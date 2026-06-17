@@ -6,6 +6,7 @@ import { PageHeader } from '../../components/ui/PageHeader';
 import { Table, THead, TR, TH, TD } from '../../components/ui/Table';
 import { Badge } from '../../components/ui/Badge';
 import { EmptyState, LoadingState, ErrorState } from '../../components/ui/states';
+import { ModuleShell } from '../../components/shell/ModuleShell';
 
 export default function DashPage() {
   const tasks = useTasks();
@@ -13,7 +14,7 @@ export default function DashPage() {
   const missions = useMissions();
 
   return (
-    <div className="flex flex-col gap-4">
+    <ModuleShell moduleId="dashboard">
       <Panel>
         <PageHeader title="Tasks" count={tasks.data?.length} />
         {tasks.isLoading ? <LoadingState /> : tasks.isError ? <ErrorState message="orca daemon unreachable" onRetry={() => tasks.refetch()} />
@@ -48,6 +49,6 @@ export default function DashPage() {
             </ul>
           ) : <EmptyState title="No active missions" />}
       </Panel>
-    </div>
+    </ModuleShell>
   );
 }

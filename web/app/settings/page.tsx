@@ -8,6 +8,8 @@ import { Panel } from '../../components/ui/Panel';
 import { PageHeader } from '../../components/ui/PageHeader';
 import { Button } from '../../components/ui/Button';
 import { LoadingState, ErrorState } from '../../components/ui/states';
+import { ModuleShell } from '../../components/shell/ModuleShell';
+import '../../modules/settings/theme.css';
 
 export default function SettingsPage() {
   const config = useConfig();
@@ -27,14 +29,14 @@ export default function SettingsPage() {
     }
   }, [config.data]);
 
-  if (config.isLoading) return <Panel><PageHeader title="Settings" /><LoadingState /></Panel>;
-  if (config.isError) return <Panel><PageHeader title="Settings" /><ErrorState message="orca daemon unreachable" onRetry={() => config.refetch()} /></Panel>;
+  if (config.isLoading) return <ModuleShell moduleId="settings"><Panel><PageHeader title="Settings" /><LoadingState /></Panel></ModuleShell>;
+  if (config.isError) return <ModuleShell moduleId="settings"><Panel><PageHeader title="Settings" /><ErrorState message="orca daemon unreachable" onRetry={() => config.refetch()} /></Panel></ModuleShell>;
 
   const toggle = (exec: string) => setAllowed((prev) => prev.includes(exec) ? prev.filter((e) => e !== exec) : [...prev, exec]);
   const apiKeySet = config.data?.autopilot.apiKeySet;
 
   return (
-    <div className="flex flex-col gap-4">
+    <ModuleShell moduleId="settings">
       <Panel>
         <PageHeader title="Models" />
         <div className="flex flex-col gap-2 p-3">
@@ -63,6 +65,6 @@ export default function SettingsPage() {
           <div><Button variant="accent" onClick={() => update.mutate({ autopilot: { model, apiUrl, ...(apiKey ? { apiKey } : {}) } }, { onSuccess: () => { toast('Autopilot saved'); setApiKey(''); }, onError: (e) => toast(String(e), 'error') })}>Save autopilot</Button></div>
         </div>
       </Panel>
-    </div>
+    </ModuleShell>
   );
 }
