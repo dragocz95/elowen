@@ -10,4 +10,10 @@ describe('FakeTmuxDriver', () => {
     expect(t.sentKeys('s1')).toEqual([['Enter']]);
     expect(await t.list()).toEqual(['s1']);
   });
+
+  it('capturePaneAnsi returns the scripted pane', async () => {
+    const t = new FakeTmuxDriver();
+    t.setPane('s1', 'colored-output');
+    expect(await t.capturePaneAnsi('s1', 200)).toBe('colored-output');
+  });
 });

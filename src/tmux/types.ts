@@ -3,6 +3,7 @@ export interface TmuxDriver {
   spawn(session: string, opts: SpawnOpts): Promise<void>;
   sendKeys(session: string, keys: string[]): Promise<void>;
   capturePane(session: string, tailLines: number): Promise<string>;
+  capturePaneAnsi(session: string, tailLines: number): Promise<string>;
   list(): Promise<string[]>;
   kill(session: string): Promise<void>;
 }

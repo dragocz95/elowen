@@ -9,6 +9,7 @@ export class FakeTmuxDriver implements TmuxDriver {
     const arr = this.keys.get(session) ?? []; arr.push(keys); this.keys.set(session, arr);
   }
   async capturePane(session: string, _tail: number) { return this.panes.get(session) ?? ''; }
+  async capturePaneAnsi(session: string, _tail: number) { return this.panes.get(session) ?? ''; }
   async list() { return [...this.panes.keys()]; }
   async kill(session: string) { this.panes.delete(session); }
 }

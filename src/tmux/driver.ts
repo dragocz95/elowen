@@ -13,6 +13,10 @@ export class RealTmuxDriver implements TmuxDriver {
     const { stdout } = await run('tmux', ['capture-pane', '-p', '-t', session, '-S', `-${tailLines}`], { maxBuffer: 512 * 1024 });
     return stdout;
   }
+  async capturePaneAnsi(session: string, tailLines: number) {
+    const { stdout } = await run('tmux', ['capture-pane', '-e', '-p', '-t', session, '-S', `-${tailLines}`], { maxBuffer: 512 * 1024 });
+    return stdout;
+  }
   async list() {
     try { const { stdout } = await run('tmux', ['list-sessions', '-F', '#{session_name}']); return stdout.split('\n').map(s => s.trim()).filter(Boolean); }
     catch { return []; }
