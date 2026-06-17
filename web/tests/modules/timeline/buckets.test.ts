@@ -16,6 +16,11 @@ describe('bucketByHour', () => {
     expect(b[11].count).toBe(2); // current hour (12:00)
     expect(b[10].count).toBe(1); // previous hour (11:00)
   });
+  it('parses SQLite-format timestamps (YYYY-MM-DD HH:MM:SS, UTC) into the right bucket', () => {
+    const b = bucketByHour([ev(1, '2026-06-17 12:05:00'), ev(2, '2026-06-17 11:40:00')], NOW);
+    expect(b[11].count).toBe(1); // current hour (12:00)
+    expect(b[10].count).toBe(1); // previous hour (11:00)
+  });
   it('skips unparseable ts and out-of-range events', () => {
     const b = bucketByHour([ev(1, 'garbage'), ev(2, '2020-01-01T00:00:00Z')], NOW);
     expect(b.reduce((s, x) => s + x.count, 0)).toBe(0);
