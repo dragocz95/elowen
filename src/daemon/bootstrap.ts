@@ -27,7 +27,7 @@ export function buildApp(opts: BuildOpts) {
   const missions = new MissionStore(db); const readiness = new Readiness(db);
   const spawn = new SpawnService({ tmux, agents });
   const bus = new EventBus();
-  const engine = new MissionEngine({ tasks, readiness, missions, spawn, tmux, project: opts.project, fallback: { program: 'claude-code', model: 'sonnet' }, nameAgent: () => `Agent${Math.floor(performance.now()) % 9999}` });
+  const engine = new MissionEngine({ tasks, readiness, missions, spawn, tmux, bus, project: opts.project, fallback: { program: 'claude-code', model: 'sonnet' }, nameAgent: () => `Agent${Math.floor(performance.now()) % 9999}` });
   // Deriver resolves a session's task via the agent registry / in-progress task (simplified: first in_progress child).
   const deriver = new Deriver({ tmux, agents, tasks, sink: bus, clock: new SystemClock(), sessionTaskId: () => tasks.list({ status: 'in_progress' })[0]?.id ?? null });
   const app = createServer({ tasks, readiness, missions, engine, spawn, tmux, bus });

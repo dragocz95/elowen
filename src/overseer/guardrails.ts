@@ -3,9 +3,9 @@ export const GUARDRAILS = ['schema', 'migration', 'auth', 'payments', 'destructi
 const PATTERNS: Record<string, RegExp> = {
   schema: /\bschema\b/i,
   migration: /\bmigrat/i,
-  auth: /\bauth|login|password|token\b/i,
-  payments: /\bpayment|billing|stripe|invoice\b/i,
-  destructive: /\bdelete|drop|truncate|rm -rf|destroy\b/i,
+  auth: /\b(auth|login|password|token)\b/i,
+  payments: /\b(payment|billing|stripe|invoice)\b/i,
+  destructive: /\b(delete|drop|truncate|rm -rf|destroy)\b/i,
 };
 
 export function detectGuardrails(text: string): string[] {

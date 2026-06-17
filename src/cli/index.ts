@@ -7,15 +7,15 @@ const BASE = process.env.ORCA_URL ?? 'http://localhost:4400';
 
 async function ensureDaemon() {
   if (process.env.ORCA_AUTOSTART === '0') return;
-  try { await fetch(`${BASE}/health`); return; } catch { /* down → start */ }
+  try { await fetch(`${BASE}/health`); return; } catch { /* down — start daemon */ }
   const entry = join(dirname(fileURLToPath(import.meta.url)), '..', 'daemon', 'index.js');
   spawn(process.execPath, [entry], { detached: true, stdio: 'ignore' }).unref();
-  for (let i = 0; i < 50; i++) { try { await fetch(`${BASE}/health`); return; } catch { await new Promise(r => setTimeout(r, 100)); } }
+  for (let i = 0; i < 50; i++) { try { await fetch(`${BASE}/health`); return; } catch { /* not healthy yet — retry */ await new Promise(r => setTimeout(r, 100)); } }
   throw new Error('orca daemon did not become healthy');
 }
 
 async function main() {
-  const [cmd, ...rest] = process.argv.slice(2);
+  const [cmd] = process.argv.slice(2);
   await ensureDaemon();
   const c = new OrcaClient(BASE);
   switch (cmd) {

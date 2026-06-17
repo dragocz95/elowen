@@ -18,9 +18,9 @@ export function createServer(d: ServerDeps): Hono {
   app.get('/health', c => c.json({ ok: true }));
 
   app.get('/tasks', c => c.json(d.tasks.list()));
-  app.post('/tasks', async c => { const b = await c.req.json(); return c.json(d.tasks.create(b), 201); });
+  app.post('/tasks', async c => { const b = await c.req.json(); const created = d.tasks.create(b); d.bus.publish({ type: 'task', taskId: created.id, status: created.status }); return c.json(created, 201); });
   app.get('/tasks/ready', c => c.json(d.readiness.ready(1)));
-  app.patch('/tasks/:id', async c => { const b = await c.req.json(); if (b.status) d.tasks.setStatus(c.req.param('id'), b.status); return c.json(d.tasks.get(c.req.param('id'))); });
+  app.patch('/tasks/:id', async c => { const b = await c.req.json(); const id = c.req.param('id'); if (b.status) { d.tasks.setStatus(id, b.status); d.bus.publish({ type: 'task', taskId: id, status: b.status }); } return c.json(d.tasks.get(id)); });
 
   app.get('/sessions', async c => c.json(await d.tmux.list()));
   app.delete('/sessions/:name', async c => { await d.tmux.kill(c.req.param('name')); return c.json({ ok: true }); });

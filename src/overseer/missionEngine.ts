@@ -4,12 +4,13 @@ import type { MissionStore, Mission } from '../store/missionStore.js';
 import type { SpawnService } from '../spawn/spawn.js';
 import type { TmuxDriver } from '../tmux/types.js';
 import type { AgentSpec } from '../spawn/commandBuilder.js';
+import type { EventBus } from '../api/sse.js';
 import { detectGuardrails, isCleared } from './guardrails.js';
 import { resolveExecutor } from './routing.js';
 
 export interface MissionEngineDeps {
   tasks: TaskStore; readiness: Readiness; missions: MissionStore;
-  spawn: SpawnService; tmux: TmuxDriver;
+  spawn: SpawnService; tmux: TmuxDriver; bus: EventBus;
   project: { id: number; path: string }; fallback: AgentSpec;
   nameAgent: () => string;
 }
@@ -20,13 +21,14 @@ export class MissionEngine {
   async engage(input: { epicId: string; autonomy: string; maxSessions: number; clearedGuardrails: string[] }): Promise<Mission> {
     const id = `m-${input.epicId}`;
     const m = this.d.missions.create({ id, epic_id: input.epicId, autonomy: input.autonomy, max_sessions: input.maxSessions, cleared_guardrails: input.clearedGuardrails });
+    this.d.bus.publish({ type: 'mission', missionId: m.id, state: 'active' });
     await this.tick(id);
     return m;
   }
 
   isActive(id: string): boolean { return this.d.missions.get(id)?.state === 'active'; }
 
-  async disengage(id: string): Promise<void> { this.d.missions.setState(id, 'disengaged'); }
+  async disengage(id: string): Promise<void> { this.d.missions.setState(id, 'disengaged'); this.d.bus.publish({ type: 'mission', missionId: id, state: 'disengaged' }); }
 
   private children(epicId: string) {
     return this.d.tasks.list({ project_id: this.d.project.id }).filter(t => t.parent_id === epicId && t.type !== 'epic');
@@ -37,7 +39,7 @@ export class MissionEngine {
 
     const kids = this.children(m.epic_id);
     if (kids.length > 0 && kids.every(t => t.status === 'closed' || t.status === 'cancelled')) {
-      this.d.missions.setState(id, 'disengaged'); return;
+      this.d.missions.setState(id, 'disengaged'); this.d.bus.publish({ type: 'mission', missionId: id, state: 'disengaged' }); return;
     }
 
     let running = (await this.d.tmux.list()).filter(s => s.startsWith('orca-')).length;
