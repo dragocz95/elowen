@@ -31,6 +31,11 @@
 
 html, body { background: var(--color-bg); color: var(--color-text); }
 
+@keyframes toast-in {
+  from { opacity: 0; transform: translateY(8px) scale(0.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
 /* Always-visible keyboard focus on interactive elements (OLED-safe accent ring) */
 button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible, [role="switch"]:focus-visible, [role="radio"]:focus-visible {
   outline: 1px solid var(--color-accent);
