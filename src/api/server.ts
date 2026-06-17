@@ -18,6 +18,7 @@ import type { ConfigStore } from '../store/configStore.js';
 import { assembleMissionDetail } from '../store/missionDetail.js';
 import type { UserStore, User } from '../store/userStore.js';
 import { authMiddleware } from './auth.js';
+import type { EventStore } from '../store/eventStore.js';
 
 
 export interface ServerDeps {
@@ -28,12 +29,19 @@ export interface ServerDeps {
   clock: Clock;
   config: ConfigStore;
   users?: UserStore;
+  events?: EventStore;
 }
 
 export function createServer(d: ServerDeps): Hono<{ Variables: { user: User; token: string } }> {
   const app = new Hono<{ Variables: { user: User; token: string } }>();
   app.use('*', cors());
   app.get('/health', c => c.json({ ok: true }));
+  app.get('/activity', (c) => {
+    if (!d.events) return c.json([]);
+    const limit = Number(c.req.query('limit')) || undefined;
+    const type = c.req.query('type') || undefined;
+    return c.json(d.events.list({ limit, type }));
+  });
 
   if (d.users) {
     const users = d.users;

@@ -222,6 +222,11 @@ it('without a UserStore, routes are open (legacy mode)', async () => {
   expect((await app.request('/tasks')).status).toBe(200);
 });
 
+it('GET /activity returns [] without an EventStore (legacy)', async () => {
+  const { app } = makeApp();
+  expect(await (await app.request('/activity')).json()).toEqual([]);
+});
+
 it('PATCH /tasks/:id sets the exec label', async () => {
   const { app } = makeApp();
   await app.request('/tasks', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: 'orca-e', project_id: 1, title: 'E' }) });

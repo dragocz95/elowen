@@ -25,3 +25,9 @@ CREATE TABLE IF NOT EXISTS auth_tokens (
   token TEXT PRIMARY KEY, user_id INTEGER NOT NULL,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+CREATE TABLE IF NOT EXISTS events (
+  id INTEGER PRIMARY KEY,
+  ts TEXT NOT NULL DEFAULT (datetime('now')),
+  type TEXT NOT NULL, target TEXT NOT NULL, detail TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_events_ts ON events(ts);
