@@ -22,5 +22,13 @@ export const orcaClient = {
   health: () => req<{ ok: boolean }>('/health'),
   createTask: (input: unknown) => req<Task>('/tasks', json(input)),
   engage: (input: unknown) => req<Mission>('/missions', json(input)),
+  spawn: (input: { taskId: string; exec?: string }) => req<{ session: string }>('/sessions', json(input)),
+  closeTask: (id: string) => req<Task>(`/tasks/${id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ status: 'closed' }) }),
+  setTaskStatus: (id: string, status: string) => req<Task>(`/tasks/${id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ status }) }),
+  killSession: (name: string) => req<{ ok: boolean }>(`/sessions/${encodeURIComponent(name)}`, { method: 'DELETE' }),
+  sendKeys: (name: string, keys: string[]) => req<{ ok: boolean }>(`/sessions/${encodeURIComponent(name)}/keys`, json({ keys })),
+  pauseMission: (id: string) => req<Mission>(`/missions/${id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action: 'pause' }) }),
+  resumeMission: (id: string) => req<Mission>(`/missions/${id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action: 'resume' }) }),
+  disengageMission: (id: string) => req<{ ok: boolean }>(`/missions/${id}`, { method: 'DELETE' }),
 };
 export type { Session };
