@@ -8,10 +8,15 @@ import type { MissionEngine } from '../overseer/missionEngine.js';
 import type { SpawnService } from '../spawn/spawn.js';
 import type { TmuxDriver } from '../tmux/types.js';
 import type { EventBus } from './sse.js';
+import type { AgentSpec } from '../spawn/commandBuilder.js';
+import { resolveExecutor } from '../overseer/routing.js';
+import { uniqueName } from '../daemon/uniqueName.js';
 
 export interface ServerDeps {
   tasks: TaskStore; readiness: Readiness; missions: MissionStore;
   engine: MissionEngine; spawn: SpawnService; tmux: TmuxDriver; bus: EventBus;
+  project: { id: number; path: string };
+  fallback: AgentSpec;
 }
 
 export function createServer(d: ServerDeps): Hono {
@@ -25,6 +30,14 @@ export function createServer(d: ServerDeps): Hono {
   app.patch('/tasks/:id', async c => { const b = await c.req.json(); const id = c.req.param('id'); if (b.status) { d.tasks.setStatus(id, b.status); d.bus.publish({ type: 'task', taskId: id, status: b.status }); } return c.json(d.tasks.get(id)); });
 
   app.get('/sessions', async c => c.json(await d.tmux.list()));
+  app.post('/sessions', async (c) => {
+    const { taskId, exec } = await c.req.json();
+    const spec = resolveExecutor(exec ? [`exec:${exec}`] : [], d.fallback);
+    d.tasks.setStatus(taskId, 'in_progress');
+    const { session } = await d.spawn.launch({ projectId: d.project.id, projectPath: d.project.path, taskId, agentName: uniqueName(), spec });
+    d.bus.publish({ type: 'task', taskId, status: 'in_progress' });
+    return c.json({ session }, 201);
+  });
   app.delete('/sessions/:name', async c => { await d.tmux.kill(c.req.param('name')); return c.json({ ok: true }); });
   app.post('/sessions/:name/keys', async c => { const { keys } = await c.req.json(); await d.tmux.sendKeys(c.req.param('name'), keys); return c.json({ ok: true }); });
   app.get('/sessions/:name/pane', async c => c.json({ pane: await d.tmux.capturePane(c.req.param('name'), 60) }));
