@@ -14,7 +14,7 @@ describe('Sidebar (registry-driven)', () => {
   it('renders wordmark + groups + active item from the registry', () => {
     const { wrapper: Wrapper } = createWrapper();
     render(<Wrapper><Sidebar /></Wrapper>);
-    expect(screen.getByText('Orca')).toBeInTheDocument();
+    expect(screen.getByAltText('Orca')).toBeInTheDocument();
     expect(screen.getByText('Operate')).toBeInTheDocument();
     expect(screen.getByText('Config')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /Dash/ }).className).toContain('border-accent');

@@ -15,7 +15,7 @@ describe('Shell', () => {
     // Set a token so LoginGate renders the shell chrome instead of the login form.
     localStorage.setItem('orca.token', 'test-token');
     render(<Shell><span>page-body</span></Shell>);
-    expect(screen.getByText('Orca')).toBeInTheDocument();
+    expect(screen.getByAltText('Orca')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /Dash/ })).toBeInTheDocument();
     expect(screen.getByText('page-body')).toBeInTheDocument();
   });
