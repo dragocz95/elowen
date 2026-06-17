@@ -16,3 +16,4 @@ CREATE TABLE IF NOT EXISTS missions (
   max_sessions INTEGER NOT NULL DEFAULT 1, cleared_guardrails TEXT NOT NULL DEFAULT '',
   state TEXT NOT NULL DEFAULT 'active', started_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+CREATE TABLE IF NOT EXISTS settings (id INTEGER PRIMARY KEY CHECK (id = 1), data TEXT NOT NULL);
