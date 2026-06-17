@@ -10,9 +10,9 @@ describe('Panel + PageHeader', () => {
     expect(el).toBeInTheDocument();
     expect(el.className + (el.parentElement?.className ?? '')).toContain('border');
   });
-  it('PageHeader shows uppercased title and mono count', () => {
+  it('PageHeader shows the title and count', () => {
     render(<PageHeader title="Tasks" count={7} />);
-    expect(screen.getByText('Tasks')).toHaveClass('uppercase');
+    expect(screen.getByRole('heading', { name: 'Tasks' })).toBeInTheDocument();
     expect(screen.getByText('7')).toHaveClass('font-mono');
   });
 });
