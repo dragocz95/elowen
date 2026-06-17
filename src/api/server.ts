@@ -63,7 +63,7 @@ export function createServer(d: ServerDeps): Hono {
         await stream.writeSSE({ data: JSON.stringify({ pane }), event: 'pane' });
       };
       await frame(); // first frame synchronously so clients render immediately
-      const stop = d.clock.setInterval(() => { void frame(); }, 1000);
+      const stop = d.clock.setInterval(() => { frame().catch(() => { /* transient capture error — skip this frame, keep the stream alive */ }); }, 1000);
       c.req.raw.signal.addEventListener('abort', stop);
       while (!c.req.raw.signal.aborted) await stream.sleep(1000);
       stop();

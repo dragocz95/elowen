@@ -115,6 +115,27 @@ it('PATCH /missions/:id pauses (drops from active) and resumes', async () => {
   expect(missions.get('m1')?.state).toBe('active');
 });
 
+it('GET /sessions/:name/stream survives a dead/missing session (empty pane)', async () => {
+  const db = openDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'orca','/o')").run();
+  const tmux = new FakeTmuxDriver(); // no pane set for 'orca-dead' → returns ''
+  const app = createServer({
+    tasks: new TaskStore(db), readiness: new Readiness(db), missions: new MissionStore(db), bus: new EventBus(),
+    engine: null as any, spawn: null as any, tmux, project: { id: 1, path: '/o' },
+    fallback: { program: 'claude-code', model: 'sonnet' }, clock: new FakeClock(0),
+  });
+  const ctrl = new AbortController();
+  const res = await app.request('/sessions/orca-dead/stream', { signal: ctrl.signal });
+  expect(res.status).toBe(200);
+  expect(res.headers.get('content-type')).toContain('text/event-stream');
+  const reader = res.body!.getReader();
+  const { value } = await reader.read();
+  const text = new TextDecoder().decode(value);
+  expect(text).toContain('event: pane');
+  // empty pane: data contains {"pane":""}, stream must not throw
+  expect(text).toContain('"pane"');
+  ctrl.abort(); await reader.cancel();
+});
+
 it('GET /sessions/:name/stream emits a first pane frame', async () => {
   const db = openDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'orca','/o')").run();
   const tmux = new FakeTmuxDriver(); tmux.setPane('orca-A', 'hello-pane');

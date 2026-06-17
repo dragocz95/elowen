@@ -8,6 +8,7 @@ import { useSessionStream } from '../../lib/useSessionStream';
 export function Terminal({ name }: { name: string }) {
   const ref = useRef<HTMLDivElement>(null);
   const termRef = useRef<XTerm | null>(null);
+  const fitRef = useRef<FitAddon | null>(null);
   const pane = useSessionStream(name);
 
   useEffect(() => {
@@ -18,12 +19,18 @@ export function Terminal({ name }: { name: string }) {
     term.open(ref.current);
     fit.fit();
     termRef.current = term;
-    return () => { term.dispose(); termRef.current = null; };
+    fitRef.current = fit;
+
+    // spec §4.3 — refit terminal on container resize
+    const ro = new ResizeObserver(() => { fit.fit(); });
+    ro.observe(ref.current);
+
+    return () => { ro.disconnect(); term.dispose(); termRef.current = null; fitRef.current = null; };
   }, []);
 
   useEffect(() => {
     const term = termRef.current;
-    if (term && pane) { term.clear(); term.write(pane); }
+    if (term) { term.clear(); term.write(pane); }
   }, [pane]);
 
   return <div ref={ref} className="h-64 w-full border border-border bg-bg" />;
