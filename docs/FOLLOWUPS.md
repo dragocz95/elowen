@@ -58,3 +58,6 @@ direct `EventSource` streams live. **Deploy builds with `NEXT_PUBLIC_ORCA_URL=ht
 Handler (`app/orca-api/[...path]/route.ts` returning the piped fetch body) if same-origin is needed
 (e.g. behind HTTPS where mixed-content blocks a direct HTTP daemon call). For the current HTTP preview,
 the direct URL is correct and verified.
+
+## L2-6 cleanup (non-blocking, from final review)
+- `web/components/auth/LoginGate.tsx` imports `EventBridge` from `app/providers` (components→app layering). Cleaner: relocate `EventBridge` to `web/components/EventBridge.tsx` and import from there in both `providers.tsx` and `LoginGate.tsx`.
