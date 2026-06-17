@@ -47,14 +47,17 @@ describe('SessionsPage', () => {
     await waitFor(() => expect(killed).toBe(true));
   });
 
-  it('toggles the inline terminal for a session', async () => {
+  it('opens terminal in modal and closes via modal close button', async () => {
     const { wrapper: Wrapper } = createWrapper();
     render(<Wrapper><ToastProvider><SessionsPage /></ToastProvider></Wrapper>);
     await waitFor(() => expect(screen.getByText('orca-SwiftLake')).toBeInTheDocument());
+    // Terminal not yet visible
     expect(screen.queryByTestId('term')).not.toBeInTheDocument();
+    // Click Terminal button → modal opens with terminal inside
     fireEvent.click(screen.getByRole('button', { name: 'Terminal' }));
     expect(screen.getByTestId('term')).toHaveTextContent('orca-SwiftLake');
-    fireEvent.click(screen.getByRole('button', { name: 'Terminal' }));
+    // Close via modal's Close button
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
     expect(screen.queryByTestId('term')).not.toBeInTheDocument();
   });
 });

@@ -8,6 +8,7 @@ import { useToast } from '../../components/ui/Toast';
 import { Panel } from '../../components/ui/Panel';
 import { PageHeader } from '../../components/ui/PageHeader';
 import { Button } from '../../components/ui/Button';
+import { Modal } from '../../components/ui/Modal';
 import { LoadingState, ErrorState, EmptyState } from '../../components/ui/states';
 
 // xterm references browser-only `self`; skip SSR to avoid prerender errors
@@ -21,8 +22,7 @@ export default function SessionsPage() {
   const kill = useKillSession();
   const send = useSendInput();
   const { toast } = useToast();
-  const [openTerms, setOpenTerms] = useState<Set<string>>(new Set());
-  const toggleTerm = (s: string) => setOpenTerms((prev) => { const n = new Set(prev); n.has(s) ? n.delete(s) : n.add(s); return n; });
+  const [openTerm, setOpenTerm] = useState<string | null>(null);
 
   return (
     <Panel>
@@ -31,21 +31,23 @@ export default function SessionsPage() {
         : sessions.data && sessions.data.length > 0 ? (
           <ul className="flex flex-col divide-y divide-border">
             {sessions.data.map((s) => (
-              <li key={s} className="flex flex-col">
-                <div className="flex items-center justify-between gap-3 px-3 py-2">
-                  <span className="font-mono text-xs text-text-muted">{s}</span>
-                  <div className="flex items-center gap-2">
-                    <Button onClick={() => toggleTerm(s)}>Terminal</Button>
-                    <SendInput onSend={(keys) => send.mutate({ name: s, keys }, { onSuccess: () => toast(`Sent to ${s}`), onError: (e) => toast(String(e), 'error') })} />
-                    <Button onClick={() => send.mutate({ name: s, keys: ['C-c'] }, { onSuccess: () => toast(`Interrupted ${s}`) })}>Interrupt</Button>
-                    <Button variant="danger" onClick={() => kill.mutate(s, { onSuccess: () => toast(`Killed ${s}`), onError: (e) => toast(String(e), 'error') })}>Kill</Button>
-                  </div>
+              <li key={s} className="flex items-center justify-between gap-3 px-3 py-2">
+                <span className="font-mono text-xs text-text-muted">{s}</span>
+                <div className="flex items-center gap-2">
+                  <Button onClick={() => setOpenTerm(s)}>Terminal</Button>
+                  <SendInput onSend={(keys) => send.mutate({ name: s, keys }, { onSuccess: () => toast(`Sent to ${s}`), onError: (e) => toast(String(e), 'error') })} />
+                  <Button onClick={() => send.mutate({ name: s, keys: ['C-c'] }, { onSuccess: () => toast(`Interrupted ${s}`) })}>Interrupt</Button>
+                  <Button variant="danger" onClick={() => kill.mutate(s, { onSuccess: () => toast(`Killed ${s}`), onError: (e) => toast(String(e), 'error') })}>Kill</Button>
                 </div>
-                {openTerms.has(s) && <div className="px-3 pb-3"><Terminal name={s} /></div>}
               </li>
             ))}
           </ul>
         ) : <EmptyState title="No live sessions" />}
+      {openTerm && (
+        <Modal title={`Terminal — ${openTerm}`} onClose={() => setOpenTerm(null)}>
+          <Terminal name={openTerm} />
+        </Modal>
+      )}
     </Panel>
   );
 }

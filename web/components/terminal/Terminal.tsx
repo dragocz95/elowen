@@ -17,15 +17,26 @@ export function Terminal({ name }: { name: string }) {
     const fit = new FitAddon();
     term.loadAddon(fit);
     term.open(ref.current);
-    fit.fit();
     termRef.current = term;
     fitRef.current = fit;
 
+    // Defer first fit to next animation frame so the modal/container has
+    // been painted and has real dimensions before xterm measures columns.
+    const rafId = requestAnimationFrame(() => {
+      if (termRef.current) fit.fit();
+    });
+
     // spec §4.3 — refit terminal on container resize
-    const ro = new ResizeObserver(() => { fit.fit(); });
+    const ro = new ResizeObserver(() => { if (termRef.current) fit.fit(); });
     ro.observe(ref.current);
 
-    return () => { ro.disconnect(); term.dispose(); termRef.current = null; fitRef.current = null; };
+    return () => {
+      cancelAnimationFrame(rafId);
+      ro.disconnect();
+      term.dispose();
+      termRef.current = null;
+      fitRef.current = null;
+    };
   }, []);
 
   useEffect(() => {
@@ -33,5 +44,5 @@ export function Terminal({ name }: { name: string }) {
     if (term) { term.clear(); term.write(pane); }
   }, [pane]);
 
-  return <div ref={ref} className="h-64 w-full border border-border bg-bg" />;
+  return <div ref={ref} className="h-full w-full border border-border bg-bg" />;
 }
