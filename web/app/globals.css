@@ -1,0 +1,14 @@
+@import "tailwindcss";
+
+@theme {
+  --color-bg: #000000;
+  --color-surface: #0a0a0a;
+  --color-elevated: #131313;
+  --color-border: oklch(0.27 0 0);
+  --color-accent: oklch(0.62 0.19 256);
+  --color-text: oklch(0.97 0 0);
+  --color-text-muted: oklch(0.62 0 0);
+  --radius-sharp: 0px;
+}
+
+html, body { background: var(--color-bg); color: var(--color-text); }
