@@ -25,20 +25,6 @@ export function DashboardView() {
 
   const metrics = deriveDashboardMetrics(tasks.data, sessions.data, missions.data);
 
-  // Status breakdown counts map
-  const statusCounts: Record<TaskStatus, number> = {
-    open: 0,
-    in_progress: 0,
-    blocked: 0,
-    closed: 0,
-    cancelled: 0,
-  };
-  if (tasks.data) {
-    for (const t of tasks.data) {
-      statusCounts[t.status] = (statusCounts[t.status] ?? 0) + 1;
-    }
-  }
-
   return (
     <>
       {/* Metrics row */}
@@ -72,7 +58,7 @@ export function DashboardView() {
             {/* Status breakdown bar */}
             <div className="flex h-2 w-full overflow-hidden border border-border mb-3">
               {STATUS_BAR_KEYS.map(({ key, bg }) => {
-                const count = statusCounts[key];
+                const count = metrics.byStatus[key];
                 if (count === 0) return null;
                 return (
                   <div

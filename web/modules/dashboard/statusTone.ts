@@ -10,5 +10,5 @@ const MAP: Record<TaskStatus, Tone> = {
 };
 
 export function statusTone(status: TaskStatus): Tone {
-  return MAP[status] ?? 'default';
+  return MAP[status];
 }
