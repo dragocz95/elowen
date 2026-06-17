@@ -4,6 +4,7 @@ import { Terminal as XTerm } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
 import { useSessionStream } from '../../lib/useSessionStream';
+import { composeFrame } from './frame';
 
 export function Terminal({ name }: { name: string }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -14,7 +15,7 @@ export function Terminal({ name }: { name: string }) {
 
   useEffect(() => {
     if (!ref.current) return;
-    const term = new XTerm({ convertEol: true, fontSize: 12, theme: { background: '#000000' } });
+    const term = new XTerm({ convertEol: true, cursorBlink: false, fontSize: 12, theme: { background: '#000000' } });
     const fit = new FitAddon();
     term.loadAddon(fit);
     term.open(ref.current);
@@ -32,10 +33,7 @@ export function Terminal({ name }: { name: string }) {
     const ro = new ResizeObserver(() => {
       if (!termRef.current) return;
       fit.fit();
-      if (paneRef.current) {
-        termRef.current.clear();
-        termRef.current.write(paneRef.current);
-      }
+      if (paneRef.current) termRef.current.write(composeFrame(paneRef.current));
     });
     ro.observe(ref.current);
 
@@ -49,9 +47,11 @@ export function Terminal({ name }: { name: string }) {
   }, []);
 
   useEffect(() => {
-    paneRef.current = pane;
     const term = termRef.current;
-    if (term) { term.clear(); term.write(pane); }
+    if (!term) return;
+    if (pane === paneRef.current) return;
+    paneRef.current = pane;
+    term.write(composeFrame(pane));
   }, [pane]);
 
   return <div ref={ref} className="h-full w-full border border-border bg-bg" />;

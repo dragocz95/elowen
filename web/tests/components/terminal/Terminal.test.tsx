@@ -14,21 +14,23 @@ beforeEach(() => { (globalThis as any).EventSource = FakeES as any; writeSpy.moc
 
 import { Terminal } from '../../../components/terminal/Terminal';
 
+const CLEAR = '\x1b[H\x1b[2J';
+
 describe('Terminal', () => {
-  it('mounts xterm and writes pane frames', () => {
+  it('mounts xterm and writes pane frames atomically (no separate clear)', () => {
     render(<Terminal name="orca-A" />);
     expect(openSpy).toHaveBeenCalled();
     act(() => FakeES.last.emit('pane', { pane: 'frame-1' }));
-    expect(clearSpy).toHaveBeenCalled();
-    expect(writeSpy).toHaveBeenCalledWith('frame-1');
+    expect(clearSpy).not.toHaveBeenCalled();
+    expect(writeSpy).toHaveBeenCalledWith(`${CLEAR}frame-1`);
   });
 
-  it('writes even when pane is empty string (B1 — cleared screen guard)', () => {
+  it('skips write when pane is unchanged (B1 — idle dedupe guard)', () => {
     render(<Terminal name="orca-B" />);
+    // paneRef starts as '' and pane starts as '' — identical, so no write
     act(() => FakeES.last.emit('pane', { pane: '' }));
-    // clear + write('') must be called even for empty pane
-    expect(clearSpy).toHaveBeenCalled();
-    expect(writeSpy).toHaveBeenCalledWith('');
+    expect(clearSpy).not.toHaveBeenCalled();
+    expect(writeSpy).not.toHaveBeenCalled();
   });
 
   it('ResizeObserver is attached on mount (B2)', () => {
