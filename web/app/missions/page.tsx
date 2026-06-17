@@ -1,6 +1,6 @@
 'use client';
 import { useState } from 'react';
-import { useMissions } from '../../lib/queries';
+import { useMissions, useConfig } from '../../lib/queries';
 import { useEngage, usePauseMission, useResumeMission, useDisengage } from '../../lib/mutations';
 import { EngageForm } from '../../components/control/EngageForm';
 import { useToast } from '../../components/ui/Toast';
@@ -16,6 +16,7 @@ import { MissionProgressView } from '../../modules/missions/MissionProgressView'
 export default function MissionsPage() {
   const [detailId, setDetailId] = useState<string | null>(null);
   const missions = useMissions();
+  const config = useConfig();
   const engage = useEngage();
   const pause = usePauseMission();
   const resume = useResumeMission();
@@ -26,7 +27,7 @@ export default function MissionsPage() {
     <ModuleShell moduleId="missions">
       <Panel>
         <PageHeader title="Missions" count={missions.data?.length} />
-        <EngageForm onEngage={(v) => engage.mutate(v, { onSuccess: () => toast(`Engaged ${v.epicId}`), onError: (e) => toast(String(e), 'error') })} />
+        <EngageForm onEngage={(v) => engage.mutate(v, { onSuccess: () => toast(`Engaged ${v.epicId}`), onError: (e) => toast(String(e), 'error') })} defaultAutonomy={config.data?.defaults?.autonomy} defaultMaxSessions={config.data?.defaults?.maxSessions} />
         {missions.isLoading ? <LoadingState /> : missions.isError ? <ErrorState message="orca daemon unreachable" onRetry={() => missions.refetch()} />
           : missions.data && missions.data.length > 0 ? (
             <ul className="flex flex-col divide-y divide-border">

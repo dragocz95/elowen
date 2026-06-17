@@ -1,8 +1,10 @@
 'use client';
 import { useTasks } from '../../lib/queries';
-import { useCreateTask, useSpawn, useCloseTask } from '../../lib/mutations';
+import { useCreateTask, useSpawn, useCloseTask, useSetTaskExec } from '../../lib/mutations';
+import { taskExec } from '../../lib/taskExec';
 import { CreateTaskForm } from '../../components/control/CreateTaskForm';
 import { ExecutorPicker } from '../../components/control/ExecutorPicker';
+import { TaskExecPicker } from '../../components/control/TaskExecPicker';
 import { useToast } from '../../components/ui/Toast';
 import { Panel } from '../../components/ui/Panel';
 import { PageHeader } from '../../components/ui/PageHeader';
@@ -17,6 +19,7 @@ export default function TasksPage() {
   const create = useCreateTask();
   const spawn = useSpawn();
   const close = useCloseTask();
+  const setExec = useSetTaskExec();
   const { toast } = useToast();
 
   return (
@@ -36,6 +39,7 @@ export default function TasksPage() {
                     <TD><Badge>{t.status}</Badge></TD>
                     <TD>
                       <div className="flex items-center gap-2">
+                        <TaskExecPicker value={taskExec(t.labels)} onChange={(exec) => setExec.mutate({ id: t.id, exec }, { onSuccess: () => toast(`Executor set for ${t.id}`), onError: (e) => toast(String(e), 'error') })} />
                         <ExecutorPicker onPick={(exec) => spawn.mutate({ taskId: t.id, exec }, { onSuccess: (r) => toast(`Launched ${r.session}`), onError: (e) => toast(String(e), 'error') })} />
                         <Button onClick={() => close.mutate(t.id, { onSuccess: () => toast(`Closed ${t.id}`), onError: (e) => toast(String(e), 'error') })}>Close</Button>
                       </div>

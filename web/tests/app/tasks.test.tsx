@@ -18,7 +18,7 @@ describe('TasksPage', () => {
     const { wrapper: Wrapper } = createWrapper();
     render(<Wrapper><ToastProvider><TasksPage /></ToastProvider></Wrapper>);
     await waitFor(() => expect(screen.getByText('orca-1')).toBeInTheDocument());
-    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'ollama/deepseek-v4-flash' } });
+    fireEvent.change(screen.getAllByRole('combobox')[1], { target: { value: 'ollama/deepseek-v4-flash' } });
     await waitFor(() => expect(spawnBody).toMatchObject({ taskId: 'orca-1', exec: 'ollama/deepseek-v4-flash' }));
   });
 });

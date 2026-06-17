@@ -2,10 +2,10 @@
 import { useState } from 'react';
 import type { EngageInput } from '../../lib/types';
 import { Button } from '../ui/Button';
-export function EngageForm({ onEngage }: { onEngage: (v: EngageInput) => void }) {
+export function EngageForm({ onEngage, defaultAutonomy, defaultMaxSessions }: { onEngage: (v: EngageInput) => void; defaultAutonomy?: string; defaultMaxSessions?: number }) {
   const [epicId, setEpicId] = useState('');
-  const [autonomy, setAutonomy] = useState('L3');
-  const [maxSessions, setMaxSessions] = useState(1);
+  const [autonomy, setAutonomy] = useState(defaultAutonomy ?? 'L3');
+  const [maxSessions, setMaxSessions] = useState(defaultMaxSessions ?? 1);
   return (
     <form
       className="flex flex-wrap items-center gap-2 p-3"
