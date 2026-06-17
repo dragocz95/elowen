@@ -133,11 +133,14 @@ cd web && npm install && npm run dev
 
 | Document | Contents |
 |---|---|
+| [CONCEPTS.md](docs/CONCEPTS.md) | Domain model — tasks, missions, autonomy, guardrails, deriver, routing |
 | [API.md](docs/API.md) | Full REST API reference with request/response examples |
 | [ARCHITECTURE.md](docs/ARCHITECTURE.md) | Module descriptions, data flow, guardrails, autonomy levels |
 | [DEVELOPMENT.md](docs/DEVELOPMENT.md) | Setup, conventions, project structure, configuration |
 | [DEPLOYMENT.md](docs/DEPLOYMENT.md) | Production deployment, systemd, Docker, reverse proxy |
+| [CLI.md](docs/CLI.md) | CLI commands, autostart, environment variables |
 | [WEB.md](docs/WEB.md) | Web UI pages, components, patterns, real-time updates |
+| [TESTING.md](docs/TESTING.md) | Test architecture, fakes, writing tests, CI |
 | [FOLLOWUPS.md](docs/FOLLOWUPS.md) | Deferred features and known limitations |
 
 ## Development
