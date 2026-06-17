@@ -44,6 +44,18 @@ export function createServer(d: ServerDeps): Hono {
 
   app.get('/missions', c => c.json(d.missions.active()));
   app.post('/missions', async c => { const b = await c.req.json(); return c.json(await d.engine.engage(b), 201); });
+  app.patch('/missions/:id', async (c) => {
+    const id = c.req.param('id');
+    const { action } = await c.req.json();
+    if (action === 'pause') {
+      d.missions.setState(id, 'paused');
+    } else if (action === 'resume') {
+      d.missions.setState(id, 'active');
+      await d.engine.tick(id);
+    }
+    d.bus.publish({ type: 'mission', missionId: id, state: action === 'pause' ? 'paused' : 'active' });
+    return c.json(d.missions.get(id));
+  });
   app.delete('/missions/:id', async c => { await d.engine.disengage(c.req.param('id')); return c.json({ ok: true }); });
 
   app.get('/events', c => streamSSE(c, async stream => {

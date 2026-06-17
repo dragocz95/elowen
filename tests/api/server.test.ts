@@ -9,6 +9,7 @@ import { createServer } from '../../src/api/server.js';
 import { FakeTmuxDriver } from '../../src/tmux/fakeDriver.js';
 import { AgentStore } from '../../src/store/agentStore.js';
 import { SpawnService } from '../../src/spawn/spawn.js';
+import { MissionEngine } from '../../src/overseer/missionEngine.js';
 
 function makeApp() {
   const db = openDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'orca','/o')").run();
@@ -61,4 +62,21 @@ it('POST /sessions launches an agent on a task and marks it in_progress', async 
   expect(body.session).toMatch(/^orca-/);
   expect(tasks.get('orca-1')?.status).toBe('in_progress');
   expect(await tmux.list()).toContain(body.session);
+});
+
+it('PATCH /missions/:id pauses (drops from active) and resumes', async () => {
+  const db = openDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'orca','/o')").run();
+  const missions = new MissionStore(db);
+  missions.create({ id: 'm1', epic_id: 'e1', autonomy: 'L3', max_sessions: 1, cleared_guardrails: [] });
+  const tmux = new FakeTmuxDriver();
+  const engine = { tick: async () => {} } as unknown as MissionEngine;
+  const app = createServer({
+    tasks: new TaskStore(db), readiness: new Readiness(db), missions, bus: new EventBus(),
+    engine, spawn: null as any, tmux, project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },
+  });
+  await app.request('/missions/m1', { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action: 'pause' }) });
+  expect((await (await app.request('/missions')).json())).toEqual([]); // paused → not active
+  expect(missions.get('m1')?.state).toBe('paused');
+  await app.request('/missions/m1', { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action: 'resume' }) });
+  expect(missions.get('m1')?.state).toBe('active');
 });
