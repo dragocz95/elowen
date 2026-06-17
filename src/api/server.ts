@@ -14,6 +14,7 @@ import type { AgentSpec } from '../spawn/commandBuilder.js';
 import { resolveExecutor } from '../overseer/routing.js';
 import { uniqueName } from '../daemon/uniqueName.js';
 import type { Clock } from '../shared/clock.js';
+import type { ConfigStore } from '../store/configStore.js';
 
 const ALLOWED_EXEC = new Set(['sonnet', 'ollama/deepseek-v4-flash', 'ollama/kimi-k2.7-code', 'ollama/minimax-m2.7', 'codex:gpt-5.4']);
 
@@ -23,6 +24,7 @@ export interface ServerDeps {
   project: { id: number; path: string };
   fallback: AgentSpec;
   clock: Clock;
+  config: ConfigStore;
 }
 
 export function createServer(d: ServerDeps): Hono {
@@ -85,6 +87,9 @@ export function createServer(d: ServerDeps): Hono {
     return c.json(d.missions.get(id));
   });
   app.delete('/missions/:id', async c => { await d.engine.disengage(c.req.param('id')); return c.json({ ok: true }); });
+
+  app.get('/config', (c) => c.json(d.config.get()));
+  app.put('/config', async (c) => { const patch = await c.req.json(); return c.json(d.config.update(patch)); });
 
   app.get('/events', c => streamSSE(c, async stream => {
     const off = d.bus.subscribe(e => void stream.writeSSE({ data: JSON.stringify(e), event: e.type }));

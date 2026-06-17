@@ -10,6 +10,7 @@ import { EventBus } from '../api/sse.js';
 import { createServer } from '../api/server.js';
 import { RealTmuxDriver } from '../tmux/driver.js';
 import { SystemClock } from '../shared/clock.js';
+import { ConfigStore } from '../store/configStore.js';
 import type { TmuxDriver } from '../tmux/types.js';
 
 export interface BuildOpts {
@@ -25,12 +26,13 @@ export function buildApp(opts: BuildOpts) {
   const tmux = opts.tmux ?? new RealTmuxDriver();
   const tasks = new TaskStore(db); const agents = new AgentStore(db);
   const missions = new MissionStore(db); const readiness = new Readiness(db);
+  const config = new ConfigStore(db);
   const spawn = new SpawnService({ tmux, agents });
   const bus = new EventBus();
   const engine = new MissionEngine({ tasks, readiness, missions, spawn, tmux, bus, project: opts.project, fallback: { program: 'claude-code', model: 'sonnet' }, nameAgent: () => `Agent${Math.floor(performance.now()) % 9999}` });
   // Deriver resolves a session's task via the agent registry / in-progress task (simplified: first in_progress child).
   const deriver = new Deriver({ tmux, agents, tasks, sink: bus, clock: new SystemClock(), sessionTaskId: () => tasks.list({ status: 'in_progress' })[0]?.id ?? null });
-  const app = createServer({ tasks, readiness, missions, engine, spawn, tmux, bus, project: opts.project, fallback: { program: 'claude-code', model: 'sonnet' }, clock: new SystemClock() });
+  const app = createServer({ tasks, readiness, missions, engine, spawn, tmux, bus, project: opts.project, fallback: { program: 'claude-code', model: 'sonnet' }, clock: new SystemClock(), config });
 
   const startLoops = () => {
     const clock = new SystemClock();
