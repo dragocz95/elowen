@@ -1,8 +1,8 @@
 'use client';
 import type { ReactNode } from 'react';
-import { Providers } from '../../app/providers.js';
-import { Sidebar } from './Sidebar.js';
-import { TopBar } from './TopBar.js';
+import { Providers } from '../../app/providers';
+import { Sidebar } from './Sidebar';
+import { TopBar } from './TopBar';
 
 export function Shell({ children }: { children: ReactNode }) {
   return (

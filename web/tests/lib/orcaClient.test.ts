@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
 import { setupServer } from 'msw/node';
 import { http, HttpResponse } from 'msw';
-import { orcaClient, OrcaApiError } from '../../lib/orcaClient.js';
+import { orcaClient, OrcaApiError } from '../../lib/orcaClient';
 
 const server = setupServer(
   http.get('http://localhost:4400/tasks', () => HttpResponse.json([{ id: 'orca-1', title: 'A', status: 'open' }])),

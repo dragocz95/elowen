@@ -1,4 +1,4 @@
-import type { Task, Session, Mission } from './types.js';
+import type { Task, Session, Mission } from './types';
 
 export const BASE = process.env.NEXT_PUBLIC_ORCA_URL ?? 'http://localhost:4400';
 

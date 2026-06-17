@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { setupServer } from 'msw/node';
 import { http, HttpResponse } from 'msw';
-import { Shell } from '../../components/shell/Shell.js';
+import { Shell } from '../../components/shell/Shell';
 
 vi.mock('next/navigation', () => ({ usePathname: () => '/' }));
 

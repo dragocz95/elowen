@@ -1,5 +1,5 @@
 'use client';
-import { useHealth } from '../../lib/queries.js';
+import { useHealth } from '../../lib/queries';
 
 export function TopBar() {
   const { data } = useHealth();

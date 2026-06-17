@@ -2,8 +2,8 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { renderHook, waitFor } from '@testing-library/react';
 import { setupServer } from 'msw/node';
 import { http, HttpResponse } from 'msw';
-import { useTasks } from '../../lib/queries.js';
-import { createWrapper } from '../test-utils.js';
+import { useTasks } from '../../lib/queries';
+import { createWrapper } from '../test-utils';
 
 const server = setupServer(
   http.get('http://localhost:4400/tasks', () =>

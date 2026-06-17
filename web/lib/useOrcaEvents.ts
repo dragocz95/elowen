@@ -1,9 +1,9 @@
 'use client';
 import { useEffect } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { QUERY_KEYS } from './queries.js';
-import { BASE } from './orcaClient.js';
-import type { OrcaEvent } from './types.js';
+import { QUERY_KEYS } from './queries';
+import { BASE } from './orcaClient';
+import type { OrcaEvent } from './types';
 
 export function useOrcaEvents(): void {
   const qc = useQueryClient();

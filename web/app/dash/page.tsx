@@ -1,11 +1,11 @@
 'use client';
 export const dynamic = 'force-dynamic';
-import { useTasks, useSessions, useMissions } from '../../lib/queries.js';
-import { Panel } from '../../components/ui/Panel.js';
-import { PageHeader } from '../../components/ui/PageHeader.js';
-import { Table, THead, TR, TH, TD } from '../../components/ui/Table.js';
-import { Badge } from '../../components/ui/Badge.js';
-import { EmptyState, LoadingState, ErrorState } from '../../components/ui/states.js';
+import { useTasks, useSessions, useMissions } from '../../lib/queries';
+import { Panel } from '../../components/ui/Panel';
+import { PageHeader } from '../../components/ui/PageHeader';
+import { Table, THead, TR, TH, TD } from '../../components/ui/Table';
+import { Badge } from '../../components/ui/Badge';
+import { EmptyState, LoadingState, ErrorState } from '../../components/ui/states';
 
 export default function DashPage() {
   const tasks = useTasks();

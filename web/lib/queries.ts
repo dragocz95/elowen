@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { orcaClient } from './orcaClient.js';
+import { orcaClient } from './orcaClient';
 
 export const QUERY_KEYS = {
   tasks: ['tasks'] as const,
