@@ -5,6 +5,7 @@ import { AgentStore } from '../store/agentStore.js';
 import { MissionStore } from '../store/missionStore.js';
 import { SpawnService } from '../spawn/spawn.js';
 import { MissionEngine } from '../overseer/missionEngine.js';
+import { Scheduler } from '../overseer/scheduler.js';
 import { Deriver } from '../deriver/deriver.js';
 import { EventBus } from '../api/sse.js';
 import { createServer } from '../api/server.js';
@@ -55,6 +56,7 @@ export function buildApp(opts: BuildOpts) {
   const events = new EventStore(db);
   bus.subscribe((e) => { try { events.record(e); } catch (err) { console.error('[orca] event record failed', err); } });
   const engine = new MissionEngine({ tasks, readiness, missions, spawn, tmux, bus, project: opts.project, fallback: { program: 'claude-code', model: 'sonnet' }, nameAgent: uniqueName });
+  const scheduler = new Scheduler({ tasks, spawn, bus, project: opts.project, fallback: { program: 'claude-code', model: 'sonnet' }, nameAgent: uniqueName, clock: new SystemClock() });
   // Deriver resolves a session's task via the agent registry / in-progress task (simplified: first in_progress child).
   const deriver = new Deriver({ tmux, agents, tasks, sink: bus, clock: new SystemClock(), sessionTaskId: () => tasks.list({ status: 'in_progress' })[0]?.id ?? null });
   const openMode = users.count() === 0 && opts.allowOpen === true;
@@ -67,7 +69,8 @@ export function buildApp(opts: BuildOpts) {
     const clock = new SystemClock();
     const stopDeriver = deriver.start();
     const stopOverseer = clock.setInterval(() => { for (const m of missions.active()) void engine.tick(m.id); }, 90000);
-    return () => { stopDeriver(); stopOverseer(); };
+    const stopScheduler = clock.setInterval(() => { void scheduler.tick(); }, 30000);
+    return () => { stopDeriver(); stopOverseer(); stopScheduler(); };
   };
   return { app, startLoops };
 }

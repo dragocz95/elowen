@@ -21,6 +21,16 @@ import { taskTypeMeta, TASK_TYPES, PRIORITIES } from './taskMeta';
 type Mode = 'single' | 'planning';
 interface ManualPhase { title: string; type: string }
 
+// ISO (UTC) ↔ <input type="datetime-local"> (local, no seconds/zone).
+function isoToLocalInput(iso?: string | null): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+const localInputToIso = (v: string): string | null => (v ? new Date(v).toISOString() : null);
+
 export function TaskModal({ task, onClose }: { task?: Task; onClose: () => void }) {
   const editing = !!task;
   const { data: config } = useConfig();
@@ -42,6 +52,7 @@ export function TaskModal({ task, onClose }: { task?: Task; onClose: () => void 
   const [type, setType] = useState(task?.type ?? 'task');
   const [priority, setPriority] = useState(task?.priority ?? 'P2');
   const [exec, setExec] = useState(task ? taskExec(task.labels) : '');
+  const [schedule, setSchedule] = useState(isoToLocalInput(task?.scheduled_at));
   const [launchNow, setLaunchNow] = useState(false);
 
   // Planning fields
@@ -59,11 +70,11 @@ export function TaskModal({ task, onClose }: { task?: Task; onClose: () => void 
     if (!title.trim()) return;
     try {
       if (editing) {
-        await update.mutateAsync({ id: task!.id, patch: { title: title.trim(), type, priority, description: description.trim() } });
+        await update.mutateAsync({ id: task!.id, patch: { title: title.trim(), type, priority, description: description.trim(), scheduled_at: localInputToIso(schedule) } });
         if (exec !== taskExec(task!.labels)) await setExecM.mutateAsync({ id: task!.id, exec });
         toast(`Updated ${task!.id}`);
       } else {
-        const created = await create.mutateAsync({ title: title.trim(), type, priority, description: description.trim() });
+        const created = await create.mutateAsync({ title: title.trim(), type, priority, description: description.trim(), scheduled_at: localInputToIso(schedule) });
         if (exec) await setExecM.mutateAsync({ id: created.id, exec });
         if (launchNow) await spawn.mutateAsync({ taskId: created.id, exec: exec || undefined });
         toast(launchNow ? `Created & launched ${created.title}` : `Created ${created.title}`);
@@ -154,7 +165,12 @@ export function TaskModal({ task, onClose }: { task?: Task; onClose: () => void 
                 </Select>
               </Field>
             </div>
-            {execSelect}
+            <div className="grid grid-cols-2 gap-4">
+              {execSelect}
+              <Field label="Schedule" hint="Optional — auto-launch at this time.">
+                <Input type="datetime-local" value={schedule} onChange={(e) => setSchedule(e.target.value)} />
+              </Field>
+            </div>
             {!editing && (
               <label className="flex items-center gap-2 text-sm text-text">
                 <input type="checkbox" checked={launchNow} onChange={(e) => setLaunchNow(e.target.checked)} className="accent-accent" />
