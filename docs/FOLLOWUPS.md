@@ -43,6 +43,10 @@ Task 17 scoped a subset. Spec §5 also lists: `GET /tasks/:id/tree`, `POST /task
 
 - Explicit SSE reconnect backoff (spec §8) — relying on native EventSource auto-reconnect for now.
 
+## Auth hardening (post auth-users slice)
+
+Auth tokens are stored in localStorage and passed to SSE via `?token=` query param (EventSource can't set headers; cross-origin cookies need HTTPS). Harden for production: TLS-terminating non-buffering reverse proxy + `Secure;HttpOnly;SameSite` cookies; add login rate-limiting; the LoginGate is presence-based and does not auto-redirect on mid-session token expiry.
+
 ## Web deploy: SSE must NOT go through the Next rewrite proxy
 
 Confirmed live (chrome-devtools): Next.js `rewrites()` BUFFER SSE responses — a browser
