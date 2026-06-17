@@ -32,3 +32,4 @@ export interface MissionDetail {
 }
 export interface User { id: number; username: string; created_at: string }
 export interface AuthResult { token: string; user: User }
+export interface ActivityEvent { id: number; ts: string; type: string; target: string; detail: string }
