@@ -51,6 +51,8 @@ export default function SettingsPage() {
   const [showAddForm, setShowAddForm] = useState(false);
   const [editingExec, setEditingExec] = useState<string | null>(null);
 
+  const [hiddenPresets, setHiddenPresets] = useState<string[]>([]);
+
   // Pending delete (drives the ConfirmDialog)
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
 
@@ -58,6 +60,7 @@ export default function SettingsPage() {
     if (config.data) {
       setAllowed(config.data.allowedExecs);
       setCustomModels(config.data.customModels ?? []);
+      setHiddenPresets(config.data.hiddenPresets ?? []);
       setModel(config.data.autopilot.model);
       setApiUrl(config.data.autopilot.apiUrl);
       setNotes(config.data.autopilot.notes);
@@ -80,8 +83,12 @@ export default function SettingsPage() {
     setAddExec('');
   };
 
-  const deleteCustomModel = (exec: string) => {
-    setCustomModels((prev) => prev.filter((m) => m.exec !== exec));
+  const deleteModel = (exec: string) => {
+    if (PRESET_EXECS.has(exec)) {
+      setHiddenPresets((prev) => (prev.includes(exec) ? prev : [...prev, exec]));
+    } else {
+      setCustomModels((prev) => prev.filter((m) => m.exec !== exec));
+    }
     setAllowed((prev) => prev.filter((e) => e !== exec));
     if (editingExec === exec) resetForm();
   };
@@ -109,11 +116,11 @@ export default function SettingsPage() {
 
   const saveModels = () =>
     update.mutate(
-      { allowedExecs: allowed, customModels },
+      { allowedExecs: allowed, customModels, hiddenPresets },
       { onSuccess: () => toast('Models saved'), onError: (e) => toast(String(e), 'error') },
     );
 
-  const models = allModels(customModels);
+  const models = allModels(customModels, hiddenPresets);
   const deleteTarget = models.find((m) => m.exec === pendingDelete);
 
   return (
@@ -159,8 +166,8 @@ export default function SettingsPage() {
                 const isCustom = !PRESET_EXECS.has(p.exec);
                 return (
                   <div key={p.exec} className="group relative">
-                    {isCustom && (
-                      <div className="absolute right-3 top-3 z-10 flex gap-1 opacity-0 transition-opacity group-hover:opacity-100" style={{ transitionDuration: 'var(--motion-fast)' }}>
+                    <div className="absolute right-3 top-3 z-10 flex gap-1 opacity-0 transition-opacity group-hover:opacity-100" style={{ transitionDuration: 'var(--motion-fast)' }}>
+                      {isCustom && (
                         <button
                           type="button"
                           aria-label={`Edit ${p.exec}`}
@@ -171,18 +178,18 @@ export default function SettingsPage() {
                         >
                           <Pencil size={13} aria-hidden />
                         </button>
-                        <button
-                          type="button"
-                          aria-label={`Delete ${p.exec}`}
-                          title={`Delete ${p.exec}`}
-                          onClick={() => setPendingDelete(p.exec)}
-                          className="flex h-6 w-6 items-center justify-center rounded-md border border-danger/60 bg-surface text-danger transition-colors hover:bg-danger hover:text-white"
-                          style={{ transitionDuration: 'var(--motion-fast)' }}
-                        >
-                          <X size={13} aria-hidden />
-                        </button>
-                      </div>
-                    )}
+                      )}
+                      <button
+                        type="button"
+                        aria-label={`Delete ${p.exec}`}
+                        title={`Delete ${p.exec}`}
+                        onClick={() => setPendingDelete(p.exec)}
+                        className="flex h-6 w-6 items-center justify-center rounded-md border border-danger/60 bg-surface text-danger transition-colors hover:bg-danger hover:text-white"
+                        style={{ transitionDuration: 'var(--motion-fast)' }}
+                      >
+                        <X size={13} aria-hidden />
+                      </button>
+                    </div>
                     <SettingCard title={p.label} description={p.exec}>
                       <Toggle checked={allowed.includes(p.exec)} onChange={() => toggle(p.exec)} label={p.label} />
                     </SettingCard>
@@ -290,7 +297,7 @@ export default function SettingsPage() {
         description={deleteTarget ? `Remove ${deleteTarget.label} (${deleteTarget.exec}) from your models? Save models to persist this change.` : undefined}
         confirmLabel="Delete"
         onConfirm={() => {
-          if (pendingDelete) deleteCustomModel(pendingDelete);
+          if (pendingDelete) deleteModel(pendingDelete);
           setPendingDelete(null);
         }}
         onClose={() => setPendingDelete(null)}

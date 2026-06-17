@@ -17,7 +17,6 @@ export function Sidebar() {
   const dragging = useRef(false);
 
   const [mobile, setMobile] = useState(false);
-  const [hovered, setHovered] = useState(false);
   useEffect(() => {
     const mq = window.matchMedia('(max-width: 767px)');
     setMobile(mq.matches);
@@ -26,9 +25,9 @@ export function Sidebar() {
     return () => mq.removeEventListener('change', handler);
   }, []);
 
+  // Collapsed stays collapsed (icon rail) until the user toggles it — no hover auto-open.
   const pinnedCollapsed = collapsed || mobile;
-  // Hover peeks the rail open without changing the pinned state (like alex-parts).
-  const expanded = !pinnedCollapsed || hovered;
+  const expanded = !pinnedCollapsed;
 
   const onPointerDown = useCallback((e: React.PointerEvent) => {
     dragging.current = true;
@@ -45,8 +44,6 @@ export function Sidebar() {
   return (
     <nav
       aria-label="Primary"
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
       className="relative flex h-full shrink-0 flex-col border-r border-border bg-surface transition-[width] duration-200"
       style={{ width: expanded ? width : RAIL, transitionTimingFunction: 'var(--ease-out)' }}
     >

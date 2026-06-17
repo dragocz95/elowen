@@ -13,12 +13,14 @@ export type OrcaEvent =
 export interface OrcaConfig {
   allowedExecs: string[];
   customModels: { label: string; exec: string }[];
+  hiddenPresets: string[];
   autopilot: { model: string; apiUrl: string; apiKeySet: boolean; notes: string };
   defaults: { exec: string; autonomy: string; maxSessions: number };
 }
 export interface ConfigPatch {
   allowedExecs?: string[];
   customModels?: { label: string; exec: string }[];
+  hiddenPresets?: string[];
   autopilot?: { model?: string; apiUrl?: string; apiKey?: string; notes?: string };
   defaults?: { exec?: string; autonomy?: string; maxSessions?: number };
 }

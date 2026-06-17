@@ -6,9 +6,10 @@ export const EXEC_PRESETS: { label: string; exec: string }[] = [
   { label: 'Codex gpt-5.4', exec: 'codex:gpt-5.4' },
 ];
 
-/** Returns preset models merged with custom models, deduplicated by exec. Custom models override preset labels on conflict. */
-export function allModels(custom: { label: string; exec: string }[] = []): { label: string; exec: string }[] {
+/** Preset models (minus hidden/deleted) merged with custom models, deduped by exec. Custom overrides preset labels. */
+export function allModels(custom: { label: string; exec: string }[] = [], hidden: string[] = []): { label: string; exec: string }[] {
   const customExecs = new Set(custom.map((m) => m.exec));
-  const presets = EXEC_PRESETS.filter((p) => !customExecs.has(p.exec));
+  const hiddenExecs = new Set(hidden);
+  const presets = EXEC_PRESETS.filter((p) => !customExecs.has(p.exec) && !hiddenExecs.has(p.exec));
   return [...presets, ...custom];
 }
