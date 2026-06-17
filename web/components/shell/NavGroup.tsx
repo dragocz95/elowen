@@ -1,6 +1,8 @@
 'use client';
-import type { NavGroupData } from '../../lib/nav';
+import type { NavEntry } from './NavItem';
 import { NavItem } from './NavItem';
+
+export interface NavGroupData { label: string; items: NavEntry[] }
 
 export function NavGroup({ group, pathname, collapsed }: { group: NavGroupData; pathname: string; collapsed: boolean }) {
   return (

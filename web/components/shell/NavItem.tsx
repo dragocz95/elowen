@@ -1,6 +1,8 @@
 'use client';
 import Link from 'next/link';
-import type { NavEntry } from '../../lib/nav';
+import type { LucideIcon } from 'lucide-react';
+
+export interface NavEntry { href: string; label: string; icon: LucideIcon }
 
 export function NavItem({ entry, active, collapsed }: { entry: NavEntry; active: boolean; collapsed: boolean }) {
   const Icon = entry.icon;

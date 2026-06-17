@@ -2,7 +2,7 @@
 import { usePathname } from 'next/navigation';
 import { ChevronLeft, ChevronRight, Circle } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { NAV_GROUPS } from '../../lib/nav';
+import { modulesByGroup } from '../../modules/registry';
 import { useSidebarState } from '../../lib/useSidebarState';
 import { useHealth } from '../../lib/queries';
 import { NavGroup } from './NavGroup';
@@ -48,7 +48,14 @@ export function Sidebar() {
       </div>
 
       <div className="flex-1 overflow-y-auto">
-        {NAV_GROUPS.map((g) => <NavGroup key={g.label} group={g} pathname={pathname} collapsed={effectiveCollapsed} />)}
+        {modulesByGroup().map((g) => (
+          <NavGroup
+            key={g.group}
+            group={{ label: g.group, items: g.items.map((m) => ({ href: m.route, label: m.label, icon: m.icon })) }}
+            pathname={pathname}
+            collapsed={effectiveCollapsed}
+          />
+        ))}
       </div>
 
       <div className="flex items-center gap-2 border-t border-border px-3 py-2">
