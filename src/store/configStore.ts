@@ -25,7 +25,7 @@ const defaultStored = (): Stored => ({
   allowedExecs: [...KNOWN_EXECS],
   autopilot: { model: DEFAULT_CONFIG.autopilot.model, apiUrl: DEFAULT_CONFIG.autopilot.apiUrl, notes: '' },
   apiKey: null,
-  defaults: { exec: 'sonnet', autonomy: 'L3', maxSessions: 1 },
+  defaults: { ...DEFAULT_CONFIG.defaults },
 });
 
 export interface ConfigPatch {

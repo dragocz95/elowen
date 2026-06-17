@@ -1,9 +1,11 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { openDb } from '../../src/store/db.js';
+import type { Db } from '../../src/store/db.js';
 import { ConfigStore } from '../../src/store/configStore.js';
 
+let db: Db;
 let cfg: ConfigStore;
-beforeEach(() => { cfg = new ConfigStore(openDb(':memory:')); });
+beforeEach(() => { db = openDb(':memory:'); cfg = new ConfigStore(db); });
 
 describe('ConfigStore', () => {
   it('returns defaults when empty (all execs allowed, key unset)', () => {
@@ -38,10 +40,10 @@ describe('ConfigStore', () => {
     expect(c.defaults).toEqual({ exec: 'codex:gpt-5.4', autonomy: 'L3', maxSessions: 3 });
   });
   it('reads an old row without the new fields as defaults', () => {
-    // simulate a pre-L2-8 stored row
-    cfg.update({ allowedExecs: ['sonnet'] });
+    // write a raw pre-L2-8 row that lacks notes and defaults fields
+    db.prepare("INSERT INTO settings (id, data) VALUES (1, ?)").run(JSON.stringify({ allowedExecs: ['sonnet'], autopilot: { model: 'm', apiUrl: 'u' }, apiKey: null }));
     const c = cfg.get();
     expect(c.autopilot.notes).toBe('');
-    expect(c.defaults.exec).toBe('sonnet');
+    expect(c.defaults).toEqual({ exec: 'sonnet', autonomy: 'L3', maxSessions: 1 });
   });
 });
