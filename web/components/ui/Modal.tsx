@@ -5,11 +5,12 @@ interface ModalProps {
   title: string;
   onClose: () => void;
   children: ReactNode;
-  size?: 'lg' | 'md' | 'sm';
+  size?: 'lg' | 'xl' | 'md' | 'sm';
 }
 
 const SIZES = {
   lg: 'h-[88vh] w-[92vw]',
+  xl: 'max-h-[90vh] w-full max-w-2xl',
   md: 'max-h-[88vh] w-full max-w-lg',
   sm: 'max-h-[80vh] w-full max-w-md',
 };

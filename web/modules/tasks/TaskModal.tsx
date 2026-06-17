@@ -119,7 +119,7 @@ export function TaskModal({ task, onClose }: { task?: Task; onClose: () => void 
   const titleText = editing ? `Edit ${task!.id}` : 'New task';
 
   return (
-    <Modal title={titleText} onClose={onClose} size="md">
+    <Modal title={titleText} onClose={onClose} size="xl">
       <div className="flex max-h-[78vh] flex-col gap-5 overflow-y-auto p-5">
         {!editing && (
           <div className="flex flex-col gap-2">
