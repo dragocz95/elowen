@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { KanbanSquare, Columns3, CalendarRange } from 'lucide-react';
 import type { Task } from '../../lib/types';
 import { useTasks, useAllDeps } from '../../lib/queries';
+import { taskBlockers } from '../../lib/agentUtils';
 import { useSetTaskStatus, useUpdateTask } from '../../lib/mutations';
 import { KanbanBoard } from '../../modules/kanban/KanbanBoard';
 import { CalendarView } from '../../modules/kanban/CalendarView';
@@ -27,12 +28,12 @@ export default function KanbanPage() {
   const [createSchedule, setCreateSchedule] = useState<string | null>(null);
 
   // A task is blocked when any task it depends on is not yet closed/cancelled.
-  const statusById = new Map((tasks.data ?? []).map((t) => [t.id, t.status]));
-  const blockedIds = new Set(
-    (deps.data ?? [])
-      .filter((e) => { const s = statusById.get(e.depends_on_id); return s != null && s !== 'closed' && s !== 'cancelled'; })
-      .map((e) => e.task_id),
-  );
+  const byId = new Map((tasks.data ?? []).map((t) => [t.id, t]));
+  const blockedBy = new Map<string, Task[]>();
+  for (const task of tasks.data ?? []) {
+    const blockers = taskBlockers(task.id, deps.data ?? [], byId);
+    if (blockers.length > 0) blockedBy.set(task.id, blockers);
+  }
 
   return (
     <ModuleShell moduleId="kanban">
@@ -51,7 +52,7 @@ export default function KanbanPage() {
         : view === 'board' ? (
           <KanbanBoard
             tasks={tasks.data ?? []}
-            blockedIds={blockedIds}
+            blockedBy={blockedBy}
             onMove={(id, status) => setStatus.mutate({ id, status }, { onError: (e) => toast(String(e), 'error') })}
             onSelect={setEditing}
           />

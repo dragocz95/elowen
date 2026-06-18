@@ -9,6 +9,10 @@ const tasks: Task[] = [
   { id: 'b', title: 'Beta', status: 'blocked' },
 ];
 
+const enriched: Task[] = [
+  { id: 'c', title: 'Gamma', status: 'closed', outcome: 'ok', result_summary: 'npm test passed (132/132)', labels: ['agent:atlas', 'exec:sonnet'] },
+];
+
 function makeDrop(taskId: string) {
   return { dataTransfer: { getData: () => taskId, setData: () => {}, dropEffect: '' } };
 }
@@ -34,6 +38,15 @@ describe('KanbanBoard', () => {
     fireEvent.dragOver(inProgress);
     fireEvent.drop(inProgress, makeDrop('a'));
     expect(onMove).toHaveBeenCalledWith('a', 'in_progress');
+  });
+
+  it('renders agent identity, result summary and outcome on an enriched card', () => {
+    const { wrapper: W } = createWrapper();
+    render(<KanbanBoard tasks={enriched} onMove={() => {}} />, { wrapper: W });
+    const card = within(screen.getByTestId('column-closed'));
+    expect(card.getByText('orca-atlas')).toBeTruthy();              // resolved agent session name
+    expect(card.getByText('npm test passed (132/132)')).toBeTruthy(); // result summary on the closed card
+    expect(card.getByText('Success')).toBeTruthy();                  // outcome badge
   });
 
   it('dropping on the same column does not call onMove', () => {

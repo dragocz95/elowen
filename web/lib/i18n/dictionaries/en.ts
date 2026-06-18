@@ -213,6 +213,14 @@ export const en = {
     autonomyL3: 'L3 · Auto',
     autonomyL3Desc: 'Full autonomy within guardrails — runs and self-clears, escalating only when it truly cannot judge.',
   },
+  agent: {
+    working: 'Working',
+    needsInput: 'Needs input',
+    idle: 'Idle',
+    complete: 'Complete',
+    ready: 'Ready',
+    waitingFor: 'Waiting for {deps}',
+  },
   sessions: {
     needsInput: 'needs input',
     loading: 'loading…',

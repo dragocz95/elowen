@@ -213,6 +213,14 @@ export const cs = {
     autonomyL3: 'L3 · Automaticky',
     autonomyL3Desc: 'Plná autonomie v rámci guardrailů — spouští a řeší sám, předává jen opravdu nejasné.',
   },
+  agent: {
+    working: 'Pracuje',
+    needsInput: 'Vyžaduje vstup',
+    idle: 'Nečinný',
+    complete: 'Dokončeno',
+    ready: 'Připraven',
+    waitingFor: 'Čeká na {deps}',
+  },
   sessions: {
     needsInput: 'vyžaduje vstup',
     loading: 'načítání…',

@@ -1,36 +1,33 @@
 'use client';
 import { useState } from 'react';
-import { Pencil, Play, Square, Pause, Archive, Trash2, Clock, Zap, CheckCircle2, XCircle } from 'lucide-react';
+import { Pencil, Play, Square, Pause, Archive, Trash2, Clock, Zap } from 'lucide-react';
 import type { Task } from '../../lib/types';
 import { useSpawn, useCloseTask, useDeleteTask, useKillSession, useSetTaskStatus, useSendInput } from '../../lib/mutations';
-import { useSessions, useConfig } from '../../lib/queries';
+import { useSessions, useConfig, useSessionSignal } from '../../lib/queries';
 import { taskExec } from '../../lib/taskExec';
+import { taskSessionName, taskAgentName, parseTs } from '../../lib/agentUtils';
 import { Badge } from '../../components/ui/Badge';
 import { Checkbox } from '../../components/ui/Checkbox';
 import { ModelIcon } from '../../components/ui/ModelIcon';
 import { IconButton } from '../../components/ui/IconButton';
 import { ActionMenu } from '../../components/ui/ActionMenu';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
+import { AgentStatusDot } from '../../components/ui/AgentStatusDot';
+import { AgentIdentityStrip } from '../../components/ui/AgentIdentityStrip';
+import { TaskContextLine } from '../../components/ui/TaskContextLine';
+import { OutcomeBadge } from '../../components/ui/OutcomeBadge';
 import { useToast } from '../../components/ui/Toast';
 import { useTranslation } from '../../lib/i18n';
 import { taskTypeMeta } from './taskMeta';
 import { statusTone } from '../dashboard/statusTone';
 
-/** The tmux session running this task, derived from its agent:<name> label. */
-function taskSession(labels?: string[]): string | null {
-  const agent = labels?.find((l) => l.startsWith('agent:'))?.slice('agent:'.length);
-  return agent ? `orca-${agent}` : null;
-}
-
 function fmtWhen(iso: string, locale?: string): string {
-  // Normalize SQLite ("2026-06-18 10:38:49", UTC) and ISO ("…T…Z") timestamps alike.
-  const norm = iso.includes('T') ? iso : iso.replace(' ', 'T') + 'Z';
-  const d = new Date(norm);
-  if (Number.isNaN(d.getTime())) return iso;
-  return d.toLocaleString(locale, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+  const ms = parseTs(iso);
+  if (ms == null) return iso;
+  return new Date(ms).toLocaleString(locale, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
 }
 
-export function TaskCard({ task, onEdit, selected = false, onToggleSelect, selecting = false }: { task: Task; onEdit: (t: Task) => void; selected?: boolean; onToggleSelect?: (id: string) => void; selecting?: boolean }) {
+export function TaskCard({ task, onEdit, blockers, selected = false, onToggleSelect, selecting = false }: { task: Task; onEdit: (t: Task) => void; blockers?: Task[]; selected?: boolean; onToggleSelect?: (id: string) => void; selecting?: boolean }) {
   const spawn = useSpawn();
   const close = useCloseTask();
   const del = useDeleteTask();
@@ -47,12 +44,14 @@ export function TaskCard({ task, onEdit, selected = false, onToggleSelect, selec
   const Icon = meta.icon;
   const exec = taskExec(task.labels);
   const iconExec = exec || config?.defaults?.exec || ''; // effective model: explicit, else the configured default
-  const hasDesc = !!task.description?.trim();
   const isClosed = task.status === 'closed';
 
   // Run state: a task is running when it's in_progress AND its tmux session is live.
-  const session = taskSession(task.labels);
+  const session = taskSessionName(task);
   const running = task.status === 'in_progress' && !!session && (sessions.data ?? []).includes(session);
+  const signal = useSessionSignal(session ?? '');
+  const hasAgent = !!taskAgentName(task);
+
   const start = () => spawn.mutate({ taskId: task.id, exec: exec || undefined }, { onSuccess: (r) => toast(t.tasks.launched.replace('{session}', r.session)), onError: (e) => toast(String(e), 'error') });
   const stop = () => {
     if (session) kill.mutate(session);
@@ -80,7 +79,10 @@ export function TaskCard({ task, onEdit, selected = false, onToggleSelect, selec
       <div className="flex min-w-0 flex-1 flex-col gap-2">
         <div className="flex items-start gap-2">
           <div className="min-w-0 flex-1">
-            <div className="truncate text-sm font-medium text-text">{task.title}</div>
+            <div className="flex items-center gap-1.5">
+              <span className="truncate text-sm font-medium text-text">{task.title}</span>
+              <AgentStatusDot signal={signal} live={running} size="sm" />
+            </div>
             <div className="mt-0.5 flex items-center gap-1.5">
               <Icon size={11} className="shrink-0 text-text-muted" aria-hidden />
               <span className="truncate font-mono text-[11px] text-text-muted">{task.id}</span>
@@ -105,24 +107,13 @@ export function TaskCard({ task, onEdit, selected = false, onToggleSelect, selec
           </div>
         </div>
 
-        {hasDesc ? <p className="line-clamp-2 text-xs leading-relaxed text-text-muted">{task.description}</p> : null}
+        {hasAgent ? <AgentIdentityStrip task={task} /> : null}
 
-        {isClosed && (task.result_summary || task.outcome) ? (
-          <div className="rounded-md border border-border bg-bg/60 p-2">
-            <div className="mb-1 flex items-center gap-1.5">
-              {task.outcome === 'fail'
-                ? <XCircle size={12} className="text-error" aria-hidden />
-                : <CheckCircle2 size={12} className="text-success" aria-hidden />}
-              <span className={`text-tiny font-semibold uppercase tracking-wide ${task.outcome === 'fail' ? 'text-error' : 'text-success'}`}>
-                {task.outcome === 'fail' ? t.tasks.outcomeFail : t.tasks.outcomeOk}
-              </span>
-            </div>
-            <p className="text-xs leading-relaxed text-text-muted">{task.result_summary || t.tasks.noSummary}</p>
-          </div>
-        ) : null}
+        <TaskContextLine task={task} sessionName={running ? session : null} blockers={blockers} />
 
         <div className="mt-auto flex flex-wrap items-center gap-1.5 pt-0.5">
           <Badge tone={statusTone(task.status)}>{STATUS_LABEL[task.status] ?? task.status}</Badge>
+          {isClosed ? <OutcomeBadge outcome={task.outcome} /> : null}
           {exec ? <Badge>{exec}</Badge> : null}
           {task.scheduled_at ? (
             <Badge tone="muted">

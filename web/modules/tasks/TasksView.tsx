@@ -3,7 +3,8 @@ import { useEffect, useMemo, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Plus, ListChecks, Search, Archive, Trash2, X, ChevronLeft, ChevronRight } from 'lucide-react';
 import type { Task, TaskStatus } from '../../lib/types';
-import { useTasks } from '../../lib/queries';
+import { useTasks, useAllDeps } from '../../lib/queries';
+import { taskBlockers } from '../../lib/agentUtils';
 import { useCloseTask, useDeleteTask } from '../../lib/mutations';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
@@ -29,6 +30,7 @@ const dayKey = (ms: number): string => { const d = new Date(ms); return `${d.get
 
 export function TasksView() {
   const tasks = useTasks();
+  const deps = useAllDeps();
   const close = useCloseTask();
   const del = useDeleteTask();
   const { toast } = useToast();
@@ -53,6 +55,17 @@ export function TasksView() {
   const router = useRouter();
   const params = useSearchParams();
   useEffect(() => { if (params.get('new') === '1') { setCreating(true); router.replace('/tasks'); } }, [params, router]);
+
+  // Resolve each task's unresolved dependency blockers once for the whole list.
+  const blockedBy = useMemo(() => {
+    const byId = new Map((tasks.data ?? []).map((x) => [x.id, x]));
+    const out = new Map<string, Task[]>();
+    for (const task of tasks.data ?? []) {
+      const b = taskBlockers(task.id, deps.data ?? [], byId);
+      if (b.length > 0) out.set(task.id, b);
+    }
+    return out;
+  }, [tasks.data, deps.data]);
 
   const toggleSelect = (id: string) => setSelected((cur) => { const next = new Set(cur); next.has(id) ? next.delete(id) : next.add(id); return next; });
   const clearSelection = () => setSelected(new Set());
@@ -123,7 +136,7 @@ export function TasksView() {
                   <span className="font-mono text-tiny text-text-muted">{g.items.length}</span>
                 </div>
                 <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                  {g.items.map((task) => <TaskCard key={task.id} task={task} onEdit={setEditing} selected={selected.has(task.id)} onToggleSelect={toggleSelect} selecting={selected.size > 0} />)}
+                  {g.items.map((task) => <TaskCard key={task.id} task={task} onEdit={setEditing} blockers={blockedBy.get(task.id)} selected={selected.has(task.id)} onToggleSelect={toggleSelect} selecting={selected.size > 0} />)}
                 </div>
               </div>
             ))}
