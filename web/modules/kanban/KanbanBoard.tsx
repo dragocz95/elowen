@@ -3,7 +3,9 @@ import { useState } from 'react';
 import { Circle, LoaderCircle, Ban, CheckCircle2, XCircle, type LucideIcon } from 'lucide-react';
 import type { Task, TaskStatus } from '../../lib/types';
 import { groupByStatus } from './groupByStatus';
+import { epicChildren, phaseIds } from '../../lib/taskTree';
 import { KanbanCard } from './KanbanCard';
+import { KanbanEpicCard } from './KanbanEpicCard';
 import { useTranslation } from '../../lib/i18n';
 
 const COLUMNS: { status: TaskStatus; labelKey: string; icon: LucideIcon; color: string }[] = [
@@ -19,8 +21,13 @@ export function KanbanBoard({ tasks, onMove, onSelect, blockedBy }: { tasks: Tas
   const STATUS_LABEL: Record<string, string> = { open: t.tasks.statusOpen, in_progress: t.tasks.statusInProgress, blocked: t.tasks.statusBlocked, closed: t.tasks.statusClosed, cancelled: t.tasks.statusCancelled };
   const groups = groupByStatus(tasks);
   const byId = new Map(tasks.map((task) => [task.id, task]));
+  const childMap = epicChildren(tasks);
+  const phaseSet = phaseIds(tasks);
   const [dragOver, setDragOver] = useState<TaskStatus | null>(null);
   const [draggingId, setDraggingId] = useState<string | null>(null);
+  // Autopilot epics start collapsed so their phases don't flood the board.
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const toggleEpic = (id: string) => setExpanded((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
   return (
     <div className="flex gap-3 overflow-x-auto">
       {COLUMNS.map((col) => {
@@ -45,11 +52,18 @@ export function KanbanBoard({ tasks, onMove, onSelect, blockedBy }: { tasks: Tas
             <span>{groups[col.status].length}</span>
           </header>
           {groups[col.status].map((task) => {
+            // Autopilot epic → collapsible container; its phases stay hidden until expanded.
+            if (task.type === 'epic' && childMap.has(task.id)) {
+              return <KanbanEpicCard key={task.id} epic={task} phases={childMap.get(task.id) ?? []} expanded={expanded.has(task.id)} onToggle={() => toggleEpic(task.id)} />;
+            }
+            const isPhase = phaseSet.has(task.id);
+            if (isPhase && !(task.parent_id && expanded.has(task.parent_id))) return null;
             const blockers = blockedBy?.get(task.id) ?? [];
             return (
               <KanbanCard
                 key={task.id}
                 task={task}
+                isPhase={isPhase}
                 blocked={blockers.length > 0}
                 blockers={blockers}
                 dragging={draggingId === task.id}

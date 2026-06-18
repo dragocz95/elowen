@@ -15,12 +15,13 @@ import { useConfig, useSessions, useSessionSignal } from '../../lib/queries';
 import { useTranslation } from '../../lib/i18n';
 
 /** Enriched kanban card: model icon, live-state dot, agent identity, context line, outcome. */
-export function KanbanCard({ task, blocked, blockers, dragging, statusLabel, onSelect, onDragStart, onDragEnd }: {
+export function KanbanCard({ task, blocked, blockers, dragging, statusLabel, isPhase = false, onSelect, onDragStart, onDragEnd }: {
   task: Task;
   blocked: boolean;
   blockers: Task[];
   dragging: boolean;
   statusLabel: string;
+  isPhase?: boolean;
   onSelect?: (t: Task) => void;
   onDragStart: (e: React.DragEvent) => void;
   onDragEnd: () => void;
@@ -41,7 +42,7 @@ export function KanbanCard({ task, blocked, blockers, dragging, statusLabel, onS
       onDragStart={onDragStart}
       onDragEnd={onDragEnd}
       onClick={() => onSelect?.(task)}
-      className={`flex gap-2.5 rounded-md border bg-bg p-2.5 transition-all ${blocked ? 'cursor-pointer border-danger/40' : 'cursor-grab border-border hover:border-border-strong'} ${dragging ? 'rotate-[1deg] opacity-50' : ''}`}
+      className={`flex gap-2.5 rounded-md border bg-bg p-2.5 transition-all ${blocked ? 'cursor-pointer border-danger/40' : 'cursor-grab border-border hover:border-border-strong'} ${isPhase ? 'ml-2 border-l-2 border-l-accent/40' : ''} ${dragging ? 'rotate-[1deg] opacity-50' : ''}`}
     >
       <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-border bg-elevated">
         {exec ? <ModelIcon name={exec} size={19} /> : <TypeIcon size={16} className="text-text-muted" aria-hidden />}

@@ -49,6 +49,24 @@ describe('KanbanBoard', () => {
     expect(card.getByText('Success')).toBeTruthy();                  // outcome badge
   });
 
+  it('collapses autopilot epic phases until the epic is expanded', () => {
+    const epicTasks: Task[] = [
+      { id: 'e', title: 'Autopilot Epic', status: 'in_progress', type: 'epic' },
+      { id: 'p1', title: 'Phase One', status: 'in_progress', parent_id: 'e' },
+      { id: 'p2', title: 'Phase Two', status: 'open', parent_id: 'e' },
+    ];
+    const { wrapper: W } = createWrapper();
+    render(<KanbanBoard tasks={epicTasks} onMove={() => {}} />, { wrapper: W });
+    // Epic header is shown; phases are hidden while collapsed.
+    const header = screen.getByRole('button', { name: /Autopilot Epic/ });
+    expect(header).toBeTruthy();
+    expect(screen.queryByText('Phase One')).toBeNull();
+    // Expanding reveals the phases.
+    fireEvent.click(header);
+    expect(screen.getByText('Phase One')).toBeTruthy();
+    expect(screen.getByText('Phase Two')).toBeTruthy();
+  });
+
   it('dropping on the same column does not call onMove', () => {
     const onMove = vi.fn();
     const { wrapper: W } = createWrapper();

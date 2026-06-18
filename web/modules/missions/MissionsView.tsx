@@ -13,6 +13,7 @@ import { Badge } from '../../components/ui/Badge';
 import { IconButton } from '../../components/ui/IconButton';
 import { ActionMenu } from '../../components/ui/ActionMenu';
 import { NeedsInputBanner } from '../../components/ui/NeedsInputBanner';
+import { ProgressRibbon } from '../../components/ui/ProgressRibbon';
 import { LoadingState, ErrorState, EmptyState } from '../../components/ui/states';
 import { useToast } from '../../components/ui/Toast';
 import { useTranslation } from '../../lib/i18n';
@@ -26,14 +27,6 @@ function missionLive(kids: { id: string; status: string; labels?: string[] }[], 
   const needs = liveKids.filter((k) => { const s = taskSessionName(k); return s ? signals[s]?.type === 'needs_input' : false; }).length;
   return { live: liveKids.length, needs };
 }
-
-// One ribbon segment per phase, colored by its status.
-const phaseColor = (status: string): string =>
-  status === 'closed' ? 'bg-accent'
-  : status === 'in_progress' ? 'bg-accent/60'
-  : status === 'blocked' ? 'bg-danger'
-  : status === 'cancelled' ? 'bg-elevated'
-  : 'bg-border-strong';
 
 // Missions split into rail groups by lifecycle state.
 const GROUP_ORDER = ['active', 'paused', 'disengaged'] as const;
@@ -120,11 +113,7 @@ export function MissionsView() {
                             <Badge tone={disengaged ? 'muted' : 'accent'}>{disengaged ? t.missions.stateDisengaged : paused ? t.missions.statePaused : m.autonomy}</Badge>
                           </div>
                           <div className="flex items-center gap-2">
-                            <div className="flex h-1.5 flex-1 gap-0.5 overflow-hidden rounded-full">
-                              {total === 0
-                                ? <div className="h-full flex-1 rounded-full bg-elevated" />
-                                : kids.map((k) => <div key={k.id} className={`h-full flex-1 rounded-full transition-colors ${phaseColor(k.status)}`} style={{ transitionDuration: 'var(--motion-base)' }} title={`${k.title} — ${k.status}`} />)}
-                            </div>
+                            <ProgressRibbon phases={kids} className="flex-1" />
                             <span className="shrink-0 font-mono text-[11px] text-text-muted">{t.missions.progressDone.replace('{done}', String(done)).replace('{total}', String(total))}</span>
                           </div>
                           {(() => { const { live, needs } = missionLive(kids, signals); return (live > 0 || needs > 0) ? (
