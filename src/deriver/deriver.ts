@@ -15,6 +15,8 @@ export interface DeriverDeps {
   sessionTaskId: (session: string) => string | null;
   /** Autonomy level (L0–L3) of the mission owning a session, or null when none (manual launch). */
   autonomyFor?: (session: string) => string | null;
+  /** Overseer decision for an auto-cleared prompt; escalates when it returns approve=false or destructive=true. */
+  decideApproval?: (input: { question: string; context: string; options: { id: string; label: string }[]; autonomy: string }) => Promise<{ approve: boolean; destructive: boolean }>;
 }
 
 /** L2/L3 missions (and manual, mission-less launches) clear permission prompts themselves; L0/L1 escalate to a human. */
@@ -44,16 +46,22 @@ export class Deriver {
 
       const prompt = detectAgentPrompt(await this.d.tmux.capturePane(session, PANE_TAIL), program);
       if (prompt) {
-        // Autonomy gate: L2/L3 (and manual launches) clear the prompt; L0/L1 escalate to a human.
-        const auto = autoClears(this.d.autonomyFor?.(session) ?? null);
-        const key = `${auto ? 'auto' : 'need'}:${hash(prompt.question + prompt.context)}`;
-        if (this.last.get(session) === key) continue;
+        const autonomy = this.d.autonomyFor?.(session) ?? null;
+        const key = `prompt:${hash(prompt.question + prompt.context)}`;
+        if (this.last.get(session) === key) continue; // already handled this exact prompt
         this.last.set(session, key);
-        if (auto) {
+        const escalate = () => this.d.sink.emit(session, { type: 'needs_input', question: prompt.question, options: prompt.options, context: prompt.context });
+        // L0/L1 always escalate to a human.
+        if (!autoClears(autonomy)) { escalate(); continue; }
+        // L2/L3: the overseer decides; destructive or uncertain prompts still escalate.
+        const decision = this.d.decideApproval
+          ? await this.d.decideApproval({ question: prompt.question, context: prompt.context, options: prompt.options, autonomy: autonomy ?? 'L3' })
+          : { approve: true, destructive: false };
+        if (decision.approve && !decision.destructive) {
           await this.d.tmux.sendKeys(session, prompt.acceptKeys);
           this.d.sink.emit(session, { type: 'working' });
         } else {
-          this.d.sink.emit(session, { type: 'needs_input', question: prompt.question, options: prompt.options, context: prompt.context });
+          escalate();
         }
         continue;
       }

@@ -6,6 +6,8 @@ import { MissionStore } from '../store/missionStore.js';
 import { SpawnService } from '../spawn/spawn.js';
 import { MissionEngine } from '../overseer/missionEngine.js';
 import { Scheduler } from '../overseer/scheduler.js';
+import { decidePrompt, isDestructive } from '../overseer/decision.js';
+import { RelayClient } from '../inference/client.js';
 import { Deriver } from '../deriver/deriver.js';
 import { EventBus } from '../api/sse.js';
 import { createServer } from '../api/server.js';
@@ -71,6 +73,21 @@ export function buildApp(opts: BuildOpts) {
       if (!t?.parent_id) return null;
       return missions.active().find((m) => m.epic_id === t.parent_id)?.autonomy ?? null;
     },
+    // Overseer decision: use the configured relay to judge auto-cleared prompts. Without a
+    // key the deriver falls back to blanket auto-approve (decideApproval stays undefined).
+    decideApproval: (() => {
+      const make = () => {
+        const cfg = config.get(); const key = config.apiKey();
+        if (!key) return null;
+        return new RelayClient({ baseUrl: cfg.autopilot.apiUrl, apiKey: key, model: cfg.autopilot.model });
+      };
+      return async (input) => {
+        const inf = make();
+        if (!inf) return { approve: true, destructive: isDestructive(`${input.question} ${input.context}`) };
+        const d = await decidePrompt(inf, input);
+        return { approve: d.approve && d.confidence >= 0.6, destructive: d.destructive };
+      };
+    })(),
   });
   const openMode = users.count() === 0 && opts.allowOpen === true;
   if (openMode) {
