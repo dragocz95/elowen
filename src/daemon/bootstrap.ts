@@ -61,10 +61,13 @@ export function buildApp(opts: BuildOpts) {
   const engine = new MissionEngine({ tasks, readiness, missions, spawn, tmux, bus, project: opts.project, fallback: { program: 'claude-code', model: 'sonnet' }, nameAgent: uniqueName });
   const scheduler = new Scheduler({ tasks, spawn, bus, project: opts.project, fallback: { program: 'claude-code', model: 'sonnet' }, nameAgent: uniqueName, clock: new SystemClock() });
   // Deriver resolves a session's task via the agent registry / in-progress task (simplified: first in_progress child).
-  // Resolve a session's task via its agent:<name> label, and the autonomy of the mission that owns it.
+  // Resolve a session's task via its agent:<name> label. Agent names recur across missions,
+  // so pick the MOST RECENT match (list is created_at ASC) — never an old same-named task,
+  // which would make the janitor reap a live agent or skip a real zombie.
   const taskForSession = (session: string) => {
     const name = session.replace(/^orca-/, '');
-    return tasks.list({ project_id: opts.project.id }).find((t) => t.labels.includes(`agent:${name}`)) ?? null;
+    const matches = tasks.list({ project_id: opts.project.id }).filter((t) => t.labels.includes(`agent:${name}`));
+    return matches[matches.length - 1] ?? null;
   };
   const deriver = new Deriver({
     tmux, agents, tasks, sink: bus, clock: new SystemClock(),

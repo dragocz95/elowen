@@ -12,6 +12,7 @@ import { ActionMenu } from '../../components/ui/ActionMenu';
 import { Modal } from '../../components/ui/Modal';
 import { LoadingState, ErrorState, EmptyState } from '../../components/ui/states';
 import { useToast } from '../../components/ui/Toast';
+import { useTranslation } from '../../lib/i18n';
 import { MissionProgressView } from './MissionProgressView';
 import { EngageModal } from './EngageModal';
 
@@ -22,6 +23,7 @@ export function MissionsView() {
   const resume = useResumeMission();
   const disengage = useDisengage();
   const { toast } = useToast();
+  const { t } = useTranslation();
   const [detailId, setDetailId] = useState<string | null>(null);
   const [engaging, setEngaging] = useState(false);
 
@@ -39,12 +41,12 @@ export function MissionsView() {
   return (
     <>
       <Section
-        title="Missions"
+        title={t.page.missions}
         icon={Rocket}
-        actions={<Button variant="accent" icon={Plus} onClick={() => setEngaging(true)}>New mission</Button>}
+        actions={<Button variant="accent" icon={Plus} onClick={() => setEngaging(true)}>{t.missions.newMission}</Button>}
       >
         {missions.isLoading ? <LoadingState />
-          : missions.isError ? <ErrorState message="orca daemon unreachable" onRetry={() => missions.refetch()} />
+          : missions.isError ? <ErrorState message={t.common.daemonUnreachable} onRetry={() => missions.refetch()} />
           : missions.data && missions.data.length > 0 ? (
             <div className="flex flex-col divide-y divide-border">
               {missions.data.map((m) => {
@@ -65,34 +67,34 @@ export function MissionsView() {
                       <div className="flex items-center gap-2">
                         <span className="truncate text-sm font-medium text-text">{epicTitle(m.epic_id)}</span>
                         <Badge tone="accent">{m.autonomy}</Badge>
-                        {paused ? <Badge tone="muted">paused</Badge> : null}
+                        {paused ? <Badge tone="muted">{t.missions.paused}</Badge> : null}
                       </div>
                       <div className="mt-1.5 flex items-center gap-2">
                         <div className="h-1.5 w-32 overflow-hidden rounded-full bg-elevated">
                           <div className="h-full rounded-full bg-accent transition-[width] duration-500" style={{ width: `${pct}%`, transitionTimingFunction: 'var(--ease-out)' }} />
                         </div>
-                        <span className="font-mono text-[11px] text-text-muted">{done}/{total} done</span>
+                        <span className="font-mono text-[11px] text-text-muted">{t.missions.progressDone.replace('{done}', String(done)).replace('{total}', String(total))}</span>
                       </div>
                     </div>
                     <div className="flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100" onClick={(e) => e.stopPropagation()}>
                       {paused
-                        ? <IconButton icon={Play} label="Resume" onClick={() => resume.mutate(m.id, { onSuccess: () => toast(`Resumed mission`), onError: (e) => toast(String(e), 'error') })} />
-                        : <IconButton icon={Pause} label="Pause" onClick={() => pause.mutate(m.id, { onSuccess: () => toast(`Paused mission`), onError: (e) => toast(String(e), 'error') })} />}
+                        ? <IconButton icon={Play} label={t.missions.resume} onClick={() => resume.mutate(m.id, { onSuccess: () => toast(t.missions.resumed), onError: (e) => toast(String(e), 'error') })} />
+                        : <IconButton icon={Pause} label={t.missions.pause} onClick={() => pause.mutate(m.id, { onSuccess: () => toast(t.missions.pausedMsg), onError: (e) => toast(String(e), 'error') })} />}
                       <ActionMenu
-                        label="Disengage mission"
-                        items={[{ label: 'Disengage mission', icon: Power, tone: 'danger', onSelect: () => disengage.mutate(m.id, { onSuccess: () => toast(`Disengaged mission`), onError: (e) => toast(String(e), 'error') }) }]}
+                        label={t.missions.disengage}
+                        items={[{ label: t.missions.disengage, icon: Power, tone: 'danger', onSelect: () => disengage.mutate(m.id, { onSuccess: () => toast(t.missions.disengaged), onError: (e) => toast(String(e), 'error') }) }]}
                       />
                     </div>
                   </div>
                 );
               })}
             </div>
-          ) : <EmptyState title="No active missions" description="Engage one on an epic to let the Pilot drive it." />}
+          ) : <EmptyState title={t.missions.empty} description={t.missions.emptyDescription} />}
       </Section>
 
       {engaging && <EngageModal onClose={() => setEngaging(false)} />}
       {detailId && (
-        <Modal title={`Mission — ${epicTitle(missions.data?.find((m) => m.id === detailId)?.epic_id ?? '')}`} onClose={() => setDetailId(null)}>
+        <Modal title={t.missions.modalTitle.replace('{title}', epicTitle(missions.data?.find((m) => m.id === detailId)?.epic_id ?? ''))} onClose={() => setDetailId(null)}>
           <MissionProgressView missionId={detailId} />
         </Modal>
       )}

@@ -1,6 +1,7 @@
 'use client';
 import { useState } from 'react';
 import { Button } from '../ui/Button';
+import { useTranslation } from '../../lib/i18n';
 
 const QUICK_KEYS: { label: string; keys: string[] }[] = [
   { label: 'Enter', keys: ['Enter'] },
@@ -21,6 +22,7 @@ export function TerminalControls({
   busy?: boolean;
 }) {
   const [text, setText] = useState('');
+  const { t } = useTranslation();
   return (
     <div className="flex flex-wrap items-center gap-2 border-t border-border bg-surface px-3 py-2">
       <form
@@ -37,11 +39,11 @@ export function TerminalControls({
         <input
           value={text}
           onChange={(e) => setText(e.target.value)}
-          placeholder="command…"
+          placeholder={t.common.command}
           className="rounded-md border border-border bg-bg px-2.5 py-1.5 font-mono text-xs text-text transition-colors focus:border-accent focus:outline-none"
           disabled={busy}
         />
-        <Button type="submit" disabled={busy}>Send</Button>
+        <Button type="submit" disabled={busy}>{t.common.send}</Button>
       </form>
       <div className="flex items-center gap-1">
         {QUICK_KEYS.map((k) => (
@@ -49,7 +51,7 @@ export function TerminalControls({
         ))}
       </div>
       <div className="ml-auto">
-        <Button variant="danger" onClick={onKill} disabled={busy}>Kill</Button>
+        <Button variant="danger" onClick={onKill} disabled={busy}>{t.common.kill}</Button>
       </div>
     </div>
   );

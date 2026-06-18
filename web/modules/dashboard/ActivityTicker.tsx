@@ -1,6 +1,7 @@
 'use client';
 import { useActivity } from '../../lib/queries';
 import { eventIcon } from '../timeline/eventMeta';
+import { useTranslation } from '../../lib/i18n';
 import type { ActivityEvent } from '../../lib/types';
 
 function rel(ts: string): string {
@@ -26,13 +27,14 @@ function Item({ e }: { e: ActivityEvent }) {
 
 export function ActivityTicker() {
   const activity = useActivity();
+  const { t } = useTranslation();
   const events = (activity.data ?? []).slice(0, 14);
   if (events.length === 0) return null;
   return (
     <div className="flex items-center gap-3 overflow-hidden rounded-lg border border-border bg-surface px-4 py-2.5" style={{ boxShadow: 'var(--shadow-card)' }}>
       <span className="flex shrink-0 items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-[#10b981]">
         <span className="live-dot h-1.5 w-1.5 rounded-full bg-[#10b981]" style={{ ['--live-ring' as string]: 'rgba(16,185,129,0.5)' }} aria-hidden />
-        Live
+        {t.common.live}
       </span>
       <div className="marquee-mask min-w-0 flex-1 overflow-hidden whitespace-nowrap">
         <div className="marquee-track">

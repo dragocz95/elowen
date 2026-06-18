@@ -38,20 +38,20 @@ export default function KanbanPage() {
       <div className="flex w-full flex-col gap-6">
         <PageHeader title={t.page.kanban} count={tasks.data?.length} />
         <Section
-          title={view === 'board' ? 'Board' : 'Calendar'}
+          title={view === 'board' ? t.kanban.board : t.kanban.calendar}
           icon={KanbanSquare}
           actions={
             <Segmented
               value={view}
               onChange={(v) => setView(v as 'board' | 'calendar')}
               options={[
-                { value: 'board', label: 'Board', icon: Columns3 },
-                { value: 'calendar', label: 'Calendar', icon: CalendarRange },
+                { value: 'board', label: t.kanban.board, icon: Columns3 },
+                { value: 'calendar', label: t.kanban.calendar, icon: CalendarRange },
               ]}
             />
           }
         >
-          {tasks.isLoading ? <LoadingState /> : tasks.isError ? <ErrorState message="orca daemon unreachable" onRetry={() => tasks.refetch()} />
+          {tasks.isLoading ? <LoadingState /> : tasks.isError ? <ErrorState message={t.common.daemonUnreachable} onRetry={() => tasks.refetch()} />
             : view === 'board' ? (
               <KanbanBoard
                 tasks={tasks.data ?? []}

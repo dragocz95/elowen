@@ -1,6 +1,7 @@
 'use client';
 import { type ReactNode, useEffect, useRef, useState } from 'react';
 import { Trash2, type LucideIcon } from 'lucide-react';
+import { useTranslation } from '../../lib/i18n';
 
 export interface ActionMenuItem {
   label: string;
@@ -15,7 +16,7 @@ export interface ActionMenuItem {
  * a gapless dropdown means moving down onto an item never dismisses it early.
  * Default trigger is a red trash icon. Reusable across destructive/contextual actions.
  */
-export function ActionMenu({ items, label = 'Actions', trigger, align = 'right' }: {
+export function ActionMenu({ items, label, trigger, align = 'right' }: {
   items: ActionMenuItem[];
   label?: string;
   trigger?: ReactNode;
@@ -24,6 +25,8 @@ export function ActionMenu({ items, label = 'Actions', trigger, align = 'right' 
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const { t } = useTranslation();
+  const resolvedLabel = label ?? t.common.actions;
 
   const cancelClose = () => { if (closeTimer.current) { clearTimeout(closeTimer.current); closeTimer.current = null; } };
   const scheduleClose = () => { cancelClose(); closeTimer.current = setTimeout(() => setOpen(false), 160); };
@@ -48,10 +51,10 @@ export function ActionMenu({ items, label = 'Actions', trigger, align = 'right' 
     >
       <button
         type="button"
-        aria-label={label}
+        aria-label={resolvedLabel}
         aria-haspopup="menu"
         aria-expanded={open}
-        title={label}
+        title={resolvedLabel}
         onClick={() => setOpen((v) => !v)}
         className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-danger/60 text-danger transition-colors hover:bg-danger hover:text-white"
         style={{ transitionDuration: 'var(--motion-fast)' }}

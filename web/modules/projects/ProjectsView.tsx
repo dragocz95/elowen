@@ -11,6 +11,7 @@ import { Input } from '../../components/ui/Input';
 import { Field } from '../../components/ui/Field';
 import { Modal } from '../../components/ui/Modal';
 import { LoadingState, ErrorState, EmptyState } from '../../components/ui/states';
+import { useTranslation } from '../../lib/i18n';
 
 export function ProjectsView() {
   const projects = useProjects();
@@ -19,6 +20,7 @@ export function ProjectsView() {
   const git = useProjectGit(selectedId);
 
   const { toast } = useToast();
+  const { t } = useTranslation();
   const createProject = useCreateProject();
 
   const [slug, setSlug] = useState('');
@@ -34,7 +36,7 @@ export function ProjectsView() {
           setSlug('');
           setPath('');
           setNotes('');
-          toast('Project created');
+          toast(t.projects.created);
         },
         onError: (e) => toast(String(e), 'error'),
       }
@@ -44,13 +46,13 @@ export function ProjectsView() {
   return (
     <div className="flex w-full flex-col gap-6">
       <Section
-        title="Projects"
+        title={t.page.projects}
         icon={FolderGit2}
-        actions={<Button variant="accent" icon={Plus} onClick={() => setCreating(true)}>New project</Button>}
+        actions={<Button variant="accent" icon={Plus} onClick={() => setCreating(true)}>{t.projects.newProject}</Button>}
       >
         {projects.isLoading && <LoadingState />}
-        {projects.isError && <ErrorState message="Failed to load projects" onRetry={() => projects.refetch()} />}
-        {projects.data && projects.data.length === 0 && <EmptyState title="No projects" />}
+        {projects.isError && <ErrorState message={t.projects.loadError} onRetry={() => projects.refetch()} />}
+        {projects.data && projects.data.length === 0 && <EmptyState title={t.projects.empty} />}
         {projects.data && projects.data.length > 0 && (
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {projects.data.map((p) => (
@@ -69,35 +71,35 @@ export function ProjectsView() {
       </Section>
 
       {creating && (
-        <Modal title="New project" onClose={() => setCreating(false)} size="md">
+        <Modal title={t.projects.newProject} onClose={() => setCreating(false)} size="md">
           <div className="flex flex-col gap-4 p-5">
-            <Field label="Slug" hint="Short identifier, e.g. orca.">
-              <Input value={slug} onChange={(e) => setSlug(e.target.value)} placeholder="my-project" autoFocus />
+            <Field label={t.projects.fieldSlug} hint={t.projects.slugHint}>
+              <Input value={slug} onChange={(e) => setSlug(e.target.value)} placeholder={t.projects.slugPlaceholder} autoFocus />
             </Field>
-            <Field label="Path" hint="Absolute path to the project on disk.">
-              <Input value={path} onChange={(e) => setPath(e.target.value)} placeholder="/var/www/my-project" className="font-mono text-xs" />
+            <Field label={t.projects.fieldPath} hint={t.projects.pathHint}>
+              <Input value={path} onChange={(e) => setPath(e.target.value)} placeholder={t.projects.pathPlaceholder} className="font-mono text-xs" />
             </Field>
-            <Field label="Pilot info" hint="Context the Pilot uses when planning for this project.">
+            <Field label={t.projects.fieldNotes} hint={t.projects.notesHint}>
               <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={4} className="w-full resize-none rounded-md border border-border bg-surface px-3 py-2 text-sm text-text placeholder:text-text-muted focus:border-accent focus:outline-none" />
             </Field>
             <div className="flex items-center justify-end gap-2 pt-1">
-              <Button variant="ghost" onClick={() => setCreating(false)}>Cancel</Button>
-              <Button variant="accent" onClick={handleCreate} disabled={createProject.isPending || !slug.trim() || !path.trim()}>Create</Button>
+              <Button variant="ghost" onClick={() => setCreating(false)}>{t.common.cancel}</Button>
+              <Button variant="accent" onClick={handleCreate} disabled={createProject.isPending || !slug.trim() || !path.trim()}>{t.projects.create}</Button>
             </div>
           </div>
         </Modal>
       )}
 
       {selectedId && (
-        <Section title="Git" icon={GitBranch}>
+        <Section title={t.projects.git} icon={GitBranch}>
           {git.isLoading && <LoadingState />}
-          {git.isError && <ErrorState message="Failed to load git info" onRetry={() => git.refetch()} />}
-          {git.data && !git.data.isRepo && <EmptyState title="Not a git repository" />}
+          {git.isError && <ErrorState message={t.projects.gitError} onRetry={() => git.refetch()} />}
+          {git.data && !git.data.isRepo && <EmptyState title={t.projects.notGit} />}
           {git.data && git.data.isRepo && git.data.status && (
             <div className="flex flex-col gap-5">
               <div className="flex flex-wrap items-center gap-2">
                 <span className="font-mono text-sm text-text">{git.data.status.branch}</span>
-                <Badge tone={git.data.status.dirty > 0 ? 'danger' : 'muted'}>{git.data.status.dirty} dirty</Badge>
+                <Badge tone={git.data.status.dirty > 0 ? 'danger' : 'muted'}>{t.projects.dirty.replace('{count}', String(git.data.status.dirty))}</Badge>
                 <Badge tone="accent">↑{git.data.status.ahead}</Badge>
                 <Badge tone="accent">↓{git.data.status.behind}</Badge>
               </div>
@@ -106,7 +108,7 @@ export function ProjectsView() {
                 <div className="flex flex-col gap-2">
                   <div className="flex items-center gap-2 text-sm font-medium text-text">
                     <GitBranch size={14} className="text-text-muted" aria-hidden />
-                    Branches
+                    {t.projects.branches}
                   </div>
                   <div className="flex flex-wrap gap-2">
                     {git.data.branches.map((b) => (
@@ -120,7 +122,7 @@ export function ProjectsView() {
                 <div className="flex flex-col gap-2">
                   <div className="flex items-center gap-2 text-sm font-medium text-text">
                     <GitCommitHorizontal size={14} className="text-text-muted" aria-hidden />
-                    Commits
+                    {t.projects.commits}
                   </div>
                   <ul className="flex flex-col gap-2">
                     {git.data.commits.map((c) => (

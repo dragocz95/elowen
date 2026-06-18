@@ -11,10 +11,11 @@ import { IconButton } from '../../components/ui/IconButton';
 import { Table, THead, TR, TH, TD } from '../../components/ui/Table';
 import { LoadingState, ErrorState, EmptyState } from '../../components/ui/states';
 import { Section } from '../../components/ui/Section';
+import { useTranslation } from '../../lib/i18n';
 
-const fmtDate = (iso: string) => {
+const fmtDate = (iso: string, locale?: string) => {
   const d = new Date(iso.includes('T') ? iso : iso.replace(' ', 'T') + 'Z');
-  return Number.isNaN(d.getTime()) ? iso : d.toLocaleString(undefined, { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+  return Number.isNaN(d.getTime()) ? iso : d.toLocaleString(locale, { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 };
 
 export function UsersPanel() {
@@ -23,13 +24,14 @@ export function UsersPanel() {
   const createUser = useCreateUser();
   const logout = useLogout();
   const { toast } = useToast();
+  const { t, locale } = useTranslation();
 
   const [newUsername, setNewUsername] = useState('');
   const [newPassword, setNewPassword] = useState('');
 
   function handleDelete(id: number) {
     deleteUser.mutate(id, {
-      onSuccess: () => toast('User deleted'),
+      onSuccess: () => toast(t.users.userDeleted),
       onError: (err) => toast(String(err), 'error'),
     });
   }
@@ -40,7 +42,7 @@ export function UsersPanel() {
       { username: newUsername, password: newPassword },
       {
         onSuccess: () => {
-          toast('User created');
+          toast(t.users.userCreated);
           setNewUsername('');
           setNewPassword('');
         },
@@ -64,33 +66,33 @@ export function UsersPanel() {
   }
 
   if (users.isLoading) return <LoadingState />;
-  if (users.isError) return <ErrorState message="Failed to load users" onRetry={() => users.refetch()} />;
+  if (users.isError) return <ErrorState message={t.users.loadError} onRetry={() => users.refetch()} />;
 
   const data = users.data ?? [];
 
   return (
     <div className="flex w-full flex-col gap-6">
-      <Section title="Users" icon={Users}>
+      <Section title={t.page.users} icon={Users}>
         {data.length === 0 ? (
-          <EmptyState title="No users" />
+          <EmptyState title={t.users.empty} />
         ) : (
           <Table>
             <THead>
               <TR>
-                <TH>Username</TH>
-                <TH>Created</TH>
-                <TH>Actions</TH>
+                <TH>{t.users.fieldUsername}</TH>
+                <TH>{t.users.fieldCreated}</TH>
+                <TH>{t.users.fieldActions}</TH>
               </TR>
             </THead>
             <tbody>
               {data.map((user) => (
                 <TR key={user.id}>
                   <TD>{user.username}</TD>
-                  <TD>{fmtDate(user.created_at)}</TD>
+                  <TD>{fmtDate(user.created_at, locale)}</TD>
                   <TD>
                     <IconButton
                       icon={Trash2}
-                      label={`Delete ${user.username}`}
+                      label={t.users.deleteLabel.replace('{username}', user.username)}
                       variant="danger"
                       disabled={data.length <= 1 || deleteUser.isPending}
                       onClick={() => handleDelete(user.id)}
@@ -103,21 +105,21 @@ export function UsersPanel() {
         )}
       </Section>
 
-      <Section title="Add user" icon={UserPlus}>
+      <Section title={t.users.addUser} icon={UserPlus}>
         <form onSubmit={handleCreate} className="flex max-w-sm flex-col gap-3">
-          <Input type="text" placeholder="Username" value={newUsername} onChange={(e) => setNewUsername(e.target.value)} />
-          <Input type="password" placeholder="Password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} />
+          <Input type="text" placeholder={t.auth.usernamePlaceholder} value={newUsername} onChange={(e) => setNewUsername(e.target.value)} />
+          <Input type="password" placeholder={t.auth.passwordPlaceholder} value={newPassword} onChange={(e) => setNewPassword(e.target.value)} />
           <div>
             <Button type="submit" variant="accent" icon={UserPlus} disabled={createUser.isPending || !newUsername || !newPassword}>
-              Add
+              {t.users.add}
             </Button>
           </div>
         </form>
       </Section>
 
-      <Section title="Session" icon={LogOut}>
+      <Section title={t.users.session} icon={LogOut}>
         <Button variant="danger" icon={LogOut} onClick={handleLogout} disabled={logout.isPending}>
-          Logout
+          {t.users.logout}
         </Button>
       </Section>
     </div>

@@ -9,6 +9,7 @@ import { Section } from '../../components/ui/Section';
 import { Table, THead, TR, TH, TD } from '../../components/ui/Table';
 import { Badge } from '../../components/ui/Badge';
 import { LoadingState, ErrorState, EmptyState } from '../../components/ui/states';
+import { useTranslation } from '../../lib/i18n';
 import { ActivityTicker } from './ActivityTicker';
 import { taskTypeMeta } from '../tasks/taskMeta';
 import type { TaskStatus } from '../../lib/types';
@@ -21,21 +22,24 @@ const STATUS_BAR_KEYS: Array<{ key: TaskStatus; bg: string }> = [
   { key: 'cancelled', bg: 'bg-elevated' },
 ];
 
-function ViewAll({ href }: { href: string }) {
+function ViewAll({ href, label }: { href: string; label: string }) {
   return (
     <Link href={href} className="inline-flex items-center gap-1.5 text-xs font-medium text-accent transition-colors hover:opacity-80">
-      View all
+      {label}
       <ArrowRight size={13} aria-hidden />
     </Link>
   );
 }
 
 export function DashboardView() {
+  const { t } = useTranslation();
   const tasks = useTasks();
   const sessions = useSessions();
   const missions = useMissions();
 
   const metrics = deriveDashboardMetrics(tasks.data, sessions.data, missions.data);
+  const TASK_STATUS_LABEL: Record<string, string> = { open: t.tasks.statusOpen, in_progress: t.tasks.statusInProgress, blocked: t.tasks.statusBlocked, closed: t.tasks.statusClosed, cancelled: t.tasks.statusCancelled };
+  const MISSION_STATE_LABEL: Record<string, string> = { active: t.missions.stateActive, paused: t.missions.paused, disengaged: t.missions.stateDisengaged };
 
   return (
     <div className="flex w-full flex-col gap-6">
@@ -43,23 +47,23 @@ export function DashboardView() {
 
       {/* Metrics row */}
       <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-5">
-        <StatCard label="Open" value={metrics.open} hint={`of ${metrics.totalTasks} total`} />
-        <StatCard label="In progress" value={metrics.inProgress} />
+        <StatCard label={t.dashboard.open} value={metrics.open} hint={t.dashboard.ofTotal.replace('{count}', String(metrics.totalTasks))} />
+        <StatCard label={t.dashboard.inProgress} value={metrics.inProgress} />
         <StatCard
-          label="Blocked"
+          label={t.dashboard.blocked}
           value={metrics.blocked}
           tone={metrics.blocked > 0 ? 'danger' : 'default'}
         />
-        <StatCard label="Live sessions" value={metrics.liveSessions} />
-        <StatCard label="Active missions" value={metrics.activeMissions} />
+        <StatCard label={t.dashboard.liveSessions} value={metrics.liveSessions} />
+        <StatCard label={t.dashboard.activeMissions} value={metrics.activeMissions} />
       </div>
 
       {/* Tasks section */}
-      <Section title="Tasks" icon={ListChecks} actions={<ViewAll href="/tasks" />}>
+      <Section title={t.page.tasks} icon={ListChecks} actions={<ViewAll href="/tasks" label={t.dashboard.viewAll} />}>
         {tasks.isLoading ? (
           <LoadingState />
         ) : tasks.isError ? (
-          <ErrorState message="orca daemon unreachable" onRetry={() => tasks.refetch()} />
+          <ErrorState message={t.common.daemonUnreachable} onRetry={() => tasks.refetch()} />
         ) : tasks.data && tasks.data.length > 0 ? (
           <div className="flex flex-col gap-3">
             {/* Status breakdown bar */}
@@ -80,8 +84,8 @@ export function DashboardView() {
               <THead>
                 <TR>
                   <TH aria-label="Type" />
-                  <TH>Title</TH>
-                  <TH>Status</TH>
+                  <TH>{t.dashboard.titleCol}</TH>
+                  <TH>{t.dashboard.statusCol}</TH>
                 </TR>
               </THead>
               <tbody>
@@ -92,7 +96,7 @@ export function DashboardView() {
                       <TD><Icon size={14} className="text-text-muted" aria-hidden /></TD>
                       <TD>{t.title}</TD>
                       <TD>
-                        <Badge tone={statusTone(t.status)}>{t.status}</Badge>
+                        <Badge tone={statusTone(t.status)}>{TASK_STATUS_LABEL[t.status] ?? t.status}</Badge>
                       </TD>
                     </TR>
                   );
@@ -101,16 +105,16 @@ export function DashboardView() {
             </Table>
           </div>
         ) : (
-          <EmptyState title="No tasks" />
+          <EmptyState title={t.tasks.empty} />
         )}
       </Section>
 
       {/* Sessions section */}
-      <Section title="Sessions" icon={Terminal} actions={<ViewAll href="/sessions" />}>
+      <Section title={t.page.sessions} icon={Terminal} actions={<ViewAll href="/sessions" label={t.dashboard.viewAll} />}>
         {sessions.isLoading ? (
           <LoadingState />
         ) : sessions.isError ? (
-          <ErrorState message="orca daemon unreachable" onRetry={() => sessions.refetch()} />
+          <ErrorState message={t.common.daemonUnreachable} onRetry={() => sessions.refetch()} />
         ) : sessions.data && sessions.data.length > 0 ? (
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {sessions.data.map((s) => (
@@ -121,23 +125,23 @@ export function DashboardView() {
             ))}
           </div>
         ) : (
-          <EmptyState title="No live sessions" />
+          <EmptyState title={t.sessions.empty} />
         )}
       </Section>
 
       {/* Missions section */}
-      <Section title="Missions" icon={Rocket} actions={<ViewAll href="/missions" />}>
+      <Section title={t.page.missions} icon={Rocket} actions={<ViewAll href="/missions" label={t.dashboard.viewAll} />}>
         {missions.isLoading ? (
           <LoadingState />
         ) : missions.isError ? (
-          <ErrorState message="orca daemon unreachable" onRetry={() => missions.refetch()} />
+          <ErrorState message={t.common.daemonUnreachable} onRetry={() => missions.refetch()} />
         ) : missions.data && missions.data.length > 0 ? (
           <Table>
             <THead>
               <TR>
-                <TH>Epic</TH>
-                <TH>Progress</TH>
-                <TH>State</TH>
+                <TH>{t.dashboard.epicCol}</TH>
+                <TH>{t.dashboard.progressCol}</TH>
+                <TH>{t.dashboard.stateCol}</TH>
               </TR>
             </THead>
             <tbody>
@@ -150,7 +154,7 @@ export function DashboardView() {
                     <TD>{epic?.title ?? m.epic_id}</TD>
                     <TD mono>{done}/{kids.length}</TD>
                     <TD>
-                      <Badge tone={m.state === 'disengaged' ? 'muted' : 'accent'}>{m.state}</Badge>
+                      <Badge tone={m.state === 'disengaged' ? 'muted' : 'accent'}>{MISSION_STATE_LABEL[m.state] ?? m.state}</Badge>
                     </TD>
                   </TR>
                 );
@@ -158,7 +162,7 @@ export function DashboardView() {
             </tbody>
           </Table>
         ) : (
-          <EmptyState title="No active missions" />
+          <EmptyState title={t.missions.empty} />
         )}
       </Section>
     </div>

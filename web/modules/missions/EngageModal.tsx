@@ -11,13 +11,7 @@ import { Field } from '../../components/ui/Field';
 import { Segmented } from '../../components/ui/Segmented';
 import { EmptyState } from '../../components/ui/states';
 import { useToast } from '../../components/ui/Toast';
-
-const AUTONOMY: { value: string; label: string; desc: string }[] = [
-  { value: 'L0', label: 'L0 · Recommend', desc: 'The Pilot only suggests. Nothing runs without you.' },
-  { value: 'L1', label: 'L1 · Assist', desc: 'Runs clean, ready work; anything uncertain waits for you.' },
-  { value: 'L2', label: 'L2 · Pilot', desc: 'Runs work and clears agent permission prompts itself; escalates only the ambiguous.' },
-  { value: 'L3', label: 'L3 · Auto', desc: 'Full autonomy within guardrails — runs and self-clears, escalating only when it truly cannot judge.' },
-];
+import { useTranslation } from '../../lib/i18n';
 
 export function EngageModal({ onClose }: { onClose: () => void }) {
   const tasks = useTasks();
@@ -25,6 +19,14 @@ export function EngageModal({ onClose }: { onClose: () => void }) {
   const config = useConfig();
   const engage = useEngage();
   const { toast } = useToast();
+  const { t } = useTranslation();
+
+  const AUTONOMY: { value: string; label: string; desc: string }[] = [
+    { value: 'L0', label: t.missions.autonomyL0, desc: t.missions.autonomyL0Desc },
+    { value: 'L1', label: t.missions.autonomyL1, desc: t.missions.autonomyL1Desc },
+    { value: 'L2', label: t.missions.autonomyL2, desc: t.missions.autonomyL2Desc },
+    { value: 'L3', label: t.missions.autonomyL3, desc: t.missions.autonomyL3Desc },
+  ];
 
   const activeEpics = new Set((missions.data ?? []).map((m) => m.epic_id));
   const epics = (tasks.data ?? []).filter((t) => t.type === 'epic' && !activeEpics.has(t.id));
@@ -37,7 +39,7 @@ export function EngageModal({ onClose }: { onClose: () => void }) {
     if (!epicId) return;
     const input: EngageInput = { epicId, autonomy, maxSessions, clearedGuardrails: [] };
     engage.mutate(input, {
-      onSuccess: () => { toast(`Engaged mission on ${epicId}`); onClose(); },
+      onSuccess: () => { toast(t.missions.engaged.replace('{epicId}', epicId)); onClose(); },
       onError: (e) => toast(String(e), 'error'),
     });
   };
@@ -45,13 +47,13 @@ export function EngageModal({ onClose }: { onClose: () => void }) {
   const autoDesc = AUTONOMY.find((a) => a.value === autonomy)?.desc;
 
   return (
-    <Modal title="New mission" onClose={onClose} size="md">
+    <Modal title={t.missions.newMission} onClose={onClose} size="md">
       <div className="flex flex-col gap-5 p-5">
         {epics.length === 0 ? (
-          <EmptyState title="No epics to engage" description="Create one with Autopilot · Planning on the Tasks page, then engage a mission here." />
+          <EmptyState title={t.missions.noEpics} description={t.missions.noEpicsDescription} />
         ) : (
           <>
-            <Field label="Epic" hint="The Pilot drives this epic's phases to completion.">
+            <Field label={t.missions.fieldEpic} hint={t.missions.epicHint}>
               <div className="flex max-h-56 flex-col gap-1 overflow-y-auto rounded-md border border-border bg-surface p-1">
                 {epics.map((e) => {
                   const active = e.id === epicId;
@@ -71,18 +73,18 @@ export function EngageModal({ onClose }: { onClose: () => void }) {
               </div>
             </Field>
 
-            <Field label="Autonomy">
+            <Field label={t.missions.fieldAutonomy}>
               <Segmented value={autonomy} onChange={setAutonomy} options={AUTONOMY.map((a) => ({ value: a.value, label: a.label }))} />
             </Field>
             {autoDesc ? <p className="-mt-3 text-xs text-text-muted">{autoDesc}</p> : null}
 
-            <Field label="Max concurrent sessions">
+            <Field label={t.missions.fieldMaxSessions}>
               <Input type="number" min={1} value={maxSessions} onChange={(e) => setMaxSessions(Number(e.target.value))} className="w-28" />
             </Field>
 
             <div className="flex items-center justify-end gap-2 pt-1">
-              <Button variant="ghost" onClick={onClose}>Cancel</Button>
-              <Button variant="accent" icon={Rocket} disabled={!epicId || engage.isPending} onClick={submit}>Engage</Button>
+              <Button variant="ghost" onClick={onClose}>{t.common.cancel}</Button>
+              <Button variant="accent" icon={Rocket} disabled={!epicId || engage.isPending} onClick={submit}>{t.missions.engage}</Button>
             </div>
           </>
         )}

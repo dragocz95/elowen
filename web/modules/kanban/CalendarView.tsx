@@ -8,11 +8,11 @@ import { statusTone } from '../dashboard/statusTone';
 import { Badge } from '../../components/ui/Badge';
 import { taskTypeMeta } from '../tasks/taskMeta';
 import { type CalRange, dayKey, sameDay, tasksByDay, countUnscheduled, weekDays, monthMatrix, shift } from './calendar';
+import { useTranslation } from '../../lib/i18n';
 
-const fmtTime = (iso?: string | null) => iso ? new Date(iso).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }) : '';
-const WD = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+const fmtTime = (iso?: string | null, locale?: string) => iso ? new Date(iso).toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' }) : '';
 
-function TaskChip({ task, onSelect }: { task: Task; onSelect: (t: Task) => void }) {
+function TaskChip({ task, onSelect, locale }: { task: Task; onSelect: (t: Task) => void; locale?: string }) {
   const Icon = taskTypeMeta(task.type).icon;
   return (
     <button
@@ -22,13 +22,16 @@ function TaskChip({ task, onSelect }: { task: Task; onSelect: (t: Task) => void 
       title={task.title}
     >
       <Icon size={12} className="shrink-0 text-text-muted" aria-hidden />
-      <span className="font-mono text-[10px] text-text-muted">{fmtTime(task.scheduled_at)}</span>
+      <span className="font-mono text-[10px] text-text-muted">{fmtTime(task.scheduled_at, locale)}</span>
       <span className="min-w-0 flex-1 truncate text-[11px] text-text">{task.title}</span>
     </button>
   );
 }
 
 export function CalendarView({ tasks, onSelect }: { tasks: Task[]; onSelect: (t: Task) => void }) {
+  const { t, locale } = useTranslation();
+  const STATUS_LABEL: Record<string, string> = { open: t.tasks.statusOpen, in_progress: t.tasks.statusInProgress, blocked: t.tasks.statusBlocked, closed: t.tasks.statusClosed, cancelled: t.tasks.statusCancelled };
+  const WD = [t.calendar.shortMon, t.calendar.shortTue, t.calendar.shortWed, t.calendar.shortThu, t.calendar.shortFri, t.calendar.shortSat, t.calendar.shortSun];
   const [range, setRange] = useState<CalRange>('week');
   const [ref, setRef] = useState<Date>(() => new Date());
   const byDay = tasksByDay(tasks);
@@ -37,10 +40,10 @@ export function CalendarView({ tasks, onSelect }: { tasks: Task[]; onSelect: (t:
   const dayTasks = (d: Date) => byDay.get(dayKey(d)) ?? [];
 
   const label = range === 'month'
-    ? ref.toLocaleDateString(undefined, { month: 'long', year: 'numeric' })
+    ? ref.toLocaleDateString(locale, { month: 'long', year: 'numeric' })
     : range === 'day'
-      ? ref.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' })
-      : (() => { const w = weekDays(ref); return `${w[0]!.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} – ${w[6]!.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`; })();
+      ? ref.toLocaleDateString(locale, { weekday: 'long', month: 'short', day: 'numeric' })
+      : (() => { const w = weekDays(ref); return `${w[0]!.toLocaleDateString(locale, { month: 'short', day: 'numeric' })} – ${w[6]!.toLocaleDateString(locale, { month: 'short', day: 'numeric' })}`; })();
 
   return (
     <div className="flex flex-col gap-4">
@@ -49,28 +52,28 @@ export function CalendarView({ tasks, onSelect }: { tasks: Task[]; onSelect: (t:
           value={range}
           onChange={(v) => setRange(v as CalRange)}
           options={[
-            { value: 'day', label: 'Day', icon: CalendarIcon },
-            { value: 'week', label: 'Week', icon: CalendarRange },
-            { value: 'month', label: 'Month', icon: CalendarDays },
+            { value: 'day', label: t.calendar.day, icon: CalendarIcon },
+            { value: 'week', label: t.calendar.week, icon: CalendarRange },
+            { value: 'month', label: t.calendar.month, icon: CalendarDays },
           ]}
         />
         <div className="flex items-center gap-2">
           <span className="text-sm font-medium text-text">{label}</span>
-          <Button variant="ghost" onClick={() => setRef(new Date())}>Today</Button>
-          <button type="button" aria-label="Previous" onClick={() => setRef((r) => shift(r, range, -1))} className="flex h-8 w-8 items-center justify-center rounded-md border border-border text-text-muted transition-colors hover:text-text"><ChevronLeft size={16} /></button>
-          <button type="button" aria-label="Next" onClick={() => setRef((r) => shift(r, range, 1))} className="flex h-8 w-8 items-center justify-center rounded-md border border-border text-text-muted transition-colors hover:text-text"><ChevronRight size={16} /></button>
+          <Button variant="ghost" onClick={() => setRef(new Date())}>{t.calendar.today}</Button>
+          <button type="button" aria-label={t.calendar.previous} onClick={() => setRef((r) => shift(r, range, -1))} className="flex h-8 w-8 items-center justify-center rounded-md border border-border text-text-muted transition-colors hover:text-text"><ChevronLeft size={16} /></button>
+          <button type="button" aria-label={t.calendar.next} onClick={() => setRef((r) => shift(r, range, 1))} className="flex h-8 w-8 items-center justify-center rounded-md border border-border text-text-muted transition-colors hover:text-text"><ChevronRight size={16} /></button>
         </div>
       </div>
 
       {range === 'day' && (
         <div className="flex flex-col gap-2 rounded-lg border border-border bg-surface p-3">
           {dayTasks(ref).length === 0
-            ? <p className="px-1 py-6 text-center text-sm text-text-muted">No scheduled tasks this day.</p>
+            ? <p className="px-1 py-6 text-center text-sm text-text-muted">{t.calendar.noTasks}</p>
             : dayTasks(ref).map((t) => (
               <button key={t.id} type="button" onClick={() => onSelect(t)} className="flex items-center gap-3 rounded-md border border-border bg-bg px-3 py-2 text-left transition-colors hover:border-border-strong">
-                <span className="font-mono text-xs text-text-muted">{fmtTime(t.scheduled_at)}</span>
+                <span className="font-mono text-xs text-text-muted">{fmtTime(t.scheduled_at, locale)}</span>
                 <span className="min-w-0 flex-1 truncate text-sm text-text">{t.title}</span>
-                <Badge tone={statusTone(t.status)}>{t.status}</Badge>
+                <Badge tone={statusTone(t.status)}>{STATUS_LABEL[t.status] ?? t.status}</Badge>
               </button>
             ))}
         </div>
@@ -84,7 +87,7 @@ export function CalendarView({ tasks, onSelect }: { tasks: Task[]; onSelect: (t:
                 <span className="text-[11px] font-medium uppercase tracking-wide text-text-muted">{WD[(d.getDay() + 6) % 7]}</span>
                 <span className={`text-xs ${sameDay(d, today) ? 'text-accent' : 'text-text-muted'}`}>{d.getDate()}</span>
               </div>
-              {dayTasks(d).map((t) => <TaskChip key={t.id} task={t} onSelect={onSelect} />)}
+              {dayTasks(d).map((t) => <TaskChip key={t.id} task={t} onSelect={onSelect} locale={locale} />)}
             </div>
           ))}
         </div>
@@ -103,8 +106,8 @@ export function CalendarView({ tasks, onSelect }: { tasks: Task[]; onSelect: (t:
                 <div key={dayKey(d)} className={`min-h-[6.5rem] border-b border-r border-border p-1.5 ${inMonth ? 'bg-surface' : 'bg-bg'}`}>
                   <div className={`mb-1 text-right text-[11px] ${sameDay(d, today) ? 'font-bold text-accent' : inMonth ? 'text-text-muted' : 'text-text-muted/40'}`}>{d.getDate()}</div>
                   <div className="flex flex-col gap-1">
-                    {list.slice(0, 3).map((t) => <TaskChip key={t.id} task={t} onSelect={onSelect} />)}
-                    {list.length > 3 ? <span className="px-1 text-[10px] text-text-muted">+{list.length - 3} more</span> : null}
+                    {list.slice(0, 3).map((t) => <TaskChip key={t.id} task={t} onSelect={onSelect} locale={locale} />)}
+                    {list.length > 3 ? <span className="px-1 text-[10px] text-text-muted">{t.calendar.nMore.replace('{count}', String(list.length - 3))}</span> : null}
                   </div>
                 </div>
               );
@@ -113,7 +116,7 @@ export function CalendarView({ tasks, onSelect }: { tasks: Task[]; onSelect: (t:
         </div>
       )}
 
-      {unscheduled > 0 ? <p className="text-xs text-text-muted">{unscheduled} unscheduled task{unscheduled === 1 ? '' : 's'} — set a schedule to place them here.</p> : null}
+      {unscheduled > 0 ? <p className="text-xs text-text-muted">{t.calendar.unscheduled.replace('{count}', String(unscheduled)).replace('{s}', unscheduled === 1 ? '' : 's')}</p> : null}
     </div>
   );
 }

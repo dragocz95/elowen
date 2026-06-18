@@ -1,6 +1,9 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
+import { LanguageProvider } from '../../../lib/i18n';
 import { Modal } from '../../../components/ui/Modal';
+
+function W({ children }: { children: React.ReactNode }) { return <LanguageProvider>{children}</LanguageProvider>; }
 
 describe('Modal', () => {
   it('renders title and children', () => {
@@ -9,6 +12,7 @@ describe('Modal', () => {
       <Modal title="Test Modal" onClose={onClose}>
         <span>modal-body</span>
       </Modal>,
+      { wrapper: W },
     );
     expect(screen.getByText('Test Modal')).toBeInTheDocument();
     expect(screen.getByText('modal-body')).toBeInTheDocument();
@@ -20,6 +24,7 @@ describe('Modal', () => {
       <Modal title="Test Modal" onClose={onClose}>
         <span>content</span>
       </Modal>,
+      { wrapper: W },
     );
     fireEvent.click(screen.getByRole('button', { name: 'Close' }));
     expect(onClose).toHaveBeenCalledTimes(1);
@@ -31,6 +36,7 @@ describe('Modal', () => {
       <Modal title="Test Modal" onClose={onClose}>
         <span>content</span>
       </Modal>,
+      { wrapper: W },
     );
     fireEvent.keyDown(window, { key: 'Escape' });
     expect(onClose).toHaveBeenCalledTimes(1);
@@ -42,8 +48,8 @@ describe('Modal', () => {
       <Modal title="Test Modal" onClose={onClose}>
         <span>content</span>
       </Modal>,
+      { wrapper: W },
     );
-    // Click the outer overlay (first child of container)
     const overlay = container.firstChild as HTMLElement;
     fireEvent.click(overlay);
     expect(onClose).toHaveBeenCalledTimes(1);
@@ -55,6 +61,7 @@ describe('Modal', () => {
       <Modal title="Test Modal" onClose={onClose}>
         <span>content</span>
       </Modal>,
+      { wrapper: W },
     );
     fireEvent.click(screen.getByText('content'));
     expect(onClose).not.toHaveBeenCalled();

@@ -1,10 +1,12 @@
 'use client';
 import { type ReactNode, useState } from 'react';
 import { HelpCircle } from 'lucide-react';
+import { useTranslation } from '../../lib/i18n';
 
 /** A small "?" that reveals a custom tooltip on hover/focus. For inline field help. */
 export function HelpTip({ children, align = 'right' }: { children: ReactNode; align?: 'left' | 'right' }) {
   const [open, setOpen] = useState(false);
+  const { t } = useTranslation();
   return (
     <span
       className="relative inline-flex"
@@ -13,7 +15,7 @@ export function HelpTip({ children, align = 'right' }: { children: ReactNode; al
     >
       <button
         type="button"
-        aria-label="Help"
+        aria-label={t.common.help}
         onFocus={() => setOpen(true)}
         onBlur={() => setOpen(false)}
         className="inline-flex h-4 w-4 items-center justify-center text-text-muted transition-colors hover:text-text"

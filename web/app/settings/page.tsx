@@ -27,12 +27,6 @@ const inputClass = 'w-full rounded-md border border-border bg-bg px-3 py-2 text-
 const PRESET_EXECS = new Set(EXEC_PRESETS.map((p) => p.exec));
 
 type Category = 'models' | 'autopilot' | 'providers' | 'defaults';
-const CATEGORIES: { id: Category; label: string; icon: LucideIcon }[] = [
-  { id: 'models', label: 'Models', icon: Boxes },
-  { id: 'autopilot', label: 'Autopilot', icon: Bot },
-  { id: 'providers', label: 'Providers', icon: Plug },
-  { id: 'defaults', label: 'Defaults', icon: SlidersHorizontal },
-];
 
 export default function SettingsPage() {
   const config = useConfig();
@@ -61,7 +55,7 @@ export default function SettingsPage() {
       const r = await orcaClient.planPreview({ goal: sampleGoal.trim(), prompt });
       setPreview(r.phases);
     } catch (e) {
-      if (e instanceof OrcaApiError && e.code === 'autopilot_key_missing') toast('Set the autopilot API key first', 'error');
+      if (e instanceof OrcaApiError && e.code === 'autopilot_key_missing') toast(t.settings.setApiKeyFirst, 'error');
       else toast(String(e), 'error');
     } finally { setPreviewing(false); }
   };
@@ -99,7 +93,7 @@ export default function SettingsPage() {
   }, [config.data]);
 
   if (config.isLoading) return <ModuleShell moduleId="settings"><PageHeader title={t.page.settings} /><LoadingState /></ModuleShell>;
-  if (config.isError) return <ModuleShell moduleId="settings"><PageHeader title={t.page.settings} /><ErrorState message="orca daemon unreachable" onRetry={() => config.refetch()} /></ModuleShell>;
+  if (config.isError) return <ModuleShell moduleId="settings"><PageHeader title={t.page.settings} /><ErrorState message={t.common.daemonUnreachable} onRetry={() => config.refetch()} /></ModuleShell>;
 
   const toggle = (exec: string) => setAllowed((prev) => prev.includes(exec) ? prev.filter((e) => e !== exec) : [...prev, exec]);
   const apiKeySet = config.data?.autopilot.apiKeySet;
@@ -145,7 +139,7 @@ export default function SettingsPage() {
   const saveModels = () =>
     update.mutate(
       { allowedExecs: allowed, customModels, hiddenPresets },
-      { onSuccess: () => toast('Models saved'), onError: (e) => toast(String(e), 'error') },
+      { onSuccess: () => toast(t.settings.modelsSaved), onError: (e) => toast(String(e), 'error') },
     );
 
   const models = allModels(customModels, hiddenPresets);
@@ -157,8 +151,9 @@ export default function SettingsPage() {
         <PageHeader title={t.page.settings} />
 
         <div className="flex flex-wrap gap-2">
-          {CATEGORIES.map(({ id, label, icon: Icon }) => {
+          {(['models', 'autopilot', 'providers', 'defaults'] as const).map((id) => {
             const active = category === id;
+            const Icon = id === 'models' ? Boxes : id === 'autopilot' ? Bot : id === 'providers' ? Plug : SlidersHorizontal;
             return (
               <button
                 key={id}
@@ -173,7 +168,7 @@ export default function SettingsPage() {
                 style={{ transitionDuration: 'var(--motion-base)' }}
               >
                 <Icon size={16} aria-hidden />
-                {label}
+                {t.settings[id]}
               </button>
             );
           })}
@@ -181,11 +176,11 @@ export default function SettingsPage() {
 
         {category === 'models' && (
           <Section
-            title="Models"
+            title={t.settings.models}
             icon={Boxes}
             actions={
               <Button variant="accent" icon={Save} onClick={saveModels}>
-                Save models
+                {t.settings.saveModels}
               </Button>
             }
           >
@@ -198,8 +193,8 @@ export default function SettingsPage() {
                       {isCustom && (
                         <button
                           type="button"
-                          aria-label={`Edit ${p.exec}`}
-                          title={`Edit ${p.exec}`}
+                          aria-label={t.settings.editLabel.replace('{exec}', p.exec)}
+                          title={t.settings.editLabel.replace('{exec}', p.exec)}
                           onClick={() => startEdit(p)}
                           className="flex h-6 w-6 items-center justify-center rounded-md border border-border bg-surface text-text-muted transition-colors hover:border-border-strong hover:text-text"
                           style={{ transitionDuration: 'var(--motion-fast)' }}
@@ -209,8 +204,8 @@ export default function SettingsPage() {
                       )}
                       <button
                         type="button"
-                        aria-label={`Delete ${p.exec}`}
-                        title={`Delete ${p.exec}`}
+                        aria-label={t.settings.deleteLabel.replace('{exec}', p.exec)}
+                        title={t.settings.deleteLabel.replace('{exec}', p.exec)}
                         onClick={() => setPendingDelete(p.exec)}
                         className="flex h-6 w-6 items-center justify-center rounded-md border border-danger/60 bg-surface text-danger transition-colors hover:bg-danger hover:text-white"
                         style={{ transitionDuration: 'var(--motion-fast)' }}
@@ -230,37 +225,37 @@ export default function SettingsPage() {
               {showAddForm ? (
                 <div className="flex flex-col gap-3 rounded-md border border-border bg-surface p-4 sm:flex-row sm:items-end">
                   <div className="flex flex-col gap-1">
-                    <span className="text-xs text-text-muted">Label</span>
+                    <span className="text-xs text-text-muted">{t.settings.labelLabel}</span>
                     <input
                       value={addLabel}
                       onChange={(e) => setAddLabel(e.target.value)}
-                      placeholder="My Model"
+                      placeholder={t.settings.modelPlaceholder}
                       className={inputClass}
-                      aria-label={editingExec ? 'Edit model label' : 'New model label'}
+                      aria-label={editingExec ? t.settings.editLabel.replace('{exec}', 'label') : t.settings.addModelLabel}
                     />
                   </div>
                   <div className="flex flex-col gap-1">
-                    <span className="text-xs text-text-muted">Exec</span>
+                    <span className="text-xs text-text-muted">{t.settings.execLabel}</span>
                     <input
                       value={addExec}
                       onChange={(e) => setAddExec(e.target.value)}
-                      placeholder="provider/model-name"
+                      placeholder={t.settings.execPlaceholder}
                       className={inputClass}
-                      aria-label={editingExec ? 'Edit model exec' : 'New model exec'}
+                      aria-label={editingExec ? t.settings.editLabel.replace('{exec}', 'exec') : t.settings.addModelExec}
                     />
                   </div>
                   <div className="flex gap-2">
                     <Button variant="accent" icon={editingExec ? Save : Plus} onClick={submitModel} disabled={!addLabel.trim() || !addExec.trim()}>
-                      {editingExec ? 'Save' : 'Add'}
+                      {editingExec ? t.settings.save : t.settings.add}
                     </Button>
                     <Button variant="ghost" onClick={resetForm}>
-                      Cancel
+                      {t.settings.cancel}
                     </Button>
                   </div>
                 </div>
               ) : (
                 <Button variant="ghost" icon={Plus} onClick={() => setShowAddForm(true)}>
-                  Add model
+                  {t.settings.addModel}
                 </Button>
               )}
             </div>
@@ -269,47 +264,42 @@ export default function SettingsPage() {
 
         {category === 'autopilot' && (
           <Section
-            title="Autopilot"
+            title={t.settings.autopilot}
             icon={Bot}
             actions={
-              <Button variant="accent" icon={Save} onClick={() => update.mutate({ autopilot: { model, overseerModel, apiUrl, notes, prompt, ...(apiKey ? { apiKey } : {}) } }, { onSuccess: () => { toast('Autopilot saved'); setApiKey(''); }, onError: (e) => toast(String(e), 'error') })}>
-                Save autopilot
+              <Button variant="accent" icon={Save} onClick={() => update.mutate({ autopilot: { model, overseerModel, apiUrl, notes, prompt, ...(apiKey ? { apiKey } : {}) } }, { onSuccess: () => { toast(t.settings.autopilotSaved); setApiKey(''); }, onError: (e) => toast(String(e), 'error') })}>
+                {t.settings.saveAutopilot}
               </Button>
             }
           >
             <div className="grid gap-4 sm:grid-cols-2">
-              <SettingCard title="Planner model" description="LLM that decomposes a goal into phases">
-                <input value={model} onChange={(e) => setModel(e.target.value)} className={inputClass} placeholder="claude-opus-4-8" />
+              <SettingCard title={t.settings.plannerModel} description={t.settings.plannerModelDesc}>
+                <input value={model} onChange={(e) => setModel(e.target.value)} className={inputClass} placeholder={t.settings.plannerPlaceholder} />
               </SettingCard>
-              <SettingCard title="Overseer model" description="LLM that judges agent prompts (blank = same as planner)">
-                <input value={overseerModel} onChange={(e) => setOverseerModel(e.target.value)} className={inputClass} placeholder="mimo-v2.5 (cheaper)" />
+              <SettingCard title={t.settings.overseerModel} description={t.settings.overseerModelDesc}>
+                <input value={overseerModel} onChange={(e) => setOverseerModel(e.target.value)} className={inputClass} placeholder={t.settings.overseerPlaceholder} />
               </SettingCard>
-              <SettingCard title="OpenAI API URL" description="OpenAI-compatible endpoint">
+              <SettingCard title={t.settings.apiUrl} description={t.settings.apiUrlDesc}>
                 <input value={apiUrl} onChange={(e) => setApiUrl(e.target.value)} className={inputClass} />
               </SettingCard>
-              <SettingCard title="API key" description={apiKeySet ? 'A key is set — leave blank to keep' : 'Stored server-side, never returned'}>
-                <input type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder={apiKeySet ? '•••• set' : 'paste key'} className={inputClass} />
+              <SettingCard title={t.settings.apiKey} description={apiKeySet ? t.settings.apiKeyDesc : t.settings.apiKeyNotSetDesc}>
+                <input type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder={apiKeySet ? t.settings.apiKeySetPlaceholder : t.settings.apiKeyPlaceholder} className={inputClass} />
               </SettingCard>
-              <SettingCard title="Notes" description="Guidance the autopilot follows">
+              <SettingCard title={t.settings.notes} description={t.settings.notesDesc}>
                 <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={3} className={`${inputClass} resize-none`} />
               </SettingCard>
               <div className="sm:col-span-2 rounded-lg border border-border bg-surface p-4">
                 <div className="mb-2 flex items-center gap-1.5">
-                  <span className="text-sm font-medium text-text">Planner prompt</span>
-                  <HelpTip>
-                    Template the Pilot uses to decompose a goal into phases. Use the
-                    <span className="mx-1 rounded bg-elevated px-1 font-mono text-text">{'{{goal}}'}</span>
-                    placeholder — it is replaced with the goal you enter. The model must return a JSON array of
-                    <span className="font-mono"> {'{title, type, agent}'}</span> objects.
-                  </HelpTip>
+                  <span className="text-sm font-medium text-text">{t.settings.plannerPrompt}</span>
+                  <HelpTip>{t.settings.plannerPromptHelp}</HelpTip>
                 </div>
                 <textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} rows={8} spellCheck={false} className={`${inputClass} resize-y font-mono text-xs leading-relaxed`} />
 
                 <div className="mt-3 flex flex-col gap-2 rounded-md border border-border bg-elevated/40 p-3">
-                  <span className="text-xs font-medium uppercase tracking-wide text-text-muted">Test plan</span>
+                  <span className="text-xs font-medium uppercase tracking-wide text-text-muted">{t.settings.testPlan}</span>
                   <div className="flex items-center gap-2">
-                    <Input value={sampleGoal} onChange={(e) => setSampleGoal(e.target.value)} placeholder="A sample goal to test this prompt…" />
-                    <Button variant="default" disabled={previewing || !sampleGoal.trim()} onClick={runPreview}>{previewing ? 'Planning…' : 'Test plan'}</Button>
+                    <Input value={sampleGoal} onChange={(e) => setSampleGoal(e.target.value)} placeholder={t.settings.sampleGoalPlaceholder} />
+                    <Button variant="default" disabled={previewing || !sampleGoal.trim()} onClick={runPreview}>{previewing ? t.settings.planning : t.settings.testPlan}</Button>
                   </div>
                   {preview && (
                     <ul className="flex flex-col divide-y divide-border rounded-md border border-border">
@@ -336,15 +326,15 @@ export default function SettingsPage() {
 
         {category === 'providers' && (
           <Section
-            title="Providers"
+            title={t.settings.providers}
             icon={Plug}
             actions={
-              <Button variant="accent" icon={Save} onClick={() => update.mutate({ providers }, { onSuccess: () => toast('Providers saved'), onError: (e) => toast(String(e), 'error') })}>
-                Save providers
+              <Button variant="accent" icon={Save} onClick={() => update.mutate({ providers }, { onSuccess: () => toast(t.settings.providersSaved), onError: (e) => toast(String(e), 'error') })}>
+                {t.settings.saveProviders}
               </Button>
             }
           >
-            <p className="mb-4 text-sm text-text-muted">Where each agent CLI lives and any extra flags passed when orca spawns it. Leave the binary as-is to use it from <span className="font-mono text-text">$PATH</span>.</p>
+            <p className="mb-4 text-sm text-text-muted">{t.settings.providersDesc}</p>
             <div className="flex flex-col gap-3">
               {PROVIDERS.map((p) => {
                 const cur = providers[p.id] ?? { bin: p.binHint, args: '' };
@@ -352,17 +342,17 @@ export default function SettingsPage() {
                 return (
                   <div key={p.id} className="flex flex-col gap-3 rounded-lg border border-border bg-surface p-4 sm:flex-row sm:items-center">
                     <div className="flex items-center gap-3 sm:w-44 sm:shrink-0">
-                      <ProviderLogo meta={p} />
+                      <ProviderLogo meta={p} alt={t.providers[p.id as keyof typeof t.providers]} />
                       <div className="min-w-0">
-                        <div className="text-sm font-medium text-text">{p.label}</div>
+                        <div className="text-sm font-medium text-text">{t.providers[p.id as keyof typeof t.providers]}</div>
                         <div className="font-mono text-[11px] text-text-muted">{p.id}</div>
                       </div>
                     </div>
                     <div className="grid flex-1 gap-3 sm:grid-cols-2">
-                      <Field label="Binary">
+                      <Field label={t.settings.binary}>
                         <Input value={cur.bin} placeholder={p.binHint} onChange={(e) => set({ bin: e.target.value })} className="font-mono text-xs" />
                       </Field>
-                      <Field label="Extra args">
+                      <Field label={t.settings.extraArgs}>
                         <Input value={cur.args} placeholder={p.argsHint} onChange={(e) => set({ args: e.target.value })} className="font-mono text-xs" />
                       </Field>
                     </div>
@@ -375,22 +365,22 @@ export default function SettingsPage() {
 
         {category === 'defaults' && (
           <Section
-            title="Defaults"
+            title={t.settings.defaults}
             icon={SlidersHorizontal}
             actions={
-              <Button variant="accent" icon={Save} onClick={() => update.mutate({ defaults: { exec: defExec, autonomy: defAutonomy, maxSessions: defMaxSessions } }, { onSuccess: () => toast('Defaults saved'), onError: (e) => toast(String(e), 'error') })}>
-                Save defaults
+              <Button variant="accent" icon={Save} onClick={() => update.mutate({ defaults: { exec: defExec, autonomy: defAutonomy, maxSessions: defMaxSessions } }, { onSuccess: () => toast(t.settings.defaultsSaved), onError: (e) => toast(String(e), 'error') })}>
+                {t.settings.saveDefaults}
               </Button>
             }
           >
             <div className="grid gap-4 sm:grid-cols-2">
-              <SettingCard title="Executor" description="Default agent for new launches">
+              <SettingCard title={t.settings.executor} description={t.settings.executorDesc}>
                 <Segmented options={EXEC_PRESETS.map((p) => ({ value: p.exec, label: p.exec }))} value={defExec} onChange={setDefExec} />
               </SettingCard>
-              <SettingCard title="Autonomy" description="Default mission autonomy level">
+              <SettingCard title={t.settings.autonomy} description={t.settings.autonomyDesc}>
                 <Segmented options={['L0', 'L1', 'L2', 'L3'].map((l) => ({ value: l, label: l }))} value={defAutonomy} onChange={setDefAutonomy} />
               </SettingCard>
-              <SettingCard title="Max sessions" description="Concurrent agents per mission">
+              <SettingCard title={t.settings.maxSessions} description={t.settings.maxSessionsDesc}>
                 <input type="number" min={1} value={defMaxSessions} onChange={(e) => setDefMaxSessions(Number(e.target.value))} className={inputClass} />
               </SettingCard>
             </div>
@@ -400,9 +390,9 @@ export default function SettingsPage() {
 
       <ConfirmDialog
         open={pendingDelete !== null}
-        title="Delete model"
-        description={deleteTarget ? `Remove ${deleteTarget.label} (${deleteTarget.exec}) from your models? Save models to persist this change.` : undefined}
-        confirmLabel="Delete"
+        title={t.settings.deleteModel}
+        description={deleteTarget ? t.settings.deleteModelDesc.replace('{label}', deleteTarget.label).replace('{exec}', deleteTarget.exec) : undefined}
+        confirmLabel={t.common.delete}
         onConfirm={() => {
           if (pendingDelete) deleteModel(pendingDelete);
           setPendingDelete(null);

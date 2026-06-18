@@ -3,11 +3,13 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Search, Plus, Rocket, CornerDownLeft, type LucideIcon } from 'lucide-react';
 import { MODULES } from '../../modules/registry';
+import { useTranslation } from '../../lib/i18n';
 
 interface Command { id: string; label: string; hint?: string; icon: LucideIcon; run: () => void }
 
 export function CommandPalette() {
   const router = useRouter();
+  const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [active, setActive] = useState(0);
@@ -26,13 +28,13 @@ export function CommandPalette() {
 
   const commands = useMemo<Command[]>(() => {
     const go = (route: string) => () => { router.push(route); setOpen(false); };
-    const nav = MODULES.map((m) => ({ id: `nav:${m.route}`, label: `Go to ${m.label}`, hint: m.route, icon: m.icon, run: go(m.route) }));
+    const nav = MODULES.map((m) => ({ id: `nav:${m.route}`, label: `${t.common.goTo} ${t.page[m.id as keyof typeof t.page] ?? m.label}`, hint: m.route, icon: m.icon, run: go(m.route) }));
     const actions: Command[] = [
-      { id: 'new-task', label: 'New task', hint: 'create', icon: Plus, run: go('/tasks?new=1') },
-      { id: 'new-mission', label: 'New mission', hint: 'engage', icon: Rocket, run: go('/missions?new=1') },
+      { id: 'new-task', label: t.tasks.newTask, hint: 'create', icon: Plus, run: go('/tasks?new=1') },
+      { id: 'new-mission', label: t.missions.newMission, hint: 'engage', icon: Rocket, run: go('/missions?new=1') },
     ];
     return [...actions, ...nav];
-  }, [router]);
+  }, [router, t]);
 
   const results = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -59,13 +61,13 @@ export function CommandPalette() {
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={onKeyDown}
-            placeholder="Search commands…"
+            placeholder={t.common.searchCommands}
             className="h-12 w-full bg-transparent text-sm text-text placeholder:text-text-muted focus:outline-none"
           />
         </div>
         <ul className="max-h-[50vh] overflow-y-auto p-1.5">
           {results.length === 0 ? (
-            <li className="px-3 py-6 text-center text-sm text-text-muted">No commands</li>
+            <li className="px-3 py-6 text-center text-sm text-text-muted">{t.common.noCommands}</li>
           ) : results.map((c, i) => {
             const Icon = c.icon;
             return (

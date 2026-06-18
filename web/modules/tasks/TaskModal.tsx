@@ -16,6 +16,7 @@ import { Segmented } from '../../components/ui/Segmented';
 import { IconButton } from '../../components/ui/IconButton';
 import { Badge } from '../../components/ui/Badge';
 import { useToast } from '../../components/ui/Toast';
+import { useTranslation } from '../../lib/i18n';
 import { taskTypeMeta, TASK_TYPES, PRIORITIES } from './taskMeta';
 
 type Mode = 'single' | 'planning';
@@ -37,6 +38,7 @@ export function TaskModal({ task, onClose }: { task?: Task; onClose: () => void 
   const models = allModels(config?.customModels, config?.hiddenPresets)
     .filter((m) => !config?.allowedExecs || config.allowedExecs.includes(m.exec));
   const { toast } = useToast();
+  const { t } = useTranslation();
 
   const create = useCreateTask();
   const update = useUpdateTask();
@@ -85,6 +87,14 @@ export function TaskModal({ task, onClose }: { task?: Task; onClose: () => void 
   const [manual, setManual] = useState(false);
   const [manualPhases, setManualPhases] = useState<ManualPhase[]>([{ title: '', type: 'task' }]);
 
+  const typeLabels: Record<string, string> = {
+    task: t.tasks.typeTask,
+    bug: t.tasks.typeBug,
+    feature: t.tasks.typeFeature,
+    epic: t.tasks.typeEpic,
+    chore: t.tasks.typeChore,
+  };
+
   const busy = create.isPending || update.isPending || spawn.isPending || setExecM.isPending || plan.isPending;
 
   async function submitSingle() {
@@ -93,12 +103,12 @@ export function TaskModal({ task, onClose }: { task?: Task; onClose: () => void 
       if (editing) {
         await update.mutateAsync({ id: task!.id, patch: { title: title.trim(), type, priority, description: description.trim(), scheduled_at: localInputToIso(schedule), deps } });
         if (exec !== taskExec(task!.labels)) await setExecM.mutateAsync({ id: task!.id, exec });
-        toast(`Updated ${task!.id}`);
+        toast(t.tasks.updated.replace('{id}', task!.id));
       } else {
         const created = await create.mutateAsync({ title: title.trim(), type, priority, description: description.trim(), scheduled_at: localInputToIso(schedule), deps });
         if (exec) await setExecM.mutateAsync({ id: created.id, exec });
         if (launchNow) await spawn.mutateAsync({ taskId: created.id, exec: exec || undefined });
-        toast(launchNow ? `Created & launched ${created.title}` : `Created ${created.title}`);
+        toast(launchNow ? t.tasks.createdAndLaunched.replace('{title}', created.title) : t.tasks.created.replace('{title}', created.title));
       }
       onClose();
     } catch (e) { toast(String(e), 'error'); }
@@ -109,35 +119,35 @@ export function TaskModal({ task, onClose }: { task?: Task; onClose: () => void 
     try {
       const r = await plan.mutateAsync({ goal: goal.trim(), exec: exec || undefined, autonomy, maxSessions, engage });
       setResult(r);
-      toast(`Plan created — ${r.phases.length} phases${r.mission ? ' · autopilot started' : ''}`);
+      toast(t.tasks.planCreated.replace('{count}', String(r.phases.length)).replace('{m}', r.mission ? t.tasks.autopilotStarted : '.'));
     } catch (e) {
       if (e instanceof OrcaApiError && e.code === 'autopilot_key_missing') {
         setManual(true);
-        toast('Autopilot key not set — add phases manually', 'error');
+        toast(t.tasks.autopilotKeyMissing, 'error');
       } else { toast(String(e), 'error'); }
     }
   }
 
   async function createManual() {
     const phases = manualPhases.map((p) => ({ title: p.title.trim(), type: p.type })).filter((p) => p.title);
-    if (phases.length === 0) { toast('Add at least one phase', 'error'); return; }
+    if (phases.length === 0) { toast(t.tasks.addAtLeastOnePhase, 'error'); return; }
     try {
       const r = await plan.mutateAsync({ goal: goal.trim(), phases, exec: exec || undefined, autonomy, maxSessions, engage });
       setResult(r);
-      toast(`Plan created — ${r.phases.length} phases${r.mission ? ' · autopilot started' : ''}`);
+      toast(t.tasks.planCreated.replace('{count}', String(r.phases.length)).replace('{m}', r.mission ? t.tasks.autopilotStarted : '.'));
     } catch (e) { toast(String(e), 'error'); }
   }
 
   const execSelect = (
-    <Field label="Executor">
+    <Field label={t.tasks.fieldExecutor}>
       <Select value={exec} onChange={(e) => setExec(e.target.value)}>
-        <option value="">Default (fallback)</option>
+        <option value="">{t.tasks.defaultExecutor}</option>
         {models.map((m) => <option key={m.exec} value={m.exec}>{m.label}</option>)}
       </Select>
     </Field>
   );
 
-  const titleText = editing ? `Edit ${task!.id}` : 'New task';
+  const titleText = editing ? t.tasks.editTitle.replace('{id}', task!.id) : t.tasks.newTitle;
 
   return (
     <Modal title={titleText} onClose={onClose} size="xl">
@@ -148,39 +158,39 @@ export function TaskModal({ task, onClose }: { task?: Task; onClose: () => void 
               value={mode}
               onChange={(v) => setMode(v as Mode)}
               options={[
-                { value: 'single', label: 'Single task', icon: ListChecks },
-                { value: 'planning', label: 'Autopilot · Planning', icon: Sparkles },
+                { value: 'single', label: t.tasks.singleTask, icon: ListChecks },
+                { value: 'planning', label: t.tasks.autopilotPlanning, icon: Sparkles },
               ]}
             />
             <p className="text-xs text-text-muted">
               {mode === 'single'
-                ? 'Create one task and optionally launch a single agent on it.'
-                : 'The Pilot breaks your goal into ordered phases, names an agent for each, and can run them autonomously.'}
+                ? t.tasks.singleTaskDesc
+                : t.tasks.autopilotPlanningDesc}
             </p>
           </div>
         )}
 
         {(editing || mode === 'single') && (
           <>
-            <Field label="Title">
-              <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="What needs doing?" autoFocus />
+            <Field label={t.tasks.fieldTitle}>
+              <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder={t.tasks.titlePlaceholder} autoFocus />
             </Field>
-            <Field label="Details" hint="Context handed to the agent — what to build, constraints, acceptance.">
+            <Field label={t.tasks.fieldDetails} hint={t.tasks.detailsHint}>
               <textarea
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
-                placeholder="Describe the task so the agent knows exactly what to do…"
+                placeholder={t.tasks.detailsPlaceholder}
                 rows={4}
                 className="w-full rounded-md border border-border bg-surface px-3 py-2 text-sm text-text placeholder:text-text-muted focus:border-accent focus:outline-none"
               />
             </Field>
             <div className="grid grid-cols-2 gap-4">
-              <Field label="Type">
+              <Field label={t.tasks.fieldType}>
                 <Select value={type} onChange={(e) => setType(e.target.value)}>
-                  {TASK_TYPES.map((t) => <option key={t} value={t}>{taskTypeMeta(t).label}</option>)}
+                  {TASK_TYPES.map((taskType) => <option key={taskType} value={taskType}>{typeLabels[taskType] ?? taskTypeMeta(taskType).label}</option>)}
                 </Select>
               </Field>
-              <Field label="Priority">
+              <Field label={t.tasks.fieldPriority}>
                 <Select value={priority} onChange={(e) => setPriority(e.target.value)}>
                   {PRIORITIES.map((p) => <option key={p} value={p}>{p}</option>)}
                 </Select>
@@ -188,24 +198,24 @@ export function TaskModal({ task, onClose }: { task?: Task; onClose: () => void 
             </div>
             <div className="grid grid-cols-2 gap-4">
               {execSelect}
-              <Field label="Schedule" hint="Optional — auto-launch at this time.">
+              <Field label={t.tasks.fieldSchedule} hint={t.tasks.scheduleHint}>
                 <Input type="datetime-local" value={schedule} onChange={(e) => setSchedule(e.target.value)} />
               </Field>
             </div>
             {scheduleConflict && (
               <p className="-mt-2 flex items-center gap-1.5 text-xs text-[#f59e0b]">
                 <AlertTriangle size={13} aria-hidden />
-                Close to <span className="font-medium text-text">{scheduleConflict.title}</span> — both launch within ~10 min, expect heavier load.
+                {t.tasks.scheduleConflict.replace('{title}', scheduleConflict.title)}
               </p>
             )}
             {depCandidates.length > 0 && (
-              <Field label="Depends on" hint="This task waits until the selected tasks are closed.">
+              <Field label={t.tasks.fieldDependsOn} hint={t.tasks.dependsOnHint}>
                 <div className="max-h-32 overflow-y-auto rounded-md border border-border bg-surface p-1">
-                  {depCandidates.map((t) => (
-                    <label key={t.id} className="flex cursor-pointer items-center gap-2 rounded px-2 py-1 text-sm hover:bg-elevated">
-                      <input type="checkbox" checked={deps.includes(t.id)} onChange={() => toggleDep(t.id)} className="accent-accent" />
-                      <span className="min-w-0 flex-1 truncate text-text">{t.title}</span>
-                      <span className="shrink-0 font-mono text-[11px] text-text-muted">{t.id}</span>
+                  {depCandidates.map((dep) => (
+                    <label key={dep.id} className="flex cursor-pointer items-center gap-2 rounded px-2 py-1 text-sm hover:bg-elevated">
+                      <input type="checkbox" checked={deps.includes(dep.id)} onChange={() => toggleDep(dep.id)} className="accent-accent" />
+                      <span className="min-w-0 flex-1 truncate text-text">{dep.title}</span>
+                      <span className="shrink-0 font-mono text-[11px] text-text-muted">{dep.id}</span>
                     </label>
                   ))}
                 </div>
@@ -214,13 +224,13 @@ export function TaskModal({ task, onClose }: { task?: Task; onClose: () => void 
             {!editing && (
               <label className="flex items-center gap-2 text-sm text-text">
                 <input type="checkbox" checked={launchNow} onChange={(e) => setLaunchNow(e.target.checked)} className="accent-accent" />
-                Launch a session immediately
+                {t.tasks.launchImmediately}
               </label>
             )}
             <div className="flex items-center justify-end gap-2 pt-1">
-              <Button variant="ghost" onClick={onClose}>Cancel</Button>
+              <Button variant="ghost" onClick={onClose}>{t.common.cancel}</Button>
               <Button variant="accent" icon={editing ? undefined : (launchNow ? Play : undefined)} disabled={busy || !title.trim()} onClick={submitSingle}>
-                {editing ? 'Save' : launchNow ? 'Create & launch' : 'Create'}
+                {editing ? t.common.save : launchNow ? t.tasks.createAndLaunch : t.tasks.create}
               </Button>
             </div>
           </>
@@ -228,54 +238,54 @@ export function TaskModal({ task, onClose }: { task?: Task; onClose: () => void 
 
         {!editing && mode === 'planning' && !result && (
           <>
-            <Field label="Goal" hint="The model breaks this into ordered phases.">
+            <Field label={t.tasks.fieldGoal} hint={t.tasks.goalHint}>
               <textarea
                 value={goal}
                 onChange={(e) => setGoal(e.target.value)}
-                placeholder="Describe the goal to plan…"
+                placeholder={t.tasks.goalPlaceholder}
                 rows={4}
                 className="w-full rounded-md border border-border bg-surface px-3 py-2 text-sm text-text placeholder:text-text-muted focus:border-accent focus:outline-none"
               />
             </Field>
             <div className="grid grid-cols-2 gap-4">
-              <Field label="Autonomy">
+              <Field label={t.tasks.fieldAutonomy}>
                 <Select value={autonomy} onChange={(e) => setAutonomy(e.target.value)}>
                   {['L0', 'L1', 'L2', 'L3'].map((l) => <option key={l} value={l}>{l}</option>)}
                 </Select>
               </Field>
-              <Field label="Max sessions">
+              <Field label={t.tasks.fieldMaxSessions}>
                 <Input type="number" min={1} value={maxSessions} onChange={(e) => setMaxSessions(Number(e.target.value))} />
               </Field>
             </div>
             {execSelect}
             <label className="flex items-center gap-2 text-sm text-text">
               <input type="checkbox" checked={engage} onChange={(e) => setEngage(e.target.checked)} className="accent-accent" />
-              Start autopilot now (engage mission)
+              {t.tasks.startAutopilot}
             </label>
 
             {manual && (
               <div className="flex flex-col gap-2 rounded-md border border-border bg-elevated/40 p-3">
-                <span className="text-xs font-medium uppercase tracking-wide text-text-muted">Phases (manual)</span>
-                {manualPhases.map((p, i) => (
+                <span className="text-xs font-medium uppercase tracking-wide text-text-muted">{t.tasks.manualPhases}</span>
+                {manualPhases.map((phase, i) => (
                   <div key={i} className="flex items-center gap-2">
-                    <Input value={p.title} placeholder={`Phase ${i + 1}`} onChange={(e) => setManualPhases((rows) => rows.map((r, j) => j === i ? { ...r, title: e.target.value } : r))} />
-                    <Select value={p.type} onChange={(e) => setManualPhases((rows) => rows.map((r, j) => j === i ? { ...r, type: e.target.value } : r))} className="w-32">
-                      {TASK_TYPES.filter((t) => t !== 'epic').map((t) => <option key={t} value={t}>{taskTypeMeta(t).label}</option>)}
+                    <Input value={phase.title} placeholder={t.tasks.phasePlaceholder.replace('{n}', String(i + 1))} onChange={(e) => setManualPhases((rows) => rows.map((r, j) => j === i ? { ...r, title: e.target.value } : r))} />
+                    <Select value={phase.type} onChange={(e) => setManualPhases((rows) => rows.map((r, j) => j === i ? { ...r, type: e.target.value } : r))} className="w-32">
+                      {TASK_TYPES.filter((taskType) => taskType !== 'epic').map((taskType) => <option key={taskType} value={taskType}>{typeLabels[taskType] ?? taskTypeMeta(taskType).label}</option>)}
                     </Select>
-                    <IconButton icon={X} label="Remove phase" onClick={() => setManualPhases((rows) => rows.length > 1 ? rows.filter((_, j) => j !== i) : rows)} />
+                    <IconButton icon={X} label={t.tasks.removePhase} onClick={() => setManualPhases((rows) => rows.length > 1 ? rows.filter((_, j) => j !== i) : rows)} />
                   </div>
                 ))}
                 <button type="button" onClick={() => setManualPhases((rows) => [...rows, { title: '', type: 'task' }])} className="inline-flex items-center gap-1 self-start text-xs text-accent hover:underline">
-                  <Plus size={13} aria-hidden /> Add phase
+                  <Plus size={13} aria-hidden /> {t.tasks.addPhase}
                 </button>
               </div>
             )}
 
             <div className="flex items-center justify-end gap-2 pt-1">
-              <Button variant="ghost" onClick={onClose}>Cancel</Button>
+              <Button variant="ghost" onClick={onClose}>{t.common.cancel}</Button>
               {manual
-                ? <Button variant="accent" disabled={busy} onClick={createManual}>Create plan</Button>
-                : <Button variant="accent" icon={Sparkles} disabled={busy || !goal.trim()} onClick={generate}>{busy ? 'Planning…' : 'Generate plan'}</Button>}
+                ? <Button variant="accent" disabled={busy} onClick={createManual}>{t.tasks.createPlan}</Button>
+                : <Button variant="accent" icon={Sparkles} disabled={busy || !goal.trim()} onClick={generate}>{busy ? t.tasks.planning : t.tasks.generatePlan}</Button>}
             </div>
           </>
         )}
@@ -283,8 +293,10 @@ export function TaskModal({ task, onClose }: { task?: Task; onClose: () => void 
         {result && (
           <div className="flex flex-col gap-3">
             <p className="text-sm text-text-muted">
-              Created epic <span className="font-mono text-text">{result.epic.id}</span> with {result.phases.length} phases
-              {result.mission ? ' — autopilot engaged.' : '.'}
+              {t.tasks.createdEpic
+                .replace('{id}', result.epic.id)
+                .replace('{count}', String(result.phases.length))
+                .replace('{m}', result.mission ? t.tasks.autopilotEngaged : '.')}
             </p>
             <ul className="flex flex-col divide-y divide-border rounded-md border border-border">
               {result.phases.map((p, i) => {
@@ -302,7 +314,7 @@ export function TaskModal({ task, onClose }: { task?: Task; onClose: () => void 
               })}
             </ul>
             <div className="flex justify-end">
-              <Button variant="accent" onClick={onClose}>Done</Button>
+              <Button variant="accent" onClick={onClose}>{t.tasks.done}</Button>
             </div>
           </div>
         )}

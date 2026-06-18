@@ -46,14 +46,14 @@ export function Sidebar() {
 
   return (
     <nav
-      aria-label="Primary"
+      aria-label={t.common.primaryNav}
       className="relative flex h-full shrink-0 flex-col border-r border-border bg-surface transition-[width] duration-200"
       style={{ width: expanded ? width : RAIL, transitionTimingFunction: 'var(--ease-out)' }}
     >
       <div className="flex items-center justify-center border-b border-border px-3 py-3 overflow-hidden">
         {expanded
-          ? <img src="/orca-logo.png" alt="Orca" className="h-9 w-auto" />
-          : <img src="/icon.png" alt="Orca" className="h-7 w-7 rounded-md" />}
+          ? <img src="/orca-logo.png" alt={t.common.appName} className="h-9 w-auto" />
+          : <img src="/icon.png" alt={t.common.appName} className="h-7 w-7 rounded-md" />}
       </div>
 
       <div className="flex-1 overflow-y-auto py-2">
@@ -91,7 +91,7 @@ export function Sidebar() {
             type="button"
             onClick={() => setLocale(locale === 'en' ? 'cs' : 'en')}
             className="ml-auto flex items-center gap-1 rounded-md border border-border px-2 py-1 text-[10px] font-mono uppercase tracking-wide text-text-muted transition-colors hover:border-border-strong hover:text-text"
-            aria-label="Switch language"
+            aria-label={t.common.switchLang}
           >
             <Languages size={12} aria-hidden />
             {locale === 'en' ? 'CS' : 'EN'}

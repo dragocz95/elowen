@@ -1,7 +1,10 @@
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, within } from '@testing-library/react';
+import { LanguageProvider } from '../../../lib/i18n';
 import { KanbanBoard } from '../../../modules/kanban/KanbanBoard';
 import type { Task } from '../../../lib/types';
+
+function W({ children }: { children: React.ReactNode }) { return <LanguageProvider>{children}</LanguageProvider>; }
 
 const tasks: Task[] = [
   { id: 'a', title: 'Alpha', status: 'open' },
@@ -14,18 +17,19 @@ function makeDrop(taskId: string) {
 
 describe('KanbanBoard', () => {
   it('renders all five columns with counts', () => {
-    render(<KanbanBoard tasks={tasks} onMove={() => {}} />);
-    expect(screen.getByText('Open')).toBeTruthy();
-    expect(screen.getByText('In progress')).toBeTruthy();
-    expect(screen.getByText('Blocked')).toBeTruthy();
-    expect(screen.getByText('Closed')).toBeTruthy();
-    expect(screen.getByText('Cancelled')).toBeTruthy();
+    render(<KanbanBoard tasks={tasks} onMove={() => {}} />, { wrapper: W });
+    // All five status columns render (labels may repeat as status badges, so assert by column id).
+    for (const s of ['open', 'in_progress', 'blocked', 'closed', 'cancelled']) {
+      expect(screen.getByTestId(`column-${s}`)).toBeTruthy();
+    }
+    // The open column header shows its count of 1 (task 'a').
+    expect(within(screen.getByTestId('column-open')).getByText('1')).toBeTruthy();
     expect(screen.getByText('Alpha')).toBeTruthy();
   });
 
   it('dropping a card on a different column calls onMove(taskId, newStatus)', () => {
     const onMove = vi.fn();
-    render(<KanbanBoard tasks={tasks} onMove={onMove} />);
+    render(<KanbanBoard tasks={tasks} onMove={onMove} />, { wrapper: W });
     const inProgress = screen.getByTestId('column-in_progress');
     fireEvent.dragOver(inProgress);
     fireEvent.drop(inProgress, makeDrop('a'));
@@ -34,7 +38,7 @@ describe('KanbanBoard', () => {
 
   it('dropping on the same column does not call onMove', () => {
     const onMove = vi.fn();
-    render(<KanbanBoard tasks={tasks} onMove={onMove} />);
+    render(<KanbanBoard tasks={tasks} onMove={onMove} />, { wrapper: W });
     const open = screen.getByTestId('column-open');
     fireEvent.drop(open, makeDrop('a'));
     expect(onMove).not.toHaveBeenCalled();

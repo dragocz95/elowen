@@ -6,13 +6,13 @@ export const PROVIDERS: ProviderMeta[] = [
   { id: 'codex', label: 'Codex', color: '#ededed', binHint: 'codex', argsHint: '--full-auto', icon: '/providers/openai.svg' },
 ];
 
-export function ProviderLogo({ meta, size = 36 }: { meta: ProviderMeta; size?: number }) {
+export function ProviderLogo({ meta, alt, size = 36 }: { meta: ProviderMeta; alt?: string; size?: number }) {
   return (
     <span
       className="inline-flex shrink-0 items-center justify-center overflow-hidden rounded-lg border border-border bg-elevated"
       style={{ width: size, height: size }}
     >
-      <img src={meta.icon} alt={meta.label} width={size * 0.62} height={size * 0.62} style={{ objectFit: 'contain' }} />
+      <img src={meta.icon} alt={alt ?? meta.label} width={size * 0.62} height={size * 0.62} style={{ objectFit: 'contain' }} />
     </span>
   );
 }

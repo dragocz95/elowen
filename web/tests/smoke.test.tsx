@@ -5,6 +5,6 @@ import Home from '../app/page';
 describe('scaffold', () => {
   it('renders the home placeholder', () => {
     render(<Home />);
-    expect(screen.getByText('orca')).toBeInTheDocument();
+    expect(screen.getByText('Orca')).toBeInTheDocument();
   });
 });

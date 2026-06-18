@@ -9,13 +9,7 @@ import { Section } from '../../components/ui/Section';
 import { Badge } from '../../components/ui/Badge';
 import { LoadingState, ErrorState, EmptyState } from '../../components/ui/states';
 import type { Tone } from '../../components/ui/tone';
-
-const FILTER_OPTIONS: SegmentedOption[] = [
-  { label: 'All', value: 'all' },
-  { label: 'Tasks', value: 'task' },
-  { label: 'Missions', value: 'mission' },
-  { label: 'Signals', value: 'signal' },
-];
+import { useTranslation } from '../../lib/i18n';
 
 const WINDOW_HOURS = 12;
 
@@ -138,10 +132,18 @@ function FeedRow({ event }: { event: GroupedEvent }) {
 }
 
 export function TimelineView() {
+  const { t } = useTranslation();
   const [filter, setFilter] = useState<string>('all');
   const [view, setView] = useState<string>('axis');
   const type = filter === 'all' ? undefined : filter;
   const q = useActivity(type);
+
+  const FILTER_OPTIONS: SegmentedOption[] = [
+    { label: t.timeline.filterAll, value: 'all' },
+    { label: t.timeline.filterTasks, value: 'task' },
+    { label: t.timeline.filterMissions, value: 'mission' },
+    { label: t.timeline.filterSignals, value: 'signal' },
+  ];
 
   const rawEvents = useMemo<AxisEvent[]>(
     () =>
@@ -172,11 +174,11 @@ export function TimelineView() {
   return (
     <div className="flex flex-col gap-4">
       <Section
-        title="Activity / last 12h"
+        title={t.timeline.activityLast12h}
         icon={Activity}
         actions={
           <div className="flex flex-wrap items-center gap-2">
-            <Segmented options={[{ label: 'Axis', value: 'axis' }, { label: 'Lanes', value: 'lanes' }]} value={view} onChange={setView} />
+            <Segmented options={[{ label: t.timeline.axis, value: 'axis' }, { label: t.timeline.lanes, value: 'lanes' }]} value={view} onChange={setView} />
             <Segmented options={FILTER_OPTIONS} value={filter} onChange={setFilter} />
           </div>
         }
@@ -184,9 +186,9 @@ export function TimelineView() {
         {q.isLoading ? (
           <LoadingState />
         ) : q.isError ? (
-          <ErrorState message="Failed to load activity" onRetry={() => q.refetch()} />
+          <ErrorState message={t.timeline.loadError} onRetry={() => q.refetch()} />
         ) : !hasData ? (
-          <EmptyState title="No activity yet" description="Events from the last 12 hours appear here." />
+          <EmptyState title={t.timeline.empty} description={t.timeline.emptyDescription} />
         ) : view === 'lanes' ? (
           <div className="flex flex-col gap-2.5">
             {lanes.map((l) => <Lane key={l.target} target={l.target} points={l.points} ticks={ticks} />)}
@@ -201,13 +203,13 @@ export function TimelineView() {
         )}
       </Section>
 
-      <Section title="Feed">
+      <Section title={t.timeline.feed}>
         {q.isLoading ? (
           <LoadingState />
         ) : q.isError ? (
-          <ErrorState message="Failed to load activity" onRetry={() => q.refetch()} />
+          <ErrorState message={t.timeline.loadError} onRetry={() => q.refetch()} />
         ) : !hasData ? (
-          <EmptyState title="No activity yet" />
+          <EmptyState title={t.timeline.empty} />
         ) : (
           <div data-testid="activity-feed" className="flex flex-col divide-y divide-border">
             {feed.map((e) => (

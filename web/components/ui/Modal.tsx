@@ -1,5 +1,6 @@
 'use client';
 import { type ReactNode, useEffect } from 'react';
+import { useTranslation } from '../../lib/i18n';
 
 interface ModalProps {
   title: string;
@@ -16,6 +17,7 @@ const SIZES = {
 };
 
 export function Modal({ title, onClose, children, size = 'lg' }: ModalProps) {
+  const { t } = useTranslation();
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose();
@@ -38,7 +40,7 @@ export function Modal({ title, onClose, children, size = 'lg' }: ModalProps) {
           <span className="text-sm font-medium text-text">{title}</span>
           <button
             type="button"
-            aria-label="Close"
+            aria-label={t.common.close}
             onClick={onClose}
             className="flex h-7 w-7 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-elevated hover:text-text"
           >
