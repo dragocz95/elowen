@@ -35,7 +35,7 @@ Starts the daemon on `http://localhost:4400`.
                     └──────────────────┘
 ```
 
-The daemon runs a tick loop every 90 seconds: checks ready tasks, evaluates guardrails, spawns agents up to `max_sessions`, and monitors their progress via tmux pane capture.
+The daemon runs a tick loop every 90 seconds: checks ready tasks, evaluates guardrails, spawns agents up to `max_sessions`, and monitors their progress via tmux pane capture. A scheduler loop runs every 30 seconds for due tasks, and a janitor loop runs every 60 seconds to reap finished agent sessions.
 
 ## Tech stack
 
@@ -79,6 +79,9 @@ orca ready
 
 # List active sessions
 orca sessions
+
+# Close a task with result summary
+orca close <taskId> --summary "what was done" --outcome ok
 ```
 
 The CLI auto-starts the daemon if it isn't already running.
@@ -97,20 +100,40 @@ curl -H "Authorization: Bearer $ORCA_TOKEN" http://localhost:4400/tasks
 The daemon exposes a Hono server on port 4400:
 
 | Method | Path | Description |
-|---|---|---|
+|---|---|---|---|
 | `GET` | `/health` | Health check |
+| `POST` | `/auth/login` | Login (username + password) |
+| `POST` | `/auth/logout` | Revoke token |
+| `GET` | `/auth/me` | Current user |
+| `GET` | `/users` | List users |
+| `POST` | `/users` | Create user |
+| `DELETE` | `/users/:id` | Delete user |
+| `GET` | `/projects` | List projects |
+| `POST` | `/projects` | Create project |
+| `GET` | `/projects/:id/git` | Git info for project |
 | `GET` | `/tasks` | List tasks |
 | `POST` | `/tasks` | Create task |
 | `GET` | `/tasks/ready` | Tasks with all deps met |
-| `GET` | `/tasks/:id` | Task detail |
-| `PATCH` | `/tasks/:id` | Update task |
-| `POST` | `/tasks/:id/deps` | Add dependency |
-| `GET` | `/tasks/:id/tree` | Task dependency tree |
-| `GET` | `/sessions` | List active sessions |
+| `GET` | `/tasks/deps` | All task dependencies |
+| `PATCH` | `/tasks/:id` | Update task (status, title, deps, exec) |
+| `DELETE` | `/tasks/:id` | Delete task |
+| `GET` | `/tasks/:id/deps` | Dependencies for a task |
+| `POST` | `/tasks/plan` | AI goal decomposition |
 | `POST` | `/sessions` | Spawn agent session |
+| `GET` | `/sessions` | List active sessions |
 | `GET` | `/sessions/:name/stream` | SSE terminal stream |
+| `GET` | `/sessions/:name/pane` | Capture pane output |
+| `POST` | `/sessions/:name/keys` | Send keystrokes |
+| `POST` | `/sessions/:name/resize` | Resize terminal |
+| `DELETE` | `/sessions/:name` | Kill session |
 | `GET` | `/missions` | List missions |
 | `POST` | `/missions` | Create mission |
+| `GET` | `/missions/:id` | Mission detail |
+| `PATCH` | `/missions/:id` | Pause / resume mission |
+| `DELETE` | `/missions/:id` | Disengage mission |
+| `GET` | `/activity` | Activity event log |
+| `GET` | `/config` | Get daemon config |
+| `PUT` | `/config` | Update daemon config |
 | `GET` | `/events` | SSE event bus |
 
 ## Missions & guardrails

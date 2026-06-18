@@ -8,36 +8,45 @@ below are deliberately deferred — each is a self-contained next task, not aban
 
 **Status:** `src/inference/` (`RelayClient` + `FakeInference`) is built and unit-tested, and
 the relay config is plumbed into `buildApp(opts.relay)` — but it is **not yet consumed**. The
-overseer currently decides purely from autonomy level + cleared guardrails.
+overseer currently decides purely from autonomy level + cleared guardrails. The `decideApproval`
+hook is wired in the deriver for prompt-level decisions, but the mission engine tick still
+uses boolean guardrail logic only.
 
-**Next task:** add an overseer decision step that consults `mimo-v2.5` via the relay
+**Next task:** add an overseer decision step that consults the configured relay model
 (`InferenceClient.decide`) for approve/redirect judgments before spawning a guardrail-triggering
-task. Construct `RelayClient` in `bootstrap.ts` when `opts.relay` is set and inject it into
-`MissionEngine` as an optional decision hook (relay absent → unchanged boolean behavior). This
-is Filip's "the LLM decides about tasks" layer.
+task. The relay is already constructed in `bootstrap.ts` and injected into the deriver's
+`decideApproval`; extend this to `MissionEngine` as an optional decision hook (relay absent →
+unchanged boolean behavior). This is the "the LLM decides about tasks" layer.
 
 ## 2. Concurrency hardening (only matters at `max_sessions > 1`)
 
 At the sequential default these are inert; they become real when parallel agents are enabled:
 
-- **`nameAgent` uniqueness** (`bootstrap.ts`): `Agent${performance.now() % 9999}` can collide
-  for two spawns in the same millisecond → duplicate `orca-<name>` tmux session + agent row.
-  Fix: a monotonic counter or a uniqueness check against live sessions.
-- **`sessionTaskId` resolver** (`bootstrap.ts`): returns the first `in_progress` task regardless
-  of session, so every concurrent session derives against the same task. Fix: have
-  `SpawnService` record a `session → taskId` map and resolve from it.
-- **Per-mission running count** (`missionEngine.ts`): the cap counts ALL `orca-*` sessions
-  globally, so two concurrent missions interfere. Fix: attribute sessions to missions.
-- **Stuck-session recovery:** if an agent dies without `jt close`, its task stays `in_progress`
+- **`nameAgent` uniqueness**: the `uniqueName()` function cycles through a fixed name list;
+  when two concurrent missions spawn agents simultaneously, names could still collide if the
+  counter hasn't advanced. Fix: a monotonic counter with a uniqueness check against live sessions.
+- **`sessionTaskId` resolver** (`bootstrap.ts`): resolves a session's task via the `agent:<name>`
+  label (most recent match). This is correct for single-mission scenarios but could pick a
+  stale task if agent names repeat across missions. Fix: have `SpawnService` record an explicit
+  `session → taskId` map.
+- **Per-mission running count** (`missionEngine.ts`): the cap now counts the mission's own
+  `in_progress` children (not all global `orca-*` sessions), so parallel missions no longer
+  interfere directly. However, global tmux session limits could still cause indirect starvation.
+- **Stuck-session recovery:** if an agent dies without `orca close`, its task stays `in_progress`
   and the mission never advances (no liveness sweep). Fix: a stall detector (silent > N min →
   nudge → relaunch → escalate), as jat had.
 
-## 3. API surface completion (spec §5 routes not in #1)
+## 3. API surface completion
 
-Task 17 scoped a subset. Spec §5 also lists: `GET /tasks/:id/tree`, `POST /tasks/:id/deps`,
-`GET/POST /agents`, `GET /projects`, `POST /sessions` (spawn), `PATCH /missions/:id`
-(pause/resume). Add as the CLI/frontend needs them; `POST /tasks/:id/deps` is the most useful
-(currently deps are only settable via the internal `TaskStore.addDep`).
+Most spec routes are now implemented: `GET /projects`, `POST /projects`, `GET /projects/:id/git`,
+`POST /sessions`, `GET /sessions/:name/pane`, `POST /sessions/:name/keys`, `POST /sessions/:name/resize`,
+`GET /missions/:id`, `PATCH /missions/:id` (pause/resume), `GET /activity`, `GET /config`, `PUT /config`.
+
+Still missing:
+- `GET /tasks/:id` — single task detail endpoint (currently only accessible via list + filter)
+- `GET /tasks/:id/tree` — dependency tree visualization
+- `POST /tasks/:id/deps` — dedicated add-dep endpoint (deps are settable via `PATCH /tasks/:id` with `deps` array)
+- `GET/POST /agents` — agent registry endpoints (the `agents` table exists but has no API surface)
 
 ## Web shell (#2) deferred
 

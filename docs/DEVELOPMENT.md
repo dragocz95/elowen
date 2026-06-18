@@ -263,7 +263,18 @@ const phases = parsePhases('[{"title":"Fix login","type":"bug"}]');
 | Variable | Default | Description |
 |---|---|---|
 | `ORCA_URL` | `http://localhost:4400` | Daemon URL for CLI |
+| `ORCA_TOKEN` | — | API token for CLI requests |
 | `ORCA_AUTOSTART` | `1` | Enable CLI daemon autostart |
+| `ORCA_DB` | `~/.config/orca/orca.db` | SQLite database path |
+| `ORCA_PORT` | `4400` | Daemon HTTP port |
+| `ORCA_PROJECT` | `orca` | Default project slug |
+| `ORCA_PROJECT_PATH` | `cwd` | Default project working directory |
+| `ORCA_RELAY_URL` | — | LLM relay base URL |
+| `ORCA_RELAY_KEY` | — | LLM relay API key |
+| `ORCA_RELAY_MODEL` | `gpt-4o-mini` | LLM relay model |
+| `ORCA_BOOTSTRAP_USER` | — | Initial admin username |
+| `ORCA_BOOTSTRAP_PASS` | — | Initial admin password |
+| `ORCA_ALLOW_OPEN` | — | Allow open (no auth) mode |
 | `NEXT_PUBLIC_ORCA_URL` | `http://localhost:4400` | Daemon URL for web UI |
 
 ### Runtime config
@@ -272,11 +283,20 @@ Stored in SQLite `settings` table. Managed via `GET/PUT /config` API:
 
 ```json
 {
-  "allowedExecs": ["sonnet", "codex:gpt-5.4"],
+  "allowedExecs": ["sonnet", "codex:gpt-5.4", "ollama/deepseek-v4-flash"],
+  "customModels": [],
+  "hiddenPresets": [],
+  "defaults": { "exec": "sonnet", "autonomy": "L3", "maxSessions": 1 },
   "autopilot": {
-    "model": "mimo-v2.5",
-    "apiUrl": "https://ai.coresynth.io/v1",
+    "model": "gpt-4o-mini",
+    "overseerModel": "",
+    "apiUrl": "https://api.openai.com/v1",
     "apiKey": "sk-..."
+  },
+  "providers": {
+    "claude-code": { "bin": "claude", "args": "" },
+    "opencode": { "bin": "opencode", "args": "" },
+    "codex": { "bin": "codex", "args": "" }
   }
 }
 ```
@@ -290,19 +310,22 @@ SQLite with WAL mode. Schema in `src/store/schema.sql`.
 ### Tables
 
 ```sql
-projects  (id, slug, path)
-tasks     (id, project_id, title, type, status, priority, parent_id, labels, created_at)
+projects  (id, slug, path, notes)
+tasks     (id, project_id, title, type, status, priority, parent_id, labels, description, scheduled_at, autostart, result_summary, outcome, closed_at, created_at)
 task_deps (task_id, depends_on_id)
 agents    (id, project_id, name, program, model, last_active_ts)
 missions  (id, epic_id, autonomy, max_sessions, cleared_guardrails, state, started_at)
 settings  (id, data)  -- JSON blob for runtime config
+users     (id, username, password_hash, created_at)
+auth_tokens (token, user_id, created_at)
+events    (id, ts, type, target, detail)
 ```
 
 DB path defaults to `./orca.db` (configurable via `bootstrap.ts`).
 
 ### Extras
 
-The `activity_log` table records all state changes automatically (via event bus → activity store).  
+The `events` table records all state changes automatically (via event bus → `EventStore`).  
 The `settings` table stores daemon configuration as a JSON blob.  
 The `auth_tokens` table manages active sessions when auth is enabled.
 

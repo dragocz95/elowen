@@ -281,7 +281,7 @@ Uses `@xterm/xterm` with `@xterm/addon-fit`:
 
 Resizable, collapsible sidebar with:
 
-- Navigation groups: **Operate** (Dashboard, Tasks, Kanban, Sessions, Missions) and **Config** (Settings)
+- Navigation groups: **Operate** (Dashboard, Tasks, Kanban, Sessions, Missions, Timeline) and **Config** (Settings, Users, Projects)
 - Daemon health indicator (green/gray dot)
 - Collapse toggle button
 - Resize handle with drag support

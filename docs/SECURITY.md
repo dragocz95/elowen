@@ -89,20 +89,20 @@ Before consulting the LLM, a hardcoded regex checks for clearly destructive oper
 rm -rf | DROP TABLE | DELETE FROM | TRUNCATE |
 migrat | .env | secret | credential | password |
 private_key | force push | git reset --hard |
-git push -f | chmod 777 | curl | sh
+git push -f | chmod 777 | curl | sh | bash
 ```
 
-If matched, the decision is forced to `escalate` regardless of LLM opinion.
+If matched, `destructive` is set to true and the decision is forced to escalate regardless of LLM opinion.
 
 ### LLM fallback
 
 If the LLM is unreachable or returns unparseable output, the decision defaults to:
 
 ```
-{ approve: false, confidence: 0, destructive: true, rationale: 'overseer inference failed' }
+{ approve: false, confidence: 0, destructive: <local-heuristic-result>, rationale: 'overseer inference failed' }
 ```
 
-Fail closed — always escalate when uncertain.
+Fail closed — always escalate when uncertain. A local destructive heuristic (`rm -rf`, `DROP TABLE`, `DELETE FROM`, `TRUNCATE`, migration, `.env`, secrets, credentials, passwords, force push, `git reset --hard`, `chmod 777`, piped `curl | sh`) always takes precedence over the LLM, forcing escalation.
 
 ---
 

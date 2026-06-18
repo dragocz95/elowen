@@ -13,8 +13,9 @@ node dist/cli/index.js <command>
 ## Global options
 
 | Environment | Default | Description |
-|---|---|---|
+|---|---|---|---|
 | `ORCA_URL` | `http://localhost:4400` | Daemon address |
+| `ORCA_TOKEN` | — | API token for authenticated requests |
 | `ORCA_AUTOSTART` | `1` | Auto-start daemon if not running (set `0` to disable) |
 
 ## Commands
@@ -70,6 +71,23 @@ orca sessions
 ```json
 ["orca-SwiftLake0", "orca-CalmRidge1"]
 ```
+
+### `orca close`
+
+Close a task with a result summary and outcome. Used by agents to signal completion.
+
+```bash
+orca close my-project-a1b2c3 --summary "Fixed the login redirect bug" --outcome ok
+orca close my-project-d4e5f6 --summary "Could not reproduce the issue" --outcome fail
+```
+
+Flags:
+| Flag | Description |
+|---|---|
+| `--summary <text>` | Human-readable result description |
+| `--outcome ok|fail` | Outcome of the task |
+
+Calls `PATCH /tasks/:id` with `status: "closed"`, `result_summary`, and `outcome`.
 
 ## Daemon autostart
 

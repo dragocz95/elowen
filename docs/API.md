@@ -236,6 +236,12 @@ GET /tasks
     "priority": "P2",
     "labels": [],
     "parent_id": null,
+    "description": "",
+    "scheduled_at": null,
+    "autostart": 0,
+    "result_summary": null,
+    "outcome": null,
+    "closed_at": null,
     "created_at": "2026-06-17 12:00:00"
   }
 ]
@@ -251,11 +257,16 @@ Content-Type: application/json
   "title": "Add dark mode",
   "type": "task",
   "priority": "P3",
-  "id": "my-project-custom-id"
+  "id": "my-project-custom-id",
+  "description": "Add dark mode support to the app",
+  "scheduled_at": "2026-06-20T10:00:00Z",
+  "autostart": 1,
+  "deps": ["other-task-id"]
 }
 ```
 
-All fields except `title` are optional. If `id` is omitted, one is generated as `<project-slug>-<random-hex>`.
+Only `title` is required. If `id` is omitted, one is generated as `<project-slug>-<random-hex>`.
+`deps` optionally sets task dependencies immediately.
 
 **Response `201`**
 ```json
@@ -272,24 +283,6 @@ All fields except `title` are optional. If `id` is omitted, one is generated as 
 }
 ```
 
-### Get task
-
-```http
-GET /tasks/:id
-```
-
-**Response `200`**
-```json
-{
-  "id": "my-project-a1b2c3d4",
-  "title": "Implement login page",
-  "status": "in_progress",
-  "labels": ["exec:claude-code"]
-}
-```
-
-Returns `null` body with 200 if the task doesn't exist.
-
 ### Update task
 
 ```http
@@ -302,7 +295,11 @@ Content-Type: application/json
 Supports partial updates:
 - `status` — triggers SSE event
 - `exec` — sets executor label (`exec:<program>`)
-- `title`, `type`, `priority` — updates metadata
+- `title`, `type`, `priority`, `description` — updates metadata
+- `scheduled_at` — schedule for future execution
+- `autostart` — auto-launch when scheduled_at arrives (1 or 0)
+- `deps` — replace task dependencies with the given array
+- `result_summary`, `outcome` — set when closing with summary
 
 **Response `200`**
 ```json
@@ -315,7 +312,7 @@ Supports partial updates:
 DELETE /tasks/:id
 ```
 
-Sets status to `cancelled` and publishes SSE event.
+Removes the task and all its dependency rows from the database. Publishes a cancelled SSE event.
 
 **Response `200`**
 ```json
@@ -337,6 +334,34 @@ Returns tasks whose dependencies are all fulfilled. Accepts optional `?limit=N` 
 ]
 ```
 
+### List all dependencies
+
+```http
+GET /tasks/deps
+```
+
+Returns all task dependency edges.
+
+**Response `200`**
+```json
+[
+  { "task_id": "phase-b", "depends_on_id": "phase-a" }
+]
+```
+
+### Get task dependencies
+
+```http
+GET /tasks/:id/deps
+```
+
+Returns dependency IDs for a specific task.
+
+**Response `200`**
+```json
+["dependency-task-id-1", "dependency-task-id-2"]
+```
+
 ### AI plan
 
 ```http
@@ -348,13 +373,16 @@ Content-Type: application/json
   "exec": "sonnet",
   "autonomy": "L3",
   "maxSessions": 1,
-  "engage": true
+  "engage": true,
+  "phases": [],
+  "dryRun": false,
+  "prompt": ""
 }
 ```
 
 Uses the configured autopilot LLM to decompose a goal into ordered implementation phases. Each phase becomes a task, chained sequentially via dependencies. Optionally engages a mission immediately.
 
-Requires autopilot API key to be configured.
+When `phases` is supplied (manual mode), the LLM is bypassed and the supplied phases are used directly. When `dryRun` is true, phases are returned without persisting anything. When `prompt` is set, it overrides the saved autopilot prompt template.
 
 **Response `201`**
 ```json
@@ -376,6 +404,11 @@ Requires autopilot API key to be configured.
 **Error `400`**
 ```json
 { "error": "autopilot_key_missing" }
+```
+
+**Error `502`**
+```json
+{ "error": "plan_parse_failed" }
 ```
 
 ---
@@ -464,14 +497,30 @@ Sends keystrokes to the tmux session (e.g., to approve agent prompts, interrupt 
 ### Capture pane
 
 ```http
-GET /sessions/:name/pane
+GET /sessions/:name/pane?ansi=1
 ```
 
-Returns the last 60 lines of the session's tmux pane.
+Returns the last 60 lines of the session's tmux pane. When `?ansi=1` is set, returns output with ANSI escape codes preserved.
 
 **Response `200`**
 ```json
 { "pane": "> orca ready\n1. Fix header\n2. Add footer\n" }
+```
+
+### Resize terminal
+
+```http
+POST /sessions/:name/resize
+Content-Type: application/json
+
+{ "cols": 120, "rows": 40 }
+```
+
+Resizes the tmux window to the given dimensions (clamped to 20-500 cols, 5-200 rows).
+
+**Response `200`**
+```json
+{ "ok": true }
 ```
 
 ---
@@ -623,10 +672,21 @@ GET /config
 ```json
 {
   "allowedExecs": ["sonnet", "codex:gpt-5.4", "ollama/deepseek-v4-flash"],
+  "customModels": [],
+  "hiddenPresets": [],
+  "defaults": { "exec": "sonnet", "autonomy": "L3", "maxSessions": 1 },
   "autopilot": {
-    "model": "mimo-v2.5",
-    "apiUrl": "https://ai.coresynth.io/v1",
-    "apiKeySet": false
+    "model": "gpt-4o-mini",
+    "overseerModel": "",
+    "apiUrl": "https://api.openai.com/v1",
+    "apiKeySet": false,
+    "notes": "",
+    "prompt": "..."
+  },
+  "providers": {
+    "claude-code": { "bin": "claude", "args": "" },
+    "opencode": { "bin": "opencode", "args": "" },
+    "codex": { "bin": "codex", "args": "" }
   }
 }
 ```
@@ -680,7 +740,7 @@ event: signal
 data: {"type": "signal", "session": "orca-Agent0", "signal": {"type": "working"}}
 ```
 
-Signal types: `working`, `needs_input`, `complete`.
+Signal types: `working`, `needs_input`, `complete` (from the deriver).
 
 ---
 

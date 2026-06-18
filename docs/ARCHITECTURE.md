@@ -37,6 +37,10 @@ The mission engine ticks every 90 seconds:
 - `missionEngine.ts` — tick loop, session counting, task-to-agent dispatch
 - `guardrails.ts` — regex-based detection of sensitive operations
 - `routing.ts` — maps task labels to agent programs (claude-code, opencode, codex)
+- `scheduler.ts` — launches due scheduled tasks (30s poll)
+- `janitor.ts` — sweeps zombie sessions whose task is closed
+- `decision.ts` — LLM-based prompt approval overseer
+- `planner.ts` — AI goal decomposition for `POST /tasks/plan`
 
 ### `src/spawn/` — Agent spawning
 
@@ -58,21 +62,29 @@ The mission engine ticks every 90 seconds:
 SQLite with WAL mode. Tables:
 
 | Table | Purpose |
-|---|---|
+|---|---|---|
 | `projects` | Registered projects |
 | `tasks` | Task queue (tree structure via `parent_id`) |
 | `task_deps` | Task dependencies (DAG) |
 | `agents` | Agent session registry |
 | `missions` | Mission definitions, autonomy level, guardrail config |
+| `settings` | Daemon configuration (JSON blob) |
+| `users` | User accounts (scrypt password hashes) |
+| `auth_tokens` | Session tokens for bearer auth |
+| `events` | Activity event log (state changes, signals) |
 
-### `src/inference/` — LLM relay (reserved)
+### `src/inference/` — LLM relay
 
-- `client.ts` — `RelayClient` for MIMO API, `FakeInference` for tests
-- Not yet wired into the decision loop (see FOLLOWUPS.md)
+- `client.ts` — `RelayClient` for OpenAI-compatible APIs, `FakeInference` for tests
+- Used by the planner (`POST /tasks/plan`) and the deriver's overseer decision hook
+
+### `src/git/` — Git integration
+
+- `gitReader.ts` — reads git status, branches, and recent commits for project paths
 
 ### `src/cli/` — CLI client
 
-Commands: `orca ls`, `orca ready`, `orca sessions`. Auto-detects and starts the daemon if not running.
+Commands: `orca ls`, `orca ready`, `orca sessions`, `orca close`. Auto-detects and starts the daemon if not running.
 
 ### `src/shared/` — Utilities
 

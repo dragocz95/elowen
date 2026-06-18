@@ -40,7 +40,7 @@ ExecStart=/usr/bin/node /opt/orca/dist/daemon/index.js
 Restart=on-failure
 RestartSec=5
 Environment=NODE_ENV=production
-Environment=ORCA_DB_PATH=/opt/orca/data/orca.db
+Environment=ORCA_DB=/opt/orca/data/orca.db
 
 [Install]
 WantedBy=multi-user.target
@@ -135,15 +135,25 @@ SSE requires `proxy_buffering off` and long `proxy_read_timeout`.
 ## Environment variables
 
 | Variable | Default | Description |
-|---|---|---|
+|---|---|---|---|
 | `ORCA_URL` | `http://localhost:4400` | Daemon URL for CLI |
+| `ORCA_TOKEN` | — | API token for CLI requests |
 | `ORCA_AUTOSTART` | `1` | Let CLI auto-start the daemon |
-| `ORCA_DB_PATH` | `./orca.db` | SQLite database path |
+| `ORCA_DB` | `~/.config/orca/orca.db` | SQLite database path |
+| `ORCA_PORT` | `4400` | Daemon HTTP port |
+| `ORCA_PROJECT` | `orca` | Default project slug |
+| `ORCA_PROJECT_PATH` | `cwd` | Default project working directory |
+| `ORCA_RELAY_URL` | — | LLM relay base URL (for autopilot) |
+| `ORCA_RELAY_KEY` | — | LLM relay API key |
+| `ORCA_RELAY_MODEL` | `gpt-4o-mini` | LLM relay model name |
+| `ORCA_BOOTSTRAP_USER` | — | Initial admin username |
+| `ORCA_BOOTSTRAP_PASS` | — | Initial admin password |
+| `ORCA_ALLOW_OPEN` | — | Allow open (no auth) mode when set to `1` |
 | `NEXT_PUBLIC_ORCA_URL` | `http://localhost:4400` | Daemon URL for web UI |
 
 ## Database
 
-SQLite with WAL mode. Default path is `./orca.db` in the working directory.
+SQLite with WAL mode. Default path is `~/.config/orca/orca.db` (configurable via `ORCA_DB`).
 
 ### Backup
 
@@ -187,7 +197,8 @@ docker logs -f orca
 - Check Node.js version: `node --version` (needs ≥22)
 - Check tmux is installed: `tmux -V`
 - Check port 4400 is free: `lsof -i :4400`
-- Check SQLite path is writable
+- Check SQLite path is writable (`ORCA_DB`)
+- Check `ORCA_ALLOW_OPEN=1` is set when running without users
 
 ### Sessions stuck
 
