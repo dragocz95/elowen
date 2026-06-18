@@ -47,7 +47,7 @@ export function SessionsView() {
       {sessions.isLoading ? <LoadingState variant="cards" />
         : sessions.isError ? <ErrorState message={t.common.daemonUnreachable} onRetry={() => sessions.refetch()} />
         : names.length > 0 ? (
-          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
             {names.map((s) => <SessionCard key={s} name={s} compact={compact} onOpenTerminal={() => setOpenTerm(s)} />)}
           </div>
         ) : filter === 'needs_input' && allNames.length > 0

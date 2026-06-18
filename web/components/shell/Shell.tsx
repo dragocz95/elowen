@@ -23,7 +23,7 @@ function ShellLayout({ children }: { children: ReactNode }) {
             </button>
             <img src="/orca-logo.png" alt={t.common.appName} className="h-7 w-auto" />
           </div>
-          <main className="flex-1 overflow-y-auto p-4">{children}</main>
+          <main className="flex-1 overflow-y-auto overflow-x-hidden p-4">{children}</main>
         </div>
       </div>
       <CommandPalette />

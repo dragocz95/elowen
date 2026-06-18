@@ -94,7 +94,7 @@ export function DashboardView() {
       </section>
 
       {/* ── Workspace: recent tasks · missions ───────────────────── */}
-      <div className="grid gap-5 lg:grid-cols-2">
+      <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
         {/* recent tasks */}
         <section className="flex flex-col rounded-lg border border-border bg-surface" style={{ boxShadow: 'var(--shadow-card)' }}>
           <div className="flex items-center justify-between border-b border-border px-4 py-3">

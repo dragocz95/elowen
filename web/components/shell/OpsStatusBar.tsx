@@ -49,16 +49,16 @@ export function OpsStatusBar({ expanded }: { expanded: boolean }) {
       {needsCount > 0 && (
         <Link href="/sessions?filter=needs_input" className="flex items-center gap-2 rounded-md px-2 py-1 text-xs font-medium text-warning transition-colors hover:bg-elevated">
           <TriangleAlert size={13} className="shrink-0" aria-hidden />
-          <span className="truncate">{t.sidebar.needsAttention.replace('{count}', String(needsCount))}</span>
+          <span className="min-w-0 flex-1 truncate">{t.sidebar.needsAttention.replace('{count}', String(needsCount))}</span>
         </Link>
       )}
       <Link href="/sessions" className="flex items-center gap-2 rounded-md px-2 py-1 text-xs text-text-muted transition-colors hover:bg-elevated">
-        {liveDot}<span className="truncate">{t.sidebar.liveAgents.replace('{count}', String(liveCount))}</span>
+        {liveDot}<span className="min-w-0 flex-1 truncate">{t.sidebar.liveAgents.replace('{count}', String(liveCount))}</span>
       </Link>
       {last && (
         <Link href={`/tasks?select=${encodeURIComponent(last.id)}`} title={last.result_summary ?? last.title} className="flex items-center gap-2 rounded-md px-2 py-1 text-xs text-text-muted transition-colors hover:bg-elevated">
           {lastFail ? <XCircle size={13} className="shrink-0 text-error" aria-hidden /> : <CheckCircle2 size={13} className="shrink-0 text-success" aria-hidden />}
-          <span className="truncate">{t.sidebar.lastOutcome.replace('{title}', last.title)}</span>
+          <span className="min-w-0 flex-1 truncate">{t.sidebar.lastOutcome.replace('{title}', last.title)}</span>
         </Link>
       )}
     </div>

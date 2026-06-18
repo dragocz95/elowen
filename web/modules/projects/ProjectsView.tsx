@@ -53,7 +53,7 @@ export function ProjectsView() {
         : projects.isError ? <ErrorState message={t.projects.loadError} onRetry={() => projects.refetch()} />
         : !projects.data || projects.data.length === 0 ? <EmptyState title={t.projects.empty} icon={FolderGit2} action={<Button variant="accent" icon={Plus} onClick={() => setCreating(true)}>{t.projects.newProject}</Button>} />
         : (
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {projects.data.map((p) => {
               const active = selectedId === p.id;
               const status = active && git.data?.isRepo ? git.data.status : null;

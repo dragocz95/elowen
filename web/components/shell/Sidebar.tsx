@@ -70,7 +70,7 @@ export function Sidebar({ mobileOpen = false, onMobileClose }: { mobileOpen?: bo
     <nav
       aria-label={t.common.primaryNav}
       className={mobile
-        ? `fixed inset-y-0 left-0 z-50 flex h-full w-[264px] flex-col border-r border-border bg-surface shadow-2xl transition-transform duration-200 md:hidden ${mobileOpen ? 'translate-x-0' : '-translate-x-full'}`
+        ? `fixed inset-y-0 left-0 z-50 flex h-full w-[264px] flex-col overflow-hidden border-r border-border bg-surface shadow-2xl transition-transform duration-200 md:hidden ${mobileOpen ? 'translate-x-0' : '-translate-x-full'}`
         : 'relative hidden h-full shrink-0 flex-col border-r border-border bg-surface transition-[width] duration-200 md:flex'}
       style={mobile ? { transitionTimingFunction: 'var(--ease-out)' } : { width: expanded ? width : RAIL, transitionTimingFunction: 'var(--ease-out)' }}
     >

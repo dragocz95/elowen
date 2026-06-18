@@ -25,7 +25,7 @@ export function LoadingState({ label, variant = 'list' }: { label?: string; vari
 
   if (variant === 'cards') {
     return (
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3" aria-busy="true" aria-label={t.common.loading}>
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3" aria-busy="true" aria-label={t.common.loading}>
         {[0, 1, 2, 3, 4, 5].map((i) => (
           <div key={i} className="flex flex-col gap-2.5 rounded-lg border border-border bg-surface p-3" style={{ boxShadow: 'var(--shadow-card)' }}>
             <div className="flex items-center gap-2.5">

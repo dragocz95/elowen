@@ -217,7 +217,7 @@ export default function SettingsPage() {
         <div className="min-w-0 flex-1">
         {category === 'models' && (
           <>
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
               {models.map((p) => {
                 const isCustom = !PRESET_EXECS.has(p.exec);
                 return (
@@ -280,7 +280,7 @@ export default function SettingsPage() {
         )}
 
         {category === 'autopilot' && (
-            <div className="grid gap-4 sm:grid-cols-2">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <SettingCard title={t.settings.plannerModel} description={t.settings.plannerModelDesc}>
                 <input value={model} onChange={(e) => setModel(e.target.value)} className={inputClass} placeholder={t.settings.plannerPlaceholder} />
               </SettingCard>
@@ -347,7 +347,7 @@ export default function SettingsPage() {
                         <div className="font-mono text-[11px] text-text-muted">{p.id}</div>
                       </div>
                     </div>
-                    <div className="grid flex-1 gap-3 sm:grid-cols-2">
+                    <div className="grid flex-1 grid-cols-1 gap-3 sm:grid-cols-2">
                       <Field label={t.settings.binary}>
                         <Input value={cur.bin} placeholder={p.binHint} onChange={(e) => set({ bin: e.target.value })} className="font-mono text-xs" />
                       </Field>
@@ -363,7 +363,7 @@ export default function SettingsPage() {
         )}
 
         {category === 'defaults' && (
-            <div className="grid gap-4 sm:grid-cols-2">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <SettingCard title={t.settings.executor} description={t.settings.executorDesc}>
                 <Segmented options={EXEC_PRESETS.map((p) => ({ value: p.exec, label: p.exec }))} value={defExec} onChange={setDefExec} />
               </SettingCard>
