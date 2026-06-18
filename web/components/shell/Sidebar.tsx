@@ -99,7 +99,7 @@ export function Sidebar() {
         )}
       </div>
 
-      {/* Pill handle toggle (pins collapsed/expanded) — no arrow, alex-parts style */}
+      {/* Pill handle toggle (pins collapsed/expanded) */}
       <button
         type="button"
         aria-label={t.common.toggleSidebar}

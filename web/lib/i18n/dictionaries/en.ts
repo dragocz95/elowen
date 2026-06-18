@@ -313,7 +313,7 @@ export const en = {
     modelPlaceholder: 'My Model',
     execPlaceholder: 'provider/model-name',
     plannerPlaceholder: 'claude-opus-4-8',
-    overseerPlaceholder: 'mimo-v2.5 (cheaper)',
+    overseerPlaceholder: 'gpt-4o-mini (cheaper)',
     apiKeyNotSetDesc: 'Stored server-side, never returned',
     apiKeySetPlaceholder: '•••• set',
     apiKeyPlaceholder: 'paste key',
@@ -339,7 +339,7 @@ export const en = {
     commits: 'Commits',
     created: 'Project created',
     slugPlaceholder: 'my-project',
-    pathPlaceholder: '/var/www/my-project',
+    pathPlaceholder: '~/projects/my-app',
   },
   users: {
     loadError: 'Failed to load users',

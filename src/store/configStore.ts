@@ -26,7 +26,7 @@ export const DEFAULT_CONFIG: OrcaConfig = {
   allowedExecs: [...KNOWN_EXECS],
   customModels: [],
   hiddenPresets: [],
-  autopilot: { model: 'mimo-v2.5', overseerModel: '', apiUrl: 'https://ai.coresynth.io/v1', apiKeySet: false, notes: '', prompt: defaultPromptTemplate() },
+  autopilot: { model: 'gpt-4o-mini', overseerModel: '', apiUrl: 'https://api.openai.com/v1', apiKeySet: false, notes: '', prompt: defaultPromptTemplate() },
   providers: { ...DEFAULT_PROVIDERS },
   defaults: { exec: 'sonnet', autonomy: 'L3', maxSessions: 1 },
 };

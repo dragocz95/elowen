@@ -313,7 +313,7 @@ export const cs = {
     modelPlaceholder: 'Můj model',
     execPlaceholder: 'provider/model-name',
     plannerPlaceholder: 'claude-opus-4-8',
-    overseerPlaceholder: 'mimo-v2.5 (levnější)',
+    overseerPlaceholder: 'gpt-4o-mini (levnější)',
     apiKeyNotSetDesc: 'Uloženo na serveru, nikdy není vráceno',
     apiKeySetPlaceholder: '•••• nastaveno',
     apiKeyPlaceholder: 'vložit klíč',
@@ -339,7 +339,7 @@ export const cs = {
     commits: 'Commity',
     created: 'Projekt vytvořen',
     slugPlaceholder: 'muj-projekt',
-    pathPlaceholder: '/var/www/muj-projekt',
+    pathPlaceholder: '~/projects/muj-projekt',
   },
   users: {
     loadError: 'Nepodařilo se načíst uživatele',
