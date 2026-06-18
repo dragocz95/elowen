@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { orcaClient } from './orcaClient';
+import type { DerivedSignal } from './types';
 
 export const QUERY_KEYS = {
   tasks: ['tasks'] as const,
@@ -7,6 +8,13 @@ export const QUERY_KEYS = {
   missions: ['missions'] as const,
   health: ['health'] as const,
   config: ['config'] as const,
+  sessionSignals: ['session-signals'] as const,
+};
+
+/** Latest derived signal per session, populated by the SSE stream (see useOrcaEvents). */
+export const useSessionSignal = (name: string): DerivedSignal | undefined => {
+  const { data } = useQuery<Record<string, DerivedSignal>>({ queryKey: QUERY_KEYS.sessionSignals, queryFn: () => ({}), staleTime: Infinity, initialData: {} });
+  return data[name];
 };
 
 export const useTasks = () =>

@@ -1,7 +1,7 @@
 'use client';
 import { TerminalSquare, SquareSlash, Power, SquareTerminal } from 'lucide-react';
 import { useKillSession, useSendInput } from '../../lib/mutations';
-import { useTasks } from '../../lib/queries';
+import { useTasks, useSessionSignal } from '../../lib/queries';
 import { taskTypeMeta } from '../tasks/taskMeta';
 import { IconButton } from '../../components/ui/IconButton';
 import { ActionMenu } from '../../components/ui/ActionMenu';
@@ -15,18 +15,22 @@ export function SessionCard({ name, onOpenTerminal }: { name: string; onOpenTerm
   const { toast } = useToast();
   const { tail, isLoading } = useSessionPane(name);
   const tasks = useTasks();
+  const signal = useSessionSignal(name);
 
   // Map session → its task via the agent:<name> label so we can show the task's type icon.
   const agent = name.startsWith('orca-') ? name.slice('orca-'.length) : null;
   const task = agent ? tasks.data?.find((t) => (t.labels ?? []).includes(`agent:${agent}`)) : undefined;
   const Icon = task ? taskTypeMeta(task.type).icon : SquareTerminal;
+  const needsInput = signal?.type === 'needs_input';
+  const dot = needsInput ? '#f59e0b' : '#10b981';
 
   return (
-    <div className="card-interactive flex flex-col gap-3 rounded-lg border border-border bg-surface p-4">
+    <div className={`card-interactive flex flex-col gap-3 rounded-lg border bg-surface p-4 ${needsInput ? 'border-[#f59e0b]/60' : 'border-border'}`}>
       <div className="flex items-center gap-2">
         <Icon size={15} className="shrink-0 text-text-muted" aria-hidden />
         <span className="min-w-0 flex-1 truncate font-mono text-xs text-text" title={task?.title}>{name}</span>
-        <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: '#10b981' }} aria-label="online" title="online" />
+        {needsInput ? <span className="shrink-0 rounded-full border border-[#f59e0b]/40 bg-[#f59e0b]/10 px-1.5 py-0.5 text-[10px] font-medium text-[#f59e0b]" title={signal?.type === 'needs_input' ? signal.question : ''}>needs input</span> : null}
+        <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: dot }} aria-label={needsInput ? 'needs input' : 'online'} title={needsInput ? 'needs input' : 'online'} />
       </div>
       <pre className="h-32 overflow-hidden whitespace-pre-wrap break-all rounded-md border border-border bg-bg p-2 font-mono text-[11px] leading-snug text-text-muted">
         {isLoading ? 'loading…' : (tail || '— no output —')}

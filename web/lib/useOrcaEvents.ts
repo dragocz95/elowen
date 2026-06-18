@@ -4,6 +4,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { QUERY_KEYS } from './queries';
 import { BASE } from './orcaClient';
 import { withToken } from './token';
+import type { DerivedSignal } from './types';
 
 export function useOrcaEvents(): void {
   const qc = useQueryClient();
@@ -21,7 +22,15 @@ export function useOrcaEvents(): void {
 
     const taskHandler = makeHandler(() => { qc.invalidateQueries({ queryKey: QUERY_KEYS.tasks }); qc.invalidateQueries({ queryKey: ['mission'] }); qc.invalidateQueries({ queryKey: ['activity'] }); });
     const missionHandler = makeHandler(() => { qc.invalidateQueries({ queryKey: QUERY_KEYS.missions }); qc.invalidateQueries({ queryKey: ['mission'] }); qc.invalidateQueries({ queryKey: ['activity'] }); });
-    const signalHandler = makeHandler(() => { qc.invalidateQueries({ queryKey: QUERY_KEYS.sessions }); qc.invalidateQueries({ queryKey: ['activity'] }); });
+    const signalHandler = (e: MessageEvent) => {
+      let data: { session?: string; signal?: DerivedSignal };
+      try { data = JSON.parse(e.data); } catch { return; } // skip malformed, keep the stream alive
+      if (data.session && data.signal) {
+        qc.setQueryData<Record<string, DerivedSignal>>(QUERY_KEYS.sessionSignals, (prev) => ({ ...(prev ?? {}), [data.session!]: data.signal! }));
+      }
+      qc.invalidateQueries({ queryKey: QUERY_KEYS.sessions });
+      qc.invalidateQueries({ queryKey: ['activity'] });
+    };
 
     es.addEventListener('task', taskHandler);
     es.addEventListener('mission', missionHandler);
