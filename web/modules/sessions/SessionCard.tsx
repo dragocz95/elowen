@@ -29,7 +29,7 @@ export function SessionCard({ name, onOpenTerminal, compact = false }: { name: s
   const exec = taskExec(task?.labels);
   const TypeIcon = task ? taskTypeMeta(task.type).icon : SquareTerminal;
   const needsInput = signal?.type === 'needs_input';
-  const dot = needsInput ? '#f59e0b' : '#10b981';
+  const dot = needsInput ? 'var(--color-warning)' : 'var(--color-approve)';
 
   // Flash the tail's bottom edge whenever fresh output streams in.
   const [flash, setFlash] = useState(false);
@@ -44,7 +44,7 @@ export function SessionCard({ name, onOpenTerminal, compact = false }: { name: s
   }, [tail]);
 
   return (
-    <div className={`card-interactive flex flex-col gap-3 rounded-lg border bg-surface ${compact ? 'p-3' : 'p-4'} ${needsInput ? 'border-[#f59e0b]/60' : 'border-border'}`}>
+    <div className={`card-interactive flex flex-col gap-3 rounded-lg border bg-surface ${compact ? 'p-3' : 'p-4'} ${needsInput ? 'border-warning/60' : 'border-border'}`}>
       <div className="flex items-center gap-2.5">
         <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-border bg-elevated">
           {exec ? <ModelIcon name={exec} size={20} /> : <TypeIcon size={18} className="text-text-muted" aria-hidden />}
@@ -53,8 +53,8 @@ export function SessionCard({ name, onOpenTerminal, compact = false }: { name: s
           <span className="truncate font-mono text-xs text-text" title={task?.title}>{name}</span>
           {task ? <span className="truncate text-[11px] text-text-muted">{task.title}</span> : null}
         </div>
-        {needsInput ? <span className="shrink-0 rounded-full border border-[#f59e0b]/40 bg-[#f59e0b]/10 px-1.5 py-0.5 text-[10px] font-medium text-[#f59e0b]" title={signal?.type === 'needs_input' ? signal.question : ''}>{t.sessions.needsInput}</span> : null}
-        <span className="live-dot h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: dot, ['--live-ring' as string]: needsInput ? 'rgba(245,158,11,0.5)' : 'rgba(16,185,129,0.5)' }} aria-label={needsInput ? t.sessions.needsInput : t.sessions.online} title={needsInput ? t.sessions.needsInput : t.sessions.online} />
+        {needsInput ? <span className="shrink-0 rounded-full border border-warning/40 bg-warning/10 px-1.5 py-0.5 text-tiny font-medium text-warning" title={signal?.type === 'needs_input' ? signal.question : ''}>{t.sessions.needsInput}</span> : null}
+        <span className="live-dot h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: dot, ['--live-ring' as string]: needsInput ? 'color-mix(in srgb, var(--color-warning) 50%, transparent)' : 'color-mix(in srgb, var(--color-approve) 50%, transparent)' }} aria-label={needsInput ? t.sessions.needsInput : t.sessions.online} title={needsInput ? t.sessions.needsInput : t.sessions.online} />
       </div>
       <pre data-flash={flash ? 'true' : undefined} className={`tail-live ${compact ? 'h-16' : 'h-32'} overflow-hidden whitespace-pre-wrap break-all rounded-md border border-border bg-bg p-2 font-mono text-[11px] leading-snug text-text-muted`}>
         {isLoading ? t.sessions.loading : tail
@@ -62,10 +62,10 @@ export function SessionCard({ name, onOpenTerminal, compact = false }: { name: s
           : t.sessions.noOutput}
       </pre>
       {needsInput && signal?.type === 'needs_input' && (
-        <div className="flex flex-col gap-2 rounded-md border border-[#f59e0b]/40 bg-[#f59e0b]/10 p-2.5">
+        <div className="flex flex-col gap-2 rounded-md border border-warning/40 bg-warning/10 p-2.5">
           <p className="text-xs text-text">{signal.question}</p>
           <div className="flex items-center gap-1.5">
-            <button type="button" onClick={() => send.mutate({ name, keys: ['Enter'] }, { onSuccess: () => toast(t.sessions.approved.replace('{name}', name)), onError: (e) => toast(String(e), 'error') })} className="rounded-md border border-[#10b981]/50 bg-[#10b981]/10 px-2.5 py-1 text-xs font-medium text-[#10b981] transition-colors hover:bg-[#10b981] hover:text-white active:scale-95">{t.sessions.allow}</button>
+            <button type="button" onClick={() => send.mutate({ name, keys: ['Enter'] }, { onSuccess: () => toast(t.sessions.approved.replace('{name}', name)), onError: (e) => toast(String(e), 'error') })} className="rounded-md border border-approve/50 bg-approve/10 px-2.5 py-1 text-xs font-medium text-approve transition-colors hover:bg-approve hover:text-white active:scale-95">{t.sessions.allow}</button>
             <button type="button" onClick={() => send.mutate({ name, keys: ['Escape'] }, { onSuccess: () => toast(t.sessions.rejected.replace('{name}', name)), onError: (e) => toast(String(e), 'error') })} className="rounded-md border border-danger/50 bg-danger/10 px-2.5 py-1 text-xs font-medium text-danger transition-colors hover:bg-danger hover:text-white active:scale-95">{t.sessions.reject}</button>
           </div>
         </div>

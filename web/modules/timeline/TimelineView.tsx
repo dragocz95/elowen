@@ -31,8 +31,8 @@ const DOT_TONE: Record<Tone, string> = {
   danger: 'bg-danger',
   muted: 'bg-text-muted',
   default: 'bg-text-muted',
-  success: 'bg-[#22c55e]',
-  warning: 'bg-[#f59e0b]',
+  success: 'bg-success',
+  warning: 'bg-warning',
 };
 
 /** "12:05" style UTC clock label. */
@@ -100,7 +100,7 @@ function TimelineTrack({ points, ticks }: { points: AxisPoint[]; ticks: { label:
         <div className="absolute inset-x-0 top-1/2 h-px -translate-y-1/2 bg-border" aria-hidden />
         {/* "Now" edge with a live pulse */}
         <div className="absolute inset-y-0 right-0 w-px bg-accent/40" aria-hidden>
-          <span className="live-dot absolute -top-0.5 left-1/2 h-1.5 w-1.5 -translate-x-1/2 rounded-full bg-accent" style={{ ['--live-ring' as string]: 'rgba(59,130,246,0.5)' }} />
+          <span className="live-dot absolute -top-0.5 left-1/2 h-1.5 w-1.5 -translate-x-1/2 rounded-full bg-accent" style={{ ['--live-ring' as string]: 'color-mix(in srgb, var(--color-info) 50%, transparent)' }} />
         </div>
         {/* Markers */}
         {points.map((p) => (
@@ -157,7 +157,7 @@ function FeedGroup({ target, title, events, exec, open, onToggle }: { target: st
         </div>
         <div className="flex shrink-0 items-center gap-2">
           <Badge tone={detailTone(latest.detail)}>{latest.detail}</Badge>
-          {exec ? <span className="inline-flex items-center gap-1 rounded-md border border-border bg-elevated px-1.5 py-0.5 font-mono text-[10px] text-text-muted"><ModelIcon name={exec} size={11} />{execModel(exec)}</span> : null}
+          {exec ? <span className="inline-flex items-center gap-1 rounded-md border border-border bg-elevated px-1.5 py-0.5 font-mono text-tiny text-text-muted"><ModelIcon name={exec} size={11} />{execModel(exec)}</span> : null}
         </div>
         <ChevronDown size={15} className={`absolute right-3 top-2.5 text-text-muted transition-transform ${open ? 'rotate-180' : ''}`} aria-hidden />
         <span className="absolute bottom-2.5 right-3 font-mono text-text-muted" style={{ fontSize: 'var(--text-caption)' }}>{clock(latest.timestamp)}</span>
@@ -198,7 +198,7 @@ function LiveFeedGroup({ target, title, exec, ts, open, onToggle }: { target: st
         </div>
         <div className="flex shrink-0 items-center gap-2">
           <Badge tone="warning">working</Badge>
-          {exec ? <span className="inline-flex items-center gap-1 rounded-md border border-border bg-elevated px-1.5 py-0.5 font-mono text-[10px] text-text-muted"><ModelIcon name={exec} size={11} />{execModel(exec)}</span> : null}
+          {exec ? <span className="inline-flex items-center gap-1 rounded-md border border-border bg-elevated px-1.5 py-0.5 font-mono text-tiny text-text-muted"><ModelIcon name={exec} size={11} />{execModel(exec)}</span> : null}
         </div>
         <ChevronDown size={15} className={`absolute right-3 top-2.5 text-text-muted transition-transform ${open ? 'rotate-180' : ''}`} aria-hidden />
         <span className="absolute bottom-2.5 right-3 font-mono text-text-muted" style={{ fontSize: 'var(--text-caption)' }}>{clock(ts)}</span>

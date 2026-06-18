@@ -12,11 +12,11 @@ import { groupByStatus } from './groupByStatus';
 import { useTranslation } from '../../lib/i18n';
 
 const COLUMNS: { status: TaskStatus; labelKey: string; icon: LucideIcon; color: string }[] = [
-  { status: 'open', labelKey: 'columnOpen', icon: Circle, color: '#22c55e' },
-  { status: 'in_progress', labelKey: 'columnInProgress', icon: LoaderCircle, color: '#f59e0b' },
-  { status: 'blocked', labelKey: 'columnBlocked', icon: Ban, color: '#ef4444' },
-  { status: 'closed', labelKey: 'columnClosed', icon: CheckCircle2, color: '#ef4444' },
-  { status: 'cancelled', labelKey: 'columnCancelled', icon: XCircle, color: '#6b7280' },
+  { status: 'open', labelKey: 'columnOpen', icon: Circle, color: 'var(--color-success)' },
+  { status: 'in_progress', labelKey: 'columnInProgress', icon: LoaderCircle, color: 'var(--color-warning)' },
+  { status: 'blocked', labelKey: 'columnBlocked', icon: Ban, color: 'var(--color-error)' },
+  { status: 'closed', labelKey: 'columnClosed', icon: CheckCircle2, color: 'var(--color-error)' },
+  { status: 'cancelled', labelKey: 'columnCancelled', icon: XCircle, color: 'var(--color-cancelled)' },
 ];
 
 export function KanbanBoard({ tasks, onMove, onSelect, blockedIds }: { tasks: Task[]; onMove: (taskId: string, status: TaskStatus) => void; onSelect?: (t: Task) => void; blockedIds?: Set<string> }) {
@@ -69,7 +69,7 @@ export function KanbanBoard({ tasks, onMove, onSelect, blockedIds }: { tasks: Ta
                 <div className="flex min-w-0 flex-1 flex-col gap-1.5">
                   <div className="flex items-start gap-2">
                     <span className="min-w-0 text-sm text-text">{task.title}</span>
-                    {blocked ? <span className="live-dot ml-auto shrink-0 text-danger" style={{ ['--live-ring' as string]: 'rgba(239,68,68,0.5)' }} title={t.kanban.blockedDeps}><Link2 size={13} aria-hidden /></span> : null}
+                    {blocked ? <span className="live-dot ml-auto shrink-0 text-danger" style={{ ['--live-ring' as string]: 'color-mix(in srgb, var(--color-error) 50%, transparent)' }} title={t.kanban.blockedDeps}><Link2 size={13} aria-hidden /></span> : null}
                   </div>
                   {task.description?.trim() ? <span className="truncate text-[11px] text-text-muted">{task.description.trim()}</span> : null}
                   <div className="flex items-center justify-between gap-2">

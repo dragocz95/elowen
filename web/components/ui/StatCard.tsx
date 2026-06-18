@@ -7,8 +7,8 @@ const VALUE_TONE: Record<Tone, string> = {
   accent: 'text-accent',
   muted: 'text-text-muted',
   danger: 'text-danger',
-  success: 'text-[#22c55e]',
-  warning: 'text-[#f59e0b]',
+  success: 'text-success',
+  warning: 'text-warning',
 };
 
 export function StatCard({ label, value, hint, tone = 'default' }: { label: string; value: string | number; hint?: string; tone?: Tone }) {

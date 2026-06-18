@@ -120,7 +120,7 @@ export function TasksView() {
                 <div className="flex items-center gap-3">
                   <span className="text-[11px] font-semibold uppercase tracking-wider text-text-muted">{g.label}</span>
                   <span className="h-px flex-1 bg-border" />
-                  <span className="font-mono text-[10px] text-text-muted">{g.items.length}</span>
+                  <span className="font-mono text-tiny text-text-muted">{g.items.length}</span>
                 </div>
                 <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                   {g.items.map((task) => <TaskCard key={task.id} task={task} onEdit={setEditing} selected={selected.has(task.id)} onToggleSelect={toggleSelect} selecting={selected.size > 0} />)}

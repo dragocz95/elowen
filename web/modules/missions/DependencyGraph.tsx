@@ -5,7 +5,7 @@ import { taskTypeMeta } from '../tasks/taskMeta';
 
 const COL_W = 230, ROW_H = 78, NODE_W = 188, NODE_H = 54, PAD = 14;
 const STATUS_COLOR: Record<string, string> = {
-  closed: '#22c55e', in_progress: '#3b82f6', blocked: '#ef4444', cancelled: '#6b7280', open: '#6b7280',
+  closed: 'var(--color-success)', in_progress: 'var(--color-info)', blocked: 'var(--color-error)', cancelled: 'var(--color-cancelled)', open: 'var(--color-cancelled)',
 };
 const isTerminal = (s: string) => s === 'closed' || s === 'cancelled';
 
@@ -52,7 +52,7 @@ export function DependencyGraph({ tasks, deps, onSelect }: { tasks: MissionTask[
               style={{ animationDelay: `${Math.min(i, 10) * 40}ms` }}
               d={`M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}`}
               fill="none"
-              stroke={done ? '#22c55e' : 'var(--color-border-strong)'}
+              stroke={done ? 'var(--color-success)' : 'var(--color-border-strong)'}
               strokeWidth={done ? 1.6 : 1.2}
               opacity={done ? 0.8 : 0.55}
             />
@@ -62,12 +62,12 @@ export function DependencyGraph({ tasks, deps, onSelect }: { tasks: MissionTask[
         {tasks.map((t, ni) => {
           const p = pos.get(t.id);
           if (!p) return null;
-          const c = STATUS_COLOR[t.status] ?? '#6b7280';
+          const c = STATUS_COLOR[t.status] ?? 'var(--color-cancelled)';
           const dim = locked(t);
           const running = t.status === 'in_progress';
           const isReady = ready(t);
           const Icon = taskTypeMeta(t.type).icon;
-          const border = running ? '#3b82f6' : isReady ? '#3b82f6' : 'var(--color-border)';
+          const border = running ? 'var(--color-info)' : isReady ? 'var(--color-info)' : 'var(--color-border)';
           return (
             <foreignObject key={t.id} x={p.x} y={p.y} width={NODE_W} height={NODE_H}>
               <div
@@ -76,11 +76,11 @@ export function DependencyGraph({ tasks, deps, onSelect }: { tasks: MissionTask[
                 style={{ borderColor: border, borderWidth: running || isReady ? 1.5 : 1, opacity: dim ? 0.55 : 1, animationDelay: `${Math.min(ni, 10) * 40}ms` }}
                 title={t.title}
               >
-                <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${running ? 'live-dot' : ''}`} style={{ backgroundColor: c, ['--live-ring' as string]: 'rgba(59,130,246,0.5)' }} aria-hidden />
+                <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${running ? 'live-dot' : ''}`} style={{ backgroundColor: c, ['--live-ring' as string]: 'color-mix(in srgb, var(--color-info) 50%, transparent)' }} aria-hidden />
                 <Icon size={13} className="shrink-0 text-text-muted" aria-hidden />
                 <div className="min-w-0 flex-1">
                   <div className="truncate text-[12px] leading-tight text-text">{t.title}</div>
-                  <div className="text-[10px] capitalize text-text-muted">{isReady ? 'ready' : t.status.replace('_', ' ')}</div>
+                  <div className="text-tiny capitalize text-text-muted">{isReady ? 'ready' : t.status.replace('_', ' ')}</div>
                 </div>
               </div>
             </foreignObject>

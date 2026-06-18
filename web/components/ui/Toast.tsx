@@ -59,7 +59,7 @@ function ToastCard({ item, meta, dismissLabel, onDismiss }: { item: ToastItem; m
 export function ToastProvider({ children }: { children: ReactNode }) {
   const { t } = useTranslation();
   const TONE: Record<Tone, { Icon: LucideIcon; color: string; title: string }> = {
-    ok: { Icon: CheckCircle2, color: '#22c55e', title: t.common.success },
+    ok: { Icon: CheckCircle2, color: 'var(--color-success)', title: t.common.success },
     error: { Icon: AlertCircle, color: 'var(--color-danger)', title: t.common.error },
   };
   const [items, setItems] = useState<ToastItem[]>([]);
@@ -71,7 +71,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   return (
     <Ctx.Provider value={{ toast }}>
       {children}
-      <div className="pointer-events-none fixed bottom-5 right-5 z-[60] flex w-[22rem] max-w-[calc(100vw-2.5rem)] flex-col gap-2.5">
+      <div className="pointer-events-none fixed bottom-5 right-5 z-50 flex w-[22rem] max-w-[calc(100vw-2.5rem)] flex-col gap-2.5">
         {items.map((item) => (
           <ToastCard key={item.id} item={item} meta={TONE[item.tone]} dismissLabel={t.common.dismiss} onDismiss={() => dismiss(item.id)} />
         ))}

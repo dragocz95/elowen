@@ -249,7 +249,7 @@ export default function SettingsPage() {
                         <ModelIcon name={p.exec} size={20} />
                       </span>
                       <div className="flex min-w-0 flex-col gap-1">
-                        <span className="truncate text-sm font-medium text-text">{p.label}{!isCustom ? <span className="ml-1.5 text-[10px] uppercase tracking-wide text-text-muted/70">{t.settings.presetTag}</span> : null}</span>
+                        <span className="truncate text-sm font-medium text-text">{p.label}{!isCustom ? <span className="ml-1.5 text-tiny uppercase tracking-wide text-text-muted/70">{t.settings.presetTag}</span> : null}</span>
                         <span className="truncate font-mono text-xs text-text-muted">{execModel(p.exec)}</span>
                       </div>
                     </div>
@@ -317,8 +317,8 @@ export default function SettingsPage() {
                           <div className="min-w-0 flex-1">
                             <div className="flex items-center gap-2">
                               <span className="truncate text-text">{p.title}</span>
-                              <span className="shrink-0 rounded border border-border px-1 text-[10px] uppercase text-text-muted">{p.type}</span>
-                              {p.agent ? <span className="shrink-0 rounded-md border border-accent/40 bg-accent/10 px-1.5 text-[10px] text-accent">{p.agent}</span> : null}
+                              <span className="shrink-0 rounded border border-border px-1 text-tiny uppercase text-text-muted">{p.type}</span>
+                              {p.agent ? <span className="shrink-0 rounded-md border border-accent/40 bg-accent/10 px-1.5 text-tiny text-accent">{p.agent}</span> : null}
                             </div>
                             {p.details ? <p className="mt-0.5 truncate text-xs text-text-muted">{p.details}</p> : null}
                           </div>

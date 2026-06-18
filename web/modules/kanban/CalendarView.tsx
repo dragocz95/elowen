@@ -24,7 +24,7 @@ function TaskChip({ task, onSelect, locale, draggable }: { task: Task; onSelect:
       title={task.title}
     >
       <Icon size={12} className="shrink-0 text-text-muted" aria-hidden />
-      <span className="font-mono text-[10px] text-text-muted">{fmtTime(taskCalDate(task), locale)}</span>
+      <span className="font-mono text-tiny text-text-muted">{fmtTime(taskCalDate(task), locale)}</span>
       <span className="min-w-0 flex-1 truncate text-[11px] text-text">{task.title}</span>
     </button>
   );
@@ -126,7 +126,7 @@ export function CalendarView({ tasks, onSelect, onCreateDay, onReschedule }: { t
                   </div>
                   <div className="flex flex-col gap-1">
                     {list.slice(0, 3).map((t) => <TaskChip key={t.id} task={t} onSelect={onSelect} locale={locale} draggable={!!onReschedule} />)}
-                    {list.length > 3 ? <span className="px-1 text-[10px] text-text-muted">{t.calendar.nMore.replace('{count}', String(list.length - 3))}</span> : null}
+                    {list.length > 3 ? <span className="px-1 text-tiny text-text-muted">{t.calendar.nMore.replace('{count}', String(list.length - 3))}</span> : null}
                   </div>
                 </div>
               );

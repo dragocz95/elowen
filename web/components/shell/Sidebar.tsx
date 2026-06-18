@@ -11,9 +11,9 @@ import { NavGroup } from './NavGroup';
 
 const RAIL = 56;
 const DAEMON_STATUS = {
-  ready: { color: '#22c55e', ring: 'rgba(34,197,94,0.5)' },
-  busy: { color: '#f59e0b', ring: 'rgba(245,158,11,0.5)' },
-  fail: { color: '#ef4444', ring: 'rgba(239,68,68,0.5)' },
+  ready: { color: 'var(--color-success)', ring: 'color-mix(in srgb, var(--color-success) 50%, transparent)' },
+  busy: { color: 'var(--color-warning)', ring: 'color-mix(in srgb, var(--color-warning) 50%, transparent)' },
+  fail: { color: 'var(--color-error)', ring: 'color-mix(in srgb, var(--color-error) 50%, transparent)' },
 } as const;
 
 export function Sidebar() {
@@ -90,7 +90,7 @@ export function Sidebar() {
 
       {expanded && nextReady && (
         <Link href="/tasks" className="border-t border-border px-4 py-2.5 transition-colors hover:bg-elevated" title={nextReady.title}>
-          <div className="text-[10px] font-medium uppercase tracking-wide text-text-muted">{t.common.nextReady}</div>
+          <div className="text-tiny font-medium uppercase tracking-wide text-text-muted">{t.common.nextReady}</div>
           <div className="mt-0.5 truncate text-xs text-text">{nextReady.title}</div>
         </Link>
       )}
@@ -105,8 +105,8 @@ export function Sidebar() {
         </span>
         {expanded && (
           <div className="flex min-w-0 flex-col leading-tight">
-            <span className="font-mono text-[10px] uppercase tracking-wide text-text-muted">{t.common.daemon}</span>
-            <span className="text-[10px] font-medium" style={{ color: DAEMON_STATUS[status].color }}>
+            <span className="font-mono text-tiny uppercase tracking-wide text-text-muted">{t.common.daemon}</span>
+            <span className="text-tiny font-medium" style={{ color: DAEMON_STATUS[status].color }}>
               {status === 'fail' ? t.common.daemonOffline : status === 'busy' ? t.common.daemonBusy : t.common.daemonReady}
             </span>
           </div>
@@ -115,7 +115,7 @@ export function Sidebar() {
           <button
             type="button"
             onClick={() => setLocale(locale === 'en' ? 'cs' : 'en')}
-            className="ml-auto flex items-center gap-1 rounded-md border border-border px-2 py-1 text-[10px] font-mono uppercase tracking-wide text-text-muted transition-colors hover:border-border-strong hover:text-text"
+            className="ml-auto flex items-center gap-1 rounded-md border border-border px-2 py-1 text-tiny font-mono uppercase tracking-wide text-text-muted transition-colors hover:border-border-strong hover:text-text"
             aria-label={t.common.switchLang}
           >
             <Languages size={12} aria-hidden />

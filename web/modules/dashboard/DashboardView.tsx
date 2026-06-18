@@ -21,7 +21,7 @@ function LiveLane({ name, task }: { name: string; task?: Task }) {
   const line = parseAnsi(tail).map((s) => s.text).join('').split('\n').map((l) => l.trim()).filter(Boolean).pop() ?? '…';
   return (
     <Link href="/sessions" className="flex items-center gap-2.5 rounded-md border border-border bg-bg px-3 py-2 transition-colors hover:border-border-strong">
-      <span className="live-dot h-2 w-2 shrink-0 rounded-full bg-accent" style={{ ['--live-ring' as string]: 'rgba(59,130,246,0.5)' }} aria-hidden />
+      <span className="live-dot h-2 w-2 shrink-0 rounded-full bg-accent" style={{ ['--live-ring' as string]: 'color-mix(in srgb, var(--color-info) 50%, transparent)' }} aria-hidden />
       <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md border border-border bg-elevated">
         {exec ? <ModelIcon name={exec} size={13} /> : <Radio size={12} className="text-text-muted" aria-hidden />}
       </span>

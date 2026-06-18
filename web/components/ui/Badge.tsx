@@ -6,8 +6,8 @@ const TONES: Record<Tone, string> = {
   accent: 'border-accent/40 bg-accent/10 text-accent',
   muted: 'border-border bg-elevated text-text-muted',
   danger: 'border-danger/40 bg-danger/10 text-danger',
-  success: 'border-[#22c55e]/40 bg-[#22c55e]/10 text-[#22c55e]',
-  warning: 'border-[#f59e0b]/40 bg-[#f59e0b]/10 text-[#f59e0b]',
+  success: 'border-success/40 bg-success/10 text-success',
+  warning: 'border-warning/40 bg-warning/10 text-warning',
 };
 
 export function Badge({ children, tone = 'default' }: { children: ReactNode; tone?: Tone }) {

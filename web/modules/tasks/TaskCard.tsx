@@ -111,9 +111,9 @@ export function TaskCard({ task, onEdit, selected = false, onToggleSelect, selec
           <div className="rounded-md border border-border bg-bg/60 p-2">
             <div className="mb-1 flex items-center gap-1.5">
               {task.outcome === 'fail'
-                ? <XCircle size={12} className="text-[#ef4444]" aria-hidden />
-                : <CheckCircle2 size={12} className="text-[#22c55e]" aria-hidden />}
-              <span className={`text-[10px] font-semibold uppercase tracking-wide ${task.outcome === 'fail' ? 'text-[#ef4444]' : 'text-[#22c55e]'}`}>
+                ? <XCircle size={12} className="text-error" aria-hidden />
+                : <CheckCircle2 size={12} className="text-success" aria-hidden />}
+              <span className={`text-tiny font-semibold uppercase tracking-wide ${task.outcome === 'fail' ? 'text-error' : 'text-success'}`}>
                 {task.outcome === 'fail' ? t.tasks.outcomeFail : t.tasks.outcomeOk}
               </span>
             </div>

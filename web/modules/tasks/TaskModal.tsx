@@ -205,7 +205,7 @@ export function TaskModal({ task, onClose, initialSchedule }: { task?: Task; onC
               </Field>
             </div>
             {scheduleConflict && (
-              <p className="-mt-2 flex items-center gap-1.5 text-xs text-[#f59e0b]">
+              <p className="-mt-2 flex items-center gap-1.5 text-xs text-warning">
                 <AlertTriangle size={13} aria-hidden />
                 {t.tasks.scheduleConflict.replace('{title}', scheduleConflict.title)}
               </p>
