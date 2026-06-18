@@ -1,6 +1,6 @@
 'use client';
 import { useEffect, useState } from 'react';
-import { Play, Sparkles, ListChecks, Plus, X } from 'lucide-react';
+import { Play, Sparkles, ListChecks, Plus, X, AlertTriangle } from 'lucide-react';
 import type { Task, PlanResult } from '../../lib/types';
 import { useConfig, useTasks } from '../../lib/queries';
 import { useCreateTask, useUpdateTask, useSpawn, useSetTaskExec, usePlanTask } from '../../lib/mutations';
@@ -67,6 +67,14 @@ export function TaskModal({ task, onClose }: { task?: Task; onClose: () => void 
     return () => { alive = false; };
   }, [task]);
   const toggleDep = (id: string) => setDeps((cur) => cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]);
+
+  // Warn when another task is scheduled within ~10 minutes of this one.
+  const scheduleConflict = (() => {
+    const iso = localInputToIso(schedule);
+    if (!iso) return undefined;
+    const ts = new Date(iso).getTime();
+    return (allTasks.data ?? []).find((t) => t.id !== task?.id && t.scheduled_at && Math.abs(new Date(t.scheduled_at).getTime() - ts) < 10 * 60 * 1000);
+  })();
 
   // Planning fields
   const [goal, setGoal] = useState('');
@@ -184,6 +192,12 @@ export function TaskModal({ task, onClose }: { task?: Task; onClose: () => void 
                 <Input type="datetime-local" value={schedule} onChange={(e) => setSchedule(e.target.value)} />
               </Field>
             </div>
+            {scheduleConflict && (
+              <p className="-mt-2 flex items-center gap-1.5 text-xs text-[#f59e0b]">
+                <AlertTriangle size={13} aria-hidden />
+                Close to <span className="font-medium text-text">{scheduleConflict.title}</span> — both launch within ~10 min, expect heavier load.
+              </p>
+            )}
             {depCandidates.length > 0 && (
               <Field label="Depends on" hint="This task waits until the selected tasks are closed.">
                 <div className="max-h-32 overflow-y-auto rounded-md border border-border bg-surface p-1">
