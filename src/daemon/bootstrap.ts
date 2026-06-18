@@ -6,6 +6,7 @@ import { MissionStore } from '../store/missionStore.js';
 import { SpawnService } from '../spawn/spawn.js';
 import { MissionEngine } from '../overseer/missionEngine.js';
 import { Scheduler } from '../overseer/scheduler.js';
+import { sweepFinishedSessions } from '../overseer/janitor.js';
 import { decidePrompt, isDestructive } from '../overseer/decision.js';
 import { RelayClient } from '../inference/client.js';
 import { Deriver } from '../deriver/deriver.js';
@@ -101,7 +102,9 @@ export function buildApp(opts: BuildOpts) {
     const stopDeriver = deriver.start();
     const stopOverseer = clock.setInterval(() => { for (const m of missions.active()) void engine.tick(m.id); }, 90000);
     const stopScheduler = clock.setInterval(() => { void scheduler.tick(); }, 30000);
-    return () => { stopDeriver(); stopOverseer(); stopScheduler(); };
+    // Janitor: reap finished agents' zombie tmux sessions.
+    const stopJanitor = clock.setInterval(() => { void sweepFinishedSessions({ tmux, taskForSession }); }, 60000);
+    return () => { stopDeriver(); stopOverseer(); stopScheduler(); stopJanitor(); };
   };
   return { app, startLoops };
 }
