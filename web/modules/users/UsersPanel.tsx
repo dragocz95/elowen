@@ -6,12 +6,16 @@ import { useCreateUser, useDeleteUser, useLogout } from '../../lib/mutations';
 import { clearToken } from '../../lib/token';
 import { useToast } from '../../components/ui/Toast';
 import { Button } from '../../components/ui/Button';
+import { Input } from '../../components/ui/Input';
 import { IconButton } from '../../components/ui/IconButton';
 import { Table, THead, TR, TH, TD } from '../../components/ui/Table';
 import { LoadingState, ErrorState, EmptyState } from '../../components/ui/states';
 import { Section } from '../../components/ui/Section';
 
-const inputClass = 'w-full rounded-md border border-border bg-bg px-3 py-2 text-sm text-text placeholder:text-text-muted transition-colors focus:border-accent';
+const fmtDate = (iso: string) => {
+  const d = new Date(iso.includes('T') ? iso : iso.replace(' ', 'T') + 'Z');
+  return Number.isNaN(d.getTime()) ? iso : d.toLocaleString(undefined, { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+};
 
 export function UsersPanel() {
   const users = useUsers();
@@ -82,7 +86,7 @@ export function UsersPanel() {
               {data.map((user) => (
                 <TR key={user.id}>
                   <TD>{user.username}</TD>
-                  <TD mono>{user.created_at}</TD>
+                  <TD>{fmtDate(user.created_at)}</TD>
                   <TD>
                     <IconButton
                       icon={Trash2}
@@ -101,20 +105,8 @@ export function UsersPanel() {
 
       <Section title="Add user" icon={UserPlus}>
         <form onSubmit={handleCreate} className="flex max-w-sm flex-col gap-3">
-          <input
-            type="text"
-            placeholder="Username"
-            value={newUsername}
-            onChange={(e) => setNewUsername(e.target.value)}
-            className={inputClass}
-          />
-          <input
-            type="password"
-            placeholder="Password"
-            value={newPassword}
-            onChange={(e) => setNewPassword(e.target.value)}
-            className={inputClass}
-          />
+          <Input type="text" placeholder="Username" value={newUsername} onChange={(e) => setNewUsername(e.target.value)} />
+          <Input type="password" placeholder="Password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} />
           <div>
             <Button type="submit" variant="accent" icon={UserPlus} disabled={createUser.isPending || !newUsername || !newPassword}>
               Add

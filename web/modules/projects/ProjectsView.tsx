@@ -7,10 +7,10 @@ import { useToast } from '../../components/ui/Toast';
 import { Section } from '../../components/ui/Section';
 import { Badge } from '../../components/ui/Badge';
 import { Button } from '../../components/ui/Button';
+import { Input } from '../../components/ui/Input';
+import { Field } from '../../components/ui/Field';
 import { Modal } from '../../components/ui/Modal';
 import { LoadingState, ErrorState, EmptyState } from '../../components/ui/states';
-
-const inputClass = 'w-full rounded-md border border-border bg-bg px-3 py-2 text-sm text-text placeholder:text-text-muted transition-colors focus:border-accent';
 
 export function ProjectsView() {
   const projects = useProjects();
@@ -69,24 +69,20 @@ export function ProjectsView() {
       </Section>
 
       {creating && (
-        <Modal title="New project" onClose={() => setCreating(false)}>
-          <div className="flex max-w-md flex-col gap-4 p-4">
-            <label className="flex flex-col gap-1.5 text-sm font-medium text-text">
-              Slug
-              <input value={slug} onChange={(e) => setSlug(e.target.value)} className={inputClass} />
-            </label>
-            <label className="flex flex-col gap-1.5 text-sm font-medium text-text">
-              Path
-              <input value={path} onChange={(e) => setPath(e.target.value)} className={inputClass} />
-            </label>
-            <label className="flex flex-col gap-1.5 text-sm font-medium text-text">
-              Pilot info
-              <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={4} className={`${inputClass} resize-none`} />
-            </label>
-            <div>
-              <Button variant="accent" onClick={handleCreate} disabled={createProject.isPending}>
-                Create
-              </Button>
+        <Modal title="New project" onClose={() => setCreating(false)} size="md">
+          <div className="flex flex-col gap-4 p-5">
+            <Field label="Slug" hint="Short identifier, e.g. orca.">
+              <Input value={slug} onChange={(e) => setSlug(e.target.value)} placeholder="my-project" autoFocus />
+            </Field>
+            <Field label="Path" hint="Absolute path to the project on disk.">
+              <Input value={path} onChange={(e) => setPath(e.target.value)} placeholder="/var/www/my-project" className="font-mono text-xs" />
+            </Field>
+            <Field label="Pilot info" hint="Context the Pilot uses when planning for this project.">
+              <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={4} className="w-full resize-none rounded-md border border-border bg-surface px-3 py-2 text-sm text-text placeholder:text-text-muted focus:border-accent focus:outline-none" />
+            </Field>
+            <div className="flex items-center justify-end gap-2 pt-1">
+              <Button variant="ghost" onClick={() => setCreating(false)}>Cancel</Button>
+              <Button variant="accent" onClick={handleCreate} disabled={createProject.isPending || !slug.trim() || !path.trim()}>Create</Button>
             </div>
           </div>
         </Modal>
