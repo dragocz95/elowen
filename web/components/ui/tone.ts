@@ -1,1 +1,1 @@
-export type Tone = 'default' | 'accent' | 'muted' | 'danger';
+export type Tone = 'default' | 'accent' | 'muted' | 'danger' | 'success' | 'warning';

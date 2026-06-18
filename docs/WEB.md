@@ -111,40 +111,130 @@ Daemon configuration (Config group):
 - **Autopilot** — decision model settings
   - Model name, API URL, API key (masked input, shows "•••• set" when configured)
 
-## Architecture
+---
 
-```
-web/
-├── app/                    Next.js App Router
-│   ├── layout.tsx          Root layout with Geist fonts
-│   ├── providers.tsx       React Query provider
-│   ├── page.tsx            Root redirect (/)
-│   ├── dash/page.tsx       Dashboard
-│   ├── tasks/page.tsx      Task management
-│   ├── missions/page.tsx   Mission management
-│   ├── sessions/page.tsx   Session management
-│   └── settings/page.tsx   Settings
-├── components/             Reusable UI components
-│   ├── control/            Form controls (CreateTask, Engage, ExecutorPicker, SendInput)
-│   ├── shell/              App shell (Sidebar, Nav, Layout)
-│   ├── terminal/           Xterm.js terminal component
-│   └── ui/                 Primitive components (Badge, Button, Modal, Panel, Table, Toast, etc.)
-├── lib/                    Client-side logic
-│   ├── orcaClient.ts       API client (fetch wrapper)
-│   ├── queries.ts          React Query hooks (useTasks, useSessions, etc.)
-│   ├── mutations.ts        Mutation hooks (useSpawn, useEngage, etc.)
-│   ├── types.ts            TypeScript types
-│   ├── useSessionStream.ts SSE hook for terminal pane stream
-│   ├── useOrcaEvents.ts    SSE hook for real-time cache invalidation
-│   └── execPresets.ts      Model/executor presets
-├── modules/                Feature modules
-│   ├── dashboard/          Dashboard view + metrics
-│   ├── kanban/             Kanban board (drag-and-drop task moves)
-│   ├── missions/           Mission progress view
-│   ├── sessions/           Session module meta
-│   ├── settings/           Settings meta + theme CSS
-│   └── tasks/              Task module meta
-```
+## Components
+
+### UI primitives
+
+| Component | Purpose |
+|---|---|
+| `Button` | Primary action button with variant (accent, danger, default) and icon support |
+| `IconButton` | Icon-only button (for table actions: delete, edit) |
+| `Input` | Text input field |
+| `Select` | Dropdown select |
+| `Toggle` | Toggle switch |
+| `Segmented` | Segmented control / radio group (used on Timeline for filter) |
+| `Modal` | Modal dialog with title, close button, backdrop blur |
+| `ConfirmDialog` | Confirmation modal with cancel/confirm |
+| `Toast` | Toast notification system (icon + message, auto-dismiss) |
+| `Panel` | Content panel container |
+| `Section` | Section container with title, icon, and optional action slot |
+| `StatCard` | Metric display card (label, value, optional hint and tone) |
+| `Badge` | Status badge with tone (accent, muted, danger) |
+| `Table` | Data table with `THead`, `TR`, `TH`, `TD` subcomponents |
+| `PageHeader` | Page title with optional count badge |
+| `Field` | Form field wrapper with label |
+| `Toolbar` | Action toolbar |
+| `SettingCard` | Settings section card |
+| `HelpTip` | Question-mark tooltip helper |
+| `ActionMenu` | Dropdown action menu |
+| `states` | `LoadingState`, `ErrorState` (with retry), `EmptyState` — consistent across all pages |
+
+### Tone system
+
+All colored components use the `Tone` type: `'default' | 'accent' | 'muted' | 'danger'`.
+
+### Shell
+
+| Component | Purpose |
+|---|---|
+| `Shell` | Root layout: sidebar + main content area + `ToastProvider` + `CommandPalette` |
+| `Sidebar` | Resizable, collapsible nav with daemon health dot, module groups, resize handle |
+| `NavGroup` | Sidebar section (Operate / Config) |
+| `NavItem` | Single nav link with icon |
+| `ModuleShell` | Per-page wrapper with sidebar state |
+| `CommandPalette` | Cmd+K global search — navigates to pages and creates tasks/missions |
+
+### Terminal
+
+| Component | Purpose |
+|---|---|
+| `Terminal` | Xterm.js wrapper with SSE stream, auto-fit, ANSI color support |
+| `TerminalPanel` | Terminal + controls (close/kill buttons) |
+| `TerminalControls` | Session action buttons |
+| `frame.ts` | Frame composition for terminal output |
+
+### Control forms
+
+| Component | Purpose |
+|---|---|
+| `CreateTaskForm` | Task creation form |
+| `EngageForm` | Mission engagement form |
+| `ExecutorPicker` | Model/executor selector for spawning |
+| `SendInput` | Keystroke input for session interaction |
+| `LoginForm` | Auth login form |
+
+---
+
+## Design system
+
+Tailwind 4 with CSS-first config in `globals.css`. OLED-friendly dark theme.
+
+### Colors
+
+| Token | Value | Usage |
+|---|---|---|
+| `bg` | `#000000` | Background (true black for OLED) |
+| `surface` | `#0a0a0a` | Card/surface background |
+| `elevated` | `#131313` | Elevated surfaces, hover states |
+| `border` | `oklch(0.27 0 0)` | Default borders |
+| `border-strong` | `oklch(0.38 0.005 256)` | Hover/active borders |
+| `accent` | `oklch(0.62 0.19 256)` | Primary accent (blue) |
+| `danger` | `oklch(0.55 0.20 25)` | Destructive actions (red) |
+| `text` | `oklch(0.97 0 0)` | Primary text |
+| `text-muted` | `oklch(0.62 0 0)` | Secondary text |
+
+### Typography
+
+| Token | Size | Usage |
+|---|---|---|
+| `display` | `2rem` | Page titles |
+| `h1` | `1.5rem` | Section headers |
+| `h2` | `1.125rem` | Subsection headers |
+| `body` | `0.875rem` | Body text |
+| `caption` | `0.6875rem` | Labels, timestamps |
+
+### Spacing & shapes
+
+| Token | Value |
+|---|---|
+| `radius` | `0.5rem` |
+| `radius-sm` | `0.375rem` |
+| `radius-lg` | `0.75rem` |
+| `shadow-card` | `0 1px 2px 0 rgb(0 0 0 / 0.4)` |
+| `shadow-raised` | `0 4px 16px -4px rgb(0 0 0 / 0.6)` |
+
+### Animations
+
+| Class | Effect |
+|---|---|
+| `.animate-fade-up` | Fade in + translate 6px up |
+| `.animate-pop-in` | Scale from 0.97 |
+| `.skeleton` | Pulsing skeleton loader |
+| `.live-dot` | Pulsing ring animation for live indicator |
+| `.marquee-track` | Scrolling ticker text |
+| `.card-interactive` | Hover: lift 1px + border glow |
+
+All animations respect `prefers-reduced-motion`.
+
+### Focus & accessibility
+
+- Accent-colored focus ring on all interactive elements
+- Thin custom scrollbars matching the theme
+- Keyboard navigation support (CommandPalette, Segmented, modals)
+
+---
 
 ## Auth
 
@@ -196,6 +286,44 @@ Resizable, collapsible sidebar with:
 - Collapse toggle button
 - Resize handle with drag support
 - Auto-collapses on mobile (<768px)
+
+### SessionCard live preview
+
+The `SessionCard` component shows live session output inline:
+
+- **ANSI parsing** — `parseAnsi()` converts terminal escape codes to colored segments (256-color + true color)
+- **Signal-aware UI** — shows Allow/Reject buttons when deriver emits `needs_input`
+- **Live cursor** — blinking animation (`skel-pulse`) while session is active
+- **Flash on update** — brief highlight when new output arrives
+
+### Calendar scheduling
+
+`CalendarView` (`modules/kanban/CalendarView.tsx`) provides drag-and-drop scheduling:
+
+- **3 modes**: day (hourly), week (7-day), month (6-week matrix)
+- **Task date resolution**: `scheduled_at` → `closed_at` → `created_at`
+- **Drag & drop**: move tasks between days to update `scheduled_at`
+- **Utilities**: `dayKey()`, `weekDays()`, `monthMatrix()`, `tasksByDay()` in `calendar.ts`
+
+### Dependency graph
+
+`DependencyGraph` (`modules/missions/DependencyGraph.tsx`) renders mission task dependencies as an SVG diagram:
+
+- **Topological layout**: phases as columns (cycle-safe via visiting guard)
+- **Node states**: ready (accent), locked (muted), running (pulse), done (checkmark)
+- **SVG edges**: cubic bezier curves, hover highlights connected paths
+
+### Toast system
+
+`Toast` (`components/ui/Toast.tsx`) uses Context/Provider with rAF-based countdown:
+
+- **Smooth progress bar**: `requestAnimationFrame` timer, pauses on hover
+- **Tone system**: accent (success) / danger (error)
+- **Usage**: `const { toast } = useToast(); toast('Done');`
+
+### Atomic terminal repaint
+
+The `frame.ts` compositor prevents flicker by combining cursor-home + clear + content into one `term.write()` call. The `nextPane()` deduplication prevents React re-renders when the frame content hasn't changed.
 
 ## Running
 

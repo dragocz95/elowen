@@ -25,4 +25,14 @@ describe('EventStore', () => {
     expect(events.list({ type: 'task' }).every((e) => e.type === 'task')).toBe(true);
     expect(events.list({ type: 'task' })).toHaveLength(2);
   });
+  it('deleteForTarget removes every event for that target only', () => {
+    events.record({ type: 'task', taskId: 'gone', status: 'open' });
+    events.record({ type: 'task', taskId: 'gone', status: 'closed' });
+    events.record({ type: 'task', taskId: 'gone', status: 'cancelled' });
+    events.record({ type: 'task', taskId: 'keep', status: 'open' });
+    events.deleteForTarget('gone');
+    const all = events.list();
+    expect(all).toHaveLength(1);
+    expect(all[0]!.target).toBe('keep');
+  });
 });

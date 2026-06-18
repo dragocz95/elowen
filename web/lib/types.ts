@@ -1,9 +1,9 @@
 export type TaskStatus = 'open' | 'in_progress' | 'blocked' | 'closed' | 'cancelled';
-export interface Task { id: string; title: string; status: TaskStatus; type?: string; priority?: string; labels?: string[]; description?: string; scheduled_at?: string | null; parent_id?: string | null }
+export interface Task { id: string; title: string; status: TaskStatus; type?: string; priority?: string; labels?: string[]; description?: string; scheduled_at?: string | null; autostart?: number; result_summary?: string | null; outcome?: string | null; closed_at?: string | null; created_at?: string; parent_id?: string | null }
 export interface Session { name: string }
 export interface Mission { id: string; epic_id: string; autonomy: string; max_sessions: number; state: string }
-export interface CreateTaskInput { title: string; type?: string; priority?: string; description?: string; scheduled_at?: string | null; deps?: string[] }
-export interface UpdateTaskInput { title?: string; type?: string; priority?: string; description?: string; scheduled_at?: string | null; deps?: string[] }
+export interface CreateTaskInput { title: string; type?: string; priority?: string; description?: string; scheduled_at?: string | null; autostart?: number; deps?: string[] }
+export interface UpdateTaskInput { title?: string; type?: string; priority?: string; description?: string; scheduled_at?: string | null; autostart?: number; deps?: string[] }
 export interface PlanInput { goal: string; exec?: string; autonomy?: string; maxSessions?: number; engage?: boolean; phases?: { title: string; type?: string }[] }
 export interface PlanResult { epic: Task; phases: Task[]; mission?: Mission }
 export interface EngageInput { epicId: string; autonomy: string; maxSessions: number; clearedGuardrails: string[] }

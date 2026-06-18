@@ -1,8 +1,11 @@
 'use client';
+import { useEffect, useRef, useState } from 'react';
 import { TerminalSquare, SquareSlash, Power, SquareTerminal } from 'lucide-react';
 import { useKillSession, useSendInput } from '../../lib/mutations';
 import { useTasks, useSessionSignal } from '../../lib/queries';
 import { taskTypeMeta } from '../tasks/taskMeta';
+import { taskExec } from '../../lib/taskExec';
+import { ModelIcon } from '../../components/ui/ModelIcon';
 import { IconButton } from '../../components/ui/IconButton';
 import { ActionMenu } from '../../components/ui/ActionMenu';
 import { SendInput } from '../../components/control/SendInput';
@@ -11,7 +14,7 @@ import { useTranslation } from '../../lib/i18n';
 import { useSessionPane } from './useSessionPane';
 import { parseAnsi } from './ansi';
 
-export function SessionCard({ name, onOpenTerminal }: { name: string; onOpenTerminal: () => void }) {
+export function SessionCard({ name, onOpenTerminal, compact = false }: { name: string; onOpenTerminal: () => void; compact?: boolean }) {
   const kill = useKillSession();
   const send = useSendInput();
   const { toast } = useToast();
@@ -23,21 +26,39 @@ export function SessionCard({ name, onOpenTerminal }: { name: string; onOpenTerm
   // Map session → its task via the agent:<name> label so we can show the task's type icon.
   const agent = name.startsWith('orca-') ? name.slice('orca-'.length) : null;
   const task = agent ? tasks.data?.find((t) => (t.labels ?? []).includes(`agent:${agent}`)) : undefined;
-  const Icon = task ? taskTypeMeta(task.type).icon : SquareTerminal;
+  const exec = taskExec(task?.labels);
+  const TypeIcon = task ? taskTypeMeta(task.type).icon : SquareTerminal;
   const needsInput = signal?.type === 'needs_input';
   const dot = needsInput ? '#f59e0b' : '#10b981';
 
+  // Flash the tail's bottom edge whenever fresh output streams in.
+  const [flash, setFlash] = useState(false);
+  const prevTail = useRef(tail);
+  useEffect(() => {
+    if (prevTail.current === tail) return;
+    prevTail.current = tail;
+    if (!tail) return;
+    setFlash(true);
+    const id = setTimeout(() => setFlash(false), 600);
+    return () => clearTimeout(id);
+  }, [tail]);
+
   return (
-    <div className={`card-interactive flex flex-col gap-3 rounded-lg border bg-surface p-4 ${needsInput ? 'border-[#f59e0b]/60' : 'border-border'}`}>
-      <div className="flex items-center gap-2">
-        <Icon size={15} className="shrink-0 text-text-muted" aria-hidden />
-        <span className="min-w-0 flex-1 truncate font-mono text-xs text-text" title={task?.title}>{name}</span>
+    <div className={`card-interactive flex flex-col gap-3 rounded-lg border bg-surface ${compact ? 'p-3' : 'p-4'} ${needsInput ? 'border-[#f59e0b]/60' : 'border-border'}`}>
+      <div className="flex items-center gap-2.5">
+        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-border bg-elevated">
+          {exec ? <ModelIcon name={exec} size={20} /> : <TypeIcon size={18} className="text-text-muted" aria-hidden />}
+        </span>
+        <div className="flex min-w-0 flex-1 flex-col">
+          <span className="truncate font-mono text-xs text-text" title={task?.title}>{name}</span>
+          {task ? <span className="truncate text-[11px] text-text-muted">{task.title}</span> : null}
+        </div>
         {needsInput ? <span className="shrink-0 rounded-full border border-[#f59e0b]/40 bg-[#f59e0b]/10 px-1.5 py-0.5 text-[10px] font-medium text-[#f59e0b]" title={signal?.type === 'needs_input' ? signal.question : ''}>{t.sessions.needsInput}</span> : null}
         <span className="live-dot h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: dot, ['--live-ring' as string]: needsInput ? 'rgba(245,158,11,0.5)' : 'rgba(16,185,129,0.5)' }} aria-label={needsInput ? t.sessions.needsInput : t.sessions.online} title={needsInput ? t.sessions.needsInput : t.sessions.online} />
       </div>
-      <pre className="h-32 overflow-hidden whitespace-pre-wrap break-all rounded-md border border-border bg-bg p-2 font-mono text-[11px] leading-snug text-text-muted">
+      <pre data-flash={flash ? 'true' : undefined} className={`tail-live ${compact ? 'h-16' : 'h-32'} overflow-hidden whitespace-pre-wrap break-all rounded-md border border-border bg-bg p-2 font-mono text-[11px] leading-snug text-text-muted`}>
         {isLoading ? t.sessions.loading : tail
-          ? parseAnsi(tail).map((s, i) => <span key={i} style={s.color ? { color: s.color } : undefined}>{s.text}</span>)
+          ? <>{parseAnsi(tail).map((s, i) => <span key={i} style={s.color ? { color: s.color } : undefined}>{s.text}</span>)}<span className="ml-px inline-block h-3 w-1.5 -translate-y-px bg-text-muted align-middle" style={{ animation: 'skel-pulse 1.2s ease-in-out infinite' }} aria-hidden /></>
           : t.sessions.noOutput}
       </pre>
       {needsInput && signal?.type === 'needs_input' && (

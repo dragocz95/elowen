@@ -1,10 +1,8 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent, within } from '@testing-library/react';
-import { LanguageProvider } from '../../../lib/i18n';
 import { KanbanBoard } from '../../../modules/kanban/KanbanBoard';
+import { createWrapper } from '../../test-utils';
 import type { Task } from '../../../lib/types';
-
-function W({ children }: { children: React.ReactNode }) { return <LanguageProvider>{children}</LanguageProvider>; }
 
 const tasks: Task[] = [
   { id: 'a', title: 'Alpha', status: 'open' },
@@ -17,6 +15,7 @@ function makeDrop(taskId: string) {
 
 describe('KanbanBoard', () => {
   it('renders all five columns with counts', () => {
+    const { wrapper: W } = createWrapper();
     render(<KanbanBoard tasks={tasks} onMove={() => {}} />, { wrapper: W });
     // All five status columns render (labels may repeat as status badges, so assert by column id).
     for (const s of ['open', 'in_progress', 'blocked', 'closed', 'cancelled']) {
@@ -29,6 +28,7 @@ describe('KanbanBoard', () => {
 
   it('dropping a card on a different column calls onMove(taskId, newStatus)', () => {
     const onMove = vi.fn();
+    const { wrapper: W } = createWrapper();
     render(<KanbanBoard tasks={tasks} onMove={onMove} />, { wrapper: W });
     const inProgress = screen.getByTestId('column-in_progress');
     fireEvent.dragOver(inProgress);
@@ -38,6 +38,7 @@ describe('KanbanBoard', () => {
 
   it('dropping on the same column does not call onMove', () => {
     const onMove = vi.fn();
+    const { wrapper: W } = createWrapper();
     render(<KanbanBoard tasks={tasks} onMove={onMove} />, { wrapper: W });
     const open = screen.getByTestId('column-open');
     fireEvent.drop(open, makeDrop('a'));

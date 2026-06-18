@@ -7,6 +7,14 @@ import { useTranslation } from '../../lib/i18n';
 
 interface Command { id: string; label: string; hint?: string; icon: LucideIcon; run: () => void }
 
+/** Accent-highlight the matched query substring within a label. */
+function Highlight({ text, q }: { text: string; q: string }) {
+  if (!q) return <>{text}</>;
+  const i = text.toLowerCase().indexOf(q.toLowerCase());
+  if (i < 0) return <>{text}</>;
+  return <>{text.slice(0, i)}<span className="text-accent">{text.slice(i, i + q.length)}</span>{text.slice(i + q.length)}</>;
+}
+
 export function CommandPalette() {
   const router = useRouter();
   const { t } = useTranslation();
@@ -79,7 +87,7 @@ export function CommandPalette() {
                   className={`flex w-full items-center gap-3 rounded-md px-3 py-2 text-left text-sm transition-colors ${i === active ? 'bg-elevated text-text' : 'text-text-muted'}`}
                 >
                   <Icon size={15} className="shrink-0" aria-hidden />
-                  <span className="flex-1 text-text">{c.label}</span>
+                  <span className="flex-1 text-text"><Highlight text={c.label} q={query.trim()} /></span>
                   {c.hint ? <span className="font-mono text-[11px] text-text-muted">{c.hint}</span> : null}
                   {i === active ? <CornerDownLeft size={13} className="text-text-muted" aria-hidden /> : null}
                 </button>

@@ -150,6 +150,8 @@ cd web && npm install && npm run dev
 | [CLI.md](docs/CLI.md) | CLI commands, autostart, environment variables |
 | [WEB.md](docs/WEB.md) | Web UI pages, components, patterns, real-time updates |
 | [TESTING.md](docs/TESTING.md) | Test architecture, fakes, writing tests, CI |
+| [SECURITY.md](docs/SECURITY.md) | Auth model, guardrails, decision engine, infrastructure security |
+| [GUIDES.md](docs/GUIDES.md) | Advanced patterns — task binding, autopilot planning, events, ANSI, calendar, toast |
 | [FOLLOWUPS.md](docs/FOLLOWUPS.md) | Deferred features and known limitations |
 
 ## Development

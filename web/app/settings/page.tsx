@@ -1,14 +1,16 @@
 'use client';
 import { useEffect, useState } from 'react';
 import { Save, Boxes, Bot, SlidersHorizontal, Plus, X, Pencil, Plug, type LucideIcon } from 'lucide-react';
-import { PROVIDERS, ProviderLogo } from '../../modules/settings/providers';
+import { PROVIDERS, ProviderLogo, ProviderTag } from '../../modules/settings/providers';
+import { ModelIcon } from '../../components/ui/ModelIcon';
+import { ModelModal } from '../../modules/settings/ModelModal';
+import { execProvider, execModel } from '../../lib/modelProvider';
 import { useConfig } from '../../lib/queries';
 import { useUpdateConfig } from '../../lib/mutations';
 import { orcaClient, OrcaApiError } from '../../lib/orcaClient';
 import { EXEC_PRESETS, allModels } from '../../lib/execPresets';
 import { useToast } from '../../components/ui/Toast';
-import { PageHeader } from '../../components/ui/PageHeader';
-import { Section } from '../../components/ui/Section';
+import { ModuleHeader } from '../../components/ui/ModuleHeader';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
 import { Field } from '../../components/ui/Field';
@@ -64,9 +66,7 @@ export default function SettingsPage() {
   const [defAutonomy, setDefAutonomy] = useState('');
   const [defMaxSessions, setDefMaxSessions] = useState(1);
 
-  // Add / edit model form state
-  const [addLabel, setAddLabel] = useState('');
-  const [addExec, setAddExec] = useState('');
+  // Add / edit model modal state
   const [showAddForm, setShowAddForm] = useState(false);
   const [editingExec, setEditingExec] = useState<string | null>(null);
 
@@ -92,8 +92,8 @@ export default function SettingsPage() {
     }
   }, [config.data]);
 
-  if (config.isLoading) return <ModuleShell moduleId="settings"><PageHeader title={t.page.settings} /><LoadingState /></ModuleShell>;
-  if (config.isError) return <ModuleShell moduleId="settings"><PageHeader title={t.page.settings} /><ErrorState message={t.common.daemonUnreachable} onRetry={() => config.refetch()} /></ModuleShell>;
+  if (config.isLoading) return <ModuleShell moduleId="settings"><ModuleHeader title={t.page.settings} icon={SlidersHorizontal} /><LoadingState /></ModuleShell>;
+  if (config.isError) return <ModuleShell moduleId="settings"><ModuleHeader title={t.page.settings} icon={SlidersHorizontal} /><ErrorState message={t.common.daemonUnreachable} onRetry={() => config.refetch()} /></ModuleShell>;
 
   const toggle = (exec: string) => setAllowed((prev) => prev.includes(exec) ? prev.filter((e) => e !== exec) : [...prev, exec]);
   const apiKeySet = config.data?.autopilot.apiKeySet;
@@ -101,8 +101,6 @@ export default function SettingsPage() {
   const resetForm = () => {
     setShowAddForm(false);
     setEditingExec(null);
-    setAddLabel('');
-    setAddExec('');
   };
 
   const deleteModel = (exec: string) => {
@@ -117,21 +115,24 @@ export default function SettingsPage() {
 
   const startEdit = (m: { label: string; exec: string }) => {
     setEditingExec(m.exec);
-    setAddLabel(m.label);
-    setAddExec(m.exec);
     setShowAddForm(true);
   };
 
-  const submitModel = () => {
-    const label = addLabel.trim();
-    const exec = addExec.trim();
-    if (!label || !exec) return;
+  const saveModel = (m: { label: string; exec: string }) => {
     if (editingExec) {
       const original = editingExec;
-      setCustomModels((prev) => prev.map((m) => (m.exec === original ? { label, exec } : m)));
-      setAllowed((prev) => prev.map((e) => (e === original ? exec : e)));
+      if (PRESET_EXECS.has(original)) {
+        // Editing a preset hides the original and stores a custom override in its place.
+        setHiddenPresets((prev) => (prev.includes(original) ? prev : [...prev, original]));
+        setCustomModels((prev) => [...prev.filter((x) => x.exec !== m.exec), m]);
+        setAllowed((prev) => { const base = prev.filter((e) => e !== original); return base.includes(m.exec) ? base : [...base, m.exec]; });
+      } else {
+        setCustomModels((prev) => prev.some((x) => x.exec === original) ? prev.map((x) => (x.exec === original ? m : x)) : [...prev, m]);
+        setAllowed((prev) => prev.map((e) => (e === original ? m.exec : e)));
+      }
     } else {
-      setCustomModels((prev) => [...prev, { label, exec }]);
+      setCustomModels((prev) => [...prev, m]);
+      setAllowed((prev) => (prev.includes(m.exec) ? prev : [...prev, m.exec])); // enable new models by default
     }
     resetForm();
   };
@@ -142,66 +143,96 @@ export default function SettingsPage() {
       { onSuccess: () => toast(t.settings.modelsSaved), onError: (e) => toast(String(e), 'error') },
     );
 
+  const saveAutopilot = () =>
+    update.mutate(
+      { autopilot: { model, overseerModel, apiUrl, notes, prompt, ...(apiKey ? { apiKey } : {}) } },
+      { onSuccess: () => { toast(t.settings.autopilotSaved); setApiKey(''); }, onError: (e) => toast(String(e), 'error') },
+    );
+
+  const saveProviders = () =>
+    update.mutate(
+      { providers },
+      { onSuccess: () => toast(t.settings.providersSaved), onError: (e) => toast(String(e), 'error') },
+    );
+
+  const saveDefaults = () =>
+    update.mutate(
+      { defaults: { exec: defExec, autonomy: defAutonomy, maxSessions: defMaxSessions } },
+      { onSuccess: () => toast(t.settings.defaultsSaved), onError: (e) => toast(String(e), 'error') },
+    );
+
+  const SECTIONS: { id: Category; icon: LucideIcon }[] = [
+    { id: 'models', icon: Boxes },
+    { id: 'autopilot', icon: Bot },
+    { id: 'providers', icon: Plug },
+    { id: 'defaults', icon: SlidersHorizontal },
+  ];
+
+  const saveAction: Record<Category, { label: string; onClick: () => void }> = {
+    models: { label: t.settings.saveModels, onClick: saveModels },
+    autopilot: { label: t.settings.saveAutopilot, onClick: saveAutopilot },
+    providers: { label: t.settings.saveProviders, onClick: saveProviders },
+    defaults: { label: t.settings.saveDefaults, onClick: saveDefaults },
+  };
+  const active = saveAction[category];
+
   const models = allModels(customModels, hiddenPresets);
   const deleteTarget = models.find((m) => m.exec === pendingDelete);
 
   return (
     <ModuleShell moduleId="settings">
-      <div className="flex w-full flex-col gap-6">
-        <PageHeader title={t.page.settings} />
+      <ModuleHeader title={t.page.settings} icon={SlidersHorizontal}>
+        <Button variant="accent" icon={Save} onClick={active.onClick}>{active.label}</Button>
+      </ModuleHeader>
 
-        <div className="flex flex-wrap gap-2">
-          {(['models', 'autopilot', 'providers', 'defaults'] as const).map((id) => {
-            const active = category === id;
-            const Icon = id === 'models' ? Boxes : id === 'autopilot' ? Bot : id === 'providers' ? Plug : SlidersHorizontal;
+      <div className="flex flex-col gap-6 md:flex-row md:items-start">
+        {/* Left section nav — sticky on md+, horizontal scroll row on small screens */}
+        <nav
+          aria-label={t.settings.sectionsNav}
+          className="-mx-1 flex shrink-0 gap-1 overflow-x-auto px-1 pb-1 md:sticky md:top-[57px] md:mx-0 md:w-44 md:flex-col md:overflow-visible md:px-0 md:pb-0"
+        >
+          {SECTIONS.map(({ id, icon: Icon }) => {
+            const isActive = category === id;
             return (
               <button
                 key={id}
                 type="button"
-                aria-pressed={active}
+                aria-pressed={isActive}
                 onClick={() => setCategory(id)}
-                className={`inline-flex items-center gap-2.5 rounded-lg border px-5 py-3 text-sm font-medium transition-colors ${
-                  active
-                    ? 'border-accent bg-accent text-white'
-                    : 'border-border bg-surface text-text-muted hover:border-border-strong hover:text-text'
+                className={`inline-flex shrink-0 items-center gap-2.5 rounded-lg border px-3 py-2 text-sm font-medium transition-colors active:scale-[0.98] md:w-full ${
+                  isActive
+                    ? 'border-border-strong bg-elevated text-text'
+                    : 'border-transparent text-text-muted hover:bg-surface hover:text-text'
                 }`}
-                style={{ transitionDuration: 'var(--motion-base)' }}
+                style={{ transitionDuration: 'var(--motion-fast)' }}
               >
-                <Icon size={16} aria-hidden />
+                <Icon size={16} aria-hidden className={isActive ? 'text-accent' : ''} />
                 {t.settings[id]}
               </button>
             );
           })}
-        </div>
+        </nav>
 
+        {/* Right content zone — the active category sits here directly, no Section frame */}
+        <div className="min-w-0 flex-1">
         {category === 'models' && (
-          <Section
-            title={t.settings.models}
-            icon={Boxes}
-            actions={
-              <Button variant="accent" icon={Save} onClick={saveModels}>
-                {t.settings.saveModels}
-              </Button>
-            }
-          >
+          <>
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
               {models.map((p) => {
                 const isCustom = !PRESET_EXECS.has(p.exec);
                 return (
-                  <div key={p.exec} className="group relative">
+                  <div key={p.exec} className="card-interactive group relative flex flex-col gap-3.5 rounded-lg border border-border bg-surface p-5">
                     <div className="absolute right-3 top-3 z-10 flex gap-1 opacity-0 transition-opacity group-hover:opacity-100" style={{ transitionDuration: 'var(--motion-fast)' }}>
-                      {isCustom && (
-                        <button
-                          type="button"
-                          aria-label={t.settings.editLabel.replace('{exec}', p.exec)}
-                          title={t.settings.editLabel.replace('{exec}', p.exec)}
-                          onClick={() => startEdit(p)}
-                          className="flex h-6 w-6 items-center justify-center rounded-md border border-border bg-surface text-text-muted transition-colors hover:border-border-strong hover:text-text"
-                          style={{ transitionDuration: 'var(--motion-fast)' }}
-                        >
-                          <Pencil size={13} aria-hidden />
-                        </button>
-                      )}
+                      <button
+                        type="button"
+                        aria-label={t.settings.editLabel.replace('{exec}', p.exec)}
+                        title={t.settings.editLabel.replace('{exec}', p.exec)}
+                        onClick={() => startEdit(p)}
+                        className="flex h-6 w-6 items-center justify-center rounded-md border border-border bg-surface text-text-muted transition-colors hover:border-border-strong hover:text-text"
+                        style={{ transitionDuration: 'var(--motion-fast)' }}
+                      >
+                        <Pencil size={13} aria-hidden />
+                      </button>
                       <button
                         type="button"
                         aria-label={t.settings.deleteLabel.replace('{exec}', p.exec)}
@@ -213,65 +244,42 @@ export default function SettingsPage() {
                         <X size={13} aria-hidden />
                       </button>
                     </div>
-                    <SettingCard title={p.label} description={p.exec}>
+                    <div className="flex items-start gap-3 pr-14">
+                      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-border bg-elevated">
+                        <ModelIcon name={p.exec} size={20} />
+                      </span>
+                      <div className="flex min-w-0 flex-col gap-1">
+                        <span className="truncate text-sm font-medium text-text">{p.label}{!isCustom ? <span className="ml-1.5 text-[10px] uppercase tracking-wide text-text-muted/70">{t.settings.presetTag}</span> : null}</span>
+                        <span className="truncate font-mono text-xs text-text-muted">{execModel(p.exec)}</span>
+                      </div>
+                    </div>
+                    <div className="flex items-center justify-between gap-2">
                       <Toggle checked={allowed.includes(p.exec)} onChange={() => toggle(p.exec)} label={p.label} />
-                    </SettingCard>
+                      <ProviderTag id={execProvider(p.exec)} />
+                    </div>
                   </div>
                 );
               })}
             </div>
 
             <div className="mt-4">
-              {showAddForm ? (
-                <div className="flex flex-col gap-3 rounded-md border border-border bg-surface p-4 sm:flex-row sm:items-end">
-                  <div className="flex flex-col gap-1">
-                    <span className="text-xs text-text-muted">{t.settings.labelLabel}</span>
-                    <input
-                      value={addLabel}
-                      onChange={(e) => setAddLabel(e.target.value)}
-                      placeholder={t.settings.modelPlaceholder}
-                      className={inputClass}
-                      aria-label={editingExec ? t.settings.editLabel.replace('{exec}', 'label') : t.settings.addModelLabel}
-                    />
-                  </div>
-                  <div className="flex flex-col gap-1">
-                    <span className="text-xs text-text-muted">{t.settings.execLabel}</span>
-                    <input
-                      value={addExec}
-                      onChange={(e) => setAddExec(e.target.value)}
-                      placeholder={t.settings.execPlaceholder}
-                      className={inputClass}
-                      aria-label={editingExec ? t.settings.editLabel.replace('{exec}', 'exec') : t.settings.addModelExec}
-                    />
-                  </div>
-                  <div className="flex gap-2">
-                    <Button variant="accent" icon={editingExec ? Save : Plus} onClick={submitModel} disabled={!addLabel.trim() || !addExec.trim()}>
-                      {editingExec ? t.settings.save : t.settings.add}
-                    </Button>
-                    <Button variant="ghost" onClick={resetForm}>
-                      {t.settings.cancel}
-                    </Button>
-                  </div>
-                </div>
-              ) : (
-                <Button variant="ghost" icon={Plus} onClick={() => setShowAddForm(true)}>
-                  {t.settings.addModel}
-                </Button>
-              )}
+              <Button variant="ghost" icon={Plus} onClick={() => { setEditingExec(null); setShowAddForm(true); }}>
+                {t.settings.addModel}
+              </Button>
             </div>
-          </Section>
+          </>
+        )}
+
+        {showAddForm && (
+          <ModelModal
+            initial={editingExec ? models.find((m) => m.exec === editingExec) ?? null : null}
+            existingExecs={new Set(models.map((m) => m.exec))}
+            onClose={resetForm}
+            onSave={saveModel}
+          />
         )}
 
         {category === 'autopilot' && (
-          <Section
-            title={t.settings.autopilot}
-            icon={Bot}
-            actions={
-              <Button variant="accent" icon={Save} onClick={() => update.mutate({ autopilot: { model, overseerModel, apiUrl, notes, prompt, ...(apiKey ? { apiKey } : {}) } }, { onSuccess: () => { toast(t.settings.autopilotSaved); setApiKey(''); }, onError: (e) => toast(String(e), 'error') })}>
-                {t.settings.saveAutopilot}
-              </Button>
-            }
-          >
             <div className="grid gap-4 sm:grid-cols-2">
               <SettingCard title={t.settings.plannerModel} description={t.settings.plannerModelDesc}>
                 <input value={model} onChange={(e) => setModel(e.target.value)} className={inputClass} placeholder={t.settings.plannerPlaceholder} />
@@ -321,19 +329,10 @@ export default function SettingsPage() {
                 </div>
               </div>
             </div>
-          </Section>
         )}
 
         {category === 'providers' && (
-          <Section
-            title={t.settings.providers}
-            icon={Plug}
-            actions={
-              <Button variant="accent" icon={Save} onClick={() => update.mutate({ providers }, { onSuccess: () => toast(t.settings.providersSaved), onError: (e) => toast(String(e), 'error') })}>
-                {t.settings.saveProviders}
-              </Button>
-            }
-          >
+          <div>
             <p className="mb-4 text-sm text-text-muted">{t.settings.providersDesc}</p>
             <div className="flex flex-col gap-3">
               {PROVIDERS.map((p) => {
@@ -360,19 +359,10 @@ export default function SettingsPage() {
                 );
               })}
             </div>
-          </Section>
+          </div>
         )}
 
         {category === 'defaults' && (
-          <Section
-            title={t.settings.defaults}
-            icon={SlidersHorizontal}
-            actions={
-              <Button variant="accent" icon={Save} onClick={() => update.mutate({ defaults: { exec: defExec, autonomy: defAutonomy, maxSessions: defMaxSessions } }, { onSuccess: () => toast(t.settings.defaultsSaved), onError: (e) => toast(String(e), 'error') })}>
-                {t.settings.saveDefaults}
-              </Button>
-            }
-          >
             <div className="grid gap-4 sm:grid-cols-2">
               <SettingCard title={t.settings.executor} description={t.settings.executorDesc}>
                 <Segmented options={EXEC_PRESETS.map((p) => ({ value: p.exec, label: p.exec }))} value={defExec} onChange={setDefExec} />
@@ -384,8 +374,8 @@ export default function SettingsPage() {
                 <input type="number" min={1} value={defMaxSessions} onChange={(e) => setDefMaxSessions(Number(e.target.value))} className={inputClass} />
               </SettingCard>
             </div>
-          </Section>
         )}
+        </div>
       </div>
 
       <ConfirmDialog

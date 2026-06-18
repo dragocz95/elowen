@@ -17,7 +17,7 @@ export function Segmented({ options, value, onChange }: { options: SegmentedOpti
             aria-checked={active}
             aria-label={o.label}
             onClick={() => onChange(o.value)}
-            className={`inline-flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-xs font-medium transition-colors ${active ? 'border-accent bg-accent text-white' : 'border-border bg-elevated text-text-muted hover:border-border-strong hover:text-text'}`}
+            className={`inline-flex h-9 items-center gap-1.5 rounded-md border px-3 text-xs font-medium transition-colors ${active ? 'border-accent/50 bg-accent/15 text-accent' : 'border-border bg-elevated text-text-muted hover:border-border-strong hover:text-text'}`}
             style={{ transitionDuration: 'var(--motion-fast)' }}
           >
             {Icon ? <Icon size={13} aria-hidden /> : null}

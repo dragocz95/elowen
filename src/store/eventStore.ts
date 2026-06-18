@@ -17,6 +17,10 @@ export class EventStore {
     const r = toRow(e);
     this.db.prepare('INSERT INTO events (type, target, detail) VALUES (?, ?, ?)').run(r.type, r.target, r.detail);
   }
+  /** Purge all events for a target (e.g. a deleted task) so the timeline shows no dead feed. */
+  deleteForTarget(target: string): void {
+    this.db.prepare('DELETE FROM events WHERE target = ?').run(target);
+  }
   list(opts?: { limit?: number; type?: string }): ActivityEvent[] {
     const limit = opts?.limit ?? 200;
     if (opts?.type) {

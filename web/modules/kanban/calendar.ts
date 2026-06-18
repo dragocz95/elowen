@@ -13,22 +13,29 @@ export function sameDay(a: Date, b: Date): boolean {
   return dayKey(a) === dayKey(b);
 }
 
-/** Group scheduled tasks by their local day key. Unscheduled tasks are excluded. */
+/** The date a task sits on in the calendar: its schedule, else when it completed.
+ *  Lets finished (closed) tasks show up on their completion day without having been planned. */
+export function taskCalDate(t: Task): string | null {
+  return t.scheduled_at || t.closed_at || null;
+}
+
+/** Group tasks by their local calendar day (scheduled or completed). Tasks with neither are excluded. */
 export function tasksByDay(tasks: Task[]): Map<string, Task[]> {
   const map = new Map<string, Task[]>();
   for (const t of tasks) {
-    if (!t.scheduled_at) continue;
-    const d = new Date(t.scheduled_at);
+    const iso = taskCalDate(t);
+    if (!iso) continue;
+    const d = new Date(iso);
     if (Number.isNaN(d.getTime())) continue;
     const k = dayKey(d);
     (map.get(k) ?? map.set(k, []).get(k)!).push(t);
   }
-  for (const list of map.values()) list.sort((a, b) => (a.scheduled_at ?? '').localeCompare(b.scheduled_at ?? ''));
+  for (const list of map.values()) list.sort((a, b) => (taskCalDate(a) ?? '').localeCompare(taskCalDate(b) ?? ''));
   return map;
 }
 
 export function countUnscheduled(tasks: Task[]): number {
-  return tasks.filter((t) => !t.scheduled_at).length;
+  return tasks.filter((t) => !taskCalDate(t)).length;
 }
 
 /** Monday-of-week (local) for the given date. */

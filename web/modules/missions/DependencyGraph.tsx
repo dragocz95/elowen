@@ -47,6 +47,9 @@ export function DependencyGraph({ tasks, deps, onSelect }: { tasks: MissionTask[
           return (
             <path
               key={i}
+              className="animate-draw"
+              pathLength={1}
+              style={{ animationDelay: `${Math.min(i, 10) * 40}ms` }}
               d={`M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}`}
               fill="none"
               stroke={done ? '#22c55e' : 'var(--color-border-strong)'}
@@ -56,7 +59,7 @@ export function DependencyGraph({ tasks, deps, onSelect }: { tasks: MissionTask[
           );
         })}
         {/* nodes */}
-        {tasks.map((t) => {
+        {tasks.map((t, ni) => {
           const p = pos.get(t.id);
           if (!p) return null;
           const c = STATUS_COLOR[t.status] ?? '#6b7280';
@@ -69,8 +72,8 @@ export function DependencyGraph({ tasks, deps, onSelect }: { tasks: MissionTask[
             <foreignObject key={t.id} x={p.x} y={p.y} width={NODE_W} height={NODE_H}>
               <div
                 onClick={() => onSelect?.(t.id)}
-                className={`flex h-full items-center gap-2 rounded-lg border bg-surface px-2.5 ${onSelect ? 'cursor-pointer' : ''}`}
-                style={{ borderColor: border, borderWidth: running || isReady ? 1.5 : 1, opacity: dim ? 0.55 : 1 }}
+                className={`animate-pop-in flex h-full items-center gap-2 rounded-lg border bg-surface px-2.5 ${onSelect ? 'cursor-pointer' : ''}`}
+                style={{ borderColor: border, borderWidth: running || isReady ? 1.5 : 1, opacity: dim ? 0.55 : 1, animationDelay: `${Math.min(ni, 10) * 40}ms` }}
                 title={t.title}
               >
                 <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${running ? 'live-dot' : ''}`} style={{ backgroundColor: c, ['--live-ring' as string]: 'rgba(59,130,246,0.5)' }} aria-hidden />

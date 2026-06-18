@@ -8,13 +8,14 @@ export class TaskStore {
   constructor(private db: Db) {}
   create(input: CreateTaskInput): Task {
     this.db.prepare(
-      `INSERT INTO tasks (id, project_id, title, type, priority, parent_id, labels, description, scheduled_at)
-       VALUES (@id, @project_id, @title, @type, @priority, @parent_id, @labels, @description, @scheduled_at)`
+      `INSERT INTO tasks (id, project_id, title, type, priority, parent_id, labels, description, scheduled_at, autostart)
+       VALUES (@id, @project_id, @title, @type, @priority, @parent_id, @labels, @description, @scheduled_at, @autostart)`
     ).run({
       id: input.id, project_id: input.project_id, title: input.title,
       type: input.type ?? 'task', priority: input.priority ?? 'P2',
       parent_id: input.parent_id ?? null, labels: (input.labels ?? []).join(','),
       description: input.description ?? '', scheduled_at: input.scheduled_at ?? null,
+      autostart: input.autostart ? 1 : 0,
     });
     return this.get(input.id)!;
   }
@@ -33,13 +34,21 @@ export class TaskStore {
     this.db.prepare('UPDATE tasks SET status = ? WHERE id = ?').run(status, id);
   }
 
-  update(id: string, patch: { title?: string; type?: string; priority?: string; description?: string; scheduled_at?: string | null }): Task | null {
+  /** Close a task, stamping the agent-reported result summary, outcome and completion time. */
+  close(id: string, opts?: { summary?: string | null; outcome?: string | null }): void {
+    this.db.prepare(
+      `UPDATE tasks SET status = 'closed', result_summary = @summary, outcome = @outcome, closed_at = datetime('now') WHERE id = @id`
+    ).run({ id, summary: opts?.summary ?? null, outcome: opts?.outcome ?? null });
+  }
+
+  update(id: string, patch: { title?: string; type?: string; priority?: string; description?: string; scheduled_at?: string | null; autostart?: number }): Task | null {
     const sets: string[] = []; const p: Record<string, unknown> = { id };
     if (typeof patch.title === 'string') { sets.push('title = @title'); p.title = patch.title; }
     if (typeof patch.type === 'string') { sets.push('type = @type'); p.type = patch.type; }
     if (typeof patch.priority === 'string') { sets.push('priority = @priority'); p.priority = patch.priority; }
     if (typeof patch.description === 'string') { sets.push('description = @description'); p.description = patch.description; }
     if (patch.scheduled_at !== undefined) { sets.push('scheduled_at = @scheduled_at'); p.scheduled_at = patch.scheduled_at; }
+    if (patch.autostart !== undefined) { sets.push('autostart = @autostart'); p.autostart = patch.autostart ? 1 : 0; }
     if (sets.length > 0) this.db.prepare(`UPDATE tasks SET ${sets.join(', ')} WHERE id = @id`).run(p);
     return this.get(id);
   }
@@ -88,6 +97,15 @@ export class TaskStore {
     if (!t) return;
     const labels = t.labels.filter((l) => !l.startsWith('exec:'));
     if (exec) labels.push(`exec:${exec}`);
+    this.db.prepare('UPDATE tasks SET labels = ? WHERE id = ?').run(labels.join(','), id);
+  }
+
+  /** Tag the task with the agent (tmux session) running it, so task ↔ session is linkable. */
+  setAgent(id: string, name: string): void {
+    const t = this.get(id);
+    if (!t) return;
+    const labels = t.labels.filter((l) => !l.startsWith('agent:'));
+    if (name) labels.push(`agent:${name}`);
     this.db.prepare('UPDATE tasks SET labels = ? WHERE id = ?').run(labels.join(','), id);
   }
 

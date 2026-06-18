@@ -18,10 +18,10 @@ export const useSessionSignal = (name: string): DerivedSignal | undefined => {
 };
 
 export const useTasks = () =>
-  useQuery({ queryKey: QUERY_KEYS.tasks, queryFn: orcaClient.tasks });
+  useQuery({ queryKey: QUERY_KEYS.tasks, queryFn: orcaClient.tasks, refetchInterval: 5000 });
 
 export const useSessions = () =>
-  useQuery({ queryKey: QUERY_KEYS.sessions, queryFn: orcaClient.sessions });
+  useQuery({ queryKey: QUERY_KEYS.sessions, queryFn: orcaClient.sessions, refetchInterval: 5000 });
 
 export const useAllDeps = () =>
   useQuery({ queryKey: ['tasks', 'deps'], queryFn: orcaClient.allDeps });
@@ -50,7 +50,7 @@ export const useUsers = () => useQuery({ queryKey: ['users'], queryFn: orcaClien
 export const useMe = () => useQuery({ queryKey: ['me'], queryFn: orcaClient.me });
 
 export const useActivity = (type?: string) =>
-  useQuery({ queryKey: ['activity', type ?? 'all'], queryFn: () => orcaClient.activity(type ? { type } : undefined) });
+  useQuery({ queryKey: ['activity', type ?? 'all'], queryFn: () => orcaClient.activity(type ? { type } : undefined), refetchInterval: 5000 });
 
 export const useProjects = () =>
   useQuery({ queryKey: ['projects'], queryFn: orcaClient.projects });

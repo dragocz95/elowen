@@ -18,14 +18,24 @@ function setup(now: number) {
 }
 
 describe('Scheduler', () => {
-  it('launches a task once its scheduled_at has passed and clears the schedule', async () => {
+  it('launches a due autostart task once its scheduled_at has passed and clears the schedule', async () => {
     const t0 = Date.parse('2026-06-17T12:00:00.000Z');
     const { tasks, tmux, scheduler } = setup(t0 + 60_000); // now is one minute after the schedule
-    tasks.create({ id: 'a', project_id: 1, title: 'Scheduled', scheduled_at: '2026-06-17T12:00:00.000Z' });
+    tasks.create({ id: 'a', project_id: 1, title: 'Scheduled', scheduled_at: '2026-06-17T12:00:00.000Z', autostart: 1 });
     await scheduler.tick();
     expect(tasks.get('a')?.status).toBe('in_progress');
     expect(tasks.get('a')?.scheduled_at).toBeNull(); // consumed
     expect(await tmux.list()).toContain('orca-Nova');
+  });
+
+  it('does not launch a due task without autostart (due-date marker only)', async () => {
+    const t0 = Date.parse('2026-06-17T12:00:00.000Z');
+    const { tasks, tmux, scheduler } = setup(t0 + 60_000); // past the schedule
+    tasks.create({ id: 'd', project_id: 1, title: 'Due but manual', scheduled_at: '2026-06-17T12:00:00.000Z' });
+    await scheduler.tick();
+    expect(tasks.get('d')?.status).toBe('open');
+    expect(tasks.get('d')?.scheduled_at).toBe('2026-06-17T12:00:00.000Z'); // kept as a due date
+    expect(await tmux.list()).toHaveLength(0);
   });
 
   it('does not launch a task scheduled in the future', async () => {

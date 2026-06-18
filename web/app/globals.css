@@ -10,6 +10,8 @@
   --color-text: oklch(0.97 0 0);
   --color-text-muted: oklch(0.62 0 0);
   --color-border-strong: oklch(0.38 0.005 256);
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, "Fira Sans", "Droid Sans", "Helvetica Neue", sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, "SF Mono", monospace;
   --radius: 0.5rem;
   --radius-sm: 0.375rem;
   --radius-lg: 0.75rem;
@@ -23,13 +25,24 @@
   --motion-fast: 120ms;
   --motion-base: 200ms;
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 
-/* Vercel-style: subtle elevation + border lighten + a 1px lift on hover (no glow, no gradient) */
-.card-interactive { transition: border-color var(--motion-base) var(--ease-out), box-shadow var(--motion-base) var(--ease-out), transform var(--motion-base) var(--ease-out); }
+/* Vercel-style: subtle elevation + border lighten + a 1px lift on hover (no glow, no gradient).
+   The resting shadow lives here too, so every .card-interactive surface shares one depth language. */
+.card-interactive { box-shadow: var(--shadow-card); transition: border-color var(--motion-base) var(--ease-out), box-shadow var(--motion-base) var(--ease-out), transform var(--motion-base) var(--ease-out); }
 .card-interactive:hover { border-color: var(--color-border-strong); box-shadow: var(--shadow-raised); transform: translateY(-1px); }
 
-html, body { background: var(--color-bg); color: var(--color-text); }
+/* Scale the whole UI up ~25% via the rem base — all rem-based type & spacing grow together. */
+html { font-size: 125%; }
+html, body {
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-sans);
+  font-weight: 400;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
 
 @keyframes toast-in {
   from { opacity: 0; transform: translateY(8px) scale(0.98); }
@@ -42,6 +55,9 @@ html, body { background: var(--color-bg); color: var(--color-text); }
 @keyframes skel-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
 @keyframes live-ring { 0% { box-shadow: 0 0 0 0 var(--live-ring, rgba(16,185,129,0.5)); } 70%, 100% { box-shadow: 0 0 0 5px rgba(0,0,0,0); } }
 @keyframes marquee { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+/* Session tail: flash the bottom edge when new output streams in */
+@keyframes tail-flash { from { box-shadow: inset 0 -1px 0 0 var(--color-accent); } to { box-shadow: inset 0 -1px 0 0 transparent; } }
+.tail-live[data-flash="true"] { animation: tail-flash 600ms var(--ease-out); }
 
 .marquee-track { display: inline-flex; animation: marquee 40s linear infinite; }
 .marquee-mask:hover .marquee-track { animation-play-state: paused; }
@@ -49,19 +65,28 @@ html, body { background: var(--color-bg); color: var(--color-text); }
 
 .animate-fade-up { animation: fade-up 260ms var(--ease-out) both; }
 .animate-pop-in { animation: pop-in 180ms var(--ease-out) both; }
+/* Route transition: opacity only — NO transform, so it never becomes a containing
+   block for the fixed-position modals/overlays rendered inside the page. */
+@keyframes route-fade { from { opacity: 0; } to { opacity: 1; } }
+.animate-route { animation: route-fade 200ms var(--ease-out) both; }
+/* SVG edge that draws itself in on mount (normalized via pathLength="1") */
+@keyframes draw { from { stroke-dashoffset: 1; } to { stroke-dashoffset: 0; } }
+.animate-draw { stroke-dasharray: 1; stroke-dashoffset: 1; animation: draw 600ms var(--ease-out) forwards; }
 .skeleton { background: var(--color-elevated); border-radius: var(--radius-sm); animation: skel-pulse 1.4s ease-in-out infinite; }
 .live-dot { position: relative; }
 .live-dot::after { content: ''; position: absolute; inset: 0; border-radius: 9999px; animation: live-ring 2s ease-out infinite; }
 
 @media (prefers-reduced-motion: reduce) {
-  .animate-fade-up, .animate-pop-in, .skeleton, .live-dot::after { animation: none !important; }
+  .animate-fade-up, .animate-pop-in, .animate-route, .skeleton, .live-dot::after, .animate-draw, .tail-live { animation: none !important; }
+  .animate-draw { stroke-dashoffset: 0; }
   .card-interactive:hover { transform: none; }
 }
 
-/* Always-visible keyboard focus on interactive elements (OLED-safe accent ring) */
-button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible, [role="switch"]:focus-visible, [role="radio"]:focus-visible {
-  outline: 1px solid var(--color-accent);
-  outline-offset: 1px;
+/* Always-visible keyboard focus on interactive elements: a 2-tone accent ring that hugs
+   rounded corners (outer + inset), OLED-safe — no outer glow. */
+button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible, [role="switch"]:focus-visible, [role="radio"]:focus-visible, [role="checkbox"]:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 1px var(--color-accent), inset 0 0 0 1px var(--color-accent);
 }
 
 * {

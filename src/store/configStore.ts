@@ -20,7 +20,7 @@ const DEFAULT_PROVIDERS: Providers = {
   'codex': { bin: 'codex', args: '' },
 };
 
-const KNOWN_EXECS = ['sonnet', 'ollama-cloud/deepseek-v4-flash', 'kimi-for-coding/k2p7', 'ollama/minimax-m2.7:cloud', 'codex:gpt-5.4'];
+const KNOWN_EXECS = ['sonnet', 'deepseek/deepseek-v4-flash', 'kimi-for-coding/k2p7', 'ollama/minimax-m2.7:cloud', 'codex:gpt-5.4'];
 
 export const DEFAULT_CONFIG: OrcaConfig = {
   allowedExecs: [...KNOWN_EXECS],

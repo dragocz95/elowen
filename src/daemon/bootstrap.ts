@@ -100,8 +100,21 @@ export function buildApp(opts: BuildOpts) {
   }
   const app = createServer({ tasks, readiness, missions, engine, spawn, tmux, bus, events, project: opts.project, fallback: { program: 'claude-code', model: 'sonnet' }, clock: new SystemClock(), config, users: openMode ? undefined : users, projects, git });
 
+  // Root-cause recovery: after a daemon crash/restart, tasks left 'in_progress' whose tmux
+  // session is gone are zombies — revert them to 'open' so they can be picked up again.
+  const reconcileZombies = async () => {
+    const live = new Set((await tmux.list()).filter((s) => s.startsWith('orca-')));
+    for (const t of tasks.list({ project_id: opts.project.id, status: 'in_progress' })) {
+      const name = t.labels.find((l) => l.startsWith('agent:'))?.slice('agent:'.length);
+      if (name && live.has(`orca-${name}`)) continue; // session still running — genuinely active
+      tasks.setStatus(t.id, 'open');
+      bus.publish({ type: 'task', taskId: t.id, status: 'open' });
+    }
+  };
+
   const startLoops = () => {
     const clock = new SystemClock();
+    void reconcileZombies(); // one-shot zombie sweep on startup
     const stopDeriver = deriver.start();
     const stopOverseer = clock.setInterval(() => { for (const m of missions.active()) void engine.tick(m.id); }, 90000);
     const stopScheduler = clock.setInterval(() => { void scheduler.tick(); }, 30000);

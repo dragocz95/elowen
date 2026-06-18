@@ -31,7 +31,9 @@ export function buildAgentCommand(spec: AgentSpec, ctx: SpawnCtx): string {
     `You are the orca agent "${ctx.agentName}". Work on task ${ctx.taskId}${titlePart}.${detailsPart}`,
     '',
     'First read the project context (AGENTS.md, CLAUDE.md, or README) to understand conventions, then implement the task end to end. Make the actual code changes — do not just describe them. Verify your work (build/tests if relevant).',
-    `When the work is complete and verified, run: ${closeCommand}`,
+    `When you finish, close the task with a one-sentence summary of what you did and the result, plus the outcome:`,
+    `  - success: ${closeCommand} --summary "<what you did + result>" --outcome ok`,
+    `  - could not complete: ${closeCommand} --summary "<what blocked you>" --outcome fail`,
   ].join('\n');
   if (spec.program.startsWith('opencode')) {
     const bin = ctx.bin || 'opencode';

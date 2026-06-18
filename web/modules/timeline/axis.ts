@@ -84,13 +84,19 @@ export function groupEvents(events: AxisEvent[]): GroupedEvent[] {
  */
 export function plotAxis(events: AxisEvent[], now: number, hours: number): AxisResult {
   const windowStart = now - hours * HOUR_MS;
+  const span = now - windowStart;
 
-  // Build ticks: one per hour, from oldest to newest.
-  const ticks: AxisTick[] = Array.from({ length: hours }, (_, i) => {
-    const tickMs = windowStart + (i + 1) * HOUR_MS;
+  // Evenly-spaced ticks across the window. For ≤24h windows use one-per-hour with HH:MM
+  // labels (so short ranges stay precise); for longer windows fall back to ~one-per-day
+  // with a D.M. date label so a week-long axis doesn't flood with 168 ticks.
+  const tickCount = hours <= 24 ? hours : Math.max(6, Math.min(12, Math.round(hours / 24)));
+  const ticks: AxisTick[] = Array.from({ length: tickCount }, (_, i) => {
+    const tickMs = windowStart + ((i + 1) * span) / tickCount;
     const d = new Date(tickMs);
-    const label = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
-    const frac = (tickMs - windowStart) / (now - windowStart);
+    const label = hours <= 24
+      ? `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+      : `${d.getDate()}.${d.getMonth() + 1}.`;
+    const frac = (tickMs - windowStart) / span;
     return { label, frac };
   });
 

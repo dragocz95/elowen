@@ -1,17 +1,24 @@
 'use client';
 import { useMemo, useState } from 'react';
-import { Activity } from 'lucide-react';
-import { useActivity } from '../../lib/queries';
+import { Activity, ChevronDown } from 'lucide-react';
+import { useActivity, useTasks, useConfig, useSessions } from '../../lib/queries';
 import { plotAxis, groupEvents, type AxisEvent, type AxisPoint, type GroupedEvent } from './axis';
 import { eventIcon, eventTone } from './eventMeta';
+import { taskExec } from '../../lib/taskExec';
+import { execModel } from '../../lib/modelProvider';
+import { useSessionPane } from '../sessions/useSessionPane';
+import { parseAnsi } from '../sessions/ansi';
+import { ModelIcon } from '../../components/ui/ModelIcon';
 import { Segmented, type SegmentedOption } from '../../components/ui/Segmented';
+import { ModuleHeader } from '../../components/ui/ModuleHeader';
 import { Section } from '../../components/ui/Section';
 import { Badge } from '../../components/ui/Badge';
 import { LoadingState, ErrorState, EmptyState } from '../../components/ui/states';
 import type { Tone } from '../../components/ui/tone';
+import type { Task } from '../../lib/types';
 import { useTranslation } from '../../lib/i18n';
 
-const WINDOW_HOURS = 12;
+const WINDOW_MAX_HOURS = 168; // cap the axis window at one week
 
 /** Parse either ISO ("2026-06-17T12:05:00Z") or SQLite ("2026-06-17 12:05:00") ts → epoch ms. */
 function parseTs(ts: string): number {
@@ -24,12 +31,25 @@ const DOT_TONE: Record<Tone, string> = {
   danger: 'bg-danger',
   muted: 'bg-text-muted',
   default: 'bg-text-muted',
+  success: 'bg-[#22c55e]',
+  warning: 'bg-[#f59e0b]',
 };
 
 /** "12:05" style UTC clock label. */
 function clock(ms: number): string {
   const d = new Date(ms);
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
+
+/** Colour a feed badge by its detail (status/signal), not just the event kind. */
+function detailTone(detail: string): Tone {
+  switch (detail) {
+    case 'complete': case 'open': return 'success';      // green
+    case 'working': case 'in_progress': case 'needs_input': return 'warning'; // amber
+    case 'closed': case 'blocked': return 'danger';        // red
+    case 'active': return 'accent';
+    default: return 'muted';
+  }
 }
 
 function AxisMarker({ point }: { point: AxisPoint }) {
@@ -44,7 +64,7 @@ function AxisMarker({ point }: { point: AxisPoint }) {
     >
       <div
         data-testid="axis-dot"
-        className={`rounded-full ring-2 ring-surface transition-transform group-hover:scale-125 ${DOT_TONE[tone]}`}
+        className={`animate-pop-in rounded-full ring-2 ring-surface transition-transform group-hover:scale-125 ${DOT_TONE[tone]}`}
         style={{ width: size, height: size, transitionDuration: 'var(--motion-fast)' }}
         aria-label={tip}
       />
@@ -78,6 +98,10 @@ function TimelineTrack({ points, ticks }: { points: AxisPoint[]; ticks: { label:
         ))}
         {/* Baseline */}
         <div className="absolute inset-x-0 top-1/2 h-px -translate-y-1/2 bg-border" aria-hidden />
+        {/* "Now" edge with a live pulse */}
+        <div className="absolute inset-y-0 right-0 w-px bg-accent/40" aria-hidden>
+          <span className="live-dot absolute -top-0.5 left-1/2 h-1.5 w-1.5 -translate-x-1/2 rounded-full bg-accent" style={{ ['--live-ring' as string]: 'rgba(59,130,246,0.5)' }} />
+        </div>
         {/* Markers */}
         {points.map((p) => (
           <AxisMarker key={p.id} point={p} />
@@ -113,28 +137,89 @@ function Lane({ target, points, ticks }: { target: string; points: AxisPoint[]; 
   );
 }
 
-function FeedRow({ event }: { event: GroupedEvent }) {
-  const Icon = eventIcon(event.type);
-  const tone = eventTone(event.type);
+/** Collapsible per-target group: header (model icon + latest status) that expands to the event list.
+ *  Re-renders live as `events` updates, even while open (open state is keyed by target). */
+function FeedGroup({ target, title, events, exec, open, onToggle }: { target: string; title?: string; events: GroupedEvent[]; exec?: string; open: boolean; onToggle: () => void }) {
+  const latest = events[0]; // newest-first
+  const LatestIcon = eventIcon(latest.type);
+  const total = events.reduce((s, e) => s + e.count, 0);
   return (
-    <div className="flex items-center gap-3 py-2.5 transition-colors hover:bg-elevated -mx-2 px-2 rounded-md" style={{ transitionDuration: 'var(--motion-fast)' }}>
-      <Icon className="shrink-0 text-text-muted" size={14} aria-hidden />
-      <span className="flex-1 truncate font-mono text-xs text-text">{event.target}</span>
-      <Badge tone={tone}>
-        {event.detail}
-        {event.count > 1 ? <span className="ml-1 opacity-70">×{event.count}</span> : null}
-      </Badge>
-      <span className="shrink-0 whitespace-nowrap font-mono text-text-muted" style={{ fontSize: 'var(--text-caption)' }}>
-        {clock(event.timestamp)}
-      </span>
+    <div className="shrink-0 overflow-hidden rounded-lg border border-border bg-surface">
+      <button type="button" onClick={onToggle} aria-expanded={open} className="relative flex w-full items-center gap-3 px-3 py-2.5 pr-14 text-left transition-colors hover:bg-elevated">
+        <span className="flex h-16 w-16 shrink-0 items-center justify-center rounded-xl border-2 border-border bg-elevated">
+          {exec ? <ModelIcon name={exec} size={38} /> : <LatestIcon size={30} className="text-text-muted" aria-hidden />}
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-sm font-semibold text-text">{title || target}</div>
+          {(title || total > 1) ? (
+            <div className="truncate font-mono text-[11px] text-text-muted">{[title ? target : null, total > 1 ? `×${total}` : null].filter(Boolean).join(' · ')}</div>
+          ) : null}
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          <Badge tone={detailTone(latest.detail)}>{latest.detail}</Badge>
+          {exec ? <span className="inline-flex items-center gap-1 rounded-md border border-border bg-elevated px-1.5 py-0.5 font-mono text-[10px] text-text-muted"><ModelIcon name={exec} size={11} />{execModel(exec)}</span> : null}
+        </div>
+        <ChevronDown size={15} className={`absolute right-3 top-2.5 text-text-muted transition-transform ${open ? 'rotate-180' : ''}`} aria-hidden />
+        <span className="absolute bottom-2.5 right-3 font-mono text-text-muted" style={{ fontSize: 'var(--text-caption)' }}>{clock(latest.timestamp)}</span>
+      </button>
+      {open && (
+        <div className="divide-y divide-border border-t border-border">
+          {events.map((e) => {
+            const Icon = eventIcon(e.type);
+            return (
+              <div key={e.id} className="flex items-center gap-3 py-2 pl-4 pr-3">
+                <Icon size={13} className="shrink-0 text-text-muted" aria-hidden />
+                <Badge tone={detailTone(e.detail)}>{e.detail}{e.count > 1 ? <span className="ml-1 opacity-70">×{e.count}</span> : null}</Badge>
+                <span className="ml-auto shrink-0 font-mono text-text-muted" style={{ fontSize: 'var(--text-caption)' }}>{clock(e.timestamp)}</span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Live variant for a running session: header shows what the agent is doing *right now*
+ *  (last line of its tmux pane, polled every 2s); expanded shows the live terminal tail. */
+function LiveFeedGroup({ target, title, exec, ts, open, onToggle }: { target: string; title?: string; exec?: string; ts: number; open: boolean; onToggle: () => void }) {
+  const { tail } = useSessionPane(target, 8);
+  const lines = parseAnsi(tail).map((s) => s.text).join('').split('\n').map((l) => l.trimEnd()).filter((l) => l.trim());
+  const current = lines[lines.length - 1] ?? '…';
+  return (
+    <div className="shrink-0 overflow-hidden rounded-lg border border-accent/40 bg-surface">
+      <button type="button" onClick={onToggle} aria-expanded={open} className="relative flex w-full items-center gap-3 px-3 py-2.5 pr-14 text-left transition-colors hover:bg-elevated">
+        <span className="flex h-16 w-16 shrink-0 items-center justify-center rounded-xl border-2 border-border bg-elevated">
+          {exec ? <ModelIcon name={exec} size={38} /> : <Activity size={30} className="text-accent" aria-hidden />}
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-sm font-semibold text-text">{title || target}</div>
+          <div className="truncate text-[11px] text-text-muted">{current}</div>
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          <Badge tone="warning">working</Badge>
+          {exec ? <span className="inline-flex items-center gap-1 rounded-md border border-border bg-elevated px-1.5 py-0.5 font-mono text-[10px] text-text-muted"><ModelIcon name={exec} size={11} />{execModel(exec)}</span> : null}
+        </div>
+        <ChevronDown size={15} className={`absolute right-3 top-2.5 text-text-muted transition-transform ${open ? 'rotate-180' : ''}`} aria-hidden />
+        <span className="absolute bottom-2.5 right-3 font-mono text-text-muted" style={{ fontSize: 'var(--text-caption)' }}>{clock(ts)}</span>
+      </button>
+      {open && (
+        <pre className="tail-live max-h-48 overflow-auto whitespace-pre-wrap break-all border-t border-border bg-bg p-2.5 font-mono text-[11px] leading-snug text-text-muted">
+          {tail ? parseAnsi(tail).map((s, i) => <span key={i} style={s.color ? { color: s.color } : undefined}>{s.text}</span>) : '…'}
+        </pre>
+      )}
     </div>
   );
 }
 
 export function TimelineView() {
   const { t } = useTranslation();
+  const tasks = useTasks();
+  const sessions = useSessions();
+  const { data: config } = useConfig();
   const [filter, setFilter] = useState<string>('all');
   const [view, setView] = useState<string>('axis');
+  const [openGroups, setOpenGroups] = useState<Set<string>>(new Set());
   const type = filter === 'all' ? undefined : filter;
   const q = useActivity(type);
 
@@ -155,40 +240,74 @@ export function TimelineView() {
     [q.data],
   );
 
-  const { points, ticks } = useMemo(() => plotAxis(rawEvents, Date.now(), WINDOW_HOURS), [rawEvents]);
+  // Window = the available data span, capped at one week. Falls back to 12h when empty,
+  // and zooms in when all events are recent (so a few-minute run isn't lost on a week axis).
+  const windowHours = useMemo(() => {
+    if (rawEvents.length === 0) return 12;
+    const earliest = Math.min(...rawEvents.map((e) => e.timestamp));
+    const spanH = (Date.now() - earliest) / 3_600_000;
+    return Math.min(WINDOW_MAX_HOURS, Math.max(1, Math.ceil(spanH)));
+  }, [rawEvents]);
+  const windowLabel = windowHours >= 144 ? t.timeline.activityWeek
+    : windowHours >= 36 ? t.timeline.activityDays.replace('{n}', String(Math.round(windowHours / 24)))
+    : t.timeline.activityHours.replace('{n}', String(Math.round(windowHours)));
+
+  const { points, ticks } = useMemo(() => plotAxis(rawEvents, Date.now(), windowHours), [rawEvents, windowHours]);
   // Feed: most-recent-first, deduped the same way as the axis.
   const feed = useMemo(() => groupEvents(rawEvents).sort((a, b) => b.timestamp - a.timestamp), [rawEvents]);
+  // Resolve a target (task id or orca-<agent> session) → its model exec, for the model icon.
+  const execForTarget = (target: string): string | undefined => {
+    const found: Task | undefined =
+      tasks.data?.find((t) => t.id === target)
+      ?? (target.startsWith('orca-') ? tasks.data?.find((t) => (t.labels ?? []).includes(`agent:${target.slice('orca-'.length)}`)) : undefined);
+    return found ? (taskExec(found.labels) || config?.defaults?.exec || undefined) : undefined;
+  };
+  // Friendly task title for a target (id or orca-<agent>), for the bold feed heading.
+  const titleForTarget = (target: string): string | undefined => {
+    const found: Task | undefined =
+      tasks.data?.find((t) => t.id === target)
+      ?? (target.startsWith('orca-') ? tasks.data?.find((t) => (t.labels ?? []).includes(`agent:${target.slice('orca-'.length)}`)) : undefined);
+    return found?.title;
+  };
+  // Group the feed per target (agent/task/mission) → collapsible cards, newest activity first.
+  const feedGroups = useMemo(() => {
+    const byTarget = new Map<string, GroupedEvent[]>();
+    for (const e of feed) { const l = byTarget.get(e.target) ?? []; l.push(e); byTarget.set(e.target, l); }
+    return Array.from(byTarget.entries())
+      .map(([target, events]) => ({ target, events, last: events[0]?.timestamp ?? 0 }))
+      .sort((a, b) => b.last - a.last);
+  }, [feed]);
+  const toggleGroup = (target: string) => setOpenGroups((s) => { const n = new Set(s); n.has(target) ? n.delete(target) : n.add(target); return n; });
+  const liveSet = useMemo(() => new Set(sessions.data ?? []), [sessions.data]);
   // Swimlanes: one track per target (agent/session/task), busiest-recent first.
   const lanes = useMemo(() => {
     const now = Date.now();
     const byTarget = new Map<string, AxisEvent[]>();
     for (const e of rawEvents) { const list = byTarget.get(e.target) ?? []; list.push(e); byTarget.set(e.target, list); }
     return Array.from(byTarget.entries())
-      .map(([target, evs]) => ({ target, points: plotAxis(evs, now, WINDOW_HOURS).points, last: Math.max(...evs.map((e) => e.timestamp)) }))
+      .map(([target, evs]) => ({ target, points: plotAxis(evs, now, windowHours).points, last: Math.max(...evs.map((e) => e.timestamp)) }))
       .sort((a, b) => b.last - a.last)
       .slice(0, 10);
-  }, [rawEvents]);
+  }, [rawEvents, windowHours]);
 
   const hasData = !q.isLoading && !q.isError && rawEvents.length > 0;
 
   return (
     <div className="flex flex-col gap-4">
-      <Section
-        title={t.timeline.activityLast12h}
-        icon={Activity}
-        actions={
-          <div className="flex flex-wrap items-center gap-2">
-            <Segmented options={[{ label: t.timeline.axis, value: 'axis' }, { label: t.timeline.lanes, value: 'lanes' }]} value={view} onChange={setView} />
-            <Segmented options={FILTER_OPTIONS} value={filter} onChange={setFilter} />
-          </div>
-        }
-      >
+      <ModuleHeader title={t.page.timeline} icon={Activity}>
+        <Segmented options={[{ label: t.timeline.axis, value: 'axis' }, { label: t.timeline.lanes, value: 'lanes' }]} value={view} onChange={setView} />
+        <Segmented options={FILTER_OPTIONS} value={filter} onChange={setFilter} />
+      </ModuleHeader>
+
+      {/* Hero: the lane/axis plot — orca's signature surface */}
+      <section className="rounded-lg border border-border border-t-2 border-t-accent/40 bg-surface p-5" style={{ boxShadow: 'var(--shadow-card)' }}>
+        <div className="mb-3 text-[11px] font-semibold uppercase tracking-widest text-text-muted">{windowLabel}</div>
         {q.isLoading ? (
           <LoadingState />
         ) : q.isError ? (
           <ErrorState message={t.timeline.loadError} onRetry={() => q.refetch()} />
         ) : !hasData ? (
-          <EmptyState title={t.timeline.empty} description={t.timeline.emptyDescription} />
+          <EmptyState title={t.timeline.empty} description={t.timeline.emptyDescription} icon={Activity} />
         ) : view === 'lanes' ? (
           <div className="flex flex-col gap-2.5">
             {lanes.map((l) => <Lane key={l.target} target={l.target} points={l.points} ticks={ticks} />)}
@@ -201,7 +320,7 @@ export function TimelineView() {
         ) : (
           <TimelineTrack points={points} ticks={ticks} />
         )}
-      </Section>
+      </section>
 
       <Section title={t.timeline.feed}>
         {q.isLoading ? (
@@ -209,11 +328,31 @@ export function TimelineView() {
         ) : q.isError ? (
           <ErrorState message={t.timeline.loadError} onRetry={() => q.refetch()} />
         ) : !hasData ? (
-          <EmptyState title={t.timeline.empty} />
+          <EmptyState title={t.timeline.empty} icon={Activity} />
         ) : (
-          <div data-testid="activity-feed" className="flex flex-col divide-y divide-border">
-            {feed.map((e) => (
-              <FeedRow key={e.id} event={e} />
+          <div data-testid="activity-feed" className="flex max-h-[60vh] flex-col gap-2 overflow-y-auto pr-0.5">
+            {feedGroups.map((g) => (
+              liveSet.has(g.target) ? (
+                <LiveFeedGroup
+                  key={g.target}
+                  target={g.target}
+                  title={titleForTarget(g.target)}
+                  exec={execForTarget(g.target)}
+                  ts={g.last}
+                  open={openGroups.has(g.target)}
+                  onToggle={() => toggleGroup(g.target)}
+                />
+              ) : (
+                <FeedGroup
+                  key={g.target}
+                  target={g.target}
+                  title={titleForTarget(g.target)}
+                  events={g.events}
+                  exec={execForTarget(g.target)}
+                  open={openGroups.has(g.target)}
+                  onToggle={() => toggleGroup(g.target)}
+                />
+              )
             ))}
           </div>
         )}

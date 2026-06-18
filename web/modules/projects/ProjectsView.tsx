@@ -1,15 +1,15 @@
 'use client';
 import { useState } from 'react';
-import { FolderGit2, GitBranch, GitCommitHorizontal, Plus } from 'lucide-react';
+import { FolderGit2, GitBranch, GitCommitHorizontal, Plus, CheckCircle2, AlertTriangle, ArrowUp, ArrowDown } from 'lucide-react';
 import { useProjects, useProjectGit } from '../../lib/queries';
 import { useCreateProject } from '../../lib/mutations';
 import { useToast } from '../../components/ui/Toast';
-import { Section } from '../../components/ui/Section';
 import { Badge } from '../../components/ui/Badge';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
 import { Field } from '../../components/ui/Field';
 import { Modal } from '../../components/ui/Modal';
+import { ModuleHeader } from '../../components/ui/ModuleHeader';
 import { LoadingState, ErrorState, EmptyState } from '../../components/ui/states';
 import { useTranslation } from '../../lib/i18n';
 
@@ -44,31 +44,94 @@ export function ProjectsView() {
   }
 
   return (
-    <div className="flex w-full flex-col gap-6">
-      <Section
-        title={t.page.projects}
-        icon={FolderGit2}
-        actions={<Button variant="accent" icon={Plus} onClick={() => setCreating(true)}>{t.projects.newProject}</Button>}
-      >
-        {projects.isLoading && <LoadingState />}
-        {projects.isError && <ErrorState message={t.projects.loadError} onRetry={() => projects.refetch()} />}
-        {projects.data && projects.data.length === 0 && <EmptyState title={t.projects.empty} />}
-        {projects.data && projects.data.length > 0 && (
+    <>
+      <ModuleHeader title={t.page.projects} count={projects.data?.length} icon={FolderGit2}>
+        <Button variant="accent" icon={Plus} onClick={() => setCreating(true)}>{t.projects.newProject}</Button>
+      </ModuleHeader>
+
+      {projects.isLoading ? <LoadingState variant="cards" />
+        : projects.isError ? <ErrorState message={t.projects.loadError} onRetry={() => projects.refetch()} />
+        : !projects.data || projects.data.length === 0 ? <EmptyState title={t.projects.empty} icon={FolderGit2} action={<Button variant="accent" icon={Plus} onClick={() => setCreating(true)}>{t.projects.newProject}</Button>} />
+        : (
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {projects.data.map((p) => (
-              <button
-                key={p.id}
-                type="button"
-                onClick={() => setSelectedId(p.id)}
-                className={`flex flex-col items-start gap-1 rounded-md border bg-bg p-4 text-left transition-colors ${selectedId === p.id ? 'border-accent' : 'border-border hover:border-border-strong'}`}
-              >
-                <span className="text-sm font-medium text-text">{p.slug}</span>
-                <span className="truncate font-mono text-xs text-text-muted">{p.path}</span>
-              </button>
-            ))}
+            {projects.data.map((p) => {
+              const active = selectedId === p.id;
+              const status = active && git.data?.isRepo ? git.data.status : null;
+              return (
+                <div
+                  key={p.id}
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => setSelectedId(p.id)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') setSelectedId(p.id); }}
+                  className={`card-interactive group flex cursor-pointer gap-3.5 rounded-lg border p-3.5 ${active ? 'border-accent bg-accent/[0.06]' : 'border-border bg-surface'}`}
+                >
+                  <div className="flex shrink-0 items-center">
+                    <span className="flex h-12 w-12 items-center justify-center rounded-xl border-2 border-border bg-elevated">
+                      <FolderGit2 size={24} className="text-text-muted" aria-hidden />
+                    </span>
+                  </div>
+
+                  <div className="flex min-w-0 flex-1 flex-col gap-1.5">
+                    <span className="truncate font-semibold text-text">{p.slug}</span>
+                    <span className="truncate font-mono text-xs text-text-muted">{p.path}</span>
+
+                    {active && git.isLoading && <span className="font-mono text-[11px] text-text-muted animate-pulse">{t.common.loading}</span>}
+                    {active && git.data && !git.data.isRepo && <Badge tone="muted">{t.projects.notGit}</Badge>}
+                    {status && (
+                      <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+                        <Badge tone="accent"><GitBranch size={11} className="mr-1" aria-hidden />{status.branch}</Badge>
+                        {status.clean
+                          ? <Badge tone="success"><CheckCircle2 size={11} className="mr-1" aria-hidden />{t.projects.clean}</Badge>
+                          : <Badge tone="warning"><AlertTriangle size={11} className="mr-1" aria-hidden />{t.projects.dirty.replace('{count}', String(status.dirty))}</Badge>}
+                        {status.ahead > 0 && <Badge tone="accent"><ArrowUp size={11} className="mr-0.5" aria-hidden />{status.ahead}</Badge>}
+                        {status.behind > 0 && <Badge tone="muted"><ArrowDown size={11} className="mr-0.5" aria-hidden />{status.behind}</Badge>}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
           </div>
         )}
-      </Section>
+
+      {selectedId && git.data?.isRepo && (git.data.branches.length > 0 || git.data.commits.length > 0) && (
+        <div className="mt-5 flex flex-col gap-5 rounded-lg border border-border bg-surface p-4" style={{ boxShadow: 'var(--shadow-card)' }}>
+          {git.data.branches.length > 0 && (
+            <div className="flex flex-col gap-2">
+              <div className="flex items-center gap-2 text-sm font-medium text-text">
+                <GitBranch size={14} className="text-text-muted" aria-hidden />
+                {t.projects.branches}
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {git.data.branches.map((b) => (
+                  <Badge key={b.name} tone={b.current ? 'accent' : 'muted'}>{b.name}{b.current ? ' *' : ''}</Badge>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {git.data.commits.length > 0 && (
+            <div className="flex flex-col gap-2">
+              <div className="flex items-center gap-2 text-sm font-medium text-text">
+                <GitCommitHorizontal size={14} className="text-text-muted" aria-hidden />
+                {t.projects.commits}
+              </div>
+              <ul className="flex flex-col gap-2">
+                {git.data.commits.map((c) => (
+                  <li key={c.hash} className="flex flex-wrap items-center gap-2 rounded-md border border-border bg-bg px-3 py-2 text-sm">
+                    <span className="font-mono text-xs text-text-muted">{c.hash}</span>
+                    <span className="text-text">{c.subject}</span>
+                    <span className="text-xs text-text-muted">{c.author} · {c.relative}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+      )}
+
+      {selectedId && git.isError && <div className="mt-5"><ErrorState message={t.projects.gitError} onRetry={() => git.refetch()} /></div>}
 
       {creating && (
         <Modal title={t.projects.newProject} onClose={() => setCreating(false)} size="md">
@@ -89,56 +152,6 @@ export function ProjectsView() {
           </div>
         </Modal>
       )}
-
-      {selectedId && (
-        <Section title={t.projects.git} icon={GitBranch}>
-          {git.isLoading && <LoadingState />}
-          {git.isError && <ErrorState message={t.projects.gitError} onRetry={() => git.refetch()} />}
-          {git.data && !git.data.isRepo && <EmptyState title={t.projects.notGit} />}
-          {git.data && git.data.isRepo && git.data.status && (
-            <div className="flex flex-col gap-5">
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="font-mono text-sm text-text">{git.data.status.branch}</span>
-                <Badge tone={git.data.status.dirty > 0 ? 'danger' : 'muted'}>{t.projects.dirty.replace('{count}', String(git.data.status.dirty))}</Badge>
-                <Badge tone="accent">↑{git.data.status.ahead}</Badge>
-                <Badge tone="accent">↓{git.data.status.behind}</Badge>
-              </div>
-
-              {git.data.branches.length > 0 && (
-                <div className="flex flex-col gap-2">
-                  <div className="flex items-center gap-2 text-sm font-medium text-text">
-                    <GitBranch size={14} className="text-text-muted" aria-hidden />
-                    {t.projects.branches}
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    {git.data.branches.map((b) => (
-                      <Badge key={b.name} tone={b.current ? 'accent' : 'muted'}>{b.name}{b.current ? ' *' : ''}</Badge>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {git.data.commits.length > 0 && (
-                <div className="flex flex-col gap-2">
-                  <div className="flex items-center gap-2 text-sm font-medium text-text">
-                    <GitCommitHorizontal size={14} className="text-text-muted" aria-hidden />
-                    {t.projects.commits}
-                  </div>
-                  <ul className="flex flex-col gap-2">
-                    {git.data.commits.map((c) => (
-                      <li key={c.hash} className="flex flex-wrap items-center gap-2 rounded-md border border-border bg-bg px-3 py-2 text-sm">
-                        <span className="font-mono text-xs text-text-muted">{c.hash}</span>
-                        <span className="text-text">{c.subject}</span>
-                        <span className="text-xs text-text-muted">{c.author} · {c.relative}</span>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-            </div>
-          )}
-        </Section>
-      )}
-    </div>
+    </>
   );
 }

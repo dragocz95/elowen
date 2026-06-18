@@ -108,6 +108,7 @@ Connects to the daemon at `NEXT_PUBLIC_ORCA_URL` (default `http://localhost:4400
 src/
 ├── api/              Hono REST router + SSE event bus
 │   ├── server.ts     Route definitions
+│   ├── auth.ts       Bearer token auth middleware
 │   └── sse.ts        EventBus implementation
 ├── cli/              CLI client (ls, ready, sessions)
 │   ├── index.ts      Entrypoint with daemon autostart
@@ -120,12 +121,19 @@ src/
 │   ├── deriver.ts    5s poll loop, state detection
 │   ├── shellPatterns.ts  Prompt detection per program
 │   └── types.ts      Signal types
-├── inference/        LLM inference relay (reserved)
-│   └── client.ts     RelayClient + FakeInference
+├── git/              Git integration
+│   └── gitReader.ts  Read git status, branches, commits
+├── inference/        LLM inference relay
+│   ├── client.ts     RelayClient + FakeInference
+│   └── types.ts      Inference types
 ├── overseer/         Orchestration engine
 │   ├── missionEngine.ts  Tick loop, spawn logic
 │   ├── guardrails.ts     Regex-based safety checks
-│   └── routing.ts        Task → agent routing
+│   ├── routing.ts        Task → agent routing
+│   ├── scheduler.ts      Scheduled task execution
+│   ├── decision.ts       LLM-based prompt decision engine
+│   ├── janitor.ts        Zombie session cleanup
+│   └── planner.ts        AI goal decomposition
 ├── shared/           Utilities
 │   └── clock.ts      Clock interface (system + fake)
 ├── spawn/            Agent launcher
@@ -134,14 +142,20 @@ src/
 ├── store/            SQLite data layer
 │   ├── db.ts         Database connection
 │   ├── schema.sql    Table definitions
-│   ├── taskStore.ts  Task CRUD
+│   ├── types.ts      Shared store types (Task, TaskStatus, etc.)
+│   ├── taskStore.ts  Task CRUD + dependency tree
 │   ├── missionStore.ts  Mission CRUD
+│   ├── missionDetail.ts  Composite mission query
 │   ├── agentStore.ts    Agent registry
 │   ├── readiness.ts     Task readiness computation
-│   └── configStore.ts   Daemon configuration
+│   ├── configStore.ts   Daemon configuration
+│   ├── userStore.ts     User management + auth tokens
+│   ├── projectStore.ts  Project CRUD
+│   └── eventStore.ts    Activity event log
 └── tmux/             tmux abstraction
     ├── types.ts      TmuxDriver interface
-    └── driver.ts     RealTmuxDriver
+    ├── driver.ts     RealTmuxDriver
+    └── fakeDriver.ts In-memory fake for tests
 ```
 
 ---
@@ -201,6 +215,44 @@ const phases = parsePhases('[{"title":"Fix login","type":"bug"}]');
 1. Add the guardrail name to `GUARDRAILS` in `src/overseer/guardrails.ts`
 2. Add the regex pattern in `PATTERNS`
 3. No other changes needed — guardrails are picked up automatically
+
+---
+
+## TypeScript configuration
+
+### Root (daemon) — `tsconfig.json`
+
+```json
+{
+  "compilerOptions": {
+    "target": "ES2023",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "outDir": "dist",
+    "rootDir": "src",
+    "declaration": true,
+    "sourceMap": true
+  }
+}
+```
+
+### Web — `web/tsconfig.json`
+
+```json
+{
+  "compilerOptions": {
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "jsx": "react-jsx",
+    "strict": true,
+    "paths": { "@/*": ["./*"] },
+    "plugins": [{ "name": "next" }]
+  }
+}
+```
 
 ---
 

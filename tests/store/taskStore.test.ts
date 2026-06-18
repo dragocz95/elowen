@@ -17,6 +17,32 @@ describe('TaskStore', () => {
     expect(store.get('orca-1')?.status).toBe('closed');
   });
 
+  it('close stamps status, summary, outcome and closed_at', () => {
+    store.create({ id: 'orca-1', project_id: 1, title: 'A' });
+    store.close('orca-1', { summary: 'Built the thing', outcome: 'ok' });
+    const t = store.get('orca-1')!;
+    expect(t.status).toBe('closed');
+    expect(t.result_summary).toBe('Built the thing');
+    expect(t.outcome).toBe('ok');
+    expect(t.closed_at).toBeTruthy();
+  });
+
+  it('close without a summary leaves result fields null', () => {
+    store.create({ id: 'orca-2', project_id: 1, title: 'B' });
+    store.close('orca-2');
+    const t = store.get('orca-2')!;
+    expect(t.status).toBe('closed');
+    expect(t.result_summary).toBeNull();
+    expect(t.outcome).toBeNull();
+  });
+
+  it('create stores the autostart flag', () => {
+    store.create({ id: 'auto', project_id: 1, title: 'Auto', scheduled_at: '2026-06-18T10:00:00.000Z', autostart: 1 });
+    expect(store.get('auto')?.autostart).toBe(1);
+    store.create({ id: 'manual', project_id: 1, title: 'Manual' });
+    expect(store.get('manual')?.autostart).toBe(0);
+  });
+
   it('descendants returns the transitive subtree excluding the root', () => {
     store.create({ id: 'epic', project_id: 1, title: 'Epic', type: 'epic' });
     store.create({ id: 'a', project_id: 1, title: 'A', parent_id: 'epic' });

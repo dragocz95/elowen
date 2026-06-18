@@ -9,7 +9,7 @@ import { createWrapper } from '../test-utils';
 
 let spawnBody: unknown = null;
 const server = setupServer(
-  http.get('http://localhost:4400/tasks', () => HttpResponse.json([{ id: 'orca-1', title: 'Build', status: 'open', type: 'task', labels: [] }])),
+  http.get('http://localhost:4400/tasks', () => HttpResponse.json([{ id: 'orca-1', title: 'Build', status: 'in_progress', type: 'task', labels: [] }])),
   http.post('http://localhost:4400/sessions', async ({ request }) => { spawnBody = await request.json(); return HttpResponse.json({ session: 'orca-A' }, { status: 201 }); }),
 );
 beforeAll(() => server.listen()); afterAll(() => server.close());
@@ -19,7 +19,8 @@ describe('TasksPage', () => {
     const { wrapper: Wrapper } = createWrapper();
     render(<Wrapper><ToastProvider><TasksPage /></ToastProvider></Wrapper>);
     await waitFor(() => expect(screen.getByText('orca-1')).toBeInTheDocument());
-    fireEvent.click(screen.getByRole('button', { name: 'Launch' }));
+    // No live session for this task → the run control shows "Start"
+    fireEvent.click(screen.getByRole('button', { name: 'Start' }));
     await waitFor(() => expect(spawnBody).toMatchObject({ taskId: 'orca-1' }));
   });
 });

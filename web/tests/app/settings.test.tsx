@@ -39,17 +39,19 @@ describe('SettingsPage', () => {
     expect(screen.getByRole('button', { name: 'Add model' })).toBeTruthy();
   });
 
-  it('add-model form appears on click and sends customModels with the new entry on save', async () => {
+  it('add-model modal opens on click and sends customModels with the new entry on save', async () => {
     const { wrapper: Wrapper } = createWrapper();
     render(<Wrapper><ToastProvider><SettingsPage /></ToastProvider></Wrapper>);
     await waitFor(() => expect(screen.getByLabelText('Claude Sonnet')).toBeChecked());
 
     fireEvent.click(screen.getByRole('button', { name: 'Add model' }));
-    fireEvent.change(screen.getByLabelText('New model label'), { target: { value: 'My Custom Model' } });
-    fireEvent.change(screen.getByLabelText('New model exec'), { target: { value: 'my/custom' } });
+    // Modal: fill label, pick the "Other" provider, type a raw exec string.
+    fireEvent.change(screen.getByPlaceholderText('My Model'), { target: { value: 'My Custom Model' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Other' }));
+    fireEvent.change(screen.getByPlaceholderText('provider/model-name'), { target: { value: 'my/custom' } });
     fireEvent.click(screen.getByRole('button', { name: 'Add' }));
 
-    // The new model card should now be in the DOM
+    // The new model card should now be in the DOM (Toggle is labelled by the model label).
     await waitFor(() => expect(screen.getByLabelText('My Custom Model')).toBeTruthy());
 
     fireEvent.click(screen.getByRole('button', { name: 'Save models' }));

@@ -13,7 +13,7 @@ export function Button({ variant = 'default', icon: Icon, className = '', childr
   const extra = className.trim();
   return (
     <button
-      className={`inline-flex items-center justify-center gap-2 border px-3.5 py-2 text-sm font-medium rounded-md transition-[color,background-color,border-color,transform] duration-150 active:scale-[0.97] disabled:opacity-40 disabled:cursor-not-allowed disabled:active:scale-100 ${VARIANTS[variant]}${extra ? ` ${extra}` : ''}`}
+      className={`inline-flex h-9 items-center justify-center gap-2 border px-3.5 text-sm font-medium rounded-md transition-[color,background-color,border-color,transform] duration-150 active:scale-[0.97] disabled:opacity-40 disabled:cursor-not-allowed disabled:active:scale-100 ${VARIANTS[variant]}${extra ? ` ${extra}` : ''}`}
       {...rest}
     >
       {Icon ? <Icon size={14} aria-hidden /> : null}

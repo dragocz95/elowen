@@ -13,7 +13,7 @@ export function Toggle({ checked, onChange, label, disabled = false }: { checked
     >
       <span
         className={`block h-3.5 w-3.5 transition-transform ${checked ? 'translate-x-4 bg-bg' : 'translate-x-0 bg-text-muted'}`}
-        style={{ transitionDuration: 'var(--motion-fast)', transitionTimingFunction: 'var(--ease-out)' }}
+        style={{ transitionDuration: 'var(--motion-base)', transitionTimingFunction: 'var(--ease-spring)' }}
       />
     </button>
   );

@@ -194,17 +194,61 @@ The `POST /tasks/plan` endpoint uses an LLM to decompose a high-level goal into 
 
 ---
 
-## Activity log
+## Activity log / event store
 
-All state changes are recorded in the `activity_log` table:
+All state changes are recorded in SQLite `events` table (`src/store/eventStore.ts`):
 
 | Event type | Example |
 |---|---|
-| `task` | Task created, status changed |
-| `mission` | Mission engaged, paused, disengaged |
+| `task` | Task created, status changed, deleted |
+| `mission` | Mission engaged, paused, resumed, disengaged |
 | `signal` | Deriver detected working/needs_input/complete |
 
-The log is queryable via `GET /activity` with optional `type` and `limit` filters. Used by the Timeline page in the web UI.
+### EventStore API
+
+```typescript
+class EventStore {
+  record(event: { type: string; target: string; detail: string }): void
+  list(opts?: { limit?: number; type?: string }): ActivityEvent[]
+  deleteForTarget(target: string): void
+}
+```
+
+The log is queryable via `GET /activity` with optional `type` and `limit` filters. Used by the Timeline page in the web UI. Events are grouped in the UI: identical events within 5 minutes collapse into `×N` to prevent flood from repeated deriver signals.
+
+---
+
+## Inference client
+
+The inference layer (`src/inference/types.ts`) defines a minimal interface for LLM backends:
+
+```typescript
+interface InferenceClient {
+  decide(prompt: string): Promise<{ text: string }>;
+}
+
+interface RelayConfig {
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+}
+```
+
+### Implementations
+
+| Implementation | File | Purpose |
+|---|---|---|
+| `RelayClient` | `src/inference/client.ts` | Production — relays to MIMO/OpenAI-compatible API |
+| `FakeInference` | `src/inference/client.ts` | Tests — returns predictable responses |
+
+### Consumers
+
+- **Planner** (`src/overseer/planner.ts`): goal decomposition for `POST /tasks/plan`
+- **Decision engine** (`src/overseer/decision.ts`): agent prompt approval
+
+### Adding a custom backend
+
+Implement the `InferenceClient` interface and inject via the `makeInference` factory in server options.
 
 ---
 

@@ -92,12 +92,16 @@ it('POST /sessions launches an agent on a task and marks it in_progress', async 
     engine: null as any, spawn: new SpawnService({ tmux, agents: new AgentStore(db) }), tmux,
     project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' }, clock: new FakeClock(0), config: new ConfigStore(db),
   });
-  const res = await app.request('/sessions', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ taskId: 'orca-1', exec: 'ollama-cloud/deepseek-v4-flash' }) });
+  const res = await app.request('/sessions', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ taskId: 'orca-1', exec: 'deepseek/deepseek-v4-flash' }) });
   expect(res.status).toBe(201);
   const body = await res.json();
   expect(body.session).toMatch(/^orca-/);
   expect(tasks.get('orca-1')?.status).toBe('in_progress');
   expect(await tmux.list()).toContain(body.session);
+  // spawn tags the task with exec + agent labels so the UI can show its model and link the session
+  const t1 = tasks.get('orca-1')!;
+  expect(t1.labels).toContain('exec:deepseek/deepseek-v4-flash');
+  expect(t1.labels.some((l) => l.startsWith('agent:'))).toBe(true);
 });
 
 it('PATCH /missions/:id pauses (drops from active) and resumes', async () => {

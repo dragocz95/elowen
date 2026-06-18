@@ -1,20 +1,31 @@
 'use client';
+import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Languages } from 'lucide-react';
 import { modulesByGroup } from '../../modules/registry';
 import { useSidebarState } from '../../lib/useSidebarState';
-import { useHealth } from '../../lib/queries';
+import { useHealth, useTasks } from '../../lib/queries';
 import { useTranslation } from '../../lib/i18n';
 import { NavGroup } from './NavGroup';
 
 const RAIL = 56;
+const DAEMON_STATUS = {
+  ready: { color: '#22c55e', ring: 'rgba(34,197,94,0.5)' },
+  busy: { color: '#f59e0b', ring: 'rgba(245,158,11,0.5)' },
+  fail: { color: '#ef4444', ring: 'rgba(239,68,68,0.5)' },
+} as const;
 
 export function Sidebar() {
   const pathname = usePathname();
   const { collapsed, width, toggle, setWidth } = useSidebarState();
   const { data } = useHealth();
+  const tasks = useTasks();
   const up = data?.ok === true;
+  // ready = up & idle · busy = up & a task is actually in progress · fail = unreachable
+  const working = (tasks.data ?? []).some((t) => t.status === 'in_progress');
+  const status: keyof typeof DAEMON_STATUS = !up ? 'fail' : working ? 'busy' : 'ready';
+  const nextReady = (tasks.data ?? []).find((t) => t.status === 'open' && t.type !== 'epic');
   const dragging = useRef(false);
 
   const { t, locale, setLocale } = useTranslation();
@@ -77,15 +88,29 @@ export function Sidebar() {
         })}
       </div>
 
-      <div className="flex items-center gap-2 border-t border-border px-4 py-3">
-        <span role="status" aria-label={up ? t.common.daemonUp : t.common.daemonDown} className="flex items-center justify-center">
+      {expanded && nextReady && (
+        <Link href="/tasks" className="border-t border-border px-4 py-2.5 transition-colors hover:bg-elevated" title={nextReady.title}>
+          <div className="text-[10px] font-medium uppercase tracking-wide text-text-muted">{t.common.nextReady}</div>
+          <div className="mt-0.5 truncate text-xs text-text">{nextReady.title}</div>
+        </Link>
+      )}
+
+      <div className={`flex items-center border-t border-border px-4 py-3 ${expanded ? 'gap-2.5' : 'justify-center'}`}>
+        <span role="status" aria-label={up ? t.common.daemonUp : t.common.daemonDown} title={status === 'fail' ? t.common.daemonOffline : status === 'busy' ? t.common.daemonBusy : t.common.daemonReady} className="flex shrink-0 items-center justify-center">
           <span
-            className={`h-2 w-2 rounded-full ${up ? 'live-dot bg-accent' : 'bg-text-muted'}`}
-            style={up ? ({ ['--live-ring' as string]: 'rgba(59,130,246,0.5)' }) : undefined}
+            className={`h-2.5 w-2.5 rounded-full ${up ? 'live-dot' : ''}`}
+            style={{ backgroundColor: DAEMON_STATUS[status].color, ['--live-ring' as string]: DAEMON_STATUS[status].ring }}
             aria-hidden
           />
         </span>
-        {expanded && <span className="font-mono text-[10px] uppercase tracking-wide text-text-muted">{t.common.daemon}</span>}
+        {expanded && (
+          <div className="flex min-w-0 flex-col leading-tight">
+            <span className="font-mono text-[10px] uppercase tracking-wide text-text-muted">{t.common.daemon}</span>
+            <span className="text-[10px] font-medium" style={{ color: DAEMON_STATUS[status].color }}>
+              {status === 'fail' ? t.common.daemonOffline : status === 'busy' ? t.common.daemonBusy : t.common.daemonReady}
+            </span>
+          </div>
+        )}
         {expanded && (
           <button
             type="button"

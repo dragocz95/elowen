@@ -11,6 +11,7 @@ import { Modal } from '../../components/ui/Modal';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
 import { Select } from '../../components/ui/Select';
+import { Checkbox } from '../../components/ui/Checkbox';
 import { Field } from '../../components/ui/Field';
 import { Segmented } from '../../components/ui/Segmented';
 import { IconButton } from '../../components/ui/IconButton';
@@ -32,7 +33,7 @@ function isoToLocalInput(iso?: string | null): string {
 }
 const localInputToIso = (v: string): string | null => (v ? new Date(v).toISOString() : null);
 
-export function TaskModal({ task, onClose }: { task?: Task; onClose: () => void }) {
+export function TaskModal({ task, onClose, initialSchedule }: { task?: Task; onClose: () => void; initialSchedule?: string }) {
   const editing = !!task;
   const { data: config } = useConfig();
   const models = allModels(config?.customModels, config?.hiddenPresets)
@@ -54,7 +55,8 @@ export function TaskModal({ task, onClose }: { task?: Task; onClose: () => void 
   const [type, setType] = useState(task?.type ?? 'task');
   const [priority, setPriority] = useState(task?.priority ?? 'P2');
   const [exec, setExec] = useState(task ? taskExec(task.labels) : '');
-  const [schedule, setSchedule] = useState(isoToLocalInput(task?.scheduled_at));
+  const [schedule, setSchedule] = useState(isoToLocalInput(task?.scheduled_at) || isoToLocalInput(initialSchedule));
+  const [autostart, setAutostart] = useState<boolean>(!!task?.autostart);
   const [deps, setDeps] = useState<string[]>([]);
   const [launchNow, setLaunchNow] = useState(false);
 
@@ -101,11 +103,11 @@ export function TaskModal({ task, onClose }: { task?: Task; onClose: () => void 
     if (!title.trim()) return;
     try {
       if (editing) {
-        await update.mutateAsync({ id: task!.id, patch: { title: title.trim(), type, priority, description: description.trim(), scheduled_at: localInputToIso(schedule), deps } });
+        await update.mutateAsync({ id: task!.id, patch: { title: title.trim(), type, priority, description: description.trim(), scheduled_at: localInputToIso(schedule), autostart: autostart ? 1 : 0, deps } });
         if (exec !== taskExec(task!.labels)) await setExecM.mutateAsync({ id: task!.id, exec });
         toast(t.tasks.updated.replace('{id}', task!.id));
       } else {
-        const created = await create.mutateAsync({ title: title.trim(), type, priority, description: description.trim(), scheduled_at: localInputToIso(schedule), deps });
+        const created = await create.mutateAsync({ title: title.trim(), type, priority, description: description.trim(), scheduled_at: localInputToIso(schedule), autostart: autostart ? 1 : 0, deps });
         if (exec) await setExecM.mutateAsync({ id: created.id, exec });
         if (launchNow) await spawn.mutateAsync({ taskId: created.id, exec: exec || undefined });
         toast(launchNow ? t.tasks.createdAndLaunched.replace('{title}', created.title) : t.tasks.created.replace('{title}', created.title));
@@ -208,24 +210,30 @@ export function TaskModal({ task, onClose }: { task?: Task; onClose: () => void 
                 {t.tasks.scheduleConflict.replace('{title}', scheduleConflict.title)}
               </p>
             )}
+            {schedule && (
+              <button type="button" onClick={() => setAutostart((v) => !v)} className="-mt-1 flex w-fit items-start gap-2 text-left text-sm text-text">
+                <Checkbox checked={autostart} className="mt-0.5" />
+                <span>{t.tasks.autostart}<span className="mt-0.5 block text-xs text-text-muted">{t.tasks.autostartHint}</span></span>
+              </button>
+            )}
             {depCandidates.length > 0 && (
               <Field label={t.tasks.fieldDependsOn} hint={t.tasks.dependsOnHint}>
                 <div className="max-h-32 overflow-y-auto rounded-md border border-border bg-surface p-1">
                   {depCandidates.map((dep) => (
-                    <label key={dep.id} className="flex cursor-pointer items-center gap-2 rounded px-2 py-1 text-sm hover:bg-elevated">
-                      <input type="checkbox" checked={deps.includes(dep.id)} onChange={() => toggleDep(dep.id)} className="accent-accent" />
+                    <button type="button" key={dep.id} onClick={() => toggleDep(dep.id)} className="flex w-full cursor-pointer items-center gap-2 rounded px-2 py-1 text-left text-sm hover:bg-elevated">
+                      <Checkbox checked={deps.includes(dep.id)} />
                       <span className="min-w-0 flex-1 truncate text-text">{dep.title}</span>
                       <span className="shrink-0 font-mono text-[11px] text-text-muted">{dep.id}</span>
-                    </label>
+                    </button>
                   ))}
                 </div>
               </Field>
             )}
             {!editing && (
-              <label className="flex items-center gap-2 text-sm text-text">
-                <input type="checkbox" checked={launchNow} onChange={(e) => setLaunchNow(e.target.checked)} className="accent-accent" />
+              <button type="button" onClick={() => setLaunchNow((v) => !v)} className="flex w-fit items-center gap-2 text-sm text-text">
+                <Checkbox checked={launchNow} />
                 {t.tasks.launchImmediately}
-              </label>
+              </button>
             )}
             <div className="flex items-center justify-end gap-2 pt-1">
               <Button variant="ghost" onClick={onClose}>{t.common.cancel}</Button>
@@ -258,10 +266,10 @@ export function TaskModal({ task, onClose }: { task?: Task; onClose: () => void 
               </Field>
             </div>
             {execSelect}
-            <label className="flex items-center gap-2 text-sm text-text">
-              <input type="checkbox" checked={engage} onChange={(e) => setEngage(e.target.checked)} className="accent-accent" />
+            <button type="button" onClick={() => setEngage((v) => !v)} className="flex w-fit items-center gap-2 text-sm text-text">
+              <Checkbox checked={engage} />
               {t.tasks.startAutopilot}
-            </label>
+            </button>
 
             {manual && (
               <div className="flex flex-col gap-2 rounded-md border border-border bg-elevated/40 p-3">

@@ -12,6 +12,13 @@ describe('calendar helpers', () => {
     expect(countUnscheduled([t('a', '2026-06-17T09:00:00.000Z'), t('b', null)])).toBe(1);
   });
 
+  it('places completed tasks on their closed day even without a schedule', () => {
+    const closed: Task = { id: 'done', title: 'done', status: 'closed', scheduled_at: null, closed_at: '2026-06-15T14:00:00.000Z' };
+    const map = tasksByDay([closed]);
+    expect(map.get(dayKey(new Date('2026-06-15T14:00:00.000Z')))?.map((x) => x.id)).toEqual(['done']);
+    expect(countUnscheduled([closed])).toBe(0); // has a calendar date now
+  });
+
   it('startOfWeek returns the Monday', () => {
     const wed = new Date(2026, 5, 17); // Wed Jun 17 2026
     const mon = startOfWeek(wed);

@@ -94,9 +94,9 @@ export function createServer(d: ServerDeps): Hono<{ Variables: { user: User; tok
 
   app.get('/tasks', c => c.json(d.tasks.list()));
   app.post('/tasks', async c => {
-    const b = await c.req.json() as { title: string; type?: string; priority?: string; id?: string; description?: string; scheduled_at?: string | null; deps?: string[] };
+    const b = await c.req.json() as { title: string; type?: string; priority?: string; id?: string; description?: string; scheduled_at?: string | null; autostart?: number; deps?: string[] };
     const id = b.id ?? `${basename(d.project.path)}-${randomBytes(4).toString('hex')}`;
-    const created = d.tasks.create({ id, project_id: d.project.id, title: b.title, type: b.type, priority: b.priority, description: b.description, scheduled_at: b.scheduled_at });
+    const created = d.tasks.create({ id, project_id: d.project.id, title: b.title, type: b.type, priority: b.priority, description: b.description, scheduled_at: b.scheduled_at, autostart: b.autostart });
     if (Array.isArray(b.deps)) d.tasks.setDeps(created.id, b.deps);
     d.bus.publish({ type: 'task', taskId: created.id, status: created.status });
     return c.json(created, 201);
@@ -106,10 +106,14 @@ export function createServer(d: ServerDeps): Hono<{ Variables: { user: User; tok
   app.patch('/tasks/:id', async c => {
     const b = await c.req.json();
     const id = c.req.param('id');
-    if (b.status) { d.tasks.setStatus(id, b.status); d.bus.publish({ type: 'task', taskId: id, status: b.status }); }
+    if (b.status) {
+      if (b.status === 'closed') d.tasks.close(id, { summary: b.result_summary, outcome: b.outcome });
+      else d.tasks.setStatus(id, b.status);
+      d.bus.publish({ type: 'task', taskId: id, status: b.status });
+    }
     if (typeof b.exec === 'string') { d.tasks.setExec(id, b.exec); }
-    if (typeof b.title === 'string' || typeof b.type === 'string' || typeof b.priority === 'string' || typeof b.description === 'string' || b.scheduled_at !== undefined) {
-      d.tasks.update(id, { title: b.title, type: b.type, priority: b.priority, description: b.description, scheduled_at: b.scheduled_at });
+    if (typeof b.title === 'string' || typeof b.type === 'string' || typeof b.priority === 'string' || typeof b.description === 'string' || b.scheduled_at !== undefined || b.autostart !== undefined) {
+      d.tasks.update(id, { title: b.title, type: b.type, priority: b.priority, description: b.description, scheduled_at: b.scheduled_at, autostart: b.autostart });
     }
     if (Array.isArray(b.deps)) d.tasks.setDeps(id, b.deps);
     return c.json(d.tasks.get(id));
@@ -118,7 +122,8 @@ export function createServer(d: ServerDeps): Hono<{ Variables: { user: User; tok
   app.delete('/tasks/:id', c => {
     const id = c.req.param('id');
     d.tasks.delete(id);
-    d.bus.publish({ type: 'task', taskId: id, status: 'cancelled' });
+    d.bus.publish({ type: 'task', taskId: id, status: 'cancelled' }); // live SSE so open UIs drop the row
+    d.events?.deleteForTarget(id); // purge its history — a removed task leaves no dead feed
     return c.json({ ok: true });
   });
   app.post('/tasks/plan', async c => {
@@ -171,19 +176,28 @@ export function createServer(d: ServerDeps): Hono<{ Variables: { user: User; tok
     return c.json({ epic, phases: created.map((t) => d.tasks.get(t.id)), mission }, 201);
   });
 
-  app.get('/sessions', async c => c.json(await d.tmux.list()));
+  app.get('/sessions', async c => c.json((await d.tmux.list()).filter((s) => s.startsWith('orca-'))));
   app.post('/sessions', async (c) => {
     const { taskId, exec } = await c.req.json() as { taskId: string; exec?: string };
     if (exec && !d.config.get().allowedExecs.includes(exec)) return c.json({ error: 'exec not allowed' }, 400);
     const spec = resolveExecutor(exec ? [`exec:${exec}`] : [], d.fallback);
     const task = d.tasks.get(taskId);
+    if (exec) d.tasks.setExec(taskId, exec); // remember which model ran it — drives the model icon
+    const agentName = uniqueName();
+    d.tasks.setAgent(taskId, agentName);     // link task → orca-<agentName> session for run controls
     d.tasks.setStatus(taskId, 'in_progress');
-    const { session } = await d.spawn.launch({ projectId: d.project.id, projectPath: d.project.path, taskId, agentName: uniqueName(), spec, taskTitle: task?.title, taskDescription: task?.description });
+    const { session } = await d.spawn.launch({ projectId: d.project.id, projectPath: d.project.path, taskId, agentName, spec, taskTitle: task?.title, taskDescription: task?.description });
     d.bus.publish({ type: 'task', taskId, status: 'in_progress' });
     return c.json({ session }, 201);
   });
   app.delete('/sessions/:name', async c => { await d.tmux.kill(c.req.param('name')); return c.json({ ok: true }); });
   app.post('/sessions/:name/keys', async c => { const { keys } = await c.req.json(); await d.tmux.sendKeys(c.req.param('name'), keys); return c.json({ ok: true }); });
+  app.post('/sessions/:name/resize', async c => {
+    const { cols, rows } = await c.req.json() as { cols?: number; rows?: number };
+    if (typeof cols !== 'number' || typeof rows !== 'number') return c.json({ error: 'cols and rows required' }, 400);
+    await d.tmux.resize(c.req.param('name'), cols, rows);
+    return c.json({ ok: true });
+  });
   app.get('/sessions/:name/pane', async c => {
     const name = c.req.param('name');
     const pane = c.req.query('ansi') ? await d.tmux.capturePaneAnsi(name, 60) : await d.tmux.capturePane(name, 60);
