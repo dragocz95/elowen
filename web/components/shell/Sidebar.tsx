@@ -17,7 +17,7 @@ const DAEMON_STATUS = {
   fail: { color: 'var(--color-error)', ring: 'color-mix(in srgb, var(--color-error) 50%, transparent)' },
 } as const;
 
-export function Sidebar() {
+export function Sidebar({ mobileOpen = false, onMobileClose }: { mobileOpen?: boolean; onMobileClose?: () => void }) {
   const pathname = usePathname();
   const { collapsed, width, toggle, setWidth } = useSidebarState();
   const { data } = useHealth();
@@ -40,9 +40,11 @@ export function Sidebar() {
     return () => mq.removeEventListener('change', handler);
   }, []);
 
-  // Collapsed stays collapsed (icon rail) until the user toggles it — no hover auto-open.
-  const pinnedCollapsed = collapsed || mobile;
-  const expanded = !pinnedCollapsed;
+  // On mobile the sidebar is a drawer (always full-width content); on desktop it collapses to a rail.
+  const expanded = mobile ? true : !collapsed;
+
+  // Close the mobile drawer after navigating.
+  useEffect(() => { if (mobile) onMobileClose?.(); }, [pathname]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const onPointerDown = useCallback((e: React.PointerEvent) => {
     dragging.current = true;
@@ -57,10 +59,20 @@ export function Sidebar() {
   }, []);
 
   return (
+    <>
+      {mobile && (
+        <div
+          aria-hidden
+          onClick={onMobileClose}
+          className={`fixed inset-0 z-40 bg-black/50 transition-opacity md:hidden ${mobileOpen ? 'opacity-100' : 'pointer-events-none opacity-0'}`}
+        />
+      )}
     <nav
       aria-label={t.common.primaryNav}
-      className="relative flex h-full shrink-0 flex-col border-r border-border bg-surface transition-[width] duration-200"
-      style={{ width: expanded ? width : RAIL, transitionTimingFunction: 'var(--ease-out)' }}
+      className={mobile
+        ? `fixed inset-y-0 left-0 z-50 flex h-full w-[264px] flex-col border-r border-border bg-surface shadow-2xl transition-transform duration-200 md:hidden ${mobileOpen ? 'translate-x-0' : '-translate-x-full'}`
+        : 'relative hidden h-full shrink-0 flex-col border-r border-border bg-surface transition-[width] duration-200 md:flex'}
+      style={mobile ? { transitionTimingFunction: 'var(--ease-out)' } : { width: expanded ? width : RAIL, transitionTimingFunction: 'var(--ease-out)' }}
     >
       <div className="flex items-center justify-center border-b border-border px-3 py-3 overflow-hidden">
         {expanded
@@ -127,17 +139,19 @@ export function Sidebar() {
         )}
       </div>
 
-      {/* Pill handle toggle (pins collapsed/expanded) */}
-      <button
-        type="button"
-        aria-label={t.common.toggleSidebar}
-        onClick={toggle}
-        className="group absolute -right-2 top-1/2 z-10 flex h-14 w-4 -translate-y-1/2 items-center justify-center"
-      >
-        <span className="h-9 w-1 rounded-full bg-border transition-all duration-200 group-hover:h-12 group-hover:bg-text-muted" />
-      </button>
+      {/* Pill handle toggle (pins collapsed/expanded) — desktop only */}
+      {!mobile && (
+        <button
+          type="button"
+          aria-label={t.common.toggleSidebar}
+          onClick={toggle}
+          className="group absolute -right-2 top-1/2 z-10 flex h-14 w-4 -translate-y-1/2 items-center justify-center"
+        >
+          <span className="h-9 w-1 rounded-full bg-border transition-all duration-200 group-hover:h-12 group-hover:bg-text-muted" />
+        </button>
+      )}
 
-      {expanded && !pinnedCollapsed && (
+      {!mobile && expanded && (
         <div
           data-testid="sidebar-resize"
           onPointerDown={onPointerDown}
@@ -148,5 +162,6 @@ export function Sidebar() {
         />
       )}
     </nav>
+    </>
   );
 }
