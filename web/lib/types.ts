@@ -2,8 +2,8 @@ export type TaskStatus = 'open' | 'in_progress' | 'blocked' | 'closed' | 'cancel
 export interface Task { id: string; title: string; status: TaskStatus; type?: string; priority?: string; labels?: string[]; description?: string; scheduled_at?: string | null }
 export interface Session { name: string }
 export interface Mission { id: string; epic_id: string; autonomy: string; max_sessions: number; state: string }
-export interface CreateTaskInput { title: string; type?: string; priority?: string; description?: string; scheduled_at?: string | null }
-export interface UpdateTaskInput { title?: string; type?: string; priority?: string; description?: string; scheduled_at?: string | null }
+export interface CreateTaskInput { title: string; type?: string; priority?: string; description?: string; scheduled_at?: string | null; deps?: string[] }
+export interface UpdateTaskInput { title?: string; type?: string; priority?: string; description?: string; scheduled_at?: string | null; deps?: string[] }
 export interface PlanInput { goal: string; exec?: string; autonomy?: string; maxSessions?: number; engage?: boolean; phases?: { title: string; type?: string }[] }
 export interface PlanResult { epic: Task; phases: Task[]; mission?: Mission }
 export interface EngageInput { epicId: string; autonomy: string; maxSessions: number; clearedGuardrails: string[] }

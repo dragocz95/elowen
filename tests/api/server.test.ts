@@ -245,6 +245,17 @@ it('PATCH /tasks/:id updates title, type and priority', async () => {
   expect(t.title).toBe('New'); expect(t.type).toBe('bug'); expect(t.priority).toBe('P0');
 });
 
+it('POST /tasks sets dependencies and GET /tasks/:id/deps returns them; PATCH replaces them', async () => {
+  const { app } = makeApp();
+  await app.request('/tasks', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: 'dep-a', project_id: 1, title: 'A' }) });
+  await app.request('/tasks', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: 'dep-b', project_id: 1, title: 'B' }) });
+  await app.request('/tasks', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: 'dep-c', project_id: 1, title: 'C', deps: ['dep-a', 'dep-b'] }) });
+  const deps = await (await app.request('/tasks/dep-c/deps')).json();
+  expect(deps.sort()).toEqual(['dep-a', 'dep-b']);
+  await app.request('/tasks/dep-c', { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ deps: ['dep-a'] }) });
+  expect(await (await app.request('/tasks/dep-c/deps')).json()).toEqual(['dep-a']);
+});
+
 it('POST /tasks persists a description and PATCH updates it', async () => {
   const { app } = makeApp();
   const post = await app.request('/tasks', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ title: 'X', description: 'do the thing' }) });

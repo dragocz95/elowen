@@ -33,6 +33,7 @@ export const orcaClient = {
   createTask: (input: CreateTaskInput) => req<Task>('/tasks', json(input)),
   updateTask: (id: string, patch: UpdateTaskInput) => req<Task>(`/tasks/${encodeURIComponent(id)}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify(patch) }),
   deleteTask: (id: string) => req<{ ok: boolean }>(`/tasks/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  taskDeps: (id: string) => req<string[]>(`/tasks/${encodeURIComponent(id)}/deps`),
   planTask: (input: PlanInput) => req<PlanResult>('/tasks/plan', json(input)),
   engage: (input: EngageInput) => req<Mission>('/missions', json(input)),
   spawn: (input: { taskId: string; exec?: string }) => req<{ session: string }>('/sessions', json(input)),

@@ -54,6 +54,19 @@ export class TaskStore {
     this.db.prepare('INSERT OR IGNORE INTO task_deps (task_id, depends_on_id) VALUES (?, ?)').run(taskId, dependsOnId);
   }
 
+  /** Replace this task's dependencies with the given set (self-references ignored). */
+  setDeps(taskId: string, dependsOnIds: string[]): void {
+    this.db.transaction(() => {
+      this.db.prepare('DELETE FROM task_deps WHERE task_id = ?').run(taskId);
+      const stmt = this.db.prepare('INSERT OR IGNORE INTO task_deps (task_id, depends_on_id) VALUES (?, ?)');
+      for (const dep of dependsOnIds) if (dep && dep !== taskId) stmt.run(taskId, dep);
+    })();
+  }
+
+  depsFor(taskId: string): string[] {
+    return (this.db.prepare('SELECT depends_on_id FROM task_deps WHERE task_id = ?').all(taskId) as { depends_on_id: string }[]).map((r) => r.depends_on_id);
+  }
+
   descendants(rootId: string): Task[] {
     const rows = this.db.prepare(
       `WITH RECURSIVE sub(id) AS (

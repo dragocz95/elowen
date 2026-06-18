@@ -1,12 +1,12 @@
 'use client';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Play, Sparkles, ListChecks, Plus, X } from 'lucide-react';
 import type { Task, PlanResult } from '../../lib/types';
-import { useConfig } from '../../lib/queries';
+import { useConfig, useTasks } from '../../lib/queries';
 import { useCreateTask, useUpdateTask, useSpawn, useSetTaskExec, usePlanTask } from '../../lib/mutations';
 import { allModels } from '../../lib/execPresets';
 import { taskExec } from '../../lib/taskExec';
-import { OrcaApiError } from '../../lib/orcaClient';
+import { OrcaApiError, orcaClient } from '../../lib/orcaClient';
 import { Modal } from '../../components/ui/Modal';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
@@ -53,7 +53,20 @@ export function TaskModal({ task, onClose }: { task?: Task; onClose: () => void 
   const [priority, setPriority] = useState(task?.priority ?? 'P2');
   const [exec, setExec] = useState(task ? taskExec(task.labels) : '');
   const [schedule, setSchedule] = useState(isoToLocalInput(task?.scheduled_at));
+  const [deps, setDeps] = useState<string[]>([]);
   const [launchNow, setLaunchNow] = useState(false);
+
+  const allTasks = useTasks();
+  const depCandidates = (allTasks.data ?? []).filter((t) => t.id !== task?.id && t.type !== 'epic' && t.status !== 'closed' && t.status !== 'cancelled');
+
+  // Seed dependencies from the server when editing an existing task.
+  useEffect(() => {
+    if (!task) return;
+    let alive = true;
+    orcaClient.taskDeps(task.id).then((d) => { if (alive) setDeps(d); }).catch(() => {});
+    return () => { alive = false; };
+  }, [task]);
+  const toggleDep = (id: string) => setDeps((cur) => cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]);
 
   // Planning fields
   const [goal, setGoal] = useState('');
@@ -70,11 +83,11 @@ export function TaskModal({ task, onClose }: { task?: Task; onClose: () => void 
     if (!title.trim()) return;
     try {
       if (editing) {
-        await update.mutateAsync({ id: task!.id, patch: { title: title.trim(), type, priority, description: description.trim(), scheduled_at: localInputToIso(schedule) } });
+        await update.mutateAsync({ id: task!.id, patch: { title: title.trim(), type, priority, description: description.trim(), scheduled_at: localInputToIso(schedule), deps } });
         if (exec !== taskExec(task!.labels)) await setExecM.mutateAsync({ id: task!.id, exec });
         toast(`Updated ${task!.id}`);
       } else {
-        const created = await create.mutateAsync({ title: title.trim(), type, priority, description: description.trim(), scheduled_at: localInputToIso(schedule) });
+        const created = await create.mutateAsync({ title: title.trim(), type, priority, description: description.trim(), scheduled_at: localInputToIso(schedule), deps });
         if (exec) await setExecM.mutateAsync({ id: created.id, exec });
         if (launchNow) await spawn.mutateAsync({ taskId: created.id, exec: exec || undefined });
         toast(launchNow ? `Created & launched ${created.title}` : `Created ${created.title}`);
@@ -171,6 +184,19 @@ export function TaskModal({ task, onClose }: { task?: Task; onClose: () => void 
                 <Input type="datetime-local" value={schedule} onChange={(e) => setSchedule(e.target.value)} />
               </Field>
             </div>
+            {depCandidates.length > 0 && (
+              <Field label="Depends on" hint="This task waits until the selected tasks are closed.">
+                <div className="max-h-32 overflow-y-auto rounded-md border border-border bg-surface p-1">
+                  {depCandidates.map((t) => (
+                    <label key={t.id} className="flex cursor-pointer items-center gap-2 rounded px-2 py-1 text-sm hover:bg-elevated">
+                      <input type="checkbox" checked={deps.includes(t.id)} onChange={() => toggleDep(t.id)} className="accent-accent" />
+                      <span className="min-w-0 flex-1 truncate text-text">{t.title}</span>
+                      <span className="shrink-0 font-mono text-[11px] text-text-muted">{t.id}</span>
+                    </label>
+                  ))}
+                </div>
+              </Field>
+            )}
             {!editing && (
               <label className="flex items-center gap-2 text-sm text-text">
                 <input type="checkbox" checked={launchNow} onChange={(e) => setLaunchNow(e.target.checked)} className="accent-accent" />

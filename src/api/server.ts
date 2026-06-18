@@ -94,9 +94,10 @@ export function createServer(d: ServerDeps): Hono<{ Variables: { user: User; tok
 
   app.get('/tasks', c => c.json(d.tasks.list()));
   app.post('/tasks', async c => {
-    const b = await c.req.json() as { title: string; type?: string; priority?: string; id?: string; description?: string; scheduled_at?: string | null };
+    const b = await c.req.json() as { title: string; type?: string; priority?: string; id?: string; description?: string; scheduled_at?: string | null; deps?: string[] };
     const id = b.id ?? `${basename(d.project.path)}-${randomBytes(4).toString('hex')}`;
     const created = d.tasks.create({ id, project_id: d.project.id, title: b.title, type: b.type, priority: b.priority, description: b.description, scheduled_at: b.scheduled_at });
+    if (Array.isArray(b.deps)) d.tasks.setDeps(created.id, b.deps);
     d.bus.publish({ type: 'task', taskId: created.id, status: created.status });
     return c.json(created, 201);
   });
@@ -109,8 +110,10 @@ export function createServer(d: ServerDeps): Hono<{ Variables: { user: User; tok
     if (typeof b.title === 'string' || typeof b.type === 'string' || typeof b.priority === 'string' || typeof b.description === 'string' || b.scheduled_at !== undefined) {
       d.tasks.update(id, { title: b.title, type: b.type, priority: b.priority, description: b.description, scheduled_at: b.scheduled_at });
     }
+    if (Array.isArray(b.deps)) d.tasks.setDeps(id, b.deps);
     return c.json(d.tasks.get(id));
   });
+  app.get('/tasks/:id/deps', c => c.json(d.tasks.depsFor(c.req.param('id'))));
   app.delete('/tasks/:id', c => {
     const id = c.req.param('id');
     d.tasks.delete(id);
