@@ -8,7 +8,7 @@ export const metadata = { title: 'orca' };
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
-    <html lang="en" className={`${GeistSans.variable} ${GeistMono.variable}`}>
+    <html lang="en" className={`${GeistSans.variable} ${GeistMono.variable}`} suppressHydrationWarning>
       <body><Shell>{children}</Shell></body>
     </html>
   );

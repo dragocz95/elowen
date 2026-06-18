@@ -14,12 +14,14 @@ import { Segmented } from '../../components/ui/Segmented';
 import { LoadingState, ErrorState } from '../../components/ui/states';
 import { ModuleShell } from '../../components/shell/ModuleShell';
 import { useToast } from '../../components/ui/Toast';
+import { useTranslation } from '../../lib/i18n';
 
 export default function KanbanPage() {
   const tasks = useTasks();
   const deps = useAllDeps();
   const setStatus = useSetTaskStatus();
   const { toast } = useToast();
+  const { t } = useTranslation();
   const [view, setView] = useState<'board' | 'calendar'>('board');
   const [editing, setEditing] = useState<Task | null>(null);
 
@@ -34,7 +36,7 @@ export default function KanbanPage() {
   return (
     <ModuleShell moduleId="kanban">
       <div className="flex w-full flex-col gap-6">
-        <PageHeader title="Kanban" count={tasks.data?.length} />
+        <PageHeader title={t.page.kanban} count={tasks.data?.length} />
         <Section
           title={view === 'board' ? 'Board' : 'Calendar'}
           icon={KanbanSquare}

@@ -1,0 +1,32 @@
+export const cs = {
+  nav: {
+    operate: 'Provoz',
+    config: 'Nastavení',
+    dash: 'Přehled',
+    tasks: 'Úkoly',
+    kanban: 'Kanban',
+    timeline: 'Časová osa',
+    sessions: 'Relace',
+    missions: 'Mise',
+    settings: 'Nastavení',
+    projects: 'Projekty',
+    users: 'Uživatelé',
+  },
+  page: {
+    dashboard: 'Přehled',
+    tasks: 'Úkoly',
+    kanban: 'Kanban',
+    timeline: 'Časová osa',
+    sessions: 'Relace',
+    missions: 'Mise',
+    settings: 'Nastavení',
+    projects: 'Projekty',
+    users: 'Uživatelé',
+  },
+  common: {
+    daemon: 'daemon',
+    daemonUp: 'daemon běží',
+    daemonDown: 'daemon offline',
+    toggleSidebar: 'Přepnout sidebar',
+  },
+} as const;

@@ -1,6 +1,7 @@
 'use client';
 import type { ReactNode } from 'react';
 import { Providers } from '../../app/providers';
+import { LanguageProvider } from '../../lib/i18n';
 import { ToastProvider } from '../ui/Toast';
 import { LoginGate } from '../auth/LoginGate';
 import { Sidebar } from './Sidebar';
@@ -9,6 +10,7 @@ import { CommandPalette } from './CommandPalette';
 export function Shell({ children }: { children: ReactNode }) {
   return (
     <Providers>
+      <LanguageProvider>
       <ToastProvider>
         <LoginGate>
           <div className="flex h-screen overflow-hidden">
@@ -18,6 +20,7 @@ export function Shell({ children }: { children: ReactNode }) {
           <CommandPalette />
         </LoginGate>
       </ToastProvider>
+      </LanguageProvider>
     </Providers>
   );
 }

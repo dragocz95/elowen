@@ -20,6 +20,7 @@ import { HelpTip } from '../../components/ui/HelpTip';
 import { LoadingState, ErrorState } from '../../components/ui/states';
 import { ModuleShell } from '../../components/shell/ModuleShell';
 import '../../modules/settings/theme.css';
+import { useTranslation } from '../../lib/i18n';
 
 const inputClass = 'w-full rounded-md border border-border bg-bg px-3 py-2 text-sm text-text placeholder:text-text-muted transition-colors focus:border-accent';
 
@@ -37,6 +38,7 @@ export default function SettingsPage() {
   const config = useConfig();
   const update = useUpdateConfig();
   const { toast } = useToast();
+  const { t } = useTranslation();
 
   const [category, setCategory] = useState<Category>('models');
 
@@ -94,8 +96,8 @@ export default function SettingsPage() {
     }
   }, [config.data]);
 
-  if (config.isLoading) return <ModuleShell moduleId="settings"><PageHeader title="Settings" /><LoadingState /></ModuleShell>;
-  if (config.isError) return <ModuleShell moduleId="settings"><PageHeader title="Settings" /><ErrorState message="orca daemon unreachable" onRetry={() => config.refetch()} /></ModuleShell>;
+  if (config.isLoading) return <ModuleShell moduleId="settings"><PageHeader title={t.page.settings} /><LoadingState /></ModuleShell>;
+  if (config.isError) return <ModuleShell moduleId="settings"><PageHeader title={t.page.settings} /><ErrorState message="orca daemon unreachable" onRetry={() => config.refetch()} /></ModuleShell>;
 
   const toggle = (exec: string) => setAllowed((prev) => prev.includes(exec) ? prev.filter((e) => e !== exec) : [...prev, exec]);
   const apiKeySet = config.data?.autopilot.apiKeySet;
@@ -150,7 +152,7 @@ export default function SettingsPage() {
   return (
     <ModuleShell moduleId="settings">
       <div className="flex w-full flex-col gap-6">
-        <PageHeader title="Settings" />
+        <PageHeader title={t.page.settings} />
 
         <div className="flex flex-wrap gap-2">
           {CATEGORIES.map(({ id, label, icon: Icon }) => {

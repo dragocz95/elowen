@@ -1,0 +1,32 @@
+export const en = {
+  nav: {
+    operate: 'Operate',
+    config: 'Config',
+    dash: 'Dash',
+    tasks: 'Tasks',
+    kanban: 'Kanban',
+    timeline: 'Timeline',
+    sessions: 'Sessions',
+    missions: 'Missions',
+    settings: 'Settings',
+    projects: 'Projects',
+    users: 'Users',
+  },
+  page: {
+    dashboard: 'Dashboard',
+    tasks: 'Tasks',
+    kanban: 'Kanban',
+    timeline: 'Timeline',
+    sessions: 'Sessions',
+    missions: 'Missions',
+    settings: 'Settings',
+    projects: 'Projects',
+    users: 'Users',
+  },
+  common: {
+    daemon: 'daemon',
+    daemonUp: 'daemon up',
+    daemonDown: 'daemon down',
+    toggleSidebar: 'Toggle sidebar',
+  },
+} as const;
