@@ -14,7 +14,7 @@ function ShellLayout({ children }: { children: ReactNode }) {
 
   return (
     <>
-      <div className="flex h-screen overflow-hidden">
+      <div className="flex h-dvh overflow-hidden">
         <Sidebar mobileOpen={drawerOpen} onMobileClose={() => setDrawerOpen(false)} />
         <div className="flex min-w-0 flex-1 flex-col">
           {/* Mobile top bar — fixed sidebar-drawer trigger; the content scrolls below it */}

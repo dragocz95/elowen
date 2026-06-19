@@ -43,6 +43,7 @@
 /* Scale the whole UI up ~25% via the rem base — all rem-based type & spacing grow together. */
 html { font-size: 125%; }
 html, body {
+  height: 100%;
   background: var(--color-bg);
   color: var(--color-text);
   font-family: var(--font-sans);
@@ -50,6 +51,9 @@ html, body {
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
 }
+/* App shell owns scrolling (in <main>); keep the page itself from scrolling/rubber-banding
+   so the mobile top bar stays put on iOS instead of moving with elastic overscroll. */
+body { overflow: hidden; overscroll-behavior: none; }
 
 @keyframes toast-in {
   from { opacity: 0; transform: translateY(8px) scale(0.98); }
