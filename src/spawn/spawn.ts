@@ -9,17 +9,20 @@ export type ProviderResolver = (program: string) => { bin?: string; args?: strin
 
 export class SpawnService {
   constructor(private d: { tmux: TmuxDriver; agents: AgentStore; orca?: OrcaCliConfig; providers?: ProviderResolver }) {}
-  async launch(input: { projectId: number; projectPath: string; taskId: string; agentName: string; spec: AgentSpec; taskTitle?: string; taskDescription?: string }): Promise<{ session: string }> {
+  async launch(input: { projectId: number; projectPath: string; taskId: string; agentName: string; spec: AgentSpec; taskTitle?: string; taskDescription?: string; epicId?: string }): Promise<{ session: string }> {
     this.d.agents.upsert({ project_id: input.projectId, name: input.agentName, program: input.spec.program, model: input.spec.model });
     const session = `orca-${input.agentName}`;
     const orca = this.d.orca;
     const closeCommand = orca ? `node ${orca.cliPath} close ${input.taskId}` : undefined;
+    // A phase agent gets a close command for its parent epic too, so the final phase can
+    // close the epic itself with its own overall result summary.
+    const epicCloseCommand = orca && input.epicId ? `node ${orca.cliPath} close ${input.epicId}` : undefined;
     const env = orca ? { ORCA_URL: orca.url, ORCA_TOKEN: orca.token } : undefined;
     const provider = this.d.providers?.(input.spec.program);
     const command = buildAgentCommand(input.spec, {
       projectPath: input.projectPath, taskId: input.taskId, agentName: input.agentName,
       taskTitle: input.taskTitle, taskDescription: input.taskDescription,
-      closeCommand, env, bin: provider?.bin, extraArgs: provider?.args,
+      closeCommand, epicId: input.epicId, epicCloseCommand, env, bin: provider?.bin, extraArgs: provider?.args,
     });
     await this.d.tmux.spawn(session, { cwd: input.projectPath, command });
     // OpenCode boots an interactive TUI that holds the --prompt in its composer without

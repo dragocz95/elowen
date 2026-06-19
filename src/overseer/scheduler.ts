@@ -31,6 +31,7 @@ export class Scheduler {
       await this.d.spawn.launch({
         projectId: this.d.project.id, projectPath: this.d.project.path, taskId: task.id,
         agentName, spec, taskTitle: task.title, taskDescription: task.description,
+        epicId: task.parent_id ?? undefined,
       });
       this.d.bus.publish({ type: 'task', taskId: task.id, status: 'in_progress' });
     }

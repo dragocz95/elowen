@@ -40,4 +40,16 @@ describe('buildAgentCommand', () => {
     const cmd = buildAgentCommand({ program: 'opencode', model: 'm' }, { projectPath: '/o', taskId: 'orca-1', agentName: 'A', bin: '/opt/oc/opencode', extraArgs: '--pure' });
     expect(cmd).toContain('/opt/oc/opencode --model m --pure --prompt ');
   });
+  it('tells the final phase agent to close the epic itself when epicId is given', () => {
+    const cmd = buildAgentCommand(
+      { program: 'opencode', model: 'm' },
+      { projectPath: '/o', taskId: 'orca-2', agentName: 'A', epicId: 'orca-epic', epicCloseCommand: 'node /x/cli.js close orca-epic' },
+    );
+    expect(cmd).toContain('phase of epic orca-epic');
+    expect(cmd).toContain('node /x/cli.js close orca-epic --summary');
+  });
+  it('omits the epic-close instruction for a standalone task (no epicId)', () => {
+    const cmd = buildAgentCommand({ program: 'opencode', model: 'm' }, { projectPath: '/o', taskId: 'orca-1', agentName: 'A' });
+    expect(cmd).not.toContain('phase of epic');
+  });
 });

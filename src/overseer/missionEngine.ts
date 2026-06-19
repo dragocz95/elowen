@@ -54,7 +54,7 @@ export class MissionEngine {
       const spec = resolveExecutor(task.labels, this.d.fallback);
       const named = task.labels.find((l) => l.startsWith('agent:'))?.slice('agent:'.length);
       this.d.tasks.setStatus(task.id, 'in_progress');
-      await this.d.spawn.launch({ projectId: this.d.project.id, projectPath: this.d.project.path, taskId: task.id, agentName: named || this.d.nameAgent(), spec, taskTitle: task.title, taskDescription: task.description });
+      await this.d.spawn.launch({ projectId: this.d.project.id, projectPath: this.d.project.path, taskId: task.id, agentName: named || this.d.nameAgent(), spec, taskTitle: task.title, taskDescription: task.description, epicId: m.epic_id });
       running++;
     }
   }

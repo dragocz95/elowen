@@ -186,7 +186,7 @@ export function createServer(d: ServerDeps): Hono<{ Variables: { user: User; tok
     const agentName = uniqueName();
     d.tasks.setAgent(taskId, agentName);     // link task → orca-<agentName> session for run controls
     d.tasks.setStatus(taskId, 'in_progress');
-    const { session } = await d.spawn.launch({ projectId: d.project.id, projectPath: d.project.path, taskId, agentName, spec, taskTitle: task?.title, taskDescription: task?.description });
+    const { session } = await d.spawn.launch({ projectId: d.project.id, projectPath: d.project.path, taskId, agentName, spec, taskTitle: task?.title, taskDescription: task?.description, epicId: task?.parent_id ?? undefined });
     d.bus.publish({ type: 'task', taskId, status: 'in_progress' });
     return c.json({ session }, 201);
   });
