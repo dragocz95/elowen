@@ -176,6 +176,9 @@ export const cs = {
     pageRange: '{from}–{to} z {total}',
     prevPage: 'Předchozí',
     nextPage: 'Další',
+    copyId: 'Kopírovat ID',
+    idCopied: 'ID {id} zkopírováno',
+    idCopyFailed: 'Kopírování selhalo',
   },
   missions: {
     newMission: 'Nová mise',
@@ -229,6 +232,8 @@ export const cs = {
     spotlightAgent: 'Agent',
     upstreamFailBanner: 'Předchozí fáze selhala — následná práce je blokována, dokud se nevyřeší nebo nepřeskočí.',
     failGate: 'Blokováno selhavší závislostí',
+    configSummary: 'Plánuje {planner} · Dozírá {overseer} · výchozí autonomie {autonomy}',
+    configSummaryTitle: 'Aktuální konfigurace autopilota',
   },
   sidebar: {
     needsAttention: '{count} vyžaduje pozornost',
@@ -257,6 +262,7 @@ export const cs = {
     kill: 'Ukončit relaci',
     empty: 'Žádné živé relace',
     emptyDescription: 'Spusťte úkol pro vytvoření relace.',
+    emptyAction: 'Přejít na Úkoly',
     terminalTitle: 'Terminál — {name}',
     online: 'online',
     filterAll: 'Vše',

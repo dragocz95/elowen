@@ -5,7 +5,7 @@ import type { Task } from '../../lib/types';
 import { useCloseTask, useDeleteTask } from '../../lib/mutations';
 import { useConfig, useSessionSignal } from '../../lib/queries';
 import { taskExec } from '../../lib/taskExec';
-import { taskAgentName, parseTs } from '../../lib/agentUtils';
+import { taskAgentName } from '../../lib/agentUtils';
 import { useTaskControls } from '../../lib/useTaskControls';
 import { Badge } from '../../components/ui/Badge';
 import { Checkbox } from '../../components/ui/Checkbox';
@@ -21,14 +21,9 @@ import { ChangeStrip } from '../../components/ui/ChangeStrip';
 import { useSessionStall } from '../../lib/useSessionStall';
 import { useToast } from '../../components/ui/Toast';
 import { useTranslation } from '../../lib/i18n';
+import { formatTaskTime } from '../../lib/formatTime';
 import { taskTypeMeta } from './taskMeta';
 import { statusTone } from '../dashboard/statusTone';
-
-function fmtWhen(iso: string, locale?: string): string {
-  const ms = parseTs(iso);
-  if (ms == null) return iso;
-  return new Date(ms).toLocaleString(locale, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
-}
 
 export function TaskCard({ task, onEdit, onSelect, active = false, blockers, selected = false, onToggleSelect, selecting = false }: { task: Task; onEdit: (t: Task) => void; onSelect?: (t: Task) => void; active?: boolean; blockers?: Task[]; selected?: boolean; onToggleSelect?: (id: string) => void; selecting?: boolean }) {
   const close = useCloseTask();
@@ -113,10 +108,10 @@ export function TaskCard({ task, onEdit, onSelect, active = false, blockers, sel
           {task.scheduled_at ? (
             <Badge tone="muted">
               {task.autostart ? <Zap size={11} className="mr-1 inline" aria-hidden /> : <Clock size={11} className="mr-1 inline" aria-hidden />}
-              {fmtWhen(task.scheduled_at, locale)}
+              {(() => { const w = formatTaskTime(task.scheduled_at, Date.now(), locale); return <span title={w.title}>{w.label}</span>; })()}
             </Badge>
           ) : (task.closed_at || task.created_at) ? (
-            <Badge tone="muted"><Clock size={11} className="mr-1 inline" aria-hidden />{fmtWhen((task.closed_at || task.created_at)!, locale)}</Badge>
+            (() => { const w = formatTaskTime(task.closed_at || task.created_at, Date.now(), locale); return <span title={w.title}><Badge tone="muted"><Clock size={11} className="mr-1 inline" aria-hidden />{w.label}</Badge></span>; })()
           ) : null}
         </div>
       </div>

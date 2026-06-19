@@ -176,6 +176,9 @@ export const en = {
     pageRange: '{from}–{to} of {total}',
     prevPage: 'Previous',
     nextPage: 'Next',
+    copyId: 'Copy ID',
+    idCopied: 'Copied {id}',
+    idCopyFailed: 'Copy failed',
   },
   missions: {
     newMission: 'New mission',
@@ -229,6 +232,8 @@ export const en = {
     spotlightAgent: 'Agent',
     upstreamFailBanner: 'An upstream phase failed — downstream work is blocked until it is resolved or skipped.',
     failGate: 'Blocked by a failed dependency',
+    configSummary: 'Planned by {planner} · Overseen by {overseer} · default autonomy {autonomy}',
+    configSummaryTitle: 'Current autopilot configuration',
   },
   sidebar: {
     needsAttention: '{count} needs attention',
@@ -257,6 +262,7 @@ export const en = {
     kill: 'Kill session',
     empty: 'No live sessions',
     emptyDescription: 'Launch a task to spawn one.',
+    emptyAction: 'Go to Tasks',
     terminalTitle: 'Terminal — {name}',
     online: 'online',
     filterAll: 'All',

@@ -1,5 +1,5 @@
 'use client';
-import { Link2 } from 'lucide-react';
+import { Link2, Clock } from 'lucide-react';
 import type { Task } from '../../lib/types';
 import { Badge } from '../../components/ui/Badge';
 import { ModelIcon } from '../../components/ui/ModelIcon';
@@ -11,6 +11,7 @@ import { statusTone } from '../dashboard/statusTone';
 import { taskTypeMeta } from '../tasks/taskMeta';
 import { taskExec } from '../../lib/taskExec';
 import { taskSessionName } from '../../lib/agentUtils';
+import { formatTaskTime } from '../../lib/formatTime';
 import { useConfig, useSessions, useSessionSignal } from '../../lib/queries';
 import { useSessionStall } from '../../lib/useSessionStall';
 import { useTranslation } from '../../lib/i18n';
@@ -27,7 +28,7 @@ export function KanbanCard({ task, blocked, blockers, dragging, statusLabel, isP
   onDragStart: (e: React.DragEvent) => void;
   onDragEnd: () => void;
 }) {
-  const { t } = useTranslation();
+  const { t, locale } = useTranslation();
   const { data: config } = useConfig();
   const sessions = useSessions();
   const sessionName = taskSessionName(task);
@@ -61,6 +62,7 @@ export function KanbanCard({ task, blocked, blockers, dragging, statusLabel, isP
         <div className="flex items-center justify-between gap-2 pt-0.5">
           <span className="truncate font-mono text-[11px] text-text-muted">{task.id}</span>
           <div className="flex shrink-0 items-center gap-1.5">
+            {(() => { const w = formatTaskTime(task.closed_at || task.created_at, Date.now(), locale); return w.label ? <span title={w.title}><Badge tone="muted"><Clock size={11} className="mr-1 inline" aria-hidden />{w.label}</Badge></span> : null; })()}
             {isClosed ? <OutcomeBadge outcome={task.outcome} /> : null}
             <Badge tone={statusTone(task.status)}>{statusLabel}</Badge>
           </div>

@@ -1,13 +1,14 @@
 'use client';
 import { useState } from 'react';
 import dynamic from 'next/dynamic';
-import { Pencil, Play, Square, SquareSlash, Archive, TerminalSquare, Link2 } from 'lucide-react';
+import { Pencil, Play, Square, SquareSlash, Archive, TerminalSquare, Link2, Copy } from 'lucide-react';
 import type { Task } from '../../lib/types';
 import { useTasks, useAllDeps, useSessionSignal, useActivity, useConfig } from '../../lib/queries';
 import { useCloseTask } from '../../lib/mutations';
 import { useTaskControls } from '../../lib/useTaskControls';
 import { taskExec } from '../../lib/taskExec';
-import { taskSessionName, taskAgentName, taskElapsed } from '../../lib/agentUtils';
+import { taskSessionName, taskAgentName } from '../../lib/agentUtils';
+import { formatTaskTime } from '../../lib/formatTime';
 import { useSessionPane } from '../sessions/useSessionPane';
 import { parseAnsi } from '../sessions/ansi';
 import { Badge } from '../../components/ui/Badge';
@@ -27,7 +28,7 @@ const TerminalPanel = dynamic(() => import('../../components/terminal/TerminalPa
 /** Persistent task detail: identity, actions, description, dependencies, live tail / result,
  *  and recent activity. Resolves the full task by id so it works from tasks and missions alike. */
 export function TaskDetailPane({ taskId, onEdit }: { taskId: string; onEdit?: (t: Task) => void }) {
-  const { t } = useTranslation();
+  const { t, locale } = useTranslation();
   const tasks = useTasks();
   const deps = useAllDeps();
   const activity = useActivity('signal');
@@ -47,46 +48,59 @@ export function TaskDetailPane({ taskId, onEdit }: { taskId: string; onEdit?: (t
   const iconExec = exec || config?.defaults?.exec || '';
   const agentName = taskAgentName(task);
   const isClosed = task.status === 'closed' || task.status === 'cancelled';
-  const elapsed = taskElapsed(task, Date.now());
+  const whenIso = task.closed_at || task.created_at;
+  const when = formatTaskTime(whenIso, Date.now(), locale);
   const STATUS_LABEL: Record<string, string> = { open: t.tasks.statusOpen, in_progress: t.tasks.statusInProgress, blocked: t.tasks.statusBlocked, closed: t.tasks.statusClosed, cancelled: t.tasks.statusCancelled };
 
   const byId = new Map((tasks.data ?? []).map((x) => [x.id, x]));
   const depTasks = (deps.data ?? []).filter((d) => d.task_id === taskId).map((d) => byId.get(d.depends_on_id)).filter((x): x is Task => !!x);
   const events = (activity.data ?? []).filter((e) => e.target === taskId || (session && e.target === session)).slice(0, 6);
 
+  const copyId = async () => {
+    try {
+      await navigator.clipboard.writeText(task.id);
+      toast(t.tasks.idCopied.replace('{id}', task.id));
+    } catch {
+      toast(t.tasks.idCopyFailed, 'error');
+    }
+  };
+
   return (
     <div className="flex flex-col gap-4">
-      {/* Identity + actions */}
-      <div className="flex items-start gap-3">
-        <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl border border-border bg-elevated">
-          {iconExec ? <ModelIcon name={iconExec} size={26} /> : <Icon size={22} className="text-text-muted" aria-hidden />}
-        </span>
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <h2 className="min-w-0 flex-1 text-base font-semibold text-text">{task.title}</h2>
-            <AgentStatusDot signal={signal} live={running} />
-          </div>
-          <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 font-mono text-[11px] text-text-muted">
-            <span>{task.id}</span>
-            {agentName ? <><span aria-hidden className="opacity-50">·</span><span>{taskSessionName(task)}</span></> : null}
-            {elapsed ? <><span aria-hidden className="opacity-50">·</span><span>{elapsed}</span></> : null}
+      {/* Identity + actions — sticky so it stays pinned while the detail scrolls. */}
+      <div className="sticky top-0 z-10 -mx-4 flex flex-col gap-2 border-b border-border bg-surface/95 px-4 pb-3 pt-1 backdrop-blur">
+        <div className="flex items-start gap-3">
+          <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl border border-border bg-elevated">
+            {iconExec ? <ModelIcon name={iconExec} size={26} /> : <Icon size={22} className="text-text-muted" aria-hidden />}
+          </span>
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2">
+              <h2 className="min-w-0 flex-1 text-base font-semibold text-text">{task.title}</h2>
+              <AgentStatusDot signal={signal} live={running} />
+            </div>
+            <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 font-mono text-[11px] text-text-muted">
+              <span>{task.id}</span>
+              <IconButton icon={Copy} label={t.tasks.copyId} onClick={copyId} />
+              {agentName ? <><span aria-hidden className="opacity-50">·</span><span>{taskSessionName(task)}</span></> : null}
+              {when.label ? <><span aria-hidden className="opacity-50">·</span><span title={when.title}>{when.label}</span></> : null}
+            </div>
           </div>
         </div>
-      </div>
 
-      <div className="flex flex-wrap items-center gap-1.5">
-        <Badge tone={statusTone(task.status)}>{STATUS_LABEL[task.status] ?? task.status}</Badge>
-        {isClosed ? <OutcomeBadge outcome={task.outcome} /> : null}
-        {exec ? <Badge>{exec}</Badge> : null}
-      </div>
+        <div className="flex flex-wrap items-center gap-1.5">
+          <Badge tone={statusTone(task.status)}>{STATUS_LABEL[task.status] ?? task.status}</Badge>
+          {isClosed ? <OutcomeBadge outcome={task.outcome} /> : null}
+          {exec ? <Badge>{exec}</Badge> : null}
+        </div>
 
-      <div className="flex flex-wrap items-center gap-1">
-        {running
-          ? <><IconButton icon={Square} label={t.tasks.stop} variant="danger" onClick={stop} /><IconButton icon={SquareSlash} label={t.sessions.interrupt} onClick={pause} /></>
-          : <IconButton icon={Play} label={t.tasks.start} onClick={start} />}
-        {session ? <IconButton icon={TerminalSquare} label={t.tasks.openTerminal} onClick={() => setOpenTerm(true)} /> : null}
-        {onEdit ? <IconButton icon={Pencil} label={t.common.edit} onClick={() => onEdit(task)} /> : null}
-        {!isClosed ? <IconButton icon={Archive} label={t.tasks.closeArchive} onClick={() => close.mutate(task.id, { onSuccess: () => toast(t.tasks.closed.replace('{id}', task.id)), onError: (e) => toast(String(e), 'error') })} /> : null}
+        <div className="flex flex-wrap items-center gap-1">
+          {running
+            ? <><IconButton icon={Square} label={t.tasks.stop} variant="danger" onClick={stop} /><IconButton icon={SquareSlash} label={t.sessions.interrupt} onClick={pause} /></>
+            : <IconButton icon={Play} label={t.tasks.start} onClick={start} />}
+          {session ? <IconButton icon={TerminalSquare} label={t.tasks.openTerminal} onClick={() => setOpenTerm(true)} /> : null}
+          {onEdit ? <IconButton icon={Pencil} label={t.common.edit} onClick={() => onEdit(task)} /> : null}
+          {!isClosed ? <IconButton icon={Archive} label={t.tasks.closeArchive} onClick={() => close.mutate(task.id, { onSuccess: () => toast(t.tasks.closed.replace('{id}', task.id)), onError: (e) => toast(String(e), 'error') })} /> : null}
+        </div>
       </div>
 
       {task.description?.trim() ? (

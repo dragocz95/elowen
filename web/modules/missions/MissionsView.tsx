@@ -2,7 +2,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Rocket, Plus, Pause, Play, Power, GitBranch, ArrowRight, AlertTriangle } from 'lucide-react';
-import { useMissions, useTasks, useMissionDetail, useSessionSignals } from '../../lib/queries';
+import { useMissions, useTasks, useMissionDetail, useSessionSignals, useConfig } from '../../lib/queries';
 import { usePauseMission, useResumeMission, useDisengage } from '../../lib/mutations';
 import type { Mission, MissionTask, MissionDeps, Task, DerivedSignal } from '../../lib/types';
 import type { Tone } from '../../components/ui/tone';
@@ -122,7 +122,7 @@ export function MissionsView() {
 
       {missions.isLoading ? <LoadingState />
         : missions.isError ? <ErrorState message={t.common.daemonUnreachable} onRetry={() => missions.refetch()} />
-        : !missions.data?.length ? <EmptyState title={t.missions.empty} description={t.missions.emptyDescription} icon={Rocket} />
+        : !missions.data?.length ? <EmptyState title={t.missions.empty} description={t.missions.emptyDescription} icon={Rocket} action={<Button variant="accent" icon={Plus} onClick={() => setEngaging(true)}>{t.missions.newMission}</Button>} />
         : (
           <div className="flex flex-col gap-6 md:flex-row md:items-start">
             {/* Left rail — mission list grouped by state */}
@@ -209,6 +209,7 @@ function MissionWorkspace({ missionId }: { missionId: string }) {
   const allTasks = useTasks();
   const sessions = useSessions();
   const signals = useSessionSignals();
+  const { data: config } = useConfig();
   const pause = usePauseMission();
   const resume = useResumeMission();
   const disengage = useDisengage();
@@ -227,6 +228,15 @@ function MissionWorkspace({ missionId }: { missionId: string }) {
   const STATE_LABEL: Record<string, string> = { active: t.missions.stateActive, paused: t.missions.statePaused, disengaged: t.missions.stateDisengaged };
   const paused = d.mission.state === 'paused';
   const disengagedFlag = d.mission.state === 'disengaged';
+
+  // Read-only "current config" line: planner + overseer + default autonomy.
+  const plannerModel = config?.autopilot?.model ?? '—';
+  const overseerModel = config?.autopilot?.overseerModel || plannerModel;
+  const defaultAutonomy = config?.defaults?.autonomy ?? '—';
+  const configLine = t.missions.configSummary
+    .replace('{planner}', plannerModel)
+    .replace('{overseer}', overseerModel)
+    .replace('{autonomy}', defaultAutonomy);
 
   // Live tmux sessions belonging to this mission's tasks (labels live on the full task records).
   const fullById = new Map((allTasks.data ?? []).map((x) => [x.id, x]));
@@ -252,6 +262,7 @@ function MissionWorkspace({ missionId }: { missionId: string }) {
           <Badge tone={STATE_TONE(d.mission.state)}>{STATE_LABEL[d.mission.state] ?? d.mission.state}</Badge>
           {d.mission.state !== 'disengaged' ? (() => { const cap = epicCapacity(d.tasks, sessions.data ?? [], d.mission.max_sessions); return <CapacityMeter running={cap.running} max={cap.max} />; })() : null}
         </div>
+        <p className="text-[11px] text-text-muted" title={t.missions.configSummaryTitle}>{configLine}</p>
         <div className="flex flex-wrap gap-x-6 gap-y-2 text-sm">
           <Metric label={t.missions.total} value={d.progress.total} />
           <Metric label={t.missions.done} value={d.progress.closed} />
