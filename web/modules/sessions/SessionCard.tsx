@@ -6,6 +6,7 @@ import { useKillSession, useSendInput } from '../../lib/mutations';
 import { useTasks, useSessionSignal } from '../../lib/queries';
 import { taskTypeMeta } from '../tasks/taskMeta';
 import { taskExec } from '../../lib/taskExec';
+import { taskForSession } from '../../lib/agentUtils';
 import { ModelIcon } from '../../components/ui/ModelIcon';
 import { OutcomeBadge } from '../../components/ui/OutcomeBadge';
 import { IconButton } from '../../components/ui/IconButton';
@@ -26,9 +27,8 @@ export function SessionCard({ name, onOpenTerminal, compact = false }: { name: s
   const tasks = useTasks();
   const signal = useSessionSignal(name);
 
-  // Map session → its task via the agent:<name> label so we can show the task's type icon.
-  const agent = name.startsWith('orca-') ? name.slice('orca-'.length) : null;
-  const task = agent ? tasks.data?.find((t) => (t.labels ?? []).includes(`agent:${agent}`)) : undefined;
+  // Map session → its task (prefer the in_progress one; agent names are reused across tasks).
+  const task = taskForSession(tasks.data ?? [], name);
   const exec = taskExec(task?.labels);
   const TypeIcon = task ? taskTypeMeta(task.type).icon : SquareTerminal;
   const needsInput = signal?.type === 'needs_input';

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { taskAgentName, taskSessionName, taskElapsed, taskBlockers, tailSnippet, liveState, needsInputSessions, lastClosedTask } from '../../lib/agentUtils';
+import { taskAgentName, taskSessionName, taskElapsed, taskBlockers, tailSnippet, liveState, needsInputSessions, lastClosedTask, taskForSession } from '../../lib/agentUtils';
 import type { Task } from '../../lib/types';
 
 const task = (over: Partial<Task> = {}): Task => ({ id: 't1', title: 'T', status: 'open', ...over });
@@ -85,6 +85,23 @@ describe('lastClosedTask', () => {
   });
   it('returns null when nothing is closed', () => {
     expect(lastClosedTask([task({ status: 'open' })])).toBeNull();
+  });
+});
+
+describe('taskForSession', () => {
+  it('prefers the in_progress task when an agent name is reused', () => {
+    const oldClosed = task({ id: 'old', status: 'closed', labels: ['agent:nova'], created_at: '2026-06-18 10:00:00' });
+    const running = task({ id: 'run', status: 'in_progress', labels: ['agent:nova'], created_at: '2026-06-19 08:00:00' });
+    expect(taskForSession([oldClosed, running], 'orca-nova')?.id).toBe('run');
+  });
+  it('falls back to the most recently created match', () => {
+    const a = task({ id: 'a', status: 'closed', labels: ['agent:nova'], created_at: '2026-06-18 10:00:00' });
+    const b = task({ id: 'b', status: 'closed', labels: ['agent:nova'], created_at: '2026-06-19 08:00:00' });
+    expect(taskForSession([a, b], 'orca-nova')?.id).toBe('b');
+  });
+  it('returns undefined for non-orca names or no match', () => {
+    expect(taskForSession([task({ labels: ['agent:nova'] })], 'tmux-x')).toBeUndefined();
+    expect(taskForSession([task({ labels: ['agent:atlas'] })], 'orca-nova')).toBeUndefined();
   });
 });
 

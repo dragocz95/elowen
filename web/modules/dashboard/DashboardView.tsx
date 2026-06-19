@@ -17,7 +17,7 @@ import { LoadingState, ErrorState, EmptyState } from '../../components/ui/states
 import { useToast } from '../../components/ui/Toast';
 import { useTranslation } from '../../lib/i18n';
 import { useSessionPane } from '../sessions/useSessionPane';
-import { tailSnippet, taskSessionName, parseTs, liveState } from '../../lib/agentUtils';
+import { tailSnippet, taskSessionName, parseTs, liveState, taskForSession } from '../../lib/agentUtils';
 import { useSessionStall } from '../../lib/useSessionStall';
 import { sessionActivity } from '../../lib/sessionActivity';
 import { epicCapacity } from '../../lib/taskTree';
@@ -73,10 +73,7 @@ export function DashboardView() {
   const MISSION_STATE_LABEL: Record<string, string> = { active: t.missions.stateActive, paused: t.missions.paused, disengaged: t.missions.stateDisengaged };
 
   const live = (sessions.data ?? []).slice(0, 6);
-  const taskForSession = (s: string): Task | undefined => {
-    const agent = s.startsWith('orca-') ? s.slice('orca-'.length) : null;
-    return agent ? tasks.data?.find((x) => (x.labels ?? []).includes(`agent:${agent}`)) : undefined;
-  };
+  const taskFor = (s: string): Task | undefined => taskForSession(tasks.data ?? [], s);
   const recent = (tasks.data ?? []).filter((x) => x.type !== 'epic').slice(0, 6);
   // Last 6 closed tasks, newest first, for the outcomes column.
   const outcomes = (tasks.data ?? [])
@@ -102,7 +99,7 @@ export function DashboardView() {
 
         <div className="mt-4 flex flex-col gap-2">
           {live.length > 0
-            ? live.map((s) => <LiveLane key={s} name={s} task={taskForSession(s)} />)
+            ? live.map((s) => <LiveLane key={s} name={s} task={taskFor(s)} />)
             : <p className="rounded-md border border-dashed border-border px-3 py-4 text-center text-xs text-text-muted">{t.dashboard.nothingRunning}</p>}
         </div>
 

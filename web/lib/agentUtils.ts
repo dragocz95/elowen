@@ -69,6 +69,17 @@ export function lastClosedTask(tasks: Task[]): Task | null {
   return closed.reduce((a, b) => ((parseTs(b.closed_at) ?? 0) > (parseTs(a.closed_at) ?? 0) ? b : a));
 }
 
+/** Resolve the task a live session (`orca-<agent>`) belongs to. Agent names come from a small
+ *  pool and get reused across tasks, so prefer an in_progress match, then the most recent. */
+export function taskForSession(tasks: Task[], sessionName: string): Task | undefined {
+  if (!sessionName.startsWith('orca-')) return undefined;
+  const label = `${AGENT_PREFIX}${sessionName.slice('orca-'.length)}`;
+  const matches = tasks.filter((t) => (t.labels ?? []).includes(label));
+  if (matches.length <= 1) return matches[0];
+  return matches.find((t) => t.status === 'in_progress')
+    ?? [...matches].sort((a, b) => (parseTs(b.created_at) ?? 0) - (parseTs(a.created_at) ?? 0))[0];
+}
+
 /** Last non-empty terminal line, with ANSI escapes stripped — for a one-line live preview. */
 export function tailSnippet(pane: string): string {
   const lines = pane.split('\n');
