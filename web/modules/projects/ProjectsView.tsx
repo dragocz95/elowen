@@ -1,6 +1,6 @@
 'use client';
 import { useState } from 'react';
-import { FolderGit2, GitBranch, GitCommitHorizontal, Plus, CheckCircle2, AlertTriangle, ArrowUp, ArrowDown } from 'lucide-react';
+import { FolderGit2, GitBranch, GitCommitHorizontal, Plus, CheckCircle2, AlertTriangle, ArrowUp, ArrowDown, Folder } from 'lucide-react';
 import { useProjects, useProjectGit } from '../../lib/queries';
 import { useCreateProject } from '../../lib/mutations';
 import { useToast } from '../../components/ui/Toast';
@@ -83,7 +83,7 @@ export function ProjectsView() {
 
                   <div className="flex min-w-0 flex-1 flex-col gap-1.5">
                     <span className="truncate font-semibold text-text">{p.slug}</span>
-                    <span className="truncate font-mono text-xs text-text-muted">{p.path}</span>
+                    <span className="flex items-center gap-1 truncate font-mono text-xs text-text-muted"><Folder size={11} className="shrink-0" aria-hidden />{p.path}</span>
 
                     {active && git.isLoading && <span className="font-mono text-[11px] text-text-muted animate-pulse">{t.common.loading}</span>}
                     {active && git.data && !git.data.isRepo && <Badge tone="muted">{t.projects.notGit}</Badge>}
@@ -145,6 +145,7 @@ export function ProjectsView() {
                       title={t.projects.viewCommit}
                       className="flex w-full flex-wrap items-center gap-2 rounded-md border border-border bg-bg px-3 py-2 text-left text-sm transition-colors hover:border-accent/50 hover:bg-elevated"
                     >
+                      <GitCommitHorizontal size={12} className="shrink-0 text-text-muted" aria-hidden />
                       <span className="font-mono text-xs text-accent">{c.hash}</span>
                       <span className="min-w-0 flex-1 truncate text-text">{c.subject}</span>
                       <span className="shrink-0 text-xs text-text-muted">{c.author} · {c.relative}</span>

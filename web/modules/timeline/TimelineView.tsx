@@ -1,7 +1,7 @@
 'use client';
 import { useMemo, useState } from 'react';
 import Link from 'next/link';
-import { Activity, ChevronDown, ArrowUpRight } from 'lucide-react';
+import { Activity, ChevronDown, ArrowUpRight, Clock, MessageSquareText, Columns3 } from 'lucide-react';
 import { useActivity, useTasks, useConfig, useSessions } from '../../lib/queries';
 import { plotAxis, groupEvents, type AxisEvent, type AxisPoint, type GroupedEvent } from './axis';
 import { eventIcon, eventTone } from './eventMeta';
@@ -308,13 +308,13 @@ export function TimelineView() {
   return (
     <div className="flex flex-col gap-4">
       <ModuleHeader title={t.page.timeline} icon={Activity}>
-        <Segmented options={[{ label: t.timeline.axis, value: 'axis' }, { label: t.timeline.lanes, value: 'lanes' }]} value={view} onChange={setView} />
+        <Segmented options={[{ label: t.timeline.axis, value: 'axis', icon: Activity }, { label: t.timeline.lanes, value: 'lanes', icon: Columns3 }]} value={view} onChange={setView} />
         <Segmented options={FILTER_OPTIONS} value={filter} onChange={setFilter} />
       </ModuleHeader>
 
       {/* Hero: the lane/axis plot — orca's signature surface */}
       <section className="rounded-lg border border-border border-t-2 border-t-accent/40 bg-surface p-5" style={{ boxShadow: 'var(--shadow-card)' }}>
-        <div className="mb-3 text-[11px] font-semibold uppercase tracking-widest text-text-muted">{windowLabel}</div>
+        <div className="mb-3 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-widest text-text-muted"><Clock size={12} className="shrink-0 text-text-muted" aria-hidden />{windowLabel}</div>
         {q.isLoading ? (
           <LoadingState />
         ) : q.isError ? (
@@ -335,7 +335,7 @@ export function TimelineView() {
         )}
       </section>
 
-      <Section title={t.timeline.feed}>
+      <Section title={t.timeline.feed} icon={MessageSquareText}>
         {q.isLoading ? (
           <LoadingState />
         ) : q.isError ? (

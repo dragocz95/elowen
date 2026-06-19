@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useMemo, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { Plus, ListChecks, Search, Archive, Trash2, X, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Plus, ListChecks, Search, Archive, Trash2, X, ChevronLeft, ChevronRight, CalendarDays, List } from 'lucide-react';
 import type { Task, TaskStatus } from '../../lib/types';
 import { useTasks, useAllDeps, useSessions, useSessionSignals, useMissions } from '../../lib/queries';
 import { taskBlockers, taskSessionName } from '../../lib/agentUtils';
@@ -196,9 +196,10 @@ export function TasksView() {
               {groups.map((g) => (
                 <div key={g.key} className="flex flex-col gap-2">
                   <div className="flex items-center gap-3">
+                    <CalendarDays size={12} className="shrink-0 text-text-muted" aria-hidden />
                     <span className="text-[11px] font-semibold uppercase tracking-wider text-text-muted">{g.label}</span>
                     <span className="h-px flex-1 bg-border" />
-                    <span className="font-mono text-tiny text-text-muted">{g.items.length}</span>
+                    <span className="inline-flex items-center gap-1 font-mono text-tiny text-text-muted"><List size={11} className="shrink-0 text-text-muted" aria-hidden />{g.items.length}</span>
                   </div>
                   <div className="flex flex-col gap-3">
                     {g.items.map((task) => {
@@ -233,7 +234,7 @@ export function TasksView() {
             <aside className="mt-5 min-w-0 lg:mt-0 lg:flex-1 lg:sticky lg:top-16 lg:max-h-[calc(100vh-80px)] lg:overflow-y-auto">
               {selectedId
                 ? <div className="rounded-lg border border-border bg-surface p-4" style={{ boxShadow: 'var(--shadow-card)' }}><TaskDetailPane taskId={selectedId} onEdit={setEditing} /></div>
-                : <div className="hidden items-center justify-center rounded-lg border border-dashed border-border py-20 text-sm text-text-muted lg:flex">{t.tasks.selectHint}</div>}
+                : <div className="hidden items-center justify-center gap-2 rounded-lg border border-dashed border-border py-20 text-sm text-text-muted lg:flex"><ListChecks size={14} className="shrink-0 text-text-muted/50" aria-hidden />{t.tasks.selectHint}</div>}
             </aside>
           </div>
         )}

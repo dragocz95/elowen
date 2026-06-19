@@ -1,5 +1,5 @@
 'use client';
-import { Pause, Play, Power } from 'lucide-react';
+import { Pause, Play, Power, CheckCircle2 } from 'lucide-react';
 import type { Mission } from '../../lib/types';
 import { useTasks, useSessions, useSessionSignals } from '../../lib/queries';
 import { usePauseMission, useResumeMission, useDisengage } from '../../lib/mutations';
@@ -66,7 +66,7 @@ export function ActiveMissionsBar({ missions, selectedId, onSelect }: { missions
             </div>
             <div className="flex items-center gap-2">
               <ProgressRibbon phases={kids} className="flex-1" />
-              <span className="shrink-0 font-mono text-[11px] text-text-muted">{t.missions.progressDone.replace('{done}', String(done)).replace('{total}', String(kids.length))}</span>
+              <span className="inline-flex shrink-0 items-center gap-1 font-mono text-[11px] text-text-muted"><CheckCircle2 size={11} className="shrink-0 text-text-muted" aria-hidden />{t.missions.progressDone.replace('{done}', String(done)).replace('{total}', String(kids.length))}</span>
             </div>
             <div className="flex items-center gap-2.5">
               {!disengaged ? <CapacityMeter running={cap.running} max={cap.max} /> : null}

@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { Rocket, Plus, Pause, Play, Power, GitBranch, ArrowRight, AlertTriangle } from 'lucide-react';
+import { Rocket, Plus, Pause, Play, Power, GitBranch, ArrowRight, AlertTriangle, ListChecks, CheckCircle2, LoaderCircle, Ban, Cpu, PlayCircle, SkipForward, type LucideIcon } from 'lucide-react';
 import { useMissions, useTasks, useMissionDetail, useSessionSignals, useConfig } from '../../lib/queries';
 import { usePauseMission, useResumeMission, useDisengage } from '../../lib/mutations';
 import type { MissionTask, MissionDeps, Task, DerivedSignal } from '../../lib/types';
@@ -93,7 +93,7 @@ export function MissionsView() {
             {/* Selected mission workspace — full width below the bar */}
             {selectedId
               ? <MissionWorkspace missionId={selectedId} />
-              : <div className="flex items-center justify-center rounded-lg border border-border bg-surface py-20 text-sm text-text-muted">{t.missions.selectMissionHint}</div>}
+              : <div className="flex items-center justify-center gap-2 rounded-lg border border-border bg-surface py-20 text-sm text-text-muted"><Rocket size={14} className="shrink-0 text-text-muted/50" aria-hidden />{t.missions.selectMissionHint}</div>}
           </div>
         )}
 
@@ -162,12 +162,12 @@ function MissionWorkspace({ missionId }: { missionId: string }) {
           {d.mission.state !== 'disengaged' ? (() => { const cap = epicCapacity(d.tasks, sessions.data ?? [], d.mission.max_sessions); return <CapacityMeter running={cap.running} max={cap.max} />; })() : null}
           <Button variant="ghost" icon={Plus} onClick={() => setAddingPhase(true)}>{t.missions.addPhase}</Button>
         </div>
-        <p className="text-[11px] text-text-muted" title={t.missions.configSummaryTitle}>{configLine}</p>
+        <p className="flex items-center gap-1.5 text-[11px] text-text-muted" title={t.missions.configSummaryTitle}><Cpu size={11} className="shrink-0 text-text-muted" aria-hidden />{configLine}</p>
         <div className="flex flex-wrap gap-x-6 gap-y-2 text-sm">
-          <Metric label={t.missions.total} value={d.progress.total} />
-          <Metric label={t.missions.done} value={d.progress.closed} />
-          <Metric label={t.missions.inProgress} value={d.progress.inProgress} tone={d.progress.inProgress > 0 ? 'accent' : 'muted'} />
-          <Metric label={t.missions.blocked} value={d.progress.blocked} tone={d.progress.blocked > 0 ? 'danger' : 'muted'} />
+          <Metric label={t.missions.total} value={d.progress.total} icon={ListChecks} />
+          <Metric label={t.missions.done} value={d.progress.closed} icon={CheckCircle2} />
+          <Metric label={t.missions.inProgress} value={d.progress.inProgress} tone={d.progress.inProgress > 0 ? 'accent' : 'muted'} icon={LoaderCircle} />
+          <Metric label={t.missions.blocked} value={d.progress.blocked} tone={d.progress.blocked > 0 ? 'danger' : 'muted'} icon={Ban} />
         </div>
       </div>
 
@@ -212,7 +212,7 @@ function MissionWorkspace({ missionId }: { missionId: string }) {
       {/* Selected-phase detail — below the flow, full width */}
       <div className="rounded-lg border border-border bg-surface p-4" style={{ boxShadow: 'var(--shadow-card)' }}>
         {selectedTaskId ? <TaskDetailPane taskId={selectedTaskId} /> : (
-          <p className="py-2 text-center text-sm text-text-muted">{t.missions.selectTaskHint}</p>
+          <p className="flex items-center justify-center gap-2 py-2 text-center text-sm text-text-muted"><ListChecks size={14} className="shrink-0 text-text-muted/50" aria-hidden />{t.missions.selectTaskHint}</p>
         )}
       </div>
 
@@ -256,7 +256,7 @@ function PhaseSpotlight({
         title={current ? current.title : t.missions.spotlightNoCurrent}
       >
         <span className="flex flex-col gap-0.5 min-w-0 flex-1">
-          <span className="text-[10px] font-medium uppercase tracking-wide text-text-muted">{t.missions.spotlightCurrent}</span>
+          <span className="inline-flex items-center gap-1 text-[10px] font-medium uppercase tracking-wide text-text-muted"><PlayCircle size={11} className="shrink-0 text-text-muted" aria-hidden />{t.missions.spotlightCurrent}</span>
           <span className="flex items-center gap-1.5 min-w-0">
             {current ? <AgentStatusDot signal={currentSignal} live={currentLive} size="sm" /> : null}
             <span className="truncate text-sm font-semibold text-text">{current ? current.title : t.missions.spotlightNoCurrent}</span>
@@ -280,7 +280,7 @@ function PhaseSpotlight({
         title={next ? next.title : t.missions.spotlightNoNext}
       >
         <span className="flex flex-col gap-0.5 min-w-0 flex-1">
-          <span className="text-[10px] font-medium uppercase tracking-wide text-text-muted">{t.missions.spotlightNext}</span>
+          <span className="inline-flex items-center gap-1 text-[10px] font-medium uppercase tracking-wide text-text-muted"><SkipForward size={11} className="shrink-0 text-text-muted" aria-hidden />{t.missions.spotlightNext}</span>
           <span className="truncate text-sm font-semibold text-text">{next ? next.title : t.missions.spotlightNoNext}</span>
         </span>
       </button>
@@ -301,10 +301,11 @@ function PhaseSpotlight({
   );
 }
 
-function Metric({ label, value, tone = 'muted' }: { label: string; value: number; tone?: 'muted' | 'accent' | 'danger' }) {
+function Metric({ label, value, tone = 'muted', icon: Icon }: { label: string; value: number; tone?: 'muted' | 'accent' | 'danger'; icon?: LucideIcon }) {
   const color = tone === 'danger' ? 'text-danger' : tone === 'accent' ? 'text-accent' : 'text-text';
   return (
     <span className="flex items-baseline gap-1.5">
+      {Icon ? <Icon size={14} className="shrink-0 self-center text-text-muted" aria-hidden /> : null}
       <span className={`font-mono text-lg font-semibold tabular-nums ${color}`}>{value}</span>
       <span className="text-xs text-text-muted">{label}</span>
     </span>

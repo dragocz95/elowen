@@ -1,6 +1,6 @@
 'use client';
 import { Fragment, useState } from 'react';
-import { Circle, LoaderCircle, Ban, CheckCircle2, XCircle, type LucideIcon } from 'lucide-react';
+import { Circle, LoaderCircle, Ban, CheckCircle2, XCircle, List, type LucideIcon } from 'lucide-react';
 import type { Task, Mission, TaskStatus } from '../../lib/types';
 import { groupByStatus } from './groupByStatus';
 import { epicChildren, phaseIds, epicEffectiveStatus } from '../../lib/taskTree';
@@ -71,7 +71,7 @@ export function KanbanBoard({ tasks, onMove, onSelect, blockedBy, missions }: { 
         >
           <header className="flex items-center justify-between px-1 font-mono uppercase tracking-widest text-text-muted" style={{ fontSize: 'var(--text-caption)' }}>
             <span className="flex items-center gap-1.5"><col.icon size={12} style={{ color: col.color }} aria-hidden />{colLabel}</span>
-            <span>{groups[col.status].filter((task) => !phaseSet.has(task.id)).length}</span>
+            <span className="inline-flex items-center gap-1"><List size={11} className="text-text-muted" aria-hidden />{groups[col.status].filter((task) => !phaseSet.has(task.id)).length}</span>
           </header>
           {groups[col.status].map((task) => {
             // Autopilot epic → collapsible container; when expanded its phases nest right

@@ -1,6 +1,6 @@
 'use client';
 import Link from 'next/link';
-import { ListChecks, Rocket, ArrowRight, Plus, Radio, CircleCheckBig, Pause, Play, Power } from 'lucide-react';
+import { ListChecks, Rocket, ArrowRight, Plus, Radio, CircleCheckBig, Pause, Play, Power, Zap, Circle, LoaderCircle, Ban, Sparkles, type LucideIcon } from 'lucide-react';
 import { useTasks, useSessions, useMissions, useSessionSignals } from '../../lib/queries';
 import { usePauseMission, useResumeMission, useDisengage } from '../../lib/mutations';
 import { deriveDashboardMetrics } from './metrics';
@@ -48,9 +48,10 @@ function LiveLane({ name, task }: { name: string; task?: Task }) {
   );
 }
 
-function Metric({ value, label, tone }: { value: number; label: string; tone?: 'accent' | 'danger' }) {
+function Metric({ value, label, tone, icon: Icon }: { value: number; label: string; tone?: 'accent' | 'danger'; icon?: LucideIcon }) {
   return (
     <span className="flex items-baseline gap-1.5">
+      {Icon ? <Icon size={12} className="shrink-0 self-center text-text-muted" aria-hidden /> : null}
       <span className={`font-mono text-xl tabular-nums ${tone === 'danger' ? 'text-danger' : tone === 'accent' ? 'text-accent' : 'text-text'}`}>{value}</span>
       <span className="text-[11px] uppercase tracking-wide text-text-muted">{label}</span>
     </span>
@@ -88,19 +89,19 @@ export function DashboardView() {
       {/* ── Hero: NOW ─────────────────────────────────────────── */}
       <section className="rounded-lg border border-border border-t-2 border-t-accent/40 bg-surface p-5" style={{ boxShadow: 'var(--shadow-card)' }}>
         <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
-          <span className="text-[11px] font-semibold uppercase tracking-widest text-text-muted">{t.dashboard.now}</span>
+          <span className="inline-flex items-center gap-1 text-[11px] font-semibold uppercase tracking-widest text-text-muted"><Zap size={12} className="text-accent" aria-hidden />{t.dashboard.now}</span>
           <span className="h-5 w-px bg-border" aria-hidden />
-          <Metric value={metrics.inProgress} label={t.dashboard.inProgress} tone="accent" />
-          <Metric value={metrics.open} label={t.dashboard.open} />
-          <Metric value={metrics.blocked} label={t.dashboard.blocked} tone={metrics.blocked > 0 ? 'danger' : undefined} />
-          <Metric value={metrics.liveSessions} label={t.dashboard.liveSessions} />
-          <Metric value={metrics.activeMissions} label={t.dashboard.activeMissions} />
+          <Metric value={metrics.inProgress} label={t.dashboard.inProgress} tone="accent" icon={LoaderCircle} />
+          <Metric value={metrics.open} label={t.dashboard.open} icon={Circle} />
+          <Metric value={metrics.blocked} label={t.dashboard.blocked} tone={metrics.blocked > 0 ? 'danger' : undefined} icon={Ban} />
+          <Metric value={metrics.liveSessions} label={t.dashboard.liveSessions} icon={Radio} />
+          <Metric value={metrics.activeMissions} label={t.dashboard.activeMissions} icon={Rocket} />
         </div>
 
         <div className="mt-4 flex flex-col gap-2">
           {live.length > 0
             ? live.map((s) => <LiveLane key={s} name={s} task={taskFor(s)} />)
-            : <p className="rounded-md border border-dashed border-border px-3 py-4 text-center text-xs text-text-muted">{t.dashboard.nothingRunning}</p>}
+            : <div className="flex flex-col items-center gap-1.5 rounded-md border border-dashed border-border px-3 py-4 text-center text-xs text-text-muted"><Radio size={14} aria-hidden />{t.dashboard.nothingRunning}</div>}
         </div>
 
         <div className="mt-4 flex flex-wrap items-center gap-2">
@@ -287,7 +288,7 @@ function AutopilotSpotlight({ missions, tasks, sessionNames, signals, onPause, o
         <div className="flex items-center gap-2"><Rocket size={15} className="text-text-muted" aria-hidden /><h2 className="text-sm font-medium text-text">{t.dashboard.autopilotSpotlight}</h2></div>
         <Link href="/missions" className="inline-flex items-center gap-1 text-xs font-medium text-accent transition-opacity hover:opacity-80">{t.dashboard.viewAll}<ArrowRight size={12} aria-hidden /></Link>
       </div>
-      <p className="px-4 py-2 text-[11px] text-text-muted">{t.dashboard.autopilotSpotlightDesc}</p>
+      <p className="flex items-center gap-1.5 px-4 py-2 text-[11px] text-text-muted"><Sparkles size={12} className="shrink-0 text-text-muted" aria-hidden />{t.dashboard.autopilotSpotlightDesc}</p>
       {isLoading ? <div className="p-4"><LoadingState /></div>
         : isError ? <div className="p-4"><ErrorState message={t.common.daemonUnreachable} onRetry={onRetry} /></div>
         : active.length === 0 ? <EmptyState title={t.dashboard.noActiveMissions} icon={Rocket} />

@@ -1,7 +1,7 @@
 'use client';
 import { useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { TerminalSquare, ArrowRight } from 'lucide-react';
+import { TerminalSquare, ArrowRight, List, Bell, Maximize2, Minimize2 } from 'lucide-react';
 import { useSessions, useSessionSignals } from '../../lib/queries';
 import { needsInputSessions } from '../../lib/agentUtils';
 import { usePersistentState } from '../../lib/usePersistentState';
@@ -45,8 +45,8 @@ export function SessionsView() {
       <ModuleHeader title={t.page.sessions} count={names.length} icon={TerminalSquare}>
         {allNames.length > 0 ? (
           <>
-            <Segmented value={filter} onChange={setFilter} options={[{ value: 'all', label: t.sessions.filterAll }, { value: 'needs_input', label: t.sessions.filterNeedsInput }]} />
-            <Segmented value={density} onChange={(v) => setDensity(v as 'comfortable' | 'compact')} options={[{ value: 'comfortable', label: t.sessions.comfortable }, { value: 'compact', label: t.sessions.compact }]} />
+            <Segmented value={filter} onChange={setFilter} options={[{ value: 'all', label: t.sessions.filterAll, icon: List }, { value: 'needs_input', label: t.sessions.filterNeedsInput, icon: Bell }]} />
+            <Segmented value={density} onChange={(v) => setDensity(v as 'comfortable' | 'compact')} options={[{ value: 'comfortable', label: t.sessions.comfortable, icon: Maximize2 }, { value: 'compact', label: t.sessions.compact, icon: Minimize2 }]} />
           </>
         ) : null}
       </ModuleHeader>

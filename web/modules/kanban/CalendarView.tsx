@@ -1,6 +1,6 @@
 'use client';
 import { useState, type DragEvent } from 'react';
-import { ChevronLeft, ChevronRight, CalendarDays, CalendarRange, Calendar as CalendarIcon, Plus } from 'lucide-react';
+import { ChevronLeft, ChevronRight, CalendarDays, CalendarRange, Calendar as CalendarIcon, CalendarPlus, Plus } from 'lucide-react';
 import type { Task } from '../../lib/types';
 import { Segmented } from '../../components/ui/Segmented';
 import { Button } from '../../components/ui/Button';
@@ -136,7 +136,7 @@ export function CalendarView({ tasks, onSelect, onCreateDay, onReschedule }: { t
         </div>
       )}
 
-      {unscheduled > 0 ? <p className="text-xs text-text-muted">{t.calendar.unscheduled.replace('{count}', String(unscheduled)).replace('{s}', unscheduled === 1 ? '' : 's')}</p> : null}
+      {unscheduled > 0 ? <p className="flex items-center gap-1.5 text-xs text-text-muted"><CalendarPlus size={12} className="shrink-0 text-text-muted" aria-hidden />{t.calendar.unscheduled.replace('{count}', String(unscheduled)).replace('{s}', unscheduled === 1 ? '' : 's')}</p> : null}
     </div>
   );
 }
