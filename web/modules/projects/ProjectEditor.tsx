@@ -1,6 +1,11 @@
 'use client';
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import dynamic from 'next/dynamic';
+import { loader } from '@monaco-editor/react';
+
+// Serve Monaco from our own static assets (public/monaco/vs) instead of the default jsdelivr CDN,
+// so a self-hosted/offline daemon never phones home. Assets are copied by scripts/copy-monaco.mjs.
+loader.config({ paths: { vs: '/monaco/vs' } });
 import { ChevronRight, File as FileIcon, Save, Code2, GitCompare, X } from 'lucide-react';
 import type { FileNode } from '../../lib/types';
 import { useProjectFiles, useProjectFile, useProjectFileDiff } from '../../lib/queries';
@@ -80,20 +85,22 @@ function TreeRow({ node, depth, expanded, onToggle, selected, onSelect }: {
   const isOpen = expanded.has(node.path);
   if (node.type === 'dir') {
     return (
-      <>
+      <li role="treeitem" aria-expanded={isOpen} aria-label={node.name}>
         <button type="button" onClick={() => onToggle(node.path)} className="flex w-full items-center gap-1 rounded px-1.5 py-1 text-left text-xs text-text-muted transition-colors hover:bg-elevated" style={{ paddingLeft: depth * 12 + 6 }}>
           <ChevronRight size={12} className={`shrink-0 transition-transform ${isOpen ? 'rotate-90' : ''}`} aria-hidden />
           <span className="truncate">{node.name}</span>
         </button>
-        {isOpen ? node.children.map((c) => <TreeRow key={c.path} node={c} depth={depth + 1} expanded={expanded} onToggle={onToggle} selected={selected} onSelect={onSelect} />) : null}
-      </>
+        {isOpen ? <ul role="group" className="m-0 list-none p-0">{node.children.map((c) => <TreeRow key={c.path} node={c} depth={depth + 1} expanded={expanded} onToggle={onToggle} selected={selected} onSelect={onSelect} />)}</ul> : null}
+      </li>
     );
   }
   return (
-    <button type="button" onClick={() => onSelect(node.path)} className={`flex w-full items-center gap-1.5 rounded px-1.5 py-1 text-left text-xs transition-colors hover:bg-elevated ${selected === node.path ? 'bg-accent/15 text-accent' : 'text-text'}`} style={{ paddingLeft: depth * 12 + 18 }} title={node.path}>
-      <FileIcon size={12} className="shrink-0 text-text-muted" aria-hidden />
-      <span className="truncate">{node.name}</span>
-    </button>
+    <li role="treeitem" aria-selected={selected === node.path}>
+      <button type="button" onClick={() => onSelect(node.path)} className={`flex w-full items-center gap-1.5 rounded px-1.5 py-1 text-left text-xs transition-colors hover:bg-elevated ${selected === node.path ? 'bg-accent/15 text-accent' : 'text-text'}`} style={{ paddingLeft: depth * 12 + 18 }} title={node.path}>
+        <FileIcon size={12} className="shrink-0 text-text-muted" aria-hidden />
+        <span className="truncate">{node.name}</span>
+      </button>
+    </li>
   );
 }
 
@@ -121,30 +128,28 @@ export function ProjectEditor({ projectId, onClose }: { projectId: number; onClo
   const [selected, setSelected] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [tab, setTab] = useState<'edit' | 'diff'>('edit');
-  const [value, setValue] = useState('');
-  const [loadedFor, setLoadedFor] = useState<string | null>(null);
+  // Per-file unsaved edit buffers — switching files never discards work (VS Code-like). A file with
+  // no entry shows the server content; an entry that differs from it is "dirty".
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
 
   const fileData = useProjectFile(projectId, selected);
   const diffData = useProjectFileDiff(projectId, tab === 'diff' ? selected : null);
   const write = useWriteProjectFile();
 
   const tree = useMemo(() => buildTree(files.data ?? []), [files.data]);
-  const dirty = selected != null && loadedFor === selected && value !== (fileData.data?.content ?? '');
+  const serverContent = fileData.data?.content ?? '';
+  const draft = selected != null ? drafts[selected] : undefined;
+  const value = draft ?? serverContent;
+  const dirty = draft !== undefined && draft !== serverContent;
 
-  // Seed the editor when a file's content arrives.
-  useEffect(() => {
-    if (selected && fileData.data && loadedFor !== selected) {
-      setValue(fileData.data.content);
-      setLoadedFor(selected);
-    }
-  }, [selected, fileData.data, loadedFor]);
-
-  const openFile = (p: string) => { setSelected(p); setLoadedFor(null); setTab('edit'); };
+  const openFile = (p: string) => { setSelected(p); setTab('edit'); };
+  const onChange = (v: string) => { if (selected != null) setDrafts((d) => ({ ...d, [selected]: v })); };
   const toggle = (p: string) => setExpanded((s) => { const n = new Set(s); n.has(p) ? n.delete(p) : n.add(p); return n; });
   const save = () => {
-    if (!selected) return;
-    write.mutate({ id: projectId, path: selected, content: value }, {
-      onSuccess: () => { setLoadedFor(null); toast(t.projects.fileSaved.replace('{path}', selected)); },
+    if (selected == null) return;
+    const path = selected;
+    write.mutate({ id: projectId, path, content: value }, {
+      onSuccess: () => { setDrafts((d) => { const n = { ...d }; delete n[path]; return n; }); toast(t.projects.fileSaved.replace('{path}', path)); },
       onError: (e) => toast(String(e), 'error'),
     });
   };
@@ -173,7 +178,7 @@ export function ProjectEditor({ projectId, onClose }: { projectId: number; onClo
         <div className="w-64 shrink-0 overflow-auto border-r border-border bg-bg/40 p-1.5">
           {files.isLoading ? <LoadingState />
             : tree.length === 0 ? <p className="p-3 text-center text-xs text-text-muted">{t.projects.noFiles}</p>
-            : tree.map((n) => <TreeRow key={n.path} node={n} depth={0} expanded={expanded} onToggle={toggle} selected={selected} onSelect={openFile} />)}
+            : <ul role="tree" aria-label={t.projects.editorTitle} className="m-0 list-none p-0">{tree.map((n) => <TreeRow key={n.path} node={n} depth={0} expanded={expanded} onToggle={toggle} selected={selected} onSelect={openFile} />)}</ul>}
         </div>
 
         {/* editor / diff */}
@@ -189,7 +194,7 @@ export function ProjectEditor({ projectId, onClose }: { projectId: number; onClo
                 beforeMount={defineOledTheme}
                 language={langOf(selected)}
                 value={value}
-                onChange={(v) => setValue(v ?? '')}
+                onChange={(v) => onChange(v ?? '')}
                 options={{ fontSize: 13, minimap: { enabled: false }, scrollBeyondLastLine: false, automaticLayout: true, padding: { top: 10 } }}
               />
             )}

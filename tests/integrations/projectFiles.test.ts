@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, symlinkSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { listProjectFiles, readProjectFile, writeProjectFile } from '../../src/integrations/projectFiles.js';
@@ -45,5 +45,23 @@ describe('path-traversal safety', () => {
     expect(() => readProjectFile(root, '../../etc/passwd')).toThrow(/outside project/);
     expect(() => readProjectFile(root, '/etc/passwd')).toThrow(/outside project/);
     expect(() => writeProjectFile(root, '../escape.txt', 'nope')).toThrow(/outside project/);
+  });
+
+  it('refuses to read through a symlink that points outside the project', () => {
+    const outside = mkdtempSync(join(tmpdir(), 'orca-outside-'));
+    writeFileSync(join(outside, 'secret.txt'), 'SECRET');
+    try {
+      symlinkSync(join(outside, 'secret.txt'), join(root, 'link'));
+      expect(() => readProjectFile(root, 'link')).toThrow(/outside project/);
+    } finally { rmSync(outside, { recursive: true, force: true }); }
+  });
+
+  it('refuses to write through a symlinked directory that escapes the project', () => {
+    const outside = mkdtempSync(join(tmpdir(), 'orca-outside-'));
+    try {
+      symlinkSync(outside, join(root, 'linkdir'));
+      expect(() => writeProjectFile(root, 'linkdir/pwned.txt', 'nope')).toThrow(/outside project/);
+      expect(existsSync(join(outside, 'pwned.txt'))).toBe(false); // nothing written outside
+    } finally { rmSync(outside, { recursive: true, force: true }); }
   });
 });

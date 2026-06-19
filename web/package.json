@@ -2,10 +2,12 @@
   "name": "orca-web",
   "version": "1.0.0",
   "private": true,
+  "license": "MIT",
   "type": "module",
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "copy:monaco": "node scripts/copy-monaco.mjs",
+    "build": "node scripts/copy-monaco.mjs && next build",
     "start": "next start",
     "test": "vitest run",
     "test:watch": "vitest"
