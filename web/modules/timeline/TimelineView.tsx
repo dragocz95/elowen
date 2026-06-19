@@ -1,7 +1,7 @@
 'use client';
 import { useMemo, useState } from 'react';
 import Link from 'next/link';
-import { Activity, ChevronDown, ArrowUpRight, Clock, MessageSquareText, Columns3 } from 'lucide-react';
+import { Activity, ChevronDown, ArrowUpRight, Clock, MessageSquareText, Columns3, Rocket } from 'lucide-react';
 import { useActivity, useTasks, useConfig, useSessions } from '../../lib/queries';
 import { plotAxis, groupEvents, type AxisEvent, type AxisPoint, type GroupedEvent } from './axis';
 import { eventIcon, eventTone } from './eventMeta';
@@ -139,9 +139,19 @@ function Lane({ target, points, ticks }: { target: string; points: AxisPoint[]; 
   );
 }
 
+/** Small "Autopilot" tag for feed cards whose task is an autopilot phase (an epic child). */
+function AutopilotChip() {
+  const { t } = useTranslation();
+  return (
+    <span className="inline-flex shrink-0 items-center gap-1 rounded-md border border-accent/30 bg-accent/10 px-1.5 py-0.5 text-tiny font-medium text-accent" title={t.timeline.autopilot}>
+      <Rocket size={11} aria-hidden />{t.timeline.autopilot}
+    </span>
+  );
+}
+
 /** Collapsible per-target group: header (model icon + latest status) that expands to the event list.
  *  Re-renders live as `events` updates, even while open (open state is keyed by target). */
-function FeedGroup({ target, title, events, exec, href, summary, open, onToggle }: { target: string; title?: string; events: GroupedEvent[]; exec?: string; href?: string; summary?: string; open: boolean; onToggle: () => void }) {
+function FeedGroup({ target, title, events, exec, href, summary, autopilot, open, onToggle }: { target: string; title?: string; events: GroupedEvent[]; exec?: string; href?: string; summary?: string; autopilot?: boolean; open: boolean; onToggle: () => void }) {
   const latest = events[0]; // newest-first
   const LatestIcon = eventIcon(latest.type);
   const total = events.reduce((s, e) => s + e.count, 0);
@@ -159,6 +169,7 @@ function FeedGroup({ target, title, events, exec, href, summary, open, onToggle 
           ) : null}
         </div>
         <div className="flex shrink-0 items-center gap-2">
+          {autopilot ? <AutopilotChip /> : null}
           <Badge tone={detailTone(latest.detail)}>{latest.detail}</Badge>
           {exec ? <span className="inline-flex items-center gap-1 rounded-md border border-border bg-elevated px-1.5 py-0.5 font-mono text-tiny text-text-muted"><ModelIcon name={exec} size={11} />{execModel(exec)}</span> : null}
         </div>
@@ -186,7 +197,7 @@ function FeedGroup({ target, title, events, exec, href, summary, open, onToggle 
 
 /** Live variant for a running session: header shows what the agent is doing *right now*
  *  (last line of its tmux pane, polled every 2s); expanded shows the live terminal tail. */
-function LiveFeedGroup({ target, title, exec, href, ts, open, onToggle }: { target: string; title?: string; exec?: string; href?: string; ts: number; open: boolean; onToggle: () => void }) {
+function LiveFeedGroup({ target, title, exec, href, ts, autopilot, open, onToggle }: { target: string; title?: string; exec?: string; href?: string; ts: number; autopilot?: boolean; open: boolean; onToggle: () => void }) {
   const { tail } = useSessionPane(target, 24);
   const lines = parseAnsi(tail).map((s) => s.text).join('').split('\n').map((l) => l.trimEnd()).filter((l) => l.trim());
   const current = lines[lines.length - 1] ?? '…';
@@ -202,6 +213,7 @@ function LiveFeedGroup({ target, title, exec, href, ts, open, onToggle }: { targ
           <div className="truncate text-[11px] text-text-muted">{current}</div>
         </div>
         <div className="flex shrink-0 items-center gap-2">
+          {autopilot ? <AutopilotChip /> : null}
           <Badge tone="warning">working</Badge>
           {exec ? <span className="inline-flex items-center gap-1 rounded-md border border-border bg-elevated px-1.5 py-0.5 font-mono text-tiny text-text-muted"><ModelIcon name={exec} size={11} />{execModel(exec)}</span> : null}
         </div>
@@ -269,6 +281,8 @@ export function TimelineView() {
     return found ? (taskExec(found.labels) || config?.defaults?.exec || undefined) : undefined;
   };
   const titleForTarget = (target: string): string | undefined => taskForTarget(target)?.title;
+  // A task driven by autopilot is an epic child (it has a parent_id) — tag it in the feed.
+  const autopilotForTarget = (target: string): boolean => !!taskForTarget(target)?.parent_id;
   // Cross-link a feed group to the right detail surface (task / sessions / missions).
   const hrefForGroup = (g: { target: string; events: GroupedEvent[] }): string | undefined => {
     const task = taskForTarget(g.target);
@@ -353,6 +367,7 @@ export function TimelineView() {
                   exec={execForTarget(g.target)}
                   href={hrefForGroup(g)}
                   ts={g.last}
+                  autopilot={autopilotForTarget(g.target)}
                   open={openGroups.has(g.target)}
                   onToggle={() => toggleGroup(g.target)}
                 />
@@ -365,6 +380,7 @@ export function TimelineView() {
                   exec={execForTarget(g.target)}
                   href={hrefForGroup(g)}
                   summary={summaryForGroup(g.target)}
+                  autopilot={autopilotForTarget(g.target)}
                   open={openGroups.has(g.target)}
                   onToggle={() => toggleGroup(g.target)}
                 />

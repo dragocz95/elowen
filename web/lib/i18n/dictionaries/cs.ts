@@ -349,6 +349,7 @@ export const cs = {
     axis: 'Osa',
     lanes: 'Pruhy',
     feed: 'Aktivita agentů',
+    autopilot: 'Autopilot',
   },
   dashboard: {
     viewAll: 'Zobrazit vše',

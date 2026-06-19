@@ -349,6 +349,7 @@ export const en = {
     axis: 'Axis',
     lanes: 'Lanes',
     feed: 'Agent activity',
+    autopilot: 'Autopilot',
   },
   dashboard: {
     viewAll: 'View all',
