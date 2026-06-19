@@ -280,9 +280,15 @@ export function TimelineView() {
     const found = taskForTarget(target);
     return found ? (taskExec(found.labels) || config?.defaults?.exec || undefined) : undefined;
   };
-  const titleForTarget = (target: string): string | undefined => taskForTarget(target)?.title;
-  // A task driven by autopilot is an epic child (it has a parent_id) — tag it in the feed.
-  const autopilotForTarget = (target: string): boolean => !!taskForTarget(target)?.parent_id;
+  // A mission target is "m-<epicId>" — resolve its epic's title so the feed shows that, not a raw id.
+  const epicIdForMission = (target: string): string | null => (target.startsWith('m-') ? target.slice(2) : null);
+  const titleForTarget = (target: string): string | undefined => {
+    const epicId = epicIdForMission(target);
+    if (epicId) return tasks.data?.find((t) => t.id === epicId)?.title;
+    return taskForTarget(target)?.title;
+  };
+  // Autopilot work = an epic child (has a parent_id) or a mission target — tag both in the feed.
+  const autopilotForTarget = (target: string): boolean => !!epicIdForMission(target) || !!taskForTarget(target)?.parent_id;
   // Cross-link a feed group to the right detail surface (task / sessions / missions).
   const hrefForGroup = (g: { target: string; events: GroupedEvent[] }): string | undefined => {
     const task = taskForTarget(g.target);
