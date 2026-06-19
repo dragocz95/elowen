@@ -13,7 +13,7 @@ import { ModuleHeader } from '../../components/ui/ModuleHeader';
 import { LoadingState, ErrorState, EmptyState } from '../../components/ui/states';
 import { useTranslation } from '../../lib/i18n';
 import { Code2 } from 'lucide-react';
-import { ProjectEditor } from './ProjectEditor';
+import { ProjectEditor } from './editor/ProjectEditor';
 
 export function ProjectsView() {
   const projects = useProjects();
