@@ -120,6 +120,20 @@ export class TaskStore {
     this.db.prepare('UPDATE tasks SET labels = ? WHERE id = ?').run(labels.join(','), id);
   }
 
+  /** Increment this task's relaunch counter (a `stuck:<n>` label) and return the new value.
+   *  Used by the stuck detector to bound how many times a dead agent is re-spawned before
+   *  the task is escalated to a human. */
+  bumpStuck(id: string): number {
+    const t = this.get(id);
+    if (!t) return 0;
+    const cur = Number(t.labels.find((l) => l.startsWith('stuck:'))?.slice('stuck:'.length)) || 0;
+    const next = cur + 1;
+    const labels = t.labels.filter((l) => !l.startsWith('stuck:'));
+    labels.push(`stuck:${next}`);
+    this.db.prepare('UPDATE tasks SET labels = ? WHERE id = ?').run(labels.join(','), id);
+    return next;
+  }
+
   depsAmong(ids: string[]): { task_id: string; depends_on_id: string }[] {
     if (ids.length === 0) return [];
     const placeholders = ids.map(() => '?').join(',');

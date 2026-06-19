@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { setupServer } from 'msw/node';
 import { http, HttpResponse } from 'msw';
+import { onUnhandledRequest } from '../../msw';
 import { TaskDetailPane } from '../../../modules/tasks/TaskDetailPane';
 import { ToastProvider } from '../../../components/ui/Toast';
 import { createWrapper } from '../../test-utils';
@@ -11,7 +12,7 @@ const server = setupServer(
   http.get('*/activity', () => HttpResponse.json([])),
   http.get('*/sessions/orca-nova/pane', () => HttpResponse.json({ pane: 'npm test\nall good' })),
 );
-beforeAll(() => server.listen()); afterEach(() => server.resetHandlers()); afterAll(() => server.close());
+beforeAll(() => server.listen({ onUnhandledRequest })); afterEach(() => server.resetHandlers()); afterAll(() => server.close());
 
 describe('TaskDetailPane', () => {
   it('renders the result summary for a closed task', async () => {

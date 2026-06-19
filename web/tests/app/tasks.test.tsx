@@ -3,6 +3,7 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 vi.mock('next/navigation', () => ({ useRouter: () => ({ push: () => {}, replace: () => {} }), useSearchParams: () => new URLSearchParams() }));
 import { setupServer } from 'msw/node';
 import { http, HttpResponse } from 'msw';
+import { onUnhandledRequest } from '../msw';
 import TasksPage from '../../app/tasks/page';
 import { ToastProvider } from '../../components/ui/Toast';
 import { createWrapper } from '../test-utils';
@@ -12,7 +13,7 @@ const server = setupServer(
   http.get('http://localhost:4400/tasks', () => HttpResponse.json([{ id: 'orca-1', title: 'Build', status: 'in_progress', type: 'task', labels: [] }])),
   http.post('http://localhost:4400/sessions', async ({ request }) => { spawnBody = await request.json(); return HttpResponse.json({ session: 'orca-A' }, { status: 201 }); }),
 );
-beforeAll(() => server.listen()); afterAll(() => server.close());
+beforeAll(() => server.listen({ onUnhandledRequest })); afterAll(() => server.close());
 
 describe('TasksPage', () => {
   it('launches a task via the Launch action', async () => {

@@ -7,7 +7,8 @@ import { SpawnService } from '../spawn/spawn.js';
 import { MissionEngine } from '../overseer/missionEngine.js';
 import { Scheduler } from '../overseer/scheduler.js';
 import { sweepFinishedSessions } from '../overseer/janitor.js';
-import { decidePrompt, isDestructive } from '../overseer/decision.js';
+import { sweepStuckTasks, deadAgentTasks } from '../overseer/stuckDetector.js';
+import { decidePrompt, decideTask, isDestructive } from '../overseer/decision.js';
 import { RelayClient } from '../inference/client.js';
 import { Deriver } from '../deriver/deriver.js';
 import { EventBus } from '../api/sse.js';
@@ -60,15 +61,34 @@ export function buildApp(opts: BuildOpts) {
   const bus = new EventBus();
   const events = new EventStore(db);
   bus.subscribe((e) => { try { events.record(e); } catch (err) { console.error('[orca] event record failed', err); } });
-  const engine = new MissionEngine({ tasks, readiness, missions, spawn, tmux, bus, project: opts.project, fallback: { program: 'claude-code', model: 'sonnet' }, nameAgent: uniqueName, clock: new SystemClock() });
-  const scheduler = new Scheduler({ tasks, spawn, bus, project: opts.project, fallback: { program: 'claude-code', model: 'sonnet' }, nameAgent: uniqueName, clock: new SystemClock() });
+  // The overseer relay client, rebuilt per-call so a key set/cleared at runtime takes effect.
+  // Overseer decisions use their own model when set, else fall back to the planner model.
+  // Returns null when no API key is configured (callers then keep their pre-relay behaviour).
+  const overseerClient = () => {
+    const cfg = config.get(); const key = config.apiKey();
+    if (!key) return null;
+    return new RelayClient({ baseUrl: cfg.autopilot.apiUrl, apiKey: key, model: cfg.autopilot.overseerModel || cfg.autopilot.model });
+  };
+  const engine = new MissionEngine({
+    tasks, readiness, missions, spawn, tmux, bus, projects,
+    fallback: { program: 'claude-code', model: 'sonnet' }, nameAgent: uniqueName, clock: new SystemClock(),
+    // Overseer LLM gate for guardrail-triggering tasks. No relay → no-op (approve, non-destructive)
+    // so the boolean guardrail behaviour is unchanged; with a relay, escalate on deny/low-confidence.
+    decideTask: async (input) => {
+      const inf = overseerClient();
+      if (!inf) return { approve: true, destructive: false };
+      const d = await decideTask(inf, input);
+      return { approve: d.approve && d.confidence >= 0.6, destructive: d.destructive };
+    },
+  });
+  const scheduler = new Scheduler({ tasks, spawn, bus, projects, fallback: { program: 'claude-code', model: 'sonnet' }, nameAgent: uniqueName, clock: new SystemClock() });
   // Deriver resolves a session's task via the agent registry / in-progress task (simplified: first in_progress child).
   // Resolve a session's task via its agent:<name> label. Agent names recur across missions,
   // so pick the MOST RECENT match (list is created_at ASC) — never an old same-named task,
   // which would make the janitor reap a live agent or skip a real zombie.
   const taskForSession = (session: string) => {
     const name = session.replace(/^orca-/, '');
-    const matches = tasks.list({ project_id: opts.project.id }).filter((t) => t.labels.includes(`agent:${name}`));
+    const matches = tasks.list().filter((t) => t.labels.includes(`agent:${name}`));
     return matches[matches.length - 1] ?? null;
   };
   const deriver = new Deriver({
@@ -79,22 +99,14 @@ export function buildApp(opts: BuildOpts) {
       if (!t?.parent_id) return null;
       return missions.active().find((m) => m.epic_id === t.parent_id)?.autonomy ?? null;
     },
-    // Overseer decision: use the configured relay to judge auto-cleared prompts. Without a
-    // key the deriver falls back to blanket auto-approve (decideApproval stays undefined).
-    decideApproval: (() => {
-      const make = () => {
-        const cfg = config.get(); const key = config.apiKey();
-        if (!key) return null;
-        // Overseer decisions use their own model when set, else fall back to the planner model.
-        return new RelayClient({ baseUrl: cfg.autopilot.apiUrl, apiKey: key, model: cfg.autopilot.overseerModel || cfg.autopilot.model });
-      };
-      return async (input) => {
-        const inf = make();
-        if (!inf) return { approve: true, destructive: isDestructive(`${input.question} ${input.context}`) };
-        const d = await decidePrompt(inf, input);
-        return { approve: d.approve && d.confidence >= 0.6, destructive: d.destructive };
-      };
-    })(),
+    // Overseer decision: use the configured relay to judge auto-cleared prompts. Without a key,
+    // fall back to blanket auto-approve while still honouring the local destructive heuristic.
+    decideApproval: async (input) => {
+      const inf = overseerClient();
+      if (!inf) return { approve: true, destructive: isDestructive(`${input.question} ${input.context}`) };
+      const d = await decidePrompt(inf, input);
+      return { approve: d.approve && d.confidence >= 0.6, destructive: d.destructive };
+    },
   });
   const openMode = users.count() === 0 && opts.allowOpen === true;
   if (openMode) {
@@ -103,12 +115,11 @@ export function buildApp(opts: BuildOpts) {
   const app = createServer({ tasks, readiness, missions, engine, spawn, tmux, bus, events, project: opts.project, fallback: { program: 'claude-code', model: 'sonnet' }, clock: new SystemClock(), config, users: openMode ? undefined : users, projects, userProjects, git });
 
   // Root-cause recovery: after a daemon crash/restart, tasks left 'in_progress' whose tmux
-  // session is gone are zombies — revert them to 'open' so they can be picked up again.
+  // session is gone are zombies — revert them to 'open' so they can be picked up again. No grace
+  // or relaunch counter here: a restart isn't an agent death, so it shouldn't spend the budget.
   const reconcileZombies = async () => {
     const live = new Set((await tmux.list()).filter((s) => s.startsWith('orca-')));
-    for (const t of tasks.list({ project_id: opts.project.id, status: 'in_progress' })) {
-      const name = t.labels.find((l) => l.startsWith('agent:'))?.slice('agent:'.length);
-      if (name && live.has(`orca-${name}`)) continue; // session still running — genuinely active
+    for (const t of deadAgentTasks(live, tasks.list({ status: 'in_progress' }))) {
       tasks.setStatus(t.id, 'open');
       bus.publish({ type: 'task', taskId: t.id, status: 'open' });
     }
@@ -122,7 +133,11 @@ export function buildApp(opts: BuildOpts) {
     const stopScheduler = clock.setInterval(() => { void scheduler.tick(); }, 30000);
     // Janitor: reap finished agents' zombie tmux sessions.
     const stopJanitor = clock.setInterval(() => { void sweepFinishedSessions({ tmux, taskForSession }); }, 60000);
-    return () => { stopDeriver(); stopOverseer(); stopScheduler(); stopJanitor(); };
+    // Stuck detector: an agent that died without `orca close` leaves its task in_progress with a
+    // dead session; revert it so the mission re-spawns (bounded), else escalate. 2-min grace
+    // covers the spawn→session window; relaunch at most twice before escalating to a human.
+    const stopStuck = clock.setInterval(() => { void sweepStuckTasks({ tmux, tasks, bus, now: clock.now(), graceMs: 120000, maxRelaunch: 2 }); }, 60000);
+    return () => { stopDeriver(); stopOverseer(); stopScheduler(); stopJanitor(); stopStuck(); };
   };
   return { app, startLoops };
 }

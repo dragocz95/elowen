@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
 import { render, screen, within } from '@testing-library/react';
 import { setupServer } from 'msw/node';
 import { http, HttpResponse } from 'msw';
+import { onUnhandledRequest } from '../../msw';
 import { TimelineView } from '../../../modules/timeline/TimelineView';
 import { createWrapper } from '../../test-utils';
 
@@ -25,7 +26,7 @@ function fixture() {
 }
 
 const server = setupServer(http.get('*/activity', () => HttpResponse.json(fixture())));
-beforeAll(() => server.listen()); afterEach(() => server.resetHandlers()); afterAll(() => server.close());
+beforeAll(() => server.listen({ onUnhandledRequest })); afterEach(() => server.resetHandlers()); afterAll(() => server.close());
 
 describe('TimelineView', () => {
   it('renders the activity feed rows', async () => {

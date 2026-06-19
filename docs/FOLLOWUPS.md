@@ -4,19 +4,15 @@ Sub-project #1 (orchestration backend `orca serve`) ships with the **boolean gua
 gate** and **sequential autopilot** (`max_sessions: 1`, the documented default). The items
 below are deliberately deferred — each is a self-contained next task, not abandoned work.
 
-## 1. Decision engine (wire the `inference` module)
+## 1. Decision engine (wire the `inference` module) — ✅ DONE
 
-**Status:** `src/inference/` (`RelayClient` + `FakeInference`) is built and unit-tested, and
-the relay config is plumbed into `buildApp(opts.relay)` — but it is **not yet consumed**. The
-overseer currently decides purely from autonomy level + cleared guardrails. The `decideApproval`
-hook is wired in the deriver for prompt-level decisions, but the mission engine tick still
-uses boolean guardrail logic only.
-
-**Next task:** add an overseer decision step that consults the configured relay model
-(`InferenceClient.decide`) for approve/redirect judgments before spawning a guardrail-triggering
-task. The relay is already constructed in `bootstrap.ts` and injected into the deriver's
-`decideApproval`; extend this to `MissionEngine` as an optional decision hook (relay absent →
-unchanged boolean behavior). This is the "the LLM decides about tasks" layer.
+The overseer LLM gate is wired into `MissionEngine` via the optional `decideTask` hook
+(`bootstrap.ts` builds it from the shared `overseerClient()` factory, reused by the deriver's
+`decideApproval`). Before dispatching a **guardrail-triggering** task, the engine consults the
+relay model (`decideTask` in `overseer/decision.ts`); a denial — or a destructive verdict —
+escalates the task to a human by setting it `blocked` (excluded from readiness) instead of
+spawning. No relay configured → no-op (approve, non-destructive) so the boolean guardrail
+behaviour is unchanged. Covered by `tests/overseer/decision.test.ts` + `missionEngine.test.ts`.
 
 ## 2. Concurrency hardening (only matters at `max_sessions > 1`)
 
@@ -32,9 +28,28 @@ At the sequential default these are inert; they become real when parallel agents
 - **Per-mission running count** (`missionEngine.ts`): the cap now counts the mission's own
   `in_progress` children (not all global `orca-*` sessions), so parallel missions no longer
   interfere directly. However, global tmux session limits could still cause indirect starvation.
-- **Stuck-session recovery:** if an agent dies without `orca close`, its task stays `in_progress`
-  and the mission never advances (no liveness sweep). Fix: a stall detector (silent > N min →
-  nudge → relaunch → escalate), as jat had.
+- **Stuck-session recovery:** ✅ DONE. `overseer/stuckDetector.ts` runs every 60s: an
+  `in_progress` task whose agent tmux session is gone (agent died without `orca close`) is reverted
+  to `open` so the mission re-spawns it, bounded by a `stuck:<n>` relaunch counter — after
+  `maxRelaunch` deaths it escalates to `blocked`. A 2-min grace (via the `started:<ms>` label) avoids
+  reaping a task mid-launch. The startup zombie reconcile shares the `deadAgentTasks` predicate.
+  (A "silent but alive" stall detector — agent hung at a prompt — is still future work.)
+
+## Multi-project orchestration — ✅ loops done, full API tenancy deferred
+
+The orchestration **loops are project-agnostic**: `MissionEngine` resolves each mission's project
+from its epic's `project_id` (no fixed project), `Scheduler.tick` iterates every registered project,
+and the startup zombie reconcile + stuck detector + `taskForSession` span all projects. `POST /tasks`
+and `POST /tasks/plan` accept an optional `project_id` (gated by `canAccessProject`), `POST /sessions`
+and `GET /tasks/:id/usage` resolve the task's own project path, and `/tasks/:epicId/phases` now
+inherits the epic's project (was a latent hardcode to project 1).
+
+**Deferred (security-sensitive):** the auth surface is still **home-project-centric**. The `GATED`
+middleware authorizes `/tasks`, `/missions`, `/sessions`, `/activity`, `/events` against the
+daemon's single home project, and `GET /tasks` / `GET /missions` return all projects' rows. Full
+per-resource multi-tenant authz (gate each task/mission/session by *its* project, filter list
+endpoints to the caller's accessible projects) is a separate slice — do it before exposing
+multi-project to non-admin users in a shared deployment.
 
 ## 3. API surface completion
 

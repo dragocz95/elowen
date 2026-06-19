@@ -32,7 +32,7 @@ export function langOf(path: string): string {
   return map[ext] ?? 'plaintext';
 }
 
-export const extOf = (p: string) => p.split('.').pop()?.toLowerCase() ?? '';
+const extOf = (p: string) => p.split('.').pop()?.toLowerCase() ?? '';
 export const basename = (p: string) => p.split('/').pop() ?? p;
 export const parentDir = (p: string) => p.split('/').slice(0, -1).join('/');
 export const joinPath = (dir: string, name: string) => (dir ? `${dir}/${name}` : name);

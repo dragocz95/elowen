@@ -2,7 +2,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { LucideIcon } from 'lucide-react';
 
-export interface MenuItem {
+interface MenuItem {
   label: string;
   icon?: LucideIcon;
   onClick: () => void;

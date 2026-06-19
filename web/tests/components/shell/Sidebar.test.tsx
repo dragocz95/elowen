@@ -2,12 +2,13 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vites
 import { render, screen } from '@testing-library/react';
 import { setupServer } from 'msw/node';
 import { http, HttpResponse } from 'msw';
+import { onUnhandledRequest } from '../../msw';
 vi.mock('next/navigation', () => ({ usePathname: () => '/dash' }));
 import { Sidebar } from '../../../components/shell/Sidebar';
 import { createWrapper } from '../../test-utils';
 
 const server = setupServer(http.get('*/health', () => HttpResponse.json({ ok: true })));
-beforeAll(() => server.listen()); afterAll(() => server.close());
+beforeAll(() => server.listen({ onUnhandledRequest })); afterAll(() => server.close());
 beforeEach(() => localStorage.clear());
 
 describe('Sidebar (registry-driven)', () => {

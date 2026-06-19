@@ -12,6 +12,7 @@ import { SpawnService } from '../../src/spawn/spawn.js';
 import { MissionEngine } from '../../src/overseer/missionEngine.js';
 import { FakeClock } from '../../src/shared/clock.js';
 import { ConfigStore } from '../../src/store/configStore.js';
+import { ProjectStore } from '../../src/store/projectStore.js';
 import { FakeInference } from '../../src/inference/client.js';
 
 function makeApp() {
@@ -281,6 +282,36 @@ it('DELETE /tasks/:id removes the task and publishes a cancelled event', async (
   const list = await (await app.request('/tasks')).json() as Array<{ id: string }>;
   expect(list.some(t => t.id === 'orca-d')).toBe(false);
   expect(events.some(e => e.type === 'task' && e.taskId === 'orca-d' && e.status === 'cancelled')).toBe(true);
+});
+
+it('POST /tasks honours an explicit project_id (multi-project)', async () => {
+  const db = openDb(':memory:');
+  db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'orca','/o')").run();
+  db.prepare("INSERT INTO projects (id,slug,path) VALUES (2,'other','/p2')").run();
+  const tasks = new TaskStore(db);
+  const app = createServer({
+    tasks, readiness: new Readiness(db), missions: new MissionStore(db), bus: new EventBus(),
+    engine: null as any, spawn: null as any, tmux: null as any,
+    project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' }, clock: new FakeClock(0),
+    config: new ConfigStore(db), projects: new ProjectStore(db),
+  });
+  const res = await app.request('/tasks', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ title: 'X', project_id: 2 }) });
+  expect(res.status).toBe(201);
+  const created = await res.json() as { id: string; project_id: number };
+  expect(created.project_id).toBe(2);
+  expect(created.id.startsWith('p2-')).toBe(true); // id prefix derives from project 2's path basename
+});
+
+it('POST /tasks rejects an unknown project_id with 404', async () => {
+  const db = openDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'orca','/o')").run();
+  const app = createServer({
+    tasks: new TaskStore(db), readiness: new Readiness(db), missions: new MissionStore(db), bus: new EventBus(),
+    engine: null as any, spawn: null as any, tmux: null as any,
+    project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' }, clock: new FakeClock(0),
+    config: new ConfigStore(db), projects: new ProjectStore(db),
+  });
+  const res = await app.request('/tasks', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ title: 'X', project_id: 99 }) });
+  expect(res.status).toBe(404);
 });
 
 it('POST /tasks/plan without an autopilot key returns 400', async () => {

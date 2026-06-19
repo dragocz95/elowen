@@ -38,6 +38,47 @@ export function decisionPrompt(input: PromptContext): string {
   ].filter(Boolean).join('\n');
 }
 
+export interface TaskContext {
+  title: string;
+  description: string;
+  labels: string[];
+  /** Guardrails the task tripped (schema, auth, payments, …) — why it reached the overseer. */
+  guardrails: string[];
+  autonomy: string;
+}
+
+export function taskDecisionPrompt(input: TaskContext): string {
+  return [
+    'You are the Overseer for an autonomous coding mission. A task is about to be dispatched to an executor agent.',
+    'It tripped one or more guardrails (sensitive areas). Decide whether to APPROVE the dispatch or ESCALATE to a human.',
+    'Approve clearly-scoped, safe work. Escalate anything destructive, ambiguous, or that exceeds the task\'s stated intent.',
+    'Return ONLY a JSON object (no prose, no fences):',
+    '{"approve": boolean, "confidence": number (0..1), "destructive": boolean, "rationale": string}',
+    '',
+    `Autonomy level: ${input.autonomy}`,
+    `Triggered guardrails: ${input.guardrails.join(', ') || 'none'}`,
+    `Task: ${input.title}`,
+    input.description ? `Details: ${input.description}` : '',
+    input.labels.length ? `Labels: ${input.labels.join(', ')}` : '',
+  ].filter(Boolean).join('\n');
+}
+
+/**
+ * Decide whether to dispatch a guardrail-triggering task or escalate to a human.
+ * Mirrors {@link decidePrompt}: the local destructive heuristic always forces escalate,
+ * and any inference failure is conservative (no approval).
+ */
+export async function decideTask(inf: InferenceClient, input: TaskContext): Promise<Decision> {
+  const localDestructive = isDestructive(`${input.title} ${input.description}`);
+  try {
+    const { text } = await inf.decide(taskDecisionPrompt(input));
+    const d = parseDecision(text);
+    return { ...d, destructive: d.destructive || localDestructive };
+  } catch {
+    return { approve: false, confidence: 0, destructive: localDestructive, rationale: 'overseer inference failed' };
+  }
+}
+
 export function parseDecision(text: string): Decision {
   const match = text.match(/\{[\s\S]*\}/);
   if (!match) throw new Error('no JSON object in decision output');

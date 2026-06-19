@@ -128,6 +128,24 @@ export function createServer(d: ServerDeps): Hono<{ Variables: { user: User; tok
     return !!u && d.userProjects.canAccess(u.id, id);
   };
 
+  // Filesystem path of a project. The daemon's home project is always known; others resolve via the
+  // ProjectStore (falling back to the home path when the store is absent — e.g. legacy single-project).
+  const pathFor = (projectId: number): string =>
+    projectId === d.project.id ? d.project.path : (d.projects?.get(projectId)?.path ?? d.project.path);
+
+  // Resolve the target project for a create/plan request. Defaults to the daemon's home project;
+  // any other project_id must exist and be accessible to the caller.
+  const resolveTarget = (c: { get: (k: 'user') => User | undefined }, projectId?: number):
+    | { project: { id: number; path: string } }
+    | { error: string; status: 403 | 404 } => {
+    const pid = projectId ?? d.project.id;
+    if (pid === d.project.id) return { project: d.project };
+    const p = d.projects?.get(pid);
+    if (!p) return { error: 'project not found', status: 404 };
+    if (!canAccessProject(c, p.id)) return { error: 'forbidden', status: 403 };
+    return { project: { id: p.id, path: p.path } };
+  };
+
   app.get('/projects', (c) => {
     const all = d.projects ? d.projects.list() : [];
     if (!d.userProjects || !d.users) return c.json(all);
@@ -293,22 +311,25 @@ export function createServer(d: ServerDeps): Hono<{ Variables: { user: User; tok
 
   app.get('/tasks', c => c.json(d.tasks.list()));
   app.post('/tasks', async c => {
-    const b = await c.req.json() as { title: string; type?: string; priority?: string; id?: string; description?: string; scheduled_at?: string | null; autostart?: number; deps?: string[] };
-    const id = b.id ?? `${basename(d.project.path)}-${randomBytes(4).toString('hex')}`;
-    const created = d.tasks.create({ id, project_id: d.project.id, title: b.title, type: b.type, priority: b.priority, description: b.description, scheduled_at: b.scheduled_at, autostart: b.autostart });
+    const b = await c.req.json() as { title: string; type?: string; priority?: string; id?: string; description?: string; scheduled_at?: string | null; autostart?: number; deps?: string[]; project_id?: number };
+    const target = resolveTarget(c, b.project_id);
+    if ('error' in target) return c.json({ error: target.error }, target.status);
+    const id = b.id ?? `${basename(target.project.path)}-${randomBytes(4).toString('hex')}`;
+    const created = d.tasks.create({ id, project_id: target.project.id, title: b.title, type: b.type, priority: b.priority, description: b.description, scheduled_at: b.scheduled_at, autostart: b.autostart });
     if (Array.isArray(b.deps)) d.tasks.setDeps(created.id, b.deps);
     d.bus.publish({ type: 'task', taskId: created.id, status: created.status });
     return c.json(created, 201);
   });
-  app.get('/tasks/ready', c => c.json(d.readiness.ready(1)));
+  app.get('/tasks/ready', c => c.json(d.readiness.ready(d.project.id)));
   app.get('/tasks/deps', c => c.json(d.tasks.allDeps()));
   // Token/cost usage for a task's agent run, read from the executor CLI's local session storage
   // (opencode / claude / codex) — portable, no relay. Null usage → no matching session found.
   app.get('/tasks/:id/usage', c => {
     const task = d.tasks.get(c.req.param('id'));
     if (!task) return c.json({ error: 'not found' }, 404);
-    // Pass the project's tasks so usage can disambiguate concurrent agents by start-order rank.
-    return c.json(readTaskUsage(task, d.tasks.list({ project_id: d.project.id }), d.project.path, d.fallback));
+    // Pass the task's own project siblings so usage can disambiguate concurrent agents by start-order
+    // rank, and read sessions from that project's path (not the daemon home, under multi-project).
+    return c.json(readTaskUsage(task, d.tasks.list({ project_id: task.project_id }), pathFor(task.project_id), d.fallback));
   });
   app.patch('/tasks/:id', async c => {
     const b = await c.req.json();
@@ -334,10 +355,12 @@ export function createServer(d: ServerDeps): Hono<{ Variables: { user: User; tok
     return c.json({ ok: true });
   });
   app.post('/tasks/plan', async c => {
-    const b = await c.req.json() as { goal?: string; exec?: string; autonomy?: string; maxSessions?: number; engage?: boolean; phases?: { title?: string; type?: string }[]; dryRun?: boolean; prompt?: string };
+    const b = await c.req.json() as { goal?: string; exec?: string; autonomy?: string; maxSessions?: number; engage?: boolean; phases?: { title?: string; type?: string }[]; dryRun?: boolean; prompt?: string; project_id?: number };
     const goal = (b.goal ?? '').trim();
     if (!goal) return c.json({ error: 'goal required' }, 400);
     if (b.exec && !d.config.get().allowedExecs.includes(b.exec)) return c.json({ error: 'exec not allowed' }, 400);
+    const target = resolveTarget(c, b.project_id);
+    if ('error' in target) return c.json({ error: target.error }, target.status);
 
     let phases: { title: string; type: string; agent?: string; details?: string }[];
     if (Array.isArray(b.phases) && b.phases.length > 0) {
@@ -361,14 +384,14 @@ export function createServer(d: ServerDeps): Hono<{ Variables: { user: User; tok
     // Playground: return the decomposition without persisting anything.
     if (b.dryRun === true) return c.json({ phases });
 
-    const newId = () => `${basename(d.project.path)}-${randomBytes(4).toString('hex')}`;
-    const epic = d.tasks.create({ id: newId(), project_id: d.project.id, title: goal, type: 'epic', description: goal });
+    const newId = () => `${basename(target.project.path)}-${randomBytes(4).toString('hex')}`;
+    const epic = d.tasks.create({ id: newId(), project_id: target.project.id, title: goal, type: 'epic', description: goal });
     d.bus.publish({ type: 'task', taskId: epic.id, status: epic.status });
     const created: typeof epic[] = [];
     for (const ph of phases) {
       // Children carry the phase details (acceptance) plus the overall goal as context.
       const childDesc = ph.details ? `${ph.details}\n\nOverall goal: ${goal}` : `Overall goal: ${goal}`;
-      const child = d.tasks.create({ id: newId(), project_id: d.project.id, title: ph.title, type: ph.type, parent_id: epic.id, labels: ph.agent ? [`agent:${ph.agent}`] : [], description: childDesc });
+      const child = d.tasks.create({ id: newId(), project_id: target.project.id, title: ph.title, type: ph.type, parent_id: epic.id, labels: ph.agent ? [`agent:${ph.agent}`] : [], description: childDesc });
       const prev = created[created.length - 1];
       if (prev) d.tasks.addDep(child.id, prev.id); // sequential: phase n depends on n-1
       if (b.exec) d.tasks.setExec(child.id, b.exec);
@@ -416,12 +439,14 @@ export function createServer(d: ServerDeps): Hono<{ Variables: { user: User; tok
     const dependedOn = new Set(d.tasks.depsAmong(existing.map((t) => t.id)).map((e) => e.depends_on_id));
     const leaves = existing.map((t) => t.id).filter((id) => !dependedOn.has(id));
     const overallGoal = epic.description?.trim() || epic.title;
-    const newId = () => `${basename(d.project.path)}-${randomBytes(4).toString('hex')}`;
+    // Children inherit the epic's project (not the daemon home) so phases added to a non-home epic
+    // land in the right project and get a matching id prefix.
+    const newId = () => `${basename(pathFor(epic.project_id))}-${randomBytes(4).toString('hex')}`;
     const created: ReturnType<typeof d.tasks.create>[] = [];
     let prevId: string | null = null;
     for (const ph of phases) {
       const childDesc = ph.details ? `${ph.details}\n\nOverall goal: ${overallGoal}` : `Overall goal: ${overallGoal}`;
-      const child = d.tasks.create({ id: newId(), project_id: d.project.id, title: ph.title, type: ph.type, parent_id: epicId, labels: ph.agent ? [`agent:${ph.agent}`] : [], description: childDesc });
+      const child = d.tasks.create({ id: newId(), project_id: epic.project_id, title: ph.title, type: ph.type, parent_id: epicId, labels: ph.agent ? [`agent:${ph.agent}`] : [], description: childDesc });
       if (prevId) d.tasks.addDep(child.id, prevId);
       else for (const leaf of leaves) d.tasks.addDep(child.id, leaf);
       if (b.exec) d.tasks.setExec(child.id, b.exec);
@@ -473,12 +498,16 @@ export function createServer(d: ServerDeps): Hono<{ Variables: { user: User; tok
     if (exec && !d.config.get().allowedExecs.includes(exec)) return c.json({ error: 'exec not allowed' }, 400);
     const spec = resolveExecutor(exec ? [`exec:${exec}`] : [], d.fallback);
     const task = d.tasks.get(taskId);
+    if (!task) return c.json({ error: 'task not found' }, 404); // don't spawn a phantom agent for a missing task
+    // Launch in the task's own project (multi-project), gated to the caller's access.
+    const projectId = task.project_id;
+    if (!canAccessProject(c, projectId)) return c.json({ error: 'forbidden' }, 403);
     if (exec) d.tasks.setExec(taskId, exec); // remember which model ran it — drives the model icon
     const agentName = uniqueName();
     d.tasks.setAgent(taskId, agentName);     // link task → orca-<agentName> session for run controls
     d.tasks.markStarted(taskId, d.clock.now()); // precise spawn time → correct usage attribution under concurrency
     d.tasks.setStatus(taskId, 'in_progress');
-    const { session } = await d.spawn.launch({ projectId: d.project.id, projectPath: d.project.path, taskId, agentName, spec, taskTitle: task?.title, taskDescription: task?.description, epicId: task?.parent_id ?? undefined });
+    const { session } = await d.spawn.launch({ projectId, projectPath: pathFor(projectId), taskId, agentName, spec, taskTitle: task.title, taskDescription: task.description, epicId: task.parent_id ?? undefined });
     d.bus.publish({ type: 'task', taskId, status: 'in_progress' });
     return c.json({ session }, 201);
   });
