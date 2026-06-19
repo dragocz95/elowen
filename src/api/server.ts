@@ -111,7 +111,8 @@ export function createServer(d: ServerDeps): Hono<{ Variables: { user: User; tok
   app.get('/tasks/:id/usage', c => {
     const task = d.tasks.get(c.req.param('id'));
     if (!task) return c.json({ error: 'not found' }, 404);
-    return c.json(readTaskUsage(task, d.project.path, d.fallback));
+    // Pass the project's tasks so usage can disambiguate concurrent agents by start-order rank.
+    return c.json(readTaskUsage(task, d.tasks.list({ project_id: d.project.id }), d.project.path, d.fallback));
   });
   app.patch('/tasks/:id', async c => {
     const b = await c.req.json();

@@ -6,20 +6,23 @@ import { EMPTY_USAGE, SESSION_MATCH_SKEW_MS, type TokenUsage } from './types.js'
  *  ~/.claude/projects/<encoded-cwd>/<sessionUuid>.jsonl, where each assistant event carries
  *  `message.usage`. Pick the session that started when this spawn ran and sum its usage.
  *  claude does not record cost, so costUsd stays null (price externally if needed). */
-export function claudeUsage(home: string, dir: string, sinceMs: number): TokenUsage | null {
+export function claudeUsage(home: string, dir: string, sinceMs: number, nth = 0): TokenUsage | null {
   // claude-code encodes a project path into a dir name by replacing '/', '.' and '_' with '-'.
   const projDir = join(home, '.claude', 'projects', dir.replace(/[/._]/g, '-'));
   if (!existsSync(projDir)) return null;
 
-  // Find the transcript whose first event started closest-after the spawn time.
-  let best: { path: string; start: number } | null = null;
+  // Transcripts started at/after the spawn window, ordered by start; `nth` picks one so
+  // concurrent agents in the same project map to distinct sessions instead of colliding.
+  const sessions: { path: string; start: number }[] = [];
   for (const name of readdirSync(projDir)) {
     if (!name.endsWith('.jsonl')) continue;
     const p = join(projDir, name);
     const start = firstEventMs(p);
     if (start == null || start < sinceMs - SESSION_MATCH_SKEW_MS) continue;
-    if (!best || start < best.start) best = { path: p, start };
+    sessions.push({ path: p, start });
   }
+  sessions.sort((a, b) => a.start - b.start);
+  const best = sessions[nth];
   if (!best) return null;
 
   const u: TokenUsage = { ...EMPTY_USAGE };

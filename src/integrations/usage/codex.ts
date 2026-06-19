@@ -7,17 +7,21 @@ import { walkFiles } from './walk.js';
 /** codex stores one rollout JSONL per session under ~/.codex/sessions/<Y>/<M>/<D>/rollout-*.jsonl,
  *  carrying a cumulative `total_token_usage` object. Pick the rollout started when this spawn ran
  *  and read its final cumulative usage. codex does not record cost (costUsd stays null). */
-export function codexUsage(home: string, _dir: string, sinceMs: number): TokenUsage | null {
+export function codexUsage(home: string, _dir: string, sinceMs: number, nth = 0): TokenUsage | null {
   const root = join(home, '.codex', 'sessions');
   if (!existsSync(root)) return null;
 
-  let best: { path: string; start: number } | null = null;
+  // codex rollouts aren't dir-scoped on disk, so concurrent codex agents can only be
+  // disambiguated by start order; `nth` picks the rank-th rollout in the spawn window.
+  const sessions: { path: string; start: number }[] = [];
   for (const f of walkFiles(root)) {
     if (!basename(f).startsWith('rollout-') || !f.endsWith('.jsonl')) continue;
     const start = rolloutStartMs(f);
     if (start == null || start < sinceMs - SESSION_MATCH_SKEW_MS) continue;
-    if (!best || start < best.start) best = { path: f, start };
+    sessions.push({ path: f, start });
   }
+  sessions.sort((a, b) => a.start - b.start);
+  const best = sessions[nth];
   if (!best) return null;
   return finalUsage(best.path);
 }

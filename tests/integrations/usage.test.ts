@@ -76,19 +76,40 @@ describe('codexUsage', () => {
 
 describe('readTaskUsage', () => {
   const fallback = { program: 'claude-code', model: 'sonnet' };
+  const ocTask = (id: string, exec: string, created: string) => ({ id, labels: [`exec:${exec}`], created_at: created });
+
   it('routes opencode tasks to the opencode reader', () => {
     write('.local/share/opencode/storage/session/global/ses_a.json',
       JSON.stringify({ id: 'ses_a', directory: DIR, time: { created: SINCE + 500 } }));
     write('.local/share/opencode/storage/message/ses_a/m1.json',
       JSON.stringify({ role: 'assistant', cost: 0.05, tokens: { input: 10, output: 5, cache: { read: 0, write: 0 } } }));
-    const task = { labels: ['exec:ollama-cloud/deepseek-v4-flash'], created_at: '2026-06-19 10:00:00' };
-    const u = readTaskUsage(task, DIR, fallback, home);
+    const task = ocTask('t1', 'ollama-cloud/deepseek-v4-flash', '2026-06-19 10:00:00');
+    const u = readTaskUsage(task, [task], DIR, fallback, home);
     expect(u?.total).toBe(15);
     expect(u?.costUsd).toBeCloseTo(0.05);
   });
 
   it('returns null when the CLI has no matching session', () => {
-    const task = { labels: ['exec:sonnet'], created_at: '2026-06-19 10:00:00' };
-    expect(readTaskUsage(task, DIR, fallback, home)).toBeNull();
+    const task = ocTask('t1', 'sonnet', '2026-06-19 10:00:00');
+    expect(readTaskUsage(task, [task], DIR, fallback, home)).toBeNull();
+  });
+
+  it('attributes concurrent agents in the same dir to distinct sessions by start-order rank', () => {
+    // Two opencode sessions opened in the same dir at nearly the same time.
+    write('.local/share/opencode/storage/session/global/ses_first.json',
+      JSON.stringify({ id: 'ses_first', directory: DIR, time: { created: SINCE + 100 } }));
+    write('.local/share/opencode/storage/message/ses_first/m.json',
+      JSON.stringify({ role: 'assistant', cost: 0.01, tokens: { input: 10, output: 0, cache: { read: 0, write: 0 } } }));
+    write('.local/share/opencode/storage/session/global/ses_second.json',
+      JSON.stringify({ id: 'ses_second', directory: DIR, time: { created: SINCE + 200 } }));
+    write('.local/share/opencode/storage/message/ses_second/m.json',
+      JSON.stringify({ role: 'assistant', cost: 0.02, tokens: { input: 99, output: 0, cache: { read: 0, write: 0 } } }));
+
+    const a = ocTask('t-a', 'ollama-cloud/deepseek-v4-flash', '2026-06-19 10:00:00');
+    const b = ocTask('t-b', 'ollama-cloud/deepseek-v4-flash', '2026-06-19 10:00:01'); // started just after
+    const siblings = [a, b];
+    // rank 0 → earliest session (10 tokens); rank 1 → second session (99 tokens). No collision.
+    expect(readTaskUsage(a, siblings, DIR, fallback, home)?.total).toBe(10);
+    expect(readTaskUsage(b, siblings, DIR, fallback, home)?.total).toBe(99);
   });
 });

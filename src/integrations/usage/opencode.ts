@@ -8,8 +8,10 @@ interface OcMessage { role?: string; cost?: number; tokens?: { input?: number; o
 
 /** opencode stores each session under storage/session/.../<sid>.json (with `directory` + created
  *  time) and its assistant messages under storage/message/<sid>/ (with `tokens` + `cost`).
- *  Find the session opened in `dir` at/after `sinceMs` and sum its token usage and cost. */
-export function opencodeUsage(home: string, dir: string, sinceMs: number): TokenUsage | null {
+ *  Find the session opened in `dir` at/after `sinceMs` and sum its token usage and cost. `nth`
+ *  selects which matching session (by start order) to read — so N agents that start concurrently
+ *  in the same dir map to the N sessions deterministically (rank 0,1,2…) instead of colliding. */
+export function opencodeUsage(home: string, dir: string, sinceMs: number, nth = 0): TokenUsage | null {
   const base = join(home, '.local', 'share', 'opencode', 'storage');
   const sessionRoot = join(base, 'session');
   if (!existsSync(sessionRoot)) return null;
@@ -26,10 +28,9 @@ export function opencodeUsage(home: string, dir: string, sinceMs: number): Token
       }
     } catch { /* skip unreadable */ }
   }
-  if (candidates.length === 0) return null;
-  // The earliest session in the window is the one this spawn opened.
   candidates.sort((a, b) => a.created - b.created);
-  const sid = candidates[0]!.id;
+  const sid = candidates[nth]?.id;
+  if (!sid) return null;
 
   const msgDir = join(base, 'message', sid);
   if (!existsSync(msgDir)) return null;
