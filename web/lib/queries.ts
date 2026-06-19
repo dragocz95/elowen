@@ -80,6 +80,9 @@ export const useProjectFile = (id: number | null, path: string | null) =>
 export const useProjectFileDiff = (id: number | null, path: string | null) =>
   useQuery({ queryKey: ['project-diff', id, path], queryFn: () => orcaClient.projectFileDiff(id as number, path as string), enabled: !!id && !!path });
 
+export const useProjectCommit = (id: number | null, hash: string | null) =>
+  useQuery({ queryKey: ['project-commit', id, hash], queryFn: () => orcaClient.projectCommit(id as number, hash as string), enabled: !!id && !!hash });
+
 export const useMe = () =>
   useQuery({ queryKey: ['me'], queryFn: orcaClient.me, staleTime: 5 * 60 * 1000 });
 

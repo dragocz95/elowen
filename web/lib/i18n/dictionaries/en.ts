@@ -481,6 +481,8 @@ export const en = {
     fileTooBig: 'File is too large or binary to edit here.',
     noChanges: 'No uncommitted changes in this file.',
     fileSaved: 'Saved {path}',
+    commitLabel: 'Commit',
+    viewCommit: 'View this commit\'s changes',
   },
   users: {
     loadError: 'Failed to load users',

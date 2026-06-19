@@ -78,6 +78,18 @@ export function writeProjectFile(root: string, rel: string, content: string): vo
   writeFileSync(abs, content, 'utf8');
 }
 
+/** Full diff of a single commit (`git show <hash>`). The hash is validated to be a plain
+ *  hex object id so it can never be a git flag/option. Empty string on any error. */
+export async function projectCommitDiff(root: string, hash: string): Promise<string> {
+  if (!/^[0-9a-f]{4,40}$/i.test(hash)) return '';
+  try {
+    const { stdout } = await run('git', ['-C', realpathSync(resolve(root)), 'show', '--stat', '--patch', hash], { maxBuffer: 8 * 1024 * 1024 });
+    return stdout;
+  } catch {
+    return '';
+  }
+}
+
 /** Unified working-tree diff for a single file (`git diff -- <path>`). Empty string when the file
  *  is unchanged or the repo can't be read. Path is validated to stay inside the project and git is
  *  handed a clean repo-relative pathspec after the `--` separator (never a flag). */

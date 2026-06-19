@@ -481,6 +481,8 @@ export const cs = {
     fileTooBig: 'Soubor je příliš velký nebo binární, nelze ho zde upravit.',
     noChanges: 'Žádné necommitnuté změny v tomto souboru.',
     fileSaved: 'Uloženo {path}',
+    commitLabel: 'Commit',
+    viewCommit: 'Zobrazit změny tohoto commitu',
   },
   users: {
     loadError: 'Nepodařilo se načíst uživatele',

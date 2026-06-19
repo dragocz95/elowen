@@ -19,7 +19,11 @@ export function ProjectsView() {
   const projects = useProjects();
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [editingId, setEditingId] = useState<number | null>(null);
+  const [editingCommit, setEditingCommit] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
+
+  const openEditor = (commit: string | null) => { setEditingId(selectedId); setEditingCommit(commit); };
+  const closeEditor = () => { setEditingId(null); setEditingCommit(null); };
   const git = useProjectGit(selectedId);
 
   const { toast } = useToast();
@@ -100,11 +104,11 @@ export function ProjectsView() {
 
       {selectedId && !editingId ? (
         <div className="mt-4">
-          <Button variant="accent" icon={Code2} onClick={() => setEditingId(selectedId)}>{t.projects.openEditor}</Button>
+          <Button variant="accent" icon={Code2} onClick={() => openEditor(null)}>{t.projects.openEditor}</Button>
         </div>
       ) : null}
 
-      {editingId ? <ProjectEditor projectId={editingId} onClose={() => setEditingId(null)} /> : null}
+      {editingId ? <ProjectEditor key={editingCommit ?? 'files'} projectId={editingId} initialCommit={editingCommit} onClose={closeEditor} /> : null}
 
       {selectedId && git.data?.isRepo && (git.data.branches.length > 0 || git.data.commits.length > 0) && (
         <div className="mt-5 flex flex-col gap-5 rounded-lg border border-border bg-surface p-4" style={{ boxShadow: 'var(--shadow-card)' }}>
@@ -130,10 +134,17 @@ export function ProjectsView() {
               </div>
               <ul className="flex flex-col gap-2">
                 {git.data.commits.map((c) => (
-                  <li key={c.hash} className="flex flex-wrap items-center gap-2 rounded-md border border-border bg-bg px-3 py-2 text-sm">
-                    <span className="font-mono text-xs text-text-muted">{c.hash}</span>
-                    <span className="text-text">{c.subject}</span>
-                    <span className="text-xs text-text-muted">{c.author} · {c.relative}</span>
+                  <li key={c.hash}>
+                    <button
+                      type="button"
+                      onClick={() => openEditor(c.hash)}
+                      title={t.projects.viewCommit}
+                      className="flex w-full flex-wrap items-center gap-2 rounded-md border border-border bg-bg px-3 py-2 text-left text-sm transition-colors hover:border-accent/50 hover:bg-elevated"
+                    >
+                      <span className="font-mono text-xs text-accent">{c.hash}</span>
+                      <span className="min-w-0 flex-1 truncate text-text">{c.subject}</span>
+                      <span className="shrink-0 text-xs text-text-muted">{c.author} · {c.relative}</span>
+                    </button>
                   </li>
                 ))}
               </ul>

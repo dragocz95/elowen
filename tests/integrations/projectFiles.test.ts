@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, symlinkSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { listProjectFiles, readProjectFile, writeProjectFile } from '../../src/integrations/projectFiles.js';
+import { listProjectFiles, readProjectFile, writeProjectFile, projectCommitDiff } from '../../src/integrations/projectFiles.js';
 
 let root: string;
 const w = (rel: string, body: string) => { const p = join(root, rel); mkdirSync(join(p, '..'), { recursive: true }); writeFileSync(p, body); };
@@ -37,6 +37,15 @@ describe('writeProjectFile', () => {
   it('writes content and round-trips, creating parent dirs', () => {
     writeProjectFile(root, 'a/b/c.txt', 'hello');
     expect(readFileSync(join(root, 'a/b/c.txt'), 'utf8')).toBe('hello');
+  });
+});
+
+describe('projectCommitDiff', () => {
+  it('rejects a non-hex hash (no git option/flag injection) and errors safely', async () => {
+    expect(await projectCommitDiff(root, '-O/tmp/pwn')).toBe('');
+    expect(await projectCommitDiff(root, 'not a hash')).toBe('');
+    expect(await projectCommitDiff(root, '--output=/tmp/x')).toBe('');
+    expect(await projectCommitDiff(root, 'deadbeef')).toBe(''); // valid hex but non-repo → caught
   });
 });
 

@@ -8,7 +8,7 @@ import { loader } from '@monaco-editor/react';
 loader.config({ paths: { vs: '/monaco/vs' } });
 import { ChevronRight, File as FileIcon, Save, Code2, GitCompare, X } from 'lucide-react';
 import type { FileNode } from '../../lib/types';
-import { useProjectFiles, useProjectFile, useProjectFileDiff } from '../../lib/queries';
+import { useProjectFiles, useProjectFile, useProjectFileDiff, useProjectCommit } from '../../lib/queries';
 import { useWriteProjectFile } from '../../lib/mutations';
 import { Button } from '../../components/ui/Button';
 import { LoadingState, EmptyState } from '../../components/ui/states';
@@ -120,14 +120,17 @@ function DiffView({ diff, empty }: { diff: string; empty: string }) {
   );
 }
 
-/** Full project code editor: file tree + Monaco editor (edit & save) + per-file git diff. */
-export function ProjectEditor({ projectId, onClose }: { projectId: number; onClose: () => void }) {
+/** Full project code editor: file tree + Monaco editor (edit & save) + per-file git diff, plus a
+ *  read-only commit-diff view when opened from a commit in the git log. */
+export function ProjectEditor({ projectId, onClose, initialCommit }: { projectId: number; onClose: () => void; initialCommit?: string | null }) {
   const { t } = useTranslation();
   const { toast } = useToast();
   const files = useProjectFiles(projectId);
   const [selected, setSelected] = useState<string | null>(null);
+  const [commit, setCommit] = useState<string | null>(initialCommit ?? null);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [tab, setTab] = useState<'edit' | 'diff'>('edit');
+  const commitData = useProjectCommit(projectId, commit);
   // Per-file unsaved edit buffers — switching files never discards work (VS Code-like). A file with
   // no entry shows the server content; an entry that differs from it is "dirty".
   const [drafts, setDrafts] = useState<Record<string, string>>({});
@@ -142,7 +145,7 @@ export function ProjectEditor({ projectId, onClose }: { projectId: number; onClo
   const value = draft ?? serverContent;
   const dirty = draft !== undefined && draft !== serverContent;
 
-  const openFile = (p: string) => { setSelected(p); setTab('edit'); };
+  const openFile = (p: string) => { setSelected(p); setCommit(null); setTab('edit'); };
   const onChange = (v: string) => { if (selected != null) setDrafts((d) => ({ ...d, [selected]: v })); };
   const toggle = (p: string) => setExpanded((s) => { const n = new Set(s); n.has(p) ? n.delete(p) : n.add(p); return n; });
   const save = () => {
@@ -160,9 +163,10 @@ export function ProjectEditor({ projectId, onClose }: { projectId: number; onClo
       <div className="flex items-center gap-2 border-b border-border px-3 py-2">
         <Code2 size={15} className="text-accent" aria-hidden />
         <span className="text-sm font-semibold text-text">{t.projects.editorTitle}</span>
-        {selected ? <span className="truncate font-mono text-xs text-text-muted">· {selected}{dirty ? ' •' : ''}</span> : null}
+        {commit ? <span className="truncate font-mono text-xs text-accent"><GitCompare size={11} className="mr-1 inline" aria-hidden />{t.projects.commitLabel} {commit.slice(0, 8)}</span>
+          : selected ? <span className="truncate font-mono text-xs text-text-muted">· {selected}{dirty ? ' •' : ''}</span> : null}
         <div className="ml-auto flex items-center gap-1.5">
-          {selected ? (
+          {!commit && selected ? (
             <>
               <Button variant={tab === 'edit' ? 'accent' : 'ghost'} onClick={() => setTab('edit')}>{t.projects.tabEdit}</Button>
               <Button variant={tab === 'diff' ? 'accent' : 'ghost'} icon={GitCompare} onClick={() => setTab('diff')}>{t.projects.tabDiff}</Button>
@@ -181,9 +185,10 @@ export function ProjectEditor({ projectId, onClose }: { projectId: number; onClo
             : <ul role="tree" aria-label={t.projects.editorTitle} className="m-0 list-none p-0">{tree.map((n) => <TreeRow key={n.path} node={n} depth={0} expanded={expanded} onToggle={toggle} selected={selected} onSelect={openFile} />)}</ul>}
         </div>
 
-        {/* editor / diff */}
+        {/* editor / diff / commit */}
         <div className="min-w-0 flex-1">
-          {!selected ? <EmptyState title={t.projects.selectFile} icon={FileIcon} />
+          {commit ? <DiffView diff={commitData.data?.diff ?? ''} empty={commitData.isLoading ? t.common.loading : t.projects.noChanges} />
+            : !selected ? <EmptyState title={t.projects.selectFile} icon={FileIcon} />
             : fileData.data?.truncated ? <p className="p-4 text-center text-sm text-text-muted">{t.projects.fileTooBig}</p>
             : tab === 'diff' ? <DiffView diff={diffData.data?.diff ?? ''} empty={t.projects.noChanges} />
             : (
