@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { Save, Boxes, Bot, SlidersHorizontal, Plus, X, Pencil, Plug, Radio, Cpu, Gauge, Layers, Link2, KeyRound, FileText, Eye, Lock, type LucideIcon } from 'lucide-react';
 import { PROVIDERS, ProviderLogo, ProviderTag } from '../../modules/settings/providers';
 import { ModelIcon } from '../../components/ui/ModelIcon';
@@ -85,8 +85,13 @@ export default function SettingsPage() {
   const hermesStatus = useHermesStatus(hHome);
   const hermesInstall = useHermesInstall();
 
+  // Seed the form from the config ONCE. useConfig is stale-while-revalidate, so it refetches on
+  // window focus; re-seeding on every refetch would wipe a model the user just added before they
+  // hit Save. We seed on first load only — subsequent server updates don't clobber in-progress edits.
+  const seeded = useRef(false);
   useEffect(() => {
-    if (config.data) {
+    if (config.data && !seeded.current) {
+      seeded.current = true;
       setAllowed(config.data.allowedExecs);
       setCustomModels(config.data.customModels ?? []);
       setHiddenPresets(config.data.hiddenPresets ?? []);
