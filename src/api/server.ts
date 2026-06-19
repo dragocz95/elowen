@@ -3,6 +3,7 @@ import { randomBytes } from 'node:crypto';
 import { hermesStatus, installHermesPlugin } from '../integrations/hermesInstall.js';
 import { detectClis } from '../integrations/cliDetection.js';
 import { readTaskUsage } from '../integrations/usage/index.js';
+import { listProjectFiles, readProjectFile, writeProjectFile, projectFileDiff } from '../integrations/projectFiles.js';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { streamSSE } from 'hono/streaming';
@@ -86,6 +87,37 @@ export function createServer(d: ServerDeps): Hono<{ Variables: { user: User; tok
     const p = d.projects.get(Number(c.req.param('id')));
     if (!p) return c.json({ error: 'project not found' }, 404);
     return c.json(await d.git.read(p.path));
+  });
+
+  // --- Project file editor: tree, read, write, per-file diff. Paths are validated to stay inside
+  // the project root (see projectFiles.safe). ---
+  const projectOf = (c: { req: { param: (k: string) => string } }) => d.projects?.get(Number(c.req.param('id'))) ?? null;
+  app.get('/projects/:id/files', (c) => {
+    if (!d.projects) return c.json({ error: 'projects unavailable' }, 400);
+    const p = projectOf(c); if (!p) return c.json({ error: 'project not found' }, 404);
+    return c.json(listProjectFiles(p.path));
+  });
+  app.get('/projects/:id/file', (c) => {
+    if (!d.projects) return c.json({ error: 'projects unavailable' }, 400);
+    const p = projectOf(c); if (!p) return c.json({ error: 'project not found' }, 404);
+    const path = c.req.query('path'); if (!path) return c.json({ error: 'path required' }, 400);
+    try { return c.json(readProjectFile(p.path, path)); }
+    catch { return c.json({ error: 'invalid path' }, 400); }
+  });
+  app.put('/projects/:id/file', async (c) => {
+    if (!d.projects) return c.json({ error: 'projects unavailable' }, 400);
+    const p = projectOf(c); if (!p) return c.json({ error: 'project not found' }, 404);
+    const b = await c.req.json() as { path?: string; content?: string };
+    if (!b.path || typeof b.content !== 'string') return c.json({ error: 'path and content required' }, 400);
+    try { writeProjectFile(p.path, b.path, b.content); return c.json({ ok: true }); }
+    catch { return c.json({ error: 'invalid path' }, 400); }
+  });
+  app.get('/projects/:id/diff', async (c) => {
+    if (!d.projects) return c.json({ error: 'projects unavailable' }, 400);
+    const p = projectOf(c); if (!p) return c.json({ error: 'project not found' }, 404);
+    const path = c.req.query('path'); if (!path) return c.json({ error: 'path required' }, 400);
+    try { return c.json({ diff: await projectFileDiff(p.path, path) }); }
+    catch { return c.json({ error: 'invalid path' }, 400); }
   });
 
   app.get('/activity', (c) => {
