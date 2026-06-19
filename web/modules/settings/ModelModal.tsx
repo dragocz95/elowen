@@ -11,19 +11,28 @@ import { type ProviderId, execProvider, execModel, buildExec } from '../../lib/m
 import { providerMeta } from './providers';
 
 type Choice = ProviderId | 'other';
-const CHOICES: Choice[] = ['claude-code', 'opencode', 'codex', 'other'];
 
-export function ModelModal({ initial, existingExecs, onClose, onSave }: {
+export function ModelModal({ initial, existingExecs, activeProviders, onClose, onSave }: {
   initial: { label: string; exec: string } | null;
   existingExecs: Set<string>;
+  /** Providers configured in the Providers tab — only these are offered when adding a model. */
+  activeProviders: ProviderId[];
   onClose: () => void;
   onSave: (m: { label: string; exec: string }) => void;
 }) {
   const { t } = useTranslation();
   const editing = !!initial;
 
+  // Offer only configured providers (+ always 'other'). When editing, keep the model's own provider
+  // visible even if it was since removed, so the form still represents the saved exec.
+  const CHOICES: Choice[] = [
+    ...activeProviders,
+    ...(initial && !activeProviders.includes(execProvider(initial.exec)) ? [execProvider(initial.exec)] : []),
+    'other' as const,
+  ];
+
   const [label, setLabel] = useState(initial?.label ?? '');
-  const [provider, setProvider] = useState<Choice>(initial ? execProvider(initial.exec) : 'claude-code');
+  const [provider, setProvider] = useState<Choice>(initial ? execProvider(initial.exec) : (activeProviders[0] ?? 'other'));
   const [model, setModel] = useState(initial ? execModel(initial.exec) : '');
   const [rawExec, setRawExec] = useState(initial?.exec ?? '');
 

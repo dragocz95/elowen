@@ -1,10 +1,10 @@
 'use client';
 import { useEffect, useState } from 'react';
-import { Save, Boxes, Bot, SlidersHorizontal, Plus, X, Pencil, Plug, Radio, type LucideIcon } from 'lucide-react';
+import { Save, Boxes, Bot, SlidersHorizontal, Plus, X, Pencil, Plug, Radio, Cpu, Gauge, Layers, Link2, KeyRound, FileText, Eye, type LucideIcon } from 'lucide-react';
 import { PROVIDERS, ProviderLogo, ProviderTag } from '../../modules/settings/providers';
 import { ModelIcon } from '../../components/ui/ModelIcon';
 import { ModelModal } from '../../modules/settings/ModelModal';
-import { execProvider, execModel } from '../../lib/modelProvider';
+import { execProvider, execModel, type ProviderId } from '../../lib/modelProvider';
 import { useConfig, useHermesStatus } from '../../lib/queries';
 import { useUpdateConfig, useHermesInstall } from '../../lib/mutations';
 import { orcaClient, OrcaApiError } from '../../lib/orcaClient';
@@ -204,6 +204,9 @@ export default function SettingsPage() {
 
   const models = allModels(customModels, hiddenPresets);
   const deleteTarget = models.find((m) => m.exec === pendingDelete);
+  // Providers the user has actually configured (non-empty binary) — the only ones offered when
+  // adding a model, and the source for the executor picker's grouping.
+  const activeProviders = PROVIDERS.filter((p) => (providers[p.id]?.bin ?? '').trim() !== '').map((p) => p.id as ProviderId);
 
   return (
     <ModuleShell moduleId="settings">
@@ -300,6 +303,7 @@ export default function SettingsPage() {
           <ModelModal
             initial={editingExec ? models.find((m) => m.exec === editingExec) ?? null : null}
             existingExecs={new Set(models.map((m) => m.exec))}
+            activeProviders={activeProviders}
             onClose={resetForm}
             onSave={saveModel}
           />
@@ -307,19 +311,19 @@ export default function SettingsPage() {
 
         {category === 'autopilot' && (
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              <SettingCard title={t.settings.plannerModel} description={t.settings.plannerModelDesc}>
+              <SettingCard title={t.settings.plannerModel} description={t.settings.plannerModelDesc} icon={Bot}>
                 <input value={model} onChange={(e) => setModel(e.target.value)} className={inputClass} placeholder={t.settings.plannerPlaceholder} />
               </SettingCard>
-              <SettingCard title={t.settings.overseerModel} description={t.settings.overseerModelDesc}>
+              <SettingCard title={t.settings.overseerModel} description={t.settings.overseerModelDesc} icon={Eye}>
                 <input value={overseerModel} onChange={(e) => setOverseerModel(e.target.value)} className={inputClass} placeholder={t.settings.overseerPlaceholder} />
               </SettingCard>
-              <SettingCard title={t.settings.apiUrl} description={t.settings.apiUrlDesc}>
+              <SettingCard title={t.settings.apiUrl} description={t.settings.apiUrlDesc} icon={Link2}>
                 <input value={apiUrl} onChange={(e) => setApiUrl(e.target.value)} className={inputClass} />
               </SettingCard>
-              <SettingCard title={t.settings.apiKey} description={apiKeySet ? t.settings.apiKeyDesc : t.settings.apiKeyNotSetDesc}>
+              <SettingCard title={t.settings.apiKey} description={apiKeySet ? t.settings.apiKeyDesc : t.settings.apiKeyNotSetDesc} icon={KeyRound}>
                 <input type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder={apiKeySet ? t.settings.apiKeySetPlaceholder : t.settings.apiKeyPlaceholder} className={inputClass} />
               </SettingCard>
-              <SettingCard title={t.settings.notes} description={t.settings.notesDesc}>
+              <SettingCard title={t.settings.notes} description={t.settings.notesDesc} icon={FileText}>
                 <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={3} className={`${inputClass} resize-none`} />
               </SettingCard>
               <div className="sm:col-span-2 rounded-lg border border-border bg-surface p-4">
@@ -390,13 +394,33 @@ export default function SettingsPage() {
 
         {category === 'defaults' && (
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              <SettingCard title={t.settings.executor} description={t.settings.executorDesc}>
-                <Segmented options={EXEC_PRESETS.map((p) => ({ value: p.exec, label: p.exec }))} value={defExec} onChange={setDefExec} />
+              <SettingCard title={t.settings.executor} description={t.settings.executorDesc} icon={Cpu}>
+                {/* Custom picker (not Segmented): each executor shows its model brand icon. The saved
+                    default is always shown even if it's not in the model list. */}
+                <div role="radiogroup" className="flex flex-wrap gap-1.5">
+                  {(models.some((m) => m.exec === defExec) ? models : [...models, { label: defExec, exec: defExec }]).filter((m) => m.exec).map((m) => {
+                    const on = defExec === m.exec;
+                    return (
+                      <button
+                        key={m.exec}
+                        type="button"
+                        role="radio"
+                        aria-checked={on}
+                        aria-label={m.label}
+                        onClick={() => setDefExec(m.exec)}
+                        className={`inline-flex h-9 items-center gap-1.5 rounded-md border px-3 text-xs font-medium transition-colors ${on ? 'border-accent/50 bg-accent/15 text-accent' : 'border-border bg-elevated text-text-muted hover:border-border-strong hover:text-text'}`}
+                        style={{ transitionDuration: 'var(--motion-fast)' }}
+                      >
+                        <ModelIcon name={m.exec} size={15} />{m.label}
+                      </button>
+                    );
+                  })}
+                </div>
               </SettingCard>
-              <SettingCard title={t.settings.autonomy} description={t.settings.autonomyDesc}>
+              <SettingCard title={t.settings.autonomy} description={t.settings.autonomyDesc} icon={Gauge}>
                 <Segmented options={['L0', 'L1', 'L2', 'L3'].map((l) => ({ value: l, label: l }))} value={defAutonomy} onChange={setDefAutonomy} />
               </SettingCard>
-              <SettingCard title={t.settings.maxSessions} description={t.settings.maxSessionsDesc}>
+              <SettingCard title={t.settings.maxSessions} description={t.settings.maxSessionsDesc} icon={Layers}>
                 <input type="number" min={1} value={defMaxSessions} onChange={(e) => setDefMaxSessions(Number(e.target.value))} className={inputClass} />
               </SettingCard>
             </div>
