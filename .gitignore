@@ -6,3 +6,6 @@ dist/
 *.log
 .superpowers/
 docs/superpowers/
+data/
+*.db-shm
+*.db-wal
