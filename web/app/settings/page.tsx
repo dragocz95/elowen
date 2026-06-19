@@ -1,19 +1,21 @@
 'use client';
 import { useEffect, useState } from 'react';
-import { Save, Boxes, Bot, SlidersHorizontal, Plus, X, Pencil, Plug, type LucideIcon } from 'lucide-react';
+import { Save, Boxes, Bot, SlidersHorizontal, Plus, X, Pencil, Plug, Radio, type LucideIcon } from 'lucide-react';
 import { PROVIDERS, ProviderLogo, ProviderTag } from '../../modules/settings/providers';
 import { ModelIcon } from '../../components/ui/ModelIcon';
 import { ModelModal } from '../../modules/settings/ModelModal';
 import { execProvider, execModel } from '../../lib/modelProvider';
-import { useConfig } from '../../lib/queries';
-import { useUpdateConfig } from '../../lib/mutations';
+import { useConfig, useHermesStatus } from '../../lib/queries';
+import { useUpdateConfig, useHermesInstall } from '../../lib/mutations';
 import { orcaClient, OrcaApiError } from '../../lib/orcaClient';
+import { getToken } from '../../lib/token';
 import { EXEC_PRESETS, allModels } from '../../lib/execPresets';
 import { useToast } from '../../components/ui/Toast';
 import { ModuleHeader } from '../../components/ui/ModuleHeader';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
 import { Field } from '../../components/ui/Field';
+import { Badge } from '../../components/ui/Badge';
 import { Toggle } from '../../components/ui/Toggle';
 import { Segmented } from '../../components/ui/Segmented';
 import { SettingCard } from '../../components/ui/SettingCard';
@@ -28,7 +30,7 @@ const inputClass = 'w-full rounded-md border border-border bg-bg px-3 py-2 text-
 
 const PRESET_EXECS = new Set(EXEC_PRESETS.map((p) => p.exec));
 
-type Category = 'models' | 'autopilot' | 'providers' | 'defaults';
+type Category = 'models' | 'autopilot' | 'providers' | 'defaults' | 'hermes';
 
 export default function SettingsPage() {
   const config = useConfig();
@@ -75,6 +77,13 @@ export default function SettingsPage() {
   // Pending delete (drives the ConfirmDialog)
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
 
+  // Hermes integration form state
+  const [hHome, setHHome] = useState('/var/www/.hermes');
+  const [hUrl, setHUrl] = useState('');
+  const [hToken, setHToken] = useState('');
+  const hermesStatus = useHermesStatus(hHome);
+  const hermesInstall = useHermesInstall();
+
   useEffect(() => {
     if (config.data) {
       setAllowed(config.data.allowedExecs);
@@ -91,6 +100,13 @@ export default function SettingsPage() {
       setDefMaxSessions(config.data.defaults.maxSessions);
     }
   }, [config.data]);
+
+  // Pre-fill Hermes form defaults once on the client.
+  useEffect(() => {
+    setHUrl(process.env.NEXT_PUBLIC_ORCA_URL ?? window.location.origin);
+    const tk = getToken();
+    if (tk) setHToken(tk);
+  }, []);
 
   if (config.isLoading) return <ModuleShell moduleId="settings"><ModuleHeader title={t.page.settings} icon={SlidersHorizontal} /><LoadingState /></ModuleShell>;
   if (config.isError) return <ModuleShell moduleId="settings"><ModuleHeader title={t.page.settings} icon={SlidersHorizontal} /><ErrorState message={t.common.daemonUnreachable} onRetry={() => config.refetch()} /></ModuleShell>;
@@ -161,20 +177,30 @@ export default function SettingsPage() {
       { onSuccess: () => toast(t.settings.defaultsSaved), onError: (e) => toast(String(e), 'error') },
     );
 
+  const installHermes = () =>
+    hermesInstall.mutate(
+      { home: hHome.trim() || undefined, url: hUrl.trim(), token: hToken.trim() },
+      {
+        onSuccess: () => toast(t.settings.hermesInstalled),
+        onError: (e) => toast(String(e), 'error'),
+      },
+    );
+
   const SECTIONS: { id: Category; icon: LucideIcon }[] = [
     { id: 'models', icon: Boxes },
     { id: 'autopilot', icon: Bot },
     { id: 'providers', icon: Plug },
     { id: 'defaults', icon: SlidersHorizontal },
+    { id: 'hermes', icon: Radio },
   ];
 
-  const saveAction: Record<Category, { label: string; onClick: () => void }> = {
+  const saveAction: Record<Exclude<Category, 'hermes'>, { label: string; onClick: () => void }> = {
     models: { label: t.settings.saveModels, onClick: saveModels },
     autopilot: { label: t.settings.saveAutopilot, onClick: saveAutopilot },
     providers: { label: t.settings.saveProviders, onClick: saveProviders },
     defaults: { label: t.settings.saveDefaults, onClick: saveDefaults },
   };
-  const active = saveAction[category];
+  const active = category === 'hermes' ? null : saveAction[category];
 
   const models = allModels(customModels, hiddenPresets);
   const deleteTarget = models.find((m) => m.exec === pendingDelete);
@@ -182,7 +208,7 @@ export default function SettingsPage() {
   return (
     <ModuleShell moduleId="settings">
       <ModuleHeader title={t.page.settings} icon={SlidersHorizontal}>
-        <Button variant="accent" icon={Save} onClick={active.onClick}>{active.label}</Button>
+        {active && <Button variant="accent" icon={Save} onClick={active.onClick}>{active.label}</Button>}
       </ModuleHeader>
 
       <div className="flex flex-col gap-6 md:flex-row md:items-start">
@@ -374,6 +400,53 @@ export default function SettingsPage() {
                 <input type="number" min={1} value={defMaxSessions} onChange={(e) => setDefMaxSessions(Number(e.target.value))} className={inputClass} />
               </SettingCard>
             </div>
+        )}
+
+        {category === 'hermes' && (
+          <div className="flex flex-col gap-4">
+            <img
+              src="/hermes-banner.png"
+              alt="Hermes"
+              className="w-full max-w-md self-start rounded-lg border border-border bg-surface object-contain"
+            />
+            <p className="text-sm text-text-muted">{t.settings.hermesDesc}</p>
+
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <Field label={t.settings.hermesHome}>
+                <Input value={hHome} onChange={(e) => setHHome(e.target.value)} className="font-mono text-xs" />
+              </Field>
+              <Field label={t.settings.hermesUrl}>
+                <Input value={hUrl} onChange={(e) => setHUrl(e.target.value)} className="font-mono text-xs" />
+              </Field>
+              <Field label={t.settings.hermesToken}>
+                <Input type="password" value={hToken} onChange={(e) => setHToken(e.target.value)} className="font-mono text-xs" />
+              </Field>
+            </div>
+
+            <div className="flex flex-col gap-3">
+              <div className="flex items-center gap-2">
+                <Button variant="accent" disabled={hermesInstall.isPending || !hUrl.trim() || !hToken.trim()} onClick={installHermes}>
+                  {hermesInstall.isPending ? t.settings.hermesInstalling : t.settings.hermesInstall}
+                </Button>
+                <span className="text-sm text-text-muted">{t.settings.hermesStatusLine}:</span>
+                {hermesStatus.isLoading ? (
+                  <Badge tone="muted">{t.common.loading}</Badge>
+                ) : hermesStatus.isError ? (
+                  <Badge tone="warning">{t.settings.hermesStatusError}</Badge>
+                ) : (
+                  <>
+                    <Badge tone={hermesStatus.data?.pluginInstalled ? 'success' : 'muted'}>
+                      {hermesStatus.data?.pluginInstalled ? t.settings.hermesStatusInstalled : t.settings.hermesStatusNotInstalled}
+                    </Badge>
+                    <Badge tone={hermesStatus.data?.enabled ? 'success' : 'muted'}>
+                      {hermesStatus.data?.enabled ? t.settings.hermesStatusEnabled : t.settings.hermesStatusDisabled}
+                    </Badge>
+                  </>
+                )}
+              </div>
+              <p className="text-xs text-text-muted">{t.settings.hermesRestartNote}</p>
+            </div>
+          </div>
         )}
         </div>
       </div>

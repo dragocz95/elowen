@@ -49,3 +49,20 @@ export interface GitStatus { branch: string; ahead: number; behind: number; dirt
 export interface GitBranch { name: string; current: boolean }
 export interface GitCommit { hash: string; subject: string; author: string; relative: string }
 export interface ProjectGit { isRepo: boolean; status: GitStatus | null; branches: GitBranch[]; commits: GitCommit[] }
+
+export interface HermesStatus {
+  home: string;
+  exists: boolean;
+  pluginsDir: boolean;
+  pluginInstalled: boolean;
+  enabled: boolean;
+}
+export interface HermesInstallInput { home?: string; url: string; token: string; timeout?: number }
+export interface HermesInstallResult {
+  pluginDir: string;
+  copied: boolean;
+  alreadyEnabled: boolean;
+  enabled: boolean;
+  backedUp: boolean;
+  status: HermesStatus;
+}

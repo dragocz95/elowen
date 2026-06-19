@@ -2,7 +2,7 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { orcaClient } from './orcaClient';
 import { QUERY_KEYS } from './queries';
-import type { CreateTaskInput, UpdateTaskInput, PlanInput, EngageInput, ConfigPatch, InsertPhasesInput } from './types';
+import type { CreateTaskInput, UpdateTaskInput, PlanInput, EngageInput, ConfigPatch, InsertPhasesInput, HermesInstallInput } from './types';
 
 export function useSpawn() {
   const qc = useQueryClient();
@@ -97,4 +97,13 @@ export function useDeleteUser() {
 export function useCreateProject() {
   const qc = useQueryClient();
   return useMutation({ mutationFn: (v: { slug: string; path: string; notes?: string }) => orcaClient.createProject(v), onSuccess: () => qc.invalidateQueries({ queryKey: ['projects'] }) });
+}
+export function useHermesInstall() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: HermesInstallInput) => orcaClient.hermesInstall(input),
+    onSuccess: (_data, variables) => {
+      qc.invalidateQueries({ queryKey: variables.home ? ['hermes-status', variables.home] : ['hermes-status'] });
+    },
+  });
 }

@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { orcaClient } from './orcaClient';
-import type { DerivedSignal } from './types';
+import type { DerivedSignal, HermesStatus } from './types';
 
 export const QUERY_KEYS = {
   tasks: ['tasks'] as const,
@@ -9,6 +9,7 @@ export const QUERY_KEYS = {
   health: ['health'] as const,
   config: ['config'] as const,
   sessionSignals: ['session-signals'] as const,
+  hermesStatus: ['hermes-status'] as const,
 };
 
 /** Latest derived signal per session, populated by the SSE stream (see useOrcaEvents). */
@@ -59,3 +60,10 @@ export const useProjects = () =>
 
 export const useProjectGit = (id: number | null) =>
   useQuery({ queryKey: ['project-git', id], queryFn: () => orcaClient.projectGit(id as number), enabled: !!id });
+
+export const useHermesStatus = (home?: string) =>
+  useQuery<HermesStatus>({
+    queryKey: home ? ['hermes-status', home] : QUERY_KEYS.hermesStatus,
+    queryFn: () => orcaClient.hermesStatus(home),
+    retry: false,
+  });
