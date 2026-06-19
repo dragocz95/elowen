@@ -17,7 +17,8 @@ import { useTranslation } from '../../lib/i18n';
 import { useCliStatus, useConfig, useUsers, useHermesStatus } from '../../lib/queries';
 import { useUpdateConfig, useCreateUser, useHermesInstall } from '../../lib/mutations';
 import { PROVIDERS } from '../../modules/settings/providers';
-import { getToken } from '../../lib/token';
+import { getToken, setToken } from '../../lib/token';
+import { orcaClient } from '../../lib/orcaClient';
 import type { CliStatus as CliStatusType } from '../../lib/types';
 import type { LocaleDict } from '../../lib/i18n/types';
 
@@ -125,11 +126,20 @@ export default function OnboardingPage() {
   };
 
   const handleCreateUser = () => {
-    if (!newUsername.trim() || !newPassword.trim()) return;
+    const username = newUsername.trim(), password = newPassword.trim();
+    if (!username || !password) return;
+    const firstRun = getToken() == null; // setup mode — this becomes the bootstrap admin
     createUser.mutate(
-      { username: newUsername.trim(), password: newPassword.trim() },
+      { username, password },
       {
-        onSuccess: () => { toast(t.onboarding.userCreated); setNewUsername(''); setNewPassword(''); },
+        onSuccess: async () => {
+          toast(t.onboarding.userCreated); setNewUsername(''); setNewPassword('');
+          // In setup mode the daemon was open; the moment the first admin exists, auth re-engages.
+          // Log that admin in immediately so the app unlocks seamlessly instead of bouncing to login.
+          if (firstRun) {
+            try { const res = await orcaClient.login(username, password); setToken(res.token); } catch { /* fall back to manual login */ }
+          }
+        },
         onError: (e) => toast(t.onboarding.userCreateError + ': ' + String(e), 'error'),
       },
     );

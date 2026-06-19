@@ -108,12 +108,13 @@ export function buildApp(opts: BuildOpts) {
       return { approve: d.approve && d.confidence >= MIN_CONFIDENCE, destructive: d.destructive };
     },
   });
-  const openMode = users.count() === 0 && opts.allowOpen === true;
-  if (openMode) {
-    console.warn('[orca] running OPEN (no auth) — ORCA_ALLOW_OPEN is set and no users exist');
+  // Setup mode: with no users yet the daemon is open so the onboarding page can run before login;
+  // auth (in authMiddleware) re-engages automatically once the first admin is created.
+  if (users.count() === 0) {
+    console.warn('[orca] SETUP MODE — no users yet; the API is open until the first admin is created via onboarding');
   }
   const avatarsDir = opts.dbPath === ':memory:' ? undefined : join(dirname(opts.dbPath), 'avatars');
-  const app = createServer({ tasks, readiness, missions, engine, spawn, tmux, bus, events, project: opts.project, fallback: { program: 'claude-code', model: 'sonnet' }, clock: new SystemClock(), config, users: openMode ? undefined : users, projects, userProjects, git, avatarsDir });
+  const app = createServer({ tasks, readiness, missions, engine, spawn, tmux, bus, events, project: opts.project, fallback: { program: 'claude-code', model: 'sonnet' }, clock: new SystemClock(), config, users, projects, userProjects, git, avatarsDir });
 
   // Root-cause recovery: after a daemon crash/restart, tasks left 'in_progress' whose tmux
   // session is gone are zombies — revert them to 'open' so they can be picked up again. No grace

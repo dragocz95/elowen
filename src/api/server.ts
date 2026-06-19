@@ -54,6 +54,8 @@ export function createServer(d: ServerDeps): Hono<{ Variables: { user: User; tok
   const app = new Hono<{ Variables: { user: User; token: string } }>();
   app.use('*', cors());
   app.get('/health', c => c.json({ ok: true }));
+  // Public: lets the web decide whether to show onboarding (no users yet) or the login form.
+  app.get('/setup', c => c.json({ needsSetup: d.users ? d.users.count() === 0 : false }));
 
   if (d.users) {
     const users = d.users;
@@ -71,6 +73,7 @@ export function createServer(d: ServerDeps): Hono<{ Variables: { user: User; tok
       app.use('*', async (c, next) => {
         const p = c.req.path;
         if (!GATED.some((g) => p === g || p.startsWith(g + '/'))) return next();
+        if (users.count() === 0) return next(); // setup mode — no users to gate yet
         const u = c.get('user');
         if (u && up.canAccess(u.id, d.project.id)) return next();
         return c.json({ error: 'forbidden' }, 403);
@@ -691,8 +694,9 @@ export function createServer(d: ServerDeps): Hono<{ Variables: { user: User; tok
   app.get('/config', (c) => c.json(d.config.get()));
   app.put('/config', async (c) => {
     // Editing the daemon config is admin-only (the Administration surface); reads stay open so the
-    // app can populate model pickers etc.
-    if (d.users) { const u = c.get('user'); if (!u || !d.users.isAdmin(u.id)) return c.json({ error: 'forbidden' }, 403); }
+    // app can populate model pickers etc. During setup (no users yet) it's open so onboarding can
+    // save providers/the API key before the first admin exists.
+    if (d.users && d.users.count() > 0) { const u = c.get('user'); if (!u || !d.users.isAdmin(u.id)) return c.json({ error: 'forbidden' }, 403); }
     const patch = await c.req.json();
     return c.json(d.config.update(patch));
   });
