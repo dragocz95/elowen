@@ -3,7 +3,7 @@ import { render, screen } from '@testing-library/react';
 import { Providers } from '../../app/providers';
 
 class FakeES { addEventListener() {} close() {} constructor(public url: string) {} }
-beforeEach(() => { (globalThis as any).EventSource = FakeES as any; });
+beforeEach(() => { (globalThis as unknown as { EventSource: typeof FakeES }).EventSource = FakeES; });
 
 describe('Providers', () => {
   it('renders children inside the query provider', () => {

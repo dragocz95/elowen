@@ -29,7 +29,7 @@ export const VALID_TYPES = new Set(['task', 'feature', 'bug', 'chore']);
 export interface Phase { title: string; type: string; agent?: string; details?: string }
 
 /** Sanitize a model-supplied agent name into a tmux-safe single token. */
-export function sanitizeAgentName(raw: unknown): string | undefined {
+function sanitizeAgentName(raw: unknown): string | undefined {
   if (typeof raw !== 'string') return undefined;
   const clean = raw.replace(/[^A-Za-z0-9]/g, '').slice(0, 24);
   return clean.length > 0 ? clean : undefined;

@@ -277,7 +277,6 @@ function MissionWorkspace({ missionId }: { missionId: string }) {
       {/* Phase spotlight: current phase + arrow + next phase, with mission controls */}
       <PhaseSpotlight
         missionId={d.mission.id}
-        state={d.mission.state}
         current={spotlight.current}
         next={spotlight.next}
         fullById={fullById}
@@ -331,10 +330,9 @@ function MissionWorkspace({ missionId }: { missionId: string }) {
 }
 
 function PhaseSpotlight({
-  missionId, state, current, next, fullById, signals, sessions, paused, disengaged, onSelectPhase, onPause, onResume, onDisengage,
+  missionId, current, next, fullById, signals, sessions, paused, disengaged, onSelectPhase, onPause, onResume, onDisengage,
 }: {
   missionId: string;
-  state: string;
   current: MissionTask | null;
   next: MissionTask | null;
   fullById: Map<string, Task>;
@@ -349,7 +347,6 @@ function PhaseSpotlight({
 }) {
   const { t } = useTranslation();
   const currentFull = current ? fullById.get(current.id) : null;
-  const nextFull = next ? fullById.get(next.id) : null;
   const currentSession = currentFull ? taskSessionName(currentFull) : null;
   const currentLive = currentSession ? sessions.has(currentSession) : false;
   const currentSignal = currentSession ? signals[currentSession] : undefined;

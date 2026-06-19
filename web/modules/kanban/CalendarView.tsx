@@ -96,7 +96,7 @@ export function CalendarView({ tasks, onSelect, onCreateDay, onReschedule }: { t
       {range === 'week' && (
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-7">
           {weekDays(ref).map((d) => (
-            <div key={dayKey(d)} {...dropProps(d)} className={`group flex min-h-[8rem] flex-col gap-1.5 rounded-lg border bg-surface p-2 transition-shadow ${dragDay === dayKey(d) ? 'border-accent ring-1 ring-accent/50' : sameDay(d, today) ? 'border-accent' : 'border-border'}`}>
+            <div key={dayKey(d)} {...dropProps(d)} className={`group flex min-h-[8rem] flex-col gap-1.5 rounded-lg border bg-surface p-2 transition-shadow ${dragDay === dayKey(d) ? 'border-accent' : sameDay(d, today) ? 'border-accent' : 'border-border'}`}>
               <div className="flex items-center justify-between px-0.5">
                 <span className="text-[11px] font-medium uppercase tracking-wide text-text-muted">{WD[(d.getDay() + 6) % 7]}</span>
                 <div className="flex items-center gap-1">
@@ -120,7 +120,7 @@ export function CalendarView({ tasks, onSelect, onCreateDay, onReschedule }: { t
               const inMonth = d.getMonth() === ref.getMonth();
               const list = dayTasks(d);
               return (
-                <div key={dayKey(d)} {...dropProps(d)} className={`group min-h-[6.5rem] border-b border-r p-1.5 transition-shadow ${dragDay === dayKey(d) ? 'border-accent ring-1 ring-inset ring-accent/50' : 'border-border'} ${inMonth ? 'bg-surface' : 'bg-bg'}`}>
+                <div key={dayKey(d)} {...dropProps(d)} className={`group min-h-[6.5rem] border-b border-r p-1.5 transition-shadow ${dragDay === dayKey(d) ? 'border-accent' : 'border-border'} ${inMonth ? 'bg-surface' : 'bg-bg'}`}>
                   <div className="mb-1 flex items-center justify-between">
                     {onCreateDay ? <button type="button" onClick={() => onCreateDay(d)} aria-label={t.tasks.newTask} className="text-text-muted opacity-0 transition-opacity hover:text-accent group-hover:opacity-100"><Plus size={12} /></button> : <span />}
                     <span className={`text-[11px] ${sameDay(d, today) ? 'font-bold text-accent' : inMonth ? 'text-text-muted' : 'text-text-muted/40'}`}>{d.getDate()}</span>

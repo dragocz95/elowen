@@ -1,7 +1,7 @@
 'use client';
 import { useState } from 'react';
 import dynamic from 'next/dynamic';
-import { Pencil, Play, Square, SquareSlash, Archive, TerminalSquare, Link2, Copy } from 'lucide-react';
+import { Pencil, Play, Square, SquareSlash, Archive, TerminalSquare, Link2, Copy, Maximize2 } from 'lucide-react';
 import type { Task } from '../../lib/types';
 import { useTasks, useAllDeps, useSessionSignal, useActivity, useConfig } from '../../lib/queries';
 import { useCloseTask } from '../../lib/mutations';
@@ -68,7 +68,7 @@ export function TaskDetailPane({ taskId, onEdit }: { taskId: string; onEdit?: (t
   return (
     <div className="flex flex-col gap-4">
       {/* Identity + actions — sticky so it stays pinned while the detail scrolls. */}
-      <div className="sticky top-0 z-10 -mx-4 flex flex-col gap-2 border-b border-border bg-surface/95 px-4 pb-3 pt-1 backdrop-blur">
+      <div className="sticky top-0 z-10 -mx-4 flex flex-col gap-2 border-b border-border bg-surface px-4 pb-3 pt-1">
         <div className="flex items-start gap-3">
           <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl border border-border bg-elevated">
             {iconExec ? <ModelIcon name={iconExec} size={26} /> : <Icon size={22} className="text-text-muted" aria-hidden />}
@@ -123,7 +123,7 @@ export function TaskDetailPane({ taskId, onEdit }: { taskId: string; onEdit?: (t
         </Field>
       ) : null}
 
-      {running && session ? <Field label={t.tasks.liveOutput}><LiveTail name={session} /></Field> : null}
+      {running && session ? <Field label={t.tasks.liveOutput}><LiveTail name={session} onExpand={() => setOpenTerm(true)} /></Field> : null}
 
       {isClosed && (task.result_summary || task.outcome) ? (
         <Field label={t.tasks.resultTitle}>
@@ -162,11 +162,27 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   );
 }
 
-function LiveTail({ name }: { name: string }) {
-  const { tail } = useSessionPane(name, 8);
+/** Bigger, readable live tail of the agent's pane. Click (or Enter/Space) opens the full terminal. */
+function LiveTail({ name, onExpand }: { name: string; onExpand: () => void }) {
+  const { t } = useTranslation();
+  const { tail } = useSessionPane(name, 20);
   return (
-    <pre className="tail-live max-h-48 overflow-auto whitespace-pre-wrap break-all rounded-md border border-border bg-bg p-2.5 font-mono text-[11px] leading-snug text-text-muted">
-      {tail ? parseAnsi(tail).map((s, i) => <span key={i} style={s.color ? { color: s.color } : undefined}>{s.text}</span>) : '…'}
-    </pre>
+    <div className="group relative">
+      <div
+        role="button"
+        tabIndex={0}
+        onClick={onExpand}
+        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onExpand(); } }}
+        title={t.tasks.openTerminal}
+        className="tail-live block max-h-80 w-full cursor-pointer overflow-auto rounded-md border border-border bg-bg p-3 transition-colors hover:border-accent/60 focus:border-accent focus:outline-none"
+      >
+        <pre className="whitespace-pre-wrap break-all font-mono text-xs leading-relaxed text-text-muted">
+          {tail ? parseAnsi(tail).map((s, i) => <span key={i} style={s.color ? { color: s.color } : undefined}>{s.text}</span>) : '…'}
+        </pre>
+      </div>
+      <span className="pointer-events-none absolute right-2 top-2 flex items-center gap-1 rounded-md border border-border bg-surface px-2 py-1 text-[11px] text-text-muted opacity-0 transition-opacity group-hover:opacity-100">
+        <Maximize2 size={12} aria-hidden /> {t.tasks.openTerminal}
+      </span>
+    </div>
   );
 }

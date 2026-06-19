@@ -23,7 +23,7 @@ export interface AxisPoint extends GroupedEvent {
   frac: number;
 }
 
-export interface AxisTick {
+interface AxisTick {
   label: string;
   frac: number;
 }

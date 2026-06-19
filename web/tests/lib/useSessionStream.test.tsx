@@ -11,7 +11,7 @@ class FakeES {
   close() { this.closed = true; }
   emit(type: string, data: unknown) { this.listeners[type]?.({ data: JSON.stringify(data) }); }
 }
-beforeEach(() => { (globalThis as any).EventSource = FakeES as any; });
+beforeEach(() => { (globalThis as unknown as { EventSource: typeof FakeES }).EventSource = FakeES; });
 
 describe('useSessionStream', () => {
   it('returns the latest pane from a pane event', () => {

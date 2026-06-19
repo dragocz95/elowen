@@ -7,7 +7,7 @@ import MissionsPage from '../../app/missions/page';
 import { ToastProvider } from '../../components/ui/Toast';
 import { createWrapper } from '../test-utils';
 
-let engageBody: any = null;
+let engageBody: unknown = null;
 const server = setupServer(
   http.get('http://localhost:4400/missions', () => HttpResponse.json([])),
   http.get('http://localhost:4400/tasks', () => HttpResponse.json([{ id: 'orca-epic', title: 'Ship it', status: 'open', type: 'epic', labels: [] }])),

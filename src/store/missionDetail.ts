@@ -2,7 +2,7 @@ import type { Task } from './types.js';
 import type { TaskStore } from './taskStore.js';
 import type { Mission, MissionStore } from './missionStore.js';
 
-export interface MissionProgress {
+interface MissionProgress {
   total: number; open: number; inProgress: number; blocked: number; closed: number; cancelled: number;
 }
 export interface MissionDetail {

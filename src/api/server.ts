@@ -1,6 +1,7 @@
 import { basename, join } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { hermesStatus, installHermesPlugin } from '../integrations/hermesInstall.js';
+import { detectClis } from '../integrations/cliDetection.js';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { streamSSE } from 'hono/streaming';
@@ -247,6 +248,18 @@ export function createServer(d: ServerDeps): Hono<{ Variables: { user: User; tok
     } catch (e) {
       return c.json({ error: (e as Error).message }, 400);
     }
+  });
+
+  app.get('/integrations/cli-status', c => {
+    const cfg = d.config.get();
+    const ctx = {
+      configPersisted: d.config.hasSettings(),
+      hasApiKey: cfg.autopilot.apiKeySet,
+      hasCustomSetup: cfg.customModels.length > 0 || cfg.hiddenPresets.length > 0,
+      userCount: d.users?.count() ?? 0,
+      projectCount: d.projects?.list().length ?? 0,
+    };
+    return c.json(detectClis(ctx));
   });
 
   app.get('/sessions', async c => c.json((await d.tmux.list()).filter((s) => s.startsWith('orca-'))));

@@ -10,11 +10,6 @@ export interface InsertPhasesInput { phases?: { title: string; type?: string }[]
 export interface InsertPhasesResult { epic: Task; phases: Task[] }
 export interface EngageInput { epicId: string; autonomy: string; maxSessions: number; clearedGuardrails: string[] }
 export type DerivedSignal = { type: 'working' } | { type: 'complete' } | { type: 'needs_input'; question: string };
-// Wire contract — must mirror the backend canonical definition in src/api/sse.ts
-export type OrcaEvent =
-  | { type: 'signal'; session: string; signal: DerivedSignal }
-  | { type: 'mission'; missionId: string; state: string }
-  | { type: 'task'; taskId: string; status: string };
 export interface OrcaConfig {
   allowedExecs: string[];
   customModels: { label: string; exec: string }[];
@@ -65,4 +60,24 @@ export interface HermesInstallResult {
   enabled: boolean;
   backedUp: boolean;
   status: HermesStatus;
+}
+
+export interface CliStatus {
+  name: string;
+  installed: boolean;
+  functional: boolean;
+  version: string | null;
+  error: string | null;
+}
+
+export interface FreshInstallInfo {
+  noConfigPersisted: boolean;
+  noApiKey: boolean;
+  noCustomSetup: boolean;
+}
+
+export interface CliDetectionResult {
+  tools: CliStatus[];
+  summary: { allInstalled: boolean; allFunctional: boolean };
+  freshInstall: FreshInstallInfo;
 }

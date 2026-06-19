@@ -5,7 +5,7 @@ import { join } from 'node:path';
  *  write its per-instance config, and enable it in Hermes's config.yaml — all without
  *  rewriting that YAML (we edit it as text so comments/formatting survive). */
 
-export const PLUGIN_NAME = 'orca';
+const PLUGIN_NAME = 'orca';
 
 export interface HermesStatus {
   home: string;

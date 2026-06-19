@@ -1,5 +1,24 @@
-import { en } from '../lib/i18n/dictionaries/en';
+'use client';
+import { useEffect } from 'react';
+import { useRouter } from 'next/navigation';
+import { useCliStatus } from '../lib/queries';
 
 export default function Home() {
-  return <main className="flex items-center justify-center h-screen text-text-muted">{en.common.appName}</main>;
+  const router = useRouter();
+  const cliStatus = useCliStatus();
+
+  useEffect(() => {
+    if (cliStatus.isLoading) return;
+    if (cliStatus.data?.freshInstall?.noConfigPersisted) {
+      router.replace('/onboarding');
+    } else {
+      router.replace('/dash');
+    }
+  }, [cliStatus.data, cliStatus.isLoading, router]);
+
+  return (
+    <main className="flex h-screen items-center justify-center text-text-muted">
+      <span className="animate-pulse text-xs">Loading…</span>
+    </main>
+  );
 }

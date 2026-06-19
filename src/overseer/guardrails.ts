@@ -1,4 +1,4 @@
-export const GUARDRAILS = ['schema', 'migration', 'auth', 'payments', 'destructive'] as const;
+const GUARDRAILS = ['schema', 'migration', 'auth', 'payments', 'destructive'] as const;
 
 const PATTERNS: Record<string, RegExp> = {
   schema: /\bschema\b/i,

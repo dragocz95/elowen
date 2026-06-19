@@ -66,7 +66,7 @@ function AxisMarker({ point }: { point: AxisPoint }) {
     >
       <div
         data-testid="axis-dot"
-        className={`animate-pop-in rounded-full ring-2 ring-surface transition-transform group-hover:scale-125 ${DOT_TONE[tone]}`}
+        className={`animate-pop-in rounded-full border-2 border-surface transition-transform group-hover:scale-125 ${DOT_TONE[tone]}`}
         style={{ width: size, height: size, transitionDuration: 'var(--motion-fast)' }}
         aria-label={tip}
       />

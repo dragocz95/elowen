@@ -1,4 +1,4 @@
-import type { Task, Session, Mission, CreateTaskInput, UpdateTaskInput, PlanInput, PlanResult, InsertPhasesInput, InsertPhasesResult, EngageInput, OrcaConfig, ConfigPatch, MissionDetail, User, AuthResult, ActivityEvent, Project, ProjectGit, HermesStatus, HermesInstallInput, HermesInstallResult } from './types';
+import type { Task, Mission, CreateTaskInput, UpdateTaskInput, PlanInput, PlanResult, InsertPhasesInput, InsertPhasesResult, EngageInput, OrcaConfig, ConfigPatch, MissionDetail, User, AuthResult, ActivityEvent, Project, ProjectGit, HermesStatus, HermesInstallInput, HermesInstallResult, CliDetectionResult } from './types';
 import { getToken, clearToken } from './token';
 
 export const BASE = process.env.NEXT_PUBLIC_ORCA_URL ?? 'http://localhost:4400';
@@ -64,5 +64,5 @@ export const orcaClient = {
   projectGit: (id: number) => req<ProjectGit>(`/projects/${id}/git`),
   hermesStatus: (home?: string) => req<HermesStatus>(`/integrations/hermes/status${home ? `?home=${encodeURIComponent(home)}` : ''}`),
   hermesInstall: (input: HermesInstallInput) => req<HermesInstallResult>('/integrations/hermes/install', json(input)),
+  cliStatus: () => req<CliDetectionResult>('/integrations/cli-status'),
 };
-export type { Session };

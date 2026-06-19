@@ -62,7 +62,7 @@ export function EngageModal({ onClose }: { onClose: () => void }) {
                       key={e.id}
                       type="button"
                       onClick={() => setEpicId(e.id)}
-                      className={`flex items-center gap-2.5 rounded-md px-2.5 py-2 text-left transition-colors ${active ? 'bg-accent/15 ring-1 ring-accent' : 'hover:bg-elevated'}`}
+                      className={`flex items-center gap-2.5 rounded-md px-2.5 py-2 text-left transition-colors ${active ? 'bg-accent/15 border border-accent' : 'hover:bg-elevated'}`}
                     >
                       <Layers size={15} className={active ? 'text-accent' : 'text-text-muted'} aria-hidden />
                       <span className="min-w-0 flex-1 truncate text-sm text-text">{e.title}</span>

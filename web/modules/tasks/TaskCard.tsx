@@ -58,7 +58,7 @@ export function TaskCard({ task, onEdit, onSelect, active = false, blockers, sel
     >
       {/* left column: big model-icon bubble (running → accent ring), divided from the content */}
       <div className="flex shrink-0 flex-col items-center justify-center self-stretch border-r border-border pr-3.5">
-        <span className={`flex h-24 w-24 items-center justify-center rounded-2xl border-2 bg-elevated transition-shadow ${running ? 'border-accent ring-2 ring-accent/30' : 'border-border'}`}>
+        <span className={`flex h-24 w-24 items-center justify-center rounded-2xl border-2 bg-elevated transition-shadow ${running ? 'border-accent' : 'border-border'}`}>
           {iconExec ? <ModelIcon name={iconExec} size={58} /> : <Icon size={52} className="text-text-muted" aria-hidden />}
         </span>
       </div>

@@ -9,8 +9,8 @@ vi.mock('@xterm/xterm', () => ({
 vi.mock('@xterm/addon-fit', () => ({ FitAddon: class { fit = fitSpy; } }));
 vi.mock('@xterm/xterm/css/xterm.css', () => ({}));
 
-class FakeES { static last: FakeES; listeners: Record<string, (e: { data: string }) => void> = {}; close() {} constructor(public url: string) { FakeES.last = this; } addEventListener(t: string, fn: any) { this.listeners[t] = fn; } emit(t: string, d: unknown) { this.listeners[t]?.({ data: JSON.stringify(d) }); } }
-beforeEach(() => { (globalThis as any).EventSource = FakeES as any; writeSpy.mockClear(); clearSpy.mockClear(); fitSpy.mockClear(); });
+class FakeES { static last: FakeES; listeners: Record<string, (e: { data: string }) => void> = {}; close() {} constructor(public url: string) { FakeES.last = this; } addEventListener(t: string, fn: (e: { data: string }) => void) { this.listeners[t] = fn; } emit(t: string, d: unknown) { this.listeners[t]?.({ data: JSON.stringify(d) }); } }
+beforeEach(() => { (globalThis as unknown as { EventSource: typeof FakeES }).EventSource = FakeES; writeSpy.mockClear(); clearSpy.mockClear(); fitSpy.mockClear(); });
 
 import { Terminal } from '../../../components/terminal/Terminal';
 

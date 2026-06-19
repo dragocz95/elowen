@@ -7,7 +7,7 @@ import { Shell } from '../../components/shell/Shell';
 import { useToast } from '../../components/ui/Toast';
 
 class FakeES { onmessage = null; addEventListener() {} close() {} constructor(public url: string) {} }
-(globalThis as any).EventSource = FakeES as any;
+(globalThis as unknown as { EventSource: typeof FakeES }).EventSource = FakeES;
 const server = setupServer(http.get('http://localhost:4400/health', () => HttpResponse.json({ ok: true })));
 beforeAll(() => server.listen()); afterAll(() => server.close());
 

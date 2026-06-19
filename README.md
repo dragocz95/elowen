@@ -199,4 +199,14 @@ npm run test:watch
 npm run serve
 ```
 
+### Dead code detection
+
+[Knip](https://knip.dev) finds unused files, exports, types, and dependencies across both the daemon and web UI:
+
+```bash
+npm run deadcode
+```
+
+Configuration in [`knip.json`](knip.json) covers both `src/` (daemon) and `web/` (Next.js). Run before opening a PR to keep the codebase clean.
+
 Test architecture uses fake implementations (`FakeTmuxDriver`, `FakeClock`) to avoid real tmux or LLM dependencies. See [DEVELOPMENT.md](docs/DEVELOPMENT.md) for full details.

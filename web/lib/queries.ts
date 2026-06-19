@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { orcaClient } from './orcaClient';
-import type { DerivedSignal, HermesStatus } from './types';
+import type { DerivedSignal, HermesStatus, CliDetectionResult } from './types';
 
 export const QUERY_KEYS = {
   tasks: ['tasks'] as const,
@@ -50,7 +50,6 @@ export const useMissionDetail = (id: string | null) =>
   });
 
 export const useUsers = () => useQuery({ queryKey: ['users'], queryFn: orcaClient.listUsers });
-export const useMe = () => useQuery({ queryKey: ['me'], queryFn: orcaClient.me });
 
 export const useActivity = (type?: string) =>
   useQuery({ queryKey: ['activity', type ?? 'all'], queryFn: () => orcaClient.activity(type ? { type } : undefined), refetchInterval: 5000 });
@@ -65,5 +64,13 @@ export const useHermesStatus = (home?: string) =>
   useQuery<HermesStatus>({
     queryKey: home ? ['hermes-status', home] : QUERY_KEYS.hermesStatus,
     queryFn: () => orcaClient.hermesStatus(home),
+    retry: false,
+  });
+
+export const useCliStatus = () =>
+  useQuery<CliDetectionResult>({
+    queryKey: ['cli-status'],
+    queryFn: orcaClient.cliStatus,
+    refetchInterval: 30000,
     retry: false,
   });

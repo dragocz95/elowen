@@ -1,7 +1,7 @@
 import type { Db } from './db.js';
 import { defaultPromptTemplate } from '../overseer/planner.js';
 
-export interface ProviderConfig { bin: string; args: string }
+interface ProviderConfig { bin: string; args: string }
 export type Providers = Record<string, ProviderConfig>;
 
 export interface OrcaConfig {
@@ -22,7 +22,7 @@ const DEFAULT_PROVIDERS: Providers = {
 
 const KNOWN_EXECS = ['sonnet', 'deepseek/deepseek-v4-flash', 'kimi-for-coding/k2p7', 'ollama/minimax-m2.7:cloud', 'codex:gpt-5.4'];
 
-export const DEFAULT_CONFIG: OrcaConfig = {
+const DEFAULT_CONFIG: OrcaConfig = {
   allowedExecs: [...KNOWN_EXECS],
   customModels: [],
   hiddenPresets: [],
@@ -101,6 +101,11 @@ export class ConfigStore {
   providers(): Providers { return this.read().providers; }
 
   apiKey(): string | null { return this.read().apiKey; }
+
+  /** Whether a settings row has been persisted (i.e. config has been saved at least once). */
+  hasSettings(): boolean {
+    return !!this.db.prepare('SELECT 1 FROM settings WHERE id = 1').get();
+  }
 
   update(patch: ConfigPatch): OrcaConfig {
     const cur = this.read();
