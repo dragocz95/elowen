@@ -190,6 +190,8 @@ export const cs = {
     output: 'výstup',
     cache: 'cache',
     cost: 'cena',
+    inputTokens: 'Vstupní tokeny',
+    outputTokens: 'Výstupní tokeny',
   },
   missions: {
     newMission: 'Nová mise',

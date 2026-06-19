@@ -190,6 +190,8 @@ export const en = {
     output: 'output',
     cache: 'cache',
     cost: 'cost',
+    inputTokens: 'Input tokens',
+    outputTokens: 'Output tokens',
   },
   missions: {
     newMission: 'New mission',
