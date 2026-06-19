@@ -500,6 +500,7 @@ export const en = {
     userDeleted: 'User deleted',
     userCreated: 'User created',
     deleteLabel: 'Delete {username}',
+    projects: 'Projects',
   },
   changes: {
     dirtyOne: '1 dirty',

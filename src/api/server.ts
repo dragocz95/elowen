@@ -27,6 +27,7 @@ import type { UserStore, User } from '../store/userStore.js';
 import { authMiddleware } from './auth.js';
 import type { EventStore } from '../store/eventStore.js';
 import type { ProjectStore } from '../store/projectStore.js';
+import type { UserProjectStore } from '../store/userProjectStore.js';
 import type { GitReader } from '../git/gitReader.js';
 
 
@@ -40,6 +41,7 @@ export interface ServerDeps {
   users?: UserStore;
   events?: EventStore;
   projects?: ProjectStore;
+  userProjects?: UserProjectStore;
   git?: GitReader;
   /** Factory for the planning LLM client; defaults to RelayClient. Overridable in tests. */
   makeInference?: (cfg: RelayConfig) => InferenceClient;
@@ -73,9 +75,46 @@ export function createServer(d: ServerDeps): Hono<{ Variables: { user: User; tok
       users.delete(Number(c.req.param('id')));
       return c.json({ ok: true });
     });
+
+    // User ↔ project assignments. Only the bootstrap admin may view/manage them.
+    if (d.userProjects) {
+      const up = d.userProjects;
+      const adminOnly = (c: { get: (k: 'user') => User }) => up.isAdmin(c.get('user').id);
+      app.get('/users/:id/projects', (c) => {
+        if (!adminOnly(c)) return c.json({ error: 'forbidden' }, 403);
+        return c.json(up.forUser(Number(c.req.param('id'))));
+      });
+      app.post('/users/:id/projects', async (c) => {
+        if (!adminOnly(c)) return c.json({ error: 'forbidden' }, 403);
+        const { projectId } = await c.req.json() as { projectId?: number };
+        if (projectId == null) return c.json({ error: 'projectId required' }, 400);
+        up.assign(Number(c.req.param('id')), Number(projectId));
+        return c.json({ ok: true });
+      });
+      app.delete('/users/:id/projects/:pid', (c) => {
+        if (!adminOnly(c)) return c.json({ error: 'forbidden' }, 403);
+        up.unassign(Number(c.req.param('id')), Number(c.req.param('pid')));
+        return c.json({ ok: true });
+      });
+    }
   }
 
-  app.get('/projects', (c) => c.json(d.projects ? d.projects.list() : []));
+  // A non-admin user may only see/operate projects assigned to them; the admin (and open mode)
+  // sees everything. Returns true when access is permitted.
+  const canAccessProject = (c: { get: (k: 'user') => User | undefined }, id: number): boolean => {
+    if (!d.userProjects || !d.users) return true; // open mode / single-user → no gating
+    const u = c.get('user');
+    return !!u && d.userProjects.canAccess(u.id, id);
+  };
+
+  app.get('/projects', (c) => {
+    const all = d.projects ? d.projects.list() : [];
+    if (!d.userProjects || !d.users) return c.json(all);
+    const u = c.get('user');
+    if (u && d.userProjects.isAdmin(u.id)) return c.json(all);
+    const allowed = u ? new Set(d.userProjects.forUser(u.id)) : new Set<number>();
+    return c.json(all.filter((p) => allowed.has(p.id)));
+  });
   app.post('/projects', async (c) => {
     if (!d.projects) return c.json({ error: 'projects unavailable' }, 400);
     const { slug, path, notes } = await c.req.json();
@@ -86,20 +125,23 @@ export function createServer(d: ServerDeps): Hono<{ Variables: { user: User; tok
     if (!d.projects || !d.git) return c.json({ error: 'projects unavailable' }, 400);
     const p = d.projects.get(Number(c.req.param('id')));
     if (!p) return c.json({ error: 'project not found' }, 404);
+    if (!canAccessProject(c, p.id)) return c.json({ error: 'forbidden' }, 403);
     return c.json(await d.git.read(p.path));
   });
 
   // --- Project file editor: tree, read, write, per-file diff. Paths are validated to stay inside
-  // the project root (see projectFiles.safe). ---
+  // the project root (see projectFiles.safe); access is gated to the project's assigned users. ---
   const projectOf = (c: { req: { param: (k: string) => string } }) => d.projects?.get(Number(c.req.param('id'))) ?? null;
   app.get('/projects/:id/files', (c) => {
     if (!d.projects) return c.json({ error: 'projects unavailable' }, 400);
     const p = projectOf(c); if (!p) return c.json({ error: 'project not found' }, 404);
+    if (!canAccessProject(c, p.id)) return c.json({ error: 'forbidden' }, 403);
     return c.json(listProjectFiles(p.path));
   });
   app.get('/projects/:id/file', (c) => {
     if (!d.projects) return c.json({ error: 'projects unavailable' }, 400);
     const p = projectOf(c); if (!p) return c.json({ error: 'project not found' }, 404);
+    if (!canAccessProject(c, p.id)) return c.json({ error: 'forbidden' }, 403);
     const path = c.req.query('path'); if (!path) return c.json({ error: 'path required' }, 400);
     try { return c.json(readProjectFile(p.path, path)); }
     catch { return c.json({ error: 'invalid path' }, 400); }
@@ -107,6 +149,7 @@ export function createServer(d: ServerDeps): Hono<{ Variables: { user: User; tok
   app.put('/projects/:id/file', async (c) => {
     if (!d.projects) return c.json({ error: 'projects unavailable' }, 400);
     const p = projectOf(c); if (!p) return c.json({ error: 'project not found' }, 404);
+    if (!canAccessProject(c, p.id)) return c.json({ error: 'forbidden' }, 403);
     const b = await c.req.json() as { path?: string; content?: string };
     if (!b.path || typeof b.content !== 'string') return c.json({ error: 'path and content required' }, 400);
     try { writeProjectFile(p.path, b.path, b.content); return c.json({ ok: true }); }
@@ -115,6 +158,7 @@ export function createServer(d: ServerDeps): Hono<{ Variables: { user: User; tok
   app.get('/projects/:id/diff', async (c) => {
     if (!d.projects) return c.json({ error: 'projects unavailable' }, 400);
     const p = projectOf(c); if (!p) return c.json({ error: 'project not found' }, 404);
+    if (!canAccessProject(c, p.id)) return c.json({ error: 'forbidden' }, 403);
     const path = c.req.query('path'); if (!path) return c.json({ error: 'path required' }, 400);
     try { return c.json({ diff: await projectFileDiff(p.path, path) }); }
     catch { return c.json({ error: 'invalid path' }, 400); }

@@ -500,6 +500,7 @@ export const cs = {
     userDeleted: 'Uživatel smazán',
     userCreated: 'Uživatel vytvořen',
     deleteLabel: 'Smazat {username}',
+    projects: 'Projekty',
   },
   changes: {
     dirtyOne: '1 změněno',

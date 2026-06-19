@@ -1,8 +1,9 @@
 'use client';
 import { useState } from 'react';
 import { Users, UserPlus, Trash2, LogOut, User } from 'lucide-react';
-import { useUsers } from '../../lib/queries';
-import { useCreateUser, useDeleteUser, useLogout } from '../../lib/mutations';
+import { useUsers, useMe, useProjects, useUserProjects } from '../../lib/queries';
+import { useCreateUser, useDeleteUser, useLogout, useAssignProject } from '../../lib/mutations';
+import type { Project } from '../../lib/types';
 import { clearToken } from '../../lib/token';
 import { useToast } from '../../components/ui/Toast';
 import { Button } from '../../components/ui/Button';
@@ -21,8 +22,38 @@ const fmtDate = (iso: string, locale?: string) => {
 
 const initials = (username: string) => username.trim().slice(0, 2).toUpperCase();
 
+/** Admin-only: toggle chips assigning a user to projects (the access boundary for non-admins). */
+function ProjectChips({ userId, projects }: { userId: number; projects: Project[] }) {
+  const { t } = useTranslation();
+  const assigned = useUserProjects(userId);
+  const assign = useAssignProject();
+  const set = new Set(assigned.data ?? []);
+  if (projects.length === 0) return null;
+  return (
+    <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+      <span className="text-[11px] uppercase tracking-wide text-text-muted">{t.users.projects}:</span>
+      {projects.map((p) => {
+        const on = set.has(p.id);
+        return (
+          <button
+            key={p.id}
+            type="button"
+            onClick={() => assign.mutate({ userId, projectId: p.id, assigned: on })}
+            disabled={assign.isPending}
+            className={`rounded-full border px-2 py-0.5 text-[11px] transition-colors ${on ? 'border-accent bg-accent/15 text-accent' : 'border-border text-text-muted hover:bg-elevated'}`}
+          >
+            {p.slug}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 export function UsersView() {
   const users = useUsers();
+  const me = useMe();
+  const projects = useProjects();
   const deleteUser = useDeleteUser();
   const createUser = useCreateUser();
   const logout = useLogout();
@@ -64,6 +95,9 @@ export function UsersView() {
   }
 
   const data = users.data ?? [];
+  // The bootstrap admin (lowest user id) manages project assignments.
+  const adminId = data.length ? Math.min(...data.map((u) => u.id)) : null;
+  const isAdmin = me.data?.user.id === adminId;
 
   return (
     <>
@@ -90,6 +124,7 @@ export function UsersView() {
                 <div className="flex min-w-0 flex-1 flex-col gap-0.5">
                   <span className="truncate font-semibold text-text">{user.username}</span>
                   <span className="truncate font-mono text-xs text-text-muted">{fmtDate(user.created_at, locale)}</span>
+                  {isAdmin ? <ProjectChips userId={user.id} projects={projects.data ?? []} /> : null}
                 </div>
 
                 <div className="shrink-0 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">

@@ -28,6 +28,10 @@ CREATE TABLE IF NOT EXISTS auth_tokens (
   token TEXT PRIMARY KEY, user_id INTEGER NOT NULL,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+CREATE TABLE IF NOT EXISTS user_projects (
+  user_id INTEGER NOT NULL, project_id INTEGER NOT NULL,
+  PRIMARY KEY (user_id, project_id)
+);
 CREATE TABLE IF NOT EXISTS events (
   id INTEGER PRIMARY KEY,
   ts TEXT NOT NULL DEFAULT (datetime('now')),
