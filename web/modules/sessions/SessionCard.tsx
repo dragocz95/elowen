@@ -1,5 +1,4 @@
 'use client';
-import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { TerminalSquare, SquareSlash, Power, SquareTerminal } from 'lucide-react';
 import { useKillSession, useSendInput } from '../../lib/mutations';
@@ -12,18 +11,16 @@ import { OutcomeBadge } from '../../components/ui/OutcomeBadge';
 import { IconButton } from '../../components/ui/IconButton';
 import { ActionMenu } from '../../components/ui/ActionMenu';
 import { ChangeStrip } from '../../components/ui/ChangeStrip';
+import { LiveTail } from '../../components/terminal/LiveTail';
 import { SendInput } from '../../components/control/SendInput';
 import { useToast } from '../../components/ui/Toast';
 import { useTranslation } from '../../lib/i18n';
-import { useSessionPane } from './useSessionPane';
-import { parseAnsi } from './ansi';
 
 export function SessionCard({ name, onOpenTerminal, compact = false }: { name: string; onOpenTerminal: () => void; compact?: boolean }) {
   const kill = useKillSession();
   const send = useSendInput();
   const { toast } = useToast();
   const { t } = useTranslation();
-  const { tail, isLoading } = useSessionPane(name);
   const tasks = useTasks();
   const signal = useSessionSignal(name);
 
@@ -34,18 +31,6 @@ export function SessionCard({ name, onOpenTerminal, compact = false }: { name: s
   const needsInput = signal?.type === 'needs_input';
   const dot = needsInput ? 'var(--color-warning)' : 'var(--color-approve)';
   const finished = !!task && (task.status === 'closed' || task.status === 'cancelled');
-
-  // Flash the tail's bottom edge whenever fresh output streams in.
-  const [flash, setFlash] = useState(false);
-  const prevTail = useRef(tail);
-  useEffect(() => {
-    if (prevTail.current === tail) return;
-    prevTail.current = tail;
-    if (!tail) return;
-    setFlash(true);
-    const id = setTimeout(() => setFlash(false), 600);
-    return () => clearTimeout(id);
-  }, [tail]);
 
   return (
     <div className={`card-interactive flex flex-col gap-3 rounded-lg border bg-surface ${compact ? 'p-3' : 'p-4'} ${needsInput ? 'border-warning/60' : 'border-border'}`}>
@@ -66,11 +51,7 @@ export function SessionCard({ name, onOpenTerminal, compact = false }: { name: s
           <p className="text-[11px] leading-snug text-text-muted">{task.result_summary?.trim() || t.tasks.noSummary}</p>
         </div>
       ) : (
-        <pre data-flash={flash ? 'true' : undefined} className={`tail-live ${compact ? 'h-16' : 'h-32'} overflow-hidden whitespace-pre-wrap break-all rounded-md border border-border bg-bg p-2 font-mono text-[11px] leading-snug text-text-muted`}>
-          {isLoading ? t.sessions.loading : tail
-            ? <>{parseAnsi(tail).map((s, i) => <span key={i} style={s.color ? { color: s.color } : undefined}>{s.text}</span>)}<span className="ml-px inline-block h-3 w-1.5 -translate-y-px bg-text-muted align-middle" style={{ animation: 'skel-pulse 1.2s ease-in-out infinite' }} aria-hidden /></>
-            : t.sessions.noOutput}
-        </pre>
+        <LiveTail name={name} lines={compact ? 14 : 22} heightClass={compact ? 'h-32' : 'h-52'} />
       )}
       {!finished && <ChangeStrip />}
       {needsInput && signal?.type === 'needs_input' && (

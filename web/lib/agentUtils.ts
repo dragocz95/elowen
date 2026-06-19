@@ -15,6 +15,11 @@ export function taskSessionName(task: Pick<Task, 'labels'>): string | null {
   return agent ? `orca-${agent}` : null;
 }
 
+/** The friendly agent name from a session id: `orca-Iris` → `Iris`. Falls back to the raw id. */
+export function agentDisplayName(session: string): string {
+  return session.replace(/^orca-/, '') || session;
+}
+
 /** Normalize a SQLite ("2026-06-18 10:38:49", UTC) or ISO timestamp to epoch ms. */
 export function parseTs(iso?: string | null): number | null {
   if (!iso) return null;

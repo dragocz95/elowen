@@ -1,7 +1,6 @@
 'use client';
 import { useState } from 'react';
-import dynamic from 'next/dynamic';
-import { Pencil, Play, Square, SquareSlash, Archive, TerminalSquare, Link2, Copy, Maximize2 } from 'lucide-react';
+import { Pencil, Play, Square, SquareSlash, Archive, TerminalSquare, Link2, Copy } from 'lucide-react';
 import type { Task } from '../../lib/types';
 import { useTasks, useAllDeps, useSessionSignal, useActivity, useConfig } from '../../lib/queries';
 import { useCloseTask } from '../../lib/mutations';
@@ -9,21 +8,18 @@ import { useTaskControls } from '../../lib/useTaskControls';
 import { taskExec } from '../../lib/taskExec';
 import { taskSessionName, taskAgentName } from '../../lib/agentUtils';
 import { formatTaskTime } from '../../lib/formatTime';
-import { useSessionPane } from '../sessions/useSessionPane';
-import { parseAnsi } from '../sessions/ansi';
 import { Badge } from '../../components/ui/Badge';
 import { ModelIcon } from '../../components/ui/ModelIcon';
 import { IconButton } from '../../components/ui/IconButton';
 import { AgentStatusDot } from '../../components/ui/AgentStatusDot';
 import { OutcomeBadge } from '../../components/ui/OutcomeBadge';
-import { Modal } from '../../components/ui/Modal';
+import { LiveTail } from '../../components/terminal/LiveTail';
+import { TerminalModal } from '../../components/terminal/TerminalModal';
 import { useToast } from '../../components/ui/Toast';
 import { EmptyState } from '../../components/ui/states';
 import { statusTone } from '../dashboard/statusTone';
 import { taskTypeMeta } from './taskMeta';
 import { useTranslation } from '../../lib/i18n';
-
-const TerminalPanel = dynamic(() => import('../../components/terminal/TerminalPanel').then((m) => m.TerminalPanel), { ssr: false });
 
 /** Persistent task detail: identity, actions, description, dependencies, live tail / result,
  *  and recent activity. Resolves the full task by id so it works from tasks and missions alike. */
@@ -123,7 +119,7 @@ export function TaskDetailPane({ taskId, onEdit }: { taskId: string; onEdit?: (t
         </Field>
       ) : null}
 
-      {running && session ? <Field label={t.tasks.liveOutput}><LiveTail name={session} onExpand={() => setOpenTerm(true)} /></Field> : null}
+      {running && session ? <Field label={t.tasks.liveOutput}><LiveTail name={session} lines={28} heightClass="max-h-96" onExpand={() => setOpenTerm(true)} /></Field> : null}
 
       {isClosed && (task.result_summary || task.outcome) ? (
         <Field label={t.tasks.resultTitle}>
@@ -144,11 +140,7 @@ export function TaskDetailPane({ taskId, onEdit }: { taskId: string; onEdit?: (t
         </Field>
       ) : null}
 
-      {openTerm && session && (
-        <Modal title={t.sessions.terminalTitle.replace('{name}', session)} onClose={() => setOpenTerm(false)}>
-          <TerminalPanel name={session} onKilled={() => setOpenTerm(false)} />
-        </Modal>
-      )}
+      {openTerm && session && <TerminalModal session={session} onClose={() => setOpenTerm(false)} />}
     </div>
   );
 }
@@ -158,31 +150,6 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
     <div className="flex flex-col gap-1.5">
       <span className="text-[11px] font-semibold uppercase tracking-wide text-text-muted">{label}</span>
       {children}
-    </div>
-  );
-}
-
-/** Bigger, readable live tail of the agent's pane. Click (or Enter/Space) opens the full terminal. */
-function LiveTail({ name, onExpand }: { name: string; onExpand: () => void }) {
-  const { t } = useTranslation();
-  const { tail } = useSessionPane(name, 20);
-  return (
-    <div className="group relative">
-      <div
-        role="button"
-        tabIndex={0}
-        onClick={onExpand}
-        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onExpand(); } }}
-        title={t.tasks.openTerminal}
-        className="tail-live block max-h-80 w-full cursor-pointer overflow-auto rounded-md border border-border bg-bg p-3 transition-colors hover:border-accent/60 focus:border-accent focus:outline-none"
-      >
-        <pre className="whitespace-pre-wrap break-all font-mono text-xs leading-relaxed text-text-muted">
-          {tail ? parseAnsi(tail).map((s, i) => <span key={i} style={s.color ? { color: s.color } : undefined}>{s.text}</span>) : '…'}
-        </pre>
-      </div>
-      <span className="pointer-events-none absolute right-2 top-2 flex items-center gap-1 rounded-md border border-border bg-surface px-2 py-1 text-[11px] text-text-muted opacity-0 transition-opacity group-hover:opacity-100">
-        <Maximize2 size={12} aria-hidden /> {t.tasks.openTerminal}
-      </span>
     </div>
   );
 }

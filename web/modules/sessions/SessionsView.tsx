@@ -1,6 +1,5 @@
 'use client';
 import { useState } from 'react';
-import dynamic from 'next/dynamic';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { TerminalSquare, ArrowRight } from 'lucide-react';
 import { useSessions, useSessionSignals } from '../../lib/queries';
@@ -9,16 +8,10 @@ import { usePersistentState } from '../../lib/usePersistentState';
 import { ModuleHeader } from '../../components/ui/ModuleHeader';
 import { Segmented } from '../../components/ui/Segmented';
 import { Button } from '../../components/ui/Button';
-import { Modal } from '../../components/ui/Modal';
+import { TerminalModal } from '../../components/terminal/TerminalModal';
 import { LoadingState, ErrorState, EmptyState } from '../../components/ui/states';
 import { useTranslation } from '../../lib/i18n';
 import { SessionCard } from './SessionCard';
-
-// xterm references browser-only `self`; skip SSR to avoid prerender errors
-const TerminalPanel = dynamic(
-  () => import('../../components/terminal/TerminalPanel').then((m) => m.TerminalPanel),
-  { ssr: false },
-);
 
 export function SessionsView() {
   const sessions = useSessions();
@@ -68,11 +61,7 @@ export function SessionsView() {
           ? <EmptyState title={t.sessions.filterNeedsInput} description={t.sessions.noNeedsInput} icon={TerminalSquare} />
           : <EmptyState title={t.sessions.empty} description={t.sessions.emptyDescription} icon={TerminalSquare} action={<Button variant="accent" icon={ArrowRight} onClick={() => router.push('/tasks')}>{t.sessions.emptyAction}</Button>} />}
 
-      {openTerm && (
-        <Modal title={t.sessions.terminalTitle.replace('{name}', openTerm)} onClose={() => setOpenTerm(null)}>
-          <TerminalPanel name={openTerm} onKilled={() => setOpenTerm(null)} />
-        </Modal>
-      )}
+      {openTerm && <TerminalModal session={openTerm} onClose={() => setOpenTerm(null)} />}
     </>
   );
 }

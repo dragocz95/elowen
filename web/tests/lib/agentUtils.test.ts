@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { taskAgentName, taskSessionName, taskElapsed, taskBlockers, tailSnippet, liveState, needsInputSessions, lastClosedTask, taskForSession } from '../../lib/agentUtils';
+import { taskAgentName, taskSessionName, agentDisplayName, taskElapsed, taskBlockers, tailSnippet, liveState, needsInputSessions, lastClosedTask, taskForSession } from '../../lib/agentUtils';
 import type { Task } from '../../lib/types';
 
 const task = (over: Partial<Task> = {}): Task => ({ id: 't1', title: 'T', status: 'open', ...over });
@@ -20,6 +20,16 @@ describe('taskSessionName', () => {
   });
   it('returns null without an agent label', () => {
     expect(taskSessionName(task())).toBeNull();
+  });
+});
+
+describe('agentDisplayName', () => {
+  it('strips the orca- prefix to the friendly agent name', () => {
+    expect(agentDisplayName('orca-Iris')).toBe('Iris');
+    expect(agentDisplayName('orca-Nova')).toBe('Nova');
+  });
+  it('falls back to the raw id when there is no prefix', () => {
+    expect(agentDisplayName('weird')).toBe('weird');
   });
 });
 

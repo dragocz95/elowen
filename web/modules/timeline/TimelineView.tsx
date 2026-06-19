@@ -187,7 +187,7 @@ function FeedGroup({ target, title, events, exec, href, summary, open, onToggle 
 /** Live variant for a running session: header shows what the agent is doing *right now*
  *  (last line of its tmux pane, polled every 2s); expanded shows the live terminal tail. */
 function LiveFeedGroup({ target, title, exec, href, ts, open, onToggle }: { target: string; title?: string; exec?: string; href?: string; ts: number; open: boolean; onToggle: () => void }) {
-  const { tail } = useSessionPane(target, 8);
+  const { tail } = useSessionPane(target, 24);
   const lines = parseAnsi(tail).map((s) => s.text).join('').split('\n').map((l) => l.trimEnd()).filter((l) => l.trim());
   const current = lines[lines.length - 1] ?? '…';
   return (
@@ -209,7 +209,7 @@ function LiveFeedGroup({ target, title, exec, href, ts, open, onToggle }: { targ
         <span className="absolute bottom-2.5 right-3 font-mono text-text-muted" style={{ fontSize: 'var(--text-caption)' }}>{clock(ts)}</span>
       </button>
       {open && (
-        <pre className="tail-live max-h-48 overflow-auto whitespace-pre-wrap break-all border-t border-border bg-bg p-2.5 font-mono text-[11px] leading-snug text-text-muted">
+        <pre className="tail-live max-h-80 overflow-auto whitespace-pre-wrap break-all border-t border-border bg-bg p-2.5 font-mono text-xs leading-relaxed text-text-muted">
           {tail ? parseAnsi(tail).map((s, i) => <span key={i} style={s.color ? { color: s.color } : undefined}>{s.text}</span>) : '…'}
         </pre>
       )}
