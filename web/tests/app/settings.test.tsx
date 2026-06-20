@@ -103,9 +103,9 @@ describe('SettingsPage', () => {
     await waitFor(() => expect(screen.getByLabelText('Claude Sonnet')).toBeChecked());
 
     fireEvent.click(screen.getByRole('button', { name: 'Autopilot' }));
-    fireEvent.click(screen.getByText('CLI agents')); // mode toggle
-    expect(screen.getByText('Pilot backend')).toBeTruthy();
-    expect(screen.getByText('Overseer backend')).toBeTruthy();
+    fireEvent.click(screen.getByText('CLI Tools')); // mode toggle
+    expect(screen.getByText('Planner (Pilot)')).toBeTruthy();
+    expect(screen.getByText('Overseer')).toBeTruthy();
 
     fireEvent.click(screen.getByRole('button', { name: 'Save autopilot' }));
     await waitFor(() => {
