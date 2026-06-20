@@ -63,3 +63,26 @@ describe('ConfigStore', () => {
     expect(cfg.get().customModels).toEqual([{ label: 'A', exec: 'a/model' }]);
   });
 });
+
+describe('ConfigStore pilot/overseer exec', () => {
+  it('defaults both exec fields to empty string', () => {
+    const c = new ConfigStore(openDb(':memory:'));
+    expect(c.get().autopilot.pilotExec).toBe('');
+    expect(c.get().autopilot.overseerExec).toBe('');
+  });
+  it('persists pilotExec and overseerExec independently', () => {
+    const c = new ConfigStore(openDb(':memory:'));
+    c.update({ autopilot: { pilotExec: 'claude:opus' } });
+    expect(c.get().autopilot.pilotExec).toBe('claude:opus');
+    expect(c.get().autopilot.overseerExec).toBe('');
+    c.update({ autopilot: { overseerExec: 'opencode:deepseek/deepseek-v4-flash' } });
+    expect(c.get().autopilot.pilotExec).toBe('claude:opus'); // untouched
+    expect(c.get().autopilot.overseerExec).toBe('opencode:deepseek/deepseek-v4-flash');
+  });
+  it('defaults reviewOnDone to false and persists true', () => {
+    const c = new ConfigStore(openDb(':memory:'));
+    expect(c.get().autopilot.reviewOnDone).toBe(false);
+    c.update({ autopilot: { reviewOnDone: true } });
+    expect(c.get().autopilot.reviewOnDone).toBe(true);
+  });
+});

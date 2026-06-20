@@ -8,7 +8,7 @@ export interface OrcaConfig {
   allowedExecs: string[];
   customModels: { label: string; exec: string }[];
   hiddenPresets: string[];
-  autopilot: { model: string; overseerModel: string; apiUrl: string; apiKeySet: boolean; notes: string; prompt: string };
+  autopilot: { model: string; overseerModel: string; apiUrl: string; apiKeySet: boolean; notes: string; prompt: string; pilotExec: string; overseerExec: string; reviewOnDone: boolean };
   providers: Providers;
   defaults: { exec: string; autonomy: string; maxSessions: number };
 }
@@ -26,7 +26,7 @@ const DEFAULT_CONFIG: OrcaConfig = {
   allowedExecs: [...KNOWN_EXECS],
   customModels: [],
   hiddenPresets: [],
-  autopilot: { model: 'gpt-4o-mini', overseerModel: '', apiUrl: 'https://api.openai.com/v1', apiKeySet: false, notes: '', prompt: defaultPromptTemplate() },
+  autopilot: { model: 'gpt-4o-mini', overseerModel: '', apiUrl: 'https://api.openai.com/v1', apiKeySet: false, notes: '', prompt: defaultPromptTemplate(), pilotExec: '', overseerExec: '', reviewOnDone: false },
   providers: { ...DEFAULT_PROVIDERS },
   defaults: { exec: 'sonnet', autonomy: 'L3', maxSessions: 1 },
 };
@@ -35,7 +35,7 @@ interface Stored {
   allowedExecs: string[];
   customModels: { label: string; exec: string }[];
   hiddenPresets: string[];
-  autopilot: { model: string; overseerModel: string; apiUrl: string; notes: string; prompt: string };
+  autopilot: { model: string; overseerModel: string; apiUrl: string; notes: string; prompt: string; pilotExec: string; overseerExec: string; reviewOnDone: boolean };
   providers: Providers;
   apiKey: string | null;
   defaults: { exec: string; autonomy: string; maxSessions: number };
@@ -45,7 +45,7 @@ const defaultStored = (): Stored => ({
   allowedExecs: [...KNOWN_EXECS],
   customModels: [],
   hiddenPresets: [],
-  autopilot: { model: DEFAULT_CONFIG.autopilot.model, overseerModel: '', apiUrl: DEFAULT_CONFIG.autopilot.apiUrl, notes: '', prompt: DEFAULT_CONFIG.autopilot.prompt },
+  autopilot: { model: DEFAULT_CONFIG.autopilot.model, overseerModel: '', apiUrl: DEFAULT_CONFIG.autopilot.apiUrl, notes: '', prompt: DEFAULT_CONFIG.autopilot.prompt, pilotExec: '', overseerExec: '', reviewOnDone: false },
   providers: { ...DEFAULT_PROVIDERS },
   apiKey: null,
   defaults: { ...DEFAULT_CONFIG.defaults },
@@ -55,7 +55,7 @@ export interface ConfigPatch {
   allowedExecs?: string[];
   customModels?: { label: string; exec: string }[];
   hiddenPresets?: string[];
-  autopilot?: { model?: string; overseerModel?: string; apiUrl?: string; apiKey?: string; notes?: string; prompt?: string };
+  autopilot?: { model?: string; overseerModel?: string; apiUrl?: string; apiKey?: string; notes?: string; prompt?: string; pilotExec?: string; overseerExec?: string; reviewOnDone?: boolean };
   providers?: Providers;
   defaults?: { exec?: string; autonomy?: string; maxSessions?: number };
 }
@@ -73,7 +73,7 @@ export class ConfigStore {
         allowedExecs: p.allowedExecs ?? d.allowedExecs,
         customModels: p.customModels ?? [],
         hiddenPresets: p.hiddenPresets ?? [],
-        autopilot: { model: p.autopilot?.model ?? d.autopilot.model, overseerModel: p.autopilot?.overseerModel ?? d.autopilot.overseerModel, apiUrl: p.autopilot?.apiUrl ?? d.autopilot.apiUrl, notes: p.autopilot?.notes ?? d.autopilot.notes, prompt: p.autopilot?.prompt ?? d.autopilot.prompt },
+        autopilot: { model: p.autopilot?.model ?? d.autopilot.model, overseerModel: p.autopilot?.overseerModel ?? d.autopilot.overseerModel, apiUrl: p.autopilot?.apiUrl ?? d.autopilot.apiUrl, notes: p.autopilot?.notes ?? d.autopilot.notes, prompt: p.autopilot?.prompt ?? d.autopilot.prompt, pilotExec: p.autopilot?.pilotExec ?? d.autopilot.pilotExec, overseerExec: p.autopilot?.overseerExec ?? d.autopilot.overseerExec, reviewOnDone: p.autopilot?.reviewOnDone ?? d.autopilot.reviewOnDone },
         providers: { ...d.providers, ...(p.providers ?? {}) },
         apiKey: p.apiKey ?? null,
         defaults: { exec: p.defaults?.exec ?? d.defaults.exec, autonomy: p.defaults?.autonomy ?? d.defaults.autonomy, maxSessions: p.defaults?.maxSessions ?? d.defaults.maxSessions },
@@ -92,7 +92,7 @@ export class ConfigStore {
       allowedExecs: s.allowedExecs,
       customModels: s.customModels,
       hiddenPresets: s.hiddenPresets,
-      autopilot: { model: s.autopilot.model, overseerModel: s.autopilot.overseerModel, apiUrl: s.autopilot.apiUrl, apiKeySet: !!s.apiKey, notes: s.autopilot.notes, prompt: s.autopilot.prompt },
+      autopilot: { model: s.autopilot.model, overseerModel: s.autopilot.overseerModel, apiUrl: s.autopilot.apiUrl, apiKeySet: !!s.apiKey, notes: s.autopilot.notes, prompt: s.autopilot.prompt, pilotExec: s.autopilot.pilotExec, overseerExec: s.autopilot.overseerExec, reviewOnDone: s.autopilot.reviewOnDone },
       providers: s.providers,
       defaults: s.defaults,
     };
@@ -114,7 +114,7 @@ export class ConfigStore {
       allowedExecs: patch.allowedExecs ?? cur.allowedExecs,
       customModels: patch.customModels ?? cur.customModels,
       hiddenPresets: patch.hiddenPresets ?? cur.hiddenPresets,
-      autopilot: { model: patch.autopilot?.model ?? cur.autopilot.model, overseerModel: patch.autopilot?.overseerModel ?? cur.autopilot.overseerModel, apiUrl: patch.autopilot?.apiUrl ?? cur.autopilot.apiUrl, notes: patch.autopilot?.notes ?? cur.autopilot.notes, prompt: patch.autopilot?.prompt ?? cur.autopilot.prompt },
+      autopilot: { model: patch.autopilot?.model ?? cur.autopilot.model, overseerModel: patch.autopilot?.overseerModel ?? cur.autopilot.overseerModel, apiUrl: patch.autopilot?.apiUrl ?? cur.autopilot.apiUrl, notes: patch.autopilot?.notes ?? cur.autopilot.notes, prompt: patch.autopilot?.prompt ?? cur.autopilot.prompt, pilotExec: patch.autopilot?.pilotExec ?? cur.autopilot.pilotExec, overseerExec: patch.autopilot?.overseerExec ?? cur.autopilot.overseerExec, reviewOnDone: patch.autopilot?.reviewOnDone ?? cur.autopilot.reviewOnDone },
       providers: patch.providers ? { ...cur.providers, ...patch.providers } : cur.providers,
       apiKey: (typeof newKey === 'string' && newKey.length > 0) ? newKey : cur.apiKey,
       defaults: { exec: patch.defaults?.exec ?? cur.defaults.exec, autonomy: patch.defaults?.autonomy ?? cur.defaults.autonomy, maxSessions: patch.defaults?.maxSessions ?? cur.defaults.maxSessions },
