@@ -71,11 +71,12 @@ export function SessionCard({ info, onOpenTerminal, compact = false }: { info: S
               {task ? <Link href={`/tasks?select=${encodeURIComponent(task.id)}`} className="truncate text-[11px] text-text-muted transition-colors hover:text-accent" title={task.title}>{task.title}</Link> : null}
             </>
           )}
-          {task ? <TaskUsageBadge taskId={task.id} live={!finished} /> : null}
         </div>
         {needsInput ? <span className="shrink-0 rounded-full border border-warning/40 bg-warning/10 px-1.5 py-0.5 text-tiny font-medium text-warning" title={signal?.type === 'needs_input' ? signal.question : ''}>{t.sessions.needsInput}</span> : null}
         <span className="live-dot h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: dot, ['--live-ring' as string]: needsInput ? 'color-mix(in srgb, var(--color-warning) 50%, transparent)' : 'color-mix(in srgb, var(--color-approve) 50%, transparent)' }} aria-label={needsInput ? t.sessions.needsInput : t.sessions.online} title={needsInput ? t.sessions.needsInput : t.sessions.online} />
       </div>
+      {/* token usage on its own row under the header (not crammed into the identity column) */}
+      {task ? <TaskUsageBadge taskId={task.id} live={!finished} /> : null}
       {finished && task ? (
         <div className={`flex flex-col gap-1.5 rounded-md border border-border bg-bg p-2.5 ${compact ? '' : 'min-h-32'}`}>
           <OutcomeBadge outcome={task.outcome} />

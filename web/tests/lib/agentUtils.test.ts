@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { taskAgentName, taskSessionName, agentDisplayName, taskElapsed, taskBlockers, tailSnippet, liveState, needsInputSessions, lastClosedTask, taskForSession } from '../../lib/agentUtils';
+import { taskAgentName, taskSessionName, agentDisplayName, taskElapsed, taskStartedMs, taskBlockers, tailSnippet, liveState, needsInputSessions, lastClosedTask, taskForSession } from '../../lib/agentUtils';
 import type { Task } from '../../lib/types';
 
 const task = (over: Partial<Task> = {}): Task => ({ id: 't1', title: 'T', status: 'open', ...over });
@@ -50,6 +50,22 @@ describe('taskElapsed', () => {
     const closed = task({ created_at: start, closed_at: '2026-06-18 10:03:00', status: 'closed' });
     // 'now' is hours later, but the run is frozen at the 3-minute close.
     expect(taskElapsed(closed, at('2026-06-18T15:00:00Z'))).toBe('3m');
+  });
+  it('measures from the real spawn (started:<ms> label), not the plan-time created_at', () => {
+    // Mission row created at 10:00 but the agent only spawned 25 min later — elapsed must reflect
+    // the spawn, so a run that ends at 10:28 reads as 3m, not 28m.
+    const spawned = at('2026-06-18T10:25:00Z');
+    const t = task({ created_at: start, labels: [`started:${spawned}`], closed_at: '2026-06-18 10:28:00', status: 'closed' });
+    expect(taskElapsed(t, at('2026-06-18T11:00:00Z'))).toBe('3m');
+  });
+});
+
+describe('taskStartedMs', () => {
+  it('prefers the started:<ms> label over created_at', () => {
+    expect(taskStartedMs(task({ created_at: '2026-06-18 10:00:00', labels: ['started:1750240000000'] }))).toBe(1750240000000);
+  });
+  it('falls back to created_at when there is no started label', () => {
+    expect(taskStartedMs(task({ created_at: '2026-06-18 10:00:00', labels: ['agent:nova'] }))).toBe(Date.parse('2026-06-18T10:00:00Z'));
   });
 });
 

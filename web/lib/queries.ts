@@ -53,7 +53,7 @@ export const useTaskUsage = (taskId: string, live = false) =>
     queryKey: ['task-usage', taskId],
     queryFn: () => orcaClient.taskUsage(taskId),
     enabled: !!taskId,
-    refetchInterval: live ? 8000 : false,
+    refetchInterval: live ? 5000 : false,
     staleTime: live ? 0 : 5 * 60 * 1000,
   });
 

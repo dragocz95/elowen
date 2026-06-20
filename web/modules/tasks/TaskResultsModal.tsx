@@ -4,7 +4,7 @@ import type { Task } from '../../lib/types';
 import { useConfig } from '../../lib/queries';
 import { taskExec } from '../../lib/taskExec';
 import { taskSessionName } from '../../lib/agentUtils';
-import { parseTs } from '../../lib/agentUtils';
+import { parseTs, taskStartedMs } from '../../lib/agentUtils';
 import { formatTaskTime } from '../../lib/formatTime';
 import { formatDuration } from '../../lib/formatDuration';
 import { Modal, ModalBody, ModalFooter } from '../../components/ui/Modal';
@@ -36,7 +36,7 @@ export function TaskResultsModal({ task, onClose }: { task: Task; onClose: () =>
 
   const finishedIso = task.closed_at || task.created_at;
   const finished = formatTaskTime(finishedIso, Date.now(), locale);
-  const startMs = parseTs(task.created_at);
+  const startMs = taskStartedMs(task); // real spawn time, not the plan-time row insert
   const endMs = parseTs(task.closed_at);
   const duration = startMs != null && endMs != null && endMs >= startMs ? formatDuration(endMs - startMs) : null;
 

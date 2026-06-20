@@ -1,11 +1,11 @@
 'use client';
 import { useState } from 'react';
-import { Pencil, Play, Square, Pause, Archive, Trash2, Clock, Zap } from 'lucide-react';
+import { Pencil, Play, Square, Pause, Archive, Trash2, Clock, Zap, Timer } from 'lucide-react';
 import type { Task } from '../../lib/types';
 import { useCloseTask, useDeleteTask } from '../../lib/mutations';
 import { useConfig, useSessionSignal } from '../../lib/queries';
 import { taskExec } from '../../lib/taskExec';
-import { taskAgentName } from '../../lib/agentUtils';
+import { taskAgentName, taskElapsed } from '../../lib/agentUtils';
 import { useTaskControls } from '../../lib/useTaskControls';
 import { Badge } from '../../components/ui/Badge';
 import { Checkbox } from '../../components/ui/Checkbox';
@@ -96,17 +96,24 @@ export function TaskCard({ task, onEdit, onSelect, active = false, blockers, sel
           </div>
         </div>
 
-        {hasAgent ? <AgentIdentityStrip task={task} /> : null}
+        {hasAgent ? <AgentIdentityStrip task={task} showTime={false} /> : null}
 
         <TaskContextLine task={task} sessionName={running ? session : null} blockers={blockers} />
 
         {running ? <ChangeStrip /> : null}
 
+        {/* run footer: agent runtime + token usage on their own line, left-aligned */}
+        {hasAgent ? (() => { const ran = taskElapsed(task, Date.now()); return (
+          <div className="flex flex-wrap items-center gap-2 text-[11px] text-text-muted">
+            {ran ? <span className="flex shrink-0 items-center gap-1" title={t.tasks.resultDuration}><Timer size={11} aria-hidden />{ran}</span> : null}
+            <TaskUsageBadge taskId={task.id} live={running} />
+          </div>
+        ); })() : null}
+
         <div className="mt-auto flex flex-wrap items-center gap-1.5 pt-0.5">
           <Badge tone={statusTone(task.status)}>{STATUS_LABEL[task.status] ?? task.status}</Badge>
           {isClosed ? <OutcomeBadge outcome={task.outcome} /> : null}
           {exec ? <Badge>{exec}</Badge> : null}
-          {hasAgent ? <TaskUsageBadge taskId={task.id} live={running} /> : null}
           {task.scheduled_at ? (
             <Badge tone="muted">
               {task.autostart ? <Zap size={11} className="mr-1 inline" aria-hidden /> : <Clock size={11} className="mr-1 inline" aria-hidden />}

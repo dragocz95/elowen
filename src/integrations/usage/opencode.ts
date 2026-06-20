@@ -1,52 +1,58 @@
-import { readFileSync, readdirSync, existsSync } from 'node:fs';
+import Database from 'better-sqlite3';
+import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { EMPTY_USAGE, SESSION_MATCH_SKEW_MS, type TokenUsage } from './types.js';
-import { walkFiles } from './walk.js';
+import { SESSION_MATCH_SKEW_MS, type TokenUsage } from './types.js';
 
-interface OcSessionMeta { id?: string; directory?: string; time?: { created?: number } }
-interface OcMessage { role?: string; cost?: number; tokens?: { input?: number; output?: number; reasoning?: number; cache?: { read?: number; write?: number } } }
+interface OcSessionRow {
+  tokens_input: number;
+  tokens_output: number;
+  tokens_reasoning: number;
+  tokens_cache_read: number;
+  tokens_cache_write: number;
+  cost: number;
+}
 
-/** opencode stores each session under storage/session/.../<sid>.json (with `directory` + created
- *  time) and its assistant messages under storage/message/<sid>/ (with `tokens` + `cost`).
- *  Find the session opened in `dir` at/after `sinceMs` and sum its token usage and cost. `nth`
- *  selects which matching session (by start order) to read — so N agents that start concurrently
- *  in the same dir map to the N sessions deterministically (rank 0,1,2…) instead of colliding. */
-export function opencodeUsage(home: string, dir: string, sinceMs: number, nth = 0): TokenUsage | null {
-  const base = join(home, '.local', 'share', 'opencode', 'storage');
-  const sessionRoot = join(base, 'session');
-  if (!existsSync(sessionRoot)) return null;
+/** opencode (≥1.x) keeps sessions in a SQLite db at ~/.local/share/opencode/opencode.db, each row
+ *  carrying its own aggregated token + cost columns and the model it ran. Pick the root session
+ *  opened in `dir` at/after the spawn time; `model` (the task's `provider/model` exec) selects the
+ *  right session when several ran concurrently in that dir (e.g. an executor next to the overseer),
+ *  and `nth` disambiguates same-model peers by start order. Returns null when none match. */
+export function opencodeUsage(home: string, dir: string, sinceMs: number, model?: string, nth = 0): TokenUsage | null {
+  const dbPath = join(home, '.local', 'share', 'opencode', 'opencode.db');
+  if (!existsSync(dbPath)) return null;
 
-  // Candidate sessions: same project dir, created within the agent's run window.
-  const candidates: { id: string; created: number }[] = [];
-  for (const f of walkFiles(sessionRoot)) {
-    if (!f.endsWith('.json')) continue;
-    try {
-      const s = JSON.parse(readFileSync(f, 'utf8')) as OcSessionMeta;
-      const created = s.time?.created ?? 0;
-      if (s.id && s.directory === dir && created >= sinceMs - SESSION_MATCH_SKEW_MS) {
-        candidates.push({ id: s.id, created });
-      }
-    } catch { /* skip unreadable */ }
+  let db: Database.Database;
+  try { db = new Database(dbPath, { readonly: true, fileMustExist: true }); }
+  catch { return null; }
+  try {
+    // Root sessions opened in this dir within the run window, ordered by real start time. opencode
+    // stores the model as JSON ({id, providerID}); its `providerID/id` round-trips to the exec spec.
+    const rows = db.prepare(
+      `SELECT tokens_input, tokens_output, tokens_reasoning, tokens_cache_read, tokens_cache_write, cost,
+              json_extract(model, '$.providerID') || '/' || json_extract(model, '$.id') AS spec
+         FROM session
+        WHERE directory = ? AND parent_id IS NULL AND time_created >= ?
+        ORDER BY time_created ASC, id ASC`
+    ).all(dir, sinceMs - SESSION_MATCH_SKEW_MS) as (OcSessionRow & { spec: string | null })[];
+    if (rows.length === 0) return null;
+
+    // Prefer rows whose model matches the task's exec; fall back to all rows when the model can't be
+    // matched (older db without the column, or an alias mismatch) so usage never silently regresses.
+    const matched = model ? rows.filter((r) => r.spec === model) : rows;
+    const r = (matched.length ? matched : rows)[nth];
+    if (!r) return null;
+
+    const u: TokenUsage = {
+      input: r.tokens_input ?? 0,
+      output: (r.tokens_output ?? 0) + (r.tokens_reasoning ?? 0),
+      cacheRead: r.tokens_cache_read ?? 0,
+      cacheWrite: r.tokens_cache_write ?? 0,
+      total: 0,
+      costUsd: r.cost ?? 0,
+    };
+    u.total = u.input + u.output + u.cacheRead + u.cacheWrite;
+    return u;
+  } finally {
+    db.close();
   }
-  candidates.sort((a, b) => a.created - b.created);
-  const sid = candidates[nth]?.id;
-  if (!sid) return null;
-
-  const msgDir = join(base, 'message', sid);
-  if (!existsSync(msgDir)) return null;
-  const u: TokenUsage = { ...EMPTY_USAGE, costUsd: 0 };
-  for (const name of readdirSync(msgDir)) {
-    if (!name.endsWith('.json')) continue;
-    try {
-      const m = JSON.parse(readFileSync(join(msgDir, name), 'utf8')) as OcMessage;
-      if (m.role !== 'assistant' || !m.tokens) continue;
-      u.input += m.tokens.input ?? 0;
-      u.output += (m.tokens.output ?? 0) + (m.tokens.reasoning ?? 0);
-      u.cacheRead += m.tokens.cache?.read ?? 0;
-      u.cacheWrite += m.tokens.cache?.write ?? 0;
-      u.costUsd = (u.costUsd ?? 0) + (m.cost ?? 0);
-    } catch { /* skip */ }
-  }
-  u.total = u.input + u.output + u.cacheRead + u.cacheWrite;
-  return u;
 }
