@@ -169,7 +169,6 @@ export default function SettingsPage() {
   // Administration surface — admins only. A non-admin who deep-links here gets a clear stop.
   if (me.data?.user && !me.data.user.is_admin) return <ModuleShell moduleId="settings"><ModuleHeader title={t.page.settings} icon={SlidersHorizontal} /><EmptyState title={t.settings.adminOnly} description={t.settings.adminOnlyDesc} icon={Lock} /></ModuleShell>;
 
-  const toggle = (exec: string) => setAllowed((prev) => prev.includes(exec) ? prev.filter((e) => e !== exec) : [...prev, exec]);
   const apiKeySet = config.data?.autopilot.apiKeySet;
 
   const resetForm = () => {
@@ -177,13 +176,30 @@ export default function SettingsPage() {
     setEditingExec(null);
   };
 
+  // Model changes auto-persist immediately — no separate "save models" step to forget (a two-step
+  // add-then-save was a footgun where edits silently vanished on reload). Each handler computes the
+  // next state, applies it, and PUTs it in one go. `silent` skips the toast for frequent toggles.
+  const persistModels = (next: { allowed?: string[]; customModels?: { label: string; exec: string }[]; hiddenPresets?: string[] }, silent = false) => {
+    const allowedExecs = next.allowed ?? allowed;
+    const cm = next.customModels ?? customModels;
+    const hp = next.hiddenPresets ?? hiddenPresets;
+    setAllowed(allowedExecs);
+    setCustomModels(cm);
+    setHiddenPresets(hp);
+    update.mutate(
+      { allowedExecs, customModels: cm, hiddenPresets: hp },
+      { onSuccess: () => { if (!silent) toast(t.settings.modelsSaved); }, onError: (e) => toast(String(e), 'error') },
+    );
+  };
+
+  const toggle = (exec: string) =>
+    persistModels({ allowed: allowed.includes(exec) ? allowed.filter((e) => e !== exec) : [...allowed, exec] }, true);
+
   const deleteModel = (exec: string) => {
-    if (PRESET_EXECS.has(exec)) {
-      setHiddenPresets((prev) => (prev.includes(exec) ? prev : [...prev, exec]));
-    } else {
-      setCustomModels((prev) => prev.filter((m) => m.exec !== exec));
-    }
-    setAllowed((prev) => prev.filter((e) => e !== exec));
+    const next: { allowed: string[]; customModels?: { label: string; exec: string }[]; hiddenPresets?: string[] } = { allowed: allowed.filter((e) => e !== exec) };
+    if (PRESET_EXECS.has(exec)) next.hiddenPresets = hiddenPresets.includes(exec) ? hiddenPresets : [...hiddenPresets, exec];
+    else next.customModels = customModels.filter((m) => m.exec !== exec);
+    persistModels(next);
     if (editingExec === exec) resetForm();
   };
 
@@ -193,29 +209,26 @@ export default function SettingsPage() {
   };
 
   const saveModel = (m: { label: string; exec: string }) => {
+    let nextCustom = customModels, nextAllowed = allowed, nextHidden = hiddenPresets;
     if (editingExec) {
       const original = editingExec;
       if (PRESET_EXECS.has(original)) {
         // Editing a preset hides the original and stores a custom override in its place.
-        setHiddenPresets((prev) => (prev.includes(original) ? prev : [...prev, original]));
-        setCustomModels((prev) => [...prev.filter((x) => x.exec !== m.exec), m]);
-        setAllowed((prev) => { const base = prev.filter((e) => e !== original); return base.includes(m.exec) ? base : [...base, m.exec]; });
+        nextHidden = hiddenPresets.includes(original) ? hiddenPresets : [...hiddenPresets, original];
+        nextCustom = [...customModels.filter((x) => x.exec !== m.exec), m];
+        const base = allowed.filter((e) => e !== original);
+        nextAllowed = base.includes(m.exec) ? base : [...base, m.exec];
       } else {
-        setCustomModels((prev) => prev.some((x) => x.exec === original) ? prev.map((x) => (x.exec === original ? m : x)) : [...prev, m]);
-        setAllowed((prev) => prev.map((e) => (e === original ? m.exec : e)));
+        nextCustom = customModels.some((x) => x.exec === original) ? customModels.map((x) => (x.exec === original ? m : x)) : [...customModels, m];
+        nextAllowed = allowed.map((e) => (e === original ? m.exec : e));
       }
     } else {
-      setCustomModels((prev) => [...prev, m]);
-      setAllowed((prev) => (prev.includes(m.exec) ? prev : [...prev, m.exec])); // enable new models by default
+      nextCustom = [...customModels, m];
+      nextAllowed = allowed.includes(m.exec) ? allowed : [...allowed, m.exec]; // enable new models by default
     }
+    persistModels({ allowed: nextAllowed, customModels: nextCustom, hiddenPresets: nextHidden });
     resetForm();
   };
-
-  const saveModels = () =>
-    update.mutate(
-      { allowedExecs: allowed, customModels, hiddenPresets },
-      { onSuccess: () => toast(t.settings.modelsSaved), onError: (e) => toast(String(e), 'error') },
-    );
 
   // Persist only the active mode's fields, and explicitly clear the other backend so the two never
   // coexist (relay clears the execs; agents leave the relay model/key untouched but unused).
@@ -256,13 +269,13 @@ export default function SettingsPage() {
     { id: 'hermes', icon: Radio },
   ];
 
-  const saveAction: Record<Exclude<Category, 'hermes'>, { label: string; onClick: () => void }> = {
-    models: { label: t.settings.saveModels, onClick: saveModels },
+  // 'models' auto-saves on every change, so it has no manual save button. 'hermes' has its own form.
+  const saveAction: Record<Exclude<Category, 'hermes' | 'models'>, { label: string; onClick: () => void }> = {
     autopilot: { label: t.settings.saveAutopilot, onClick: saveAutopilot },
     providers: { label: t.settings.saveProviders, onClick: saveProviders },
     defaults: { label: t.settings.saveDefaults, onClick: saveDefaults },
   };
-  const active = category === 'hermes' ? null : saveAction[category];
+  const active = category === 'hermes' || category === 'models' ? null : saveAction[category];
 
   const models = allModels(customModels, hiddenPresets);
 

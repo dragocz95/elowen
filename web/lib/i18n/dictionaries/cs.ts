@@ -389,7 +389,6 @@ export const cs = {
     sectionsNav: 'Sekce nastavení',
     adminOnly: 'Jen pro administrátory',
     adminOnlyDesc: 'Tato sekce je vyhrazena administrátorům. Svůj účet upravíte v sekci Můj účet.',
-    saveModels: 'Uložit modely',
     saveAutopilot: 'Uložit autopilota',
     saveProviders: 'Uložit poskytovatele',
     saveDefaults: 'Uložit výchozí',

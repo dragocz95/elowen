@@ -16,20 +16,23 @@ const server = setupServer(
 beforeAll(() => server.listen({ onUnhandledRequest })); afterEach(() => server.resetHandlers()); afterAll(() => server.close());
 
 describe('SettingsPage', () => {
-  it('loads config and saves a changed model allowlist', async () => {
+  it('auto-saves a changed model allowlist on toggle (no manual save button)', async () => {
+    putBody = null;
     const { wrapper: Wrapper } = createWrapper();
     render(<Wrapper><ToastProvider><SettingsPage /></ToastProvider></Wrapper>);
     await waitFor(() => expect(screen.getByLabelText('Claude Sonnet')).toBeChecked());
-    fireEvent.click(screen.getByLabelText('Claude Sonnet')); // uncheck sonnet
-    fireEvent.click(screen.getByRole('button', { name: 'Save models' }));
+    // Models auto-persist: a toggle PUTs immediately, no separate "Save models" button.
+    expect(screen.queryByRole('button', { name: 'Save models' })).toBeNull();
+    fireEvent.click(screen.getByLabelText('Claude Sonnet')); // uncheck sonnet → auto-saves
     await waitFor(() => expect((putBody as { allowedExecs: string[] }).allowedExecs).not.toContain('sonnet'));
   });
 
-  it('Save models sends customModels in the PUT body', async () => {
+  it('auto-save sends customModels in the PUT body', async () => {
+    putBody = null;
     const { wrapper: Wrapper } = createWrapper();
     render(<Wrapper><ToastProvider><SettingsPage /></ToastProvider></Wrapper>);
     await waitFor(() => expect(screen.getByLabelText('Claude Sonnet')).toBeChecked());
-    fireEvent.click(screen.getByRole('button', { name: 'Save models' }));
+    fireEvent.click(screen.getByLabelText('Claude Sonnet')); // any change triggers the PUT
     await waitFor(() => expect((putBody as { customModels: unknown }).customModels).toBeDefined());
     expect(Array.isArray((putBody as { customModels: unknown[] }).customModels)).toBe(true);
   });
@@ -51,12 +54,13 @@ describe('SettingsPage', () => {
     fireEvent.change(screen.getByPlaceholderText('My Model'), { target: { value: 'My Custom Model' } });
     fireEvent.click(screen.getByRole('button', { name: 'Other' }));
     fireEvent.change(screen.getByPlaceholderText('provider/model-name'), { target: { value: 'my/custom' } });
+    putBody = null;
     fireEvent.click(screen.getByRole('button', { name: 'Add' }));
 
     // The new model card should now be in the DOM (Toggle is labelled by the model label).
     await waitFor(() => expect(screen.getByLabelText('My Custom Model')).toBeTruthy());
 
-    fireEvent.click(screen.getByRole('button', { name: 'Save models' }));
+    // Adding the model auto-persists — no separate "Save models" click needed.
     await waitFor(() => {
       const body = putBody as { customModels: { label: string; exec: string }[] };
       expect(body.customModels).toContainEqual({ label: 'My Custom Model', exec: 'my/custom' });

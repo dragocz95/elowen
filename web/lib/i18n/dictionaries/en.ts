@@ -389,7 +389,6 @@ export const en = {
     sectionsNav: 'Settings sections',
     adminOnly: 'Administrators only',
     adminOnlyDesc: 'This section is reserved for admins. Edit your own profile in My account.',
-    saveModels: 'Save models',
     saveAutopilot: 'Save autopilot',
     saveProviders: 'Save providers',
     saveDefaults: 'Save defaults',
