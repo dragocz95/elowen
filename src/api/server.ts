@@ -19,7 +19,7 @@ import type { AgentSpec } from '../spawn/commandBuilder.js';
 import { resolveExecutor } from '../overseer/routing.js';
 import { decompose, parsePhases, VALID_TYPES as VALID_PHASE_TYPES, type Phase } from '../overseer/planner.js';
 import { PlanJobStore, type PlanJob } from '../overseer/planJob.js';
-import type { DecisionQueue } from '../overseer/decisionQueue.js';
+import { DecisionQueue } from '../overseer/decisionQueue.js';
 import type { Task } from '../store/types.js';
 import { RelayClient } from '../inference/client.js';
 import type { InferenceClient, RelayConfig } from '../inference/types.js';
@@ -63,6 +63,7 @@ export function createServer(d: ServerDeps): Hono<{ Variables: { user: User; tok
   // Core reasoning stores are optional in deps for back-compat with existing call sites/tests; the
   // daemon (bootstrap) injects shared instances. Default here so every route has a working store.
   const planJobs = d.planJobs ?? new PlanJobStore();
+  const decisionQueue = d.decisionQueue ?? new DecisionQueue();
   const app = new Hono<{ Variables: { user: User; token: string } }>();
   app.use('*', cors());
   app.get('/health', c => c.json({ ok: true }));
@@ -788,6 +789,30 @@ export function createServer(d: ServerDeps): Hono<{ Variables: { user: User; tok
     if (!missionAccessible(c, mission.epic_id)) return c.json({ error: 'forbidden' }, 403);
     await d.engine.disengage(c.req.param('id'));
     return c.json({ ok: true });
+  });
+
+  // Overseer long-poll: the parked per-mission overseer agent polls `next` (blocks until a decision
+  // is needed or a heartbeat) and answers via `decide`. Decisions are keyed by mission id in the
+  // path; both sit behind the bearer middleware. No model output is parsed — the agent posts a
+  // structured verdict, and the local destructive heuristic stays authoritative (applied at enqueue).
+  app.get('/missions/:id/overseer/next', async (c) => {
+    const id = c.req.param('id');
+    const raw = Number(c.req.query('timeoutMs'));
+    const timeoutMs = Number.isFinite(raw) && raw > 0 ? Math.min(raw, 30_000) : undefined;
+    const req = await decisionQueue.next(id, timeoutMs);
+    return c.json(req ?? {});
+  });
+  app.post('/missions/:id/overseer/decide', async (c) => {
+    const id = c.req.param('id');
+    const b = await c.req.json().catch(() => ({})) as { id?: string; approve?: boolean; confidence?: number; rationale?: string };
+    if (!b.id) return c.json({ error: 'id required' }, 400);
+    const ok = decisionQueue.resolve(id, b.id, {
+      approve: b.approve === true,
+      confidence: typeof b.confidence === 'number' ? Math.max(0, Math.min(1, b.confidence)) : 0,
+      destructive: false, // never trusted from the agent — the enqueue-time heuristic is authoritative
+      rationale: typeof b.rationale === 'string' ? b.rationale : '',
+    });
+    return ok ? c.json({ ok: true }) : c.json({ error: 'no such decision' }, 404);
   });
 
   app.get('/config', (c) => c.json(d.config.get()));
