@@ -1,6 +1,10 @@
 export type TaskStatus = 'open' | 'in_progress' | 'blocked' | 'closed' | 'cancelled';
 export interface Task { id: string; title: string; status: TaskStatus; type?: string; priority?: string; labels?: string[]; description?: string; scheduled_at?: string | null; autostart?: number; result_summary?: string | null; outcome?: string | null; closed_at?: string | null; created_at?: string; parent_id?: string | null }
 export interface Session { name: string }
+export type SessionRole = 'overseer' | 'pilot' | 'agent';
+/** Structured identity of a live agent session, classified by the daemon (single source of truth).
+ *  Clients render from `role` — they never parse meaning out of the raw session name. */
+export interface SessionInfo { name: string; role: SessionRole; agent: string; missionId?: string }
 export interface Mission { id: string; epic_id: string; autonomy: string; max_sessions: number; state: string }
 export interface CreateTaskInput { title: string; type?: string; priority?: string; description?: string; scheduled_at?: string | null; autostart?: number; deps?: string[] }
 export interface UpdateTaskInput { title?: string; type?: string; priority?: string; description?: string; scheduled_at?: string | null; autostart?: number; deps?: string[] }

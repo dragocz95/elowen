@@ -31,7 +31,9 @@ export function makePilot(deps: { spawn: SpawnService; config: ConfigStore; proj
     const cfg = deps.config.get();
     const spec = resolveExecutor([`exec:${cfg.autopilot.pilotExec}`], { program: 'claude-code', model: 'sonnet' });
     const notes = deps.projects.get(job.projectId)?.notes;
-    const agentName = deps.nameAgent();
+    // Structured `pilot-` prefix so the session classifies as the planner (mirrors the overseer's
+    // `overseer-` prefix), instead of being indistinguishable from a worker agent.
+    const agentName = `pilot-${deps.nameAgent()}`;
     await deps.spawn.launch({
       projectId: job.projectId, projectPath, taskId: job.id, agentName, spec,
       taskTitle: `Plan: ${job.goal}`,

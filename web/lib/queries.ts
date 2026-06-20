@@ -34,7 +34,13 @@ export const useSessionSignal = (name: string): DerivedSignal | undefined => use
 export const useTasks = () =>
   useQuery({ queryKey: QUERY_KEYS.tasks, queryFn: orcaClient.tasks, refetchInterval: 5000 });
 
+/** Live session names — the stable handles used for liveness checks, signal keys and ops.
+ *  Backed by the same query as useSessionInfos (one fetch); selects just the names. */
 export const useSessions = () =>
+  useQuery({ queryKey: QUERY_KEYS.sessions, queryFn: orcaClient.sessions, refetchInterval: 5000, select: (s) => s.map((x) => x.name) });
+
+/** Live sessions with their daemon-classified role/identity, for display surfaces. */
+export const useSessionInfos = () =>
   useQuery({ queryKey: QUERY_KEYS.sessions, queryFn: orcaClient.sessions, refetchInterval: 5000 });
 
 export const useAllDeps = () =>

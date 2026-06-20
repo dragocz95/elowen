@@ -26,7 +26,7 @@ describe('TaskDetailPane', () => {
   it('renders the live tail for a running task', async () => {
     const { wrapper: Wrapper, client } = createWrapper();
     client.setQueryData(['tasks'], [{ id: 'tr', title: 'Running one', status: 'in_progress', labels: ['agent:nova'] }]);
-    client.setQueryData(['sessions'], ['orca-nova']);
+    client.setQueryData(['sessions'], [{ name: 'orca-nova', role: 'agent', agent: 'nova' }]);
     render(<Wrapper><ToastProvider><TaskDetailPane taskId="tr" /></ToastProvider></Wrapper>);
     expect(await screen.findByText('Live output')).toBeTruthy();
     expect(await screen.findByText(/all good/)).toBeTruthy();

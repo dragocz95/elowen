@@ -39,7 +39,7 @@ const server = setupServer(
   http.get('http://localhost:4400/tasks', () => HttpResponse.json([])),
   http.get('http://localhost:4400/projects', () => HttpResponse.json([{ id: 1, slug: 'orca', path: '/var/www/orca', notes: '' }])),
   http.get('http://localhost:4400/projects/1/git', () => HttpResponse.json({ isRepo: false, status: null, branches: [], commits: [] })),
-  http.get('http://localhost:4400/sessions', () => HttpResponse.json(['orca-SwiftLake'])),
+  http.get('http://localhost:4400/sessions', () => HttpResponse.json([{ name: 'orca-SwiftLake', role: 'agent', agent: 'SwiftLake' }])),
   http.get('http://localhost:4400/sessions/orca-SwiftLake/pane', () => HttpResponse.json({ pane: 'line a\nline b' })),
   http.delete('http://localhost:4400/sessions/orca-SwiftLake', () => { killed = true; return HttpResponse.json({ ok: true }); }),
 );
@@ -49,7 +49,7 @@ describe('SessionsPage', () => {
   it('kills a session', async () => {
     const { wrapper: Wrapper } = createWrapper();
     render(<Wrapper><ToastProvider><SessionsPage /></ToastProvider></Wrapper>);
-    await waitFor(() => expect(screen.getByText('orca-SwiftLake')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText('SwiftLake')).toBeInTheDocument());
     // Kill lives in the red action menu: open it, then pick the item
     fireEvent.click(screen.getByRole('button', { name: 'Kill session' }));
     fireEvent.click(screen.getByRole('menuitem', { name: 'Kill session' }));
@@ -59,7 +59,7 @@ describe('SessionsPage', () => {
   it('opens terminal in modal and closes via modal close button', async () => {
     const { wrapper: Wrapper } = createWrapper();
     render(<Wrapper><ToastProvider><SessionsPage /></ToastProvider></Wrapper>);
-    await waitFor(() => expect(screen.getByText('orca-SwiftLake')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText('SwiftLake')).toBeInTheDocument());
     // Terminal not yet visible
     expect(screen.queryByTestId('term')).not.toBeInTheDocument();
     // Click Terminal button → modal opens with terminal inside

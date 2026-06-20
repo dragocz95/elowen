@@ -1,11 +1,13 @@
 'use client';
 import Link from 'next/link';
-import { TerminalSquare, SquareSlash, Power, SquareTerminal } from 'lucide-react';
+import { TerminalSquare, SquareSlash, Power, SquareTerminal, Eye, Bot } from 'lucide-react';
 import { useKillSession, useSendInput } from '../../lib/mutations';
-import { useTasks, useSessionSignal } from '../../lib/queries';
+import { useTasks, useSessionSignal, useConfig } from '../../lib/queries';
 import { taskTypeMeta } from '../tasks/taskMeta';
 import { taskExec } from '../../lib/taskExec';
-import { taskForSession } from '../../lib/agentUtils';
+import { taskForSession, missionEpicId } from '../../lib/agentUtils';
+import { execModel } from '../../lib/modelProvider';
+import type { SessionInfo } from '../../lib/types';
 import { ModelIcon } from '../../components/ui/ModelIcon';
 import { OutcomeBadge } from '../../components/ui/OutcomeBadge';
 import { IconButton } from '../../components/ui/IconButton';
@@ -17,17 +19,28 @@ import { SendInput } from '../../components/control/SendInput';
 import { useToast } from '../../components/ui/Toast';
 import { useTranslation } from '../../lib/i18n';
 
-export function SessionCard({ name, onOpenTerminal, compact = false }: { name: string; onOpenTerminal: () => void; compact?: boolean }) {
+export function SessionCard({ info, onOpenTerminal, compact = false }: { info: SessionInfo; onOpenTerminal: () => void; compact?: boolean }) {
   const kill = useKillSession();
   const send = useSendInput();
   const { toast } = useToast();
   const { t } = useTranslation();
   const tasks = useTasks();
+  const config = useConfig();
+  const name = info.name;
   const signal = useSessionSignal(name);
 
   // Map session → its task (prefer the in_progress one; agent names are reused across tasks).
   const task = taskForSession(tasks.data ?? [], name);
   const exec = taskExec(task?.labels);
+  // The model running in this session: the task's exec for a worker, else the configured
+  // pilot/overseer backend for the autopilot's own reasoning agents.
+  const roleExec = info.role === 'overseer' ? config.data?.autopilot.overseerExec
+    : info.role === 'pilot' ? config.data?.autopilot.pilotExec : undefined;
+  const modelExec = exec ?? (roleExec || undefined);
+  // The epic an overseer governs — its title is the human name of the mission.
+  const epic = info.role === 'overseer' && info.missionId
+    ? (tasks.data ?? []).find((x) => x.id === missionEpicId(info.missionId!))
+    : undefined;
   const TypeIcon = task ? taskTypeMeta(task.type).icon : SquareTerminal;
   const needsInput = signal?.type === 'needs_input';
   const dot = needsInput ? 'var(--color-warning)' : 'var(--color-approve)';
@@ -37,11 +50,27 @@ export function SessionCard({ name, onOpenTerminal, compact = false }: { name: s
     <div className={`card-interactive flex flex-col gap-3 rounded-lg border bg-surface ${compact ? 'p-3' : 'p-4'} ${needsInput ? 'border-warning/60' : 'border-border'}`}>
       <div className="flex items-center gap-2.5">
         <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-border bg-elevated">
-          {exec ? <ModelIcon name={exec} size={20} /> : <TypeIcon size={18} className="text-text-muted" aria-hidden />}
+          {info.role === 'overseer' ? <Eye size={18} className="text-text-muted" aria-hidden />
+            : info.role === 'pilot' ? <Bot size={18} className="text-text-muted" aria-hidden />
+            : exec ? <ModelIcon name={exec} size={20} /> : <TypeIcon size={18} className="text-text-muted" aria-hidden />}
         </span>
         <div className="flex min-w-0 flex-1 flex-col">
-          <span className="truncate font-mono text-xs text-text" title={task?.title}>{name}</span>
-          {task ? <Link href={`/tasks?select=${encodeURIComponent(task.id)}`} className="truncate text-[11px] text-text-muted transition-colors hover:text-accent" title={task.title}>{task.title}</Link> : null}
+          {info.role === 'overseer' ? (
+            <>
+              <span className="truncate text-xs font-semibold text-text" title={epic?.title}>{t.sessions.roleOverseer}{epic ? ` · ${epic.title}` : ''}</span>
+              <span className="truncate font-mono text-[11px] text-text-muted">{info.missionId}</span>
+            </>
+          ) : info.role === 'pilot' ? (
+            <>
+              <span className="truncate text-xs font-semibold text-text">{t.sessions.rolePilot}</span>
+              <span className="truncate text-[11px] text-text-muted">{info.agent}</span>
+            </>
+          ) : (
+            <>
+              <span className="truncate text-xs font-semibold text-text" title={task?.title}>{info.agent}</span>
+              {task ? <Link href={`/tasks?select=${encodeURIComponent(task.id)}`} className="truncate text-[11px] text-text-muted transition-colors hover:text-accent" title={task.title}>{task.title}</Link> : null}
+            </>
+          )}
           {task ? <TaskUsageBadge taskId={task.id} live={!finished} /> : null}
         </div>
         {needsInput ? <span className="shrink-0 rounded-full border border-warning/40 bg-warning/10 px-1.5 py-0.5 text-tiny font-medium text-warning" title={signal?.type === 'needs_input' ? signal.question : ''}>{t.sessions.needsInput}</span> : null}
@@ -53,7 +82,7 @@ export function SessionCard({ name, onOpenTerminal, compact = false }: { name: s
           <p className="text-[11px] leading-snug text-text-muted">{task.result_summary?.trim() || t.tasks.noSummary}</p>
         </div>
       ) : (
-        <LiveTail name={name} lines={compact ? 14 : 22} heightClass={compact ? 'h-32' : 'h-52'} />
+        <LiveTail name={name} lines={compact ? 14 : 22} heightClass={compact ? 'h-32' : 'h-52'} onExpand={onOpenTerminal} />
       )}
       {!finished && <ChangeStrip />}
       {needsInput && signal?.type === 'needs_input' && (
@@ -67,7 +96,12 @@ export function SessionCard({ name, onOpenTerminal, compact = false }: { name: s
       )}
       <div className="flex items-center justify-between gap-2">
         <SendInput onSend={(keys) => send.mutate({ name, keys }, { onSuccess: () => toast(t.sessions.sentTo.replace('{name}', name)), onError: (e) => toast(String(e), 'error') })} />
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-1.5">
+          {modelExec ? (
+            <span className="inline-flex items-center gap-1 rounded-full border border-border bg-elevated px-2 py-0.5 text-[11px] text-text-muted" title={modelExec}>
+              <ModelIcon name={modelExec} size={13} /><span className="max-w-28 truncate">{execModel(modelExec)}</span>
+            </span>
+          ) : null}
           <IconButton icon={TerminalSquare} label={t.sessions.terminal} onClick={onOpenTerminal} />
           <IconButton icon={SquareSlash} label={t.sessions.interrupt} onClick={() => send.mutate({ name, keys: ['C-c'] }, { onSuccess: () => toast(t.sessions.interrupted.replace('{name}', name)) })} />
           <ActionMenu label={t.sessions.kill} items={[{ label: t.sessions.kill, icon: Power, tone: 'danger', onSelect: () => kill.mutate(name, { onSuccess: () => toast(t.sessions.killed.replace('{name}', name)), onError: (e) => toast(String(e), 'error') }) }]} />

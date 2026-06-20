@@ -12,7 +12,7 @@ const server = setupServer(
     { id: 't1', title: 'Alpha', status: 'open' },
     { id: 't2', title: 'Beta', status: 'blocked' },
   ])),
-  http.get('*/sessions', () => HttpResponse.json(['orca-x'])),
+  http.get('*/sessions', () => HttpResponse.json([{ name: 'orca-x', role: 'agent', agent: 'x' }])),
   http.get('*/missions', () => HttpResponse.json([{ id: 'm1', epic_id: 'e', autonomy: 'low', max_sessions: 1, state: 'active' }])),
 );
 beforeAll(() => server.listen({ onUnhandledRequest })); afterEach(() => server.resetHandlers()); afterAll(() => server.close());

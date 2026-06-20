@@ -42,7 +42,7 @@ describe('Sidebar (registry-driven)', () => {
   it('shows live agents and last outcome in the ops bar, and a pending-approval count on the notification bell', () => {
     const { wrapper: Wrapper, client } = createWrapper();
     client.setQueryData(['tasks'], [{ id: 'tx', title: 'Refactor', status: 'closed', outcome: 'ok', result_summary: 'passed', closed_at: '2026-06-18 10:00:00' }]);
-    client.setQueryData(['sessions'], ['orca-a', 'orca-b']);
+    client.setQueryData(['sessions'], [{ name: 'orca-a', role: 'agent', agent: 'a' }, { name: 'orca-b', role: 'agent', agent: 'b' }]);
     client.setQueryData(['session-signals'], { 'orca-a': { type: 'needs_input', question: 'go?' } });
     render(<Wrapper><Sidebar /></Wrapper>);
     // One agent waiting for approval → badge on the notification bell.

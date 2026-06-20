@@ -8,7 +8,7 @@ import { createWrapper } from '../test-utils';
 
 const server = setupServer(
   http.get('http://localhost:4400/tasks', () => HttpResponse.json([{ id: 'orca-1', title: 'Build', status: 'open' }])),
-  http.get('http://localhost:4400/sessions', () => HttpResponse.json(['orca-SwiftLake'])),
+  http.get('http://localhost:4400/sessions', () => HttpResponse.json([{ name: 'orca-SwiftLake', role: 'agent', agent: 'SwiftLake' }])),
   http.get('http://localhost:4400/missions', () => HttpResponse.json([])),
   http.get('http://localhost:4400/sessions/:name/pane', () => HttpResponse.json({ pane: '' })),
 );

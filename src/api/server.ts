@@ -18,6 +18,7 @@ import type { EventBus } from './sse.js';
 import type { AgentSpec } from '../spawn/commandBuilder.js';
 import { resolveExecutor } from '../overseer/routing.js';
 import { decompose, parsePhases, VALID_TYPES as VALID_PHASE_TYPES, type Phase } from '../overseer/planner.js';
+import { classifySession } from '../overseer/sessionInfo.js';
 import { isDestructive } from '../overseer/decision.js';
 import { PlanJobStore, type PlanJob } from '../overseer/planJob.js';
 import { DecisionQueue } from '../overseer/decisionQueue.js';
@@ -714,7 +715,7 @@ export function createServer(d: ServerDeps): Hono<{ Variables: { user: User; tok
     return c.json(detectClis(ctx));
   });
 
-  app.get('/sessions', async c => c.json((await d.tmux.list()).filter((s) => s.startsWith('orca-'))));
+  app.get('/sessions', async c => c.json((await d.tmux.list()).filter((s) => s.startsWith('orca-')).map(classifySession)));
   app.post('/sessions', async (c) => {
     const { taskId, exec } = await c.req.json() as { taskId: string; exec?: string };
     if (exec && !d.config.get().allowedExecs.includes(exec)) return c.json({ error: 'exec not allowed' }, 400);

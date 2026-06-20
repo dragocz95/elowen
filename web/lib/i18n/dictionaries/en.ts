@@ -300,6 +300,8 @@ export const en = {
     emptyAction: 'Go to Tasks',
     terminalTitle: 'Terminal — {name}',
     online: 'online',
+    roleOverseer: 'Autopilot',
+    rolePilot: 'Planner',
     filterAll: 'All',
     filterNeedsInput: 'Needs input',
     noNeedsInput: 'No agent is waiting for input.',

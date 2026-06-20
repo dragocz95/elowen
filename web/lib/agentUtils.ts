@@ -20,6 +20,11 @@ export function agentDisplayName(session: string): string {
   return session.replace(/^orca-/, '') || session;
 }
 
+/** The epic id a mission governs: `m-orca-1234` → `orca-1234` (mission ids are `m-${epicId}`). */
+export function missionEpicId(missionId: string): string {
+  return missionId.replace(/^m-/, '');
+}
+
 /** Normalize a SQLite ("2026-06-18 10:38:49", UTC) or ISO timestamp to epoch ms. */
 export function parseTs(iso?: string | null): number | null {
   if (!iso) return null;

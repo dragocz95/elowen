@@ -300,6 +300,8 @@ export const cs = {
     emptyAction: 'Přejít na Úkoly',
     terminalTitle: 'Terminál — {name}',
     online: 'online',
+    roleOverseer: 'Autopilot',
+    rolePilot: 'Plánovač',
     filterAll: 'Vše',
     filterNeedsInput: 'Vyžaduje vstup',
     noNeedsInput: 'Žádný agent nečeká na vstup.',

@@ -1,4 +1,4 @@
-import type { Task, Mission, CreateTaskInput, UpdateTaskInput, PlanInput, PlanSubmitResult, PlanJob, InsertPhasesInput, InsertPhasesResult, EngageInput, OrcaConfig, ConfigPatch, MissionDetail, User, UserPatch, ProfilePatch, AuthResult, ActivityEvent, Project, ProjectGit, HermesStatus, HermesInstallInput, HermesInstallResult, CliDetectionResult, TokenUsage, FileNode } from './types';
+import type { Task, Mission, CreateTaskInput, UpdateTaskInput, PlanInput, PlanSubmitResult, PlanJob, InsertPhasesInput, InsertPhasesResult, EngageInput, OrcaConfig, ConfigPatch, MissionDetail, User, UserPatch, ProfilePatch, AuthResult, ActivityEvent, Project, ProjectGit, HermesStatus, HermesInstallInput, HermesInstallResult, CliDetectionResult, TokenUsage, FileNode, SessionInfo } from './types';
 import { getToken, clearToken } from './token';
 
 export const BASE = process.env.NEXT_PUBLIC_ORCA_URL ?? 'http://localhost:4400';
@@ -26,7 +26,7 @@ const json = (body: unknown): RequestInit => ({ method: 'POST', headers: { 'cont
 export const orcaClient = {
   tasks: () => req<Task[]>('/tasks'),
   ready: () => req<Task[]>('/tasks/ready'),
-  sessions: () => req<string[]>('/sessions'),
+  sessions: () => req<SessionInfo[]>('/sessions'),
   missions: () => req<Mission[]>('/missions'),
   getMissionDetail: (id: string) => req<MissionDetail>(`/missions/${encodeURIComponent(id)}`),
   health: () => req<{ ok: boolean }>('/health'),

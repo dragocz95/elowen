@@ -2,7 +2,7 @@
 import { useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { TerminalSquare, ArrowRight, List, Bell, Maximize2, Minimize2 } from 'lucide-react';
-import { useSessions, useSessionSignals } from '../../lib/queries';
+import { useSessionInfos, useSessionSignals } from '../../lib/queries';
 import { needsInputSessions } from '../../lib/agentUtils';
 import { usePersistentState } from '../../lib/usePersistentState';
 import { ModuleHeader } from '../../components/ui/ModuleHeader';
@@ -14,7 +14,7 @@ import { useTranslation } from '../../lib/i18n';
 import { SessionCard } from './SessionCard';
 
 export function SessionsView() {
-  const sessions = useSessions();
+  const sessions = useSessionInfos();
   const signals = useSessionSignals();
   const router = useRouter();
   const params = useSearchParams();
@@ -25,7 +25,9 @@ export function SessionsView() {
   const compact = density === 'compact';
 
   const filter = params.get('filter') === 'needs_input' ? 'needs_input' : 'all';
-  const allNames = sessions.data ?? [];
+  const infos = sessions.data ?? [];
+  const byName = new Map(infos.map((i) => [i.name, i] as const));
+  const allNames = infos.map((i) => i.name);
   // Sort: needs_input first, then working sessions, then the rest (alphabetical fallback).
   const rank = (name: string): number => {
     const s = signals[name]?.type;
@@ -55,7 +57,7 @@ export function SessionsView() {
         : sessions.isError ? <ErrorState message={t.common.daemonUnreachable} onRetry={() => sessions.refetch()} />
         : names.length > 0 ? (
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
-            {names.map((s) => <SessionCard key={s} name={s} compact={compact} onOpenTerminal={() => setOpenTerm(s)} />)}
+            {names.map((s) => <SessionCard key={s} info={byName.get(s)!} compact={compact} onOpenTerminal={() => setOpenTerm(s)} />)}
           </div>
         ) : filter === 'needs_input' && allNames.length > 0
           ? <EmptyState title={t.sessions.filterNeedsInput} description={t.sessions.noNeedsInput} icon={TerminalSquare} />
