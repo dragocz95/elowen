@@ -14,6 +14,7 @@ import { IconButton } from '../../components/ui/IconButton';
 import { ActionMenu } from '../../components/ui/ActionMenu';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { AgentStatusDot } from '../../components/ui/AgentStatusDot';
+import { ProjectPill } from '../../components/ui/ProjectPill';
 import { AgentIdentityStrip } from '../../components/ui/AgentIdentityStrip';
 import { TaskContextLine } from '../../components/ui/TaskContextLine';
 import { OutcomeBadge } from '../../components/ui/OutcomeBadge';
@@ -121,6 +122,7 @@ export function TaskCard({ task, onEdit, onSelect, active = false, blockers, sel
           ) : (task.closed_at || task.created_at) ? (
             (() => { const w = formatTaskTime(task.closed_at || task.created_at, Date.now(), locale); return <span title={w.title}><Badge tone="muted"><Clock size={11} className="mr-1 inline" aria-hidden />{w.label}</Badge></span>; })()
           ) : null}
+          <ProjectPill projectId={task.project_id} />
         </div>
       </div>
 

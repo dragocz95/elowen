@@ -1,7 +1,7 @@
 export type TaskStatus = 'open' | 'in_progress' | 'blocked' | 'closed' | 'cancelled';
 /** Outcome the daemon records when a task closes (`src/store/types.ts`). */
 export type TaskOutcome = 'ok' | 'fail';
-export interface Task { id: string; title: string; status: TaskStatus; type?: string; priority?: string; labels?: string[]; description?: string; scheduled_at?: string | null; autostart?: number; result_summary?: string | null; outcome?: TaskOutcome | null; closed_at?: string | null; created_at?: string; parent_id?: string | null }
+export interface Task { id: string; title: string; status: TaskStatus; type?: string; priority?: string; labels?: string[]; description?: string; scheduled_at?: string | null; autostart?: number; result_summary?: string | null; outcome?: TaskOutcome | null; closed_at?: string | null; created_at?: string; parent_id?: string | null; project_id?: number }
 export type SessionRole = 'overseer' | 'pilot' | 'agent';
 /** Structured identity of a live agent session, classified by the daemon (single source of truth).
  *  Clients render from `role` — they never parse meaning out of the raw session name. */

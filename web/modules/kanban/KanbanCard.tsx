@@ -7,6 +7,7 @@ import { AgentStatusDot } from '../../components/ui/AgentStatusDot';
 import { AgentIdentityStrip } from '../../components/ui/AgentIdentityStrip';
 import { TaskContextLine } from '../../components/ui/TaskContextLine';
 import { OutcomeBadge } from '../../components/ui/OutcomeBadge';
+import { ProjectPill } from '../../components/ui/ProjectPill';
 import { statusTone } from '../dashboard/statusTone';
 import { taskTypeMeta } from '../tasks/taskMeta';
 import { taskExec } from '../../lib/taskExec';
@@ -67,6 +68,7 @@ export function KanbanCard({ task, blocked, blockers, dragging, statusLabel, isP
             <Badge tone={statusTone(task.status)}>{statusLabel}</Badge>
           </div>
         </div>
+        {task.project_id != null ? <div className="flex"><ProjectPill projectId={task.project_id} /></div> : null}
       </div>
     </div>
   );

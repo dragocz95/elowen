@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent, within } from '@testing-library/react';
 import { KanbanBoard } from '../../../modules/kanban/KanbanBoard';
+import { ToastProvider } from '../../../components/ui/Toast';
 import { createWrapper } from '../../test-utils';
 import type { Task } from '../../../lib/types';
 
@@ -56,7 +57,7 @@ describe('KanbanBoard', () => {
       { id: 'p2', title: 'Phase Two', status: 'open', parent_id: 'e' },
     ];
     const { wrapper: W } = createWrapper();
-    render(<KanbanBoard tasks={epicTasks} onMove={() => {}} />, { wrapper: W });
+    render(<ToastProvider><KanbanBoard tasks={epicTasks} onMove={() => {}} /></ToastProvider>, { wrapper: W });
     // Epic header is shown; phases are hidden while collapsed.
     const header = screen.getByRole('button', { name: /Autopilot Epic/ });
     expect(header).toBeTruthy();

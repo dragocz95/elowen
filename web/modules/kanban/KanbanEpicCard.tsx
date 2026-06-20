@@ -1,7 +1,13 @@
 'use client';
-import { ChevronRight } from 'lucide-react';
+import { useState } from 'react';
+import { ChevronRight, Trash2 } from 'lucide-react';
 import type { Task, TaskStatus } from '../../lib/types';
 import { ProgressRibbon } from '../../components/ui/ProgressRibbon';
+import { ProjectPill } from '../../components/ui/ProjectPill';
+import { ActionMenu } from '../../components/ui/ActionMenu';
+import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
+import { useToast } from '../../components/ui/Toast';
+import { useDeleteMission } from '../../lib/mutations';
 import { taskTypeMeta } from '../tasks/taskMeta';
 import { epicProgress, epicLive } from '../../lib/taskTree';
 import { useSessions, useSessionSignals } from '../../lib/queries';
@@ -13,6 +19,9 @@ export function KanbanEpicCard({ epic, phases, expanded, onToggle, effectiveStat
   const { t } = useTranslation();
   const sessions = useSessions();
   const signals = useSessionSignals();
+  const { toast } = useToast();
+  const deleteMission = useDeleteMission();
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const { done, total } = epicProgress(phases);
   const { running, needsInput } = epicLive(phases, sessions.data ?? [], signals);
   const Icon = taskTypeMeta('epic').icon;
@@ -33,7 +42,7 @@ export function KanbanEpicCard({ epic, phases, expanded, onToggle, effectiveStat
       title={titleText}
       onClick={onToggle}
       onKeyDown={(e) => { if (e.key === 'Enter') onToggle(); }}
-      className="flex cursor-pointer flex-col gap-2 rounded-md border border-accent/30 bg-accent/[0.04] p-2.5 transition-colors hover:border-accent/50"
+      className="group flex cursor-pointer flex-col gap-2 rounded-md border border-accent/30 bg-accent/[0.04] p-2.5 transition-colors hover:border-accent/50"
     >
       <div className="flex items-center gap-2">
         <ChevronRight size={14} className={`shrink-0 text-text-muted transition-transform ${expanded ? 'rotate-90' : ''}`} aria-hidden />
@@ -41,11 +50,31 @@ export function KanbanEpicCard({ epic, phases, expanded, onToggle, effectiveStat
         <span className="min-w-0 flex-1 truncate text-sm font-semibold text-text">{epic.title}</span>
         {virtual ? <span className="shrink-0 rounded border border-accent/40 px-1 font-mono text-[10px] uppercase tracking-wide text-accent" aria-hidden>{trueStatusLabel}</span> : null}
         {active ? <span className={`h-2 w-2 shrink-0 rounded-full ${active ? 'live-dot' : ''}`} style={{ backgroundColor: dotColor, ['--live-ring' as string]: dotRing }} aria-hidden /> : null}
+        <div className="shrink-0 opacity-0 transition-opacity group-hover:opacity-100" onClick={(e) => e.stopPropagation()}>
+          <ActionMenu
+            label={t.tasks.deleteMission}
+            items={[{ label: t.tasks.deleteMission, icon: Trash2, tone: 'danger', onSelect: () => setConfirmDelete(true) }]}
+          />
+        </div>
       </div>
       <div className="flex items-center gap-2 pl-6">
         <ProgressRibbon phases={phases} className="flex-1" />
         <span className="shrink-0 font-mono text-[11px] text-text-muted">{done}/{total}</span>
       </div>
+      {epic.project_id != null ? <div className="flex pl-6"><ProjectPill projectId={epic.project_id} /></div> : null}
+
+      {confirmDelete && (
+        <div onClick={(e) => e.stopPropagation()}>
+          <ConfirmDialog
+            open={confirmDelete}
+            title={t.tasks.confirmDeleteMissionTitle.replace('{id}', epic.id)}
+            description={t.tasks.confirmDeleteMissionDescription}
+            confirmLabel={t.tasks.deleteMission}
+            onClose={() => setConfirmDelete(false)}
+            onConfirm={() => { setConfirmDelete(false); deleteMission.mutate(epic.id, { onSuccess: () => toast(t.tasks.missionDeleted.replace('{id}', epic.id)), onError: (e) => toast(String(e), 'error') }); }}
+          />
+        </div>
+      )}
     </div>
   );
 }

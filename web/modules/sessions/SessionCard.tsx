@@ -10,6 +10,7 @@ import { execModel } from '../../lib/modelProvider';
 import type { SessionInfo } from '../../lib/types';
 import { ModelIcon } from '../../components/ui/ModelIcon';
 import { OutcomeBadge } from '../../components/ui/OutcomeBadge';
+import { ProjectPill } from '../../components/ui/ProjectPill';
 import { IconButton } from '../../components/ui/IconButton';
 import { ActionMenu } from '../../components/ui/ActionMenu';
 import { ChangeStrip } from '../../components/ui/ChangeStrip';
@@ -98,6 +99,7 @@ export function SessionCard({ info, onOpenTerminal, compact = false }: { info: S
       <div className="flex items-center justify-between gap-2">
         <SendInput onSend={(keys) => send.mutate({ name, keys }, { onSuccess: () => toast(t.sessions.sentTo.replace('{name}', name)), onError: (e) => toast(String(e), 'error') })} />
         <div className="flex items-center gap-1.5">
+          {task ? <ProjectPill projectId={task.project_id} /> : null}
           {modelExec ? (
             <span className="inline-flex items-center gap-1 rounded-full border border-border bg-elevated px-2 py-0.5 text-[11px] text-text-muted" title={modelExec}>
               <ModelIcon name={modelExec} size={13} /><span className="max-w-28 truncate">{execModel(modelExec)}</span>

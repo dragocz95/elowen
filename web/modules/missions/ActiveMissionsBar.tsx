@@ -9,6 +9,7 @@ import { Badge } from '../../components/ui/Badge';
 import { IconButton } from '../../components/ui/IconButton';
 import { ActionMenu } from '../../components/ui/ActionMenu';
 import { ProgressRibbon } from '../../components/ui/ProgressRibbon';
+import { ProjectPill } from '../../components/ui/ProjectPill';
 import { CapacityMeter } from '../../components/ui/CapacityMeter';
 import { useToast } from '../../components/ui/Toast';
 import { useTranslation } from '../../lib/i18n';
@@ -35,12 +36,12 @@ export function ActiveMissionsBar({ missions, selectedId, onSelect }: { missions
   const { toast } = useToast();
   const { t } = useTranslation();
 
-  const epicTitle = (epicId: string) => tasks.data?.find((task) => task.id === epicId)?.title ?? epicId;
   const ordered = [...missions].sort((a, b) => (RANK[a.state] ?? 0) - (RANK[b.state] ?? 0));
 
   return (
     <div className="flex flex-wrap gap-3">
       {ordered.map((m) => {
+        const epic = tasks.data?.find((task) => task.id === m.epic_id);
         const kids = (tasks.data ?? []).filter((task) => task.parent_id === m.epic_id);
         const done = kids.filter((task) => task.status === 'closed' || task.status === 'cancelled').length;
         const paused = m.state === 'paused';
@@ -61,7 +62,7 @@ export function ActiveMissionsBar({ missions, selectedId, onSelect }: { missions
             style={{ transitionDuration: 'var(--motion-fast)' }}
           >
             <div className="flex items-start gap-2">
-              <span className="min-w-0 flex-1 truncate text-sm font-semibold text-text">{epicTitle(m.epic_id)}</span>
+              <span className="min-w-0 flex-1 truncate text-sm font-semibold text-text">{epic?.title ?? m.epic_id}</span>
               <Badge tone={disengaged ? 'muted' : (paused || stalled) ? 'warning' : 'accent'}>{disengaged ? t.missions.stateDisengaged : paused ? t.missions.statePaused : stalled ? t.missions.stateStalled : m.autonomy}</Badge>
             </div>
             <div className="flex items-center gap-2">
@@ -79,6 +80,7 @@ export function ActiveMissionsBar({ missions, selectedId, onSelect }: { missions
                 <ActionMenu label={t.missions.disengage} items={[{ label: t.missions.disengage, icon: Power, tone: 'danger', onSelect: () => disengage.mutate(m.id, { onSuccess: () => toast(t.missions.disengaged), onError: (e) => toast(String(e), 'error') }) }]} />
               </div>
             </div>
+            {epic?.project_id != null ? <div className="flex"><ProjectPill projectId={epic.project_id} /></div> : null}
           </div>
         );
       })}
