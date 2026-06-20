@@ -50,6 +50,19 @@ function BackendPicker({ value, onChange, models, relayLabel, allowRelay = true 
   );
 }
 
+/** Relay-mode model field: a free-text model name with a live brand badge, mirroring
+ *  BackendPicker's icon affordance so both autopilot modes look consistent. */
+function ModelInput({ value, onChange, placeholder }: { value: string; onChange: (v: string) => void; placeholder?: string }) {
+  return (
+    <div className="flex items-center gap-2">
+      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-border bg-bg" aria-hidden>
+        <ModelIcon name={value} size={16} />
+      </span>
+      <input value={value} onChange={(e) => onChange(e.target.value)} className={inputClass} placeholder={placeholder} />
+    </div>
+  );
+}
+
 type Category = 'models' | 'autopilot' | 'providers' | 'defaults' | 'hermes';
 
 export default function SettingsPage() {
@@ -393,10 +406,10 @@ export default function SettingsPage() {
               {reasoningMode === 'relay' ? (
                 <>
                   <SettingCard title={t.settings.plannerModel} description={t.settings.plannerModelDesc} icon={Bot}>
-                    <input value={model} onChange={(e) => setModel(e.target.value)} className={inputClass} placeholder={t.settings.plannerPlaceholder} />
+                    <ModelInput value={model} onChange={setModel} placeholder={t.settings.plannerPlaceholder} />
                   </SettingCard>
                   <SettingCard title={t.settings.overseerModel} description={t.settings.overseerModelDesc} icon={Eye}>
-                    <input value={overseerModel} onChange={(e) => setOverseerModel(e.target.value)} className={inputClass} placeholder={t.settings.overseerPlaceholder} />
+                    <ModelInput value={overseerModel} onChange={setOverseerModel} placeholder={t.settings.overseerPlaceholder} />
                   </SettingCard>
                   <SettingCard title={t.settings.apiUrl} description={t.settings.apiUrlDesc} icon={Link2}>
                     <input value={apiUrl} onChange={(e) => setApiUrl(e.target.value)} className={inputClass} />
