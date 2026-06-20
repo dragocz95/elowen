@@ -21,6 +21,13 @@ export function useSessionStream(name: string): string {
       } catch { /* malformed frame — skip, keep the stream alive */ }
     };
     es.addEventListener('pane', onPane as EventListener);
+    // On a terminal failure (readyState CLOSED) just stop — do NOT clear the auth token here. The
+    // EventSource API can't distinguish a 401 from a benign drop (proxy/SSE timeout, daemon restart,
+    // hard-reload race), so clearing it would log the user out spuriously. Real auth expiry is
+    // handled by the regular request path; this only avoids a retry storm against a dead endpoint.
+    es.onerror = () => {
+      if (es.readyState === EventSource.CLOSED) es.close();
+    };
     return () => es.close();
   }, [name]);
   return pane;

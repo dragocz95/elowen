@@ -13,4 +13,12 @@ describe('MissionStore', () => {
     m.setState('m1', 'disengaged');
     expect(m.active()).toEqual([]);
   });
+  it('live includes active and stalled missions', () => {
+    m.create({ id: 'a', epic_id: 'e1', autonomy: 'L3', max_sessions: 1, cleared_guardrails: [] });
+    m.create({ id: 'b', epic_id: 'e2', autonomy: 'L3', max_sessions: 1, cleared_guardrails: [] });
+    m.create({ id: 'c', epic_id: 'e3', autonomy: 'L3', max_sessions: 1, cleared_guardrails: [] });
+    m.setState('b', 'stalled');
+    m.setState('c', 'paused');
+    expect(m.live().map(x => x.id).sort()).toEqual(['a', 'b']); // paused excluded
+  });
 });

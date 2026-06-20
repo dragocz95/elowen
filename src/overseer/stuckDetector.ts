@@ -9,7 +9,13 @@ const agentOf = (t: Task): string | null => t.labels.find((l) => l.startsWith('a
 function startedOf(t: Task): number | null {
   const label = t.labels.find((l) => l.startsWith('started:'));
   if (label) { const n = Number(label.slice('started:'.length)); if (Number.isFinite(n)) return n; }
-  if (t.created_at) { const n = Date.parse(t.created_at.replace(' ', 'T') + 'Z'); if (Number.isFinite(n)) return n; }
+  if (t.created_at) {
+    // SQLite `datetime('now')` is `YYYY-MM-DD HH:MM:SS` (UTC, no zone) → normalise to ISO + 'Z'. But
+    // if it already carries a zone (a 'T' separator implies an ISO string), parse it as-is — appending
+    // a second 'Z' would yield `...ZZ` and a NaN. Brittle-format guard for #54.
+    const iso = t.created_at.includes('T') ? t.created_at : t.created_at.replace(' ', 'T') + 'Z';
+    const n = Date.parse(iso); if (Number.isFinite(n)) return n;
+  }
   return null;
 }
 

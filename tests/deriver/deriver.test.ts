@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { Deriver } from '../../src/deriver/deriver.js';
 import { FakeTmuxDriver } from '../../src/tmux/fakeDriver.js';
 import { openDb } from '../../src/store/db.js';
@@ -63,10 +63,62 @@ describe('Deriver permission handling', () => {
     expect(emitted.at(-1)!.sig.type).toBe('needs_input');
   });
 
+  it('claude workspace-trust gate: auto-accepts under autonomy WITHOUT consulting the overseer', async () => {
+    const db = openDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'orca','/o')").run();
+    const tasks = new TaskStore(db); const agents = new AgentStore(db);
+    tasks.create({ id: 'orca-1', project_id: 1, title: 'T' }); tasks.setStatus('orca-1', 'in_progress');
+    agents.upsert({ project_id: 1, name: 'Nova', program: 'claude-code', model: 'sonnet' });
+    const tmux = new FakeTmuxDriver();
+    tmux.setPane('orca-Nova', ' Accessing workspace:\n ❯ 1. Yes, I trust this folder\n   2. No, exit');
+    let consulted = false;
+    const deriver = new Deriver({
+      tmux, agents, tasks, sink: { emit: () => {} }, sessionTaskId: () => 'orca-1',
+      autonomyFor: () => 'L3',
+      decideApproval: async () => { consulted = true; return { approve: false, destructive: true }; },
+    });
+    await deriver.tick();
+    expect(tmux.sentKeys('orca-Nova')).toEqual([['Enter']]); // cleared despite a reject verdict
+    expect(consulted).toBe(false); // overseer never asked — trust is environmental
+  });
+
+  it('L1: claude trust gate still escalates (autonomy gate precedes auto-accept)', async () => {
+    const db = openDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'orca','/o')").run();
+    const tasks = new TaskStore(db); const agents = new AgentStore(db);
+    tasks.create({ id: 'orca-1', project_id: 1, title: 'T' }); tasks.setStatus('orca-1', 'in_progress');
+    agents.upsert({ project_id: 1, name: 'Nova', program: 'claude-code', model: 'sonnet' });
+    const tmux = new FakeTmuxDriver();
+    tmux.setPane('orca-Nova', ' Accessing workspace:\n ❯ 1. Yes, I trust this folder\n   2. No, exit');
+    const emitted: { sig: { type: string } }[] = [];
+    const deriver = new Deriver({
+      tmux, agents, tasks, sink: { emit: (_s, sig) => emitted.push({ sig }) },
+      sessionTaskId: () => 'orca-1', autonomyFor: () => 'L1',
+    });
+    await deriver.tick();
+    expect(tmux.sentKeys('orca-Nova')).toEqual([]);
+    expect(emitted.at(-1)!.sig.type).toBe('needs_input');
+  });
+
   it('passes the session mission id into decideApproval', async () => {
     let seen: string | null = 'unset';
     const { deriver } = setup('L3', async (input) => { seen = input.missionId; return { approve: true, destructive: false }; }, () => 'm-ep');
     await deriver.tick();
     expect(seen).toBe('m-ep');
+  });
+
+  it('a thrown overseer decision escalates instead of breaking the tick', async () => {
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { tmux, deriver, emitted } = setup('L3', async () => { throw new Error('relay down'); });
+    await expect(deriver.tick()).resolves.toBeUndefined();
+    expect(tmux.sentKeys('orca-TestAgent')).toEqual([]); // never auto-clears on a failed decision
+    expect(emitted.at(-1)!.sig.type).toBe('needs_input');
+    err.mockRestore();
+  });
+
+  it('a vanished session (capturePane throws) is isolated — the sweep does not break', async () => {
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { tmux, deriver } = setup('L3');
+    tmux.capturePane = async () => { throw new Error('no server on this socket'); };
+    await expect(deriver.tick()).resolves.toBeUndefined();
+    err.mockRestore();
   });
 });

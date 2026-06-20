@@ -1,5 +1,5 @@
 import type { Task, DerivedSignal } from './types';
-import { parseAnsi } from '../modules/sessions/ansi';
+import { parseAnsi } from './ansi';
 
 const AGENT_PREFIX = 'agent:';
 
@@ -28,7 +28,10 @@ export function missionEpicId(missionId: string): string {
 /** Normalize a SQLite ("2026-06-18 10:38:49", UTC) or ISO timestamp to epoch ms. */
 export function parseTs(iso?: string | null): number | null {
   if (!iso) return null;
-  const norm = iso.includes('T') ? iso : iso.replace(' ', 'T') + 'Z';
+  // SQLite emits "2026-06-18 10:38:49" (space-separated, UTC, no zone). Normalize to ISO and
+  // tag it UTC — but only add 'Z' when the value doesn't already carry a zone, so an already
+  // UTC-suffixed "…49Z" doesn't become an invalid "…49ZZ".
+  const norm = iso.includes('T') ? iso : iso.replace(' ', 'T') + (iso.endsWith('Z') ? '' : 'Z');
   const ms = new Date(norm).getTime();
   return Number.isNaN(ms) ? null : ms;
 }

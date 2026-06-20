@@ -2,31 +2,29 @@ import type { SpawnService } from '../spawn/spawn.js';
 import type { ConfigStore } from '../store/configStore.js';
 import type { ProjectStore } from '../store/projectStore.js';
 import type { PlanJob } from './planJob.js';
+import { render } from '../prompts/index.js';
 import { resolveExecutor } from './routing.js';
 
 /** The planning prompt: the Pilot reads the repo, then submits a structured plan via the orca CLI.
- *  It must NOT implement anything and must NOT spawn agents — the engine owns orchestration. */
-export function pilotPrompt(goal: string, jobId: string, projectNotes?: string, template?: string): string {
-  const notes = projectNotes?.trim() ? `\nProject context:\n${projectNotes.trim()}\n` : '';
-  const guide = template?.trim() ? `\nPlanning guidance:\n${template.trim()}\n` : '';
-  return [
-    'You are the orca Pilot. Produce an implementation PLAN — do not write any code.',
-    'First explore the repository (read the files relevant to the goal, AGENTS.md / CLAUDE.md / README for conventions) so the plan fits the actual codebase.',
-    `Goal: ${goal}`,
-    notes,
-    guide,
-    'Decompose the goal into 3 to 7 ordered phases. Each phase: a short title, a type (task|feature|bug|chore), optionally an agent name and a one-line details string.',
-    'When the plan is ready, submit it ONCE with a single command (do NOT implement, do NOT spawn agents, do NOT close anything):',
-    `  orca plan submit --phases '[{"title":"...","type":"feature","details":"..."}]'`,
-    `(Job ${jobId} is set in your ORCA_PLAN_JOB env — the command picks it up automatically.)`,
-    'After submitting, stop. The orca engine will create and run the phases.',
-  ].filter(Boolean).join('\n');
+ *  It must NOT implement anything and must NOT spawn agents — the engine owns orchestration.
+ *  Note: this is a complete, self-contained agent prompt. It deliberately does NOT embed the relay
+ *  planner template (`config.autopilot.prompt`) — that template is a relay-format prompt carrying
+ *  `{{goal}}` placeholders and a "return ONLY a JSON array" instruction, which would both leak the
+ *  raw placeholder into the agent's view and contradict the `orca plan submit` flow below. */
+export function pilotPrompt(goal: string, jobId: string, projectNotes?: string, cliPath?: string): string {
+  // Inline notes block (empty when there are none) so the goal line stays flush against the rest.
+  const notes = projectNotes?.trim() ? `\n\nProject context:\n${projectNotes.trim()}\n` : '';
+  // Invoke the daemon's OWN CLI by absolute path via node — exactly like the worker close command.
+  // A bare `orca` would 127 (`command not found`) unless the binary happens to be on the agent's
+  // PATH, and even then it could be a version-skewed global install rather than this daemon's CLI.
+  const submit = cliPath ? `node ${cliPath} plan submit` : 'orca plan submit';
+  return render('pilot', { goal, notes, submit, jobId });
 }
 
 /** Build the Pilot spawner: launches a repo-aware planning agent for an agent-mode plan job. The
  *  agent submits its plan back through the orca CLI (`orca plan submit`); the daemon never reads its
  *  stdout. Returns a function matching the `pilot` ServerDep. */
-export function makePilot(deps: { spawn: SpawnService; config: ConfigStore; projects: ProjectStore; nameAgent: () => string }): (job: PlanJob, projectPath: string) => Promise<void> {
+export function makePilot(deps: { spawn: SpawnService; config: ConfigStore; projects: ProjectStore; nameAgent: () => string; cliPath?: string }): (job: PlanJob, projectPath: string) => Promise<void> {
   return async (job, projectPath) => {
     const cfg = deps.config.get();
     const spec = resolveExecutor([`exec:${cfg.autopilot.pilotExec}`], { program: 'claude-code', model: 'sonnet' });
@@ -37,7 +35,7 @@ export function makePilot(deps: { spawn: SpawnService; config: ConfigStore; proj
     await deps.spawn.launch({
       projectId: job.projectId, projectPath, taskId: job.id, agentName, spec,
       taskTitle: `Plan: ${job.goal}`,
-      rawPrompt: pilotPrompt(job.goal, job.id, notes, cfg.autopilot.prompt),
+      rawPrompt: pilotPrompt(job.goal, job.id, notes, deps.cliPath),
       extraEnv: { ORCA_PLAN_JOB: job.id },
     });
   };

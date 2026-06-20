@@ -1,4 +1,5 @@
 'use client';
+import { useEffect, useState } from 'react';
 import { orcaClient } from '../../lib/orcaClient';
 
 // Deterministic monogram colour so a given user always gets the same chip.
@@ -9,11 +10,20 @@ const colorFor = (s: string) => COLORS[[...s].reduce((a, c) => a + c.charCodeAt(
 /** A user's avatar: the uploaded image when present, else a coloured initials monogram. */
 export function Avatar({ user, size = 36 }: { user: { id: number; username: string; name?: string; avatar?: string }; size?: number }) {
   const label = user.name?.trim() || user.username;
-  if (user.avatar) {
+  // The avatar URL is a short-lived signed link minted on demand (finding W2) — fetch it when the
+  // user has an uploaded avatar; fall back to the monogram until (and if) it resolves.
+  const [src, setSrc] = useState<string | null>(null);
+  useEffect(() => {
+    if (!user.avatar) { setSrc(null); return; }
+    let live = true;
+    orcaClient.avatarUrl(user.id).then((u) => { if (live) setSrc(u); }).catch(() => { if (live) setSrc(null); });
+    return () => { live = false; };
+  }, [user.id, user.avatar]);
+  if (user.avatar && src) {
     return (
       // eslint-disable-next-line @next/next/no-img-element
       <img
-        src={orcaClient.avatarUrl(user.id)}
+        src={src}
         alt={label}
         className="shrink-0 rounded-full border border-border object-cover"
         style={{ width: size, height: size }}

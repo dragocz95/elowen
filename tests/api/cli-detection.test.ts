@@ -49,7 +49,6 @@ describe('cli detection unit', () => {
   it('detects fresh install when context indicates no config, no api key, no custom setup', () => {
     const result = detectClis({
       configPersisted: false, hasApiKey: false, hasCustomSetup: false,
-      userCount: 0, projectCount: 0,
     });
     expect(result.freshInstall.noConfigPersisted).toBe(true);
     expect(result.freshInstall.noApiKey).toBe(true);
@@ -59,7 +58,6 @@ describe('cli detection unit', () => {
   it('detects non-fresh install when config has been persisted', () => {
     const result = detectClis({
       configPersisted: true, hasApiKey: false, hasCustomSetup: false,
-      userCount: 1, projectCount: 1,
     });
     expect(result.freshInstall.noConfigPersisted).toBe(false);
   });
@@ -67,7 +65,6 @@ describe('cli detection unit', () => {
   it('detects non-fresh install when api key is set', () => {
     const result = detectClis({
       configPersisted: true, hasApiKey: true, hasCustomSetup: false,
-      userCount: 0, projectCount: 0,
     });
     expect(result.freshInstall.noApiKey).toBe(false);
   });

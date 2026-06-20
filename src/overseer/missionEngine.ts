@@ -58,7 +58,10 @@ export class MissionEngine {
       if (t.status !== 'in_progress') continue;
       const agent = t.labels.find((l) => l.startsWith('agent:'))?.slice('agent:'.length);
       const session = agent ? `orca-${agent}` : null;
-      if (session && live.has(session)) await this.d.tmux.kill(session);
+      // Guard the kill: if the session exited between `list()` and here, the driver rejects — without
+      // the catch one dead session would abort the loop and strand the remaining children in_progress
+      // forever (the UI would still read "running"). Mirror overseerAgent.stop / janitor.
+      if (session && live.has(session)) { try { await this.d.tmux.kill(session); } catch { /* already gone — fine */ } }
       this.d.tasks.setStatus(t.id, 'open');
       this.d.bus.publish({ type: 'task', taskId: t.id, status: 'open' });
       stopped++;
@@ -68,7 +71,8 @@ export class MissionEngine {
 
   async disengage(id: string): Promise<void> {
     const m = this.d.missions.get(id);
-    if (m) await this.stopRunning(m.epic_id);
+    if (!m || m.state === 'disengaged') return; // idempotent: a repeat call must not re-publish the event
+    await this.stopRunning(m.epic_id);
     await this.markDisengaged(id);
   }
 
@@ -76,6 +80,9 @@ export class MissionEngine {
    *  parked overseer (kill its session + drain its queue). Shared by explicit disengage AND the
    *  natural-completion branch in tick — otherwise a self-completing mission leaks its overseer. */
   private async markDisengaged(id: string): Promise<void> {
+    // Re-check state under the (single-threaded) call: two overlapping ticks can both see "all kids
+    // closed" and call this. Bail if already disengaged so the event + overseer.stop fire exactly once.
+    if (this.d.missions.get(id)?.state === 'disengaged') return;
     this.d.missions.setState(id, 'disengaged');
     this.d.bus.publish({ type: 'mission', missionId: id, state: 'disengaged' });
     await this.d.overseer?.stop(id);
@@ -83,7 +90,8 @@ export class MissionEngine {
 
   async pause(id: string): Promise<void> {
     const m = this.d.missions.get(id);
-    if (m) await this.stopRunning(m.epic_id);
+    if (!m || m.state === 'paused') return; // idempotent: a repeat call must not re-publish the event
+    await this.stopRunning(m.epic_id);
     this.d.missions.setState(id, 'paused');
     this.d.bus.publish({ type: 'mission', missionId: id, state: 'paused' });
     await this.d.overseer?.stop(id); // a paused mission keeps no parked overseer; resume restarts it
@@ -103,8 +111,9 @@ export class MissionEngine {
   }
 
   // Epic ids are globally unique, so children resolve by parent_id alone — no project scoping needed.
+  // An epic's own parent_id is never its own id, so no `type !== 'epic'` filter is needed.
   private children(epicId: string) {
-    return this.d.tasks.list().filter(t => t.parent_id === epicId && t.type !== 'epic');
+    return this.d.tasks.list().filter(t => t.parent_id === epicId);
   }
 
   async tick(id: string): Promise<void> {
@@ -127,9 +136,10 @@ export class MissionEngine {
     // Slots in use = this epic's own in-progress children — NOT all global orca- tmux
     // sessions (other projects/missions would otherwise starve this one).
     let running = kids.filter(t => t.status === 'in_progress').length;
-    for (const task of this.d.readiness.ready(epic.project_id)) {
+    // readyForEpic returns only this epic's direct, dependency-cleared children — so a project with
+    // several parallel missions no longer has each one walk every ready task in the project (#34/S15).
+    for (const task of this.d.readiness.readyForEpic(m.epic_id)) {
       if (running >= m.max_sessions) break;
-      if (task.parent_id !== m.epic_id) continue;
       const triggered = detectGuardrails(`${task.title} ${task.labels.join(' ')}`);
       const permitted = (m.autonomy === 'L3' || m.autonomy === 'L2') && isCleared(triggered, m.cleared_guardrails);
       if (!permitted) continue;
@@ -161,7 +171,9 @@ export class MissionEngine {
     // Stall vs resume: with nothing running and a blocked child present, the mission can't advance
     // until a human unblocks it — mark it 'stalled' so the UI reads "needs attention" rather than a
     // misleading "active". The overseer keeps ticking stalled missions (missions.live()), so once
-    // the blocker clears and work resumes (running > 0), it flips back to 'active'.
+    // the blocker clears and work resumes (running > 0), it flips back to 'active'. Re-fetch the
+    // children here on purpose: the dispatch loop above may have just set one 'blocked' (overseer
+    // denial), and that mutation isn't reflected in the pre-loop `kids` snapshot.
     const stalled = this.children(m.epic_id);
     if (running === 0 && stalled.some(t => t.status === 'blocked')) {
       if (m.state !== 'stalled') { this.d.missions.setState(id, 'stalled'); this.d.bus.publish({ type: 'mission', missionId: id, state: 'stalled' }); }

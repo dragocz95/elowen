@@ -1,7 +1,18 @@
 import { randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
 import type { Db } from './db.js';
 
+/** Fallback token TTL (days) when no configured value is passed in — keeps the store usable on its
+ *  own (e.g. tests). The live value comes from config.security.tokenTtlDays. */
+const DEFAULT_TOKEN_TTL_DAYS = 30;
+const ttlDays = (days?: number): number =>
+  typeof days === 'number' && Number.isFinite(days) && days >= 1 ? Math.floor(days) : DEFAULT_TOKEN_TTL_DAYS;
+
 export interface User { id: number; username: string; created_at: string; is_admin: boolean; allowed_execs: string[]; name: string; email: string; avatar: string; default_exec: string }
+/** What a token may do. 'full' = an interactive user session (the user's own rights). 'agent' = a
+ *  spawned worker/overseer/pilot, restricted to its task-close / plan-submit / overseer verbs. */
+export type TokenScope = 'full' | 'agent';
+/** A resolved token: the owning user plus the token's scope, so route guards can narrow an agent. */
+export interface Principal { user: User; scope: TokenScope }
 type Row = { id: number; username: string; created_at: string; is_admin: number; password_hash: string; allowed_execs: string; name: string; email: string; avatar: string; default_exec: string };
 const mask = (r: Row): User => ({ id: r.id, username: r.username, created_at: r.created_at, is_admin: !!r.is_admin, allowed_execs: r.allowed_execs ? r.allowed_execs.split(',').filter(Boolean) : [], name: r.name ?? '', email: r.email ?? '', avatar: r.avatar ?? '', default_exec: r.default_exec ?? '' });
 
@@ -79,22 +90,45 @@ export class UserStore {
     return (this.db.prepare('SELECT COUNT(*) AS n FROM users').get() as { n: number }).n;
   }
   delete(id: number): void {
-    this.db.prepare('DELETE FROM auth_tokens WHERE user_id = ?').run(id);
-    this.db.prepare('DELETE FROM user_projects WHERE user_id = ?').run(id); // no orphan assignments
-    this.db.prepare('DELETE FROM users WHERE id = ?').run(id);
+    // One transaction so a mid-way failure can't leave orphan tokens/assignments (consistent with
+    // ProjectStore.remove and TaskStore.delete). The schema has no FK cascade, so order is explicit.
+    this.db.transaction(() => {
+      this.db.prepare('DELETE FROM auth_tokens WHERE user_id = ?').run(id);
+      this.db.prepare('DELETE FROM user_projects WHERE user_id = ?').run(id); // no orphan assignments
+      this.db.prepare('DELETE FROM users WHERE id = ?').run(id);
+    })();
   }
-  issueToken(userId: number): string {
+  issueToken(userId: number, scope: TokenScope = 'full'): string {
     const token = randomBytes(32).toString('hex');
-    this.db.prepare('INSERT INTO auth_tokens (token, user_id) VALUES (?, ?)').run(token, userId);
+    this.db.prepare('INSERT INTO auth_tokens (token, user_id, scope) VALUES (?, ?, ?)').run(token, userId, scope);
     return token;
   }
-  userForToken(token: string): User | null {
+  userForToken(token: string, days?: number): User | null {
+    return this.principalForToken(token, days)?.user ?? null;
+  }
+  /** Resolve a token to its owning user AND scope, so route guards can restrict agent tokens.
+   *  Tokens expire after the configured TTL — an old token captured from a log / URL stops working
+   *  even if it was never explicitly revoked. */
+  principalForToken(token: string, days?: number): Principal | null {
     const r = this.db
-      .prepare('SELECT u.* FROM auth_tokens t JOIN users u ON u.id = t.user_id WHERE t.token = ?')
-      .get(token) as Row | undefined;
-    return r ? mask(r) : null;
+      .prepare(`SELECT u.*, t.scope AS token_scope FROM auth_tokens t JOIN users u ON u.id = t.user_id WHERE t.token = ? AND t.created_at > datetime('now', '-${ttlDays(days)} days')`)
+      .get(token) as (Row & { token_scope: string }) | undefined;
+    if (!r) return null;
+    return { user: mask(r), scope: r.token_scope === 'agent' ? 'agent' : 'full' };
+  }
+  /** Re-issue the daemon's agent service token: drop any prior agent-scoped tokens for the user, then
+   *  mint a fresh one. Called at boot so a restart rotates the token (no unbounded accumulation). */
+  refreshAgentToken(userId: number): string {
+    return this.db.transaction(() => {
+      this.db.prepare("DELETE FROM auth_tokens WHERE user_id = ? AND scope = 'agent'").run(userId);
+      return this.issueToken(userId, 'agent');
+    })();
   }
   revokeToken(token: string): void {
     this.db.prepare('DELETE FROM auth_tokens WHERE token = ?').run(token);
+  }
+  /** Delete tokens past their TTL. Cheap; called periodically so the table doesn't grow unbounded. */
+  purgeExpiredTokens(days?: number): void {
+    this.db.prepare(`DELETE FROM auth_tokens WHERE created_at <= datetime('now', '-${ttlDays(days)} days')`).run();
   }
 }

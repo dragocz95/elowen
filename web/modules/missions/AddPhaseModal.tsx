@@ -13,7 +13,7 @@ import { Segmented } from '../../components/ui/Segmented';
 import { IconButton } from '../../components/ui/IconButton';
 import { useToast } from '../../components/ui/Toast';
 import { useTranslation } from '../../lib/i18n';
-import { taskTypeMeta, TASK_TYPES } from '../tasks/taskMeta';
+import { taskTypeLabel, TASK_TYPES } from '../tasks/taskMeta';
 import { OrcaApiError } from '../../lib/orcaClient';
 
 type Mode = 'manual' | 'replan';
@@ -33,13 +33,6 @@ export function AddPhaseModal({ epicId, onClose }: { epicId: string; onClose: ()
   const [goal, setGoal] = useState('');
   const [rows, setRows] = useState<ManualPhase[]>([{ title: '', type: 'task' }]);
 
-  const typeLabels: Record<string, string> = {
-    task: t.tasks.typeTask,
-    bug: t.tasks.typeBug,
-    feature: t.tasks.typeFeature,
-    epic: t.tasks.typeEpic,
-    chore: t.tasks.typeChore,
-  };
 
   const busy = insert.isPending;
 
@@ -94,7 +87,7 @@ export function AddPhaseModal({ epicId, onClose }: { epicId: string; onClose: ()
                   className="w-32"
                 >
                   {TASK_TYPES.filter((taskType) => taskType !== 'epic').map((taskType) => (
-                    <option key={taskType} value={taskType}>{typeLabels[taskType] ?? taskTypeMeta(taskType).label}</option>
+                    <option key={taskType} value={taskType}>{taskTypeLabel(t, taskType)}</option>
                   ))}
                 </Select>
                 <IconButton icon={X} label={t.tasks.removePhase} onClick={() => setRows((rs) => rs.length > 1 ? rs.filter((_, j) => j !== i) : rs)} />

@@ -1,11 +1,16 @@
 export type TaskStatus = 'open' | 'in_progress' | 'blocked' | 'closed' | 'cancelled';
-export interface Task { id: string; title: string; status: TaskStatus; type?: string; priority?: string; labels?: string[]; description?: string; scheduled_at?: string | null; autostart?: number; result_summary?: string | null; outcome?: string | null; closed_at?: string | null; created_at?: string; parent_id?: string | null }
-export interface Session { name: string }
+/** Outcome the daemon records when a task closes (`src/store/types.ts`). */
+export type TaskOutcome = 'ok' | 'fail';
+export interface Task { id: string; title: string; status: TaskStatus; type?: string; priority?: string; labels?: string[]; description?: string; scheduled_at?: string | null; autostart?: number; result_summary?: string | null; outcome?: TaskOutcome | null; closed_at?: string | null; created_at?: string; parent_id?: string | null }
 export type SessionRole = 'overseer' | 'pilot' | 'agent';
 /** Structured identity of a live agent session, classified by the daemon (single source of truth).
  *  Clients render from `role` — they never parse meaning out of the raw session name. */
 export interface SessionInfo { name: string; role: SessionRole; agent: string; missionId?: string }
-export interface Mission { id: string; epic_id: string; autonomy: string; max_sessions: number; state: string }
+/** Autonomy level the overseer runs a mission at (`L0` manual … `L3` fully autonomous). */
+export type Autonomy = 'L0' | 'L1' | 'L2' | 'L3';
+/** Lifecycle state of a mission, set by the daemon (`src/overseer/missionEngine.ts`). */
+export type MissionState = 'active' | 'paused' | 'disengaged' | 'stalled';
+export interface Mission { id: string; epic_id: string; autonomy: Autonomy; max_sessions: number; state: MissionState }
 export interface CreateTaskInput { title: string; type?: string; priority?: string; description?: string; scheduled_at?: string | null; autostart?: number; deps?: string[] }
 export interface UpdateTaskInput { title?: string; type?: string; priority?: string; description?: string; scheduled_at?: string | null; autostart?: number; deps?: string[] }
 export interface PlanInput { goal: string; exec?: string; autonomy?: string; maxSessions?: number; engage?: boolean; phases?: { title: string; type?: string }[] }
@@ -26,6 +31,7 @@ export interface OrcaConfig {
   autopilot: { model: string; overseerModel: string; apiUrl: string; apiKeySet: boolean; notes: string; prompt: string; pilotExec: string; overseerExec: string; reviewOnDone: boolean };
   providers: Record<string, { bin: string; args: string }>;
   defaults: { exec: string; autonomy: string; maxSessions: number };
+  security: { tokenTtlDays: number };
 }
 export interface ConfigPatch {
   allowedExecs?: string[];
@@ -34,8 +40,9 @@ export interface ConfigPatch {
   autopilot?: { model?: string; overseerModel?: string; apiUrl?: string; apiKey?: string; notes?: string; prompt?: string; pilotExec?: string; overseerExec?: string; reviewOnDone?: boolean };
   providers?: Record<string, { bin: string; args: string }>;
   defaults?: { exec?: string; autonomy?: string; maxSessions?: number };
+  security?: { tokenTtlDays?: number };
 }
-export interface MissionTask { id: string; title: string; status: TaskStatus; type: string; parent_id: string | null; labels?: string[]; outcome?: string | null }
+export interface MissionTask { id: string; title: string; status: TaskStatus; type: string; parent_id: string | null; labels?: string[]; outcome?: TaskOutcome | null }
 export interface MissionProgress { total: number; open: number; inProgress: number; blocked: number; closed: number; cancelled: number }
 export interface MissionDeps { taskId: string; dependsOnId: string }
 export interface MissionDetail {

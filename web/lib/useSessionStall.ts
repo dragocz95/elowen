@@ -1,6 +1,6 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
-import { useSessionPane } from '../modules/sessions/useSessionPane';
+import { useSessionPane } from './useSessionPane';
 
 export type StallState = 'fresh' | 'stalled' | 'stuck';
 
@@ -29,7 +29,8 @@ export function stallState(silenceSec: number, live: boolean, thresholds: StallT
  *  changes we reset the "last change" timestamp, then derive a stall state from
  *  the elapsed silence. Returns `fresh` for non-live sessions. */
 export function useSessionStall(name: string, live: boolean, thresholds: StallThresholds = DEFAULT_STALL_THRESHOLDS): { state: StallState; silenceSec: number } {
-  const { tail } = useSessionPane(name, 8);
+  // Only poll while the session is live; a dead session reads as 'fresh' below anyway.
+  const { tail } = useSessionPane(name, 8, live);
   const [now, setNow] = useState(() => Date.now());
   const lastChangeRef = useRef<number>(Date.now());
 

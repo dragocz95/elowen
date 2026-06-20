@@ -26,7 +26,7 @@ function setup() {
     engine: null as never, spawn: null as never, tmux: null as never,
     project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },
     clock: new FakeClock(0), config: new ConfigStore(db),
-    users, projects: new ProjectStore(db), userProjects: new UserProjectStore(db), avatarsDir,
+    users, projects: new ProjectStore(db), userProjects: new UserProjectStore(db), avatarsDir, avatarSecret: 'test-avatar-secret',
   });
   return { app, bob, adminTok: users.issueToken(admin.id), bobTok: users.issueToken(bob.id) };
 }
@@ -73,6 +73,45 @@ describe('avatar upload + serve', () => {
   it('404s when a user has no avatar', async () => {
     const { app, bob, bobTok } = setup();
     expect((await app.request(`/users/${bob.id}/avatar`, auth(bobTok))).status).toBe(404);
+  });
+});
+
+describe('avatar signed URL (W2 — no long-lived token in the <img> src)', () => {
+  async function uploadAvatar(app: ReturnType<typeof setup>['app'], bobTok: string) {
+    const fd = new FormData();
+    fd.append('avatar', new File([new Uint8Array([1, 2, 3, 4])], 'me.png', { type: 'image/png' }));
+    await app.request('/auth/me/avatar', { method: 'POST', headers: { authorization: `Bearer ${bobTok}` }, body: fd });
+  }
+
+  it('mints a signed URL (authenticated) and serves the avatar with NO session token in the path', async () => {
+    const { app, bob, bobTok } = setup();
+    await uploadAvatar(app, bobTok);
+    const minted = await app.request(`/users/${bob.id}/avatar/url`, auth(bobTok));
+    expect(minted.status).toBe(200);
+    const { url } = await minted.json() as { url: string };
+    expect(url).toMatch(/^\/users\/\d+\/avatar\?exp=\d+&sig=[0-9a-f]+$/);
+    expect(url).not.toContain('token='); // the whole point: no long-lived token in the URL
+    // The signed link works WITHOUT any bearer/token header (an <img> can't set headers).
+    const got = await app.request(url);
+    expect(got.status).toBe(200);
+    expect(got.headers.get('content-type')).toBe('image/png');
+  });
+
+  it('rejects a tampered signature and an expired link', async () => {
+    const { app, bob, bobTok } = setup();
+    await uploadAvatar(app, bobTok);
+    const { url } = await (await app.request(`/users/${bob.id}/avatar/url`, auth(bobTok))).json() as { url: string };
+    // Flip the last sig char → invalid HMAC → 403, no bytes served.
+    const tampered = url.slice(0, -1) + (url.endsWith('a') ? 'b' : 'a');
+    expect((await app.request(tampered)).status).toBe(403);
+    // A past `exp` is rejected even with an otherwise well-formed sig.
+    expect((await app.request(`/users/${bob.id}/avatar?exp=1&sig=deadbeef`)).status).toBe(403);
+  });
+
+  it('still requires auth for an unsigned avatar request', async () => {
+    const { app, bob, bobTok } = setup();
+    await uploadAvatar(app, bobTok);
+    expect((await app.request(`/users/${bob.id}/avatar`)).status).toBe(401); // no sig, no bearer
   });
 });
 

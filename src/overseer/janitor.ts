@@ -1,9 +1,12 @@
 import type { TmuxDriver } from '../tmux/types.js';
+import type { Task } from '../store/types.js';
 
 export interface JanitorDeps {
   tmux: TmuxDriver;
-  /** Resolve the task an orca- session is working, or null if none is found. */
-  taskForSession: (session: string) => { status: string } | null;
+  /** Resolve the task an orca- session is working, or null if none is found. Typed off `Task` (not a
+   *  bare `{ status: string }`) so `status` is the real `TaskStatus` union and the field can't drift
+   *  from the store; the janitor only reads `status`, so a `Pick` keeps the contract minimal. */
+  taskForSession: (session: string) => Pick<Task, 'status'> | null;
 }
 
 /**

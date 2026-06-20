@@ -1,6 +1,7 @@
 'use client';
-import { CheckCircle2, XCircle, Archive, Bot, Clock, CalendarCheck } from 'lucide-react';
+import { CheckCircle2, XCircle, Archive, Bot, Clock, CalendarCheck, type LucideIcon } from 'lucide-react';
 import type { Task } from '../../lib/types';
+import { statusLabel } from './taskMeta';
 import { useConfig } from '../../lib/queries';
 import { taskExec } from '../../lib/taskExec';
 import { taskSessionName } from '../../lib/agentUtils';
@@ -29,18 +30,13 @@ export function TaskResultsModal({ task, onClose }: { task: Task; onClose: () =>
   const fail = task.outcome === 'fail';
   const HeaderIcon = task.outcome ? (fail ? XCircle : CheckCircle2) : Archive;
 
-  const STATUS_LABEL: Record<string, string> = {
-    open: t.tasks.statusOpen, in_progress: t.tasks.statusInProgress, blocked: t.tasks.statusBlocked,
-    closed: t.tasks.statusClosed, cancelled: t.tasks.statusCancelled,
-  };
-
   const finishedIso = task.closed_at || task.created_at;
   const finished = formatTaskTime(finishedIso, Date.now(), locale);
   const startMs = taskStartedMs(task); // real spawn time, not the plan-time row insert
   const endMs = parseTs(task.closed_at);
   const duration = startMs != null && endMs != null && endMs >= startMs ? formatDuration(endMs - startMs) : null;
 
-  const meta: { icon: typeof Bot; label: string; value: string; modelIcon?: string }[] = [];
+  const meta: { icon: LucideIcon; label: string; value: string; modelIcon?: string }[] = [];
   if (exec || iconExec) meta.push({ icon: Bot, label: t.tasks.resultExecutor, value: exec || iconExec, modelIcon: iconExec });
   if (session) meta.push({ icon: Bot, label: t.tasks.resultAgent, value: session });
   if (finished.label) meta.push({ icon: CalendarCheck, label: t.tasks.resultFinished, value: finished.label });
@@ -50,7 +46,7 @@ export function TaskResultsModal({ task, onClose }: { task: Task; onClose: () =>
     <Modal title={task.title} description={task.id} onClose={onClose} size="md" icon={HeaderIcon}>
       <ModalBody>
         <div className="flex flex-wrap items-center gap-1.5">
-          <Badge tone={statusTone(task.status)}>{STATUS_LABEL[task.status] ?? task.status}</Badge>
+          <Badge tone={statusTone(task.status)}>{statusLabel(t, task.status)}</Badge>
           <OutcomeBadge outcome={task.outcome} />
           {exec ? <Badge>{exec}</Badge> : null}
           <TaskUsageBadge taskId={task.id} />

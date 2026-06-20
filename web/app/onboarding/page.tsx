@@ -1,4 +1,5 @@
 'use client';
+export const dynamic = 'force-dynamic';
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
@@ -125,7 +126,7 @@ export default function OnboardingPage() {
   };
 
   useEffect(() => {
-    setHUrl(process.env.NEXT_PUBLIC_ORCA_URL ?? (typeof window !== 'undefined' ? window.location.origin : ''));
+    setHUrl(process.env.NEXT_PUBLIC_ORCA_URL ?? window.location.origin);
     const tk = getToken();
     if (tk) setHToken(tk);
   }, []);
@@ -176,7 +177,11 @@ export default function OnboardingPage() {
   };
 
   // The autopilot backend is ready with EITHER a relay API key OR a configured CLI agent.
-  const backendReady = !isFresh?.noApiKey || !!(config.data?.autopilot.pilotExec || config.data?.autopilot.overseerExec);
+  // Explicit isFresh guard: while CLI status is still loading (isFresh undefined) the backend
+  // is NOT assumed ready, so we never flash "setup complete" before the data arrives.
+  const backendReady = isFresh
+    ? (!isFresh.noApiKey || !!(config.data?.autopilot.pilotExec || config.data?.autopilot.overseerExec))
+    : false;
   const allStepsDone = !isFresh?.noConfigPersisted && backendReady && users.data && users.data.length > 0;
 
   const agentTools = cliStatus.data?.tools.filter((t) => ['claude', 'codex', 'opencode'].includes(t.name)) ?? [];
@@ -303,7 +308,7 @@ export default function OnboardingPage() {
                     </Field>
                     <Field label={t.onboarding.fieldApiKey}>
                       <Input type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)}
-                        placeholder={config.data?.autopilot.apiKeySet ? '•••• set' : ''} className="font-mono text-xs" />
+                        placeholder={config.data?.autopilot.apiKeySet ? t.settings.apiKeySetPlaceholder : ''} className="font-mono text-xs" />
                     </Field>
                   </div>
                   <div className="mt-4 flex items-center justify-between">

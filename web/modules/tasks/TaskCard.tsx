@@ -23,7 +23,7 @@ import { useSessionStall } from '../../lib/useSessionStall';
 import { useToast } from '../../components/ui/Toast';
 import { useTranslation } from '../../lib/i18n';
 import { formatTaskTime } from '../../lib/formatTime';
-import { taskTypeMeta } from './taskMeta';
+import { taskTypeMeta, statusLabel } from './taskMeta';
 import { statusTone } from '../dashboard/statusTone';
 
 export function TaskCard({ task, onEdit, onSelect, active = false, blockers, selected = false, onToggleSelect, selecting = false }: { task: Task; onEdit: (t: Task) => void; onSelect?: (t: Task) => void; active?: boolean; blockers?: Task[]; selected?: boolean; onToggleSelect?: (id: string) => void; selecting?: boolean }) {
@@ -46,7 +46,6 @@ export function TaskCard({ task, onEdit, onSelect, active = false, blockers, sel
   const stall = useSessionStall(session ?? '', running && !!session);
   const stallProps = session ? { stall: stall.state, silenceSec: stall.silenceSec } : {};
 
-  const STATUS_LABEL: Record<string, string> = { open: t.tasks.statusOpen, in_progress: t.tasks.statusInProgress, blocked: t.tasks.statusBlocked, closed: t.tasks.statusClosed, cancelled: t.tasks.statusCancelled };
   const open = () => (onSelect ?? onEdit)(task);
 
   return (
@@ -111,7 +110,7 @@ export function TaskCard({ task, onEdit, onSelect, active = false, blockers, sel
         ); })() : null}
 
         <div className="mt-auto flex flex-wrap items-center gap-1.5 pt-0.5">
-          <Badge tone={statusTone(task.status)}>{STATUS_LABEL[task.status] ?? task.status}</Badge>
+          <Badge tone={statusTone(task.status)}>{statusLabel(t, task.status)}</Badge>
           {isClosed ? <OutcomeBadge outcome={task.outcome} /> : null}
           {exec ? <Badge>{exec}</Badge> : null}
           {task.scheduled_at ? (

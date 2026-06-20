@@ -1,3 +1,5 @@
+import { render } from '../prompts/index.js';
+
 export interface AgentSpec { program: string; model: string }
 export interface SpawnCtx {
   projectPath: string;
@@ -21,6 +23,9 @@ export interface SpawnCtx {
   /** When set, used verbatim as the agent prompt instead of the assembled worker preamble. Used by
    *  reasoning agents (Pilot/Overseer) that own their own instructions and close nothing. */
   rawPrompt?: string;
+  /** How the agent invokes the orca CLI for read-only verbs (e.g. `orca ls`) — `node <cliPath>` in
+   *  practice, so it never depends on `orca` being on PATH. Falls back to bare `orca`. */
+  cli?: string;
 }
 
 const esc = (s: string) => `'${s.replace(/'/g, "'\\''")}'`;
@@ -36,35 +41,16 @@ export function buildAgentCommand(spec: AgentSpec, ctx: SpawnCtx): string {
   const detailsPart = ctx.taskDescription && ctx.taskDescription.trim() ? `\n\nDetails:\n${ctx.taskDescription.trim()}` : '';
   // A phase agent must NOT redo earlier phases. Without this it sees the whole goal in its details
   // and re-implements/re-verifies everything, only gradually discovering prior phases are done.
-  const implementLines = ctx.epicId
-    ? [
-        `This is ONE phase of a larger sequential mission (epic ${ctx.epicId}) — NOT the whole goal. Earlier phases were already completed by other agents, so do NOT redo or re-verify their work.`,
-        'Before you start, look at the current state of the repo (`git status`, `git diff`, and the files relevant to your phase) so you build on what is already there instead of starting over. Then skim the project context (AGENTS.md, CLAUDE.md, README) for conventions.',
-        'Implement ONLY this phase\'s own deliverable, end to end — make the real code changes (don\'t just describe them) and verify just what you changed. Any "Overall goal" in the details above is shared mission context for reference; it is not your task.',
-      ]
-    : [
-        'First read the project context (AGENTS.md, CLAUDE.md, or README) to understand conventions, then implement the task end to end. Make the actual code changes — do not just describe them. Verify your work (build/tests if relevant).',
-      ];
-  const lines = [
-    `You are the orca agent "${ctx.agentName}". Work on task ${ctx.taskId}${titlePart}.${detailsPart}`,
-    '',
-    ...implementLines,
-    'For any shell command that may run long (dependency installs, builds, full test suites), set a generous tool timeout — at least 20 minutes (1200000 ms). The default command timeout is short and would otherwise kill it mid-run and fail your task.',
-    `When you finish, close the task with a one-sentence summary of what you did and the result, plus the outcome:`,
-    `  - success: ${closeCommand} --summary "<what you did + result>" --outcome ok`,
-    `  - could not complete: ${closeCommand} --summary "<what blocked you>" --outcome fail`,
-  ];
+  // The phase template carries the "build on prior phases" framing; the standalone one does not.
+  let prompt = ctx.epicId
+    ? render('worker-phase', { agentName: ctx.agentName, taskId: ctx.taskId, titlePart, detailsPart, epicId: ctx.epicId, closeCommand })
+    : render('worker', { agentName: ctx.agentName, taskId: ctx.taskId, titlePart, detailsPart, closeCommand });
   if (ctx.epicId && ctx.epicCloseCommand) {
     // The agent owns mission completion: after closing its own phase, if it was the last
     // one, it closes the epic itself and writes the overall result summary.
-    lines.push(
-      '',
-      `This task is a phase of epic ${ctx.epicId}. After you close your own task, run \`orca ls\` to check the epic's other phases. If every other phase of this epic is already closed (i.e. you were the final phase), close the epic yourself and write your own summary of the whole mission — what was done across all phases and anything still left to do:`,
-      `  ${ctx.epicCloseCommand} --summary "<overall mission result: what happened + what's left>" --outcome ok`,
-      `If any sibling phase is still open or in progress, do NOT touch the epic — that agent will handle it.`,
-    );
+    prompt += `\n\n${render('worker-epic-close', { epicId: ctx.epicId, cli: ctx.cli ?? 'orca', epicCloseCommand: ctx.epicCloseCommand })}`;
   }
-  return buildLaunchCommand(spec, ctx, lines.join('\n'));
+  return buildLaunchCommand(spec, ctx, prompt);
 }
 
 /** Assemble the actual `cd && export … && <bin> … <prompt>` shell command for a given prompt. Shared

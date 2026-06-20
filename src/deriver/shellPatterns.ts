@@ -5,6 +5,10 @@ export interface DetectedPrompt {
   context: string;
   /** Keys that accept/approve the prompt. The deriver sends these only when autonomy permits. */
   acceptKeys: string[];
+  /** Environmental gate (e.g. workspace-trust) the agent must clear just to start — not an action
+   *  it wants to take. The deriver clears these directly under autonomy, without an overseer call:
+   *  orca only ever spawns into projects the user registered, so trusting the workspace is implied. */
+  autoAccept?: boolean;
 }
 
 const OPENCODE_PERMISSION = {
@@ -24,6 +28,22 @@ function detectOpenCodePermission(output: string): DetectedPrompt | null {
     options: [{ id: 'allow', label: 'Allow once' }, { id: 'reject', label: 'Reject' }],
     context: OPENCODE_PERMISSION.title,
     acceptKeys: ['Enter'], // leftmost "Allow once" is focused; one Enter approves (verified live)
+  };
+}
+
+// Claude Code workspace-trust gate, shown on first entry to an unseen folder (even with
+// --dangerously-skip-permissions, which only bypasses per-tool prompts). Blocks the agent from
+// starting at all, so an autonomous mission would otherwise hang here forever. Default-highlighted
+// option is "1. Yes, I trust this folder" → a single Enter confirms (verified live, claude 2.1.x).
+function detectClaudeTrust(output: string): DetectedPrompt | null {
+  if (!/Yes, I trust this folder/i.test(output)) return null;
+  return {
+    question: 'Claude asks to trust the workspace folder before starting.',
+    questionType: 'approval',
+    options: [{ id: 'yes', label: 'Yes, I trust this folder' }, { id: 'no', label: 'No, exit' }],
+    context: 'Accessing workspace (trust check)',
+    acceptKeys: ['Enter'],
+    autoAccept: true,
   };
 }
 
@@ -54,7 +74,7 @@ function detectCodexApproval(output: string): DetectedPrompt | null {
 export function detectAgentPrompt(output: string, program: string): DetectedPrompt | null {
   const p = program.toLowerCase();
   if (p.startsWith('opencode')) return detectOpenCodePermission(output);
-  if (p.startsWith('claude')) return detectClaudePermission(output);
+  if (p.startsWith('claude')) return detectClaudeTrust(output) ?? detectClaudePermission(output);
   if (p.startsWith('codex')) return detectCodexApproval(output);
   return null;
 }

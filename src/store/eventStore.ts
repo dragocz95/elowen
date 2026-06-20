@@ -23,6 +23,16 @@ export class EventStore {
   deleteForTarget(target: string): void {
     this.db.prepare('DELETE FROM events WHERE target = ?').run(target);
   }
+  /** Wipe the whole activity feed (admin cleanup). Returns the number of rows removed. */
+  deleteAll(): number {
+    return this.db.prepare('DELETE FROM events').run().changes;
+  }
+  /** Retention: drop events older than `days` so a long-running daemon's timeline can't grow without
+   *  bound. Returns the number of rows removed. `days` is clamped to a positive integer. */
+  purgeOlderThan(days = 30): number {
+    const d = Number.isFinite(days) && days >= 1 ? Math.floor(days) : 30;
+    return this.db.prepare(`DELETE FROM events WHERE ts < datetime('now', '-${d} days')`).run().changes;
+  }
   list(opts?: { limit?: number; type?: string }): ActivityEvent[] {
     const limit = opts?.limit ?? 200;
     if (opts?.type) {

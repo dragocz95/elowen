@@ -16,5 +16,5 @@ export class FakeTmuxDriver implements TmuxDriver {
   async capturePane(session: string, _tail: number) { return this.panes.get(session) ?? ''; }
   async capturePaneAnsi(session: string, _tail: number) { return this.panes.get(session) ?? ''; }
   async list() { return [...this.panes.keys()]; }
-  async kill(session: string) { this.panes.delete(session); }
+  async kill(session: string) { this.panes.delete(session); this.keys.delete(session); this.commands.delete(session); this.sizes.delete(session); }
 }

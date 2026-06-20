@@ -29,6 +29,16 @@ describe('Scheduler', () => {
     expect(await tmux.list()).toContain('orca-Nova');
   });
 
+  it('does not auto-launch a due autostart task whose title trips a guardrail (left open)', async () => {
+    const t0 = Date.parse('2026-06-17T12:00:00.000Z');
+    const { tasks, tmux, scheduler } = setup(t0 + 60_000);
+    tasks.create({ id: 'g', project_id: 1, title: 'delete the auth tokens table', scheduled_at: '2026-06-17T12:00:00.000Z', autostart: 1 });
+    await scheduler.tick();
+    expect(tasks.get('g')?.status).toBe('open'); // guardrail (auth/delete) → not fired unattended
+    expect(tasks.get('g')?.scheduled_at).toBe('2026-06-17T12:00:00.000Z'); // schedule kept, not consumed
+    expect(await tmux.list()).toHaveLength(0);
+  });
+
   it('does not launch a due task without autostart (due-date marker only)', async () => {
     const t0 = Date.parse('2026-06-17T12:00:00.000Z');
     const { tasks, tmux, scheduler } = setup(t0 + 60_000); // past the schedule
@@ -53,6 +63,45 @@ describe('Scheduler', () => {
     tasks.create({ id: 'c', project_id: 1, title: 'Unscheduled' });
     await scheduler.tick();
     expect(tasks.get('c')?.status).toBe('open');
+  });
+
+  it('fires a task scheduled with a non-UTC zone for the same instant (#39)', async () => {
+    // 10:00+02:00 === 08:00Z. Lexically '2026-06-17T10:00:00+02:00' > the UTC `now` string, so the old
+    // string compare would wrongly judge it not-due. Epoch compare gets the instant right.
+    const now = Date.parse('2026-06-17T08:00:30.000Z'); // 30s after the scheduled instant
+    const { tasks, scheduler } = setup(now);
+    tasks.create({ id: 'tz', project_id: 1, title: 'Zoned', scheduled_at: '2026-06-17T10:00:00+02:00', autostart: 1 });
+    await scheduler.tick();
+    expect(tasks.get('tz')?.status).toBe('in_progress'); // due by absolute time despite the zone
+    expect(tasks.get('tz')?.scheduled_at).toBeNull();
+  });
+
+  it('caps how many autostart tasks it launches per project in one tick (#41)', async () => {
+    const t0 = Date.parse('2026-06-17T12:00:00.000Z');
+    const db = openDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'orca','/o')").run();
+    const tasks = new TaskStore(db);
+    const tmux = new FakeTmuxDriver();
+    let n = 0;
+    const scheduler = new Scheduler({ tasks, spawn: new SpawnService({ tmux, agents: new AgentStore(db) }), bus: new EventBus(), projects: new ProjectStore(db), fallback: { program: 'claude-code', model: 'sonnet' }, nameAgent: () => `N${n++}`, clock: new FakeClock(t0 + 60_000), maxPerProjectPerTick: 2 });
+    for (let i = 0; i < 5; i++) tasks.create({ id: `s${i}`, project_id: 1, title: `S${i}`, scheduled_at: '2026-06-17T12:00:00.000Z', autostart: 1 });
+    await scheduler.tick();
+    const launched = ['s0', 's1', 's2', 's3', 's4'].filter((id) => tasks.get(id)?.status === 'in_progress');
+    expect(launched).toHaveLength(2);                                  // capped this tick
+    expect((await tmux.list()).length).toBe(2);
+    await scheduler.tick();                                            // next tick fires the rest
+    expect(['s0', 's1', 's2', 's3', 's4'].filter((id) => tasks.get(id)?.status === 'in_progress')).toHaveLength(4);
+  });
+
+  it('restores the schedule (and status open) when the spawn fails (O9)', async () => {
+    const t0 = Date.parse('2026-06-17T12:00:00.000Z');
+    const db = openDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'orca','/o')").run();
+    const tasks = new TaskStore(db);
+    const failingSpawn = { launch: async () => { throw new Error('tmux down'); } };
+    const scheduler = new Scheduler({ tasks, spawn: failingSpawn as never, bus: new EventBus(), projects: new ProjectStore(db), fallback: { program: 'claude-code', model: 'sonnet' }, nameAgent: () => 'Nova', clock: new FakeClock(t0 + 60_000) });
+    tasks.create({ id: 'f', project_id: 1, title: 'Will fail', scheduled_at: '2026-06-17T12:00:00.000Z', autostart: 1 });
+    await scheduler.tick();
+    expect(tasks.get('f')?.status).toBe('open');                          // rolled back, not stuck in_progress
+    expect(tasks.get('f')?.scheduled_at).toBe('2026-06-17T12:00:00.000Z'); // schedule restored → retries next tick
   });
 
   it('launches due autostart tasks across every project', async () => {

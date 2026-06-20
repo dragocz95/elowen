@@ -1,6 +1,6 @@
 import { basename, join } from 'node:path';
 import { writeFileSync, readFileSync, existsSync, mkdirSync, unlinkSync } from 'node:fs';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, createHmac, timingSafeEqual } from 'node:crypto';
 import { hermesStatus, installHermesPlugin } from '../integrations/hermesInstall.js';
 import { detectClis } from '../integrations/cliDetection.js';
 import { readTaskUsage } from '../integrations/usage/index.js';
@@ -29,7 +29,7 @@ import { uniqueName } from '../daemon/uniqueName.js';
 import type { Clock } from '../shared/clock.js';
 import type { ConfigStore } from '../store/configStore.js';
 import { assembleMissionDetail } from '../store/missionDetail.js';
-import type { UserStore, User } from '../store/userStore.js';
+import type { UserStore, User, TokenScope } from '../store/userStore.js';
 import { authMiddleware } from './auth.js';
 import type { EventStore } from '../store/eventStore.js';
 import type { ProjectStore } from '../store/projectStore.js';
@@ -51,6 +51,9 @@ export interface ServerDeps {
   git?: GitReader;
   /** Directory where uploaded user avatars are stored/served. Absent → avatar upload disabled. */
   avatarsDir?: string;
+  /** HMAC secret for short-lived signed avatar URLs (so an <img> src never carries the long-lived
+   *  session token). Per-daemon-process; absent → signed avatar links unavailable (bearer only). */
+  avatarSecret?: string;
   /** Factory for the planning LLM client; defaults to RelayClient. Overridable in tests. */
   makeInference?: (cfg: RelayConfig) => InferenceClient;
   /** Async planning job registry (relay or agent backend resolves into it). Defaulted when absent. */
@@ -61,20 +64,56 @@ export interface ServerDeps {
   pilot?: (job: PlanJob, projectPath: string) => Promise<void>;
 }
 
-export function createServer(d: ServerDeps): Hono<{ Variables: { user: User; token: string } }> {
+export function createServer(d: ServerDeps): Hono<{ Variables: { user: User; token: string; tokenScope: TokenScope } }> {
   // Core reasoning stores are optional in deps for back-compat with existing call sites/tests; the
   // daemon (bootstrap) injects shared instances. Default here so every route has a working store.
   const planJobs = d.planJobs ?? new PlanJobStore();
   const decisionQueue = d.decisionQueue ?? new DecisionQueue();
-  const app = new Hono<{ Variables: { user: User; token: string } }>();
+  const app = new Hono<{ Variables: { user: User; token: string; tokenScope: TokenScope } }>();
   app.use('*', cors());
+  // Single source of truth for malformed-body handling: most POST/PATCH routes call `c.req.json()`
+  // without a per-route catch, and Hono throws a SyntaxError on invalid JSON. Convert that to a clean
+  // 400 instead of leaking a default 500 with no useful body.
+  app.onError((err, c) => {
+    if (err instanceof SyntaxError) return c.json({ error: 'invalid JSON body' }, 400);
+    console.error('[orca] unhandled route error', err);
+    return c.json({ error: 'internal error' }, 500);
+  });
   app.get('/health', c => c.json({ ok: true }));
   // Public: lets the web decide whether to show onboarding (no users yet) or the login form.
   app.get('/setup', c => c.json({ needsSetup: d.users ? d.users.count() === 0 : false }));
 
   if (d.users) {
     const users = d.users;
-    app.use('*', authMiddleware(users));
+    app.use('*', authMiddleware(users, () => d.config.get().security.tokenTtlDays));
+
+    // Capability gate for the agent service token. A spawned worker/overseer/pilot runs with
+    // --dangerously-skip-permissions, so a prompt-injected agent must NOT reach the admin surface
+    // (users, /config, project register/delete). Allow ONLY the verbs its CLI actually drives:
+    //   • close its task        → PATCH /tasks/:id
+    //   • submit a plan         → POST  /plan/:jobId/submit  (+ GET /plan/:jobId)
+    //   • overseer poll/decide  → GET /missions/:id/overseer/next, POST /missions/:id/overseer/decide
+    //   • read-only listings    → GET /tasks, /tasks/ready, /sessions   (orca ls|ready|sessions)
+    // Project ownership of the affected row is still enforced downstream (canAccessProject etc.),
+    // so the agent can't cross tenancy even within the allow-list.
+    const agentAllowed = (method: string, path: string): boolean => {
+      if (method === 'GET') {
+        if (path === '/tasks' || path === '/tasks/ready' || path === '/sessions') return true;
+        if (/^\/plan\/[^/]+$/.test(path)) return true;
+        if (/^\/missions\/[^/]+\/overseer\/next$/.test(path)) return true;
+      }
+      if (method === 'PATCH' && /^\/tasks\/[^/]+$/.test(path)) return true;
+      if (method === 'POST') {
+        if (/^\/plan\/[^/]+\/submit$/.test(path)) return true;
+        if (/^\/missions\/[^/]+\/overseer\/decide$/.test(path)) return true;
+      }
+      return false;
+    };
+    app.use('*', async (c, next) => {
+      if (c.get('tokenScope') !== 'agent') return next();
+      if (!agentAllowed(c.req.method, c.req.path)) return c.json({ error: 'forbidden' }, 403);
+      return next();
+    });
 
     // Gate the project-scoped surface: a non-admin must be assigned to the daemon's project to
     // touch its tasks/missions/sessions. Admin passes (canAccess checks is_admin). Without a
@@ -134,10 +173,38 @@ export function createServer(d: ServerDeps): Hono<{ Variables: { user: User; tok
       writeFileSync(join(d.avatarsDir, filename), Buffer.from(await file.arrayBuffer()));
       return c.json(users.setAvatar(u.id, filename));
     });
-    // Serve a user's avatar bytes. Reachable as an <img> src via the ?token= query (auth accepts it).
+    // Short-lived signed URL for a user's avatar. An <img> can't set an Authorization header, so the
+    // old approach put the long-lived session token in the query string (leaked into logs/referrer/
+    // history — finding W2). Instead, an AUTHENTICATED caller mints a signed link here; the link
+    // carries only an HMAC over (id, exp) that expires in minutes, so a leaked URL is near-worthless.
+    const AVATAR_URL_TTL_MS = 5 * 60 * 1000;
+    const signAvatar = (id: number, exp: number): string =>
+      createHmac('sha256', d.avatarSecret!).update(`${id}.${exp}`).digest('hex');
+    const avatarSigValid = (id: number, exp: number, sig: string): boolean => {
+      if (!d.avatarSecret || !Number.isFinite(exp) || exp < Date.now()) return false;
+      const expected = Buffer.from(signAvatar(id, exp), 'hex');
+      const got = Buffer.from(sig, 'hex');
+      return expected.length === got.length && timingSafeEqual(expected, got);
+    };
+    app.get('/users/:id/avatar/url', (c) => {
+      if (!d.avatarsDir || !d.avatarSecret) return c.json({ error: 'avatars unavailable' }, 400);
+      const id = Number(c.req.param('id'));
+      const target = users.get(id);
+      if (!target || !target.avatar) return c.json({ error: 'not found' }, 404);
+      const exp = Date.now() + AVATAR_URL_TTL_MS;
+      return c.json({ url: `/users/${id}/avatar?exp=${exp}&sig=${signAvatar(id, exp)}` });
+    });
+    // Serve a user's avatar bytes. Reachable as an <img> src via a short-lived `exp`+`sig` signature
+    // (minted above); the bearer path still works for direct API use.
     app.get('/users/:id/avatar', (c) => {
       if (!d.avatarsDir) return c.json({ error: 'not found' }, 404);
-      const target = users.get(Number(c.req.param('id')));
+      const id = Number(c.req.param('id'));
+      const exp = Number(c.req.query('exp'));
+      const sig = c.req.query('sig');
+      // Allow either a valid signature (the <img> path) or the authenticated session (bearer/token,
+      // which the auth middleware already validated for any non-signed request that reached here).
+      if (sig != null) { if (!avatarSigValid(id, exp, sig)) return c.json({ error: 'forbidden' }, 403); }
+      const target = users.get(id);
       if (!target || !target.avatar) return c.json({ error: 'not found' }, 404);
       const path = join(d.avatarsDir, target.avatar);
       if (!existsSync(path)) return c.json({ error: 'not found' }, 404);
@@ -204,18 +271,53 @@ export function createServer(d: ServerDeps): Hono<{ Variables: { user: User; tok
     }
   }
 
+  // Minimal structural view of the request context the access predicates read (the real Hono context
+  // satisfies it). Overloaded `get` so a caller can read both the user and the token scope.
+  type AccessCtx = { get: { (k: 'user'): User | undefined; (k: 'tokenScope'): TokenScope | undefined } };
+
+  // The projects an AGENT-scoped token may touch. The shared service token is owned by the admin user,
+  // so without this it would inherit admin's cross-project bypass and a prompt-injected agent could
+  // read/close tasks in tenants it isn't working in (finding S51). Bind it to the daemon's live work:
+  //   • workers   → projects with an in_progress `agent:`-labelled task
+  //   • overseers → projects of every active mission's epic (the overseer polls even between phases)
+  // A pilot only ever submits to the plan job it was handed (project checked on that job's route), so
+  // it needs no extra entry here.
+  const agentProjects = (): Set<number> => {
+    const ids = new Set<number>();
+    for (const t of d.tasks.list({ status: 'in_progress' })) {
+      if (t.labels.some((l) => l.startsWith('agent:'))) ids.add(t.project_id);
+    }
+    for (const m of d.missions.active()) {
+      const epic = d.tasks.get(m.epic_id);
+      if (epic) ids.add(epic.project_id);
+    }
+    return ids;
+  };
+
   // A non-admin user may only see/operate projects assigned to them; the admin (and open mode)
-  // sees everything. Returns true when access is permitted.
-  const canAccessProject = (c: { get: (k: 'user') => User | undefined }, id: number): boolean => {
+  // sees everything. An agent-scoped token is confined to its live working set, never admin-bypass.
+  // Returns true when access is permitted.
+  const canAccessProject = (c: AccessCtx, id: number): boolean => {
     if (!d.userProjects || !d.users) return true; // open mode / single-user → no gating
+    if (c.get('tokenScope') === 'agent') return agentProjects().has(id);
     const u = c.get('user');
     return !!u && d.userProjects.canAccess(u.id, id);
   };
 
+  // Admin gate for daemon-wide, project-agnostic routes (integrations, etc.). Open/single-user mode
+  // (no userProjects store) passes; otherwise only the admin clears it.
+  const notAdmin = (c: { get: (k: 'user') => User | undefined }): boolean => {
+    if (!d.userProjects || !d.users) return false;
+    const u = c.get('user');
+    return !u || !d.userProjects.isAdmin(u.id);
+  };
+
   // The set of project ids the caller may see, or null for unrestricted (open mode / admin).
-  // Computed once for list endpoints so they don't run a per-row access query.
-  const accessibleProjects = (c: { get: (k: 'user') => User | undefined }): Set<number> | null => {
+  // Computed once for list endpoints so they don't run a per-row access query. An agent-scoped token
+  // is confined to its live working set (never the admin-bypass null).
+  const accessibleProjects = (c: AccessCtx): Set<number> | null => {
     if (!d.userProjects || !d.users) return null;
+    if (c.get('tokenScope') === 'agent') return agentProjects();
     const u = c.get('user');
     if (!u || d.userProjects.isAdmin(u.id)) return null;
     return new Set(d.userProjects.forUser(u.id));
@@ -223,10 +325,37 @@ export function createServer(d: ServerDeps): Hono<{ Variables: { user: User; tok
 
   // A mission belongs to its epic's project — gate by that project's access. Open/single-user mode
   // has no tenancy boundary, so it always passes (even if the epic row is absent).
-  const missionAccessible = (c: { get: (k: 'user') => User | undefined }, epicId: string): boolean => {
+  const missionAccessible = (c: AccessCtx, epicId: string): boolean => {
     if (!d.userProjects || !d.users) return true;
     const epic = d.tasks.get(epicId);
     return !!epic && canAccessProject(c, epic.project_id);
+  };
+
+  // Resolve a live session name (`orca-<agentName>` / `orca-overseer-<missionId>` / `orca-pilot-…`)
+  // to the task it runs, mirroring the daemon's agent:<name> label convention (bootstrap.taskForSession).
+  // Agent names recur across missions, so the MOST RECENT match wins (list is created_at ASC).
+  const taskForSession = (session: string): Task | null => {
+    const info = classifySession(session);
+    if (info.role === 'overseer') {
+      const mission = d.missions.get(info.missionId ?? '');
+      return mission ? d.tasks.get(mission.epic_id) : null;
+    }
+    const matches = d.tasks.list().filter((t) => t.labels.includes(`agent:${info.agent}`));
+    return matches[matches.length - 1] ?? null;
+  };
+
+  // Ownership guard for the session-control routes (kill / keys / resize / pane / stream). The caller
+  // must be able to access the project the session's task belongs to; admin / open-mode pass via
+  // canAccessProject. An unresolvable session (no matching task) is refused — a caller can't operate
+  // a session it can't be shown to own. Returns null when access is allowed, else a 403 response.
+  const sessionAccessible = (c: AccessCtx, name: string): boolean => {
+    if (!d.userProjects || !d.users) return true; // open / single-user mode — no tenancy boundary
+    const u = c.get('user');
+    // Admin sees every session — but NOT via an agent-scoped token (it's owned by the admin user yet
+    // must stay confined to its working set; fall through to the project check below).
+    if (c.get('tokenScope') !== 'agent' && u && d.userProjects.isAdmin(u.id)) return true;
+    const task = taskForSession(name);
+    return !!task && canAccessProject(c, task.project_id);
   };
 
   // Per-user model allow-list: a non-admin whose allowed_execs is non-empty may only use those
@@ -246,7 +375,7 @@ export function createServer(d: ServerDeps): Hono<{ Variables: { user: User; tok
 
   // Resolve the target project for a create/plan request. Defaults to the daemon's home project;
   // any other project_id must exist and be accessible to the caller.
-  const resolveTarget = (c: { get: (k: 'user') => User | undefined }, projectId?: number):
+  const resolveTarget = (c: AccessCtx, projectId?: number):
     | { project: { id: number; path: string } }
     | { error: string; status: 403 | 404 } => {
     const pid = projectId ?? d.project.id;
@@ -340,6 +469,18 @@ export function createServer(d: ServerDeps): Hono<{ Variables: { user: User; tok
     if (typeof b.path === 'string' && b.path.trim()) patch.path = b.path.trim();
     if (typeof b.notes === 'string') patch.notes = b.notes;
     return c.json(d.projects.update(id, patch));
+  });
+  // Remove a project from orca entirely: cascades to its tasks, missions, agents and access grants
+  // (ProjectStore.remove), but never touches the files on disk. Admin-only; the daemon's home project
+  // can't be removed (it's where the daemon itself lives).
+  app.delete('/projects/:id', (c) => {
+    if (!d.projects) return c.json({ error: 'projects unavailable' }, 400);
+    if (d.userProjects && d.users) { const u = c.get('user'); if (!u || !d.userProjects.isAdmin(u.id)) return c.json({ error: 'forbidden' }, 403); }
+    const id = Number(c.req.param('id'));
+    if (id === d.project.id) return c.json({ error: 'cannot remove the home project' }, 400);
+    if (!d.projects.get(id)) return c.json({ error: 'project not found' }, 404);
+    d.projects.remove(id);
+    return c.json({ ok: true });
   });
   app.get('/projects/:id/git', async (c) => {
     if (!d.projects || !d.git) return c.json({ error: 'projects unavailable' }, 400);
@@ -542,7 +683,10 @@ export function createServer(d: ServerDeps): Hono<{ Variables: { user: User; tok
                 const dep = d.tasks.get(e.task_id);
                 if (dep && dep.status === 'open') { d.tasks.setStatus(dep.id, 'blocked'); d.bus.publish({ type: 'task', taskId: dep.id, status: 'blocked' }); }
               }
-            });
+            })
+            // Fire-and-forget review must never crash the daemon — the verdict apply (or the enqueue
+            // itself) can throw, so swallow-and-log instead of leaving an unhandled rejection.
+            .catch((e) => console.error('[orca] review verdict apply failed', e));
         }
       }
     }
@@ -554,15 +698,39 @@ export function createServer(d: ServerDeps): Hono<{ Variables: { user: User; tok
     return c.json(d.tasks.get(id));
   });
   app.get('/tasks/:id/deps', c => c.json(d.tasks.depsFor(c.req.param('id'))));
-  app.delete('/tasks/:id', c => {
+  app.delete('/tasks/:id', async c => {
     const id = c.req.param('id');
     const existing = d.tasks.get(id);
     if (!existing) return c.json({ error: 'task not found' }, 404);
     if (!canAccessProject(c, existing.project_id)) return c.json({ error: 'forbidden' }, 403);
+    // `?subtree=1` removes a whole mission: disengage it (stops its agents), then delete the epic,
+    // every child task, their dependency edges and the mission row — not just the single task.
+    if (c.req.query('subtree')) {
+      const mission = d.missions.live().find((m) => m.epic_id === id);
+      if (mission) await d.engine.disengage(mission.id).catch(() => { /* best-effort */ });
+      const removed = d.tasks.deleteEpic(id);
+      d.bus.publish({ type: 'task', taskId: id, status: 'cancelled' });
+      d.events?.deleteForTarget(id);
+      return c.json({ ok: true, tasks: removed.tasks });
+    }
     d.tasks.delete(id);
     d.bus.publish({ type: 'task', taskId: id, status: 'cancelled' }); // live SSE so open UIs drop the row
     d.events?.deleteForTarget(id); // purge its history — a removed task leaves no dead feed
     return c.json({ ok: true });
+  });
+  // Admin maintenance: wipe ALL operational data — tasks (+deps), missions, the activity feed — and
+  // stop every live agent session. Projects, users and config are kept. Irreversible; admin-only.
+  app.post('/admin/cleanup', async c => {
+    if (notAdmin(c)) return c.json({ error: 'forbidden' }, 403);
+    // Stop missions cleanly first (kills their agents + drains overseers), then sweep any remaining
+    // orca- sessions (manual launches / zombies) so no agent keeps running against deleted tasks.
+    for (const m of d.missions.live()) await d.engine.disengage(m.id).catch(() => { /* best-effort */ });
+    for (const s of (await d.tmux.list()).filter((s) => s.startsWith('orca-'))) {
+      await d.tmux.kill(s).catch(() => { /* already gone */ });
+    }
+    const removed = d.tasks.deleteAll();
+    const events = d.events?.deleteAll() ?? 0;
+    return c.json({ ok: true, tasks: removed.tasks, missions: removed.missions, events });
   });
   app.post('/tasks/plan', async c => {
     const b = await c.req.json() as { goal?: string; exec?: string; autonomy?: string; maxSessions?: number; engage?: boolean; phases?: { title?: string; type?: string }[]; dryRun?: boolean; prompt?: string; project_id?: number };
@@ -620,14 +788,17 @@ export function createServer(d: ServerDeps): Hono<{ Variables: { user: User; tok
   app.get('/plan/:jobId', (c) => {
     const job = planJobs.get(c.req.param('jobId'));
     if (!job) return c.json({ error: 'not found' }, 404);
-    if (!canAccessProject(c, job.projectId)) return c.json({ error: 'forbidden' }, 403);
+    // The Pilot (agent scope) is handed exactly this job's unguessable id and may have no in_progress
+    // task yet (it runs during initial planning), so the working-set check doesn't apply — the job id
+    // is the capability. Interactive users still go through the project access gate.
+    if (c.get('tokenScope') !== 'agent' && !canAccessProject(c, job.projectId)) return c.json({ error: 'forbidden' }, 403);
     return c.json(job);
   });
 
   app.post('/plan/:jobId/submit', async (c) => {
     const job = planJobs.get(c.req.param('jobId'));
     if (!job) return c.json({ error: 'not found' }, 404);
-    if (!canAccessProject(c, job.projectId)) return c.json({ error: 'forbidden' }, 403);
+    if (c.get('tokenScope') !== 'agent' && !canAccessProject(c, job.projectId)) return c.json({ error: 'forbidden' }, 403);
     const body = await c.req.json().catch(() => ({})) as { phases?: unknown };
     let phases: Phase[];
     try { phases = parsePhases(JSON.stringify(body.phases ?? [])); } // reuse the relay validator (DRY)
@@ -686,14 +857,33 @@ export function createServer(d: ServerDeps): Hono<{ Variables: { user: User; tok
   });
 
   // Hermes integration — install the bundled orca plugin into a same-host Hermes instance.
-  const hermesHome = (override?: string) => (override?.trim() || process.env.HERMES_HOME || '/var/www/.hermes');
-  app.get('/integrations/hermes/status', c => c.json(hermesStatus(hermesHome(c.req.query('home')))));
+  const hermesRoot = process.env.HERMES_HOME || '/var/www/.hermes';
+  // Resolve the Hermes home. An `home` override is constrained to live under the configured root so a
+  // crafted path can't read/write arbitrary filesystem locations (path-traversal / fs enumeration).
+  // Returns null for a rejected override; callers turn that into a 400.
+  const hermesHome = (override?: string): string | null => {
+    const o = override?.trim();
+    if (!o) return hermesRoot;
+    const abs = join(o);
+    if (abs !== hermesRoot && !abs.startsWith(hermesRoot + '/')) return null;
+    return abs;
+  };
+  app.get('/integrations/hermes/status', c => {
+    if (notAdmin(c)) return c.json({ error: 'forbidden' }, 403);
+    const home = hermesHome(c.req.query('home'));
+    if (!home) return c.json({ error: 'home must be under the Hermes root' }, 400);
+    return c.json(hermesStatus(home));
+  });
   app.post('/integrations/hermes/install', async c => {
-    const b = await c.req.json() as { home?: string; url?: string; token?: string; timeout?: number };
+    // Admin-only: this writes a plugin + credentials into a host path. Without the gate any
+    // authenticated user could point Hermes at an attacker URL/token.
+    if (notAdmin(c)) return c.json({ error: 'forbidden' }, 403);
+    const b = await c.req.json().catch(() => ({})) as { home?: string; url?: string; token?: string; timeout?: number };
     const url = (b.url ?? '').trim();
     const token = (b.token ?? '').trim();
     if (!url || !token) return c.json({ error: 'url and token required' }, 400);
     const home = hermesHome(b.home);
+    if (!home) return c.json({ error: 'home must be under the Hermes root' }, 400);
     const pluginSrc = join(d.project.path, 'hermes-plugin', 'orca');
     try {
       const result = installHermesPlugin({ home, pluginSrc, url, token, timeout: b.timeout });
@@ -709,8 +899,6 @@ export function createServer(d: ServerDeps): Hono<{ Variables: { user: User; tok
       configPersisted: d.config.hasSettings(),
       hasApiKey: cfg.autopilot.apiKeySet,
       hasCustomSetup: cfg.customModels.length > 0 || cfg.hiddenPresets.length > 0,
-      userCount: d.users?.count() ?? 0,
-      projectCount: d.projects?.list().length ?? 0,
     };
     return c.json(detectClis(ctx));
   });
@@ -731,13 +919,38 @@ export function createServer(d: ServerDeps): Hono<{ Variables: { user: User; tok
     d.tasks.setAgent(taskId, agentName);     // link task → orca-<agentName> session for run controls
     d.tasks.markStarted(taskId, d.clock.now()); // precise spawn time → correct usage attribution under concurrency
     d.tasks.setStatus(taskId, 'in_progress');
-    const { session } = await d.spawn.launch({ projectId, projectPath: pathFor(projectId), taskId, agentName, spec, taskTitle: task.title, taskDescription: task.description, epicId: task.parent_id ?? undefined });
+    let session: string;
+    try {
+      ({ session } = await d.spawn.launch({ projectId, projectPath: pathFor(projectId), taskId, agentName, spec, taskTitle: task.title, taskDescription: task.description, epicId: task.parent_id ?? undefined }));
+    } catch (e) {
+      // The task was already flipped to in_progress above; a spawn failure (bad cwd, missing tmux,
+      // name collision) would otherwise leave it stuck with no live session until the stuck detector
+      // reverts it 120s later. Revert immediately so the mission/scheduler can re-pick it.
+      d.tasks.setStatus(taskId, 'open');
+      d.bus.publish({ type: 'task', taskId, status: 'open' });
+      return c.json({ error: `spawn failed: ${(e as Error).message}` }, 500);
+    }
     d.bus.publish({ type: 'task', taskId, status: 'in_progress' });
     return c.json({ session }, 201);
   });
-  app.delete('/sessions/:name', async c => { await d.tmux.kill(c.req.param('name')); return c.json({ ok: true }); });
-  app.post('/sessions/:name/keys', async c => { const { keys } = await c.req.json(); await d.tmux.sendKeys(c.req.param('name'), keys); return c.json({ ok: true }); });
+  app.delete('/sessions/:name', async c => {
+    if (!sessionAccessible(c, c.req.param('name'))) return c.json({ error: 'forbidden' }, 403);
+    await d.tmux.kill(c.req.param('name')); return c.json({ ok: true });
+  });
+  app.post('/sessions/:name/keys', async c => {
+    if (!sessionAccessible(c, c.req.param('name'))) return c.json({ error: 'forbidden' }, 403);
+    const { keys } = await c.req.json().catch(() => ({})) as { keys?: unknown };
+    // Validate before handing to `tmux send-keys`: it must be a non-empty list of plain key tokens.
+    // Reject anything starting with '-' so a crafted entry can't smuggle a tmux flag (e.g. `-t
+    // <other-session>`) and redirect keystrokes into a session the caller shouldn't reach.
+    if (!Array.isArray(keys) || keys.length === 0 || !keys.every((k) => typeof k === 'string' && k.length > 0 && !k.startsWith('-'))) {
+      return c.json({ error: 'keys must be a non-empty array of non-flag strings' }, 400);
+    }
+    await d.tmux.sendKeys(c.req.param('name'), keys as string[]);
+    return c.json({ ok: true });
+  });
   app.post('/sessions/:name/resize', async c => {
+    if (!sessionAccessible(c, c.req.param('name'))) return c.json({ error: 'forbidden' }, 403);
     const { cols, rows } = await c.req.json() as { cols?: number; rows?: number };
     if (typeof cols !== 'number' || typeof rows !== 'number') return c.json({ error: 'cols and rows required' }, 400);
     await d.tmux.resize(c.req.param('name'), cols, rows);
@@ -745,22 +958,32 @@ export function createServer(d: ServerDeps): Hono<{ Variables: { user: User; tok
   });
   app.get('/sessions/:name/pane', async c => {
     const name = c.req.param('name');
+    if (!sessionAccessible(c, name)) return c.json({ error: 'forbidden' }, 403);
     const pane = c.req.query('ansi') ? await d.tmux.capturePaneAnsi(name, 60) : await d.tmux.capturePane(name, 60);
     return c.json({ pane });
   });
 
   app.get('/sessions/:name/stream', (c) => {
     const name = c.req.param('name');
+    if (!sessionAccessible(c, name)) return c.json({ error: 'forbidden' }, 403);
     return streamSSE(c, async (stream) => {
+      let done = false;          // flips once: on abort, on too many errors, or on normal exit
       const frame = async () => {
         const pane = await d.tmux.capturePaneAnsi(name, 200);
         await stream.writeSSE({ data: JSON.stringify({ pane }), event: 'pane' });
       };
       await frame(); // first frame synchronously so clients render immediately
-      const stop = d.clock.setInterval(() => { frame().catch(() => { /* transient capture error — skip this frame, keep the stream alive */ }); }, 1000);
-      c.req.raw.signal.addEventListener('abort', stop);
-      while (!c.req.raw.signal.aborted) await stream.sleep(1000);
-      stop();
+      let errs = 0;
+      // capturePaneAnsi returns '' for a vanished session, so a throw here means the write failed
+      // (closed client). After a short run of consecutive failures, stop pushing empty frames forever.
+      const clear = d.clock.setInterval(() => {
+        frame().then(() => { errs = 0; }).catch(() => { if (++errs >= 5) done = true; });
+      }, 1000);
+      // Single teardown: the abort listener flips `done`; the loop exits and `clear()` runs exactly
+      // once (the previous code called stop() on both abort and loop-exit — a redundant double-clear).
+      c.req.raw.signal.addEventListener('abort', () => { done = true; });
+      while (!done && !c.req.raw.signal.aborted) await stream.sleep(1000);
+      clear();
     });
   });
 
@@ -777,9 +1000,20 @@ export function createServer(d: ServerDeps): Hono<{ Variables: { user: User; tok
     return detail ? c.json(detail) : c.json({ error: 'mission not found' }, 404);
   });
   app.post('/missions', async c => {
-    const b = await c.req.json();
+    const b = await c.req.json().catch(() => ({})) as { epicId?: string; autonomy?: string; maxSessions?: number; clearedGuardrails?: string[] };
+    // Validate the epic up front: an absent/unknown epicId would otherwise create a zombie mission
+    // (id `m-undefined`, no epic to tick) that reports `active` over SSE but never progresses.
+    if (!b.epicId) return c.json({ error: 'epicId required' }, 400);
+    if (!d.tasks.get(b.epicId)) return c.json({ error: 'epic not found' }, 404);
     if (!missionAccessible(c, b.epicId)) return c.json({ error: 'forbidden' }, 403);
-    return c.json(await d.engine.engage(b), 201);
+    // Default the engage params (mirrors /tasks/plan) so a partial body can't reach the engine with
+    // undefined autonomy/maxSessions.
+    return c.json(await d.engine.engage({
+      epicId: b.epicId,
+      autonomy: b.autonomy ?? 'L3',
+      maxSessions: typeof b.maxSessions === 'number' ? b.maxSessions : 1,
+      clearedGuardrails: Array.isArray(b.clearedGuardrails) ? b.clearedGuardrails : [],
+    }), 201);
   });
   app.patch('/missions/:id', async (c) => {
     const id = c.req.param('id');
@@ -809,7 +1043,7 @@ export function createServer(d: ServerDeps): Hono<{ Variables: { user: User; tok
   // Gate the overseer routes by the mission's OWN project (not the daemon home project the GATED
   // middleware checks) so a cross-project user can't read/answer another tenant's decisions. A
   // non-existent mission id has nothing to leak, so it falls through (harmless heartbeat / no-op).
-  const overseerForbidden = (c: { get: (k: 'user') => User | undefined }, missionId: string): boolean => {
+  const overseerForbidden = (c: AccessCtx, missionId: string): boolean => {
     const mission = d.missions.get(missionId);
     return !!mission && !missionAccessible(c, mission.epic_id);
   };

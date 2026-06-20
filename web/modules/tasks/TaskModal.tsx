@@ -18,7 +18,7 @@ import { IconButton } from '../../components/ui/IconButton';
 import { Badge } from '../../components/ui/Badge';
 import { useToast } from '../../components/ui/Toast';
 import { useTranslation } from '../../lib/i18n';
-import { taskTypeMeta, TASK_TYPES, PRIORITIES } from './taskMeta';
+import { taskTypeMeta, taskTypeLabel, TASK_TYPES, PRIORITIES } from './taskMeta';
 
 type Mode = 'single' | 'planning';
 interface ManualPhase { title: string; type: string }
@@ -100,14 +100,6 @@ export function TaskModal({ task, onClose, initialSchedule }: { task?: Task; onC
   const planJob = usePlanJob(planJobId);
   const [manual, setManual] = useState(false);
   const [manualPhases, setManualPhases] = useState<ManualPhase[]>([{ title: '', type: 'task' }]);
-
-  const typeLabels: Record<string, string> = {
-    task: t.tasks.typeTask,
-    bug: t.tasks.typeBug,
-    feature: t.tasks.typeFeature,
-    epic: t.tasks.typeEpic,
-    chore: t.tasks.typeChore,
-  };
 
   // "Planning" covers both the in-flight request and the time the async job is still resolving.
   const planning = plan.isPending || planJobId !== null;
@@ -226,7 +218,7 @@ export function TaskModal({ task, onClose, initialSchedule }: { task?: Task; onC
             <div className="grid grid-cols-2 gap-4">
               <Field label={t.tasks.fieldType}>
                 <Select value={type} onChange={(e) => setType(e.target.value)}>
-                  {TASK_TYPES.map((taskType) => <option key={taskType} value={taskType}>{typeLabels[taskType] ?? taskTypeMeta(taskType).label}</option>)}
+                  {TASK_TYPES.map((taskType) => <option key={taskType} value={taskType}>{taskTypeLabel(t, taskType)}</option>)}
                 </Select>
               </Field>
               <Field label={t.tasks.fieldPriority}>
@@ -315,7 +307,7 @@ export function TaskModal({ task, onClose, initialSchedule }: { task?: Task; onC
                   <div key={i} className="flex items-center gap-2">
                     <Input value={phase.title} placeholder={t.tasks.phasePlaceholder.replace('{n}', String(i + 1))} onChange={(e) => setManualPhases((rows) => rows.map((r, j) => j === i ? { ...r, title: e.target.value } : r))} />
                     <Select value={phase.type} onChange={(e) => setManualPhases((rows) => rows.map((r, j) => j === i ? { ...r, type: e.target.value } : r))} className="w-32">
-                      {TASK_TYPES.filter((taskType) => taskType !== 'epic').map((taskType) => <option key={taskType} value={taskType}>{typeLabels[taskType] ?? taskTypeMeta(taskType).label}</option>)}
+                      {TASK_TYPES.filter((taskType) => taskType !== 'epic').map((taskType) => <option key={taskType} value={taskType}>{taskTypeLabel(t, taskType)}</option>)}
                     </Select>
                     <IconButton icon={X} label={t.tasks.removePhase} onClick={() => setManualPhases((rows) => rows.length > 1 ? rows.filter((_, j) => j !== i) : rows)} />
                   </div>

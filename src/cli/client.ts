@@ -5,7 +5,10 @@ export class OrcaClient {
     if (this.token) headers.set('authorization', `Bearer ${this.token}`);
     const res = await fetch(`${this.base}${path}`, { ...init, headers });
     if (!res.ok) throw new Error(`orca API ${res.status} on ${path}`);
-    return res.json();
+    // A proxy or wrong endpoint can return 200 with a non-JSON body; surface a clear error rather
+    // than crashing the CLI (and the spawned agent that drives it) on an opaque SyntaxError.
+    try { return await res.json(); }
+    catch { throw new Error(`orca API non-JSON response on ${path}`); }
   }
   tasks() { return this.req('/tasks'); }
   createTask(input: unknown) { return this.req('/tasks', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(input) }); }

@@ -19,7 +19,7 @@ import { TerminalModal } from '../../components/terminal/TerminalModal';
 import { useToast } from '../../components/ui/Toast';
 import { EmptyState } from '../../components/ui/states';
 import { statusTone } from '../dashboard/statusTone';
-import { taskTypeMeta } from './taskMeta';
+import { taskTypeMeta, statusLabel } from './taskMeta';
 import { useTranslation } from '../../lib/i18n';
 
 /** Persistent task detail: identity, actions, description, dependencies, live tail / result,
@@ -47,7 +47,6 @@ export function TaskDetailPane({ taskId, onEdit }: { taskId: string; onEdit?: (t
   const isClosed = task.status === 'closed' || task.status === 'cancelled';
   const whenIso = task.closed_at || task.created_at;
   const when = formatTaskTime(whenIso, Date.now(), locale);
-  const STATUS_LABEL: Record<string, string> = { open: t.tasks.statusOpen, in_progress: t.tasks.statusInProgress, blocked: t.tasks.statusBlocked, closed: t.tasks.statusClosed, cancelled: t.tasks.statusCancelled };
 
   const byId = new Map((tasks.data ?? []).map((x) => [x.id, x]));
   const depTasks = (deps.data ?? []).filter((d) => d.task_id === taskId).map((d) => byId.get(d.depends_on_id)).filter((x): x is Task => !!x);
@@ -85,7 +84,7 @@ export function TaskDetailPane({ taskId, onEdit }: { taskId: string; onEdit?: (t
         </div>
 
         <div className="flex flex-wrap items-center gap-1.5">
-          <Badge tone={statusTone(task.status)}>{STATUS_LABEL[task.status] ?? task.status}</Badge>
+          <Badge tone={statusTone(task.status)}>{statusLabel(t, task.status)}</Badge>
           {isClosed ? <OutcomeBadge outcome={task.outcome} /> : null}
           {exec ? <Badge>{exec}</Badge> : null}
           {agentName ? <TaskUsageBadge taskId={task.id} live={running} /> : null}
@@ -114,7 +113,7 @@ export function TaskDetailPane({ taskId, onEdit }: { taskId: string; onEdit?: (t
               <li key={d.id} className="flex items-center gap-2 text-xs">
                 <Link2 size={12} className="shrink-0 text-text-muted" aria-hidden />
                 <span className="min-w-0 flex-1 truncate text-text">{d.title}</span>
-                <Badge tone={statusTone(d.status)}>{STATUS_LABEL[d.status] ?? d.status}</Badge>
+                <Badge tone={statusTone(d.status)}>{statusLabel(t, d.status)}</Badge>
               </li>
             ))}
           </ul>

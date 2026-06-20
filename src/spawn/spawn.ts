@@ -13,6 +13,9 @@ export class SpawnService {
     this.d.agents.upsert({ project_id: input.projectId, name: input.agentName, program: input.spec.program, model: input.spec.model });
     const session = `orca-${input.agentName}`;
     const orca = this.d.orca;
+    // Invoke the daemon's own CLI by absolute path via node, so agents never depend on `orca` being
+    // on PATH (it isn't). Shared by the close commands and the worker preamble's read-only verbs.
+    const cli = orca ? `node ${orca.cliPath}` : undefined;
     const closeCommand = orca ? `node ${orca.cliPath} close ${input.taskId}` : undefined;
     // A phase agent gets a close command for its parent epic too, so the final phase can
     // close the epic itself with its own overall result summary.
@@ -24,7 +27,7 @@ export class SpawnService {
     const command = buildAgentCommand(input.spec, {
       projectPath: input.projectPath, taskId: input.taskId, agentName: input.agentName,
       taskTitle: input.taskTitle, taskDescription: input.taskDescription,
-      closeCommand, epicId: input.epicId, epicCloseCommand, env, bin: provider?.bin, extraArgs: provider?.args,
+      closeCommand, epicId: input.epicId, epicCloseCommand, cli, env, bin: provider?.bin, extraArgs: provider?.args,
       rawPrompt: input.rawPrompt,
     });
     await this.d.tmux.spawn(session, { cwd: input.projectPath, command });

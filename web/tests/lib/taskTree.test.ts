@@ -43,6 +43,13 @@ describe('epicLive', () => {
     const live = epicLive(children, ['orca-nova', 'orca-atlas'], { 'orca-atlas': { type: 'needs_input', question: '?' } });
     expect(live).toEqual({ running: 2, needsInput: 1 });
   });
+
+  // W19: a stale needs_input signal for a session that is no longer live must not be counted.
+  it('ignores needs_input signals for dead (non-live) sessions', () => {
+    const children = [task({ id: 'a', status: 'in_progress', labels: ['agent:nova'] })];
+    const live = epicLive(children, [], { 'orca-nova': { type: 'needs_input', question: '?' } });
+    expect(live).toEqual({ running: 0, needsInput: 0 });
+  });
 });
 
 describe('epicCapacity', () => {
@@ -63,6 +70,13 @@ describe('epicCapacity', () => {
     expect(epicCapacity(children, ['orca-nova', 'orca-atlas'], 1)).toEqual({ running: 1, max: 1, free: 0 });
     expect(epicCapacity(children, ['orca-nova', 'orca-atlas'], 0)).toEqual({ running: 0, max: 0, free: 0 });
     expect(epicCapacity(children, ['orca-nova', 'orca-atlas'], -2)).toEqual({ running: 0, max: 0, free: 0 });
+  });
+
+  // W20: non-finite maxSessions (undefined/NaN from malformed data) must not poison the meter.
+  it('treats non-finite maxSessions as 0 instead of rendering NaN', () => {
+    const children = [task({ id: 'a', status: 'in_progress', labels: ['agent:nova'] })];
+    expect(epicCapacity(children, ['orca-nova'], NaN)).toEqual({ running: 0, max: 0, free: 0 });
+    expect(epicCapacity(children, ['orca-nova'], undefined as unknown as number)).toEqual({ running: 0, max: 0, free: 0 });
   });
 });
 

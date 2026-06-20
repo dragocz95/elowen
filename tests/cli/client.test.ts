@@ -15,6 +15,12 @@ describe('OrcaClient', () => {
     expect(calls[0].init.method).toBe('POST');
   });
 
+  it('throws a clear error on a 200 non-JSON response rather than a raw SyntaxError', async () => {
+    global.fetch = vi.fn(async () => new Response('<html>oops</html>', { status: 200, headers: { 'content-type': 'text/html' } })) as any;
+    const c = new OrcaClient('http://localhost:4400');
+    await expect(c.tasks()).rejects.toThrow(/non-JSON/);
+  });
+
   it('close PATCHes the task to closed and sends the bearer token', async () => {
     const calls: any[] = [];
     global.fetch = vi.fn(async (url: any, init: any) => { calls.push({ url, init }); return new Response(JSON.stringify({ id: 'orca-1', status: 'closed' }), { status: 200 }); }) as any;

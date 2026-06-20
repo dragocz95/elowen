@@ -8,7 +8,11 @@ CREATE TABLE IF NOT EXISTS tasks (
   result_summary TEXT, outcome TEXT, closed_at TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
-CREATE TABLE IF NOT EXISTS task_deps (task_id TEXT NOT NULL, depends_on_id TEXT NOT NULL, PRIMARY KEY (task_id, depends_on_id));
+CREATE TABLE IF NOT EXISTS task_deps (
+  task_id TEXT NOT NULL, depends_on_id TEXT NOT NULL,
+  PRIMARY KEY (task_id, depends_on_id),
+  CHECK (task_id != depends_on_id)
+);
 CREATE TABLE IF NOT EXISTS agents (
   id INTEGER PRIMARY KEY, project_id INTEGER NOT NULL, name TEXT NOT NULL,
   program TEXT NOT NULL, model TEXT NOT NULL, last_active_ts TEXT NOT NULL DEFAULT (datetime('now')),
@@ -32,6 +36,7 @@ CREATE TABLE IF NOT EXISTS users (
 );
 CREATE TABLE IF NOT EXISTS auth_tokens (
   token TEXT PRIMARY KEY, user_id INTEGER NOT NULL,
+  scope TEXT NOT NULL DEFAULT 'full',
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE TABLE IF NOT EXISTS user_projects (
@@ -44,3 +49,9 @@ CREATE TABLE IF NOT EXISTS events (
   type TEXT NOT NULL, target TEXT NOT NULL, detail TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_events_ts ON events(ts);
+CREATE INDEX IF NOT EXISTS idx_events_target ON events(target);
+CREATE INDEX IF NOT EXISTS idx_events_type_ts ON events(type, ts DESC);
+CREATE INDEX IF NOT EXISTS idx_tasks_project_status ON tasks(project_id, status);
+CREATE INDEX IF NOT EXISTS idx_tasks_parent ON tasks(parent_id);
+CREATE INDEX IF NOT EXISTS idx_missions_epic ON missions(epic_id);
+CREATE INDEX IF NOT EXISTS idx_missions_state ON missions(state);

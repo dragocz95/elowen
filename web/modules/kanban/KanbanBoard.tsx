@@ -6,6 +6,7 @@ import { groupByStatus } from './groupByStatus';
 import { epicChildren, phaseIds, epicEffectiveStatus } from '../../lib/taskTree';
 import { KanbanCard } from './KanbanCard';
 import { KanbanEpicCard } from './KanbanEpicCard';
+import { statusLabel } from '../tasks/taskMeta';
 import { useTranslation } from '../../lib/i18n';
 
 const COLUMNS: { status: TaskStatus; labelKey: string; icon: LucideIcon; color: string }[] = [
@@ -18,7 +19,6 @@ const COLUMNS: { status: TaskStatus; labelKey: string; icon: LucideIcon; color: 
 
 export function KanbanBoard({ tasks, onMove, onSelect, blockedBy, missions }: { tasks: Task[]; onMove: (taskId: string, status: TaskStatus) => void; onSelect?: (t: Task) => void; blockedBy?: Map<string, Task[]>; missions?: Mission[] }) {
   const { t } = useTranslation();
-  const STATUS_LABEL: Record<string, string> = { open: t.tasks.statusOpen, in_progress: t.tasks.statusInProgress, blocked: t.tasks.statusBlocked, closed: t.tasks.statusClosed, cancelled: t.tasks.statusCancelled };
   const activeMissions = missions ?? [];
   const childMap = epicChildren(tasks);
   const phaseSet = phaseIds(tasks);
@@ -43,7 +43,7 @@ export function KanbanBoard({ tasks, onMove, onSelect, blockedBy, missions }: { 
         blocked={blockers.length > 0}
         blockers={blockers}
         dragging={draggingId === task.id}
-        statusLabel={STATUS_LABEL[task.status] ?? task.status}
+        statusLabel={statusLabel(t, task.status)}
         onSelect={onSelect}
         onDragStart={(e) => { e.dataTransfer.setData('text/plain', task.id); setDraggingId(task.id); }}
         onDragEnd={() => { setDraggingId(null); setDragOver(null); }}
@@ -80,7 +80,7 @@ export function KanbanBoard({ tasks, onMove, onSelect, blockedBy, missions }: { 
               const phases = childMap.get(task.id) ?? [];
               return (
                 <Fragment key={task.id}>
-                  <KanbanEpicCard epic={task} phases={phases} expanded={expanded.has(task.id)} onToggle={() => toggleEpic(task.id)} effectiveStatus={effStatus(task)} trueStatusLabel={STATUS_LABEL[task.status] ?? task.status} />
+                  <KanbanEpicCard epic={task} phases={phases} expanded={expanded.has(task.id)} onToggle={() => toggleEpic(task.id)} effectiveStatus={effStatus(task)} trueStatusLabel={statusLabel(t, task.status)} />
                   {expanded.has(task.id) ? phases.map((ph) => renderCard(ph, true)) : null}
                 </Fragment>
               );

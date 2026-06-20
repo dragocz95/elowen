@@ -3,7 +3,7 @@ import { Link2, CheckCircle2, XCircle, ChevronRight } from 'lucide-react';
 import type { Task } from '../../lib/types';
 import { tailSnippet } from '../../lib/agentUtils';
 import { sessionActivity } from '../../lib/sessionActivity';
-import { useSessionPane } from '../../modules/sessions/useSessionPane';
+import { useSessionPane } from '../../lib/useSessionPane';
 import { useTranslation } from '../../lib/i18n';
 import { Badge } from './Badge';
 import type { Tone } from './tone';

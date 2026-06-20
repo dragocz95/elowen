@@ -40,7 +40,7 @@ function ProjectChips({ userId, projects }: { userId: number; projects: Project[
           <button
             key={p.id}
             type="button"
-            onClick={() => assign.mutate({ userId, projectId: p.id, assigned: on })}
+            onClick={() => assign.mutate({ userId, projectId: p.id, currentlyAssigned: on })}
             disabled={assign.isPending}
             className={`rounded-full border px-2.5 py-1 text-xs transition-colors ${on ? 'border-accent bg-accent/15 text-accent' : 'border-border text-text-muted hover:bg-elevated'}`}
           >

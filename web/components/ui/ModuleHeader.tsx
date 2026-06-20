@@ -1,8 +1,8 @@
 import type { ReactNode } from 'react';
 import type { LucideIcon } from 'lucide-react';
 
-/** Sticky, compact module toolbar — replaces PageHeader + a Section header on operational
- *  pages. Holds title, count, and a right-aligned actions/toggles slot. */
+/** Sticky, compact module toolbar for operational pages.
+ *  Holds title, count, and a right-aligned actions/toggles slot. */
 export function ModuleHeader({ title, count, icon: Icon, children }: { title: string; count?: number; icon?: LucideIcon; children?: ReactNode }) {
   return (
     <div className="z-20 -mx-4 -mt-4 mb-5 flex flex-col gap-2 border-b border-border bg-bg px-4 py-3 md:sticky md:top-0 md:flex-row md:flex-wrap md:items-center md:gap-x-3">

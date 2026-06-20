@@ -23,6 +23,21 @@ export function useDeleteTask() {
   const qc = useQueryClient();
   return useMutation({ mutationFn: (id: string) => orcaClient.deleteTask(id), onSuccess: () => qc.invalidateQueries({ queryKey: QUERY_KEYS.tasks }) });
 }
+export function useDeleteMission() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (epicId: string) => orcaClient.deleteMission(epicId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: QUERY_KEYS.tasks });
+      qc.invalidateQueries({ queryKey: QUERY_KEYS.missions });
+      qc.invalidateQueries({ queryKey: ['mission'] });
+    },
+  });
+}
+export function useCleanupAll() {
+  const qc = useQueryClient();
+  return useMutation({ mutationFn: () => orcaClient.cleanupAll(), onSuccess: () => qc.invalidateQueries() });
+}
 export function usePlanTask() {
   const qc = useQueryClient();
   return useMutation({
@@ -34,9 +49,11 @@ export function useInsertPhases() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (v: { epicId: string; body: InsertPhasesInput }) => orcaClient.insertPhases(v.epicId, v.body),
-    onSuccess: () => {
+    onSuccess: (_r, v) => {
       qc.invalidateQueries({ queryKey: QUERY_KEYS.tasks });
-      qc.invalidateQueries({ queryKey: ['mission'] });
+      // Invalidate only the affected epic's mission detail, not every open mission (the broad
+      // `['mission']` prefix would refetch all open detail views, including the stray null key).
+      qc.invalidateQueries({ queryKey: ['mission', v.epicId] });
       qc.invalidateQueries({ queryKey: QUERY_KEYS.missions });
     },
   });
@@ -118,11 +135,20 @@ export function useUpdateProject() {
   const qc = useQueryClient();
   return useMutation({ mutationFn: (v: { id: number; path?: string; notes?: string }) => orcaClient.updateProject(v.id, { path: v.path, notes: v.notes }), onSuccess: () => qc.invalidateQueries({ queryKey: ['projects'] }) });
 }
+export function useRemoveProject() {
+  const qc = useQueryClient();
+  return useMutation({ mutationFn: (id: number) => orcaClient.removeProject(id), onSuccess: () => qc.invalidateQueries({ queryKey: ['projects'] }) });
+}
+/**
+ * Toggle a project assignment for a user. `currentlyAssigned` is the present state of the chip:
+ * when the project is already assigned we unassign it, otherwise we assign it. Naming the flag
+ * after the current state (rather than a bare `assigned`) keeps the toggle direction unambiguous.
+ */
 export function useAssignProject() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (v: { userId: number; projectId: number; assigned: boolean }) =>
-      v.assigned ? orcaClient.unassignProject(v.userId, v.projectId) : orcaClient.assignProject(v.userId, v.projectId),
+    mutationFn: (v: { userId: number; projectId: number; currentlyAssigned: boolean }) =>
+      v.currentlyAssigned ? orcaClient.unassignProject(v.userId, v.projectId) : orcaClient.assignProject(v.userId, v.projectId),
     onSuccess: (_r, v) => qc.invalidateQueries({ queryKey: ['user-projects', v.userId] }),
   });
 }
@@ -132,7 +158,6 @@ export function useWriteProjectFile() {
     mutationFn: (v: { id: number; path: string; content: string }) => orcaClient.writeProjectFile(v.id, v.path, v.content),
     onSuccess: (_r, v) => {
       qc.invalidateQueries({ queryKey: ['project-file', v.id, v.path] });
-      qc.invalidateQueries({ queryKey: ['project-diff', v.id, v.path] });
       qc.invalidateQueries({ queryKey: ['project-git', v.id] });
     },
   });

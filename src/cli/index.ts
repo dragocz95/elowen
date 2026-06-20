@@ -30,7 +30,10 @@ export async function run(argv: string[], c: OrcaClient, env: NodeJS.ProcessEnv)
     case 'close': {
       if (!arg) { console.error('usage: orca close <taskId> [--summary "<text>"] [--outcome ok|fail]'); process.exit(1); }
       const outcome = flag(rest, '--outcome');
-      await c.close(arg, { summary: flag(rest, '--summary'), outcome: outcome === 'fail' ? 'fail' : outcome === 'ok' ? 'ok' : undefined });
+      // Reject a typo'd outcome instead of silently storing null — the agent would otherwise think it
+      // closed "ok"/"fail" while the task records no outcome at all.
+      if (outcome !== undefined && outcome !== 'ok' && outcome !== 'fail') { console.error('orca close: --outcome must be ok or fail'); process.exit(2); }
+      await c.close(arg, { summary: flag(rest, '--summary'), outcome });
       console.log(`closed ${arg}`); break;
     }
     case 'plan': {
@@ -46,7 +49,19 @@ export async function run(argv: string[], c: OrcaClient, env: NodeJS.ProcessEnv)
     case 'overseer': {
       const missionId = env.ORCA_MISSION;
       if (!missionId) { console.error('orca overseer: ORCA_MISSION is not set'); process.exit(1); }
-      if (arg === 'poll') { console.log(JSON.stringify(await c.overseerPoll(missionId), null, 2)); break; }
+      if (arg === 'poll') {
+        // Absorb heartbeats HERE, in the CLI process, so the (LLM-driven) overseer agent is woken
+        // only for a real decision. The server long-poll returns `{}` every ~25s to keep the HTTP
+        // request from hanging; surfacing those heartbeats to the model would force a fresh round-trip
+        // (and token spend) every 25s for an otherwise-idle overseer. Loop until a decision (`id`) or
+        // an error arrives; when the mission ends the daemon kills this session, ending the loop.
+        for (;;) {
+          const r = await c.overseerPoll(missionId) as Record<string, unknown> | null;
+          if (r && (r.id || r.error)) { console.log(JSON.stringify(r, null, 2)); break; }
+          // heartbeat (`{}`) — the server already blocked ~25s, so just poll again.
+        }
+        break;
+      }
       if (arg === 'decide') {
         const id = flag(rest, '--id');
         if (!id) { console.error('usage: orca overseer decide --id <id> (--approve|--escalate) [--confidence <0..1>] [--rationale "<text>"]'); process.exit(1); }

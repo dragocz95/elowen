@@ -1,8 +1,11 @@
 import type { Db } from './db.js';
+import type { MissionState } from './types.js';
+
+export type { MissionState };
 
 export interface Mission {
   id: string; epic_id: string; autonomy: string; max_sessions: number;
-  cleared_guardrails: string[]; state: string;
+  cleared_guardrails: string[]; state: MissionState;
 }
 
 type MRow = Omit<Mission, 'cleared_guardrails'> & { cleared_guardrails: string };
@@ -36,7 +39,7 @@ export class MissionStore {
     return (this.db.prepare("SELECT * FROM missions WHERE state IN ('active','stalled')").all() as MRow[]).map(toMission);
   }
 
-  setState(id: string, state: string): void {
+  setState(id: string, state: MissionState): void {
     this.db.prepare('UPDATE missions SET state=? WHERE id=?').run(state, id);
   }
 }

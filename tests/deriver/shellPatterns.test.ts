@@ -10,6 +10,13 @@ describe('detectAgentPrompt', () => {
     expect(p).not.toBeNull();
     expect(p!.acceptKeys).toEqual(['Enter']);
   });
+  it('detects the Claude workspace-trust gate and marks it auto-accept', () => {
+    const dialog = ` Accessing workspace:\n /tmp/new-project\n Quick safety check: Is this a project you created or one you trust?\n ❯ 1. Yes, I trust this folder\n   2. No, exit\n Enter to confirm · Esc to cancel`;
+    const p = detectAgentPrompt(dialog, 'claude-code');
+    expect(p).not.toBeNull();
+    expect(p!.acceptKeys).toEqual(['Enter']);
+    expect(p!.autoAccept).toBe(true);
+  });
   it('detects the Claude "Do you want to proceed?" gate', () => {
     const p = detectAgentPrompt('Edit file?\n  Do you want to proceed?\n ❯ 1. Yes\n   2. No', 'claude-code');
     expect(p).not.toBeNull();

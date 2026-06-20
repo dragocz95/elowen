@@ -2,7 +2,7 @@
 import { useState } from 'react';
 import { FolderGit2, GitBranch, GitCommitHorizontal, Plus, CheckCircle2, AlertTriangle, ArrowUp, ArrowDown, Folder } from 'lucide-react';
 import { useProjects, useProjectGit } from '../../lib/queries';
-import { useCreateProject, useUpdateProject } from '../../lib/mutations';
+import { useCreateProject, useUpdateProject, useRemoveProject } from '../../lib/mutations';
 import type { Project } from '../../lib/types';
 import { useToast } from '../../components/ui/Toast';
 import { Badge } from '../../components/ui/Badge';
@@ -13,7 +13,7 @@ import { Modal, ModalBody, ModalFooter } from '../../components/ui/Modal';
 import { ModuleHeader } from '../../components/ui/ModuleHeader';
 import { LoadingState, ErrorState, EmptyState } from '../../components/ui/states';
 import { useTranslation } from '../../lib/i18n';
-import { Code2, Pencil } from 'lucide-react';
+import { Code2, Pencil, Trash2 } from 'lucide-react';
 import { ProjectEditor } from './editor/ProjectEditor';
 
 export function ProjectsView() {
@@ -33,6 +33,10 @@ export function ProjectsView() {
   const { t } = useTranslation();
   const createProject = useCreateProject();
   const updateProject = useUpdateProject();
+  const removeProject = useRemoveProject();
+  // Project pending removal — drives the confirm dialog. Removal detaches the project from orca
+  // (tasks/missions/access) but never touches files on disk; the backend rejects the home project.
+  const [removing, setRemoving] = useState<Project | null>(null);
 
   const [slug, setSlug] = useState('');
   const [path, setPath] = useState('');
@@ -69,6 +73,19 @@ export function ProjectsView() {
         onError: (e) => toast(String(e), 'error'),
       }
     );
+  }
+
+  function handleRemove() {
+    if (!removing) return;
+    const id = removing.id;
+    removeProject.mutate(id, {
+      onSuccess: () => {
+        setRemoving(null);
+        if (selectedId === id) setSelectedId(null);
+        toast(t.projects.removed);
+      },
+      onError: (e) => toast(String(e), 'error'),
+    });
   }
 
   return (
@@ -214,8 +231,22 @@ export function ProjectsView() {
             </Field>
           </ModalBody>
           <ModalFooter>
+            <Button variant="danger" icon={Trash2} onClick={() => { const p = editProject; setEditProject(null); setRemoving(p); }}>{t.projects.removeProject}</Button>
+            <div className="flex-1" />
             <Button variant="ghost" onClick={() => setEditProject(null)}>{t.common.cancel}</Button>
             <Button variant="accent" onClick={handleUpdate} disabled={updateProject.isPending || !editPath.trim()}>{t.common.save}</Button>
+          </ModalFooter>
+        </Modal>
+      )}
+
+      {removing && (
+        <Modal title={t.projects.removeConfirmTitle} onClose={() => setRemoving(null)} size="sm" icon={AlertTriangle}>
+          <ModalBody>
+            <p className="text-sm text-text-muted">{t.projects.removeConfirmBody.replace('{slug}', removing.slug)}</p>
+          </ModalBody>
+          <ModalFooter>
+            <Button variant="ghost" onClick={() => setRemoving(null)}>{t.common.cancel}</Button>
+            <Button variant="danger" icon={Trash2} onClick={handleRemove} disabled={removeProject.isPending}>{t.projects.removeConfirmBtn}</Button>
           </ModalFooter>
         </Modal>
       )}

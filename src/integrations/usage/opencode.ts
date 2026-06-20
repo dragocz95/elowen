@@ -1,6 +1,6 @@
 import Database from 'better-sqlite3';
 import { existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { SESSION_MATCH_SKEW_MS, type TokenUsage } from './types.js';
 
 interface OcSessionRow {
@@ -33,7 +33,9 @@ export function opencodeUsage(home: string, dir: string, sinceMs: number, model?
          FROM session
         WHERE directory = ? AND parent_id IS NULL AND time_created >= ?
         ORDER BY time_created ASC, id ASC`
-    ).all(dir, sinceMs - SESSION_MATCH_SKEW_MS) as (OcSessionRow & { spec: string | null })[];
+    // opencode stores `directory` as the resolved absolute path; normalize ours (e.g. strip a
+    // trailing slash) so the exact-match WHERE doesn't silently miss every session.
+    ).all(resolve(dir), sinceMs - SESSION_MATCH_SKEW_MS) as (OcSessionRow & { spec: string | null })[];
     if (rows.length === 0) return null;
 
     // Prefer rows whose model matches the task's exec; fall back to all rows when the model can't be

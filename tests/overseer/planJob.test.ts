@@ -25,4 +25,16 @@ describe('PlanJobStore', () => {
   it('get returns null for unknown id', () => {
     expect(new PlanJobStore().get('nope')).toBeNull();
   });
+
+  it('prunes settled jobs older than the TTL on the next create, but keeps in-flight ones (O27)', () => {
+    let now = 0;
+    const s = new PlanJobStore(() => now);
+    const old = s.create({ goal: 'old', projectId: 1, epicId: null, dryRun: false });
+    s.fail(old.id, 'done long ago'); // terminal
+    const stillPlanning = s.create({ goal: 'wip', projectId: 1, epicId: null, dryRun: false }); // never settled
+    now += 11 * 60_000; // advance past the 10-min TTL
+    s.create({ goal: 'fresh', projectId: 1, epicId: null, dryRun: false }); // triggers prune
+    expect(s.get(old.id)).toBeNull();              // long-settled job evicted
+    expect(s.get(stillPlanning.id)).not.toBeNull(); // in-flight job retained regardless of age
+  });
 });

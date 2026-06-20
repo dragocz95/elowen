@@ -19,4 +19,26 @@ export class ProjectStore {
     this.db.prepare('UPDATE projects SET path = ?, notes = ? WHERE id = ?').run(path, notes, id);
     return this.get(id);
   }
+
+  /** Remove a project from the registry and everything scoped to it: its tasks (+ their deps and any
+   *  missions driving them), its agents, and every user's access grant. The schema has no FK cascade,
+   *  so the order is explicit and the whole thing runs in one transaction. The on-disk files at
+   *  `project.path` are NEVER touched — this only detaches the project from orca. */
+  remove(id: number): boolean {
+    if (!this.get(id)) return false;
+    this.db.transaction(() => {
+      this.db.prepare(
+        'DELETE FROM missions WHERE epic_id IN (SELECT id FROM tasks WHERE project_id = ?)'
+      ).run(id);
+      this.db.prepare(
+        'DELETE FROM task_deps WHERE task_id IN (SELECT id FROM tasks WHERE project_id = ?)' +
+        ' OR depends_on_id IN (SELECT id FROM tasks WHERE project_id = ?)'
+      ).run(id, id);
+      this.db.prepare('DELETE FROM tasks WHERE project_id = ?').run(id);
+      this.db.prepare('DELETE FROM agents WHERE project_id = ?').run(id);
+      this.db.prepare('DELETE FROM user_projects WHERE project_id = ?').run(id);
+      this.db.prepare('DELETE FROM projects WHERE id = ?').run(id);
+    })();
+    return true;
+  }
 }

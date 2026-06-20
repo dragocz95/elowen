@@ -39,38 +39,63 @@ export class Deriver {
   async tick(): Promise<void> {
     const sessions = (await this.d.tmux.list()).filter(s => s.startsWith('orca-'));
     for (const session of sessions) {
-      const program = this.d.agents.programFor(session.replace(/^orca-/, ''));
-      if (!program) continue;
-      const taskId = this.d.sessionTaskId(session); if (!taskId) continue;
-      const task = this.d.tasks.get(taskId); if (!task) continue;
+      // Isolate each session: a vanished session (capturePane) or a relay throw (decideApproval) must
+      // not break the 5s sweep for the rest. Robustness of a periodic loop trumps a single iteration.
+      try { await this.tickSession(session); }
+      catch (e) { console.error('[orca] deriver tick failed for', session, e); }
+    }
+  }
 
-      if (task.status === 'closed') { this.emitOnce(session, 'complete', { type: 'complete' }); continue; }
-      if (task.status !== 'in_progress' && task.status !== 'open') continue;
+  private async tickSession(session: string): Promise<void> {
+    const program = this.d.agents.programFor(session.replace(/^orca-/, ''));
+    if (!program) return;
+    const taskId = this.d.sessionTaskId(session); if (!taskId) return;
+    const task = this.d.tasks.get(taskId); if (!task) return;
 
-      const prompt = detectAgentPrompt(await this.d.tmux.capturePane(session, PANE_TAIL), program);
-      if (prompt) {
-        const autonomy = this.d.autonomyFor?.(session) ?? null;
-        const key = `prompt:${hash(prompt.question + prompt.context)}`;
-        if (this.last.get(session) === key) continue; // already handled this exact prompt
-        this.last.set(session, key);
-        const escalate = () => this.d.sink.emit(session, { type: 'needs_input', question: prompt.question, options: prompt.options, context: prompt.context });
-        // L0/L1 always escalate to a human.
-        if (!autoClears(autonomy)) { escalate(); continue; }
-        // L2/L3: the overseer decides; destructive or uncertain prompts still escalate.
-        const decision = this.d.decideApproval
+    if (task.status === 'closed') {
+      this.emitOnce(session, 'complete', { type: 'complete' });
+      this.last.delete(session); // finished agent — drop its tracking entry so the Map can't grow unbounded
+      return;
+    }
+    if (task.status !== 'in_progress' && task.status !== 'open') return;
+
+    const prompt = detectAgentPrompt(await this.d.tmux.capturePane(session, PANE_TAIL), program);
+    if (prompt) {
+      const autonomy = this.d.autonomyFor?.(session) ?? null;
+      const key = `prompt:${hash(prompt.question + prompt.context)}`;
+      if (this.last.get(session) === key) return; // already handled this exact prompt
+      this.last.set(session, key);
+      const escalate = () => this.d.sink.emit(session, { type: 'needs_input', question: prompt.question, options: prompt.options, context: prompt.context });
+      // L0/L1 always escalate to a human.
+      if (!autoClears(autonomy)) { escalate(); return; }
+      // Environmental gates (workspace-trust) just block startup — orca only spawns into the
+      // user's own registered projects, so clear them directly without an overseer round-trip.
+      if (prompt.autoAccept) {
+        await this.d.tmux.sendKeys(session, prompt.acceptKeys);
+        this.d.sink.emit(session, { type: 'working' });
+        return;
+      }
+      // L2/L3: the overseer decides; destructive or uncertain prompts still escalate. A decision
+      // failure (relay/queue throw) is conservative — escalate to a human rather than auto-clear.
+      let decision: { approve: boolean; destructive: boolean };
+      try {
+        decision = this.d.decideApproval
           ? await this.d.decideApproval({ question: prompt.question, context: prompt.context, options: prompt.options, autonomy: autonomy ?? 'L3', missionId: this.d.missionFor?.(session) ?? null })
           : { approve: true, destructive: false };
-        if (decision.approve && !decision.destructive) {
-          await this.d.tmux.sendKeys(session, prompt.acceptKeys);
-          this.d.sink.emit(session, { type: 'working' });
-        } else {
-          escalate();
-        }
-        continue;
+      } catch (e) {
+        console.error('[orca] overseer decision failed, escalating', e);
+        decision = { approve: false, destructive: false };
       }
-      this.last.set(session, 'working');
-      this.d.sink.emit(session, { type: 'working' });
+      if (decision.approve && !decision.destructive) {
+        await this.d.tmux.sendKeys(session, prompt.acceptKeys);
+        this.d.sink.emit(session, { type: 'working' });
+      } else {
+        escalate();
+      }
+      return;
     }
+    this.last.set(session, 'working');
+    this.d.sink.emit(session, { type: 'working' });
   }
 
   private emitOnce(session: string, key: string, sig: DerivedSignal) {

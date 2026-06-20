@@ -4,7 +4,7 @@ import type { Task } from '../../lib/types';
 import { Badge } from '../../components/ui/Badge';
 import { ProgressRibbon } from '../../components/ui/ProgressRibbon';
 import { TaskCard } from './TaskCard';
-import { taskTypeMeta } from './taskMeta';
+import { taskTypeMeta, statusLabel } from './taskMeta';
 import { statusTone } from '../dashboard/statusTone';
 import { epicProgress, epicLive } from '../../lib/taskTree';
 import { useSessions, useSessionSignals } from '../../lib/queries';
@@ -29,7 +29,6 @@ export function EpicGroup({ epic, phases, effectiveStatus, expanded, onToggle, o
   const { done, total } = epicProgress(phases);
   const { running, needsInput } = epicLive(phases, sessions.data ?? [], signals);
   const Icon = taskTypeMeta('epic').icon;
-  const STATUS_LABEL: Record<string, string> = { open: t.tasks.statusOpen, in_progress: t.tasks.statusInProgress, blocked: t.tasks.statusBlocked, closed: t.tasks.statusClosed, cancelled: t.tasks.statusCancelled };
   const active = needsInput > 0 || running > 0;
   const dotColor = needsInput > 0 ? 'var(--color-warning)' : 'var(--color-success)';
   const dotRing = needsInput > 0 ? 'color-mix(in srgb, var(--color-warning) 50%, transparent)' : 'color-mix(in srgb, var(--color-success) 50%, transparent)';
@@ -54,7 +53,7 @@ export function EpicGroup({ epic, phases, effectiveStatus, expanded, onToggle, o
             <span className="shrink-0 font-mono text-[11px] text-text-muted">{done}/{total} {t.tasks.phasesLabel}</span>
           </div>
         </div>
-        <Badge tone={statusTone(effectiveStatus ?? epic.status)}>{STATUS_LABEL[effectiveStatus ?? epic.status] ?? epic.status}</Badge>
+        <Badge tone={statusTone(effectiveStatus ?? epic.status)}>{statusLabel(t, effectiveStatus ?? epic.status)}</Badge>
       </button>
 
       {expanded ? (

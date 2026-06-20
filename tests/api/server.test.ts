@@ -481,3 +481,37 @@ it('POST /tasks/:epicId/phases ticks an active mission so it picks up the new ph
   expect(res.status).toBe(201);
   expect(ticked).toBe('m-E');
 });
+
+it('returns 400 on a malformed JSON body (central onError, not a 500)', async () => {
+  const { app } = makeApp();
+  const res = await app.request('/tasks', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{ not json' });
+  expect(res.status).toBe(400);
+  expect(await res.json()).toEqual({ error: 'invalid JSON body' });
+});
+
+it('POST /sessions reverts the task to open when spawn.launch fails', async () => {
+  const db = openDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'orca','/o')").run();
+  const tasks = new TaskStore(db);
+  tasks.create({ id: 'orca-s1', project_id: 1, title: 'T', description: 'd' });
+  const tmux = new FakeTmuxDriver();
+  tmux.spawn = async () => { throw new Error('tmux exploded'); };
+  const spawn = new SpawnService({ tmux, agents: new AgentStore(db) });
+  const bus = new EventBus();
+  const events: OrcaEvent[] = []; bus.subscribe((e) => events.push(e));
+  const app = createServer({
+    tasks, readiness: new Readiness(db), missions: new MissionStore(db), bus,
+    engine: null as any, spawn, tmux,
+    project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' }, clock: new FakeClock(0), config: new ConfigStore(db),
+  });
+  const res = await app.request('/sessions', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ taskId: 'orca-s1' }) });
+  expect(res.status).toBe(500);
+  expect(tasks.get('orca-s1')!.status).toBe('open'); // reverted, not left stuck in_progress
+  expect(events.some((e) => e.type === 'task' && e.taskId === 'orca-s1' && e.status === 'open')).toBe(true);
+});
+
+it('GET /integrations/hermes/status rejects a home override outside the Hermes root', async () => {
+  const { app } = makeApp();
+  const res = await app.request('/integrations/hermes/status?home=/etc', {});
+  expect(res.status).toBe(400);
+  expect(await res.json()).toEqual({ error: 'home must be under the Hermes root' });
+});

@@ -11,6 +11,12 @@ export type OrcaEvent =
 export class EventBus implements SignalSink {
   private subs = new Set<(e: OrcaEvent) => void>();
   subscribe(fn: (e: OrcaEvent) => void): () => void { this.subs.add(fn); return () => this.subs.delete(fn); }
-  publish(e: OrcaEvent): void { for (const fn of this.subs) fn(e); }
+  /** Isolate subscribers: a throwing/closed subscriber (e.g. a torn-down SSE stream) must not abort
+   *  the broadcast to the rest — otherwise one dead client silences live events for everyone. */
+  publish(e: OrcaEvent): void {
+    for (const fn of this.subs) {
+      try { fn(e); } catch (err) { console.error('[orca] event subscriber threw', err); }
+    }
+  }
   emit(session: string, signal: DerivedSignal): void { this.publish({ type: 'signal', session, signal }); }
 }

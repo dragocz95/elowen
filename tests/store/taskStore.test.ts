@@ -1,9 +1,11 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { openDb } from '../../src/store/db.js';
+import type { Db } from '../../src/store/db.js';
 import { TaskStore } from '../../src/store/taskStore.js';
 
+let db: Db;
 let store: TaskStore;
-beforeEach(() => { const db = openDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'orca','/var/www/orca')").run(); store = new TaskStore(db); });
+beforeEach(() => { db = openDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'orca','/var/www/orca')").run(); store = new TaskStore(db); });
 
 describe('TaskStore', () => {
   it('creates and reads a task with parsed labels', () => {
@@ -83,6 +85,87 @@ describe('TaskStore', () => {
     store.delete('a');
     expect(store.get('a')).toBeNull();
     expect(store.depsAmong(['a', 'b'])).toEqual([]); // edge gone too
+  });
+
+  it('addDep ignores self-references', () => {
+    store.create({ id: 'a', project_id: 1, title: 'A' });
+    store.addDep('a', 'a');
+    expect(store.depsFor('a')).toEqual([]);
+  });
+
+  it('addDep rejects an edge that would create a cycle', () => {
+    store.create({ id: 'a', project_id: 1, title: 'A' });
+    store.create({ id: 'b', project_id: 1, title: 'B' });
+    store.addDep('b', 'a'); // b → a
+    store.addDep('a', 'b'); // a → b would close the cycle; must be dropped
+    expect(store.depsFor('a')).toEqual([]);
+    expect(store.depsFor('b')).toEqual(['a']);
+  });
+
+  it('addDep rejects a transitive cycle', () => {
+    store.create({ id: 'a', project_id: 1, title: 'A' });
+    store.create({ id: 'b', project_id: 1, title: 'B' });
+    store.create({ id: 'c', project_id: 1, title: 'C' });
+    store.addDep('b', 'a'); // b → a
+    store.addDep('c', 'b'); // c → b
+    store.addDep('a', 'c'); // a → c closes a→c→b→a; must be dropped
+    expect(store.depsFor('a')).toEqual([]);
+  });
+
+  it('setDeps drops self-references and cycle-forming edges', () => {
+    store.create({ id: 'a', project_id: 1, title: 'A' });
+    store.create({ id: 'b', project_id: 1, title: 'B' });
+    store.addDep('b', 'a'); // existing b → a
+    store.setDeps('a', ['a', 'b']); // self-ref dropped; a → b would cycle, dropped
+    expect(store.depsFor('a')).toEqual([]);
+  });
+
+  it('update drops a non-string scheduled_at, keeps string/null', () => {
+    store.create({ id: 's', project_id: 1, title: 'S', scheduled_at: '2026-06-20T10:00:00.000Z' });
+    // A loose request value (number) must not be persisted.
+    store.update('s', { scheduled_at: 42 as unknown as string });
+    expect(store.get('s')?.scheduled_at).toBe('2026-06-20T10:00:00.000Z'); // untouched
+    store.update('s', { scheduled_at: null });
+    expect(store.get('s')?.scheduled_at).toBeNull();
+    store.update('s', { scheduled_at: '2026-07-01T00:00:00.000Z' });
+    expect(store.get('s')?.scheduled_at).toBe('2026-07-01T00:00:00.000Z');
+  });
+
+  it('delete of an epic task also removes its mission', () => {
+    store.create({ id: 'epic', project_id: 1, title: 'Epic', type: 'epic' });
+    db.prepare("INSERT INTO missions (id,epic_id,autonomy,state) VALUES ('m1','epic','L3','active')").run();
+    store.delete('epic');
+    expect(db.prepare("SELECT COUNT(*) c FROM missions WHERE epic_id = 'epic'").get()).toEqual({ c: 0 });
+  });
+
+  it('deleteEpic removes the epic, its whole subtree, their deps and the mission', () => {
+    store.create({ id: 'epic', project_id: 1, title: 'Epic', type: 'epic' });
+    store.create({ id: 'a', project_id: 1, title: 'A', parent_id: 'epic' });
+    store.create({ id: 'b', project_id: 1, title: 'B', parent_id: 'epic' });
+    store.addDep('b', 'a');
+    db.prepare("INSERT INTO missions (id,epic_id,autonomy,state) VALUES ('m1','epic','L3','active')").run();
+    store.create({ id: 'other', project_id: 1, title: 'Other' }); // unrelated, must survive
+
+    const removed = store.deleteEpic('epic');
+    expect(removed.tasks).toBe(3); // epic + a + b
+    expect(store.get('epic')).toBeNull();
+    expect(store.get('a')).toBeNull();
+    expect(store.get('b')).toBeNull();
+    expect(store.depsFor('b')).toEqual([]);
+    expect(db.prepare("SELECT COUNT(*) c FROM missions").get()).toEqual({ c: 0 });
+    expect(store.get('other')).not.toBeNull(); // unrelated task untouched
+  });
+
+  it('deleteAll wipes every task, dep and mission and reports the counts', () => {
+    store.create({ id: 'epic', project_id: 1, title: 'Epic', type: 'epic' });
+    store.create({ id: 'a', project_id: 1, title: 'A', parent_id: 'epic' });
+    store.addDep('a', 'epic');
+    db.prepare("INSERT INTO missions (id,epic_id,autonomy,state) VALUES ('m1','epic','L3','active')").run();
+    const removed = store.deleteAll();
+    expect(removed).toEqual({ tasks: 2, missions: 1 });
+    expect(store.list()).toEqual([]);
+    expect(db.prepare('SELECT COUNT(*) c FROM task_deps').get()).toEqual({ c: 0 });
+    expect(db.prepare('SELECT COUNT(*) c FROM missions').get()).toEqual({ c: 0 });
   });
 
   it('setExec sets, replaces and clears the exec label, preserving others', () => {

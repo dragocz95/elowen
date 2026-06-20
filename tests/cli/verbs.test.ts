@@ -7,6 +7,7 @@ function fakeClient() {
     planSubmit: vi.fn().mockResolvedValue({}),
     overseerPoll: vi.fn().mockResolvedValue({ id: 'd1', kind: 'task', context: {} }),
     overseerDecide: vi.fn().mockResolvedValue({}),
+    close: vi.fn().mockResolvedValue({}),
   } as unknown as OrcaClient;
 }
 
@@ -23,6 +24,22 @@ describe('cli reasoning verbs', () => {
     expect((c.overseerPoll as any)).toHaveBeenCalledWith('m1');
     expect(log.mock.calls[0]![0]).toContain('"id": "d1"');
     log.mockRestore();
+  });
+  it('close passes through a valid --outcome', async () => {
+    const c = fakeClient();
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    await run(['close', 'orca-1', '--summary', 'done', '--outcome', 'ok'], c, {});
+    expect((c.close as any)).toHaveBeenCalledWith('orca-1', { summary: 'done', outcome: 'ok' });
+    vi.restoreAllMocks();
+  });
+  it('close rejects an invalid --outcome with exit code 2 (no silent null)', async () => {
+    const c = fakeClient();
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const exit = vi.spyOn(process, 'exit').mockImplementation((() => { throw new Error('exit'); }) as never);
+    await expect(run(['close', 'orca-1', '--outcome', 'success'], c, {})).rejects.toThrow('exit');
+    expect(exit).toHaveBeenCalledWith(2);
+    expect((c.close as any)).not.toHaveBeenCalled();
+    err.mockRestore(); exit.mockRestore();
   });
   it('overseer decide maps --approve/--escalate and flags', async () => {
     const c = fakeClient();

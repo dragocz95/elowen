@@ -73,6 +73,23 @@ describe('sweepStuckTasks', () => {
   });
 });
 
+describe('sweepStuckTasks created_at fallback (#54)', () => {
+  it('parses an already-ISO created_at (with zone) without producing NaN', async () => {
+    const db = openDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'orca','/o')").run();
+    const tasks = new TaskStore(db);
+    const tmux = new FakeTmuxDriver();
+    const bus = new EventBus();
+    // No agent/started labels: startedOf falls back to created_at. Force an ISO value carrying 'Z'
+    // (what a non-SQLite-default write would store) — the old `+ 'Z'` would make `...ZZ` → NaN, so the
+    // grace window couldn't protect a fresh task. With the #54 guard it parses and the grace applies.
+    tasks.create({ id: 't1', project_id: 1, title: 'no labels' });
+    db.prepare("UPDATE tasks SET created_at = ?, status = 'in_progress' WHERE id = 't1'").run(new Date(NOW - 10_000).toISOString());
+    const r = await sweepStuckTasks({ tmux, tasks, bus, now: NOW, graceMs: 120_000, maxRelaunch: 2 });
+    expect(r.reverted).toEqual([]); // within grace (10s ago) → not reaped; created_at parsed correctly
+    expect(tasks.get('t1')!.status).toBe('in_progress');
+  });
+});
+
 describe('deadAgentTasks', () => {
   it('flags in_progress tasks with no live session (or no agent label)', () => {
     const db = openDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'orca','/o')").run();

@@ -12,7 +12,7 @@ describe('sweepFinishedSessions', () => {
     const statuses: Record<string, string> = { 'orca-Done': 'closed', 'orca-Running': 'in_progress' };
     const reaped = await sweepFinishedSessions({
       tmux,
-      taskForSession: (s) => { const name = s.replace(/^orca-/, ''); const st = statuses[`orca-${name}`]; return st ? { status: st } : null; },
+      taskForSession: (s) => { const name = s.replace(/^orca-/, ''); const st = statuses[`orca-${name}`]; return st ? { status: st as never } : null; },
     });
     expect(reaped).toEqual(['orca-Done']);
     const live = await tmux.list();

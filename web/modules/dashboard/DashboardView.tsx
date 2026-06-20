@@ -16,14 +16,14 @@ import { CapacityMeter } from '../../components/ui/CapacityMeter';
 import { LoadingState, ErrorState, EmptyState } from '../../components/ui/states';
 import { useToast } from '../../components/ui/Toast';
 import { useTranslation } from '../../lib/i18n';
-import { useSessionPane } from '../sessions/useSessionPane';
+import { useSessionPane } from '../../lib/useSessionPane';
 import { tailSnippet, taskSessionName, parseTs, taskForSession } from '../../lib/agentUtils';
 import { useSessionStall } from '../../lib/useSessionStall';
 import { sessionActivity } from '../../lib/sessionActivity';
 import { epicCapacity } from '../../lib/taskTree';
 import { taskExec } from '../../lib/taskExec';
 import { ModelIcon } from '../../components/ui/ModelIcon';
-import { taskTypeMeta } from '../tasks/taskMeta';
+import { taskTypeMeta, statusLabel } from '../tasks/taskMeta';
 import type { Task, DerivedSignal, Mission } from '../../lib/types';
 
 /** A single live agent lane in the hero: status pulse, model icon, name, current activity line. */
@@ -70,8 +70,7 @@ export function DashboardView() {
   const { toast } = useToast();
 
   const metrics = deriveDashboardMetrics(tasks.data, sessions.data, missions.data);
-  const TASK_STATUS_LABEL: Record<string, string> = { open: t.tasks.statusOpen, in_progress: t.tasks.statusInProgress, blocked: t.tasks.statusBlocked, closed: t.tasks.statusClosed, cancelled: t.tasks.statusCancelled };
-  const MISSION_STATE_LABEL: Record<string, string> = { active: t.missions.stateActive, paused: t.missions.paused, disengaged: t.missions.stateDisengaged };
+  const MISSION_STATE_LABEL: Record<string, string> = { active: t.missions.stateActive, paused: t.missions.paused, disengaged: t.missions.stateDisengaged, stalled: t.missions.stateStalled };
 
   const live = (sessions.data ?? []).slice(0, 6);
   const taskFor = (s: string): Task | undefined => taskForSession(tasks.data ?? [], s);
@@ -129,7 +128,7 @@ export function DashboardView() {
                     <Link key={task.id} href="/tasks" className="flex items-center gap-3 px-4 py-2.5 transition-colors hover:bg-elevated">
                       <Icon size={14} className="shrink-0 text-text-muted" aria-hidden />
                       <span className="min-w-0 flex-1 truncate text-sm text-text">{task.title}</span>
-                      <Badge tone={statusTone(task.status)}>{TASK_STATUS_LABEL[task.status] ?? task.status}</Badge>
+                      <Badge tone={statusTone(task.status)}>{statusLabel(t, task.status)}</Badge>
                     </Link>
                   );
                 })}

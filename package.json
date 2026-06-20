@@ -10,7 +10,7 @@
     "orca": "./dist/cli/index.js"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json && cp src/store/schema.sql dist/store/ && cp src/overseer/autopilotPrompt.md dist/overseer/",
+    "build": "tsc -p tsconfig.json && cp src/store/schema.sql dist/store/ && cp -r prompts dist/",
     "test": "vitest run",
     "test:watch": "vitest",
     "deadcode": "knip",

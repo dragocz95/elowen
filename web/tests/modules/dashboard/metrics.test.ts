@@ -3,7 +3,7 @@ import { deriveDashboardMetrics } from '../../../modules/dashboard/metrics';
 import type { Task, Mission } from '../../../lib/types';
 
 const task = (id: string, status: Task['status']): Task => ({ id, title: id, status });
-const mission = (id: string, state: string): Mission => ({ id, epic_id: 'e', autonomy: 'low', max_sessions: 1, state });
+const mission = (id: string, state: Mission['state']): Mission => ({ id, epic_id: 'e', autonomy: 'L0', max_sessions: 1, state });
 
 describe('deriveDashboardMetrics', () => {
   it('returns all zeros for empty/undefined inputs', () => {

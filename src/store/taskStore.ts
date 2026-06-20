@@ -47,7 +47,11 @@ export class TaskStore {
     if (typeof patch.type === 'string') { sets.push('type = @type'); p.type = patch.type; }
     if (typeof patch.priority === 'string') { sets.push('priority = @priority'); p.priority = patch.priority; }
     if (typeof patch.description === 'string') { sets.push('description = @description'); p.description = patch.description; }
-    if (patch.scheduled_at !== undefined) { sets.push('scheduled_at = @scheduled_at'); p.scheduled_at = patch.scheduled_at; }
+    // Last line of defence: only a string or explicit null may reach the column (callers pass
+    // request JSON, which TS can't constrain at runtime). A bad type is dropped, not persisted.
+    if (typeof patch.scheduled_at === 'string' || patch.scheduled_at === null) {
+      sets.push('scheduled_at = @scheduled_at'); p.scheduled_at = patch.scheduled_at;
+    }
     if (patch.autostart !== undefined) { sets.push('autostart = @autostart'); p.autostart = patch.autostart ? 1 : 0; }
     if (sets.length > 0) this.db.prepare(`UPDATE tasks SET ${sets.join(', ')} WHERE id = @id`).run(p);
     return this.get(id);
@@ -55,21 +59,74 @@ export class TaskStore {
 
   delete(id: string): void {
     this.db.transaction(() => {
+      // An epic task may drive a mission; remove it too so no mission is left pointing at a gone epic.
+      this.db.prepare('DELETE FROM missions WHERE epic_id = ?').run(id);
       this.db.prepare('DELETE FROM task_deps WHERE task_id = ? OR depends_on_id = ?').run(id, id);
       this.db.prepare('DELETE FROM tasks WHERE id = ?').run(id);
     })();
   }
+
+  /** Delete an epic and its whole subtree in one go: the epic, every descendant task, all their
+   *  dependency edges, and any mission those tasks drove. Used to remove a mission outright (not just
+   *  disengage it). Returns how many task rows were removed. */
+  deleteEpic(epicId: string): { tasks: number } {
+    return this.db.transaction(() => {
+      const ids = [epicId, ...this.descendants(epicId).map((t) => t.id)];
+      const ph = ids.map(() => '?').join(',');
+      this.db.prepare(`DELETE FROM missions WHERE epic_id IN (${ph})`).run(...ids);
+      this.db.prepare(`DELETE FROM task_deps WHERE task_id IN (${ph}) OR depends_on_id IN (${ph})`).run(...ids, ...ids);
+      const r = this.db.prepare(`DELETE FROM tasks WHERE id IN (${ph})`).run(...ids);
+      return { tasks: r.changes };
+    })();
+  }
+
+  /** Wipe ALL tasks, their dependency edges and every mission — the operational data reset used by
+   *  the admin cleanup. Projects/users/config are untouched. Returns the row counts removed. */
+  deleteAll(): { tasks: number; missions: number } {
+    return this.db.transaction(() => {
+      const missions = (this.db.prepare('SELECT COUNT(*) c FROM missions').get() as { c: number }).c;
+      this.db.prepare('DELETE FROM task_deps').run();
+      this.db.prepare('DELETE FROM missions').run();
+      const r = this.db.prepare('DELETE FROM tasks').run();
+      return { tasks: r.changes, missions };
+    })();
+  }
   addDep(taskId: string, dependsOnId: string): void {
+    if (!dependsOnId || dependsOnId === taskId) return; // no self-reference
+    if (this.wouldCycle(taskId, dependsOnId)) return; // adding dep would create a cycle
     this.db.prepare('INSERT OR IGNORE INTO task_deps (task_id, depends_on_id) VALUES (?, ?)').run(taskId, dependsOnId);
   }
 
-  /** Replace this task's dependencies with the given set (self-references ignored). */
+  /** Replace this task's dependencies with the given set. Self-references are dropped and any edge
+   *  that would introduce a cycle (incl. mutual deps within the incoming set) is rejected. */
   setDeps(taskId: string, dependsOnIds: string[]): void {
     this.db.transaction(() => {
       this.db.prepare('DELETE FROM task_deps WHERE task_id = ?').run(taskId);
       const stmt = this.db.prepare('INSERT OR IGNORE INTO task_deps (task_id, depends_on_id) VALUES (?, ?)');
-      for (const dep of dependsOnIds) if (dep && dep !== taskId) stmt.run(taskId, dep);
+      for (const dep of dependsOnIds) {
+        if (!dep || dep === taskId) continue;
+        if (this.wouldCycle(taskId, dep)) continue;
+        stmt.run(taskId, dep);
+      }
     })();
+  }
+
+  /** True if adding edge task→dependsOn would create a cycle: i.e. dependsOn already (transitively)
+   *  depends on task. Walks the existing task_deps graph from dependsOn looking for taskId. */
+  private wouldCycle(taskId: string, dependsOnId: string): boolean {
+    const edges = this.db.prepare('SELECT task_id, depends_on_id FROM task_deps').all() as { task_id: string; depends_on_id: string }[];
+    const adj = new Map<string, string[]>();
+    for (const e of edges) (adj.get(e.task_id) ?? adj.set(e.task_id, []).get(e.task_id)!).push(e.depends_on_id);
+    const seen = new Set<string>();
+    const stack = [dependsOnId];
+    while (stack.length) {
+      const cur = stack.pop()!;
+      if (cur === taskId) return true;
+      if (seen.has(cur)) continue;
+      seen.add(cur);
+      for (const next of adj.get(cur) ?? []) stack.push(next);
+    }
+    return false;
   }
 
   depsFor(taskId: string): string[] {

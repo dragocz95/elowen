@@ -1,4 +1,4 @@
-import { parseAnsi } from '../modules/sessions/ansi';
+import { parseAnsi } from './ansi';
 
 export type ActivityCategory = 'editing' | 'testing' | 'building' | 'installing' | 'thinking' | 'prompted' | 'error' | 'unknown';
 

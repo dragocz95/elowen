@@ -6,7 +6,7 @@ import { Segmented } from '../../components/ui/Segmented';
 import { Button } from '../../components/ui/Button';
 import { statusTone } from '../dashboard/statusTone';
 import { Badge } from '../../components/ui/Badge';
-import { taskTypeMeta } from '../tasks/taskMeta';
+import { taskTypeMeta, statusLabel } from '../tasks/taskMeta';
 import { type CalRange, dayKey, sameDay, tasksByDay, countUnscheduled, weekDays, monthMatrix, shift, taskCalDate } from './calendar';
 import { useTranslation } from '../../lib/i18n';
 import { usePersistentState } from '../../lib/usePersistentState';
@@ -39,7 +39,6 @@ export function CalendarView({ tasks, onSelect, onCreateDay, onReschedule }: { t
     onDragLeave: (e: DragEvent) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragDay((s) => (s === dayKey(d) ? null : s)); },
     onDrop: (e: DragEvent) => { e.preventDefault(); setDragDay(null); const id = e.dataTransfer.getData('application/x-task'); if (id) onReschedule(id, d); },
   } : {};
-  const STATUS_LABEL: Record<string, string> = { open: t.tasks.statusOpen, in_progress: t.tasks.statusInProgress, blocked: t.tasks.statusBlocked, closed: t.tasks.statusClosed, cancelled: t.tasks.statusCancelled };
   const WD = [t.calendar.shortMon, t.calendar.shortTue, t.calendar.shortWed, t.calendar.shortThu, t.calendar.shortFri, t.calendar.shortSat, t.calendar.shortSun];
   const [range, setRange] = usePersistentState<CalRange>('orca.calendar.range', 'week', ['day', 'week', 'month']);
   const [ref, setRef] = useState<Date>(() => new Date());
@@ -78,11 +77,11 @@ export function CalendarView({ tasks, onSelect, onCreateDay, onReschedule }: { t
         <div className="flex flex-col gap-2 rounded-lg border border-border bg-surface p-3">
           {dayTasks(ref).length === 0
             ? <p className="px-1 py-6 text-center text-sm text-text-muted">{t.calendar.noTasks}</p>
-            : dayTasks(ref).map((t) => (
-              <button key={t.id} type="button" onClick={() => onSelect(t)} className="flex items-center gap-3 rounded-md border border-border bg-bg px-3 py-2 text-left transition-colors hover:border-border-strong">
-                <span className="font-mono text-xs text-text-muted">{fmtTime(taskCalDate(t), locale)}</span>
-                <span className="min-w-0 flex-1 truncate text-sm text-text">{t.title}</span>
-                <Badge tone={statusTone(t.status)}>{STATUS_LABEL[t.status] ?? t.status}</Badge>
+            : dayTasks(ref).map((task) => (
+              <button key={task.id} type="button" onClick={() => onSelect(task)} className="flex items-center gap-3 rounded-md border border-border bg-bg px-3 py-2 text-left transition-colors hover:border-border-strong">
+                <span className="font-mono text-xs text-text-muted">{fmtTime(taskCalDate(task), locale)}</span>
+                <span className="min-w-0 flex-1 truncate text-sm text-text">{task.title}</span>
+                <Badge tone={statusTone(task.status)}>{statusLabel(t, task.status)}</Badge>
               </button>
             ))}
           {onCreateDay ? (

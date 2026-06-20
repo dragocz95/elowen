@@ -4,7 +4,7 @@ import { ChevronRight } from 'lucide-react';
 import type { MissionTask, MissionDeps } from '../../lib/types';
 import { layoutPhases } from './layoutPhases';
 import { isFailGate, isTerminal } from './missionUtils';
-import { taskTypeMeta } from '../tasks/taskMeta';
+import { taskTypeMeta, statusLabel } from '../tasks/taskMeta';
 import { TaskUsageBadge } from '../../components/ui/TaskUsageBadge';
 import { useTranslation } from '../../lib/i18n';
 
@@ -37,11 +37,6 @@ export function TaskFlow({ tasks, deps, selectedId, onSelect }: {
   const ready = (task: MissionTask) => task.status === 'open' && (depsByTask.get(task.id) ?? []).every((id) => isTerminal(byId.get(id)?.status ?? 'open'));
   const gated = (task: MissionTask) => (depsByTask.get(task.id) ?? []).some((id) => { const dep = byId.get(id); return dep ? isFailGate(dep) : false; });
 
-  const STATUS_LABEL: Record<string, string> = {
-    open: t.tasks.statusOpen, in_progress: t.tasks.statusInProgress, blocked: t.tasks.statusBlocked,
-    closed: t.tasks.statusClosed, cancelled: t.tasks.statusCancelled,
-  };
-
   return (
     <div className="flex items-stretch gap-1">
       {ordered.map((task, i) => {
@@ -69,7 +64,7 @@ export function TaskFlow({ tasks, deps, selectedId, onSelect }: {
                 {isGated ? <span className="shrink-0 text-[10px] font-bold text-danger" title={t.missions.failGate}>!</span> : null}
               </div>
               <div className="flex min-w-0 items-center justify-between gap-1">
-                <span className="truncate text-tiny capitalize text-text-muted">{isReady ? t.tasks.statusOpen : STATUS_LABEL[task.status] ?? task.status}</span>
+                <span className="truncate text-tiny capitalize text-text-muted">{isReady ? t.tasks.statusOpen : statusLabel(t, task.status)}</span>
                 {running ? <TaskUsageBadge taskId={task.id} live /> : null}
               </div>
             </button>

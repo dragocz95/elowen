@@ -41,6 +41,20 @@ describe('projects api', () => {
     const missing = await app.request('/projects/999', { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ notes: 'x' }) });
     expect(missing.status).toBe(404);
   });
+  it('DELETE /projects/:id removes a non-home project; 404 unknown; 400 for the home project', async () => {
+    const { app } = makeApp();
+    await app.request('/projects', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ slug: 'gone', path: '/g' }) });
+    const before = await (await app.request('/projects')).json();
+    const target = before.find((p: { slug: string }) => p.slug === 'gone');
+    const ok = await app.request(`/projects/${target.id}`, { method: 'DELETE' });
+    expect(ok.status).toBe(200);
+    const after = await (await app.request('/projects')).json();
+    expect(after.some((p: { slug: string }) => p.slug === 'gone')).toBe(false);
+    expect((await app.request('/projects/999', { method: 'DELETE' })).status).toBe(404);
+    const home = await app.request('/projects/1', { method: 'DELETE' });
+    expect(home.status).toBe(400);
+    expect((await (await app.request('/projects')).json()).some((p: { id: number }) => p.id === 1)).toBe(true);
+  });
   it('GET /projects/:id/git returns the reader result; 404 unknown', async () => {
     const { app } = makeApp();
     expect((await app.request('/projects/999/git')).status).toBe(404);

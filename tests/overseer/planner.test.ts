@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parsePhases, decompose, planPrompt, defaultPromptTemplate } from '../../src/overseer/planner.js';
+import { parsePhases, decompose, planPrompt, defaultPromptTemplate, _resetDefaultCache } from '../../src/overseer/planner.js';
 import { FakeInference } from '../../src/inference/client.js';
 
 describe('planner.parsePhases', () => {
@@ -28,6 +28,24 @@ describe('planner.parsePhases', () => {
     expect(phases[2].agent).toBeUndefined();
   });
 
+  it('keeps tmux-legal dashes and underscores in agent names (no collapse to one word)', () => {
+    const phases = parsePhases('[{"title":"A","agent":"code-reviewer"},{"title":"B","agent":"bug_finder"},{"title":"C","agent":"db:writer"}]');
+    expect(phases[0].agent).toBe('code-reviewer'); // dash survives (#33)
+    expect(phases[1].agent).toBe('bug_finder');    // underscore survives
+    expect(phases[2].agent).toBe('dbwriter');      // ':' (session separator) still stripped
+  });
+
+  it('extracts the first balanced array and ignores a trailing bracketed note (#30)', () => {
+    const phases = parsePhases('Here is the plan: [{"title":"Only"}]. Notes: [misc, do not parse this]');
+    expect(phases).toEqual([{ title: 'Only', type: 'task' }]);
+  });
+
+  it('does not choke on brackets inside string values', () => {
+    const phases = parsePhases('[{"title":"Fix [BUG-12] in parser","details":"handle ] and ["}]');
+    expect(phases[0].title).toBe('Fix [BUG-12] in parser');
+    expect(phases[0].details).toBe('handle ] and [');
+  });
+
   it('captures per-phase details when present', () => {
     const phases = parsePhases('[{"title":"A","details":"Build X with acceptance Y"},{"title":"B","details":"  "}]');
     expect(phases[0].details).toBe('Build X with acceptance Y');
@@ -52,6 +70,12 @@ describe('planner.planPrompt', () => {
   });
   it('default template contains the {{goal}} placeholder', () => {
     expect(defaultPromptTemplate()).toContain('{{goal}}');
+  });
+  it('_resetDefaultCache forces a re-read (cache is not permanent) (#31)', () => {
+    const first = defaultPromptTemplate();
+    _resetDefaultCache();
+    const second = defaultPromptTemplate(); // re-read from disk, not the stale module-level cache
+    expect(second).toBe(first);
   });
   it('substitutes the project notes into a {{project}} placeholder', () => {
     const out = planPrompt('ship it', 'Ctx: {{project}}\nGoal: {{goal}}', { notes: 'monorepo; run pnpm' });

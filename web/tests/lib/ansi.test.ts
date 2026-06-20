@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseAnsi } from '../../../modules/sessions/ansi';
+import { parseAnsi } from '../../lib/ansi';
 
 const ESC = '\x1b';
 

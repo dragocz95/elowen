@@ -64,10 +64,6 @@ export interface DetectionContext {
   hasApiKey: boolean;
   /** Whether custom providers have been configured (non-default bin paths, extra models, etc.). */
   hasCustomSetup: boolean;
-  /** Total number of users in the system. */
-  userCount: number;
-  /** Total number of projects. */
-  projectCount: number;
 }
 
 export function detectClis(context?: DetectionContext): CliDetectionResult {

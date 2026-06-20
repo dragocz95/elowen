@@ -1,8 +1,8 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
 import { Maximize2 } from 'lucide-react';
-import { useSessionPane } from '../../modules/sessions/useSessionPane';
-import { parseAnsi } from '../../modules/sessions/ansi';
+import { useSessionPane } from '../../lib/useSessionPane';
+import { parseAnsi } from '../../lib/ansi';
 import { useTranslation } from '../../lib/i18n';
 
 /** Live, ANSI-coloured tail of a tmux session's pane — the single source of truth for the

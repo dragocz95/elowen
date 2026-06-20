@@ -7,6 +7,15 @@ export class OrcaApiError extends Error {
   constructor(message: string, public status: number, public code?: string) { super(message); this.name = 'OrcaApiError'; }
 }
 
+/** A presentable message for a caught error: prefer the server-provided error code (a short
+ *  human-readable string from the daemon) over the raw `orca <status> on <path>` diagnostic, so
+ *  toasts show "forbidden" rather than "Error: orca 403 on /tasks". */
+export function apiErrorMessage(e: unknown): string {
+  if (e instanceof OrcaApiError) return e.code ?? e.message;
+  if (e instanceof Error) return e.message;
+  return String(e);
+}
+
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const token = getToken();
   const headers = new Headers(init?.headers);
@@ -18,7 +27,16 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
     try { code = ((await res.json()) as { error?: string }).error; } catch { /* non-JSON body */ }
     throw new OrcaApiError(`orca ${res.status} on ${path}`, res.status, code);
   }
-  return res.json() as Promise<T>;
+  // 204 No Content (and other empty 2xx bodies) have nothing to parse — callers of such routes
+  // type the result as void/unknown, so returning undefined is correct and avoids a SyntaxError.
+  if (res.status === 204) return undefined as T;
+  try {
+    return (await res.json()) as T;
+  } catch {
+    // A 2xx with a non-JSON body (HTML error page from a proxy, truncated stream) — surface a
+    // typed error instead of letting an opaque SyntaxError bubble into react-query.
+    throw new OrcaApiError(`non-JSON response from ${path}`, res.status);
+  }
 }
 
 const json = (body: unknown): RequestInit => ({ method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
@@ -34,6 +52,10 @@ export const orcaClient = {
   createTask: (input: CreateTaskInput) => req<Task>('/tasks', json(input)),
   updateTask: (id: string, patch: UpdateTaskInput) => req<Task>(`/tasks/${encodeURIComponent(id)}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify(patch) }),
   deleteTask: (id: string) => req<{ ok: boolean }>(`/tasks/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  /** Remove a whole mission: the epic, its child tasks and the mission row (not just one task). */
+  deleteMission: (epicId: string) => req<{ ok: boolean; tasks: number }>(`/tasks/${encodeURIComponent(epicId)}?subtree=1`, { method: 'DELETE' }),
+  /** Admin cleanup: wipe all tasks, missions and the activity feed; stop every live session. */
+  cleanupAll: () => req<{ ok: boolean; tasks: number; missions: number; events: number }>('/admin/cleanup', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }),
   taskDeps: (id: string) => req<string[]>(`/tasks/${encodeURIComponent(id)}/deps`),
   taskUsage: (id: string) => req<TokenUsage | null>(`/tasks/${encodeURIComponent(id)}/usage`),
   allDeps: () => req<{ task_id: string; depends_on_id: string }[]>('/tasks/deps'),
@@ -60,16 +82,22 @@ export const orcaClient = {
   me: () => req<{ user: User }>('/auth/me'),
   updateMe: (patch: ProfilePatch) => req<User>('/auth/me', { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify(patch) }),
   uploadAvatar: (file: File) => { const fd = new FormData(); fd.append('avatar', file); return req<User>('/auth/me/avatar', { method: 'POST', body: fd }); },
-  // Authenticated <img> src for a user's avatar (token in the query — an <img> can't set headers).
-  avatarUrl: (id: number) => `${BASE}/users/${id}/avatar?token=${encodeURIComponent(getToken() ?? '')}`,
+  // Mint a short-lived signed avatar URL. An <img> can't set an Authorization header, so instead of
+  // leaking the long-lived session token into the query string (finding W2) we ask the daemon — over
+  // an authenticated request — for an HMAC-signed link that expires in minutes.
+  avatarUrl: async (id: number) => `${BASE}${(await req<{ url: string }>(`/users/${id}/avatar/url`)).url}`,
   listUsers: () => req<User[]>('/users'),
   createUser: (username: string, password: string) => req<User>('/users', json({ username, password })),
   updateUser: (id: number, patch: UserPatch) => req<User>(`/users/${id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify(patch) }),
   deleteUser: (id: number) => req<{ ok: boolean }>(`/users/${id}`, { method: 'DELETE' }),
-  activity: (opts?: { limit?: number; type?: string }) => req<ActivityEvent[]>(`/activity?${new URLSearchParams({ ...(opts?.limit ? { limit: String(opts.limit) } : {}), ...(opts?.type ? { type: opts.type } : {}) }).toString()}`),
+  activity: (opts?: { limit?: number; type?: string }) => {
+    const qs = new URLSearchParams({ ...(opts?.limit ? { limit: String(opts.limit) } : {}), ...(opts?.type ? { type: opts.type } : {}) }).toString();
+    return req<ActivityEvent[]>(`/activity${qs ? `?${qs}` : ''}`);
+  },
   projects: () => req<Project[]>('/projects'),
   createProject: (v: { slug: string; path: string; notes?: string }) => req<Project>('/projects', json(v)),
   updateProject: (id: number, patch: { path?: string; notes?: string }) => req<Project>(`/projects/${id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify(patch) }),
+  removeProject: (id: number) => req<{ ok: boolean }>(`/projects/${id}`, { method: 'DELETE' }),
   projectGit: (id: number) => req<ProjectGit>(`/projects/${id}/git`),
   projectFiles: (id: number) => req<FileNode[]>(`/projects/${id}/files`),
   projectFile: (id: number, path: string) => req<{ content: string; truncated: boolean }>(`/projects/${id}/file?path=${encodeURIComponent(path)}`),

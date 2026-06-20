@@ -7,8 +7,8 @@ import { plotAxis, groupEvents, type AxisEvent, type AxisPoint, type GroupedEven
 import { eventIcon, eventTone } from './eventMeta';
 import { taskExec } from '../../lib/taskExec';
 import { execModel } from '../../lib/modelProvider';
-import { useSessionPane } from '../sessions/useSessionPane';
-import { parseAnsi } from '../sessions/ansi';
+import { useSessionPane } from '../../lib/useSessionPane';
+import { parseAnsi } from '../../lib/ansi';
 import { ModelIcon } from '../../components/ui/ModelIcon';
 import { Segmented, type SegmentedOption } from '../../components/ui/Segmented';
 import { ModuleHeader } from '../../components/ui/ModuleHeader';

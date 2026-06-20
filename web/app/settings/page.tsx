@@ -1,13 +1,14 @@
 'use client';
+export const dynamic = 'force-dynamic';
 import { useEffect, useState, useRef } from 'react';
-import { Save, Boxes, Bot, SlidersHorizontal, Plus, X, Pencil, Plug, Radio, Cpu, Gauge, Layers, Link2, KeyRound, FileText, Eye, Lock, type LucideIcon } from 'lucide-react';
+import { Save, Boxes, Bot, SlidersHorizontal, Plus, X, Pencil, Plug, Radio, Cpu, Gauge, Layers, Link2, KeyRound, FileText, Eye, Lock, Trash2, type LucideIcon } from 'lucide-react';
 import { PROVIDERS, ProviderLogo, ProviderTag } from '../../modules/settings/providers';
 import { ModelIcon } from '../../components/ui/ModelIcon';
 import { Select } from '../../components/ui/Select';
 import { ModelModal } from '../../modules/settings/ModelModal';
 import { execProvider, execModel, type ProviderId } from '../../lib/modelProvider';
-import { useConfig, useHermesStatus, useMe } from '../../lib/queries';
-import { useUpdateConfig, useHermesInstall } from '../../lib/mutations';
+import { useConfig, useHermesStatus, useMe, usePlanJob } from '../../lib/queries';
+import { useUpdateConfig, useHermesInstall, useCleanupAll } from '../../lib/mutations';
 import { orcaClient, OrcaApiError } from '../../lib/orcaClient';
 import { getToken } from '../../lib/token';
 import { EXEC_PRESETS, allModels } from '../../lib/execPresets';
@@ -63,14 +64,17 @@ function ModelInput({ value, onChange, placeholder }: { value: string; onChange:
   );
 }
 
-type Category = 'models' | 'autopilot' | 'providers' | 'defaults' | 'hermes';
+type Category = 'models' | 'autopilot' | 'providers' | 'defaults' | 'hermes' | 'data';
 
 export default function SettingsPage() {
   const config = useConfig();
   const update = useUpdateConfig();
+  const cleanup = useCleanupAll();
   const me = useMe();
   const { toast } = useToast();
   const { t } = useTranslation();
+  // Drives the "delete all data" confirm dialog (Data section).
+  const [cleanupOpen, setCleanupOpen] = useState(false);
 
   const [category, setCategory] = useState<Category>('models');
 
@@ -91,29 +95,38 @@ export default function SettingsPage() {
   const [providers, setProviders] = useState<Record<string, { bin: string; args: string }>>({});
   const [sampleGoal, setSampleGoal] = useState('');
   const [preview, setPreview] = useState<{ title: string; type: string; agent?: string; details?: string }[] | null>(null);
-  const [previewing, setPreviewing] = useState(false);
+  // Async plan preview is driven by usePlanJob (React Query polling) so it cleans up on unmount —
+  // no manual setTimeout loop that keeps firing after the user navigates away.
+  const [previewJobId, setPreviewJobId] = useState<string | null>(null);
+  const [submittingPreview, setSubmittingPreview] = useState(false);
+  const previewJob = usePlanJob(previewJobId);
+  const previewing = submittingPreview || previewJobId !== null;
 
   const runPreview = async () => {
-    setPreviewing(true);
+    setSubmittingPreview(true);
     try {
-      // Planning is async: submit a dryRun job, then poll it until it resolves (the relay backend
-      // finishes inline; an agent backend takes longer, so poll up to ~2 min before giving up).
+      // Planning is async: submit a dryRun job; usePlanJob then polls it until it resolves (the relay
+      // backend finishes inline; an agent backend takes longer).
       const { jobId } = await orcaClient.planPreview({ goal: sampleGoal.trim(), prompt });
-      for (let i = 0; i < 120; i++) {
-        const job = await orcaClient.getPlanJob(jobId);
-        if (job.status === 'done') { setPreview(job.phases); break; }
-        if (job.status === 'failed') { toast(t.settings.planFailed, 'error'); break; }
-        await new Promise((r) => setTimeout(r, 1000));
-      }
+      setPreviewJobId(jobId);
     } catch (e) {
       if (e instanceof OrcaApiError && e.code === 'autopilot_key_missing') toast(t.settings.setApiKeyFirst, 'error');
       else toast(String(e), 'error');
-    } finally { setPreviewing(false); }
+    } finally { setSubmittingPreview(false); }
   };
+
+  // React to the async plan job: render phases on done, surface failures, then clear the job id.
+  useEffect(() => {
+    const job = previewJob.data;
+    if (!job || !previewJobId) return;
+    if (job.status === 'done') { setPreview(job.phases); setPreviewJobId(null); }
+    else if (job.status === 'failed') { toast(t.settings.planFailed, 'error'); setPreviewJobId(null); }
+  }, [previewJob.data, previewJobId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const [defExec, setDefExec] = useState('');
   const [defAutonomy, setDefAutonomy] = useState('');
   const [defMaxSessions, setDefMaxSessions] = useState(1);
+  const [defTokenTtl, setDefTokenTtl] = useState(30);
 
   // Add / edit model modal state
   const [showAddForm, setShowAddForm] = useState(false);
@@ -154,6 +167,7 @@ export default function SettingsPage() {
       setDefExec(config.data.defaults.exec);
       setDefAutonomy(config.data.defaults.autonomy);
       setDefMaxSessions(config.data.defaults.maxSessions);
+      setDefTokenTtl(config.data.security?.tokenTtlDays ?? 30);
     }
   }, [config.data]);
 
@@ -248,7 +262,7 @@ export default function SettingsPage() {
 
   const saveDefaults = () =>
     update.mutate(
-      { defaults: { exec: defExec, autonomy: defAutonomy, maxSessions: defMaxSessions } },
+      { defaults: { exec: defExec, autonomy: defAutonomy, maxSessions: defMaxSessions }, security: { tokenTtlDays: defTokenTtl } },
       { onSuccess: () => toast(t.settings.defaultsSaved), onError: (e) => toast(String(e), 'error') },
     );
 
@@ -267,15 +281,17 @@ export default function SettingsPage() {
     { id: 'providers', icon: Plug },
     { id: 'defaults', icon: SlidersHorizontal },
     { id: 'hermes', icon: Radio },
+    { id: 'data', icon: Trash2 },
   ];
 
-  // 'models' auto-saves on every change, so it has no manual save button. 'hermes' has its own form.
-  const saveAction: Record<Exclude<Category, 'hermes' | 'models'>, { label: string; onClick: () => void }> = {
+  // 'models' auto-saves; 'hermes' has its own form; 'data' is a one-off danger action — none use the
+  // shared footer save button.
+  const saveAction: Record<Exclude<Category, 'hermes' | 'models' | 'data'>, { label: string; onClick: () => void }> = {
     autopilot: { label: t.settings.saveAutopilot, onClick: saveAutopilot },
     providers: { label: t.settings.saveProviders, onClick: saveProviders },
     defaults: { label: t.settings.saveDefaults, onClick: saveDefaults },
   };
-  const active = category === 'hermes' || category === 'models' ? null : saveAction[category];
+  const active = category === 'hermes' || category === 'models' || category === 'data' ? null : saveAction[category];
 
   const models = allModels(customModels, hiddenPresets);
 
@@ -545,6 +561,9 @@ export default function SettingsPage() {
               <SettingCard title={t.settings.maxSessions} description={t.settings.maxSessionsDesc} icon={Layers}>
                 <input type="number" min={1} value={defMaxSessions} onChange={(e) => setDefMaxSessions(Number(e.target.value))} className={inputClass} />
               </SettingCard>
+              <SettingCard title={t.settings.tokenTtl} description={t.settings.tokenTtlDesc} icon={KeyRound}>
+                <input type="number" min={1} value={defTokenTtl} onChange={(e) => setDefTokenTtl(Number(e.target.value))} className={inputClass} />
+              </SettingCard>
             </div>
         )}
 
@@ -596,6 +615,20 @@ export default function SettingsPage() {
             </div>
           </div>
         )}
+
+        {category === 'data' && (
+          <div className="flex flex-col gap-4">
+            <div className="rounded-lg border border-danger/40 bg-danger/[0.04] p-4">
+              <div className="flex items-center gap-2 text-sm font-semibold text-danger">
+                <Trash2 size={15} aria-hidden /> {t.settings.dangerZone}
+              </div>
+              <p className="mt-2 max-w-prose text-sm text-text-muted">{t.settings.cleanupDesc}</p>
+              <Button variant="danger" icon={Trash2} className="mt-4 self-start" disabled={cleanup.isPending} onClick={() => setCleanupOpen(true)}>
+                {t.settings.cleanupButton}
+              </Button>
+            </div>
+          </div>
+        )}
         </div>
       </div>
 
@@ -609,6 +642,21 @@ export default function SettingsPage() {
           setPendingDelete(null);
         }}
         onClose={() => setPendingDelete(null)}
+      />
+
+      <ConfirmDialog
+        open={cleanupOpen}
+        title={t.settings.cleanupConfirmTitle}
+        description={t.settings.cleanupConfirmDesc}
+        confirmLabel={t.settings.cleanupButton}
+        onConfirm={() => {
+          setCleanupOpen(false);
+          cleanup.mutate(undefined, {
+            onSuccess: (r) => toast(t.settings.cleanupDone.replace('{tasks}', String(r.tasks)).replace('{missions}', String(r.missions))),
+            onError: (e) => toast(String(e), 'error'),
+          });
+        }}
+        onClose={() => setCleanupOpen(false)}
       />
     </ModuleShell>
   );

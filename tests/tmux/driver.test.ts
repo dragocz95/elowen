@@ -22,4 +22,18 @@ describe.runIf(hasTmux)('RealTmuxDriver', () => {
     await t.kill(s);
     expect(size).toBe('132x40');
   });
+
+  it('capturePane on a vanished session returns empty (mirrors capturePaneAnsi)', async () => {
+    const t = new RealTmuxDriver();
+    expect(await t.capturePane(`orca-gone-${process.pid}`, 60)).toBe('');
+  });
+});
+
+describe('RealTmuxDriver.sendKeys validation', () => {
+  it('rejects empty, non-string, or flag-shaped keys (defense in depth)', async () => {
+    const t = new RealTmuxDriver();
+    await expect(t.sendKeys('orca-x', [])).rejects.toThrow(/non-empty/);
+    await expect(t.sendKeys('orca-x', ['-t', 'other'])).rejects.toThrow(/non-flag/);
+    await expect(t.sendKeys('orca-x', [123 as unknown as string])).rejects.toThrow();
+  });
 });

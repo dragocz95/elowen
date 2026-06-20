@@ -1,6 +1,5 @@
 import type { AgentSpec } from '../spawn/commandBuilder.js';
-
-const PROGRAM_PREFIXES: Record<string, string> = { 'codex:': 'codex', 'opencode:': 'opencode', 'claude:': 'claude-code' };
+import { PROGRAM_PREFIXES, BARE_WITH_SLASH_PROGRAM, BARE_PLAIN_PROGRAM } from '../shared/execs.js';
 
 export function resolveExecutor(labels: string[], fallback: AgentSpec): AgentSpec {
   const label = labels.find(l => l.startsWith('exec:'));
@@ -9,6 +8,6 @@ export function resolveExecutor(labels: string[], fallback: AgentSpec): AgentSpe
   for (const [prefix, program] of Object.entries(PROGRAM_PREFIXES)) {
     if (spec.startsWith(prefix)) return { program, model: spec.slice(prefix.length) };
   }
-  if (spec.includes('/')) return { program: 'opencode', model: spec };
-  return { program: 'claude-code', model: spec };
+  if (spec.includes('/')) return { program: BARE_WITH_SLASH_PROGRAM, model: spec };
+  return { program: BARE_PLAIN_PROGRAM, model: spec };
 }

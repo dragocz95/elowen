@@ -8,7 +8,7 @@ import { MissionEngine } from '../overseer/missionEngine.js';
 import { Scheduler } from '../overseer/scheduler.js';
 import { sweepFinishedSessions } from '../overseer/janitor.js';
 import { sweepStuckTasks, deadAgentTasks } from '../overseer/stuckDetector.js';
-import { decidePrompt, decideTask, isDestructive, MIN_CONFIDENCE } from '../overseer/decision.js';
+import { decidePrompt, decideTask, isDestructive, gateVerdict } from '../overseer/decision.js';
 import type { TaskContext } from '../overseer/decision.js';
 import { PlanJobStore } from '../overseer/planJob.js';
 import { DecisionQueue } from '../overseer/decisionQueue.js';
@@ -30,6 +30,7 @@ import type { TmuxDriver } from '../tmux/types.js';
 import { uniqueName } from './uniqueName.js';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { randomBytes } from 'node:crypto';
 
 export interface BuildOpts {
   dbPath: string;
@@ -59,8 +60,13 @@ export function buildApp(opts: BuildOpts) {
   const userProjects = new UserProjectStore(db);
   const git = new RealGitReader();
   // Give spawned agents a way to close their task: the orca CLI path + daemon URL + a service token.
+  // The token is AGENT-SCOPED (not the admin's full token): a prompt-injected agent can only drive
+  // its own worker/overseer/pilot verbs (close task, plan submit, overseer poll/decide, read-only
+  // listings) — never manage users, PUT /config, or register/delete projects (finding S51). Refreshed
+  // on every boot so a restart rotates it. Owned by the lowest-id user purely to satisfy the FK; the
+  // scope, not the owner, is what bounds it.
   const cliPath = join(dirname(fileURLToPath(import.meta.url)), '..', 'cli', 'index.js');
-  const serviceToken = users.count() > 0 ? users.issueToken(users.list()[0]!.id) : '';
+  const serviceToken = users.count() > 0 ? users.refreshAgentToken(users.list()[0]!.id) : '';
   const orcaCli = { cliPath, url: `http://localhost:${process.env.ORCA_PORT ?? 4400}`, token: serviceToken };
   const spawn = new SpawnService({ tmux, agents, orca: orcaCli, providers: (program) => config.get().providers[program] });
   const bus = new EventBus();
@@ -79,8 +85,8 @@ export function buildApp(opts: BuildOpts) {
   // the Overseer parks a per-mission agent that long-polls the decision queue.
   const planJobs = new PlanJobStore();
   const decisionQueue = new DecisionQueue();
-  const pilot = makePilot({ spawn, config, projects, nameAgent: uniqueName });
-  const overseer = makeOverseer({ spawn, tmux, config, queue: decisionQueue });
+  const pilot = makePilot({ spawn, config, projects, nameAgent: uniqueName, cliPath });
+  const overseer = makeOverseer({ spawn, tmux, config, queue: decisionQueue, cliPath });
 
   // A task/prompt decision resolves through ONE of two backends, chosen by config:
   //   • overseerExec set → enqueue on the per-mission queue; the parked agent answers (or it times
@@ -91,12 +97,12 @@ export function buildApp(opts: BuildOpts) {
     if (config.get().autopilot.overseerExec) {
       const localDestructive = isDestructive(`${input.title} ${input.description ?? ''}`);
       const v = await decisionQueue.enqueue(missionId, 'task', { ...input }, localDestructive);
-      return { approve: v.approve && v.confidence >= MIN_CONFIDENCE && !v.destructive, destructive: v.destructive };
+      return gateVerdict(v, { blockDestructive: true });
     }
     const inf = overseerClient();
     if (!inf) return { approve: true, destructive: false };
     const d = await decideTask(inf, input);
-    return { approve: d.approve && d.confidence >= MIN_CONFIDENCE, destructive: d.destructive };
+    return gateVerdict(d, { blockDestructive: false });
   };
 
   const engine = new MissionEngine({
@@ -139,12 +145,12 @@ export function buildApp(opts: BuildOpts) {
       if (input.missionId && config.get().autopilot.overseerExec) {
         const localDestructive = isDestructive(`${input.question} ${input.context}`);
         const v = await decisionQueue.enqueue(input.missionId, 'prompt', { question: input.question, context: input.context, options: input.options }, localDestructive);
-        return { approve: v.approve && v.confidence >= MIN_CONFIDENCE && !v.destructive, destructive: v.destructive };
+        return gateVerdict(v, { blockDestructive: true });
       }
       const inf = overseerClient();
       if (!inf) return { approve: true, destructive: isDestructive(`${input.question} ${input.context}`) };
       const d = await decidePrompt(inf, input);
-      return { approve: d.approve && d.confidence >= MIN_CONFIDENCE, destructive: d.destructive };
+      return gateVerdict(d, { blockDestructive: false });
     },
   });
   // Setup mode: with no users yet the daemon is open so the onboarding page can run before login;
@@ -153,7 +159,10 @@ export function buildApp(opts: BuildOpts) {
     console.warn('[orca] SETUP MODE — no users yet; the API is open until the first admin is created via onboarding');
   }
   const avatarsDir = opts.dbPath === ':memory:' ? undefined : join(dirname(opts.dbPath), 'avatars');
-  const app = createServer({ tasks, readiness, missions, engine, spawn, tmux, bus, events, project: opts.project, fallback: { program: 'claude-code', model: 'sonnet' }, clock: new SystemClock(), config, users, projects, userProjects, git, avatarsDir, planJobs, decisionQueue, pilot });
+  // Per-process secret for short-lived signed avatar URLs (finding W2) — keeps the long-lived session
+  // token out of <img> src query strings. Rotates on restart; links live ~5 min, so that's harmless.
+  const avatarSecret = randomBytes(32).toString('hex');
+  const app = createServer({ tasks, readiness, missions, engine, spawn, tmux, bus, events, project: opts.project, fallback: { program: 'claude-code', model: 'sonnet' }, clock: new SystemClock(), config, users, projects, userProjects, git, avatarsDir, avatarSecret, planJobs, decisionQueue, pilot });
 
   // Root-cause recovery: after a daemon crash/restart, tasks left 'in_progress' whose tmux
   // session is gone are zombies — revert them to 'open' so they can be picked up again. No grace
@@ -187,8 +196,10 @@ export function buildApp(opts: BuildOpts) {
 
   const startLoops = () => {
     const clock = new SystemClock();
-    void reconcileZombies(); // one-shot zombie sweep on startup
-    void reconcileOverseers(); // re-park overseers for active missions / kill orphans
+    // One-shot startup sweeps. Log on failure (e.g. tmux missing) so a silent rejection can't leave
+    // zombies un-reverted — that would stall every mission until the next restart.
+    void reconcileZombies().catch((e) => console.error('[orca] reconcileZombies failed', e));
+    void reconcileOverseers().catch((e) => console.error('[orca] reconcileOverseers failed', e)); // re-park overseers for active missions / kill orphans
     const stopDeriver = deriver.start();
     const stopOverseer = clock.setInterval(() => { for (const m of missions.live()) void engine.tick(m.id); }, 90000);
     const stopScheduler = clock.setInterval(() => { void scheduler.tick(); }, 30000);
@@ -198,7 +209,16 @@ export function buildApp(opts: BuildOpts) {
     // dead session; revert it so the mission re-spawns (bounded), else escalate. 2-min grace
     // covers the spawn→session window; relaunch at most twice before escalating to a human.
     const stopStuck = clock.setInterval(() => { void sweepStuckTasks({ tmux, tasks, bus, now: clock.now(), graceMs: 120000, maxRelaunch: 2 }); }, 60000);
-    return () => { stopDeriver(); stopOverseer(); stopScheduler(); stopJanitor(); stopStuck(); };
+    // Overseer watchdog: a parked overseer can die mid-mission (TUI crash, OOM) and would otherwise
+    // leave the mission running unsupervised until the next daemon restart. reconcileOverseers is
+    // idempotent — it re-parks a missing overseer for each active mission and kills orphans — so run
+    // it periodically, not just on boot.
+    const stopOverseerWatchdog = clock.setInterval(() => { void reconcileOverseers().catch((e) => console.error('[orca] overseer watchdog failed', e)); }, 60000);
+    // Purge expired auth tokens hourly so the table can't grow unbounded over a long-running daemon.
+    const purgeTokens = () => users?.purgeExpiredTokens(config.get().security.tokenTtlDays);
+    purgeTokens();
+    const stopTokenPurge = clock.setInterval(purgeTokens, 3_600_000);
+    return () => { stopDeriver(); stopOverseer(); stopScheduler(); stopJanitor(); stopStuck(); stopOverseerWatchdog(); stopTokenPurge(); };
   };
   return { app, startLoops };
 }

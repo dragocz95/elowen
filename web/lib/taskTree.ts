@@ -36,7 +36,9 @@ export function epicLive(children: Task[], sessions: string[], signals: Record<s
   for (const c of children) {
     const s = taskSessionName(c);
     if (c.status === 'in_progress' && s && sessions.includes(s)) running++;
-    if (s && signals[s]?.type === 'needs_input') needsInput++;
+    // Only count needs-input for a still-live session: a dead agent's signal lingers stale in
+    // the cache and would otherwise over-report "needs input" for a session that no longer exists.
+    if (s && sessions.includes(s) && signals[s]?.type === 'needs_input') needsInput++;
   }
   return { running, needsInput };
 }
@@ -50,7 +52,9 @@ export function epicCapacity(children: Task[], sessions: string[], maxSessions: 
     const s = taskSessionName(c);
     if (c.status === 'in_progress' && s && sessions.includes(s)) running++;
   }
-  const max = Math.max(0, Math.floor(maxSessions));
+  // Guard against non-finite maxSessions (undefined/NaN from malformed data) so the meter never
+  // renders "NaN/NaN" — Math.floor(NaN) stays NaN and poisons every downstream value.
+  const max = Math.max(0, Number.isFinite(maxSessions) ? Math.floor(maxSessions) : 0);
   const clamped = Math.min(running, max);
   return { running: clamped, max, free: Math.max(0, max - clamped) };
 }

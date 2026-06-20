@@ -20,6 +20,7 @@ import { usePersistentState } from '../../lib/usePersistentState';
 import { LoadingState, ErrorState, EmptyState } from '../../components/ui/states';
 import { TaskCard } from './TaskCard';
 import { TaskModal } from './TaskModal';
+import { dayKey } from '../kanban/calendar';
 
 type Filter = 'all' | TaskStatus | 'autopilot';
 const FILTER_VALUES: readonly Filter[] = ['all', 'open', 'in_progress', 'blocked', 'closed', 'cancelled', 'autopilot'];
@@ -31,7 +32,8 @@ function taskDayMs(task: Task): number {
   const ms = iso ? new Date(iso).getTime() : NaN;
   return Number.isNaN(ms) ? 0 : ms;
 }
-const dayKey = (ms: number): string => { const d = new Date(ms); return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`; };
+/** Day key from epoch ms — delegates to the canonical local YYYY-MM-DD key (single source of truth). */
+const dayKeyMs = (ms: number): string => dayKey(new Date(ms));
 
 export function TasksView() {
   const tasks = useTasks();
@@ -155,9 +157,9 @@ export function TasksView() {
   // Group the current page's cards into day sections, preserving sorted order.
   const dayLabel = (ms: number): string => {
     const now = new Date();
-    const todayKey = dayKey(now.getTime());
-    const yesterdayKey = dayKey(now.getTime() - 86400000);
-    const k = dayKey(ms);
+    const todayKey = dayKeyMs(now.getTime());
+    const yesterdayKey = dayKeyMs(now.getTime() - 86400000);
+    const k = dayKeyMs(ms);
     if (k === todayKey) return t.tasks.dayToday;
     if (k === yesterdayKey) return t.tasks.dayYesterday;
     return new Date(ms).toLocaleDateString(locale, { weekday: 'short', month: 'short', day: 'numeric' });
@@ -166,7 +168,7 @@ export function TasksView() {
     const out: { key: string; label: string; items: Task[] }[] = [];
     for (const task of pageItems) {
       const ms = taskDayMs(task);
-      const k = dayKey(ms);
+      const k = dayKeyMs(ms);
       const last = out[out.length - 1];
       if (last && last.key === k) last.items.push(task);
       else out.push({ key: k, label: dayLabel(ms), items: [task] });

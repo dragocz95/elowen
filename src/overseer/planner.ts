@@ -1,37 +1,30 @@
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-import { dirname, join } from 'node:path';
 import type { InferenceClient } from '../inference/types.js';
+import { rawTemplate, _resetPromptCache } from '../prompts/index.js';
+import { extractJson } from './llmParse.js';
 
-const here = dirname(fileURLToPath(import.meta.url));
-
-/** Built-in fallback if the prompt .md cannot be read (e.g. not copied into dist). */
-const FALLBACK_PROMPT = [
-  'You are the Pilot: decompose the goal into 3 to 7 ordered phases and name each phase\'s agent.',
-  'Return ONLY a JSON array of {"title": string, "type": "task"|"feature"|"bug"|"chore", "agent": string}.',
-  '',
-  'Goal: {{goal}}',
-].join('\n');
-
-let cachedDefault: string | null = null;
-/** Default planner prompt template (editable in Settings). Read once from autopilotPrompt.md. */
+/** Default planner prompt template (editable in Settings). Read from prompts/planner.md, with a
+ *  built-in fallback (prompts/planner-fallback.md) if the default cannot be read (e.g. not copied
+ *  into dist). The loader caches both, so repeated calls do not re-touch disk. */
 export function defaultPromptTemplate(): string {
-  if (cachedDefault === null) {
-    try { cachedDefault = readFileSync(join(here, 'autopilotPrompt.md'), 'utf-8').trim(); }
-    catch { cachedDefault = FALLBACK_PROMPT; }
-  }
-  return cachedDefault;
+  try { return rawTemplate('planner'); }
+  catch { return rawTemplate('planner-fallback'); }
 }
+
+/** Drop the cached template so the next read re-loads planner.md. For tests (the loader cache
+ *  otherwise leaks across cases) and for picking up an on-disk template edit without a restart. */
+export function _resetDefaultCache(): void { _resetPromptCache(); }
 
 /** Task types a phase may take; anything else is coerced to 'task'. */
 export const VALID_TYPES = new Set(['task', 'feature', 'bug', 'chore']);
 
 export interface Phase { title: string; type: string; agent?: string; details?: string }
 
-/** Sanitize a model-supplied agent name into a tmux-safe single token. */
+/** Sanitize a model-supplied agent name into a tmux-safe single token. Keeps `_` and `-` (both legal
+ *  in tmux session names) so multi-word names like "code-reviewer" survive instead of collapsing to
+ *  "codereviewer"; strips only `:` (the session-name separator) and whitespace/other characters. */
 function sanitizeAgentName(raw: unknown): string | undefined {
   if (typeof raw !== 'string') return undefined;
-  const clean = raw.replace(/[^A-Za-z0-9]/g, '').slice(0, 24);
+  const clean = raw.replace(/[^A-Za-z0-9_-]/g, '').slice(0, 24);
   return clean.length > 0 ? clean : undefined;
 }
 
@@ -59,9 +52,7 @@ export function planPrompt(goal: string, template?: string, project?: PlanProjec
 
 /** Extract and validate the phase array from raw LLM output. Throws on unparseable/empty output. */
 export function parsePhases(text: string): Phase[] {
-  const match = text.match(/\[[\s\S]*\]/);
-  if (!match) throw new Error('no JSON array in plan output');
-  const raw = JSON.parse(match[0]) as unknown; // caller wraps in try/catch
+  const raw = extractJson(text, '['); // first balanced array; caller wraps in try/catch
   if (!Array.isArray(raw)) throw new Error('plan output is not an array');
   const phases = raw
     .filter((p): p is { title: string; type?: unknown; agent?: unknown; details?: unknown } => !!p && typeof (p as { title?: unknown }).title === 'string' && (p as { title: string }).title.trim().length > 0)

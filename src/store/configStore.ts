@@ -1,5 +1,6 @@
 import type { Db } from './db.js';
 import { defaultPromptTemplate } from '../overseer/planner.js';
+import { DEFAULT_BINS, KNOWN_EXECS, isAllowedExec } from '../shared/execs.js';
 
 interface ProviderConfig { bin: string; args: string }
 export type Providers = Record<string, ProviderConfig>;
@@ -11,16 +12,33 @@ export interface OrcaConfig {
   autopilot: { model: string; overseerModel: string; apiUrl: string; apiKeySet: boolean; notes: string; prompt: string; pilotExec: string; overseerExec: string; reviewOnDone: boolean };
   providers: Providers;
   defaults: { exec: string; autonomy: string; maxSessions: number };
+  security: { tokenTtlDays: number };
 }
 
-// Default executable name per agent program (resolveExecutor program ids).
-const DEFAULT_PROVIDERS: Providers = {
-  'claude-code': { bin: 'claude', args: '' },
-  'opencode': { bin: 'opencode', args: '' },
-  'codex': { bin: 'codex', args: '' },
-};
+// Default executable name per agent program (resolveExecutor program ids). Derived from the shared
+// executor table so program ids + their bins stay in one place (audit #43/S21).
+const DEFAULT_PROVIDERS: Providers = Object.fromEntries(
+  Object.entries(DEFAULT_BINS).map(([program, bin]) => [program, { bin, args: '' }]),
+);
 
-const KNOWN_EXECS = ['sonnet', 'deepseek/deepseek-v4-flash', 'kimi-for-coding/k2p7', 'ollama/minimax-m2.7:cloud', 'codex:gpt-5.4'];
+/** Keep only well-formed provider entries ({ bin: string, args: string }). A malformed value (e.g.
+ *  bin as a number from a hand-edited row or a loose PUT) is dropped, never persisted/returned — it
+ *  would otherwise reach spawn() as an invalid executable. */
+function sanitizeProviders(input: unknown): Providers {
+  if (!input || typeof input !== 'object') return {};
+  const out: Providers = {};
+  for (const [k, v] of Object.entries(input as Record<string, unknown>)) {
+    if (v && typeof v === 'object' && typeof (v as ProviderConfig).bin === 'string' && typeof (v as ProviderConfig).args === 'string') {
+      out[k] = { bin: (v as ProviderConfig).bin, args: (v as ProviderConfig).args };
+    }
+  }
+  return out;
+}
+
+/** Token TTL must be a whole number of days ≥ 1 (it feeds a SQLite date modifier). Anything
+ *  invalid falls back to the current value. */
+const clampTtlDays = (next: number | undefined, fallback: number): number =>
+  typeof next === 'number' && Number.isFinite(next) && next >= 1 ? Math.floor(next) : fallback;
 
 const DEFAULT_CONFIG: OrcaConfig = {
   allowedExecs: [...KNOWN_EXECS],
@@ -29,6 +47,7 @@ const DEFAULT_CONFIG: OrcaConfig = {
   autopilot: { model: 'gpt-4o-mini', overseerModel: '', apiUrl: 'https://api.openai.com/v1', apiKeySet: false, notes: '', prompt: defaultPromptTemplate(), pilotExec: '', overseerExec: '', reviewOnDone: false },
   providers: { ...DEFAULT_PROVIDERS },
   defaults: { exec: 'sonnet', autonomy: 'L3', maxSessions: 1 },
+  security: { tokenTtlDays: 30 },
 };
 
 interface Stored {
@@ -39,6 +58,7 @@ interface Stored {
   providers: Providers;
   apiKey: string | null;
   defaults: { exec: string; autonomy: string; maxSessions: number };
+  security: { tokenTtlDays: number };
 }
 
 const defaultStored = (): Stored => ({
@@ -49,6 +69,7 @@ const defaultStored = (): Stored => ({
   providers: { ...DEFAULT_PROVIDERS },
   apiKey: null,
   defaults: { ...DEFAULT_CONFIG.defaults },
+  security: { ...DEFAULT_CONFIG.security },
 });
 
 export interface ConfigPatch {
@@ -58,6 +79,7 @@ export interface ConfigPatch {
   autopilot?: { model?: string; overseerModel?: string; apiUrl?: string; apiKey?: string; notes?: string; prompt?: string; pilotExec?: string; overseerExec?: string; reviewOnDone?: boolean };
   providers?: Providers;
   defaults?: { exec?: string; autonomy?: string; maxSessions?: number };
+  security?: { tokenTtlDays?: number };
 }
 
 export class ConfigStore {
@@ -69,14 +91,18 @@ export class ConfigStore {
     try {
       const p = JSON.parse(row.data) as Partial<Stored>;
       const d = defaultStored();
+      // `as Partial<Stored>` is only a compile-time hint — a hand-edited or legacy row can hold the
+      // wrong runtime shape (e.g. allowedExecs as a string), which would crash callers that .map it.
+      // So each typed field is shape-checked; a bad value falls back to its default.
       return {
-        allowedExecs: p.allowedExecs ?? d.allowedExecs,
-        customModels: p.customModels ?? [],
-        hiddenPresets: p.hiddenPresets ?? [],
+        allowedExecs: Array.isArray(p.allowedExecs) ? p.allowedExecs : d.allowedExecs,
+        customModels: Array.isArray(p.customModels) ? p.customModels : [],
+        hiddenPresets: Array.isArray(p.hiddenPresets) ? p.hiddenPresets : [],
         autopilot: { model: p.autopilot?.model ?? d.autopilot.model, overseerModel: p.autopilot?.overseerModel ?? d.autopilot.overseerModel, apiUrl: p.autopilot?.apiUrl ?? d.autopilot.apiUrl, notes: p.autopilot?.notes ?? d.autopilot.notes, prompt: p.autopilot?.prompt ?? d.autopilot.prompt, pilotExec: p.autopilot?.pilotExec ?? d.autopilot.pilotExec, overseerExec: p.autopilot?.overseerExec ?? d.autopilot.overseerExec, reviewOnDone: p.autopilot?.reviewOnDone ?? d.autopilot.reviewOnDone },
-        providers: { ...d.providers, ...(p.providers ?? {}) },
-        apiKey: p.apiKey ?? null,
+        providers: { ...d.providers, ...sanitizeProviders(p.providers) },
+        apiKey: typeof p.apiKey === 'string' ? p.apiKey : null,
         defaults: { exec: p.defaults?.exec ?? d.defaults.exec, autonomy: p.defaults?.autonomy ?? d.defaults.autonomy, maxSessions: p.defaults?.maxSessions ?? d.defaults.maxSessions },
+        security: { tokenTtlDays: p.security?.tokenTtlDays ?? d.security.tokenTtlDays },
       };
     } catch { return defaultStored(); } // corrupt row → defaults, never throw
   }
@@ -95,6 +121,7 @@ export class ConfigStore {
       autopilot: { model: s.autopilot.model, overseerModel: s.autopilot.overseerModel, apiUrl: s.autopilot.apiUrl, apiKeySet: !!s.apiKey, notes: s.autopilot.notes, prompt: s.autopilot.prompt, pilotExec: s.autopilot.pilotExec, overseerExec: s.autopilot.overseerExec, reviewOnDone: s.autopilot.reviewOnDone },
       providers: s.providers,
       defaults: s.defaults,
+      security: s.security,
     };
   }
 
@@ -110,15 +137,32 @@ export class ConfigStore {
   update(patch: ConfigPatch): OrcaConfig {
     const cur = this.read();
     const newKey = patch.autopilot?.apiKey;
+    // The pilot/overseer/default exec must resolve to a real program — mirror the API's
+    // allowedExecs guard so an admin can't persist a bare bogus spec (e.g. 'foo') that
+    // resolveExecutor would silently turn into a non-existent claude-code model (audit O22).
+    const allowed = patch.allowedExecs ?? cur.allowedExecs;
+    const pilotExec = this.normalizeExec(patch.autopilot?.pilotExec, cur.autopilot.pilotExec, allowed, '');
+    const overseerExec = this.normalizeExec(patch.autopilot?.overseerExec, cur.autopilot.overseerExec, allowed, '');
+    const defaultExec = this.normalizeExec(patch.defaults?.exec, cur.defaults.exec, allowed, cur.defaults.exec);
     this.write({
-      allowedExecs: patch.allowedExecs ?? cur.allowedExecs,
+      allowedExecs: allowed,
       customModels: patch.customModels ?? cur.customModels,
       hiddenPresets: patch.hiddenPresets ?? cur.hiddenPresets,
-      autopilot: { model: patch.autopilot?.model ?? cur.autopilot.model, overseerModel: patch.autopilot?.overseerModel ?? cur.autopilot.overseerModel, apiUrl: patch.autopilot?.apiUrl ?? cur.autopilot.apiUrl, notes: patch.autopilot?.notes ?? cur.autopilot.notes, prompt: patch.autopilot?.prompt ?? cur.autopilot.prompt, pilotExec: patch.autopilot?.pilotExec ?? cur.autopilot.pilotExec, overseerExec: patch.autopilot?.overseerExec ?? cur.autopilot.overseerExec, reviewOnDone: patch.autopilot?.reviewOnDone ?? cur.autopilot.reviewOnDone },
-      providers: patch.providers ? { ...cur.providers, ...patch.providers } : cur.providers,
+      autopilot: { model: patch.autopilot?.model ?? cur.autopilot.model, overseerModel: patch.autopilot?.overseerModel ?? cur.autopilot.overseerModel, apiUrl: patch.autopilot?.apiUrl ?? cur.autopilot.apiUrl, notes: patch.autopilot?.notes ?? cur.autopilot.notes, prompt: patch.autopilot?.prompt ?? cur.autopilot.prompt, pilotExec, overseerExec, reviewOnDone: patch.autopilot?.reviewOnDone ?? cur.autopilot.reviewOnDone },
+      providers: patch.providers ? { ...cur.providers, ...sanitizeProviders(patch.providers) } : cur.providers,
       apiKey: (typeof newKey === 'string' && newKey.length > 0) ? newKey : cur.apiKey,
-      defaults: { exec: patch.defaults?.exec ?? cur.defaults.exec, autonomy: patch.defaults?.autonomy ?? cur.defaults.autonomy, maxSessions: patch.defaults?.maxSessions ?? cur.defaults.maxSessions },
+      defaults: { exec: defaultExec, autonomy: patch.defaults?.autonomy ?? cur.defaults.autonomy, maxSessions: patch.defaults?.maxSessions ?? cur.defaults.maxSessions },
+      // Clamp to a sane positive integer — the value is interpolated into a SQL date modifier.
+      security: { tokenTtlDays: clampTtlDays(patch.security?.tokenTtlDays, cur.security.tokenTtlDays) },
     });
     return this.get();
+  }
+
+  /** Resolve an exec field on update: keep the current value when the patch omits it; accept a
+   *  patched value only if it's allow-listed/well-formed (isAllowedExec), otherwise fall back to
+   *  `onInvalid` so an invalid spec is never persisted. */
+  private normalizeExec(next: string | undefined, current: string, allowed: readonly string[], onInvalid: string): string {
+    if (next === undefined) return current;
+    return isAllowedExec(next, allowed) ? next : onInvalid;
   }
 }

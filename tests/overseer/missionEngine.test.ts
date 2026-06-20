@@ -95,6 +95,51 @@ describe('MissionEngine', () => {
     expect(tasks.get('t1')!.status).toBe('open');
     expect(engine.isActive(m.id)).toBe(false); // paused, not active
   });
+
+  it('stopRunning reverts every in_progress child even if a tmux.kill throws (O3)', async () => {
+    const db = openDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'orca','/o')").run();
+    const tasks = new TaskStore(db);
+    tasks.create({ id: 'epic', project_id: 1, title: 'E', type: 'epic' });
+    tasks.create({ id: 'a', project_id: 1, title: 'a', parent_id: 'epic' });
+    tasks.create({ id: 'b', project_id: 1, title: 'b', parent_id: 'epic' });
+    // Two parallel in_progress children; the first session's kill rejects (it exited already).
+    for (const id of ['a', 'b']) { tasks.setAgent(id, id); tasks.setStatus(id, 'in_progress'); }
+    const base = new FakeTmuxDriver();
+    await base.spawn('orca-a', { cwd: '/o', command: 'x' });
+    await base.spawn('orca-b', { cwd: '/o', command: 'x' });
+    // Minimal driver: the first kill rejects (session exited between list() and kill); the rest delegate.
+    const tmux = { list: () => base.list(), kill: (s: string) => { if (s === 'orca-a') throw new Error('already gone'); return base.kill(s); } } as never;
+    const engine = new MissionEngine({
+      tasks, readiness: new Readiness(db), missions: new MissionStore(db),
+      spawn: new SpawnService({ tmux, agents: new AgentStore(db) }), tmux, bus: new EventBus(),
+      projects: new ProjectStore(db), fallback: { program: 'claude-code', model: 'sonnet' },
+      nameAgent: () => 'AgentX', clock: new SystemClock(),
+    });
+    const stopped = await engine.stopRunning('epic');
+    expect(stopped).toBe(2);
+    expect(tasks.get('a')!.status).toBe('open'); // a throwing kill did NOT strand the rest in_progress
+    expect(tasks.get('b')!.status).toBe('open');
+  });
+
+  it('disengage and pause are idempotent — a repeat call emits no second event (O6)', async () => {
+    const { engine, bus } = setup();
+    const events: OrcaEvent[] = [];
+    const m = await engine.engage({ epicId: 'epic', autonomy: 'L3', maxSessions: 1, clearedGuardrails: [] });
+    bus.subscribe((e) => events.push(e));
+    await engine.disengage(m.id);
+    await engine.disengage(m.id); // no-op: already disengaged
+    expect(events.filter((e) => e.type === 'mission' && e.state === 'disengaged')).toHaveLength(1);
+  });
+
+  it('pause is idempotent — a repeat call emits no second paused event (O6)', async () => {
+    const { engine, bus } = setup();
+    const events: OrcaEvent[] = [];
+    const m = await engine.engage({ epicId: 'epic', autonomy: 'L3', maxSessions: 1, clearedGuardrails: [] });
+    bus.subscribe((e) => events.push(e));
+    await engine.pause(m.id);
+    await engine.pause(m.id); // no-op: already paused
+    expect(events.filter((e) => e.type === 'mission' && e.state === 'paused')).toHaveLength(1);
+  });
 });
 
 describe('MissionEngine overseer gate (decideTask)', () => {

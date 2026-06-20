@@ -11,9 +11,15 @@ export function useOrcaEvents(): void {
   useEffect(() => {
     const es = new EventSource(withToken(`${BASE}/events`));
 
-    // Native EventSource auto-reconnects on transport drops (browser-managed retry with
-    // exponential backoff per HTML spec §9.2.6), which satisfies spec §8 for the common
-    // case. Explicit capped backoff with jitter is deferred.
+    // Native EventSource auto-reconnects on transport drops (browser-managed retry per HTML spec).
+    // On a terminal failure (readyState CLOSED) just stop — do NOT touch the auth token here: the
+    // EventSource API can't tell a 401 from a benign drop (proxy/SSE timeout, daemon restart, a
+    // hard-reload race), so clearing the token on CLOSED would log the user out spuriously. Real
+    // auth expiry is handled by the regular request path (`req` clears the token on a 401), which
+    // drives the login gate. Closing here only avoids a retry storm against a dead endpoint.
+    es.onerror = () => {
+      if (es.readyState === EventSource.CLOSED) es.close();
+    };
 
     const makeHandler = (invalidate: () => void) => (e: MessageEvent) => {
       try { JSON.parse(e.data); } catch { return; } // skip malformed, keep the stream alive

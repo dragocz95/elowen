@@ -72,8 +72,13 @@ export const useConfig = () =>
 
 export const useMissionDetail = (id: string | null) =>
   useQuery({
-    queryKey: ['mission', id],
-    queryFn: () => orcaClient.getMissionDetail(id as string),
+    // A null id collapses into a stable sentinel key so a disabled query never persists a
+    // distinct `['mission', null]` entry that later invalidations would needlessly touch.
+    queryKey: ['mission', id ?? '_none'],
+    queryFn: () => {
+      if (!id) throw new Error('useMissionDetail: id is required'); // unreachable — guarded by `enabled`
+      return orcaClient.getMissionDetail(id);
+    },
     enabled: !!id,
   });
 

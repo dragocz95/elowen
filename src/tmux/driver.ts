@@ -19,10 +19,17 @@ export class RealTmuxDriver implements TmuxDriver {
     try { await run('tmux', ['resize-window', '-t', session, '-x', String(x), '-y', String(y)]); }
     catch { /* session gone or tmux too old — ignore */ }
   }
-  async sendKeys(session: string, keys: string[]) { await run('tmux', ['send-keys', '-t', session, ...keys]); }
+  async sendKeys(session: string, keys: string[]) {
+    // Defense in depth (the API validates first): a non-string element would make execFile throw an
+    // opaque TypeError, and a flag-shaped token (`-t …`) could redirect keys into another session.
+    if (!Array.isArray(keys) || keys.length === 0 || !keys.every((k) => typeof k === 'string' && !k.startsWith('-'))) throw new Error('sendKeys: keys must be a non-empty array of non-flag strings');
+    await run('tmux', ['send-keys', '-t', session, ...keys]);
+  }
   async capturePane(session: string, tailLines: number) {
-    const { stdout } = await run('tmux', ['capture-pane', '-p', '-t', session, '-S', `-${tailLines}`], { maxBuffer: 512 * 1024 });
-    return stdout;
+    try {
+      const { stdout } = await run('tmux', ['capture-pane', '-p', '-t', session, '-S', `-${tailLines}`], { maxBuffer: 512 * 1024 });
+      return stdout;
+    } catch { return ''; } // dead/missing session → empty (mirror capturePaneAnsi); the deriver sweep must not break on a vanished session
   }
   async capturePaneAnsi(session: string, tailLines: number) {
     try {

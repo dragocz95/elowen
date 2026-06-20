@@ -25,7 +25,7 @@ function setup() {
   const tmux = new FakeTmuxDriver();
   const app = createServer({
     tasks, readiness: new Readiness(db), missions: new MissionStore(db), bus: new EventBus(),
-    engine: null as never, spawn: new SpawnService({ tmux, agents: new AgentStore(db) }), tmux,
+    engine: { disengage: async () => {} } as never, spawn: new SpawnService({ tmux, agents: new AgentStore(db) }), tmux,
     project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },
     clock: new FakeClock(0), config: new ConfigStore(db),
     users, projects: new ProjectStore(db), userProjects,
@@ -93,5 +93,60 @@ describe('per-user model allow-list enforcement', () => {
     expect((await app.request('/sessions', post(bobTok, { taskId: 'orca-1', exec: 'deepseek/deepseek-v4-flash' }))).status).toBe(201);
     tasks.create({ id: 'orca-2', project_id: 1, title: 'Y' });
     expect((await app.request('/sessions', post(adminTok, { taskId: 'orca-2', exec: 'codex:gpt-5.4' }))).status).toBe(201);
+  });
+});
+
+describe('admin gates & input validation (batch 1 audit fixes)', () => {
+  it('hermes status/install are admin-only (non-admin → 403)', async () => {
+    const { app, adminTok, bobTok } = setup();
+    expect((await app.request('/integrations/hermes/status', auth(bobTok))).status).toBe(403);
+    expect((await app.request('/integrations/hermes/install', post(bobTok, { url: 'http://x', token: 't' }))).status).toBe(403);
+    // admin clears the gate (status reads cleanly even if hermes isn't present)
+    expect((await app.request('/integrations/hermes/status', auth(adminTok))).status).toBe(200);
+  });
+
+  it('POST /missions rejects a missing epicId (400) and an unknown epic (404) before touching the engine', async () => {
+    const { app, adminTok } = setup();
+    expect((await app.request('/missions', post(adminTok, {}))).status).toBe(400);
+    expect((await app.request('/missions', post(adminTok, { epicId: 'nope' }))).status).toBe(404);
+  });
+
+  it('POST /sessions/:name/keys rejects non-array / flag-injection keys (400)', async () => {
+    const { app, adminTok } = setup();
+    expect((await app.request('/sessions/orca-Nova/keys', post(adminTok, { keys: 'Enter' }))).status).toBe(400);
+    expect((await app.request('/sessions/orca-Nova/keys', post(adminTok, { keys: [] }))).status).toBe(400);
+    expect((await app.request('/sessions/orca-Nova/keys', post(adminTok, { keys: ['-t', 'other', 'C-c'] }))).status).toBe(400);
+    // a clean key list is accepted
+    expect((await app.request('/sessions/orca-Nova/keys', post(adminTok, { keys: ['Enter'] }))).status).toBe(200);
+  });
+
+  it('POST /admin/cleanup is admin-only and wipes all tasks + missions', async () => {
+    const { app, adminTok, bobTok, tasks, db } = setup();
+    tasks.create({ id: 'orca-1', project_id: 1, title: 'X' });
+    tasks.create({ id: 'orca-2', project_id: 1, title: 'Y', type: 'epic' });
+    db.prepare("INSERT INTO missions (id,epic_id,autonomy,state) VALUES ('m1','orca-2','L3','active')").run();
+    expect((await app.request('/admin/cleanup', post(bobTok, {}))).status).toBe(403); // non-admin blocked
+    const res = await app.request('/admin/cleanup', post(adminTok, {}));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ ok: true, tasks: 2, missions: 1 });
+    expect(tasks.list()).toEqual([]);
+    expect(db.prepare('SELECT COUNT(*) c FROM missions').get()).toEqual({ c: 0 });
+  });
+
+  it('DELETE /tasks/:id?subtree=1 removes the epic, its children and the mission', async () => {
+    const { app, adminTok, tasks, db } = setup();
+    tasks.create({ id: 'orca-ep', project_id: 1, title: 'Epic', type: 'epic' });
+    tasks.create({ id: 'orca-c1', project_id: 1, title: 'C1', parent_id: 'orca-ep' });
+    tasks.create({ id: 'orca-c2', project_id: 1, title: 'C2', parent_id: 'orca-ep' });
+    db.prepare("INSERT INTO missions (id,epic_id,autonomy,state) VALUES ('m-ep','orca-ep','L3','active')").run();
+    tasks.create({ id: 'orca-keep', project_id: 1, title: 'Keep' });
+
+    const res = await app.request('/tasks/orca-ep?subtree=1', { method: 'DELETE', headers: { authorization: `Bearer ${adminTok}` } });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ ok: true, tasks: 3 });
+    expect(tasks.get('orca-ep')).toBeNull();
+    expect(tasks.get('orca-c1')).toBeNull();
+    expect(db.prepare('SELECT COUNT(*) c FROM missions').get()).toEqual({ c: 0 });
+    expect(tasks.get('orca-keep')).not.toBeNull();
   });
 });
