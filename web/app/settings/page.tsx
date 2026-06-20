@@ -60,8 +60,15 @@ export default function SettingsPage() {
   const runPreview = async () => {
     setPreviewing(true);
     try {
-      const r = await orcaClient.planPreview({ goal: sampleGoal.trim(), prompt });
-      setPreview(r.phases);
+      // Planning is async: submit a dryRun job, then poll it until it resolves (the relay backend
+      // finishes inline; an agent backend takes longer, so poll up to ~2 min before giving up).
+      const { jobId } = await orcaClient.planPreview({ goal: sampleGoal.trim(), prompt });
+      for (let i = 0; i < 120; i++) {
+        const job = await orcaClient.getPlanJob(jobId);
+        if (job.status === 'done') { setPreview(job.phases); break; }
+        if (job.status === 'failed') { toast(t.settings.planFailed, 'error'); break; }
+        await new Promise((r) => setTimeout(r, 1000));
+      }
     } catch (e) {
       if (e instanceof OrcaApiError && e.code === 'autopilot_key_missing') toast(t.settings.setApiKeyFirst, 'error');
       else toast(String(e), 'error');

@@ -6,6 +6,11 @@ export interface CreateTaskInput { title: string; type?: string; priority?: stri
 export interface UpdateTaskInput { title?: string; type?: string; priority?: string; description?: string; scheduled_at?: string | null; autostart?: number; deps?: string[] }
 export interface PlanInput { goal: string; exec?: string; autonomy?: string; maxSessions?: number; engage?: boolean; phases?: { title: string; type?: string }[] }
 export interface PlanResult { epic: Task; phases: Task[]; mission?: Mission }
+export interface PlanPhase { title: string; type: string; agent?: string; details?: string }
+export type PlanJobStatus = 'planning' | 'done' | 'failed';
+export interface PlanJob { id: string; epicId: string | null; goal: string; status: PlanJobStatus; phases: PlanPhase[]; error?: string }
+/** Autopilot planning is async: the endpoint returns a job to poll. Manual mode still returns a PlanResult. */
+export type PlanSubmitResult = { jobId: string; epicId?: string } | PlanResult;
 export interface InsertPhasesInput { phases?: { title: string; type?: string }[]; goal?: string; exec?: string; prompt?: string }
 export interface InsertPhasesResult { epic: Task; phases: Task[] }
 export interface EngageInput { epicId: string; autonomy: string; maxSessions: number; clearedGuardrails: string[] }

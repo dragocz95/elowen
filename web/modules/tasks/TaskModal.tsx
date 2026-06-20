@@ -2,7 +2,7 @@
 import { useEffect, useState } from 'react';
 import { Play, Sparkles, ListChecks, Plus, X, AlertTriangle, Pencil } from 'lucide-react';
 import type { Task, PlanResult } from '../../lib/types';
-import { useConfig, useTasks } from '../../lib/queries';
+import { useConfig, useTasks, usePlanJob } from '../../lib/queries';
 import { useCreateTask, useUpdateTask, useSpawn, useSetTaskExec, usePlanTask } from '../../lib/mutations';
 import { allModels } from '../../lib/execPresets';
 import { taskExec } from '../../lib/taskExec';
@@ -22,6 +22,14 @@ import { taskTypeMeta, TASK_TYPES, PRIORITIES } from './taskMeta';
 
 type Mode = 'single' | 'planning';
 interface ManualPhase { title: string; type: string }
+/** Normalized plan result rendered after creation — fed by both the sync manual path and the async
+ *  autopilot job. `engaged` reflects whether a mission was started. */
+interface PlanOutcome { epicId: string; phases: { title: string; type: string; agent?: string }[]; engaged: boolean }
+
+/** Project full phase Task rows (manual path) into the lightweight phase shape the outcome renders. */
+function phasesFromTasks(tasks: Task[]): PlanOutcome['phases'] {
+  return tasks.map((p) => ({ title: p.title, type: p.type ?? 'task', agent: p.labels?.find((l) => l.startsWith('agent:'))?.slice('agent:'.length) }));
+}
 
 // ISO (UTC) ↔ <input type="datetime-local"> (local, no seconds/zone).
 function isoToLocalInput(iso?: string | null): string {
@@ -85,7 +93,10 @@ export function TaskModal({ task, onClose, initialSchedule }: { task?: Task; onC
   const [autonomy, setAutonomy] = useState(config?.defaults?.autonomy ?? 'L3');
   const [maxSessions, setMaxSessions] = useState(config?.defaults?.maxSessions ?? 1);
   const [engage, setEngage] = useState(false);
-  const [result, setResult] = useState<PlanResult | null>(null);
+  // Normalized plan outcome shared by the manual (sync) and autopilot (async job) paths.
+  const [result, setResult] = useState<PlanOutcome | null>(null);
+  const [planJobId, setPlanJobId] = useState<string | null>(null);
+  const planJob = usePlanJob(planJobId);
   const [manual, setManual] = useState(false);
   const [manualPhases, setManualPhases] = useState<ManualPhase[]>([{ title: '', type: 'task' }]);
 
@@ -97,7 +108,23 @@ export function TaskModal({ task, onClose, initialSchedule }: { task?: Task; onC
     chore: t.tasks.typeChore,
   };
 
-  const busy = create.isPending || update.isPending || spawn.isPending || setExecM.isPending || plan.isPending;
+  // "Planning" covers both the in-flight request and the time the async job is still resolving.
+  const planning = plan.isPending || planJobId !== null;
+  const busy = create.isPending || update.isPending || spawn.isPending || setExecM.isPending || planning;
+
+  // React to the async autopilot job: render its phases on done, surface failures, then clear it.
+  useEffect(() => {
+    const job = planJob.data;
+    if (!job || !planJobId) return;
+    if (job.status === 'done') {
+      setResult({ epicId: job.epicId ?? '', phases: job.phases, engaged: engage });
+      toast(t.tasks.planCreated.replace('{count}', String(job.phases.length)).replace('{m}', engage ? t.tasks.autopilotStarted : '.'));
+      setPlanJobId(null);
+    } else if (job.status === 'failed') {
+      toast(t.tasks.planFailed, 'error');
+      setPlanJobId(null);
+    }
+  }, [planJob.data, planJobId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function submitSingle() {
     if (!title.trim()) return;
@@ -119,9 +146,10 @@ export function TaskModal({ task, onClose, initialSchedule }: { task?: Task; onC
   async function generate() {
     if (!goal.trim()) return;
     try {
+      // Autopilot planning is async: the endpoint returns a job; the effect renders it on done.
       const r = await plan.mutateAsync({ goal: goal.trim(), exec: exec || undefined, autonomy, maxSessions, engage });
-      setResult(r);
-      toast(t.tasks.planCreated.replace('{count}', String(r.phases.length)).replace('{m}', r.mission ? t.tasks.autopilotStarted : '.'));
+      if ('jobId' in r) setPlanJobId(r.jobId);
+      else finishSync(r);
     } catch (e) {
       if (e instanceof OrcaApiError && e.code === 'autopilot_key_missing') {
         setManual(true);
@@ -135,9 +163,14 @@ export function TaskModal({ task, onClose, initialSchedule }: { task?: Task; onC
     if (phases.length === 0) { toast(t.tasks.addAtLeastOnePhase, 'error'); return; }
     try {
       const r = await plan.mutateAsync({ goal: goal.trim(), phases, exec: exec || undefined, autonomy, maxSessions, engage });
-      setResult(r);
-      toast(t.tasks.planCreated.replace('{count}', String(r.phases.length)).replace('{m}', r.mission ? t.tasks.autopilotStarted : '.'));
+      if ('jobId' in r) setPlanJobId(r.jobId); else finishSync(r); // manual returns a PlanResult synchronously
     } catch (e) { toast(String(e), 'error'); }
+  }
+
+  // Map a synchronous PlanResult into the normalized outcome and toast the summary.
+  function finishSync(r: PlanResult) {
+    setResult({ epicId: r.epic.id, phases: phasesFromTasks(r.phases), engaged: !!r.mission });
+    toast(t.tasks.planCreated.replace('{count}', String(r.phases.length)).replace('{m}', r.mission ? t.tasks.autopilotStarted : '.'));
   }
 
   const execSelect = (
@@ -303,21 +336,20 @@ export function TaskModal({ task, onClose, initialSchedule }: { task?: Task; onC
           <div className="flex flex-col gap-3">
             <p className="text-sm text-text-muted">
               {t.tasks.createdEpic
-                .replace('{id}', result.epic.id)
+                .replace('{id}', result.epicId)
                 .replace('{count}', String(result.phases.length))
-                .replace('{m}', result.mission ? t.tasks.autopilotEngaged : '.')}
+                .replace('{m}', result.engaged ? t.tasks.autopilotEngaged : '.')}
             </p>
             <ul className="flex flex-col divide-y divide-border rounded-md border border-border">
               {result.phases.map((p, i) => {
                 const meta = taskTypeMeta(p.type);
                 const Icon = meta.icon;
-                const agent = p.labels?.find((l) => l.startsWith('agent:'))?.slice('agent:'.length);
                 return (
-                  <li key={p.id} className="flex items-center gap-3 px-3 py-2 text-sm">
+                  <li key={i} className="flex items-center gap-3 px-3 py-2 text-sm">
                     <span className="w-4 shrink-0 font-mono text-xs text-text-muted">{i + 1}</span>
                     <Icon size={15} className="shrink-0 text-text-muted" aria-hidden />
                     <span className="min-w-0 flex-1 truncate text-text">{p.title}</span>
-                    {agent ? <Badge tone="accent">{agent}</Badge> : null}
+                    {p.agent ? <Badge tone="accent">{p.agent}</Badge> : null}
                   </li>
                 );
               })}

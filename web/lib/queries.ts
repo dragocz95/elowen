@@ -1,6 +1,17 @@
 import { useQuery } from '@tanstack/react-query';
 import { orcaClient } from './orcaClient';
-import type { DerivedSignal, HermesStatus, CliDetectionResult } from './types';
+import type { DerivedSignal, HermesStatus, CliDetectionResult, PlanJob } from './types';
+
+/** Poll an async plan job until it leaves the 'planning' state. The SSE `plan` handler also pushes
+ *  updates into this cache (keyed by jobId) so the poll is a fallback. Disabled when jobId is null. */
+export function usePlanJob(jobId: string | null) {
+  return useQuery<PlanJob>({
+    queryKey: ['plan-job', jobId],
+    queryFn: () => orcaClient.getPlanJob(jobId!),
+    enabled: !!jobId,
+    refetchInterval: (q) => (q.state.data?.status === 'planning' ? 1000 : false),
+  });
+}
 
 export const QUERY_KEYS = {
   tasks: ['tasks'] as const,
