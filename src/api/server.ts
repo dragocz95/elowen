@@ -18,6 +18,7 @@ import type { EventBus } from './sse.js';
 import type { AgentSpec } from '../spawn/commandBuilder.js';
 import { resolveExecutor } from '../overseer/routing.js';
 import { decompose, parsePhases, VALID_TYPES as VALID_PHASE_TYPES, type Phase } from '../overseer/planner.js';
+import { isDestructive } from '../overseer/decision.js';
 import { PlanJobStore, type PlanJob } from '../overseer/planJob.js';
 import { DecisionQueue } from '../overseer/decisionQueue.js';
 import type { Task } from '../store/types.js';
@@ -523,6 +524,18 @@ export function createServer(d: ServerDeps): Hono<{ Variables: { user: User; tok
       if (b.status === 'closed') d.tasks.close(id, { summary: b.result_summary, outcome: b.outcome });
       else d.tasks.setStatus(id, b.status);
       d.bus.publish({ type: 'task', taskId: id, status: b.status });
+      // Post-done review (opt-in): when a mission phase closes, let the parked overseer judge the
+      // outcome. Non-blocking (void) — it must never delay the agent's close. Default off, and only
+      // active with an agent overseer configured.
+      const cfg = d.config.get();
+      if (b.status === 'closed' && existing.parent_id && cfg.autopilot.reviewOnDone && cfg.autopilot.overseerExec) {
+        const mission = d.missions.active().find((m) => m.epic_id === existing.parent_id);
+        if (mission) {
+          const localDestructive = isDestructive(`${existing.title} ${b.result_summary ?? ''}`);
+          void decisionQueue.enqueue(mission.id, 'review', { title: existing.title, outcome: b.outcome ?? '', summary: b.result_summary ?? '' }, localDestructive)
+            .then(() => { /* verdict is advisory for now; a future change can gate the next phase */ });
+        }
+      }
     }
     if (typeof b.exec === 'string') { d.tasks.setExec(id, b.exec); }
     if (typeof b.title === 'string' || typeof b.type === 'string' || typeof b.priority === 'string' || typeof b.description === 'string' || b.scheduled_at !== undefined || b.autostart !== undefined) {
