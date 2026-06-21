@@ -8,6 +8,7 @@ dist/
 logs/
 .superpowers/
 docs/superpowers/
+CLAUDE.md
 data/
 *.db-shm
 *.db-wal
