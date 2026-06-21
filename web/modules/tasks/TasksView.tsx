@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Plus, ListChecks, Search, Archive, Trash2, X, ChevronLeft, ChevronRight, CalendarDays, List } from 'lucide-react';
 import type { Task, TaskStatus } from '../../lib/types';
-import { useTasks, useAllDeps, useSessions, useSessionSignals, useMissions, useProjects } from '../../lib/queries';
+import { useTasks, useAllDeps, useSessions, useSessionSignals, useMissions } from '../../lib/queries';
 import { taskBlockers, taskSessionName } from '../../lib/agentUtils';
 import { epicChildren, phaseIds, epicLive, epicEffectiveStatus } from '../../lib/taskTree';
 import { useCloseTask, useDeleteTask } from '../../lib/mutations';
@@ -17,6 +17,7 @@ import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { useToast } from '../../components/ui/Toast';
 import { useTranslation } from '../../lib/i18n';
 import { usePersistentState } from '../../lib/usePersistentState';
+import { useProjectFilter } from '../../lib/useProjectFilter';
 import { ProjectFilterPills } from '../../components/ui/ProjectFilterPills';
 import { LoadingState, ErrorState, EmptyState } from '../../components/ui/states';
 import { TaskCard } from './TaskCard';
@@ -37,7 +38,6 @@ function taskDayMs(task: Task): number {
 const dayKeyMs = (ms: number): string => dayKey(new Date(ms));
 
 export function TasksView() {
-  const projects = useProjects();
   const deps = useAllDeps();
   const sessions = useSessions();
   const signals = useSessionSignals();
@@ -51,9 +51,8 @@ export function TasksView() {
   const [query, setQuery] = useState('');
   const [filter, setFilter] = usePersistentState<Filter>('orca.tasks.filter', 'in_progress', FILTER_VALUES);
   // Selected project pill — 'all' shows every accessible project; a number narrows the list
-  // (server-side via /tasks?project_id=N). Stored as a string so usePersistentState validates it.
-  const [projectKey, setProjectKey] = usePersistentState<string>('orca.tasks.project', 'all', ['all', ...(projects.data ?? []).map((p) => String(p.id))]);
-  const selectedProject: number | 'all' = projectKey === 'all' ? 'all' : Number(projectKey);
+  // (server-side via /tasks?project_id=N). Persisted + stale-id-clamped by the shared hook.
+  const { selectedProject, setProject } = useProjectFilter('orca.tasks.project');
   const tasks = useTasks(selectedProject === 'all' ? undefined : selectedProject);
   const [page, setPage] = useState(0);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -195,7 +194,7 @@ export function TasksView() {
 
       {/* Project picker pills — narrow the list to one project (server-side). Hidden when the
           workspace has fewer than two projects: no choice to make. */}
-      <ProjectFilterPills value={selectedProject} onChange={(v) => setProjectKey(v === 'all' ? 'all' : String(v))} />
+      <ProjectFilterPills value={selectedProject} onChange={setProject} />
 
       {tasks.isLoading ? <LoadingState variant="cards" />
         : tasks.isError ? <ErrorState message={t.common.daemonUnreachable} onRetry={() => tasks.refetch()} />

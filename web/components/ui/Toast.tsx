@@ -1,5 +1,5 @@
 'use client';
-import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { CheckCircle2, AlertCircle, X, type LucideIcon } from 'lucide-react';
 import { useTranslation } from '../../lib/i18n';
 
@@ -68,8 +68,11 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     const id = nextId++;
     setItems((xs) => [...xs, { id, message, tone }]);
   }, []);
+  // Stable context value: `toast` never changes identity, so consumers don't re-render every time a
+  // toast is shown/dismissed (which would, among other things, churn the SSE subscription in EventBridge).
+  const ctx = useMemo(() => ({ toast }), [toast]);
   return (
-    <Ctx.Provider value={{ toast }}>
+    <Ctx.Provider value={ctx}>
       {children}
       <div className="pointer-events-none fixed bottom-5 right-5 z-50 flex w-[22rem] max-w-[calc(100vw-2.5rem)] flex-col gap-2.5">
         {items.map((item) => (

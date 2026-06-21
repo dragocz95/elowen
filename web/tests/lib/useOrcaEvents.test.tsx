@@ -54,6 +54,23 @@ describe('useOrcaEvents', () => {
     expect(onReview).toHaveBeenCalledWith({ missionId: 'm-1', taskId: 'orca-9', approve: false, rationale: 'scope creep' });
   });
 
+  it('does not reopen the SSE connection when only the onReview identity changes', () => {
+    const { wrapper } = wrap();
+    const first = vi.fn();
+    const { rerender } = renderHook(({ cb }) => useOrcaEvents({ onReview: cb }), { wrapper, initialProps: { cb: first } });
+    const es = FakeES.last;
+    // EventBridge passes a fresh inline arrow on every render (a toast re-renders it). The SSE
+    // lifecycle must not depend on that identity — else each toast tears down and reopens the stream.
+    const second = vi.fn();
+    rerender({ cb: second });
+    expect(es.closed).toBe(false); // the existing connection was NOT torn down…
+    expect(FakeES.last).toBe(es); // …and no replacement was opened
+    // …yet the LATEST callback is the one a verdict reaches.
+    FakeES.last.emit({ type: 'review', missionId: 'm', taskId: 't', approve: false, rationale: 'r' });
+    expect(second).toHaveBeenCalledTimes(1);
+    expect(first).not.toHaveBeenCalled();
+  });
+
   it('closes the source on unmount', () => {
     const { wrapper } = wrap();
     const { unmount } = renderHook(() => useOrcaEvents(), { wrapper });

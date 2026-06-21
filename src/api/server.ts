@@ -741,7 +741,17 @@ export function createServer(d: ServerDeps): Hono<{ Variables: { user: User; tok
           for (const e of d.tasks.allDeps()) {
             if (e.depends_on_id !== id) continue;
             const dep = d.tasks.get(e.task_id);
-            if (dep && dep.status === 'open') { d.tasks.setStatus(dep.id, 'blocked'); d.bus.publish({ type: 'task', taskId: dep.id, status: 'blocked' }); gated.push(dep.id); }
+            if (!dep) continue;
+            // Gate a direct dependent when it is still 'open', OR when this very phase's earlier review
+            // already gated it (an L3 self-heal re-close: the dependent is 'blocked' from the first round,
+            // not 'open', so a status check alone would miss it and the mission would strand). The
+            // `gatedby:<id>` marker records which review holds it, so the verdict releases only its own gate.
+            const gatedByThis = dep.labels.includes(`gatedby:${id}`);
+            if (dep.status === 'open' || gatedByThis) {
+              if (dep.status !== 'blocked') { d.tasks.setStatus(dep.id, 'blocked'); d.bus.publish({ type: 'task', taskId: dep.id, status: 'blocked' }); }
+              if (!gatedByThis) d.tasks.addLabel(dep.id, `gatedby:${id}`);
+              gated.push(dep.id);
+            }
           }
           // Nothing was gated → nothing downstream to hold back, so there is nothing to review. This is
           // the terminal/leaf phase: closing it also completes the mission, which drains the queue with a
@@ -766,7 +776,13 @@ export function createServer(d: ServerDeps): Hono<{ Variables: { user: User; tok
                   // change is never overridden.
                   for (const depId of gated) {
                     const dep = d.tasks.get(depId);
-                    if (dep && dep.status === 'blocked') { d.tasks.setStatus(dep.id, 'open'); d.bus.publish({ type: 'task', taskId: dep.id, status: 'open' }); }
+                    if (!dep) continue;
+                    d.tasks.removeLabel(depId, `gatedby:${id}`); // clear this review's hold…
+                    // …and re-open only when no OTHER review still gates the dependent (a DAG dependent
+                    // can be held by several predecessors at once). Re-check 'blocked' so a human's
+                    // manual change is never overridden.
+                    const stillGated = d.tasks.get(depId)!.labels.some((l) => l.startsWith('gatedby:'));
+                    if (!stillGated && dep.status === 'blocked') { d.tasks.setStatus(dep.id, 'open'); d.bus.publish({ type: 'task', taskId: dep.id, status: 'open' }); }
                   }
                   void d.engine.tick(mission.id).catch((e) => log.error('post-review tick failed', e));
                   return;

@@ -72,6 +72,7 @@ export const cs = {
     searchPlaceholder: 'Hledat úkoly…',
     filterAll: 'Vše',
     filterAllProjects: 'Všechny projekty',
+    filterProjectsAria: 'Filtr projektů',
     filterOpen: 'Otevřené',
     filterActive: 'Aktivní',
     filterBlocked: 'Blokované',

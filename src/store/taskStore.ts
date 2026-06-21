@@ -157,6 +157,22 @@ export class TaskStore {
     this.db.prepare('UPDATE tasks SET labels = ? WHERE id = ?').run(labels.join(','), id);
   }
 
+  /** Add a free-form label (idempotent — never duplicates). Used for ad-hoc markers such as the
+   *  review gate's `gatedby:<phaseId>`, which records exactly which phase's review holds a dependent
+   *  blocked so an approval releases only its own gate. */
+  addLabel(id: string, label: string): void {
+    const t = this.get(id);
+    if (!t || t.labels.includes(label)) return;
+    this.db.prepare('UPDATE tasks SET labels = ? WHERE id = ?').run([...t.labels, label].join(','), id);
+  }
+
+  /** Remove a label if present. Pair of `addLabel`. */
+  removeLabel(id: string, label: string): void {
+    const t = this.get(id);
+    if (!t || !t.labels.includes(label)) return;
+    this.db.prepare('UPDATE tasks SET labels = ? WHERE id = ?').run(t.labels.filter((l) => l !== label).join(','), id);
+  }
+
   /** Tag the task with the agent (tmux session) running it, so task ↔ session is linkable. */
   setAgent(id: string, name: string): void {
     const t = this.get(id);

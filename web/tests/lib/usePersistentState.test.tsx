@@ -31,4 +31,20 @@ describe('usePersistentState', () => {
     const { result } = renderHook(() => usePersistentState<V>('k', 'open', ALLOWED));
     expect(result.current[0]).toBe('open');
   });
+
+  it('accepts a predicate validator and restores any value it allows', () => {
+    // A predicate lets callers validate against a static SHAPE instead of an async-derived list — so a
+    // stored value (e.g. a project id) is restored on mount even before the project list has loaded.
+    localStorage.setItem('k', '2');
+    const ok = (v: string) => v === 'all' || /^\d+$/.test(v);
+    const { result } = renderHook(() => usePersistentState<string>('k', 'all', ok));
+    expect(result.current[0]).toBe('2');
+  });
+
+  it('rejects a stored value the predicate disallows (keeps fallback)', () => {
+    localStorage.setItem('k', 'bogus');
+    const ok = (v: string) => v === 'all' || /^\d+$/.test(v);
+    const { result } = renderHook(() => usePersistentState<string>('k', 'all', ok));
+    expect(result.current[0]).toBe('all');
+  });
 });

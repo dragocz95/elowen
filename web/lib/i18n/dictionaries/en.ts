@@ -72,6 +72,7 @@ export const en = {
     searchPlaceholder: 'Search tasks…',
     filterAll: 'All',
     filterAllProjects: 'All projects',
+    filterProjectsAria: 'Project filter',
     filterOpen: 'Open',
     filterActive: 'Active',
     filterBlocked: 'Blocked',

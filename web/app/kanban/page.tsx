@@ -3,7 +3,7 @@ export const dynamic = 'force-dynamic';
 import { useState } from 'react';
 import { KanbanSquare, Columns3, CalendarRange } from 'lucide-react';
 import type { Task } from '../../lib/types';
-import { useTasks, useAllDeps, useMissions, useProjects } from '../../lib/queries';
+import { useTasks, useAllDeps, useMissions } from '../../lib/queries';
 import { taskBlockers } from '../../lib/agentUtils';
 import { useSetTaskStatus, useUpdateTask } from '../../lib/mutations';
 import { KanbanBoard } from '../../modules/kanban/KanbanBoard';
@@ -18,11 +18,10 @@ import { ModuleShell } from '../../components/shell/ModuleShell';
 import { useToast } from '../../components/ui/Toast';
 import { useTranslation } from '../../lib/i18n';
 import { usePersistentState } from '../../lib/usePersistentState';
+import { useProjectFilter } from '../../lib/useProjectFilter';
 
 export default function KanbanPage() {
-  const projects = useProjects();
-  const [projectKey, setProjectKey] = usePersistentState<string>('orca.kanban.project', 'all', ['all', ...(projects.data ?? []).map((p) => String(p.id))]);
-  const selectedProject: number | 'all' = projectKey === 'all' ? 'all' : Number(projectKey);
+  const { selectedProject, setProject } = useProjectFilter('orca.kanban.project');
   const tasks = useTasks(selectedProject === 'all' ? undefined : selectedProject);
   const deps = useAllDeps();
   const missions = useMissions();
@@ -60,7 +59,7 @@ export default function KanbanPage() {
           ]}
         />
       </ModuleHeader>
-      <ProjectFilterPills value={selectedProject} onChange={(v) => setProjectKey(v === 'all' ? 'all' : String(v))} />
+      <ProjectFilterPills value={selectedProject} onChange={setProject} />
 
       {tasks.isLoading ? <LoadingState variant={view === 'board' ? 'kanban' : 'cards'} /> : tasks.isError ? <ErrorState message={t.common.daemonUnreachable} onRetry={() => tasks.refetch()} />
         : view === 'board' ? (

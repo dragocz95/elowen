@@ -1,5 +1,5 @@
 'use client';
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { QUERY_KEYS } from './queries';
 import { BASE } from './orcaClient';
@@ -13,7 +13,12 @@ export interface ReviewEvent { missionId: string; taskId: string; approve: boole
  *  toast. Kept as a callback so the data hook stays testable without a ToastProvider in scope. */
 export function useOrcaEvents(opts?: { onReview?: (e: ReviewEvent) => void }): void {
   const qc = useQueryClient();
-  const onReview = opts?.onReview;
+  // Hold the latest onReview in a ref so the SSE effect can call it WITHOUT listing it as a dependency.
+  // The caller (EventBridge) passes a fresh inline arrow on every render — a toast re-renders it — and
+  // depending on that identity would tear down and reopen the EventSource on every toast (dropping
+  // events mid-reconnect). The connection's lifecycle depends only on the query client.
+  const onReviewRef = useRef(opts?.onReview);
+  onReviewRef.current = opts?.onReview;
   useEffect(() => {
     const es = new EventSource(withToken(`${BASE}/events`));
 
@@ -66,7 +71,7 @@ export function useOrcaEvents(opts?: { onReview?: (e: ReviewEvent) => void }): v
       qc.invalidateQueries({ queryKey: ['mission'] });
       qc.invalidateQueries({ queryKey: QUERY_KEYS.missions });
       qc.invalidateQueries({ queryKey: ['activity'] });
-      if (data.taskId) onReview?.({ missionId: data.missionId, taskId: data.taskId, approve: !!data.approve, rationale: data.rationale ?? '' });
+      if (data.taskId) onReviewRef.current?.({ missionId: data.missionId, taskId: data.taskId, approve: !!data.approve, rationale: data.rationale ?? '' });
     };
 
     es.addEventListener('task', taskHandler);
@@ -76,5 +81,5 @@ export function useOrcaEvents(opts?: { onReview?: (e: ReviewEvent) => void }): v
     es.addEventListener('review', reviewHandler);
 
     return () => es.close();
-  }, [qc, onReview]);
+  }, [qc]);
 }

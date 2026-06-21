@@ -52,4 +52,16 @@ describe('KanbanPage project pills', () => {
     await waitFor(() => expect(lastTasksUrl).not.toContain('project_id='));
     await waitFor(() => expect(screen.getByText('Alpha')).toBeInTheDocument());
   });
+
+  it('conveys the active pill with aria-pressed (not colour alone) inside a labelled group', async () => {
+    const { wrapper: Wrapper } = createWrapper();
+    render(<Wrapper><ToastProvider><KanbanPage /></ToastProvider></Wrapper>);
+    // Pills live in an accessible group, and selection is exposed via aria-pressed for screen readers.
+    await waitFor(() => expect(screen.getByRole('group', { name: /project/i })).toBeInTheDocument());
+    expect(screen.getByRole('button', { name: /All projects/i })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByRole('button', { name: 'other' })).toHaveAttribute('aria-pressed', 'false');
+    fireEvent.click(screen.getByRole('button', { name: 'other' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'other' })).toHaveAttribute('aria-pressed', 'true'));
+    expect(screen.getByRole('button', { name: /All projects/i })).toHaveAttribute('aria-pressed', 'false');
+  });
 });

@@ -55,6 +55,30 @@ describe('review escalation + self-heal', () => {
     expect(t.deps.tasks.get(nextId)!.status).toBe('blocked'); // next phase still gated
   });
 
+  it('L3: re-closing a self-healed phase re-reviews it and an approval releases the gated dependent', async () => {
+    const t = await makeTestApp({});
+    await enableReview(t, t.token);
+    const { missionId, childId, nextId } = t.deps.seedMissionWithChain('L3');
+    // Round 1: close P1 → review enqueued, P2 gated (blocked), verdict rejects → P1 self-heals (re-opens).
+    const poll1 = t.deps.decisionQueue.next(missionId, 2000);
+    await closePhase(t, t.token, childId);
+    const req1 = await poll1;
+    t.deps.decisionQueue.resolve(missionId, req1!.id, { approve: false, confidence: 0, destructive: false, rationale: 'fix it' });
+    await new Promise((r) => setTimeout(r, 40));
+    expect(t.deps.tasks.get(childId)!.status).toBe('in_progress'); // re-spawned to fix
+    expect(t.deps.tasks.get(nextId)!.status).toBe('blocked'); // dependent still gated
+    // Round 2: the agent fixes and closes P1 again. The re-close MUST re-review (the gate can't go
+    // dark just because the dependent is already 'blocked' from round 1) — else the mission strands.
+    const poll2 = t.deps.decisionQueue.next(missionId, 2000);
+    await closePhase(t, t.token, childId, 'fixed now');
+    const req2 = await poll2;
+    expect(req2?.kind).toBe('review'); // the fixed phase is reviewed again, not silently accepted
+    // Approve the fix → the gated dependent is released and spawned (mission advances, no strand).
+    t.deps.decisionQueue.resolve(missionId, req2!.id, { approve: true, confidence: 0.9, destructive: false, rationale: 'good' });
+    await new Promise((r) => setTimeout(r, 40));
+    expect(t.deps.tasks.get(nextId)!.status).toBe('in_progress'); // released — the mission did NOT hang
+  });
+
   it('L3: after the self-heal budget (2) is spent, it escalates instead of re-spawning', async () => {
     const t = await makeTestApp({});
     await enableReview(t, t.token);
