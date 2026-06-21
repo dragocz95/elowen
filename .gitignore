@@ -1,6 +1,7 @@
 node_modules/
 dist/
 *.db
+*.db.bak*
 .env
 .next/
 *.log

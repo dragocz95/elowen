@@ -44,13 +44,14 @@ describe('Modal', () => {
 
   it('calls onClose when backdrop is clicked', () => {
     const onClose = vi.fn();
-    const { container } = render(
+    render(
       <Modal title="Test Modal" onClose={onClose}>
         <span>content</span>
       </Modal>,
       { wrapper: W },
     );
-    const overlay = container.firstChild as HTMLElement;
+    // The modal portals to <body>, so reach the backdrop from the document, not the render container.
+    const overlay = document.querySelector('.fixed.inset-0') as HTMLElement;
     fireEvent.click(overlay);
     expect(onClose).toHaveBeenCalledTimes(1);
   });

@@ -1,5 +1,6 @@
 'use client';
-import { type ReactNode, useEffect } from 'react';
+import { type ReactNode, useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import type { LucideIcon } from 'lucide-react';
 import { useTranslation } from '../../lib/i18n';
 
@@ -23,6 +24,12 @@ const SIZES = {
 
 export function Modal({ title, onClose, children, size = 'lg', icon: Icon, description }: ModalProps) {
   const { t } = useTranslation();
+  // Portal to <body> so the fixed overlay is positioned against the viewport, not trapped inside a
+  // transformed/clipping ancestor (a card with a transform turns `position: fixed` into "fixed to the
+  // card" → the modal renders inside the card and flickers with the card's hover state). Mounted-gated
+  // because createPortal needs `document`, which isn't there during SSR.
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose();
@@ -31,7 +38,8 @@ export function Modal({ title, onClose, children, size = 'lg', icon: Icon, descr
     return () => window.removeEventListener('keydown', handler);
   }, [onClose]);
 
-  return (
+  if (!mounted) return null;
+  return createPortal(
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
       onClick={onClose}
@@ -64,7 +72,8 @@ export function Modal({ title, onClose, children, size = 'lg', icon: Icon, descr
           {children}
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 
