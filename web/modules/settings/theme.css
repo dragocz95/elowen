@@ -1,5 +1,2 @@
 /* Per-module theme override: scoped to the settings module only. */
-[data-module="settings"] {
-  /* per-module token overrides go here — scoped to this module's shell */
-}
 [data-module="settings"] h1 { letter-spacing: 0.02em; }
