@@ -64,43 +64,6 @@ export function decisionPrompt(input: PromptContext): string {
   return `${header}\n${body}`;
 }
 
-export interface TaskContext {
-  title: string;
-  description: string;
-  labels: string[];
-  /** Guardrails the task tripped (schema, auth, payments, …) — why it reached the overseer. */
-  guardrails: string[];
-  autonomy: string;
-}
-
-export function taskDecisionPrompt(input: TaskContext): string {
-  const header = overseerHeader('mission. A task is about to be dispatched to an executor agent. It tripped one or more guardrails (sensitive areas)', 'Approve clearly-scoped, safe work. Escalate anything destructive, ambiguous, or that exceeds the task\'s stated intent.');
-  const body = render('decision-task', {
-    autonomy: input.autonomy,
-    guardrails: input.guardrails.join(', ') || 'none',
-    title: input.title,
-    details: input.description ? `\nDetails: ${input.description}` : '',
-    labels: input.labels.length ? `\nLabels: ${input.labels.join(', ')}` : '',
-  });
-  return `${header}\n${body}`;
-}
-
-/**
- * Decide whether to dispatch a guardrail-triggering task or escalate to a human.
- * Mirrors {@link decidePrompt}: the local destructive heuristic always forces escalate,
- * and any inference failure is conservative (no approval).
- */
-export async function decideTask(inf: InferenceClient, input: TaskContext): Promise<Decision> {
-  const localDestructive = isDestructive(`${input.title} ${input.description}`);
-  try {
-    const { text } = await inf.decide(taskDecisionPrompt(input));
-    const d = parseDecision(text);
-    return { ...d, destructive: d.destructive || localDestructive };
-  } catch {
-    return { approve: false, confidence: 0, destructive: localDestructive, rationale: 'overseer inference failed' };
-  }
-}
-
 export function parseDecision(text: string): Decision {
   const raw = extractJson(text, '{') as Partial<Decision>; // first balanced object; callers wrap in try/catch
   return {

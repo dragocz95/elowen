@@ -29,15 +29,6 @@ describe('Scheduler', () => {
     expect(await tmux.list()).toContain('orca-Nova');
   });
 
-  it('does not auto-launch a due autostart task whose title trips a guardrail (left open)', async () => {
-    const t0 = Date.parse('2026-06-17T12:00:00.000Z');
-    const { tasks, tmux, scheduler } = setup(t0 + 60_000);
-    tasks.create({ id: 'g', project_id: 1, title: 'delete the auth tokens table', scheduled_at: '2026-06-17T12:00:00.000Z', autostart: 1 });
-    await scheduler.tick();
-    expect(tasks.get('g')?.status).toBe('open'); // guardrail (auth/delete) → not fired unattended
-    expect(tasks.get('g')?.scheduled_at).toBe('2026-06-17T12:00:00.000Z'); // schedule kept, not consumed
-    expect(await tmux.list()).toHaveLength(0);
-  });
 
   it('does not launch a due task without autostart (due-date marker only)', async () => {
     const t0 = Date.parse('2026-06-17T12:00:00.000Z');

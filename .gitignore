@@ -4,6 +4,7 @@ dist/
 .env
 .next/
 *.log
+logs/
 .superpowers/
 docs/superpowers/
 data/

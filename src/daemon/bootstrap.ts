@@ -8,8 +8,7 @@ import { MissionEngine } from '../overseer/missionEngine.js';
 import { Scheduler } from '../overseer/scheduler.js';
 import { sweepFinishedSessions } from '../overseer/janitor.js';
 import { sweepStuckTasks, deadAgentTasks } from '../overseer/stuckDetector.js';
-import { decidePrompt, decideTask, isDestructive, gateVerdict } from '../overseer/decision.js';
-import type { TaskContext } from '../overseer/decision.js';
+import { decidePrompt, isDestructive, gateVerdict } from '../overseer/decision.js';
 import { PlanJobStore } from '../overseer/planJob.js';
 import { DecisionQueue } from '../overseer/decisionQueue.js';
 import { makePilot } from '../overseer/pilotAgent.js';
@@ -28,9 +27,23 @@ import { UserProjectStore } from '../store/userProjectStore.js';
 import { RealGitReader } from '../git/gitReader.js';
 import type { TmuxDriver } from '../tmux/types.js';
 import { uniqueName } from './uniqueName.js';
+import { logger } from '../shared/logger.js';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { randomBytes } from 'node:crypto';
+
+const log = logger('daemon');
+
+/** Compact, human-readable one-liner for a bus event — the daemon's activity trail in the log file. */
+function describeEvent(e: { type: string } & Record<string, unknown>): string {
+  switch (e.type) {
+    case 'task': return `task ${e.taskId} → ${e.status}`;
+    case 'mission': return `mission ${e.missionId} → ${e.state}`;
+    case 'plan': return `plan ${e.jobId} → ${e.status}${e.epicId ? ` (epic ${e.epicId})` : ''}${e.error ? ` — ${e.error}` : ''}`;
+    case 'signal': return `signal ${e.session} → ${(e.signal as { type?: string })?.type ?? '?'}`;
+    default: return e.type;
+  }
+}
 
 export interface BuildOpts {
   dbPath: string;
@@ -54,7 +67,7 @@ export function buildApp(opts: BuildOpts) {
       users.create(opts.bootstrap.username, opts.bootstrap.password);
     }
   } else if (users.count() === 0) {
-    console.warn('[orca] no users exist and no ORCA_BOOTSTRAP_USER/PASS set — login will be impossible until a user is seeded');
+    log.warn('no users exist and no ORCA_BOOTSTRAP_USER/PASS set — login will be impossible until a user is seeded');
   }
   const projects = new ProjectStore(db);
   const userProjects = new UserProjectStore(db);
@@ -62,16 +75,21 @@ export function buildApp(opts: BuildOpts) {
   // Give spawned agents a way to close their task: the orca CLI path + daemon URL + a service token.
   // The token is AGENT-SCOPED (not the admin's full token): a prompt-injected agent can only drive
   // its own worker/overseer/pilot verbs (close task, plan submit, overseer poll/decide, read-only
-  // listings) — never manage users, PUT /config, or register/delete projects (finding S51). Refreshed
-  // on every boot so a restart rotates it. Owned by the lowest-id user purely to satisfy the FK; the
-  // scope, not the owner, is what bounds it.
+  // listings) — never manage users, PUT /config, or register/delete projects (finding S51). Reused
+  // across restarts (see ensureAgentToken) so a restart doesn't 401 in-flight agents. Owned by the
+  // lowest-id user purely to satisfy the FK; the scope, not the owner, is what bounds it.
   const cliPath = join(dirname(fileURLToPath(import.meta.url)), '..', 'cli', 'index.js');
-  const serviceToken = users.count() > 0 ? users.refreshAgentToken(users.list()[0]!.id) : '';
+  // Reuse the existing agent token across restarts so a daemon restart doesn't 401 in-flight agents
+  // mid-task (they hold the token they were spawned with); only mints fresh when none is valid.
+  const serviceToken = users.count() > 0 ? users.ensureAgentToken(users.list()[0]!.id) : '';
   const orcaCli = { cliPath, url: `http://localhost:${process.env.ORCA_PORT ?? 4400}`, token: serviceToken };
   const spawn = new SpawnService({ tmux, agents, orca: orcaCli, providers: (program) => config.get().providers[program] });
   const bus = new EventBus();
   const events = new EventStore(db);
-  bus.subscribe((e) => { try { events.record(e); } catch (err) { console.error('[orca] event record failed', err); } });
+  bus.subscribe((e) => { try { events.record(e); } catch (err) { log.error('event record failed', err); } });
+  // Activity trail: mirror every bus event into the log file as a readable one-liner, so the log on
+  // its own tells the story of a run (spawns, advances, plans) without cross-referencing the DB.
+  bus.subscribe((e) => log.info(describeEvent(e)));
   // The overseer relay client, rebuilt per-call so a key set/cleared at runtime takes effect.
   // Overseer decisions use their own model when set, else fall back to the planner model.
   // Returns null when no API key is configured (callers then keep their pre-relay behaviour).
@@ -88,27 +106,9 @@ export function buildApp(opts: BuildOpts) {
   const pilot = makePilot({ spawn, config, projects, nameAgent: uniqueName, cliPath });
   const overseer = makeOverseer({ spawn, tmux, config, queue: decisionQueue, cliPath });
 
-  // A task/prompt decision resolves through ONE of two backends, chosen by config:
-  //   • overseerExec set → enqueue on the per-mission queue; the parked agent answers (or it times
-  //     out to a conservative escalate). The local destructive heuristic is carried at enqueue and
-  //     stays authoritative — never trusted from the agent.
-  //   • overseerExec empty → the existing relay path (or blanket approve when no key).
-  const decideTaskDep = async (missionId: string, input: TaskContext) => {
-    if (config.get().autopilot.overseerExec) {
-      const localDestructive = isDestructive(`${input.title} ${input.description ?? ''}`);
-      const v = await decisionQueue.enqueue(missionId, 'task', { ...input }, localDestructive);
-      return gateVerdict(v, { blockDestructive: true });
-    }
-    const inf = overseerClient();
-    if (!inf) return { approve: true, destructive: false };
-    const d = await decideTask(inf, input);
-    return gateVerdict(d, { blockDestructive: false });
-  };
-
   const engine = new MissionEngine({
     tasks, readiness, missions, spawn, tmux, bus, projects,
     fallback: { program: 'claude-code', model: 'sonnet' }, nameAgent: uniqueName, clock: new SystemClock(),
-    decideTask: decideTaskDep,
     overseer,
   });
   const scheduler = new Scheduler({ tasks, spawn, bus, projects, fallback: { program: 'claude-code', model: 'sonnet' }, nameAgent: uniqueName, clock: new SystemClock() });
@@ -139,8 +139,8 @@ export function buildApp(opts: BuildOpts) {
       return missions.active().find((m) => m.epic_id === t.parent_id)?.autonomy ?? null;
     },
     missionFor: missionIdForSession,
-    // Overseer decision for an auto-cleared prompt — same two-backend split as decideTaskDep: the
-    // parked agent (queue) when overseerExec is set and the prompt belongs to a mission, else relay.
+    // Overseer decision for an auto-cleared prompt: the parked agent (queue) when overseerExec is set
+    // and the prompt belongs to a mission, else the relay.
     decideApproval: async (input) => {
       if (input.missionId && config.get().autopilot.overseerExec) {
         const localDestructive = isDestructive(`${input.question} ${input.context}`);
@@ -156,13 +156,13 @@ export function buildApp(opts: BuildOpts) {
   // Setup mode: with no users yet the daemon is open so the onboarding page can run before login;
   // auth (in authMiddleware) re-engages automatically once the first admin is created.
   if (users.count() === 0) {
-    console.warn('[orca] SETUP MODE — no users yet; the API is open until the first admin is created via onboarding');
+    log.warn('SETUP MODE — no users yet; the API is open until the first admin is created via onboarding');
   }
   const avatarsDir = opts.dbPath === ':memory:' ? undefined : join(dirname(opts.dbPath), 'avatars');
   // Per-process secret for short-lived signed avatar URLs (finding W2) — keeps the long-lived session
   // token out of <img> src query strings. Rotates on restart; links live ~5 min, so that's harmless.
   const avatarSecret = randomBytes(32).toString('hex');
-  const app = createServer({ tasks, readiness, missions, engine, spawn, tmux, bus, events, project: opts.project, fallback: { program: 'claude-code', model: 'sonnet' }, clock: new SystemClock(), config, users, projects, userProjects, git, avatarsDir, avatarSecret, planJobs, decisionQueue, pilot });
+  const app = createServer({ tasks, readiness, missions, engine, spawn, tmux, bus, events, agents, project: opts.project, fallback: { program: 'claude-code', model: 'sonnet' }, clock: new SystemClock(), config, users, projects, userProjects, git, avatarsDir, avatarSecret, planJobs, decisionQueue, pilot });
 
   // Root-cause recovery: after a daemon crash/restart, tasks left 'in_progress' whose tmux
   // session is gone are zombies — revert them to 'open' so they can be picked up again. No grace
@@ -198,22 +198,34 @@ export function buildApp(opts: BuildOpts) {
     const clock = new SystemClock();
     // One-shot startup sweeps. Log on failure (e.g. tmux missing) so a silent rejection can't leave
     // zombies un-reverted — that would stall every mission until the next restart.
-    void reconcileZombies().catch((e) => console.error('[orca] reconcileZombies failed', e));
-    void reconcileOverseers().catch((e) => console.error('[orca] reconcileOverseers failed', e)); // re-park overseers for active missions / kill orphans
+    void reconcileZombies().catch((e) => log.error('reconcileZombies failed', e));
+    void reconcileOverseers().catch((e) => log.error('reconcileOverseers failed', e)); // re-park overseers for active missions / kill orphans
     const stopDeriver = deriver.start();
     const stopOverseer = clock.setInterval(() => { for (const m of missions.live()) void engine.tick(m.id); }, 90000);
     const stopScheduler = clock.setInterval(() => { void scheduler.tick(); }, 30000);
-    // Janitor: reap finished agents' zombie tmux sessions.
-    const stopJanitor = clock.setInterval(() => { void sweepFinishedSessions({ tmux, taskForSession }); }, 60000);
+    // Janitor: reap finished agents' zombie tmux sessions. Log what it reaps so the trail shows when
+    // a session was cleaned up (and that the janitor is alive).
+    const stopJanitor = clock.setInterval(() => {
+      void sweepFinishedSessions({ tmux, taskForSession })
+        .then((reaped) => { if (reaped.length) log.info(`janitor reaped ${reaped.length} finished session(s): ${reaped.join(', ')}`); })
+        .catch((e) => log.error('janitor sweep failed', e));
+    }, 60000);
     // Stuck detector: an agent that died without `orca close` leaves its task in_progress with a
     // dead session; revert it so the mission re-spawns (bounded), else escalate. 2-min grace
     // covers the spawn→session window; relaunch at most twice before escalating to a human.
-    const stopStuck = clock.setInterval(() => { void sweepStuckTasks({ tmux, tasks, bus, now: clock.now(), graceMs: 120000, maxRelaunch: 2 }); }, 60000);
+    const stopStuck = clock.setInterval(() => {
+      void sweepStuckTasks({ tmux, tasks, bus, now: clock.now(), graceMs: 120000, maxRelaunch: 2 })
+        .then(({ reverted, escalated }) => {
+          if (reverted.length) log.warn(`stuck detector reverted ${reverted.length} dead-agent task(s) to open: ${reverted.join(', ')}`);
+          if (escalated.length) log.error(`stuck detector escalated ${escalated.length} task(s) to blocked after max relaunches: ${escalated.join(', ')}`);
+        })
+        .catch((e) => log.error('stuck sweep failed', e));
+    }, 60000);
     // Overseer watchdog: a parked overseer can die mid-mission (TUI crash, OOM) and would otherwise
     // leave the mission running unsupervised until the next daemon restart. reconcileOverseers is
     // idempotent — it re-parks a missing overseer for each active mission and kills orphans — so run
     // it periodically, not just on boot.
-    const stopOverseerWatchdog = clock.setInterval(() => { void reconcileOverseers().catch((e) => console.error('[orca] overseer watchdog failed', e)); }, 60000);
+    const stopOverseerWatchdog = clock.setInterval(() => { void reconcileOverseers().catch((e) => log.error('overseer watchdog failed', e)); }, 60000);
     // Purge expired auth tokens hourly so the table can't grow unbounded over a long-running daemon.
     const purgeTokens = () => users?.purgeExpiredTokens(config.get().security.tokenTtlDays);
     purgeTokens();

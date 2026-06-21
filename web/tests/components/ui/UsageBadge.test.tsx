@@ -31,13 +31,22 @@ describe('UsageBadge', () => {
     expect(container.textContent).toContain('cache');
   });
 
-  it('renders the cache pill in the blue info tone', () => {
+  it('tones the pills: input=info (blue), cache=warning (yellow), output=danger (red)', () => {
     const { wrapper: Wrapper } = createWrapper();
     const { container } = render(<Wrapper><UsageBadge usage={{ input: 5000, output: 1000, cacheRead: 3000, cacheWrite: 0, total: 6000, costUsd: null }} /></Wrapper>);
-    // The inner label span reads exactly "cache"; its parent is the styled pill.
-    const label = Array.from(container.querySelectorAll('span')).find((el) => el.textContent === 'cache');
-    const pill = label?.parentElement;
-    expect(pill?.className).toContain('text-info');
+    const pillFor = (label: string) =>
+      Array.from(container.querySelectorAll('span')).find((el) => el.textContent === label)?.parentElement;
+    expect(pillFor('input')?.className).toContain('text-info');
+    expect(pillFor('cache')?.className).toContain('text-warning');
+    expect(pillFor('output')?.className).toContain('text-danger');
+  });
+
+  it('renders a green cost pill when cost is positive', () => {
+    const { wrapper: Wrapper } = createWrapper();
+    const { container } = render(<Wrapper><UsageBadge usage={{ input: 1000, output: 500, cacheRead: 0, cacheWrite: 0, total: 1500, costUsd: 0.0234 }} /></Wrapper>);
+    expect(container.textContent).toContain('$0.0234');
+    const pill = Array.from(container.querySelectorAll('span')).find((el) => el.textContent === 'cost')?.parentElement;
+    expect(pill?.className).toContain('text-approve');
   });
 
   it('renders an icon in every pill', () => {

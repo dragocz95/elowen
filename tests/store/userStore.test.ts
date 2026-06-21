@@ -63,6 +63,18 @@ describe('UserStore', () => {
     users.refreshAgentToken(u.id);
     expect(users.userForToken(full)?.id).toBe(u.id);
   });
+  it('ensureAgentToken reuses an existing valid agent token across restarts, mints when absent', () => {
+    const u = users.create('a', 'x');
+    const first = users.ensureAgentToken(u.id);
+    const second = users.ensureAgentToken(u.id);
+    expect(second).toBe(first);                                 // reused — a restart keeps in-flight agents valid
+    expect(users.principalForToken(first)?.scope).toBe('agent');
+    // After an explicit rotation the prior token is gone, so ensure mints a new (different) one.
+    users.refreshAgentToken(u.id);
+    const third = users.ensureAgentToken(u.id);
+    expect(third).not.toBe(first);
+    expect(users.principalForToken(third)?.scope).toBe('agent');
+  });
   it('delete removes the user, their tokens and project assignments in one go', () => {
     const db = openDb(':memory:');
     const store = new UserStore(db);

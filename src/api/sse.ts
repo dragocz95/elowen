@@ -1,6 +1,9 @@
 import type { SignalSink, DerivedSignal } from '../deriver/types.js';
 import type { PlanJobStatus } from '../overseer/planJob.js';
 import type { Phase } from '../overseer/planner.js';
+import { logger } from '../shared/logger.js';
+
+const log = logger('sse');
 
 export type OrcaEvent =
   | { type: 'signal'; session: string; signal: DerivedSignal }
@@ -15,7 +18,7 @@ export class EventBus implements SignalSink {
    *  the broadcast to the rest — otherwise one dead client silences live events for everyone. */
   publish(e: OrcaEvent): void {
     for (const fn of this.subs) {
-      try { fn(e); } catch (err) { console.error('[orca] event subscriber threw', err); }
+      try { fn(e); } catch (err) { log.error('event subscriber threw', err); }
     }
   }
   emit(session: string, signal: DerivedSignal): void { this.publish({ type: 'signal', session, signal }); }

@@ -243,7 +243,7 @@ export const en = {
     autonomyL2: 'L2 · Pilot',
     autonomyL2Desc: 'Runs work and clears agent permission prompts itself; escalates only the ambiguous.',
     autonomyL3: 'L3 · Auto',
-    autonomyL3Desc: 'Full autonomy within guardrails — runs and self-clears, escalating only when it truly cannot judge.',
+    autonomyL3Desc: 'Full autonomy — runs and self-clears, escalating only when it truly cannot judge.',
     spotlightCurrent: 'Current phase',
     spotlightNext: 'Next phase',
     spotlightNoNext: 'No further phases',

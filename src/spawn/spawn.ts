@@ -1,6 +1,9 @@
 import type { TmuxDriver } from '../tmux/types.js';
 import type { AgentStore } from '../store/agentStore.js';
 import { buildAgentCommand, type AgentSpec } from './commandBuilder.js';
+import { logger } from '../shared/logger.js';
+
+const log = logger('spawn');
 
 /** How a spawned agent reaches back to the daemon to close its task. */
 export interface OrcaCliConfig { cliPath: string; url: string; token: string }
@@ -31,6 +34,9 @@ export class SpawnService {
       rawPrompt: input.rawPrompt,
     });
     await this.d.tmux.spawn(session, { cwd: input.projectPath, command });
+    // Explicit spawn record: captures pilot/overseer launches too (they have no task row, so the
+    // bus 'task → in_progress' activity line never covers them).
+    log.info(`spawned ${session} (${input.spec.program}/${input.spec.model}) for task ${input.taskId}`);
     // OpenCode boots an interactive TUI that holds the --prompt in its composer without
     // submitting it; nudge Enter a few times after the UI mounts to send the task.
     // (Enter on an empty composer is a no-op, so whichever press lands first submits and

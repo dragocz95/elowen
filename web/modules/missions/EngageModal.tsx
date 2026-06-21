@@ -37,7 +37,7 @@ export function EngageModal({ onClose }: { onClose: () => void }) {
 
   const submit = () => {
     if (!epicId) return;
-    const input: EngageInput = { epicId, autonomy, maxSessions, clearedGuardrails: [] };
+    const input: EngageInput = { epicId, autonomy, maxSessions };
     engage.mutate(input, {
       onSuccess: () => { toast(t.missions.engaged.replace('{epicId}', epicId)); onClose(); },
       onError: (e) => toast(String(e), 'error'),

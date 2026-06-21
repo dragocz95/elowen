@@ -19,13 +19,39 @@ Authentication is optional. When enabled, the daemon uses bearer token auth:
 
 All other endpoints require authentication when `UserStore` is configured.
 
+### Token scope
+
+Tokens carry a `scope` field with two values:
+
+| Scope | Purpose | Restrictions |
+|---|---|---|
+| `full` | Interactive user session (login via browser/CLI) | Full access according to the user's role and project assignments |
+| `agent` | Spawned agent (worker, overseer, pilot) | Confined to task-close/plan-submit/overseer-decide verbs; project scope limited to the agent's live working set |
+
+**Agent-scoped tokens** are injected into every spawned agent via `ORCA_TOKEN`. They prevent a compromised agent from:
+- Creating users or admin operations
+- Accessing projects it isn't actively working in
+- Listing tokens or reading other agents' data
+
+The `agentProjects()` helper in `server.ts` resolves the agent's allowed project set at query time: workers may touch projects with an `in_progress` agent-labelled task, overseers may touch projects of every active mission's epic. The `agent` scope gate runs as a middleware — non-agent routes return 403 for agent-scoped tokens.
+
+Tokens are re-issued via `ensureAgentToken()` at daemon boot, preserving existing in-flight agent credentials across restarts. `refreshAgentToken()` provides an explicit rotation primitive.
+
 ### Token lifecycle
 
 ```
 issue → store in auth_tokens → validate on each request → revoke on logout
 ```
 
-Tokens are never returned after initial issuance. There is no token expiry — revocations are explicit via logout.
+The daemon configuration exposes `security.tokenTtlDays` (default: 30 days). Every token row records its creation timestamp; lookups filter out rows older than the TTL:
+
+```json
+{
+  "security": { "tokenTtlDays": 30 }
+}
+```
+
+Expired tokens are purged every hour by the **Token purge** loop (`purgeExpiredTokens` in `UserStore`). Tokens created before `now - tokenTtlDays` are deleted from `auth_tokens` and become invalid immediately.
 
 ### Web UI
 
@@ -93,10 +119,14 @@ Before consulting the LLM, a hardcoded regex checks for clearly destructive oper
 rm -rf | DROP TABLE | DELETE FROM | TRUNCATE |
 migrat | .env | secret | credential | password |
 private_key | force push | git reset --hard |
-git push -f | chmod 777 | curl | sh | bash
+git push -f | chmod 777 | curl | wget | sh | bash |
+python -e | node -e | perl -e | nc | ncat | bash -c |
+eval( | os.system | subprocess. | exec(
 ```
 
 If matched, `destructive` is set to true and the decision is forced to escalate regardless of LLM opinion.
+
+All decisions pass through the centralized `gateVerdict()` function in `decision.ts`, which applies the `MIN_CONFIDENCE` threshold (0.6) as a single source of truth — low-confidence approvals are automatically escalated.
 
 ### LLM fallback
 
@@ -115,7 +145,7 @@ Fail closed — always escalate when uncertain.
 | Operation | Restriction |
 |---|---|
 | List users | `GET /users` — any authenticated user (no sensitive data) |
-| Create user | `POST /users` — any authenticated user |
+| Create user | `POST /users` — admin only (except first user in setup mode) |
 | Edit user | `PATCH /users/:id` — admin only (toggle is_admin, allowed_execs) |
 | Delete user | `DELETE /users/:id` — cannot delete last user or admin |
 | User avatar | `GET /users/:id/avatar` — auth token as query param, returns image bytes |
@@ -174,6 +204,15 @@ The daemon enables CORS for all origins (`app.use('*', cors())`). In production,
 ```typescript
 app.use('*', cors({ origin: 'https://orca.example.com' }));
 ```
+
+### Overseer watchdog
+
+A parked overseer agent can die mid-mission (TUI crash, OOM, network blip), leaving the mission running unsupervised. The **overseer watchdog** (`reconcileOverseers()`) runs every 60 seconds:
+
+1. Re-parks a fresh overseer for every active mission whose agent session is missing
+2. Kills orphan overseer sessions (still running but mission no longer active)
+
+This is a separate loop from the mission engine tick (90s) — an overseer death is detected and repaired within one minute, independently of the agent's task progress. The watchdog also runs once at startup (`bootstrap.ts`) so no mission starts without its overseer.
 
 ### Rate limiting
 

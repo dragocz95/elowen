@@ -44,6 +44,13 @@ describe('ProjectPill', () => {
     expect(container.querySelector('span')).toBeNull();
   });
 
+  it('shows the lone project when `always` is set (session cards confirm the working dir)', async () => {
+    server.use(projectsHandler([TWO[0]]));
+    const { wrapper: W } = createWrapper();
+    const { container } = render(<W><ProjectPill projectId={1} always /></W>);
+    await waitFor(() => expect(container.textContent).toContain('orca'));
+  });
+
   it('renders nothing when no project id is given', () => {
     const { wrapper: W } = createWrapper();
     const { container } = render(<W><ProjectPill /></W>);

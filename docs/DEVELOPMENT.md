@@ -31,12 +31,12 @@ npm run build
 node dist/daemon/index.js
 ```
 
-Compiles TypeScript to `dist/` and copies `src/store/schema.sql` and `src/overseer/autopilotPrompt.md`. The CLI binary is at `dist/cli/index.js`.
+Compiles TypeScript to `dist/` and copies `src/store/schema.sql` and the entire `prompts/` directory to `dist/`. The CLI binary is at `dist/cli/index.js`.
 
 ### Run tests
 
 ```bash
-npm test            # single run (~232 daemon tests)
+npm test            # single run (395 daemon tests)
 npm run test:watch  # watch mode
 ```
 
@@ -61,7 +61,7 @@ The CLI auto-starts the daemon if it isn't running (set `ORCA_AUTOSTART=0` to di
 cd web
 npm install
 npm run dev     # Next.js dev server (turbopack)
-npm test        # Vitest (~236 web tests)
+npm test        # Vitest (270 web tests)
 npm run build   # Production build
 ```
 
@@ -121,7 +121,7 @@ User-facing strings in the web UI use the `useTranslation()` hook with CS and EN
 ```
 src/
 ├── api/              Hono REST router + SSE event bus
-│   ├── server.ts     Route definitions (~854 lines)
+│   ├── server.ts     Route definitions (~1102 lines)
 │   ├── auth.ts       Bearer token auth middleware
 │   └── sse.ts        EventBus implementation
 ├── cli/              CLI client
@@ -147,19 +147,24 @@ src/
 │   └── usage/            Token/cost reader per executor CLI
 ├── overseer/         Orchestration engine
 │   ├── missionEngine.ts  Tick loop, spawn logic
-│   ├── guardrails.ts     Regex-based safety checks
+
 │   ├── routing.ts        Task → agent routing
 │   ├── scheduler.ts      Scheduled task execution
-│   ├── decision.ts       LLM-based prompt decision engine
+│   ├── decision.ts       LLM-based prompt decision engine + gateVerdict
 │   ├── decisionQueue.ts  Per-mission FIFO of awaitable decisions
 │   ├── janitor.ts        Zombie session cleanup
 │   ├── planner.ts        AI goal decomposition
 │   ├── planJob.ts        Async planning job registry
 │   ├── pilotAgent.ts     Pilot agent spawn logic
 │   ├── overseerAgent.ts  Parked overseer agent lifecycle
-│   └── stuckDetector.ts  Stuck task detection + relaunch
+│   ├── stuckDetector.ts  Stuck task detection + relaunch
+│   ├── llmParse.ts       Shared LLM JSON extraction helper
+│   └── sessionInfo.ts    Session classification (agent/pilot/overseer)
+├── prompts/          Prompt template system
+│   └── index.ts      render(name, vars) + rawTemplate(name)
 ├── shared/           Utilities
-│   └── clock.ts      Clock interface (system + fake)
+│   ├── clock.ts      Clock interface (system + fake)
+│   └── execs.ts      Executor metadata (PROGRAM_PREFIXES, KNOWN_EXECS, etc.)
 ├── spawn/            Agent launcher
 │   ├── spawn.ts      SpawnService
 │   └── commandBuilder.ts  Agent command construction
@@ -181,10 +186,28 @@ src/
     ├── types.ts      TmuxDriver interface
     ├── driver.ts     RealTmuxDriver
     └── fakeDriver.ts In-memory fake for tests
-tests/                Mirrors src/ structure (~232 tests)
-web/                  Next.js frontend (~236 tests)
+prompts/              Prompt templates (planner, pilot, overseer, worker, decision)
+tests/                Mirrors src/ structure (395 tests)
+web/                  Next.js frontend (270 tests)
 docs/                 Documentation tree
 ```
+
+---
+
+## Timer loops
+
+Much of the daemon's orchestration runs on periodic intervals. Wired in
+`src/daemon/bootstrap.ts:startLoops()`:
+
+| Loop | Interval | Purpose |
+|---|---|---|
+| Overseer (engine tick) | 90 s | Tick active missions: pick ready tasks, check guardrails, spawn agents |
+| Scheduler | 30 s | Launch due scheduled/autostart tasks |
+| Janitor | 60 s | Kill zombie tmux sessions whose task is already closed/cancelled |
+| Stuck detector | 60 s | Revert tasks whose agent died without `orca close` (bounded, escalate after 2 relaunch attempts) |
+| Deriver | 5 s | Poll tmux panes, detect agent state, auto-approve known prompts via overseer gate |
+| Overseer watchdog | 60 s | Re-park missing overseer agents for active/stalled missions (crash recovery) |
+| Token purge | 1 h | Delete expired auth tokens (TTL from `config.security.tokenTtlDays`) |
 
 ---
 
@@ -245,12 +268,6 @@ Pass `phases: [{title, type?}]` — no LLM, no key needed. Synchronous 201 respo
 5. Wire any new service dependencies through `src/daemon/bootstrap.ts`
 6. Add tests in `tests/`
 
-## Adding a new guardrail
-
-1. Add the guardrail name to `GUARDRAILS` in `src/overseer/guardrails.ts`
-2. Add the regex pattern in `PATTERNS`
-3. No other changes needed — guardrails are picked up automatically
-
 ---
 
 ## Configuration
@@ -295,6 +312,7 @@ Stored in SQLite `settings` table. Managed via `GET/PUT /config` API:
     "notes": "",
     "prompt": "Decompose the following goal into ordered implementation phases..."
   },
+  "security": { "tokenTtlDays": 30 },
   "providers": {
     "claude-code": { "bin": "claude", "args": "" },
     "opencode": { "bin": "opencode", "args": "" },
@@ -326,25 +344,11 @@ user_projects (user_id, project_id)
 
 ---
 
-## Guardrails
-
-Tasks are blocked if their title or labels match sensitive patterns:
-
-| Guardrail | Pattern |
-|---|---|
-| `schema` | `schema` |
-| `migration` | `migrat*` |
-| `auth` | `auth`, `login`, `password`, `token` |
-| `payments` | `payment`, `billing`, `stripe`, `invoice` |
-| `destructive` | `delete`, `drop`, `truncate`, `rm -rf`, `destroy` |
-
-Blocked tasks are skipped by the mission engine unless the guardrail is cleared in the mission's `cleared_guardrails`. An overseer LLM gate can further deny dispatch.
-
 ---
 
 ## Agent routing
 
-Tasks specify executors via labels (`exec:<spec>`). Resolution (`src/overseer/routing.ts`):
+Tasks specify executors via labels (`exec:<spec>`). Resolution (`src/overseer/routing.ts`, importing executor metadata from `src/shared/execs.ts`):
 
 - `exec:sonnet` → `{ program: 'claude-code', model: 'sonnet' }`
 - `exec:opencode:<model>` → `{ program: 'opencode', model: '<model>' }`

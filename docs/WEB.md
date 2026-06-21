@@ -209,7 +209,8 @@ Thin fetch wrapper around the daemon API. Sets `Authorization: Bearer <token>` f
 | Hook | Key | Polling |
 |------|-----|---------|
 | `useTasks` | `['tasks']` | 5 s |
-| `useSessions` | `['sessions']` | 5 s |
+| `useSessions` | `['sessions']` | 5 s (selects names only) |
+| `useSessionInfos` | `['sessions']` | 5 s (full session info with daemon-classified identity) |
 | `useMissions` | `['missions']` | — |
 | `useHealth` | `['health']` | 10 s |
 | `useConfig` | `['config']` | — |
@@ -220,10 +221,14 @@ Thin fetch wrapper around the daemon API. Sets `Authorization: Bearer <token>` f
 | `useProjectGit` | `['project-git', id]` | — |
 | `useProjectFiles` | `['project-files', id]` | — |
 | `useProjectFile` | `['project-file', id, path]` | — |
+| `useProjectFileAtHead` | `['project-head', id, path]` | — |
 | `useProjectCommit` | `['project-commit', id, hash]` | — |
+| `useProjectCommitFileDiff` | `['project-commit-file', id, hash, path]` | — |
+| `useProjectChanged` | `['project-changed', id]` | — |
+| `useProjectChanges` | `['project-changes', id]` | — (enabled flag) |
 | `useMissionDetail` | `['mission', id]` | — |
 | `useAllDeps` | `['tasks', 'deps']` | — |
-| `useTaskUsage` | `['task-usage', taskId]` | 8 s (live) |
+| `useTaskUsage` | `['task-usage', taskId]` | 5 s (live), 5 min stale (finished) |
 | `useSessionSignals` | `['session-signals']` | SSE-populated |
 | `useHermesStatus` | `['hermes-status']` | — |
 | `useCliStatus` | `['cli-status']` | 30 s |
@@ -241,18 +246,22 @@ Mutations auto-invalidate related query caches on success:
 | `useUpdateTask` | tasks |
 | `useDeleteTask` | tasks |
 | `usePlanTask` | tasks, missions |
+| `useInsertPhases` | tasks, mission detail (epicId), missions |
 | `useCloseTask` | tasks |
 | `useSetTaskStatus` | tasks |
 | `useSetTaskExec` | tasks |
 | `useKillSession` | sessions |
+| `useSendInput` | — (sends keystrokes to session) |
 | `useEngage` / `usePauseMission` / `useResumeMission` / `useDisengage` | missions |
+| `useDeleteMission` | tasks, missions, mission detail |
+| `useCleanupAll` | all |
 | `useUpdateConfig` | config |
 | `useLogin` / `useLogout` | — |
 | `useCreateUser` / `useDeleteUser` / `useUpdateUser` | users, me |
 | `useUpdateMe` / `useUploadAvatar` | me |
-| `useCreateProject` / `useUpdateProject` | projects |
+| `useCreateProject` / `useUpdateProject` / `useRemoveProject` | projects |
 | `useAssignProject` | user-projects |
-| `useWriteProjectFile` | project-file, project-diff, project-git |
+| `useWriteProjectFile` | project-file, project-git |
 | `useNewProjectFile` / `useNewProjectDir` / `useRenameProjectEntry` / `useCopyProjectEntry` / `useDeleteProjectEntry` | project-files, project-git, project-changed |
 | `useHermesInstall` | hermes-status |
 
@@ -375,7 +384,7 @@ All animations respect `prefers-reduced-motion`.
 | Component | Purpose |
 |-----------|---------|
 | `Button` | Primary action with variant (accent, danger, default, ghost) and icon support |
-| `IconButton` | Icon-only button for table actions |
+| `IconButton` | Icon-only button for actions |
 | `Input` | Text input field |
 | `Select` | Dropdown select |
 | `Toggle` | Toggle switch |
@@ -383,15 +392,10 @@ All animations respect `prefers-reduced-motion`.
 | `Modal` | Modal dialog with title, close, backdrop, sizes (sm/md/lg/full) |
 | `ConfirmDialog` | Confirmation modal with cancel/confirm |
 | `Toast` | Toast notification (icon + message, auto-dismiss, rAF-based progress bar, hover pause) |
-| `Panel` | Content panel container |
 | `Section` | Section container with title, icon, optional action |
-| `StatCard` | Metric display card (label, value, hint, tone) |
 | `Badge` | Status badge with tone (`default` / `accent` / `muted` / `danger` / `success` / `warning`) |
-| `Table` | Data table with `THead`, `TR`, `TH`, `TD` |
-| `PageHeader` | Page title with optional count badge |
-| `ModuleHeader` | Sticky, compact toolbar — replaces PageHeader on operational pages |
+| `ModuleHeader` | Sticky, compact page toolbar with title, icon, optional actions |
 | `Field` | Form field wrapper with label and optional hint |
-| `Toolbar` | Action toolbar |
 | `SettingCard` | Settings section card |
 | `HelpTip` | Question-mark tooltip helper |
 | `ActionMenu` | Dropdown action menu with icon and tone support |
@@ -399,6 +403,7 @@ All animations respect `prefers-reduced-motion`.
 | `Checkbox` | Checkbox input |
 | `states` | `LoadingState`, `ErrorState` (with retry), `EmptyState` |
 | `ModelIcon` | Brand icon for a model, resolved from exec string via lobe-icons SVG set (`public/models/`) |
+| `ProjectPill` | Small muted pill showing project/repo slug (hidden in single-project workspaces by default) |
 | `AgentIdentityStrip` | Agent name, model, task ID in a compact strip |
 | `AgentStatusDot` | Colored live-dot with signal-aware state (working, needs_input, idle, stalled, stuck) |
 | `CapacityMeter` | `{running}/{max}` session usage bar |
@@ -410,7 +415,7 @@ All animations respect `prefers-reduced-motion`.
 | `ProgressRibbon` | Segmented colored bar for phase-level progress |
 | `TaskContextLine` | Executor + agent summary for a task |
 | `TaskUsageBadge` | Token/cost display for a task's agent run |
-| `UsageBadge` | Token/cost badge |
+| `UsageBadge` | Token/cost badge with IN / CACHE / OUT pills, hover breakdown with prices |
 
 ### Tone system
 
@@ -523,7 +528,7 @@ npm install
 npm run dev          # Next.js dev server (turbopack)
 npm run build        # production build (next build)
 npm start             # production server (next start -p 4500)
-npm test              # Vitest (~236 cases, RTL + MSW)
+npm test              # Vitest (~270 cases, RTL + MSW)
 npm run test:watch    # watch mode
 ```
 
@@ -533,7 +538,7 @@ Set `NEXT_PUBLIC_ORCA_URL` to the daemon URL (default: `http://localhost:4400`).
 
 ### Test setup
 
-Tests in `web/tests/` (~236 cases) use:
+Tests in `web/tests/` (~270 cases) use:
 - **Vitest** — test runner
 - **MSW** — API mocking
 - **Testing Library** — component rendering and interaction

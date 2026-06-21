@@ -11,6 +11,7 @@ import { streamSSE } from 'hono/streaming';
 import type { TaskStore } from '../store/taskStore.js';
 import type { Readiness } from '../store/readiness.js';
 import type { MissionStore } from '../store/missionStore.js';
+import type { AgentStore } from '../store/agentStore.js';
 import type { MissionEngine } from '../overseer/missionEngine.js';
 import type { SpawnService } from '../spawn/spawn.js';
 import type { TmuxDriver } from '../tmux/types.js';
@@ -35,6 +36,7 @@ import type { EventStore } from '../store/eventStore.js';
 import type { ProjectStore } from '../store/projectStore.js';
 import type { UserProjectStore } from '../store/userProjectStore.js';
 import type { GitReader } from '../git/gitReader.js';
+import { logger } from '../shared/logger.js';
 
 
 export interface ServerDeps {
@@ -48,6 +50,9 @@ export interface ServerDeps {
   events?: EventStore;
   projects?: ProjectStore;
   userProjects?: UserProjectStore;
+  /** Agent registry — records each spawned agent's project at spawn. Used to tag live sessions with
+   *  their project (the daemon's single source of truth for session→repo). */
+  agents?: AgentStore;
   git?: GitReader;
   /** Directory where uploaded user avatars are stored/served. Absent → avatar upload disabled. */
   avatarsDir?: string;
@@ -65,6 +70,7 @@ export interface ServerDeps {
 }
 
 export function createServer(d: ServerDeps): Hono<{ Variables: { user: User; token: string; tokenScope: TokenScope } }> {
+  const log = logger('api');
   // Core reasoning stores are optional in deps for back-compat with existing call sites/tests; the
   // daemon (bootstrap) injects shared instances. Default here so every route has a working store.
   const planJobs = d.planJobs ?? new PlanJobStore();
@@ -76,7 +82,7 @@ export function createServer(d: ServerDeps): Hono<{ Variables: { user: User; tok
   // 400 instead of leaking a default 500 with no useful body.
   app.onError((err, c) => {
     if (err instanceof SyntaxError) return c.json({ error: 'invalid JSON body' }, 400);
-    console.error('[orca] unhandled route error', err);
+    log.error('unhandled route error', err);
     return c.json({ error: 'internal error' }, 500);
   });
   app.get('/health', c => c.json({ ok: true }));
@@ -215,6 +221,11 @@ export function createServer(d: ServerDeps): Hono<{ Variables: { user: User; tok
     app.get('/users', (c) => c.json(users.list()));
     app.post('/users', async (c) => {
       const { username, password } = await c.req.json();
+      // Allow creation during setup (no users yet), otherwise admin only
+      if (users.count() > 0) {
+        const actor = c.get('user');
+        if (!actor || !users.isAdmin(actor.id)) return c.json({ error: 'forbidden' }, 403);
+      }
       try { return c.json(users.create(username, password), 201); }
       catch { return c.json({ error: 'username taken' }, 409); }
     });
@@ -434,7 +445,7 @@ export function createServer(d: ServerDeps): Hono<{ Variables: { user: User; tok
     job.epicId = epic.id;
     planJobs.setPhases(jobId, phases);
     if (job.engage) {
-      await d.engine.engage({ epicId: epic.id, autonomy: job.engage.autonomy, maxSessions: job.engage.maxSessions, clearedGuardrails: [] });
+      await d.engine.engage({ epicId: epic.id, autonomy: job.engage.autonomy, maxSessions: job.engage.maxSessions });
     } else {
       const missionId = `m-${epic.id}`;
       if (d.engine?.isActive(missionId)) await d.engine.tick(missionId); // replan into a live mission
@@ -686,7 +697,7 @@ export function createServer(d: ServerDeps): Hono<{ Variables: { user: User; tok
             })
             // Fire-and-forget review must never crash the daemon — the verdict apply (or the enqueue
             // itself) can throw, so swallow-and-log instead of leaving an unhandled rejection.
-            .catch((e) => console.error('[orca] review verdict apply failed', e));
+            .catch((e) => log.error('review verdict apply failed', e));
         }
       }
     }
@@ -752,7 +763,7 @@ export function createServer(d: ServerDeps): Hono<{ Variables: { user: User; tok
       job.epicId = epic.id;
       planJobs.setPhases(job.id, phases);
       let mission;
-      if (b.engage === true) mission = await d.engine.engage({ epicId: epic.id, autonomy: b.autonomy ?? 'L3', maxSessions: b.maxSessions ?? 1, clearedGuardrails: [] });
+      if (b.engage === true) mission = await d.engine.engage({ epicId: epic.id, autonomy: b.autonomy ?? 'L3', maxSessions: b.maxSessions ?? 1 });
       return c.json({ epic, phases: created.map((t) => d.tasks.get(t.id)), mission }, 201);
     }
 
@@ -903,7 +914,12 @@ export function createServer(d: ServerDeps): Hono<{ Variables: { user: User; tok
     return c.json(detectClis(ctx));
   });
 
-  app.get('/sessions', async c => c.json((await d.tmux.list()).filter((s) => s.startsWith('orca-')).map(classifySession)));
+  app.get('/sessions', async c => c.json((await d.tmux.list()).filter((s) => s.startsWith('orca-')).map((s) => {
+    const info = classifySession(s);
+    // Tag each session with its project from the agent store (every role upserts there at spawn), so
+    // clients can show the repo for workers, pilots and overseers alike — the name alone can't.
+    return { ...info, projectId: d.agents?.projectFor(s.slice('orca-'.length)) ?? undefined };
+  })));
   app.post('/sessions', async (c) => {
     const { taskId, exec } = await c.req.json() as { taskId: string; exec?: string };
     if (exec && !d.config.get().allowedExecs.includes(exec)) return c.json({ error: 'exec not allowed' }, 400);
@@ -1000,7 +1016,7 @@ export function createServer(d: ServerDeps): Hono<{ Variables: { user: User; tok
     return detail ? c.json(detail) : c.json({ error: 'mission not found' }, 404);
   });
   app.post('/missions', async c => {
-    const b = await c.req.json().catch(() => ({})) as { epicId?: string; autonomy?: string; maxSessions?: number; clearedGuardrails?: string[] };
+    const b = await c.req.json().catch(() => ({})) as { epicId?: string; autonomy?: string; maxSessions?: number };
     // Validate the epic up front: an absent/unknown epicId would otherwise create a zombie mission
     // (id `m-undefined`, no epic to tick) that reports `active` over SSE but never progresses.
     if (!b.epicId) return c.json({ error: 'epicId required' }, 400);
@@ -1012,7 +1028,6 @@ export function createServer(d: ServerDeps): Hono<{ Variables: { user: User; tok
       epicId: b.epicId,
       autonomy: b.autonomy ?? 'L3',
       maxSessions: typeof b.maxSessions === 'number' ? b.maxSessions : 1,
-      clearedGuardrails: Array.isArray(b.clearedGuardrails) ? b.clearedGuardrails : [],
     }), 201);
   });
   app.patch('/missions/:id', async (c) => {

@@ -105,10 +105,27 @@ it('POST /sessions launches an agent on a task and marks it in_progress', async 
   expect(t1.labels.some((l) => l.startsWith('agent:'))).toBe(true);
 });
 
+it('GET /sessions tags each live session with its project from the agent store', async () => {
+  const db = openDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (7,'orca','/o')").run();
+  const tasks = new TaskStore(db); tasks.create({ id: 'orca-1', project_id: 7, title: 'X' });
+  const tmux = new FakeTmuxDriver();
+  const agents = new AgentStore(db);
+  const app = createServer({
+    tasks, readiness: new Readiness(db), missions: new MissionStore(db), bus: new EventBus(),
+    engine: null as any, spawn: new SpawnService({ tmux, agents }), tmux, agents,
+    project: { id: 7, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' }, clock: new FakeClock(0), config: new ConfigStore(db),
+  });
+  await app.request('/sessions', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ taskId: 'orca-1', exec: 'deepseek/deepseek-v4-flash' }) });
+  const sessions = await (await app.request('/sessions')).json();
+  expect(sessions).toHaveLength(1);
+  // the daemon resolves the session's repo from the agent store (works for every role, not just workers)
+  expect(sessions[0].projectId).toBe(7);
+});
+
 it('PATCH /missions/:id pauses (drops from active) and resumes', async () => {
   const db = openDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'orca','/o')").run();
   const missions = new MissionStore(db);
-  missions.create({ id: 'm1', epic_id: 'e1', autonomy: 'L3', max_sessions: 1, cleared_guardrails: [] });
+  missions.create({ id: 'm1', epic_id: 'e1', autonomy: 'L3', max_sessions: 1 });
   const tmux = new FakeTmuxDriver();
   // pause is delegated to the engine (it stops running agents, then marks the mission paused).
   const engine = { tick: async () => {}, pause: async (id: string) => missions.setState(id, 'paused'), resume: async (id: string) => missions.setState(id, 'active') } as unknown as MissionEngine;
@@ -200,7 +217,7 @@ it('GET /missions/:id returns mission detail for a seeded mission', async () => 
     project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' }, clock: new FakeClock(0), config: new ConfigStore(db),
   });
   tasks.create({ id: 'epic', project_id: 1, title: 'E', type: 'epic' });
-  missions.create({ id: 'm1', epic_id: 'epic', autonomy: 'low', max_sessions: 1, cleared_guardrails: [] });
+  missions.create({ id: 'm1', epic_id: 'epic', autonomy: 'low', max_sessions: 1 });
   const res = await app.request('/missions/m1');
   expect(res.status).toBe(200);
   const body = await res.json() as { epic: { id: string }; progress: { total: number } };

@@ -5,11 +5,12 @@ import type { SpawnService } from '../spawn/spawn.js';
 import type { TmuxDriver } from '../tmux/types.js';
 import type { AgentSpec } from '../spawn/commandBuilder.js';
 import type { EventBus } from '../api/sse.js';
-import { detectGuardrails, isCleared } from './guardrails.js';
 import { resolveExecutor } from './routing.js';
-import type { TaskContext } from './decision.js';
 import type { OverseerController } from './overseerAgent.js';
 import type { Clock } from '../shared/clock.js';
+import { logger } from '../shared/logger.js';
+
+const log = logger('overseer');
 
 export interface MissionEngineDeps {
   tasks: TaskStore; readiness: Readiness; missions: MissionStore;
@@ -19,11 +20,6 @@ export interface MissionEngineDeps {
   projects: { get(id: number): { id: number; path: string } | null };
   fallback: AgentSpec;
   nameAgent: () => string; clock: Clock;
-  /** Optional overseer gate consulted before dispatching a guardrail-triggering task. When it
-   *  returns approve=false (or destructive), the task is escalated (set `blocked`) instead of
-   *  spawned. Absent (no relay configured) → unchanged boolean guardrail behaviour. The `missionId`
-   *  lets a queue-backed implementation route the decision to this mission's parked overseer agent. */
-  decideTask?: (missionId: string, input: TaskContext) => Promise<{ approve: boolean; destructive: boolean }>;
   /** Optional parked-overseer lifecycle. Started on engage, stopped on pause/disengage. Absent (or
    *  inert when no overseerExec is configured) → relay-fallback decisions, no parked agent. */
   overseer?: OverseerController;
@@ -32,12 +28,12 @@ export interface MissionEngineDeps {
 export class MissionEngine {
   constructor(private d: MissionEngineDeps) {}
 
-  async engage(input: { epicId: string; autonomy: string; maxSessions: number; clearedGuardrails: string[] }): Promise<Mission> {
+  async engage(input: { epicId: string; autonomy: string; maxSessions: number }): Promise<Mission> {
     const id = `m-${input.epicId}`;
-    const m = this.d.missions.create({ id, epic_id: input.epicId, autonomy: input.autonomy, max_sessions: input.maxSessions, cleared_guardrails: input.clearedGuardrails });
+    const m = this.d.missions.create({ id, epic_id: input.epicId, autonomy: input.autonomy, max_sessions: input.maxSessions });
     this.d.bus.publish({ type: 'mission', missionId: m.id, state: 'active' });
     // Park the per-mission overseer agent (no-op when no overseerExec is configured) so it is ready
-    // to answer decisions before the first guardrail task dispatches.
+    // to answer decisions (e.g. post-completion reviews) for this mission.
     const epic = this.d.tasks.get(input.epicId);
     const project = epic ? this.d.projects.get(epic.project_id) : null;
     if (project) await this.d.overseer?.start(id, project.id, project.path);
@@ -124,7 +120,7 @@ export class MissionEngine {
     if (!project) {
       // A live epic whose project row is gone is an invariant violation; surface it instead of
       // silently no-opping every tick forever (the mission would otherwise look active but stuck).
-      console.error(`[orca] mission ${id}: project ${epic.project_id} not found for epic ${epic.id} — cannot tick`);
+      log.error(`mission ${id}: project ${epic.project_id} not found for epic ${epic.id} — cannot tick`);
       return;
     }
 
@@ -140,21 +136,8 @@ export class MissionEngine {
     // several parallel missions no longer has each one walk every ready task in the project (#34/S15).
     for (const task of this.d.readiness.readyForEpic(m.epic_id)) {
       if (running >= m.max_sessions) break;
-      const triggered = detectGuardrails(`${task.title} ${task.labels.join(' ')}`);
-      const permitted = (m.autonomy === 'L3' || m.autonomy === 'L2') && isCleared(triggered, m.cleared_guardrails);
-      if (!permitted) continue;
-      // Overseer LLM gate: for guardrail-triggering tasks, consult the relay (when wired) before
-      // dispatch. A denial — or a destructive verdict — escalates the task to a human (set
-      // `blocked`, excluded from readiness) rather than spawning, halting the mission until a
-      // human intervenes. The boolean clearance above is necessary; this is an extra safety net.
-      if (triggered.length > 0 && this.d.decideTask) {
-        const verdict = await this.d.decideTask(m.id, { title: task.title, description: task.description, labels: task.labels, guardrails: triggered, autonomy: m.autonomy });
-        if (!verdict.approve || verdict.destructive) {
-          this.d.tasks.setStatus(task.id, 'blocked');
-          this.d.bus.publish({ type: 'task', taskId: task.id, status: 'blocked' });
-          continue;
-        }
-      }
+      // Autonomy gate: L0/L1 are manual (the human launches each task), L2/L3 dispatch autonomously.
+      if (m.autonomy !== 'L3' && m.autonomy !== 'L2') continue;
       const spec = resolveExecutor(task.labels, this.d.fallback);
       const named = task.labels.find((l) => l.startsWith('agent:'))?.slice('agent:'.length);
       const agentName = named || this.d.nameAgent();

@@ -1,7 +1,7 @@
 /** Structured identity of a live agent tmux session, derived from the daemon's own naming
  *  convention. The daemon owns how it names sessions, so classifying them here keeps the role a
  *  first-class fact the API exposes — clients never reverse-engineer meaning from the raw name. */
-export type SessionRole = 'overseer' | 'pilot' | 'agent';
+type SessionRole = 'overseer' | 'pilot' | 'agent';
 
 export interface SessionInfo {
   /** The tmux session id (`orca-…`) — the stable handle for all session operations. */
@@ -11,6 +11,9 @@ export interface SessionInfo {
   agent: string;
   /** The mission this overseer governs (role `overseer` only). */
   missionId?: string;
+  /** The project this session runs in. Not derivable from the name — the `/sessions` route fills it
+   *  from the agent store (which records every spawned agent's project), left undefined here. */
+  projectId?: number;
 }
 
 const ORCA = 'orca-';

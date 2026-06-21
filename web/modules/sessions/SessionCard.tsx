@@ -37,7 +37,10 @@ export function SessionCard({ info, onOpenTerminal, compact = false }: { info: S
   // pilot/overseer backend for the autopilot's own reasoning agents.
   const roleExec = info.role === 'overseer' ? config.data?.autopilot.overseerExec
     : info.role === 'pilot' ? config.data?.autopilot.pilotExec : undefined;
-  const modelExec = exec ?? (roleExec || undefined);
+  // `taskExec` returns '' (not undefined) when a session has no task — pilot/overseer agents. Use
+  // `||` so that empty worker exec falls through to the configured pilot/overseer backend, otherwise
+  // `?? ` keeps the '' and the model pill never renders for the autopilot's own reasoning agents.
+  const modelExec = exec || roleExec || undefined;
   // The epic an overseer governs — its title is the human name of the mission.
   const epic = info.role === 'overseer' && info.missionId
     ? (tasks.data ?? []).find((x) => x.id === missionEpicId(info.missionId!))
@@ -99,7 +102,7 @@ export function SessionCard({ info, onOpenTerminal, compact = false }: { info: S
       <div className="flex items-center justify-between gap-2">
         <SendInput onSend={(keys) => send.mutate({ name, keys }, { onSuccess: () => toast(t.sessions.sentTo.replace('{name}', name)), onError: (e) => toast(String(e), 'error') })} />
         <div className="flex items-center gap-1.5">
-          {task ? <ProjectPill projectId={task.project_id} /> : null}
+          <ProjectPill projectId={info.projectId ?? task?.project_id} always />
           {modelExec ? (
             <span className="inline-flex items-center gap-1 rounded-full border border-border bg-elevated px-2 py-0.5 text-[11px] text-text-muted" title={modelExec}>
               <ModelIcon name={modelExec} size={13} /><span className="max-w-28 truncate">{execModel(modelExec)}</span>

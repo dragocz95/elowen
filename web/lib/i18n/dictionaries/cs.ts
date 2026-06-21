@@ -243,7 +243,7 @@ export const cs = {
     autonomyL2: 'L2 · Pilotovat',
     autonomyL2Desc: 'Spouští práci a sám řeší prompt agenta; nejednoznačné předává vám.',
     autonomyL3: 'L3 · Automaticky',
-    autonomyL3Desc: 'Plná autonomie v rámci guardrailů — spouští a řeší sám, předává jen opravdu nejasné.',
+    autonomyL3Desc: 'Plná autonomie — spouští a řeší sám, předává jen opravdu nejasné.',
     spotlightCurrent: 'Aktuální fáze',
     spotlightNext: 'Další fáze',
     spotlightNoNext: 'Žádné další fáze',

@@ -22,7 +22,7 @@ describe('assembleMissionDetail', () => {
     tasks.create({ id: 'b', project_id: 1, title: 'B', parent_id: 'epic' });
     tasks.addDep('b', 'a');
     tasks.setStatus('a', 'closed');
-    missions.create({ id: 'm1', epic_id: 'epic', autonomy: 'low', max_sessions: 1, cleared_guardrails: [] });
+    missions.create({ id: 'm1', epic_id: 'epic', autonomy: 'low', max_sessions: 1 });
     const d = assembleMissionDetail({ missions, tasks }, 'm1')!;
     expect(d.epic?.id).toBe('epic');
     expect(d.tasks.map((t) => t.id).sort()).toEqual(['a', 'b']);

@@ -66,7 +66,7 @@ export async function makeTestApp(opts: TestAppOpts = {}) {
     const epic = tasks.create({ id: 'orca-ep', project_id: 1, title: 'Epic', type: 'epic', description: 'epic' });
     const child = tasks.create({ id: 'orca-c1', project_id: 1, title: 'Child phase', type: 'task', parent_id: epic.id, description: 'child' });
     tasks.setStatus(child.id, 'in_progress');
-    const mission = missions.create({ id: `m-${epic.id}`, epic_id: epic.id, autonomy: 'L3', max_sessions: 1, cleared_guardrails: [] });
+    const mission = missions.create({ id: `m-${epic.id}`, epic_id: epic.id, autonomy: 'L3', max_sessions: 1 });
     return { missionId: mission.id, epicId: epic.id, childId: child.id };
   };
 
@@ -77,7 +77,7 @@ export async function makeTestApp(opts: TestAppOpts = {}) {
     const p2 = tasks.create({ id: 'orca-p2', project_id: 1, title: 'Phase 2', type: 'task', parent_id: epic.id, description: 'p2' });
     tasks.addDep(p2.id, p1.id);
     tasks.setStatus(p1.id, 'in_progress');
-    const mission = missions.create({ id: `m-${epic.id}`, epic_id: epic.id, autonomy: 'L3', max_sessions: 1, cleared_guardrails: [] });
+    const mission = missions.create({ id: `m-${epic.id}`, epic_id: epic.id, autonomy: 'L3', max_sessions: 1 });
     return { missionId: mission.id, epicId: epic.id, childId: p1.id, nextId: p2.id };
   };
 

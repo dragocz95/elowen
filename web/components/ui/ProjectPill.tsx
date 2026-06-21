@@ -3,10 +3,12 @@ import { FolderGit2 } from 'lucide-react';
 import { useProjects } from '../../lib/queries';
 
 /** Small muted pill showing which project/repo a card belongs to. Hidden when the workspace has
- *  only one project (it's noise then) or when the id can't be resolved to a slug. */
-export function ProjectPill({ projectId }: { projectId?: number }) {
+ *  only one project (it's noise then) or when the id can't be resolved to a slug. Pass `always` to
+ *  show it even in a single-project workspace — on session cards "where is this agent working" is
+ *  meaningful confirmation, not noise. */
+export function ProjectPill({ projectId, always = false }: { projectId?: number; always?: boolean }) {
   const { data: projects } = useProjects();
-  if (projectId == null || !projects || projects.length < 2) return null;
+  if (projectId == null || !projects || (!always && projects.length < 2)) return null;
   const project = projects.find((p) => p.id === projectId);
   if (!project) return null;
   return (

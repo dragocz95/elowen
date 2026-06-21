@@ -1,28 +1,28 @@
 export type TaskStatus = 'open' | 'in_progress' | 'blocked' | 'closed' | 'cancelled';
 /** Outcome the daemon records when a task closes (`src/store/types.ts`). */
-export type TaskOutcome = 'ok' | 'fail';
+type TaskOutcome = 'ok' | 'fail';
 export interface Task { id: string; title: string; status: TaskStatus; type?: string; priority?: string; labels?: string[]; description?: string; scheduled_at?: string | null; autostart?: number; result_summary?: string | null; outcome?: TaskOutcome | null; closed_at?: string | null; created_at?: string; parent_id?: string | null; project_id?: number }
-export type SessionRole = 'overseer' | 'pilot' | 'agent';
+type SessionRole = 'overseer' | 'pilot' | 'agent';
 /** Structured identity of a live agent session, classified by the daemon (single source of truth).
  *  Clients render from `role` — they never parse meaning out of the raw session name. */
-export interface SessionInfo { name: string; role: SessionRole; agent: string; missionId?: string }
+export interface SessionInfo { name: string; role: SessionRole; agent: string; missionId?: string; projectId?: number }
 /** Autonomy level the overseer runs a mission at (`L0` manual … `L3` fully autonomous). */
-export type Autonomy = 'L0' | 'L1' | 'L2' | 'L3';
+type Autonomy = 'L0' | 'L1' | 'L2' | 'L3';
 /** Lifecycle state of a mission, set by the daemon (`src/overseer/missionEngine.ts`). */
-export type MissionState = 'active' | 'paused' | 'disengaged' | 'stalled';
+type MissionState = 'active' | 'paused' | 'disengaged' | 'stalled';
 export interface Mission { id: string; epic_id: string; autonomy: Autonomy; max_sessions: number; state: MissionState }
 export interface CreateTaskInput { title: string; type?: string; priority?: string; description?: string; scheduled_at?: string | null; autostart?: number; deps?: string[] }
 export interface UpdateTaskInput { title?: string; type?: string; priority?: string; description?: string; scheduled_at?: string | null; autostart?: number; deps?: string[] }
 export interface PlanInput { goal: string; exec?: string; autonomy?: string; maxSessions?: number; engage?: boolean; phases?: { title: string; type?: string }[] }
 export interface PlanResult { epic: Task; phases: Task[]; mission?: Mission }
-export interface PlanPhase { title: string; type: string; agent?: string; details?: string }
-export type PlanJobStatus = 'planning' | 'done' | 'failed';
+interface PlanPhase { title: string; type: string; agent?: string; details?: string }
+type PlanJobStatus = 'planning' | 'done' | 'failed';
 export interface PlanJob { id: string; epicId: string | null; goal: string; status: PlanJobStatus; phases: PlanPhase[]; error?: string }
 /** Autopilot planning is async: the endpoint returns a job to poll. Manual mode still returns a PlanResult. */
 export type PlanSubmitResult = { jobId: string; epicId?: string } | PlanResult;
 export interface InsertPhasesInput { phases?: { title: string; type?: string }[]; goal?: string; exec?: string; prompt?: string }
 export interface InsertPhasesResult { epic: Task; phases: Task[] }
-export interface EngageInput { epicId: string; autonomy: string; maxSessions: number; clearedGuardrails: string[] }
+export interface EngageInput { epicId: string; autonomy: string; maxSessions: number }
 export type DerivedSignal = { type: 'working' } | { type: 'complete' } | { type: 'needs_input'; question: string };
 export interface OrcaConfig {
   allowedExecs: string[];
@@ -43,7 +43,7 @@ export interface ConfigPatch {
   security?: { tokenTtlDays?: number };
 }
 export interface MissionTask { id: string; title: string; status: TaskStatus; type: string; parent_id: string | null; labels?: string[]; outcome?: TaskOutcome | null }
-export interface MissionProgress { total: number; open: number; inProgress: number; blocked: number; closed: number; cancelled: number }
+interface MissionProgress { total: number; open: number; inProgress: number; blocked: number; closed: number; cancelled: number }
 export interface MissionDeps { taskId: string; dependsOnId: string }
 export interface MissionDetail {
   mission: Mission;
@@ -58,9 +58,9 @@ export interface ProfilePatch { name?: string; email?: string; default_exec?: st
 export interface AuthResult { token: string; user: User }
 export interface ActivityEvent { id: number; ts: string; type: string; target: string; detail: string }
 export interface Project { id: number; slug: string; path: string; notes: string }
-export interface GitStatus { branch: string; ahead: number; behind: number; dirty: number; clean: boolean }
-export interface GitBranch { name: string; current: boolean }
-export interface GitCommit { hash: string; subject: string; author: string; relative: string }
+interface GitStatus { branch: string; ahead: number; behind: number; dirty: number; clean: boolean }
+interface GitBranch { name: string; current: boolean }
+interface GitCommit { hash: string; subject: string; author: string; relative: string }
 export interface ProjectGit { isRepo: boolean; status: GitStatus | null; branches: GitBranch[]; commits: GitCommit[] }
 
 export interface HermesStatus {
@@ -88,7 +88,7 @@ export interface CliStatus {
   error: string | null;
 }
 
-export interface FreshInstallInfo {
+interface FreshInstallInfo {
   noConfigPersisted: boolean;
   noApiKey: boolean;
   noCustomSetup: boolean;

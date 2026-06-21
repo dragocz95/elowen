@@ -159,6 +159,11 @@ SSE requires `proxy_buffering off` and long `proxy_read_timeout`.
 | `ORCA_ALLOW_OPEN` | — | Allow open (no auth) mode when set to `1` |
 | `NEXT_PUBLIC_ORCA_URL` | `http://localhost:4400` | Daemon URL for web UI |
 
+### Runtime config
+
+Additional security settings are managed via `PUT /config`:
+- `security.tokenTtlDays` — auth token expiry in days (default 30); expired tokens are purged every hour
+
 ## Database
 
 SQLite with WAL mode. Default path is `~/.config/orca/orca.db` (configurable via `ORCA_DB`).

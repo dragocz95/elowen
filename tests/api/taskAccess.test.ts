@@ -27,7 +27,7 @@ function setup() {
   tasks.create({ id: 't2', project_id: 2, title: 'foreign task' });
   tasks.create({ id: 'epic2', project_id: 2, title: 'E2', type: 'epic' });
   const missions = new MissionStore(db);
-  missions.create({ id: 'm2', epic_id: 'epic2', autonomy: 'L3', max_sessions: 1, cleared_guardrails: [] });
+  missions.create({ id: 'm2', epic_id: 'epic2', autonomy: 'L3', max_sessions: 1 });
   const app = createServer({
     tasks, readiness: new Readiness(db), missions, bus: new EventBus(),
     engine: null as never, spawn: null as never, tmux: null as never,

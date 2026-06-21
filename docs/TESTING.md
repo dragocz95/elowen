@@ -2,7 +2,7 @@
 
 ## Running tests
 
-### Daemon tests (~232 cases)
+### Daemon tests (~395 cases)
 
 ```bash
 # All tests
@@ -18,7 +18,7 @@ npx vitest tests/store/taskStore.test.ts
 npx vitest --coverage
 ```
 
-### Web frontend tests (~236 cases)
+### Web frontend tests (~270 cases)
 
 ```bash
 cd web

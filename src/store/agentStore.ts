@@ -17,4 +17,11 @@ export class AgentStore {
     const r = this.db.prepare('SELECT program FROM agents WHERE name=? COLLATE NOCASE ORDER BY last_active_ts DESC LIMIT 1').get(name) as { program?: string } | undefined;
     return r?.program?.toLowerCase() ?? null;
   }
+
+  /** The project a named agent most recently ran in — the single source of truth for which repo a
+   *  live session belongs to, across every role (worker / pilot / overseer all upsert here at spawn). */
+  projectFor(name: string): number | null {
+    const r = this.db.prepare('SELECT project_id FROM agents WHERE name=? COLLATE NOCASE ORDER BY last_active_ts DESC LIMIT 1').get(name) as { project_id?: number } | undefined;
+    return r?.project_id ?? null;
+  }
 }

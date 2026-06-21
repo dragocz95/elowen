@@ -4,6 +4,9 @@ import type { TaskStore } from '../store/taskStore.js';
 import type { Clock } from '../shared/clock.js';
 import { detectAgentPrompt } from './shellPatterns.js';
 import type { SignalSink, DerivedSignal } from './types.js';
+import { logger } from '../shared/logger.js';
+
+const log = logger('deriver');
 
 const PANE_TAIL = 60;
 function hash(s: string) { let h = 0; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0; return (h >>> 0).toString(36); }
@@ -42,7 +45,7 @@ export class Deriver {
       // Isolate each session: a vanished session (capturePane) or a relay throw (decideApproval) must
       // not break the 5s sweep for the rest. Robustness of a periodic loop trumps a single iteration.
       try { await this.tickSession(session); }
-      catch (e) { console.error('[orca] deriver tick failed for', session, e); }
+      catch (e) { log.error(`tick failed for ${session}`, e); }
     }
   }
 
@@ -83,7 +86,7 @@ export class Deriver {
           ? await this.d.decideApproval({ question: prompt.question, context: prompt.context, options: prompt.options, autonomy: autonomy ?? 'L3', missionId: this.d.missionFor?.(session) ?? null })
           : { approve: true, destructive: false };
       } catch (e) {
-        console.error('[orca] overseer decision failed, escalating', e);
+        log.error('overseer decision failed, escalating', e);
         decision = { approve: false, destructive: false };
       }
       if (decision.approve && !decision.destructive) {

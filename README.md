@@ -52,7 +52,7 @@ The web UI ships a **Monaco-based code editor** in the Projects page — browse,
 | Frontend | Next.js 16, React 19, Tailwind CSS 4, i18n (CS/EN), Monaco editor |
 | Integration | Hermes agent plugin (Python, orca toolset) |
 | Tests | Vitest |
-| CLI | Native Node CLI (`bin/orca`) |
+| CLI | Native Node CLI (`dist/cli/index.js`) |
 
 ## Project structure
 
@@ -66,13 +66,15 @@ src/
 ├── inference/    # LLM inference relay (RelayClient + FakeInference)
 ├── integrations/ # External integrations (Hermes, CLI detection, project files, usage)
 ├── overseer/     # Mission engine, guardrails, routing, scheduler, planner,
-│                 #   stuck detector, decision queue, pilot/overseer agents
-├── shared/       # Utilities (Clock abstraction)
+│                 #   stuck detector, decision queue, pilot/overseer agents,
+│                 #   llmParse, sessionInfo
+├── prompts/      # Prompt template system (render + rawTemplate)
+├── shared/       # Utilities (Clock abstraction, executor metadata)
 ├── spawn/        # Agent launcher (tmux)
 ├── store/        # SQLite data layer (tasks, missions, agents, users, projects, events)
 └── tmux/         # tmux driver (real + fake)
-tests/            # Mirrors src/ structure (~232 tests)
-web/              # Next.js frontend (~236 tests)
+tests/            # Mirrors src/ structure (~395 tests)
+web/              # Next.js frontend (~270 tests)
 docs/             # Documentation tree
 ```
 
@@ -223,7 +225,7 @@ cd web && npm install && npm run dev
 | Document | Contents |
 |---|---|---|
 | [docs/index.md](docs/index.md) | Entry point with full index and cross-links |
-| [CONCEPTS.md](docs/CONCEPTS.md) | Domain model — tasks, missions, autonomy, guardrails, deriver, routing |
+| [CONCEPTS.md](docs/CONCEPTS.md) | Domain model — tasks, missions, autonomy, guardrails, overseer, deriver, routing |
 | [API.md](docs/API.md) | Full REST API reference with request/response examples |
 | [ARCHITECTURE.md](docs/ARCHITECTURE.md) | Module descriptions, data flow, guardrails, autonomy levels |
 | [DEVELOPMENT.md](docs/DEVELOPMENT.md) | Setup, conventions, project structure, configuration |

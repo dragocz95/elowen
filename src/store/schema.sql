@@ -20,7 +20,7 @@ CREATE TABLE IF NOT EXISTS agents (
 );
 CREATE TABLE IF NOT EXISTS missions (
   id TEXT PRIMARY KEY, epic_id TEXT NOT NULL, autonomy TEXT NOT NULL,
-  max_sessions INTEGER NOT NULL DEFAULT 1, cleared_guardrails TEXT NOT NULL DEFAULT '',
+  max_sessions INTEGER NOT NULL DEFAULT 1,
   state TEXT NOT NULL DEFAULT 'active', started_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE TABLE IF NOT EXISTS settings (id INTEGER PRIMARY KEY CHECK (id = 1), data TEXT NOT NULL);

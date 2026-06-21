@@ -92,14 +92,14 @@ The tick loop (every 90 seconds, one tick per active mission):
 
 | Level | Name | Behavior |
 |---|---|---|
-| L0 | Manual | Engine never auto-spawns; guardrail-triggering tasks blocked. Prompts escalate to human. |
+| L0 | Manual | Engine never auto-spawns; guardrail-triggering tasks skipped (remain `open`). Prompts escalate to human. |
 | L1 | Semi-autonomous | Same as L0 — no auto-spawn by the engine |
-| L2 | Autonomous | Engine auto-spawns; guardrail-triggering tasks permitted if in `cleared_guardrails`. Prompts auto-cleared for L2/L3 (overseer decides whether to approve or escalate). |
+| L2 | Autonomous | Engine auto-spawns; guardrail-triggering tasks permitted if in `cleared_guardrails`. Prompts auto-processed via overseer gate. |
 | L3 | Full autonomy | Same as L2 — full auto-spawn, cleared guardrails executed, prompts auto-processed |
 
 In the current implementation:
-- **L0–L1**: Guardrail-triggering tasks are blocked regardless of `cleared_guardrails`; auto-spawn is disabled.
-- **L2–L3**: Guardrail-triggering tasks are permitted if the guardrail is in `cleared_guardrails`; the engine auto-spawns them. The deriver auto-clears permission prompts (via LLM overseer or parked agent), escalating only destructive/uncertain ones.
+- **L0–L1**: The engine never auto-spawns. Guardrail-triggering tasks match no `permitted` check (the code requires L2/L3), so they are skipped — the task stays `open` and can be launched manually. The overseer decision gate (when configured) is never reached for these tasks because the guardrail check short-circuits first. The deriver escalates all detected permission prompts to human (`needs_input`), never auto-approving.
+- **L2–L3**: The engine auto-spawns ready tasks. Guardrail-triggering tasks are permitted if every triggered guardrail is in `cleared_guardrails`. The overseer decision gate (relay LLM or parked agent) can still deny dispatch — a denial or destructive verdict sets the task `blocked`. The deriver auto-clears permission prompts via the same overseer gate, escalating only destructive/uncertain ones.
 
 ---
 
@@ -109,7 +109,7 @@ Guardrails are safety patterns that prevent agents from performing sensitive ope
 
 ### Detection
 
-`guardrails.ts` scans task title + labels against regex patterns:
+Guardrails scan task title + labels against regex patterns:
 
 ```typescript
 schema:      /\bschema\b/i
@@ -119,7 +119,7 @@ payments:    /\b(payment|billing|stripe|invoice)\b/i
 destructive: /\b(delete|drop|truncate|rm -rf|destroy)\b/i
 ```
 
-A task matching any pattern triggers that guardrail.
+A task matching any pattern triggers that guardrail. The guardrail patterns are intentionally narrower than the decision engine's local DESTRUCTIVE regex (see Overseeer section) — guardrails gate task dispatch, while the decision engine's heuristic gate catches deeper dangerous operations in prompts.
 
 ### Clearance
 
@@ -146,6 +146,8 @@ Two decision paths, controlled by `config.autopilot.overseerExec`:
 
 `overseerExec` is empty. Decisions go through `RelayClient` using `config.autopilot.overseerModel` (falls back to planner model). Prompt and task approvals are LLM-based; when the LLM is unavailable or no API key is set, responses default to `{approve: true}` (blanket approve).
 
+All decisions pass through the centralized `gateVerdict()` function in `decision.ts`, which applies the `MIN_CONFIDENCE` (0.6) threshold as a single source of truth — callers no longer re-implement the comparison.
+
 ### Agent path (parked overseer)
 
 `overseerExec` is set (e.g., `sonnet`). On mission engage, one **Overseer agent** is parked per active mission. It runs a long-poll loop:
@@ -154,7 +156,7 @@ Two decision paths, controlled by `config.autopilot.overseerExec`:
 3. `orca overseer decide --id <id> --approve --confidence 0.85 --rationale "..."` — submits the verdict
 4. Back to step 1
 
-The local destructive heuristic (computed at enqueue time) is **always authoritative** — the agent cannot override it. A timeout (120s) or mission disengage conservatively escalates all pending decisions.
+The local destructive heuristic (computed at enqueue time) is **always authoritative** — the agent cannot override it. A timeout (120s) or mission disengage conservatively escalates all pending decisions. The heuristic covers: rm -rf, DROP TABLE, DELETE FROM, TRUNCATE, migration, .env, secret/credential/password/private_key, force push, git reset --hard, chmod 777, curl/wget pipes to shell, python/node/perl -e/-c, netcat, bash -c, eval(), os.system, subprocess, and exec().
 
 The decision queue (`DecisionQueue`) is a per-mission FIFO. Three kinds of decisions flow through:
 
@@ -176,6 +178,8 @@ When `config.autopilot.pilotExec` is set, `POST /tasks/plan` spawns a **Pilot** 
 4. Stops — it must not implement anything or spawn agents
 
 The PlanJobStore tracks the async planning job. The daemon supports two backends transparently: the relay path completes synchronously (the response waits for the LLM), while the agent path returns `202 Accepted` with a `jobId` that the web UI polls via `GET /plan/:jobId`.
+
+The Pilot prompt is stored in `prompts/pilot.md` and rendered at runtime via `src/prompts/index.ts` with `{{goal}}` and `{{projectNotes}}` substitution.
 
 ---
 
@@ -220,9 +224,9 @@ The `POST /tasks/plan` endpoint decomposes a high-level goal into ordered implem
 
 ### Relay backend (default)
 
-1. **Prompt construction** — `planPrompt(goal, guidance)` builds a system prompt asking for 3–7 JSON phases
+1. **Prompt construction** — the template from `prompts/planner.md` (or user-saved custom via `PUT /config`) is rendered with `{{goal}}` and `{{project}}` substitution
 2. **LLM call** — `decompose(inf, goal, template, opts)` sends the prompt via the configured autopilot inference client
-3. **Parse** — `parsePhases(text)` extracts the JSON array, validates each phase has a title and valid type
+3. **Parse** — `parsePhases(text)` extracts the JSON array via `extractJson()` (from `src/overseer/llmParse.ts`), validates each phase has a title and valid type
 4. **Task creation** — `persistPlan(job, deps)` creates an epic + chained child tasks with sequential dependencies
 5. **Optional engage** — if `engage: true`, creates and starts a mission immediately
 
@@ -311,6 +315,8 @@ Tasks specify which AI agent should execute them via the `exec:<spec>` label.
 - `exec:deepseek/deepseek-v4-flash` → `{ program: 'opencode', model: 'deepseek/deepseek-v4-flash' }` (contains `/`)
 - No label → uses the configured fallback (default: `claude-code` / `sonnet`)
 
+The executor metadata (program prefixes, default binaries, known execs, well-formedness rules) is centralized in `src/shared/execs.ts`. Both `overseer/routing.ts` (resolution) and `store/configStore.ts` (validation) import from there — adding or changing an executor is a one-line edit in a single file.
+
 ### Agent commands
 
 | Program | Command pattern |
@@ -339,15 +345,19 @@ tick():
     resolve agent program (from agent store)
     resolve associated task (via agent:<name> label)
     if task closed → emit 'complete'
+    if task status not in_progress/open → skip
     capture pane (last 60 lines)
-    run detectAgentPrompt(program, output)
-    if known prompt and auto-clears (L2/L3/mission-less):
-      consult overseer → approve? send accept keys + emit 'working'
-      escalate? emit 'needs_input' with question/options
-    elif known prompt and L0/L1:
-      emit 'needs_input'
+    detectAgentPrompt(program, output)
+    if prompt detected and L2/L3/mission-less:
+      autoAccept (workspace-trust) → send accept keys, emit 'working'
+      else → consult overseer → approve? send accept keys + emit 'working'
+              escalate? emit 'needs_input' with question/options
+    elif prompt detected and L0/L1:
+      emit 'needs_input' (always escalate)
     else → emit 'working'
 ```
+
+Each detected prompt is hashed to avoid re-emitting on consecutive polls.
 
 ### Detected states
 
@@ -359,10 +369,13 @@ tick():
 
 ### Prompt detection
 
-Currently implemented for **OpenCode** permission prompts:
-- Detects "Permission required" title + accept/reject options
-- For L2/L3/mission-less sessions: auto-sends accept keys after overseer approval
-- For L0/L1: always escalates to human
+Implemented for all three supported agent programs (`shellPatterns.ts`):
+
+- **OpenCode** — "Permission required" dialog with Allow/Reject options
+- **Claude Code** — workspace-trust gate on first folder entry (auto-accepted directly, no overseer round-trip) and "Do you want to proceed?" permission gate
+- **Codex** — "Allow command?" / "Approve this command?" approval gate
+
+For L2/L3 missions and mission-less sessions: environmental gates (claude workspace-trust) are auto-accepted; other prompts go through the overseer gate — accept keys are sent on approval, else escalate to human. For L0/L1: all prompts escalate to human.
 
 ### Deduplication
 
@@ -404,6 +417,39 @@ interface SessionInfo { name: string; role: SessionRole; agent: string; missionI
 | `orca-<name>` | `agent` | Worker agent on a task |
 
 `GET /sessions` returns classified sessions — clients see structured role + agent name + optional missionId, never parse the raw tmux name.
+
+## Prompt template system
+
+All LLM prompts are managed as Markdown templates in the repo-root `prompts/` directory and rendered via `src/prompts/index.ts`:
+
+```typescript
+import { render, rawTemplate } from '../prompts/index.js';
+
+// Rendered with variable substitution
+const prompt = render('planner', { goal: 'Add dark mode', project: 'My notes' });
+
+// Raw template for the editable editor in settings
+const raw = rawTemplate('planner');
+```
+
+The build copies `prompts/` into `dist/prompts/`. Templates are cached after first read; call `_resetPromptCache()` to force re-read (for tests or on-disk edits).
+
+| Template | Used by |
+|---|---|
+| `planner.md` | Autopilot relay: goal → phases decomposition |
+| `planner-fallback.md` | Fallback when no custom template is saved |
+| `pilot.md` | Pilot agent: repo-aware CLI planning |
+| `overseer.md` | Parked overseer agent: per-mission decision loop |
+| `worker.md` | Worker agent: general task execution |
+| `worker-phase.md` | Phase agent: epic child task execution |
+| `worker-epic-close.md` | Final phase: also closes parent epic |
+| `decision-header.md` | Shared overseer decision header |
+| `decision-prompt.md` | Overseer prompt-gate decision body |
+
+
+## LLM JSON extraction
+
+`src/overseer/llmParse.ts` provides a shared `extractJson()` function for robustly extracting JSON objects/arrays from LLM output — handling markdown fences, prose wrappers, and greedy bracket matching. Used by both `planner.ts` (phase array extraction) and `decision.ts` (verdict object extraction), replacing the previously duplicated regex-based approaches.
 
 ## Token-usage observability
 

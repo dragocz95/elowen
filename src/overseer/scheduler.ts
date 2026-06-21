@@ -4,7 +4,9 @@ import type { EventBus } from '../api/sse.js';
 import type { AgentSpec } from '../spawn/commandBuilder.js';
 import type { Clock } from '../shared/clock.js';
 import { resolveExecutor } from './routing.js';
-import { detectGuardrails } from './guardrails.js';
+import { logger } from '../shared/logger.js';
+
+const log = logger('scheduler');
 
 export interface SchedulerDeps {
   tasks: TaskStore; spawn: SpawnService; bus: EventBus;
@@ -39,11 +41,6 @@ export class Scheduler {
       let launched = 0;
       for (const task of due) {
         if (launched >= limit) break; // per-project burst cap — the rest stay due for the next tick
-        // Guardrail gate: a scheduled autostart task fires with no autonomy level and no overseer in
-        // the loop, so — unlike a mission spawn — nothing would catch a sensitive one. If its title
-        // trips a guardrail, leave it open (don't consume the schedule) so it can't auto-run
-        // unattended; a human can launch it manually.
-        if (detectGuardrails(task.title).length > 0) continue;
         const spec = resolveExecutor(task.labels, this.d.fallback);
         const named = task.labels.find((l) => l.startsWith('agent:'))?.slice('agent:'.length);
         const agentName = named || this.d.nameAgent();
@@ -64,7 +61,7 @@ export class Scheduler {
           this.d.tasks.update(task.id, { scheduled_at: originalSchedule });
           this.d.tasks.setStatus(task.id, 'open');
           this.d.bus.publish({ type: 'task', taskId: task.id, status: 'open' });
-          console.error(`[orca] scheduler: spawn failed for task ${task.id} — schedule restored: ${String(e)}`);
+          log.error(`spawn failed for task ${task.id} — schedule restored`, e);
           continue;
         }
         this.d.bus.publish({ type: 'task', taskId: task.id, status: 'in_progress' });

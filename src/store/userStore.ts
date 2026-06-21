@@ -117,9 +117,23 @@ export class UserStore {
     return { user: mask(r), scope: r.token_scope === 'agent' ? 'agent' : 'full' };
   }
   /** Re-issue the daemon's agent service token: drop any prior agent-scoped tokens for the user, then
-   *  mint a fresh one. Called at boot so a restart rotates the token (no unbounded accumulation). */
+   *  mint a fresh one. An explicit rotation primitive (e.g. a leaked-token reset). */
   refreshAgentToken(userId: number): string {
     return this.db.transaction(() => {
+      this.db.prepare("DELETE FROM auth_tokens WHERE user_id = ? AND scope = 'agent'").run(userId);
+      return this.issueToken(userId, 'agent');
+    })();
+  }
+  /** The daemon's agent service token, reused across restarts: return the existing valid agent token
+   *  if one is still within TTL, else clear stale ones and mint a fresh token. Called at boot — unlike
+   *  a blind rotate, this keeps in-flight agents' credential alive across a daemon restart (they'd
+   *  otherwise 401 on `orca close`) while still bounding accumulation (at most one live token). */
+  ensureAgentToken(userId: number, days?: number): string {
+    return this.db.transaction(() => {
+      const existing = this.db
+        .prepare(`SELECT token FROM auth_tokens WHERE user_id = ? AND scope = 'agent' AND created_at > datetime('now', '-${ttlDays(days)} days') ORDER BY created_at DESC LIMIT 1`)
+        .get(userId) as { token?: string } | undefined;
+      if (existing?.token) return existing.token;
       this.db.prepare("DELETE FROM auth_tokens WHERE user_id = ? AND scope = 'agent'").run(userId);
       return this.issueToken(userId, 'agent');
     })();

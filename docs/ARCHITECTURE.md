@@ -19,6 +19,8 @@ The daemon starts a set of independent timer loops:
 | Janitor | 60 s | Kill zombie tmux sessions whose task is already closed/cancelled |
 | Stuck detector | 60 s | Revert tasks whose agent died without `orca close` (bounded), escalate after 2 relaunch attempts |
 | Deriver | 5 s | Poll tmux panes, detect agent state (working, needs_input, complete), auto-approve known prompts |
+| Overseer watchdog | 60 s | Re-park missing overseer agents for active/stalled missions (crash recovery) |
+| Token purge | 1 h | Delete expired auth tokens (TTL from `config.security.tokenTtlDays`) |
 
 ### Startup reconcile
 
@@ -51,29 +53,31 @@ The agent works in the tmux pane, then calls `node <cli> close <taskId> …` bac
 
 ### `src/api/` — REST API (Hono)
 
-- `server.ts` — route definitions (~854 lines): tasks, missions, sessions, projects, users, auth, config, integrations, file editor, git surface, planner, plan jobs, overseer decision routes
+- `server.ts` — route definitions (~1102 lines): tasks, missions, sessions, projects, users, auth, config, integrations, file editor, git surface, planner, plan jobs, overseer decision routes
 - `sse.ts` — `EventBus` for real-time SSE notifications (terminal output, task state changes, plan job status)
 - `auth.ts` — Bearer token middleware, also accepts `?token=` query param for SSE
 
 ### `src/overseer/` — Orchestration logic
 
 - `missionEngine.ts` — tick loop, session counting, guardrail enforcement, task-to-agent dispatch, engage/pause/resume/disengage, stalled detection
-- `guardrails.ts` — regex-based detection of sensitive operations (schema, migration, auth, payments, destructive)
-- `routing.ts` — maps `exec:<spec>` labels to agent programs (claude-code, opencode, codex)
-- `scheduler.ts` — launches due scheduled tasks across all projects (30s poll)
+
+- `routing.ts` — maps `exec:<spec>` labels to agent programs (claude-code, opencode, codex) via `resolveExecutor()`; imports executor metadata from `shared/execs.ts`
+- `scheduler.ts` — launches due scheduled tasks across all projects (30s poll); uses `Date.parse()` epoch comparison
 - `janitor.ts` — sweeps zombie sessions whose task is closed/cancelled (60s)
 - `stuckDetector.ts` — reverts tasks whose agent died without closing, bounded relaunch (`stuck:<n>` label), escalates to blocked after maxRelaunch (60s)
-- `decision.ts` — LLM-based prompt and task approval overseer with local destructive heuristic
+- `decision.ts` — LLM-based prompt and task approval overseer; centralized `gateVerdict()` applies `MIN_CONFIDENCE` threshold; broadened DESTRUCTIVE regex (curl/wget pipes, python/node/perl -e, netcat, eval, os.system, subprocess)
 - `decisionQueue.ts` — per-mission FIFO: engine/deriver enqueue decisions, parked overseer polls and resolves; timeout escalates conservatively
 - `overseerAgent.ts` — lifecycle of the parked per-mission overseer agent (long-poll loop)
 - `pilotAgent.ts` — spawns the planning agent for agent-mode plan jobs (reads repo, submits plan via `orca plan submit`)
-- `planner.ts` — AI goal decomposition for `POST /tasks/plan` (relay backend)
+- `planner.ts` — AI goal decomposition for `POST /tasks/plan` (relay backend); prompt from `prompts/planner.md`
 - `planJob.ts` — async planning job registry (shared state between relay and agent backends)
+- `llmParse.ts` — `extractJson()` shared helper for robust LLM JSON output extraction (used by planner + decision)
+- `sessionInfo.ts` — `classifySession()` maps every `orca-*` session to structured `SessionInfo` (role + agent name + optional missionId)
 
 ### `src/spawn/` — Agent spawning
 
-- `spawn.ts` — `SpawnService` creates tmux sessions with agent commands
-- `commandBuilder.ts` — builds the shell command per agent type (claude-code with `--dangerously-skip-permissions`, opencode TUI, codex with bypass flag)
+- `spawn.ts` — `SpawnService` creates tmux sessions with agent commands; nudges Enter at 4s/8s/13s for OpenCode TUI
+- `commandBuilder.ts` — builds the shell command per agent type (claude-code, opencode TUI, codex)
 
 ### `src/deriver/` — Agent monitoring
 
@@ -129,6 +133,14 @@ Commands: `orca ls`, `orca ready`, `orca sessions`, `orca close`, `orca plan sub
 ### `src/shared/` — Utilities
 
 - `clock.ts` — `Clock` interface with `SystemClock` (real) and `FakeClock` (test) implementations
+- `execs.ts` — single source of truth for executor metadata: `PROGRAM_PREFIXES`, `KNOWN_EXECS`, `DEFAULT_BINS`, `isWellFormedExec`, `isAllowedExec` (formerly duplicated across `routing.ts` and `configStore.ts`)
+
+### `src/prompts/` — Prompt template system
+
+- `index.ts` — `render(name, vars)` loads `.md` templates and substitutes `{{placeholder}}` variables; `rawTemplate()` for the editable planner default; templates cache until `_resetPromptCache()`
+
+Templates live in the repo-root `prompts/` directory (copied to `dist/prompts/` during build):
+`planner.md`, `planner-fallback.md`, `pilot.md`, `overseer.md`, `worker.md`, `worker-phase.md`, `worker-epic-close.md`, `decision-header.md`, `decision-prompt.md`
 
 ## Guardrails
 
@@ -142,20 +154,20 @@ Tasks are blocked if their title or labels match sensitive patterns:
 | `payments` | `payment`, `billing`, `stripe`, `invoice` |
 | `destructive` | `delete`, `drop`, `truncate`, `rm -rf`, `destroy` |
 
-Cleared per-mission via `cleared_guardrails` array. Autonomy L2/L3 permits tasks matching cleared guardrails; L0/L1 blocks them regardless.
+Cleared per-mission via `cleared_guardrails` array. Autonomy L2/L3 permits tasks matching cleared guardrails; L0/L1 skips them (tasks stay `open`, can be launched manually).
 
-An additional **overseer LLM gate** (when configured) consults an LLM or parked agent for guardrail-triggering tasks before dispatch. A denial or destructive verdict escalates the task to `blocked`.
+An additional **overseer LLM gate** (when configured) consults an LLM or parked agent for guardrail-triggering tasks before dispatch. A denial or destructive verdict escalates the task to `blocked`. The decision engine's local DESTRUCTIVE regex is broader than the guardrail patterns — it catches curl/wget pipes to shell, inline interpreter one-liners (python/node/perl -e/-c), netcat, eval, os.system, subprocess, and exec calls.
 
 ## Autonomy levels
 
 | Level | Name | Behavior |
 |---|---|---|
-| L0 | Manual | Guardrail-triggering tasks blocked regardless of clearance |
+| L0 | Manual | No auto-spawn; guardrail-triggering tasks skipped by the engine (remain `open`); prompts escalate to human |
 | L1 | Semi-autonomous | Same as L0 — no auto-spawn by the engine |
-| L2 | Autonomous | Agent operates within cleared guardrails, auto-approves known prompts |
-| L3 | Full autonomy | Same as L2 — prompts auto-cleared, no human needed |
+| L2 | Autonomous | Engine auto-spawns tasks with cleared guardrails; prompts auto-processed via overseer gate |
+| L3 | Full autonomy | Same as L2 — full auto-spawn, cleared guardrails executed, prompts auto-processed |
 
-L2/L3 auto-spawn ready tasks on the engine tick. L0/L1 won't auto-spawn — tasks must be launched manually via the API.
+Tasks with triggered guardrails that are **not** in `cleared_guardrails` are simply skipped during the engine tick — they remain `open` and can be spawned manually via the API. The overseer decision gate (when configured) can further escalate a guardrail-triggering task to `blocked` if the LLM or parked agent denies it.
 
 ## Autopilot modes
 
@@ -211,10 +223,13 @@ A **parked Overseer agent** (`config.autopilot.overseerExec`) can replace the re
       └──────────────────────────────────────┘
 ```
 
-Additional parallel loops (not pictured):
-- **Scheduler** (30s) — reads tasks directly from TaskStore
-- **Janitor** (60s) — reads tmux sessions, checks task status
-- **Stuck detector** (60s) — reads tmux sessions + TaskStore, reverts/escalates
+Additional parallel loops (not pictured in the diagram above, see the timer loop table at the top):
+- **Deriver** (5s) — polls tmux panes, detects worker/overseer/pilot state
+- **Scheduler** (30s) — reads tasks directly from TaskStore, spawns due scheduled/autostart tasks
+- **Janitor** (60s) — reaps zombie tmux sessions whose task is already closed/cancelled
+- **Stuck detector** (60s) — reverts tasks whose agent died without `orca close` (bounded relaunch, escalates to `blocked`)
+- **Overseer watchdog** (60s) — re-parks missing overseer agents for active/stalled missions (crash recovery)
+- **Token purge** (1h) — deletes expired auth tokens
 
 ## Access control / multi-tenancy
 
@@ -235,4 +250,4 @@ Tests use Vitest with fake implementations:
 
 This allows full integration-style tests without real tmux or network dependencies.
 
-Daemon tests: ~232 `it`/`test` cases in `tests/`. Web tests: ~236 cases in `web/tests/` (Vitest + React Testing Library).
+Daemon tests: 395 `it`/`test` cases in `tests/`. Web tests: 270 cases in `web/tests/` (Vitest + React Testing Library).

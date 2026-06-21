@@ -33,7 +33,7 @@ function setup() {
 describe('MissionEngine', () => {
   it('engages, spawns the ready head, advances on completion, auto-disengages', async () => {
     const { tasks, tmux, engine } = setup();
-    const m = await engine.engage({ epicId: 'epic', autonomy: 'L3', maxSessions: 1, clearedGuardrails: [] });
+    const m = await engine.engage({ epicId: 'epic', autonomy: 'L3', maxSessions: 1 });
     expect(await tmux.list()).toContain('orca-AgentX'); // t1 spawned
     // simulate t1 done
     tasks.setStatus('t1', 'closed'); await tmux.kill('orca-AgentX');
@@ -47,7 +47,7 @@ describe('MissionEngine', () => {
   it('does not count unrelated global orca- sessions against max_sessions', async () => {
     const { tmux, engine } = setup();
     await tmux.spawn('orca-OtherProject', { cwd: '/x', command: 'sleep 1' }); // foreign session
-    const m = await engine.engage({ epicId: 'epic', autonomy: 'L3', maxSessions: 1, clearedGuardrails: [] });
+    const m = await engine.engage({ epicId: 'epic', autonomy: 'L3', maxSessions: 1 });
     expect(engine.isActive(m.id)).toBe(true);
     expect(await tmux.list()).toContain('orca-AgentX'); // head still spawned despite the foreign session
   });
@@ -56,7 +56,7 @@ describe('MissionEngine', () => {
     const { engine, bus } = setup();
     const events: OrcaEvent[] = [];
     bus.subscribe(e => events.push(e));
-    const m = await engine.engage({ epicId: 'epic', autonomy: 'L3', maxSessions: 1, clearedGuardrails: [] });
+    const m = await engine.engage({ epicId: 'epic', autonomy: 'L3', maxSessions: 1 });
     const missionEvents = events.filter(e => e.type === 'mission');
     expect(missionEvents[0]).toMatchObject({ type: 'mission', missionId: m.id, state: 'active' });
   });
@@ -65,7 +65,7 @@ describe('MissionEngine', () => {
     const { tasks, tmux, engine, bus } = setup();
     const events: OrcaEvent[] = [];
     bus.subscribe(e => events.push(e));
-    const m = await engine.engage({ epicId: 'epic', autonomy: 'L3', maxSessions: 1, clearedGuardrails: [] });
+    const m = await engine.engage({ epicId: 'epic', autonomy: 'L3', maxSessions: 1 });
     // close all tasks and tick to trigger auto-disengage
     tasks.setStatus('t1', 'closed'); await tmux.kill('orca-AgentX');
     await engine.tick(m.id);
@@ -78,7 +78,7 @@ describe('MissionEngine', () => {
 
   it('disengage kills the running agent and reverts its task to open', async () => {
     const { tasks, tmux, engine } = setup();
-    const m = await engine.engage({ epicId: 'epic', autonomy: 'L3', maxSessions: 1, clearedGuardrails: [] });
+    const m = await engine.engage({ epicId: 'epic', autonomy: 'L3', maxSessions: 1 });
     expect(await tmux.list()).toContain('orca-AgentX');
     expect(tasks.get('t1')!.status).toBe('in_progress');
     await engine.disengage(m.id);
@@ -89,7 +89,7 @@ describe('MissionEngine', () => {
 
   it('pause stops the running agent and reverts its task (resume re-spawns it)', async () => {
     const { tasks, tmux, engine } = setup();
-    const m = await engine.engage({ epicId: 'epic', autonomy: 'L3', maxSessions: 1, clearedGuardrails: [] });
+    const m = await engine.engage({ epicId: 'epic', autonomy: 'L3', maxSessions: 1 });
     await engine.pause(m.id);
     expect(await tmux.list()).not.toContain('orca-AgentX');
     expect(tasks.get('t1')!.status).toBe('open');
@@ -124,7 +124,7 @@ describe('MissionEngine', () => {
   it('disengage and pause are idempotent — a repeat call emits no second event (O6)', async () => {
     const { engine, bus } = setup();
     const events: OrcaEvent[] = [];
-    const m = await engine.engage({ epicId: 'epic', autonomy: 'L3', maxSessions: 1, clearedGuardrails: [] });
+    const m = await engine.engage({ epicId: 'epic', autonomy: 'L3', maxSessions: 1 });
     bus.subscribe((e) => events.push(e));
     await engine.disengage(m.id);
     await engine.disengage(m.id); // no-op: already disengaged
@@ -134,7 +134,7 @@ describe('MissionEngine', () => {
   it('pause is idempotent — a repeat call emits no second paused event (O6)', async () => {
     const { engine, bus } = setup();
     const events: OrcaEvent[] = [];
-    const m = await engine.engage({ epicId: 'epic', autonomy: 'L3', maxSessions: 1, clearedGuardrails: [] });
+    const m = await engine.engage({ epicId: 'epic', autonomy: 'L3', maxSessions: 1 });
     bus.subscribe((e) => events.push(e));
     await engine.pause(m.id);
     await engine.pause(m.id); // no-op: already paused
@@ -142,12 +142,11 @@ describe('MissionEngine', () => {
   });
 });
 
-describe('MissionEngine overseer gate (decideTask)', () => {
-  function gateSetup(decideTask?: (missionId: string, i: { guardrails: string[] }) => Promise<{ approve: boolean; destructive: boolean }>, overseer?: { start: ReturnType<typeof vi.fn>; stop: ReturnType<typeof vi.fn> }) {
+describe('MissionEngine overseer lifecycle', () => {
+  function setup(overseer?: { start: ReturnType<typeof vi.fn>; stop: ReturnType<typeof vi.fn> }) {
     const db = openDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'orca','/o')").run();
     const tasks = new TaskStore(db);
     tasks.create({ id: 'epic', project_id: 1, title: 'E', type: 'epic' });
-    // Title trips the 'auth' guardrail, so the gate is consulted once that guardrail is cleared.
     tasks.create({ id: 'g1', project_id: 1, title: 'Add auth login flow', parent_id: 'epic' });
     const tmux = new FakeTmuxDriver();
     const missions = new MissionStore(db);
@@ -156,78 +155,31 @@ describe('MissionEngine overseer gate (decideTask)', () => {
       spawn: new SpawnService({ tmux, agents: new AgentStore(db) }), tmux, bus: new EventBus(),
       projects: new ProjectStore(db), fallback: { program: 'claude-code', model: 'sonnet' },
       nameAgent: () => 'AgentX', clock: new SystemClock(),
-      decideTask: decideTask as never,
       overseer: overseer as never,
     });
     return { tasks, tmux, engine, missions };
   }
 
-  it('escalates a guardrail-triggering task to blocked when the overseer denies', async () => {
-    const { tasks, tmux, engine } = gateSetup(async () => ({ approve: false, destructive: false }));
-    await engine.engage({ epicId: 'epic', autonomy: 'L3', maxSessions: 1, clearedGuardrails: ['auth'] });
-    expect(tasks.get('g1')!.status).toBe('blocked'); // escalated, not spawned
-    expect(await tmux.list()).not.toContain('orca-AgentX');
-  });
-
-  it('marks the mission stalled when a blocked child halts it, and resumes on unblock', async () => {
-    let calls = 0; // deny the first decision (→ blocked/stalled), approve the retry after unblock
-    const { tasks, engine, missions } = gateSetup(async () => ({ approve: ++calls > 1, destructive: false }));
-    const m = await engine.engage({ epicId: 'epic', autonomy: 'L3', maxSessions: 1, clearedGuardrails: ['auth'] });
-    expect(tasks.get('g1')!.status).toBe('blocked');
-    expect(missions.get(m.id)!.state).toBe('stalled'); // not a misleading "active"
-    expect(missions.active().map((x) => x.id)).not.toContain(m.id); // dropped from active...
-    expect(missions.live().map((x) => x.id)).toContain(m.id);       // ...but still ticked
-
-    // Human unblocks the task; the next tick clears the gate, dispatches it, and resumes the mission.
-    tasks.setStatus('g1', 'open');
-    await engine.tick(m.id);
-    expect(missions.get(m.id)!.state).toBe('active');
-    expect(tasks.get('g1')!.status).toBe('in_progress');
-  });
-
-  it('escalates when the overseer flags the task destructive even if it approves', async () => {
-    const { tasks, tmux, engine } = gateSetup(async () => ({ approve: true, destructive: true }));
-    await engine.engage({ epicId: 'epic', autonomy: 'L3', maxSessions: 1, clearedGuardrails: ['auth'] });
-    expect(tasks.get('g1')!.status).toBe('blocked'); // destructive verdict escalates despite approve
-    expect(await tmux.list()).not.toContain('orca-AgentX');
-  });
-
-  it('dispatches normally when the overseer approves', async () => {
-    const { tasks, tmux, engine } = gateSetup(async () => ({ approve: true, destructive: false }));
-    await engine.engage({ epicId: 'epic', autonomy: 'L3', maxSessions: 1, clearedGuardrails: ['auth'] });
-    expect(tasks.get('g1')!.status).toBe('in_progress');
-    expect(await tmux.list()).toContain('orca-AgentX');
-  });
-
-  it('is a no-op gate without a hook: cleared guardrail task spawns (unchanged behaviour)', async () => {
-    const { tasks, tmux, engine } = gateSetup(undefined);
-    await engine.engage({ epicId: 'epic', autonomy: 'L3', maxSessions: 1, clearedGuardrails: ['auth'] });
-    expect(tasks.get('g1')!.status).toBe('in_progress');
-    expect(await tmux.list()).toContain('orca-AgentX');
-  });
-
-  it('starts the overseer on engage and passes the mission id to decideTask', async () => {
+  it('starts the overseer on engage', async () => {
     const start = vi.fn().mockResolvedValue(undefined);
     const stop = vi.fn().mockResolvedValue(undefined);
-    const decideTask = vi.fn().mockResolvedValue({ approve: true, destructive: false });
-    const { engine } = gateSetup(decideTask, { start, stop });
-    await engine.engage({ epicId: 'epic', autonomy: 'L3', maxSessions: 1, clearedGuardrails: ['auth'] });
+    const { engine } = setup({ start, stop });
+    await engine.engage({ epicId: 'epic', autonomy: 'L3', maxSessions: 1 });
     expect(start).toHaveBeenCalledWith('m-epic', 1, '/o');
-    expect(decideTask).toHaveBeenCalledWith('m-epic', expect.objectContaining({ title: 'Add auth login flow' }));
   });
 
   it('stops the overseer on disengage', async () => {
     const stop = vi.fn().mockResolvedValue(undefined);
-    const { engine } = gateSetup(vi.fn().mockResolvedValue({ approve: true, destructive: false }), { start: vi.fn().mockResolvedValue(undefined), stop });
-    const m = await engine.engage({ epicId: 'epic', autonomy: 'L3', maxSessions: 1, clearedGuardrails: ['auth'] });
+    const { engine } = setup({ start: vi.fn().mockResolvedValue(undefined), stop });
+    const m = await engine.engage({ epicId: 'epic', autonomy: 'L3', maxSessions: 1 });
     await engine.disengage(m.id);
     expect(stop).toHaveBeenCalledWith(m.id);
   });
 
   it('stops the overseer when a mission completes on its own (no leak)', async () => {
     const stop = vi.fn().mockResolvedValue(undefined);
-    const { tasks, engine } = gateSetup(vi.fn().mockResolvedValue({ approve: true, destructive: false }), { start: vi.fn().mockResolvedValue(undefined), stop });
-    const m = await engine.engage({ epicId: 'epic', autonomy: 'L3', maxSessions: 1, clearedGuardrails: ['auth'] });
+    const { tasks, engine } = setup({ start: vi.fn().mockResolvedValue(undefined), stop });
+    const m = await engine.engage({ epicId: 'epic', autonomy: 'L3', maxSessions: 1 });
     tasks.setStatus('g1', 'closed'); // the only child closes → next tick self-disengages
     await engine.tick(m.id);
     expect(engine.isActive(m.id)).toBe(false);
@@ -250,7 +202,7 @@ describe('MissionEngine multi-project', () => {
       projects: new ProjectStore(db), fallback: { program: 'claude-code', model: 'sonnet' },
       nameAgent: () => 'AgentX', clock: new SystemClock(),
     });
-    await engine.engage({ epicId: 'epic2', autonomy: 'L3', maxSessions: 1, clearedGuardrails: [] });
+    await engine.engage({ epicId: 'epic2', autonomy: 'L3', maxSessions: 1 });
     expect(await tmux.list()).toContain('orca-AgentX');
     expect(tmux.commandFor('orca-AgentX')).toContain('/p2'); // launched in project 2, not the home '/o'
     expect(tasks.get('x1')!.status).toBe('in_progress');

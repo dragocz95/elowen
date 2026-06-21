@@ -59,7 +59,7 @@ describe('ProjectStore.remove (cascade)', () => {
     const epic = tasks.create({ id: 'd-epic', project_id: doomed.id, title: 'E', type: 'epic' });
     const child = tasks.create({ id: 'd-child', project_id: doomed.id, title: 'C' });
     tasks.addDep(child.id, epic.id);
-    missions.create({ id: 'm1', epic_id: epic.id, autonomy: 'L3', max_sessions: 1, cleared_guardrails: [] });
+    missions.create({ id: 'm1', epic_id: epic.id, autonomy: 'L3', max_sessions: 1 });
     agents.upsert({ project_id: doomed.id, name: 'Nova', program: 'claude-code', model: 'sonnet' });
     up.assign(1, doomed.id);
 
