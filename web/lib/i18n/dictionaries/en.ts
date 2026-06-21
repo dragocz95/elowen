@@ -132,6 +132,8 @@ export const en = {
     goalPlaceholder: 'Describe the goal to plan…',
     fieldAutonomy: 'Autonomy',
     fieldMaxSessions: 'Max sessions',
+    autoModelLabel: 'Autopilot picks the model',
+    autoModelHint: 'Autopilot chooses the best model per phase from the model descriptions in Settings.',
     startAutopilot: 'Start autopilot now (engage mission)',
     manualPhases: 'Phases (manual)',
     removePhase: 'Remove phase',

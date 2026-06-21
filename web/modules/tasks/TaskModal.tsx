@@ -12,6 +12,7 @@ import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
 import { Select } from '../../components/ui/Select';
 import { Checkbox } from '../../components/ui/Checkbox';
+import { Toggle } from '../../components/ui/Toggle';
 import { Field } from '../../components/ui/Field';
 import { Segmented } from '../../components/ui/Segmented';
 import { IconButton } from '../../components/ui/IconButton';
@@ -106,6 +107,9 @@ export function TaskModal({ task, onClose, initialSchedule }: { task?: Task; onC
   const autonomy = autonomyPick ?? config?.defaults?.autonomy ?? 'L3';
   const maxSessions = maxSessionsPick ?? config?.defaults?.maxSessions ?? 1;
   const [engage, setEngage] = useState(false);
+  // When on, the planner picks a model per phase from the model descriptions; the manual exec picker
+  // is hidden and no uniform exec is sent.
+  const [autoModel, setAutoModel] = useState(false);
   // Normalized plan outcome shared by the manual (sync) and autopilot (async job) paths.
   const [result, setResult] = useState<PlanOutcome | null>(null);
   const [planJobId, setPlanJobId] = useState<string | null>(null);
@@ -155,7 +159,7 @@ export function TaskModal({ task, onClose, initialSchedule }: { task?: Task; onC
     setPlanError(null);
     try {
       // Autopilot planning is async: the endpoint returns a job; the effect renders it on done.
-      const r = await plan.mutateAsync({ goal: goal.trim(), exec: exec || undefined, autonomy, maxSessions, engage, project_id: projectId });
+      const r = await plan.mutateAsync({ goal: goal.trim(), exec: autoModel ? undefined : (exec || undefined), autoModel, autonomy, maxSessions, engage, project_id: projectId });
       if ('jobId' in r) setPlanJobId(r.jobId);
       else finishSync(r);
     } catch (e) {
@@ -332,7 +336,10 @@ export function TaskModal({ task, onClose, initialSchedule }: { task?: Task; onC
                 <Input type="number" min={1} value={maxSessions} onChange={(e) => setMaxSessions(Number(e.target.value))} />
               </Field>
             </div>
-            {execSelect}
+            <Field label={t.tasks.autoModelLabel} hint={t.tasks.autoModelHint}>
+              <Toggle checked={autoModel} onChange={setAutoModel} label={t.tasks.autoModelLabel} />
+            </Field>
+            {!autoModel && execSelect}
             <button type="button" onClick={() => setEngage((v) => !v)} className="flex w-fit items-center gap-2 text-sm text-text">
               <Checkbox checked={engage} />
               {t.tasks.startAutopilot}

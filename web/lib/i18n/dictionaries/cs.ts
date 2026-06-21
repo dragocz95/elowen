@@ -132,6 +132,8 @@ export const cs = {
     goalPlaceholder: 'Popište cíl k naplánování…',
     fieldAutonomy: 'Autonomie',
     fieldMaxSessions: 'Max relací',
+    autoModelLabel: 'Autopilot vybere model',
+    autoModelHint: 'Autopilot zvolí nejvhodnější model ke každé fázi podle popisů modelů v Nastavení.',
     startAutopilot: 'Spustit autopilota (zahájit misi)',
     manualPhases: 'Fáze (ručně)',
     removePhase: 'Odebrat fázi',
