@@ -56,6 +56,17 @@ describe('MissionEngine', () => {
     expect(await tmux.list()).toContain('orca-AgentX'); // L1 dispatches work; the overseer gates its prompts later
   });
 
+  it('picks a worker name clear of a lingering session (no duplicate-session crash)', async () => {
+    const { tmux, engine } = setup();
+    await tmux.spawn('orca-AgentX', { cwd: '/o', command: 'zombie' }); // a stale worker session lingers
+    await engine.engage({ epicId: 'epic', autonomy: 'L3', maxSessions: 1 });
+    const live = await tmux.list();
+    // The new worker avoids the live name entirely — its session is a distinct, non-colliding handle…
+    const fresh = live.filter((s) => s !== 'orca-AgentX' && s.startsWith('orca-AgentX'));
+    expect(fresh).toHaveLength(1);
+    expect(fresh[0]).not.toBe('orca-AgentX'); // …so `tmux new-session` can never see a duplicate
+  });
+
   it('L0 (Recommend) spawns nothing — the plan only gets proposed', async () => {
     const { tasks, tmux, engine } = setup();
     await engine.engage({ epicId: 'epic', autonomy: 'L0', maxSessions: 1 });

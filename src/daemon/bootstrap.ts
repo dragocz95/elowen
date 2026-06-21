@@ -122,7 +122,7 @@ export function buildApp(opts: BuildOpts) {
   // the Overseer parks a per-mission agent that long-polls the decision queue.
   const planJobs = new PlanJobStore();
   const decisionQueue = new DecisionQueue();
-  const pilot = makePilot({ spawn, config, projects, planJobs, nameAgent: uniqueName, cliPath });
+  const pilot = makePilot({ spawn, config, projects, planJobs, tmux, nameAgent: uniqueName, cliPath });
   const overseer = makeOverseer({ spawn, tmux, config, queue: decisionQueue, cliPath });
 
   const engine = new MissionEngine({

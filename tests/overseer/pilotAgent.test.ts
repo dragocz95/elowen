@@ -38,6 +38,7 @@ describe('makePilot', () => {
       config: { get: () => ({ autopilot: { pilotExec: 'claude:opus', prompt: 'TPL {{goal}}', notes: '' } }), apiKey: () => null } as never,
       projects: { get: () => ({ id: 1, path: '/repo', notes: 'N' }) } as never,
       planJobs: { setSession: vi.fn() } as never,
+      tmux: { list: async () => [] } as never,
       nameAgent: () => 'pilotX',
       cliPath: '/d/cli/index.js',
     });
@@ -57,10 +58,26 @@ describe('makePilot', () => {
       spawn: { launch } as never,
       config: { get: () => ({ autopilot: { pilotExec: 'claude:opus' } }) } as never,
       projects: { get: () => ({ id: 1, path: '/repo' }) } as never,
+      tmux: { list: async () => [] } as never,
       nameAgent: () => 'pilotX',
       planJobs: { setSession } as never,
     });
     await pilot({ id: 'pj-9', goal: 'g', projectId: 1, epicId: null, dryRun: false, status: 'planning', phases: [] }, '/repo');
     expect(setSession).toHaveBeenCalledWith('pj-9', 'orca-pilotX');
+  });
+
+  it('picks a pilot name whose session is not already live (no duplicate-session crash)', async () => {
+    const launch = vi.fn().mockResolvedValue({ session: 'orca-pilot-Atlas' });
+    const queue = ['Nova', 'Atlas'];
+    const pilot = makePilot({
+      spawn: { launch } as never,
+      config: { get: () => ({ autopilot: { pilotExec: 'claude:opus' } }) } as never,
+      projects: { get: () => ({ id: 1, path: '/repo' }) } as never,
+      planJobs: { setSession: vi.fn() } as never,
+      tmux: { list: async () => ['orca-pilot-Nova'] } as never, // a stale pilot session lingers
+      nameAgent: () => queue.shift()!,
+    });
+    await pilot({ id: 'pj-9', goal: 'g', projectId: 1, epicId: null, dryRun: false, status: 'planning', phases: [] }, '/repo');
+    expect(launch.mock.calls[0]![0].agentName).toBe('pilot-Atlas'); // skipped the live pilot-Nova
   });
 });

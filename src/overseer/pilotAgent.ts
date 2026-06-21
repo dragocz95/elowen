@@ -1,10 +1,12 @@
 import type { SpawnService } from '../spawn/spawn.js';
 import type { ConfigStore } from '../store/configStore.js';
 import type { ProjectStore } from '../store/projectStore.js';
+import type { TmuxDriver } from '../tmux/types.js';
 import type { PlanJob, PlanJobStore } from './planJob.js';
 import { render } from '../prompts/index.js';
 import { resolveExecutor } from './routing.js';
 import { modelsBlock } from './planner.js';
+import { freeAgentName } from '../daemon/uniqueName.js';
 
 /** The planning prompt: the Pilot reads the repo, then submits a structured plan via the orca CLI.
  *  It must NOT implement anything and must NOT spawn agents — the engine owns orchestration.
@@ -26,15 +28,16 @@ export function pilotPrompt(goal: string, jobId: string, projectNotes?: string, 
 /** Build the Pilot spawner: launches a repo-aware planning agent for an agent-mode plan job. The
  *  agent submits its plan back through the orca CLI (`orca plan submit`); the daemon never reads its
  *  stdout. Returns a function matching the `pilot` ServerDep. */
-export function makePilot(deps: { spawn: SpawnService; config: ConfigStore; projects: ProjectStore; planJobs: PlanJobStore; nameAgent: () => string; cliPath?: string }): (job: PlanJob, projectPath: string) => Promise<void> {
+export function makePilot(deps: { spawn: SpawnService; config: ConfigStore; projects: ProjectStore; planJobs: PlanJobStore; tmux: TmuxDriver; nameAgent: () => string; cliPath?: string }): (job: PlanJob, projectPath: string) => Promise<void> {
   return async (job, projectPath) => {
     const cfg = deps.config.get();
     const spec = resolveExecutor([`exec:${cfg.autopilot.pilotExec}`], { program: 'claude-code', model: 'sonnet' });
     const notes = deps.projects.get(job.projectId)?.notes;
     const models = job.autoModel ? modelsBlock(cfg.allowedExecs, cfg.modelNotes) : undefined;
     // Structured `pilot-` prefix so the session classifies as the planner (mirrors the overseer's
-    // `overseer-` prefix), instead of being indistinguishable from a worker agent.
-    const agentName = `pilot-${deps.nameAgent()}`;
+    // `overseer-` prefix), instead of being indistinguishable from a worker agent. The name is picked
+    // clear of any live session so a lingering pilot can never trigger a duplicate-session crash.
+    const agentName = `pilot-${await freeAgentName(deps.nameAgent, () => deps.tmux.list(), 'pilot-')}`;
     const { session } = await deps.spawn.launch({
       projectId: job.projectId, projectPath, taskId: job.id, agentName, spec,
       taskTitle: `Plan: ${job.goal}`,

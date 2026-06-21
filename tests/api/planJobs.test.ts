@@ -34,6 +34,20 @@ describe('async plan jobs (relay path)', () => {
     expect(tasks.some((t) => t.title === 'Build')).toBe(true);
   });
 
+  it('tears down the Pilot tmux session once the plan job settles (no lingering planner)', async () => {
+    const t = await makeTestApp({ apiKey: '' });
+    // A pilot is planning: its session is live and recorded on the job.
+    const job = t.deps.planJobs.create({ goal: 'g', projectId: 1, epicId: null, dryRun: false });
+    t.deps.planJobs.setSession(job.id, 'orca-pilot-Atlas');
+    await t.deps.tmux.spawn('orca-pilot-Atlas', { cwd: '/o', command: 'planning' });
+    expect(await t.deps.tmux.list()).toContain('orca-pilot-Atlas');
+    // The pilot submits its plan → the job settles → its session must be reaped so it can't linger
+    // and later collide with a fresh plan job's name.
+    const res = await t.app.request(`/plan/${job.id}/submit`, { method: 'POST', headers: { authorization: `Bearer ${t.token}`, 'content-type': 'application/json' }, body: JSON.stringify({ phases: [{ title: 'Build', type: 'feature' }] }) });
+    expect(res.status).toBe(200);
+    expect(await t.deps.tmux.list()).not.toContain('orca-pilot-Atlas');
+  });
+
   it('POST /plan/:id/submit rejects empty/invalid phases', async () => {
     const { app, token } = await makeTestApp({ apiKey: '' });
     await app.request('/config', { method: 'PUT', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: JSON.stringify({ autopilot: { pilotExec: 'claude:opus' } }) });

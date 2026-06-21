@@ -4,7 +4,7 @@ import { randomBytes, createHmac, timingSafeEqual } from 'node:crypto';
 import { hermesStatus, installHermesPlugin } from '../integrations/hermesInstall.js';
 import { detectClis } from '../integrations/cliDetection.js';
 import { readTaskUsage } from '../integrations/usage/index.js';
-import { listProjectFiles, readProjectFile, writeProjectFile, readProjectBytes, createProjectFile, createProjectDir, deleteProjectEntry, renameProjectEntry, copyProjectEntry, projectFileAtHead, projectFileDiff, projectCommitDiff, projectCommitFiles, projectCommitFileDiff, projectChangedFiles, projectWorkingDiff } from '../integrations/projectFiles.js';
+import { listProjectFiles, readProjectFile, writeProjectFile, readProjectBytes, createProjectFile, createProjectDir, deleteProjectEntry, renameProjectEntry, copyProjectEntry, projectFileAtHead, projectFileDiff, projectCommitDiff, projectCommitFiles, projectCommitFileDiff, projectChangedFiles, projectWorkingDiff, projectReviewDiff } from '../integrations/projectFiles.js';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { streamSSE } from 'hono/streaming';
@@ -472,12 +472,20 @@ export function createServer(d: ServerDeps): Hono<{ Variables: { user: User; tok
   // Finalize an async plan job: a dryRun job records phases without persisting; otherwise persist the
   // epic+children, optionally engage a mission, tick an already-active mission so it picks up the new
   // ready phase, and announce the result over SSE. Shared by the relay path and the agent submit path.
+  // Reap a settled plan job's Pilot tmux session. The Pilot has submitted (or the job failed), so its
+  // pane is done; leaving it alive lets a finished planner linger and later collide with a fresh plan
+  // job's session name. No-op for relay jobs (no session) and safe if the session is already gone.
+  const reapPilotSession = (job: PlanJob): void => {
+    if (job.sessionName) void d.tmux.kill(job.sessionName).catch(() => { /* already gone — fine */ });
+  };
+
   async function finalizePlanJob(jobId: string, phases: Phase[]): Promise<void> {
     const job = planJobs.get(jobId);
     if (!job) return;
     if (job.dryRun) {
       planJobs.setPhases(jobId, phases);
       d.bus.publish({ type: 'plan', jobId, status: 'done', phases });
+      reapPilotSession(job);
       return;
     }
     job.phases = phases;
@@ -491,6 +499,7 @@ export function createServer(d: ServerDeps): Hono<{ Variables: { user: User; tok
       if (d.engine?.isActive(missionId)) await d.engine.tick(missionId); // replan into a live mission
     }
     d.bus.publish({ type: 'plan', jobId, status: 'done', epicId: epic.id, phases: created.map((t) => ({ title: t.title, type: t.type })) });
+    reapPilotSession(job);
   }
 
   app.get('/projects', (c) => {
@@ -765,8 +774,8 @@ export function createServer(d: ServerDeps): Hono<{ Variables: { user: User; tok
             // don't commit, so `git diff HEAD` is the phase's actual change set (cumulative across a
             // sequential mission, which the overseer reads against the phase's stated scope).
             const reviewPath = d.projects?.get(existing.project_id)?.path ?? d.project.path;
-            const [changedFiles, workingDiff] = await Promise.all([projectChangedFiles(reviewPath), projectWorkingDiff(reviewPath)]);
-            const reviewCtx = buildReviewContext({ title: existing.title, outcome: b.outcome ?? '', summary: b.result_summary ?? '', changedFiles, diff: workingDiff });
+            const { changedFiles, diff } = await projectReviewDiff(reviewPath);
+            const reviewCtx = buildReviewContext({ title: existing.title, outcome: b.outcome ?? '', summary: b.result_summary ?? '', changedFiles, diff });
             void decisionQueue.enqueue(mission.id, 'review', reviewCtx, localDestructive)
               .then((verdict) => {
                 // The mission may have torn down while the review was pending (manual disengage, shutdown):
@@ -892,7 +901,7 @@ export function createServer(d: ServerDeps): Hono<{ Variables: { user: User; tok
     d.bus.publish({ type: 'plan', jobId: job.id, status: 'planning' });
     if (cfg.autopilot.pilotExec && d.pilot) {
       // Agent backend: spawn the Pilot in the repo; it submits via `orca plan submit`.
-      void d.pilot(job, target.project.path).catch((e) => { planJobs.fail(job.id, String(e)); d.bus.publish({ type: 'plan', jobId: job.id, status: 'failed', error: String(e) }); });
+      void d.pilot(job, target.project.path).catch((e) => { planJobs.fail(job.id, String(e)); d.bus.publish({ type: 'plan', jobId: job.id, status: 'failed', error: String(e) }); reapPilotSession(job); });
       return c.json({ jobId: job.id }, 202);
     }
     // Relay backend: decompose inline and resolve the job before responding.

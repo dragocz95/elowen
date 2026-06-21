@@ -7,6 +7,7 @@ import type { TmuxDriver } from '../tmux/types.js';
 import type { AgentSpec } from '../spawn/commandBuilder.js';
 import type { EventBus } from '../api/sse.js';
 import { resolveExecutor } from './routing.js';
+import { freeAgentName } from '../daemon/uniqueName.js';
 import type { OverseerController } from './overseerAgent.js';
 import type { Clock } from '../shared/clock.js';
 import { logger } from '../shared/logger.js';
@@ -197,7 +198,10 @@ export class MissionEngine {
       if (m.autonomy === 'L0') continue;
       const spec = resolveExecutor(task.labels, this.d.fallback);
       const named = task.labels.find((l) => l.startsWith('agent:'))?.slice('agent:'.length);
-      const agentName = named || this.d.nameAgent();
+      // A fresh name is picked clear of any live session, so a lingering worker (or the counter
+      // resetting to 0 on a daemon restart) can never collide with `tmux new-session`. A re-spawn
+      // of an already-named task reuses its name — its prior session is dead by the time we get here.
+      const agentName = named || await freeAgentName(this.d.nameAgent, () => this.d.tmux.list());
       // Tag the agent BEFORE marking in_progress, so an in_progress child always carries its
       // agent label — otherwise a crash between the two writes would leave stopRunning unable to
       // find (and kill) the session.
