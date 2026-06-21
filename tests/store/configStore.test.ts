@@ -40,6 +40,15 @@ describe('ConfigStore', () => {
     expect(c.autopilot.notes).toBe('be careful');
     expect(c.defaults).toEqual({ exec: 'codex:gpt-5.4', autonomy: 'L3', maxSessions: 3 });
   });
+  it('defaults modelNotes to {} and round-trips an update', () => {
+    expect(cfg.get().modelNotes).toEqual({});
+    cfg.update({ modelNotes: { sonnet: 'Best for coding', 'codex:gpt-5.4': 'Cheap planner' } });
+    expect(cfg.get().modelNotes).toEqual({ sonnet: 'Best for coding', 'codex:gpt-5.4': 'Cheap planner' });
+  });
+  it('reads a legacy row without modelNotes as {}', () => {
+    db.prepare('INSERT INTO settings (id, data) VALUES (1, ?)').run(JSON.stringify({ allowedExecs: ['sonnet'] }));
+    expect(cfg.get().modelNotes).toEqual({});
+  });
   it('defaults security.tokenTtlDays to 30 and updates it', () => {
     expect(cfg.get().security).toEqual({ tokenTtlDays: 30 });
     cfg.update({ security: { tokenTtlDays: 7 } });
