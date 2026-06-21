@@ -23,6 +23,14 @@ describe('TaskDetailPane', () => {
     expect(screen.getByText('Result')).toBeTruthy();
   });
 
+  it('renders the mission summary under a distinct label for a closed epic', async () => {
+    const { wrapper: Wrapper, client } = createWrapper();
+    client.setQueryData(['tasks'], [{ id: 'ep', title: 'Big mission', type: 'epic', status: 'closed', outcome: 'ok', result_summary: 'three phases shipped' }]);
+    render(<Wrapper><ToastProvider><TaskDetailPane taskId="ep" /></ToastProvider></Wrapper>);
+    expect(await screen.findByText('three phases shipped')).toBeTruthy();
+    expect(screen.getByText('Mission summary')).toBeTruthy(); // not the generic "Result" — an epic carries the autopilot mission summary
+  });
+
   it('renders the live tail for a running task', async () => {
     const { wrapper: Wrapper, client } = createWrapper();
     client.setQueryData(['tasks'], [{ id: 'tr', title: 'Running one', status: 'in_progress', labels: ['agent:nova'] }]);

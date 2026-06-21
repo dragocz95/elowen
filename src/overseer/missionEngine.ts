@@ -1,4 +1,5 @@
 import type { TaskStore } from '../store/taskStore.js';
+import type { Task } from '../store/types.js';
 import type { Readiness } from '../store/readiness.js';
 import type { MissionStore, Mission } from '../store/missionStore.js';
 import type { SpawnService } from '../spawn/spawn.js';
@@ -23,6 +24,15 @@ export interface MissionEngineDeps {
   /** Optional parked-overseer lifecycle. Started on engage, stopped on pause/disengage. Absent (or
    *  inert when no overseerExec is configured) → relay-fallback decisions, no parked agent. */
   overseer?: OverseerController;
+  /** Optional overseer-model summariser: given the mission goal and each phase's own result, returns
+   *  prose describing what the mission accomplished. Stamped on the epic on natural completion so the
+   *  dashboard can show it. Absent (or on error/blank) → the engine writes a deterministic digest. */
+  summarize?: (ctx: SummaryContext) => Promise<string>;
+}
+
+export interface SummaryContext {
+  goal: string;
+  phases: { title: string; outcome: string | null; summary: string | null }[];
 }
 
 export class MissionEngine {
@@ -89,6 +99,30 @@ export class MissionEngine {
     await this.d.overseer?.stop(id);
   }
 
+  /** On natural completion, stamp a human-readable "what happened" summary onto the epic so the
+   *  dashboard can show it on the task. Prefer the overseer model's prose; fall back to a
+   *  deterministic digest of each phase's own result if no summariser is wired or it errors/blanks.
+   *  Re-closing an epic the final agent already closed simply overwrites its summary with the prose. */
+  private async writeMissionSummary(epic: Task, kids: Task[]): Promise<void> {
+    const phases = kids
+      .filter(k => k.status !== 'cancelled') // cancelled phases never ran — don't report them as outcomes
+      .map(k => ({ title: k.title, outcome: k.outcome, summary: k.result_summary }));
+    let summary = '';
+    try {
+      summary = (await this.d.summarize?.({ goal: epic.title, phases }))?.trim() ?? '';
+    } catch (e) {
+      log.error(`mission summary generation failed for epic ${epic.id} — using digest`, e);
+    }
+    if (!summary) summary = this.digest(phases);
+    this.d.tasks.close(epic.id, { summary, outcome: 'ok' });
+    this.d.bus.publish({ type: 'task', taskId: epic.id, status: 'closed' });
+  }
+
+  private digest(phases: SummaryContext['phases']): string {
+    const lines = phases.map(p => `- ${p.title}: ${p.summary?.trim() || p.outcome || 'dokončeno'}`);
+    return `Mise dokončena (${phases.length} fází).\n${lines.join('\n')}`;
+  }
+
   async pause(id: string): Promise<void> {
     const m = this.d.missions.get(id);
     if (!m || m.state === 'paused') return; // idempotent: a repeat call must not re-publish the event
@@ -141,7 +175,8 @@ export class MissionEngine {
 
     const kids = this.children(m.epic_id);
     if (kids.length > 0 && kids.every(t => t.status === 'closed' || t.status === 'cancelled')) {
-      await this.markDisengaged(id); return; // also tears down the parked overseer (no leak on self-completion)
+      await this.writeMissionSummary(epic, kids); // stamp a "what happened" summary on the epic first…
+      await this.markDisengaged(id); return; // …then tear down the parked overseer (no leak on self-completion)
     }
 
     // Watchdog: keep the parked overseer alive. It can exit on its own (full context / clean exit per

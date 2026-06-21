@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useMemo, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { Plus, ListChecks, Search, Archive, Trash2, X, ChevronLeft, ChevronRight, CalendarDays, List, FolderGit2 } from 'lucide-react';
+import { Plus, ListChecks, Search, Archive, Trash2, X, ChevronLeft, ChevronRight, CalendarDays, List } from 'lucide-react';
 import type { Task, TaskStatus } from '../../lib/types';
 import { useTasks, useAllDeps, useSessions, useSessionSignals, useMissions, useProjects } from '../../lib/queries';
 import { taskBlockers, taskSessionName } from '../../lib/agentUtils';
@@ -17,6 +17,7 @@ import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { useToast } from '../../components/ui/Toast';
 import { useTranslation } from '../../lib/i18n';
 import { usePersistentState } from '../../lib/usePersistentState';
+import { ProjectFilterPills } from '../../components/ui/ProjectFilterPills';
 import { LoadingState, ErrorState, EmptyState } from '../../components/ui/states';
 import { TaskCard } from './TaskCard';
 import { TaskModal } from './TaskModal';
@@ -193,34 +194,8 @@ export function TasksView() {
       </ModuleHeader>
 
       {/* Project picker pills — narrow the list to one project (server-side). Hidden when the
-          workspace has fewer than two projects: no choice to make, would be pure noise. */}
-      {(projects.data ?? []).length > 1 && (
-        <div className="flex flex-wrap items-center gap-1.5">
-          <button
-            type="button"
-            onClick={() => setProjectKey('all')}
-            className={`inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs font-medium transition-colors ${selectedProject === 'all' ? 'border-accent/50 bg-accent/15 text-accent' : 'border-border bg-elevated text-text-muted hover:border-border-strong hover:text-text'}`}
-            style={{ transitionDuration: 'var(--motion-fast)' }}
-          >
-            <FolderGit2 size={13} className="shrink-0" aria-hidden />{t.tasks.filterAllProjects}
-          </button>
-          {(projects.data ?? []).map((p) => {
-            const on = selectedProject === p.id;
-            return (
-              <button
-                key={p.id}
-                type="button"
-                onClick={() => setProjectKey(String(p.id))}
-                title={p.path}
-                className={`inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs font-medium transition-colors ${on ? 'border-accent/50 bg-accent/15 text-accent' : 'border-border bg-elevated text-text-muted hover:border-border-strong hover:text-text'}`}
-                style={{ transitionDuration: 'var(--motion-fast)' }}
-              >
-                <FolderGit2 size={13} className="shrink-0" aria-hidden />{p.slug}
-              </button>
-            );
-          })}
-        </div>
-      )}
+          workspace has fewer than two projects: no choice to make. */}
+      <ProjectFilterPills value={selectedProject} onChange={(v) => setProjectKey(v === 'all' ? 'all' : String(v))} />
 
       {tasks.isLoading ? <LoadingState variant="cards" />
         : tasks.isError ? <ErrorState message={t.common.daemonUnreachable} onRetry={() => tasks.refetch()} />

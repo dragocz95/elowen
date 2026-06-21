@@ -5,6 +5,7 @@ import { AgentStore } from '../store/agentStore.js';
 import { MissionStore } from '../store/missionStore.js';
 import { SpawnService } from '../spawn/spawn.js';
 import { MissionEngine } from '../overseer/missionEngine.js';
+import type { SummaryContext } from '../overseer/missionEngine.js';
 import { Scheduler } from '../overseer/scheduler.js';
 import { sweepFinishedSessions } from '../overseer/janitor.js';
 import { sweepStuckTasks, deadAgentTasks } from '../overseer/stuckDetector.js';
@@ -33,6 +34,24 @@ import { dirname, join } from 'node:path';
 import { randomBytes } from 'node:crypto';
 
 const log = logger('daemon');
+
+/** Build the overseer-model prompt that turns a finished mission's phase results into a short,
+ *  human-readable Czech summary shown on the epic in the dashboard. Kept terse so the relay returns
+ *  prose, not JSON or a plan. */
+function missionSummaryPrompt(ctx: SummaryContext): string {
+  const phases = ctx.phases
+    .map((p, i) => `${i + 1}. ${p.title} — ${p.summary?.trim() || p.outcome || 'dokončeno'}`)
+    .join('\n');
+  return [
+    'Jsi dozorčí autopilota. Mise právě skončila. Napiš stručné shrnutí v češtině (2–4 věty),',
+    'co se v misi reálně udělalo, formálním tónem (vykání). Bez nadpisů, bez odrážek, jen plynulá próza.',
+    '',
+    `Cíl mise: ${ctx.goal}`,
+    '',
+    'Dokončené fáze:',
+    phases,
+  ].join('\n');
+}
 
 /** Compact, human-readable one-liner for a bus event — the daemon's activity trail in the log file. */
 function describeEvent(e: { type: string } & Record<string, unknown>): string {
@@ -110,6 +129,14 @@ export function buildApp(opts: BuildOpts) {
     tasks, readiness, missions, spawn, tmux, bus, projects,
     fallback: { program: 'claude-code', model: 'sonnet' }, nameAgent: uniqueName, clock: new SystemClock(),
     overseer,
+    // On natural completion, ask the overseer model to write the mission's "what happened" prose.
+    // No relay key → return blank so the engine writes its own deterministic phase digest instead.
+    summarize: async (ctx) => {
+      const inf = overseerClient();
+      if (!inf) return '';
+      const { text } = await inf.decide(missionSummaryPrompt(ctx));
+      return text;
+    },
   });
   const scheduler = new Scheduler({ tasks, spawn, bus, projects, fallback: { program: 'claude-code', model: 'sonnet' }, nameAgent: uniqueName, clock: new SystemClock() });
   // Deriver resolves a session's task via the agent registry / in-progress task (simplified: first in_progress child).

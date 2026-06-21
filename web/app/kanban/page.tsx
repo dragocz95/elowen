@@ -3,7 +3,7 @@ export const dynamic = 'force-dynamic';
 import { useState } from 'react';
 import { KanbanSquare, Columns3, CalendarRange } from 'lucide-react';
 import type { Task } from '../../lib/types';
-import { useTasks, useAllDeps, useMissions } from '../../lib/queries';
+import { useTasks, useAllDeps, useMissions, useProjects } from '../../lib/queries';
 import { taskBlockers } from '../../lib/agentUtils';
 import { useSetTaskStatus, useUpdateTask } from '../../lib/mutations';
 import { KanbanBoard } from '../../modules/kanban/KanbanBoard';
@@ -12,6 +12,7 @@ import { TaskModal } from '../../modules/tasks/TaskModal';
 import { TaskResultsModal } from '../../modules/tasks/TaskResultsModal';
 import { ModuleHeader } from '../../components/ui/ModuleHeader';
 import { Segmented } from '../../components/ui/Segmented';
+import { ProjectFilterPills } from '../../components/ui/ProjectFilterPills';
 import { LoadingState, ErrorState } from '../../components/ui/states';
 import { ModuleShell } from '../../components/shell/ModuleShell';
 import { useToast } from '../../components/ui/Toast';
@@ -19,7 +20,10 @@ import { useTranslation } from '../../lib/i18n';
 import { usePersistentState } from '../../lib/usePersistentState';
 
 export default function KanbanPage() {
-  const tasks = useTasks();
+  const projects = useProjects();
+  const [projectKey, setProjectKey] = usePersistentState<string>('orca.kanban.project', 'all', ['all', ...(projects.data ?? []).map((p) => String(p.id))]);
+  const selectedProject: number | 'all' = projectKey === 'all' ? 'all' : Number(projectKey);
+  const tasks = useTasks(selectedProject === 'all' ? undefined : selectedProject);
   const deps = useAllDeps();
   const missions = useMissions();
   const setStatus = useSetTaskStatus();
@@ -56,6 +60,7 @@ export default function KanbanPage() {
           ]}
         />
       </ModuleHeader>
+      <ProjectFilterPills value={selectedProject} onChange={(v) => setProjectKey(v === 'all' ? 'all' : String(v))} />
 
       {tasks.isLoading ? <LoadingState variant={view === 'board' ? 'kanban' : 'cards'} /> : tasks.isError ? <ErrorState message={t.common.daemonUnreachable} onRetry={() => tasks.refetch()} />
         : view === 'board' ? (

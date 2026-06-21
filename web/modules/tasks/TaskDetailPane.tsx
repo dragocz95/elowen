@@ -1,6 +1,6 @@
 'use client';
 import { useState } from 'react';
-import { Pencil, Play, Square, SquareSlash, Archive, TerminalSquare, Link2, Copy, ShieldCheck, RotateCcw } from 'lucide-react';
+import { Pencil, Play, Square, SquareSlash, Archive, TerminalSquare, Link2, Copy, ShieldCheck, RotateCcw, ScrollText } from 'lucide-react';
 import type { Task } from '../../lib/types';
 import { useTasks, useAllDeps, useSessionSignal, useActivity, useConfig } from '../../lib/queries';
 import { useCloseTask, useSetTaskStatus, useResumeMission } from '../../lib/mutations';
@@ -68,6 +68,9 @@ export function TaskDetailPane({ taskId, onEdit }: { taskId: string; onEdit?: (t
   // mission so the engine re-spawns it now instead of waiting out the 90s tick. "Approve & continue"
   // overrides a blocked next phase; "Re-run" retries the rejected (closed) phase itself.
   const isPhase = !!task.parent_id;
+  // An epic carries the autopilot's mission summary (what the whole mission accomplished); a plain
+  // task/phase carries its own per-task result. Same card, different heading.
+  const isEpic = task.type === 'epic';
   const reopenResume = (doneMsg: string) => {
     setStatus.mutate({ id: task.id, status: 'open' }, {
       onSuccess: () => {
@@ -144,8 +147,11 @@ export function TaskDetailPane({ taskId, onEdit }: { taskId: string; onEdit?: (t
       {running && session ? <Field label={t.tasks.liveOutput}><LiveTail name={session} lines={28} heightClass="max-h-96" onExpand={() => setOpenTerm(true)} /></Field> : null}
 
       {isClosed && (task.result_summary || task.outcome) ? (
-        <Field label={t.tasks.resultTitle}>
-          <p className="text-sm leading-relaxed text-text-muted">{task.result_summary?.trim() || t.tasks.noSummary}</p>
+        <Field label={isEpic ? t.tasks.missionSummaryTitle : t.tasks.resultTitle}>
+          <div className="flex items-start gap-2.5 rounded-lg border border-border bg-elevated p-3">
+            <ScrollText size={15} className="mt-0.5 shrink-0 text-text-muted" aria-hidden />
+            <p className="whitespace-pre-wrap text-sm leading-relaxed text-text">{task.result_summary?.trim() || t.tasks.noSummary}</p>
+          </div>
         </Field>
       ) : null}
 

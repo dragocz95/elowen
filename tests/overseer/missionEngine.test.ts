@@ -8,11 +8,12 @@ import { ProjectStore } from '../../src/store/projectStore.js';
 import { SpawnService } from '../../src/spawn/spawn.js';
 import { FakeTmuxDriver } from '../../src/tmux/fakeDriver.js';
 import { MissionEngine } from '../../src/overseer/missionEngine.js';
+import type { MissionEngineDeps } from '../../src/overseer/missionEngine.js';
 import { EventBus } from '../../src/api/sse.js';
 import { SystemClock } from '../../src/shared/clock.js';
 import type { OrcaEvent } from '../../src/api/sse.js';
 
-function setup() {
+function setup(opts?: { summarize?: MissionEngineDeps['summarize'] }) {
   const db = openDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'orca','/o')").run();
   const tasks = new TaskStore(db);
   tasks.create({ id: 'epic', project_id: 1, title: 'E', type: 'epic' });
@@ -25,7 +26,7 @@ function setup() {
     tasks, readiness: new Readiness(db), missions: new MissionStore(db),
     spawn: new SpawnService({ tmux, agents: new AgentStore(db) }), tmux, bus,
     projects: new ProjectStore(db), fallback: { program: 'claude-code', model: 'sonnet' },
-    nameAgent: () => 'AgentX', clock: new SystemClock(),
+    nameAgent: () => 'AgentX', clock: new SystemClock(), summarize: opts?.summarize,
   });
   return { tasks, tmux, engine, bus };
 }
@@ -73,6 +74,39 @@ describe('MissionEngine', () => {
     tasks.setStatus('t2', 'closed'); await tmux.kill('orca-AgentX');
     await engine.tick(m.id);
     expect(engine.isActive(m.id)).toBe(false); // auto-disengaged
+  });
+
+  it('on completion writes the overseer mission summary onto the epic before disengaging', async () => {
+    const summarize = vi.fn().mockResolvedValue('Mise proběhla hladce, obě fáze hotové.');
+    const { tasks, tmux, engine } = setup({ summarize });
+    const m = await engine.engage({ epicId: 'epic', autonomy: 'L3', maxSessions: 1 });
+    tasks.close('t1', { summary: 'first done', outcome: 'ok' }); await tmux.kill('orca-AgentX');
+    await engine.tick(m.id); // spawns t2
+    tasks.close('t2', { summary: 'second done', outcome: 'ok' }); await tmux.kill('orca-AgentX');
+    await engine.tick(m.id); // completion → summarize + close epic + disengage
+    // The overseer model is handed the goal + each phase's outcome/summary, and its prose is stamped on the epic.
+    expect(summarize).toHaveBeenCalledTimes(1);
+    expect(summarize).toHaveBeenCalledWith(expect.objectContaining({
+      goal: 'E',
+      phases: expect.arrayContaining([expect.objectContaining({ title: 'one', summary: 'first done' })]),
+    }));
+    const epic = tasks.get('epic')!;
+    expect(epic.status).toBe('closed');
+    expect(epic.result_summary).toBe('Mise proběhla hladce, obě fáze hotové.');
+    expect(engine.isActive(m.id)).toBe(false);
+  });
+
+  it('falls back to a deterministic phase digest on completion when no summarizer is wired', async () => {
+    const { tasks, tmux, engine } = setup(); // no summarize dep → engine synthesises the digest itself
+    const m = await engine.engage({ epicId: 'epic', autonomy: 'L3', maxSessions: 1 });
+    tasks.close('t1', { summary: 'wrote the parser', outcome: 'ok' }); await tmux.kill('orca-AgentX');
+    await engine.tick(m.id);
+    tasks.close('t2', { summary: 'added tests', outcome: 'ok' }); await tmux.kill('orca-AgentX');
+    await engine.tick(m.id);
+    const epic = tasks.get('epic')!;
+    expect(epic.status).toBe('closed');
+    expect(epic.result_summary).toContain('one'); // both phase titles surface in the digest
+    expect(epic.result_summary).toContain('two');
   });
 
   it('does not count unrelated global orca- sessions against max_sessions', async () => {

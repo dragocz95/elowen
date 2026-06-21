@@ -1,6 +1,6 @@
 'use client';
 import { useMemo, useState, useEffect } from 'react';
-import { File as FileIcon, Save, Code2, GitCompare, X, FilePlus, FolderPlus, Pencil, Copy, Trash2, ClipboardCopy, Eye, WrapText, Maximize2, Minimize2 } from 'lucide-react';
+import { File as FileIcon, Save, Code2, GitCompare, X, FilePlus, FolderPlus, Pencil, Copy, Trash2, ClipboardCopy, Eye, WrapText, Maximize2, Minimize2, PanelLeft } from 'lucide-react';
 import {
   useProjectFiles, useProjectFile, useProjectFileAtHead, useProjectCommit, useProjectCommitFileDiff,
   useProjectChanged, useProjectChanges,
@@ -22,6 +22,7 @@ import { PatchView } from './PatchView';
 import { MarkdownPreview } from './MarkdownPreview';
 import { ImagePreview } from './ImagePreview';
 import { Tabs } from './Tabs';
+import { useMobile } from '../../../lib/useMobile';
 
 type Tab = 'edit' | 'diff' | 'preview';
 type Dialog =
@@ -47,6 +48,10 @@ export function ProjectEditor({ projectId, onClose, initialCommit, initialWorkin
   const [dialog, setDialog] = useState<Dialog | null>(null);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [dirtyPaths, setDirtyPaths] = useState<Set<string>>(new Set());
+  // On mobile the file tree is hidden by default in fullscreen (it eats too much of the narrow
+  // viewport); a toggle surfaces it as an overlay. On desktop the tree is always visible.
+  const mobile = useMobile();
+  const [showTree, setShowTree] = useState(false);
 
   const commitData = useProjectCommit(projectId, commit);
   const changesData = useProjectChanges(projectId, working);
@@ -92,10 +97,16 @@ export function ProjectEditor({ projectId, onClose, initialCommit, initialWorkin
   // Esc leaves fullscreen (without closing the editor); ignored while a dialog/menu owns Esc.
   useEffect(() => {
     if (!fullscreen) return;
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape' && !dialog && !menu) { e.stopPropagation(); setFullscreen(false); } };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape' && !dialog && !menu) { e.stopPropagation(); setFullscreen(false); setShowTree(false); } };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [fullscreen, dialog, menu]);
+
+  // Auto-fullscreen on mobile so the editor owns the whole viewport (the 70vh inline view is too
+  // cramped on a phone); the user can still exit to the inline card via the toolbar toggle.
+  useEffect(() => { if (mobile) setFullscreen(true); }, [mobile]);
+  // Reset the tree overlay whenever it stops being relevant (exit fullscreen, or switch to desktop).
+  useEffect(() => { if (!fullscreen || !mobile) setShowTree(false); }, [fullscreen, mobile]);
 
   const save = () => {
     if (selected == null) return;
@@ -199,6 +210,19 @@ export function ProjectEditor({ projectId, onClose, initialCommit, initialWorkin
     >
       {/* toolbar */}
       <div className="flex items-center gap-2 border-b border-border px-3 py-2">
+        {/* On mobile (fullscreen + tree hidden) a toggle surfaces the file tree as an overlay. */}
+        {mobile && fullscreen && (
+          <button
+            type="button"
+            onClick={() => setShowTree((s) => !s)}
+            aria-pressed={showTree}
+            aria-label={t.projects.toggleTree}
+            title={t.projects.toggleTree}
+            className={`flex h-7 w-7 items-center justify-center rounded-md transition-colors ${showTree ? 'bg-accent/15 text-accent' : 'text-text-muted hover:bg-elevated hover:text-text'}`}
+          >
+            <PanelLeft size={15} />
+          </button>
+        )}
         <Code2 size={15} className="text-accent" aria-hidden />
         <span className="text-sm font-semibold text-text">{t.projects.editorTitle}</span>
         {working ? <span className="truncate font-mono text-xs text-warning"><GitCompare size={11} className="mr-1 inline" aria-hidden />{t.projects.workingChanges}</span>
@@ -219,25 +243,30 @@ export function ProjectEditor({ projectId, onClose, initialCommit, initialWorkin
       </div>
 
       <div className="flex min-h-0 flex-1">
-        {/* file tree + fullscreen toggle at the bottom of the file menu */}
-        <div className="flex w-64 shrink-0 flex-col border-r border-border bg-bg/40">
-          <div className="min-h-0 flex-1 overflow-auto p-1.5">
-            {files.isLoading ? <LoadingState />
-              : <FileTree tree={tree} expanded={expanded} onToggle={toggle} selected={selected} onSelect={selectInTree} changed={changedSet} onContextMenu={onContextMenu} emptyLabel={t.projects.noFiles} treeLabel={t.projects.editorTitle} />}
+        {/* File tree. On desktop it's a fixed 256px sidebar. On mobile fullscreen it's a togglable
+            overlay (default hidden) so it never eats the narrow viewport. */}
+        {(mobile && fullscreen && !showTree) ? null : (
+          <div
+            className={`flex shrink-0 flex-col border-r border-border bg-bg/40 ${(mobile && fullscreen) ? 'absolute inset-y-0 left-0 z-10 w-[80%] max-w-72 shadow-lg' : 'w-64'}`}
+          >
+            <div className="min-h-0 flex-1 overflow-auto p-1.5">
+              {files.isLoading ? <LoadingState />
+                : <FileTree tree={tree} expanded={expanded} onToggle={toggle} selected={selected} onSelect={(p) => { selectInTree(p); if (mobile && fullscreen) setShowTree(false); }} changed={changedSet} onContextMenu={onContextMenu} emptyLabel={t.projects.noFiles} treeLabel={t.projects.editorTitle} />}
+            </div>
+            <div className="shrink-0 border-t border-border p-1.5">
+              <button
+                type="button"
+                onClick={() => setFullscreen((f) => !f)}
+                aria-pressed={fullscreen}
+                title={fullscreen ? t.projects.exitFullscreen : t.projects.fullscreen}
+                className="flex w-full items-center justify-center gap-2 rounded-md border border-border bg-elevated px-2 py-1.5 text-xs font-medium text-text-muted transition-colors hover:border-border-strong hover:text-text"
+              >
+                {fullscreen ? <Minimize2 size={13} aria-hidden /> : <Maximize2 size={13} aria-hidden />}
+                {fullscreen ? t.projects.exitFullscreen : t.projects.fullscreen}
+              </button>
+            </div>
           </div>
-          <div className="shrink-0 border-t border-border p-1.5">
-            <button
-              type="button"
-              onClick={() => setFullscreen((f) => !f)}
-              aria-pressed={fullscreen}
-              title={fullscreen ? t.projects.exitFullscreen : t.projects.fullscreen}
-              className="flex w-full items-center justify-center gap-2 rounded-md border border-border bg-elevated px-2 py-1.5 text-xs font-medium text-text-muted transition-colors hover:border-border-strong hover:text-text"
-            >
-              {fullscreen ? <Minimize2 size={13} aria-hidden /> : <Maximize2 size={13} aria-hidden />}
-              {fullscreen ? t.projects.exitFullscreen : t.projects.fullscreen}
-            </button>
-          </div>
-        </div>
+        )}
 
         {/* editor / diff / preview / commit / working changes */}
         <div className="flex min-w-0 flex-1 flex-col">
