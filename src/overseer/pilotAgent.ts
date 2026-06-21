@@ -11,14 +11,15 @@ import { resolveExecutor } from './routing.js';
  *  planner template (`config.autopilot.prompt`) — that template is a relay-format prompt carrying
  *  `{{goal}}` placeholders and a "return ONLY a JSON array" instruction, which would both leak the
  *  raw placeholder into the agent's view and contradict the `orca plan submit` flow below. */
-export function pilotPrompt(goal: string, jobId: string, projectNotes?: string, cliPath?: string): string {
+export function pilotPrompt(goal: string, jobId: string, projectNotes?: string, cliPath?: string, models?: string): string {
   // Inline notes block (empty when there are none) so the goal line stays flush against the rest.
   const notes = projectNotes?.trim() ? `\n\nProject context:\n${projectNotes.trim()}\n` : '';
   // Invoke the daemon's OWN CLI by absolute path via node — exactly like the worker close command.
   // A bare `orca` would 127 (`command not found`) unless the binary happens to be on the agent's
   // PATH, and even then it could be a version-skewed global install rather than this daemon's CLI.
   const submit = cliPath ? `node ${cliPath} plan submit` : 'orca plan submit';
-  return render('pilot', { goal, notes, submit, jobId });
+  // Empty when auto model selection is off — render() drops the {{models}} token to nothing.
+  return render('pilot', { goal, notes, submit, jobId, models: models ?? '' });
 }
 
 /** Build the Pilot spawner: launches a repo-aware planning agent for an agent-mode plan job. The

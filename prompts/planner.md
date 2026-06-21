@@ -10,4 +10,6 @@ Rules:
 - "agent": a short, real, friendly single-word first name (e.g. Nova, Atlas, Iris) — unique per phase.
 - Order the phases so each builds on the previous one.
 
+{{models}}
+
 Goal: {{goal}}

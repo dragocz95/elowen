@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parsePhases, decompose, planPrompt, defaultPromptTemplate, _resetDefaultCache } from '../../src/overseer/planner.js';
+import { parsePhases, decompose, planPrompt, modelsBlock, defaultPromptTemplate, _resetDefaultCache } from '../../src/overseer/planner.js';
 import { FakeInference } from '../../src/inference/client.js';
 
 describe('planner.parsePhases', () => {
@@ -52,6 +52,13 @@ describe('planner.parsePhases', () => {
     expect(phases[1].details).toBeUndefined(); // blank → omitted
   });
 
+  it('captures a per-phase exec when present', () => {
+    const phases = parsePhases('[{"title":"A","type":"task","exec":"sonnet"},{"title":"B","type":"task"},{"title":"C","exec":"  "}]');
+    expect(phases[0].exec).toBe('sonnet');
+    expect(phases[1].exec).toBeUndefined();
+    expect(phases[2].exec).toBeUndefined(); // blank → omitted
+  });
+
   it('throws when there is no array', () => {
     expect(() => parsePhases('no json here')).toThrow();
   });
@@ -70,6 +77,9 @@ describe('planner.planPrompt', () => {
   });
   it('default template contains the {{goal}} placeholder', () => {
     expect(defaultPromptTemplate()).toContain('{{goal}}');
+  });
+  it('default template carries a {{models}} placeholder', () => {
+    expect(defaultPromptTemplate()).toContain('{{models}}');
   });
   it('_resetDefaultCache forces a re-read (cache is not permanent) (#31)', () => {
     const first = defaultPromptTemplate();
@@ -92,6 +102,34 @@ describe('planner.planPrompt', () => {
   it('injects nothing when the project has no notes', () => {
     expect(planPrompt('ship it', 'Plan: {{goal}}', { notes: '   ' })).toBe('Plan: ship it');
     expect(planPrompt('ship it', 'Plan: {{goal}}')).toBe('Plan: ship it');
+  });
+  it('substitutes a models block into a {{models}} placeholder', () => {
+    const out = planPrompt('ship it', 'Models:\n{{models}}\nGoal: {{goal}}', undefined, '- sonnet: coder');
+    expect(out).toContain('- sonnet: coder');
+    expect(out).not.toContain('{{models}}');
+    expect(out).toContain('Goal: ship it');
+  });
+  it('collapses {{models}} to empty when no block is given', () => {
+    expect(planPrompt('ship it', 'Models:\n{{models}}\nGoal: {{goal}}', undefined, '')).toBe('Models:\n\nGoal: ship it');
+  });
+  it('prepends the models block when the template has no {{models}} placeholder', () => {
+    const out = planPrompt('ship it', 'Plan: {{goal}}', undefined, '- sonnet: coder');
+    expect(out.startsWith('- sonnet: coder')).toBe(true);
+    expect(out).toContain('Plan: ship it');
+  });
+});
+
+describe('planner.modelsBlock', () => {
+  it('lists only enabled models that have a non-empty note + carries the exec instruction', () => {
+    const block = modelsBlock(['sonnet', 'codex:gpt-5.4', 'deepseek/x'], { sonnet: 'Strong coder', 'codex:gpt-5.4': '  ', 'ollama/y': 'not enabled' });
+    expect(block).toContain('- sonnet: Strong coder');
+    expect(block).not.toContain('codex:gpt-5.4'); // empty note → omitted
+    expect(block).not.toContain('ollama/y');       // not in allowedExecs → omitted
+    expect(block).toMatch(/exec/i);
+  });
+  it('returns empty string when nothing qualifies', () => {
+    expect(modelsBlock(['sonnet'], {})).toBe('');
+    expect(modelsBlock([], { sonnet: 'x' })).toBe('');
   });
 });
 
