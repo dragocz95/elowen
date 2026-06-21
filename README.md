@@ -25,6 +25,10 @@ Codex) in isolated `tmux` sessions — with a REST API, a CLI, and a real-time w
 
 - **Autopilot planning.** Give the Pilot a goal; an LLM decomposes it into ordered
   phases, names an agent per phase, and chains them by dependency.
+- **Per-model descriptions & per-phase model selection.** Write a capability
+  description for each model in Settings; flip on "Autopilot picks the model" and the
+  planner chooses the best-suited model for each phase from those descriptions —
+  validated against your allow-list, falling back to the default on anything invalid.
 - **Agent-agnostic spawning.** Runs Claude Code, OpenCode, or Codex in `tmux`,
   configurable per task. Each agent gets the task context and closes its own task when done.
 - **Autonomy levels (L0–L3).** The overseer auto-clears safe permission prompts at
@@ -54,7 +58,7 @@ Codex) in isolated `tmux` sessions — with a REST API, a CLI, and a real-time w
 | **Tasks** — list + detail with live agent output and token usage. ![Tasks](docs/screenshots/tasks.png) | **Kanban** — open / in-progress / blocked / closed, with mission progress. ![Kanban](docs/screenshots/kanban.png) |
 | **Missions** — phase graph and task flow for an autopilot run. ![Missions](docs/screenshots/missions.png) | **Timeline** — a live activity feed across tasks, missions, and signals. ![Timeline](docs/screenshots/timeline.png) |
 | **Sessions** — real-time `tmux` agent previews with one-click intervention. ![Sessions](docs/screenshots/sessions.png) | **Terminal** — the full agent TUI, including human-in-the-loop approvals. ![Terminal](docs/screenshots/terminal.png) |
-| **Projects** — a built-in Monaco editor with the project file tree. ![Projects editor](docs/screenshots/projects-editor.png) | **Settings** — model presets, providers, autopilot, and defaults. ![Settings](docs/screenshots/settings.png) |
+| **Projects** — a built-in Monaco editor with the project file tree. ![Projects editor](docs/screenshots/projects-editor.png) | **Settings** — model presets & descriptions, providers, autopilot, and defaults. ![Settings](docs/screenshots/settings.png) |
 
 <div align="center">
 
