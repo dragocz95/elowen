@@ -42,11 +42,32 @@ describe('Deriver permission handling', () => {
     expect(tmux.sentKeys('orca-TestAgent')).toEqual([['Enter']]);
   });
 
-  it('L1 / L0: does NOT press Enter; escalates as needs_input', async () => {
-    const { tmux, deriver, emitted } = setup('L1');
+  it('L0: never auto-clears — escalates even when an (approving) overseer is wired', async () => {
+    const { tmux, deriver, emitted } = setup('L0', async () => ({ approve: true, destructive: false }));
     await deriver.tick();
-    expect(tmux.sentKeys('orca-TestAgent')).toEqual([]); // never auto-clears
+    expect(tmux.sentKeys('orca-TestAgent')).toEqual([]); // L0 = recommend only, nothing runs
     expect(emitted.at(-1)!.sig.type).toBe('needs_input');
+  });
+
+  it('L1: routes the prompt through the overseer and clears it when approved', async () => {
+    const { tmux, deriver, emitted } = setup('L1', async () => ({ approve: true, destructive: false }));
+    await deriver.tick();
+    expect(tmux.sentKeys('orca-TestAgent')).toEqual([['Enter']]); // Assist auto-runs clearly-safe steps
+    expect(emitted.at(-1)!.sig.type).toBe('working');
+  });
+
+  it('L1: escalates when the overseer declines (e.g. below the stricter threshold)', async () => {
+    const { tmux, deriver, emitted } = setup('L1', async () => ({ approve: false, destructive: false }));
+    await deriver.tick();
+    expect(tmux.sentKeys('orca-TestAgent')).toEqual([]);
+    expect(emitted.at(-1)!.sig.type).toBe('needs_input');
+  });
+
+  it('passes the L1 autonomy level into decideApproval so the overseer can apply its stricter gate', async () => {
+    let seen = 'unset';
+    const { deriver } = setup('L1', async (input) => { seen = input.autonomy; return { approve: false, destructive: false }; });
+    await deriver.tick();
+    expect(seen).toBe('L1');
   });
 
   it('L3 with overseer: approves a safe prompt (presses Enter)', async () => {
@@ -81,7 +102,7 @@ describe('Deriver permission handling', () => {
     expect(consulted).toBe(false); // overseer never asked — trust is environmental
   });
 
-  it('L1: claude trust gate still escalates (autonomy gate precedes auto-accept)', async () => {
+  it('L0: claude trust gate still escalates (autonomy gate precedes auto-accept)', async () => {
     const db = openDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'orca','/o')").run();
     const tasks = new TaskStore(db); const agents = new AgentStore(db);
     tasks.create({ id: 'orca-1', project_id: 1, title: 'T' }); tasks.setStatus('orca-1', 'in_progress');
@@ -91,7 +112,7 @@ describe('Deriver permission handling', () => {
     const emitted: { sig: { type: string } }[] = [];
     const deriver = new Deriver({
       tmux, agents, tasks, sink: { emit: (_s, sig) => emitted.push({ sig }) },
-      sessionTaskId: () => 'orca-1', autonomyFor: () => 'L1',
+      sessionTaskId: () => 'orca-1', autonomyFor: () => 'L0',
     });
     await deriver.tick();
     expect(tmux.sentKeys('orca-Nova')).toEqual([]);

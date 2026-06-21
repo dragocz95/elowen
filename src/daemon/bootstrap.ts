@@ -8,7 +8,7 @@ import { MissionEngine } from '../overseer/missionEngine.js';
 import { Scheduler } from '../overseer/scheduler.js';
 import { sweepFinishedSessions } from '../overseer/janitor.js';
 import { sweepStuckTasks, deadAgentTasks } from '../overseer/stuckDetector.js';
-import { decidePrompt, isDestructive, gateVerdict } from '../overseer/decision.js';
+import { decidePrompt, isDestructive, gateVerdict, minConfidenceFor, noOverseerFallback } from '../overseer/decision.js';
 import { PlanJobStore } from '../overseer/planJob.js';
 import { DecisionQueue } from '../overseer/decisionQueue.js';
 import { makePilot } from '../overseer/pilotAgent.js';
@@ -142,15 +142,20 @@ export function buildApp(opts: BuildOpts) {
     // Overseer decision for an auto-cleared prompt: the parked agent (queue) when overseerExec is set
     // and the prompt belongs to a mission, else the relay.
     decideApproval: async (input) => {
+      // Per-autonomy confidence bar: L1 (Assist) is held stricter than L2/L3 so it auto-runs only
+      // clearly-safe steps. One source of truth, applied on every gate path below.
+      const minConfidence = minConfidenceFor(input.autonomy);
       if (input.missionId && config.get().autopilot.overseerExec) {
         const localDestructive = isDestructive(`${input.question} ${input.context}`);
         const v = await decisionQueue.enqueue(input.missionId, 'prompt', { question: input.question, context: input.context, options: input.options }, localDestructive);
-        return gateVerdict(v, { blockDestructive: true });
+        return gateVerdict(v, { blockDestructive: true, minConfidence });
       }
       const inf = overseerClient();
-      if (!inf) return { approve: true, destructive: isDestructive(`${input.question} ${input.context}`) };
+      // No overseer wired at all: only L3 may wave a non-destructive prompt through; L1/L2 escalate
+      // instead of being blindly approved (that blanket-approve was the bug that collapsed L2 into L3).
+      if (!inf) return noOverseerFallback(input.autonomy, isDestructive(`${input.question} ${input.context}`));
       const d = await decidePrompt(inf, input);
-      return gateVerdict(d, { blockDestructive: false });
+      return gateVerdict(d, { blockDestructive: false, minConfidence });
     },
   });
   // Setup mode: with no users yet the daemon is open so the onboarding page can run before login;

@@ -49,6 +49,19 @@ describe('MissionEngine', () => {
     expect(events.some((e) => e.type === 'task' && e.taskId === 't1' && e.status === 'open')).toBe(true);
   });
 
+  it('L1 (Assist) auto-spawns the ready head', async () => {
+    const { tmux, engine } = setup();
+    await engine.engage({ epicId: 'epic', autonomy: 'L1', maxSessions: 1 });
+    expect(await tmux.list()).toContain('orca-AgentX'); // L1 dispatches work; the overseer gates its prompts later
+  });
+
+  it('L0 (Recommend) spawns nothing — the plan only gets proposed', async () => {
+    const { tasks, tmux, engine } = setup();
+    await engine.engage({ epicId: 'epic', autonomy: 'L0', maxSessions: 1 });
+    expect(await tmux.list()).not.toContain('orca-AgentX');
+    expect(tasks.get('t1')!.status).toBe('open'); // untouched
+  });
+
   it('engages, spawns the ready head, advances on completion, auto-disengages', async () => {
     const { tasks, tmux, engine } = setup();
     const m = await engine.engage({ epicId: 'epic', autonomy: 'L3', maxSessions: 1 });

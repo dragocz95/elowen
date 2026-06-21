@@ -25,9 +25,11 @@ export interface DeriverDeps {
   decideApproval?: (input: { question: string; context: string; options: { id: string; label: string }[]; autonomy: string; missionId: string | null }) => Promise<{ approve: boolean; destructive: boolean }>;
 }
 
-/** L2/L3 missions (and manual, mission-less launches) clear permission prompts themselves; L0/L1 escalate to a human. */
+/** L1–L3 missions (and manual, mission-less launches) route permission prompts through the overseer;
+ *  only L0 (Recommend) escalates everything to a human. L1 differs from L2/L3 not here but at the
+ *  overseer's confidence bar — `minConfidenceFor` holds L1 to a stricter threshold. */
 function autoClears(autonomy: string | null): boolean {
-  return autonomy === null || autonomy === 'L2' || autonomy === 'L3';
+  return autonomy !== 'L0';
 }
 
 export class Deriver {
@@ -69,7 +71,7 @@ export class Deriver {
       if (this.last.get(session) === key) return; // already handled this exact prompt
       this.last.set(session, key);
       const escalate = () => this.d.sink.emit(session, { type: 'needs_input', question: prompt.question, options: prompt.options, context: prompt.context });
-      // L0/L1 always escalate to a human.
+      // L0 (Recommend) always escalates to a human — nothing is cleared autonomously.
       if (!autoClears(autonomy)) { escalate(); return; }
       // Environmental gates (workspace-trust) just block startup — orca only spawns into the
       // user's own registered projects, so clear them directly without an overseer round-trip.

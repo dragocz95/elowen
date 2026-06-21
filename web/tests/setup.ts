@@ -1,4 +1,10 @@
 import '@testing-library/jest-dom/vitest';
+import { afterEach } from 'vitest';
+
+// Components persist UI state (last-visited section, kanban view, …) into localStorage via
+// usePersistentState. jsdom keeps one localStorage for the whole file, so without this a test that
+// navigates away leaks its persisted section into the next test's initial render. Reset between tests.
+afterEach(() => { try { localStorage.clear(); } catch { /* no storage in this env — nothing to clear */ } });
 
 // jsdom does not implement ResizeObserver — provide a no-op stub so Terminal
 // tests (and any component using ResizeObserver) don't blow up.

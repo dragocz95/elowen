@@ -151,8 +151,10 @@ export class MissionEngine {
     // several parallel missions no longer has each one walk every ready task in the project (#34/S15).
     for (const task of this.d.readiness.readyForEpic(m.epic_id)) {
       if (running >= m.max_sessions) break;
-      // Autonomy gate: L0/L1 are manual (the human launches each task), L2/L3 dispatch autonomously.
-      if (m.autonomy !== 'L3' && m.autonomy !== 'L2') continue;
+      // Autonomy gate: only L0 (Recommend) is hands-off — it just proposes the plan and spawns nothing.
+      // L1–L3 dispatch work autonomously; they differ later, at how the deriver/overseer gate the
+      // agent's permission prompts (L1 escalates more, L3 the least).
+      if (m.autonomy === 'L0') continue;
       const spec = resolveExecutor(task.labels, this.d.fallback);
       const named = task.labels.find((l) => l.startsWith('agent:'))?.slice('agent:'.length);
       const agentName = named || this.d.nameAgent();

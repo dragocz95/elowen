@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { isDestructive, decisionPrompt, parseDecision, decidePrompt, gateVerdict, MIN_CONFIDENCE } from '../../src/overseer/decision.js';
+import { isDestructive, decisionPrompt, parseDecision, decidePrompt, gateVerdict, minConfidenceFor, noOverseerFallback, MIN_CONFIDENCE, STRICT_CONFIDENCE } from '../../src/overseer/decision.js';
 import { FakeInference } from '../../src/inference/client.js';
 
 describe('decision.gateVerdict', () => {
@@ -12,6 +12,31 @@ describe('decision.gateVerdict', () => {
   it('blockDestructive=true rejects a confident-but-destructive verdict; false lets it through (flag still set)', () => {
     expect(gateVerdict(v(true, 1, true), { blockDestructive: true })).toEqual({ approve: false, destructive: true });
     expect(gateVerdict(v(true, 1, true), { blockDestructive: false })).toEqual({ approve: true, destructive: true });
+  });
+  it('honours a custom minConfidence: a mid-confidence verdict clears the default gate but not a stricter one', () => {
+    const mid = v(true, 0.7, false);
+    expect(gateVerdict(mid, { blockDestructive: false }).approve).toBe(true); // default 0.6
+    expect(gateVerdict(mid, { blockDestructive: false, minConfidence: STRICT_CONFIDENCE }).approve).toBe(false); // 0.85
+  });
+});
+
+describe('decision.minConfidenceFor', () => {
+  it('L1 (Assist) demands a stricter confidence than L2/L3', () => {
+    expect(minConfidenceFor('L1')).toBe(STRICT_CONFIDENCE);
+    expect(minConfidenceFor('L1')).toBeGreaterThan(minConfidenceFor('L2'));
+    expect(minConfidenceFor('L2')).toBe(MIN_CONFIDENCE);
+    expect(minConfidenceFor('L3')).toBe(MIN_CONFIDENCE);
+  });
+});
+
+describe('decision.noOverseerFallback', () => {
+  it('only L3 blanket-approves a non-destructive prompt when no overseer is configured', () => {
+    expect(noOverseerFallback('L3', false)).toEqual({ approve: true, destructive: false });
+    expect(noOverseerFallback('L2', false)).toEqual({ approve: false, destructive: false }); // escalates, not waved through
+    expect(noOverseerFallback('L1', false)).toEqual({ approve: false, destructive: false });
+  });
+  it('never approves a destructive prompt, not even at L3', () => {
+    expect(noOverseerFallback('L3', true)).toEqual({ approve: false, destructive: true });
   });
 });
 

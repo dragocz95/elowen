@@ -13,6 +13,7 @@ import { useUpdateConfig, useCleanupAll } from '../../lib/mutations';
 import { orcaClient, OrcaApiError } from '../../lib/orcaClient';
 import { useHermesForm } from '../../modules/settings/useHermesForm';
 import { EXEC_PRESETS, allModels } from '../../lib/execPresets';
+import { usePersistentState } from '../../lib/usePersistentState';
 import { useToast } from '../../components/ui/Toast';
 import { ModuleHeader } from '../../components/ui/ModuleHeader';
 import { Button } from '../../components/ui/Button';
@@ -65,7 +66,8 @@ function ModelInput({ value, onChange, placeholder }: { value: string; onChange:
   );
 }
 
-type Category = 'models' | 'autopilot' | 'providers' | 'defaults' | 'hermes' | 'data';
+const CATEGORY_VALUES = ['models', 'autopilot', 'providers', 'defaults', 'hermes', 'data'] as const;
+type Category = (typeof CATEGORY_VALUES)[number];
 
 export default function SettingsPage() {
   const config = useConfig();
@@ -77,7 +79,8 @@ export default function SettingsPage() {
   // Drives the "delete all data" confirm dialog (Data section).
   const [cleanupOpen, setCleanupOpen] = useState(false);
 
-  const [category, setCategory] = useState<Category>('models');
+  // Remember the last settings section across reloads (F5) until the user switches.
+  const [category, setCategory] = usePersistentState<Category>('orca.settings.category', 'models', CATEGORY_VALUES);
 
   const [allowed, setAllowed] = useState<string[]>([]);
   const [customModels, setCustomModels] = useState<{ label: string; exec: string }[]>([]);
@@ -579,6 +582,9 @@ export default function SettingsPage() {
               </SettingCard>
               <SettingCard title={t.settings.autonomy} description={t.settings.autonomyDesc} icon={Gauge}>
                 <Segmented options={['L0', 'L1', 'L2', 'L3'].map((l) => ({ value: l, label: l }))} value={defAutonomy} onChange={setDefAutonomy} />
+                <p className="mt-2 text-xs leading-relaxed text-text-muted">
+                  {({ L0: t.missions.autonomyL0Desc, L1: t.missions.autonomyL1Desc, L2: t.missions.autonomyL2Desc, L3: t.missions.autonomyL3Desc } as Record<string, string>)[defAutonomy]}
+                </p>
               </SettingCard>
               <SettingCard title={t.settings.maxSessions} description={t.settings.maxSessionsDesc} icon={Layers}>
                 <input type="number" min={1} value={defMaxSessions} onChange={(e) => setDefMaxSessions(Number(e.target.value))} className={inputClass} />

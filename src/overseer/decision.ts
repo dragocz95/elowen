@@ -21,16 +21,36 @@ export interface Decision {
  *  human. Single source of truth for both the prompt gate (deriver) and the task gate (engine). */
 export const MIN_CONFIDENCE = 0.6;
 
+/** Stricter confidence bar for L1 (Assist): the Pilot may auto-run only *clearly* safe steps, so a
+ *  merely-plausible verdict is not enough — anything below this escalates to a human. */
+export const STRICT_CONFIDENCE = 0.85;
+
+/** The confidence an overseer verdict must reach to auto-clear at a given autonomy level. L1 (Assist)
+ *  is held to a stricter bar than L2/L3, which is exactly what separates "only safe steps" from
+ *  "clears prompts itself". Single source of truth for the per-level threshold. */
+export function minConfidenceFor(autonomy: string): number {
+  return autonomy === 'L1' ? STRICT_CONFIDENCE : MIN_CONFIDENCE;
+}
+
+/** The decision when no overseer is configured at all (relay fallback, no parked agent). Only full
+ *  autonomy (L3) may wave a non-destructive prompt through unattended; L0–L2 escalate to a human
+ *  rather than be blindly approved. Destructive prompts always escalate, even at L3. */
+export function noOverseerFallback(autonomy: string, destructive: boolean): { approve: boolean; destructive: boolean } {
+  return { approve: autonomy === 'L3' && !destructive, destructive };
+}
+
 /** Apply the auto-approve gate to a raw decision/verdict: approve only when the overseer was
- *  confident enough (≥ MIN_CONFIDENCE), and — for prompt-style decisions — only when not flagged
- *  destructive. The `destructive` flag always passes through so the caller can escalate on it. This
- *  is the single place the threshold is applied; callers no longer re-implement the comparison. */
+ *  confident enough (≥ `minConfidence`, default MIN_CONFIDENCE), and — for prompt-style decisions —
+ *  only when not flagged destructive. The `destructive` flag always passes through so the caller can
+ *  escalate on it. This is the single place the threshold is applied; callers no longer re-implement
+ *  the comparison. Pass `minConfidence` (e.g. via `minConfidenceFor`) to raise the bar per autonomy. */
 export function gateVerdict(
   v: { approve: boolean; confidence: number; destructive: boolean },
-  opts: { blockDestructive: boolean },
+  opts: { blockDestructive: boolean; minConfidence?: number },
 ): { approve: boolean; destructive: boolean } {
+  const minConfidence = opts.minConfidence ?? MIN_CONFIDENCE;
   return {
-    approve: v.approve && v.confidence >= MIN_CONFIDENCE && (!opts.blockDestructive || !v.destructive),
+    approve: v.approve && v.confidence >= minConfidence && (!opts.blockDestructive || !v.destructive),
     destructive: v.destructive,
   };
 }

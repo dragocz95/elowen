@@ -16,6 +16,7 @@ import { LoadingState, ErrorState } from '../../components/ui/states';
 import { ModuleShell } from '../../components/shell/ModuleShell';
 import { useToast } from '../../components/ui/Toast';
 import { useTranslation } from '../../lib/i18n';
+import { usePersistentState } from '../../lib/usePersistentState';
 
 export default function KanbanPage() {
   const tasks = useTasks();
@@ -25,7 +26,8 @@ export default function KanbanPage() {
   const updateTask = useUpdateTask();
   const { toast } = useToast();
   const { t } = useTranslation();
-  const [view, setView] = useState<'board' | 'calendar'>('board');
+  // Remember board vs calendar across reloads (F5) until the user switches.
+  const [view, setView] = usePersistentState<'board' | 'calendar'>('orca.kanban.view', 'board', ['board', 'calendar']);
   const [editing, setEditing] = useState<Task | null>(null);
   const [viewing, setViewing] = useState<Task | null>(null);
   const [createSchedule, setCreateSchedule] = useState<string | null>(null);
