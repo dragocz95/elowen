@@ -1,5 +1,6 @@
 'use client';
 import { type ReactNode, useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Trash2, type LucideIcon } from 'lucide-react';
 import { useTranslation } from '../../lib/i18n';
 
@@ -24,20 +25,50 @@ export function ActionMenu({ items, label, trigger, align = 'right' }: {
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
   const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const { t } = useTranslation();
   const resolvedLabel = label ?? t.common.actions;
 
+  // Portalled to <body> + fixed-positioned from the trigger rect so the dropdown escapes the
+  // card's stacking context / overflow — otherwise a sibling card below paints over it.
+  const [pos, setPos] = useState<{ top: number; left?: number; right?: number } | null>(null);
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+
+  const place = () => {
+    const el = btnRef.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    setPos(align === 'right'
+      ? { top: r.bottom, right: window.innerWidth - r.right }
+      : { top: r.bottom, left: r.left });
+  };
+
   const cancelClose = () => { if (closeTimer.current) { clearTimeout(closeTimer.current); closeTimer.current = null; } };
   const scheduleClose = () => { cancelClose(); closeTimer.current = setTimeout(() => setOpen(false), 160); };
+  const openMenu = () => { cancelClose(); place(); setOpen(true); };
 
   useEffect(() => {
     if (!open) return;
-    const onDown = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
+    const onDown = (e: MouseEvent) => {
+      if (ref.current?.contains(e.target as Node)) return;
+      if (menuRef.current?.contains(e.target as Node)) return;
+      setOpen(false);
+    };
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
+    const reposition = () => place();
     document.addEventListener('mousedown', onDown);
     document.addEventListener('keydown', onKey);
-    return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onKey); };
+    window.addEventListener('resize', reposition);
+    window.addEventListener('scroll', reposition, true);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onKey);
+      window.removeEventListener('resize', reposition);
+      window.removeEventListener('scroll', reposition, true);
+    };
   }, [open]);
 
   useEffect(() => () => cancelClose(), []);
@@ -46,27 +77,30 @@ export function ActionMenu({ items, label, trigger, align = 'right' }: {
     <div
       ref={ref}
       className="relative"
-      onMouseEnter={() => { cancelClose(); setOpen(true); }}
+      onMouseEnter={openMenu}
       onMouseLeave={scheduleClose}
     >
       <button
+        ref={btnRef}
         type="button"
         aria-label={resolvedLabel}
         aria-haspopup="menu"
         aria-expanded={open}
         title={resolvedLabel}
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => (open ? setOpen(false) : openMenu())}
         className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-danger/60 text-danger transition-colors hover:bg-danger hover:text-white"
         style={{ transitionDuration: 'var(--motion-fast)' }}
       >
         {trigger ?? <Trash2 size={15} aria-hidden />}
       </button>
-      {open && (
+      {mounted && open && pos && createPortal(
         <div
+          ref={menuRef}
           role="menu"
-          // top-full (no margin gap) keeps the hover path continuous from trigger to items
-          className={`absolute top-full z-50 min-w-[12rem] overflow-hidden rounded-lg border border-border bg-surface py-1.5 ${align === 'right' ? 'right-0' : 'left-0'}`}
-          style={{ boxShadow: 'var(--shadow-raised)' }}
+          onMouseEnter={cancelClose}
+          onMouseLeave={scheduleClose}
+          className="fixed z-[61] min-w-[12rem] overflow-hidden rounded-lg border border-border bg-surface py-1.5"
+          style={{ top: pos.top, left: pos.left, right: pos.right, boxShadow: 'var(--shadow-raised)' }}
         >
           {items.map((it) => {
             const Icon = it.icon;
@@ -85,7 +119,8 @@ export function ActionMenu({ items, label, trigger, align = 'right' }: {
               </button>
             );
           })}
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   );

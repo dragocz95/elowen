@@ -88,22 +88,20 @@ export function TaskCard({ task, onEdit, onSelect, active = false, blockers, sel
         <Badge tone={statusTone(task.status)}>{statusLabel(t, task.status)}</Badge>
       </div>
 
-      {/* run + hover controls */}
+      {/* run controls — always visible so the dropdown trigger never vanishes mid-interaction */}
       <div className="flex shrink-0 items-center gap-1" onClick={(e) => e.stopPropagation()}>
         {running
           ? <IconButton icon={Square} label={t.tasks.stop} variant="danger" onClick={stop} />
           : <IconButton icon={Play} label={t.tasks.start} onClick={start} />}
-        <div className="flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
-          {running ? <IconButton icon={Pause} label={t.tasks.pause} onClick={pause} /> : null}
-          <IconButton icon={Pencil} label={t.common.edit} onClick={() => onEdit(task)} />
-          <ActionMenu
-            label={t.tasks.deleteOrClose}
-            items={[
-              { label: t.tasks.closeArchive, icon: Archive, onSelect: () => close.mutate(task.id, { onSuccess: () => toast(t.tasks.closed.replace('{id}', task.id)), onError: (e) => toast(String(e), 'error') }) },
-              { label: t.tasks.deletePermanently, icon: Trash2, tone: 'danger', onSelect: () => setConfirmDelete(true) },
-            ]}
-          />
-        </div>
+        {running ? <IconButton icon={Pause} label={t.tasks.pause} onClick={pause} /> : null}
+        <IconButton icon={Pencil} label={t.common.edit} onClick={() => onEdit(task)} />
+        <ActionMenu
+          label={t.tasks.deleteOrClose}
+          items={[
+            { label: t.tasks.closeArchive, icon: Archive, onSelect: () => close.mutate(task.id, { onSuccess: () => toast(t.tasks.closed.replace('{id}', task.id)), onError: (e) => toast(String(e), 'error') }) },
+            { label: t.tasks.deletePermanently, icon: Trash2, tone: 'danger', onSelect: () => setConfirmDelete(true) },
+          ]}
+        />
       </div>
 
       {onToggleSelect ? (
