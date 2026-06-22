@@ -2,7 +2,8 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { readState, writeState, clearState, isAlive, status, stop, type RunState } from '../../src/cli/launcher.js';
+import { readState, writeState, clearState, isAlive, status, stop, start, type RunState } from '../../src/cli/launcher.js';
+import type { spawn as nodeSpawn } from 'node:child_process';
 
 let home: string;
 let env: NodeJS.ProcessEnv;
@@ -70,5 +71,23 @@ describe('cli/launcher.stop', () => {
     const killed: number[] = [];
     await stop(env, (pid) => killed.push(pid));
     expect(killed).toEqual([]);
+  });
+});
+
+describe('cli/launcher.start', () => {
+  const fakeSpawn = (() => ({ pid: 4321, unref() { /* detached */ } })) as unknown as typeof nodeSpawn;
+
+  it('records run state and resolves when the daemon answers /health', async () => {
+    const fetchFn = (async () => new Response('ok', { status: 200 })) as unknown as typeof fetch;
+    const s = await start(env, { version: '9.9.9', spawn: fakeSpawn, fetch: fetchFn, pollMs: 1, attempts: 3 });
+    expect(s.daemon.pid).toBe(4321);
+    expect(readState(env)).toEqual(s);
+  });
+
+  it('throws when the daemon never becomes healthy, but still records pids for cleanup', async () => {
+    const fetchFn = (async () => { throw new Error('ECONNREFUSED'); }) as unknown as typeof fetch;
+    await expect(start(env, { version: '9.9.9', spawn: fakeSpawn, fetch: fetchFn, pollMs: 1, attempts: 2 }))
+      .rejects.toThrow(/did not become healthy/);
+    expect(readState(env)?.daemon.pid).toBe(4321);
   });
 });

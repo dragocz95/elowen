@@ -104,12 +104,17 @@ export async function start(env: NodeJS.ProcessEnv, deps: StartDeps): Promise<Ru
     : launch(webServer(), { PORT: String(webPort), HOSTNAME: '127.0.0.1', ORCA_DAEMON_URL: `http://127.0.0.1:${daemonPort}` });
 
   // Wait for the daemon to answer; the web proxies it, so it comes up second.
+  let healthy = false;
   for (let i = 0; i < attempts; i++) {
-    if (await portHealthy(fetchFn, daemonPort, '/health')) break;
+    if (await portHealthy(fetchFn, daemonPort, '/health')) { healthy = true; break; }
     await new Promise((r) => setTimeout(r, pollMs));
   }
 
+  // Record state even on failure so `orca down`/`status` can see and clean up the spawned pids.
   const state: RunState = { daemon: { pid: daemonPid, port: daemonPort }, web: { pid: webPid, port: webPort }, version: deps.version, startedAt: now() };
   writeState(env, state);
+  // But never report success when the daemon never answered: a wedged or crash-looping daemon would
+  // otherwise be written as "orca is up". Surface it so the operator knows to check the logs.
+  if (!healthy) throw new Error(`orca daemon did not become healthy on :${daemonPort} after ${Math.round((attempts * pollMs) / 1000)}s — check the logs in ${logDir(env)}`);
   return state;
 }

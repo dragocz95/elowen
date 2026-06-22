@@ -91,13 +91,15 @@ export async function menu(env: NodeJS.ProcessEnv, version: string): Promise<voi
 
     if (action === 'status') { p.note(formatStatus(st, version), 'Status'); continue; }
     if (action === 'open') {
-      if (!running) { await runLifecycle('up', env, deps); }
+      // start() throws if the daemon never comes up — show it rather than opening a dead URL.
+      if (!running) { try { await runLifecycle('up', env, deps); } catch (e) { p.log.error((e as Error).message); continue; } }
       openUrl(webUrl);
       p.log.success(`Opening ${webUrl}`);
       continue;
     }
     if (action === 'up') {
-      await runLifecycle('up', env, deps);
+      try { await runLifecycle('up', env, deps); }
+      catch (e) { p.log.error((e as Error).message); continue; }
       // A brand-new install has no admin yet — offer the wizard right after the daemon is up.
       try {
         if (await isFirstRun(fetch, BASE) && await runSetupWizard(BASE)) {
