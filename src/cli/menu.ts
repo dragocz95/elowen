@@ -1,42 +1,20 @@
-import { spawn, execFile } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import * as p from '@clack/prompts';
 import { status } from './launcher.js';
 import { defaultLifecycleDeps, formatStatus, runLifecycle } from './commands.js';
 import { isFirstRun } from './setup.js';
 import { runSetupWizard } from './setupWizard.js';
 import { readInstallInfo, type InstallInfo } from './installInfo.js';
+import { update } from './update.js';
+import { SERVICES, runCmd, systemctl, servicesActive } from './systemd.js';
 
 const BASE = process.env.ORCA_URL ?? 'http://localhost:4400';
-const SERVICES = ['orca-daemon', 'orca-web'];
 
 /** Open a URL in the user's default browser, cross-platform, fire-and-forget. */
 function openUrl(url: string): void {
   const cmd = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'cmd' : 'xdg-open';
   const args = process.platform === 'win32' ? ['/c', 'start', '', url] : [url];
   try { spawn(cmd, args, { detached: true, stdio: 'ignore' }).unref(); } catch { /* headless box — ignore */ }
-}
-
-/** Run a command, resolving its stdout/exit code (never rejects). */
-function run(cmd: string, args: string[]): Promise<{ code: number; stdout: string }> {
-  return new Promise((resolve) => {
-    execFile(cmd, args, (err, stdout) => {
-      const code = err && typeof (err as { code?: unknown }).code === 'number' ? (err as { code: number }).code : err ? 1 : 0;
-      resolve({ code, stdout: stdout?.toString() ?? '' });
-    });
-  });
-}
-
-/** systemctl, transparently via sudo when we aren't root (so a non-root operator still works). */
-async function systemctl(...args: string[]): Promise<{ code: number; stdout: string }> {
-  const asRoot = typeof process.getuid === 'function' && process.getuid() === 0;
-  return asRoot ? run('systemctl', args) : run('sudo', ['systemctl', ...args]);
-}
-
-/** Whether both ORCA units report active. */
-async function servicesActive(): Promise<boolean> {
-  const r = await systemctl('is-active', ...SERVICES);
-  const states = r.stdout.trim().split('\n');
-  return states.length > 0 && states.every((s) => s.trim() === 'active');
 }
 
 /** Launcher menu for a systemd-provisioned box (`orca install`): drives the units via systemctl and
@@ -62,13 +40,14 @@ async function systemdMenu(info: InstallInfo, version: string): Promise<void> {
 
     if (action === 'open') { openUrl(info.publicUrl); p.log.success(`Opening ${info.publicUrl}`); continue; }
     if (action === 'status') { const r = await systemctl('status', '--no-pager', '-n', '0', ...SERVICES); p.note(r.stdout.trim() || '(no output)', 'Status'); continue; }
-    if (action === 'logs') { const r = await run('journalctl', ['-u', 'orca-daemon', '-n', '20', '--no-pager']); p.note(r.stdout.trim() || '(no logs — try: journalctl -u orca-daemon)', 'orca-daemon'); continue; }
+    if (action === 'logs') { const r = await runCmd('journalctl', ['-u', 'orca-daemon', '-n', '20', '--no-pager']); p.note(r.stdout.trim() || '(no logs — try: journalctl -u orca-daemon)', 'orca-daemon'); continue; }
     if (action === 'update') {
-      const s = p.spinner(); s.start('Updating orcasynth…');
-      const upd = await run('npm', ['install', '-g', 'orcasynth@latest']);
-      if (upd.code !== 0) { s.stop('Update failed — see npm output above.'); continue; }
-      await systemctl('restart', ...SERVICES);
-      s.stop('Updated and restarted.');
+      const s = p.spinner(); s.start('Checking npm for a newer version…');
+      try {
+        // Shared updater: self-locating npm --prefix + systemd-aware restart (same path as `orca update`).
+        const r = await update(process.env, { current: version });
+        s.stop(r.updated ? `Updated ${r.from} → ${r.to} and restarted.` : `Already on the latest version (${r.to}).`);
+      } catch (e) { s.stop(`Update failed: ${(e as Error).message}`); }
       continue;
     }
     // start | stop | restart

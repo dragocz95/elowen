@@ -1,9 +1,26 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { fileURLToPath } from 'node:url';
+import { dirname, basename } from 'node:path';
 import { isNewer } from './version.js';
 import { start, stop } from './launcher.js';
+import { readInstallInfo } from './installInfo.js';
+import { SERVICES, systemctl } from './systemd.js';
 
 const execFileAsync = promisify(execFile);
+
+/** The npm `--prefix` this very binary lives under, so `orca update` reinstalls *itself* in place —
+ *  no matter where it was globally installed (e.g. a www-data-owned prefix), and without the operator
+ *  having to remember any `--prefix`. Returns null when run from a source checkout (no node_modules in
+ *  the path), in which case we let npm use its default global prefix. */
+function selfPrefix(): string | null {
+  const here = fileURLToPath(import.meta.url); // <prefix>[/lib]/node_modules/orcasynth/dist/cli/update.js
+  const idx = here.lastIndexOf('/node_modules/');
+  if (idx === -1) return null;
+  let base = here.slice(0, idx); // <prefix>/lib  (global, has lib/)  OR  <prefix>  (prefix-style install)
+  if (basename(base) === 'lib') base = dirname(base);
+  return base;
+}
 
 /** Latest published version of orcasynth from the npm registry. Uses the bare registry JSON endpoint
  *  (no npm spawn) so a version check is cheap and offline-tolerant (throws → caller reports it). */
@@ -34,10 +51,20 @@ export async function update(env: NodeJS.ProcessEnv, deps: UpdateDeps): Promise<
   const latest = await checkLatest(fetchFn);
   if (!isNewer(latest, deps.current)) return { updated: false, from: deps.current, to: latest };
 
-  const install = deps.install ?? (async () => { await execFileAsync('npm', ['install', '-g', 'orcasynth@latest']); });
+  const install = deps.install ?? (async () => {
+    const prefix = selfPrefix();
+    await execFileAsync('npm', ['install', '-g', 'orcasynth@latest', ...(prefix ? ['--prefix', prefix] : [])]);
+  });
   await install();
 
+  // A box provisioned by `orca install` is systemd-managed — restart those units (sudo when not root).
+  // A plain launcher install has no install.json — fall back to stop/start of our own spawned daemon.
   const restart = deps.restart ?? (async (e) => {
+    if (readInstallInfo()) {
+      const r = await systemctl('restart', ...SERVICES);
+      if (r.code !== 0) throw new Error(`systemctl restart failed (code ${r.code})`);
+      return;
+    }
     await stop(e);
     await start(e, { version: latest });
   });
