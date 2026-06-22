@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { daemonUrl, sessionCookie, clearCookie, isSameOrigin, isHttps, forwardHeaders, COOKIE_NAME } from '../../lib/proxy';
+import { daemonUrl, sessionCookie, clearCookie, isSameOrigin, isHttps, forwardHeaders, tokenFromCookie, jsonError, requireSameOrigin, COOKIE_NAME } from '../../lib/proxy';
 
 describe('proxy helpers', () => {
   beforeEach(() => { delete process.env.ORCA_DAEMON_URL; });
@@ -88,5 +88,28 @@ describe('proxy helpers', () => {
     // nothing, and keeping it out avoids any gzip/SSE streaming edge case.
     const enc = forwardHeaders(new Request('https://web.example/api/x', { headers: { 'accept-encoding': 'gzip, br' } }));
     expect(enc.get('accept-encoding')).toBeNull();
+  });
+
+  it('tokenFromCookie reads the session token from the cookie header, or null', () => {
+    const withTok = new Request('https://web.example/api/x', { headers: { cookie: `other=1; ${COOKIE_NAME}=abc123; x=2` } });
+    expect(tokenFromCookie(withTok)).toBe('abc123');
+    expect(tokenFromCookie(new Request('https://web.example/api/x'))).toBeNull();
+    expect(tokenFromCookie(new Request('https://web.example/api/x', { headers: { cookie: 'other=1' } }))).toBeNull();
+  });
+
+  it('jsonError returns a JSON { error } body with the given status', async () => {
+    const res = jsonError('forbidden', 403);
+    expect(res.status).toBe(403);
+    expect(res.headers.get('content-type')).toBe('application/json');
+    expect(await res.json()).toEqual({ error: 'forbidden' });
+  });
+
+  it('requireSameOrigin returns null same-origin and a 403 cross-origin', async () => {
+    const same = new Request('https://web.example/api/x', { method: 'POST', headers: { origin: 'https://web.example', host: 'web.example' } });
+    expect(requireSameOrigin(same)).toBeNull();
+    const cross = new Request('https://web.example/api/x', { method: 'POST', headers: { origin: 'https://evil.example', host: 'web.example' } });
+    const blocked = requireSameOrigin(cross);
+    expect(blocked?.status).toBe(403);
+    expect(await blocked!.json()).toEqual({ error: 'forbidden' });
   });
 });

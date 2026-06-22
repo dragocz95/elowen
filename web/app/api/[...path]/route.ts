@@ -1,14 +1,9 @@
-import { daemonUrl, forwardHeaders, isSameOrigin, clearCookie, isHttps, COOKIE_NAME } from '../../../lib/proxy';
+import { daemonUrl, forwardHeaders, requireSameOrigin, jsonError, tokenFromCookie, clearCookie, isHttps } from '../../../lib/proxy';
 
 // Catch-all BFF proxy: every browser REST/SSE call hits this same-origin route, which reads the
 // httpOnly session cookie, injects it as a daemon bearer token server-side, and streams the response
 // straight back (SSE frames included). The token never reaches browser JS.
 type Ctx = { params: Promise<{ path: string[] }> };
-
-function tokenFrom(req: Request): string | null {
-  const m = (req.headers.get('cookie') ?? '').match(new RegExp(`${COOKIE_NAME}=([^;]+)`));
-  return m ? m[1] : null;
-}
 
 const MUTATING = new Set(['POST', 'PATCH', 'PUT', 'DELETE']);
 
@@ -20,17 +15,14 @@ function safeSegments(path: string[]): boolean {
 }
 
 async function proxy(req: Request, ctx: Ctx): Promise<Response> {
-  if (MUTATING.has(req.method) && !isSameOrigin(req)) {
-    return new Response(JSON.stringify({ error: 'forbidden' }), { status: 403, headers: { 'content-type': 'application/json' } });
+  if (MUTATING.has(req.method)) {
+    const blocked = requireSameOrigin(req);
+    if (blocked) return blocked;
   }
-  const token = tokenFrom(req);
-  if (!token) {
-    return new Response(JSON.stringify({ error: 'unauthorized' }), { status: 401, headers: { 'content-type': 'application/json' } });
-  }
+  const token = tokenFromCookie(req);
+  if (!token) return jsonError('unauthorized', 401);
   const { path } = await ctx.params;
-  if (!safeSegments(path)) {
-    return new Response(JSON.stringify({ error: 'bad_request' }), { status: 400, headers: { 'content-type': 'application/json' } });
-  }
+  if (!safeSegments(path)) return jsonError('bad_request', 400);
   const search = new URL(req.url).search;
   const headers = forwardHeaders(req);
   headers.set('authorization', `Bearer ${token}`);

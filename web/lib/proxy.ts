@@ -45,6 +45,25 @@ export function isSameOrigin(req: Request): boolean {
   return originHost === host;
 }
 
+/** Read the session token from the httpOnly cookie header, or null when absent. The single place
+ *  the cookie is parsed, so every route handler reads it the same way. */
+export function tokenFromCookie(req: Request): string | null {
+  const m = (req.headers.get('cookie') ?? '').match(new RegExp(`${COOKIE_NAME}=([^;]+)`));
+  return m ? m[1] : null;
+}
+
+/** A JSON `{ error }` Response with the given status. The uniform error shape every BFF route
+ *  returns, so the client's `apiErrorMessage` can read `.error` consistently. */
+export function jsonError(error: string, status: number): Response {
+  return new Response(JSON.stringify({ error }), { status, headers: { 'content-type': 'application/json' } });
+}
+
+/** CSRF guard for a mutating route: a 403 Response when the request is cross-origin, else null
+ *  (proceed). Wraps `isSameOrigin` so handlers just `const blocked = requireSameOrigin(req); if (blocked) return blocked;`. */
+export function requireSameOrigin(req: Request): Response | null {
+  return isSameOrigin(req) ? null : jsonError('forbidden', 403);
+}
+
 /** Headers safe to forward from the browser to the daemon. An allow-list (not a deny-list) so a
  *  client can never smuggle its own `authorization` (the proxy injects the real bearer), spoof its
  *  source IP via `x-forwarded-for`/`x-real-ip`/`forwarded` (defeating daemon rate-limiting/audit),
