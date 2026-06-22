@@ -1,4 +1,4 @@
-import { daemonUrl, forwardHeaders, isSameOrigin, clearCookie, COOKIE_NAME } from '../../../lib/proxy';
+import { daemonUrl, forwardHeaders, isSameOrigin, clearCookie, isHttps, COOKIE_NAME } from '../../../lib/proxy';
 
 // Catch-all BFF proxy: every browser REST/SSE call hits this same-origin route, which reads the
 // httpOnly session cookie, injects it as a daemon bearer token server-side, and streams the response
@@ -43,7 +43,7 @@ async function proxy(req: Request, ctx: Ctx): Promise<Response> {
   // Never relay a daemon-set cookie to the browser; the proxy is the sole owner of the session cookie.
   resHeaders.delete('set-cookie');
   // A daemon 401 means the session token is stale/revoked — expire the cookie so the gate logs out.
-  if (upstream.status === 401) resHeaders.append('set-cookie', clearCookie());
+  if (upstream.status === 401) resHeaders.append('set-cookie', clearCookie(isHttps(req)));
   return new Response(upstream.body, { status: upstream.status, headers: resHeaders });
 }
 

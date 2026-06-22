@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { daemonUrl, sessionCookie, clearCookie, isSameOrigin, forwardHeaders, COOKIE_NAME } from '../../lib/proxy';
+import { daemonUrl, sessionCookie, clearCookie, isSameOrigin, isHttps, forwardHeaders, COOKIE_NAME } from '../../lib/proxy';
 
 describe('proxy helpers', () => {
   beforeEach(() => { delete process.env.ORCA_DAEMON_URL; });
@@ -10,17 +10,31 @@ describe('proxy helpers', () => {
     expect(daemonUrl()).toBe('http://localhost:9999');
   });
 
-  it('sessionCookie is httpOnly, secure, lax', () => {
-    const c = sessionCookie('tok123');
-    expect(c).toContain(`${COOKIE_NAME}=tok123`);
-    expect(c).toMatch(/HttpOnly/);
-    expect(c).toMatch(/Secure/);
-    expect(c).toMatch(/SameSite=Lax/);
+  it('sessionCookie is httpOnly + lax, and Secure only over HTTPS', () => {
+    const secure = sessionCookie('tok123', true);
+    expect(secure).toContain(`${COOKIE_NAME}=tok123`);
+    expect(secure).toMatch(/HttpOnly/);
+    expect(secure).toMatch(/Secure/);
+    expect(secure).toMatch(/SameSite=Lax/);
+    // Over plain HTTP the cookie must NOT be Secure, or the browser drops it (→ 401 after login).
+    const insecure = sessionCookie('tok123', false);
+    expect(insecure).toMatch(/HttpOnly/);
+    expect(insecure).not.toMatch(/Secure/);
   });
 
-  it('clearCookie expires the cookie', () => {
-    expect(clearCookie()).toMatch(/Max-Age=0/);
-    expect(clearCookie()).toContain(`${COOKIE_NAME}=;`);
+  it('clearCookie expires the cookie and matches the Secure attr', () => {
+    expect(clearCookie(true)).toMatch(/Max-Age=0/);
+    expect(clearCookie(true)).toContain(`${COOKIE_NAME}=;`);
+    expect(clearCookie(true)).toMatch(/Secure/);
+    expect(clearCookie(false)).not.toMatch(/Secure/);
+  });
+
+  it('isHttps reads X-Forwarded-Proto from the reverse proxy', () => {
+    expect(isHttps(new Request('http://web/api/x', { headers: { 'x-forwarded-proto': 'https' } }))).toBe(true);
+    expect(isHttps(new Request('http://web/api/x', { headers: { 'x-forwarded-proto': 'http' } }))).toBe(false);
+    expect(isHttps(new Request('http://web/api/x'))).toBe(false);
+    // Some proxies chain values ("https, http"); the client-facing (first) scheme wins.
+    expect(isHttps(new Request('http://web/api/x', { headers: { 'x-forwarded-proto': 'https, http' } }))).toBe(true);
   });
 
   it('isSameOrigin: no Origin header is allowed', () => {

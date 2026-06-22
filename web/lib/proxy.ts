@@ -7,14 +7,23 @@ export function daemonUrl(): string {
   return process.env.ORCA_DAEMON_URL ?? 'http://localhost:4400';
 }
 
-const ATTRS = 'HttpOnly; Secure; SameSite=Lax; Path=/';
+const ATTRS = 'HttpOnly; SameSite=Lax; Path=/';
 
-export function sessionCookie(token: string): string {
-  return `${COOKIE_NAME}=${token}; ${ATTRS}`;
+/** Whether the browser reached us over HTTPS. The reverse proxy forwards the original scheme in
+ *  X-Forwarded-Proto (nginx: `proxy_set_header X-Forwarded-Proto $scheme`); absent means a direct
+ *  plain-HTTP hit (localhost / IP:4500). The session cookie is marked `Secure` ONLY over HTTPS —
+ *  marking it Secure on a plain-HTTP deployment makes the browser silently drop it, so every
+ *  post-login request arrives without the cookie and the daemon answers 401 across the board. */
+export function isHttps(req: Request): boolean {
+  return (req.headers.get('x-forwarded-proto') ?? '').split(',')[0].trim().toLowerCase() === 'https';
 }
 
-export function clearCookie(): string {
-  return `${COOKIE_NAME}=; ${ATTRS}; Max-Age=0`;
+export function sessionCookie(token: string, secure: boolean): string {
+  return `${COOKIE_NAME}=${token}; ${ATTRS}${secure ? '; Secure' : ''}`;
+}
+
+export function clearCookie(secure: boolean): string {
+  return `${COOKIE_NAME}=; ${ATTRS}${secure ? '; Secure' : ''}; Max-Age=0`;
 }
 
 /** Same-origin guard for mutating requests (CSRF defense-in-depth on top of SameSite=Lax).

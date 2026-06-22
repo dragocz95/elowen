@@ -1,4 +1,4 @@
-import { daemonUrl, clearCookie, isSameOrigin, COOKIE_NAME } from '../../../../lib/proxy';
+import { daemonUrl, clearCookie, isSameOrigin, isHttps, COOKIE_NAME } from '../../../../lib/proxy';
 
 function tokenFrom(req: Request): string | null {
   const cookie = req.headers.get('cookie') ?? '';
@@ -19,6 +19,6 @@ export async function POST(req: Request): Promise<Response> {
   }
   return new Response(JSON.stringify({ ok: true }), {
     status: 200,
-    headers: { 'content-type': 'application/json', 'set-cookie': clearCookie() },
+    headers: { 'content-type': 'application/json', 'set-cookie': clearCookie(isHttps(req)) },
   });
 }

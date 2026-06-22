@@ -22,6 +22,22 @@ describe('auth login route', () => {
     expect(JSON.stringify(body)).not.toContain('secret-tok');
   });
 
+  it('marks the cookie Secure behind HTTPS but not over plain HTTP (IP:4500 / localhost)', async () => {
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({ token: 't' }), { status: 200, headers: { 'content-type': 'application/json' } }));
+    const httpsReq = new Request('http://web.test/api/auth/login', {
+      method: 'POST', headers: { 'content-type': 'application/json', origin: 'https://web.test', 'x-forwarded-proto': 'https' },
+      body: JSON.stringify({ username: 'admin', password: 'x' }),
+    });
+    expect((await login(httpsReq)).headers.get('set-cookie') ?? '').toMatch(/Secure/);
+
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({ token: 't' }), { status: 200, headers: { 'content-type': 'application/json' } }));
+    const httpReq = new Request('http://web.test/api/auth/login', {
+      method: 'POST', headers: { 'content-type': 'application/json', origin: 'http://web.test' },
+      body: JSON.stringify({ username: 'admin', password: 'x' }),
+    });
+    expect((await login(httpReq)).headers.get('set-cookie') ?? '').not.toMatch(/Secure/);
+  });
+
   it('propagates a daemon auth failure without setting a cookie', async () => {
     fetchMock.mockResolvedValue(new Response(JSON.stringify({ error: 'bad credentials' }), { status: 401 }));
     const res = await login(post('https://web.test/api/auth/login', { username: 'admin', password: 'wrong' }));

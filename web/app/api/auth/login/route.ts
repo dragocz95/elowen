@@ -1,4 +1,4 @@
-import { daemonUrl, sessionCookie, isSameOrigin } from '../../../../lib/proxy';
+import { daemonUrl, sessionCookie, isSameOrigin, isHttps } from '../../../../lib/proxy';
 
 // Proxy-owned login: forward credentials to the daemon, and on success mint the httpOnly session
 // cookie here. The daemon token is placed in the cookie and never returned to the browser body, so
@@ -30,6 +30,6 @@ export async function POST(req: Request): Promise<Response> {
   }
   return new Response(JSON.stringify({ ok: true }), {
     status: 200,
-    headers: { 'content-type': 'application/json', 'set-cookie': sessionCookie(token) },
+    headers: { 'content-type': 'application/json', 'set-cookie': sessionCookie(token, isHttps(req)) },
   });
 }
