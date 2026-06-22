@@ -3,7 +3,6 @@ import { useEffect, useRef } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { QUERY_KEYS } from './queries';
 import { BASE } from './orcaClient';
-import { withToken } from './token';
 import type { DerivedSignal, PlanJob } from './types';
 
 export interface ReviewEvent { missionId: string; taskId: string; approve: boolean; rationale: string }
@@ -20,7 +19,8 @@ export function useOrcaEvents(opts?: { onReview?: (e: ReviewEvent) => void }): v
   const onReviewRef = useRef(opts?.onReview);
   onReviewRef.current = opts?.onReview;
   useEffect(() => {
-    const es = new EventSource(withToken(`${BASE}/events`));
+    // Same-origin SSE through the /api proxy; the httpOnly session cookie rides along via credentials.
+    const es = new EventSource(`${BASE}/events`, { withCredentials: true });
 
     // Native EventSource auto-reconnects on transport drops (browser-managed retry per HTML spec).
     // On a terminal failure (readyState CLOSED) just stop — do NOT touch the auth token here: the
