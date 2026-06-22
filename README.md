@@ -4,13 +4,14 @@
 
 **Control autonomous coding agents — without losing control.**
 
-Plan work, launch isolated coding agents, watch every session, and step in
-before risky changes reach your codebase.
+Plan the work, launch isolated coding agents, watch every session live, and step in
+before a risky change ever reaches your codebase.
 
 `Plan · Dispatch · Observe · Intervene`
 
-Orcasynth is a self-hosted daemon that runs coding agents (Claude Code, OpenCode,
-Codex) in isolated `tmux` sessions — with a REST API, a CLI, and a real-time web UI.
+Orcasynth is a self-hosted daemon that orchestrates autonomous coding agents
+(Claude Code, OpenCode, Codex) in isolated `tmux` sessions — with a REST API, a CLI,
+and a real-time Next.js web UI. No SaaS, no lock-in: your machine, your agents, your code.
 
 [![CI](https://github.com/dragocz1995/orcasynth/actions/workflows/ci.yml/badge.svg)](https://github.com/dragocz1995/orcasynth/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
@@ -21,32 +22,51 @@ Codex) in isolated `tmux` sessions — with a REST API, a CLI, and a real-time w
 
 ---
 
+## Why Orcasynth
+
+Coding agents are powerful but messy to run at scale: one terminal per agent, no shared
+view of what's happening, and no safety net when an agent decides to `rm -rf` something.
+
+Orcasynth puts a control plane in front of them. Hand it a goal and it plans the work,
+spawns the right agent for each step in its own `tmux` session, streams every keystroke to
+your browser, and gates dangerous actions behind a human when you want it to. When you
+trust it more, you turn the autonomy up; when you trust it less, you turn it down.
+
 ## What it does
 
-- **Autopilot planning.** Give the Pilot a goal; an LLM decomposes it into ordered
-  phases, names an agent per phase, and chains them by dependency.
-- **Per-model descriptions & per-phase model selection.** Write a capability
-  description for each model in Settings; flip on "Autopilot picks the model" and the
-  planner chooses the best-suited model for each phase from those descriptions —
-  validated against your allow-list, falling back to the default on anything invalid.
-- **Agent-agnostic spawning.** Runs Claude Code, OpenCode, or Codex in `tmux`,
-  configurable per task. Each agent gets the task context and closes its own task when done.
-- **Autonomy levels (L0–L3).** The overseer auto-clears safe permission prompts at
-  higher autonomy and escalates destructive or uncertain ones to a human.
-- **Live web UI.** Tasks, a kanban board + calendar, missions with progress, a timeline,
-  and live `tmux` session previews with one-click agent intervention. EN/CS i18n built in.
-- **Self-healing.** A stuck-session detector revives agents that die without closing out,
-  and live token/cost usage is shown per run.
-- **Multi-user RBAC.** Per-project assignments, per-user model allow-lists, profiles & avatars,
-  and a first-run onboarding that needs no login until the first admin is created.
-- **Self-hosted & lightweight.** A single SQLite-backed daemon (Hono) + a Next.js front end.
-  No external services required beyond your LLM provider.
+- **Autopilot planning.** Give the Pilot a goal and an LLM decomposes it into ordered
+  phases, chains them by dependency, and can name an agent per phase. Phases only start
+  once the phases they depend on are done.
+- **Per-model descriptions & per-phase model selection.** Write a capability description
+  for each model in Settings, flip on "Autopilot picks the model," and the planner chooses
+  the best-suited model for each phase from those descriptions — validated against your
+  allow-list, falling back to the default on anything invalid.
+- **Agent-agnostic spawning.** Runs Claude Code, OpenCode, or Codex in isolated `tmux`
+  sessions, configurable per task. Each agent receives the task context and closes its own
+  task when it's done.
+- **Autonomy levels (L0–L3).** Choose how much rope each mission gets — from
+  **L0 · Recommend** (plan only, nothing runs until you approve) through **L1 · Assist**
+  and **L2 · Pilot** to **L3 · Auto** (full autonomy). The overseer's decision engine
+  auto-clears agent permission prompts when confidence is high and the action is safe, and
+  escalates anything destructive or uncertain to a human. Operations like `rm -rf`, dropping
+  tables, force-pushes, or touching `.env` always escalate, whatever the level.
+- **Live web UI with one-click intervention.** Tasks, a kanban board with a calendar,
+  missions with phase progress, a timeline, and real-time `tmux` session previews you can
+  jump into and take over. Full EN/CS internationalization built in.
+- **Self-healing.** A stuck-session detector revives agents that die without closing out
+  (and blocks the task after repeated failures instead of crash-looping). A janitor sweeps
+  up finished sessions. Live token and cost usage is shown per run.
+- **Multi-user RBAC.** Admin and member roles, per-project assignments, per-user model
+  allow-lists, profiles and avatars, and a first-run onboarding that needs no login until
+  the first admin is created.
+- **Self-hosted & lightweight.** A single SQLite-backed daemon (Hono + SSE) plus a Next.js
+  front end. No external services required beyond your own LLM provider.
 
 ## Screenshots
 
 <div align="center">
 
-**Dashboard** — live agents, active missions, autopilot spotlight, and recent outcomes at a glance.
+**Dashboard** — live agents, active missions, the autopilot spotlight, and recent outcomes at a glance.
 
 ![Dashboard](docs/screenshots/dashboard.png)
 
@@ -54,7 +74,7 @@ Codex) in isolated `tmux` sessions — with a REST API, a CLI, and a real-time w
 
 | | |
 |---|---|
-| **Tasks** — list + detail with live agent output and token usage. ![Tasks](docs/screenshots/tasks.png) | **Kanban** — open / in-progress / blocked / closed, with mission progress. ![Kanban](docs/screenshots/kanban.png) |
+| **Tasks** — list + detail with live agent output and token usage. ![Tasks](docs/screenshots/tasks.png) | **Kanban** — open / in-progress / blocked / closed, with mission progress and a calendar. ![Kanban](docs/screenshots/kanban.png) |
 | **Missions** — phase graph and task flow for an autopilot run (folded into Tasks). ![Missions](docs/screenshots/missions.png) | **Timeline** — a live activity feed across tasks, missions, and signals. ![Timeline](docs/screenshots/timeline.png) |
 | **Sessions** — real-time `tmux` agent previews with one-click intervention. ![Sessions](docs/screenshots/sessions.png) | **Terminal** — the full agent TUI, including human-in-the-loop approvals. ![Terminal](docs/screenshots/terminal.png) |
 | **Projects** — a built-in Monaco editor with the project file tree. ![Projects editor](docs/screenshots/projects-editor.png) | **Settings** — model presets & descriptions, providers, autopilot, and defaults. ![Settings](docs/screenshots/settings.png) |
@@ -86,8 +106,8 @@ orca update     # update to the latest release from npm
 ```
 
 Requires **Node ≥ 22** and **tmux**. On first run, `orca` walks you through a quick
-setup — admin account, LLM provider + API key, default model. Your data (config, the
-SQLite database and logs) lives in **`~/.config/orca/`** and survives every update.
+setup — admin account, LLM provider + API key, and a default model. Your data (config,
+the SQLite database, and logs) lives in **`~/.config/orca/`** and survives every update.
 
 Then open <http://localhost:4500> and sign in.
 
@@ -111,12 +131,36 @@ npm start -- -p 4500
 Open <http://localhost:4500> and sign in. Configure your LLM provider and models in
 **Settings → Autopilot / Models**, then create a task or engage an autopilot mission.
 
-The CLI auto-starts the daemon if it isn't running:
+The CLI talks to the daemon over the REST API and auto-starts it if it isn't running:
 
 ```bash
-node dist/cli/index.js ls        # list tasks
-node dist/cli/index.js close <id>
+node dist/cli/index.js ls          # list tasks
+node dist/cli/index.js close <id>  # close a task
 ```
+
+## How it works
+
+```
+        goal
+         │
+         ▼
+   ┌───────────┐   phases + deps    ┌─────────────┐   spawn    ┌──────────────┐
+   │   Pilot   │ ─────────────────► │   Overseer  │ ─────────► │  Agent (tmux) │
+   │ (planner) │                    │ (scheduler, │            │ Claude Code / │
+   └───────────┘                    │  decisions) │ ◄───────── │ OpenCode /    │
+                                    └─────────────┘   signals  │ Codex         │
+                                          │                    └──────────────┘
+                                          │ escalate
+                                          ▼
+                                    human-in-the-loop
+```
+
+The **Pilot** decomposes a goal into a dependency-ordered set of phases. The **Overseer**
+schedules ready phases, spawns the right **Agent** for each one in its own `tmux` session,
+and watches the output. A deriver reads each session and emits signals — `working`,
+`needs_input`, `complete`. When an agent hits a permission prompt, the decision engine
+either clears it automatically (high confidence, non-destructive, within the mission's
+autonomy level) or escalates it to a human.
 
 ## Architecture
 
@@ -125,12 +169,14 @@ is a thin client over the REST API + SSE event stream.
 
 | Layer | What lives there |
 |-------|------------------|
-| `src/store` | SQLite stores (tasks, missions, agents, config, users) |
-| `src/overseer` | mission engine, scheduler, planner, decision engine, janitor |
+| `src/store` | SQLite stores (tasks, missions, agents, config, users, projects, events) via `better-sqlite3` |
+| `src/overseer` | mission engine, planner, scheduler, decision engine, stuck-detector, janitor |
 | `src/spawn` · `src/tmux` | agent command building + tmux driver |
-| `src/deriver` | derives signals from agent output (working / needs-input / complete) |
-| `src/api` | Hono REST server + SSE bus |
-| `web/modules` | feature modules (tasks, kanban, missions, sessions, timeline, …) |
+| `src/deriver` | derives signals from agent output (`working` / `needs_input` / `complete`) |
+| `src/integrations` | per-executor token/cost usage extraction |
+| `src/api` | Hono REST server + SSE event bus |
+| `src/cli` · `src/daemon` | the `orca` CLI and the daemon entrypoint |
+| `web/modules` | feature modules (tasks, kanban, sessions, timeline, projects, settings, …) |
 
 See [`docs/`](./docs) for the [API](./docs/API.md), [architecture](./docs/ARCHITECTURE.md),
 [concepts](./docs/CONCEPTS.md), [CLI](./docs/CLI.md), and [development](./docs/DEVELOPMENT.md) guides.
@@ -158,3 +204,5 @@ Star the repo if you find it useful — it helps others discover the project.
 ## License
 
 [MIT](./LICENSE)
+</content>
+</invoke>
