@@ -20,9 +20,11 @@ export function authMiddleware(users: UserStore, tokenTtlDays?: () => number): M
     // detect tooling, save config and create the first admin. As soon as one user exists, auth is
     // enforced on every request again.
     if (users.count() === 0) return next();
+    // Bearer header only. A token in the query string leaks into access logs, the Referer header and
+    // proxy caches; nothing needs it (the web app authenticates via the BFF-injected Authorization
+    // header, even for SSE, and the CLI sends a Bearer header).
     const header = c.req.header('authorization');
-    const bearer = header?.startsWith('Bearer ') ? header.slice(7) : undefined;
-    const token = bearer ?? c.req.query('token');
+    const token = header?.startsWith('Bearer ') ? header.slice(7) : undefined;
     const principal = token ? users.principalForToken(token, tokenTtlDays?.()) : null;
     if (!principal) return c.json({ error: 'unauthorized' }, 401);
     c.set('user', principal.user);

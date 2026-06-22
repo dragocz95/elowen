@@ -54,7 +54,7 @@ describe('auth', () => {
     expect(last).toBe(429);
   });
 
-  it('protects routes: 401 without token, 200 with Bearer and with ?token=', async () => {
+  it('protects routes: 401 without token, 200 with Bearer; rejects a ?token= query token', async () => {
     const { app } = makeAuthedApp();
     expect((await app.request('/tasks')).status).toBe(401);
     // /projects (incl. mutating POST + git shell-out) and /activity must be gated too
@@ -64,7 +64,9 @@ describe('auth', () => {
     const login = await (await app.request('/auth/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ username: 'alice', password: 'secret' }) })).json();
     const t = login.token as string;
     expect((await app.request('/tasks', { headers: { authorization: `Bearer ${t}` } })).status).toBe(200);
-    expect((await app.request(`/tasks?token=${t}`)).status).toBe(200);
+    // A token in the query string is no longer accepted — it leaks into logs/Referer and nothing uses
+    // it (the web app authenticates via the BFF-injected Bearer header). Only the header is honoured.
+    expect((await app.request(`/tasks?token=${t}`)).status).toBe(401);
   });
 
   it('keeps /health public without a token', async () => {
