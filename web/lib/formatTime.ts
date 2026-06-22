@@ -1,4 +1,5 @@
 import { parseTs } from './agentUtils';
+import { compactElapsed } from './formatDuration';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -11,11 +12,15 @@ export interface TaskTimeLabel {
   title: string;
 }
 
-/** Render a DB (UTC) timestamp as an absolute local-time string for tooltips. */
-function localFull(ms: number, locale?: string): string {
+/** Render a DB (UTC) or ISO timestamp as an absolute local-time string ('Jun 19, 2026, 14:02').
+ *  `seconds` adds the seconds field (tooltips want it; compact lists don't). Falls back to the raw
+ *  input when it can't be parsed. Single source of truth for absolute local date/time rendering. */
+export function localDateTime(iso: string, locale?: string, seconds = true): string {
+  const ms = parseTs(iso);
+  if (ms == null) return iso;
   return new Date(ms).toLocaleString(locale, {
     year: 'numeric', month: 'short', day: 'numeric',
-    hour: '2-digit', minute: '2-digit', second: '2-digit',
+    hour: '2-digit', minute: '2-digit', ...(seconds ? { second: '2-digit' } : {}),
   });
 }
 
@@ -27,17 +32,9 @@ export function formatTaskTime(iso: string | null | undefined, nowMs: number, lo
   if (!iso) return { label: '', title: '' };
   const ms = parseTs(iso);
   if (ms == null) return { label: iso, title: iso };
-  const title = localFull(ms, locale);
+  const title = localDateTime(iso, locale);
   const delta = nowMs - ms;
-  if (delta < DAY_MS) {
-    if (delta < 0) return { label: '0s', title };
-    const secs = Math.floor(delta / 1000);
-    if (secs < 60) return { label: `${secs}s`, title };
-    const mins = Math.floor(secs / 60);
-    if (mins < 60) return { label: `${mins}m`, title };
-    const hours = Math.floor(mins / 60);
-    return { label: `${hours}h`, title };
-  }
+  if (delta < DAY_MS) return { label: compactElapsed(delta), title };
   const label = new Date(ms).toLocaleString(locale, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
   return { label, title };
 }

@@ -3,6 +3,7 @@ import { useMemo, useState } from 'react';
 import Link from 'next/link';
 import { Activity, Clock, Columns3, ArrowUpRight, FileDiff } from 'lucide-react';
 import { useActivity, useProjectChanged, useProjectChanges, useProjects, useProjectsCommits, useTasks } from '../../lib/queries';
+import { parseTs } from '../../lib/agentUtils';
 import { ChangesOverTime } from './ChangesOverTime';
 import { plotAxis, type AxisEvent, type AxisPoint } from './axis';
 import { eventIcon, markerTone } from './eventMeta';
@@ -19,12 +20,6 @@ import { useTranslation } from '../../lib/i18n';
 import { usePersistentState } from '../../lib/usePersistentState';
 
 const WINDOW_MAX_HOURS = 168; // cap the axis window at one week
-
-/** Parse either ISO ("2026-06-17T12:05:00Z") or SQLite ("2026-06-17 12:05:00") ts → epoch ms. */
-function parseTs(ts: string): number {
-  const iso = ts.includes('T') ? ts : ts.replace(' ', 'T') + 'Z';
-  return Date.parse(iso);
-}
 
 const TONE_DOT: Record<Tone, string> = {
   accent: 'bg-accent', danger: 'bg-danger', success: 'bg-success',
@@ -279,7 +274,7 @@ export function TimelineView() {
     () =>
       (q.data ?? []).flatMap((e) => {
         const ts = parseTs(e.ts);
-        if (Number.isNaN(ts)) return [];
+        if (ts == null) return [];
         return [{ id: String(e.id), type: e.type, target: e.target, detail: e.detail, timestamp: ts, projectId: e.project_id }];
       }),
     [q.data],

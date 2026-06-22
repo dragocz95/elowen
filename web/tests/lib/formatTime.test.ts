@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { formatTaskTime } from '../../lib/formatTime';
+import { formatTaskTime, localDateTime } from '../../lib/formatTime';
 
 const ISO = '2026-06-18 10:00:00'; // SQLite UTC format
 const at = (iso: string) => new Date(iso).getTime();
@@ -37,5 +37,24 @@ describe('formatTaskTime', () => {
 
   it('clamps future timestamps to a relative bucket of 0s', () => {
     expect(formatTaskTime(ISO, at('2026-06-18T09:59:00Z')).label).toBe('0s');
+  });
+});
+
+describe('localDateTime', () => {
+  const expected = (seconds: boolean) => new Date(at('2026-06-18T10:00:00Z')).toLocaleString('en-US', {
+    year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
+    ...(seconds ? { second: '2-digit' } : {}),
+  });
+  it('renders SQLite UTC in local time, with seconds by default', () => {
+    expect(localDateTime(ISO, 'en-US')).toBe(expected(true));
+  });
+  it('omits seconds when asked', () => {
+    expect(localDateTime(ISO, 'en-US', false)).toBe(expected(false));
+  });
+  it('parses an already-Z-suffixed space form without producing Invalid Date', () => {
+    expect(localDateTime('2026-06-18 10:00:00Z', 'en-US', false)).toBe(expected(false));
+  });
+  it('falls back to the raw input when unparseable', () => {
+    expect(localDateTime('not-a-date', 'en-US')).toBe('not-a-date');
   });
 });

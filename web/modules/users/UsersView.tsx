@@ -18,11 +18,7 @@ import { ModelIcon } from '../../components/ui/ModelIcon';
 import { ModuleHeader } from '../../components/ui/ModuleHeader';
 import { LoadingState, ErrorState, EmptyState } from '../../components/ui/states';
 import { useTranslation } from '../../lib/i18n';
-
-const fmtDate = (iso: string, locale?: string) => {
-  const d = new Date(iso.includes('T') ? iso : iso.replace(' ', 'T') + 'Z');
-  return Number.isNaN(d.getTime()) ? iso : d.toLocaleString(locale, { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-};
+import { localDateTime } from '../../lib/formatTime';
 
 /** Admin-only: toggle chips assigning a user to projects (the access boundary for non-admins). */
 function ProjectChips({ userId, projects }: { userId: number; projects: Project[] }) {
@@ -174,7 +170,7 @@ export function UsersView() {
                     <span className="truncate font-semibold text-text">{user.name || user.username}</span>
                     {user.is_admin ? <Badge tone="accent"><ShieldCheck size={11} className="mr-1" aria-hidden />{t.users.admin}</Badge> : null}
                   </span>
-                  <span className="truncate font-mono text-xs text-text-muted">@{user.username} · {fmtDate(user.created_at, locale)}</span>
+                  <span className="truncate font-mono text-xs text-text-muted">@{user.username} · {localDateTime(user.created_at, locale, false)}</span>
                   {isAdmin ? <ProjectChips userId={user.id} projects={projects.data ?? []} /> : null}
                   {isAdmin ? <ModelChips user={user} globalExecs={globalExecs} custom={customModels} /> : null}
                 </div>

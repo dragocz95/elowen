@@ -1,5 +1,6 @@
 import type { Task, DerivedSignal } from './types';
 import { parseAnsi } from './ansi';
+import { compactElapsed } from './formatDuration';
 
 const AGENT_PREFIX = 'agent:';
 
@@ -53,13 +54,7 @@ export function taskElapsed(task: Pick<Task, 'labels' | 'created_at' | 'closed_a
   // from 'now' and reads as if the agent were still working.
   const finished = task.status === 'closed' || task.status === 'cancelled';
   const end = finished ? (parseTs(task.closed_at) ?? nowMs) : nowMs;
-  const secs = Math.max(0, Math.floor((end - start) / 1000));
-  if (secs < 60) return `${secs}s`;
-  const mins = Math.floor(secs / 60);
-  if (mins < 60) return `${mins}m`;
-  const hours = Math.floor(mins / 60);
-  if (hours < 24) return `${hours}h`;
-  return `${Math.floor(hours / 24)}d`;
+  return compactElapsed(end - start);
 }
 
 export interface DepEdge { task_id: string; depends_on_id: string }

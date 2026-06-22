@@ -17,6 +17,7 @@ import { AddPhaseModal } from './AddPhaseModal';
 import { taskTypeMeta, statusLabel } from './taskMeta';
 import { statusTone } from '../dashboard/statusTone';
 import { epicProgress, epicLive } from '../../lib/taskTree';
+import { formatCost } from '../../lib/formatTokens';
 import { useTranslation } from '../../lib/i18n';
 
 /** An autopilot epic in the task list: a collapsible parent whose phases stay tucked away
@@ -103,8 +104,8 @@ export function EpicGroup({ epic, phases, effectiveStatus, expanded, onToggle, o
               <ProgressRibbon phases={phases} className="max-w-[12rem] flex-1" />
               <span className="shrink-0 font-mono text-[11px] text-text-muted">{done}/{total} {t.tasks.phasesLabel}</span>
               {totalCost > 0 ? (
-                <span className="inline-flex shrink-0 items-center gap-0.5 rounded border border-approve/30 px-1.5 py-0.5 font-mono text-[11px] text-approve" title={`${t.usage.cost}: $${totalCost.toFixed(4)}`}>
-                  <Coins size={10} className="shrink-0" aria-hidden />${totalCost.toFixed(4)}
+                <span className="inline-flex shrink-0 items-center gap-0.5 rounded border border-approve/30 px-1.5 py-0.5 font-mono text-[11px] text-approve" title={`${t.usage.cost}: ${formatCost(totalCost)}`}>
+                  <Coins size={10} className="shrink-0" aria-hidden />{formatCost(totalCost)}
                 </span>
               ) : null}
               <ProjectPill projectId={epic.project_id} />

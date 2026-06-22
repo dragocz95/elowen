@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { formatTokens } from '../../lib/formatTokens';
+import { formatTokens, formatCost } from '../../lib/formatTokens';
 
 describe('formatTokens', () => {
   it('shows raw counts below 1k', () => {
@@ -17,5 +17,13 @@ describe('formatTokens', () => {
   it('guards non-finite and negative inputs', () => {
     expect(formatTokens(NaN)).toBe('0');
     expect(formatTokens(-5)).toBe('0');
+  });
+});
+
+describe('formatCost', () => {
+  it('renders USD with a fixed 4 decimals', () => {
+    expect(formatCost(0.1234)).toBe('$0.1234');
+    expect(formatCost(1)).toBe('$1.0000');
+    expect(formatCost(0)).toBe('$0.0000');
   });
 });

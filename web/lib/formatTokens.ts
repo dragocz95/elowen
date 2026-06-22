@@ -5,3 +5,9 @@ export function formatTokens(n: number): string {
   if (n < 1_000_000) return `${(n / 1000).toFixed(n < 10_000 ? 1 : 0)}k`;
   return `${(n / 1_000_000).toFixed(1)}M`;
 }
+
+/** A USD cost as a fixed 4-decimal "$0.1234" label. Single source of truth for cost rendering
+ *  across the usage surfaces. */
+export function formatCost(usd: number): string {
+  return `$${usd.toFixed(4)}`;
+}
