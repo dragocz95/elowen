@@ -168,6 +168,21 @@ export function Sidebar({ mobileOpen = false, onMobileClose }: { mobileOpen?: bo
         )}
       </div>
 
+      {/* Version + authorship credit — its own line-separated footer at the very bottom. */}
+      {expanded && (
+        <div className="flex flex-col items-center gap-0.5 border-t border-border px-3 py-2 text-center">
+          <span className="font-mono text-tiny text-text-muted">orca v{data?.version ?? '—'}</span>
+          <a
+            href="https://dragocz.dev"
+            target="_blank"
+            rel="noreferrer"
+            className="text-tiny font-semibold uppercase tracking-[0.15em] text-text-muted/70 transition-colors hover:text-text"
+          >
+            by dragocz.dev
+          </a>
+        </div>
+      )}
+
       {/* Pill handle toggle (pins collapsed/expanded) — desktop only */}
       {!mobile && (
         <button
