@@ -15,20 +15,27 @@ function fixture() {
     id: 10 + i,
     ts: new Date(now - 30 * min + i * 5_000).toISOString(),
     type: 'signal',
-    target: 'agent-1',
+    target: 'orca-Juno',
     detail: 'working',
     project_id: null,
   }));
   return [
     { id: 4, ts: new Date(now - 2 * min).toISOString(), type: 'review', target: 'orca-x', detail: 'escalated: missing tests', project_id: 5 },
     { id: 3, ts: new Date(now - 5 * min).toISOString(), type: 'task', target: 'orca-x', detail: 'closed', project_id: 5 },
-    { id: 2, ts: new Date(now - 20 * min).toISOString(), type: 'mission', target: 'm1', detail: 'active', project_id: null },
+    { id: 2, ts: new Date(now - 20 * min).toISOString(), type: 'mission', target: 'm-ep1', detail: 'active', project_id: null },
     ...flood,
   ];
 }
 
+const TASKS = [
+  { id: 'orca-x', title: 'Refactor the parser', status: 'closed', labels: [], project_id: 5 },
+  { id: 'ep1', title: 'Big epic goal', status: 'in_progress', labels: [], project_id: 5 },
+  { id: 'orca-w', title: 'Worker task', status: 'in_progress', labels: ['agent:Juno'], project_id: 5 },
+];
+
 const server = setupServer(
   http.get('*/activity', () => HttpResponse.json(fixture())),
+  http.get('*/tasks', () => HttpResponse.json(TASKS)),
   http.get('*/projects/:id/changed', () => HttpResponse.json({ changed: ['src/foo.ts'] })),
   http.get('*/projects/:id/changes', () => HttpResponse.json({ diff: '--- a/src/foo.ts\n+++ b/src/foo.ts\n@@ -1 +1 @@\n-old\n+new line here' })),
 );
@@ -63,8 +70,21 @@ describe('TimelineView', () => {
     fireEvent.click(reviewDot!);
     // Drawer shows the verdict rationale…
     expect((await screen.findAllByText(/missing tests/)).length).toBeGreaterThanOrEqual(1);
+    // …the friendly task title (not the raw orca-id)…
+    expect((await screen.findAllByText('Refactor the parser')).length).toBeGreaterThanOrEqual(1);
     // …and pulls the project's working diff (project_id = 5 on the event).
     expect(await screen.findByText(/\+new line here/)).toBeTruthy();
+  });
+
+  it('labels an agent (signal) marker with its name, not the raw orca- session', async () => {
+    const { wrapper: Wrapper } = createWrapper();
+    render(<Wrapper><TimelineView /></Wrapper>);
+    const dots = await screen.findAllByTestId('axis-dot');
+    const agentDot = dots.find((d) => d.getAttribute('aria-label')?.includes('working'));
+    fireEvent.click(agentDot!);
+    // The detail header shows the agent name "Juno", never "orca-Juno".
+    expect((await screen.findAllByText('Juno')).length).toBeGreaterThanOrEqual(1);
+    expect(screen.queryByText('orca-Juno')).toBeNull();
   });
 
   it('shows summary stats for the window', async () => {

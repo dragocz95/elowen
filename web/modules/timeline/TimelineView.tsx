@@ -2,13 +2,15 @@
 import { useMemo, useState } from 'react';
 import Link from 'next/link';
 import { Activity, Clock, Columns3, ArrowUpRight, FileDiff } from 'lucide-react';
-import { useActivity, useProjectChanged, useProjectChanges } from '../../lib/queries';
+import { useActivity, useProjectChanged, useProjectChanges, useTasks } from '../../lib/queries';
 import { plotAxis, type AxisEvent, type AxisPoint } from './axis';
 import { eventIcon, markerTone } from './eventMeta';
 import { Segmented, type SegmentedOption } from '../../components/ui/Segmented';
 import { ModuleHeader } from '../../components/ui/ModuleHeader';
 import { Modal } from '../../components/ui/Modal';
 import { Badge } from '../../components/ui/Badge';
+import { ProjectPill } from '../../components/ui/ProjectPill';
+import type { Task } from '../../lib/types';
 import { PatchView } from '../projects/editor/PatchView';
 import { LoadingState, ErrorState, EmptyState } from '../../components/ui/states';
 import type { Tone } from '../../components/ui/tone';
@@ -53,11 +55,36 @@ function taskIdOf(p: { type: string; target: string }): string | null {
   return p.type === 'task' || p.type === 'review' ? p.target : null;
 }
 
-function AxisMarker({ point, onPick }: { point: AxisPoint; onPick: (p: AxisPoint) => void }) {
+export interface Display { label: string; projectId: number | null }
+
+/** Resolve an event's raw target into a human label + the project it belongs to, so the timeline
+ *  reads "Refactor the parser" / "Juno" instead of "orca-ab12cd34" / "orca-Juno":
+ *   - mission `m-<epicId>` → the epic's title
+ *   - task/review (target = task id) → the task title
+ *   - signal (agent session `orca-<name>`) → the agent name + its worker task's project
+ *  Falls back to the raw target (and the event's own project) when nothing resolves. */
+function resolveDisplay(p: { type: string; target: string; projectId?: number | null }, byId: Map<string, Task>, byAgent: Map<string, Task>): Display {
+  if (p.target.startsWith('m-')) {
+    const epic = byId.get(p.target.slice(2));
+    return { label: epic?.title ?? p.target, projectId: epic?.project_id ?? p.projectId ?? null };
+  }
+  if (p.type === 'task' || p.type === 'review') {
+    const t = byId.get(p.target);
+    return { label: t?.title ?? p.target, projectId: p.projectId ?? t?.project_id ?? null };
+  }
+  if (p.target.startsWith('orca-')) {
+    const name = p.target.slice('orca-'.length);
+    const t = byAgent.get(name);
+    return { label: name, projectId: t?.project_id ?? p.projectId ?? null };
+  }
+  return { label: p.target, projectId: p.projectId ?? null };
+}
+
+function AxisMarker({ point, label, onPick }: { point: AxisPoint; label: string; onPick: (p: AxisPoint) => void }) {
   const tone = markerTone(point.type, point.detail);
   // Scale the dot with the collapsed count so busy runs read as heavier.
   const size = Math.min(20, 11 + Math.floor(Math.log2(point.count + 1)) * 2);
-  const tip = `${point.target} · ${point.detail} · ${clock(point.timestamp)}${point.count > 1 ? ` · ×${point.count}` : ''}`;
+  const tip = `${label} · ${point.detail} · ${clock(point.timestamp)}${point.count > 1 ? ` · ×${point.count}` : ''}`;
   return (
     <div
       className="group absolute top-1/2 -translate-x-1/2 -translate-y-1/2"
@@ -77,7 +104,7 @@ function AxisMarker({ point, onPick }: { point: AxisPoint; onPick: (p: AxisPoint
         className="pointer-events-none absolute bottom-full left-1/2 z-10 mb-2 hidden -translate-x-1/2 whitespace-nowrap rounded-md border border-border bg-elevated px-2.5 py-1.5 text-xs text-text group-hover:block"
         style={{ boxShadow: 'var(--shadow-raised)' }}
       >
-        <span className="font-mono text-text">{point.target}</span>
+        <span className="text-text">{label}</span>
         <span className="text-text-muted"> · {point.detail} · {clock(point.timestamp)}</span>
         {point.count > 1 ? <span className="text-text-muted"> · ×{point.count}</span> : null}
       </div>
@@ -85,7 +112,7 @@ function AxisMarker({ point, onPick }: { point: AxisPoint; onPick: (p: AxisPoint
   );
 }
 
-function TimelineTrack({ points, ticks, onPick }: { points: AxisPoint[]; ticks: { label: string; frac: number }[]; onPick: (p: AxisPoint) => void }) {
+function TimelineTrack({ points, ticks, resolve, onPick }: { points: AxisPoint[]; ticks: { label: string; frac: number }[]; resolve: (p: AxisPoint) => Display; onPick: (p: AxisPoint) => void }) {
   return (
     <div className="relative w-full select-none">
       <div className="relative h-16">
@@ -97,7 +124,7 @@ function TimelineTrack({ points, ticks, onPick }: { points: AxisPoint[]; ticks: 
         <div className="absolute inset-y-0 right-0 w-px bg-accent/40" aria-hidden>
           <span className="live-dot absolute -top-0.5 left-1/2 h-1.5 w-1.5 -translate-x-1/2 rounded-full bg-accent" style={{ ['--live-ring' as string]: 'color-mix(in srgb, var(--color-info) 50%, transparent)' }} />
         </div>
-        {points.map((p) => <AxisMarker key={p.id} point={p} onPick={onPick} />)}
+        {points.map((p) => <AxisMarker key={p.id} point={p} label={resolve(p).label} onPick={onPick} />)}
       </div>
       <div className="relative mt-1.5 h-4">
         {ticks.map((t) => (
@@ -110,25 +137,32 @@ function TimelineTrack({ points, ticks, onPick }: { points: AxisPoint[]; ticks: 
   );
 }
 
-/** A swimlane: a big tinted icon for the lane's latest kind, the target, its latest status badge,
- *  and the event track. Clicking a marker drills into that event. */
-function Lane({ target, points, ticks, onPick }: { target: string; points: AxisPoint[]; ticks: { label: string; frac: number }[]; onPick: (p: AxisPoint) => void }) {
+/** A swimlane: a big tinted icon for the lane's latest kind, a human label (agent name / task or
+ *  epic title) with its project pill, the latest status, and the event track. Clicking a marker
+ *  drills into that event. */
+function Lane({ points, ticks, resolve, onPick }: { points: AxisPoint[]; ticks: { label: string; frac: number }[]; resolve: (p: AxisPoint) => Display; onPick: (p: AxisPoint) => void }) {
   const latest = points.reduce((a, b) => (b.timestamp > a.timestamp ? b : a), points[0]!);
   const Icon = eventIcon(latest.type);
   const tone = markerTone(latest.type, latest.detail);
+  const { label, projectId } = resolve(latest);
   return (
     <div className="flex items-center gap-3 rounded-lg border border-border bg-surface px-3 py-2.5">
       <span className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-xl border-2 ${TONE_BUBBLE[tone]}`}>
         <Icon size={24} aria-hidden />
       </span>
-      <div className="w-32 shrink-0">
-        <div className="truncate font-mono text-xs text-text" title={target}>{target}</div>
-        <div className={`truncate text-[11px] ${TONE_TEXT[tone]}`}>{latest.detail}</div>
+      <div className="w-44 shrink-0">
+        <div className="flex items-center gap-1.5">
+          <span className="truncate text-sm font-medium text-text" title={label}>{label}</span>
+        </div>
+        <div className="mt-0.5 flex items-center gap-1.5">
+          <span className={`shrink-0 text-[11px] ${TONE_TEXT[tone]}`}>{latest.detail}</span>
+          <ProjectPill projectId={projectId ?? undefined} />
+        </div>
       </div>
       <div className="relative h-9 flex-1">
         {ticks.map((t) => <div key={t.label} className="absolute inset-y-0 w-px bg-border/40" style={{ left: `${t.frac * 100}%` }} aria-hidden />)}
         <div className="absolute inset-x-0 top-1/2 h-px -translate-y-1/2 bg-border/60" aria-hidden />
-        {points.map((p) => <AxisMarker key={p.id} point={p} onPick={onPick} />)}
+        {points.map((p) => <AxisMarker key={p.id} point={p} label={resolve(p).label} onPick={onPick} />)}
       </div>
     </div>
   );
@@ -148,16 +182,16 @@ function StatCard({ tone, count, label }: { tone: Tone; count: number; label: st
 
 /** Drill-down: full event detail + the project's working-tree diff (for task/review events that
  *  carry a project). Reuses the existing PatchView so diff rendering stays single-source. */
-function EventDetail({ point, onClose }: { point: AxisPoint; onClose: () => void }) {
+function EventDetail({ point, display, onClose }: { point: AxisPoint; display: Display; onClose: () => void }) {
   const { t } = useTranslation();
   const Icon = eventIcon(point.type);
   const tone = markerTone(point.type, point.detail);
-  const projectId = point.projectId ?? null;
+  const projectId = display.projectId;
   const taskId = taskIdOf(point);
   const changed = useProjectChanged(projectId);
   const changes = useProjectChanges(projectId, true);
   return (
-    <Modal title={point.target} description={`${point.detail} · ${clock(point.timestamp)}`} icon={Icon} size="lg" onClose={onClose}>
+    <Modal title={display.label} description={`${point.detail} · ${clock(point.timestamp)}`} icon={Icon} size="lg" onClose={onClose}>
       <div className="flex h-full flex-col gap-4 overflow-hidden p-5">
         <div className="flex items-center gap-3">
           <span className={`flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl border-2 ${TONE_BUBBLE[tone]}`}>
@@ -167,8 +201,9 @@ function EventDetail({ point, onClose }: { point: AxisPoint; onClose: () => void
             <div className="flex items-center gap-2">
               <Badge tone={tone}>{point.detail}</Badge>
               {point.count > 1 ? <span className="text-xs text-text-muted">×{point.count}</span> : null}
+              <ProjectPill projectId={projectId ?? undefined} />
             </div>
-            <div className="mt-1 truncate font-mono text-xs text-text-muted">{point.target}</div>
+            <div className="mt-1 truncate text-sm font-medium text-text">{display.label}</div>
           </div>
           {taskId ? (
             <Link href={`/tasks?select=${encodeURIComponent(taskId)}`} className="inline-flex shrink-0 items-center gap-1 rounded-md border border-border bg-elevated px-2.5 py-1.5 text-xs text-text transition-colors hover:text-accent">
@@ -206,6 +241,21 @@ export function TimelineView() {
   const [picked, setPicked] = useState<AxisPoint | null>(null);
   const type = filter === 'all' ? undefined : filter;
   const q = useActivity(type);
+  const tasks = useTasks();
+
+  // Index tasks two ways so a raw event target reads as a human label: by id (task/review/mission
+  // epic) and by the worker session name carried in an `agent:<name>` label (signal events).
+  const { byId, byAgent } = useMemo(() => {
+    const byId = new Map<string, Task>();
+    const byAgent = new Map<string, Task>();
+    for (const task of tasks.data ?? []) {
+      byId.set(task.id, task);
+      const agent = task.labels?.find((l) => l.startsWith('agent:'))?.slice('agent:'.length);
+      if (agent) byAgent.set(agent, task);
+    }
+    return { byId, byAgent };
+  }, [tasks.data]);
+  const resolve = useMemo(() => (p: { type: string; target: string; projectId?: number | null }) => resolveDisplay(p, byId, byAgent), [byId, byAgent]);
 
   const FILTER_OPTIONS: SegmentedOption[] = [
     { label: t.timeline.filterAll, value: 'all' },
@@ -301,7 +351,7 @@ export function TimelineView() {
           <EmptyState title={t.timeline.empty} description={t.timeline.emptyDescription} icon={Activity} />
         ) : view === 'lanes' ? (
           <div className="flex flex-col gap-2.5">
-            {lanes.map((l) => <Lane key={l.target} target={l.target} points={l.points} ticks={ticks} onPick={setPicked} />)}
+            {lanes.map((l) => <Lane key={l.target} points={l.points} ticks={ticks} resolve={resolve} onPick={setPicked} />)}
             <div className="relative mt-1 ml-[10.25rem] h-4">
               {ticks.map((tk) => (
                 <span key={tk.label} className="absolute -translate-x-1/2 font-mono text-text-muted" style={{ left: `${tk.frac * 100}%`, fontSize: 'var(--text-caption)' }}>{tk.label}</span>
@@ -309,11 +359,11 @@ export function TimelineView() {
             </div>
           </div>
         ) : (
-          <TimelineTrack points={points} ticks={ticks} onPick={setPicked} />
+          <TimelineTrack points={points} ticks={ticks} resolve={resolve} onPick={setPicked} />
         )}
       </section>
 
-      {picked ? <EventDetail point={picked} onClose={() => setPicked(null)} /> : null}
+      {picked ? <EventDetail point={picked} display={resolve(picked)} onClose={() => setPicked(null)} /> : null}
     </div>
   );
 }
