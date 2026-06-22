@@ -46,6 +46,9 @@ export function openDb(path: string): Db {
   // The index is created here (not in schema.sql) so it runs *after* the column exists on migrated DBs.
   addColumn(db, 'events', 'project_id', 'INTEGER');
   db.exec('CREATE INDEX IF NOT EXISTS idx_events_project ON events(project_id)');
+  // Timeline labels: snapshot the task/epic title at write time so an event still reads as a name
+  // after its task is deleted (events outlive tasks). Empty for signal/plan and unknown tasks.
+  addColumn(db, 'events', 'label', "TEXT NOT NULL DEFAULT ''");
   // Seed the bootstrap admin on existing DBs: the lowest-id user, if none is flagged yet.
   db.exec("UPDATE users SET is_admin = 1 WHERE id = (SELECT MIN(id) FROM users) AND NOT EXISTS (SELECT 1 FROM users WHERE is_admin = 1)");
   return db;

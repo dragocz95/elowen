@@ -64,14 +64,16 @@ export interface Display { label: string; projectId: number | null }
  *   - task/review (target = task id) → the task title
  *   - signal (agent session `orca-<name>`) → the agent name + its worker task's project
  *  Falls back to the raw target (and the event's own project) when nothing resolves. */
-function resolveDisplay(p: { type: string; target: string; projectId?: number | null }, byId: Map<string, Task>, byAgent: Map<string, Task>): Display {
+function resolveDisplay(p: { type: string; target: string; projectId?: number | null }, byId: Map<string, Task>, byAgent: Map<string, Task>, byLabel: Map<string, string>): Display {
+  // Prefer the live task/epic title; fall back to the label snapshotted on the event at write time
+  // (so a deleted task still reads as a name instead of a raw orca-<id>), then the raw target.
   if (p.target.startsWith('m-')) {
     const epic = byId.get(p.target.slice(2));
-    return { label: epic?.title ?? p.target, projectId: epic?.project_id ?? p.projectId ?? null };
+    return { label: epic?.title ?? byLabel.get(p.target) ?? p.target, projectId: epic?.project_id ?? p.projectId ?? null };
   }
   if (p.type === 'task' || p.type === 'review') {
     const t = byId.get(p.target);
-    return { label: t?.title ?? p.target, projectId: p.projectId ?? t?.project_id ?? null };
+    return { label: t?.title ?? byLabel.get(p.target) ?? p.target, projectId: p.projectId ?? t?.project_id ?? null };
   }
   if (p.target.startsWith('orca-')) {
     const name = p.target.slice('orca-'.length);
@@ -256,7 +258,13 @@ export function TimelineView() {
     }
     return { byId, byAgent };
   }, [tasks.data]);
-  const resolve = useMemo(() => (p: { type: string; target: string; projectId?: number | null }) => resolveDisplay(p, byId, byAgent), [byId, byAgent]);
+  // target → label snapshotted on its events, so a deleted task/epic still shows its name.
+  const byLabel = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const e of q.data ?? []) if (e.label) m.set(e.target, e.label);
+    return m;
+  }, [q.data]);
+  const resolve = useMemo(() => (p: { type: string; target: string; projectId?: number | null }) => resolveDisplay(p, byId, byAgent, byLabel), [byId, byAgent, byLabel]);
 
   const FILTER_OPTIONS: SegmentedOption[] = [
     { label: t.timeline.filterAll, value: 'all' },

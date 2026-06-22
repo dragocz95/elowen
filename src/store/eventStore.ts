@@ -1,7 +1,7 @@
 import type { Db } from './db.js';
 import type { OrcaEvent } from '../api/sse.js';
 
-export interface ActivityEvent { id: number; ts: string; type: string; target: string; detail: string; project_id: number | null }
+export interface ActivityEvent { id: number; ts: string; type: string; target: string; detail: string; project_id: number | null; label: string }
 
 function toRow(e: OrcaEvent): { type: string; target: string; detail: string } | null {
   switch (e.type) {
@@ -24,7 +24,14 @@ export class EventStore {
     const projectId = taskId
       ? (this.db.prepare('SELECT project_id FROM tasks WHERE id = ?').get(taskId) as { project_id: number } | undefined)?.project_id ?? null
       : null;
-    this.db.prepare('INSERT INTO events (type, target, detail, project_id) VALUES (?, ?, ?, ?)').run(r.type, r.target, r.detail, projectId);
+    // Snapshot a human label now so the event still reads as a name after its task/epic is deleted
+    // (events outlive tasks). Resolve the title for task/review (the target id) and mission (the epic
+    // id inside m-<epicId>); signal/plan keep the agent/job name the target already carries.
+    const titleId = taskId ?? (e.type === 'mission' && e.missionId.startsWith('m-') ? e.missionId.slice(2) : null);
+    const label = titleId
+      ? (this.db.prepare('SELECT title FROM tasks WHERE id = ?').get(titleId) as { title: string } | undefined)?.title ?? ''
+      : '';
+    this.db.prepare('INSERT INTO events (type, target, detail, project_id, label) VALUES (?, ?, ?, ?, ?)').run(r.type, r.target, r.detail, projectId, label);
   }
   /** Purge all events for a target (e.g. a deleted task) so the timeline shows no dead feed. */
   deleteForTarget(target: string): void {

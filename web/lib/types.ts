@@ -60,7 +60,7 @@ export interface ProfilePatch { name?: string; email?: string; default_exec?: st
 // Login no longer surfaces a token to the browser — the proxy sets it as an httpOnly cookie and
 // returns only a success flag.
 export type AuthResult = { ok: true };
-export interface ActivityEvent { id: number; ts: string; type: string; target: string; detail: string; project_id: number | null }
+export interface ActivityEvent { id: number; ts: string; type: string; target: string; detail: string; project_id: number | null; label: string }
 export interface Project { id: number; slug: string; path: string; notes: string }
 interface GitStatus { branch: string; ahead: number; behind: number; dirty: number; clean: boolean }
 interface GitBranch { name: string; current: boolean }

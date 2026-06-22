@@ -34,6 +34,26 @@ describe('EventStore', () => {
     events.record({ type: 'task', taskId: 'ghost', status: 'open' });
     expect(events.list()[0]!.project_id ?? null).toBeNull();
   });
+  it('snapshots a human label at write time so it survives the task/epic being deleted', () => {
+    db.prepare("INSERT INTO projects (id, slug, path) VALUES (1, 'p', '/p')").run();
+    db.prepare("INSERT INTO tasks (id, project_id, title, type) VALUES ('t-x', 1, 'Rewrite docs', 'task')").run();
+    db.prepare("INSERT INTO tasks (id, project_id, title, type) VALUES ('epic-1', 1, 'Docs autopilot', 'epic')").run();
+    events.record({ type: 'task', taskId: 't-x', status: 'open' });
+    events.record({ type: 'review', missionId: 'm-epic-1', taskId: 't-x', approve: true, rationale: 'ok' });
+    events.record({ type: 'mission', missionId: 'm-epic-1', state: 'active' });
+    db.prepare('DELETE FROM tasks').run(); // tasks gone — the snapshotted labels must remain
+    const [mission, review, task] = events.list(); // newest-first
+    expect(task!.label).toBe('Rewrite docs');
+    expect(review!.label).toBe('Rewrite docs');
+    expect(mission!.label).toBe('Docs autopilot');
+  });
+  it('leaves the label empty for signals and unknown tasks', () => {
+    events.record({ type: 'signal', session: 'orca-Juno', signal: { type: 'working' } });
+    events.record({ type: 'task', taskId: 'ghost', status: 'open' });
+    const [task, signal] = events.list(); // newest-first
+    expect(signal!.label).toBe('');
+    expect(task!.label).toBe('');
+  });
   it('respects limit and type filter', () => {
     events.record({ type: 'task', taskId: 'a', status: 'open' });
     events.record({ type: 'task', taskId: 'b', status: 'closed' });
