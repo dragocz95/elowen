@@ -1,4 +1,5 @@
 import type { Db } from './db.js';
+import { deleteTasksAndDeps } from './cascade.js';
 
 export interface Project { id: number; slug: string; path: string; notes: string }
 
@@ -27,14 +28,9 @@ export class ProjectStore {
   remove(id: number): boolean {
     if (!this.get(id)) return false;
     this.db.transaction(() => {
-      this.db.prepare(
-        'DELETE FROM missions WHERE epic_id IN (SELECT id FROM tasks WHERE project_id = ?)'
-      ).run(id);
-      this.db.prepare(
-        'DELETE FROM task_deps WHERE task_id IN (SELECT id FROM tasks WHERE project_id = ?)' +
-        ' OR depends_on_id IN (SELECT id FROM tasks WHERE project_id = ?)'
-      ).run(id, id);
-      this.db.prepare('DELETE FROM tasks WHERE project_id = ?').run(id);
+      // Tasks + their missions and dep edges go through the shared cascade; the agents, access
+      // grants and the project row itself are project-only and stay here.
+      deleteTasksAndDeps(this.db, 'project', id);
       this.db.prepare('DELETE FROM agents WHERE project_id = ?').run(id);
       this.db.prepare('DELETE FROM user_projects WHERE project_id = ?').run(id);
       this.db.prepare('DELETE FROM projects WHERE id = ?').run(id);

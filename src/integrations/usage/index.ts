@@ -6,17 +6,11 @@ import { opencodeUsage } from './opencode.js';
 import { claudeUsage } from './claude.js';
 import { codexUsage } from './codex.js';
 import { SESSION_MATCH_SKEW_MS, type TokenUsage } from './types.js';
+import { parseDbTs } from '../../shared/time.js';
 
 export type { TokenUsage } from './types.js';
 
 type UsageTask = Pick<Task, 'id' | 'labels' | 'created_at'>;
-
-/** Parse a SQLite ("2026-06-19 11:13:20", UTC) or ISO timestamp to epoch ms. */
-function parseTs(ts?: string | null): number {
-  if (!ts) return 0;
-  const ms = Date.parse(ts.includes('T') ? ts : ts.replace(' ', 'T') + 'Z');
-  return Number.isNaN(ms) ? 0 : ms;
-}
 
 /** The precise spawn time (epoch ms) the agent launched, from the `started:<ms>` label — this is
  *  sub-second and reflects real spawn order, unlike whole-second `created_at` (set at row insert).
@@ -24,7 +18,7 @@ function parseTs(ts?: string | null): number {
 function startedMs(task: UsageTask): number {
   const lbl = task.labels?.find((l) => l.startsWith('started:'));
   if (lbl) { const ms = Number(lbl.slice('started:'.length)); if (Number.isFinite(ms)) return ms; }
-  return parseTs(task.created_at);
+  return parseDbTs(task.created_at);
 }
 
 /** The resolved CLI program + model for a task (program normalized: 'opencode' | 'claude-code' |

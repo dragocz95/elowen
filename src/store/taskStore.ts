@@ -1,5 +1,6 @@
 import type { Db } from './db.js';
 import type { Task, CreateTaskInput, TaskStatus } from './types.js';
+import { deleteTasksAndDeps } from './cascade.js';
 
 type Row = Omit<Task, 'labels'> & { labels: string };
 const toTask = (r: Row): Task => ({ ...r, labels: r.labels ? r.labels.split(',').filter(Boolean) : [] });
@@ -69,14 +70,7 @@ export class TaskStore {
    *  dependency edges, and any mission those tasks drove. Used to remove a mission outright (not just
    *  disengage it). Returns how many task rows were removed. */
   deleteEpic(epicId: string): { tasks: number } {
-    return this.db.transaction(() => {
-      const ids = [epicId, ...this.descendants(epicId).map((t) => t.id)];
-      const ph = ids.map(() => '?').join(',');
-      this.db.prepare(`DELETE FROM missions WHERE epic_id IN (${ph})`).run(...ids);
-      this.db.prepare(`DELETE FROM task_deps WHERE task_id IN (${ph}) OR depends_on_id IN (${ph})`).run(...ids, ...ids);
-      const r = this.db.prepare(`DELETE FROM tasks WHERE id IN (${ph})`).run(...ids);
-      return { tasks: r.changes };
-    })();
+    return this.db.transaction(() => ({ tasks: deleteTasksAndDeps(this.db, 'epic', epicId) }))();
   }
 
   /** Wipe ALL tasks, their dependency edges and every mission — the operational data reset used by
