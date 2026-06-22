@@ -438,7 +438,7 @@ In multi-user mode, non-admin users see only their assigned projects. Admin sees
 **Response `200`**
 ```json
 [
-  { "id": 1, "slug": "my-project", "path": "/var/www/my-project", "notes": null }
+  { "id": 1, "slug": "my-project", "path": "/srv/my-project", "notes": null }
 ]
 ```
 
@@ -450,7 +450,7 @@ Content-Type: application/json
 
 {
   "slug": "my-project",
-  "path": "/var/www/my-project",
+  "path": "/srv/my-project",
   "notes": "Optional pilot info"
 }
 ```
@@ -459,7 +459,7 @@ Admin-only when multi-user auth is on. Slug must be unique.
 
 **Response `201`**
 ```json
-{ "id": 1, "slug": "my-project", "path": "/var/www/my-project", "notes": "Optional pilot info" }
+{ "id": 1, "slug": "my-project", "path": "/srv/my-project", "notes": "Optional pilot info" }
 ```
 
 **Error `400`**
@@ -483,7 +483,7 @@ Admin-only when multi-user auth is on. Slug must be unique.
 PATCH /projects/:id
 Content-Type: application/json
 
-{ "path": "/var/www/my-project/updated-path", "notes": "Updated pilot notes" }
+{ "path": "/srv/my-project/updated-path", "notes": "Updated pilot notes" }
 ```
 
 Admin-only (when multi-user mode). Updates the path and/or Pilot notes. Slug stays immutable.
@@ -1797,7 +1797,7 @@ The `prompt` field holds the raw custom planner template (empty = use built-in d
     "pilotExec": "",
     "overseerExec": "",
     "reviewOnDone": false,
-    "apiUrl": "https://ai.coresynth.io/v1",
+    "apiUrl": "https://relay.example/v1",
     "apiKeySet": false,
     "notes": "",
     "prompt": ""
@@ -1896,17 +1896,17 @@ is present on `done`.
 ### Hermes plugin status
 
 ```http
-GET /integrations/hermes/status?home=/var/www/.hermes
+GET /integrations/hermes/status?home=~/.hermes
 ```
 
 Reports whether the Orca plugin is installed and enabled in a same-host Hermes instance.
 `home` override is constrained to live under the daemon's configured Hermes root
-(`HERMES_HOME` env, default `/var/www/.hermes`). Admin-only in multi-user mode.
+(`HERMES_HOME` env, default `~/.hermes`). Admin-only in multi-user mode.
 
 **Response `200`**
 ```json
 {
-  "home": "/var/www/.hermes",
+  "home": "~/.hermes",
   "exists": true,
   "pluginsDir": true,
   "pluginInstalled": true,
@@ -1931,7 +1931,7 @@ POST /integrations/hermes/install
 Content-Type: application/json
 
 {
-  "home": "/var/www/.hermes",
+  "home": "~/.hermes",
   "url": "http://localhost:4400",
   "token": "a1b2c3d4...",
   "timeout": 5000
@@ -1945,12 +1945,12 @@ Admin-only (writes credentials into a host path).
 **Response `201`**
 ```json
 {
-  "pluginDir": "/var/www/.hermes/plugins/orca",
+  "pluginDir": "~/.hermes/plugins/orca",
   "copied": true,
   "alreadyEnabled": false,
   "enabled": true,
   "backedUp": true,
-  "status": { "home": "/var/www/.hermes", "pluginInstalled": true, "enabled": true }
+  "status": { "home": "~/.hermes", "pluginInstalled": true, "enabled": true }
 }
 ```
 

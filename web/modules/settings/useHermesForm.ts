@@ -9,7 +9,7 @@ import { useHermesInstall } from '../../lib/mutations';
  *  token is entered manually (the session token now lives in an httpOnly cookie JS can't read, and a
  *  long-lived external integration should use its own minted token anyway). Each page renders its own layout. */
 export function useHermesForm() {
-  const [home, setHome] = useState('/var/www/.hermes');
+  const [home, setHome] = useState('');
   const [url, setUrl] = useState('');
   const [token, setToken] = useState('');
   const status = useHermesStatus(home);

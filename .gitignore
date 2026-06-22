@@ -14,3 +14,7 @@ data/
 *.db-shm
 *.db-wal
 .jat/
+
+# Python bytecode
+__pycache__/
+*.pyc

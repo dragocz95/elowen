@@ -67,7 +67,7 @@ A complete example launch:
 ```bash
 ORCA_PORT=4400 \
 ORCA_DB=/opt/orca/data/orca.db \
-ORCA_PROJECT_PATH=/var/www/orca \
+ORCA_PROJECT_PATH=/opt/orca \
 ORCA_BOOTSTRAP_USER=admin \
 ORCA_BOOTSTRAP_PASS=secure-pass \
 node dist/daemon/index.js
@@ -93,7 +93,7 @@ Restart=on-failure
 RestartSec=5
 Environment=NODE_ENV=production
 Environment=ORCA_DB=/opt/orca/data/orca.db
-Environment=ORCA_PROJECT_PATH=/var/www/orca
+Environment=ORCA_PROJECT_PATH=/opt/orca
 Environment=ORCA_BOOTSTRAP_USER=admin
 Environment=ORCA_BOOTSTRAP_PASS=change-me
 

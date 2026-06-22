@@ -1,4 +1,5 @@
 import { basename, join } from 'node:path';
+import { homedir } from 'node:os';
 import { writeFileSync, readFileSync, existsSync, mkdirSync, unlinkSync } from 'node:fs';
 import { randomBytes, createHmac, timingSafeEqual } from 'node:crypto';
 import { hermesStatus, installHermesPlugin } from '../integrations/hermesInstall.js';
@@ -994,7 +995,7 @@ export function createServer(d: ServerDeps): Hono<{ Variables: { user: User; tok
   });
 
   // Hermes integration — install the bundled orca plugin into a same-host Hermes instance.
-  const hermesRoot = process.env.HERMES_HOME || '/var/www/.hermes';
+  const hermesRoot = process.env.HERMES_HOME || join(homedir(), '.hermes');
   // Resolve the Hermes home. An `home` override is constrained to live under the configured root so a
   // crafted path can't read/write arbitrary filesystem locations (path-traversal / fs enumeration).
   // Returns null for a rejected override; callers turn that into a 400.

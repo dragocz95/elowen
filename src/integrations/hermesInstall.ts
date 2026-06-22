@@ -16,7 +16,7 @@ export interface HermesStatus {
 }
 
 export interface HermesInstallInput {
-  home: string;        // Hermes home (contains plugins/ and config.yaml), e.g. /var/www/.hermes
+  home: string;        // Hermes home (contains plugins/ and config.yaml), e.g. ~/.hermes
   pluginSrc: string;   // path to the plugin source dir (…/hermes-plugin/orca)
   url: string;         // orca API base URL to bake into the plugin config
   token: string;       // orca bearer token
