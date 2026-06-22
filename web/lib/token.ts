@@ -1,26 +1,12 @@
-const KEY = 'orca.token';
-
-/** Event fired whenever the stored token is dropped (a 401 from a stale/expired/deleted-user token,
- *  or an explicit logout). The auth gate listens for it to flip straight to the login form instead
- *  of stranding the user in a logged-in-but-broken shell. */
+// The daemon token now lives in an httpOnly cookie the browser JS cannot read; there is no
+// getToken/setToken/withToken anymore. We keep the "auth cleared" signal so a 401 (stale/expired
+// session) or an explicit logout flips the auth gate to the login form without a reload.
 export const AUTH_CLEARED_EVENT = 'orca:auth-cleared';
 
-export function getToken(): string | null {
-  if (typeof window === 'undefined') return null;
-  return window.localStorage.getItem(KEY);
-}
-export function setToken(token: string): void {
-  if (typeof window === 'undefined') return;
-  window.localStorage.setItem(KEY, token);
-}
+/** End the session: ask the proxy to expire the httpOnly cookie (best-effort) and notify the auth
+ *  gate. Kept dependency-free (no orcaClient import) to avoid an import cycle. */
 export function clearToken(): void {
   if (typeof window === 'undefined') return;
-  window.localStorage.removeItem(KEY);
+  void fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' }).catch(() => { /* network/daemon down: still signal the UI */ });
   window.dispatchEvent(new Event(AUTH_CLEARED_EVENT));
-}
-export function withToken(url: string): string {
-  const token = getToken();
-  if (!token) return url;
-  const sep = url.includes('?') ? '&' : '?';
-  return `${url}${sep}token=${encodeURIComponent(token)}`;
 }

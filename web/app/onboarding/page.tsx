@@ -23,7 +23,6 @@ import { Segmented } from '../../components/ui/Segmented';
 import { Select } from '../../components/ui/Select';
 import { ModelIcon } from '../../components/ui/ModelIcon';
 import { allModels } from '../../lib/execPresets';
-import { getToken, setToken } from '../../lib/token';
 import { orcaClient } from '../../lib/orcaClient';
 import type { CliStatus as CliStatusType } from '../../lib/types';
 import type { LocaleDict } from '../../lib/i18n/types';
@@ -140,19 +139,23 @@ export default function OnboardingPage() {
     );
   };
 
-  const handleCreateUser = () => {
+  const handleCreateUser = async () => {
     const username = newUsername.trim(), password = newPassword.trim();
     if (!username || !password) return;
-    const firstRun = getToken() == null; // setup mode — this becomes the bootstrap admin
+    // Setup mode = the daemon still reports needsSetup (no admin yet); this user becomes the bootstrap
+    // admin. Derived from the daemon's own status, not a client token (which no longer exists).
+    let firstRun = false;
+    try { firstRun = (await orcaClient.setupStatus()).needsSetup; } catch { /* assume not first-run */ }
     createUser.mutate(
       { username, password },
       {
         onSuccess: async () => {
           toast(t.onboarding.userCreated); setNewUsername(''); setNewPassword('');
           // In setup mode the daemon was open; the moment the first admin exists, auth re-engages.
-          // Log that admin in immediately so the app unlocks seamlessly instead of bouncing to login.
+          // Log that admin in immediately (the proxy sets the httpOnly cookie) so the app unlocks
+          // seamlessly instead of bouncing to login.
           if (firstRun) {
-            try { const res = await orcaClient.login(username, password); setToken(res.token); } catch { /* fall back to manual login */ }
+            try { await orcaClient.login(username, password); } catch { /* fall back to manual login */ }
           }
         },
         onError: (e) => toast(t.onboarding.userCreateError + ': ' + String(e), 'error'),

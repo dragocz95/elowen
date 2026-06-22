@@ -1,7 +1,6 @@
 'use client';
 import { useState } from 'react';
 import { useLogin } from '../../lib/mutations';
-import { setToken } from '../../lib/token';
 import { useToast } from '../ui/Toast';
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';
@@ -19,8 +18,8 @@ export function LoginForm({ onAuthed }: { onAuthed: () => void }) {
     login.mutate(
       { username, password },
       {
-        onSuccess: ({ token }) => {
-          setToken(token);
+        onSuccess: () => {
+          // The proxy set the httpOnly session cookie; nothing to store client-side.
           onAuthed();
         },
         onError: (err) => {

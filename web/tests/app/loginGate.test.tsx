@@ -27,34 +27,39 @@ class FakeES { onmessage = null; addEventListener() {} close() {} constructor(pu
 
 const server = setupServer();
 beforeAll(() => server.listen({ onUnhandledRequest }));
-afterEach(() => { server.resetHandlers(); localStorage.clear(); });
+afterEach(() => { server.resetHandlers(); });
 afterAll(() => server.close());
 
 const passwordInput = () => document.querySelector('input[type="password"]');
 
 describe('LoginGate', () => {
-  it('flips a stale token to the login form (and drops it) when /auth/me 401s', async () => {
-    // A leftover token from a deleted/expired user — the daemon rejects it.
-    localStorage.setItem('orca.token', 'stale-token');
-    server.use(http.get('http://localhost:4400/auth/me', () => new HttpResponse(null, { status: 401 })));
+  it('shows the login form when there is no valid session (me() 401, setup done)', async () => {
+    // The httpOnly cookie is absent/invalid → the proxy answers 401; setup is already complete.
+    server.use(
+      http.get('*/api/auth/me', () => new HttpResponse(null, { status: 401 })),
+      http.get('*/api/setup', () => HttpResponse.json({ needsSetup: false })),
+    );
 
     render(<Wrap><LoginGate><span>secret-content</span></LoginGate></Wrap>);
 
-    // The background validation 401 clears the token and routes to the login form.
     await waitFor(() => expect(passwordInput()).toBeTruthy());
     expect(screen.queryByText('secret-content')).toBeNull();
-    expect(localStorage.getItem('orca.token')).toBeNull(); // dropped, not left dangling
+  });
+
+  it('opens the shell when the session cookie is valid (me() 200)', async () => {
+    server.use(http.get('*/api/auth/me', () => HttpResponse.json({ user: { id: 1, username: 'admin' } })));
+
+    render(<Wrap><LoginGate><span>secret-content</span></LoginGate></Wrap>);
+    await waitFor(() => expect(screen.getByText('secret-content')).toBeInTheDocument());
   });
 
   it('flips to login when an AUTH_CLEARED_EVENT fires mid-session (no reload)', async () => {
-    localStorage.setItem('orca.token', 'valid-token');
-    server.use(http.get('http://localhost:4400/auth/me', () => HttpResponse.json({ user: { id: 1, username: 'admin' } })));
+    server.use(http.get('*/api/auth/me', () => HttpResponse.json({ user: { id: 1, username: 'admin' } })));
 
     render(<Wrap><LoginGate><span>secret-content</span></LoginGate></Wrap>);
-    // Valid token → shell content shows.
     await waitFor(() => expect(screen.getByText('secret-content')).toBeInTheDocument());
 
-    // A later 401 elsewhere clears the token and dispatches the event; the gate must react.
+    // A later 401 elsewhere clears the session and dispatches the event; the gate must react.
     window.dispatchEvent(new Event(AUTH_CLEARED_EVENT));
     await waitFor(() => expect(passwordInput()).toBeTruthy());
     expect(screen.queryByText('secret-content')).toBeNull();
