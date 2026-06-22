@@ -1,9 +1,18 @@
 import { spawn } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { OrcaClient } from './client.js';
+import { defaultLifecycleDeps, runLifecycle } from './commands.js';
+import { menu } from './menu.js';
 
 const BASE = process.env.ORCA_URL ?? 'http://localhost:4400';
+
+/** This package's version, read from its package.json (two dirs up from dist/cli/index.js). */
+function pkgVersion(): string {
+  try { return (JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'package.json'), 'utf8')) as { version?: string }).version ?? '0.0.0'; }
+  catch { return '0.0.0'; }
+}
 
 async function ensureDaemon() {
   if (process.env.ORCA_AUTOSTART === '0') return;
@@ -75,14 +84,22 @@ export async function run(argv: string[], c: OrcaClient, env: NodeJS.ProcessEnv)
       }
       console.error('usage: orca overseer <poll|decide ...>'); process.exit(1); break;
     }
-    default: console.error('usage: orca <ls|ready|sessions|close|plan submit|overseer poll|overseer decide>'); process.exit(1);
+    default: console.error('usage: orca [menu] | <up|down|status|update> | <ls|ready|sessions|close|plan submit|overseer poll|overseer decide>'); process.exit(1);
   }
 }
 
 async function main() {
+  const argv = process.argv.slice(2);
+  const version = pkgVersion();
+  // Bare `orca` in a terminal opens the interactive launcher menu. Piped/non-TTY falls through to the
+  // usage error from `run`, so scripts still get deterministic behavior.
+  if (argv.length === 0 && process.stdin.isTTY) { await menu(process.env, version); return; }
+  // Install-lifecycle commands manage the daemon/web themselves — handle them BEFORE ensureDaemon so
+  // they don't trigger the API-CLI's auto-spawn.
+  if (await runLifecycle(argv[0], process.env, defaultLifecycleDeps(version))) return;
   await ensureDaemon();
   const c = new OrcaClient(BASE, process.env.ORCA_TOKEN);
-  await run(process.argv.slice(2), c, process.env);
+  await run(argv, c, process.env);
 }
 
 // Run only when invoked as the binary, not when imported (e.g. by tests).

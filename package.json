@@ -1,22 +1,51 @@
 {
-  "name": "orca",
+  "name": "orcasynth",
   "version": "1.1.1",
+  "description": "ORCA — an autonomous coding-agent orchestrator with an autopilot overseer, daemon API and web UI. Install globally and run `orca`.",
   "license": "MIT",
   "type": "module",
+  "homepage": "https://github.com/dragocz1995/orcasynth#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dragocz1995/orcasynth.git"
+  },
+  "bugs": {
+    "url": "https://github.com/dragocz1995/orcasynth/issues"
+  },
+  "keywords": [
+    "ai",
+    "agent",
+    "orchestrator",
+    "autopilot",
+    "coding-agent",
+    "llm",
+    "cli",
+    "tmux"
+  ],
   "engines": {
     "node": ">=22"
   },
   "bin": {
     "orca": "./dist/cli/index.js"
   },
+  "files": [
+    "dist/",
+    "web-dist/",
+    "prompts/",
+    "LICENSE",
+    "README.md"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.json && cp src/store/schema.sql dist/store/ && cp -r prompts dist/",
+    "build:web": "node scripts/build-web-bundle.mjs",
+    "prepublishOnly": "npm run build && npm run build:web",
     "test": "vitest run",
     "test:watch": "vitest",
     "deadcode": "knip",
     "serve": "node --experimental-strip-types src/daemon/index.ts"
   },
   "dependencies": {
+    "@clack/prompts": "^1.6.0",
     "@hono/node-server": "^1.13.0",
     "better-sqlite3": "^11.0.0",
     "hono": "^4.6.0"

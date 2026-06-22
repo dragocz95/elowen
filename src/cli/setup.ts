@@ -11,7 +11,7 @@ export interface SetupAnswers {
 }
 
 /** Daemon config patch shape (subset of the daemon's ConfigPatch) — the LLM endpoint + key + model. */
-export interface SetupConfigPatch {
+interface SetupConfigPatch {
   autopilot: { model: string; apiUrl: string; apiKey?: string };
 }
 

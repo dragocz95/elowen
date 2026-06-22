@@ -4,7 +4,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { dataDir, dbPath, logDir, runFile } from './paths.js';
 
-export interface Svc { pid: number; port: number }
+interface Svc { pid: number; port: number }
 export interface RunState { daemon: Svc; web: Svc; version: string; startedAt: string }
 export interface SvcStatus { running: boolean; pid: number | null; port: number; healthy: boolean }
 

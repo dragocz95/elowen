@@ -7,7 +7,7 @@ const execFileAsync = promisify(execFile);
 
 /** Latest published version of orcasynth from the npm registry. Uses the bare registry JSON endpoint
  *  (no npm spawn) so a version check is cheap and offline-tolerant (throws → caller reports it). */
-export async function checkLatest(fetchFn: typeof fetch = fetch): Promise<string> {
+async function checkLatest(fetchFn: typeof fetch = fetch): Promise<string> {
   const r = await fetchFn('https://registry.npmjs.org/orcasynth/latest');
   if (!r.ok) throw new Error(`registry returned ${r.status}`);
   const body = await r.json() as { version?: string };
