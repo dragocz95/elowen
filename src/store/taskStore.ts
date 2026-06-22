@@ -58,12 +58,11 @@ export class TaskStore {
   }
 
   delete(id: string): void {
-    this.db.transaction(() => {
-      // An epic task may drive a mission; remove it too so no mission is left pointing at a gone epic.
-      this.db.prepare('DELETE FROM missions WHERE epic_id = ?').run(id);
-      this.db.prepare('DELETE FROM task_deps WHERE task_id = ? OR depends_on_id = ?').run(id, id);
-      this.db.prepare('DELETE FROM tasks WHERE id = ?').run(id);
-    })();
+    // Always remove the whole subtree: deleting a parent (epic) must never leave its children
+    // (phases) orphaned. deleteEpic covers the leaf case too — a task with no descendants just
+    // removes its own row, its dep edges and any mission it drove. Single source of truth for
+    // delete semantics, so a plain DELETE /tasks/:id can't strand rows.
+    this.deleteEpic(id);
   }
 
   /** Delete an epic and its whole subtree in one go: the epic, every descendant task, all their

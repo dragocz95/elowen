@@ -8,6 +8,7 @@ import { taskBlockers, taskSessionName } from '../../lib/agentUtils';
 import { epicChildren, phaseIds, epicLive, epicEffectiveStatus } from '../../lib/taskTree';
 import { useCloseTask, useDeleteTask } from '../../lib/mutations';
 import { TaskDetailPane } from './TaskDetailPane';
+import { MissionFlow } from './MissionFlow';
 import { EpicGroup } from './EpicGroup';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
@@ -243,9 +244,20 @@ export function TasksView() {
             {/* Right — persistent detail pane. Bounded height + internal scroll so its header
                 stays pinned below the toolbar instead of sliding under it on long tasks. */}
             <aside className="mt-5 min-w-0 lg:mt-0 lg:flex-1 lg:sticky lg:top-16 lg:max-h-[calc(100vh-80px)] lg:overflow-y-auto">
-              {selectedId
-                ? <div className="rounded-lg border border-border bg-surface p-4" style={{ boxShadow: 'var(--shadow-card)' }}><TaskDetailPane taskId={selectedId} onEdit={setEditing} /></div>
-                : <div className="hidden items-center justify-center gap-2 rounded-lg border border-dashed border-border py-20 text-sm text-text-muted lg:flex"><ListChecks size={14} className="shrink-0 text-text-muted/50" aria-hidden />{t.tasks.selectHint}</div>}
+              {(() => {
+                if (!selectedId) {
+                  return <div className="hidden items-center justify-center gap-2 rounded-lg border border-dashed border-border py-20 text-sm text-text-muted lg:flex"><ListChecks size={14} className="shrink-0 text-text-muted/50" aria-hidden />{t.tasks.selectHint}</div>;
+                }
+                const selTask = tasks.data?.find((x) => x.id === selectedId);
+                const selPhases = selTask?.type === 'epic' ? (childMap.get(selTask.id) ?? []) : [];
+                // A selected mission (epic with phases) shows the flow graph; everything else — including
+                // a phase drilled into from the graph — shows the task/agent detail with a back chip.
+                if (selTask?.type === 'epic' && selPhases.length > 0) {
+                  return <div className="rounded-lg border border-border bg-surface p-4" style={{ boxShadow: 'var(--shadow-card)' }}><MissionFlow epic={selTask} phases={selPhases} activeId={selectedId} onSelectPhase={setSelectedId} /></div>;
+                }
+                const backToEpic = selTask?.parent_id && tasks.data?.some((x) => x.id === selTask.parent_id && x.type === 'epic') ? selTask.parent_id : null;
+                return <div className="rounded-lg border border-border bg-surface p-4" style={{ boxShadow: 'var(--shadow-card)' }}><TaskDetailPane taskId={selectedId} onEdit={setEditing} onBack={backToEpic ? () => setSelectedId(backToEpic) : undefined} /></div>;
+              })()}
             </aside>
           </div>
         )}

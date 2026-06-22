@@ -187,6 +187,20 @@ export function createServer(d: ServerDeps): Hono<{ Variables: { user: User; tok
       }
       return c.json(users.setProfile(u.id, { name: b.name, email: b.email, default_exec: b.default_exec }));
     });
+    // Self-service password change: verify the current password, then swap in the new one. A wrong
+    // current password is rejected (401) so it can't be used to set a password without knowing it.
+    app.post('/auth/me/password', async (c) => {
+      const u = c.get('user');
+      const b = await c.req.json().catch(() => null) as { currentPassword?: unknown; newPassword?: unknown } | null;
+      if (typeof b?.currentPassword !== 'string' || typeof b?.newPassword !== 'string') {
+        return c.json({ error: 'currentPassword and newPassword required' }, 400);
+      }
+      if (b.newPassword.length < 8) return c.json({ error: 'new password too short (min 8)' }, 400);
+      if (!users.changePassword(u.id, b.currentPassword, b.newPassword)) {
+        return c.json({ error: 'current password is incorrect' }, 401);
+      }
+      return c.json({ ok: true });
+    });
     // Avatar upload (multipart). Validated by type + size; stored as <userId>.<ext> under avatarsDir.
     const AVATAR_EXT: Record<string, string> = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp', 'image/gif': 'gif' };
     const AVATAR_MIME: Record<string, string> = { png: 'image/png', jpg: 'image/jpeg', webp: 'image/webp', gif: 'image/gif' };

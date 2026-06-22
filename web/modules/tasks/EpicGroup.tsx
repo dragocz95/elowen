@@ -88,9 +88,9 @@ export function EpicGroup({ epic, phases, effectiveStatus, expanded, onToggle, o
       <div className="relative flex items-stretch">
         <button
           type="button"
-          onClick={onToggle}
+          onClick={() => { onToggle(); onSelect(epic); }}
           aria-expanded={expanded}
-          className="flex min-w-0 flex-1 items-center gap-3 p-3 text-left transition-colors hover:bg-accent/[0.06]"
+          className={`flex min-w-0 flex-1 items-center gap-3 p-3 text-left transition-colors hover:bg-accent/[0.06] ${activeId === epic.id ? 'bg-accent/[0.06]' : ''}`}
         >
           <ChevronRight size={16} className={`shrink-0 text-text-muted transition-transform ${expanded ? 'rotate-90' : ''}`} aria-hidden />
           <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-border bg-elevated"><Icon size={20} className="text-accent" aria-hidden /></span>

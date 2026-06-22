@@ -75,6 +75,17 @@ describe('UserStore', () => {
     expect(third).not.toBe(first);
     expect(users.principalForToken(third)?.scope).toBe('agent');
   });
+  it('changePassword swaps the hash when the current password matches, rejects a wrong one', () => {
+    const u = users.create('alice', 'oldpass');
+    expect(users.changePassword(u.id, 'wrong', 'newpass')).toBe(false); // wrong current → no change
+    expect(users.verify('alice', 'oldpass')?.id).toBe(u.id);            // still the old password
+    expect(users.changePassword(u.id, 'oldpass', 'newpass')).toBe(true);
+    expect(users.verify('alice', 'oldpass')).toBeNull();               // old no longer works
+    expect(users.verify('alice', 'newpass')?.id).toBe(u.id);          // new one does
+  });
+  it('changePassword returns false for an unknown user id', () => {
+    expect(users.changePassword(999, 'whatever', 'newpass')).toBe(false);
+  });
   it('delete removes the user, their tokens and project assignments in one go', () => {
     const db = openDb(':memory:');
     const store = new UserStore(db);

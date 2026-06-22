@@ -101,10 +101,11 @@ function AxisMarker({ point, label, onPick }: { point: AxisPoint; label: string;
         style={{ width: size, height: size, transitionDuration: 'var(--motion-fast)' }}
         aria-label={tip}
       />
-      {/* Hover tooltip */}
+      {/* Hover tooltip — wraps to a fixed max width (long task titles), and anchors to the marker's
+          near edge when it sits at the start/end of the axis so it never clips off the side. */}
       <div
         role="tooltip"
-        className="pointer-events-none absolute bottom-full left-1/2 z-10 mb-2 hidden -translate-x-1/2 whitespace-nowrap rounded-md border border-border bg-elevated px-2.5 py-1.5 text-xs text-text group-hover:block"
+        className={`pointer-events-none absolute bottom-full z-10 mb-2 hidden w-max max-w-[18rem] whitespace-normal break-words rounded-md border border-border bg-elevated px-2.5 py-1.5 text-xs text-text group-hover:block ${point.frac < 0.12 ? 'left-0' : point.frac > 0.88 ? 'right-0' : 'left-1/2 -translate-x-1/2'}`}
         style={{ boxShadow: 'var(--shadow-raised)' }}
       >
         <span className="text-text">{label}</span>

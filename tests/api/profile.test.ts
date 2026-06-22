@@ -32,6 +32,7 @@ function setup() {
 }
 const auth = (t: string) => ({ headers: { authorization: `Bearer ${t}` } });
 const patch = (t: string, body: unknown) => ({ method: 'PATCH', headers: { authorization: `Bearer ${t}`, 'content-type': 'application/json' }, body: JSON.stringify(body) });
+const post = (t: string, body: unknown) => ({ method: 'POST', headers: { authorization: `Bearer ${t}`, 'content-type': 'application/json' }, body: JSON.stringify(body) });
 const put = (t: string, body: unknown) => ({ method: 'PUT', headers: { authorization: `Bearer ${t}`, 'content-type': 'application/json' }, body: JSON.stringify(body) });
 
 describe('PATCH /auth/me — self-service profile', () => {
@@ -46,6 +47,31 @@ describe('PATCH /auth/me — self-service profile', () => {
   it('rejects a default executor the user is not allowed to run', async () => {
     const { app, bobTok } = setup();
     expect((await app.request('/auth/me', patch(bobTok, { default_exec: 'bogus/model' }))).status).toBe(400);
+  });
+});
+
+describe('POST /auth/me/password — self-service password change', () => {
+  it('changes the password when the current one is correct, and the new one then logs in', async () => {
+    const { app, bobTok } = setup();
+    const res = await app.request('/auth/me/password', post(bobTok, { currentPassword: 'pw', newPassword: 'brandnewpw' }));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true });
+    // old password no longer logs in; the new one does
+    expect((await app.request('/auth/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ username: 'bob', password: 'pw' }) })).status).toBe(401);
+    expect((await app.request('/auth/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ username: 'bob', password: 'brandnewpw' }) })).status).toBe(200);
+  });
+  it('rejects a wrong current password with 401 and leaves the password unchanged', async () => {
+    const { app, bobTok } = setup();
+    expect((await app.request('/auth/me/password', post(bobTok, { currentPassword: 'nope', newPassword: 'brandnewpw' }))).status).toBe(401);
+    expect((await app.request('/auth/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ username: 'bob', password: 'pw' }) })).status).toBe(200);
+  });
+  it('rejects a too-short new password with 400', async () => {
+    const { app, bobTok } = setup();
+    expect((await app.request('/auth/me/password', post(bobTok, { currentPassword: 'pw', newPassword: 'short' }))).status).toBe(400);
+  });
+  it('requires a bearer token', async () => {
+    const { app } = setup();
+    expect((await app.request('/auth/me/password', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ currentPassword: 'pw', newPassword: 'brandnewpw' }) })).status).toBe(401);
   });
 });
 

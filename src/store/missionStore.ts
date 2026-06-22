@@ -15,10 +15,17 @@ const COLS = 'id,epic_id,autonomy,max_sessions,state';
 export class MissionStore {
   constructor(private db: Db) {}
 
+  /** Create (engage) a mission, or re-activate an existing one with the same id. A mission id is
+   *  `m-<epicId>`, so re-engaging an epic whose prior mission was disengaged/crashed would otherwise
+   *  hit a UNIQUE violation — the row is left behind on disengage. Upsert resets it to 'active' and
+   *  applies the new autonomy / max_sessions, making engage idempotent and re-engageable. */
   create(m: Omit<Mission, 'state'>): Mission {
     this.db.prepare(
       `INSERT INTO missions (id,epic_id,autonomy,max_sessions,state)
-       VALUES (@id,@epic_id,@autonomy,@max_sessions,'active')`
+       VALUES (@id,@epic_id,@autonomy,@max_sessions,'active')
+       ON CONFLICT(id) DO UPDATE SET
+         epic_id=excluded.epic_id, autonomy=excluded.autonomy,
+         max_sessions=excluded.max_sessions, state='active'`
     ).run({ ...m });
     return this.get(m.id)!;
   }

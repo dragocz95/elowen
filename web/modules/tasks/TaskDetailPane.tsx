@@ -1,6 +1,6 @@
 'use client';
 import { useState } from 'react';
-import { Pencil, Play, Square, SquareSlash, Archive, TerminalSquare, Link2, Copy, ShieldCheck, RotateCcw, ScrollText } from 'lucide-react';
+import { Pencil, Play, Square, SquareSlash, Archive, TerminalSquare, Link2, Copy, ShieldCheck, RotateCcw, ScrollText, ChevronLeft } from 'lucide-react';
 import type { Task } from '../../lib/types';
 import { useTasks, useAllDeps, useSessionSignal, useActivity, useConfig } from '../../lib/queries';
 import { useCloseTask, useSetTaskStatus, useResumeMission } from '../../lib/mutations';
@@ -25,7 +25,7 @@ import { useTranslation } from '../../lib/i18n';
 
 /** Persistent task detail: identity, actions, description, dependencies, live tail / result,
  *  and recent activity. Resolves the full task by id so it works from tasks and missions alike. */
-export function TaskDetailPane({ taskId, onEdit }: { taskId: string; onEdit?: (t: Task) => void }) {
+export function TaskDetailPane({ taskId, onEdit, onBack }: { taskId: string; onEdit?: (t: Task) => void; onBack?: () => void }) {
   const { t, locale } = useTranslation();
   const tasks = useTasks();
   const deps = useAllDeps();
@@ -85,6 +85,11 @@ export function TaskDetailPane({ taskId, onEdit }: { taskId: string; onEdit?: (t
     <div className="flex flex-col gap-4">
       {/* Identity + actions — sticky so it stays pinned while the detail scrolls. */}
       <div className="sticky top-0 z-10 -mx-4 flex flex-col gap-2 border-b border-border bg-surface px-4 pb-3 pt-1">
+        {onBack ? (
+          <button type="button" onClick={onBack} className="-ml-1 inline-flex w-fit items-center gap-1 rounded-md px-1.5 py-1 text-xs text-text-muted transition-colors hover:bg-elevated hover:text-text">
+            <ChevronLeft size={14} aria-hidden />{t.tasks.backToFlow}
+          </button>
+        ) : null}
         <div className="flex items-start gap-3">
           <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl border border-border bg-elevated">
             {iconExec ? <ModelIcon name={iconExec} size={26} /> : <Icon size={22} className="text-text-muted" aria-hidden />}

@@ -1,8 +1,8 @@
 'use client';
 import { useState, useEffect, useRef } from 'react';
-import { UserCog, Mail, Cpu, Upload, ShieldCheck, Save, Check, User as UserIcon } from 'lucide-react';
+import { UserCog, Mail, Cpu, Upload, ShieldCheck, Save, Check, User as UserIcon, KeyRound } from 'lucide-react';
 import { useMe, useConfig } from '../../lib/queries';
-import { useUpdateMe, useUploadAvatar } from '../../lib/mutations';
+import { useUpdateMe, useUploadAvatar, useChangePassword } from '../../lib/mutations';
 import { allModels } from '../../lib/execPresets';
 import { Avatar } from '../../components/ui/Avatar';
 import { ModelIcon } from '../../components/ui/ModelIcon';
@@ -20,6 +20,7 @@ export function AccountView() {
   const { data: config } = useConfig();
   const updateMe = useUpdateMe();
   const uploadAvatar = useUploadAvatar();
+  const changePassword = useChangePassword();
   const { toast } = useToast();
   const { t } = useTranslation();
   const fileRef = useRef<HTMLInputElement>(null);
@@ -27,6 +28,9 @@ export function AccountView() {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [defaultExec, setDefaultExec] = useState('');
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
 
   useEffect(() => {
     if (me.data?.user) {
@@ -57,6 +61,18 @@ export function AccountView() {
     if (f) uploadAvatar.mutate(f, { onSuccess: () => toast(t.account.avatarSaved), onError: (er) => toast(String(er) || t.account.saveError, 'error') });
     e.target.value = ''; // allow re-selecting the same file
   };
+  const submitPassword = () => {
+    if (newPassword.length < 8) { toast(t.account.passwordTooShort, 'error'); return; }
+    if (newPassword !== confirmPassword) { toast(t.account.passwordMismatch, 'error'); return; }
+    changePassword.mutate(
+      { currentPassword, newPassword },
+      {
+        onSuccess: () => { setCurrentPassword(''); setNewPassword(''); setConfirmPassword(''); toast(t.account.passwordChanged); },
+        onError: (e) => toast(String(e) || t.account.passwordError, 'error'),
+      },
+    );
+  };
+  const canSubmitPassword = currentPassword.length > 0 && newPassword.length >= 8 && newPassword === confirmPassword;
 
   return (
     <>
@@ -126,6 +142,49 @@ export function AccountView() {
               <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
             </SettingCard>
           </div>
+
+          {/* Password change — verified server-side against the current password. */}
+          <SettingCard title={t.account.password} icon={KeyRound}>
+            <p className="mb-3 text-xs text-text-muted">{t.account.passwordHint}</p>
+            <form
+              className="flex flex-col gap-3"
+              onSubmit={(e) => { e.preventDefault(); submitPassword(); }}
+            >
+              {/* Username hint helps password managers associate the credential. */}
+              <input type="text" name="username" autoComplete="username" value={u.username} readOnly hidden />
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                <Input
+                  type="password"
+                  autoComplete="current-password"
+                  placeholder={t.account.currentPassword}
+                  aria-label={t.account.currentPassword}
+                  value={currentPassword}
+                  onChange={(e) => setCurrentPassword(e.target.value)}
+                />
+                <Input
+                  type="password"
+                  autoComplete="new-password"
+                  placeholder={t.account.newPassword}
+                  aria-label={t.account.newPassword}
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                />
+                <Input
+                  type="password"
+                  autoComplete="new-password"
+                  placeholder={t.account.confirmPassword}
+                  aria-label={t.account.confirmPassword}
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                />
+              </div>
+              <div className="flex justify-end">
+                <Button type="submit" variant="accent" icon={KeyRound} disabled={!canSubmitPassword || changePassword.isPending}>
+                  {t.account.changePassword}
+                </Button>
+              </div>
+            </form>
+          </SettingCard>
         </div>
       </div>
     </>

@@ -78,6 +78,14 @@ export class UserStore {
     const r = this.db.prepare('SELECT * FROM users WHERE id = ?').get(id) as Row | undefined;
     return r ? mask(r) : null;
   }
+  /** Self-service password change: rewrite the hash only when `current` matches the stored one.
+   *  Returns false on an unknown user or a wrong current password (so the caller can 4xx). */
+  changePassword(id: number, current: string, next: string): boolean {
+    const r = this.db.prepare('SELECT password_hash FROM users WHERE id = ?').get(id) as { password_hash: string } | undefined;
+    if (!r || !verifyPassword(current, r.password_hash)) return false;
+    this.db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hashPassword(next), id);
+    return true;
+  }
   verify(username: string, password: string): User | null {
     const r = this.db.prepare('SELECT * FROM users WHERE username = ?').get(username) as Row | undefined;
     if (!r || !verifyPassword(password, r.password_hash)) return null;

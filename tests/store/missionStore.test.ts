@@ -13,6 +13,15 @@ describe('MissionStore', () => {
     m.setState('m1', 'disengaged');
     expect(m.active()).toEqual([]);
   });
+  it('re-creating an existing mission id re-activates it instead of throwing (re-engage)', () => {
+    m.create({ id: 'm1', epic_id: 'e1', autonomy: 'L3', max_sessions: 1 });
+    m.setState('m1', 'disengaged'); // mission ran and was disengaged — the row stays behind
+    // Re-engaging the same epic must not blow up on the UNIQUE id; it resets the row to active and
+    // applies the new autonomy / max_sessions.
+    const again = m.create({ id: 'm1', epic_id: 'e1', autonomy: 'L2', max_sessions: 3 });
+    expect(again).toMatchObject({ id: 'm1', epic_id: 'e1', autonomy: 'L2', max_sessions: 3, state: 'active' });
+    expect(m.active().map(x => x.id)).toEqual(['m1']); // active again, exactly one row
+  });
   it('live includes active and stalled missions', () => {
     m.create({ id: 'a', epic_id: 'e1', autonomy: 'L3', max_sessions: 1 });
     m.create({ id: 'b', epic_id: 'e2', autonomy: 'L3', max_sessions: 1 });

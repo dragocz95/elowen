@@ -83,6 +83,7 @@ export const orcaClient = {
   me: () => req<{ user: User }>('/auth/me'),
   updateMe: (patch: ProfilePatch) => req<User>('/auth/me', { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify(patch) }),
   uploadAvatar: (file: File) => { const fd = new FormData(); fd.append('avatar', file); return req<User>('/auth/me/avatar', { method: 'POST', body: fd }); },
+  changePassword: (currentPassword: string, newPassword: string) => req<{ ok: boolean }>('/auth/me/password', json({ currentPassword, newPassword })),
   // Mint a short-lived signed avatar URL. An <img> can't set an Authorization header, so instead of
   // leaking the long-lived session token into the query string (finding W2) we ask the daemon — over
   // an authenticated request — for an HMAC-signed link that expires in minutes.

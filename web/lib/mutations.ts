@@ -127,6 +127,9 @@ export function useUploadAvatar() {
   const qc = useQueryClient();
   return useMutation({ mutationFn: (file: File) => orcaClient.uploadAvatar(file), onSuccess: () => qc.invalidateQueries({ queryKey: ['me'] }) });
 }
+export function useChangePassword() {
+  return useMutation({ mutationFn: (v: { currentPassword: string; newPassword: string }) => orcaClient.changePassword(v.currentPassword, v.newPassword) });
+}
 export function useCreateProject() {
   const qc = useQueryClient();
   return useMutation({ mutationFn: (v: { slug: string; path: string; notes?: string }) => orcaClient.createProject(v), onSuccess: () => qc.invalidateQueries({ queryKey: ['projects'] }) });

@@ -138,6 +138,26 @@ describe('TaskStore', () => {
     expect(db.prepare("SELECT COUNT(*) c FROM missions WHERE epic_id = 'epic'").get()).toEqual({ c: 0 });
   });
 
+  it('delete of a parent task cascades to its children — never leaves orphaned phases', () => {
+    store.create({ id: 'epic', project_id: 1, title: 'Epic', type: 'epic' });
+    store.create({ id: 'a', project_id: 1, title: 'A', parent_id: 'epic' });
+    store.create({ id: 'b', project_id: 1, title: 'B', parent_id: 'epic' });
+    store.create({ id: 'other', project_id: 1, title: 'Other' }); // unrelated, must survive
+    store.delete('epic');
+    expect(store.get('epic')).toBeNull();
+    expect(store.get('a')).toBeNull();
+    expect(store.get('b')).toBeNull();
+    expect(store.get('other')).not.toBeNull();
+  });
+
+  it('delete of a leaf task removes only that task', () => {
+    store.create({ id: 'epic', project_id: 1, title: 'Epic', type: 'epic' });
+    store.create({ id: 'a', project_id: 1, title: 'A', parent_id: 'epic' });
+    store.delete('a');
+    expect(store.get('a')).toBeNull();
+    expect(store.get('epic')).not.toBeNull(); // the parent and its siblings stay
+  });
+
   it('deleteEpic removes the epic, its whole subtree, their deps and the mission', () => {
     store.create({ id: 'epic', project_id: 1, title: 'Epic', type: 'epic' });
     store.create({ id: 'a', project_id: 1, title: 'A', parent_id: 'epic' });
