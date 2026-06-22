@@ -7,7 +7,7 @@ import { ensureServiceUser, userHome, type ServiceUserChoice } from './serviceUs
 import { detectAgentClis, installCommand } from './agentClis.js';
 import { daemonUnit, webUnit, type UnitParams } from './systemdUnits.js';
 import { detectProxy, nginxVhost, apacheVhost, certbotCommand, type ProxyKind } from './proxy.js';
-import { applySetup, buildSetupPlan, isFirstRun, type SetupAnswers } from '../setup.js';
+import { applySetup, buildSetupPlan, defaultExecForCli, isFirstRun, type SetupAnswers } from '../setup.js';
 import { runSetupWizard } from '../setupWizard.js';
 import { INSTALL_INFO_PATH, serializeInstallInfo, type InstallInfo } from '../installInfo.js';
 
@@ -265,8 +265,12 @@ async function planFromArgs(r: Runner, args: string[]): Promise<InstallPlan> {
 
   const adminUser = flag(args, '--admin-user');
   const adminPass = flag(args, '--admin-pass');
+  // `--autopilot-cli <claude|opencode|codex>` runs autopilot through an agent CLI (no API key);
+  // otherwise the --llm-* flags configure the hosted-API engine.
+  const autopilotCli = flag(args, '--autopilot-cli');
+  const pilotExec = autopilotCli ? defaultExecForCli(autopilotCli, flag(args, '--autopilot-model')) : undefined;
   const admin: SetupAnswers | null = adminUser && adminPass
-    ? { username: adminUser, password: adminPass, apiUrl: flag(args, '--llm-url') ?? 'https://api.openai.com/v1', apiKey: flag(args, '--llm-key') ?? '', model: flag(args, '--llm-model') ?? 'gpt-4o-mini' }
+    ? { username: adminUser, password: adminPass, pilotExec, apiUrl: flag(args, '--llm-url') ?? 'https://api.openai.com/v1', apiKey: flag(args, '--llm-key') ?? '', model: flag(args, '--llm-model') ?? 'gpt-4o-mini' }
     : null;
 
   return {
@@ -412,7 +416,38 @@ function planSummary(plan: InstallPlan): string {
 
 /** `orca install` — provision a fresh Debian/Ubuntu box. Run as root. Pass `--unattended` (with flags)
  *  for a non-interactive install; otherwise an interactive wizard collects every answer. */
+const INSTALL_HELP = `🐋 orca install — provision a fresh Debian/Ubuntu box as an orca service (run as root)
+
+USAGE
+  orca install                    interactive wizard (recommended)
+  orca install --unattended [options]
+
+OPTIONS
+  --unattended                    run non-interactively from the flags below
+  --user <name>                   service user that runs the agents          (default: orca)
+  --agents <list>                 agent CLIs to install: all | none | claude,opencode,codex
+  --no-tmux                       skip installing tmux
+
+  Deployment (pick one; default is localhost):
+  --domain <host>                 serve on a domain behind a reverse proxy (+ Let's Encrypt HTTPS)
+  --ip <addr> | --host <addr>     serve directly on the public IP and port (no proxy)
+  --localhost                     bind to localhost only
+  --proxy <nginx|apache|none>     reverse proxy to configure for --domain
+  --email <addr>                  contact email for Let's Encrypt renewal notices
+
+  First admin + autopilot:
+  --admin-user <name>             create the first admin account
+  --admin-pass <pass>             admin password
+  --autopilot-cli <cli>           run autopilot through an agent CLI (claude|opencode|codex) — no API key
+  --autopilot-model <spec>        model for --autopilot-cli opencode (e.g. anthropic/claude-sonnet-4-5)
+  --llm-url <url>                 hosted-API engine: base URL    (default: https://api.openai.com/v1)
+  --llm-key <key>                 hosted-API engine: API key
+  --llm-model <name>              hosted-API engine: model       (default: gpt-4o-mini)
+
+  -h, --help                      show this help`;
+
 export async function install(args: string[] = []): Promise<void> {
+  if (args.includes('--help') || args.includes('-h')) { console.log(INSTALL_HELP); return; }
   const r = realRunner();
   const unattended = args.includes('--unattended');
   p.intro(`🐋 orca install${unattended ? ' (unattended)' : ''}`);

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { isFirstRun, buildSetupPlan, applySetup, type SetupAnswers } from '../../src/cli/setup.js';
+import { isFirstRun, buildSetupPlan, applySetup, defaultExecForCli, fetchAvailableClis, type SetupAnswers } from '../../src/cli/setup.js';
 
 const answers: SetupAnswers = {
   username: 'admin', password: 'sekret',
@@ -15,6 +15,50 @@ describe('cli/setup.buildSetupPlan', () => {
   it('omits the apiKey from the patch when left blank', () => {
     const plan = buildSetupPlan({ ...answers, apiKey: '' });
     expect(plan.config.autopilot).not.toHaveProperty('apiKey');
+  });
+  it('builds a CLI-engine patch (pilot + overseer exec, no API key) when pilotExec is set', () => {
+    const plan = buildSetupPlan({ ...answers, pilotExec: 'codex:gpt-5.5' });
+    expect(plan.config).toEqual({ autopilot: { pilotExec: 'codex:gpt-5.5', overseerExec: 'codex:gpt-5.5' } });
+    expect(plan.config.autopilot).not.toHaveProperty('apiKey');
+    expect(plan.config.autopilot).not.toHaveProperty('model');
+  });
+});
+
+describe('cli/setup.defaultExecForCli', () => {
+  it('maps each agent CLI to a well-formed exec spec', () => {
+    expect(defaultExecForCli('claude')).toBe('claude:sonnet');
+    expect(defaultExecForCli('codex')).toBe('codex:gpt-5.5');
+    expect(defaultExecForCli('opencode', 'ollama-cloud/glm-5.2')).toBe('opencode:ollama-cloud/glm-5.2');
+  });
+  it('falls back to the default opencode model and rejects unknown CLIs', () => {
+    expect(defaultExecForCli('opencode')).toMatch(/^opencode:.+/);
+    expect(defaultExecForCli('nope')).toBe('');
+  });
+});
+
+describe('cli/setup.fetchAvailableClis', () => {
+  const status = (tools: { name: string; functional: boolean }[]) =>
+    (async () => new Response(JSON.stringify({ tools }), { status: 200 })) as unknown as typeof fetch;
+
+  it('returns only functional agent CLIs, in recommended order', async () => {
+    const fetchFn = status([
+      { name: 'codex', functional: true }, { name: 'claude', functional: true },
+      { name: 'opencode', functional: false }, { name: 'node', functional: true }, { name: 'tmux', functional: true },
+    ]);
+    expect(await fetchAvailableClis(fetchFn, 'http://x', 'TKN')).toEqual(['claude', 'codex']);
+  });
+  it('returns [] when the probe fails', async () => {
+    const fetchFn = (async () => new Response('nope', { status: 401 })) as unknown as typeof fetch;
+    expect(await fetchAvailableClis(fetchFn, 'http://x', 'TKN')).toEqual([]);
+  });
+  it('sends the bearer token', async () => {
+    let auth: string | undefined;
+    const fetchFn = (async (_url: string, init?: RequestInit) => {
+      auth = (init?.headers as Record<string, string>)?.authorization;
+      return new Response(JSON.stringify({ tools: [] }), { status: 200 });
+    }) as unknown as typeof fetch;
+    await fetchAvailableClis(fetchFn, 'http://x', 'TKN');
+    expect(auth).toBe('Bearer TKN');
   });
 });
 
