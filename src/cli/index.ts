@@ -9,7 +9,46 @@ import { menu } from './menu.js';
 
 const BASE = process.env.ORCA_URL ?? 'http://localhost:4400';
 
-const USAGE = 'usage: orca [menu] | install | <up|down|status|update> | <ls|ready|sessions|close|plan submit|overseer poll|overseer decide>';
+const USAGE = "usage: orca [command] [options]  —  run `orca --help` for the full command list";
+
+/** The full, grouped help shown for `orca --help`. Kept as a function so the version is interpolated. */
+function helpText(version: string): string {
+  return `🐋 orca ${version} — control plane for autonomous coding agents
+
+USAGE
+  orca                            open the interactive launcher menu (in a terminal)
+  orca <command> [options]
+
+SETUP
+  install                         provision orca as a service: systemd units, a reverse proxy
+                                  and the first admin (run as root). See \`orca install --help\`.
+
+SERVICE
+  up                              start the daemon (:4400) and web UI (:4500) in the background
+  down                            stop the daemon and web UI
+  status                          show which services are running and healthy
+  update                          update to the latest npm release and restart in place
+
+TASKS
+  ls                              list all tasks (JSON)
+  ready                           list tasks ready to run (JSON)
+  sessions                        list live agent sessions (JSON)
+  close <id> [options]            close a task
+                                    --summary "<text>"        closing note
+                                    --outcome ok|fail         record the outcome
+
+AGENT-FACING                      (invoked by running agents — rarely needed by hand)
+  plan submit --phases '<json>'   submit an autopilot plan        (needs ORCA_PLAN_JOB)
+  overseer poll                   wait for the next decision       (needs ORCA_MISSION)
+  overseer decide --id <id> …     resolve a decision: --approve | --escalate | --choice <optionId>
+                                    [--confidence <0..1>] [--rationale "<text>"]
+
+OPTIONS
+  -h, --help                      show this help
+  -v, --version                   print the version
+
+Docs & issues: https://github.com/dragocz1995/orcasynth`;
+}
 
 /** Commands that talk to the daemon API — only these justify auto-starting it. Everything else
  *  (help, unknown verbs) must NOT spawn a daemon: a stray detached daemon squats the port and starves
@@ -108,7 +147,7 @@ async function main() {
   // usage error from `run`, so scripts still get deterministic behavior.
   if (argv.length === 0 && process.stdin.isTTY) { await menu(process.env, version); return; }
   // Help / bare non-TTY invocation: print usage and stop. Must NOT fall through to ensureDaemon.
-  if (argv.length === 0 || argv[0] === '--help' || argv[0] === '-h' || argv[0] === 'help') { console.log(USAGE); return; }
+  if (argv.length === 0 || argv[0] === '--help' || argv[0] === '-h' || argv[0] === 'help') { console.log(helpText(version)); return; }
   if (argv[0] === '--version' || argv[0] === '-v') { console.log(version); return; }
   // `orca install` is the root provisioning wizard — it sets up systemd, the proxy and the admin
   // itself, so it must run BEFORE ensureDaemon (no auto-spawn) and before the lifecycle commands.
