@@ -13,8 +13,10 @@ import { Modal, ModalBody, ModalFooter } from '../../components/ui/Modal';
 import { ModuleHeader } from '../../components/ui/ModuleHeader';
 import { LoadingState, ErrorState, EmptyState } from '../../components/ui/states';
 import { useTranslation } from '../../lib/i18n';
-import { Code2, Pencil, Trash2 } from 'lucide-react';
+import { Code2, Pencil, Trash2, ImageIcon } from 'lucide-react';
 import { ProjectEditor } from './editor/ProjectEditor';
+import { ProjectIcon } from '../../components/ui/ProjectIcon';
+import { ProjectIconPicker } from './ProjectIconPicker';
 
 export function ProjectsView() {
   const projects = useProjects();
@@ -47,6 +49,8 @@ export function ProjectsView() {
   const [editPath, setEditPath] = useState('');
   const [editNotes, setEditNotes] = useState('');
   const openEdit = (p: Project) => { setEditProject(p); setEditPath(p.path); setEditNotes(p.notes); };
+  // Project whose icon is being chosen (drives the icon-picker modal, stacked over the edit modal).
+  const [iconFor, setIconFor] = useState<Project | null>(null);
 
   function handleCreate() {
     createProject.mutate(
@@ -112,8 +116,8 @@ export function ProjectsView() {
                   className={`card-interactive group flex cursor-pointer gap-3.5 rounded-lg border p-3.5 ${active ? 'border-accent bg-accent/[0.06]' : 'border-border bg-surface'}`}
                 >
                   <div className="flex shrink-0 items-center">
-                    <span className="flex h-12 w-12 items-center justify-center rounded-xl border-2 border-border bg-elevated">
-                      <FolderGit2 size={24} className="text-text-muted" aria-hidden />
+                    <span className="flex h-12 w-12 items-center justify-center overflow-hidden rounded-xl border-2 border-border bg-elevated">
+                      <ProjectIcon project={p} size={p.icon ? 44 : 24} className="text-text-muted" />
                     </span>
                   </div>
 
@@ -223,6 +227,21 @@ export function ProjectsView() {
             <Field label={t.projects.fieldSlug} hint={t.projects.slugImmutable}>
               <Input value={editProject.slug} disabled className="font-mono text-xs opacity-60" />
             </Field>
+            <Field label={t.projects.iconLabel} hint={t.projects.iconHint}>
+              {(() => {
+                // Live project so the preview reflects an icon just set via the picker (which invalidates ['projects']).
+                const live = projects.data?.find((x) => x.id === editProject.id) ?? editProject;
+                return (
+                  <div className="flex items-center gap-3">
+                    <span className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-lg border border-border bg-elevated">
+                      <ProjectIcon project={live} size={live.icon ? 36 : 22} className="text-text-muted" />
+                    </span>
+                    <Button icon={ImageIcon} onClick={() => setIconFor(live)}>{t.projects.chooseIcon}</Button>
+                    {live.icon ? <span className="min-w-0 flex-1 truncate font-mono text-xs text-text-muted" title={live.icon}>{live.icon}</span> : null}
+                  </div>
+                );
+              })()}
+            </Field>
             <Field label={t.projects.fieldPath} hint={t.projects.pathHint}>
               <Input value={editPath} onChange={(e) => setEditPath(e.target.value)} className="font-mono text-xs" />
             </Field>
@@ -238,6 +257,8 @@ export function ProjectsView() {
           </ModalFooter>
         </Modal>
       )}
+
+      {iconFor && <ProjectIconPicker project={iconFor} onClose={() => setIconFor(null)} />}
 
       {removing && (
         <Modal title={t.projects.removeConfirmTitle} onClose={() => setRemoving(null)} size="sm" icon={AlertTriangle}>

@@ -146,6 +146,11 @@ export function useRemoveProject() {
   const qc = useQueryClient();
   return useMutation({ mutationFn: (id: number) => orcaClient.removeProject(id), onSuccess: () => qc.invalidateQueries({ queryKey: ['projects'] }) });
 }
+/** Set (or clear, with icon: '') a project's icon — a project-relative image path chosen from the repo. */
+export function useSetProjectIcon() {
+  const qc = useQueryClient();
+  return useMutation({ mutationFn: (v: { id: number; icon: string }) => orcaClient.updateProject(v.id, { icon: v.icon }), onSuccess: () => qc.invalidateQueries({ queryKey: ['projects'] }) });
+}
 /**
  * Toggle a project assignment for a user. `currentlyAssigned` is the present state of the chip:
  * when the project is already assigned we unassign it, otherwise we assign it. Naming the flag

@@ -6,7 +6,7 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
 import { hermesStatus, installHermesPlugin } from '../integrations/hermesInstall.js';
 import { detectClis } from '../integrations/cliDetection.js';
 import { readTaskUsage } from '../integrations/usage/index.js';
-import { listProjectFiles, readProjectFile, writeProjectFile, readProjectBytes, createProjectFile, createProjectDir, deleteProjectEntry, renameProjectEntry, copyProjectEntry, projectFileAtHead, projectFileDiff, projectCommitDiff, projectCommitFiles, projectCommitFileDiff, projectCommitLog, projectChangedFiles, projectWorkingDiff, projectReviewDiff } from '../integrations/projectFiles.js';
+import { listProjectFiles, readProjectFile, writeProjectFile, readProjectBytes, createProjectFile, createProjectDir, deleteProjectEntry, renameProjectEntry, copyProjectEntry, projectFileAtHead, projectFileDiff, projectCommitDiff, projectCommitFiles, projectCommitFileDiff, projectCommitLog, projectChangedFiles, projectWorkingDiff, projectReviewDiff, isProjectImage } from '../integrations/projectFiles.js';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { streamSSE } from 'hono/streaming';
@@ -547,11 +547,18 @@ export function createServer(d: ServerDeps): Hono<{ Variables: { user: User; tok
     if (!d.projects) return c.json({ error: 'projects unavailable' }, 400);
     if (d.userProjects && d.users) { const u = c.get('user'); if (!u || !d.userProjects.isAdmin(u.id)) return c.json({ error: 'forbidden' }, 403); }
     const id = Number(c.req.param('id'));
-    if (!d.projects.get(id)) return c.json({ error: 'project not found' }, 404);
-    const b = await c.req.json() as { path?: string; notes?: string };
-    const patch: { path?: string; notes?: string } = {};
+    const cur = d.projects.get(id);
+    if (!cur) return c.json({ error: 'project not found' }, 404);
+    const b = await c.req.json() as { path?: string; notes?: string; icon?: string };
+    const patch: { path?: string; notes?: string; icon?: string } = {};
     if (typeof b.path === 'string' && b.path.trim()) patch.path = b.path.trim();
     if (typeof b.notes === 'string') patch.notes = b.notes;
+    // Icon is a project-relative image path. '' clears it; anything else must resolve to a real image
+    // file inside the project root (guards against path traversal / pointing at a non-image).
+    if (typeof b.icon === 'string') {
+      if (b.icon !== '' && !isProjectImage(cur.path, b.icon)) return c.json({ error: 'invalid icon path' }, 400);
+      patch.icon = b.icon;
+    }
     return c.json(d.projects.update(id, patch));
   });
   // Remove a project from orca entirely: cascades to its tasks, missions, agents and access grants

@@ -7,8 +7,8 @@ import { createWrapper } from '../../test-utils';
 import type { Project } from '../../../lib/types';
 
 const TWO: Project[] = [
-  { id: 1, slug: 'orca', path: '/var/www/orca', notes: '' },
-  { id: 2, slug: 'hermes', path: '/var/www/hermes', notes: '' },
+  { id: 1, slug: 'orca', path: '/var/www/orca', notes: '', icon: '' },
+  { id: 2, slug: 'hermes', path: '/var/www/hermes', notes: '', icon: '' },
 ];
 
 function projectsHandler(projects: Project[]) {

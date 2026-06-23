@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, symlinkSyn
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
-import { listProjectFiles, readProjectFile, writeProjectFile, readProjectBytes, createProjectFile, createProjectDir, deleteProjectEntry, renameProjectEntry, copyProjectEntry, projectCommitDiff, projectCommitFiles, projectCommitFileDiff, projectCommitLog } from '../../src/integrations/projectFiles.js';
+import { listProjectFiles, readProjectFile, writeProjectFile, readProjectBytes, createProjectFile, createProjectDir, deleteProjectEntry, renameProjectEntry, copyProjectEntry, projectCommitDiff, projectCommitFiles, projectCommitFileDiff, projectCommitLog, isProjectImage } from '../../src/integrations/projectFiles.js';
 
 let root: string;
 const w = (rel: string, body: string) => { const p = join(root, rel); mkdirSync(join(p, '..'), { recursive: true }); writeFileSync(p, body); };
@@ -169,6 +169,39 @@ describe('projectCommitLog', () => {
     expect((await projectCommitLog(root, 2)).length).toBe(2);
     // a non-finite / negative limit must not blow up or inject — it falls back to a safe default
     expect((await projectCommitLog(root, -5 as number)).length).toBeGreaterThan(0);
+  });
+});
+
+describe('isProjectImage', () => {
+  beforeEach(() => {
+    w('assets/logo.png', 'PNG');
+    w('icon.svg', '<svg/>');
+    w('notes.txt', 'text');
+  });
+
+  it('accepts a real image file inside the project (by extension)', () => {
+    expect(isProjectImage(root, 'assets/logo.png')).toBe(true);
+    expect(isProjectImage(root, 'icon.svg')).toBe(true);
+  });
+
+  it('rejects a non-image file, a directory and a missing file', () => {
+    expect(isProjectImage(root, 'notes.txt')).toBe(false);   // not an image extension
+    expect(isProjectImage(root, 'assets')).toBe(false);       // a directory
+    expect(isProjectImage(root, 'nope.png')).toBe(false);     // does not exist
+  });
+
+  it('never throws and rejects a path that escapes the project root', () => {
+    expect(isProjectImage(root, '../../etc/passwd.png')).toBe(false);
+    expect(isProjectImage(root, '/etc/hosts')).toBe(false);
+  });
+
+  it('rejects an image symlink that points outside the project', () => {
+    const outside = mkdtempSync(join(tmpdir(), 'orca-outside-'));
+    writeFileSync(join(outside, 'evil.png'), 'PNG');
+    try {
+      symlinkSync(join(outside, 'evil.png'), join(root, 'linked.png'));
+      expect(isProjectImage(root, 'linked.png')).toBe(false);
+    } finally { rmSync(outside, { recursive: true, force: true }); }
   });
 });
 

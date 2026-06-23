@@ -26,6 +26,9 @@ export function openDb(path: string): Db {
   // exists is skipped via PRAGMA table_info, so we never rely on swallowing arbitrary ALTER errors
   // (a real failure — disk full, lock — now surfaces instead of being silently caught).
   addColumn(db, 'projects', 'notes', "TEXT NOT NULL DEFAULT ''");
+  // Project icon: a project-relative path to an image file already in the repo (e.g. assets/logo.png).
+  // Empty = the default folder glyph. Never an uploaded copy — it references a file in the project.
+  addColumn(db, 'projects', 'icon', "TEXT NOT NULL DEFAULT ''");
   addColumn(db, 'tasks', 'description', "TEXT NOT NULL DEFAULT ''");
   addColumn(db, 'tasks', 'scheduled_at', 'TEXT');
   addColumn(db, 'tasks', 'autostart', 'INTEGER NOT NULL DEFAULT 0');

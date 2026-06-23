@@ -22,6 +22,14 @@ describe('ProjectStore', () => {
     expect(p.notes).toBe('');
     expect(() => store.create({ slug: 'a', path: '/b' })).toThrow();
   });
+  it('defaults icon to empty and round-trips an icon update without clobbering other fields', () => {
+    const p = store.create({ slug: 'web', path: '/p', notes: 'keep' });
+    expect(p.icon).toBe('');
+    store.update(p.id, { icon: 'assets/logo.png' });
+    expect(store.get(p.id)).toMatchObject({ path: '/p', notes: 'keep', icon: 'assets/logo.png' });
+    store.update(p.id, { icon: '' }); // clear back to the default glyph
+    expect(store.get(p.id)?.icon).toBe('');
+  });
   it('updates path and notes, leaving the slug immutable', () => {
     const p = store.create({ slug: 'web', path: '/old', notes: 'old' });
     const up = store.update(p.id, { path: '/new', notes: 'new' });

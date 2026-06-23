@@ -1,4 +1,7 @@
 import { describe, it, expect } from 'vitest';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { openDb } from '../../src/store/db.js';
 import { TaskStore } from '../../src/store/taskStore.js';
 import { Readiness } from '../../src/store/readiness.js';
@@ -40,6 +43,26 @@ describe('projects api', () => {
     expect(body).toMatchObject({ id: 1, slug: 'orca', path: '/moved', notes: 'pilot ctx' });
     const missing = await app.request('/projects/999', { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ notes: 'x' }) });
     expect(missing.status).toBe(404);
+  });
+  it('PATCH /projects/:id sets an icon from a real repo image and rejects an escaping path', async () => {
+    const { app } = makeApp();
+    const root = mkdtempSync(join(tmpdir(), 'orca-proj-'));
+    mkdirSync(join(root, 'assets'), { recursive: true });
+    writeFileSync(join(root, 'assets/logo.png'), 'PNG');
+    try {
+      // Register a project whose path is a real dir, then set its icon to an image inside it.
+      const created = await (await app.request('/projects', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ slug: 'icn', path: root }) })).json();
+      const ok = await app.request(`/projects/${created.id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ icon: 'assets/logo.png' }) });
+      expect(ok.status).toBe(200);
+      expect((await ok.json()).icon).toBe('assets/logo.png');
+      // A traversal path is refused (and never persisted).
+      const bad = await app.request(`/projects/${created.id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ icon: '../../etc/passwd' }) });
+      expect(bad.status).toBe(400);
+      expect((await (await app.request('/projects')).json()).find((p: { id: number }) => p.id === created.id).icon).toBe('assets/logo.png');
+      // '' clears the icon back to the default.
+      const cleared = await app.request(`/projects/${created.id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ icon: '' }) });
+      expect((await cleared.json()).icon).toBe('');
+    } finally { rmSync(root, { recursive: true, force: true }); }
   });
   it('DELETE /projects/:id removes a non-home project; 404 unknown; 400 for the home project', async () => {
     const { app } = makeApp();

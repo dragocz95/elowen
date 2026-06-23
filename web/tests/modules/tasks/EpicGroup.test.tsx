@@ -15,7 +15,7 @@ const phases: Task[] = [
 
 const server = setupServer(
   http.get('*/api/sessions', () => HttpResponse.json([])),
-  http.get('*/api/projects', () => HttpResponse.json([{ id: 1, slug: 'orca', path: '/var/www/orca', notes: '' }])),
+  http.get('*/api/projects', () => HttpResponse.json([{ id: 1, slug: 'orca', path: '/var/www/orca', notes: '', icon: '' }])),
   // EpicGroup now drives the mission lifecycle + rolled-up cost, so it reads these too.
   http.get('*/api/missions', () => HttpResponse.json([])),
   http.get('*/api/config', () => HttpResponse.json({})),

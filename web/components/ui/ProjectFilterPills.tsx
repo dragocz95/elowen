@@ -2,6 +2,7 @@
 import { FolderGit2 } from 'lucide-react';
 import { useProjects } from '../../lib/queries';
 import { useTranslation } from '../../lib/i18n';
+import { ProjectIcon } from './ProjectIcon';
 
 /** Shared project filter pills — "All projects" + one pill per accessible project. Hidden when the
  *  workspace has fewer than two projects (no choice to make). Purely presentational: the host owns
@@ -27,7 +28,7 @@ export function ProjectFilterPills({ value, onChange }: { value: number | 'all';
           className={pillClass(value === p.id)}
           style={{ transitionDuration: 'var(--motion-fast)' }}
         >
-          <FolderGit2 size={13} className="shrink-0" aria-hidden />{p.slug}
+          <ProjectIcon project={p} size={13} />{p.slug}
         </button>
       ))}
     </div>
