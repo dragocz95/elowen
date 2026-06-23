@@ -30,6 +30,15 @@ describe('bridge', () => {
     expect(calls.write).toEqual([]);
   });
 
+  it('also notifies onResize on a resize control frame', () => {
+    const { pty, calls } = fakePty();
+    const seen: number[][] = [];
+    const b = bridge(pty, { send: () => {}, close: () => {} }, (c, r) => seen.push([c, r]));
+    b.onMessage(JSON.stringify({ type: 'resize', cols: 120, rows: 40 }));
+    expect(calls.resize).toEqual([[120, 40]]); // the PTY is still resized
+    expect(seen).toEqual([[120, 40]]);          // and the tmux window too
+  });
+
   it('treats non-control messages as raw input bytes', () => {
     const { pty, calls } = fakePty();
     const b = bridge(pty, { send: () => {}, close: () => {} });
