@@ -13,7 +13,7 @@ mcp_servers:
     timeout: 120
 plugins:
   enabled:
-  - coresynth-tools
+  - example-plugin
 `;
 
 describe('mcpEndpoint', () => {
@@ -50,7 +50,7 @@ describe('upsertOrcaServer', () => {
     expect(text).toContain('      Authorization: "Bearer ${MCP_ORCA_API_KEY}"');
     expect(text).toContain('chrome-devtools:'); // sibling server kept
     expect(text).toContain('# Hermes config'); // comments survive
-    expect(text).toContain('coresynth-tools'); // unrelated section untouched
+    expect(text).toContain('example-plugin'); // unrelated section untouched
     expect(orcaServerState(text)).toEqual({ registered: true, enabled: true });
   });
 
