@@ -319,5 +319,5 @@ export function buildApp(opts: BuildOpts) {
     const stopTicketSweep = clock.setInterval(() => tickets.sweep(clock.now()), 60_000);
     return () => { stopDeriver(); stopOverseer(); stopScheduler(); stopJanitor(); stopStuck(); stopOverseerWatchdog(); stopTokenPurge(); stopEventPurge(); stopTicketSweep(); };
   };
-  return { app, startLoops, tickets };
+  return { app, startLoops, tickets, tmux };
 }
