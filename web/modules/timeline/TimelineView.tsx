@@ -3,7 +3,7 @@ import { useMemo, useState } from 'react';
 import Link from 'next/link';
 import { Activity, Clock, Columns3, ArrowUpRight, FileDiff } from 'lucide-react';
 import { useActivity, useProjectChanged, useProjectChanges, useProjects, useProjectsCommits, useTasks } from '../../lib/queries';
-import { parseTs } from '../../lib/agentUtils';
+import { parseTs } from '../../lib/format';
 import { ChangesOverTime } from './ChangesOverTime';
 import { plotAxis, type AxisEvent, type AxisPoint } from './axis';
 import { eventIcon, markerTone } from './eventMeta';

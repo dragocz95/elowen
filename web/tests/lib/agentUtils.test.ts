@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { taskAgentName, taskSessionName, agentDisplayName, taskElapsed, taskStartedMs, taskBlockers, tailSnippet, liveState, needsInputSessions, lastClosedTask, taskForSession, parseTs, keysForOption, taskExec } from '../../lib/agentUtils';
+import { taskAgentName, taskSessionName, agentDisplayName, taskElapsed, taskStartedMs, taskBlockers, tailSnippet, liveState, needsInputSessions, lastClosedTask, taskForSession, keysForOption, taskExec } from '../../lib/agentUtils';
 import type { Task } from '../../lib/types';
 
 const task = (over: Partial<Task> = {}): Task => ({ id: 't1', title: 'T', status: 'open', ...over });
@@ -66,24 +66,6 @@ describe('taskStartedMs', () => {
   });
   it('falls back to created_at when there is no started label', () => {
     expect(taskStartedMs(task({ created_at: '2026-06-18 10:00:00', labels: ['agent:nova'] }))).toBe(Date.parse('2026-06-18T10:00:00Z'));
-  });
-});
-
-describe('parseTs', () => {
-  it('parses SQLite space-separated UTC timestamps', () => {
-    expect(parseTs('2026-06-18 10:38:49')).toBe(Date.parse('2026-06-18T10:38:49Z'));
-  });
-  it('parses ISO timestamps with an explicit offset unchanged', () => {
-    expect(parseTs('2026-06-18T10:38:49+02:00')).toBe(Date.parse('2026-06-18T10:38:49+02:00'));
-  });
-  // W18: an already-Z-suffixed space-form must not get a second 'Z' (which → Invalid Date → null).
-  it('does not double-append Z to an already UTC-suffixed value', () => {
-    expect(parseTs('2026-06-18 10:38:49Z')).toBe(Date.parse('2026-06-18T10:38:49Z'));
-  });
-  it('returns null for empty or unparseable input', () => {
-    expect(parseTs(null)).toBeNull();
-    expect(parseTs('')).toBeNull();
-    expect(parseTs('not-a-date')).toBeNull();
   });
 });
 

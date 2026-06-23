@@ -1,7 +1,25 @@
 import { describe, it, expect } from 'vitest';
-import { formatDuration, compactElapsed, formatTokens, formatCost, formatTaskTime, localDateTime } from '../../lib/format';
+import { formatDuration, compactElapsed, formatTokens, formatCost, formatTaskTime, localDateTime, parseTs } from '../../lib/format';
 
 const S = 1000, M = 60 * S, H = 60 * M, D = 24 * H;
+
+describe('parseTs', () => {
+  it('parses SQLite space-separated UTC timestamps', () => {
+    expect(parseTs('2026-06-18 10:38:49')).toBe(Date.parse('2026-06-18T10:38:49Z'));
+  });
+  it('parses ISO timestamps with an explicit offset unchanged', () => {
+    expect(parseTs('2026-06-18T10:38:49+02:00')).toBe(Date.parse('2026-06-18T10:38:49+02:00'));
+  });
+  // W18: an already-Z-suffixed space-form must not get a second 'Z' (which → Invalid Date → null).
+  it('does not double-append Z to an already UTC-suffixed value', () => {
+    expect(parseTs('2026-06-18 10:38:49Z')).toBe(Date.parse('2026-06-18T10:38:49Z'));
+  });
+  it('returns null for empty or unparseable input', () => {
+    expect(parseTs(null)).toBeNull();
+    expect(parseTs('')).toBeNull();
+    expect(parseTs('not-a-date')).toBeNull();
+  });
+});
 
 describe('formatDuration', () => {
   it('formats with two units down the ladder', () => {

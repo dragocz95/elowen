@@ -17,7 +17,8 @@ import { LoadingState, ErrorState, EmptyState } from '../../components/ui/states
 import { useToast } from '../../components/ui/Toast';
 import { useTranslation } from '../../lib/i18n';
 import { useSessionPane } from '../../lib/useSessionPane';
-import { tailSnippet, taskSessionName, parseTs, taskForSession } from '../../lib/agentUtils';
+import { tailSnippet, taskSessionName, taskForSession } from '../../lib/agentUtils';
+import { parseTs } from '../../lib/format';
 import { useSessionStall } from '../../lib/useSessionStall';
 import { sessionActivity } from '../../lib/sessionActivity';
 import { epicCapacity } from '../../lib/taskTree';

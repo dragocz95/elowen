@@ -1,5 +1,6 @@
 import type { Task, Mission, DerivedSignal } from './types';
-import { taskSessionName, parseTs } from './agentUtils';
+import { taskSessionName } from './agentUtils';
+import { parseTs } from './format';
 
 /** Children of each epic, keyed by epic id, in sequence order (oldest first). */
 export function epicChildren(tasks: Task[]): Map<string, Task[]> {
