@@ -35,7 +35,7 @@ describe('install/agentClis', () => {
 
 describe('install/preflight', () => {
   const ok = runner({
-    exec: async (cmd, args) => {
+    exec: async (cmd, _args) => {
       if (cmd === 'id') return { code: 0, stdout: '0\n', stderr: '' };
       if (cmd === 'node') return { code: 0, stdout: 'v22.22.2\n', stderr: '' };
       return { code: 0, stdout: '', stderr: '' };

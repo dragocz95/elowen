@@ -17,7 +17,7 @@ function setup(opts: { spawnFails?: boolean } = {}) {
   const db = openDb(':memory:');
   db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'orca','/o')").run();
   const users = new UserStore(db);
-  const admin = users.create('admin', 'pw');
+  users.create('admin', 'pw'); // first user becomes admin — keep amy a non-admin member
   const amy = users.create('amy', 'pw');
   const config = new ConfigStore(db);
   config.update({ allowedExecs: ['sonnet'] });

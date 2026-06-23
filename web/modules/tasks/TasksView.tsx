@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Plus, ListChecks, Search, Archive, Trash2, X, ChevronLeft, ChevronRight, CalendarDays, List } from 'lucide-react';
 import type { Task, TaskStatus } from '../../lib/types';
@@ -161,7 +161,7 @@ export function TasksView() {
   const pageItems = filtered.slice(clampedPage * PAGE_SIZE, clampedPage * PAGE_SIZE + PAGE_SIZE);
 
   // Group the current page's cards into day sections, preserving sorted order.
-  const dayLabel = (ms: number): string => {
+  const dayLabel = useCallback((ms: number): string => {
     const now = new Date();
     const todayKey = dayKeyMs(now.getTime());
     const yesterdayKey = dayKeyMs(now.getTime() - 86400000);
@@ -169,7 +169,7 @@ export function TasksView() {
     if (k === todayKey) return t.tasks.dayToday;
     if (k === yesterdayKey) return t.tasks.dayYesterday;
     return new Date(ms).toLocaleDateString(locale, { weekday: 'short', month: 'short', day: 'numeric' });
-  };
+  }, [t, locale]);
   const groups = useMemo(() => {
     const out: { key: string; label: string; items: Task[] }[] = [];
     for (const task of pageItems) {
@@ -180,7 +180,7 @@ export function TasksView() {
       else out.push({ key: k, label: dayLabel(ms), items: [task] });
     }
     return out;
-  }, [pageItems, locale, t]);
+  }, [pageItems, dayLabel]);
 
   return (
     <>

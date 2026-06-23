@@ -56,10 +56,12 @@ export function ProjectEditor({ projectId, onClose, initialCommit, initialWorkin
   const commitData = useProjectCommit(projectId, commit);
   const changesData = useProjectChanges(projectId, working);
   const commitFileDiff = useProjectCommitFileDiff(projectId, commit, commit ? selected : null);
-  const workingChanged = useProjectChanged(projectId).data?.changed ?? [];
+  // Keep the raw query value (stable ref) out of the memo deps; default to [] inside the callback so a
+  // fresh `?? []` doesn't change the deps on every render.
+  const workingChanged = useProjectChanged(projectId).data?.changed;
   // In commit mode highlight the files that commit touched; otherwise the uncommitted working set.
   const changedSet = useMemo(
-    () => new Set(commit ? (commitData.data?.files ?? []) : workingChanged),
+    () => new Set(commit ? (commitData.data?.files ?? []) : (workingChanged ?? [])),
     [commit, commitData.data?.files, workingChanged],
   );
 

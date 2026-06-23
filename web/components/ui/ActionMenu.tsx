@@ -1,5 +1,5 @@
 'use client';
-import { type ReactNode, useEffect, useRef, useState } from 'react';
+import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Trash2, type LucideIcon } from 'lucide-react';
 import { useTranslation } from '../../lib/i18n';
@@ -39,14 +39,14 @@ export function ActionMenu({ items, label, trigger, triggerClassName, align = 'r
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
 
-  const place = () => {
+  const place = useCallback(() => {
     const el = btnRef.current;
     if (!el) return;
     const r = el.getBoundingClientRect();
     setPos(align === 'right'
       ? { top: r.bottom, right: window.innerWidth - r.right }
       : { top: r.bottom, left: r.left });
-  };
+  }, [align]);
 
   const cancelClose = () => { if (closeTimer.current) { clearTimeout(closeTimer.current); closeTimer.current = null; } };
   const scheduleClose = () => { cancelClose(); closeTimer.current = setTimeout(() => setOpen(false), 160); };
@@ -71,7 +71,7 @@ export function ActionMenu({ items, label, trigger, triggerClassName, align = 'r
       window.removeEventListener('resize', reposition);
       window.removeEventListener('scroll', reposition, true);
     };
-  }, [open]);
+  }, [open, place]);
 
   useEffect(() => () => cancelClose(), []);
 
