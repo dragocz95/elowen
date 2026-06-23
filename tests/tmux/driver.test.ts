@@ -29,6 +29,22 @@ describe.runIf(hasTmux)('RealTmuxDriver', () => {
   });
 });
 
+describe.runIf(hasTmux)('RealTmuxDriver.sendRaw', () => {
+  it('forwards raw bytes literally into the pane', async () => {
+    const t = new RealTmuxDriver(); const s = `orca-raw-${process.pid}`;
+    await t.spawn(s, { cwd: '/tmp', command: 'cat' }); // cat echoes typed input back to the pane
+    await new Promise(r => setTimeout(r, 300));
+    await t.sendRaw(s, 'orca-raw-marker\r');            // \r submits, like a real Enter
+    await new Promise(r => setTimeout(r, 300));
+    expect(await t.capturePane(s, 60)).toContain('orca-raw-marker');
+    await t.kill(s);
+  });
+  it('an empty string is a no-op (never shells out)', async () => {
+    const t = new RealTmuxDriver();
+    await expect(t.sendRaw(`orca-gone-${process.pid}`, '')).resolves.toBeUndefined();
+  });
+});
+
 describe('RealTmuxDriver.sendKeys validation', () => {
   it('rejects empty, non-string, or flag-shaped keys (defense in depth)', async () => {
     const t = new RealTmuxDriver();

@@ -25,6 +25,13 @@ export class RealTmuxDriver implements TmuxDriver {
     if (!Array.isArray(keys) || keys.length === 0 || !keys.every((k) => typeof k === 'string' && !k.startsWith('-'))) throw new Error('sendKeys: keys must be a non-empty array of non-flag strings');
     await run('tmux', ['send-keys', '-t', session, ...keys]);
   }
+  /** Forward raw terminal bytes (xterm onData) to the pane verbatim. `-l` disables key-name lookup
+   *  so control chars / ESC sequences pass through exactly as a real terminal would deliver them;
+   *  `--` stops option parsing so `data` can safely begin with '-'. Powers the interactive advisor. */
+  async sendRaw(session: string, data: string) {
+    if (typeof data !== 'string' || data.length === 0) return;
+    await run('tmux', ['send-keys', '-t', session, '-l', '--', data]);
+  }
   async capturePane(session: string, tailLines: number) {
     try {
       const { stdout } = await run('tmux', ['capture-pane', '-p', '-t', session, '-S', `-${tailLines}`], { maxBuffer: 512 * 1024 });

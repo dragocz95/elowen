@@ -2,6 +2,7 @@ import type { TmuxDriver, SpawnOpts } from './types.js';
 export class FakeTmuxDriver implements TmuxDriver {
   private panes = new Map<string, string>();
   private keys = new Map<string, string[][]>();
+  private raw = new Map<string, string[]>();
   private commands = new Map<string, string>();
   setPane(session: string, text: string) { this.panes.set(session, text); }
   sentKeys(session: string) { return this.keys.get(session) ?? []; }
@@ -10,8 +11,13 @@ export class FakeTmuxDriver implements TmuxDriver {
   sizeFor(session: string) { return this.sizes.get(session); }
   async spawn(session: string, opts: SpawnOpts) { this.panes.set(session, ''); this.commands.set(session, opts.command); }
   async resize(session: string, cols: number, rows: number) { this.sizes.set(session, { cols, rows }); }
+  sentRaw(session: string) { return this.raw.get(session) ?? []; }
   async sendKeys(session: string, keys: string[]) {
     const arr = this.keys.get(session) ?? []; arr.push(keys); this.keys.set(session, arr);
+  }
+  async sendRaw(session: string, data: string) {
+    if (typeof data !== 'string' || data.length === 0) return;
+    const arr = this.raw.get(session) ?? []; arr.push(data); this.raw.set(session, arr);
   }
   async capturePane(session: string, _tail: number) { return this.panes.get(session) ?? ''; }
   async capturePaneAnsi(session: string, _tail: number) { return this.panes.get(session) ?? ''; }

@@ -148,6 +148,11 @@ export function createServer(d: ServerDeps): Hono<{ Variables: { user: User; tok
       app.use('*', async (c, next) => {
         const p = c.req.path;
         if (!GATED.some((g) => p === g || p.startsWith(g + '/'))) return next();
+        // An advisor session is per-user, not project-scoped: its access is governed by ownership in
+        // the route's own sessionAccessible check, so the project gate must not pre-empt it (the user
+        // need not be assigned to the daemon's project to reach their own advisor).
+        const sess = p.match(/^\/sessions\/([^/]+)/);
+        if (sess?.[1] && classifySession(decodeURIComponent(sess[1])).role === 'advisor') return next();
         if (users.count() === 0) return next(); // setup mode — no users to gate yet
         const u = c.get('user');
         if (u && up.canAccess(u.id, d.project.id)) return next();
@@ -421,6 +426,13 @@ export function createServer(d: ServerDeps): Hono<{ Variables: { user: User; tok
   const sessionAccessible = (c: AccessCtx, name: string): boolean => {
     if (!d.userProjects || !d.users) return true; // open / single-user mode — no tenancy boundary
     const u = c.get('user');
+    // An advisor session belongs to exactly one user: only its owner (or an admin) may reach it, and
+    // never via an agent-scoped token. It has no task row, so the project check below can't apply.
+    const info = classifySession(name);
+    if (info.role === 'advisor') {
+      if (c.get('tokenScope') === 'agent') return false;
+      return !!u && (u.id === info.userId || d.userProjects.isAdmin(u.id));
+    }
     // Admin sees every session — but NOT via an agent-scoped token (it's owned by the admin user yet
     // must stay confined to its working set; fall through to the project check below).
     if (c.get('tokenScope') !== 'agent' && u && d.userProjects.isAdmin(u.id)) return true;
@@ -1151,6 +1163,16 @@ export function createServer(d: ServerDeps): Hono<{ Variables: { user: User; tok
       return c.json({ error: 'keys must be a non-empty array of non-flag strings' }, 400);
     }
     await d.tmux.sendKeys(c.req.param('name'), keys as string[]);
+    return c.json({ ok: true });
+  });
+  app.post('/sessions/:name/input', async c => {
+    // Raw interactive input: the xterm `onData` bytes (printable chars, control codes, ESC sequences)
+    // are forwarded verbatim to the pane via `send-keys -l`, so the advisor terminal behaves like a
+    // real one. `-l` + `--` (in the driver) make a leading '-' safe, so no flag-token validation here.
+    if (!sessionAccessible(c, c.req.param('name'))) return c.json({ error: 'forbidden' }, 403);
+    const { data } = await c.req.json().catch(() => ({})) as { data?: unknown };
+    if (typeof data !== 'string' || data.length === 0) return c.json({ error: 'data must be a non-empty string' }, 400);
+    await d.tmux.sendRaw(c.req.param('name'), data);
     return c.json({ ok: true });
   });
   app.post('/sessions/:name/resize', async c => {

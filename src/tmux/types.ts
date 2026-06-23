@@ -3,6 +3,8 @@ export interface TmuxDriver {
   spawn(session: string, opts: SpawnOpts): Promise<void>;
   resize(session: string, cols: number, rows: number): Promise<void>;
   sendKeys(session: string, keys: string[]): Promise<void>;
+  /** Forward raw terminal bytes (xterm onData) to the pane verbatim — powers the interactive advisor. */
+  sendRaw(session: string, data: string): Promise<void>;
   capturePane(session: string, tailLines: number): Promise<string>;
   capturePaneAnsi(session: string, tailLines: number): Promise<string>;
   list(): Promise<string[]>;
