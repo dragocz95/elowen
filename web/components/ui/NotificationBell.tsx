@@ -1,6 +1,7 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { uiZoom } from '../../lib/uiZoom';
 import Link from 'next/link';
 import { Bell, ShieldAlert } from 'lucide-react';
 import type { Task } from '../../lib/types';
@@ -33,7 +34,10 @@ export function NotificationBell() {
     const el = btnRef.current;
     if (!el) return;
     const r = el.getBoundingClientRect();
-    setPos({ left: Math.max(8, r.left), bottom: window.innerHeight - r.top + 8 });
+    // Portalled into <body>, inside the UI-scale `zoom`. getBoundingClientRect returns zoomed (visual)
+    // coords, so divide by z before using them as fixed CSS positions (innerHeight is unzoomed layout).
+    const z = uiZoom();
+    setPos({ left: Math.max(8, r.left / z), bottom: window.innerHeight - r.top / z + 8 });
   };
   const toggle = () => { if (!open) place(); setOpen((o) => !o); };
 

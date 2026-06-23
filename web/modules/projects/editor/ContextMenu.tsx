@@ -1,6 +1,7 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
 import type { LucideIcon } from 'lucide-react';
+import { uiZoom } from '../../../lib/uiZoom';
 
 interface MenuItem {
   label: string;
@@ -19,15 +20,19 @@ export interface ContextMenuState { x: number; y: number; items: MenuEntry[] }
  *  item runs. Position is clamped so the menu never overflows the viewport. */
 export function ContextMenu({ state, onClose }: { state: ContextMenuState; onClose: () => void }) {
   const ref = useRef<HTMLDivElement>(null);
-  const [pos, setPos] = useState({ x: state.x, y: state.y });
+  // state.x/y are MouseEvent.clientX/Y from the right-click — zoomed (visual) viewport coords. This menu
+  // is fixed-positioned inside the UI-scale `zoom`, so divide by z (and the rect width/height likewise)
+  // or it lands away from the cursor at any scale ≠ 100%. uiZoom() is 1 at normal scale (no-op).
+  const [pos, setPos] = useState(() => { const z = uiZoom(); return { x: state.x / z, y: state.y / z }; });
 
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
+    const z = uiZoom();
     const { width, height } = el.getBoundingClientRect();
     setPos({
-      x: Math.min(state.x, window.innerWidth - width - 8),
-      y: Math.min(state.y, window.innerHeight - height - 8),
+      x: Math.min(state.x / z, window.innerWidth - width / z - 8),
+      y: Math.min(state.y / z, window.innerHeight - height / z - 8),
     });
   }, [state.x, state.y]);
 

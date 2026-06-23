@@ -3,6 +3,7 @@ import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom';
 import { Trash2, type LucideIcon } from 'lucide-react';
 import { useTranslation } from '../../lib/i18n';
+import { uiZoom } from '../../lib/uiZoom';
 
 export interface ActionMenuItem {
   label: string;
@@ -43,9 +44,14 @@ export function ActionMenu({ items, label, trigger, triggerClassName, align = 'r
     const el = btnRef.current;
     if (!el) return;
     const r = el.getBoundingClientRect();
+    // The UI-scale feature puts `zoom: z` on <html>. This menu is portalled into <body> (inside that
+    // zoom) and fixed-positioned, so its CSS px render at z×. getBoundingClientRect already returns
+    // zoomed (visual) viewport coords, so divide them by z to land the menu under the trigger instead
+    // of flinging it off to the side. window.innerWidth is the unzoomed layout width → left as-is.
+    const z = uiZoom();
     setPos(align === 'right'
-      ? { top: r.bottom, right: window.innerWidth - r.right }
-      : { top: r.bottom, left: r.left });
+      ? { top: r.bottom / z, right: window.innerWidth - r.right / z }
+      : { top: r.bottom / z, left: r.left / z });
   }, [align]);
 
   const cancelClose = () => { if (closeTimer.current) { clearTimeout(closeTimer.current); closeTimer.current = null; } };
