@@ -302,6 +302,12 @@ export const cs = {
     noExecs: 'Nemáte povoleného žádného agenta. Požádejte správce o přidělení.',
     hint: 'Pište přímo do terminálu — všechny klávesy fungují.',
     resize: 'Tažením změníte velikost',
+    dockLeft: 'Ukotvit vlevo',
+    dockRight: 'Ukotvit vpravo',
+    addPane: 'Přidat panel',
+    removePane: 'Zavřít panel',
+    pickSession: 'Vyberte běžící session',
+    noSessions: 'Žádné běžící session',
   },
   sessions: {
     needsInput: 'vyžaduje vstup',

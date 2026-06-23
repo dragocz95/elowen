@@ -14,6 +14,9 @@ export function StreamTerminal({ name }: { name: string }) {
   const ref = useRef<HTMLDivElement>(null);
   const termRef = useRef<XTerm | null>(null);
   const streamRef = useRef<{ send: (d: string) => void; resize: (c: number, r: number) => void } | null>(null);
+  // Holds the current "fit + push size to the PTY" routine so the WS-open effect below can fire it
+  // even though it's created inside the mount effect.
+  const syncSizeRef = useRef<() => void>(() => {});
   const [fallback, setFallback] = useState(false);
 
   // Push every inbound PTY byte straight into xterm. `termRef` is stable, so the callback identity
@@ -35,19 +38,20 @@ export function StreamTerminal({ name }: { name: string }) {
     // Forward every keystroke verbatim to the PTY over the socket.
     const dataSub = term.onData((d) => streamRef.current?.send(d));
 
-    // Tell the PTY our size so the attached tmux/agent redraws at our width (SIGWINCH via pty.resize).
-    let lastSize = '';
-    const pushSize = () => {
+    // Fit xterm to the container, then tell the PTY the new size so the attached tmux window resizes
+    // (SIGWINCH → the agent TUI redraws to fill the panel). No dedupe: the resize frame is tiny, and
+    // it MUST go out again whenever the socket (re)opens — the first fit usually runs before the WS is
+    // connected, when the resize would otherwise be dropped, leaving the PTY stuck at its default size.
+    const syncSize = () => {
       const t = termRef.current;
       if (!t) return;
-      const key = `${t.cols}x${t.rows}`;
-      if (key === lastSize) return;
-      lastSize = key;
+      fit.fit();
       streamRef.current?.resize(t.cols, t.rows);
     };
+    syncSizeRef.current = syncSize;
 
-    const rafId = requestAnimationFrame(() => { if (termRef.current) { fit.fit(); pushSize(); } });
-    const ro = new ResizeObserver(() => { if (termRef.current) { fit.fit(); pushSize(); } });
+    const rafId = requestAnimationFrame(syncSize);
+    const ro = new ResizeObserver(syncSize);
     ro.observe(ref.current);
 
     return () => {
@@ -56,8 +60,13 @@ export function StreamTerminal({ name }: { name: string }) {
       ro.disconnect();
       term.dispose();
       termRef.current = null;
+      syncSizeRef.current = () => {};
     };
   }, [name, fallback]);
+
+  // Re-push the size the moment the socket opens: the initial fit almost always runs before the WS is
+  // ready, so without this the PTY never learns the real terminal size and the content can't fill the panel.
+  useEffect(() => { if (stream.status === 'open') syncSizeRef.current(); }, [stream.status]);
 
   if (fallback) return <Terminal name={name} interactive />;
   return <div ref={ref} className="h-full w-full border border-border bg-bg" />;

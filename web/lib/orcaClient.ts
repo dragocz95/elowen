@@ -81,7 +81,7 @@ export const orcaClient = {
   killSession: (name: string) => req<{ ok: boolean }>(`/sessions/${encodeURIComponent(name)}`, { method: 'DELETE' }),
   sendKeys: (name: string, keys: string[]) => req<{ ok: boolean }>(`/sessions/${encodeURIComponent(name)}/keys`, json({ keys })),
   resizeSession: (name: string, cols: number, rows: number) => req<{ ok: boolean }>(`/sessions/${encodeURIComponent(name)}/resize`, json({ cols, rows })),
-  /** Forward raw xterm `onData` bytes to a session's pane (interactive terminal — see AdvisorDock). */
+  /** Forward raw xterm `onData` bytes to a session's pane (snapshot-mirror interactive terminal). */
   sessionInput: (name: string, data: string) => req<{ ok: boolean }>(`/sessions/${encodeURIComponent(name)}/input`, json({ data })),
   /** Mint a single-use ticket to open the terminal WebSocket stream for a session (PTY stream). */
   wsTicket: (name: string) => req<{ ticket: string }>(`/sessions/${encodeURIComponent(name)}/ws-ticket`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }),

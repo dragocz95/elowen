@@ -16,6 +16,26 @@ if (typeof globalThis.ResizeObserver === 'undefined') {
   };
 }
 
+// jsdom does not implement PointerEvent — Testing Library then fires a bare Event that drops the
+// clientX/clientY coordinates, so pointer-drag components (ResizeHandle) can't be tested. Back it with
+// MouseEvent (which does carry coordinates) and tack on the pointer fields we use.
+if (typeof globalThis.PointerEvent === 'undefined') {
+  class PointerEventPolyfill extends MouseEvent {
+    pointerId: number;
+    constructor(type: string, init: PointerEventInit = {}) {
+      super(type, init);
+      this.pointerId = init.pointerId ?? 0;
+    }
+  }
+  globalThis.PointerEvent = PointerEventPolyfill as unknown as typeof PointerEvent;
+}
+// jsdom Elements lack pointer-capture methods; our handles call them, guarded, but stub them so the
+// real (non-guarded) call paths are also safe.
+if (typeof Element !== 'undefined' && !Element.prototype.setPointerCapture) {
+  Element.prototype.setPointerCapture = () => {};
+  Element.prototype.releasePointerCapture = () => {};
+}
+
 // jsdom does not implement window.matchMedia — provide a stub that defaults to
 // non-mobile (matches: false) so existing tests are unaffected.
 if (typeof window !== 'undefined' && !window.matchMedia) {

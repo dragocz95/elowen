@@ -52,6 +52,20 @@ describe('terminalWsHandler', () => {
     expect(killed).toBe(true);
   });
 
+  it('forwards a resize frame to resizeWindow with the ticket session', async () => {
+    const tickets = createTicketStore();
+    const id = tickets.issue({ session: 'orca-advisor-9', userId: 9 });
+    const resized: unknown[] = [];
+    const attach = ((_mod: PtyModule) =>
+      ({ onData: () => {}, write: () => {}, resize: () => {}, kill: () => {} })) as typeof import('../../src/terminal/ptySession.js').attachPty;
+    const resizeWindow = (session: string, cols: number, rows: number) => { resized.push([session, cols, rows]); };
+    const events = await terminalWsHandler({ tickets, loadPty: async () => okPty, attach, resizeWindow })(ctx(`http://x/ws/terminal?ticket=${id}`));
+    const w = fakeWs();
+    events.onOpen?.(new Event('open'), w.ws);
+    events.onMessage?.({ data: JSON.stringify({ type: 'resize', cols: 100, rows: 30 }) } as MessageEvent, w.ws);
+    expect(resized).toEqual([['orca-advisor-9', 100, 30]]);
+  });
+
   it('consumes the ticket exactly once', async () => {
     const tickets = createTicketStore();
     const id = tickets.issue({ session: 'orca-advisor-1', userId: 1 });

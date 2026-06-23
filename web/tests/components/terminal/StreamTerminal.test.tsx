@@ -41,6 +41,12 @@ describe('StreamTerminal', () => {
     expect(sendSpy).toHaveBeenCalledWith('x');
   });
 
+  it('pushes the terminal size to the stream once the socket is open', () => {
+    render(<StreamTerminal name="orca-advisor-1" />);
+    // status is 'open' → the size must be synced (cols/rows from the xterm mock).
+    expect(resizeSpy).toHaveBeenCalledWith(80, 24);
+  });
+
   it('renders the interactive snapshot fallback when the stream is unsupported', () => {
     status = 'unsupported';
     render(<StreamTerminal name="orca-worker1" />);

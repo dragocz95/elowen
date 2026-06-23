@@ -13,7 +13,7 @@ const log = logger('daemon');
 process.on('unhandledRejection', (e) => log.error('unhandledRejection', e));
 process.on('uncaughtException', (e) => log.error('uncaughtException', e));
 
-const { app, startLoops, tickets } = buildApp({
+const { app, startLoops, tickets, tmux } = buildApp({
   dbPath: process.env.ORCA_DB ?? `${process.env.HOME}/.config/orca/orca.db`,
   project: { id: 1, slug: process.env.ORCA_PROJECT ?? 'orca', path: process.env.ORCA_PROJECT_PATH ?? process.cwd() },
   relay: process.env.ORCA_RELAY_URL ? { baseUrl: process.env.ORCA_RELAY_URL, apiKey: process.env.ORCA_RELAY_KEY ?? '', model: process.env.ORCA_RELAY_MODEL ?? 'gpt-4o-mini' } : null,
@@ -25,7 +25,13 @@ const { app, startLoops, tickets } = buildApp({
 // (nginx proxies /ws/ here), the handler redeems the single-use ticket and bridges a tmux-attached PTY
 // to the socket. node-ws must inject into the same http server `serve()` returns, below.
 const { injectWebSocket, upgradeWebSocket } = createNodeWebSocket({ app });
-app.get('/ws/terminal', upgradeWebSocket(terminalWsHandler({ tickets, loadPty })));
+app.get('/ws/terminal', upgradeWebSocket(terminalWsHandler({
+  tickets,
+  loadPty,
+  // A client resize must also resize the tmux *window* — the advisor session is `window-size manual`,
+  // so the PTY size alone won't reflow the content to fill the panel.
+  resizeWindow: (session, cols, rows) => { void tmux.resize(session, cols, rows); },
+})));
 
 startLoops();
 // Bind to localhost by default: a daemon token can spawn agents (effectively RCE), so the daemon

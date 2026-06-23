@@ -442,7 +442,7 @@ Status-to-tone mapping for task statuses in `modules/dashboard/statusTone.ts`:
 
 | Component | Purpose |
 |-----------|---------|
-| `StreamTerminal` | Real-PTY terminal: raw bytes stream over a WebSocket from a `tmux attach` (native cursor/scrollback), fully interactive. Falls back to `Terminal` when the stream is unavailable. Used by the advisor and the enlarged modal |
+| `StreamTerminal` | Real-PTY terminal: raw bytes stream over a WebSocket from a `tmux attach` (native cursor/scrollback), fully interactive. Falls back to `Terminal` when the stream is unavailable. Used by the advisor dock and the enlarged modal |
 | `Terminal` | Xterm.js wrapper with `@xterm/addon-fit`, snapshot SSE stream, ANSI color, auto-resize. Powers grid previews and the `StreamTerminal` fallback |
 | `TerminalPanel` | StreamTerminal + controls (close/kill) |
 | `TerminalModal` | Modal wrapping TerminalPanel with session actions |
@@ -451,6 +451,12 @@ Status-to-tone mapping for task statuses in `modules/dashboard/statusTone.ts`:
 | `frame.ts` | Frame compositor: cursor-home + clear + content in one `term.write()`, deduplication via `nextPane()` |
 
 **Terminal streaming (PTY).** `StreamTerminal` opens a true PTY stream: `useTerminalStream` mints a single-use ticket via `POST /sessions/:name/ws-ticket` (same-origin BFF, cookie auth + ownership), then opens `wss://<host>/ws/terminal?ticket=…` **straight to the daemon** (nginx `/ws/` location → :4400, bypassing the BFF which cannot proxy a WS upgrade). The daemon redeems the ticket and bridges a `tmux attach` PTY (`node-pty`) to the socket — stdout → `xterm.write`, `xterm.onData` → PTY stdin, fit → resize control frame. The token never reaches the browser; the short-lived single-use ticket is the WS capability. When `node-pty` is absent or no reverse proxy fronts the daemon WS (ip/localhost deploys), the daemon closes with code `4001` and `StreamTerminal` falls back to the snapshot `Terminal`.
+
+**Resize.** A fit produces a `{type:'resize',cols,rows}` control frame. The daemon resizes the PTY **and** the tmux *window* (`tmux resize-window`): the advisor session is created `window-size manual`, so the PTY size alone is ignored and the content won't reflow to fill the panel. `StreamTerminal` also re-pushes the size the moment the socket opens — the first fit usually runs before the WS is connected, when the resize would otherwise be dropped.
+
+### Advisor dock (`modules/advisor/`)
+
+The advisor is a **docked, IDE-style side panel** (`AdvisorPanel`), not a floating box. It opens as a full-height column on the left or right (`useDockState`, persisted to `localStorage` under `advisor:dock`: open/side/width/panes/sizes). A vertical `ResizeHandle` on the inner edge resizes the panel vs. the page; the panel hosts a vertical stack of **panes** split by horizontal `ResizeHandle`s. Each pane is an `AdvisorPane`: the user's own advisor (start/stop lifecycle + agent picker) or, added via `SessionPicker`, a read-write `StreamTerminal` onto any running session — so you can watch the advisor and a worker at once. When the dock is closed, a floating `AdvisorLauncher` (🐋) reopens it.
 
 ### Control forms (`components/control/`)
 

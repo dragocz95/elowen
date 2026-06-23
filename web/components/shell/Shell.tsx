@@ -7,16 +7,21 @@ import { ToastProvider } from '../ui/Toast';
 import { LoginGate } from '../auth/LoginGate';
 import { Sidebar } from './Sidebar';
 import { CommandPalette } from './CommandPalette';
-import { AdvisorDock } from '../../modules/advisor/AdvisorDock';
+import { AdvisorPanel } from '../../modules/advisor/AdvisorPanel';
+import { AdvisorLauncher } from '../../modules/advisor/AdvisorLauncher';
+import { useDockState } from '../../lib/useDockState';
 
 function ShellLayout({ children }: { children: ReactNode }) {
   const { t } = useTranslation();
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const dock = useDockState();
+  const docked = dock.state.open;
 
   return (
     <>
       <div className="flex h-dvh overflow-hidden">
         <Sidebar mobileOpen={drawerOpen} onMobileClose={() => setDrawerOpen(false)} />
+        {docked && dock.state.side === 'left' && <AdvisorPanel dock={dock} />}
         <div className="flex min-w-0 flex-1 flex-col">
           <main className="flex-1 overflow-y-auto overflow-x-hidden overscroll-contain">
             {/* Mobile top bar — sits at the top of the page and scrolls away with content */}
@@ -29,9 +34,10 @@ function ShellLayout({ children }: { children: ReactNode }) {
             <div className="p-4">{children}</div>
           </main>
         </div>
+        {docked && dock.state.side === 'right' && <AdvisorPanel dock={dock} />}
       </div>
       <CommandPalette />
-      <AdvisorDock />
+      {!docked && <AdvisorLauncher onOpen={() => dock.setOpen(true)} />}
     </>
   );
 }

@@ -24,14 +24,25 @@ function parseControl(raw: string): ResizeFrame | null {
 
 /** Wire a PTY and a WebSocket into a full-duplex terminal: PTY output → ws.send, ws messages → PTY
  *  (a `{type:'resize'}` control frame resizes; anything else is raw input bytes). `dispose` kills the
- *  PTY — called when the socket closes so no orphan `tmux attach` lingers. */
-export function bridge(pty: PtySession, ws: WsLike): { onMessage(raw: string): void; dispose(): void } {
+ *  PTY — called when the socket closes so no orphan `tmux attach` lingers.
+ *
+ *  `onResize` fires alongside `pty.resize` on a resize frame: the PTY sizing only covers the attached
+ *  client's viewport, but the advisor tmux session is created with `window-size manual`, so tmux
+ *  ignores the client size unless we also resize the *window* (the caller wires this to
+ *  `tmux resize-window`). Without it the content can't reflow to fill the panel. */
+export function bridge(
+  pty: PtySession,
+  ws: WsLike,
+  onResize?: (cols: number, rows: number) => void,
+): { onMessage(raw: string): void; dispose(): void } {
   pty.onData((d) => ws.send(d));
   return {
     onMessage(raw) {
       const ctl = parseControl(raw);
-      if (ctl) pty.resize(ctl.cols, ctl.rows);
-      else pty.write(raw);
+      if (ctl) {
+        pty.resize(ctl.cols, ctl.rows);
+        onResize?.(ctl.cols, ctl.rows);
+      } else pty.write(raw);
     },
     dispose() {
       pty.kill();

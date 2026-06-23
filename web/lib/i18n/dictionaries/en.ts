@@ -302,6 +302,12 @@ export const en = {
     noExecs: 'You have no agent enabled. Ask an admin to allow one for you.',
     hint: 'Type directly into the terminal — all keys work.',
     resize: 'Drag to resize',
+    dockLeft: 'Dock left',
+    dockRight: 'Dock right',
+    addPane: 'Add panel',
+    removePane: 'Close panel',
+    pickSession: 'Pick a running session',
+    noSessions: 'No running sessions',
   },
   sessions: {
     needsInput: 'needs input',
