@@ -8,18 +8,20 @@ import { join } from 'node:path';
  *  imperfect MCP wiring for one program degrades gracefully rather than removing the advisor's reach. */
 export function writeMcpConfig(program: string, cwd: string, token: string, mcpUrl: string): void {
   const auth = `Bearer ${token}`;
+  // The config carries the advisor's full-scope bearer token, so lock the file to the daemon user (0600).
+  const opts = { mode: 0o600 } as const;
   if (program.startsWith('claude')) {
     writeFileSync(join(cwd, '.mcp.json'), JSON.stringify({
       mcpServers: { orca: { type: 'http', url: mcpUrl, headers: { Authorization: auth } } },
-    }, null, 2));
+    }, null, 2), opts);
   } else if (program.startsWith('opencode')) {
     writeFileSync(join(cwd, 'opencode.json'), JSON.stringify({
       $schema: 'https://opencode.ai/config.json',
       mcp: { orca: { type: 'remote', url: mcpUrl, headers: { Authorization: auth }, enabled: true } },
-    }, null, 2));
+    }, null, 2), opts);
   } else if (program.startsWith('codex')) {
     // Codex reads MCP servers from its TOML config. Written project-local; VERIFY the exact key/path
     // (and whether the installed codex needs a `--config`/`-c` flag to pick this up) for the version.
-    writeFileSync(join(cwd, '.codex-mcp.toml'), `[mcp_servers.orca]\nurl = "${mcpUrl}"\nbearer_token = "${token}"\n`);
+    writeFileSync(join(cwd, '.codex-mcp.toml'), `[mcp_servers.orca]\nurl = "${mcpUrl}"\nbearer_token = "${token}"\n`, opts);
   }
 }

@@ -13,7 +13,7 @@ import { UserProjectStore } from '../../src/store/userProjectStore.js';
 import { FakeTmuxDriver } from '../../src/tmux/fakeDriver.js';
 import { AdvisorService } from '../../src/advisor/service.js';
 
-function setup() {
+function setup(opts: { spawnFails?: boolean } = {}) {
   const db = openDb(':memory:');
   db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'orca','/o')").run();
   const users = new UserStore(db);
@@ -24,6 +24,7 @@ function setup() {
   const tmux = new FakeTmuxDriver();
   const spawn = {
     launch: async (input: { agentName: string; projectPath: string }) => {
+      if (opts.spawnFails) throw new Error('tmux: failed to create session');
       await tmux.spawn(`orca-${input.agentName}`, { cwd: input.projectPath, command: '' });
       return { session: `orca-${input.agentName}` };
     },
@@ -58,6 +59,11 @@ describe('advisor routes', () => {
   it('rejects an exec not in the allow-list with 403', async () => {
     const { app, amyTok } = setup();
     expect((await app.request('/advisor/start', post(amyTok, { exec: 'opus' }))).status).toBe(403);
+  });
+
+  it('surfaces a spawn/tmux failure as 500, not 403', async () => {
+    const { app, amyTok } = setup({ spawnFails: true });
+    expect((await app.request('/advisor/start', post(amyTok, { exec: 'sonnet' }))).status).toBe(500);
   });
 
   it('requires the exec field (400)', async () => {
