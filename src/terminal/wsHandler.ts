@@ -10,6 +10,9 @@ export interface TerminalWsDeps {
   loadPty: () => Promise<PtyModule | null>;
   /** Injectable for tests; defaults to the real `attachPty`. */
   attach?: typeof attachPty;
+  /** Resize the underlying tmux *window* on a client resize. The advisor session is `window-size
+   *  manual`, so resizing the PTY alone won't reflow the content — the window has to be resized too. */
+  resizeWindow?: (session: string, cols: number, rows: number) => void;
 }
 
 /** Close code signalling "no PTY stream here — fall back to the snapshot mirror" (bad ticket or
@@ -39,7 +42,11 @@ export function terminalWsHandler(deps: TerminalWsDeps): (c: Context) => Promise
         }
         const attach = deps.attach ?? attachPty;
         const pty = attach(mod, { session: ticket.session, cols: 80, rows: 24 });
-        b = bridge(pty, { send: (d: string) => ws.send(d), close: () => ws.close() });
+        b = bridge(
+          pty,
+          { send: (d: string) => ws.send(d), close: () => ws.close() },
+          (cols, rows) => deps.resizeWindow?.(ticket.session, cols, rows),
+        );
       },
       onMessage(evt) {
         if (b) b.onMessage(String(evt.data));
