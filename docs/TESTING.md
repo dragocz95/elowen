@@ -2,7 +2,7 @@
 
 ## Running tests
 
-### Daemon tests (~439 cases)
+### Daemon tests (~649 cases)
 
 ```bash
 # All tests
@@ -18,7 +18,7 @@ npx vitest tests/store/taskStore.test.ts
 npx vitest --coverage
 ```
 
-### Web frontend tests (~285 cases)
+### Web frontend tests (~363 cases)
 
 ```bash
 cd web
@@ -26,10 +26,11 @@ npm test
 npm run test:watch   # watch mode
 ```
 
-### Dead-code check
+### Lint + architecture checks
 
 ```bash
-npm run deadcode     # knip — fails on unused exports/files/dependencies
+npm run lint      # ESLint + dependency-cruiser (no-circular, layer boundaries, orphans)
+npm run deadcode   # knip — fails on unused exports/files/dependencies
 ```
 
 ## Test structure
@@ -38,17 +39,20 @@ Daemon tests mirror the `src/` directory structure:
 
 ```
 tests/
+├── advisor/       per-user assistant lifecycle + MCP config
 ├── api/           server routes, auth, rate limiter, SSE
-├── cli/           CLI commands + client
+├── cli/           CLI commands + client + orca api passthrough
 ├── daemon/        bootstrap wiring, reasoning agents
 ├── deriver/       pane polling, shell prompt detection
 ├── helpers/       shared test fixtures
 ├── inference/     relay client + fake
 ├── integrations/  hermes install, project files, CLI detection, usage
+├── mcp/           MCP server + toolset
 ├── overseer/      mission engine, routing, decision gate, planner, pilot, stuck detector
-├── shared/        clock, execs, logger
+├── shared/        clock, execs, logger, apiClient
 ├── spawn/         spawn service + command builder
 ├── store/         task/mission/agent/user/project/event stores
+├── terminal/      PTY WS bridge, ticket store, wsHandler
 └── tmux/          real + fake driver
 ```
 
@@ -56,10 +60,10 @@ Web tests mirror `web/`:
 
 ```
 web/tests/
-├── app/                 Next.js route-level tests
+├── app/                 Next.js route-level tests (incl. pop-out terminal window)
 ├── components/          React components (ui/, feature modules)
-├── lib/                 orcaClient, queries, mutations, hooks, i18n
-├── modules/             feature-module tests (tasks, timeline, etc.)
+├── lib/                 orcaClient, queries, mutations, hooks, i18n, openTerminalWindow
+├── modules/             feature-module tests (tasks, timeline, advisor, etc.)
 ├── globals.test.ts      global setup sanity
 ├── smoke.test.tsx       render-the-app smoke test
 ├── msw.ts               shared MSW handlers

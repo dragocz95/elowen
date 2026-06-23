@@ -9,8 +9,8 @@
 | [README.md](../README.md) | Top-level project overview, quick start, tech stack |
 | [API.md](API.md) | Full REST API reference with request/response examples and status codes |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | System architecture, module descriptions, data flow, timer loops |
-| [CLI.md](CLI.md) | CLI commands (ls, ready, sessions, close, plan submit, overseer poll/decide) |
-| [CONCEPTS.md](CONCEPTS.md) | Domain model: tasks, missions, autonomy levels, overseer, deriver, agent routing, event bus |
+| [CLI.md](CLI.md) | CLI commands (ls, ready, sessions, close, api, plan submit, overseer poll/decide, lifecycle: up/down/status/update/install) |
+| [CONCEPTS.md](CONCEPTS.md) | Domain model: tasks, missions, autonomy levels, overseer, deriver, agent routing, event bus, assistant |
 | [DEVELOPMENT.md](DEVELOPMENT.md) | Setup, npm scripts, conventions, project structure, configuration, adding endpoints |
 | [DEPLOYMENT.md](DEPLOYMENT.md) | Production deployment: env block, systemd, Docker, nginx, web frontend, troubleshooting |
 | [GUIDES.md](GUIDES.md) | Advanced patterns: task↔session binding, goal decomposition, overseer gate, deriver prompt detection, scheduled tasks, stuck detector, post-done review, async planning jobs, event store, executor routing |
@@ -88,6 +88,7 @@ Additional parallel loops: **Deriver** (5s), **Scheduler** (30s), **Janitor** (6
 - **Overseer** — decision gate: relay LLM or parked per-mission agent; centralized `gateVerdict()` threshold
 - **Pilot** — repo-aware planning agent; submits phases via `orca plan submit`; prompt in `prompts/pilot.md`
 - **Autopilot** — two backends: relay LLM or CLI agent (Pilot); phases from `prompts/planner.md` template
+- **Assistant** — per-user advisor session driving Orca on the user's behalf via a built-in MCP server; `orca api` CLI passthrough; docked IDE-style panel with a real-PTY terminal and pop-out window
 - **Per-model descriptions & autoModel** — write capability descriptions per model in Settings; flip "Autopilot picks the model" and the planner selects the best model per phase from those descriptions, validated against the allow-list
 - **Deriver** — polls tmux panes every 5s, detects agent state via `shellPatterns.ts`, auto-approves via overseer gate
 - **Event bus** — SSE for real-time UI updates; `GET /events`
@@ -104,6 +105,7 @@ All LLM prompts are stored as Markdown templates under `prompts/` and rendered a
 | `planner-fallback.md` | Planner when no custom template is saved |
 | `pilot.md` | Pilot agent (CLI-based planning) |
 | `overseer.md` | Parked overseer agent (per-mission decision loop) |
+| `advisor.md` | Per-user assistant agent (drives Orca on the user's behalf) |
 | `worker.md` | Worker agent (general task execution) |
 | `worker-phase.md` | Phase agent (epic child task execution) |
 | `worker-epic-close.md` | Final-phase agent (also closes the parent epic) |
@@ -132,13 +134,14 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for module details.
 # Daemon
 npm install && npm run build        # compile TS → dist/, copy schema.sql + prompts/
 npm run serve                       # dev mode (direct TS via --experimental-strip-types)
-npm test                            # daemon tests (~439)
+npm test                            # daemon tests (~649)
+npm run lint                        # ESLint + dependency-cruiser architecture checks
 node dist/daemon/index.js           # production start
 
 # Web
 cd web && npm install
 npm run dev                         # Next.js dev server (turbopack)
-npm test                            # web tests (~285)
+npm test                            # web tests (~363)
 npm run build && npm start          # production
 ```
 

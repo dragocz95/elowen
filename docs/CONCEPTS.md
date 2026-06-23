@@ -407,7 +407,7 @@ The event bus:
 The daemon classifies every live tmux session by its naming convention so the API and web UI know its role without reverse-engineering the raw name. `classifySession()` in `src/overseer/sessionInfo.ts` maps each `orca-*` session to a `SessionInfo`:
 
 ```typescript
-type SessionRole = 'overseer' | 'pilot' | 'agent';
+type SessionRole = 'overseer' | 'pilot' | 'agent' | 'advisor';
 interface SessionInfo { name: string; role: SessionRole; agent: string; missionId?: string }
 ```
 
@@ -415,6 +415,7 @@ interface SessionInfo { name: string; role: SessionRole; agent: string; missionI
 |--------|------|---------|
 | `orca-overseer-<missionId>` | `overseer` | Parked per-mission decision agent |
 | `orca-pilot-<name>` | `pilot` | Repo-aware planning agent |
+| `orca-advisor-<userId>` | `advisor` | Per-user assistant session (see Assistant section) |
 | `orca-<name>` | `agent` | Worker agent on a task |
 
 `GET /sessions` returns classified sessions — clients see structured role + agent name + optional missionId, never parse the raw tmux name.
@@ -441,6 +442,7 @@ The build copies `prompts/` into `dist/prompts/`. Templates are cached after fir
 | `planner-fallback.md` | Fallback when no custom template is saved | `{{goal}}`, `{{models}}` |
 | `pilot.md` | Pilot agent: repo-aware CLI planning | `{{goal}}`, `{{notes}}`, `{{submit}}`, `{{jobId}}`, `{{models}}` |
 | `overseer.md` | Parked overseer agent: per-mission decision loop | — |
+| `advisor.md` | Per-user assistant agent: drives Orca on the user's behalf | `{{userName}}` |
 | `worker.md` | Worker agent: general task execution | — |
 | `worker-phase.md` | Phase agent: epic child task execution | — |
 | `worker-epic-close.md` | Final phase: also closes parent epic | — |
@@ -553,3 +555,38 @@ Default off. Requires `overseerExec` to be set (relay fallback cannot drive post
 ### Overseer watchdog
 
 The mission engine calls `overseer.ensure()` on every tick. If the parked overseer session has exited mid-mission (full context, clean exit per its own prompt), `ensure()` re-parks it automatically — otherwise post-phase reviews and permission decisions would silently stop. The call is idempotent: it is a no-op while the session is still live or when no `overseerExec` is configured.
+
+---
+
+## Assistant (per-user advisor)
+
+The **assistant** (UI label "Assistant", session role `advisor`) is a persistent, per-user agent session that drives Orca on the user's behalf. Each user gets their own `orca-advisor-<userId>` tmux session that runs a configured CLI agent (`advisor_exec`, remembered per user) with a **full-scope token** scoped to that user's rights.
+
+### Lifecycle
+
+- **Start** — `POST /advisor/start { exec }` (or the dock's start button). The `AdvisorService` (`src/advisor/service.ts`) resolves the executor, mints a dedicated `advisor`-scoped token (`ensureAdvisorToken`), writes a per-program MCP config into the advisor's cwd so the CLI auto-connects to Orca's MCP server, and spawns the session.
+- **Auto-start on login** — when a user with a saved `advisor_exec` and `advisor_autostart: true` logs in, `ensureOnLogin()` brings the assistant back up fire-and-forget (never blocks the login response).
+- **Stop** — `POST /advisor/stop` kills the `orca-advisor-<userId>` session. The token is untouched (reused across restarts).
+- **Status** — `GET /advisor/status` returns `{ running, exec, session }`; polled by the dock every 5 s.
+
+### MCP server
+
+The advisor acts through Orca's built-in MCP server (`src/mcp/`), exposed at `POST /mcp`. Each request is handled statelessly with a fresh `McpServer` + transport bound to the caller's bearer token, so every advisor connection acts with exactly its user's rights. The toolset (`src/mcp/tools.ts`):
+
+| Tool | Purpose |
+|---|---|
+| `orca_request` | Generic escape hatch — call any REST endpoint (method, path, body) |
+| `orca_tasks` | List all tasks |
+| `orca_create_task` | Create a task (title, project_id?, description?) |
+| `orca_plan` | Plan a goal into an epic with phases (autopilot) |
+| `orca_sessions` | List live agent sessions |
+
+Every tool delegates to the shared `callOrcaApi` core (`src/shared/apiClient.ts`) — the same forward path as the `orca api` CLI verb, so a new REST endpoint works in both with zero edits.
+
+### `orca api` CLI passthrough
+
+Agents (including the assistant) can also drive Orca without MCP via `orca api <METHOD> <path> [jsonBody]`. It reads `ORCA_URL`/`ORCA_TOKEN` from the environment the daemon injects into every spawned agent, so it reaches any endpoint without a per-endpoint CLI command. The assistant prompt (`prompts/advisor.md`) advertises both paths.
+
+### Access
+
+The advisor session is per-user, not project-scoped: only its owner (or an admin) may reach it via the session routes, and a user need not be assigned to the daemon's project to reach their own advisor. The advisor's token is a fourth scope (`advisor`, stored alongside `full`/`agent`) — isolated so rotating/stopping the advisor never touches login tokens.

@@ -27,6 +27,7 @@ Every token carries a `scope` field (column `scope` on `auth_tokens`, aliased to
 |---|---|---|
 | `full` | Interactive user session (login via browser/CLI) | Bounded by the user's role and project assignments |
 | `agent` | Spawned agent (worker, overseer, pilot) — injected via `ORCA_TOKEN` | Verb + path allow-list; project scope confined to the agent's live working set |
+| `advisor` | Per-user assistant session (`orca-advisor-<userId>`) | Mapped to `full` at the guard so it has the user's own rights, but isolated from login tokens so rotating/stopping the advisor never touches `full` tokens |
 
 **Agent-scoped tokens** are injected into every spawned agent via `ORCA_TOKEN` (set by `bootstrap.ts` to `ensureAgentToken()` for the lowest-id user — the FK owner, not the security boundary). They prevent a prompt-injected agent from:
 
@@ -132,6 +133,17 @@ If the LLM is unreachable or returns unparseable output, the decision defaults t
 ```
 
 **Fail closed** — always escalate when uncertain.
+
+### Assistant / MCP server
+
+The per-user assistant (`orca-advisor-<userId>`) runs with a **full-scope** `advisor`-scoped token bound to its user's rights, so it can do anything the user could — but it is isolated from the user's login (`full`) tokens. Rotating or stopping the advisor never invalidates a login session, and vice-versa. The assistant's token is minted by `ensureAdvisorToken()` (idempotent — reused across restarts).
+
+The advisor reaches the daemon through two equivalent authenticated paths, both using `ORCA_TOKEN`:
+
+1. **MCP tools** — the built-in MCP server at `POST /mcp`. Each request is handled statelessly: a fresh `McpServer` + transport bound to the request's bearer token, so every connection acts with exactly its user's rights. The toolset (`orca_request` generic escape hatch + typed helpers) all delegate to the shared `callOrcaApi` core — no request logic is duplicated with the CLI.
+2. **`orca api <METHOD> <path> [body]`** — the generic CLI passthrough. Same shared forward core, same bearer token.
+
+The MCP config files written into the advisor's cwd (`.mcp.json` / `opencode.json` / `.codex-mcp.toml`) carry the advisor's bearer token, so they are locked to the daemon user (0600).
 
 ### Guardrails (removed in v1.1.1)
 

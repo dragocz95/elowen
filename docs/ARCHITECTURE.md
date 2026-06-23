@@ -62,15 +62,30 @@ The agent works in the tmux pane, then calls `node <cli> close <taskId> …` bac
 
 ### `src/terminal/` — Real-PTY terminal streaming
 
-Streams a true PTY (a `tmux attach` via `node-pty`) over a WebSocket to the browser's xterm, for the advisor and enlarged-modal terminals (grid previews stay on the snapshot mirror). The WS reaches the daemon directly (nginx `/ws/` → :4400), so it carries no session cookie — a short-lived single-use ticket is the capability.
+Streams a true PTY (a `tmux attach` via `node-pty`) over a WebSocket to the browser's xterm, for the assistant dock, the enlarged-modal terminals, and the pop-out terminal window (grid previews stay on the snapshot mirror). The WS reaches the daemon directly (nginx `/ws/` → :4400), so it carries no session cookie — a short-lived single-use ticket is the capability.
 
 - `ticketStore.ts` — in-memory single-use tickets (issue/consume/TTL sweep)
 - `ptyLoader.ts` — lazy, cached `import('node-pty')` with availability detection; null → snapshot fallback (`node-pty` is an **optional dependency**)
 - `ptySession.ts` — `tmux attach -t <session>` PTY client (fully interactive — the ownership gate is enforced at ticket-mint time)
 - `bridge.ts` — pure full-duplex PTY↔WS logic (PTY out → ws.send; ws messages → input bytes / `{type:'resize'}` control frame)
 - `wsHandler.ts` — `@hono/node-ws` upgrade handler: consume ticket → load pty → attach → bridge → kill on close. Closes with code `4001` when unsupported
+- On a client resize, the daemon resizes both the PTY **and** the tmux *window* (`tmux resize-window`) — the advisor session is created `window-size manual`, so the PTY size alone would be ignored and the content wouldn't reflow to fill the panel
 
 The ticket is minted by the authenticated `POST /sessions/:name/ws-ticket` (ownership-gated by the same session access check) and shared with the daemon's `/ws/terminal` handler via the `ticketStore`. node-ws injects into the same http server (`injectWebSocket` after `serve()` in `daemon/index.ts`).
+
+### `src/advisor/` — Per-user Assistant lifecycle
+
+The assistant is a persistent, per-user agent session (`orca-advisor-<userId>`) that drives Orca on the user's behalf with a full-scope token. The module is opt-in: when the daemon's DB is `:memory:` (tests), `AdvisorService` is not instantiated and the `/advisor/*` routes degrade gracefully.
+
+- `service.ts` — `AdvisorService`: start/stop/status/ensureOnLogin. Resolves executor, mints the advisor token (`ensureAdvisorToken`), writes the per-program MCP config, and spawns via `SpawnService` with the user's own token overriding the daemon's agent service token
+- `mcpConfig.ts` — writes a per-program MCP config into the advisor's cwd so the spawned CLI auto-connects to Orca's MCP server: claude reads `.mcp.json`, opencode reads `opencode.json`, codex reads `.codex-mcp.toml`. Config files are locked to the daemon user (0600)
+
+### `src/mcp/` — Built-in MCP server
+
+A stateless MCP server (`/mcp` endpoint) exposing Orca's toolset to the assistant (and any other MCP-capable client). Built on `@modelcontextprotocol/sdk`.
+
+- `server.ts` — `handleMcpRequest(req, deps)`: a fresh `McpServer` + `WebStandardStreamableHTTPServerTransport` per request, bound to the request's bearer token, so each connection acts with exactly its user's rights
+- `tools.ts` — `makeOrcaTools(d)`: `orca_request` (generic escape hatch — any REST endpoint), plus typed helpers `orca_tasks`, `orca_create_task`, `orca_plan`, `orca_sessions`. All delegate to the shared `callOrcaApi` core, so a new REST endpoint works with zero edits here
 
 ### `src/overseer/` — Orchestration logic
 
@@ -118,8 +133,8 @@ SQLite with WAL mode (`better-sqlite3`). Tables:
 | `agents` | Agent session registry (per-project unique names) |
 | `missions` | Mission definitions, autonomy level |
 | `settings` | Daemon configuration (JSON blob) |
-| `users` | User accounts (scrypt password hashes, admin flag, per-user exec allow-list) |
-| `auth_tokens` | Session tokens for bearer auth |
+| `users` | User accounts (scrypt password hashes, admin flag, per-user exec allow-list, advisor exec + autostart flag) |
+| `auth_tokens` | Session tokens for bearer auth (scope: full / agent / advisor) |
 | `events` | Activity event log (state changes, signals) |
 | `user_projects` | User ↔ project assignments (RBAC many-to-many) |
 
@@ -143,12 +158,13 @@ Store modules: `db.ts`, `taskStore.ts`, `missionStore.ts`, `agentStore.ts`, `eve
 
 ### `src/cli/` — CLI client
 
-Commands: `orca ls`, `orca ready`, `orca sessions`, `orca close`, `orca plan submit`, `orca overseer poll`, `orca overseer decide`. Auto-detects and starts the daemon if not running.
+Commands: `orca ls`, `orca ready`, `orca sessions`, `orca close`, `orca plan submit`, `orca overseer poll`, `orca overseer decide`, plus the generic `orca api <METHOD> <path> [jsonBody]` REST passthrough. Lifecycle commands (`orca up`, `down`, `status`, `update`, `install`) manage the daemon itself. Auto-detects and starts the daemon if not running (except lifecycle commands).
 
 ### `src/shared/` — Utilities
 
 - `clock.ts` — `Clock` interface with `SystemClock` (real) and `FakeClock` (test) implementations
 - `execs.ts` — single source of truth for executor metadata: `PROGRAM_PREFIXES`, `KNOWN_EXECS`, `DEFAULT_BINS`, `isWellFormedExec`, `isAllowedExec` (formerly duplicated across `routing.ts` and `configStore.ts`)
+- `apiClient.ts` — `callOrcaApi(method, path, body, opts)`: the single HTTP-forward core for reaching the Orca REST API with a bearer token. Shared by the `orca api` CLI verb and every MCP tool, so there is no duplicated request logic and a new REST endpoint works in both with zero edits
 
 ### `src/prompts/` — Prompt template system
 
@@ -249,4 +265,4 @@ Tests use Vitest with fake implementations:
 
 This allows full integration-style tests without real tmux or network dependencies.
 
-Daemon tests: ~439 `it`/`test` cases in `tests/`. Web tests: ~285 cases in `web/tests/` (Vitest + React Testing Library).
+Daemon tests: ~649 `it`/`test` cases in `tests/`. Web tests: ~363 cases in `web/tests/` (Vitest + React Testing Library).

@@ -14,6 +14,7 @@ Every page is a thin shell in `app/<route>/page.tsx` that renders a `*View` from
 | `/sessions` | `sessions/` | `SessionsView` | Operate |
 | `/timeline` | `timeline/` | `TimelineView` | Operate |
 | `/projects` | `projects/` | `ProjectsView` | Operate |
+| `/terminal/[name]` | — | chromeless pop-out terminal (inline in `app/terminal/[name]/page.tsx`) | — (no chrome) |
 | `/settings` | — | inline (in `app/settings/page.tsx`) | Config |
 | `/users` | `users/` | `UsersView` | Config |
 | `/account` | `account/` | `AccountView` | — (sidebar footer) |
@@ -234,6 +235,7 @@ Thin fetch wrapper around the daemon API. Sets `Authorization: Bearer <token>` f
 | `useCliStatus` | `['cli-status']` | 30 s |
 | `usePlanJob` | `['plan-job', jobId]` | 1 s while planning |
 | `useUserProjects` | `['user-projects', userId]` | — |
+| `useAdvisorStatus` | `['advisor-status']` | 5 s |
 
 ### Mutations (`lib/mutations.ts`)
 
@@ -264,6 +266,8 @@ Mutations auto-invalidate related query caches on success:
 | `useWriteProjectFile` | project-file, project-git |
 | `useNewProjectFile` / `useNewProjectDir` / `useRenameProjectEntry` / `useCopyProjectEntry` / `useDeleteProjectEntry` | project-files, project-git, project-changed |
 | `useHermesInstall` | hermes-status |
+| `useAdvisorStart` | advisor-status, sessions |
+| `useAdvisorStop` | advisor-status, sessions |
 
 ### Real-time updates
 
@@ -454,9 +458,15 @@ Status-to-tone mapping for task statuses in `modules/dashboard/statusTone.ts`:
 
 **Resize.** A fit produces a `{type:'resize',cols,rows}` control frame. The daemon resizes the PTY **and** the tmux *window* (`tmux resize-window`): the advisor session is created `window-size manual`, so the PTY size alone is ignored and the content won't reflow to fill the panel. `StreamTerminal` also re-pushes the size the moment the socket opens — the first fit usually runs before the WS is connected, when the resize would otherwise be dropped.
 
-### Advisor dock (`modules/advisor/`)
+### Assistant dock (`modules/advisor/`)
 
-The advisor is a **docked, IDE-style side panel** (`AdvisorPanel`), not a floating box. It opens as a full-height column on the left or right (`useDockState`, persisted to `localStorage` under `advisor:dock`: open/side/width/panes/sizes). A vertical `ResizeHandle` on the inner edge resizes the panel vs. the page; the panel hosts a vertical stack of **panes** split by horizontal `ResizeHandle`s. Each pane is an `AdvisorPane`: the user's own advisor (start/stop lifecycle + agent picker) or, added via `SessionPicker`, a read-write `StreamTerminal` onto any running session — so you can watch the advisor and a worker at once. When the dock is closed, a floating `AdvisorLauncher` (🐋) reopens it.
+The assistant (formerly "advisor") is a **docked, IDE-style side panel** (`AdvisorPanel`), not a floating box. It opens as a full-height column on the left or right (`useDockState`, persisted to `localStorage` under `advisor:dock`: open/side/width/panes/sizes). A vertical `ResizeHandle` on the inner edge resizes the panel vs. the page; the panel hosts a vertical stack of **panes** split by horizontal `ResizeHandle`s. Each pane is an `AdvisorPane`: the user's own assistant (start/stop lifecycle + agent picker with per-model brand icons) or, added via `SessionPicker`, a read-write `StreamTerminal` onto any running session — so you can watch the assistant and a worker at once. When the dock is closed, a floating `AdvisorLauncher` (a dark terminal icon) reopens it.
+
+The dock's thin global toolbar carries no pane title (each pane labels itself); running-state controls live in an overflow menu. The sidebar **mirrors to the right edge** when the dock is on the left, so the layout stays balanced whichever side you pick.
+
+### Pop-out terminal window (`/terminal/[name]`)
+
+Any session terminal can be popped out into its own chromeless browser window via `openTerminalWindow(name)` (`web/lib/openTerminalWindow.ts`). The route `app/terminal/[name]/page.tsx` renders a single full-viewport `StreamTerminal` with a minimal title bar (agent name + `SquareTerminal` icon) — no sidebar, no dock, no app chrome. It's still rendered inside the app's providers and auth gate (same-origin cookie), so it's authenticated like any other page. The `Shell` skips its chrome for `/terminal/*` routes. Windows are keyed by session name so re-opening focuses the existing window instead of stacking duplicates.
 
 ### Control forms (`components/control/`)
 
@@ -545,7 +555,7 @@ npm install
 npm run dev          # Next.js dev server (turbopack)
 npm run build        # production build (next build)
 npm start -- -p 4500 # production server (next start, port 4500)
-npm test             # Vitest (~313 cases, RTL + MSW)
+npm test             # Vitest (~363 cases, RTL + MSW)
 npm run test:watch   # watch mode
 ```
 
@@ -555,7 +565,7 @@ The web app talks only to its own same-origin `/api` proxy (`lib/orcaClient.ts:6
 
 ### Test setup
 
-Tests in `web/tests/` (~285 cases) use:
+Tests in `web/tests/` (~363 cases) use:
 - **Vitest** — test runner
 - **MSW** — API mocking
 - **Testing Library** — component rendering and interaction

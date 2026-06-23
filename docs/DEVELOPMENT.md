@@ -24,8 +24,9 @@ npm run build
 |---|---|
 | `npm run serve` | Run the daemon directly from TS via `--experimental-strip-types` (no build step). Starts on `http://localhost:4400`. |
 | `npm run build` | `tsc -p tsconfig.json` + copy `src/store/schema.sql` → `dist/store/` + copy `prompts/` → `dist/prompts/`. CLI ends up at `dist/cli/index.js`, daemon at `dist/daemon/index.js`. |
-| `npm test` | `vitest run` — single run of the daemon test suite (~439 cases) |
+| `npm test` | `vitest run` — single run of the daemon test suite (~649 cases) |
 | `npm run test:watch` | `vitest` — watch mode |
+| `npm run lint` | ESLint + dependency-cruiser architecture checks (no-circular, layer boundaries, orphans) |
 | `npm run deadcode` | `knip` — detect unused exports, files, and dependencies |
 
 ### CLI (without global link)
@@ -47,12 +48,13 @@ Or link globally: `npm link` then `orca ls`. The CLI auto-starts the daemon if i
 cd web
 npm install
 npm run dev      # Next.js dev server (turbopack)
-npm test         # Vitest (~285 cases)
+npm test         # Vitest (~363 cases)
+npm run lint     # ESLint + dependency-cruiser architecture checks
 npm run build    # Production build (copies Monaco workers, then next build)
 npm start        # Production server (default port 3000)
 ```
 
-Connects to the daemon at `NEXT_PUBLIC_ORCA_URL` (default `http://localhost:4400`).
+Connects to the daemon via the same-origin `/api` BFF proxy. Set `ORCA_DAEMON_URL` (server-side, default `http://localhost:4400`) if the daemon is not on localhost — there is no browser-side env var.
 
 **Gotcha:** a stale turbopack dev server on :4500 serves broken CSS chunks. Fix by killing the :4500 pid and running `next start` (not `next dev`).
 
@@ -149,6 +151,18 @@ src/
 ├── inference/        LLM inference relay
 │   ├── client.ts     RelayClient + FakeInference
 │   └── types.ts      Inference types
+├── advisor/          Per-user Assistant lifecycle
+│   ├── service.ts    AdvisorService (start/stop/status/ensureOnLogin)
+│   └── mcpConfig.ts  Per-program MCP config writer (.mcp.json / opencode.json / .codex-mcp.toml)
+├── mcp/              Built-in MCP server (/mcp endpoint)
+│   ├── server.ts     Stateless per-request McpServer + transport, bound to caller's token
+│   └── tools.ts      Orca toolset over the shared callOrcaApi core
+├── terminal/         Real-PTY terminal streaming over WebSocket
+│   ├── ticketStore.ts  Single-use WS tickets
+│   ├── ptyLoader.ts    Lazy node-pty import (optional dependency)
+│   ├── ptySession.ts   tmux attach PTY client
+│   ├── bridge.ts       Full-duplex PTY↔WS logic
+│   └── wsHandler.ts     @hono/node-ws upgrade handler
 ├── integrations/     External integrations
 │   ├── hermesInstall.ts  Hermes MCP-server registration
 │   ├── projectFiles.ts   File tree, read/write/diff for Monaco editor
@@ -195,9 +209,9 @@ src/
     ├── types.ts      TmuxDriver interface
     ├── driver.ts     RealTmuxDriver
     └── fakeDriver.ts In-memory fake for tests
-prompts/              Prompt templates (planner, pilot, overseer, worker, decision)
-tests/                Mirrors src/ structure (~439 tests)
-web/                  Next.js frontend (~285 tests)
+prompts/              Prompt templates (planner, pilot, overseer, advisor, worker, decision)
+tests/                Mirrors src/ structure (~649 tests)
+web/                  Next.js frontend (~363 tests)
 docs/                 Documentation tree
 ```
 
@@ -280,6 +294,7 @@ Pass `phases: [{title, type?}]` — no LLM, no key needed. Synchronous 201 respo
 6. Add tests in `tests/` (mirror the `src/` path)
 7. If the endpoint is user-facing, add i18n keys in both `web/lib/i18n/dictionaries/cs.ts` and `en.ts`
 8. If the endpoint should be reachable by spawned agents, add it to the `agentAllowed()` allow-list in `server.ts`
+9. The `orca api <METHOD> <path>` CLI verb and the MCP `orca_request` tool both delegate to the shared `callOrcaApi` core, so a new endpoint is reachable from the assistant and any agent with **zero CLI/MCP edits** — only add a typed helper to `src/mcp/tools.ts` if you want a nicer-named tool for it.
 
 ---
 
@@ -304,7 +319,7 @@ Pass `phases: [{title, type?}]` — no LLM, no key needed. Synchronous 201 respo
 | `ORCA_ALLOW_OPEN` | — | Allow open (no auth) mode when set to `1` |
 | `ORCA_LOG_LEVEL` | `info` | `debug` / `info` / `warn` / `error` |
 | `ORCA_LOG_DIR` | `cwd/logs` | Log directory |
-| `NEXT_PUBLIC_ORCA_URL` | `http://localhost:4400` | Daemon URL for web UI |
+| `ORCA_DAEMON_URL` | `http://localhost:4400` | Daemon URL for the web BFF proxy (server-side only) |
 
 ### Runtime config
 

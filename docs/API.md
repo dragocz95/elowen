@@ -1776,6 +1776,115 @@ from the agent.
 
 ---
 
+## Assistant (per-user advisor)
+
+The assistant is a persistent, per-user agent session that drives Orca on the user's behalf through
+the built-in MCP server. Each user gets their own `orca-advisor-<userId>` tmux session. Full-scope
+(non-`agent`) callers only — a spawned agent must not be able to start/stop a human's assistant.
+
+### Assistant status
+
+```http
+GET /advisor/status
+```
+
+Returns the caller's advisor session state.
+
+**Response `200`**
+```json
+{ "running": false, "exec": "sonnet", "session": null }
+```
+
+When `running`, `session` is the `orca-advisor-<userId>` tmux session name.
+
+**Response `200`** — feature disabled (in-memory DB / tests):
+```json
+{ "running": false, "exec": "", "session": null }
+```
+
+### Start assistant
+
+```http
+POST /advisor/start
+Content-Type: application/json
+
+{ "exec": "sonnet" }
+```
+
+Starts the caller's advisor session with the chosen executor. The exec must be in the daemon's
+`allowedExecs` and (for a restricted non-admin) the user's own `allowed_execs`. The chosen exec is
+remembered on the user record for autostart on next login. Idempotent — a no-op if already running.
+
+Internally: resolves the executor, mints a dedicated `advisor`-scoped token, writes a per-program
+MCP config into the advisor's cwd, and spawns `orca-advisor-<userId>` via tmux with the user's own
+token overriding the daemon's agent service token.
+
+**Response `201`**
+```json
+{ "session": "orca-advisor-1" }
+```
+
+**Error `400`**
+```json
+{ "error": "exec not allowed" }
+```
+
+**Error `403`**
+```json
+{ "error": "exec not allowed for user" }
+```
+
+**Error `503`** — advisor feature unavailable (in-memory DB):
+```json
+{ "error": "advisor unavailable" }
+```
+
+### Stop assistant
+
+```http
+POST /advisor/stop
+```
+
+Kills the caller's advisor tmux session. The advisor token is untouched (reused across restarts).
+
+**Response `200`**
+```json
+{ "ok": true }
+```
+
+---
+
+## MCP server
+
+The daemon exposes a built-in MCP server at `/mcp` so the assistant (and any other MCP-capable client)
+can drive Orca with native tools. Each request is handled statelessly: a fresh `McpServer` + transport
+bound to the request's bearer token, so every connection acts with exactly its user's rights.
+
+```http
+POST /mcp
+Authorization: Bearer <token>
+Content-Type: application/json
+
+<JSON-RPC request body>
+```
+
+The endpoint accepts the standard MCP Streamable HTTP transport protocol. Tools exposed:
+
+| Tool | Input | Purpose |
+|---|---|---|
+| `orca_request` | `method`, `path`, `body?` | Generic escape hatch — call any Orca REST endpoint |
+| `orca_tasks` | — | List all tasks |
+| `orca_create_task` | `title`, `project_id?`, `description?` | Create a task |
+| `orca_plan` | `goal`, `project_id?` | Plan a goal into an epic with phases (autopilot) |
+| `orca_sessions` | — | List live agent sessions |
+
+Every tool delegates to the shared `callOrcaApi` core (`src/shared/apiClient.ts`) — the same forward
+path as the `orca api` CLI verb, so a new REST endpoint works in both with zero edits.
+
+**Response `200`** — JSON-RPC response with the tool result as MCP `text` content.
+
+---
+
 ## Activity log
 
 ```http
@@ -2126,4 +2235,8 @@ also include `jobId` and `epicId` where applicable:
 | 67 | `POST` | `/missions/:id/overseer/decide` | Bearer (full + agent) | Missions |
 | 68 | `GET` | `/config` | Bearer | Config |
 | 69 | `PUT` | `/config` | Bearer (admin/setup) | Config |
-| 70 | `GET` | `/events` | Bearer (?token) | Events |
+| 70 | `GET` | `/advisor/status` | Bearer (full) | Assistant |
+| 71 | `POST` | `/advisor/start` | Bearer (full) | Assistant |
+| 72 | `POST` | `/advisor/stop` | Bearer (full) | Assistant |
+| 73 | `POST` | `/mcp` | Bearer | MCP server |
+| 74 | `GET` | `/events` | Bearer (?token) | Events |

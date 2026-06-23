@@ -54,7 +54,7 @@ ORCA_LOG_LEVEL=               # debug | info | warn | error (default info)
 ORCA_LOG_DIR=$PWD/logs        # log directory
 
 # Web UI (Next.js)
-NEXT_PUBLIC_ORCA_URL=http://localhost:4400
+# ORCA_DAEMON_URL=http://localhost:4400   # server-side only — the BFF proxy uses this to reach the daemon
 
 # Agent-injected (set by the daemon on spawned agent env, not by the operator)
 # ORCA_PLAN_JOB=<jobId>       # Pilot agent
@@ -152,13 +152,13 @@ Use the Next.js production server (not static export):
 
 ```bash
 cd web
-NEXT_PUBLIC_ORCA_URL=http://localhost:4400 npm start   # default port 3000
+npm start   # default port 3000, talks to daemon via the same-origin /api proxy
 ```
 
 The web UI is typically served on port 4500:
 
 ```bash
-NEXT_PUBLIC_ORCA_URL=http://your-server:4400 npx next start -p 4500
+ORCA_DAEMON_URL=http://your-server:4400 npx next start -p 4500
 ```
 
 ### Reverse proxy (nginx)
@@ -174,7 +174,7 @@ server {
         proxy_http_version 1.1;
     }
 
-    # Daemon API + SSE (direct, no rewrite prefix)
+    # Daemon API + SSE + MCP (direct, no rewrite prefix)
     location /api/ {
         proxy_pass http://127.0.0.1:4400;
         proxy_http_version 1.1;
@@ -185,12 +185,24 @@ server {
         proxy_read_timeout 86400s;
         proxy_set_header x-real-ip $remote_addr;
     }
+
+    # Real-PTY terminal WebSocket (StreamTerminal). The Next.js BFF can't proxy a WS upgrade,
+    # so nginx proxies /ws/ straight to the daemon. A short-lived single-use ticket is the capability.
+    location /ws/ {
+        proxy_pass http://127.0.0.1:4400;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_read_timeout 86400s;
+        proxy_set_header x-real-ip $remote_addr;
+    }
 }
 ```
 
 Notes:
 
 - SSE requires `proxy_buffering off` and a long `proxy_read_timeout` (86400 s = 24 h)
+- The `/ws/` location is required for the real-PTY terminal WebSocket (StreamTerminal); without it the terminal falls back to the snapshot mirror
 - Set `x-real-ip` so the login rate limiter sees the real client IP (it prefers `x-real-ip` over `x-forwarded-for`)
 - The daemon enables CORS for all origins; restrict it in code for production
 
@@ -213,7 +225,8 @@ Notes:
 | `ORCA_ALLOW_OPEN` | — | Allow open (no auth) mode when set to `1` |
 | `ORCA_LOG_LEVEL` | `info` | `debug` / `info` / `warn` / `error` |
 | `ORCA_LOG_DIR` | `cwd/logs` | Log directory |
-| `NEXT_PUBLIC_ORCA_URL` | `http://localhost:4400` | Daemon URL for web UI |
+| `HERMES_HOME` | `~/.hermes` | Hermes root for same-host MCP registration |
+| `ORCA_DAEMON_URL` | `http://localhost:4400` | Daemon URL for the web BFF proxy (server-side only) |
 
 ### Runtime config
 
@@ -224,6 +237,7 @@ Additional security + autopilot settings are managed via `GET/PUT /config` (stor
 - `autopilot.{model, overseerModel, pilotExec, overseerExec, apiUrl, apiKeySet, reviewOnDone, notes, prompt}` — planning + overseer config
 - `defaults.{exec, autonomy, maxSessions}` — new-task defaults
 - `providers.{claude-code, opencode, codex}.{bin, args}` — CLI binary config
+- Per-user `advisor_exec` + `advisor_autostart` — the user's chosen assistant model and login-autostart flag
 
 API keys are write-only: `apiKeySet` (boolean) is exposed in `GET /config`, the key value is never returned.
 
@@ -309,7 +323,7 @@ kill $(lsof -t -i :4400)
 ### Web UI shows "orca daemon unreachable"
 
 - Verify the daemon is running on port 4400
-- Check `NEXT_PUBLIC_ORCA_URL` points to the correct address
+- Check `ORCA_DAEMON_URL` (server-side) points to the correct address
 - Check CORS isn't blocked (daemon enables CORS for all origins)
 - If the dev server on :4500 serves broken CSS chunks, kill the :4500 pid and run `next start` (not `next dev`) — turbopack dev cache can go stale
 
@@ -320,3 +334,7 @@ The login rate limiter caps 10 attempts per 5-minute window per IP (prefers `x-r
 ### Overseer died mid-mission
 
 The overseer watchdog (`reconcileOverseers()`, 60 s) re-parks a fresh overseer for any active mission whose agent session is missing, and kills orphan overseer sessions. No manual action needed; verify with `orca sessions` that `orca-overseer-<missionId>` reappears within a minute.
+
+### Assistant won't start
+
+The assistant is opt-in per daemon (disabled when the DB is `:memory:`). If `POST /advisor/start` returns `503 advisor unavailable`, you're running against an in-memory DB (tests). Otherwise verify the chosen `exec` is in the daemon's `allowedExecs` and (for a non-admin) the user's own `allowed_execs`. The assistant session is `orca-advisor-<userId>` — check it with `orca sessions`. If it crashes, restart via the dock or `POST /advisor/start`.

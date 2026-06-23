@@ -5,10 +5,17 @@ The `orca` CLI connects to the daemon and provides quick access to common operat
 ## Installation
 
 ```bash
-npm link    # makes `orca` available globally
-# or
+npm install -g orcasynth   # makes `orca` available globally
+# or, from a source checkout:
 node dist/cli/index.js <command>
 ```
+
+## Two command families
+
+The CLI has two kinds of commands:
+
+- **API commands** (`ls`, `ready`, `sessions`, `close`, `plan`, `overseer`, `api`) talk to the daemon REST API. They auto-start the daemon if it isn't running (disable with `ORCA_AUTOSTART=0`).
+- **Lifecycle commands** (`up`, `down`, `status`, `update`, `install`) manage the daemon itself — they never auto-start it. Run `orca` with no argument for the interactive launcher menu.
 
 ## Environment variables
 
@@ -168,6 +175,72 @@ Calls `POST /missions/:missionId/overseer/decide`. Requires `ORCA_MISSION` to be
 
 > **Note:** The destructive heuristic (`isDestructive()`) is applied server-side at enqueue time and is authoritative — the agent's `--approve` cannot override a destructive classification.
 
+### `orca api` (generic REST passthrough)
+
+Generic authenticated REST passthrough — call any Orca endpoint with no per-endpoint CLI command.
+Reads `ORCA_URL`/`ORCA_TOKEN` from the environment the daemon injects into every spawned agent, so an
+agent (including the assistant) can drive any endpoint. A new REST endpoint needs zero CLI edits.
+
+```bash
+orca api GET /tasks
+orca api POST /tasks '{"title":"Fix the build","project_id":1}'
+orca api POST /tasks/plan '{"goal":"Add dark mode","project_id":1}'
+orca api GET /sessions
+```
+
+The forward logic (headers, JSON parse, error handling) lives in the shared `callOrcaApi` core
+(`src/shared/apiClient.ts`) — exactly the same path the MCP tools use, so the two never drift.
+
+**Response** — the parsed JSON response body (pretty-printed), or the raw text when the body isn't JSON.
+
+**Exit codes**
+
+| Code | Meaning |
+|---|---|
+| `0` | HTTP 2xx |
+| `1` | Non-2xx response (the body is still printed) |
+| `2` | Usage error (`usage: orca api <METHOD> <path> [jsonBody]`) or invalid JSON body |
+
+## Lifecycle commands
+
+These manage the daemon itself and never auto-start it.
+
+### `orca up`
+
+Starts the daemon (:4400) and the web UI (:4500) in the background. Fails loudly if the daemon never
+becomes healthy (prints `orca daemon did not become healthy` and exits non-zero).
+
+### `orca down`
+
+Stops the daemon and the web UI.
+
+### `orca status`
+
+Prints a one-glance block showing which services are running and healthy:
+
+```
+  orcasynth v1.4.15
+
+  daemon  ●  running  :4400  healthy
+  web     ●  running  :4500  healthy  http://localhost:4500
+```
+
+### `orca update`
+
+Updates to the latest npm release and restarts the services in place. Self-locating and
+systemd-aware — it targets its own install prefix and restarts the units. The reliable fallback is:
+
+```bash
+sudo npm install -g orcasynth@latest --prefix <install-prefix> && sudo systemctl restart orca-daemon orca-web
+```
+
+### `orca install`
+
+Guided provisioning wizard (run as root): systemd units, a reverse proxy, and the first admin.
+Supports unattended mode (`orca install --unattended`) and lets you choose the domain / IP:port /
+localhost, TLS (Let's Encrypt where applicable), and the autopilot engine (agent CLI or API key).
+See `orca install --help` for the flags.
+
 ## Daemon autostart
 
 The CLI automatically starts the daemon if it isn't running:
@@ -193,7 +266,7 @@ ORCA_AUTOSTART=0 orca ls
 
 ## Adding commands
 
-New CLI commands are added in `src/cli/index.ts` by adding a `case` to the `switch` statement in `run()`:
+New daemon-backed commands are added in `src/cli/index.ts` by adding a `case` to the `switch` in `run()`:
 
 ```typescript
 case 'mycommand':
@@ -206,3 +279,9 @@ And the corresponding method in `src/cli/client.ts`:
 ```typescript
 async mycommand() { return this.req('/my-endpoint'); }
 ```
+
+Add the command name to the `API_COMMANDS` set so the daemon auto-starts for it. Lifecycle commands
+go through `runLifecycle()` in `src/cli/commands.ts` instead.
+
+For a generic one-off, `orca api <METHOD> <path> [body]` reaches any endpoint with no CLI edit — both
+the CLI and the MCP tools delegate to the shared `callOrcaApi` core in `src/shared/apiClient.ts`.
