@@ -30,6 +30,7 @@ import type { TmuxDriver } from '../tmux/types.js';
 import { uniqueName } from './uniqueName.js';
 import { logger } from '../shared/logger.js';
 import { AdvisorService } from '../advisor/service.js';
+import { writeMcpConfig } from '../advisor/mcpConfig.js';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { randomBytes } from 'node:crypto';
@@ -230,10 +231,12 @@ export function buildApp(opts: BuildOpts) {
   // Per-user advisor: a persistent assistant session controlling Orca on the user's behalf. Its cwd
   // is a neutral per-user dir (alongside the DB, NOT a project checkout) so the per-program MCP config
   // never pollutes a repo. Disabled for the in-memory DB (tests build their own AdvisorService).
+  const mcpUrl = `${orcaCli.url}/mcp`; // the daemon hosts the MCP server on its own /mcp route
   const advisor = opts.dbPath === ':memory:' ? undefined : new AdvisorService({
     spawn, tmux, users, config, fallback: { program: 'claude-code', model: 'sonnet' },
     projectId: opts.project.id, url: orcaCli.url,
     advisorDir: (id) => { const p = join(dirname(opts.dbPath), 'advisor', String(id)); mkdirSync(p, { recursive: true }); return p; },
+    prepareMcp: (program, cwd, token) => writeMcpConfig(program, cwd, token, mcpUrl),
   });
   const app = createServer({ tasks, readiness, missions, engine, spawn, tmux, bus, events, agents, project: opts.project, fallback: { program: 'claude-code', model: 'sonnet' }, clock: new SystemClock(), config, users, projects, userProjects, git, avatarsDir, avatarSecret, planJobs, decisionQueue, pilot, advisor });
 

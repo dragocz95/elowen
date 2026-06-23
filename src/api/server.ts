@@ -35,6 +35,7 @@ import type { ConfigStore } from '../store/configStore.js';
 import { assembleMissionDetail } from '../store/missionDetail.js';
 import type { UserStore, User, TokenScope } from '../store/userStore.js';
 import { authMiddleware } from './auth.js';
+import { handleMcpRequest } from '../mcp/server.js';
 import type { EventStore } from '../store/eventStore.js';
 import type { ProjectStore } from '../store/projectStore.js';
 import type { UserProjectStore } from '../store/userProjectStore.js';
@@ -85,6 +86,9 @@ const ORCA_VERSION = (() => {
   try { return (JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'package.json'), 'utf8')) as { version?: string }).version ?? '0.0.0'; }
   catch { return '0.0.0'; }
 })();
+
+/** Port the daemon listens on — the MCP route reaches back into this same daemon's REST API at it. */
+const ORCA_PORT = Number(process.env.ORCA_PORT ?? 4400);
 
 export function createServer(d: ServerDeps): Hono<{ Variables: { user: User; token: string; tokenScope: TokenScope } }> {
   const log = logger('api');
@@ -1237,6 +1241,14 @@ export function createServer(d: ServerDeps): Hono<{ Variables: { user: User; tok
     if (c.get('tokenScope') === 'agent') return c.json({ error: 'forbidden' }, 403);
     await d.advisor.stop(c.get('user').id);
     return c.json({ ok: true });
+  });
+
+  // MCP endpoint: the advisor agent connects here to control Orca with native tools. Each request is
+  // handled statelessly with the toolset bound to the caller's token, and every tool delegates to the
+  // same `callOrcaApi` core as the `orca api` CLI verb — so a new REST endpoint needs zero edits here.
+  app.all('/mcp', async c => {
+    const token = c.get('token');
+    return handleMcpRequest(c.req.raw, { url: `http://localhost:${ORCA_PORT}`, token });
   });
 
   app.get('/missions', c => {
