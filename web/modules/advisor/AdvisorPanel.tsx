@@ -1,6 +1,6 @@
 'use client';
 import { useRef, useState } from 'react';
-import { Bot, X, Plus, PanelLeft, PanelRight } from 'lucide-react';
+import { X, Plus, PanelLeft, PanelRight } from 'lucide-react';
 import { useTranslation } from '../../lib/i18n';
 import { ResizeHandle } from '../../components/ui/ResizeHandle';
 import { AdvisorPane } from './AdvisorPane';
@@ -46,9 +46,9 @@ export function AdvisorPanel({ dock }: { dock: UseDockState }) {
       className="flex h-full shrink-0 flex-col overflow-hidden border-border bg-surface"
       style={{ width: `min(${state.width}px, 100vw)` }}
     >
-      <div className="flex items-center gap-2 border-b border-border px-3 py-2">
-        <Bot size={16} className="text-accent" aria-hidden />
-        <span className="text-sm font-semibold">{t.advisor.title}</span>
+      {/* Thin global toolbar for the whole dock (it may hold several panes), so it carries no pane
+          title — each pane labels itself below. Controls are right-aligned. */}
+      <div className="flex items-center gap-1 border-b border-border px-2 py-1.5">
         <div className="flex-1" />
         <button
           type="button"
