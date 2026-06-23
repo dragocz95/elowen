@@ -23,6 +23,8 @@ import { ProjectFilterPills } from '../../components/ui/ProjectFilterPills';
 import { LoadingState, ErrorState, EmptyState } from '../../components/ui/states';
 import { TaskCard } from './TaskCard';
 import { TaskModal } from './TaskModal';
+import { DateRangeFilter } from './DateRangeFilter';
+import { DEFAULT_RANGE, serializeRange, parseRange, isStoredRange, inRange } from './dateRange';
 import { dayKey } from '../kanban/calendar';
 
 type Filter = 'all' | TaskStatus | 'autopilot';
@@ -51,6 +53,11 @@ export function TasksView() {
   const [editing, setEditing] = useState<Task | null>(null);
   const [query, setQuery] = useState('');
   const [filter, setFilter] = usePersistentState<Filter>('orca.tasks.filter', 'in_progress', FILTER_VALUES);
+  // Date-range window, persisted as one serialized slot. Defaults to the last 7 days; older work is
+  // reached by widening the range (or paging through). Applied caller-side only — the shared /tasks
+  // fetch stays unfiltered so Kanban/Timeline/Sidebar keep their full cache.
+  const [rangeRaw, setRangeRaw] = usePersistentState('orca.tasks.range', serializeRange(DEFAULT_RANGE), isStoredRange);
+  const range = useMemo(() => parseRange(rangeRaw) ?? DEFAULT_RANGE, [rangeRaw]);
   // Selected project pill — 'all' shows every accessible project; a number narrows the list
   // (server-side via /tasks?project_id=N). Persisted + stale-id-clamped by the shared hook.
   const { selectedProject, setProject } = useProjectFilter('orca.tasks.project');
@@ -121,6 +128,7 @@ export function TasksView() {
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
+    const now = Date.now();
     const matchText = (t: Task) => `${t.title} ${t.id} ${t.description ?? ''}`.toLowerCase().includes(q);
     const isEpicActive = (epic: Task): boolean => {
       const kids = childMap.get(epic.id) ?? [];
@@ -144,6 +152,7 @@ export function TasksView() {
         if (!q) return true;
         return matchText(t) || kids.some(matchText);
       })
+      .filter((t) => { const ms = taskDayMs(t); return ms === 0 || inRange(ms, range, now); }) // date window (default 7d); dateless tasks never hide
       .sort((a, b) => {
         if (filter === 'autopilot') {
           const aActive = isEpicActive(a);
@@ -152,10 +161,10 @@ export function TasksView() {
         }
         return taskDayMs(b) - taskDayMs(a); // newest day first
       });
-  }, [tasks.data, query, filter, childMap, phaseSet, sessions.data, signals, missions.data]);
+  }, [tasks.data, query, filter, range, childMap, phaseSet, sessions.data, signals, missions.data]);
 
   // Reset to the first page whenever the result set changes shape.
-  useEffect(() => { setPage(0); }, [query, filter, selectedProject]);
+  useEffect(() => { setPage(0); }, [query, filter, range, selectedProject]);
   const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const clampedPage = Math.min(page, pageCount - 1);
   const pageItems = filtered.slice(clampedPage * PAGE_SIZE, clampedPage * PAGE_SIZE + PAGE_SIZE);
@@ -190,6 +199,7 @@ export function TasksView() {
           <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={t.tasks.searchPlaceholder} className="pl-9" />
         </div>
         <Segmented value={filter} onChange={(v) => setFilter(v as Filter)} options={FILTERS} />
+        <DateRangeFilter value={range} onChange={(r) => setRangeRaw(serializeRange(r))} />
         <Button variant="accent" icon={Plus} onClick={() => setCreating(true)}>{t.tasks.newTask}</Button>
       </ModuleHeader>
 

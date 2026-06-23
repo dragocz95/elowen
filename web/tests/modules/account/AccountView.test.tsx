@@ -5,6 +5,7 @@ import { http, HttpResponse } from 'msw';
 import { onUnhandledRequest } from '../../msw';
 import { AccountView } from '../../../modules/account/AccountView';
 import { ToastProvider } from '../../../components/ui/Toast';
+import { UiScaleProvider } from '../../../lib/useUiScale';
 import { createWrapper } from '../../test-utils';
 
 const server = setupServer();
@@ -21,7 +22,7 @@ describe('AccountView', () => {
       http.patch('*/api/auth/me', async ({ request }) => { patched = await request.json() as Record<string, unknown>; return HttpResponse.json(meUser({ default_exec: 'sonnet' })); }),
     );
     const { wrapper: Wrapper } = createWrapper();
-    render(<Wrapper><ToastProvider><AccountView /></ToastProvider></Wrapper>);
+    render(<Wrapper><UiScaleProvider><ToastProvider><AccountView /></ToastProvider></UiScaleProvider></Wrapper>);
 
     expect(await screen.findByText('@bob')).toBeTruthy();
     // Restricted to 'sonnet' (admin allow-list) → only that model is pickable (a radio chip).

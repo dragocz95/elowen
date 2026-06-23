@@ -11,6 +11,7 @@ export const cs = {
     missions: 'Mise',
     settings: 'Nastavení',
     projects: 'Projekty',
+    editor: 'Editor',
     users: 'Uživatelé',
   },
   page: {
@@ -22,6 +23,7 @@ export const cs = {
     missions: 'Mise',
     settings: 'Nastavení',
     projects: 'Projekty',
+    editor: 'Editor',
     users: 'Uživatelé',
   },
   common: {
@@ -196,6 +198,14 @@ export const cs = {
     pageRange: '{from}–{to} z {total}',
     prevPage: 'Předchozí',
     nextPage: 'Další',
+    rangeLabel: 'Období',
+    rangeLast7: 'Posledních 7 dní',
+    rangeLast30: 'Posledních 30 dní',
+    rangeLast90: 'Posledních 90 dní',
+    rangeAll: 'Vše',
+    rangeCustom: 'Vlastní',
+    rangeFrom: 'Od',
+    rangeTo: 'Do',
     copyId: 'Kopírovat ID',
     idCopied: 'ID {id} zkopírováno',
     idCopyFailed: 'Kopírování selhalo',
@@ -418,6 +428,8 @@ export const cs = {
     epicCol: 'Epic',
     progressCol: 'Pokrok',
     stateCol: 'Stav',
+    models: 'Modely',
+    noModelUsage: 'Zatím žádná spotřeba tokenů.',
   },
   settings: {
     models: 'Modely',
@@ -636,6 +648,10 @@ export const cs = {
     modelsUpdated: 'Povolené modely uloženy',
     updateError: 'Nepodařilo se uložit změnu',
   },
+  editor: {
+    noProjects: 'Žádný projekt k úpravám',
+    noProjectsDescription: 'Nejdřív vytvořte projekt, pak ho otevřete zde v editoru.',
+  },
   account: {
     title: 'Můj účet',
     name: 'Jméno',
@@ -659,6 +675,9 @@ export const cs = {
     passwordMismatch: 'Nová hesla se neshodují',
     passwordTooShort: 'Nové heslo musí mít alespoň 8 znaků',
     passwordError: 'Změna hesla selhala',
+    uiScale: 'Měřítko rozhraní',
+    uiScaleHint: 'Zvětší nebo zmenší celé rozhraní na tomto zařízení (výchozí je 100 %).',
+    uiScaleReset: 'Výchozí',
   },
   changes: {
     dirtyOne: '1 změněno',

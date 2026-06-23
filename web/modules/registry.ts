@@ -7,9 +7,10 @@ import { meta as escalations } from './escalations/meta';
 import { meta as sessions } from './sessions/meta';
 import { meta as settings } from './settings/meta';
 import { meta as projects } from './projects/meta';
+import { meta as editor } from './editor/meta';
 import { meta as users } from './users/meta';
 
-export const MODULES: ModuleMeta[] = [dashboard, tasks, kanban, timeline, escalations, sessions, settings, projects, users];
+export const MODULES: ModuleMeta[] = [dashboard, tasks, kanban, timeline, escalations, sessions, settings, projects, editor, users];
 
 const GROUP_ORDER: ModuleGroup[] = ['Operate', 'Config'];
 

@@ -32,7 +32,7 @@ type Dialog =
 /** Full project code editor: file tree with a right-click file-manager (new/rename/duplicate/delete),
  *  open-file tabs, Monaco editor (Cmd+S save), side-by-side working diff, Markdown/image previews,
  *  plus read-only commit-diff views when opened from the git log. */
-export function ProjectEditor({ projectId, onClose, initialCommit, initialWorking }: { projectId: number; onClose: () => void; initialCommit?: string | null; initialWorking?: boolean }) {
+export function ProjectEditor({ projectId, onClose, initialCommit, initialWorking }: { projectId: number; onClose?: () => void; initialCommit?: string | null; initialWorking?: boolean }) {
   const { t } = useTranslation();
   const { toast } = useToast();
   const files = useProjectFiles(projectId);
@@ -240,7 +240,7 @@ export function ProjectEditor({ projectId, onClose, initialCommit, initialWorkin
               <Button variant="accent" icon={Save} disabled={!dirty || write.isPending} onClick={save}>{t.common.save}</Button>
             </>
           ) : null}
-          <button type="button" aria-label={t.common.close} onClick={onClose} className="flex h-7 w-7 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-elevated hover:text-text"><X size={15} /></button>
+          {onClose ? <button type="button" aria-label={t.common.close} onClick={onClose} className="flex h-7 w-7 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-elevated hover:text-text"><X size={15} /></button> : null}
         </div>
       </div>
 

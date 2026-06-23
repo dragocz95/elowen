@@ -1,4 +1,4 @@
-import type { Task, Mission, CreateTaskInput, UpdateTaskInput, PlanInput, PlanSubmitResult, PlanJob, InsertPhasesInput, InsertPhasesResult, EngageInput, OrcaConfig, ConfigPatch, MissionDetail, User, UserPatch, ProfilePatch, AuthResult, ActivityEvent, Project, ProjectGit, CommitLogEntry, HermesStatus, HermesInstallInput, HermesInstallResult, CliDetectionResult, TokenUsage, FileNode, SessionInfo } from './types';
+import type { Task, Mission, CreateTaskInput, UpdateTaskInput, PlanInput, PlanSubmitResult, PlanJob, InsertPhasesInput, InsertPhasesResult, EngageInput, OrcaConfig, ConfigPatch, MissionDetail, User, UserPatch, ProfilePatch, AuthResult, ActivityEvent, Project, ProjectGit, CommitLogEntry, HermesStatus, HermesInstallInput, HermesInstallResult, CliDetectionResult, TokenUsage, ModelUsage, FileNode, SessionInfo } from './types';
 import { clearToken } from './token';
 
 // Same-origin BFF base: the browser talks only to this web origin's /api proxy, which injects the
@@ -66,6 +66,7 @@ export const orcaClient = {
   cleanupAll: () => req<{ ok: boolean; tasks: number; missions: number; events: number }>('/admin/cleanup', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }),
   taskDeps: (id: string) => req<string[]>(`/tasks/${encodeURIComponent(id)}/deps`),
   taskUsage: (id: string) => req<TokenUsage | null>(`/tasks/${encodeURIComponent(id)}/usage`),
+  usageByModel: (projectId?: number) => req<ModelUsage[]>(projectId != null ? `/usage/by-model?project_id=${projectId}` : '/usage/by-model'),
   allDeps: () => req<{ task_id: string; depends_on_id: string }[]>('/tasks/deps'),
   planTask: (input: PlanInput) => req<PlanSubmitResult>('/tasks/plan', json(input)),
   planPreview: (input: { goal: string; prompt?: string }) => req<{ jobId: string }>('/tasks/plan', json({ ...input, dryRun: true })),

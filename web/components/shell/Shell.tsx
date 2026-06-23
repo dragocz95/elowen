@@ -11,6 +11,7 @@ import { CommandPalette } from './CommandPalette';
 import { AdvisorPanel } from '../../modules/advisor/AdvisorPanel';
 import { AdvisorLauncher } from '../../modules/advisor/AdvisorLauncher';
 import { useDockState } from '../../lib/useDockState';
+import { UiScaleProvider } from '../../lib/useUiScale';
 
 function ShellLayout({ children }: { children: ReactNode }) {
   const { t } = useTranslation();
@@ -59,6 +60,7 @@ function ShellBody({ children }: { children: ReactNode }) {
 export function Shell({ children }: { children: ReactNode }) {
   return (
     <Providers>
+      <UiScaleProvider>
       <LanguageProvider>
       <ToastProvider>
         <LoginGate>
@@ -66,6 +68,7 @@ export function Shell({ children }: { children: ReactNode }) {
         </LoginGate>
       </ToastProvider>
       </LanguageProvider>
+      </UiScaleProvider>
     </Providers>
   );
 }

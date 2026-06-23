@@ -1,7 +1,7 @@
 'use client';
 import Link from 'next/link';
-import { ListChecks, Rocket, ArrowRight, Plus, Radio, CircleCheckBig, Pause, Play, Power, Zap, Circle, LoaderCircle, Ban, Sparkles, type LucideIcon } from 'lucide-react';
-import { useTasks, useSessions, useMissions, useSessionSignals } from '../../lib/queries';
+import { ListChecks, Rocket, ArrowRight, Plus, Radio, CircleCheckBig, Pause, Play, Power, Zap, Circle, LoaderCircle, Ban, Sparkles, Boxes, type LucideIcon } from 'lucide-react';
+import { useTasks, useSessions, useMissions, useSessionSignals, useConfig, useModelUsage } from '../../lib/queries';
 import { usePauseMission, useResumeMission, useDisengage } from '../../lib/mutations';
 import { deriveDashboardMetrics } from './metrics';
 import { statusTone } from './statusTone';
@@ -18,7 +18,9 @@ import { useToast } from '../../components/ui/Toast';
 import { useTranslation } from '../../lib/i18n';
 import { useSessionPane } from '../../lib/useSessionPane';
 import { tailSnippet, taskSessionName, taskForSession } from '../../lib/agentUtils';
-import { parseTs } from '../../lib/format';
+import { parseTs, formatTokens } from '../../lib/format';
+import { allModels } from '../../lib/execPresets';
+import { UsageBadge } from '../../components/ui/UsageBadge';
 import { useSessionStall } from '../../lib/useSessionStall';
 import { sessionActivity } from '../../lib/sessionActivity';
 import { epicCapacity } from '../../lib/taskTree';
@@ -65,6 +67,8 @@ export function DashboardView() {
   const sessions = useSessions();
   const missions = useMissions();
   const signals = useSessionSignals();
+  const config = useConfig();
+  const modelUsage = useModelUsage();
   const pause = usePauseMission();
   const resume = useResumeMission();
   const disengage = useDisengage();
@@ -81,6 +85,10 @@ export function DashboardView() {
     .filter((x) => x.status === 'closed' && x.type !== 'epic')
     .sort((a, b) => (parseTs(b.closed_at) ?? 0) - (parseTs(a.closed_at) ?? 0))
     .slice(0, 6);
+  // Models that actually burned tokens, biggest spender first, labelled from the config model list.
+  const models = allModels(config.data?.customModels ?? [], config.data?.hiddenPresets ?? []);
+  const labelOf = (exec: string): string => models.find((m) => m.exec === exec)?.label ?? exec;
+  const usedModels = (modelUsage.data ?? []).filter((m) => m.usage.total > 0).sort((a, b) => b.usage.total - a.usage.total);
 
   return (
     <div className="flex w-full flex-col gap-5">
@@ -110,8 +118,8 @@ export function DashboardView() {
         </div>
       </section>
 
-      {/* ── Workspace: recent tasks · missions ───────────────────── */}
-      <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
+      {/* ── Workspace: recent tasks · missions · models ──────────── */}
+      <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
         {/* recent tasks */}
         <section className="flex flex-col rounded-lg border border-border bg-surface" style={{ boxShadow: 'var(--shadow-card)' }}>
           <div className="flex items-center justify-between border-b border-border px-4 py-3">
@@ -165,6 +173,29 @@ export function DashboardView() {
                     </Link>
                   );
                 })}
+              </div>
+            )}
+        </section>
+
+        {/* models — cumulative token spend per model */}
+        <section className="flex flex-col rounded-lg border border-border bg-surface" style={{ boxShadow: 'var(--shadow-card)' }}>
+          <div className="flex items-center justify-between border-b border-border px-4 py-3">
+            <div className="flex items-center gap-2"><Boxes size={15} className="text-text-muted" aria-hidden /><h2 className="text-sm font-medium text-text">{t.dashboard.models}</h2></div>
+          </div>
+          {modelUsage.isLoading ? <div className="p-4"><LoadingState /></div>
+            : usedModels.length === 0 ? <EmptyState title={t.dashboard.noModelUsage} icon={Boxes} />
+            : (
+              <div className="flex flex-col divide-y divide-border">
+                {usedModels.map((m) => (
+                  <div key={m.exec} className="flex flex-col gap-1.5 px-4 py-2.5">
+                    <div className="flex items-center gap-2.5">
+                      <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md border border-border bg-elevated"><ModelIcon name={m.exec} size={13} /></span>
+                      <span className="min-w-0 flex-1 truncate text-sm text-text">{labelOf(m.exec)}</span>
+                      <span className="shrink-0 font-mono text-xs tabular-nums text-text-muted">{formatTokens(m.usage.total)}</span>
+                    </div>
+                    <UsageBadge usage={m.usage} />
+                  </div>
+                ))}
               </div>
             )}
         </section>

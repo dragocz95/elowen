@@ -67,6 +67,16 @@ export const useTaskUsage = (taskId: string, live = false) =>
     staleTime: live ? 0 : 5 * 60 * 1000,
   });
 
+/** Cumulative token usage per model across the workspace (or one project). Polled at a relaxed
+ *  cadence — these are historical totals, not live numbers. */
+export const useModelUsage = (projectId?: number) =>
+  useQuery({
+    queryKey: projectId == null ? ['usage', 'by-model'] : ['usage', 'by-model', projectId],
+    queryFn: () => orcaClient.usageByModel(projectId),
+    refetchInterval: 30000,
+    staleTime: 15000,
+  });
+
 export const useMissions = () =>
   useQuery({ queryKey: QUERY_KEYS.missions, queryFn: orcaClient.missions });
 

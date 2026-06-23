@@ -6,6 +6,7 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
 import { hermesStatus, installOrcaMcp } from '../integrations/hermesInstall.js';
 import { detectClis } from '../integrations/cliDetection.js';
 import { readTaskUsage } from '../integrations/usage/index.js';
+import { aggregateUsageByExec } from '../integrations/usage/byModel.js';
 import { listProjectFiles, readProjectFile, writeProjectFile, readProjectBytes, createProjectFile, createProjectDir, deleteProjectEntry, renameProjectEntry, copyProjectEntry, projectFileAtHead, projectFileDiff, projectCommitDiff, projectCommitFiles, projectCommitFileDiff, projectCommitLog, projectChangedFiles, projectWorkingDiff, projectReviewDiff, isProjectImage } from '../integrations/projectFiles.js';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
@@ -155,7 +156,7 @@ export function createServer(d: ServerDeps): Hono<{ Variables: { user: User; tok
       // Every route family that exposes the daemon's project data — including the activity log and
       // the live SSE event stream, which carry task/mission ids + statuses. Boundary-matched so
       // '/tasksfoo' can't sneak past '/tasks'.
-      const GATED = ['/tasks', '/missions', '/sessions', '/activity', '/events'];
+      const GATED = ['/tasks', '/missions', '/sessions', '/activity', '/events', '/usage'];
       app.use('*', async (c, next) => {
         const p = c.req.path;
         if (!GATED.some((g) => p === g || p.startsWith(g + '/'))) return next();
@@ -808,6 +809,23 @@ export function createServer(d: ServerDeps): Hono<{ Variables: { user: User; tok
     // Pass the task's own project siblings so usage can disambiguate concurrent agents by start-order
     // rank, and read sessions from that project's path (not the daemon home, under multi-project).
     return c.json(readTaskUsage(task, d.tasks.list({ project_id: task.project_id }), pathFor(task.project_id), d.fallback));
+  });
+  // Total token usage aggregated per model (exec spec), for the dashboard's model column. Scoped to
+  // the caller's accessible projects; optional `?project_id=N` narrows it further. Sibling lists are
+  // computed once per project so readTaskUsage can rank concurrent agents without O(n²) DB hits.
+  app.get('/usage/by-model', c => {
+    const allowed = accessibleProjects(c);
+    const all = d.tasks.list();
+    const scoped = allowed ? all.filter((t) => allowed.has(t.project_id)) : all;
+    const pidRaw = c.req.query('project_id');
+    let tasks = scoped;
+    if (pidRaw !== undefined && pidRaw !== '') {
+      const pid = Number(pidRaw);
+      tasks = Number.isFinite(pid) ? scoped.filter((t) => t.project_id === pid) : scoped;
+    }
+    const siblings = new Map<number, ReturnType<typeof d.tasks.list>>();
+    for (const pid of new Set(tasks.map((t) => t.project_id))) siblings.set(pid, d.tasks.list({ project_id: pid }));
+    return c.json(aggregateUsageByExec(tasks, (t) => readTaskUsage(t, siblings.get(t.project_id) ?? [], pathFor(t.project_id), d.fallback)));
   });
   app.patch('/tasks/:id', async c => {
     const b = await c.req.json();

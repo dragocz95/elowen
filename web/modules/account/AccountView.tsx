@@ -1,6 +1,6 @@
 'use client';
 import { useState, useEffect, useRef } from 'react';
-import { UserCog, Mail, Cpu, Upload, ShieldCheck, Save, Check, User as UserIcon, KeyRound } from 'lucide-react';
+import { UserCog, Mail, Cpu, Upload, ShieldCheck, Save, Check, User as UserIcon, KeyRound, ZoomIn } from 'lucide-react';
 import { useMe, useConfig } from '../../lib/queries';
 import { useUpdateMe, useUploadAvatar, useChangePassword } from '../../lib/mutations';
 import { allModels } from '../../lib/execPresets';
@@ -10,10 +10,12 @@ import { Badge } from '../../components/ui/Badge';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
 import { SettingCard } from '../../components/ui/SettingCard';
+import { Slider } from '../../components/ui/Slider';
 import { ModuleHeader } from '../../components/ui/ModuleHeader';
 import { LoadingState } from '../../components/ui/states';
 import { useToast } from '../../components/ui/Toast';
 import { useTranslation } from '../../lib/i18n';
+import { useUiScale, MIN_SCALE, MAX_SCALE, DEFAULT_SCALE } from '../../lib/useUiScale';
 
 export function AccountView() {
   const me = useMe();
@@ -23,7 +25,9 @@ export function AccountView() {
   const changePassword = useChangePassword();
   const { toast } = useToast();
   const { t } = useTranslation();
+  const { scale, setScale } = useUiScale();
   const fileRef = useRef<HTMLInputElement>(null);
+  const scalePct = Math.round(scale * 100);
 
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
@@ -184,6 +188,15 @@ export function AccountView() {
                 </Button>
               </div>
             </form>
+          </SettingCard>
+
+          {/* Whole-app zoom — a per-device display preference, applied live via the UiScaleProvider. */}
+          <SettingCard title={t.account.uiScale} icon={ZoomIn} description={t.account.uiScaleHint}>
+            <div className="flex items-center gap-4">
+              <Slider value={scalePct} min={MIN_SCALE * 100} max={MAX_SCALE * 100} step={5} onChange={(v) => setScale(v / 100)} aria-label={t.account.uiScale} />
+              <span className="w-12 shrink-0 text-right font-mono text-sm tabular-nums text-text">{scalePct}%</span>
+              <Button variant="ghost" onClick={() => setScale(DEFAULT_SCALE)} disabled={scalePct === DEFAULT_SCALE * 100}>{t.account.uiScaleReset}</Button>
+            </div>
           </SettingCard>
         </div>
       </div>

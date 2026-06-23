@@ -52,13 +52,21 @@ trust it more, you turn the autonomy up; when you trust it less, you turn it dow
   tables, force-pushes, or touching `.env` always escalate, whatever the level.
 - **Live web UI with one-click intervention.** Tasks, a kanban board with a calendar,
   missions with phase progress, a timeline, and real-time `tmux` session previews you can
-  jump into and take over. Full EN/CS internationalization built in.
+  jump into and take over. Each preview is a real PTY streamed over a WebSocket (xterm),
+  so you type straight into the agent — native cursor, smooth scrolling, full key support —
+  not a read-only mirror. Full EN/CS internationalization built in, and the whole dashboard
+  is responsive down to a phone.
 - **Self-healing.** A stuck-session detector revives agents that die without closing out
   (and blocks the task after repeated failures instead of crash-looping). A janitor sweeps
   up finished sessions. Live token and cost usage is shown per run.
 - **Multi-user RBAC.** Admin and member roles, per-project assignments, per-user model
   allow-lists, profiles and avatars, and a first-run onboarding that needs no login until
   the first admin is created.
+- **Per-user Assistant.** Each user gets a persistent assistant agent (`orca-advisor-<userId>`)
+  that drives Orca on their behalf through a built-in MCP server — list tasks, plan goals,
+  watch sessions, or call any REST endpoint via the `orca api` passthrough. Auto-starts on
+  login, remembers its model, and runs in a docked IDE-style side panel with a real-PTY
+  terminal. Pop any session terminal out into its own chromeless window for focus.
 - **Self-hosted & lightweight.** A single SQLite-backed daemon (Hono + SSE) plus a Next.js
   front end. No external services required beyond your own LLM provider.
 
@@ -72,12 +80,21 @@ trust it more, you turn the autonomy up; when you trust it less, you turn it dow
 
 </div>
 
+<div align="center">
+
+**Assistant panel** — a docked, dock-left/right, resizable IDE-style side column. Watch your always-on AI assistant and a running agent next to the main view, with a model picker that shows per-provider brand icons.
+
+![Assistant panel](docs/screenshots/assistant-panel.png)
+
+</div>
+
 | | |
 |---|---|
 | **Tasks** — list + detail with live agent output and token usage. ![Tasks](docs/screenshots/tasks.png) | **Kanban** — open / in-progress / blocked / closed, with mission progress and a calendar. ![Kanban](docs/screenshots/kanban.png) |
 | **Missions** — phase graph and task flow for an autopilot run (folded into Tasks). ![Missions](docs/screenshots/missions.png) | **Timeline** — a live activity feed across tasks, missions, and signals. ![Timeline](docs/screenshots/timeline.png) |
-| **Sessions** — real-time `tmux` agent previews with one-click intervention. ![Sessions](docs/screenshots/sessions.png) | **Terminal** — the full agent TUI, including human-in-the-loop approvals. ![Terminal](docs/screenshots/terminal.png) |
-| **Projects** — a built-in Monaco editor with the project file tree. ![Projects editor](docs/screenshots/projects-editor.png) | **Settings** — model presets & descriptions, providers, autopilot, and defaults. ![Settings](docs/screenshots/settings.png) |
+| **Sessions** — real-time `tmux` agent previews with one-click intervention. ![Sessions](docs/screenshots/sessions.png) | **Terminal** — an interactive real-PTY agent terminal you type straight into, including human-in-the-loop approvals. ![Terminal](docs/screenshots/terminal.png) |
+| **Pop-out terminal** — pull any session into its own standalone, chromeless window for focus. ![Pop-out terminal](docs/screenshots/terminal-popout.png) | **Settings** — per-model descriptions with brand icons, providers, autopilot, and defaults. ![Settings](docs/screenshots/settings.png) |
+| **Projects** — a built-in Monaco editor with the project file tree. ![Projects editor](docs/screenshots/projects-editor.png) | |
 
 <div align="center">
 
@@ -103,6 +120,7 @@ orca up         # start the daemon (:4400) + web UI (:4500) in the background
 orca status     # show what's running
 orca down       # stop everything
 orca update     # update to the latest release from npm
+orca install    # guided provisioning wizard (domain/TLS, ports, first admin)
 ```
 
 Requires **Node ≥ 22** and **tmux**. On first run, `orca` walks you through a quick
@@ -172,11 +190,14 @@ is a thin client over the REST API + SSE event stream.
 | `src/store` | SQLite stores (tasks, missions, agents, config, users, projects, events) via `better-sqlite3` |
 | `src/overseer` | mission engine, planner, scheduler, decision engine, stuck-detector, janitor |
 | `src/spawn` · `src/tmux` | agent command building + tmux driver |
+| `src/advisor` | per-user assistant lifecycle (start/stop/autostart) + MCP config injection |
+| `src/mcp` | built-in MCP server exposing Orca's toolset to the assistant agent |
+| `src/terminal` | real-PTY WebSocket streaming (`node-pty` + `tmux attach`) |
 | `src/deriver` | derives signals from agent output (`working` / `needs_input` / `complete`) |
-| `src/integrations` | per-executor token/cost usage extraction |
+| `src/integrations` | per-executor token/cost usage extraction, Hermes MCP registration, CLI detection |
 | `src/api` | Hono REST server + SSE event bus |
-| `src/cli` · `src/daemon` | the `orca` CLI and the daemon entrypoint |
-| `web/modules` | feature modules (tasks, kanban, sessions, timeline, projects, settings, …) |
+| `src/cli` · `src/daemon` | the `orca` CLI (incl. `orca api` passthrough) and the daemon entrypoint |
+| `web/modules` | feature modules (tasks, kanban, sessions, timeline, projects, advisor, settings, …) |
 
 See [`docs/`](./docs) for the [API](./docs/API.md), [architecture](./docs/ARCHITECTURE.md),
 [concepts](./docs/CONCEPTS.md), [CLI](./docs/CLI.md), and [development](./docs/DEVELOPMENT.md) guides.
@@ -186,6 +207,8 @@ See [`docs/`](./docs) for the [API](./docs/API.md), [architecture](./docs/ARCHIT
 ```bash
 npm test            # daemon tests (vitest)
 npm run build       # typecheck + build
+npm run lint        # ESLint (unused imports, hook deps)
+npm run depcruise   # dependency-cruiser architecture checks (no cycles, layer boundaries)
 cd web && npm test  # web tests
 ```
 
