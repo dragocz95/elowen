@@ -99,6 +99,15 @@ describe('UserStore', () => {
     expect(db.prepare('SELECT COUNT(*) c FROM user_projects WHERE user_id = ?').get(u.id)).toEqual({ c: 0 });
   });
 
+  it('ensureAdvisorToken reuses a valid advisor token and resolves as full scope', () => {
+    const u = users.create('amy', 'pw');
+    const t1 = users.ensureAdvisorToken(u.id);
+    const t2 = users.ensureAdvisorToken(u.id);
+    expect(t1).toBe(t2);                                       // reused, not re-minted
+    expect(users.principalForToken(t1)?.scope).toBe('full');  // advisor → full access at the guard
+    expect(users.principalForToken(t1)?.user.id).toBe(u.id);
+  });
+
   it('advisor config: defaults, set exec, toggle autostart', () => {
     const u = users.create('amy', 'pw');
     expect(u.advisor_exec).toBe('');

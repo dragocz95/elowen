@@ -119,7 +119,7 @@ export class UserStore {
       this.db.prepare('DELETE FROM users WHERE id = ?').run(id);
     })();
   }
-  issueToken(userId: number, scope: TokenScope = 'full'): string {
+  issueToken(userId: number, scope: StoredScope = 'full'): string {
     const token = randomBytes(32).toString('hex');
     this.db.prepare('INSERT INTO auth_tokens (token, user_id, scope) VALUES (?, ?, ?)').run(token, userId, scope);
     return token;
@@ -157,6 +157,20 @@ export class UserStore {
       if (existing?.token) return existing.token;
       this.db.prepare("DELETE FROM auth_tokens WHERE user_id = ? AND scope = 'agent'").run(userId);
       return this.issueToken(userId, 'agent');
+    })();
+  }
+  /** The user's advisor token, reused across restarts. Stored under DB scope 'advisor' so it is
+   *  isolated from login ('full') and worker ('agent') tokens — stopping/rotating the advisor never
+   *  disturbs the user's web session. principalForToken maps any non-'agent' scope to full access, so
+   *  the advisor acts with the user's own rights (mirrors ensureAgentToken's reuse-within-TTL shape). */
+  ensureAdvisorToken(userId: number, days?: number): string {
+    return this.db.transaction(() => {
+      const existing = this.db
+        .prepare(`SELECT token FROM auth_tokens WHERE user_id = ? AND scope = 'advisor' AND created_at > datetime('now', '-${ttlDays(days)} days') ORDER BY created_at DESC LIMIT 1`)
+        .get(userId) as { token?: string } | undefined;
+      if (existing?.token) return existing.token;
+      this.db.prepare("DELETE FROM auth_tokens WHERE user_id = ? AND scope = 'advisor'").run(userId);
+      return this.issueToken(userId, 'advisor');
     })();
   }
   revokeToken(token: string): void {
