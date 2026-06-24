@@ -19,9 +19,7 @@ import type { Tone } from '../../components/ui/tone';
 import { useTranslation } from '../../lib/i18n';
 import { usePersistentState } from '../../lib/usePersistentState';
 import { DateRangeFilter } from './DateRangeFilter';
-import { DEFAULT_RANGE, parseRange, serializeRange, isStoredRange, inRange } from './dateRange';
-
-const WINDOW_MAX_HOURS = 168; // cap the axis window at one week
+import { DEFAULT_RANGE, parseRange, serializeRange, isStoredRange, inRange, rangeWindowCapHours } from './dateRange';
 
 const TONE_DOT: Record<Tone, string> = {
   accent: 'bg-accent', danger: 'bg-danger', success: 'bg-success',
@@ -289,14 +287,14 @@ export function TimelineView() {
     [rawEvents, range],
   );
 
-  // Window = the available data span, capped at one week. Falls back to 12h when empty,
-  // and zooms in when all events are recent (so a few-minute run isn't lost on a week axis).
+  // Window = the available data span, capped by the active range. Falls back to 12h when empty,
+  // and zooms in when all events are recent (so a few-minute run isn't lost on a wide axis).
   const windowHours = useMemo(() => {
     if (filteredEvents.length === 0) return 12;
     const earliest = Math.min(...filteredEvents.map((e) => e.timestamp));
     const spanH = (Date.now() - earliest) / 3_600_000;
-    return Math.min(WINDOW_MAX_HOURS, Math.max(1, Math.ceil(spanH)));
-  }, [filteredEvents]);
+    return Math.min(rangeWindowCapHours(range, Date.now()), Math.max(1, Math.ceil(spanH)));
+  }, [filteredEvents, range]);
   const windowLabel = windowHours >= 144 ? t.timeline.activityWeek
     : windowHours >= 36 ? t.timeline.activityDays.replace('{n}', String(Math.round(windowHours / 24)))
     : t.timeline.activityHours.replace('{n}', String(Math.round(windowHours)));
