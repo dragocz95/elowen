@@ -246,6 +246,7 @@ export const cs = {
     mergePrConfirmTitle: 'Sloučit pull request do hlavní větve?',
     mergePrConfirmDesc: 'Provede squash merge do hlavní větve a smaže větev mise. Sloučí se jen tehdy, když je pull request bez konfliktů a všechny kontroly CI prošly.',
     mergePrDone: 'Pull request sloučen do hlavní větve',
+    prFixBadge: 'Oprava z PR review · {n}. kolo',
     continueMission: 'Pokračovat v misi',
     continued: 'Mise znovu spuštěna',
     stateActive: 'Aktivní',

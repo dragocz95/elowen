@@ -53,7 +53,7 @@ export interface ConfigPatch {
 export interface MissionTask { id: string; title: string; status: TaskStatus; type: string; parent_id: string | null; labels?: string[]; outcome?: TaskOutcome | null }
 interface MissionProgress { total: number; open: number; inProgress: number; blocked: number; closed: number; cancelled: number }
 export interface MissionDeps { taskId: string; dependsOnId: string }
-export interface MissionPrInfo { branch: string; prNumber: number | null; prUrl: string | null; prState: string | null }
+export interface MissionPrInfo { branch: string; prNumber: number | null; prUrl: string | null; prState: string | null; fixRounds: number; lastFeedback: string | null }
 export interface MissionDetail {
   mission: Mission;
   epic: MissionTask | null;

@@ -59,6 +59,9 @@ export function openDb(path: string): Db {
   // PR feedback loop budget: how many auto fix rounds a mission's PR has already consumed. Bounds the
   // Codex↔Orca review ping-pong before escalating to a human. Additive — old DBs default to 0.
   addColumn(db, 'mission_pr', 'fix_rounds', 'INTEGER NOT NULL DEFAULT 0');
+  // The aggregated PR-review feedback the planner is currently fixing — surfaced in the UI so a fix
+  // round is explained ("these phases address PR review X"). Cleared on merge/close. Old DBs default null.
+  addColumn(db, 'mission_pr', 'last_feedback', 'TEXT');
   // Seed the bootstrap admin on existing DBs: the lowest-id user, if none is flagged yet.
   db.exec("UPDATE users SET is_admin = 1 WHERE id = (SELECT MIN(id) FROM users) AND NOT EXISTS (SELECT 1 FROM users WHERE is_admin = 1)");
   return db;

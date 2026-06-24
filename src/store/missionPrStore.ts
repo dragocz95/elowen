@@ -12,9 +12,10 @@ export interface MissionPr {
   pr_state: string | null;     // open | merged | closed | null (not opened yet)
   last_review_ts: string | null;
   fix_rounds: number;          // PR feedback fix rounds already consumed (loop budget)
+  last_feedback: string | null; // aggregated PR-review feedback the current fix round addresses (for the UI)
 }
 
-const COLS = 'mission_id,branch,worktree,pr_number,pr_url,pr_state,last_review_ts,fix_rounds';
+const COLS = 'mission_id,branch,worktree,pr_number,pr_url,pr_state,last_review_ts,fix_rounds,last_feedback';
 
 export class MissionPrStore {
   constructor(private db: Db) {}
@@ -61,9 +62,16 @@ export class MissionPrStore {
     return this.get(missionId)?.fix_rounds ?? 0;
   }
 
-  /** Zero the fix-round budget — on a merged/closed PR, or when a human manually re-engages the mission. */
+  /** Zero the fix-round budget and clear the fix context — on a merged/closed PR, or when a human
+   *  manually re-engages the mission. */
   resetFixRounds(missionId: string): void {
-    this.db.prepare('UPDATE mission_pr SET fix_rounds = 0 WHERE mission_id=?').run(missionId);
+    this.db.prepare('UPDATE mission_pr SET fix_rounds = 0, last_feedback = NULL WHERE mission_id=?').run(missionId);
+  }
+
+  /** Record the aggregated PR-review feedback the current fix round is addressing (for the UI). */
+  setLastFeedback(missionId: string, feedback: string): MissionPr | null {
+    this.db.prepare('UPDATE mission_pr SET last_feedback=? WHERE mission_id=?').run(feedback, missionId);
+    return this.get(missionId);
   }
 
   remove(missionId: string): void {

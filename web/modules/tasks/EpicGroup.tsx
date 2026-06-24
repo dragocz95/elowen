@@ -1,7 +1,7 @@
 'use client';
 import { useState } from 'react';
 import { useQueries } from '@tanstack/react-query';
-import { ChevronRight, Trash2, Play, Pause, Power, Rocket, Plus, Coins, GitPullRequest, GitMerge } from 'lucide-react';
+import { ChevronRight, Trash2, Play, Pause, Power, Rocket, Plus, Coins, GitPullRequest, GitMerge, Wrench } from 'lucide-react';
 import type { Task } from '../../lib/types';
 import { Badge } from '../../components/ui/Badge';
 import { ProgressRibbon } from '../../components/ui/ProgressRibbon';
@@ -141,6 +141,15 @@ export function EpicGroup({ epic, phases, effectiveStatus, expanded, onToggle, o
             </a>
           ) : pr && pr.prState !== 'verify_failed' ? (
             <ActionPill icon={GitPullRequest} label={t.missions.openPr} tone="accent" onClick={onOpenPr} disabled={openPr.isPending} />
+          ) : null}
+          {pr && pr.fixRounds > 0 && pr.prState === 'open' ? (
+            <span
+              title={pr.lastFeedback ?? undefined}
+              className="inline-flex shrink-0 items-center gap-1 rounded-full border border-warning/40 bg-warning/10 px-2.5 py-1 text-[11px] font-medium text-warning"
+            >
+              <Wrench size={12} className="shrink-0" aria-hidden />
+              <span className="hidden sm:inline">{t.missions.prFixBadge.replace('{n}', String(pr.fixRounds))}</span>
+            </span>
           ) : null}
           {pr?.prState === 'open' ? (
             <ActionPill icon={GitMerge} label={t.missions.mergePr} tone="accent" onClick={() => setConfirmMerge(true)} disabled={mergePr.isPending} />

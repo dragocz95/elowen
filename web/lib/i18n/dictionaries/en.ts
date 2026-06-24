@@ -246,6 +246,7 @@ export const en = {
     mergePrConfirmTitle: 'Merge the pull request into the base branch?',
     mergePrConfirmDesc: 'Squash-merges into the base branch and deletes the mission branch. Merges only when the pull request is conflict-free and all CI checks have passed.',
     mergePrDone: 'Pull request merged into the base branch',
+    prFixBadge: 'PR review fix · round {n}',
     continueMission: 'Continue mission',
     continued: 'Mission re-engaged',
     stateActive: 'Active',

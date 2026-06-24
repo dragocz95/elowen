@@ -100,9 +100,9 @@ export class MissionGit {
 
   /** Branch + PR metadata for the mission, for the web UI (badge, link, "Open PR" affordance). Null
    *  when the mission has no PR-native record (mode off / not engaged in PR mode). */
-  prInfo(missionId: string): { branch: string; prNumber: number | null; prUrl: string | null; prState: string | null } | null {
+  prInfo(missionId: string): { branch: string; prNumber: number | null; prUrl: string | null; prState: string | null; fixRounds: number; lastFeedback: string | null } | null {
     const rec = this.d.prs.get(missionId);
-    return rec ? { branch: rec.branch, prNumber: rec.pr_number, prUrl: rec.pr_url, prState: rec.pr_state } : null;
+    return rec ? { branch: rec.branch, prNumber: rec.pr_number, prUrl: rec.pr_url, prState: rec.pr_state, fixRounds: rec.fix_rounds, lastFeedback: rec.last_feedback } : null;
   }
 
   /** Mission ids with a PR still needing attention (no PR yet, or an open one) — used so a completed
@@ -230,6 +230,8 @@ export class MissionGit {
     ].join('\n');
     const exec = this.missionExec(project.id, missionId.replace(/^m-/, ''));
     this.d.prs.setLastReviewTs(missionId, new Date(newestMs).toISOString());
+    this.d.prs.setLastFeedback(missionId, feedback); // surfaced in the UI so the fix round is explained
+
     log.info(`PR mode: mission ${missionId} got ${freshReviews.length + freshLines.length + freshComments.length} fresh feedback item(s)`);
     return { action: 'feedback', feedback, newestTs: new Date(newestMs).toISOString(), exec };
   }

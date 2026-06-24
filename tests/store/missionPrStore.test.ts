@@ -63,6 +63,15 @@ describe('MissionPrStore', () => {
     expect(store.get('m-1')?.fix_rounds).toBe(0);
   });
 
+  it('records the PR-review feedback and clears it on reset', () => {
+    store.create({ mission_id: 'm-1', branch: 'orca/feat-1', worktree: '/wt/a' });
+    expect(store.get('m-1')?.last_feedback).toBeNull();
+    store.setLastFeedback('m-1', '- codex: fix the cap bug');
+    expect(store.get('m-1')?.last_feedback).toBe('- codex: fix the cap bug');
+    store.resetFixRounds('m-1'); // merge/close clears the fix context too
+    expect(store.get('m-1')?.last_feedback).toBeNull();
+  });
+
   it('removes a record on cleanup', () => {
     store.create({ mission_id: 'm-1', branch: 'orca/feat-1', worktree: '/wt/a' });
     store.remove('m-1');
