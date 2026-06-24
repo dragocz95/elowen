@@ -3,8 +3,10 @@ import { TaskStore } from '../store/taskStore.js';
 import { Readiness } from '../store/readiness.js';
 import { AgentStore } from '../store/agentStore.js';
 import { MissionStore } from '../store/missionStore.js';
+import { MissionPrStore } from '../store/missionPrStore.js';
 import { SpawnService } from '../spawn/spawn.js';
 import { MissionEngine } from '../overseer/missionEngine.js';
+import { MissionGit } from '../overseer/missionGit.js';
 import type { SummaryContext } from '../overseer/missionEngine.js';
 import { Scheduler } from '../overseer/scheduler.js';
 import { sweepFinishedSessions } from '../overseer/janitor.js';
@@ -133,10 +135,15 @@ export function buildApp(opts: BuildOpts) {
   const pilot = makePilot({ spawn, config, projects, planJobs, tmux, nameAgent: uniqueName, cli });
   const overseer = makeOverseer({ spawn, tmux, config, queue: decisionQueue, cli });
 
+  // PR-native git lifecycle (no-op unless Settings → PR workflow is enabled): each mission runs in an
+  // isolated worktree on its own branch, commits per approved phase, and (later stages) opens a PR.
+  const missionPrs = new MissionPrStore(db);
+  const missionGit = new MissionGit({ prs: missionPrs, config, projects, tasks });
+
   const engine = new MissionEngine({
     tasks, readiness, missions, spawn, tmux, bus, projects,
     fallback: { program: 'claude-code', model: 'sonnet' }, nameAgent: uniqueName, clock: new SystemClock(),
-    overseer,
+    overseer, missionGit,
     // On natural completion, ask the overseer model to write the mission's "what happened" prose.
     // No relay key → return blank so the engine writes its own deterministic phase digest instead.
     summarize: async (ctx) => {

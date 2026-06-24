@@ -9,6 +9,7 @@ import type { EventBus } from '../api/sse.js';
 import { resolveExecutor } from './routing.js';
 import { freeAgentName } from '../daemon/uniqueName.js';
 import type { OverseerController } from './overseerAgent.js';
+import type { MissionGit } from './missionGit.js';
 import type { Clock } from '../shared/clock.js';
 import { logger } from '../shared/logger.js';
 
@@ -25,6 +26,9 @@ export interface MissionEngineDeps {
   /** Optional parked-overseer lifecycle. Started on engage, stopped on pause/disengage. Absent (or
    *  inert when no overseerExec is configured) → relay-fallback decisions, no parked agent. */
   overseer?: OverseerController;
+  /** Optional PR-native git lifecycle. When wired and PR mode is enabled, each mission runs in an
+   *  isolated worktree on its own branch; absent (or PR mode off) → agents run in the main checkout. */
+  missionGit?: MissionGit;
   /** Optional overseer-model summariser: given the mission goal and each phase's own result, returns
    *  prose describing what the mission accomplished. Stamped on the epic on natural completion so the
    *  dashboard can show it. Absent (or on error/blank) → the engine writes a deterministic digest. */
@@ -52,6 +56,9 @@ export class MissionEngine {
     // to answer decisions (e.g. post-completion reviews) for this mission.
     const epic = this.d.tasks.get(input.epicId);
     const project = epic ? this.d.projects.get(epic.project_id) : null;
+    // Provision the mission's branch + worktree (no-op when PR mode is off) BEFORE the first tick, so
+    // the very first agent already spawns inside the isolated worktree.
+    await this.d.missionGit?.onEngage(id, input.epicId);
     if (project) await this.d.overseer?.start(id, project.id, project.path);
     await this.tick(id);
     return m;
@@ -86,6 +93,9 @@ export class MissionEngine {
     if (!m || m.state === 'disengaged') return; // idempotent: a repeat call must not re-publish the event
     await this.stopRunning(m.epic_id);
     await this.markDisengaged(id);
+    // Explicit disengage tears down the worktree (the branch is kept). Natural completion does NOT —
+    // it routes through markDisengaged directly so the worktree survives for the PR/feedback path.
+    await this.d.missionGit?.cleanup(id);
   }
 
   /** The single disengage transition: mark the mission disengaged, announce it, and tear down the
@@ -131,6 +141,7 @@ export class MissionEngine {
     this.d.missions.setState(id, 'paused');
     this.d.bus.publish({ type: 'mission', missionId: id, state: 'paused' });
     await this.d.overseer?.stop(id); // a paused mission keeps no parked overseer; resume restarts it
+    await this.d.missionGit?.cleanup(id); // free the worktree; resume re-provisions it via onEngage
   }
 
   /** Resume a paused mission: flip active, re-park the overseer (pause stopped it), then tick so it
@@ -142,6 +153,8 @@ export class MissionEngine {
     this.d.bus.publish({ type: 'mission', missionId: id, state: 'active' });
     const epic = this.d.tasks.get(m.epic_id);
     const project = epic ? this.d.projects.get(epic.project_id) : null;
+    // Pause freed the worktree, so re-provision it (no-op when PR mode is off or it still exists).
+    await this.d.missionGit?.onEngage(id, m.epic_id);
     if (project) await this.d.overseer?.start(id, project.id, project.path);
     await this.tick(id);
   }
@@ -208,8 +221,10 @@ export class MissionEngine {
       if (!named) this.d.tasks.setAgent(task.id, agentName);
       this.d.tasks.markStarted(task.id, this.d.clock.now()); // precise spawn time → correct usage attribution under concurrency
       this.d.tasks.setStatus(task.id, 'in_progress');
+      // In PR-native mode the agent runs inside the mission's isolated worktree, not the main checkout.
+      const cwd = this.d.missionGit?.worktreeFor(id) ?? project.path;
       try {
-        await this.d.spawn.launch({ projectId: epic.project_id, projectPath: project.path, taskId: task.id, agentName, spec, taskTitle: task.title, taskDescription: task.description, epicId: m.epic_id });
+        await this.d.spawn.launch({ projectId: epic.project_id, projectPath: cwd, taskId: task.id, agentName, spec, taskTitle: task.title, taskDescription: task.description, epicId: m.epic_id });
       } catch (e) {
         // Spawn failed (tmux down, bin missing): roll back to open so the task doesn't sit in_progress
         // with no agent — which would otherwise burn the stuck-detector's relaunch budget before it

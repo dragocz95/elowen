@@ -23,6 +23,10 @@ CREATE TABLE IF NOT EXISTS missions (
   max_sessions INTEGER NOT NULL DEFAULT 1,
   state TEXT NOT NULL DEFAULT 'active', started_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+CREATE TABLE IF NOT EXISTS mission_pr (
+  mission_id TEXT PRIMARY KEY, branch TEXT NOT NULL, worktree TEXT NOT NULL,
+  pr_number INTEGER, pr_url TEXT, pr_state TEXT, last_review_ts TEXT
+);
 CREATE TABLE IF NOT EXISTS settings (id INTEGER PRIMARY KEY CHECK (id = 1), data TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS users (
   id INTEGER PRIMARY KEY, username TEXT UNIQUE NOT NULL,
