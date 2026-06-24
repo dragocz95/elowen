@@ -56,6 +56,9 @@ export function openDb(path: string): Db {
   // Timeline labels: snapshot the task/epic title at write time so an event still reads as a name
   // after its task is deleted (events outlive tasks). Empty for signal/plan and unknown tasks.
   addColumn(db, 'events', 'label', "TEXT NOT NULL DEFAULT ''");
+  // PR feedback loop budget: how many auto fix rounds a mission's PR has already consumed. Bounds the
+  // Codex↔Orca review ping-pong before escalating to a human. Additive — old DBs default to 0.
+  addColumn(db, 'mission_pr', 'fix_rounds', 'INTEGER NOT NULL DEFAULT 0');
   // Seed the bootstrap admin on existing DBs: the lowest-id user, if none is flagged yet.
   db.exec("UPDATE users SET is_admin = 1 WHERE id = (SELECT MIN(id) FROM users) AND NOT EXISTS (SELECT 1 FROM users WHERE is_admin = 1)");
   return db;

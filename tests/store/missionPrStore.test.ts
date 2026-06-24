@@ -53,6 +53,16 @@ describe('MissionPrStore', () => {
     expect(rec?.last_review_ts).toBe('2026-06-24T10:00:00Z');
   });
 
+  it('starts fix_rounds at 0, bumps it (returns the new count) and resets it', () => {
+    store.create({ mission_id: 'm-1', branch: 'orca/feat-1', worktree: '/wt/a' });
+    expect(store.get('m-1')?.fix_rounds).toBe(0);
+    expect(store.bumpFixRounds('m-1')).toBe(1);
+    expect(store.bumpFixRounds('m-1')).toBe(2);
+    expect(store.get('m-1')?.fix_rounds).toBe(2);
+    store.resetFixRounds('m-1');
+    expect(store.get('m-1')?.fix_rounds).toBe(0);
+  });
+
   it('removes a record on cleanup', () => {
     store.create({ mission_id: 'm-1', branch: 'orca/feat-1', worktree: '/wt/a' });
     store.remove('m-1');

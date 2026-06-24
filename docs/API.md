@@ -1728,13 +1728,7 @@ Manually open the PR for a PR-native mission (used when `prAutoOpen` is off). Ru
 
 **Error `422`** — the verify command failed (`{ "error": "...", "output": "..." }`), the project has no GitHub remote, or `gh` is unavailable/unauthenticated. **Error `400`** when PR workflow isn't enabled; **`404`** unknown mission; **`403`** forbidden.
 
-```http
-POST /missions/:id/pr/sync
-```
-
-Ingest any new PR review feedback now (the daemon also polls every ~60 s). A *changes requested* review appends a fix phase and re-engages the mission.
-
-**Response `200`** — `{ "action": "fix-created", "taskId": "..." }`, `{ "action": "closed" }` (PR merged/closed), or `{ "action": "none" }`.
+PR review feedback is ingested by a ~60 s daemon poller (`prFeedback`), not a request endpoint: fresh actionable feedback is routed through the pilot into 1..N fix phases (bounded by a 2-round fix budget), then the mission is re-engaged.
 
 ### Overseer long-poll (parked agent)
 

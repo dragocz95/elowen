@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, rmSync, writeFileSync, chmodSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createPR } from '../../src/integrations/github/pr.js';
+import { createPR, readPRReviews } from '../../src/integrations/github/pr.js';
 
 // A fake `gh` on PATH lets us assert createPR's parsing/fallback without touching the network. Each
 // test writes a shell stub that mimics the relevant `gh` behaviour.
@@ -58,5 +58,39 @@ if [ "$1" = "pr" ] && [ "$2" = "view" ]; then echo '{"number":7,"url":"https://g
     fakeGh(`if [ -z "\${GH_TOKEN+x}" ]; then echo "https://github.com/o/r/pull/4"; else exit 1; fi`);
     const ref = await createPR({ dir: binDir, base: 'main', head: 'orca/x', title: 'T', body: 'B', token: '' });
     expect(ref).toEqual({ number: 4, url: 'https://github.com/o/r/pull/4' });
+  });
+});
+
+describe('readPRReviews', () => {
+  it('reads state, COMMENTED reviews and line comments (the gh api call)', async () => {
+    // The stub branches on `gh pr view` (lifecycle + reviews) vs `gh api .../comments` (line comments).
+    fakeGh(`
+if [ "$1" = "pr" ] && [ "$2" = "view" ]; then
+  echo '{"state":"OPEN","reviews":[{"state":"COMMENTED","body":"Codex review","author":{"login":"codex[bot]"},"submittedAt":"2026-06-24T12:00:00Z"}],"comments":[]}'
+elif [ "$1" = "api" ]; then
+  echo '[{"body":"cap bug","path":"web/x.tsx","line":298,"user":{"login":"codex[bot]"},"created_at":"2026-06-24T12:00:05Z"}]'
+fi`);
+    const st = await readPRReviews({ dir: binDir, number: 2, token: 't' });
+    expect(st?.state).toBe('OPEN');
+    expect(st?.reviews).toEqual([{ state: 'COMMENTED', body: 'Codex review', author: 'codex[bot]', submittedAt: '2026-06-24T12:00:00Z' }]);
+    expect(st?.lineComments).toEqual([{ body: 'cap bug', path: 'web/x.tsx', line: 298, author: 'codex[bot]', createdAt: '2026-06-24T12:00:05Z' }]);
+  });
+
+  it('degrades to empty line comments when the gh api call fails (still returns reviews)', async () => {
+    fakeGh(`
+if [ "$1" = "pr" ] && [ "$2" = "view" ]; then
+  echo '{"state":"OPEN","reviews":[],"comments":[]}'
+elif [ "$1" = "api" ]; then
+  exit 1
+fi`);
+    const st = await readPRReviews({ dir: binDir, number: 2, token: 't' });
+    expect(st?.state).toBe('OPEN');
+    expect(st?.lineComments).toEqual([]);
+  });
+
+  it('returns null when gh pr view itself fails', async () => {
+    fakeGh(`if [ "$1" = "pr" ]; then exit 1; fi`);
+    const st = await readPRReviews({ dir: binDir, number: 2, token: 't' });
+    expect(st).toBeNull();
   });
 });

@@ -11,9 +11,10 @@ export interface MissionPr {
   pr_url: string | null;
   pr_state: string | null;     // open | merged | closed | null (not opened yet)
   last_review_ts: string | null;
+  fix_rounds: number;          // PR feedback fix rounds already consumed (loop budget)
 }
 
-const COLS = 'mission_id,branch,worktree,pr_number,pr_url,pr_state,last_review_ts';
+const COLS = 'mission_id,branch,worktree,pr_number,pr_url,pr_state,last_review_ts,fix_rounds';
 
 export class MissionPrStore {
   constructor(private db: Db) {}
@@ -51,6 +52,18 @@ export class MissionPrStore {
   setLastReviewTs(missionId: string, ts: string): MissionPr | null {
     this.db.prepare('UPDATE mission_pr SET last_review_ts=? WHERE mission_id=?').run(ts, missionId);
     return this.get(missionId);
+  }
+
+  /** Increment the PR fix-round counter and return the new value — the analogue of taskStore.bumpReviewFix,
+   *  but for PR review feedback. Bounds the auto Codex↔Orca fix ping-pong before escalating to a human. */
+  bumpFixRounds(missionId: string): number {
+    this.db.prepare('UPDATE mission_pr SET fix_rounds = fix_rounds + 1 WHERE mission_id=?').run(missionId);
+    return this.get(missionId)?.fix_rounds ?? 0;
+  }
+
+  /** Zero the fix-round budget — on a merged/closed PR, or when a human manually re-engages the mission. */
+  resetFixRounds(missionId: string): void {
+    this.db.prepare('UPDATE mission_pr SET fix_rounds = 0 WHERE mission_id=?').run(missionId);
   }
 
   remove(missionId: string): void {

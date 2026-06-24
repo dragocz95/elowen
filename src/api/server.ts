@@ -1399,19 +1399,6 @@ export function createServer(d: ServerDeps): Hono<{ Variables: { user: User; tok
       default: return c.json({ error: 'PR workflow not enabled for this mission' }, 400);
     }
   });
-  // On-demand PR feedback sync (the periodic poller does this every ~60s): ingest any new review
-  // feedback into a fix phase and re-engage the mission so an agent applies it.
-  app.post('/missions/:id/pr/sync', async c => {
-    const id = c.req.param('id');
-    const mission = d.missions.get(id);
-    if (!mission) return c.json({ error: 'mission not found' }, 404);
-    if (!missionAccessible(c, mission.epic_id)) return c.json({ error: 'forbidden' }, 403);
-    if (!d.missionGit) return c.json({ error: 'PR workflow not enabled' }, 400);
-    const res = await d.missionGit.ingestReviews(id);
-    if (res.action === 'fix-created') await d.engine.engage({ epicId: mission.epic_id, autonomy: mission.autonomy, maxSessions: mission.max_sessions });
-    return c.json(res);
-  });
-
   // Overseer long-poll: the parked per-mission overseer agent polls `next` (blocks until a decision
   // is needed or a heartbeat) and answers via `decide`. Decisions are keyed by mission id in the
   // path; both sit behind the bearer middleware. No model output is parsed — the agent posts a

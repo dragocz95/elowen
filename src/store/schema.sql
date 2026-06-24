@@ -25,7 +25,8 @@ CREATE TABLE IF NOT EXISTS missions (
 );
 CREATE TABLE IF NOT EXISTS mission_pr (
   mission_id TEXT PRIMARY KEY, branch TEXT NOT NULL, worktree TEXT NOT NULL,
-  pr_number INTEGER, pr_url TEXT, pr_state TEXT, last_review_ts TEXT
+  pr_number INTEGER, pr_url TEXT, pr_state TEXT, last_review_ts TEXT,
+  fix_rounds INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS settings (id INTEGER PRIMARY KEY CHECK (id = 1), data TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS users (

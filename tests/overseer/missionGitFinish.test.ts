@@ -92,4 +92,23 @@ describe('MissionGit.finishMission (Stage 4)', () => {
     expect(res).toEqual({ state: 'opened', url: 'https://github.com/o/r/pull/8', number: 8 });
     expect(prs.get('m-epic')!.pr_state).toBe('open');
   });
+
+  it('auto-pushes a fix round onto an already-open PR even in manual mode', async () => {
+    // gh create fails ("already exists") → falls back to gh pr view → the existing PR is re-read; the
+    // point is finishMission must PUSH (not return ready) once a PR is open, so the fix reaches the PR.
+    fakeGh(`
+if [ "$1" = "pr" ] && [ "$2" = "create" ]; then echo "already exists" >&2; exit 1; fi
+if [ "$1" = "pr" ] && [ "$2" = "view" ]; then echo '{"number":8,"url":"https://github.com/o/r/pull/8"}'; fi`);
+    const { missionGit, prs } = build({ prAutoOpen: false, verify: '' });
+    await missionGit.onEngage('m-epic', 'epic');
+    const wt = prs.get('m-epic')!.worktree;
+    writeFileSync(join(wt, 'a.txt'), 'work\n'); await missionGit.commitPhase('m-epic', 'phase one');
+    prs.setPr('m-epic', { number: 8, url: 'https://github.com/o/r/pull/8', state: 'open' }); // PR already open
+
+    writeFileSync(join(wt, 'fix.txt'), 'the fix\n'); await missionGit.commitPhase('m-epic', 'fix round');
+    const res = await missionGit.finishMission('m-epic'); // manual mode, but PR is open → must push
+    expect(res.state).toBe('opened'); // NOT 'ready'
+    // The fix commit reached the remote branch.
+    expect(git(remote, 'log', '--oneline', 'orca/demo-epic').trim()).toContain('fix round');
+  });
 });

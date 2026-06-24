@@ -10,7 +10,7 @@ import { MissionGit } from '../overseer/missionGit.js';
 import type { SummaryContext } from '../overseer/missionEngine.js';
 import { Scheduler } from '../overseer/scheduler.js';
 import { sweepFinishedSessions } from '../overseer/janitor.js';
-import { sweepPrFeedback } from '../overseer/prFeedback.js';
+import { sweepPrFeedback, type PrFeedbackDeps } from '../overseer/prFeedback.js';
 import { sweepStuckTasks, deadAgentTasks } from '../overseer/stuckDetector.js';
 import { decidePrompt, decideChoice, isDestructive, gateVerdict, minConfidenceFor, noOverseerFallback } from '../overseer/decision.js';
 import { PlanJobStore } from '../overseer/planJob.js';
@@ -325,10 +325,34 @@ export function buildApp(opts: BuildOpts) {
     const stopEventPurge = clock.setInterval(purgeEvents, 3_600_000);
     // Sweep expired terminal-WS tickets so a burst of unredeemed tickets can't grow the map unbounded.
     const stopTicketSweep = clock.setInterval(() => tickets.sweep(clock.now()), 60_000);
-    // PR feedback loop (no-op unless PR mode + open PRs): poll each open PR for "changes requested"
-    // reviews, turn them into a fix phase and re-engage the mission so an agent applies them.
+    // PR feedback loop (no-op unless PR mode + open PRs): poll each open PR for fresh actionable review
+    // feedback and, within the fix budget, route it through the pilot (1..N fix phases on the mission's
+    // exec) then re-engage the mission so an agent applies them. Relay-only (no agent pilot) degrades to
+    // a single fix phase. The pilot plans in the mission's WORKTREE (not the main checkout) so it sees
+    // the mission's committed changes — the code under review and the bug live on the branch, not in
+    // the base checkout. The worker later applies the fix in that same worktree (missionEngine cwd).
+    const replan: PrFeedbackDeps['replan'] = async ({ epicId, goal, exec }) => {
+      const epic = tasks.get(epicId);
+      const project = epic ? projects.get(epic.project_id) : null;
+      const mission = missions.get(`m-${epicId}`);
+      if (!epic || !project || !mission) return false;
+      const engage = { autonomy: mission.autonomy, maxSessions: mission.max_sessions };
+      if (config.get().autopilot.pilotExec) {
+        const cwd = missionGit.worktreeFor(`m-${epicId}`) ?? project.path;
+        // engage flag → finalizePlanJob re-engages the mission AFTER the pilot pins the phases, so a
+        // completed mission doesn't disengage in the gap between engage and the phases existing.
+        const job = planJobs.create({ goal, projectId: epic.project_id, epicId, dryRun: false, exec, engage });
+        bus.publish({ type: 'plan', jobId: job.id, status: 'planning' });
+        void pilot(job, cwd).catch((e) => { planJobs.fail(job.id, String(e)); bus.publish({ type: 'plan', jobId: job.id, status: 'failed', error: String(e) }); });
+        return true;
+      }
+      // Relay-only fallback: append one fix phase synchronously, then engage (the phase already exists).
+      const ok = await missionGit.appendFixPhase(epicId, goal, exec);
+      if (ok) await engine.engage({ epicId, ...engage });
+      return ok;
+    };
     const stopPrFeedback = clock.setInterval(() => {
-      void sweepPrFeedback({ prs: missionPrs, missions, missionGit, engage: (i) => engine.engage(i) })
+      void sweepPrFeedback({ prs: missionPrs, missions, missionGit, bus, replan })
         .then((ids) => { if (ids.length) log.info(`PR feedback re-engaged ${ids.length} mission(s): ${ids.join(', ')}`); })
         .catch((e) => log.error('PR feedback sweep failed', e));
     }, 60_000);

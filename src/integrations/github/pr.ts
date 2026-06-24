@@ -44,28 +44,54 @@ export async function createPR(input: { dir: string; base: string; head: string;
 
 interface PrReview { state: string; body: string; author: string; submittedAt: string }
 interface PrComment { body: string; author: string; createdAt: string }
-export interface PrStatus { state: string; reviews: PrReview[]; comments: PrComment[] }
+/** A line-level (diff) review comment — where bots like Codex and humans pin actionable feedback. These
+ *  are NOT in `gh pr view`'s `comments` (those are conversation/issue comments), only in the REST API. */
+interface PrLineComment { body: string; path: string; line: number | null; author: string; createdAt: string }
+export interface PrStatus { state: string; reviews: PrReview[]; comments: PrComment[]; lineComments: PrLineComment[] }
 
-/** Read a PR's lifecycle state, reviews and conversation comments via `gh pr view --json`. Used by the
- *  feedback poller to turn a "changes requested" review into a fix phase. Returns null when gh is
- *  missing/unauthenticated or the JSON can't be read — the poller treats that as "no new feedback". */
+/** Read a PR's lifecycle state, reviews, conversation comments and line-level (diff) review comments.
+ *  Lifecycle/reviews/conversation come from `gh pr view --json`; line comments need the REST API
+ *  (`gh api repos/{owner}/{repo}/pulls/N/comments`, gh fills owner/repo from the cwd's git remote) since
+ *  `gh pr view` omits them. Used by the feedback poller to turn a review into fix phases. Returns null
+ *  when `gh pr view` is missing/unauthenticated or its JSON can't be read — the poller treats that as
+ *  "no new feedback". A failing line-comment call degrades to an empty list (reviews still flow). */
 export async function readPRReviews(input: { dir: string; number: number; token: string }): Promise<PrStatus | null> {
   const env = ghEnv(input.token);
+  let view: { state?: unknown; reviews?: unknown; comments?: unknown };
   try {
     const { stdout } = await run('gh', ['pr', 'view', String(input.number), '--json', 'state,reviews,comments'], { cwd: input.dir, env });
-    const j = JSON.parse(stdout) as { state?: unknown; reviews?: unknown; comments?: unknown };
-    const reviews: PrReview[] = Array.isArray(j.reviews) ? j.reviews.map((r) => {
-      const o = r as { state?: unknown; body?: unknown; submittedAt?: unknown; author?: { login?: unknown } };
-      return { state: String(o.state ?? ''), body: String(o.body ?? ''), author: String(o.author?.login ?? ''), submittedAt: String(o.submittedAt ?? '') };
-    }) : [];
-    const comments: PrComment[] = Array.isArray(j.comments) ? j.comments.map((c) => {
-      const o = c as { body?: unknown; createdAt?: unknown; author?: { login?: unknown } };
-      return { body: String(o.body ?? ''), author: String(o.author?.login ?? ''), createdAt: String(o.createdAt ?? '') };
-    }) : [];
-    return { state: String(j.state ?? ''), reviews, comments };
+    view = JSON.parse(stdout) as typeof view;
   } catch (e) {
     log.error(`gh pr view (reviews) failed for #${input.number}`, e);
     return null;
+  }
+  const reviews: PrReview[] = Array.isArray(view.reviews) ? view.reviews.map((r) => {
+    const o = r as { state?: unknown; body?: unknown; submittedAt?: unknown; author?: { login?: unknown } };
+    return { state: String(o.state ?? ''), body: String(o.body ?? ''), author: String(o.author?.login ?? ''), submittedAt: String(o.submittedAt ?? '') };
+  }) : [];
+  const comments: PrComment[] = Array.isArray(view.comments) ? view.comments.map((c) => {
+    const o = c as { body?: unknown; createdAt?: unknown; author?: { login?: unknown } };
+    return { body: String(o.body ?? ''), author: String(o.author?.login ?? ''), createdAt: String(o.createdAt ?? '') };
+  }) : [];
+  const lineComments = await readLineComments(input.dir, input.number, env);
+  return { state: String(view.state ?? ''), reviews, comments, lineComments };
+}
+
+/** Fetch line-level review comments via the REST API. Failure (no remote, gh missing, bad JSON) degrades
+ *  to an empty list — it must never sink the whole review read. */
+async function readLineComments(dir: string, number: number, env: NodeJS.ProcessEnv): Promise<PrLineComment[]> {
+  try {
+    const { stdout } = await run('gh', ['api', `repos/{owner}/{repo}/pulls/${number}/comments`, '--paginate'], { cwd: dir, env });
+    const arr = JSON.parse(stdout) as unknown;
+    if (!Array.isArray(arr)) return [];
+    return arr.map((c) => {
+      const o = c as { body?: unknown; path?: unknown; line?: unknown; original_line?: unknown; created_at?: unknown; user?: { login?: unknown } };
+      const line = typeof o.line === 'number' ? o.line : typeof o.original_line === 'number' ? o.original_line : null;
+      return { body: String(o.body ?? ''), path: String(o.path ?? ''), line, author: String(o.user?.login ?? ''), createdAt: String(o.created_at ?? '') };
+    });
+  } catch (e) {
+    log.warn(`gh api line comments failed for #${number} — treating as none`, e);
+    return [];
   }
 }
 

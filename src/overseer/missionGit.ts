@@ -27,11 +27,12 @@ export interface MissionGitDeps {
   tasks: TaskStore;
 }
 
-/** Outcome of polling a PR for new review feedback. */
+/** Outcome of polling a PR for new review feedback. ingestReviews only DETECTS — turning feedback into
+ *  fix phases is the caller's job (it routes through the pilot, or a single-phase fallback). */
 export type IngestResult =
-  | { action: 'none' }                              // no PR / no new changes-requested review
-  | { action: 'closed' }                            // PR merged/closed → stop watching
-  | { action: 'fix-created'; taskId: string };      // a fix phase was appended → re-engage the mission
+  | { action: 'none' }                                                  // no PR / no fresh actionable feedback
+  | { action: 'closed' }                                                // PR merged/closed → stop watching
+  | { action: 'feedback'; feedback: string; newestTs: string; exec?: string }; // fresh feedback to plan a fix from
 
 /** Single source of truth for what happens to git across a mission's lifecycle: branch + worktree on
  *  engage, commit per approved phase, and worktree cleanup on pause/disengage. PR opening and feedback
@@ -137,7 +138,10 @@ export class MissionGit {
         return { state: 'verify-failed', output: v.output };
       }
     }
-    if (!force && !cfg.prAutoOpen) return { state: 'ready' }; // verified, waiting for a manual open
+    // prAutoOpen gates only the FIRST open. Once a PR exists, a completed fix round must always push so
+    // the PR reflects the new commits — otherwise the feedback loop commits a fix nobody ever sees.
+    const prAlreadyOpen = rec.pr_state === 'open';
+    if (!force && !prAlreadyOpen && !cfg.prAutoOpen) return { state: 'ready' }; // verified, waiting for a manual open
     return this.pushAndOpen(missionId, rec.worktree, rec.branch, project.path, cfg.prBaseBranch);
   }
 
@@ -171,11 +175,14 @@ export class MissionGit {
     }
   }
 
-  /** Poll the mission's open PR for new "changes requested" feedback. A merged/closed PR stops the
-   *  watch. A new changes-requested review (newer than the last one ingested) appends a single "fix"
-   *  phase under the epic — depending on the latest phase so it runs last — carrying the aggregated
-   *  reviewer feedback; the caller then re-engages the mission so an agent applies it in the worktree
-   *  and the next commit/push updates the PR. Dedup is by `last_review_ts`. No-op when PR mode is off. */
+  /** Poll the mission's open PR for fresh, actionable review feedback. A merged/closed PR stops the
+   *  watch (and clears the fix budget). Otherwise it gathers everything newer than the last ingested
+   *  timestamp and, if any is *actionable*, returns the aggregated text plus the original mission's exec
+   *  (so fix phases inherit the same model) for the caller to plan a fix from. Actionable = a
+   *  CHANGES_REQUESTED review, a line-level (diff) comment, a COMMENTED review with a real body, or a
+   *  conversation comment — a bare 👍/empty review is ignored. Dedup is by `last_review_ts`, which is
+   *  advanced here whenever feedback is returned so the same batch is never planned twice. No-op when PR
+   *  mode is off. */
   async ingestReviews(missionId: string): Promise<IngestResult> {
     if (!this.prEnabled()) return { action: 'none' };
     const rec = this.d.prs.get(missionId);
@@ -186,30 +193,62 @@ export class MissionGit {
     if (!status) return { action: 'none' };
     if (status.state === 'MERGED' || status.state === 'CLOSED') {
       this.d.prs.setPrState(missionId, status.state.toLowerCase());
+      this.d.prs.resetFixRounds(missionId);
       log.info(`PR mode: mission ${missionId} PR is ${status.state.toLowerCase()} — no longer watching`);
       return { action: 'closed' };
     }
     const since = rec.last_review_ts ? Date.parse(rec.last_review_ts) : 0;
-    const fresh = status.reviews.filter((r) => r.state === 'CHANGES_REQUESTED' && (Date.parse(r.submittedAt) || 0) > since);
-    if (fresh.length === 0) return { action: 'none' };
-    const newestTs = fresh.reduce((mx, r) => Math.max(mx, Date.parse(r.submittedAt) || 0), since);
+    const ts = (s: string): number => Date.parse(s) || 0;
+    const freshReviews = status.reviews.filter((r) => ts(r.submittedAt) > since
+      && (r.state === 'CHANGES_REQUESTED' || (r.state === 'COMMENTED' && r.body.trim().length > 0)));
+    const freshLines = status.lineComments.filter((c) => ts(c.createdAt) > since && c.body.trim().length > 0);
+    const freshComments = status.comments.filter((c) => ts(c.createdAt) > since && c.body.trim().length > 0);
+    if (freshReviews.length + freshLines.length + freshComments.length === 0) return { action: 'none' };
+
+    const newestMs = [...freshReviews.map((r) => ts(r.submittedAt)), ...freshLines.map((c) => ts(c.createdAt)), ...freshComments.map((c) => ts(c.createdAt))]
+      .reduce((mx, n) => Math.max(mx, n), since);
     const feedback = [
-      ...fresh.map((r) => `- ${r.author || 'reviewer'}: ${r.body || '(no summary)'}`),
-      ...status.comments.filter((c) => (Date.parse(c.createdAt) || 0) > since).map((c) => `- ${c.author || 'reviewer'}: ${c.body}`),
+      ...freshReviews.map((r) => `- ${r.author || 'reviewer'} (${r.state}): ${r.body.trim() || '(no summary)'}`),
+      ...freshLines.map((c) => `- ${c.author || 'reviewer'} @ ${c.path}:${c.line ?? '?'}: ${c.body.trim()}`),
+      ...freshComments.map((c) => `- ${c.author || 'reviewer'}: ${c.body.trim()}`),
     ].join('\n');
-    const epicId = missionId.replace(/^m-/, '');
-    const epicChildren = this.d.tasks.list({ project_id: project.id }).filter((t) => t.parent_id === epicId);
-    const lastPhase = epicChildren[epicChildren.length - 1] ?? null; // list is created_at ASC → newest last
-    const fixId = `${epicId}-prfix-${newestTs}`;
-    if (this.d.tasks.get(fixId)) return { action: 'none' }; // already created for this review batch
+    const exec = this.missionExec(project.id, missionId.replace(/^m-/, ''));
+    this.d.prs.setLastReviewTs(missionId, new Date(newestMs).toISOString());
+    log.info(`PR mode: mission ${missionId} got ${freshReviews.length + freshLines.length + freshComments.length} fresh feedback item(s)`);
+    return { action: 'feedback', feedback, newestTs: new Date(newestMs).toISOString(), exec };
+  }
+
+  /** Relay-only fallback (no agent pilot configured): append a single fix phase under the epic instead
+   *  of planning 1..N via the pilot. Depends on the epic's last phase so it runs last; inherits `exec`.
+   *  Deterministic id keyed on the fix-round index so re-sweeps before the bump don't double-create.
+   *  Returns true when a phase was appended. */
+  async appendFixPhase(epicId: string, feedback: string, exec?: string): Promise<boolean> {
+    const epic = this.d.tasks.get(epicId);
+    const project = epic ? this.d.projects.get(epic.project_id) : null;
+    if (!project) return false;
+    const children = this.d.tasks.list({ project_id: project.id }).filter((t) => t.parent_id === epicId);
+    const fixId = `${epicId}-prfix-${this.d.prs.get(`m-${epicId}`)?.fix_rounds ?? 0}`;
+    if (this.d.tasks.get(fixId)) return false; // already appended for this round
     this.d.tasks.create({
       id: fixId, project_id: project.id, title: 'Address PR review feedback', parent_id: epicId,
-      description: `A reviewer requested changes on the open pull request. Apply the requested fixes in the working tree (do not touch git/branches — Orca commits and pushes for you):\n\n${feedback}`,
+      description: `A reviewer left feedback on the open pull request. Apply the requested fixes in the working tree (do not touch git/branches — Orca commits and pushes for you):\n\n${feedback}`,
     });
+    const lastPhase = children[children.length - 1] ?? null;
     if (lastPhase) this.d.tasks.addDep(fixId, lastPhase.id);
-    this.d.prs.setLastReviewTs(missionId, new Date(newestTs).toISOString());
-    log.info(`PR mode: mission ${missionId} got changes-requested → fix phase ${fixId}`);
-    return { action: 'fix-created', taskId: fixId };
+    if (exec) this.d.tasks.setExec(fixId, exec);
+    return true;
+  }
+
+  /** The exec the original mission's phases ran on, read from the `exec:<spec>` label of the epic's last
+   *  labelled phase, so fix phases inherit the same model instead of the hard-wired sonnet fallback.
+   *  Undefined when no phase carried an exec (then the fallback applies — same as the original run). */
+  private missionExec(projectId: number, epicId: string): string | undefined {
+    const children = this.d.tasks.list({ project_id: projectId }).filter((t) => t.parent_id === epicId);
+    for (let i = children.length - 1; i >= 0; i--) {
+      const label = children[i]?.labels.find((l) => l.startsWith('exec:'));
+      if (label) return label.slice('exec:'.length);
+    }
+    return undefined;
   }
 
   /** On pause/disengage: tear down the mission's worktree (the branch is kept so an open PR survives).
