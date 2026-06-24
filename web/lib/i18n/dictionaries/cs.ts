@@ -526,6 +526,8 @@ export const cs = {
     plannerPrompt: 'Prompt plánovače',
     binary: 'Binárka',
     extraArgs: 'Další parametry',
+    skipPermissions: 'Přeskakovat dotazy na oprávnění',
+    skipPermissionsHint: 'Agent běží bez interaktivních „Povolit?" dotazů — orca ho spouští bez dozoru v tmuxu, takže by jinak misi zablokoval. Autonomii hlídá overseer nad agentem. Vypněte, jen pokud chcete dotazy ručně.',
     executor: 'Vykonavatel',
     executorDesc: 'Výchozí agent pro nová spuštění',
     autonomy: 'Autonomie',

@@ -8,16 +8,36 @@ describe('buildAgentCommand', () => {
     expect(cmd).toContain('--prompt'); // UI mode: task preloaded into the composer
     expect(cmd).not.toContain('opencode run'); // not headless
   });
+  it('bypasses opencode permission prompts by default via a merged OPENCODE_CONFIG_CONTENT env', () => {
+    const cmd = buildAgentCommand({ program: 'opencode', model: 'm' }, { projectPath: '/o', taskId: 'orca-1', agentName: 'A' });
+    expect(cmd).toContain('export OPENCODE_CONFIG_CONTENT=');
+    expect(cmd).toContain('"permission":"allow"');
+  });
+  it('omits the opencode permission bypass when skipPermissions is off', () => {
+    const cmd = buildAgentCommand({ program: 'opencode', model: 'm' }, { projectPath: '/o', taskId: 'orca-1', agentName: 'A', skipPermissions: false });
+    expect(cmd).not.toContain('OPENCODE_CONFIG_CONTENT');
+    expect(cmd).toContain('--prompt'); // still launches normally, just with prompts on
+  });
   it('routes a bare model to claude with an autonomous approval bypass', () => {
     const cmd = buildAgentCommand({ program: 'claude-code', model: 'sonnet' }, { projectPath: '/o', taskId: 'orca-1', agentName: 'A' });
     expect(cmd).toContain('--model sonnet');
     expect(cmd).toContain('--dangerously-skip-permissions');
+  });
+  it('omits the claude bypass flag when skipPermissions is off', () => {
+    const cmd = buildAgentCommand({ program: 'claude-code', model: 'sonnet' }, { projectPath: '/o', taskId: 'orca-1', agentName: 'A', skipPermissions: false });
+    expect(cmd).not.toContain('--dangerously-skip-permissions');
+    expect(cmd).toContain('--model sonnet');
   });
   it('routes codex with a positional prompt and autonomous approval bypass', () => {
     const cmd = buildAgentCommand({ program: 'codex', model: 'gpt-5.4' }, { projectPath: '/o', taskId: 'orca-1', agentName: 'A' });
     expect(cmd).toContain('codex');
     expect(cmd).toContain('--model gpt-5.4');
     expect(cmd).toContain('--dangerously-bypass-approvals-and-sandbox');
+  });
+  it('omits the codex bypass flag when skipPermissions is off', () => {
+    const cmd = buildAgentCommand({ program: 'codex', model: 'gpt-5.4' }, { projectPath: '/o', taskId: 'orca-1', agentName: 'A', skipPermissions: false });
+    expect(cmd).not.toContain('--dangerously-bypass-approvals-and-sandbox');
+    expect(cmd).toContain('--model gpt-5.4');
   });
   it('embeds the close command in the prompt and exports the provided env', () => {
     const cmd = buildAgentCommand(

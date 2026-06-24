@@ -526,6 +526,8 @@ export const en = {
     plannerPrompt: 'Planner prompt',
     binary: 'Binary',
     extraArgs: 'Extra args',
+    skipPermissions: 'Skip permission prompts',
+    skipPermissionsHint: 'The agent runs without interactive "Allow?" prompts — orca spawns it unattended in tmux, so a prompt would otherwise stall the mission. Autonomy is enforced by the overseer above the agent. Turn off only if you want to approve prompts by hand.',
     executor: 'Executor',
     executorDesc: 'Default agent for new launches',
     autonomy: 'Autonomy',

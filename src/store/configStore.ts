@@ -2,7 +2,7 @@ import type { Db } from './db.js';
 import { defaultPromptTemplate } from '../overseer/planner.js';
 import { DEFAULT_BINS, EXEC_NOTES, KNOWN_EXECS, isAllowedExec } from '../shared/execs.js';
 
-interface ProviderConfig { bin: string; args: string }
+interface ProviderConfig { bin: string; args: string; skipPermissions: boolean }
 export type Providers = Record<string, ProviderConfig>;
 
 export interface OrcaConfig {
@@ -19,18 +19,21 @@ export interface OrcaConfig {
 // Default executable name per agent program (resolveExecutor program ids). Derived from the shared
 // executor table so program ids + their bins stay in one place (audit #43/S21).
 const DEFAULT_PROVIDERS: Providers = Object.fromEntries(
-  Object.entries(DEFAULT_BINS).map(([program, bin]) => [program, { bin, args: '' }]),
+  Object.entries(DEFAULT_BINS).map(([program, bin]) => [program, { bin, args: '', skipPermissions: true }]),
 );
 
-/** Keep only well-formed provider entries ({ bin: string, args: string }). A malformed value (e.g.
- *  bin as a number from a hand-edited row or a loose PUT) is dropped, never persisted/returned — it
- *  would otherwise reach spawn() as an invalid executable. */
+/** Keep only well-formed provider entries ({ bin: string, args: string, skipPermissions: boolean }). A
+ *  malformed value (e.g. bin as a number from a hand-edited row or a loose PUT) is dropped, never
+ *  persisted/returned — it would otherwise reach spawn() as an invalid executable. `skipPermissions`
+ *  defaults to true when absent (older configs, or a partial PUT) so unattended agents keep bypassing
+ *  permission prompts unless the operator explicitly turns it off. */
 function sanitizeProviders(input: unknown): Providers {
   if (!input || typeof input !== 'object') return {};
   const out: Providers = {};
   for (const [k, v] of Object.entries(input as Record<string, unknown>)) {
     if (v && typeof v === 'object' && typeof (v as ProviderConfig).bin === 'string' && typeof (v as ProviderConfig).args === 'string') {
-      out[k] = { bin: (v as ProviderConfig).bin, args: (v as ProviderConfig).args };
+      const skip = (v as ProviderConfig).skipPermissions;
+      out[k] = { bin: (v as ProviderConfig).bin, args: (v as ProviderConfig).args, skipPermissions: typeof skip === 'boolean' ? skip : true };
     }
   }
   return out;

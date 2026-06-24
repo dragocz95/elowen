@@ -20,6 +20,10 @@ export interface SpawnCtx {
   bin?: string;
   /** Extra CLI args inserted after the model flag (configured per provider in Settings). */
   extraArgs?: string;
+  /** Whether to bypass the agent's interactive permission prompts (Settings → Providers, default on).
+   *  Undefined means "use the built-in default" (bypass). orca agents run unattended in a tmux pane,
+   *  so a prompt would hang the mission; the overseer enforces autonomy above the agent. */
+  skipPermissions?: boolean;
   /** When set, used verbatim as the agent prompt instead of the assembled worker preamble. Used by
    *  reasoning agents (Pilot/Overseer) that own their own instructions and close nothing. */
   rawPrompt?: string;
@@ -61,21 +65,29 @@ function buildLaunchCommand(spec: AgentSpec, ctx: SpawnCtx, prompt: string): str
     ? Object.entries(ctx.env).map(([k, v]) => `export ${k}=${esc(v)}`).join(' && ') + ' && '
     : '';
   const extra = ctx.extraArgs && ctx.extraArgs.trim() ? ` ${ctx.extraArgs.trim()}` : '';
+  // Bypass interactive permission prompts unless the operator turned it off for this provider
+  // (Settings → Providers). Each agent has its own mechanism; undefined defaults to on.
+  const skip = ctx.skipPermissions !== false;
   if (spec.program.startsWith('opencode')) {
     const bin = ctx.bin || 'opencode';
     // Launch the interactive TUI (UI mode) with the task preloaded into the composer
     // via --prompt. The TUI holds the prompt but does not auto-submit it, so SpawnService
     // nudges Enter a few times once the UI has mounted (Enter on an empty composer is a
-    // harmless no-op, so the extra presses are safe).
-    return `${cd} && ${envExport}${bin} --model ${spec.model}${extra} --prompt ${esc(prompt)}`;
+    // harmless no-op, so the extra presses are safe). The TUI has no skip-permissions flag (that
+    // lives on `opencode run`), so the bypass is delivered as a merged config via env:
+    // OPENCODE_CONFIG_CONTENT sets permission "*" → allow without writing any file into the repo.
+    const yolo = skip ? `export OPENCODE_CONFIG_CONTENT=${esc('{"permission":"allow"}')} && ` : '';
+    return `${cd} && ${envExport}${yolo}${bin} --model ${spec.model}${extra} --prompt ${esc(prompt)}`;
   }
   if (spec.program.startsWith('codex')) {
     const bin = ctx.bin || 'codex';
     // Positional prompt + autonomous approval bypass (codex's skip-permissions equivalent).
-    return `${cd} && ${envExport}${bin} --dangerously-bypass-approvals-and-sandbox --model ${spec.model}${extra} ${esc(prompt)}`;
+    const bypass = skip ? ' --dangerously-bypass-approvals-and-sandbox' : '';
+    return `${cd} && ${envExport}${bin}${bypass} --model ${spec.model}${extra} ${esc(prompt)}`;
   }
   const bin = ctx.bin || 'claude';
   // Autonomous approval bypass: orca-spawned agents run unattended in a tmux pane, so an
-  // interactive permission prompt would hang the whole mission. Mirror codex's bypass flag.
-  return `${cd} && ${envExport}${bin} --dangerously-skip-permissions --model ${spec.model}${extra} ${esc(prompt)}`;
+  // interactive permission prompt would hang the whole mission.
+  const bypass = skip ? ' --dangerously-skip-permissions' : '';
+  return `${cd} && ${envExport}${bin}${bypass} --model ${spec.model}${extra} ${esc(prompt)}`;
 }

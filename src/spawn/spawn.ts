@@ -8,8 +8,10 @@ const log = logger('spawn');
 /** How a spawned agent reaches back to the daemon to close its task. `cli` is the full orca
  *  invocation: the global `orca` command in production, or `node <dist/cli/index.js>` in a checkout. */
 export interface OrcaCliConfig { cli: string; url: string; token: string }
-/** Per-program binary override + extra args (configured in Settings → Providers). */
-export type ProviderResolver = (program: string) => { bin?: string; args?: string } | undefined;
+/** Per-program binary override + extra args + permission-bypass toggle (configured in Settings →
+ *  Providers). `skipPermissions` defaults to true at the config layer; undefined here means "use the
+ *  built-in default" (bypass on). */
+export type ProviderResolver = (program: string) => { bin?: string; args?: string; skipPermissions?: boolean } | undefined;
 
 export class SpawnService {
   constructor(private d: { tmux: TmuxDriver; agents: AgentStore; orca?: OrcaCliConfig; providers?: ProviderResolver }) {}
@@ -32,7 +34,7 @@ export class SpawnService {
       projectPath: input.projectPath, taskId: input.taskId, agentName: input.agentName,
       taskTitle: input.taskTitle, taskDescription: input.taskDescription,
       closeCommand, epicId: input.epicId, epicCloseCommand, cli, env, bin: provider?.bin, extraArgs: provider?.args,
-      rawPrompt: input.rawPrompt,
+      skipPermissions: provider?.skipPermissions, rawPrompt: input.rawPrompt,
     });
     await this.d.tmux.spawn(session, { cwd: input.projectPath, command });
     // Explicit spawn record: captures pilot/overseer launches too (they have no task row, so the

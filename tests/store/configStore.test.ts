@@ -106,10 +106,20 @@ describe('ConfigStore', () => {
     db.prepare("INSERT INTO settings (id, data) VALUES (1, ?)")
       .run(JSON.stringify({ providers: { 'claude-code': { bin: 'claude', args: '' }, bad: { bin: 42, args: '' } } }));
     expect(cfg.get().providers.bad).toBeUndefined();
-    expect(cfg.get().providers['claude-code']).toEqual({ bin: 'claude', args: '' });
+    // skipPermissions defaults to true when an older row omits it.
+    expect(cfg.get().providers['claude-code']).toEqual({ bin: 'claude', args: '', skipPermissions: true });
     // A malformed provider in an update patch is also dropped.
     const c = cfg.update({ providers: { worse: { bin: 1, args: 2 } as unknown as { bin: string; args: string } } });
     expect(c.providers.worse).toBeUndefined();
+  });
+  it('round-trips the per-provider skipPermissions toggle and defaults it on', () => {
+    // Default providers carry skipPermissions: true out of the box.
+    expect(cfg.get().providers['claude-code']?.skipPermissions).toBe(true);
+    // An explicit false is persisted and returned; a fresh true flips it back.
+    const off = cfg.update({ providers: { 'opencode': { bin: 'opencode', args: '', skipPermissions: false } } });
+    expect(off.providers['opencode']).toEqual({ bin: 'opencode', args: '', skipPermissions: false });
+    const on = cfg.update({ providers: { 'opencode': { bin: 'opencode', args: '', skipPermissions: true } } });
+    expect(on.providers['opencode']?.skipPermissions).toBe(true);
   });
 });
 

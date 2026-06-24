@@ -105,7 +105,7 @@ export default function SettingsPage() {
   const [apiKey, setApiKey] = useState('');
   const [notes, setNotes] = useState('');
   const [prompt, setPrompt] = useState('');
-  const [providers, setProviders] = useState<Record<string, { bin: string; args: string }>>({});
+  const [providers, setProviders] = useState<Record<string, { bin: string; args: string; skipPermissions?: boolean }>>({});
   const [sampleGoal, setSampleGoal] = useState('');
   const [preview, setPreview] = useState<{ title: string; type: string; agent?: string; details?: string }[] | null>(null);
   // Async plan preview is driven by usePlanJob (React Query polling) so it cleans up on unmount —
@@ -574,24 +574,33 @@ export default function SettingsPage() {
             <p className="mb-4 text-sm text-text-muted">{t.settings.providersDesc}</p>
             <div className="flex flex-col gap-3">
               {PROVIDERS.map((p) => {
-                const cur = providers[p.id] ?? { bin: p.binHint, args: '' };
-                const set = (patch: Partial<{ bin: string; args: string }>) => setProviders((prev) => ({ ...prev, [p.id]: { ...cur, ...patch } }));
+                const cur = providers[p.id] ?? { bin: p.binHint, args: '', skipPermissions: true };
+                const set = (patch: Partial<{ bin: string; args: string; skipPermissions: boolean }>) => setProviders((prev) => ({ ...prev, [p.id]: { ...cur, ...patch } }));
                 return (
-                  <div key={p.id} className="flex flex-col gap-3 rounded-lg border border-border bg-surface p-4 sm:flex-row sm:items-center">
-                    <div className="flex items-center gap-3 sm:w-44 sm:shrink-0">
+                  <div key={p.id} className="flex flex-col gap-3 rounded-lg border border-border bg-surface p-4 sm:flex-row sm:items-start">
+                    <div className="flex items-center gap-3 sm:w-44 sm:shrink-0 sm:pt-1">
                       <ProviderLogo meta={p} alt={t.providers[p.id as keyof typeof t.providers]} />
                       <div className="min-w-0">
                         <div className="text-sm font-medium text-text">{t.providers[p.id as keyof typeof t.providers]}</div>
                         <div className="font-mono text-[11px] text-text-muted">{p.id}</div>
                       </div>
                     </div>
-                    <div className="grid flex-1 grid-cols-1 gap-3 sm:grid-cols-2">
-                      <Field label={t.settings.binary}>
-                        <Input value={cur.bin} placeholder={p.binHint} onChange={(e) => set({ bin: e.target.value })} className="font-mono text-xs" />
-                      </Field>
-                      <Field label={t.settings.extraArgs}>
-                        <Input value={cur.args} placeholder={p.argsHint} onChange={(e) => set({ args: e.target.value })} className="font-mono text-xs" />
-                      </Field>
+                    <div className="flex flex-1 flex-col gap-3">
+                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                        <Field label={t.settings.binary}>
+                          <Input value={cur.bin} placeholder={p.binHint} onChange={(e) => set({ bin: e.target.value })} className="font-mono text-xs" />
+                        </Field>
+                        <Field label={t.settings.extraArgs}>
+                          <Input value={cur.args} placeholder={p.argsHint} onChange={(e) => set({ args: e.target.value })} className="font-mono text-xs" />
+                        </Field>
+                      </div>
+                      <label className="flex items-center justify-between gap-3 rounded-md border border-border bg-bg px-3 py-2">
+                        <span className="min-w-0">
+                          <span className="block text-xs font-medium text-text">{t.settings.skipPermissions}</span>
+                          <span className="block text-[11px] text-text-muted">{t.settings.skipPermissionsHint}</span>
+                        </span>
+                        <Toggle checked={cur.skipPermissions !== false} onChange={(v) => set({ skipPermissions: v })} label={t.settings.skipPermissions} />
+                      </label>
                     </div>
                   </div>
                 );
