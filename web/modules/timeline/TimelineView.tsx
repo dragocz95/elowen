@@ -18,6 +18,8 @@ import { LoadingState, ErrorState, EmptyState } from '../../components/ui/states
 import type { Tone } from '../../components/ui/tone';
 import { useTranslation } from '../../lib/i18n';
 import { usePersistentState } from '../../lib/usePersistentState';
+import { useProjectFilter } from '../../lib/useProjectFilter';
+import { ProjectFilterPills } from '../../components/ui/ProjectFilterPills';
 import { DateRangeFilter } from './DateRangeFilter';
 import { DEFAULT_RANGE, parseRange, serializeRange, isStoredRange, inRange, rangeWindowCapHours } from './dateRange';
 
@@ -235,6 +237,7 @@ function EventDetail({ point, display, onClose }: { point: AxisPoint; display: D
 
 export function TimelineView() {
   const { t } = useTranslation();
+  const { selectedProject, setProject } = useProjectFilter('orca.timeline.project');
   const [filter, setFilter] = usePersistentState<string>('orca.timeline.filter', 'all', ['all', 'task', 'mission', 'signal', 'review']);
   const [view, setView] = usePersistentState<string>('orca.timeline.view', 'axis', ['axis', 'lanes']);
   const [rangeRaw, setRangeRaw] = usePersistentState('orca.timeline.range', serializeRange(DEFAULT_RANGE), isStoredRange);
@@ -283,8 +286,8 @@ export function TimelineView() {
   );
 
   const filteredEvents = useMemo(
-    () => { const now = Date.now(); return rawEvents.filter((e) => inRange(e.timestamp, range, now)); },
-    [rawEvents, range],
+    () => { const now = Date.now(); return rawEvents.filter((e) => inRange(e.timestamp, range, now) && (selectedProject === 'all' || e.projectId === selectedProject)); },
+    [rawEvents, range, selectedProject],
   );
 
   // Window = the available data span, capped by the active range. Falls back to 12h when empty,
@@ -329,10 +332,13 @@ export function TimelineView() {
 
   const hasData = !q.isLoading && !q.isError && filteredEvents.length > 0;
 
-  // Merge every accessible project's commit history into one "changes over time" stream below the
-  // axis (activity events don't carry a project id, so we scan the projects the user can see).
+  // Merge project commit history into "changes over time" — scoped to the selected project when
+  // a filter is active, or all accessible projects when showing everything.
   const projects = useProjects();
-  const projectIds = useMemo(() => (projects.data ?? []).map((p) => p.id), [projects.data]);
+  const projectIds = useMemo(() => {
+    const all = (projects.data ?? []).map((p) => p.id);
+    return selectedProject === 'all' ? all : all.filter((id) => id === selectedProject);
+  }, [projects.data, selectedProject]);
   const commitsQ = useProjectsCommits(projectIds, windowHours);
 
   const STAT_CARDS: { tone: Tone; count: number; label: string }[] = [
@@ -346,6 +352,7 @@ export function TimelineView() {
   return (
     <div className="flex flex-col gap-4">
       <ModuleHeader title={t.page.timeline} icon={Activity}>
+        <ProjectFilterPills value={selectedProject} onChange={setProject} />
         <DateRangeFilter value={range} onChange={(r) => setRangeRaw(serializeRange(r))} />
         <Segmented options={[{ label: t.timeline.axis, value: 'axis', icon: Activity }, { label: t.timeline.lanes, value: 'lanes', icon: Columns3 }]} value={view} onChange={setView} />
         <Segmented options={FILTER_OPTIONS} value={filter} onChange={setFilter} />

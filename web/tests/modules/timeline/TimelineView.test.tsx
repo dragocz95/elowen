@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, afterEach, beforeEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { setupServer } from 'msw/node';
 import { http, HttpResponse } from 'msw';
@@ -40,6 +40,7 @@ const server = setupServer(
   http.get('*/api/projects/:id/changes', () => HttpResponse.json({ diff: '--- a/src/foo.ts\n+++ b/src/foo.ts\n@@ -1 +1 @@\n-old\n+new line here' })),
 );
 beforeAll(() => server.listen({ onUnhandledRequest })); afterEach(() => server.resetHandlers()); afterAll(() => server.close());
+beforeEach(() => localStorage.clear());
 
 describe('TimelineView', () => {
   it('renders the timeline track tick labels', async () => {
@@ -147,5 +148,53 @@ describe('TimelineView', () => {
 
     // Summary strip must be populated.
     expect(await screen.findByTestId('timeline-summary')).toBeTruthy();
+  });
+
+  it('project filter pills are hidden when the workspace has fewer than 2 projects', async () => {
+    server.use(
+      http.get('*/api/projects', () => HttpResponse.json([
+        { id: 5, slug: 'orca', path: '/o', notes: '', icon: '', pr_enabled: null },
+      ])),
+    );
+    const { wrapper: Wrapper } = createWrapper();
+    render(<Wrapper><TimelineView /></Wrapper>);
+    // Wait for activity data and ticks to appear, then check pills are absent.
+    await screen.findAllByTestId('axis-tick');
+    expect(screen.queryByRole('group', { name: 'Project filter' })).toBeNull();
+  });
+
+  it('project filter pills appear when the workspace has 2 or more projects', async () => {
+    server.use(
+      http.get('*/api/projects', () => HttpResponse.json([
+        { id: 5, slug: 'orca', path: '/o', notes: '', icon: '', pr_enabled: null },
+        { id: 7, slug: 'other', path: '/p2', notes: '', icon: '', pr_enabled: null },
+      ])),
+    );
+    const { wrapper: Wrapper } = createWrapper();
+    render(<Wrapper><TimelineView /></Wrapper>);
+    // Pills are rendered asynchronously once the project list resolves.
+    expect(await screen.findByRole('group', { name: 'Project filter' })).toBeTruthy();
+  });
+
+  it('project filter — only events from the selected project appear as markers', async () => {
+    const now = Date.now();
+    const min = 60 * 1000;
+    server.use(
+      http.get('*/api/projects', () => HttpResponse.json([
+        { id: 5, slug: 'orca', path: '/o', notes: '', icon: '', pr_enabled: null },
+        { id: 7, slug: 'other', path: '/p2', notes: '', icon: '', pr_enabled: null },
+      ])),
+      http.get('*/api/activity', () => HttpResponse.json([
+        { id: 50, ts: new Date(now - 2 * min).toISOString(), type: 'task', target: 'orca-x', detail: 'proj-five', project_id: 5 },
+        { id: 51, ts: new Date(now - 3 * min).toISOString(), type: 'task', target: 'orca-y', detail: 'proj-seven', project_id: 7 },
+      ])),
+    );
+    // Pre-seed the filter so only project 5 events pass.
+    localStorage.setItem('orca.timeline.project', '5');
+    const { wrapper: Wrapper } = createWrapper();
+    render(<Wrapper><TimelineView /></Wrapper>);
+    const dots = await screen.findAllByTestId('axis-dot');
+    expect(dots.some((d) => d.getAttribute('aria-label')?.includes('proj-five'))).toBe(true);
+    expect(dots.some((d) => d.getAttribute('aria-label')?.includes('proj-seven'))).toBe(false);
   });
 });
