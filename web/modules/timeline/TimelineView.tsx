@@ -295,9 +295,11 @@ export function TimelineView() {
     const spanH = (Date.now() - earliest) / 3_600_000;
     return Math.min(rangeWindowCapHours(range, Date.now()), Math.max(1, Math.ceil(spanH)));
   }, [filteredEvents, range]);
-  const windowLabel = windowHours >= 144 ? t.timeline.activityWeek
-    : windowHours >= 36 ? t.timeline.activityDays.replace('{n}', String(Math.round(windowHours / 24)))
-    : t.timeline.activityHours.replace('{n}', String(Math.round(windowHours)));
+  const windowLabel = windowHours < 36
+    ? t.timeline.activityHours.replace('{n}', String(Math.round(windowHours)))
+    : range.preset === '7d'
+      ? t.timeline.activityWeek
+      : t.timeline.activityDays.replace('{n}', String(Math.round(windowHours / 24)));
 
   const { points, ticks } = useMemo(() => plotAxis(filteredEvents, Date.now(), windowHours), [filteredEvents, windowHours]);
 
