@@ -77,6 +77,28 @@ describe('advisor routes', () => {
     expect((await app.request('/advisor/start', post(agentTok, { exec: 'sonnet' }))).status).toBe(403);
   });
 
+  it('killing the advisor from the sessions list disables autostart, so login keeps it down', async () => {
+    const { app, users, amy, amyTok } = setup();
+    await app.request('/advisor/start', post(amyTok, { exec: 'sonnet' })); // running, autostart armed
+    expect(users.get(amy.id)?.advisor_autostart).toBe(true);
+    // Kill it via the generic session route (the Sessions page) — not the advisor pane's Stop button.
+    const del = await app.request(`/sessions/orca-advisor-${amy.id}`, { method: 'DELETE', ...auth(amyTok) });
+    expect(del.status).toBe(200);
+    expect(users.get(amy.id)?.advisor_autostart).toBe(false); // the kill is an explicit "turn it off"
+    // A fresh login must NOT resurrect it.
+    const res = await app.request('/auth/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ username: 'amy', password: 'pw' }) });
+    await new Promise((r) => setTimeout(r, 20));
+    const tok = (await res.json() as { token: string }).token;
+    expect((await (await app.request('/advisor/status', auth(tok))).json() as { running: boolean }).running).toBe(false);
+  });
+
+  it('killing a non-advisor session does not touch advisor autostart', async () => {
+    const { app, users, amy, amyTok } = setup();
+    await app.request('/advisor/start', post(amyTok, { exec: 'sonnet' }));
+    await app.request('/sessions/orca-some-agent-7', { method: 'DELETE', ...auth(amyTok) }).catch(() => {});
+    expect(users.get(amy.id)?.advisor_autostart).toBe(true); // unaffected
+  });
+
   it('login brings a remembered advisor back up (autostart)', async () => {
     const { app, users, amy } = setup();
     users.setAdvisorExec(amy.id, 'sonnet'); // pretend amy set it up before

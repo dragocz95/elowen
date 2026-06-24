@@ -1264,8 +1264,18 @@ export function createServer(d: ServerDeps): Hono<{ Variables: { user: User; tok
     return c.json({ session }, 201);
   });
   app.delete('/sessions/:name', async c => {
-    if (!sessionAccessible(c, c.req.param('name'))) return c.json({ error: 'forbidden' }, 403);
-    await d.tmux.kill(c.req.param('name')); return c.json({ ok: true });
+    const name = c.req.param('name');
+    if (!sessionAccessible(c, name)) return c.json({ error: 'forbidden' }, 403);
+    // Killing a user's advisor from the sessions list is an explicit "turn it off" — route it through
+    // advisor.stop so it also persists advisor_autostart=false. A bare tmux.kill would leave the flag
+    // on, and ensureOnLogin would resurrect the advisor on the next login (the "it comes back after I
+    // killed it" bug). Plain agent/overseer sessions just get killed.
+    const info = classifySession(name);
+    if (info.role === 'advisor' && info.userId !== undefined && d.advisor) {
+      await d.advisor.stop(info.userId);
+      return c.json({ ok: true });
+    }
+    await d.tmux.kill(name); return c.json({ ok: true });
   });
   app.post('/sessions/:name/keys', async c => {
     if (!sessionAccessible(c, c.req.param('name'))) return c.json({ error: 'forbidden' }, 403);
