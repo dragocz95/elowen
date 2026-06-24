@@ -1325,7 +1325,15 @@ export function createServer(d: ServerDeps): Hono<{ Variables: { user: User; tok
   app.get('/missions', c => {
     const allowed = accessibleProjects(c);
     const live = d.missions.live();
-    const visible = allowed ? live.filter((m) => { const epic = d.tasks.get(m.epic_id); return epic && allowed.has(epic.project_id); }) : live;
+    // Also surface DISENGAGED missions whose PR is still pending (ready to open / open) so a completed
+    // PR-native mission keeps its branch/PR affordance in the UI — the manual "Open PR" lives here.
+    const liveIds = new Set(live.map((m) => m.id));
+    const extra = (d.missionGit?.pendingPrMissionIds() ?? [])
+      .filter((id) => !liveIds.has(id))
+      .map((id) => d.missions.get(id))
+      .filter((m): m is NonNullable<typeof m> => m != null);
+    const all = [...live, ...extra];
+    const visible = allowed ? all.filter((m) => { const epic = d.tasks.get(m.epic_id); return epic && allowed.has(epic.project_id); }) : all;
     // Attach PR-native metadata (branch/PR url+state) so the tasks view can show a badge + "Open PR"
     // without a per-mission detail fetch. Null for non-PR missions.
     return c.json(visible.map((m) => ({ ...m, pr: d.missionGit?.prInfo(m.id) ?? null })));

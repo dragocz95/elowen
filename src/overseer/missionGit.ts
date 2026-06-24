@@ -104,6 +104,12 @@ export class MissionGit {
     return rec ? { branch: rec.branch, prNumber: rec.pr_number, prUrl: rec.pr_url, prState: rec.pr_state } : null;
   }
 
+  /** Mission ids with a PR still needing attention (no PR yet, or an open one) — used so a completed
+   *  mission keeps showing its branch/PR affordance in the UI even after it has disengaged. */
+  pendingPrMissionIds(): string[] {
+    return this.d.prs.pending().map((r) => r.mission_id);
+  }
+
   /** Finalise a mission at epic-done: run the verify gate, then (when auto-open is on) push the branch
    *  and open the PR. With auto-open off, a passing gate returns 'ready' and waits for a manual open.
    *  A failing gate records 'verify_failed' and opens nothing. No-op when PR mode is off. */

@@ -5,10 +5,12 @@ import { Readiness } from '../../src/store/readiness.js';
 import { MissionStore } from '../../src/store/missionStore.js';
 import { ProjectStore } from '../../src/store/projectStore.js';
 import { ConfigStore } from '../../src/store/configStore.js';
+import { MissionPrStore } from '../../src/store/missionPrStore.js';
+import { MissionGit } from '../../src/overseer/missionGit.js';
 import { createServer } from '../../src/api/server.js';
 import { EventBus } from '../../src/api/sse.js';
 import { SystemClock } from '../../src/shared/clock.js';
-import type { MissionGit, FinishResult } from '../../src/overseer/missionGit.js';
+import type { FinishResult } from '../../src/overseer/missionGit.js';
 
 function build(openPr: () => Promise<FinishResult>, withGit = true) {
   const db = openDb(':memory:');
@@ -57,5 +59,56 @@ describe('POST /missions/:id/pr', () => {
   it('400s when the PR workflow is not wired', async () => {
     const app = build(async () => ({ state: 'off' }), false);
     expect((await openPr(app)).status).toBe(400);
+  });
+});
+
+describe('GET /missions surfaces a completed PR-native mission', () => {
+  it('includes a DISENGAGED mission with a pending PR (so the Open PR affordance survives completion)', async () => {
+    const db = openDb(':memory:');
+    const projects = new ProjectStore(db);
+    const project = projects.create({ slug: 'demo', path: '/o' });
+    const tasks = new TaskStore(db);
+    tasks.create({ id: 'epic', project_id: project.id, title: 'E', type: 'epic' });
+    const missions = new MissionStore(db);
+    missions.create({ id: 'm-epic', epic_id: 'epic', autonomy: 'L3', max_sessions: 1 });
+    missions.setState('m-epic', 'disengaged'); // naturally completed → drops out of live()
+    const prs = new MissionPrStore(db);
+    prs.create({ mission_id: 'm-epic', branch: 'orca/demo-epic', worktree: '/wt' }); // pr pending (no url yet)
+    const config = new ConfigStore(db);
+    const missionGit = new MissionGit({ prs, config, projects, tasks });
+    const app = createServer({
+      tasks, readiness: new Readiness(db), missions, engine: null as never, spawn: null as never,
+      tmux: null as never, bus: new EventBus(), missionGit, projects,
+      project: { id: project.id, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },
+      clock: new SystemClock(), config,
+    });
+    const list = await (await app.request('/missions')).json() as { id: string; state: string; pr: { branch: string } | null }[];
+    const m = list.find((x) => x.id === 'm-epic');
+    expect(m).toBeTruthy();
+    expect(m!.state).toBe('disengaged');
+    expect(m!.pr?.branch).toBe('orca/demo-epic');
+  });
+
+  it('drops a mission once its PR is merged', async () => {
+    const db = openDb(':memory:');
+    const projects = new ProjectStore(db);
+    const project = projects.create({ slug: 'demo', path: '/o' });
+    const tasks = new TaskStore(db);
+    tasks.create({ id: 'epic', project_id: project.id, title: 'E', type: 'epic' });
+    const missions = new MissionStore(db);
+    missions.create({ id: 'm-epic', epic_id: 'epic', autonomy: 'L3', max_sessions: 1 });
+    missions.setState('m-epic', 'disengaged');
+    const prs = new MissionPrStore(db);
+    prs.create({ mission_id: 'm-epic', branch: 'orca/demo-epic', worktree: '/wt' });
+    prs.setPr('m-epic', { number: 1, url: 'u', state: 'merged' });
+    const config = new ConfigStore(db);
+    const app = createServer({
+      tasks, readiness: new Readiness(db), missions, engine: null as never, spawn: null as never,
+      tmux: null as never, bus: new EventBus(), missionGit: new MissionGit({ prs, config, projects, tasks }), projects,
+      project: { id: project.id, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },
+      clock: new SystemClock(), config,
+    });
+    const list = await (await app.request('/missions')).json() as { id: string }[];
+    expect(list.find((x) => x.id === 'm-epic')).toBeUndefined(); // merged → no longer surfaced
   });
 });

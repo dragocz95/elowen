@@ -61,4 +61,11 @@ export class MissionPrStore {
   withOpenPr(): MissionPr[] {
     return this.db.prepare(`SELECT ${COLS} FROM mission_pr WHERE pr_state='open'`).all() as MissionPr[];
   }
+
+  /** Records still needing attention in the UI: no PR yet (ready to open / verify failed) or an open
+   *  PR — i.e. anything not merged/closed. Lets a completed-but-PR-pending mission keep surfacing the
+   *  branch/PR affordance even after it has disengaged. */
+  pending(): MissionPr[] {
+    return this.db.prepare(`SELECT ${COLS} FROM mission_pr WHERE pr_state IS NULL OR pr_state NOT IN ('merged','closed')`).all() as MissionPr[];
+  }
 }
