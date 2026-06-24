@@ -2,7 +2,7 @@ import { useMemo } from 'react';
 import { useQuery, useQueries } from '@tanstack/react-query';
 import { orcaClient } from './orcaClient';
 import { pendingEscalations, type Escalation } from './escalations';
-import type { DerivedSignal, HermesStatus, CliDetectionResult, PlanJob } from './types';
+import type { DerivedSignal, HermesStatus, CliDetectionResult, GithubAuthStatus, PlanJob } from './types';
 
 /** Poll an async plan job until it leaves the 'planning' state. The SSE `plan` handler also pushes
  *  updates into this cache (keyed by jobId) so the poll is a fallback. Disabled when jobId is null. */
@@ -165,6 +165,14 @@ export const useCliStatus = () =>
   useQuery<CliDetectionResult>({
     queryKey: ['cli-status'],
     queryFn: orcaClient.cliStatus,
+    refetchInterval: 30000,
+    retry: false,
+  });
+
+export const useGithubStatus = () =>
+  useQuery<GithubAuthStatus>({
+    queryKey: ['github-status'],
+    queryFn: orcaClient.githubStatus,
     refetchInterval: 30000,
     retry: false,
   });

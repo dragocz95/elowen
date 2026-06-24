@@ -7,6 +7,7 @@ import { ModelIcon } from '../../components/ui/ModelIcon';
 import { Select } from '../../components/ui/Select';
 import { ModelModal } from '../../modules/settings/ModelModal';
 import { ModelNoteModal } from '../../modules/settings/ModelNoteModal';
+import { GithubStatusBanner } from '../../modules/settings/GithubStatusBanner';
 import { execProvider, execModel, type ProviderId } from '../../lib/modelProvider';
 import { useConfig, useMe, usePlanJob } from '../../lib/queries';
 import { useUpdateConfig, useCleanupAll } from '../../lib/mutations';
@@ -549,6 +550,7 @@ export default function SettingsPage() {
         {category === 'github' && (
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <p className="sm:col-span-2 text-sm text-text-muted">{t.settings.githubIntro}</p>
+            <GithubStatusBanner />
             <SettingCard title={t.settings.ghToken} description={ghTokenSet ? t.settings.ghTokenDesc : t.settings.ghTokenNotSetDesc} icon={KeyRound}>
               <input type="password" value={ghToken} onChange={(e) => setGhToken(e.target.value)} placeholder={ghTokenSet ? t.settings.apiKeySetPlaceholder : t.settings.ghTokenPlaceholder} className={inputClass} />
             </SettingCard>

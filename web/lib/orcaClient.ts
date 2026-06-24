@@ -1,4 +1,4 @@
-import type { Task, Mission, CreateTaskInput, UpdateTaskInput, PlanInput, PlanSubmitResult, PlanJob, InsertPhasesInput, InsertPhasesResult, EngageInput, OrcaConfig, ConfigPatch, MissionDetail, User, UserPatch, ProfilePatch, AuthResult, ActivityEvent, Project, ProjectGit, CommitLogEntry, HermesStatus, HermesInstallInput, HermesInstallResult, CliDetectionResult, TokenUsage, FileNode, DirListing, SessionInfo } from './types';
+import type { Task, Mission, CreateTaskInput, UpdateTaskInput, PlanInput, PlanSubmitResult, PlanJob, InsertPhasesInput, InsertPhasesResult, EngageInput, OrcaConfig, ConfigPatch, MissionDetail, User, UserPatch, ProfilePatch, AuthResult, ActivityEvent, Project, ProjectGit, CommitLogEntry, HermesStatus, HermesInstallInput, HermesInstallResult, CliDetectionResult, GithubAuthStatus, TokenUsage, FileNode, DirListing, SessionInfo } from './types';
 import { clearToken } from './token';
 
 // Same-origin BFF base: the browser talks only to this web origin's /api proxy, which injects the
@@ -151,4 +151,5 @@ export const orcaClient = {
   hermesStatus: (home?: string) => req<HermesStatus>(`/integrations/hermes/status${home ? `?home=${encodeURIComponent(home)}` : ''}`),
   hermesInstall: (input: HermesInstallInput) => req<HermesInstallResult>('/integrations/hermes/install', json(input)),
   cliStatus: () => req<CliDetectionResult>('/integrations/cli-status'),
+  githubStatus: () => req<GithubAuthStatus>('/integrations/github-status'),
 };

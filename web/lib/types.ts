@@ -113,6 +113,16 @@ export interface CliDetectionResult {
   freshInstall: FreshInstallInfo;
 }
 
+/** GitHub auth posture for the PR-native workflow. `method` is what a push would actually use. */
+export interface GithubAuthStatus {
+  ghInstalled: boolean;
+  ghAuthenticated: boolean;
+  account: string | null;
+  tokenSet: boolean;
+  ready: boolean;
+  method: 'token' | 'gh' | 'none';
+}
+
 /** One entry in a project's file tree. */
 export interface FileNode { path: string; type: 'file' | 'dir' }
 /** A shallow directory listing for the new-project path picker (server-side filesystem browse). */

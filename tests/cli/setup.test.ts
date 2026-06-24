@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { isFirstRun, buildSetupPlan, applySetup, defaultExecForCli, fetchAvailableClis, type SetupAnswers } from '../../src/cli/setup.js';
+import { isFirstRun, buildSetupPlan, applySetup, defaultExecForCli, fetchAvailableClis, fetchGithubStatus, type SetupAnswers } from '../../src/cli/setup.js';
 
 const answers: SetupAnswers = {
   username: 'admin', password: 'sekret',
@@ -59,6 +59,21 @@ describe('cli/setup.fetchAvailableClis', () => {
     }) as unknown as typeof fetch;
     await fetchAvailableClis(fetchFn, 'http://x', 'TKN');
     expect(auth).toBe('Bearer TKN');
+  });
+});
+
+describe('cli/setup.fetchGithubStatus', () => {
+  it('passes through the daemon probe result', async () => {
+    const fetchFn = (async () => new Response(JSON.stringify({ ready: true, method: 'gh', account: 'octocat' }), { status: 200 })) as unknown as typeof fetch;
+    expect(await fetchGithubStatus(fetchFn, 'http://x', 'TKN')).toEqual({ ready: true, method: 'gh', account: 'octocat' });
+  });
+  it('degrades to a not-ready default on a failed probe', async () => {
+    const fetchFn = (async () => new Response('nope', { status: 500 })) as unknown as typeof fetch;
+    expect(await fetchGithubStatus(fetchFn, 'http://x', 'TKN')).toEqual({ ready: false, method: 'none', account: null });
+  });
+  it('degrades to a not-ready default when the request throws', async () => {
+    const fetchFn = (async () => { throw new Error('network down'); }) as unknown as typeof fetch;
+    expect(await fetchGithubStatus(fetchFn, 'http://x', 'TKN')).toEqual({ ready: false, method: 'none', account: null });
   });
 });
 

@@ -5,6 +5,7 @@ import { writeFileSync, readFileSync, existsSync, mkdirSync, unlinkSync } from '
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { hermesStatus, installOrcaMcp } from '../integrations/hermesInstall.js';
 import { detectClis } from '../integrations/cliDetection.js';
+import { detectGithubAuth } from '../integrations/github/auth.js';
 import { readTaskUsage } from '../integrations/usage/index.js';
 import { aggregateUsageByExec } from '../integrations/usage/byModel.js';
 import { listProjectFiles, listDirs, readProjectFile, writeProjectFile, readProjectBytes, createProjectFile, createProjectDir, deleteProjectEntry, renameProjectEntry, copyProjectEntry, projectFileAtHead, projectFileDiff, projectCommitDiff, projectCommitFiles, projectCommitFileDiff, projectCommitLog, projectChangedFiles, projectWorkingDiff, projectReviewDiff, isProjectImage } from '../integrations/projectFiles.js';
@@ -1190,6 +1191,10 @@ export function createServer(d: ServerDeps): Hono<{ Variables: { user: User; tok
     };
     return c.json(detectClis(ctx));
   });
+
+  // GitHub auth posture for the PR-native workflow — whether a push would succeed (via a stored token
+  // or gh's own login) and as whom. The token value is never exposed, only whether one is set.
+  app.get('/integrations/github-status', c => c.json(detectGithubAuth(!!d.config.ghToken())));
 
   app.get('/sessions', async c => c.json((await d.tmux.list()).filter((s) => s.startsWith('orca-')).map((s) => {
     const info = classifySession(s);

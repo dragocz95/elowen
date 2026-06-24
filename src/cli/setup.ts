@@ -30,14 +30,17 @@ export function defaultExecForCli(cli: string, opencodeModel = 'anthropic/claude
   }
 }
 
-/** Daemon autopilot config patch (subset of the daemon's ConfigPatch): either the CLI engine
- *  (pilotExec/overseerExec) or the hosted-API engine (model/apiUrl/apiKey). */
+/** Daemon autopilot config patch (subset of the daemon's ConfigPatch): the CLI engine
+ *  (pilotExec/overseerExec) or the hosted-API engine (model/apiUrl/apiKey), plus the opt-in
+ *  PR-native workflow toggle and its GitHub token. */
 interface AutopilotPatch {
   model?: string;
   apiUrl?: string;
   apiKey?: string;
   pilotExec?: string;
   overseerExec?: string;
+  prEnabled?: boolean;
+  ghToken?: string;
 }
 
 interface SetupConfigPatch {
@@ -101,6 +104,20 @@ export async function fetchAvailableClis(fetchFn: typeof fetch, base: string, to
   const body = await r.json() as { tools?: { name: string; functional?: boolean }[] };
   const functional = new Set((body.tools ?? []).filter((t) => t.functional).map((t) => t.name));
   return AUTOPILOT_CLIS.filter((c) => functional.has(c));
+}
+
+/** Ask the daemon whether a PR-native push would succeed (a stored token or gh's own login) and as
+ *  whom — same probe the web settings banner uses. Returns a not-ready default on any failure so the
+ *  wizard degrades to "warn + offer a token". */
+export async function fetchGithubStatus(fetchFn: typeof fetch, base: string, token: string): Promise<{ ready: boolean; method: string; account: string | null }> {
+  try {
+    const r = await fetchFn(`${base}/integrations/github-status`, { headers: { authorization: `Bearer ${token}` } });
+    if (!r.ok) return { ready: false, method: 'none', account: null };
+    const b = await r.json() as { ready?: boolean; method?: string; account?: string | null };
+    return { ready: !!b.ready, method: b.method ?? 'none', account: b.account ?? null };
+  } catch {
+    return { ready: false, method: 'none', account: null };
+  }
 }
 
 /** Create the admin, log in for a bearer token, then save the config. Kept for the non-interactive

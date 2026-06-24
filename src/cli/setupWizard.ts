@@ -1,5 +1,5 @@
 import * as p from '@clack/prompts';
-import { createAdmin, saveConfig, fetchAvailableClis, defaultExecForCli } from './setup.js';
+import { createAdmin, saveConfig, fetchAvailableClis, fetchGithubStatus, defaultExecForCli } from './setup.js';
 
 const PROVIDERS: Record<string, string> = {
   OpenAI: 'https://api.openai.com/v1',
@@ -56,6 +56,40 @@ async function chooseAutopilot(clis: string[]): Promise<AutopilotPatch | null> {
   return { pilotExec: exec, overseerExec: exec };
 }
 
+/** Opt-in PR-native step: missions can finish by opening a real GitHub pull request, but that push
+ *  needs GitHub auth — a stored token or the service user's own `gh auth login`. We probe the daemon
+ *  for the current posture; if nothing would work, we warn and offer to paste a token right here (gh's
+ *  own login is interactive against the service user, so a token is the reliable non-interactive path).
+ *  Off by default — when declined, nothing is persisted and the project-level default stays off. */
+async function chooseGithubWorkflow(base: string, token: string): Promise<void> {
+  const enable = await p.confirm({ message: 'Use the PR-native workflow? Missions open a GitHub pull request when they finish.', initialValue: false });
+  if (p.isCancel(enable) || !enable) return;
+
+  const s = p.spinner();
+  s.start('Checking GitHub access…');
+  const gh = await fetchGithubStatus(fetch, base, token);
+  s.stop(gh.ready
+    ? `GitHub ready — ${gh.method === 'token' ? 'using a stored token' : `signed in via gh CLI${gh.account ? ` as @${gh.account}` : ''}`}.`
+    : 'No GitHub sign-in found on the server.');
+
+  let ghToken: string | undefined;
+  if (!gh.ready) {
+    p.log.warn('Without a token or `gh auth login`, PR-native missions can’t push. Run `gh auth login` as the service user later, or paste a token now.');
+    const entered = await p.password({ message: 'GitHub token (optional — leave blank to set up gh later)' });
+    if (p.isCancel(entered)) return;
+    if (entered) ghToken = entered;
+  }
+
+  const s2 = p.spinner();
+  s2.start('Enabling PR-native workflow…');
+  try {
+    await saveConfig(fetch, base, token, { autopilot: { prEnabled: true, ...(ghToken ? { ghToken } : {}) } });
+    s2.stop('PR-native workflow enabled. New projects will open PRs by default — override it per project anytime.');
+  } catch (e) {
+    s2.stop(`Enabling PR-native workflow failed: ${(e as Error).message}`);
+  }
+}
+
 /** Interactive first-run wizard: create the admin, then let the operator pick the autopilot engine —
  *  an installed agent CLI (no API key) or an LLM API key — and persist it through the daemon API at
  *  `base`. The admin is created up front so the CLI-detection probe can authenticate (which engines
@@ -92,5 +126,7 @@ export async function runSetupWizard(base: string): Promise<{ username: string; 
       s2.stop(`Saving autopilot settings failed: ${(e as Error).message}`);
     }
   }
+
+  await chooseGithubWorkflow(base, token);
   return { username, password };
 }
