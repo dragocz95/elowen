@@ -332,10 +332,13 @@ export function TimelineView() {
 
   const hasData = !q.isLoading && !q.isError && filteredEvents.length > 0;
 
-  // Merge every accessible project's commit history into one "changes over time" stream below the
-  // axis (activity events don't carry a project id, so we scan the projects the user can see).
+  // Merge project commit history into "changes over time" — scoped to the selected project when
+  // a filter is active, or all accessible projects when showing everything.
   const projects = useProjects();
-  const projectIds = useMemo(() => (projects.data ?? []).map((p) => p.id), [projects.data]);
+  const projectIds = useMemo(() => {
+    const all = (projects.data ?? []).map((p) => p.id);
+    return selectedProject === 'all' ? all : all.filter((id) => id === selectedProject);
+  }, [projects.data, selectedProject]);
   const commitsQ = useProjectsCommits(projectIds, windowHours);
 
   const STAT_CARDS: { tone: Tone; count: number; label: string }[] = [
