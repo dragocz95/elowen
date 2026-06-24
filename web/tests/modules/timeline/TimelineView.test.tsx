@@ -93,4 +93,59 @@ describe('TimelineView', () => {
     // A summary strip counts the event kinds in the window.
     expect(await screen.findByTestId('timeline-summary')).toBeTruthy();
   });
+
+  // Regression: when the range is widened to 30d or 'all', events older than 7 days must
+  // appear as markers, populate the summary stats strip, and surface their project diff on
+  // marker click — the original bug silently kept the 7d filter regardless of the selection.
+  it('30d range shows markers, stats and detail diff for events older than 7 days', async () => {
+    const tenDaysAgo = new Date(Date.now() - 10 * 24 * 3600 * 1000).toISOString();
+    server.use(
+      http.get('*/api/activity', () =>
+        HttpResponse.json([
+          { id: 30, ts: tenDaysAgo, type: 'task', target: 'orca-x', detail: 'closed', project_id: 5 },
+          { id: 31, ts: tenDaysAgo, type: 'review', target: 'orca-x', detail: 'escalated: old review', project_id: 5 },
+        ]),
+      ),
+    );
+    // Pre-seed localStorage so usePersistentState hydrates with 30d instead of the 7d default.
+    localStorage.setItem('orca.timeline.range', '30d');
+    const { wrapper: Wrapper } = createWrapper();
+    render(<Wrapper><TimelineView /></Wrapper>);
+
+    // Events 10 days old must be visible as markers when the 30d range is active.
+    const dots = await screen.findAllByTestId('axis-dot');
+    expect(dots.length).toBeGreaterThanOrEqual(1);
+
+    // The summary stats strip must appear (it is hidden when no events pass the range filter).
+    expect(await screen.findByTestId('timeline-summary')).toBeTruthy();
+
+    // Clicking the old review marker must open the detail and show the project diff,
+    // confirming the event's project linkage works for out-of-7d events too.
+    const reviewDot = dots.find((d) => d.getAttribute('aria-label')?.includes('old review'));
+    expect(reviewDot).toBeTruthy();
+    fireEvent.click(reviewDot!);
+    expect(await screen.findByText(/\+new line here/)).toBeTruthy();
+  });
+
+  it('all range shows markers and stats for events older than 7 days', async () => {
+    const thirtyOneDaysAgo = new Date(Date.now() - 31 * 24 * 3600 * 1000).toISOString();
+    server.use(
+      http.get('*/api/activity', () =>
+        HttpResponse.json([
+          { id: 40, ts: thirtyOneDaysAgo, type: 'mission', target: 'm-ep1', detail: 'active', project_id: null },
+          { id: 41, ts: thirtyOneDaysAgo, type: 'task', target: 'orca-x', detail: 'closed', project_id: 5 },
+        ]),
+      ),
+    );
+    localStorage.setItem('orca.timeline.range', 'all');
+    const { wrapper: Wrapper } = createWrapper();
+    render(<Wrapper><TimelineView /></Wrapper>);
+
+    // Events 31 days old (outside 30d but inside 'all') must appear as markers.
+    const dots = await screen.findAllByTestId('axis-dot');
+    expect(dots.length).toBeGreaterThanOrEqual(1);
+
+    // Summary strip must be populated.
+    expect(await screen.findByTestId('timeline-summary')).toBeTruthy();
+  });
 });
