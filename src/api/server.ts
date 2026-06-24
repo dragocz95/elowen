@@ -16,6 +16,7 @@ import type { Readiness } from '../store/readiness.js';
 import type { MissionStore } from '../store/missionStore.js';
 import type { AgentStore } from '../store/agentStore.js';
 import type { MissionEngine } from '../overseer/missionEngine.js';
+import type { MissionGit } from '../overseer/missionGit.js';
 import type { SpawnService } from '../spawn/spawn.js';
 import type { TmuxDriver } from '../tmux/types.js';
 import type { EventBus } from './sse.js';
@@ -53,6 +54,8 @@ const REVIEW_FIX_BUDGET = 2;
 export interface ServerDeps {
   tasks: TaskStore; readiness: Readiness; missions: MissionStore;
   engine: MissionEngine; spawn: SpawnService; tmux: TmuxDriver; bus: EventBus;
+  /** PR-native git lifecycle. Absent (or PR mode off) → phases never commit, no worktree, no PR. */
+  missionGit?: MissionGit;
   project: { id: number; path: string };
   fallback: AgentSpec;
   clock: Clock;
@@ -844,9 +847,13 @@ export function createServer(d: ServerDeps): Hono<{ Variables: { user: User; tok
       // so a bad result halts the mission for a human instead of rolling on. Default off, and only
       // active with an agent overseer configured.
       const cfg = d.config.get();
-      if (b.status === 'closed' && existing.parent_id && cfg.autopilot.reviewOnDone && cfg.autopilot.overseerExec) {
+      if (b.status === 'closed' && existing.parent_id) {
         const mission = d.missions.active().find((m) => m.epic_id === existing.parent_id);
-        if (mission) {
+        // Tracks whether this close handed the phase to the overseer review gate. When it did, the
+        // phase's worktree commit happens on the approving verdict (below); when it didn't, the close
+        // is final and we commit right here — so a rejected phase never lands a commit.
+        let reviewEnqueued = false;
+        if (mission && cfg.autopilot.reviewOnDone && cfg.autopilot.overseerExec) {
           // Close the gate now: block every open direct dependent so no tick spawns it while the review
           // is pending. Track exactly which ones we gated — the verdict releases only these, never a
           // dependent left blocked by a different cause (e.g. an earlier review on another dep).
@@ -871,6 +878,7 @@ export function createServer(d: ServerDeps): Hono<{ Variables: { user: User; tok
           // synthetic 'mission disengaged' verdict. Reviewing it here would let that synthetic reject
           // resurrect a just-finished phase into an orphaned, mission-less 'open' state. Skip it.
           if (gated.length > 0) {
+            reviewEnqueued = true;
             const localDestructive = isDestructive(`${existing.title} ${b.result_summary ?? ''}`);
             // Hand the overseer the REAL evidence — the working-tree changes — not just the agent's
             // self-reported summary, so the review judges the diff instead of rubber-stamping. Workers
@@ -880,7 +888,7 @@ export function createServer(d: ServerDeps): Hono<{ Variables: { user: User; tok
             const { changedFiles, diff } = await projectReviewDiff(reviewPath);
             const reviewCtx = buildReviewContext({ title: existing.title, outcome: b.outcome ?? '', summary: b.result_summary ?? '', changedFiles, diff });
             void decisionQueue.enqueue(mission.id, 'review', reviewCtx, localDestructive)
-              .then((verdict) => {
+              .then(async (verdict) => {
                 // The mission may have torn down while the review was pending (manual disengage, shutdown):
                 // the drain settles the queue with a synthetic reject. Never apply a verdict to a dead
                 // mission — releasing or self-healing it would only orphan tasks under a mission that's gone.
@@ -891,6 +899,9 @@ export function createServer(d: ServerDeps): Hono<{ Variables: { user: User; tok
                 // pane and the user only sees an unexplained 'blocked'/'stalled'.
                 d.bus.publish({ type: 'review', missionId: mission.id, taskId: id, approve: approved, rationale: verdict.rationale });
                 if (approved) {
+                  // Commit the approved phase's worktree work (no-op unless PR mode) BEFORE the next
+                  // phase ticks, so the next agent never edits the worktree mid-commit.
+                  await d.missionGit?.commitPhase(mission.id, existing.title).catch((e) => log.error('phase commit failed', e));
                   // Gate opens: release the gated dependents and tick so the next phase spawns promptly
                   // rather than waiting up to the 90s interval.
                   releaseGatedDependents(id);
@@ -925,6 +936,9 @@ export function createServer(d: ServerDeps): Hono<{ Variables: { user: User; tok
               .catch((e) => log.error('review verdict apply failed', e));
           }
         }
+        // PR-native: when a phase's close is final (no review gate pending), commit its worktree work
+        // now. The review path above commits on approval instead, so a rejected phase never commits.
+        if (mission && !reviewEnqueued) await d.missionGit?.commitPhase(mission.id, existing.title).catch((e) => log.error('phase commit failed', e));
       }
     }
     if (typeof b.exec === 'string') { d.tasks.setExec(id, b.exec); }
