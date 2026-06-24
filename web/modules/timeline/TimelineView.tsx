@@ -18,6 +18,8 @@ import { LoadingState, ErrorState, EmptyState } from '../../components/ui/states
 import type { Tone } from '../../components/ui/tone';
 import { useTranslation } from '../../lib/i18n';
 import { usePersistentState } from '../../lib/usePersistentState';
+import { DateRangeFilter } from './DateRangeFilter';
+import { DEFAULT_RANGE, parseRange, serializeRange, isStoredRange, inRange } from './dateRange';
 
 const WINDOW_MAX_HOURS = 168; // cap the axis window at one week
 
@@ -237,6 +239,8 @@ export function TimelineView() {
   const { t } = useTranslation();
   const [filter, setFilter] = usePersistentState<string>('orca.timeline.filter', 'all', ['all', 'task', 'mission', 'signal', 'review']);
   const [view, setView] = usePersistentState<string>('orca.timeline.view', 'axis', ['axis', 'lanes']);
+  const [rangeRaw, setRangeRaw] = usePersistentState('orca.timeline.range', serializeRange(DEFAULT_RANGE), isStoredRange);
+  const range = useMemo(() => parseRange(rangeRaw) ?? DEFAULT_RANGE, [rangeRaw]);
   const [picked, setPicked] = useState<AxisPoint | null>(null);
   const type = filter === 'all' ? undefined : filter;
   const q = useActivity(type);
@@ -280,19 +284,24 @@ export function TimelineView() {
     [q.data],
   );
 
+  const filteredEvents = useMemo(
+    () => { const now = Date.now(); return rawEvents.filter((e) => inRange(e.timestamp, range, now)); },
+    [rawEvents, range],
+  );
+
   // Window = the available data span, capped at one week. Falls back to 12h when empty,
   // and zooms in when all events are recent (so a few-minute run isn't lost on a week axis).
   const windowHours = useMemo(() => {
-    if (rawEvents.length === 0) return 12;
-    const earliest = Math.min(...rawEvents.map((e) => e.timestamp));
+    if (filteredEvents.length === 0) return 12;
+    const earliest = Math.min(...filteredEvents.map((e) => e.timestamp));
     const spanH = (Date.now() - earliest) / 3_600_000;
     return Math.min(WINDOW_MAX_HOURS, Math.max(1, Math.ceil(spanH)));
-  }, [rawEvents]);
+  }, [filteredEvents]);
   const windowLabel = windowHours >= 144 ? t.timeline.activityWeek
     : windowHours >= 36 ? t.timeline.activityDays.replace('{n}', String(Math.round(windowHours / 24)))
     : t.timeline.activityHours.replace('{n}', String(Math.round(windowHours)));
 
-  const { points, ticks } = useMemo(() => plotAxis(rawEvents, Date.now(), windowHours), [rawEvents, windowHours]);
+  const { points, ticks } = useMemo(() => plotAxis(filteredEvents, Date.now(), windowHours), [filteredEvents, windowHours]);
 
   // Summary: count the in-window points by kind, with review split into approved/escalated.
   const stats = useMemo(() => {
@@ -310,15 +319,15 @@ export function TimelineView() {
   const lanes = useMemo(() => {
     const now = Date.now();
     const byTarget = new Map<string, AxisEvent[]>();
-    for (const e of rawEvents) { const list = byTarget.get(e.target) ?? []; list.push(e); byTarget.set(e.target, list); }
+    for (const e of filteredEvents) { const list = byTarget.get(e.target) ?? []; list.push(e); byTarget.set(e.target, list); }
     return Array.from(byTarget.entries())
       .map(([target, evs]) => ({ target, points: plotAxis(evs, now, windowHours).points, last: Math.max(...evs.map((e) => e.timestamp)) }))
       .filter((l) => l.points.length > 0)
       .sort((a, b) => b.last - a.last)
       .slice(0, 10);
-  }, [rawEvents, windowHours]);
+  }, [filteredEvents, windowHours]);
 
-  const hasData = !q.isLoading && !q.isError && rawEvents.length > 0;
+  const hasData = !q.isLoading && !q.isError && filteredEvents.length > 0;
 
   // Merge every accessible project's commit history into one "changes over time" stream below the
   // axis (activity events don't carry a project id, so we scan the projects the user can see).
@@ -337,6 +346,7 @@ export function TimelineView() {
   return (
     <div className="flex flex-col gap-4">
       <ModuleHeader title={t.page.timeline} icon={Activity}>
+        <DateRangeFilter value={range} onChange={(r) => setRangeRaw(serializeRange(r))} />
         <Segmented options={[{ label: t.timeline.axis, value: 'axis', icon: Activity }, { label: t.timeline.lanes, value: 'lanes', icon: Columns3 }]} value={view} onChange={setView} />
         <Segmented options={FILTER_OPTIONS} value={filter} onChange={setFilter} />
       </ModuleHeader>
