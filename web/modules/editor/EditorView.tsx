@@ -32,7 +32,9 @@ export function EditorView() {
   return (
     <>
       <ModuleHeader title={t.page.editor} icon={Code2}>
-        <ProjectFilterPills value={selectedProject} onChange={setProject} />
+        {/* The editor always edits one concrete project — never "All" — so drop that pill and bind the
+            picker to the resolved project id (falls back to the first accessible project). */}
+        <ProjectFilterPills value={projectId ?? 'all'} onChange={setProject} includeAll={false} />
       </ModuleHeader>
       {projectId == null
         ? <EmptyState title={t.editor.noProjects} description={t.editor.noProjectsDescription} icon={Code2} />

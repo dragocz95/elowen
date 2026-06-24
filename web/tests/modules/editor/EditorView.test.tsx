@@ -55,6 +55,16 @@ describe('EditorView', () => {
     expect(screen.getByTestId('editor').getAttribute('data-hasclose')).toBe('0');
   });
 
+  it('offers a project picker but never an "All projects" option', () => {
+    const { wrapper } = createWrapper();
+    render(<EditorView />, { wrapper });
+    // Both projects are selectable…
+    expect(screen.getByText('orca')).toBeTruthy();
+    expect(screen.getByText('other')).toBeTruthy();
+    // …but the editor edits exactly one, so the "All projects" pill must not be there.
+    expect(screen.queryByText('All projects')).toBeNull();
+  });
+
   it('on mobile gives the editor a way back to the app', () => {
     mobileFlag = true;
     const { wrapper } = createWrapper();
