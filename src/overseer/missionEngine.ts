@@ -189,7 +189,23 @@ export class MissionEngine {
 
     const kids = this.children(m.epic_id);
     if (kids.length > 0 && kids.every(t => t.status === 'closed' || t.status === 'cancelled')) {
+      // A mission already held by a failed PR verify gate stays stalled for a human — never re-summarise
+      // or re-run the (possibly slow) gate on every subsequent tick.
+      if (this.d.missionGit?.prState(id) === 'verify_failed') {
+        if (m.state !== 'stalled') { this.d.missions.setState(id, 'stalled'); this.d.bus.publish({ type: 'mission', missionId: id, state: 'stalled' }); }
+        return;
+      }
       await this.writeMissionSummary(epic, kids); // stamp a "what happened" summary on the epic first…
+      // Finalise git (no-op unless PR mode): verify gate → push → open PR (auto) or wait for manual.
+      const fin = await this.d.missionGit?.finishMission(id);
+      if (fin?.state === 'verify-failed') {
+        // The quality gate failed: hold the mission for a human (worktree + branch kept), don't open a
+        // PR, and don't disengage. Surface the failure so the UI shows why it stalled.
+        this.d.missions.setState(id, 'stalled');
+        this.d.bus.publish({ type: 'mission', missionId: id, state: 'stalled' });
+        this.d.bus.publish({ type: 'review', missionId: id, taskId: epic.id, approve: false, rationale: `Verify command failed:\n${fin.output}` });
+        return;
+      }
       await this.markDisengaged(id); return; // …then tear down the parked overseer (no leak on self-completion)
     }
 

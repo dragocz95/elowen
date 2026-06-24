@@ -1358,6 +1358,24 @@ export function createServer(d: ServerDeps): Hono<{ Variables: { user: User; tok
     await d.engine.disengage(c.req.param('id'));
     return c.json({ ok: true });
   });
+  // Manually open the PR for a PR-native mission (the "Open PR" affordance, for prAutoOpen=off). Runs
+  // the same verify gate, pushes the branch and opens the PR via gh. Returns the PR url on success, or
+  // a 4xx with the reason (verify failed / no remote / gh unavailable) so the UI can explain it.
+  app.post('/missions/:id/pr', async c => {
+    const id = c.req.param('id');
+    const mission = d.missions.get(id);
+    if (!mission) return c.json({ error: 'mission not found' }, 404);
+    if (!missionAccessible(c, mission.epic_id)) return c.json({ error: 'forbidden' }, 403);
+    if (!d.missionGit) return c.json({ error: 'PR workflow not enabled' }, 400);
+    const res = await d.missionGit.openPr(id);
+    switch (res.state) {
+      case 'opened': return c.json({ url: res.url, number: res.number });
+      case 'verify-failed': return c.json({ error: 'verify command failed', output: res.output }, 422);
+      case 'no-remote': return c.json({ error: 'project has no GitHub remote to push to' }, 422);
+      case 'pr-failed': return c.json({ error: 'gh CLI unavailable or unauthenticated' }, 422);
+      default: return c.json({ error: 'PR workflow not enabled for this mission' }, 400);
+    }
+  });
 
   // Overseer long-poll: the parked per-mission overseer agent polls `next` (blocks until a decision
   // is needed or a heartbeat) and answers via `decide`. Decisions are keyed by mission id in the

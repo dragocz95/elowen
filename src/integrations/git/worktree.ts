@@ -56,6 +56,26 @@ export async function commitAll(dir: string, message: string): Promise<boolean> 
   return true;
 }
 
+/** Push `branch` from the worktree to origin using a short-lived token-auth remote URL. GitHub-only;
+ *  returns false (warn) when the repo has no `origin` remote. The token is embedded in the remote URL
+ *  of a single push and never persisted to the repo config. */
+export async function pushBranch(dir: string, branch: string, token: string): Promise<boolean> {
+  const cwd = realRepo(dir);
+  let origin = '';
+  try { origin = (await run('git', ['-C', cwd, 'remote', 'get-url', 'origin'])).stdout.trim(); }
+  catch { log.warn(`push skipped for ${branch} — no origin remote`); return false; }
+  await run('git', ['-C', cwd, 'push', '--force-with-lease', authenticatedRemote(origin, token), `${branch}:${branch}`]);
+  return true;
+}
+
+/** Rewrite an https GitHub remote to embed a token for a single push. SSH or non-GitHub remotes (and a
+ *  blank token) are returned unchanged — token auth doesn't apply. */
+function authenticatedRemote(origin: string, token: string): string {
+  if (!token) return origin;
+  const m = /^https:\/\/(?:[^@/]+@)?github\.com\/(.+?)(?:\.git)?\/?$/i.exec(origin);
+  return m ? `https://x-access-token:${token}@github.com/${m[1]}.git` : origin;
+}
+
 /** The base branch a PR targets: an explicit `configured` value wins; otherwise detect the remote's
  *  default branch (`origin/HEAD`), falling back to `main` when there's no remote. */
 export async function detectBaseBranch(repo: string, configured: string): Promise<string> {
