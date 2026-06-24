@@ -1,6 +1,6 @@
 {
   "name": "orcasynth",
-  "version": "1.4.25",
+  "version": "1.4.26",
   "description": "ORCA — an autonomous coding-agent orchestrator with an autopilot overseer, daemon API and web UI. Install globally and run `orca`.",
   "license": "MIT",
   "type": "module",
