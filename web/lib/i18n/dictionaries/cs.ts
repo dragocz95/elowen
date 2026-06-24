@@ -403,6 +403,10 @@ export const cs = {
     changesOverTime: 'Změny v čase',
     mostActiveFiles: 'Nejaktivnější soubory',
     noChangesInWindow: 'V tomto okně žádné commity',
+    rangeLabel: 'Období',
+    rangeLast7: 'Posledních 7 dní',
+    rangeLast30: 'Posledních 30 dní',
+    rangeAll: 'Vše',
   },
   review: {
     escalated: 'Dozorčí zamítl fázi: {reason}',

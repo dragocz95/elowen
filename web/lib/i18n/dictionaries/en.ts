@@ -403,6 +403,10 @@ export const en = {
     changesOverTime: 'Changes over time',
     mostActiveFiles: 'Most active files',
     noChangesInWindow: 'No commits in this window',
+    rangeLabel: 'Date range',
+    rangeLast7: 'Last 7 days',
+    rangeLast30: 'Last 30 days',
+    rangeAll: 'All time',
   },
   review: {
     escalated: 'Overseer rejected a phase: {reason}',
