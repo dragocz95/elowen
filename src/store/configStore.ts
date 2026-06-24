@@ -10,7 +10,7 @@ export interface OrcaConfig {
   customModels: { label: string; exec: string }[];
   hiddenPresets: string[];
   modelNotes: Record<string, string>;
-  autopilot: { model: string; overseerModel: string; apiUrl: string; apiKeySet: boolean; notes: string; prompt: string; pilotExec: string; overseerExec: string; reviewOnDone: boolean };
+  autopilot: { model: string; overseerModel: string; apiUrl: string; apiKeySet: boolean; notes: string; prompt: string; pilotExec: string; overseerExec: string; reviewOnDone: boolean; prEnabled: boolean; prBaseBranch: string; prAutoOpen: boolean; prVerifyCommand: string; ghTokenSet: boolean };
   providers: Providers;
   defaults: { exec: string; autonomy: string; maxSessions: number };
   security: { tokenTtlDays: number };
@@ -46,7 +46,7 @@ const DEFAULT_CONFIG: OrcaConfig = {
   customModels: [],
   hiddenPresets: [],
   modelNotes: { ...EXEC_NOTES },
-  autopilot: { model: 'gpt-4o-mini', overseerModel: '', apiUrl: 'https://api.openai.com/v1', apiKeySet: false, notes: '', prompt: defaultPromptTemplate(), pilotExec: '', overseerExec: '', reviewOnDone: false },
+  autopilot: { model: 'gpt-4o-mini', overseerModel: '', apiUrl: 'https://api.openai.com/v1', apiKeySet: false, notes: '', prompt: defaultPromptTemplate(), pilotExec: '', overseerExec: '', reviewOnDone: false, prEnabled: false, prBaseBranch: '', prAutoOpen: false, prVerifyCommand: '', ghTokenSet: false },
   providers: { ...DEFAULT_PROVIDERS },
   defaults: { exec: 'sonnet', autonomy: 'L3', maxSessions: 1 },
   security: { tokenTtlDays: 30 },
@@ -57,9 +57,10 @@ interface Stored {
   customModels: { label: string; exec: string }[];
   hiddenPresets: string[];
   modelNotes: Record<string, string>;
-  autopilot: { model: string; overseerModel: string; apiUrl: string; notes: string; prompt: string; pilotExec: string; overseerExec: string; reviewOnDone: boolean };
+  autopilot: { model: string; overseerModel: string; apiUrl: string; notes: string; prompt: string; pilotExec: string; overseerExec: string; reviewOnDone: boolean; prEnabled: boolean; prBaseBranch: string; prAutoOpen: boolean; prVerifyCommand: string };
   providers: Providers;
   apiKey: string | null;
+  ghToken: string | null;
   defaults: { exec: string; autonomy: string; maxSessions: number };
   security: { tokenTtlDays: number };
 }
@@ -69,9 +70,10 @@ const defaultStored = (): Stored => ({
   customModels: [],
   hiddenPresets: [],
   modelNotes: { ...EXEC_NOTES },
-  autopilot: { model: DEFAULT_CONFIG.autopilot.model, overseerModel: '', apiUrl: DEFAULT_CONFIG.autopilot.apiUrl, notes: '', prompt: DEFAULT_CONFIG.autopilot.prompt, pilotExec: '', overseerExec: '', reviewOnDone: false },
+  autopilot: { model: DEFAULT_CONFIG.autopilot.model, overseerModel: '', apiUrl: DEFAULT_CONFIG.autopilot.apiUrl, notes: '', prompt: DEFAULT_CONFIG.autopilot.prompt, pilotExec: '', overseerExec: '', reviewOnDone: false, prEnabled: false, prBaseBranch: '', prAutoOpen: false, prVerifyCommand: '' },
   providers: { ...DEFAULT_PROVIDERS },
   apiKey: null,
+  ghToken: null,
   defaults: { ...DEFAULT_CONFIG.defaults },
   security: { ...DEFAULT_CONFIG.security },
 });
@@ -81,7 +83,7 @@ export interface ConfigPatch {
   customModels?: { label: string; exec: string }[];
   hiddenPresets?: string[];
   modelNotes?: Record<string, string>;
-  autopilot?: { model?: string; overseerModel?: string; apiUrl?: string; apiKey?: string; notes?: string; prompt?: string; pilotExec?: string; overseerExec?: string; reviewOnDone?: boolean };
+  autopilot?: { model?: string; overseerModel?: string; apiUrl?: string; apiKey?: string; notes?: string; prompt?: string; pilotExec?: string; overseerExec?: string; reviewOnDone?: boolean; prEnabled?: boolean; prBaseBranch?: string; prAutoOpen?: boolean; prVerifyCommand?: string; ghToken?: string };
   providers?: Providers;
   defaults?: { exec?: string; autonomy?: string; maxSessions?: number };
   security?: { tokenTtlDays?: number };
@@ -106,9 +108,10 @@ export class ConfigStore {
         // Seed built-in notes under any stored notes so known models always carry a description,
         // while user edits (including an explicit '' to clear one) take precedence.
         modelNotes: (p.modelNotes && typeof p.modelNotes === 'object' && !Array.isArray(p.modelNotes)) ? { ...d.modelNotes, ...(p.modelNotes as Record<string, string>) } : { ...d.modelNotes },
-        autopilot: { model: p.autopilot?.model ?? d.autopilot.model, overseerModel: p.autopilot?.overseerModel ?? d.autopilot.overseerModel, apiUrl: p.autopilot?.apiUrl ?? d.autopilot.apiUrl, notes: p.autopilot?.notes ?? d.autopilot.notes, prompt: p.autopilot?.prompt ?? d.autopilot.prompt, pilotExec: p.autopilot?.pilotExec ?? d.autopilot.pilotExec, overseerExec: p.autopilot?.overseerExec ?? d.autopilot.overseerExec, reviewOnDone: p.autopilot?.reviewOnDone ?? d.autopilot.reviewOnDone },
+        autopilot: { model: p.autopilot?.model ?? d.autopilot.model, overseerModel: p.autopilot?.overseerModel ?? d.autopilot.overseerModel, apiUrl: p.autopilot?.apiUrl ?? d.autopilot.apiUrl, notes: p.autopilot?.notes ?? d.autopilot.notes, prompt: p.autopilot?.prompt ?? d.autopilot.prompt, pilotExec: p.autopilot?.pilotExec ?? d.autopilot.pilotExec, overseerExec: p.autopilot?.overseerExec ?? d.autopilot.overseerExec, reviewOnDone: p.autopilot?.reviewOnDone ?? d.autopilot.reviewOnDone, prEnabled: p.autopilot?.prEnabled ?? d.autopilot.prEnabled, prBaseBranch: p.autopilot?.prBaseBranch ?? d.autopilot.prBaseBranch, prAutoOpen: p.autopilot?.prAutoOpen ?? d.autopilot.prAutoOpen, prVerifyCommand: p.autopilot?.prVerifyCommand ?? d.autopilot.prVerifyCommand },
         providers: { ...d.providers, ...sanitizeProviders(p.providers) },
         apiKey: typeof p.apiKey === 'string' ? p.apiKey : null,
+        ghToken: typeof p.ghToken === 'string' ? p.ghToken : null,
         defaults: { exec: p.defaults?.exec ?? d.defaults.exec, autonomy: p.defaults?.autonomy ?? d.defaults.autonomy, maxSessions: p.defaults?.maxSessions ?? d.defaults.maxSessions },
         security: { tokenTtlDays: p.security?.tokenTtlDays ?? d.security.tokenTtlDays },
       };
@@ -127,7 +130,7 @@ export class ConfigStore {
       customModels: s.customModels,
       hiddenPresets: s.hiddenPresets,
       modelNotes: s.modelNotes,
-      autopilot: { model: s.autopilot.model, overseerModel: s.autopilot.overseerModel, apiUrl: s.autopilot.apiUrl, apiKeySet: !!s.apiKey, notes: s.autopilot.notes, prompt: s.autopilot.prompt, pilotExec: s.autopilot.pilotExec, overseerExec: s.autopilot.overseerExec, reviewOnDone: s.autopilot.reviewOnDone },
+      autopilot: { model: s.autopilot.model, overseerModel: s.autopilot.overseerModel, apiUrl: s.autopilot.apiUrl, apiKeySet: !!s.apiKey, notes: s.autopilot.notes, prompt: s.autopilot.prompt, pilotExec: s.autopilot.pilotExec, overseerExec: s.autopilot.overseerExec, reviewOnDone: s.autopilot.reviewOnDone, prEnabled: s.autopilot.prEnabled, prBaseBranch: s.autopilot.prBaseBranch, prAutoOpen: s.autopilot.prAutoOpen, prVerifyCommand: s.autopilot.prVerifyCommand, ghTokenSet: !!s.ghToken },
       providers: s.providers,
       defaults: s.defaults,
       security: s.security,
@@ -138,6 +141,8 @@ export class ConfigStore {
 
   apiKey(): string | null { return this.read().apiKey; }
 
+  ghToken(): string | null { return this.read().ghToken; }
+
   /** Whether a settings row has been persisted (i.e. config has been saved at least once). */
   hasSettings(): boolean {
     return !!this.db.prepare('SELECT 1 FROM settings WHERE id = 1').get();
@@ -146,6 +151,7 @@ export class ConfigStore {
   update(patch: ConfigPatch): OrcaConfig {
     const cur = this.read();
     const newKey = patch.autopilot?.apiKey;
+    const newGhToken = patch.autopilot?.ghToken;
     // The pilot/overseer/default exec must resolve to a real program — mirror the API's
     // allowedExecs guard so an admin can't persist a bare bogus spec (e.g. 'foo') that
     // resolveExecutor would silently turn into a non-existent claude-code model (audit O22).
@@ -158,9 +164,10 @@ export class ConfigStore {
       customModels: patch.customModels ?? cur.customModels,
       hiddenPresets: patch.hiddenPresets ?? cur.hiddenPresets,
       modelNotes: patch.modelNotes ?? cur.modelNotes,
-      autopilot: { model: patch.autopilot?.model ?? cur.autopilot.model, overseerModel: patch.autopilot?.overseerModel ?? cur.autopilot.overseerModel, apiUrl: patch.autopilot?.apiUrl ?? cur.autopilot.apiUrl, notes: patch.autopilot?.notes ?? cur.autopilot.notes, prompt: patch.autopilot?.prompt ?? cur.autopilot.prompt, pilotExec, overseerExec, reviewOnDone: patch.autopilot?.reviewOnDone ?? cur.autopilot.reviewOnDone },
+      autopilot: { model: patch.autopilot?.model ?? cur.autopilot.model, overseerModel: patch.autopilot?.overseerModel ?? cur.autopilot.overseerModel, apiUrl: patch.autopilot?.apiUrl ?? cur.autopilot.apiUrl, notes: patch.autopilot?.notes ?? cur.autopilot.notes, prompt: patch.autopilot?.prompt ?? cur.autopilot.prompt, pilotExec, overseerExec, reviewOnDone: patch.autopilot?.reviewOnDone ?? cur.autopilot.reviewOnDone, prEnabled: patch.autopilot?.prEnabled ?? cur.autopilot.prEnabled, prBaseBranch: patch.autopilot?.prBaseBranch ?? cur.autopilot.prBaseBranch, prAutoOpen: patch.autopilot?.prAutoOpen ?? cur.autopilot.prAutoOpen, prVerifyCommand: patch.autopilot?.prVerifyCommand ?? cur.autopilot.prVerifyCommand },
       providers: patch.providers ? { ...cur.providers, ...sanitizeProviders(patch.providers) } : cur.providers,
       apiKey: (typeof newKey === 'string' && newKey.length > 0) ? newKey : cur.apiKey,
+      ghToken: (typeof newGhToken === 'string' && newGhToken.length > 0) ? newGhToken : cur.ghToken,
       defaults: { exec: defaultExec, autonomy: patch.defaults?.autonomy ?? cur.defaults.autonomy, maxSessions: patch.defaults?.maxSessions ?? cur.defaults.maxSessions },
       // Clamp to a sane positive integer — the value is interpolated into a SQL date modifier.
       security: { tokenTtlDays: clampTtlDays(patch.security?.tokenTtlDays, cur.security.tokenTtlDays) },

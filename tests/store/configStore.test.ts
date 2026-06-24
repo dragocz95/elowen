@@ -136,6 +136,46 @@ describe('ConfigStore pilot/overseer exec', () => {
   });
 });
 
+describe('ConfigStore PR-native config', () => {
+  it('defaults the four PR fields and ghTokenSet to off', () => {
+    const c = new ConfigStore(openDb(':memory:'));
+    const a = c.get().autopilot;
+    expect(a.prEnabled).toBe(false);
+    expect(a.prBaseBranch).toBe('');
+    expect(a.prAutoOpen).toBe(false);
+    expect(a.prVerifyCommand).toBe('');
+    expect(a.ghTokenSet).toBe(false);
+  });
+  it('persists the PR fields and never returns the raw ghToken', () => {
+    const c = new ConfigStore(openDb(':memory:'));
+    const got = c.update({ autopilot: { prEnabled: true, prBaseBranch: 'develop', prAutoOpen: true, prVerifyCommand: 'npm test', ghToken: 'ghp_secret123' } });
+    expect(got.autopilot.prEnabled).toBe(true);
+    expect(got.autopilot.prBaseBranch).toBe('develop');
+    expect(got.autopilot.prAutoOpen).toBe(true);
+    expect(got.autopilot.prVerifyCommand).toBe('npm test');
+    expect(got.autopilot.ghTokenSet).toBe(true);
+    expect(JSON.stringify(got)).not.toContain('ghp_secret123');
+    expect(c.ghToken()).toBe('ghp_secret123');
+  });
+  it('update without ghToken keeps the existing token', () => {
+    const c = new ConfigStore(openDb(':memory:'));
+    c.update({ autopilot: { ghToken: 'ghp_keepme' } });
+    c.update({ autopilot: { prEnabled: true } });
+    expect(c.ghToken()).toBe('ghp_keepme');
+    expect(c.get().autopilot.ghTokenSet).toBe(true);
+  });
+  it('reads a legacy row without PR fields as defaults', () => {
+    const db2 = openDb(':memory:');
+    db2.prepare('INSERT INTO settings (id, data) VALUES (1, ?)').run(JSON.stringify({ allowedExecs: ['sonnet'], autopilot: { model: 'm', apiUrl: 'u' }, apiKey: null }));
+    const a = new ConfigStore(db2).get().autopilot;
+    expect(a.prEnabled).toBe(false);
+    expect(a.prBaseBranch).toBe('');
+    expect(a.prAutoOpen).toBe(false);
+    expect(a.prVerifyCommand).toBe('');
+    expect(a.ghTokenSet).toBe(false);
+  });
+});
+
 describe('ConfigStore exec validation (O22)', () => {
   it('rejects a bare bogus overseerExec/pilotExec, normalizing to empty', () => {
     const c = new ConfigStore(openDb(':memory:'));

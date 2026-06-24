@@ -130,6 +130,29 @@ describe('SettingsPage', () => {
     });
   });
 
+  it('reveals the PR-native fields when the workflow toggle is on and saves them', async () => {
+    const { wrapper: Wrapper } = createWrapper();
+    render(<Wrapper><ToastProvider><SettingsPage /></ToastProvider></Wrapper>);
+    await waitFor(() => expect(screen.getByLabelText('Claude Sonnet 4.5')).toBeChecked());
+
+    fireEvent.click(screen.getByRole('button', { name: 'Autopilot' }));
+    // PR workflow defaults off → the base-branch / verify fields stay hidden.
+    expect(screen.getByLabelText('PR workflow')).not.toBeChecked();
+    expect(screen.queryByText('Verify command')).toBeNull();
+
+    fireEvent.click(screen.getByLabelText('PR workflow'));
+    expect(screen.getByText('Verify command')).toBeTruthy(); // fields revealed
+
+    fireEvent.change(screen.getByPlaceholderText('e.g. npm test'), { target: { value: 'npm test' } });
+    putBody = null;
+    fireEvent.click(screen.getByRole('button', { name: 'Save autopilot' }));
+    await waitFor(() => {
+      const ap = (putBody as { autopilot: { prEnabled: boolean; prVerifyCommand: string } }).autopilot;
+      expect(ap.prEnabled).toBe(true);
+      expect(ap.prVerifyCommand).toBe('npm test');
+    });
+  });
+
   it('shows the Hermes panel with status badges and no header save button', async () => {
     const { wrapper: Wrapper } = createWrapper();
     render(<Wrapper><ToastProvider><SettingsPage /></ToastProvider></Wrapper>);
