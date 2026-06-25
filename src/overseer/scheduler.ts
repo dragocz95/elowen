@@ -24,13 +24,7 @@ export interface SchedulerDeps {
   /** A PR mission's isolated worktree, used to tell a shared checkout apart from an isolated one when
    *  deciding whether a standalone task must wait for the checkout to free up. */
   worktreeFor?: (missionId: string) => string | null | undefined;
-  /** Max autostart tasks to launch per project in a single tick. Caps a burst of co-scheduled tasks
-   *  (e.g. 50 due at the same minute) from spawning 50 parallel agents at once and exhausting API
-   *  quota/resources; the rest stay due and fire on the next tick. */
-  maxPerProjectPerTick?: number;
 }
-
-const DEFAULT_MAX_PER_PROJECT_PER_TICK = 5;
 
 /** Launches open, autostart tasks whose scheduled_at has arrived, then clears the schedule.
  *  Scheduled tasks without autostart are due-date markers only — never auto-launched.
@@ -41,7 +35,6 @@ export class Scheduler {
 
   async tick(): Promise<void> {
     const now = this.d.clock.now();
-    const limit = this.d.maxPerProjectPerTick ?? DEFAULT_MAX_PER_PROJECT_PER_TICK;
     // Shared (non-PR) checkouts are single-writer: a task waits for the checkout to free up so its
     // committed delta stays cleanly attributable. Track which are occupied across ALL projects/missions
     // (a non-PR mission phase and a standalone task can target the same project.path) and grow the set
@@ -55,10 +48,11 @@ export class Scheduler {
       const due = this.d.tasks
         .list({ project_id: project.id, status: 'open' })
         .filter((t) => t.autostart && t.scheduled_at != null && Date.parse(t.scheduled_at) <= now);
-      let launched = 0;
       for (const task of due) {
-        if (launched >= limit) break; // per-project burst cap — the rest stay due for the next tick
         const cwd = checkoutOf(resolver, task); // a standalone task's checkout is the shared project path
+        // Shared-checkout serialization is itself the burst cap: every standalone task in a project
+        // shares the project checkout, so once one launches the rest are `busy` and wait for the next
+        // tick — a minute's worth of co-scheduled tasks can't spawn a swarm of parallel agents at once.
         if (busy.has(cwd)) continue; // shared checkout already has a live agent — serialize, retry next tick
         const spec = resolveExecutor(task.labels, this.d.fallback);
         const named = task.labels.find((l) => l.startsWith('agent:'))?.slice('agent:'.length);
@@ -67,10 +61,14 @@ export class Scheduler {
         this.d.tasks.update(task.id, { scheduled_at: null }); // consume so it fires once
         this.d.tasks.setAgent(task.id, agentName);            // link task → session for run controls
         this.d.tasks.markStarted(task.id, now); // precise spawn time → correct usage attribution under concurrency
+        // Flip to in_progress BEFORE the first await: the busy-gate's cross-tick correctness depends on
+        // it. A concurrent mission/scheduler tick computes `busy` from the in_progress list, so if we
+        // yielded (at the gitLock await below) while still 'open', that tick could miss this task and
+        // launch a second agent into the same shared checkout — re-opening the C1/H1 attribution race.
+        this.d.tasks.setStatus(task.id, 'in_progress');
         // Read HEAD + stamp the baseline under the checkout lock, so it lands AFTER any in-flight
         // commit on this checkout (a just-closed task still committing) and the snapshot range is exact.
         await this.gitLock.run(cwd, async () => this.d.tasks.markBase(task.id, await projectHead(cwd)));
-        this.d.tasks.setStatus(task.id, 'in_progress');
         try {
           await this.d.spawn.launch({
             projectId: project.id, projectPath: cwd, taskId: task.id,
@@ -88,7 +86,6 @@ export class Scheduler {
         }
         busy.add(cwd); // this checkout is now occupied — later tasks this tick wait for it
         this.d.bus.publish({ type: 'task', taskId: task.id, status: 'in_progress' });
-        launched++;
       }
     }
   }

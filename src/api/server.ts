@@ -515,10 +515,12 @@ export function createServer(d: ServerDeps): Hono<{ Variables: { user: User; tok
     return u.allowed_execs.length === 0 || u.allowed_execs.includes(exec);
   };
 
-  // Filesystem path of a project. The daemon's home project is always known; others resolve via the
-  // ProjectStore (falling back to the home path when the store is absent — e.g. legacy single-project).
+  // Filesystem path of a project. Store-first for EVERY id (the home project included), so this agrees
+  // with the scheduler's baseline resolver and a re-homed project path resolves consistently across the
+  // spawn baseline and the close-time snapshot. Falls back to the home path when the store is absent
+  // (legacy single-project) or the id is unknown.
   const pathFor = (projectId: number): string =>
-    projectId === d.project.id ? d.project.path : (d.projects?.get(projectId)?.path ?? d.project.path);
+    d.projects?.get(projectId)?.path ?? d.project.path;
 
   // Where a task's agent actually ran — the cwd its CLI logged token usage under. For a PR-native
   // mission that's the isolated worktree, not the project checkout; otherwise the project path. A

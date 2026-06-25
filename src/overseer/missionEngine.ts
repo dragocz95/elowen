@@ -291,6 +291,8 @@ export class MissionEngine {
       // find (and kill) the session.
       if (!named) this.d.tasks.setAgent(task.id, agentName);
       this.d.tasks.markStarted(task.id, this.d.clock.now()); // precise spawn time → correct usage attribution under concurrency
+      // in_progress BEFORE the gitLock await below: a concurrent tick's busy-snapshot must see this
+      // checkout occupied the moment we yield, or it could launch a second agent into the same tree.
       this.d.tasks.setStatus(task.id, 'in_progress');
       // Read HEAD + stamp the baseline under the checkout lock so it lands AFTER any in-flight commit
       // (a just-closed phase still committing) — then `git diff base..HEAD` captures exactly this phase.

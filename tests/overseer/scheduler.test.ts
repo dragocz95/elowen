@@ -89,6 +89,22 @@ describe('Scheduler', () => {
     expect(live()).toHaveLength(1);              // the next one fires now
   });
 
+  it('flips a task to in_progress BEFORE the baseline await, so a concurrent tick sees the checkout busy', async () => {
+    // Cross-tick gate correctness: the scheduler yields at the gitLock await while stamping the baseline.
+    // If the task were still 'open' at that point, a concurrent mission/scheduler tick computing `busy`
+    // from the in_progress list would miss it and launch a second agent into the same shared checkout.
+    const t0 = Date.parse('2026-06-17T12:00:00.000Z');
+    const db = openDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'orca','/o')").run();
+    const tasks = new TaskStore(db);
+    const tmux = new FakeTmuxDriver();
+    let statusAtAwait: string | undefined; // the task's status at the moment the lock body (first await) runs
+    const gitLock = { run: async (_key: string, fn: () => Promise<unknown>) => { statusAtAwait = tasks.get('a')?.status; return fn(); } };
+    const scheduler = new Scheduler({ tasks, spawn: new SpawnService({ tmux, agents: new AgentStore(db) }), bus: new EventBus(), projects: new ProjectStore(db), fallback: { program: 'claude-code', model: 'sonnet' }, nameAgent: () => 'Nova', clock: new FakeClock(t0 + 60_000), gitLock: gitLock as never });
+    tasks.create({ id: 'a', project_id: 1, title: 'A', scheduled_at: '2026-06-17T12:00:00.000Z', autostart: 1 });
+    await scheduler.tick();
+    expect(statusAtAwait).toBe('in_progress'); // flipped before we yielded — the gate can't be raced across ticks
+  });
+
   it('launches tasks in DIFFERENT projects concurrently — separate checkouts never block each other', async () => {
     const t0 = Date.parse('2026-06-17T12:00:00.000Z');
     const db = openDb(':memory:');
