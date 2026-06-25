@@ -214,6 +214,19 @@ export class TaskStore {
     return next;
   }
 
+  /** Clear the `reviewfix:<n>` counter on every phase of an epic. Called when a mission (re-)engages
+   *  so a fresh run starts with the full self-heal budget. Without it a re-engaged mission inherits the
+   *  reviewfix labels of a prior (possibly aborted or buggy) run and escalates after fewer — or zero —
+   *  real retries. Only `reviewfix:` labels are touched; agent/exec/stuck labels are preserved. */
+  resetReviewFix(epicId: string): void {
+    const rows = this.db.prepare('SELECT id, labels FROM tasks WHERE parent_id = ?').all(epicId) as { id: string; labels: string }[];
+    for (const r of rows) {
+      if (!r.labels.includes('reviewfix:')) continue;
+      const labels = r.labels.split(',').filter((l) => l && !l.startsWith('reviewfix:'));
+      this.db.prepare('UPDATE tasks SET labels = ? WHERE id = ?').run(labels.join(','), r.id);
+    }
+  }
+
   depsAmong(ids: string[]): { task_id: string; depends_on_id: string }[] {
     if (ids.length === 0) return [];
     const placeholders = ids.map(() => '?').join(',');

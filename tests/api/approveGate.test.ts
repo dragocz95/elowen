@@ -45,6 +45,30 @@ describe('POST /tasks/:id/approve-gate (human approval of an escalated phase)', 
     expect(t.deps.tasks.get('orca-D')!.status).toBe('open');
   });
 
+  it('un-freezes the stalled mission whose escalated phase is approved', async () => {
+    const t = await makeTestApp({});
+    // Epic + a frozen (stalled) mission; phase A is closed+escalated and gates dependent D — both
+    // children of the epic, mirroring a real escalation the human now resolves from the inbox.
+    t.deps.tasks.create({ id: 'orca-ep', project_id: 1, title: 'Epic', type: 'epic', description: 'e' });
+    t.deps.tasks.create({ id: 'orca-A', project_id: 1, title: 'A', type: 'task', parent_id: 'orca-ep', description: 'A' });
+    t.deps.tasks.setStatus('orca-A', 'closed');
+    t.deps.tasks.create({ id: 'orca-D', project_id: 1, title: 'D', type: 'task', parent_id: 'orca-ep', description: 'D' });
+    t.deps.tasks.addDep('orca-D', 'orca-A');
+    t.deps.tasks.setStatus('orca-D', 'blocked');
+    t.deps.tasks.addLabel('orca-D', 'gatedby:orca-A');
+    t.deps.missions.create({ id: 'm-orca-ep', epic_id: 'orca-ep', autonomy: 'L3', max_sessions: 1 });
+    t.deps.missions.setState('m-orca-ep', 'stalled');
+
+    const res = await approveGate(t, 'orca-A');
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ released: ['orca-D'] });
+    // The frozen mission resumed: resumeStalled flipped it active and ticked, so the freed dependent
+    // didn't just unblock — it was picked straight up and spawned. Reaching 'in_progress' proves the
+    // un-freeze drove a real tick, not just a state flip.
+    expect(t.deps.missions.get('m-orca-ep')!.state).toBe('active');
+    expect(t.deps.tasks.get('orca-D')!.status).toBe('in_progress');
+  });
+
   it('404s for an unknown task', async () => {
     const t = await makeTestApp({});
     const res = await approveGate(t, 'orca-nope');

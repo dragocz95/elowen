@@ -51,6 +51,9 @@ export class MissionEngine {
   async engage(input: { epicId: string; autonomy: string; maxSessions: number; createdBy?: number | null }): Promise<Mission> {
     const id = `m-${input.epicId}`;
     const m = this.d.missions.create({ id, epic_id: input.epicId, autonomy: input.autonomy, max_sessions: input.maxSessions, created_by: input.createdBy ?? null });
+    // Fresh self-heal budget: a re-engage must not inherit `reviewfix:<n>` labels from a prior aborted
+    // run, or the mission escalates after fewer (or zero) real review retries this time around.
+    this.d.tasks.resetReviewFix(input.epicId);
     this.d.bus.publish({ type: 'mission', missionId: m.id, state: 'active' });
     // Park the per-mission overseer agent (no-op when no overseerExec is configured) so it is ready
     // to answer decisions (e.g. post-completion reviews) for this mission.
@@ -86,6 +89,33 @@ export class MissionEngine {
       stopped++;
     }
     return stopped;
+  }
+
+  /** Kill the live tmux session of a single task, if any. A re-open path (review self-heal, stuck
+   *  revert) calls this first so the re-spawn never collides with a worker that outlived its task
+   *  close ("duplicate session"). Mirrors stopRunning but for one task; the caller owns the status. */
+  async stopTask(taskId: string): Promise<void> {
+    const agent = this.d.tasks.get(taskId)?.labels.find((l) => l.startsWith('agent:'))?.slice('agent:'.length);
+    if (!agent) return;
+    const session = `orca-${agent}`;
+    if ((await this.d.tmux.list()).includes(session)) {
+      try { await this.d.tmux.kill(session); } catch { /* already gone — fine */ }
+    }
+  }
+
+  /** Resume after work was just unblocked (gate approved, self-heal re-opened a phase): un-freeze the
+   *  mission if it had stalled, then tick so the freed work spawns immediately instead of waiting on
+   *  the interval — which, for a stalled mission, never comes (it no longer ticks itself). The un-stall
+   *  matters because the mission can flip to 'stalled' in the window between a phase closing and its
+   *  review verdict returning; a plain tick would then be a no-op (frozen) and the work would never run.
+   *  Always ticks; the un-stall is conditional, so this is a safe drop-in wherever we'd otherwise tick. */
+  async resumeStalled(id: string): Promise<void> {
+    const m = this.d.missions.get(id);
+    if (m?.state === 'stalled') {
+      this.d.missions.setState(id, 'active');
+      this.d.bus.publish({ type: 'mission', missionId: id, state: 'active' });
+    }
+    await this.tick(id);
   }
 
   async disengage(id: string): Promise<void> {
@@ -209,6 +239,12 @@ export class MissionEngine {
       await this.markDisengaged(id); return; // …then tear down the parked overseer (no leak on self-completion)
     }
 
+    // Escalated → frozen. A stalled mission is waiting on a human (approve-gate / re-run on the
+    // Escalations page); it must NOT churn — no re-spawns, no overseer re-park. The human action
+    // un-stalls it explicitly (resumeStalled → active + tick). Without this freeze an escalated mission
+    // retries spawns and re-parks a crashed overseer every interval, burning tokens while it should wait.
+    if (m.state === 'stalled') return;
+
     // Watchdog: keep the parked overseer alive. It can exit on its own (full context / clean exit per
     // its prompt) and nothing else re-parks it mid-mission — without this its post-phase reviews and
     // prompt decisions silently stop. Idempotent: a no-op while it is still parked (or none configured).
@@ -253,17 +289,16 @@ export class MissionEngine {
       running++;
     }
 
-    // Stall vs resume: with nothing running and a blocked child present, the mission can't advance
-    // until a human unblocks it — mark it 'stalled' so the UI reads "needs attention" rather than a
-    // misleading "active". The overseer keeps ticking stalled missions (missions.live()), so once
-    // the blocker clears and work resumes (running > 0), it flips back to 'active'. Re-fetch the
-    // children here on purpose: the dispatch loop above may have just set one 'blocked' (overseer
-    // denial), and that mutation isn't reflected in the pre-loop `kids` snapshot.
+    // Stall: with nothing running and a blocked child present, the mission can't advance until a
+    // human unblocks it — mark it 'stalled' so the UI reads "needs attention" rather than a misleading
+    // "active". From here it freezes (see the early return above); the human action resumes it via
+    // resumeStalled. We only reach this point on an active mission, so no un-stall branch is needed.
+    // Re-fetch the children on purpose: the dispatch loop above may have just set one 'blocked'
+    // (overseer denial), and that mutation isn't reflected in the pre-loop `kids` snapshot.
     const stalled = this.children(m.epic_id);
     if (running === 0 && stalled.some(t => t.status === 'blocked')) {
-      if (m.state !== 'stalled') { this.d.missions.setState(id, 'stalled'); this.d.bus.publish({ type: 'mission', missionId: id, state: 'stalled' }); }
-    } else if (m.state === 'stalled') {
-      this.d.missions.setState(id, 'active'); this.d.bus.publish({ type: 'mission', missionId: id, state: 'active' });
+      this.d.missions.setState(id, 'stalled');
+      this.d.bus.publish({ type: 'mission', missionId: id, state: 'stalled' });
     }
   }
 }

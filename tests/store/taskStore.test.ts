@@ -164,6 +164,7 @@ describe('TaskStore', () => {
     store.create({ id: 'b', project_id: 1, title: 'B', parent_id: 'epic' });
     store.addDep('b', 'a');
     db.prepare("INSERT INTO missions (id,epic_id,autonomy,state) VALUES ('m1','epic','L3','active')").run();
+    db.prepare("INSERT INTO mission_pr (mission_id,branch,worktree) VALUES ('m1','orca/x','/wt/m1')").run();
     store.create({ id: 'other', project_id: 1, title: 'Other' }); // unrelated, must survive
 
     const removed = store.deleteEpic('epic');
@@ -173,7 +174,21 @@ describe('TaskStore', () => {
     expect(store.get('b')).toBeNull();
     expect(store.depsFor('b')).toEqual([]);
     expect(db.prepare("SELECT COUNT(*) c FROM missions").get()).toEqual({ c: 0 });
+    expect(db.prepare("SELECT COUNT(*) c FROM mission_pr").get()).toEqual({ c: 0 }); // PR record torn down too — no orphan
     expect(store.get('other')).not.toBeNull(); // unrelated task untouched
+  });
+
+  it('resetReviewFix clears the reviewfix budget on an epic\'s phases, keeping other labels', () => {
+    store.create({ id: 'epic', project_id: 1, title: 'E', type: 'epic' });
+    store.create({ id: 'p1', project_id: 1, title: 'P1', parent_id: 'epic', labels: ['agent:x', 'reviewfix:2'] });
+    store.create({ id: 'p2', project_id: 1, title: 'P2', parent_id: 'epic', labels: ['exec:sonnet'] }); // no reviewfix → untouched
+    store.create({ id: 'other', project_id: 1, title: 'O', labels: ['reviewfix:1'] }); // not a child → untouched
+
+    store.resetReviewFix('epic');
+
+    expect(store.get('p1')!.labels).toEqual(['agent:x']);        // reviewfix dropped, agent kept
+    expect(store.get('p2')!.labels).toEqual(['exec:sonnet']);    // unchanged
+    expect(store.get('other')!.labels).toEqual(['reviewfix:1']); // unrelated task untouched
   });
 
   it('deleteAll wipes every task, dep and mission and reports the counts', () => {

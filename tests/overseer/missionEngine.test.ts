@@ -22,13 +22,14 @@ function setup(opts?: { summarize?: MissionEngineDeps['summarize'] }) {
   tasks.addDep('t2', 't1');
   const tmux = new FakeTmuxDriver();
   const bus = new EventBus();
+  const missions = new MissionStore(db);
   const engine = new MissionEngine({
-    tasks, readiness: new Readiness(db), missions: new MissionStore(db),
+    tasks, readiness: new Readiness(db), missions,
     spawn: new SpawnService({ tmux, agents: new AgentStore(db) }), tmux, bus,
     projects: new ProjectStore(db), fallback: { program: 'claude-code', model: 'sonnet' },
     nameAgent: () => 'AgentX', clock: new SystemClock(), summarize: opts?.summarize,
   });
-  return { tasks, tmux, engine, bus };
+  return { tasks, tmux, engine, bus, missions };
 }
 
 describe('MissionEngine', () => {
@@ -48,6 +49,58 @@ describe('MissionEngine', () => {
     await engine.engage({ epicId: 'epic', autonomy: 'L3', maxSessions: 1 });
     expect(tasks.get('t1')!.status).toBe('open'); // rolled back — not left in_progress burning relaunch budget
     expect(events.some((e) => e.type === 'task' && e.taskId === 't1' && e.status === 'open')).toBe(true);
+  });
+
+  it('engage clears a stale reviewfix budget so a re-engaged mission gets a fresh self-heal allowance', async () => {
+    const { tasks, engine } = setup();
+    tasks.addLabel('t1', 'reviewfix:2'); // left over from a prior aborted/buggy run
+    await engine.engage({ epicId: 'epic', autonomy: 'L3', maxSessions: 1 });
+    expect(tasks.get('t1')!.labels.some((l) => l.startsWith('reviewfix:'))).toBe(false); // reset → full budget again
+  });
+
+  it('stopTask kills the worker session of a single task so a re-open re-spawns cleanly', async () => {
+    const { tasks, tmux, engine } = setup();
+    tasks.setAgent('t1', 'Worker1');
+    await tmux.spawn('orca-Worker1', { command: 'sleep', cwd: '/o' });
+    expect(await tmux.list()).toContain('orca-Worker1');
+    await engine.stopTask('t1'); // a worker that outlived its task close must be reaped before re-spawn
+    expect(await tmux.list()).not.toContain('orca-Worker1');
+  });
+
+  it('stopTask is a no-op for a task with no agent label or no live session', async () => {
+    const { engine, tmux } = setup();
+    await engine.stopTask('t2');                      // t2 has no agent label
+    await engine.stopTask('missing');                 // task does not exist
+    expect(await tmux.list()).toEqual([]);            // nothing killed, nothing thrown
+  });
+
+  it('a stalled (escalated) mission is frozen — a tick spawns nothing and leaves it stalled', async () => {
+    const { engine, tmux, missions } = setup();
+    missions.create({ id: 'm-epic', epic_id: 'epic', autonomy: 'L3', max_sessions: 1 });
+    missions.setState('m-epic', 'stalled'); // escalated → waiting on a human
+    await engine.tick('m-epic');
+    expect(await tmux.list()).toEqual([]);                  // frozen: the ready head (t1) is NOT spawned
+    expect(missions.get('m-epic')!.state).toBe('stalled');  // still frozen, no churn
+  });
+
+  it('resumeStalled un-freezes a stalled mission and ticks so the freed head spawns', async () => {
+    const { engine, tmux, missions, bus } = setup();
+    const events: OrcaEvent[] = []; bus.subscribe((e) => events.push(e));
+    missions.create({ id: 'm-epic', epic_id: 'epic', autonomy: 'L3', max_sessions: 1 });
+    missions.setState('m-epic', 'stalled');
+    await engine.resumeStalled('m-epic');
+    expect(missions.get('m-epic')!.state).toBe('active');                                  // un-frozen
+    expect(events.some((e) => e.type === 'mission' && e.state === 'active')).toBe(true);   // announced
+    expect(await tmux.list()).toContain('orca-AgentX');                                    // ready head spawned
+  });
+
+  it('resumeStalled never resurrects a disengaged mission', async () => {
+    const { engine, tmux, missions } = setup();
+    missions.create({ id: 'm-epic', epic_id: 'epic', autonomy: 'L3', max_sessions: 1 });
+    missions.setState('m-epic', 'disengaged');
+    await engine.resumeStalled('m-epic');
+    expect(missions.get('m-epic')!.state).toBe('disengaged'); // not flipped to active
+    expect(await tmux.list()).toEqual([]);                    // and nothing spawned
   });
 
   it('L1 (Assist) auto-spawns the ready head', async () => {

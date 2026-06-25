@@ -975,13 +975,15 @@ export function createServer(d: ServerDeps): Hono<{ Variables: { user: User; tok
                   // Commit the approved phase's worktree work (no-op unless PR mode) BEFORE the next
                   // phase ticks, so the next agent never edits the worktree mid-commit.
                   await d.missionGit?.commitPhase(mission.id, existing.title).catch((e) => log.error('phase commit failed', e));
-                  // Gate opens: release the gated dependents and tick so the next phase spawns promptly
-                  // rather than waiting up to the 90s interval.
+                  // Gate opens: release the gated dependents and resume so the next phase spawns promptly
+                  // rather than waiting up to the 90s interval. resumeStalled (not a bare tick) un-freezes
+                  // the mission if it stalled while the verdict was pending — otherwise the freeze would
+                  // swallow this tick and the approved work would never run.
                   releaseGatedDependents(id);
-                  void d.engine.tick(mission.id).catch((e) => log.error('post-review tick failed', e));
+                  void d.engine.resumeStalled(mission.id).catch((e) => log.error('post-review resume failed', e));
                   return;
                 }
-                // Rejected/destructive. L3 (full autonomy) self-heals: re-open the phase with the review
+                // Rejected. L3 (full autonomy) self-heals: re-open the phase with the review
                 // feedback so the agent fixes it, up to REVIEW_FIX_BUDGET times before escalating. L1/L2
                 // (human-in-the-loop) leave it — the dependents stay gated for a human to resolve.
                 // A `escalated` verdict (the overseer never answered — a timeout) is NOT a real reject:
@@ -992,9 +994,14 @@ export function createServer(d: ServerDeps): Hono<{ Variables: { user: User; tok
                 if (fresh && !verdict.escalated && mission.autonomy === 'L3' && d.tasks.bumpReviewFix(id) <= REVIEW_FIX_BUDGET) {
                   const feedback = `\n\n[Review rejected — previous attempt was not accepted]: ${verdict.rationale}\nFix the issue and close the task again.`;
                   d.tasks.update(id, { description: (fresh.description ?? '') + feedback });
+                  // Reap the worker if it outlived its task close, so the re-spawn doesn't collide with a
+                  // still-live `orca-<agent>` session ("duplicate session" → endless failed re-spawns).
+                  await d.engine.stopTask(id);
                   d.tasks.setStatus(id, 'open'); // re-open so the engine tick re-spawns it (its deps are already satisfied)
                   d.bus.publish({ type: 'task', taskId: id, status: 'open' });
-                  void d.engine.tick(mission.id).catch((e) => log.error('post-review self-heal tick failed', e));
+                  // Self-heal is autonomous continuation, not an escalation — resume (un-freeze if it
+                  // stalled in the verdict window) so the re-opened phase actually re-spawns.
+                  void d.engine.resumeStalled(mission.id).catch((e) => log.error('post-review self-heal resume failed', e));
                 } else {
                   // Not self-healed (overseer timeout, L1/L2 human-in-the-loop, or self-heal budget
                   // spent): leave the phase closed and its dependents blocked for a human. Tick so the
@@ -1030,6 +1037,11 @@ export function createServer(d: ServerDeps): Hono<{ Variables: { user: User; tok
     if (!existing) return c.json({ error: 'task not found' }, 404);
     if (!canAccessProject(c, existing.project_id)) return c.json({ error: 'forbidden' }, 403);
     const released = releaseGatedDependents(id);
+    // The escalation froze the whole mission (state 'stalled'); approving here is the human action that
+    // un-freezes it. Resume so the released dependents spawn now instead of the mission sitting idle —
+    // a stalled mission no longer ticks itself, so without this the approval would release the gate but
+    // nothing would ever pick the work up. The phase's parent IS the epic; mission id is `m-<epicId>`.
+    if (existing.parent_id) void d.engine.resumeStalled(`m-${existing.parent_id}`).catch((e) => log.error('approve-gate resume failed', e));
     return c.json({ released });
   });
 
