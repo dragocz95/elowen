@@ -21,6 +21,11 @@ export function deleteTasksAndDeps(db: Db, scope: 'project' | 'epic', id: string
       ).all({ root: id }) as { id: string }[]).map((r) => r.id)];
   if (ids.length === 0) return 0;
   const ph = ids.map(() => '?').join(',');
+  // Tear down the PR record of every mission being removed FIRST — while its `missions` row still
+  // exists to map epic → mission_id. Skipping this leaves an orphan `mission_pr` row (the schema has
+  // no FK cascade) pointing at a worktree whose mission is gone. The on-disk worktree dir is freed by
+  // the caller that holds missionGit (the subtree-delete endpoint); this keeps the DB consistent.
+  db.prepare(`DELETE FROM mission_pr WHERE mission_id IN (SELECT id FROM missions WHERE epic_id IN (${ph}))`).run(...ids);
   db.prepare(`DELETE FROM missions WHERE epic_id IN (${ph})`).run(...ids);
   db.prepare(`DELETE FROM task_deps WHERE task_id IN (${ph}) OR depends_on_id IN (${ph})`).run(...ids, ...ids);
   return db.prepare(`DELETE FROM tasks WHERE id IN (${ph})`).run(...ids).changes;

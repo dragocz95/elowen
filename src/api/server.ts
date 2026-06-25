@@ -1054,8 +1054,14 @@ export function createServer(d: ServerDeps): Hono<{ Variables: { user: User; tok
     // `?subtree=1` removes a whole mission: disengage it (stops its agents), then delete the epic,
     // every child task, their dependency edges and the mission row — not just the single task.
     if (c.req.query('subtree')) {
-      const mission = d.missions.live().find((m) => m.epic_id === id);
-      if (mission) await d.engine.disengage(mission.id).catch(() => { /* best-effort */ });
+      // Mission id is `m-<epicId>` by construction. Stop a still-running mission (kills its agents),
+      // then free its worktree UNCONDITIONALLY: a naturally-completed ('disengaged') or paused mission
+      // keeps its worktree for the PR/feedback path, so disengage() alone would skip it and leak the
+      // on-disk worktree when the epic is deleted (the mission_pr row is also pruned by the cascade).
+      const missionId = `m-${id}`;
+      const mission = d.missions.get(missionId);
+      if (mission && mission.state !== 'disengaged') await d.engine.disengage(missionId).catch(() => { /* best-effort */ });
+      await d.missionGit?.cleanup(missionId).catch(() => { /* best-effort */ });
       const removed = d.tasks.deleteEpic(id);
       d.bus.publish({ type: 'task', taskId: id, status: 'cancelled' });
       d.events?.deleteForTarget(id);

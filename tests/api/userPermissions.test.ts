@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { openDb } from '../../src/store/db.js';
 import { TaskStore } from '../../src/store/taskStore.js';
 import { Readiness } from '../../src/store/readiness.js';
@@ -14,7 +14,7 @@ import { UserStore } from '../../src/store/userStore.js';
 import { ProjectStore } from '../../src/store/projectStore.js';
 import { UserProjectStore } from '../../src/store/userProjectStore.js';
 
-function setup() {
+function setup(extra: { engine?: unknown; missionGit?: unknown } = {}) {
   const db = openDb(':memory:');
   db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'orca','/o')").run();
   const users = new UserStore(db);
@@ -25,7 +25,8 @@ function setup() {
   const tmux = new FakeTmuxDriver();
   const app = createServer({
     tasks, readiness: new Readiness(db), missions: new MissionStore(db), bus: new EventBus(),
-    engine: { disengage: async () => {} } as never, spawn: new SpawnService({ tmux, agents: new AgentStore(db) }), tmux,
+    engine: (extra.engine ?? { disengage: async () => {} }) as never, spawn: new SpawnService({ tmux, agents: new AgentStore(db) }), tmux,
+    missionGit: extra.missionGit as never,
     project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },
     clock: new FakeClock(0), config: new ConfigStore(db),
     users, projects: new ProjectStore(db), userProjects,
@@ -134,19 +135,41 @@ describe('admin gates & input validation (batch 1 audit fixes)', () => {
   });
 
   it('DELETE /tasks/:id?subtree=1 removes the epic, its children and the mission', async () => {
-    const { app, adminTok, tasks, db } = setup();
+    const disengage = vi.fn().mockResolvedValue(undefined);
+    const cleanup = vi.fn().mockResolvedValue(undefined);
+    const { app, adminTok, tasks, db } = setup({ engine: { disengage }, missionGit: { cleanup } });
     tasks.create({ id: 'orca-ep', project_id: 1, title: 'Epic', type: 'epic' });
     tasks.create({ id: 'orca-c1', project_id: 1, title: 'C1', parent_id: 'orca-ep' });
     tasks.create({ id: 'orca-c2', project_id: 1, title: 'C2', parent_id: 'orca-ep' });
-    db.prepare("INSERT INTO missions (id,epic_id,autonomy,state) VALUES ('m-ep','orca-ep','L3','active')").run();
+    db.prepare("INSERT INTO missions (id,epic_id,autonomy,state) VALUES ('m-orca-ep','orca-ep','L3','active')").run();
     tasks.create({ id: 'orca-keep', project_id: 1, title: 'Keep' });
 
     const res = await app.request('/tasks/orca-ep?subtree=1', { method: 'DELETE', headers: { authorization: `Bearer ${adminTok}` } });
     expect(res.status).toBe(200);
     expect(await res.json()).toMatchObject({ ok: true, tasks: 3 });
+    expect(disengage).toHaveBeenCalledWith('m-orca-ep'); // running mission stopped
+    expect(cleanup).toHaveBeenCalledWith('m-orca-ep');   // worktree freed
     expect(tasks.get('orca-ep')).toBeNull();
     expect(tasks.get('orca-c1')).toBeNull();
     expect(db.prepare('SELECT COUNT(*) c FROM missions').get()).toEqual({ c: 0 });
     expect(tasks.get('orca-keep')).not.toBeNull();
+  });
+
+  it('DELETE /tasks/:id?subtree=1 frees the worktree even when the mission already completed (disengaged)', async () => {
+    // A naturally-completed mission keeps its worktree for the PR/feedback path, so it sits in
+    // 'disengaged' — not 'live'. Deleting the epic must still tear down the worktree + its mission_pr
+    // row, or both leak. disengage() is skipped (nothing is running); cleanup() runs unconditionally.
+    const disengage = vi.fn().mockResolvedValue(undefined);
+    const cleanup = vi.fn().mockResolvedValue(undefined);
+    const { app, adminTok, tasks, db } = setup({ engine: { disengage }, missionGit: { cleanup } });
+    tasks.create({ id: 'orca-ep', project_id: 1, title: 'Epic', type: 'epic' });
+    db.prepare("INSERT INTO missions (id,epic_id,autonomy,state) VALUES ('m-orca-ep','orca-ep','L3','disengaged')").run();
+    db.prepare("INSERT INTO mission_pr (mission_id,branch,worktree) VALUES ('m-orca-ep','orca/x','/wt')").run();
+
+    const res = await app.request('/tasks/orca-ep?subtree=1', { method: 'DELETE', headers: { authorization: `Bearer ${adminTok}` } });
+    expect(res.status).toBe(200);
+    expect(disengage).not.toHaveBeenCalled();          // already disengaged — nothing to stop
+    expect(cleanup).toHaveBeenCalledWith('m-orca-ep'); // but the worktree is still freed
+    expect(db.prepare('SELECT COUNT(*) c FROM mission_pr').get()).toEqual({ c: 0 }); // cascade pruned the row
   });
 });
