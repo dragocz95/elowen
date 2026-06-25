@@ -13,7 +13,7 @@ import { useConfig, useMe, usePlanJob, useSystem } from '../../lib/queries';
 import { useUpdateConfig, useCleanupAll, useSystemUpdate } from '../../lib/mutations';
 import { orcaClient, OrcaApiError } from '../../lib/orcaClient';
 import { useHermesForm } from '../../modules/settings/useHermesForm';
-import { EXEC_PRESETS, allModels } from '../../lib/execPresets';
+import { allModels, isPresetExec, removeModel, upsertModel } from '../../lib/execPresets';
 import { usePersistentState } from '../../lib/usePersistentState';
 import { useToast } from '../../components/ui/Toast';
 import { ModuleHeader } from '../../components/ui/ModuleHeader';
@@ -32,8 +32,6 @@ import '../../modules/settings/theme.css';
 import { useTranslation } from '../../lib/i18n';
 
 const inputClass = 'w-full rounded-md border border-border bg-bg px-3 py-2 text-sm text-text placeholder:text-text-muted transition-colors focus:border-accent';
-
-const PRESET_EXECS = new Set(EXEC_PRESETS.map((p) => p.exec));
 
 /** Per-role reasoning backend picker: "Relay (model via API)" by default, or a CLI agent model from
  *  the configured list. Mirrors the executor Select used elsewhere, with a live model badge. An
@@ -231,11 +229,11 @@ export default function SettingsPage() {
   const toggle = (exec: string) =>
     persistModels({ allowed: allowed.includes(exec) ? allowed.filter((e) => e !== exec) : [...allowed, exec] }, true);
 
+  // Delete and edit go through the pure helpers so a custom override of a preset (which lives in BOTH
+  // customModels and the preset list) is handled correctly — the old split-by-`PRESET_EXECS` logic
+  // left the other half behind, so presets wouldn't delete and renames duplicated.
   const deleteModel = (exec: string) => {
-    const next: { allowed: string[]; customModels?: { label: string; exec: string }[]; hiddenPresets?: string[] } = { allowed: allowed.filter((e) => e !== exec) };
-    if (PRESET_EXECS.has(exec)) next.hiddenPresets = hiddenPresets.includes(exec) ? hiddenPresets : [...hiddenPresets, exec];
-    else next.customModels = customModels.filter((m) => m.exec !== exec);
-    persistModels(next);
+    persistModels(removeModel({ allowed, customModels, hiddenPresets, modelNotes }, exec));
     if (editingExec === exec) resetForm();
   };
 
@@ -245,24 +243,7 @@ export default function SettingsPage() {
   };
 
   const saveModel = (m: { label: string; exec: string }) => {
-    let nextCustom = customModels, nextAllowed = allowed, nextHidden = hiddenPresets;
-    if (editingExec) {
-      const original = editingExec;
-      if (PRESET_EXECS.has(original)) {
-        // Editing a preset hides the original and stores a custom override in its place.
-        nextHidden = hiddenPresets.includes(original) ? hiddenPresets : [...hiddenPresets, original];
-        nextCustom = [...customModels.filter((x) => x.exec !== m.exec), m];
-        const base = allowed.filter((e) => e !== original);
-        nextAllowed = base.includes(m.exec) ? base : [...base, m.exec];
-      } else {
-        nextCustom = customModels.some((x) => x.exec === original) ? customModels.map((x) => (x.exec === original ? m : x)) : [...customModels, m];
-        nextAllowed = allowed.map((e) => (e === original ? m.exec : e));
-      }
-    } else {
-      nextCustom = [...customModels, m];
-      nextAllowed = allowed.includes(m.exec) ? allowed : [...allowed, m.exec]; // enable new models by default
-    }
-    persistModels({ allowed: nextAllowed, customModels: nextCustom, hiddenPresets: nextHidden });
+    persistModels(upsertModel({ allowed, customModels, hiddenPresets, modelNotes }, m, editingExec ?? undefined));
     resetForm();
   };
 
@@ -386,10 +367,13 @@ export default function SettingsPage() {
           <>
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
               {models.map((p) => {
-                const isCustom = !PRESET_EXECS.has(p.exec);
+                const isCustom = !isPresetExec(p.exec);
                 return (
                   <div key={p.exec} className="card-interactive group relative flex flex-col gap-3.5 rounded-lg border border-border bg-surface p-5">
-                    <div className="absolute right-3 top-3 z-10 flex gap-1 opacity-0 transition-opacity group-hover:opacity-100" style={{ transitionDuration: 'var(--motion-fast)' }}>
+                    {/* Always visible on touch (no hover exists on phones, so hover-only buttons are
+                     *  unreachable — you could only toggle a model, never edit/delete it). On desktop
+                     *  (sm+) keep the clean hover-reveal, plus focus-within for keyboard access. */}
+                    <div className="absolute right-3 top-3 z-10 flex gap-1 opacity-100 transition-opacity sm:opacity-0 sm:group-hover:opacity-100 sm:focus-within:opacity-100" style={{ transitionDuration: 'var(--motion-fast)' }}>
                       <button
                         type="button"
                         aria-label={t.settings.editLabel.replace('{exec}', p.exec)}
