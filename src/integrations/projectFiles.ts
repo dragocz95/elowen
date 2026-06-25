@@ -279,6 +279,16 @@ export async function projectCommitFiles(root: string, hash: string): Promise<st
 export interface CommitFileChange { path: string; added: number; deleted: number }
 export interface CommitLogEntry { hash: string; subject: string; author: string; timestamp: number; files: CommitFileChange[] }
 
+/** Parse one `git --numstat` row (`<added>\t<deleted>\t<path>`) into a file change, or null when the
+ *  line carries no path. Binary files report '-' for the counts, which map to 0. The path may itself
+ *  contain tabs, so everything past the first two columns is re-joined. */
+function parseNumstatLine(line: string): CommitFileChange | null {
+  const [added = '', deleted = '', ...pathParts] = line.split('\t');
+  const path = pathParts.join('\t').trim();
+  if (!path) return null;
+  return { path, added: added === '-' ? 0 : Number(added) || 0, deleted: deleted === '-' ? 0 : Number(deleted) || 0 };
+}
+
 /** Recent commit history with per-file line churn, for the timeline's "changes over time" view.
  *  One `git log --numstat` call yields each commit's hash, committer timestamp (ms), author, subject
  *  and the list of changed files with +added / −deleted counts (binary files report 0/0). `limit` is
@@ -300,9 +310,8 @@ export async function projectCommitLog(root: string, limit: number): Promise<Com
         cur = { hash, subject: rest.join('\t'), author, timestamp: Number(ct) * 1000, files: [] };
         commits.push(cur);
       } else if (cur && line.trim()) {
-        const [added = '', deleted = '', ...pathParts] = line.split('\t');
-        const path = pathParts.join('\t').trim();
-        if (path) cur.files.push({ path, added: added === '-' ? 0 : Number(added) || 0, deleted: deleted === '-' ? 0 : Number(deleted) || 0 });
+        const f = parseNumstatLine(line);
+        if (f) cur.files.push(f);
       }
     }
     return commits;
@@ -361,10 +370,8 @@ export async function projectRangeDiff(root: string, base: string, head: string)
     const { stdout } = await run('git', ['-C', realpathSync(resolve(root)), 'diff', '--numstat', base, head], { maxBuffer: 8 * 1024 * 1024 });
     const files: CommitFileChange[] = [];
     for (const line of stdout.split('\n')) {
-      if (!line.trim()) continue;
-      const [added = '', deleted = '', ...pathParts] = line.split('\t');
-      const path = pathParts.join('\t').trim();
-      if (path) files.push({ path, added: added === '-' ? 0 : Number(added) || 0, deleted: deleted === '-' ? 0 : Number(deleted) || 0 });
+      const f = parseNumstatLine(line);
+      if (f) files.push(f);
     }
     return files;
   } catch {

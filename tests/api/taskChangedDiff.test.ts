@@ -16,7 +16,7 @@ function setup() {
   db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'home','/o')").run();
   db.prepare("INSERT INTO projects (id,slug,path) VALUES (2,'other','/p2')").run();
   const users = new UserStore(db);
-  const admin = users.create('admin', 'pw');
+  users.create('admin', 'pw'); // claims the bootstrap-admin slot so bob is a plain member (access gate stays meaningful)
   const bob = users.create('bob', 'pw');
   const userProjects = new UserProjectStore(db);
   userProjects.assign(bob.id, 1);

@@ -4,11 +4,9 @@ import type { Task, CommitFileChange } from '../../lib/types';
 import { useTaskChangedFileDiff } from '../../lib/queries';
 import { useTranslation } from '../../lib/i18n';
 import { fileIcon } from '../../lib/fileIcon';
+import { baseName, dirName } from '../../lib/filePath';
 import { Modal } from '../../components/ui/Modal';
 import { PatchView } from '../projects/editor/PatchView';
-
-const baseName = (p: string) => p.split('/').pop() ?? p;
-const dirName = (p: string) => { const i = p.lastIndexOf('/'); return i >= 0 ? p.slice(0, i + 1) : ''; };
 
 /** A task's FROZEN change list: the files it committed (captured at close), with +/− churn and a
  *  click-through to each file's diff. Reads `task.changed_files` — never the live working tree — so an

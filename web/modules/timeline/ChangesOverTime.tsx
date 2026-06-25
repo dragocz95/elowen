@@ -5,6 +5,7 @@ import type { CommitLogEntry } from '../../lib/types';
 import { useProjectCommit, useProjectCommitFileDiff } from '../../lib/queries';
 import { useTranslation } from '../../lib/i18n';
 import { fileIcon } from '../../lib/fileIcon';
+import { baseName, dirName } from '../../lib/filePath';
 import { Badge } from '../../components/ui/Badge';
 import { ProjectPill } from '../../components/ui/ProjectPill';
 import { Modal } from '../../components/ui/Modal';
@@ -13,8 +14,6 @@ import { PatchView } from '../projects/editor/PatchView';
 export type TimelineCommit = CommitLogEntry & { projectId: number };
 
 const hhmm = (ts: number) => { const d = new Date(ts); return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; };
-const baseName = (p: string) => p.split('/').pop() ?? p;
-const dirName = (p: string) => { const i = p.lastIndexOf('/'); return i >= 0 ? p.slice(0, i + 1) : ''; };
 const sumAdded = (c: TimelineCommit) => c.files.reduce((n, f) => n + f.added, 0);
 const sumDeleted = (c: TimelineCommit) => c.files.reduce((n, f) => n + f.deleted, 0);
 
