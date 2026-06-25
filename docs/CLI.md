@@ -159,7 +159,11 @@ Used by the parked **Overseer agent** to submit a verdict for a pending decision
 ```bash
 orca overseer decide --id a1b2c3d4e5f6 --approve --confidence 0.85 --rationale "Schema change is scoped and safe"
 orca overseer decide --id b2c3d4e5f6 --escalate --rationale "This migrates production data — needs human review"
+orca overseer decide --id c3d4e5f6a1b2 --choice opt_rollback --rationale "Rollback is the safest option"
 ```
+
+A `question`-kind decision uses `--choice` to pick an option; a permission/review decision uses
+`--approve` or `--escalate`.
 
 Flags:
 
@@ -168,7 +172,8 @@ Flags:
 | `--id <id>` | Decision ID from `orca overseer poll` |
 | `--approve` | Approve the action (confidence defaults to `0.7` when omitted) |
 | `--escalate` | Escalate to a human (sets confidence to `0`) |
-| `--confidence <0..1>` | Confidence level |
+| `--choice <optionId>` | Pick an option for a `question`-kind decision (overrides confidence to `0.7`) |
+| `--confidence <0..1>` | Confidence level (default `0.7` for `--approve` / `--choice`, `0` for `--escalate`) |
 | `--rationale "<text>"` | Reason for the decision |
 
 Calls `POST /missions/:missionId/overseer/decide`. Requires `ORCA_MISSION` to be set.

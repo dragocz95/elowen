@@ -186,6 +186,36 @@ fields are updated. Returns the updated profile subset.
 { "error": "exec not allowed" }
 ```
 
+### Change password
+
+```http
+POST /auth/me/password
+Content-Type: application/json
+
+{ "currentPassword": "secret", "newPassword": "new-secure-pass" }
+```
+
+Self-service password change. Verifies the current password before accepting the new one.
+New password must be at least 8 characters.
+
+**Response `200`**
+```json
+{ "ok": true }
+```
+
+**Error `400`**
+```json
+{ "error": "currentPassword and newPassword required" }
+```
+```json
+{ "error": "new password too short (min 8)" }
+```
+
+**Error `401`**
+```json
+{ "error": "current password is incorrect" }
+```
+
 ### Upload avatar
 
 ```http
@@ -582,6 +612,34 @@ Requires both `projectStore` and `gitReader` configured.
 { "error": "project not found" }
 ```
 
+### Filesystem directory browser
+
+```http
+GET /fs/dirs?path=/home
+```
+
+Browses the server's directory tree to pick a new project's path. Admin-only in multi-user
+mode — it lists directory names outside any project root. Directory-only, never returns file
+contents.
+
+**Response `200`**
+```json
+[
+  { "name": "projects", "path": "/home/projects" },
+  { "name": "www", "path": "/home/www" }
+]
+```
+
+**Error `400`**
+```json
+{ "error": "cannot read directory" }
+```
+
+**Error `403`**
+```json
+{ "error": "forbidden" }
+```
+
 ---
 
 ## Project file editor
@@ -855,6 +913,38 @@ GET /projects/:id/commit/:hash/diff?path=src/index.ts
 { "error": "path required" }
 ```
 
+### Commit log
+
+```http
+GET /projects/:id/commits?limit=30
+```
+
+Returns the commit log for the project. `limit` defaults to 30.
+
+**Response `200`**
+```json
+{
+  "commits": [
+    { "hash": "abc123", "author": "dev", "subject": "Fix header", "date": "2026-06-17 12:00:00", "relative": "2 hours ago" }
+  ]
+}
+```
+
+**Error `400`**
+```json
+{ "error": "projects unavailable" }
+```
+
+**Error `403`**
+```json
+{ "error": "forbidden" }
+```
+
+**Error `404`**
+```json
+{ "error": "project not found" }
+```
+
 ---
 
 ## Tasks
@@ -1003,6 +1093,33 @@ With `?subtree=1`:
 { "error": "forbidden" }
 ```
 
+### Human approval of review gate
+
+```http
+POST /tasks/:id/approve-gate
+```
+
+Manually approve a phase that was escalated by the post-done review. Accepts the phase's
+result and releases only the dependents no other predecessor still gates. Used from the
+escalations inbox when the overseer escalates to a human.
+
+**Response `200`**
+```json
+{ "released": 2 }
+```
+
+`released` is the count of dependents unblocked by this approval.
+
+**Error `404`**
+```json
+{ "error": "task not found" }
+```
+
+**Error `403`**
+```json
+{ "error": "forbidden" }
+```
+
 ### List ready tasks
 
 ```http
@@ -1072,6 +1189,50 @@ own project path so usage can disambiguate concurrent agents by start-order.
 **Error `404`**
 ```json
 { "error": "not found" }
+```
+
+**Error `403`**
+```json
+{ "error": "forbidden" }
+```
+
+---
+
+## Usage & Stats
+
+Aggregated token and cost usage across the daemon's projects. These endpoints read from the
+persisted `task_usage` snapshots (written by the `UsageRecorder` bus subscriber as each task
+settles), never re-scanning the CLI session stores.
+
+### Usage by model
+
+```http
+GET /usage/by-model?project_id=1
+```
+
+Returns total token/cost aggregated per model (exec spec). Scoped to the caller's accessible
+projects; optional `?project_id=N` narrows it to a single project.
+
+**Response `200`**
+```json
+[
+  { "exec": "sonnet", "inputTokens": 120000, "outputTokens": 34000, "totalTokens": 154000, "costUsd": 0.45, "sessions": 3 },
+  { "exec": "claude:opus", "inputTokens": 50000, "outputTokens": 12000, "totalTokens": 62000, "costUsd": 0.93, "sessions": 1 }
+]
+```
+
+### Reset usage stats
+
+```http
+POST /usage/reset
+```
+
+Admin-only. Wipes the `task_usage` snapshot rows from the database. Irreversible, but it only
+clears Orca's own DB — the agents' CLI session transcripts are untouched.
+
+**Response `200`**
+```json
+{ "ok": true, "cleared": 42 }
 ```
 
 **Error `403`**
@@ -1465,6 +1626,33 @@ All key tokens are validated: must be a non-empty array of non-flag strings (key
 { "error": "forbidden" }
 ```
 
+### Raw interactive input
+
+```http
+POST /sessions/:name/input
+Content-Type: application/json
+
+{ "data": "\u001b[A" }
+```
+
+Sends raw bytes to the tmux pane via `send-keys -l`. Used for interactive terminal input
+(xterm `onData` bytes including printable chars, control codes, and ESC sequences).
+
+**Response `200`**
+```json
+{ "ok": true }
+```
+
+**Error `400`**
+```json
+{ "error": "data must be a non-empty string" }
+```
+
+**Error `403`**
+```json
+{ "error": "forbidden" }
+```
+
 ### Resize terminal
 
 ```http
@@ -1729,6 +1917,40 @@ Manually open the PR for a PR-native mission (used when `prAutoOpen` is off). Ru
 **Error `422`** — the verify command failed (`{ "error": "...", "output": "..." }`), the project has no GitHub remote, or `gh` is unavailable/unauthenticated. **Error `400`** when PR workflow isn't enabled; **`404`** unknown mission; **`403`** forbidden.
 
 PR review feedback is ingested by a ~60 s daemon poller (`prFeedback`), not a request endpoint: fresh actionable feedback is routed through the pilot into 1..N fix phases (bounded by a 2-round fix budget), then the mission is re-engaged.
+
+### Merge PR
+
+```http
+POST /missions/:id/merge-pr
+```
+
+Squash-merges the mission's PR into the base branch. Runs the open/conflict/CI gate — a refusal
+returns 422 with a human reason.
+
+**Response `200`**
+```json
+{ "ok": true }
+```
+
+**Error `400`**
+```json
+{ "error": "PR workflow not enabled" }
+```
+
+**Error `403`**
+```json
+{ "error": "forbidden" }
+```
+
+**Error `404`**
+```json
+{ "error": "mission not found" }
+```
+
+**Error `422`**
+```json
+{ "error": "PR has conflicts" }
+```
 
 ### Overseer long-poll (parked agent)
 
@@ -2008,6 +2230,54 @@ setup (no users yet) it is open so onboarding can save providers before the firs
 
 ---
 
+## System
+
+### System info
+
+```http
+GET /system
+```
+
+Read-only status panel: the running version, the latest published one, whether an update is
+available, and the auto-update opt-in. Any authenticated user may see it (non-admins still
+can't trigger an update).
+
+**Response `200`**
+```json
+{
+  "version": "1.4.33",
+  "latest": "1.4.33",
+  "updateAvailable": false,
+  "autoUpdate": { "enabled": true, "hour": 3 }
+}
+```
+
+### Trigger update
+
+```http
+POST /system/update
+```
+
+Admin-only. Triggers an in-place update via `orca update` (detached). Refused with `409`
+while a mission is live — the update restarts services, which would kill running agents.
+
+**Response `200`**
+```json
+{ "started": true }
+```
+
+**Error `409`**
+```json
+{ "error": "mission_running" }
+```
+
+**Error `403`**
+```json
+{ "error": "forbidden" }
+```
+
+---
+
 ## Events (SSE)
 
 ```http
@@ -2147,6 +2417,94 @@ has enough configuration to operate. Used by the onboarding wizard.
 }
 ```
 
+### GitHub auth status
+
+```http
+GET /integrations/github-status
+```
+
+Reports the GitHub authentication posture for the PR-native workflow — whether a push would
+succeed (via a stored token or `gh` CLI's own login) and as whom. The token value is never
+exposed, only whether one is set.
+
+**Response `200`**
+```json
+{
+  "authed": true,
+  "user": "dev",
+  "hasToken": false,
+  "ghCli": true
+}
+```
+
+---
+
+## Push Notifications
+
+Web push notifications via VAPID. A browser subscribes with the user's bearer token, and the
+daemon sends push notifications for mission escalations, review requests, and other events.
+
+### VAPID public key
+
+```http
+GET /push/vapid-public-key
+```
+
+Returns the VAPID public key the browser needs to create a push subscription. Safe pre-auth
+(the key is public). Returns an empty string when push is not configured.
+
+**Response `200`**
+```json
+{ "publicKey": "BIsdf...abc" }
+```
+
+### Subscribe device
+
+```http
+POST /push/subscribe
+Content-Type: application/json
+
+{
+  "endpoint": "https://fcm.googleapis.com/...",
+  "keys": { "p256dh": "...", "auth": "..." }
+}
+```
+
+Registers a device push subscription for the authenticated user. Sending a duplicate endpoint
+updates the keys (idempotent).
+
+**Response `201`**
+```json
+{ "ok": true }
+```
+
+**Error `400`**
+```json
+{ "error": "endpoint and keys.{p256dh,auth} required" }
+```
+
+### Unsubscribe device
+
+```http
+POST /push/unsubscribe
+Content-Type: application/json
+
+{ "endpoint": "https://fcm.googleapis.com/..." }
+```
+
+Removes a device subscription. Scoped to the authenticated user — you can only remove your
+own device.
+
+**Response `200`**
+```json
+{ "ok": true }
+```
+
+**Error `400`**
+```json
+{ "error": "endpoint required" }
+```
+
 ---
 
 ## Status codes
@@ -2189,73 +2547,90 @@ also include `jobId` and `epicId` where applicable:
 | 2 | `GET` | `/setup` | Public | Health & setup |
 | 3 | `POST` | `/auth/login` | Public | Authentication |
 | 4 | `POST` | `/auth/logout` | Bearer | Authentication |
-| 5 | `GET` | `/auth/me` | Bearer | Authentication |
+| 5 | `GET` | `/auth/me` | Bearer (full) | Authentication |
 | 6 | `PATCH` | `/auth/me` | Bearer | Authentication |
-| 7 | `POST` | `/auth/me/avatar` | Bearer | Authentication |
-| 8 | `GET` | `/users/:id/avatar/url` | Bearer | Authentication |
-| 9 | `GET` | `/users/:id/avatar` | Bearer/signed | Authentication |
-| 10 | `GET` | `/users` | Bearer (admin) | Users |
-| 11 | `POST` | `/users` | Bearer (admin/open) | Users |
-| 12 | `PATCH` | `/users/:id` | Bearer (admin) | Users |
-| 13 | `DELETE` | `/users/:id` | Bearer (admin) | Users |
-| 14 | `GET` | `/users/:id/projects` | Bearer (admin) | Assignments |
-| 15 | `POST` | `/users/:id/projects` | Bearer (admin) | Assignments |
-| 16 | `DELETE` | `/users/:id/projects/:pid` | Bearer (admin) | Assignments |
-| 17 | `GET` | `/projects` | Bearer | Projects |
-| 18 | `POST` | `/projects` | Bearer (admin) | Projects |
-| 19 | `PATCH` | `/projects/:id` | Bearer (admin) | Projects |
-| 20 | `DELETE` | `/projects/:id` | Bearer (admin) | Projects |
-| 21 | `GET` | `/projects/:id/git` | Bearer | Projects |
-| 22 | `GET` | `/projects/:id/files` | Bearer | File editor |
-| 23 | `GET` | `/projects/:id/file` | Bearer | File editor |
-| 24 | `PUT` | `/projects/:id/file` | Bearer | File editor |
-| 25 | `GET` | `/projects/:id/raw` | Bearer | File editor |
-| 26 | `POST` | `/projects/:id/new-file` | Bearer | File editor |
-| 27 | `POST` | `/projects/:id/dir` | Bearer | File editor |
-| 28 | `POST` | `/projects/:id/rename` | Bearer | File editor |
-| 29 | `POST` | `/projects/:id/copy` | Bearer | File editor |
-| 30 | `DELETE` | `/projects/:id/entry` | Bearer | File editor |
-| 31 | `GET` | `/projects/:id/diff` | Bearer | File editor |
-| 32 | `GET` | `/projects/:id/head` | Bearer | File editor |
-| 33 | `GET` | `/projects/:id/commit/:hash` | Bearer | File editor |
-| 34 | `GET` | `/projects/:id/commit/:hash/diff` | Bearer | File editor |
-| 35 | `GET` | `/projects/:id/changed` | Bearer | File editor |
-| 36 | `GET` | `/projects/:id/changes` | Bearer | File editor |
-| 37 | `GET` | `/activity` | Bearer | Activity |
-| 38 | `GET` | `/tasks` | Bearer (full + agent) | Tasks |
-| 39 | `POST` | `/tasks` | Bearer | Tasks |
-| 40 | `GET` | `/tasks/ready` | Bearer (full + agent) | Tasks |
-| 41 | `GET` | `/tasks/deps` | Bearer | Tasks |
-| 42 | `GET` | `/tasks/:id/usage` | Bearer | Tasks |
-| 43 | `PATCH` | `/tasks/:id` | Bearer (full + agent) | Tasks |
-| 44 | `GET` | `/tasks/:id/deps` | Bearer | Tasks |
-| 45 | `DELETE` | `/tasks/:id` | Bearer | Tasks |
-| 46 | `POST` | `/admin/cleanup` | Bearer (admin) | Admin |
-| 47 | `POST` | `/tasks/plan` | Bearer | Planning |
-| 48 | `GET` | `/plan/:jobId` | Bearer (full + agent) | Planning |
-| 49 | `POST` | `/plan/:jobId/submit` | Bearer (full + agent) | Planning |
-| 50 | `POST` | `/tasks/:epicId/phases` | Bearer | Planning |
-| 51 | `GET` | `/integrations/hermes/status` | Bearer (admin) | Integrations |
-| 52 | `POST` | `/integrations/hermes/install` | Bearer (admin) | Integrations |
-| 53 | `GET` | `/integrations/cli-status` | Bearer | Integrations |
-| 54 | `GET` | `/sessions` | Bearer (full + agent) | Sessions |
-| 55 | `POST` | `/sessions` | Bearer | Sessions |
-| 56 | `DELETE` | `/sessions/:name` | Bearer | Sessions |
-| 57 | `POST` | `/sessions/:name/keys` | Bearer | Sessions |
-| 58 | `POST` | `/sessions/:name/resize` | Bearer | Sessions |
-| 59 | `GET` | `/sessions/:name/pane` | Bearer | Sessions |
-| 60 | `GET` | `/sessions/:name/stream` | Bearer | Sessions |
-| 61 | `GET` | `/missions` | Bearer | Missions |
-| 62 | `GET` | `/missions/:id` | Bearer | Missions |
-| 63 | `POST` | `/missions` | Bearer | Missions |
-| 64 | `PATCH` | `/missions/:id` | Bearer | Missions |
-| 65 | `DELETE` | `/missions/:id` | Bearer | Missions |
-| 66 | `GET` | `/missions/:id/overseer/next` | Bearer (full + agent) | Missions |
-| 67 | `POST` | `/missions/:id/overseer/decide` | Bearer (full + agent) | Missions |
-| 68 | `GET` | `/config` | Bearer | Config |
-| 69 | `PUT` | `/config` | Bearer (admin/setup) | Config |
-| 70 | `GET` | `/advisor/status` | Bearer (full) | Assistant |
-| 71 | `POST` | `/advisor/start` | Bearer (full) | Assistant |
-| 72 | `POST` | `/advisor/stop` | Bearer (full) | Assistant |
-| 73 | `POST` | `/mcp` | Bearer | MCP server |
-| 74 | `GET` | `/events` | Bearer (?token) | Events |
+| 7 | `POST` | `/auth/me/password` | Bearer | Authentication |
+| 8 | `POST` | `/auth/me/avatar` | Bearer | Authentication |
+| 9 | `GET` | `/users/:id/avatar/url` | Bearer | Authentication |
+| 10 | `GET` | `/users/:id/avatar` | Bearer/signed | Authentication |
+| 11 | `GET` | `/users` | Bearer (admin) | Users |
+| 12 | `POST` | `/users` | Bearer (admin/open) | Users |
+| 13 | `PATCH` | `/users/:id` | Bearer (admin) | Users |
+| 14 | `DELETE` | `/users/:id` | Bearer (admin) | Users |
+| 15 | `GET` | `/users/:id/projects` | Bearer (admin) | Assignments |
+| 16 | `POST` | `/users/:id/projects` | Bearer (admin) | Assignments |
+| 17 | `DELETE` | `/users/:id/projects/:pid` | Bearer (admin) | Assignments |
+| 18 | `GET` | `/projects` | Bearer | Projects |
+| 19 | `POST` | `/projects` | Bearer (admin) | Projects |
+| 20 | `PATCH` | `/projects/:id` | Bearer (admin) | Projects |
+| 21 | `DELETE` | `/projects/:id` | Bearer (admin) | Projects |
+| 22 | `GET` | `/projects/:id/git` | Bearer | Projects |
+| 23 | `GET` | `/fs/dirs` | Bearer (admin) | Projects |
+| 24 | `GET` | `/projects/:id/files` | Bearer | File editor |
+| 25 | `GET` | `/projects/:id/file` | Bearer | File editor |
+| 26 | `PUT` | `/projects/:id/file` | Bearer | File editor |
+| 27 | `GET` | `/projects/:id/raw` | Bearer | File editor |
+| 28 | `POST` | `/projects/:id/new-file` | Bearer | File editor |
+| 29 | `POST` | `/projects/:id/dir` | Bearer | File editor |
+| 30 | `POST` | `/projects/:id/rename` | Bearer | File editor |
+| 31 | `POST` | `/projects/:id/copy` | Bearer | File editor |
+| 32 | `DELETE` | `/projects/:id/entry` | Bearer | File editor |
+| 33 | `GET` | `/projects/:id/diff` | Bearer | File editor |
+| 34 | `GET` | `/projects/:id/head` | Bearer | File editor |
+| 35 | `GET` | `/projects/:id/commit/:hash` | Bearer | File editor |
+| 36 | `GET` | `/projects/:id/commit/:hash/diff` | Bearer | File editor |
+| 37 | `GET` | `/projects/:id/commits` | Bearer | File editor |
+| 38 | `GET` | `/projects/:id/changed` | Bearer | File editor |
+| 39 | `GET` | `/projects/:id/changes` | Bearer | File editor |
+| 40 | `GET` | `/activity` | Bearer | Activity |
+| 41 | `GET` | `/tasks` | Bearer (full + agent) | Tasks |
+| 42 | `POST` | `/tasks` | Bearer | Tasks |
+| 43 | `GET` | `/tasks/ready` | Bearer (full + agent) | Tasks |
+| 44 | `GET` | `/tasks/deps` | Bearer | Tasks |
+| 45 | `GET` | `/tasks/:id/usage` | Bearer | Tasks |
+| 46 | `PATCH` | `/tasks/:id` | Bearer (full + agent) | Tasks |
+| 47 | `POST` | `/tasks/:id/approve-gate` | Bearer | Tasks |
+| 48 | `GET` | `/tasks/:id/deps` | Bearer | Tasks |
+| 49 | `DELETE` | `/tasks/:id` | Bearer | Tasks |
+| 50 | `POST` | `/admin/cleanup` | Bearer (admin) | Admin |
+| 51 | `GET` | `/usage/by-model` | Bearer | Usage & Stats |
+| 52 | `POST` | `/usage/reset` | Bearer (admin) | Usage & Stats |
+| 53 | `POST` | `/tasks/plan` | Bearer | Planning |
+| 54 | `GET` | `/plan/:jobId` | Bearer (full + agent) | Planning |
+| 55 | `POST` | `/plan/:jobId/submit` | Bearer (full + agent) | Planning |
+| 56 | `POST` | `/tasks/:epicId/phases` | Bearer | Planning |
+| 57 | `GET` | `/sessions` | Bearer (full + agent) | Sessions |
+| 58 | `POST` | `/sessions` | Bearer | Sessions |
+| 59 | `DELETE` | `/sessions/:name` | Bearer | Sessions |
+| 60 | `POST` | `/sessions/:name/keys` | Bearer | Sessions |
+| 61 | `POST` | `/sessions/:name/input` | Bearer | Sessions |
+| 62 | `POST` | `/sessions/:name/resize` | Bearer | Sessions |
+| 63 | `GET` | `/sessions/:name/pane` | Bearer | Sessions |
+| 64 | `GET` | `/sessions/:name/stream` | Bearer | Sessions |
+| 65 | `POST` | `/sessions/:name/ws-ticket` | Bearer | Sessions |
+| 66 | `GET` | `/missions` | Bearer | Missions |
+| 67 | `GET` | `/missions/:id` | Bearer | Missions |
+| 68 | `POST` | `/missions` | Bearer | Missions |
+| 69 | `PATCH` | `/missions/:id` | Bearer | Missions |
+| 70 | `DELETE` | `/missions/:id` | Bearer | Missions |
+| 71 | `POST` | `/missions/:id/pr` | Bearer | Missions |
+| 72 | `POST` | `/missions/:id/merge-pr` | Bearer | Missions |
+| 73 | `GET` | `/missions/:id/overseer/next` | Bearer (full + agent) | Missions |
+| 74 | `POST` | `/missions/:id/overseer/decide` | Bearer (full + agent) | Missions |
+| 75 | `GET` | `/advisor/status` | Bearer (full) | Assistant |
+| 76 | `POST` | `/advisor/start` | Bearer (full) | Assistant |
+| 77 | `POST` | `/advisor/stop` | Bearer (full) | Assistant |
+| 78 | `ALL` | `/mcp` | Bearer | MCP server |
+| 79 | `GET` | `/events` | Bearer (?token) | Events |
+| 80 | `GET` | `/integrations/hermes/status` | Bearer (admin) | Integrations |
+| 81 | `POST` | `/integrations/hermes/install` | Bearer (admin) | Integrations |
+| 82 | `GET` | `/integrations/cli-status` | Bearer | Integrations |
+| 83 | `GET` | `/integrations/github-status` | Bearer | Integrations |
+| 84 | `GET` | `/push/vapid-public-key` | Public/Bearer | Push Notifications |
+| 85 | `POST` | `/push/subscribe` | Bearer | Push Notifications |
+| 86 | `POST` | `/push/unsubscribe` | Bearer | Push Notifications |
+| 87 | `GET` | `/system` | Bearer | System |
+| 88 | `POST` | `/system/update` | Bearer (admin) | System |
+| 89 | `GET` | `/config` | Bearer | Config |
+| 90 | `PUT` | `/config` | Bearer (admin/setup) | Config |
+| 91 | `GET` | `/ws/terminal` | Ticket | Terminal |
