@@ -5,12 +5,11 @@ import { Modal, ModalBody, ModalFooter } from '../../components/ui/Modal';
 import { Button } from '../../components/ui/Button';
 import { useToast } from '../../components/ui/Toast';
 import { useResetUsage } from '../../lib/mutations';
-import { OrcaApiError } from '../../lib/orcaClient';
 import { useTranslation } from '../../lib/i18n';
 
-/** Destructive confirmation for resetting all usage. Requires the operator to type the sentinel
- *  word so it can't be triggered by a stray click, and surfaces the daemon's "agents running"
- *  refusal (409) as a friendly message rather than a raw error code. */
+/** Confirmation for resetting the usage stats. Requires the operator to type the sentinel word so it
+ *  can't be triggered by a stray click. Only the stored snapshots are wiped — the agents' CLI session
+ *  transcripts are never touched — so this is safe and reversible by simply letting tasks run again. */
 export function ResetUsageModal({ onClose }: { onClose: () => void }) {
   const { t } = useTranslation();
   const { toast } = useToast();
@@ -22,10 +21,7 @@ export function ResetUsageModal({ onClose }: { onClose: () => void }) {
   const onConfirm = () => {
     reset.mutate(undefined, {
       onSuccess: () => { toast(t.stats.resetDone); onClose(); },
-      onError: (e) => {
-        const blocked = e instanceof OrcaApiError && e.code === 'agents_running';
-        toast(blocked ? t.stats.resetBlocked : t.stats.resetFailed, 'error');
-      },
+      onError: () => toast(t.stats.resetFailed, 'error'),
     });
   };
 

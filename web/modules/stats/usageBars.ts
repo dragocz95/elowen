@@ -17,6 +17,8 @@ export interface UsageSummary {
   totalCostLabel: string;     // '—' or formatCost
   totalTokens: number;
   totalTokensLabel: string;
+  totalCacheTokens: number;   // cacheRead + cacheWrite across all models
+  totalCacheLabel: string;
   modelsUsed: number;
   hasAnyUsage: boolean;
 }
@@ -41,6 +43,7 @@ export function buildUsageSummary(data: ModelUsage[] | undefined): UsageSummary 
     .sort((a, b) => b.totalTokens - a.totalTokens);
 
   const totalTokens = items.reduce((sum, m) => sum + m.usage.total, 0);
+  const totalCacheTokens = items.reduce((sum, m) => sum + m.usage.cacheRead + m.usage.cacheWrite, 0);
   const costs = items.map((m) => m.usage.costUsd).filter((c): c is number => c != null);
   const totalCost = costs.length ? costs.reduce((sum, c) => sum + c, 0) : null;
 
@@ -50,6 +53,8 @@ export function buildUsageSummary(data: ModelUsage[] | undefined): UsageSummary 
     totalCostLabel: totalCost == null ? DASH : formatCost(totalCost),
     totalTokens,
     totalTokensLabel: formatTokens(totalTokens),
+    totalCacheTokens,
+    totalCacheLabel: formatTokens(totalCacheTokens),
     modelsUsed: rows.length,
     hasAnyUsage: totalTokens > 0,
   };

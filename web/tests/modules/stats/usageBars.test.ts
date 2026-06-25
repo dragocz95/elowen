@@ -16,8 +16,18 @@ describe('buildUsageSummary', () => {
       expect(s.totalTokens).toBe(0);
       expect(s.totalCost).toBeNull();
       expect(s.totalCostLabel).toBe('—');
+      expect(s.totalCacheTokens).toBe(0);
       expect(s.modelsUsed).toBe(0);
     }
+  });
+
+  it('sums cache tokens (read + write) across models', () => {
+    const s = buildUsageSummary([
+      { exec: 'a', usage: { input: 1, output: 1, cacheRead: 10, cacheWrite: 5, total: 17, costUsd: null } },
+      { exec: 'b', usage: { input: 1, output: 1, cacheRead: 20, cacheWrite: 0, total: 22, costUsd: null } },
+    ]);
+    expect(s.totalCacheTokens).toBe(35);
+    expect(s.totalCacheLabel).toBe('35');
   });
 
   it('sorts rows by tokens desc and max-normalizes the bar widths', () => {

@@ -155,14 +155,8 @@ export interface ModelUsage {
   usage: TokenUsage;
 }
 
-/** Outcome of clearing one executor's session store on a usage reset. */
-export interface ExecClearResult {
-  cleared: boolean;
-  removed: number;
-  error?: string;
-}
-
+/** Result of a usage reset: how many task_usage snapshot rows were wiped. */
 export interface ResetUsageResult {
   ok: boolean;
-  cleared: { opencode: ExecClearResult; claude: ExecClearResult; codex: ExecClearResult };
+  cleared: number;
 }

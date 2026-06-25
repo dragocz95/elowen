@@ -1,6 +1,6 @@
 'use client';
 import { useState } from 'react';
-import { BarChart3, Boxes, Coins, DollarSign } from 'lucide-react';
+import { BarChart3, Boxes, Coins, DollarSign, Database } from 'lucide-react';
 import { useModelUsage, useMe } from '../../lib/queries';
 import { StatCard } from '../../components/ui/StatCard';
 import { ModelIcon } from '../../components/ui/ModelIcon';
@@ -27,9 +27,10 @@ export function StatsView() {
   return (
     <div className="mx-auto flex w-full max-w-4xl flex-col gap-8">
       {/* ── Summary cards ─────────────────────────────────────── */}
-      <section className="grid grid-cols-2 gap-4 lg:grid-cols-3">
+      <section className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         <StatCard value={summary.totalCostLabel} label={t.stats.cardTotalCost} icon={DollarSign} />
         <StatCard value={summary.totalTokensLabel} label={t.stats.cardTotalTokens} icon={Coins} />
+        <StatCard value={summary.totalCacheLabel} label={t.stats.cardCache} icon={Database} />
         <StatCard value={summary.modelsUsed} label={t.stats.cardModelsUsed} icon={Boxes} />
       </section>
 
