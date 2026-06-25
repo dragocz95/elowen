@@ -57,13 +57,14 @@ Data refreshes via `useTasks` (poll 5 s), `useSessions` (poll 5 s), `useMissions
 - **ModuleHeader** — title, search input, segmented filter (Active / Open / Blocked / Closed / Autopilot / All), New task button
 - **Day-grouped task list** — cards grouped by today/yesterday/date, paginated (12 per page)
 - **TaskCard** — compact single-row card: small model-icon bubble, title + id, live dot, status/time/project badges, quick run controls (Start/Stop/Pause), hover action menu (close/delete). Full detail (agent, usage, changes, context) opens in the detail pane on click. Checkbox for bulk select.
-- **EpicGroup** — collapsible epic row that IS the mission: lifecycle pills (Engage / Pause / Resume / Disengage) resolved from the mission state, rolled-up cost (`totalCost` from `['task-usage', id]` cache), `ProgressRibbon`, `done/total` count, `ProjectPill`. Expanded shows child phases as `TaskCard` rows. Action menu: Add phase, Delete mission. No `overflow-hidden` on the card to avoid clipping the action menu dropdown.
+- **EpicGroup** — collapsible epic row that IS the mission: lifecycle pills (Engage / Pause / Resume / Disengage, plus PR link/open/merge) in their own row below the progress bar, rolled-up cost (`totalCost` from `['task-usage', id]` cache), `ProgressRibbon`, `done/total` count, `ProjectPill`. Status badge and action menu (Add phase, Delete mission) grouped together top-right, revealed on epic hover. Expanded shows child phases as `TaskCard` rows. No `overflow-hidden` on the card to avoid clipping the action menu dropdown.
 - **Filters** — search by text/id, status filter, persistent in `localStorage`
 - **Bulk actions** — bottom bar with close/delete for selected tasks
 - **TaskDetailPane** — right-side detail drawer: description, phases, dependencies, executor, result summary + `OutcomeBadge`, launch/edit/close actions
 - **TaskModal** — create/edit modal: title, details, type, priority, executor, schedule, autostart, dependencies
   - **Project picker** — row of project pills (`ProjectPill`-style buttons with `FolderGit2` icon) when the user has access to more than one project. Selection plumbed as `project_id` into `POST /tasks` and `POST /tasks/plan`. Hidden for existing tasks (project is fixed) and single-project workspaces.
-- **PlanModal** — `Autopilot · Planning` mode: goal input, autonomy (L0–L3), max sessions, manual phase list, create & engage
+  - **Form controls** — all single-choice fields use `Segmented` (type, priority) or `ExecutorPicker` (executor model pills with brand icons, alphabetical, first 5 shown with "+N more" expander). No native `<select>` dropdowns remain.
+- **PlanModal** — `Autopilot · Planning` mode: goal input, autonomy (L0–L3 via `Segmented`), max sessions, PR workflow mode (`Segmented`: default/on/off), manual phase list, create & engage
   - **Project picker** — same project pills as TaskModal, plumbed as `project_id` into `POST /tasks/plan`
   - **Auto-model toggle** — when enabled (`autoModel`), the executor picker is hidden and the planner picks the best model per phase from the model descriptions in Settings. The toggle is mutually exclusive with the manual executor selector.
   - **Pilot live preview** — during agent-mode planning the `PlanJob` carries a `sessionName` (the Pilot's tmux session). When `planJob.data?.sessionName` is set, a `LiveTail` pane renders under the spinner so the user watches the planner think in real time. Relay-mode planning is synchronous and has no session, so this pane stays hidden.
@@ -96,7 +97,7 @@ Supports deep-links: `?new=1` opens create modal, `?select=<id>` opens detail pa
 
 The standalone `/missions` route was removed in v1.1.1. Mission lifecycle is driven directly from the epic row in the Tasks view:
 
-- **Lifecycle pills** — `ActionPill` buttons on each `EpicGroup`: Engage (one-click with configured autonomy/maxSessions defaults), Pause, Resume, Disengage. A never-engaged epic shows only Engage; a disengaged mission is done.
+- **Lifecycle pills** — `ActionPill` buttons on each `EpicGroup` in their own row below the progress bar (indented under the title): Engage (one-click with configured autonomy/maxSessions defaults), Pause, Resume, Disengage, plus PR link/open/merge pills. A never-engaged epic shows only Engage; a disengaged mission is done. The pill row is only rendered when there is at least one action, so a quiet epic stays a single compact line.
 - **Rolled-up cost** — each phase's agent cost (`costUsd` from `['task-usage', id]` cache) summed and shown as a green `Coins` pill on the epic row. Shares the cache with expanded phase cards, so no extra fetches.
 - **AddPhaseModal** — moved to `modules/tasks/AddPhaseModal.tsx`, reachable from the epic's action menu alongside Delete mission.
 - **Deleted modules** — `modules/missions/` (MissionsView, TaskFlow, ActiveMissionsBar, EngageModal, layoutPhases, missionUtils, meta) and the `/missions` route + registry entry. All `/missions` links (dashboard, timeline, command palette) repointed to `/tasks`.
@@ -144,7 +145,7 @@ The standalone `/missions` route was removed in v1.1.1. Mission lifecycle is dri
 
 - **Project cards** — grid with slug, path, git status (branch, clean/dirty, ahead/behind), clickable to select
 - **New project modal** — slug, path, pilot info notes
-- **Edit project modal** — path and notes (slug is immutable)
+- **Edit project modal** — path, notes, and PR workflow toggle (`Segmented`: inherit/on/off). Slug is immutable.
 - **Git section** — branches (current highlighted), recent commits with hash/subject/author/relative time
 - **Open editor** — launches the Monaco code editor
 
@@ -493,9 +494,9 @@ The UI adapts across three breakpoints using standard Tailwind responsive prefix
 | `Button` | Primary action with variant (accent, danger, default, ghost) and icon support |
 | `IconButton` | Icon-only button for actions |
 | `Input` | Text input field |
-| `Select` | Dropdown select |
 | `Toggle` | Toggle switch |
-| `Segmented` | Segmented control / radio group |
+| `Segmented` | Connected segmented control / radio group — single source of truth for single-choice toggles (mode, filters, type, priority, autonomy, PR workflow). One bordered track with accent-filled active option, wraps when it can't fit. |
+| `ExecutorPicker` | Executor model picker as brand-icon pills (icon + name). Shows first `limit` models alphabetically with "+N more" expander; keeps selected model visible when collapsed. |
 | `Modal` | Modal dialog with title, close, backdrop, sizes (sm/md/lg/full) |
 | `ConfirmDialog` | Confirmation modal with cancel/confirm |
 | `Toast` | Toast notification (icon + message, auto-dismiss, rAF-based progress bar, hover pause) |
@@ -505,7 +506,7 @@ The UI adapts across three breakpoints using standard Tailwind responsive prefix
 | `Field` | Form field wrapper with label and optional hint |
 | `SettingCard` | Settings section card |
 | `HelpTip` | Question-mark tooltip helper |
-| `ActionMenu` | Dropdown action menu with icon and tone support |
+| `ActionMenu` | Dropdown action menu with icon and tone support. Default trigger is a filled-red trash icon (solid at rest, darkens on hover). Portalled to body to escape stacking context. |
 | `Avatar` | User avatar with fallback initial |
 | `Checkbox` | Checkbox input |
 | `states` | `LoadingState`, `ErrorState` (with retry), `EmptyState` |
@@ -562,7 +563,9 @@ Status-to-tone mapping for task statuses in `modules/dashboard/statusTone.ts`:
 
 ### Assistant dock (`modules/advisor/`)
 
-The assistant (formerly "advisor") is a **docked, IDE-style side panel** (`AdvisorPanel`), not a floating box. It opens as a full-height column on the left or right (`useDockState`, persisted to `localStorage` under `advisor:dock`: open/side/width/panes/sizes). A vertical `ResizeHandle` on the inner edge resizes the panel vs. the page; the panel hosts a vertical stack of **panes** split by horizontal `ResizeHandle`s. Each pane is an `AdvisorPane`: the user's own assistant (start/stop lifecycle + agent picker with per-model brand icons) or, added via `SessionPicker`, a read-write `StreamTerminal` onto any running session — so you can watch the assistant and a worker at once. When the dock is closed, a floating `AdvisorLauncher` (a dark terminal icon) reopens it.
+The assistant (formerly "advisor") is a **docked, IDE-style side panel** (`AdvisorPanel`), not a floating box. It opens as a full-height column on the left or right (`useDockState`, persisted to `localStorage` under `advisor:dock`: open/side/width/panes/sizes). A vertical `ResizeHandle` on the inner edge resizes the panel vs. the page; the panel hosts a vertical stack of **panes** split by horizontal `ResizeHandle`s. Each pane is an `AdvisorPane`: the user's own assistant (start/stop lifecycle + agent picker with per-model brand icons) or, added via `SessionPicker`, a read-write `StreamTerminal` onto any running session — so you can watch the assistant and a worker at once.
+
+The advisor pane is **removable**: its header has a close control, removal persists an off intent, and it can be re-added from the "+" menu (`SessionPicker` shows a "Re-add advisor" option when the advisor pane is absent). When no panes remain, the dock renders an empty state with a hint. When the dock is closed, a floating `AdvisorLauncher` (a dark terminal icon) reopens it.
 
 The dock's thin global toolbar carries no pane title (each pane labels itself); running-state controls live in an overflow menu. The sidebar **mirrors to the right edge** when the dock is on the left, so the layout stays balanced whichever side you pick.
 
