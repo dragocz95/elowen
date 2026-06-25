@@ -97,86 +97,83 @@ export function EpicGroup({ epic, phases, effectiveStatus, expanded, onToggle, o
   // list — is rounded to match below (rounded-b-lg).
   return (
     <div className="group/epic rounded-lg border border-accent/30 bg-accent/[0.04]">
-      <div className="relative flex items-stretch">
-        <button
-          type="button"
-          onClick={() => { onToggle(); onSelect(epic); }}
-          aria-expanded={expanded}
-          className={`flex min-w-0 flex-1 items-center gap-3 p-3 text-left transition-colors hover:bg-accent/[0.06] ${activeId === epic.id ? 'bg-accent/[0.06]' : ''}`}
-        >
-          <ChevronRight size={16} className={`shrink-0 text-text-muted transition-transform ${expanded ? 'rotate-90' : ''}`} aria-hidden />
-          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-border bg-elevated"><Icon size={20} className="text-accent" aria-hidden /></span>
-          <div className="flex min-w-0 flex-1 flex-col gap-1.5">
-            <div className="flex items-center gap-2">
-              <span className="min-w-0 flex-1 truncate text-sm font-semibold text-text">{epic.title}</span>
-              {active ? <span className="live-dot h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: dotColor, ['--live-ring' as string]: dotRing }} aria-hidden /> : null}
-            </div>
-            <div className="flex items-center gap-2">
-              <ProgressRibbon phases={phases} className="max-w-[12rem] flex-1" />
-              <span className="shrink-0 font-mono text-[11px] text-text-muted">{done}/{total} {t.tasks.phasesLabel}</span>
-              {totalCost > 0 ? (
-                <span className="inline-flex shrink-0 items-center gap-0.5 rounded border border-approve/30 px-1.5 py-0.5 font-mono text-[11px] text-approve" title={`${t.usage.cost}: ${formatCost(totalCost)}`}>
-                  <Coins size={10} className="shrink-0" aria-hidden />{formatCost(totalCost)}
-                </span>
-              ) : null}
-              <ProjectPill projectId={epic.project_id} />
-            </div>
+      <button
+        type="button"
+        onClick={() => { onToggle(); onSelect(epic); }}
+        aria-expanded={expanded}
+        className={`flex w-full min-w-0 items-center gap-3 p-3 text-left transition-colors hover:bg-accent/[0.06] ${activeId === epic.id ? 'bg-accent/[0.06]' : ''}`}
+      >
+        <ChevronRight size={16} className={`shrink-0 text-text-muted transition-transform ${expanded ? 'rotate-90' : ''}`} aria-hidden />
+        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-border bg-elevated"><Icon size={20} className="text-accent" aria-hidden /></span>
+        <div className="flex min-w-0 flex-1 flex-col gap-1.5">
+          <div className="flex items-center gap-2">
+            <span className="min-w-0 flex-1 truncate text-sm font-semibold text-text">{epic.title}</span>
+            {active ? <span className="live-dot h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: dotColor, ['--live-ring' as string]: dotRing }} aria-hidden /> : null}
           </div>
-          <Badge tone={statusTone(effectiveStatus ?? epic.status)}>{statusLabel(t, effectiveStatus ?? epic.status)}</Badge>
-        </button>
+          <div className="flex items-center gap-2">
+            <ProgressRibbon phases={phases} className="max-w-[12rem] flex-1" />
+            <span className="shrink-0 font-mono text-[11px] text-text-muted">{done}/{total} {t.tasks.phasesLabel}</span>
+            {totalCost > 0 ? (
+              <span className="inline-flex shrink-0 items-center gap-0.5 rounded border border-approve/30 px-1.5 py-0.5 font-mono text-[11px] text-approve" title={`${t.usage.cost}: ${formatCost(totalCost)}`}>
+                <Coins size={10} className="shrink-0" aria-hidden />{formatCost(totalCost)}
+              </span>
+            ) : null}
+            <ProjectPill projectId={epic.project_id} />
+          </div>
+        </div>
+        <Badge tone={statusTone(effectiveStatus ?? epic.status)}>{statusLabel(t, effectiveStatus ?? epic.status)}</Badge>
+      </button>
 
-        {/* Mission lifecycle controls — siblings of the toggle button (never nested, so the HTML stays
-            valid and a control click doesn't also collapse the epic). */}
-        <div className="flex items-center gap-1 pr-3">
-          {pr?.prUrl ? (
-            <a
-              href={pr.prUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              onClick={(e) => e.stopPropagation()}
-              className="inline-flex shrink-0 items-center gap-1 rounded-md border border-accent/40 bg-accent/10 px-2 py-1 text-xs font-medium text-accent transition-colors hover:bg-accent/20"
-              title={t.missions.viewPr}
-            >
-              <GitPullRequest size={13} className="shrink-0" aria-hidden />#{pr.prNumber}
-            </a>
-          ) : pr?.prState === 'ready' ? (
-            <ActionPill icon={GitPullRequest} label={t.missions.openPr} tone="accent" onClick={onOpenPr} disabled={openPr.isPending} />
-          ) : null}
-          {pr && pr.fixRounds > 0 && pr.prState === 'open' ? (
-            <span
-              title={pr.lastFeedback ?? undefined}
-              className="inline-flex shrink-0 items-center gap-1 rounded-full border border-warning/40 bg-warning/10 px-2.5 py-1 text-[11px] font-medium text-warning"
-            >
-              <Wrench size={12} className="shrink-0" aria-hidden />
-              <span className="hidden sm:inline">{t.missions.prFixBadge.replace('{n}', String(pr.fixRounds))}</span>
-            </span>
-          ) : null}
-          {pr?.prState === 'open' ? (
-            <ActionPill icon={GitMerge} label={t.missions.mergePr} tone="accent" onClick={() => setConfirmMerge(true)} disabled={mergePr.isPending} />
-          ) : null}
-          {!live && !epicClosed && !mission ? (
-            <ActionPill icon={Rocket} label={t.missions.engage} tone="accent" onClick={onEngage} disabled={engage.isPending} />
-          ) : null}
-          {!live && !epicClosed && mission ? (
-            <ActionPill icon={Play} label={t.missions.continueMission} tone="accent" onClick={onContinue} disabled={engage.isPending} />
-          ) : null}
-          {live ? (
-            <>
-              {paused
-                ? <ActionPill icon={Play} label={t.missions.resume} tone="accent" onClick={onResume} disabled={resume.isPending} />
-                : <ActionPill icon={Pause} label={t.missions.pause} onClick={onPause} disabled={pause.isPending} />}
-              <ActionPill icon={Power} label={t.missions.disengage} tone="danger" onClick={onDisengage} disabled={disengage.isPending} />
-            </>
-          ) : null}
-          <div className="opacity-0 transition-opacity group-hover/epic:opacity-100">
-            <ActionMenu
-              label={t.tasks.epicActions}
-              items={[
-                { label: t.missions.addPhase, icon: Plus, onSelect: () => setAddingPhase(true) },
-                { label: t.tasks.deleteMission, icon: Trash2, tone: 'danger', onSelect: () => setConfirmDelete(true) },
-              ]}
-            />
-          </div>
+      {/* Mission lifecycle controls — their own row under the progress bar (outside the toggle button, so
+          a control click never collapses the epic), indented to line up beneath the title/progress. */}
+      <div className="flex flex-wrap items-center gap-1.5 px-3 pb-3 pl-[5.75rem]">
+        {pr?.prUrl ? (
+          <a
+            href={pr.prUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex shrink-0 items-center gap-1 rounded-md border border-accent/40 bg-accent/10 px-2 py-1 text-xs font-medium text-accent transition-colors hover:bg-accent/20"
+            title={t.missions.viewPr}
+          >
+            <GitPullRequest size={13} className="shrink-0" aria-hidden />#{pr.prNumber}
+          </a>
+        ) : pr?.prState === 'ready' ? (
+          <ActionPill icon={GitPullRequest} label={t.missions.openPr} tone="accent" onClick={onOpenPr} disabled={openPr.isPending} />
+        ) : null}
+        {pr && pr.fixRounds > 0 && pr.prState === 'open' ? (
+          <span
+            title={pr.lastFeedback ?? undefined}
+            className="inline-flex shrink-0 items-center gap-1 rounded-full border border-warning/40 bg-warning/10 px-2.5 py-1 text-[11px] font-medium text-warning"
+          >
+            <Wrench size={12} className="shrink-0" aria-hidden />
+            <span className="hidden sm:inline">{t.missions.prFixBadge.replace('{n}', String(pr.fixRounds))}</span>
+          </span>
+        ) : null}
+        {pr?.prState === 'open' ? (
+          <ActionPill icon={GitMerge} label={t.missions.mergePr} tone="accent" onClick={() => setConfirmMerge(true)} disabled={mergePr.isPending} />
+        ) : null}
+        {!live && !epicClosed && !mission ? (
+          <ActionPill icon={Rocket} label={t.missions.engage} tone="accent" onClick={onEngage} disabled={engage.isPending} />
+        ) : null}
+        {!live && !epicClosed && mission ? (
+          <ActionPill icon={Play} label={t.missions.continueMission} tone="accent" onClick={onContinue} disabled={engage.isPending} />
+        ) : null}
+        {live ? (
+          <>
+            {paused
+              ? <ActionPill icon={Play} label={t.missions.resume} tone="accent" onClick={onResume} disabled={resume.isPending} />
+              : <ActionPill icon={Pause} label={t.missions.pause} onClick={onPause} disabled={pause.isPending} />}
+            <ActionPill icon={Power} label={t.missions.disengage} tone="danger" onClick={onDisengage} disabled={disengage.isPending} />
+          </>
+        ) : null}
+        <div className="opacity-0 transition-opacity group-hover/epic:opacity-100">
+          <ActionMenu
+            label={t.tasks.epicActions}
+            items={[
+              { label: t.missions.addPhase, icon: Plus, onSelect: () => setAddingPhase(true) },
+              { label: t.tasks.deleteMission, icon: Trash2, tone: 'danger', onSelect: () => setConfirmDelete(true) },
+            ]}
+          />
         </div>
       </div>
 
