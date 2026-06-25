@@ -71,6 +71,13 @@ trust it more, you turn the autonomy up; when you trust it less, you turn it dow
   opens a server-side folder picker to choose the path instead of typing it, and you pick a
   project icon (from an image already in the repo) right after creating it. Full EN/CS
   internationalization built in, and the whole dashboard is responsive down to a phone.
+- **Phone push notifications.** Launch a swarm and walk away from the keyboard — Orca pings
+  your phone only when a mission actually needs you. A review escalation, an agent waiting on
+  input, or a stalled run arrives as a Web Push notification with inline action buttons
+  (**Approve / Re-run / Allow / Reject / Open**) that act through the service worker without
+  opening the app; mission-done / PR-opened arrives as a tap-to-open FYI. Opt in per device
+  from your Account, and notifications route to the mission's owner plus admins. A VAPID
+  keypair is generated on first boot and the private key never leaves the daemon.
 - **Self-healing.** A stuck-session detector revives agents that die without closing out
   (and blocks the task after repeated failures instead of crash-looping). A janitor sweeps
   up finished sessions. Live token and cost usage is shown per run.
