@@ -26,6 +26,8 @@ import { RealTmuxDriver } from '../tmux/driver.js';
 import { SystemClock } from '../shared/clock.js';
 import { ConfigStore } from '../store/configStore.js';
 import { ensureVapidKeys } from '../push/vapid.js';
+import { PushSender } from '../push/pushSender.js';
+import { PushDispatcher } from '../push/pushDispatcher.js';
 import { UserStore } from '../store/userStore.js';
 import { EventStore } from '../store/eventStore.js';
 import { ProjectStore } from '../store/projectStore.js';
@@ -144,6 +146,12 @@ export function buildApp(opts: BuildOpts) {
   // isolated worktree on its own branch, commits per approved phase, and (later stages) opens a PR.
   const missionPrs = new MissionPrStore(db);
   const missionGit = new MissionGit({ prs: missionPrs, config, projects, tasks });
+
+  // Phone push: a single bus subscriber maps lifecycle events (review escalation, needs_input, stall,
+  // completion) to web-push notifications for the mission's owner + admins. No-op until a user
+  // subscribes a device and (implicitly) VAPID keys exist — generated above on first boot.
+  const pushSender = new PushSender(pushSubscriptions, () => config.webPushKeys());
+  new PushDispatcher({ missions, tasks, users, sender: pushSender, missionGit }).subscribe(bus);
 
   const engine = new MissionEngine({
     tasks, readiness, missions, spawn, tmux, bus, projects,
