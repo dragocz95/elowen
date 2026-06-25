@@ -1,4 +1,4 @@
-import { readFileSync, readdirSync, existsSync } from 'node:fs';
+import { readFileSync, readdirSync, existsSync, openSync, readSync, closeSync } from 'node:fs';
 import { join } from 'node:path';
 import { EMPTY_USAGE, type TokenUsage } from './types.js';
 import { pickNthSession } from './walk.js';
@@ -42,16 +42,27 @@ export function claudeUsage(home: string, dir: string, sinceMs: number, nth = 0)
   return u;
 }
 
-/** Epoch ms of a transcript's first timestamped event, or null. */
+/** Epoch ms of a transcript's first timestamped event, or null. Reads only the head of the file —
+ *  transcripts run to hundreds of MB and we scan every session in a project to rank them, so loading
+ *  each one whole just to read its first timestamp is what made the usage endpoint blow up memory. */
 function firstEventMs(path: string): number | null {
-  let raw;
-  try { raw = readFileSync(path, 'utf8'); } catch { return null; }
-  for (const line of raw.split('\n')) {
+  for (const line of readHead(path).split('\n')) {
     if (!line.trim()) continue;
     try {
       const ev = JSON.parse(line) as { timestamp?: string };
       if (ev.timestamp) { const ms = Date.parse(ev.timestamp); if (!Number.isNaN(ms)) return ms; }
-    } catch { /* skip */ }
+    } catch { /* skip — the last line of the head window may be truncated */ }
   }
   return null;
+}
+
+/** Read up to `bytes` from the start of a file without loading the whole thing. */
+function readHead(path: string, bytes = 65536): string {
+  let fd;
+  try { fd = openSync(path, 'r'); } catch { return ''; }
+  try {
+    const buf = Buffer.allocUnsafe(bytes);
+    const n = readSync(fd, buf, 0, bytes, 0);
+    return buf.toString('utf8', 0, n);
+  } catch { return ''; } finally { closeSync(fd); }
 }

@@ -33,6 +33,9 @@ import { EventStore } from '../store/eventStore.js';
 import { ProjectStore } from '../store/projectStore.js';
 import { UserProjectStore } from '../store/userProjectStore.js';
 import { PushSubscriptionStore } from '../store/pushSubscriptionStore.js';
+import { TaskUsageStore } from '../store/taskUsageStore.js';
+import { UsageRecorder } from '../integrations/usage/recorder.js';
+import { usagePath } from '../integrations/usage/usagePath.js';
 import { RealGitReader } from '../git/gitReader.js';
 import type { TmuxDriver } from '../tmux/types.js';
 import { uniqueName } from './uniqueName.js';
@@ -103,6 +106,7 @@ export function buildApp(opts: BuildOpts) {
   const projects = new ProjectStore(db);
   const userProjects = new UserProjectStore(db);
   const pushSubscriptions = new PushSubscriptionStore(db);
+  const taskUsage = new TaskUsageStore(db);
   const git = new RealGitReader();
   // Give spawned agents a way to close their task: the orca CLI path + daemon URL + a service token.
   // The token is AGENT-SCOPED (not the admin's full token): a prompt-injected agent can only drive
@@ -152,6 +156,13 @@ export function buildApp(opts: BuildOpts) {
   // subscribes a device and (implicitly) VAPID keys exist — generated above on first boot.
   const pushSender = new PushSender(pushSubscriptions, () => config.webPushKeys());
   new PushDispatcher({ missions, tasks, users, sender: pushSender, missionGit }).subscribe(bus);
+  // Snapshot each task's token/cost usage into task_usage as it settles, so the stats page reads
+  // DB aggregates instead of re-scanning the CLIs' session stores. Resolve the same path the live
+  // usage endpoint does (mission worktree under PR-native, else the project checkout).
+  new UsageRecorder({
+    usage: taskUsage, tasks, fallback: { program: 'claude-code', model: 'sonnet' },
+    pathFor: (task) => usagePath(task, (pid) => projects.get(pid)?.path ?? opts.project.path, (id) => missionGit?.worktreeFor(id)),
+  }).subscribe(bus);
 
   const engine = new MissionEngine({
     tasks, readiness, missions, spawn, tmux, bus, projects,
@@ -262,7 +273,7 @@ export function buildApp(opts: BuildOpts) {
   // Single-use ticket store for the terminal WebSocket stream — shared between the authenticated
   // `POST /sessions/:name/ws-ticket` route and the daemon's `/ws/terminal` upgrade handler.
   const tickets = createTicketStore();
-  const app = createServer({ tasks, readiness, missions, engine, missionGit, spawn, tmux, bus, events, agents, project: opts.project, fallback: { program: 'claude-code', model: 'sonnet' }, clock: new SystemClock(), config, users, projects, userProjects, pushSubscriptions, git, avatarsDir, avatarSecret, planJobs, decisionQueue, pilot, advisor, tickets });
+  const app = createServer({ tasks, readiness, missions, engine, missionGit, spawn, tmux, bus, events, agents, project: opts.project, fallback: { program: 'claude-code', model: 'sonnet' }, clock: new SystemClock(), config, users, projects, userProjects, pushSubscriptions, taskUsage, git, avatarsDir, avatarSecret, planJobs, decisionQueue, pilot, advisor, tickets });
 
   // Root-cause recovery: after a daemon crash/restart, tasks left 'in_progress' whose tmux
   // session is gone are zombies — revert them to 'open' so they can be picked up again. No grace

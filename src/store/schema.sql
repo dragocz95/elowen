@@ -13,6 +13,21 @@ CREATE TABLE IF NOT EXISTS task_deps (
   PRIMARY KEY (task_id, depends_on_id),
   CHECK (task_id != depends_on_id)
 );
+-- Persisted per-task token/cost usage, snapshotted once when a task settles (closed/cancelled) so the
+-- stats page reads aggregates straight from the DB instead of re-scanning the CLIs' session stores.
+CREATE TABLE IF NOT EXISTS task_usage (
+  task_id TEXT PRIMARY KEY,
+  project_id INTEGER NOT NULL,
+  exec TEXT NOT NULL,
+  input INTEGER NOT NULL DEFAULT 0,
+  output INTEGER NOT NULL DEFAULT 0,
+  cache_read INTEGER NOT NULL DEFAULT 0,
+  cache_write INTEGER NOT NULL DEFAULT 0,
+  total INTEGER NOT NULL DEFAULT 0,
+  cost_usd REAL,
+  captured_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_task_usage_project ON task_usage(project_id);
 CREATE TABLE IF NOT EXISTS agents (
   id INTEGER PRIMARY KEY, project_id INTEGER NOT NULL, name TEXT NOT NULL,
   program TEXT NOT NULL, model TEXT NOT NULL, last_active_ts TEXT NOT NULL DEFAULT (datetime('now')),

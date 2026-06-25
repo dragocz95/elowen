@@ -8,8 +8,7 @@ import { hermesStatus, installOrcaMcp } from '../integrations/hermesInstall.js';
 import { detectClis } from '../integrations/cliDetection.js';
 import { detectGithubAuth } from '../integrations/github/auth.js';
 import { readTaskUsage } from '../integrations/usage/index.js';
-import { aggregateUsageByExec } from '../integrations/usage/byModel.js';
-import { clearAllUsage } from '../integrations/usage/reset.js';
+import { usagePath } from '../integrations/usage/usagePath.js';
 import { listProjectFiles, listDirs, readProjectFile, writeProjectFile, readProjectBytes, createProjectFile, createProjectDir, deleteProjectEntry, renameProjectEntry, copyProjectEntry, projectFileAtHead, projectFileDiff, projectCommitDiff, projectCommitFiles, projectCommitFileDiff, projectCommitLog, projectChangedFiles, projectWorkingDiff, projectReviewDiff, isProjectImage } from '../integrations/projectFiles.js';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
@@ -47,6 +46,7 @@ import type { EventStore } from '../store/eventStore.js';
 import type { ProjectStore } from '../store/projectStore.js';
 import type { UserProjectStore } from '../store/userProjectStore.js';
 import type { PushSubscriptionStore, WebPushSubscription } from '../store/pushSubscriptionStore.js';
+import type { TaskUsageStore } from '../store/taskUsageStore.js';
 import type { GitReader } from '../git/gitReader.js';
 import { logger } from '../shared/logger.js';
 import { shortId } from '../shared/id.js';
@@ -71,6 +71,7 @@ export interface ServerDeps {
   userProjects?: UserProjectStore;
   /** Per-user web-push device subscriptions. Absent → push subscribe/unsubscribe routes degrade to no-ops. */
   pushSubscriptions?: PushSubscriptionStore;
+  taskUsage?: TaskUsageStore;
   /** Agent registry — records each spawned agent's project at spawn. Used to tag live sessions with
    *  their project (the daemon's single source of truth for session→repo). */
   agents?: AgentStore;
@@ -513,10 +514,8 @@ export function createServer(d: ServerDeps): Hono<{ Variables: { user: User; tok
   // mission that's the isolated worktree, not the project checkout; otherwise the project path. A
   // phase's mission is `m-<epicId>`, and its epic is the task's parent. Falls back to the project path
   // when there's no worktree (PR mode off / mission torn down).
-  const usagePathFor = (task: { project_id: number; parent_id: string | null }): string => {
-    if (task.parent_id) { const wt = d.missionGit?.worktreeFor(`m-${task.parent_id}`); if (wt) return wt; }
-    return pathFor(task.project_id);
-  };
+  const usagePathFor = (task: { project_id: number; parent_id: string | null }): string =>
+    usagePath(task, pathFor, (id) => d.missionGit?.worktreeFor(id));
 
   // Resolve the target project for a create/plan request. Defaults to the daemon's home project;
   // any other project_id must exist and be accessible to the caller.
@@ -881,31 +880,24 @@ export function createServer(d: ServerDeps): Hono<{ Variables: { user: User; tok
     // rank, and read sessions from that project's path (not the daemon home, under multi-project).
     return c.json(readTaskUsage(task, d.tasks.list({ project_id: task.project_id }), usagePathFor(task), d.fallback));
   });
-  // Total token usage aggregated per model (exec spec), for the dashboard's model column. Scoped to
-  // the caller's accessible projects; optional `?project_id=N` narrows it further. Sibling lists are
-  // computed once per project so readTaskUsage can rank concurrent agents without O(n²) DB hits.
+  // Total token/cost usage aggregated per model (exec spec). Read straight from the `task_usage`
+  // snapshots (the UsageRecorder writes one per task as it settles), so this never re-scans the CLIs'
+  // session stores. Scoped to the caller's accessible projects; optional `?project_id=N` narrows it.
   app.get('/usage/by-model', c => {
-    const allowed = accessibleProjects(c);
-    const all = d.tasks.list();
-    const scoped = allowed ? all.filter((t) => allowed.has(t.project_id)) : all;
+    const allowed = accessibleProjects(c); // Set of project ids, or null for an admin (all projects)
+    let projectIds: number[] | undefined = allowed ? [...allowed] : undefined;
     const pidRaw = c.req.query('project_id');
-    let tasks = scoped;
     if (pidRaw !== undefined && pidRaw !== '') {
       const pid = Number(pidRaw);
-      tasks = Number.isFinite(pid) ? scoped.filter((t) => t.project_id === pid) : scoped;
+      if (Number.isFinite(pid)) projectIds = projectIds ? projectIds.filter((p) => p === pid) : [pid];
     }
-    const siblings = new Map<number, ReturnType<typeof d.tasks.list>>();
-    for (const pid of new Set(tasks.map((t) => t.project_id))) siblings.set(pid, d.tasks.list({ project_id: pid }));
-    return c.json(aggregateUsageByExec(tasks, (t) => readTaskUsage(t, siblings.get(t.project_id) ?? [], usagePathFor(t), d.fallback)));
+    return c.json(d.taskUsage?.aggregateByExec(projectIds) ?? []);
   });
-  // Destructively reset all usage: delete every executor's CLI session store (opencode/claude/codex)
-  // for the daemon user's HOME. Admin-only and irreversible. Refused while any agent is live, so a
-  // session store is never deleted under a running agent (which also keeps opencode.db unlocked).
-  app.post('/usage/reset', async c => {
+  // Reset the usage stats: wipe the `task_usage` snapshots. Admin-only and irreversible, but it only
+  // clears Orca's own DB rows — the agents' CLI session transcripts are left untouched.
+  app.post('/usage/reset', c => {
     if (notAdmin(c)) return c.json({ error: 'forbidden' }, 403);
-    const live = (await d.tmux.list()).filter((s) => s.startsWith('orca-'));
-    if (live.length > 0) return c.json({ error: 'agents_running', sessions: live }, 409);
-    return c.json({ ok: true, cleared: clearAllUsage() });
+    return c.json({ ok: true, cleared: d.taskUsage?.deleteAll() ?? 0 });
   });
   app.patch('/tasks/:id', async c => {
     const b = await c.req.json();
