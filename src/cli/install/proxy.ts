@@ -40,7 +40,8 @@ export function nginxVhost(domain: string, webPort: number, daemonPort: number):
     location = /sw.js {
         proxy_pass http://127.0.0.1:${webPort};
         proxy_set_header Host $host;
-        add_header Cache-Control "no-cache, no-store, must-revalidate";
+        proxy_hide_header Cache-Control;
+        add_header Cache-Control "no-cache, no-store, must-revalidate" always;
     }
 
     location / {
