@@ -47,7 +47,7 @@ export function buildAgentCommand(spec: AgentSpec, ctx: SpawnCtx): string {
   // and re-implements/re-verifies everything, only gradually discovering prior phases are done.
   // The phase template carries the "build on prior phases" framing; the standalone one does not.
   let prompt = ctx.epicId
-    ? render('worker-phase', { agentName: ctx.agentName, taskId: ctx.taskId, titlePart, detailsPart, epicId: ctx.epicId, closeCommand })
+    ? render('worker-phase', { agentName: ctx.agentName, taskId: ctx.taskId, titlePart, detailsPart, epicId: ctx.epicId, closeCommand, cli: ctx.cli ?? 'orca' })
     : render('worker', { agentName: ctx.agentName, taskId: ctx.taskId, titlePart, detailsPart, closeCommand });
   if (ctx.epicId && ctx.epicCloseCommand) {
     // The agent owns mission completion: after closing its own phase, if it was the last

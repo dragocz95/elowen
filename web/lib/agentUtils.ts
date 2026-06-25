@@ -1,4 +1,4 @@
-import type { Task, DerivedSignal } from './types';
+import type { Task, DerivedSignal, SessionInfo } from './types';
 import { parseAnsi } from './ansi';
 import { compactElapsed, parseTs } from './format';
 
@@ -31,6 +31,17 @@ export function agentDisplayName(session: string): string {
 /** The epic id a mission governs: `m-orca-1234` → `orca-1234` (mission ids are `m-${epicId}`). */
 export function missionEpicId(missionId: string): string {
   return missionId.replace(/^m-/, '');
+}
+
+/** A human label for a live session: an overseer/pilot driving a mission shows its epic title (the
+ *  goal a human wrote) rather than the opaque `orca-overseer-m-…` id; everything else falls back to
+ *  the friendly agent name. Resolved against the task list so it tracks renames automatically. */
+export function sessionLabel(info: Pick<SessionInfo, 'name' | 'role' | 'missionId'>, tasks: Task[]): string {
+  if (info.missionId && (info.role === 'overseer' || info.role === 'pilot')) {
+    const epic = tasks.find((tk) => tk.id === missionEpicId(info.missionId!));
+    if (epic?.title) return epic.title;
+  }
+  return agentDisplayName(info.name);
 }
 
 /** Epoch ms the task's agent actually spawned: the precise `started:<ms>` label, falling back to

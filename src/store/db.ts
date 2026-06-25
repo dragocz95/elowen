@@ -35,6 +35,12 @@ export function openDb(path: string): Db {
   addColumn(db, 'tasks', 'result_summary', 'TEXT');
   addColumn(db, 'tasks', 'outcome', 'TEXT');
   addColumn(db, 'tasks', 'closed_at', 'TEXT');
+  // Per-task frozen change list captured at close: the files THIS task committed (JSON CommitFileChange[]),
+  // plus the base/head SHAs the diff was taken between so a single file's diff can be regenerated lazily.
+  // Never the live working tree (shared per project) — see TaskSnapshot. Old DBs default empty/NULL.
+  addColumn(db, 'tasks', 'changed_files', 'TEXT');
+  addColumn(db, 'tasks', 'base_sha', 'TEXT');
+  addColumn(db, 'tasks', 'head_sha', 'TEXT');
   addColumn(db, 'users', 'is_admin', 'INTEGER NOT NULL DEFAULT 0');
   addColumn(db, 'users', 'allowed_execs', "TEXT NOT NULL DEFAULT ''");
   addColumn(db, 'users', 'name', "TEXT NOT NULL DEFAULT ''");

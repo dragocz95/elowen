@@ -39,6 +39,8 @@ TASKS
                                     --outcome ok|fail         record the outcome
 
 AGENT-FACING                      (invoked by running agents — rarely needed by hand)
+  note add <missionId> "<text>"   leave a handoff note for later phases of this mission
+  note ls  <missionId>            read this mission's handoff notes (oldest-first)
   api <METHOD> <path> [body]      generic authenticated REST call (needs ORCA_URL/ORCA_TOKEN)
   plan submit --phases '<json>'   submit an autopilot plan        (needs ORCA_PLAN_JOB)
   overseer poll                   wait for the next decision       (needs ORCA_MISSION)
@@ -55,7 +57,7 @@ Docs & issues: https://github.com/dragocz1995/orcasynth`;
 /** Commands that talk to the daemon API — only these justify auto-starting it. Everything else
  *  (help, unknown verbs) must NOT spawn a daemon: a stray detached daemon squats the port and starves
  *  the systemd-managed one into a restart loop. */
-const API_COMMANDS = new Set(['ls', 'ready', 'sessions', 'close', 'plan', 'overseer', 'api']);
+const API_COMMANDS = new Set(['ls', 'ready', 'sessions', 'close', 'note', 'plan', 'overseer', 'api']);
 
 /** True only for verbs that need the daemon API up — the gate for ensureDaemon's auto-spawn. */
 export function needsDaemon(cmd: string | undefined): boolean {
@@ -103,6 +105,21 @@ export async function run(argv: string[], c: OrcaClient, env: NodeJS.ProcessEnv)
       if (outcome !== undefined && outcome !== 'ok' && outcome !== 'fail') { console.error('orca close: --outcome must be ok or fail'); process.exit(2); }
       await c.close(arg, { summary: flag(rest, '--summary'), outcome });
       console.log(`closed ${arg}`); break;
+    }
+    case 'note': {
+      // Handoff notes between agents working the same mission. `<missionId>` is the epic id (or `m-<epicId>`);
+      // the daemon normalizes the prefix. add → leave a note; ls → read the mission's notes (oldest-first).
+      if (arg === 'add') {
+        const target = rest[0]; const text = rest[1];
+        if (!target || !text) { console.error('usage: orca note add <missionId> "<text>"'); process.exit(1); }
+        await c.noteAdd(target, text);
+        console.log(`noted on ${target}`); break;
+      }
+      if (arg === 'ls') {
+        if (!rest[0]) { console.error('usage: orca note ls <missionId>'); process.exit(1); }
+        console.log(JSON.stringify(await c.notes(rest[0]), null, 2)); break;
+      }
+      console.error('usage: orca note <add <missionId> "<text>"|ls <missionId>>'); process.exit(1); break;
     }
     case 'plan': {
       if (arg !== 'submit') { console.error("usage: orca plan submit --phases '<json>'"); process.exit(1); }

@@ -1,8 +1,8 @@
 'use client';
 import { Bot, Eye, SquareTerminal, Plus } from 'lucide-react';
 import { useTranslation } from '../../lib/i18n';
-import { useSessionInfos } from '../../lib/queries';
-import { agentDisplayName } from '../../lib/agentUtils';
+import { useSessionInfos, useTasks } from '../../lib/queries';
+import { sessionLabel } from '../../lib/agentUtils';
 import type { SessionInfo } from '../../lib/types';
 
 function roleIcon(role: SessionInfo['role']) {
@@ -22,6 +22,7 @@ export function SessionPicker({ open, onPick, onClose, exclude, showAdvisor, onA
 }) {
   const { t } = useTranslation();
   const infos = useSessionInfos();
+  const tasks = useTasks();
   if (!open) return null;
   const excluded = new Set(exclude);
   const sessions = (infos.data ?? []).filter((s) => !excluded.has(s.name));
@@ -63,7 +64,7 @@ export function SessionPicker({ open, onPick, onClose, exclude, showAdvisor, onA
                 className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors hover:bg-surface"
               >
                 <Icon size={15} className="shrink-0 text-text-muted" aria-hidden />
-                <span className="truncate">{agentDisplayName(s.name)}</span>
+                <span className="truncate">{sessionLabel(s, tasks.data ?? [])}</span>
               </button>
             );
           })

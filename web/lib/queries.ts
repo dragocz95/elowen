@@ -137,6 +137,14 @@ export const useProjectCommitFileDiff = (id: number | null, hash: string | null,
 export const useProjectChanged = (id: number | null) =>
   useQuery({ queryKey: ['project-changed', id], queryFn: () => orcaClient.projectChanged(id as number), enabled: !!id });
 
+/** Lazy diff of one file from a task's frozen change list — fetched only when the user opens it. */
+export const useTaskChangedFileDiff = (taskId: string | null, path: string | null) =>
+  useQuery({ queryKey: ['task-changed-diff', taskId, path], queryFn: () => orcaClient.taskChangedFileDiff(taskId as string, path as string), enabled: !!taskId && !!path });
+
+/** Handoff notes for a mission (keyed by epic id), shown read-only in the detail pane. */
+export const useMissionNotes = (target: string | null) =>
+  useQuery({ queryKey: ['mission-notes', target], queryFn: () => orcaClient.missionNotes(target as string), enabled: !!target, refetchInterval: 10000 });
+
 export const useProjectChanges = (id: number | null, enabled: boolean) =>
   useQuery({ queryKey: ['project-changes', id], queryFn: () => orcaClient.projectChanges(id as number), enabled: !!id && enabled });
 

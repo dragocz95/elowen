@@ -1,7 +1,7 @@
 export type TaskStatus = 'open' | 'in_progress' | 'blocked' | 'closed' | 'cancelled';
 /** Outcome the daemon records when a task closes (`src/store/types.ts`). */
 type TaskOutcome = 'ok' | 'fail';
-export interface Task { id: string; title: string; status: TaskStatus; type?: string; priority?: string; labels?: string[]; description?: string; scheduled_at?: string | null; autostart?: number; result_summary?: string | null; outcome?: TaskOutcome | null; closed_at?: string | null; created_at?: string; parent_id?: string | null; project_id?: number }
+export interface Task { id: string; title: string; status: TaskStatus; type?: string; priority?: string; labels?: string[]; description?: string; scheduled_at?: string | null; autostart?: number; result_summary?: string | null; outcome?: TaskOutcome | null; closed_at?: string | null; created_at?: string; parent_id?: string | null; project_id?: number; changed_files?: CommitFileChange[] }
 type SessionRole = 'overseer' | 'pilot' | 'agent' | 'advisor';
 /** Structured identity of a live agent session, classified by the daemon (single source of truth).
  *  Clients render from `role` — they never parse meaning out of the raw session name. */
@@ -78,6 +78,8 @@ interface GitCommit { hash: string; subject: string; author: string; relative: s
 export interface ProjectGit { isRepo: boolean; status: GitStatus | null; branches: GitBranch[]; commits: GitCommit[] }
 export interface CommitFileChange { path: string; added: number; deleted: number }
 export interface CommitLogEntry { hash: string; subject: string; author: string; timestamp: number; files: CommitFileChange[] }
+/** A handoff note one agent left for later agents on the same mission. */
+export interface Note { id: number; scope: string; target: string; author: string; body: string; created_at: string }
 
 export interface HermesStatus {
   home: string;

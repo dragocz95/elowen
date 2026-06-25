@@ -4,6 +4,7 @@ import type { EventBus } from '../api/sse.js';
 import type { AgentSpec } from '../spawn/commandBuilder.js';
 import type { Clock } from '../shared/clock.js';
 import { resolveExecutor } from './routing.js';
+import { projectHead } from '../integrations/projectFiles.js';
 import { logger } from '../shared/logger.js';
 
 const log = logger('scheduler');
@@ -48,6 +49,7 @@ export class Scheduler {
         this.d.tasks.update(task.id, { scheduled_at: null }); // consume so it fires once
         this.d.tasks.setAgent(task.id, agentName);            // link task → session for run controls
         this.d.tasks.markStarted(task.id, now); // precise spawn time → correct usage attribution under concurrency
+        this.d.tasks.markBase(task.id, await projectHead(project.path)); // baseline for the per-task change snapshot at close
         this.d.tasks.setStatus(task.id, 'in_progress');
         try {
           await this.d.spawn.launch({

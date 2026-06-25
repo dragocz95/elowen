@@ -7,6 +7,7 @@ import type { TmuxDriver } from '../tmux/types.js';
 import type { AgentSpec } from '../spawn/commandBuilder.js';
 import type { EventBus } from '../api/sse.js';
 import { resolveExecutor } from './routing.js';
+import { projectHead } from '../integrations/projectFiles.js';
 import { freeAgentName } from '../daemon/uniqueName.js';
 import type { OverseerController } from './overseerAgent.js';
 import type { MissionGit } from './missionGit.js';
@@ -275,6 +276,10 @@ export class MissionEngine {
       this.d.tasks.setStatus(task.id, 'in_progress');
       // In PR-native mode the agent runs inside the mission's isolated worktree, not the main checkout.
       const cwd = this.d.missionGit?.worktreeFor(id) ?? project.path;
+      // Baseline for the per-task change snapshot: the checkout's HEAD right now. At close the task's
+      // frozen change list is `git diff base..HEAD` in this same cwd — the delta this phase committed.
+      const baseSha = await projectHead(cwd);
+      if (baseSha) this.d.tasks.markBase(task.id, baseSha);
       try {
         await this.d.spawn.launch({ projectId: epic.project_id, projectPath: cwd, taskId: task.id, agentName, spec, taskTitle: task.title, taskDescription: task.description, epicId: m.epic_id });
       } catch (e) {

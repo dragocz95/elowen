@@ -2,7 +2,7 @@
 import { useState } from 'react';
 import { Pencil, Play, Square, SquareSlash, Archive, TerminalSquare, Link2, Copy, ShieldCheck, RotateCcw, ChevronLeft } from 'lucide-react';
 import type { Task } from '../../lib/types';
-import { useTasks, useAllDeps, useSessionSignal, useActivity, useConfig } from '../../lib/queries';
+import { useTasks, useAllDeps, useSessionSignal, useConfig, useMissionNotes } from '../../lib/queries';
 import { useCloseTask, useSetTaskStatus, useResumeMission } from '../../lib/mutations';
 import { apiErrorMessage } from '../../lib/orcaClient';
 import { useTaskControls } from '../../lib/useTaskControls';
@@ -16,6 +16,7 @@ import { AgentStatusDot } from '../../components/ui/AgentStatusDot';
 import { OutcomeBadge } from '../../components/ui/OutcomeBadge';
 import { TaskUsageBadge } from '../../components/ui/TaskUsageBadge';
 import { ResultSummary } from './ResultSummary';
+import { TaskChanges } from './TaskChanges';
 import { LiveTail } from '../../components/terminal/LiveTail';
 import { TerminalModal } from '../../components/terminal/TerminalModal';
 import { useToast } from '../../components/ui/Toast';
@@ -30,7 +31,6 @@ export function TaskDetailPane({ taskId, onEdit, onBack }: { taskId: string; onE
   const { t, locale } = useTranslation();
   const tasks = useTasks();
   const deps = useAllDeps();
-  const activity = useActivity('signal');
   const { data: config } = useConfig();
   const close = useCloseTask();
   const setStatus = useSetTaskStatus();
@@ -41,6 +41,9 @@ export function TaskDetailPane({ taskId, onEdit, onBack }: { taskId: string; onE
   const task = tasks.data?.find((x) => x.id === taskId);
   const { session, running, start, stop, pause } = useTaskControls(task ?? { id: taskId, title: '', status: 'open' });
   const signal = useSessionSignal(session ?? '');
+  // Handoff notes are mission-scoped (keyed by epic id): a phase shows its mission's notes, an epic its own.
+  const notesTarget = task ? (task.parent_id ?? (task.type === 'epic' ? task.id : null)) : null;
+  const notes = useMissionNotes(notesTarget);
 
   if (!task) return <EmptyState title={t.tasks.selectHint} icon={TerminalSquare} />;
 
@@ -54,7 +57,6 @@ export function TaskDetailPane({ taskId, onEdit, onBack }: { taskId: string; onE
 
   const byId = new Map((tasks.data ?? []).map((x) => [x.id, x]));
   const depTasks = (deps.data ?? []).filter((d) => d.task_id === taskId).map((d) => byId.get(d.depends_on_id)).filter((x): x is Task => !!x);
-  const events = (activity.data ?? []).filter((e) => e.target === taskId || (session && e.target === session)).slice(0, 6);
 
   const copyId = async () => {
     try {
@@ -151,13 +153,15 @@ export function TaskDetailPane({ taskId, onEdit, onBack }: { taskId: string; onE
 
       <ResultSummary task={task} />
 
-      {events.length > 0 ? (
-        <Field label={t.tasks.recentActivity}>
-          <ul className="flex flex-col divide-y divide-border">
-            {events.map((e) => (
-              <li key={e.id} className="flex items-center gap-2 py-1.5 text-xs">
-                <span className="min-w-0 flex-1 truncate font-mono text-text-muted">{e.detail}</span>
-                <span className="shrink-0 font-mono text-text-muted opacity-70">{e.ts.slice(11, 16)}</span>
+      <TaskChanges task={task} />
+
+      {notes.data && notes.data.length > 0 ? (
+        <Field label={t.tasks.handoffNotes}>
+          <ul className="flex flex-col gap-1.5">
+            {notes.data.map((n) => (
+              <li key={n.id} className="rounded-md border border-border bg-surface p-2 text-xs">
+                {n.author ? <span className="mr-1.5 font-medium text-text">{n.author}</span> : null}
+                <span className="whitespace-pre-wrap text-text-muted">{n.body}</span>
               </li>
             ))}
           </ul>

@@ -1,9 +1,19 @@
 import type { Db } from './db.js';
 import type { Task, CreateTaskInput, TaskStatus } from './types.js';
+import type { CommitFileChange } from '../integrations/projectFiles.js';
 import { deleteTasksAndDeps } from './cascade.js';
 
-type Row = Omit<Task, 'labels'> & { labels: string };
-const toTask = (r: Row): Task => ({ ...r, labels: r.labels ? r.labels.split(',').filter(Boolean) : [] });
+type Row = Omit<Task, 'labels' | 'changed_files'> & { labels: string; changed_files: string | null };
+
+/** Parse the stored `changed_files` JSON blob into the typed change list. Always in try/catch — the
+ *  column is plain text and a malformed/legacy value must degrade to an empty list, never throw. */
+function parseChangedFiles(raw: string | null): CommitFileChange[] {
+  if (!raw) return [];
+  try { const v = JSON.parse(raw); return Array.isArray(v) ? v as CommitFileChange[] : []; }
+  catch { return []; }
+}
+
+const toTask = (r: Row): Task => ({ ...r, labels: r.labels ? r.labels.split(',').filter(Boolean) : [], changed_files: parseChangedFiles(r.changed_files) });
 
 export class TaskStore {
   constructor(private db: Db) {}
@@ -184,6 +194,25 @@ export class TaskStore {
     const labels = t.labels.filter((l) => !l.startsWith('started:'));
     labels.push(`started:${ms}`);
     this.db.prepare('UPDATE tasks SET labels = ? WHERE id = ?').run(labels.join(','), id);
+  }
+
+  /** Record the project's git HEAD at the moment the agent spawned, as a `base:<sha>` label. At close
+   *  the task's frozen change list is `git diff base..HEAD` — the delta THIS task committed. Idempotent
+   *  per spawn; re-stamping (a relaunch) refreshes the baseline to the current HEAD. */
+  markBase(id: string, sha: string): void {
+    const t = this.get(id);
+    if (!t || !/^[0-9a-f]{4,40}$/i.test(sha)) return;
+    const labels = t.labels.filter((l) => !l.startsWith('base:'));
+    labels.push(`base:${sha}`);
+    this.db.prepare('UPDATE tasks SET labels = ? WHERE id = ?').run(labels.join(','), id);
+  }
+
+  /** Persist the frozen per-task change list (JSON `CommitFileChange[]`) plus the base/head SHAs the
+   *  diff was taken between, so the detail pane can lazily regenerate a single file's diff. Written once
+   *  at close by the snapshot service. */
+  saveChangedFiles(id: string, files: CommitFileChange[], base: string, head: string): void {
+    this.db.prepare('UPDATE tasks SET changed_files = @files, base_sha = @base, head_sha = @head WHERE id = @id')
+      .run({ id, files: JSON.stringify(files), base, head });
   }
 
   /** Increment this task's relaunch counter (a `stuck:<n>` label) and return the new value.

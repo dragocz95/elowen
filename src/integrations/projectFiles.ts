@@ -276,7 +276,7 @@ export async function projectCommitFiles(root: string, hash: string): Promise<st
   }
 }
 
-interface CommitFileChange { path: string; added: number; deleted: number }
+export interface CommitFileChange { path: string; added: number; deleted: number }
 export interface CommitLogEntry { hash: string; subject: string; author: string; timestamp: number; files: CommitFileChange[] }
 
 /** Recent commit history with per-file line churn, for the timeline's "changes over time" view.
@@ -334,6 +334,54 @@ export async function projectFileDiff(root: string, rel: string): Promise<string
   const cleanRel = relative(r, safe(root, rel)); // normalized, inside-root pathspec
   try {
     const { stdout } = await run('git', ['-C', r, 'diff', '--', cleanRel], { maxBuffer: 4 * 1024 * 1024 });
+    return stdout;
+  } catch {
+    return '';
+  }
+}
+
+/** The project's current git HEAD sha (`git rev-parse HEAD`), captured as a task's baseline at spawn.
+ *  Empty string outside a repo / on any error (e.g. a repo with no commits yet). */
+export async function projectHead(root: string): Promise<string> {
+  try {
+    const { stdout } = await run('git', ['-C', realpathSync(resolve(root)), 'rev-parse', 'HEAD'], { maxBuffer: 1024 * 1024 });
+    return stdout.trim();
+  } catch {
+    return '';
+  }
+}
+
+/** Per-file line churn between two commits (`git diff --numstat <base> <head>`) — the frozen delta a
+ *  task introduced, captured at close. Both refs are validated as hex object ids so neither can be a
+ *  git flag. Newly-committed files appear in the range (no `--no-index` needed). Empty list outside a
+ *  repo, on any error, or when the range is empty (base === head). */
+export async function projectRangeDiff(root: string, base: string, head: string): Promise<CommitFileChange[]> {
+  if (!/^[0-9a-f]{4,40}$/i.test(base) || !/^[0-9a-f]{4,40}$/i.test(head)) return [];
+  try {
+    const { stdout } = await run('git', ['-C', realpathSync(resolve(root)), 'diff', '--numstat', base, head], { maxBuffer: 8 * 1024 * 1024 });
+    const files: CommitFileChange[] = [];
+    for (const line of stdout.split('\n')) {
+      if (!line.trim()) continue;
+      const [added = '', deleted = '', ...pathParts] = line.split('\t');
+      const path = pathParts.join('\t').trim();
+      if (path) files.push({ path, added: added === '-' ? 0 : Number(added) || 0, deleted: deleted === '-' ? 0 : Number(deleted) || 0 });
+    }
+    return files;
+  } catch {
+    return [];
+  }
+}
+
+/** Unified diff of a single file across a commit range (`git diff <base> <head> -- <path>`), for the
+ *  click-through on a task's frozen change list. Both refs are validated as hex object ids; the path is
+ *  validated to stay inside the project and handed to git as a clean pathspec after `--`. Empty string
+ *  on a non-hex ref or any error (e.g. a ref GC'd after a later squash) — the list still renders. */
+export async function projectRangeFileDiff(root: string, base: string, head: string, rel: string): Promise<string> {
+  if (!/^[0-9a-f]{4,40}$/i.test(base) || !/^[0-9a-f]{4,40}$/i.test(head)) return '';
+  const r = realpathSync(resolve(root));
+  const cleanRel = relative(r, safe(root, rel));
+  try {
+    const { stdout } = await run('git', ['-C', r, 'diff', base, head, '--', cleanRel], { maxBuffer: 4 * 1024 * 1024 });
     return stdout;
   } catch {
     return '';

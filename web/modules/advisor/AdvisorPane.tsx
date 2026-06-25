@@ -6,11 +6,11 @@ import { Button } from '../../components/ui/Button';
 import { ActionMenu } from '../../components/ui/ActionMenu';
 import { useToast } from '../../components/ui/Toast';
 import { useTranslation } from '../../lib/i18n';
-import { useAdvisorStatus, useConfig, useMe, useSessionInfos } from '../../lib/queries';
+import { useAdvisorStatus, useConfig, useMe, useSessionInfos, useTasks } from '../../lib/queries';
 import { useAdvisorStart, useAdvisorStop } from '../../lib/mutations';
 import { allModels } from '../../lib/execPresets';
 import { apiErrorMessage } from '../../lib/orcaClient';
-import { agentDisplayName } from '../../lib/agentUtils';
+import { sessionLabel } from '../../lib/agentUtils';
 import { openTerminalWindow } from '../../lib/openTerminalWindow';
 import { ModelIcon } from '../../components/ui/ModelIcon';
 import type { DockPane } from '../../lib/useDockState';
@@ -34,13 +34,15 @@ function PaneHeader({ children }: { children: React.ReactNode }) {
 function SessionPane({ name, onRemove }: { name: string; onRemove?: () => void }) {
   const { t } = useTranslation();
   const infos = useSessionInfos();
+  const tasks = useTasks();
   const info = infos.data?.find((s) => s.name === name);
   const Icon = info?.role === 'overseer' ? Eye : info?.role === 'pilot' || info?.role === 'advisor' ? Bot : SquareTerminal;
+  const label = sessionLabel(info ?? { name, role: 'agent' }, tasks.data ?? []);
   return (
     <div className="flex h-full min-h-0 flex-col">
       <PaneHeader>
         <Icon size={15} className="text-text-muted" aria-hidden />
-        <span className="truncate text-sm font-medium">{agentDisplayName(name)}</span>
+        <span className="truncate text-sm font-medium">{label}</span>
         <div className="flex-1" />
         <button
           type="button"

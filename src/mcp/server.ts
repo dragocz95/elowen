@@ -31,6 +31,16 @@ function createOrcaMcpServer(deps: McpDeps): McpServer {
 
   server.registerTool('orca_sessions', { description: 'List live agent sessions.', inputSchema: {} }, async () => text(await tools.orca_sessions()));
 
+  server.registerTool('orca_note_add', {
+    description: 'Leave a handoff note for later agents working the same mission. `target` is the epic id.',
+    inputSchema: { target: z.string(), body: z.string() },
+  }, async (a) => text(await tools.orca_note_add(a)));
+
+  server.registerTool('orca_notes', {
+    description: "Read a mission's handoff notes left by earlier phases (oldest-first). `target` is the epic id.",
+    inputSchema: { target: z.string() },
+  }, async (a) => text(await tools.orca_notes(a)));
+
   return server;
 }
 

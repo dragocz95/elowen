@@ -30,6 +30,7 @@ import { PushSender } from '../push/pushSender.js';
 import { PushDispatcher } from '../push/pushDispatcher.js';
 import { UserStore } from '../store/userStore.js';
 import { EventStore } from '../store/eventStore.js';
+import { NoteStore } from '../store/noteStore.js';
 import { ProjectStore } from '../store/projectStore.js';
 import { UserProjectStore } from '../store/userProjectStore.js';
 import { PushSubscriptionStore } from '../store/pushSubscriptionStore.js';
@@ -126,6 +127,7 @@ export function buildApp(opts: BuildOpts) {
   const spawn = new SpawnService({ tmux, agents, orca: orcaCli, providers: (program) => config.get().providers[program] });
   const bus = new EventBus();
   const events = new EventStore(db);
+  const notes = new NoteStore(db);
   bus.subscribe((e) => { try { events.record(e); } catch (err) { log.error('event record failed', err); } });
   // Activity trail: mirror every bus event into the log file as a readable one-liner, so the log on
   // its own tells the story of a run (spawns, advances, plans) without cross-referencing the DB.
@@ -270,7 +272,7 @@ export function buildApp(opts: BuildOpts) {
   // Single-use ticket store for the terminal WebSocket stream — shared between the authenticated
   // `POST /sessions/:name/ws-ticket` route and the daemon's `/ws/terminal` upgrade handler.
   const tickets = createTicketStore();
-  const app = createServer({ tasks, readiness, missions, engine, missionGit, spawn, tmux, bus, events, agents, project: opts.project, fallback: { program: 'claude-code', model: 'sonnet' }, clock: new SystemClock(), config, users, projects, userProjects, pushSubscriptions, taskUsage, git, avatarsDir, avatarSecret, planJobs, decisionQueue, pilot, advisor, tickets });
+  const app = createServer({ tasks, readiness, missions, engine, missionGit, spawn, tmux, bus, events, notes, agents, project: opts.project, fallback: { program: 'claude-code', model: 'sonnet' }, clock: new SystemClock(), config, users, projects, userProjects, pushSubscriptions, taskUsage, git, avatarsDir, avatarSecret, planJobs, decisionQueue, pilot, advisor, tickets });
 
   // Root-cause recovery: after a daemon crash/restart, tasks left 'in_progress' whose tmux
   // session is gone are zombies — revert them to 'open' so they can be picked up again. No grace

@@ -56,35 +56,29 @@ export function TaskCard({ task, onEdit, onSelect, active = false, blockers, sel
       tabIndex={0}
       onClick={open}
       onKeyDown={(e) => { if (e.key === 'Enter') open(); }}
-      className={`card-interactive group relative flex flex-wrap cursor-pointer items-center gap-x-3 gap-y-2 rounded-lg border p-2.5 ${selected || active ? 'border-accent bg-accent/[0.06]' : 'border-border bg-surface'}`}
+      className={`card-interactive group relative flex cursor-pointer items-center gap-3 rounded-lg border p-2.5 ${selected || active ? 'border-accent bg-accent/[0.06]' : 'border-border bg-surface'}`}
     >
       {/* model-icon bubble — accent ring while the agent is live */}
       <span className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border-2 bg-elevated ${running ? 'border-accent' : 'border-border'}`}>
         {iconExec ? <ModelIcon name={iconExec} size={26} /> : <Icon size={22} className="text-text-muted" aria-hidden />}
       </span>
 
-      {/* title + id */}
-      <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+      {/* title, then the model name on its own line, then the status/meta pills below it — stacked so
+          a long model name truncates within the column instead of sliding under the badges */}
+      <div className="flex min-w-0 flex-1 flex-col gap-1">
         <div className="flex items-center gap-1.5">
           <span className="truncate text-sm font-medium text-text">{task.title}</span>
           <AgentStatusDot signal={signal} live={running} size="sm" {...stallProps} />
         </div>
-        <div className="flex items-center gap-1.5">
+        <div className="flex min-w-0 items-center gap-1.5">
           {iconExec ? (
-            <span className="inline-flex shrink-0 items-center gap-1 rounded-md border border-border bg-elevated px-1.5 py-0.5 font-mono text-[11px] text-text-muted" title={iconExec}>
-              <ModelIcon name={iconExec} size={11} />{execModel(iconExec)}
+            <span className="inline-flex min-w-0 items-center gap-1 rounded-md border border-border bg-elevated px-1.5 py-0.5 font-mono text-[11px] text-text-muted" title={iconExec}>
+              <ModelIcon name={iconExec} size={11} /><span className="truncate">{execModel(iconExec)}</span>
             </span>
           ) : (
-            <span className="inline-flex items-center gap-1.5"><Icon size={11} className="shrink-0 text-text-muted" aria-hidden /><span className="truncate font-mono text-[11px] text-text-muted">{task.id}</span></span>
+            <span className="inline-flex min-w-0 items-center gap-1.5"><Icon size={11} className="shrink-0 text-text-muted" aria-hidden /><span className="truncate font-mono text-[11px] text-text-muted">{task.id}</span></span>
           )}
-          {blocked ? <span className="shrink-0 text-[11px] text-warning" title={blockers!.map((b) => b.title).join(', ')}>· {t.tasks.dependencies} {blockers!.length}</span> : null}
         </div>
-      </div>
-
-      {/* badges + run controls — one row alongside the title on desktop; on phones they drop to
-          their own full-width line (badges left, controls right) so nothing clips off the edge */}
-      <div className="flex w-full items-center justify-between gap-2 sm:w-auto sm:justify-end">
-        {/* status + meta badges */}
         <div className="flex flex-wrap items-center gap-1.5">
           {whenFmt ? (
             <span title={whenFmt.title}><Badge tone="muted">
@@ -95,23 +89,24 @@ export function TaskCard({ task, onEdit, onSelect, active = false, blockers, sel
           <ProjectPill projectId={task.project_id} />
           {isClosed ? <OutcomeBadge outcome={task.outcome} /> : null}
           <Badge tone={statusTone(task.status)}>{statusLabel(t, task.status)}</Badge>
+          {blocked ? <span className="shrink-0 text-[11px] text-warning" title={blockers!.map((b) => b.title).join(', ')}>· {t.tasks.dependencies} {blockers!.length}</span> : null}
         </div>
+      </div>
 
-        {/* run controls — always visible so the dropdown trigger never vanishes mid-interaction */}
-        <div className="flex shrink-0 items-center gap-1" onClick={(e) => e.stopPropagation()}>
-          {running
-            ? <IconButton icon={Square} label={t.tasks.stop} variant="danger" onClick={stop} />
-            : <IconButton icon={Play} label={t.tasks.start} onClick={start} />}
-          {running ? <IconButton icon={Pause} label={t.tasks.pause} onClick={pause} /> : null}
-          <IconButton icon={Pencil} label={t.common.edit} onClick={() => onEdit(task)} />
-          <ActionMenu
-            label={t.tasks.deleteOrClose}
-            items={[
-              { label: t.tasks.closeArchive, icon: Archive, onSelect: () => close.mutate(task.id, { onSuccess: () => toast(t.tasks.closed.replace('{id}', task.id)), onError: (e) => toast(String(e), 'error') }) },
-              { label: t.tasks.deletePermanently, icon: Trash2, tone: 'danger', onSelect: () => setConfirmDelete(true) },
-            ]}
-          />
-        </div>
+      {/* run controls — always visible so the dropdown trigger never vanishes mid-interaction */}
+      <div className="flex shrink-0 items-center gap-1 self-start" onClick={(e) => e.stopPropagation()}>
+        {running
+          ? <IconButton icon={Square} label={t.tasks.stop} variant="danger" onClick={stop} />
+          : <IconButton icon={Play} label={t.tasks.start} onClick={start} />}
+        {running ? <IconButton icon={Pause} label={t.tasks.pause} onClick={pause} /> : null}
+        <IconButton icon={Pencil} label={t.common.edit} onClick={() => onEdit(task)} />
+        <ActionMenu
+          label={t.tasks.deleteOrClose}
+          items={[
+            { label: t.tasks.closeArchive, icon: Archive, onSelect: () => close.mutate(task.id, { onSuccess: () => toast(t.tasks.closed.replace('{id}', task.id)), onError: (e) => toast(String(e), 'error') }) },
+            { label: t.tasks.deletePermanently, icon: Trash2, tone: 'danger', onSelect: () => setConfirmDelete(true) },
+          ]}
+        />
       </div>
 
       {onToggleSelect ? (

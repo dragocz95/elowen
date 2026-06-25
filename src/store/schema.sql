@@ -84,6 +84,18 @@ CREATE TABLE IF NOT EXISTS events (
 CREATE INDEX IF NOT EXISTS idx_events_ts ON events(ts);
 CREATE INDEX IF NOT EXISTS idx_events_target ON events(target);
 CREATE INDEX IF NOT EXISTS idx_events_type_ts ON events(type, ts DESC);
+-- Inter-agent handoff notes: free-form context an agent leaves for later agents working the same
+-- scope (a mission/epic by default). Generic (scope, target) shape mirrors events; no FK so a note
+-- can outlive a deleted epic and a project-scoped target stays valid.
+CREATE TABLE IF NOT EXISTS notes (
+  id INTEGER PRIMARY KEY,
+  scope TEXT NOT NULL,
+  target TEXT NOT NULL,
+  author TEXT NOT NULL DEFAULT '',
+  body TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_notes_scope_target ON notes(scope, target, id);
 CREATE INDEX IF NOT EXISTS idx_tasks_project_status ON tasks(project_id, status);
 CREATE INDEX IF NOT EXISTS idx_tasks_parent ON tasks(parent_id);
 CREATE INDEX IF NOT EXISTS idx_missions_epic ON missions(epic_id);

@@ -9,7 +9,8 @@ import { detectClis } from '../integrations/cliDetection.js';
 import { detectGithubAuth } from '../integrations/github/auth.js';
 import { readTaskUsage } from '../integrations/usage/index.js';
 import { usagePath } from '../integrations/usage/usagePath.js';
-import { listProjectFiles, listDirs, readProjectFile, writeProjectFile, readProjectBytes, createProjectFile, createProjectDir, deleteProjectEntry, renameProjectEntry, copyProjectEntry, projectFileAtHead, projectFileDiff, projectCommitDiff, projectCommitFiles, projectCommitFileDiff, projectCommitLog, projectChangedFiles, projectWorkingDiff, projectReviewDiff, isProjectImage } from '../integrations/projectFiles.js';
+import { listProjectFiles, listDirs, readProjectFile, writeProjectFile, readProjectBytes, createProjectFile, createProjectDir, deleteProjectEntry, renameProjectEntry, copyProjectEntry, projectFileAtHead, projectFileDiff, projectCommitDiff, projectCommitFiles, projectCommitFileDiff, projectCommitLog, projectChangedFiles, projectWorkingDiff, projectReviewDiff, projectHead, projectRangeFileDiff, isProjectImage } from '../integrations/projectFiles.js';
+import { snapshotTaskChanges } from '../overseer/taskSnapshot.js';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { streamSSE } from 'hono/streaming';
@@ -42,6 +43,7 @@ import { authMiddleware } from './auth.js';
 import { handleMcpRequest } from '../mcp/server.js';
 import { createTicketStore, type TicketStore } from '../terminal/ticketStore.js';
 import type { EventStore } from '../store/eventStore.js';
+import type { NoteStore } from '../store/noteStore.js';
 import type { ProjectStore } from '../store/projectStore.js';
 import type { UserProjectStore } from '../store/userProjectStore.js';
 import type { PushSubscriptionStore, WebPushSubscription } from '../store/pushSubscriptionStore.js';
@@ -66,6 +68,7 @@ export interface ServerDeps {
   config: ConfigStore;
   users?: UserStore;
   events?: EventStore;
+  notes?: NoteStore;
   projects?: ProjectStore;
   userProjects?: UserProjectStore;
   /** Per-user web-push device subscriptions. Absent → push subscribe/unsubscribe routes degrade to no-ops. */
@@ -172,11 +175,13 @@ export function createServer(d: ServerDeps): Hono<{ Variables: { user: User; tok
     const agentAllowed = (method: string, path: string): boolean => {
       if (method === 'GET') {
         if (path === '/tasks' || path === '/tasks/ready' || path === '/sessions') return true;
+        if (path === '/notes') return true; // read a mission's handoff notes (orca note ls)
         if (/^\/plan\/[^/]+$/.test(path)) return true;
         if (/^\/missions\/[^/]+\/overseer\/next$/.test(path)) return true;
       }
       if (method === 'PATCH' && /^\/tasks\/[^/]+$/.test(path)) return true;
       if (method === 'POST') {
+        if (path === '/notes') return true; // leave a handoff note for later phases (orca note add)
         if (/^\/plan\/[^/]+\/submit$/.test(path)) return true;
         if (/^\/missions\/[^/]+\/overseer\/decide$/.test(path)) return true;
       }
@@ -824,6 +829,33 @@ export function createServer(d: ServerDeps): Hono<{ Variables: { user: User; tok
     return c.json(d.events.list({ limit, type }));
   });
 
+  // Inter-agent handoff notes. Scope defaults to 'mission'; the target is an epic id (a leading `m-`
+  // from a mission id is stripped here so workers — which hold the bare epicId — and the overseer —
+  // which holds ORCA_MISSION=m-<epicId> — both work). Access is gated by the target epic's project, so
+  // an agent can only read/write notes for a mission in a project it is actively working in.
+  const noteTarget = (raw: string | undefined): string => (raw ?? '').replace(/^m-/, '');
+  app.get('/notes', (c) => {
+    const scope = c.req.query('scope') || 'mission';
+    const target = noteTarget(c.req.query('target'));
+    if (!target) return c.json({ error: 'target required' }, 400);
+    const epic = d.tasks.get(target);
+    if (epic && !canAccessProject(c, epic.project_id)) return c.json({ error: 'forbidden' }, 403);
+    return c.json(d.notes?.list(scope, target) ?? []);
+  });
+  app.post('/notes', async (c) => {
+    const b = await c.req.json().catch(() => ({}));
+    const scope = typeof b.scope === 'string' && b.scope ? b.scope : 'mission';
+    const target = noteTarget(typeof b.target === 'string' ? b.target : '');
+    const body = typeof b.body === 'string' ? b.body.trim() : '';
+    if (!target || !body) return c.json({ error: 'target and body required' }, 400);
+    const epic = d.tasks.get(target);
+    if (!epic) return c.json({ error: 'unknown target' }, 404);
+    if (!canAccessProject(c, epic.project_id)) return c.json({ error: 'forbidden' }, 403);
+    if (!d.notes) return c.json({ error: 'notes unavailable' }, 400);
+    const author = typeof b.author === 'string' ? b.author : '';
+    return c.json(d.notes.add({ scope, target, author, body }), 201);
+  });
+
   app.get('/tasks', c => {
     const allowed = accessibleProjects(c);
     const all = d.tasks.list();
@@ -970,9 +1002,12 @@ export function createServer(d: ServerDeps): Hono<{ Variables: { user: User; tok
                 // pane and the user only sees an unexplained 'blocked'/'stalled'.
                 d.bus.publish({ type: 'review', missionId: mission.id, taskId: id, approve: approved, rationale: verdict.rationale });
                 if (approved) {
-                  // Commit the approved phase's worktree work (no-op unless PR mode) BEFORE the next
-                  // phase ticks, so the next agent never edits the worktree mid-commit.
-                  await d.missionGit?.commitPhase(mission.id, existing.title).catch((e) => log.error('phase commit failed', e));
+                  // Commit the approved phase's work BEFORE the next phase ticks (the worktree in PR
+                  // mode, else the shared project checkout) so the next agent never edits it mid-commit
+                  // and the snapshot below has a stable base..HEAD to diff.
+                  await d.missionGit?.commitPhase(mission.id, existing.title, reviewPath).catch((e) => log.error('phase commit failed', e));
+                  // Freeze this phase's change list now that its commit has landed (base..HEAD in the same path).
+                  await snapshotTaskChanges(d.tasks, id, reviewPath);
                   // Gate opens: release the gated dependents and resume so the next phase spawns promptly
                   // rather than waiting up to the 90s interval. resumeStalled (not a bare tick) un-freezes
                   // the mission if it stalled while the verdict was pending — otherwise the freeze would
@@ -1014,9 +1049,19 @@ export function createServer(d: ServerDeps): Hono<{ Variables: { user: User; tok
               .catch((e) => log.error('review verdict apply failed', e));
           }
         }
-        // PR-native: when a phase's close is final (no review gate pending), commit its worktree work
-        // now. The review path above commits on approval instead, so a rejected phase never commits.
-        if (mission && !reviewEnqueued) await d.missionGit?.commitPhase(mission.id, existing.title).catch((e) => log.error('phase commit failed', e));
+        // When a phase's close is final (no review gate pending), commit its work now — the worktree in
+        // PR mode, else the shared project checkout. The review path above commits on approval instead,
+        // so a rejected phase never commits.
+        if (mission && !reviewEnqueued) {
+          const snapPath = d.missionGit?.worktreeFor(mission.id) ?? d.projects?.get(existing.project_id)?.path ?? d.project.path;
+          await d.missionGit?.commitPhase(mission.id, existing.title, snapPath).catch((e) => log.error('phase commit failed', e));
+          await snapshotTaskChanges(d.tasks, id, snapPath);
+        }
+      } else if (b.status === 'closed') {
+        // A standalone task (no mission/worktree): its agent commits into the project checkout, so the
+        // frozen change list is base..HEAD there. No-op when nothing was committed (empty snapshot).
+        const snapPath = d.projects?.get(existing.project_id)?.path ?? d.project.path;
+        await snapshotTaskChanges(d.tasks, id, snapPath);
       }
     }
     if (typeof b.exec === 'string') { d.tasks.setExec(id, b.exec); }
@@ -1025,6 +1070,24 @@ export function createServer(d: ServerDeps): Hono<{ Variables: { user: User; tok
     }
     if (Array.isArray(b.deps)) d.tasks.setDeps(id, b.deps);
     return c.json(d.tasks.get(id));
+  });
+  // Diff of one file from a task's FROZEN change list (the commits it landed between base..head). Read
+  // from the mission worktree while it's live, else the project checkout (where the commits merged to).
+  // Empty when the task has no snapshot, the file isn't in it, or the refs were GC'd by a later squash.
+  app.get('/tasks/:id/changed/diff', async c => {
+    const id = c.req.param('id');
+    const task = d.tasks.get(id);
+    if (!task) return c.json({ error: 'task not found' }, 404);
+    if (!canAccessProject(c, task.project_id)) return c.json({ error: 'forbidden' }, 403);
+    const path = c.req.query('path') ?? '';
+    if (!task.base_sha || !task.head_sha || !path) return c.json({ diff: '' });
+    const root = (task.parent_id ? d.missionGit?.worktreeFor(`m-${task.parent_id}`) : undefined)
+      ?? d.projects?.get(task.project_id)?.path ?? d.project.path;
+    try {
+      return c.json({ diff: await projectRangeFileDiff(root, task.base_sha, task.head_sha, path) });
+    } catch {
+      return c.json({ diff: '' }); // path-traversal reject / bad ref — degrade to empty, never 500
+    }
   });
   // Human approval of an escalated phase: accept its result and release the review gate it holds,
   // re-opening only the dependents no OTHER predecessor still gates (mirrors the agent-approved
@@ -1063,6 +1126,7 @@ export function createServer(d: ServerDeps): Hono<{ Variables: { user: User; tok
       const removed = d.tasks.deleteEpic(id);
       d.bus.publish({ type: 'task', taskId: id, status: 'cancelled' });
       d.events?.deleteForTarget(id);
+      d.notes?.deleteForTarget('mission', id); // a removed mission leaves no orphan handoff notes
       return c.json({ ok: true, tasks: removed.tasks });
     }
     d.tasks.delete(id);
@@ -1285,6 +1349,7 @@ export function createServer(d: ServerDeps): Hono<{ Variables: { user: User; tok
     const agentName = uniqueName();
     d.tasks.setAgent(taskId, agentName);     // link task → orca-<agentName> session for run controls
     d.tasks.markStarted(taskId, d.clock.now()); // precise spawn time → correct usage attribution under concurrency
+    d.tasks.markBase(taskId, await projectHead(pathFor(projectId))); // baseline for the per-task change snapshot at close
     d.tasks.setStatus(taskId, 'in_progress');
     let session: string;
     try {

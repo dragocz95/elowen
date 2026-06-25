@@ -18,6 +18,12 @@ export class OrcaClient {
   close(taskId: string, opts?: { summary?: string; outcome?: string }) {
     return this.req(`/tasks/${encodeURIComponent(taskId)}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ status: 'closed', result_summary: opts?.summary, outcome: opts?.outcome }) });
   }
+  noteAdd(target: string, body: string) {
+    return this.req('/notes', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ scope: 'mission', target, body }) });
+  }
+  notes(target: string) {
+    return this.req(`/notes?scope=mission&target=${encodeURIComponent(target)}`);
+  }
   planSubmit(jobId: string, phases: unknown) {
     return this.req(`/plan/${encodeURIComponent(jobId)}/submit`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ phases }) });
   }

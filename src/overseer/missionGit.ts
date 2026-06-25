@@ -87,16 +87,17 @@ export class MissionGit {
     return this.d.prs.get(missionId)?.worktree ?? null;
   }
 
-  /** Commit an approved phase's work in the mission's worktree. No-op (returns false) when PR mode is
-   *  off, the mission has no worktree, or the diff is empty. */
-  async commitPhase(missionId: string, phaseTitle: string): Promise<boolean> {
-    if (!this.prEnabled(missionId)) return false;
-    const dir = this.worktreeFor(missionId);
+  /** Commit a finished phase's work so the per-task change snapshot has a stable base..HEAD to diff.
+   *  In PR-native mode this commits the mission's worktree; otherwise it commits the shared project
+   *  checkout (`fallbackDir`) so non-PR missions still record each phase's delta. No-op (returns false)
+   *  when there's no target dir or the tree is clean. */
+  async commitPhase(missionId: string, phaseTitle: string, fallbackDir?: string): Promise<boolean> {
+    const dir = this.worktreeFor(missionId) ?? (this.prEnabled(missionId) ? null : fallbackDir ?? null);
     if (!dir) return false;
     try {
       return await commitAll(dir, phaseTitle);
     } catch (e) {
-      log.error(`PR mode: commit failed for mission ${missionId}`, e);
+      log.error(`phase commit failed for mission ${missionId}`, e);
       return false;
     }
   }
