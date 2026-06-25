@@ -9,11 +9,14 @@ Every page is a thin shell in `app/<route>/page.tsx` that renders a `*View` from
 | Route | Module | View | Nav group |
 |-------|--------|------|-----------|
 | `/dash` | `dashboard/` | `DashboardView` | Operate |
+| `/stats` | `stats/` | `StatsView` | Operate |
 | `/tasks` | `tasks/` | `TasksView` | Operate |
 | `/kanban` | `kanban/` | `KanbanBoard` + `CalendarView` | Operate |
 | `/sessions` | `sessions/` | `SessionsView` | Operate |
 | `/timeline` | `timeline/` | `TimelineView` | Operate |
+| `/escalations` | `escalations/` | `EscalationsView` | Operate |
 | `/projects` | `projects/` | `ProjectsView` | Operate |
+| `/editor` | `editor/` | `ProjectEditor` | Config |
 | `/terminal/[name]` | — | chromeless pop-out terminal (inline in `app/terminal/[name]/page.tsx`) | — (no chrome) |
 | `/settings` | — | inline (in `app/settings/page.tsx`) | Config |
 | `/users` | `users/` | `UsersView` | Config |
@@ -36,6 +39,16 @@ Module metadata (id, label, route, icon, group) is defined in each `modules/<nam
 - **Recent outcomes** — last 6 closed tasks with `OutcomeBadge` and result summary
 
 Data refreshes via `useTasks` (poll 5 s), `useSessions` (poll 5 s), `useMissions`, and real-time SSE events (`useOrcaEvents`).
+
+### Statistics `/stats`
+
+`StatsView` (`modules/stats/StatsView.tsx`):
+
+- **Summary cards** — 4-card grid: total cost, total tokens, cache tokens, models used
+- **Cost by model** — per-model rows with `ModelIcon`, proportional bar, token count, cost label
+- **Usage aggregation** — `buildUsageSummary()` in `usageBars.ts` shapes raw `/usage/by-model` data into sorted display rows with max-normalized bar widths
+- **Reset usage** — admin-only `ResetUsageModal` that requires typing a sentinel word to confirm; wipes `task_usage` snapshots (CLI transcripts untouched)
+- **Data sources** — `useModelUsage` (30 s polling), admin-only `useResetUsage` mutation
 
 ### Tasks `/tasks`
 
@@ -89,6 +102,15 @@ The standalone `/missions` route was removed in v1.1.1. Mission lifecycle is dri
 - **Deleted modules** — `modules/missions/` (MissionsView, TaskFlow, ActiveMissionsBar, EngageModal, layoutPhases, missionUtils, meta) and the `/missions` route + registry entry. All `/missions` links (dashboard, timeline, command palette) repointed to `/tasks`.
 - **API** — mission data still accessible via `GET /missions`, `GET /missions/:id`.
 
+### Escalations `/escalations`
+
+`EscalationsView` (`modules/escalations/EscalationsView.tsx`):
+
+- **Inbox** — every overseer rejection still awaiting human resolution, with the full rationale
+- **Actions** — approve (release the review gate so downstream phases continue) or re-run the rejected phase
+- **Self-clearing** — items disappear once their gated phases are released
+- **Data source** — `useEscalations()` derived from review activity + task + dependency state
+
 ### Timeline `/timeline`
 
 `TimelineView` (`modules/timeline/TimelineView.tsx`):
@@ -104,7 +126,16 @@ The standalone `/missions` route was removed in v1.1.1. Mission lifecycle is dri
   - `LiveFeedGroup` — real-time variant for running sessions: live tail pane with ANSI coloring
   - Autopilot chip on mission/task events
   - Cross-links to Tasks/Sessions/Missions
-- **Filter** — All / Tasks / Missions / Signals (persistent in `localStorage`)
+- **Filter** — All / Tasks / Missions / Signals / Reviews (persistent in `localStorage`)
+- **Summary strip** — stat cards with kind counts (tasks, missions, approved, escalated, signals)
+- **ProjectPill** — shown in each lane, event detail, and commit row to identify which project an event belongs to. Hidden in single-project workspaces
+- **ProjectFilterPills** — "All projects" + one pill per accessible project; hidden when fewer than two projects exist
+- **Date range filter** — `DateRangeFilter` component with preset ranges (hours, days, all time), persisted in `localStorage`
+- **ChangesOverTime** — commit stream below the axis with roll-up of most-touched files in the window
+  - `CommitRow` — compact card with hash, subject, time, file-type breakdown, added/deleted counts, `ProjectPill`
+  - `Most active files` — sorts by touch count, shows sparkline of activity across the window, clickable to view file diff
+  - Top-files opens `PatchView` modal with the full commit diff
+  - Commit data via `useProjectsCommits` (merged time-sorted stream across projects, 60 s poll)
 - Events within 5 min of same type/detail/target collapse into `×N` groups
 
 ### Projects `/projects`
@@ -143,7 +174,7 @@ Self-hosted Monaco editor (`@monaco-editor/react`) with:
 
 ### Settings `/settings`
 
-Admin-only (non-admins see a lock screen with link to My Account). Inline in `app/settings/page.tsx`:
+Admin-only (non-admins see a lock screen with link to My Account). Inline in `app/settings/page.tsx`. 7-section sidebar navigation persists the active section in `localStorage`.
 
 - **Models** — grid of executor presets + custom models with toggle switches, edit/delete, add modal
   - `ModelModal` — add/edit model: label, provider (Claude Code / OpenCode / Codex / Other), model ID
@@ -155,15 +186,22 @@ Admin-only (non-admins see a lock screen with link to My Account). Inline in `ap
   - CLI Agents: pilot exec, overseer exec, review on done
   - Notes, planner prompt template with `{{goal}}` placeholder
   - Test plan button — submits dry-run, polls async plan job, shows preview
-- **Providers** — per-program binary paths and extra CLI args (Claude Code, OpenCode, Codex)
-- **Defaults** — default executor, autonomy level, max sessions
+- **GitHub** — PR workflow configuration: GitHub token, default PR settings (base branch, auto-open, verify command), status banner showing `gh` auth state
+- **Providers** — per-program binary paths and extra CLI args (Claude Code, OpenCode, Codex); skip-permissions toggle per provider
+- **Defaults** — default executor, autonomy level, max sessions, login token TTL
   - The autonomy selector shows a contextual explainer text below the L0–L3 segmented control that updates in real time as the user switches levels. The texts (from i18n dictionaries) describe each level's behavior:
     - **L0**: "The Pilot only plans and proposes. Nothing runs until you approve it."
     - **L1**: "The Pilot runs only clear, safe steps on its own. Anything uncertain or sensitive waits for your approval."
     - **L2**: "The Pilot runs work and clears agent permission prompts itself. Ambiguous or risky situations are escalated to you."
     - **L3**: "Full autonomy. The Pilot runs and clears everything itself, reaching out only when it genuinely cannot decide."
 - **Hermes** — one-click MCP-server registration for same-host Hermes integration
-  - Hermes home, orca URL and token, MCP-server status indicator
+  - Hermes home, orca URL and token, MCP-server status indicator (registered/enabled badges)
+- **System** — version info, update posture, and service health:
+  - **Hero card** — Orca logo, current version (`useSystem`, 60 s poll), update available badge, Update now button
+  - **Auto-update toggle** — enables automatic daemon updates on new npm releases; saves immediately via `PUT /config`
+  - **Services** — live health cards for Daemon (`:4400`) and Web (`:4500`) with status dots
+  - Uses `useSystem` for version + update info, `useSystemUpdate` mutation for triggering updates
+- **Data** — danger zone with "Delete all data" (admin-only, `ConfirmDialog` + `useCleanupAll`); wipes tasks, missions, activity; keeps projects, users, settings
 
 ### Users `/users`
 
@@ -184,6 +222,12 @@ Admin-only (non-admins see a lock screen with link to My Account). Inline in `ap
 - **Default model selector** — radiogroup of allowed models with `ModelIcon`
 - **Profile** — avatar (upload), name, email
 - **Admin badge** shown when user is admin
+- **Password change** — current + new + confirm with server-side validation
+- **Phone push toggle** — per-device opt-in for mission notifications (review escalation, needs_input, stall, completion)
+  - Checks `isPushSupported()`, queries existing subscription via `navigator.serviceWorker.getRegistration()`
+  - `enablePush()` / `disablePush()` via `lib/pushClient.ts` — calls `POST /push/subscribe` / `POST /push/unsubscribe`
+  - Inline action buttons in the notification (Allow/Reject, Approve/Rerun, Open)
+- **UI scale slider** — per-device display preference, live-preview via `useUiScale`, persisted in `localStorage`
 
 ### Onboarding `/onboarding`
 
@@ -236,6 +280,11 @@ Thin fetch wrapper around the daemon API. Sets `Authorization: Bearer <token>` f
 | `usePlanJob` | `['plan-job', jobId]` | 1 s while planning |
 | `useUserProjects` | `['user-projects', userId]` | — |
 | `useAdvisorStatus` | `['advisor-status']` | 5 s |
+| `useSystem` | `['system']` | 60 s |
+| `useModelUsage` | `['usage-by-model']` | 30 s |
+| `useEscalations` | derived (activity + tasks + deps) | — |
+| `useGithubStatus` | `['github-status']` | 30 s |
+| `useProjectsCommits` | `['project-commits', id]` × N | 60 s (combined stream) |
 
 ### Mutations (`lib/mutations.ts`)
 
@@ -268,6 +317,10 @@ Mutations auto-invalidate related query caches on success:
 | `useHermesInstall` | hermes-status |
 | `useAdvisorStart` | advisor-status, sessions |
 | `useAdvisorStop` | advisor-status, sessions |
+| `useResetUsage` | usage-by-model |
+| `useSystemUpdate` | system |
+| `useChangePassword` | — |
+| `useApproveGate` | tasks, missions, activity |
 
 ### Real-time updates
 
@@ -306,7 +359,38 @@ When the daemon has a `UserStore` (multi-user mode):
 - **Assignment management** — admin-only, in Users page via `ProjectChips`
 - **Model allow-list** — admin can restrict which models a non-admin may run
 
-## Internationalization
+## Progressive Web App (PWA)
+
+Orca is installable as a standalone PWA with offline-capable push notifications.
+
+### Service worker (`public/sw.js`)
+
+Versioned (`SW_VERSION`), installed via `skipWaiting` + `clients.claim` for immediate activation.
+
+- **Push handler** — receives `push` events from the daemon's `PushDispatcher` (VAPID), parses the payload, and shows a notification with inline action buttons
+- **Notification click handler** — maps `notificationclick` action to one of:
+  - **`approve`** — `POST /api/tasks/:id/approve-gate` (release review gate)
+  - **`rerun`** — `PATCH /api/tasks/:id` (re-open) + `PATCH /api/missions/:id` (resume)
+  - **`allow`** — `POST /api/sessions/:name/keys` (send Enter keystroke)
+  - **`reject`** — `POST /api/sessions/:name/keys` (send Escape keystroke)
+  - **default** — opens the app URL
+- **Safe URL opener** — only allows same-origin or `https:` URLs; rejects `javascript:`, `data:`, off-origin redirects
+- **Action-to-request mapping** mirrors `pushClient.ts:actionToRequest` — keep both in sync
+
+### Manifest (`public/manifest.json`)
+
+`display: standalone`, black background/theme, single 512×512 icon.
+
+### Push subscription lifecycle
+
+1. Browser fetches VAPID public key from `GET /push/vapid-public-key` (pre-auth, no token needed)
+2. User toggles "Enable on this device" in Account → `enablePush()` subscribes via `PushSubscription` API, posts to `POST /push/subscribe`
+3. Daemon stores in `user_push_subscriptions` table, scoped to the authenticated user
+4. On mission events, `PushDispatcher` resolves recipients (owner + admins), fires VAPID push via `web-push`
+5. `disablePush()` calls `POST /push/unsubscribe` — daemon prunes the endpoint
+6. Daemon's `PushSender` prunes dead subscriptions (404/410) automatically
+
+### Internationalization
 
 Full Czech and English support via `lib/i18n/`:
 
@@ -373,6 +457,24 @@ Tailwind CSS 4 with CSS-first config in `globals.css`. OLED-friendly dark theme,
 | `card-interactive` | Hover: lift 1px + border lighten + shadow raise |
 
 All animations respect `prefers-reduced-motion`.
+
+### Responsive design
+
+The UI adapts across three breakpoints using standard Tailwind responsive prefixes:
+
+| Breakpoint | Width | Behavior |
+|---|---|---|
+| **Mobile** | `< 768px` | Single column, collapsible sidebar overlay, no hover effects, touch-optimized |
+| **Tablet** | `768px – 1023px` | Sidebar auto-collapsed, grid layouts shift to 2 columns |
+| **Desktop** | `≥ 1024px` | Full sidebar, multi-column grids, hover states |
+
+- **Sidebar** — resizable (drag handle), collapsible, auto-collapses ≤ 768px, overlay pattern on mobile
+- **Font upscale** — `html { font-size: 125% }` kicks in at `768px` (md breakpoint) where there's room
+- **UI scale** — per-user persistent zoom override (`useUiScale`, 80–120%, persisted in `localStorage`) via Slider in Account
+- **Grids** collapse responsively: 4-column stat cards → 2 columns → single column
+- **All animations** respect `prefers-reduced-motion`
+- **`overscroll-behavior: none`** on body for iOS scroll stability
+- **Custom scrollbars** — `scrollbar-width: thin`
 
 ### Focus & accessibility
 
