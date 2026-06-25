@@ -24,12 +24,13 @@ GET /events?token=<token>
 
 ### Token scopes
 
-There are two token scopes:
+There are three token scopes:
 
 | Scope | Purpose |
 |---|---|
 | `full` | Interactive user sessions (web UI, CLI). Full access subject to project assignment. |
 | `agent` | Issued to spawned agents (`--dangerously-skip-permissions`). Restricted to a narrow allow-list: `PATCH /tasks/:id` (close), `POST /plan/:jobId/submit`, `GET /plan/:jobId`, `GET /tasks`, `GET /tasks/ready`, `GET /sessions`, `GET /missions/:id/overseer/next`, `POST /missions/:id/overseer/decide`. All other routes return 403. |
+| `advisor` | Per-user assistant session (`orca-advisor-<userId>`). Mapped to `full` at the guard so it has the user's own rights, but isolated from login tokens so rotating/stopping the advisor never touches `full` tokens. |
 
 Project ownership is still enforced per-row even within the agent allow-list — agents cannot cross tenancy.
 

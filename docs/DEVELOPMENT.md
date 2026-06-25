@@ -210,8 +210,8 @@ src/
     ├── driver.ts     RealTmuxDriver
     └── fakeDriver.ts In-memory fake for tests
 prompts/              Prompt templates (planner, pilot, overseer, advisor, worker, decision)
-tests/                Mirrors src/ structure (~649 tests)
-web/                  Next.js frontend (~363 tests)
+tests/                Mirrors src/ structure (~823 tests)
+web/                  Next.js frontend (~433 tests)
 docs/                 Documentation tree
 ```
 
@@ -232,6 +232,8 @@ Much of the daemon's orchestration runs on periodic intervals. Wired in
 | Overseer watchdog | 60 s | Re-park missing overseer agents for active/stalled missions (crash recovery) |
 | Token purge | 1 h | Delete expired auth tokens (TTL from `config.security.tokenTtlDays`) |
 | Event purge | 1 h | Drop `events` rows past the 30-day retention window (`eventStore.purgeOlderThan()`) |
+| Ticket sweep | 60 s | Sweep expired terminal-WS single-use tickets |
+| PR feedback | 60 s | Poll open PRs for fresh actionable review feedback, re-engage mission with fix phases |
 
 ---
 

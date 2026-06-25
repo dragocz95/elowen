@@ -148,7 +148,7 @@ node dist/daemon/index.js           # production start
 # Web
 cd web && npm install
 npm run dev                         # Next.js dev server (turbopack)
-npm test                            # web tests (~363)
+npm test                            # web tests (~433)
 npm run build && npm start          # production
 ```
 

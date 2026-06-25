@@ -300,4 +300,4 @@ Tests use Vitest with fake implementations:
 
 This allows full integration-style tests without real tmux or network dependencies.
 
-Daemon tests: ~823 `it`/`test` cases across 108 test files in `tests/`. Web tests: ~363 cases in `web/tests/` (Vitest + React Testing Library).
+Daemon tests: ~823 `it`/`test` cases across 108 test files in `tests/`. Web tests: ~433 cases in `web/tests/` (Vitest + React Testing Library).
