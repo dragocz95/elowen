@@ -83,4 +83,48 @@ describe('KanbanBoard', () => {
     fireEvent.drop(open, makeDrop('a'));
     expect(onMove).not.toHaveBeenCalled();
   });
+
+  describe('allTasks rollup independence from date filter', () => {
+    // Simulate a date filter that hides the open phase (p2) but still shows the epic and the
+    // closed phase (p1). Without allTasks the board would derive the epic's effective status only
+    // from the visible children and wrongly report it as closed.
+    const epic: Task = { id: 'e2', title: 'Filtered Epic', status: 'open', type: 'epic' };
+    const closedPhase: Task = { id: 'ph1', title: 'Done Phase', status: 'closed', outcome: 'ok', parent_id: 'e2' };
+    const openPhase: Task = { id: 'ph2', title: 'Future Phase', status: 'open', parent_id: 'e2' };
+
+    it('with allTasks: epic with a filtered-out open phase is NOT shown as closed', () => {
+      const { wrapper: W } = wrap();
+      // tasks = filtered view (open phase absent); allTasks = full project set
+      render(
+        <KanbanBoard tasks={[epic, closedPhase]} allTasks={[epic, closedPhase, openPhase]} onMove={() => {}} />,
+        { wrapper: W },
+      );
+      // The epic should land in the 'open' column because its open phase is visible in allTasks.
+      expect(within(screen.getByTestId('column-open')).getByRole('button', { name: /Filtered Epic/ })).toBeTruthy();
+      // And it must not appear in the 'closed' column.
+      expect(within(screen.getByTestId('column-closed')).queryByText('Filtered Epic')).toBeNull();
+    });
+
+    it('with allTasks: progress counter reflects ALL phases, not just the filtered subset', () => {
+      const { wrapper: W } = wrap();
+      render(
+        <KanbanBoard tasks={[epic, closedPhase]} allTasks={[epic, closedPhase, openPhase]} onMove={() => {}} />,
+        { wrapper: W },
+      );
+      // KanbanEpicCard renders "<done>/<total>" — with two phases (one closed, one open) it
+      // should read "1/2", not "1/1" as it would if derived from the filtered tasks only.
+      expect(within(screen.getByTestId('column-open')).getByText('1/2')).toBeTruthy();
+    });
+
+    it('without allTasks: backward-compat — epic with all visible phases closed reads as closed', () => {
+      const { wrapper: W } = wrap();
+      // No allTasks → falls back to tasks; tasks only contains the closed phase.
+      render(
+        <KanbanBoard tasks={[epic, closedPhase]} onMove={() => {}} />,
+        { wrapper: W },
+      );
+      expect(within(screen.getByTestId('column-closed')).getByRole('button', { name: /Filtered Epic/ })).toBeTruthy();
+      expect(within(screen.getByTestId('column-closed')).getByText('1/1')).toBeTruthy();
+    });
+  });
 });

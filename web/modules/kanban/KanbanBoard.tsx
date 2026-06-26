@@ -18,12 +18,16 @@ const COLUMNS: { status: TaskStatus; labelKey: string; icon: LucideIcon; color: 
   { status: 'cancelled', labelKey: 'columnCancelled', icon: XCircle, color: 'var(--color-cancelled)' },
 ];
 
-export function KanbanBoard({ tasks, onMove, onSelect, onEdit, blockedBy, missions }: { tasks: Task[]; onMove: (taskId: string, status: TaskStatus) => void; onSelect?: (t: Task) => void; onEdit?: (t: Task) => void; blockedBy?: Map<string, Task[]>; missions?: Mission[] }) {
+export function KanbanBoard({ tasks, allTasks, onMove, onSelect, onEdit, blockedBy, missions }: { tasks: Task[]; allTasks?: Task[]; onMove: (taskId: string, status: TaskStatus) => void; onSelect?: (t: Task) => void; onEdit?: (t: Task) => void; blockedBy?: Map<string, Task[]>; missions?: Mission[] }) {
   const { t } = useTranslation();
   const activeMissions = missions ?? [];
-  const childMap = epicChildren(tasks);
+  // Build child map and phase set from the full, unfiltered task list so that epic rollup
+  // status and progress are independent of any active date filter. Defaults to tasks so that
+  // call sites that pass no allTasks keep the existing behaviour.
+  const fullTasks = allTasks ?? tasks;
+  const childMap = epicChildren(fullTasks);
   const ctxMenu = useTaskContextMenu({ onSelect: (x) => onSelect?.(x), onEdit: (x) => onEdit?.(x), childMap, blockedBy: blockedBy ?? new Map(), missions: activeMissions });
-  const phaseSet = phaseIds(tasks);
+  const phaseSet = phaseIds(fullTasks);
   // An epic is placed by its effective status (active mission / running phase → in progress,
   // all phases done → closed); its true task status is preserved on the card (title/tooltip).
   const effStatus = (task: Task) => (task.type === 'epic' ? epicEffectiveStatus(task, activeMissions, childMap.get(task.id) ?? []) : task.status);

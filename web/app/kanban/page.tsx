@@ -93,6 +93,7 @@ export default function KanbanPage() {
         : view === 'board' ? (
           <KanbanBoard
             tasks={filteredTasks}
+            allTasks={tasks.data ?? []}
             blockedBy={blockedBy}
             missions={missions.data ?? []}
             onMove={(id, status) => setStatus.mutate({ id, status }, { onError: (e) => toast(String(e), 'error') })}
