@@ -1,13 +1,13 @@
 'use client';
 import { useState } from 'react';
-import { Pencil, Play, Square, SquareSlash, Archive, TerminalSquare, Link2, Copy, ShieldCheck, RotateCcw, ChevronLeft } from 'lucide-react';
+import { Pencil, Play, Square, SquareSlash, Archive, TerminalSquare, Link2, Copy, ShieldCheck, RotateCcw, ChevronLeft, Timer } from 'lucide-react';
 import type { Task } from '../../lib/types';
 import { useTasks, useAllDeps, useSessionSignal, useConfig, useMissionNotes } from '../../lib/queries';
 import { useCloseTask, useSetTaskStatus, useResumeMission } from '../../lib/mutations';
 import { apiErrorMessage } from '../../lib/orcaClient';
 import { useTaskControls } from '../../lib/useTaskControls';
 import { taskExec } from '../../lib/agentUtils';
-import { taskSessionName, taskAgentName } from '../../lib/agentUtils';
+import { taskSessionName, taskAgentName, taskElapsed, phaseDetails } from '../../lib/agentUtils';
 import { formatTaskTime } from '../../lib/format';
 import { Badge } from '../../components/ui/Badge';
 import { ModelIcon } from '../../components/ui/ModelIcon';
@@ -54,6 +54,8 @@ export function TaskDetailPane({ taskId, onEdit, onBack }: { taskId: string; onE
   const isClosed = task.status === 'closed' || task.status === 'cancelled';
   const whenIso = task.closed_at || task.created_at;
   const when = formatTaskTime(whenIso, Date.now(), locale);
+  const ran = taskElapsed(task, Date.now()); // how long the agent ran (frozen once the task finished)
+  const details = phaseDetails(task.description); // phase details without the repeated mission overgoal
 
   const byId = new Map((tasks.data ?? []).map((x) => [x.id, x]));
   const depTasks = (deps.data ?? []).filter((d) => d.task_id === taskId).map((d) => byId.get(d.depends_on_id)).filter((x): x is Task => !!x);
@@ -104,6 +106,7 @@ export function TaskDetailPane({ taskId, onEdit, onBack }: { taskId: string; onE
               <IconButton icon={Copy} label={t.tasks.copyId} onClick={copyId} />
               {agentName ? <><span aria-hidden className="opacity-50">·</span><span>{taskSessionName(task)}</span></> : null}
               {when.label ? <><span aria-hidden className="opacity-50">·</span><span title={when.title}>{when.label}</span></> : null}
+              {ran ? <><span aria-hidden className="opacity-50">·</span><span className="inline-flex items-center gap-1" title={t.tasks.flowElapsed}><Timer size={11} aria-hidden />{ran}</span></> : null}
             </div>
           </div>
         </div>
@@ -129,9 +132,9 @@ export function TaskDetailPane({ taskId, onEdit, onBack }: { taskId: string; onE
         </div>
       </div>
 
-      {task.description?.trim() ? (
+      {details ? (
         <Field label={t.tasks.fieldDetails}>
-          <p className="whitespace-pre-wrap text-sm leading-relaxed text-text-muted">{task.description}</p>
+          <p className="whitespace-pre-wrap text-sm leading-relaxed text-text-muted">{details}</p>
         </Field>
       ) : null}
 

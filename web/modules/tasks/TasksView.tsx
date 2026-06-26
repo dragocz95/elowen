@@ -266,7 +266,7 @@ export function TasksView() {
                 // A selected mission (epic with phases) shows the flow graph; everything else — including
                 // a phase drilled into from the graph — shows the task/agent detail with a back chip.
                 if (selTask?.type === 'epic' && selPhases.length > 0) {
-                  return <div className="rounded-lg border border-border bg-surface p-4" style={{ boxShadow: 'var(--shadow-card)' }}><MissionFlow epic={selTask} phases={selPhases} activeId={selectedId} onSelectPhase={setSelectedId} /></div>;
+                  return <div className="rounded-lg border border-border bg-surface p-4" style={{ boxShadow: 'var(--shadow-card)' }}><MissionFlow epic={selTask} phases={selPhases} activeId={selectedId} onSelectPhase={setSelectedId} onContextMenu={ctxMenu.open} /></div>;
                 }
                 const backToEpic = selTask?.parent_id && tasks.data?.some((x) => x.id === selTask.parent_id && x.type === 'epic') ? selTask.parent_id : null;
                 return <div className="rounded-lg border border-border bg-surface p-4" style={{ boxShadow: 'var(--shadow-card)' }}><TaskDetailPane taskId={selectedId} onEdit={setEditing} onBack={backToEpic ? () => setSelectedId(backToEpic) : undefined} /></div>;

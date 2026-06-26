@@ -36,7 +36,7 @@ export interface OrcaConfig {
   hiddenPresets: string[];
   modelNotes: Record<string, string>;
   autopilot: { model: string; overseerModel: string; apiUrl: string; apiKeySet: boolean; notes: string; prompt: string; pilotExec: string; overseerExec: string; reviewOnDone: boolean; prEnabled: boolean; prBaseBranch: string; prAutoOpen: boolean; prVerifyCommand: string; ghTokenSet: boolean };
-  providers: Record<string, { bin: string; args: string; skipPermissions: boolean }>;
+  providers: Record<string, { bin: string; args: string; skipPermissions: boolean; resume: boolean }>;
   defaults: { exec: string; autonomy: string; maxSessions: number };
   security: { tokenTtlDays: number };
   autoUpdate: boolean;

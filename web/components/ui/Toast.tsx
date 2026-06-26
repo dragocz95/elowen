@@ -16,6 +16,13 @@ function ToastCard({ item, meta, dismissLabel, onDismiss }: { item: ToastItem; m
   const [remaining, setRemaining] = useState(100);
   const paused = useRef(false);
 
+  // Dark toast that fits the dark UI: a deep, clearly-tinted fill (mixed into near-black, not a
+  // washed pale white) with a strong same-hue border + a bright lifted accent for icon/title, so it
+  // reads as a solid dark-green / dark-rose panel — not muddy, not pale.
+  const fill = `color-mix(in srgb, ${color} 22%, #0b0b0b)`;
+  const edge = `color-mix(in srgb, ${color} 58%, #0b0b0b)`;
+  const accent = `color-mix(in srgb, ${color} 82%, #ffffff)`;
+
   useEffect(() => {
     // rAF countdown that drives both the progress bar and auto-dismiss; pauses on hover.
     let elapsed = 0;
@@ -32,26 +39,31 @@ function ToastCard({ item, meta, dismissLabel, onDismiss }: { item: ToastItem; m
 
   return (
     <div
-      role="status"
+      role={item.tone === 'error' ? 'alert' : 'status'}
       onMouseEnter={() => { paused.current = true; }}
       onMouseLeave={() => { paused.current = false; }}
-      className="pointer-events-auto relative flex items-start gap-3 overflow-hidden rounded-lg border border-border bg-surface py-3 pl-4 pr-3"
-      style={{ boxShadow: 'var(--shadow-raised)', borderLeft: `3px solid ${color}`, animation: 'toast-in 200ms var(--ease-out)' }}
+      className="pointer-events-auto relative flex items-start gap-3 overflow-hidden rounded-lg py-3 pl-4 pr-3"
+      style={{
+        boxShadow: 'var(--shadow-raised)',
+        background: fill,
+        border: `1px solid ${edge}`,
+        animation: 'toast-in 200ms var(--ease-out)',
+      }}
     >
-      <Icon size={20} aria-hidden className="mt-px shrink-0" style={{ color }} />
+      <Icon size={20} aria-hidden className="mt-px shrink-0" style={{ color: accent }} />
       <div className="min-w-0 flex-1">
-        <div className="text-sm font-semibold text-text">{title}</div>
-        <div className="mt-0.5 break-words text-sm leading-snug text-text-muted">{item.message}</div>
+        <div className="text-sm font-semibold" style={{ color: accent }}>{title}</div>
+        <div className="mt-0.5 break-words text-sm leading-snug text-text">{item.message}</div>
       </div>
       <button
         type="button"
         aria-label={dismissLabel}
         onClick={onDismiss}
-        className="-mr-1 -mt-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-elevated hover:text-text"
+        className="-mr-1 -mt-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-white/10 hover:text-text"
       >
         <X size={15} aria-hidden />
       </button>
-      <span className="absolute bottom-0 left-0 h-0.5" style={{ width: `${remaining}%`, backgroundColor: color, opacity: 0.5 }} aria-hidden />
+      <span className="absolute bottom-0 left-0 h-0.5" style={{ width: `${remaining}%`, backgroundColor: accent, opacity: 0.55 }} aria-hidden />
     </div>
   );
 }
@@ -59,8 +71,8 @@ function ToastCard({ item, meta, dismissLabel, onDismiss }: { item: ToastItem; m
 export function ToastProvider({ children }: { children: ReactNode }) {
   const { t } = useTranslation();
   const TONE: Record<Tone, { Icon: LucideIcon; color: string; title: string }> = {
-    ok: { Icon: CheckCircle2, color: 'var(--color-success)', title: t.common.success },
-    error: { Icon: AlertCircle, color: 'var(--color-danger)', title: t.common.error },
+    ok: { Icon: CheckCircle2, color: '#32CD32', title: t.common.success },
+    error: { Icon: AlertCircle, color: '#FF3131', title: t.common.error },
   };
   const [items, setItems] = useState<ToastItem[]>([]);
   const dismiss = useCallback((id: number) => setItems((xs) => xs.filter((x) => x.id !== id)), []);
@@ -74,7 +86,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   return (
     <Ctx.Provider value={ctx}>
       {children}
-      <div className="pointer-events-none fixed bottom-5 right-5 z-50 flex w-[22rem] max-w-[calc(100vw-2.5rem)] flex-col gap-2.5">
+      <div className="pointer-events-none fixed bottom-5 right-5 z-50 flex w-[28rem] max-w-[calc(100vw-2.5rem)] flex-col gap-2.5">
         {items.map((item) => (
           <ToastCard key={item.id} item={item} meta={TONE[item.tone]} dismissLabel={t.common.dismiss} onDismiss={() => dismiss(item.id)} />
         ))}

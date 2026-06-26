@@ -39,11 +39,6 @@
 .live-dot { position: relative; }
 .live-dot::after { content: ''; position: absolute; inset: 0; border-radius: 9999px; animation: live-ring 2s ease-out infinite; }
 
-/* Mission Flow — animated dashed connectors between nodes. A repeating dash tile scrolls along the
-   edge so the flow reads as "moving" toward the next node. Vertical (default) and horizontal (-h)
-   variants; the -active variant tints the dashes with the accent for a live phase. */
-.flow-edge { background-image: repeating-linear-gradient(to bottom, var(--color-border-strong) 0 4px, transparent 4px 8px); background-size: 1px 8px; background-repeat: repeat-y; background-position: 0 0; animation: flow-dash-v 0.7s linear infinite; }
-.flow-edge-h { background-image: repeating-linear-gradient(to right, var(--color-border-strong) 0 4px, transparent 4px 8px); background-size: 8px 1px; background-repeat: repeat-x; background-position: 0 0; animation: flow-dash-h 0.7s linear infinite; }
-.flow-edge-active { background-image: repeating-linear-gradient(to bottom, var(--color-accent) 0 4px, transparent 4px 8px); }
-/* Active phase node: a crisp accent ring that pulses (no blur — stays within the flat OLED look). */
+/* Active phase node (Mission Flow canvas): a crisp accent ring that pulses (no blur — stays within
+   the flat OLED look). */
 .flow-active { animation: flow-pulse 1.8s ease-in-out infinite; }

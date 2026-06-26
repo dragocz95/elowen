@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { taskAgentName, taskSessionName, agentDisplayName, taskElapsed, taskStartedMs, taskBlockers, tailSnippet, liveState, needsInputSessions, lastClosedTask, taskForSession, keysForOption, taskExec } from '../../lib/agentUtils';
+import { taskAgentName, taskSessionName, agentDisplayName, taskElapsed, taskStartedMs, taskBlockers, tailSnippet, liveState, needsInputSessions, lastClosedTask, taskForSession, keysForOption, taskExec, phaseDetails } from '../../lib/agentUtils';
 import type { Task } from '../../lib/types';
 
 const task = (over: Partial<Task> = {}): Task => ({ id: 't1', title: 'T', status: 'open', ...over });
@@ -30,6 +30,22 @@ describe('agentDisplayName', () => {
   });
   it('falls back to the raw id when there is no prefix', () => {
     expect(agentDisplayName('weird')).toBe('weird');
+  });
+});
+
+describe('phaseDetails', () => {
+  it('strips the appended "Overall goal:" overgoal, keeping only the phase details', () => {
+    expect(phaseDetails('Build the login form.\n\nOverall goal: Ship auth.')).toBe('Build the login form.');
+  });
+  it('returns empty when the description is nothing but the overgoal', () => {
+    expect(phaseDetails('Overall goal: Ship auth.')).toBe('');
+  });
+  it('leaves a standalone description (no overgoal) unchanged', () => {
+    expect(phaseDetails('Just a plain task description.')).toBe('Just a plain task description.');
+  });
+  it('returns empty for null/undefined', () => {
+    expect(phaseDetails(null)).toBe('');
+    expect(phaseDetails(undefined)).toBe('');
   });
 });
 

@@ -11,6 +11,21 @@ export function taskExec(labels?: string[]): string {
   return label ? label.slice(EXEC_PREFIX.length) : '';
 }
 
+/** A mission phase's description has the shared mission goal appended as `\n\nOverall goal: …` so the
+ *  agent gets it as prompt context (see daemon server.ts childDesc, which joins with `\n\n`). That
+ *  overgoal repeats on every phase, so the detail pane strips it and shows only the phase's own
+ *  details. We anchor on the exact `\n\nOverall goal:` separator and take the LAST occurrence, so a
+ *  phase whose own details legitimately mention "Overall goal:" isn't truncated. Standalone tasks
+ *  (no overgoal) and details with no appended block are returned unchanged. */
+export function phaseDetails(description?: string | null): string {
+  if (!description) return '';
+  // Phase with no own details: server emits just `Overall goal: …` (no leading details block) → hide it.
+  if (description.trimStart().startsWith('Overall goal:')) return '';
+  const at = description.lastIndexOf('\n\nOverall goal:');
+  if (at < 0) return description.trim();
+  return description.slice(0, at).trim();
+}
+
 /** Extract the agent name from a task's `agent:<name>` label, if present. */
 export function taskAgentName(task: Pick<Task, 'labels'>): string | null {
   const label = task.labels?.find((l) => l.startsWith(AGENT_PREFIX));
@@ -53,15 +68,21 @@ export function taskStartedMs(task: Pick<Task, 'labels' | 'created_at'>): number
   return parseTs(task.created_at);
 }
 
-/** Compact, language-neutral elapsed time (e.g. "12s", "3m", "5h", "2d") the agent has run. */
-export function taskElapsed(task: Pick<Task, 'labels' | 'created_at' | 'closed_at' | 'status'>, nowMs: number): string | null {
+/** Raw elapsed milliseconds the agent has run, or null when it never started. A finished task's run
+ *  is frozen at its close time — otherwise the duration keeps growing from 'now' and reads as if the
+ *  agent were still working. Sums cleanly across a mission's phases for a total run time. */
+export function taskElapsedMs(task: Pick<Task, 'labels' | 'created_at' | 'closed_at' | 'status'>, nowMs: number): number | null {
   const start = taskStartedMs(task);
   if (start == null) return null;
-  // A finished task's run is frozen at its close time — otherwise the duration keeps growing
-  // from 'now' and reads as if the agent were still working.
   const finished = task.status === 'closed' || task.status === 'cancelled';
   const end = finished ? (parseTs(task.closed_at) ?? nowMs) : nowMs;
-  return compactElapsed(end - start);
+  return Math.max(0, end - start);
+}
+
+/** Compact, language-neutral elapsed time (e.g. "12s", "3m", "5h", "2d") the agent has run. */
+export function taskElapsed(task: Pick<Task, 'labels' | 'created_at' | 'closed_at' | 'status'>, nowMs: number): string | null {
+  const ms = taskElapsedMs(task, nowMs);
+  return ms == null ? null : compactElapsed(ms);
 }
 
 export interface DepEdge { task_id: string; depends_on_id: string }
