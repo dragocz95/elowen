@@ -235,7 +235,7 @@ Stops the daemon and the web UI.
 Prints a one-glance block showing which services are running and healthy:
 
 ```
-  orcasynth v1.4.41
+  orcasynth v1.4.46
 
   daemon  ●  running  :4400  healthy
   web     ●  running  :4500  healthy  http://localhost:4500

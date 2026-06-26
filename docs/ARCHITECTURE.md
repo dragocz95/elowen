@@ -69,7 +69,7 @@ The agent works in the tmux pane, then calls `node <cli> close <taskId> …` bac
 
 ### `src/api/` — REST API (Hono)
 
-- `server.ts` — route definitions (1,738 lines, 92 routes in one file): tasks, missions, sessions, projects, users, auth, config, integrations, file editor, git surface, planner, plan jobs, overseer decision routes, web push subscriptions, usage stats, system info, advisor, MCP, activity log, events SSE, handoff notes, per-task change snapshots
+- `server.ts` — route definitions (1,738 lines, 94 routes in one file): tasks, missions, sessions, projects, users, auth, config, integrations, file editor, git surface, planner, plan jobs, overseer decision routes, web push subscriptions, usage stats, system info, advisor, MCP, activity log, events SSE, handoff notes, per-task change snapshots
 - `sse.ts` — `EventBus` for real-time SSE notifications (terminal output, task state changes, plan job status)
 - `auth.ts` — Bearer token middleware (header only, no query param). `/ws/terminal` is public here — the terminal-WS ticket is its capability
 

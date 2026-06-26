@@ -156,6 +156,4 @@ npm run build && npm start          # production
 
 CI runs both daemon and web jobs in parallel on every push/PR to `main` — see [`.github/workflows/ci.yml`](../.github/workflows/ci.yml).
 
-## Codebase audit
 
-A comprehensive security + robustness audit was performed across all layers (API, overseer, store, spawn, deriver, integrations, CLI, web data, web UI). The executive summary identifies 1 high, ~38 medium, and ~160 low-severity findings across 6 cross-cutting themes (auth surface, async error handling, zombie states, stringly-typed contracts, duplication, memory leaks).

@@ -169,7 +169,7 @@ GitHub Actions runs on every push and PR to `main` (see [`.github/workflows/ci.y
 
 | Job | Commands | Notes |
 |-----|----------|-------|
-| **Daemon** (833 tests) | `npm ci` → `npm run build` → `npm test` | tmux installed via `apt` for the real driver test |
-| **Web** (445 tests) | `npm ci` → `npm run build` → `npm test` | runs in `web/` subdirectory |
+| **Daemon** (~915 tests) | `npm ci` → `npm run build` → `npm test` | tmux installed via `apt` for the real driver test |
+| **Web** (~469 tests) | `npm ci` → `npm run build` → `npm test` | runs in `web/` subdirectory |
 
 Both jobs run in parallel on `ubuntu-latest` with Node 22. Superseded runs on the same ref are cancelled automatically.
