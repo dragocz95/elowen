@@ -27,10 +27,11 @@ The Next.js dashboard (`web/`) drives the whole daemon over the HTTP API. See [W
 | | |
 |---|---|
 | **Tasks** — list + detail with live agent output and token usage. ![Tasks](screenshots/tasks.png) | **Kanban** — open / in-progress / blocked / closed, with mission progress. ![Kanban](screenshots/kanban.png) |
-| **Missions** — phase graph and task flow for an autopilot run (folded into Tasks). ![Missions](screenshots/missions.png) | **Timeline** — a live activity feed across tasks, missions, and signals, plus commit history. ![Timeline](screenshots/timeline.png) |
+| **Mission flow** — redesigned deployment-summary view with hero header, metric pills, and phase log. ![Mission flow](screenshots/mission-flow.png) | **Timeline** — a live activity feed across tasks, missions, and signals, plus commit history. ![Timeline](screenshots/timeline.png) |
 | **Sessions** — real-time `tmux` agent previews with one-click intervention. ![Sessions](screenshots/sessions.png) | **Terminal** — the full agent TUI, including human-in-the-loop approvals. ![Terminal](screenshots/terminal.png) |
-| **Stats** — per-model token/cost breakdown with summary cards. | **Escalations** — overseer rejections with approve/rerun actions. |
-| **Projects** — a built-in Monaco editor with the project file tree. ![Projects editor](screenshots/projects-editor.png) | **Settings** — model presets & descriptions, providers, autopilot, defaults, system panel. ![Settings](screenshots/settings.png) |
+| **Task detail** — per-task change snapshots with file list and diff viewer, plus handoff notes. ![Task detail](screenshots/task-detail-changes.png) | **Context menu** — right-click context menu on tasks with run controls, metadata submenus, and lifecycle actions. ![Context menu](screenshots/context-menu.png) |
+| **Segmented & pills** — connected segmented controls and executor model pills replace all native selects. ![Segmented & pills](screenshots/segmented-pills.png) | **Settings** — model presets & descriptions, providers, autopilot, defaults, system panel. ![Settings](screenshots/settings.png) |
+| **Projects** — a built-in Monaco editor with the project file tree. ![Projects editor](screenshots/projects-editor.png) | **Escalations** — overseer rejections with approve/rerun actions. |
 
 First-run onboarding walks through creating the admin user and the home project:
 

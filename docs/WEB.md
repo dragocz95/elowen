@@ -103,6 +103,18 @@ The standalone `/missions` route was removed in v1.1.1. Mission lifecycle is dri
 - **Deleted modules** — `modules/missions/` (MissionsView, TaskFlow, ActiveMissionsBar, EngageModal, layoutPhases, missionUtils, meta) and the `/missions` route + registry entry. All `/missions` links (dashboard, timeline, command palette) repointed to `/tasks`.
 - **API** — mission data still accessible via `GET /missions`, `GET /missions/:id`.
 
+#### Mission view redesign (v1.4.45)
+
+Clicking an epic in the task list opens a redesigned mission detail view (`MissionFlow` in `modules/tasks/MissionFlow.tsx`) rendered as a "deployment summary":
+
+- **Hero header** — the full mission goal (epic title + description), status badge, and the finished result lifted to the top via `ResultSummary` with an accent-highlighted card. No graph — the left list already carries the mission's progress.
+- **Headline metric pills** — a row of compact `Pill` chips: total cost (`Coins` icon, green), total run time (`Clock`), phase count (`Layers`), and the model(s) that ran (single `ModelIcon` + exec name, or a stack of icons for multi-model missions). Pills are hidden when their value is zero (e.g. cost stays hidden for CLIs that don't report it).
+- **Phase log** — each phase rendered as a `PhaseLogRow` (`modules/tasks/PhaseLogRow.tsx`): a compact log line with index number, state glyph (green checkmark for done, red X for failed, blue dot for running, amber circle for blocked, gray circle for pending), phase title, model icon, agent name with `AgentStatusDot`, and elapsed time. The agent's note (result summary) is tucked beneath each row, line-clamped to 2 lines. Clicking a phase drills into its agent detail pane.
+- **State glyphs** — mission-log-specific status icons that read "done = good" (green success), unlike the generic status palette where a closed task is red. Running phases get a pulsing blue dot with `flow-active` animation.
+- **Back navigation** — a "Back to mission graph" button returns to the epic's expanded phase list in the task list.
+
+![Mission flow](screenshots/mission-flow.png)
+
 ### Escalations `/escalations`
 
 `EscalationsView` (`modules/escalations/EscalationsView.tsx`):
@@ -644,6 +656,85 @@ Toast uses Context/Provider with `requestAnimationFrame`-based countdown:
 - Smooth progress bar that pauses on hover
 - Tone system: accent (success), danger (error)
 - Usage: `const { toast } = useToast(); toast('Done');`
+
+#### Tonal toast styling (v1.4.45)
+
+Toasts use a dark tonal style that fits the OLED UI: a deep, clearly-tinted fill (color mixed into near-black, not a washed pale white) with a strong same-hue border and a bright lifted accent for the icon and title. This reads as a solid dark-green (success) or dark-rose (error) panel — not muddy, not pale.
+
+- **Fill** — `color-mix(in srgb, <color> 22%, #0b0b0b)` — deep tinted background
+- **Border** — `color-mix(in srgb, <color> 58%, #0b0b0b)` — strong same-hue edge
+- **Accent** — `color-mix(in srgb, <color> 82%, #ffffff)` — bright lifted icon/title
+- **Progress bar** — rAF-driven countdown bar at the bottom, same accent color at 55% opacity, pauses on hover
+- **Dismiss** — X button in the top-right corner, or auto-dismiss after 4.5 s
+- **Animation** — `toast-in` keyframe (200 ms ease-out) for entry
+- **Position** — fixed bottom-right, stacked vertically with 2.5 spacing, max 28rem wide
+
+### Task right-click context menu (v1.4.44)
+
+Every task card and epic row supports a right-click context menu (`useTaskContextMenu` in `modules/tasks/useTaskContextMenu.tsx`). The menu is context-aware — it resolves each task's live/structural state from the query caches and builds a declarative action spec via `buildTaskMenu()` (`modules/tasks/taskContextMenu.ts`).
+
+**Menu structure** (varies by task kind — standalone, phase, or epic):
+
+| Group | Actions |
+|-------|---------|
+| Navigation | Open detail, Edit |
+| Run controls | Start, Stop, Pause, Open terminal |
+| Metadata submenus | Set model (executor picker with brand icons), Set priority (P0–P3), Set status (open/blocked/closed/cancelled) |
+| Dependencies | Manage dependencies (opens `DepPickerModal`) |
+| Lifecycle | Reopen, Approve gate (gated phases), Plan mission (standalone tasks), Close |
+| Clipboard + destructive | Copy ID, Delete permanently |
+
+**Epic-specific menu** — epics get a compact menu: Run review, Add phase, Copy ID, Delete mission.
+
+**Submenus** — one-level-deep nested panels that open on hover (or click for touch), flipping left/up when they would overflow the viewport. Each submenu marks the currently-selected option as disabled.
+
+**Implementation** — the `ContextMenu` component (`components/ui/ContextMenu.tsx`) is a floating OLED-styled panel (`fixed`, `z-50`, `bg-elevated`, `rounded-lg`) shared across the file tree and the task list. It closes on outside click, Esc, scroll, or resize. Position is clamped to the viewport and adjusted for the UI scale (`uiZoom()`). The menu spec is pure and unit-testable — `buildTaskMenu()` takes a plain `TaskMenuCtx` record and returns a `TaskMenuEntry[]` with no JSX or i18n.
+
+![Context menu](screenshots/context-menu.png)
+
+### Pill / segmented selectors
+
+All single-choice form controls use connected segmented controls or pill-style pickers — no native `<select>` dropdowns remain in the UI.
+
+#### Segmented (`components/ui/Segmented.tsx`)
+
+A connected segmented switch: one bordered track holding the options, the active one lifted with an accent fill. Single source of truth for single-choice toggles across the app:
+
+- **Uses** — mode filters (Active/Open/Blocked/Closed/Autopilot/All), task type, priority, autonomy level (L0–L3), PR workflow mode (inherit/on/off), backend mode (Relay/CLI Agents)
+- **Sizes** — `sm` for tight inline rows (e.g. manual phase lines), `md` for full form fields
+- **Wrapping** — the track wraps when it can't fit, so long option sets degrade gracefully
+- **Accessibility** — `role="radiogroup"` with `role="radio"` and `aria-checked` on each option
+
+#### ExecutorPicker (`components/ui/ExecutorPicker.tsx`)
+
+Executor model picker as brand-icon pills (icon + name). To stay compact with long allow-lists:
+
+- Shows first `limit` models alphabetically (default 5), with a "+N more" expander button
+- The currently-selected model is always kept visible, even when it sorts past the cap
+- An empty `value` means "Default" — rendered as a separate pill when `allowDefault` is true
+- Used in `TaskModal`, `PlanModal`, and the context menu's "Set model" submenu
+
+![Segmented and pill selectors](screenshots/segmented-pills.png)
+
+### Per-task change snapshots
+
+When a task closes, the daemon captures a frozen snapshot of the files it committed (`task.changed_files` as `CommitFileChange[]`). The `TaskChanges` component (`modules/tasks/TaskChanges.tsx`) renders this in the task detail pane:
+
+- **File list** — each changed file as a clickable card with file-type icon, path (directory dimmed, basename bright), and `+N −M` churn counts in green/red
+- **Diff viewer** — clicking a file opens a `Modal` with the full unified diff rendered by `PatchView` (the same Monaco-based diff component used in the project editor)
+- **Frozen snapshot** — reads `task.changed_files`, never the live working tree, so an old task always shows its own work, not whatever the latest agent is currently doing
+- **Data source** — `useTaskChangedFileDiff(taskId, path)` fetches the per-file diff from `GET /tasks/:id/changed/:path/diff`
+
+![Task changes](screenshots/task-detail-changes.png)
+
+### Inter-agent handoff notes
+
+Handoff notes are mission-scoped messages left by agents for downstream phases. The `TaskDetailPane` renders them when present:
+
+- **Scope** — notes are keyed by epic ID (`parent_id` for phases, own `id` for epics), so a phase shows its mission's notes and an epic shows its own
+- **Data source** — `useMissionNotes(epicId)` fetches from `GET /notes?target=m-<epicId>`
+- **Rendering** — each note as a bordered card with author name (bold) and body text (muted, pre-wrap). Notes are listed in chronological order
+- **Empty state** — the notes section is hidden entirely when there are no notes, keeping the detail pane clean for tasks without handoff context
 
 ### Event deduplication
 
