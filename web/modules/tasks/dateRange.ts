@@ -72,3 +72,10 @@ export function taskDayMs(task: Task): number {
   const ms = iso ? new Date(iso).getTime() : NaN;
   return Number.isNaN(ms) ? 0 : ms;
 }
+
+/** True when a task has no scheduled date and no closed date — i.e. it is open/in-progress/blocked
+ *  work that has not been anchored to any specific day. Such tasks must always appear on the board
+ *  regardless of the active date window, because hiding them would silently drop live work. */
+export function isUnscheduled(task: Task): boolean {
+  return !task.scheduled_at && !task.closed_at;
+}

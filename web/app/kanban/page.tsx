@@ -11,7 +11,7 @@ import { CalendarView } from '../../modules/kanban/CalendarView';
 import { TaskModal } from '../../modules/tasks/TaskModal';
 import { TaskResultsModal } from '../../modules/tasks/TaskResultsModal';
 import { DateRangeFilter } from '../../modules/tasks/DateRangeFilter';
-import { inRange, taskDayMs, isStoredRange, serializeRange, parseRange } from '../../modules/tasks/dateRange';
+import { inRange, taskDayMs, isUnscheduled, isStoredRange, serializeRange, parseRange } from '../../modules/tasks/dateRange';
 import type { DateRange } from '../../modules/tasks/dateRange';
 import { ModuleHeader } from '../../components/ui/ModuleHeader';
 import { Segmented } from '../../components/ui/Segmented';
@@ -56,11 +56,13 @@ export default function KanbanPage() {
     if (blockers.length > 0) blockedBy.set(task.id, blockers);
   }
 
-  // Apply the date filter client-side. Dateless tasks (taskDayMs returns 0) are never hidden.
+  // Apply the date filter client-side. Unscheduled tasks (no scheduled_at, no closed_at) are always
+  // visible — only a scheduled_at or closed_at anchors a task to the date window.
   // Epics whose phases are visible are always included so phases don't become orphaned standalone cards.
   const filteredTasks = useMemo(() => {
     const now = Date.now();
     const passes = (t: Task) => {
+      if (isUnscheduled(t)) return true;
       const ms = taskDayMs(t);
       return ms === 0 || inRange(ms, range, now);
     };
