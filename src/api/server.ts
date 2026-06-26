@@ -28,7 +28,8 @@ import type { EventBus } from './sse.js';
 import type { AgentSpec } from '../spawn/commandBuilder.js';
 import { resolveExecutor } from '../overseer/routing.js';
 import { parseResumeLabel } from '../spawn/resume/index.js';
-import { decompose, parsePhases, modelsBlock, VALID_TYPES as VALID_PHASE_TYPES, type Phase } from '../overseer/planner.js';
+import { decompose, parsePhases, modelsBlock, parallelismBlock, VALID_TYPES as VALID_PHASE_TYPES, type Phase } from '../overseer/planner.js';
+import { resolvePrEnabled } from '../overseer/prMode.js';
 import { classifySession } from '../overseer/sessionInfo.js';
 import { buildReviewContext } from '../overseer/reviewContext.js';
 import { PlanJobStore, type PlanJob } from '../overseer/planJob.js';
@@ -579,7 +580,12 @@ export function createServer(d: ServerDeps): Hono<{ Variables: { user: User; tok
     // this batch), else drop it so the engine assigns a fresh unique name via freeAgentName at spawn.
     const usedAgents = new Set(existing.flatMap((t) => t.labels.filter((l) => l.startsWith('agent:')).map((l) => l.slice('agent:'.length))));
     const created: Task[] = [];
-    let prevId: string | null = null;
+    // No phase carries an id → we can't build a real DAG, so reproduce the legacy prev→next chain
+    // (back-compat: old relay prompts and manual UI phases never emit ids). Any id present → DAG mode.
+    const linear = job.phases.every((p) => !p.id);
+    const idMap = new Map<string, string>(); // planner-local phase id → created DB task id
+    // Pass 1: create every child task first, so a phase's dependsOn can reference a sibling defined
+    // either earlier OR later in the array (a DAG, not just a backward chain). Deps wired in pass 2.
     for (const ph of job.phases) {
       // The web detail pane strips this appended overgoal back off (web/lib/agentUtils phaseDetails),
       // which anchors on the exact `\n\nOverall goal:` separator — keep that wording/join in sync.
@@ -587,8 +593,7 @@ export function createServer(d: ServerDeps): Hono<{ Variables: { user: User; tok
       const agentLabels = ph.agent && !usedAgents.has(ph.agent) ? [`agent:${ph.agent}`] : [];
       if (agentLabels.length) usedAgents.add(ph.agent!);
       const child = d.tasks.create({ id: newId(), project_id: job.projectId, title: ph.title, type: ph.type, parent_id: epic.id, labels: agentLabels, description: childDesc });
-      if (prevId) d.tasks.addDep(child.id, prevId); // chain within the new batch
-      else for (const leaf of leaves) d.tasks.addDep(child.id, leaf); // first new phase waits on the tail
+      if (ph.id) idMap.set(ph.id, child.id);
       // exec: auto mode takes the planner's per-phase pick, manual mode the job-level choice. Either
       // way it must be allow-listed — a halucinated/disabled exec is dropped so the child runs with
       // the configured default (resolveExecutor fallback), never a bogus model.
@@ -596,8 +601,38 @@ export function createServer(d: ServerDeps): Hono<{ Variables: { user: User; tok
       if (pickedExec && allowedExecs.includes(pickedExec)) d.tasks.setExec(child.id, pickedExec);
       d.bus.publish({ type: 'task', taskId: child.id, status: child.status });
       created.push(child);
-      prevId = child.id;
     }
+    // Pass 2: wire dependencies. Linear mode reproduces the old chain exactly. DAG mode maps each
+    // phase's dependsOn (planner-local ids) to DB ids. A phase that declared NO deps inherits the
+    // epic's current leaves, so a replan never overtakes unfinished work — a fresh epic has no leaves,
+    // so such phases start ready (enabling parallel branches). setDeps' cycle guard quietly drops any
+    // hallucinated loop, so the mission can never deadlock.
+    let prevId: string | null = null;
+    created.forEach((child, i) => {
+      const ph = job.phases[i]!; // created is built 1:1 from job.phases above, so this is always defined
+      if (linear) {
+        if (prevId) d.tasks.addDep(child.id, prevId); // chain within the new batch
+        else for (const leaf of leaves) d.tasks.addDep(child.id, leaf); // first new phase waits on the tail
+        prevId = child.id;
+        return;
+      }
+      const declared = ph.dependsOn ?? [];
+      const deps = declared.map((pid) => idMap.get(pid)).filter((x): x is string => !!x);
+      // Planner DECLARED dependencies but none resolved (typo'd / hallucinated ids): don't silently
+      // drop the ordering and let the phase start early in parallel — fall back to the previous phase
+      // in the batch so it still waits (the first phase has no predecessor → leaves/ready). Only a
+      // phase that declared no deps at all gets the leaves (genuine parallel/replan-append).
+      const effective = deps.length ? deps
+        : declared.length > 0 ? (i > 0 ? [created[i - 1]!.id] : leaves)
+          : leaves;
+      // On a replan into a LIVE epic (pre-existing leaves), a phase that resolved its deps among the
+      // new batch would otherwise ignore the still-running frontier and could start alongside it —
+      // even a hallucinated cycle, once the guard drops an edge, leaves a root with no leaf dep. Also
+      // wait on the existing leaves so the "a replan never overtakes unfinished work" invariant holds.
+      // A fresh epic has no leaves, so independent branches still start in parallel as intended.
+      const withFrontier = deps.length && leaves.length ? [...new Set([...effective, ...leaves])] : effective;
+      d.tasks.setDeps(child.id, withFrontier);
+    });
     return { epic, phases: created };
   }
 
@@ -1064,8 +1099,9 @@ export function createServer(d: ServerDeps): Hono<{ Variables: { user: User; tok
                 // a re-engage between close and this verdict (e.g. a PR-feedback replan) may have changed
                 // it, and the self-heal decision must follow the mission's CURRENT autonomy.
                 if (fresh && !verdict.escalated && live.autonomy === 'L3' && d.tasks.bumpReviewFix(id) <= REVIEW_FIX_BUDGET) {
-                  const feedback = `\n\n[Review rejected — previous attempt was not accepted]: ${verdict.rationale}\nFix the issue and close the task again.`;
-                  d.tasks.update(id, { description: (fresh.description ?? '') + feedback });
+                  // Pin the rejection as a single resume note so a multi-round reject loop refreshes it
+                  // instead of stacking duplicate feedback blocks onto the description.
+                  d.tasks.setResumeNote(id, `[Review rejected — previous attempt was not accepted]: ${verdict.rationale}\nFix the issue and close the task again.`);
                   // Reap the worker if it outlived its task close, so the re-spawn doesn't collide with a
                   // still-live `orca-<agent>` session ("duplicate session" → endless failed re-spawns).
                   await d.engine.stopTask(id);
@@ -1202,7 +1238,11 @@ export function createServer(d: ServerDeps): Hono<{ Variables: { user: User; tok
     const goal = (b.goal ?? '').trim();
     const name = (b.name ?? '').trim(); // optional short mission name → epic title (goal stays the description)
     // Tri-state PR override: true (force on) / false (force off) / null|undefined (inherit project+global).
-    const prEnabled = b.prEnabled === true ? true : b.prEnabled === false ? false : null;
+    let prEnabled = b.prEnabled === true ? true : b.prEnabled === false ? false : null;
+    // Parallel sessions only materialise in isolated worktrees — a shared checkout is single-writer, so
+    // a >1 max_sessions mission would silently serialize to one agent. Opting into parallelism therefore
+    // auto-enables PR-native mode, unless the user explicitly turned it off (then we honour their choice).
+    if ((b.maxSessions ?? 1) > 1 && prEnabled === null) prEnabled = true;
     if (!goal) return c.json({ error: 'goal required' }, 400);
     if (b.exec && !d.config.get().allowedExecs.includes(b.exec)) return c.json({ error: 'exec not allowed' }, 400);
     if (b.exec && !execAllowedForUser(c, b.exec)) return c.json({ error: 'exec not allowed for user' }, 403);
@@ -1231,7 +1271,7 @@ export function createServer(d: ServerDeps): Hono<{ Variables: { user: User; tok
       // Auto mode lets the planner pick a model per phase, so no uniform exec rides along.
       exec: b.autoModel ? undefined : b.exec, autoModel: b.autoModel === true,
       engage: b.engage === true ? { autonomy: b.autonomy ?? 'L3', maxSessions: b.maxSessions ?? 1 } : undefined,
-      prEnabled,
+      prEnabled, maxSessions: b.maxSessions ?? 1,
     });
     d.bus.publish({ type: 'plan', jobId: job.id, status: 'planning' });
     if (cfg.autopilot.pilotExec && d.pilot) {
@@ -1247,7 +1287,11 @@ export function createServer(d: ServerDeps): Hono<{ Variables: { user: User; tok
     try {
       const notes = d.projects?.get(target.project.id)?.notes;
       const models = job.autoModel ? modelsBlock(cfg.allowedExecs, cfg.modelNotes) : undefined;
-      phases = await decompose(inf, goal, b.prompt ?? cfg.autopilot.prompt, { notes }, models);
+      // Same parallelism guidance the agent-mode Pilot gets: parallel branches only when >1 session
+      // AND the mission will run PR-native (isolated worktrees), resolved exactly as runtime does.
+      const isolated = resolvePrEnabled(prEnabled, d.projects?.get(target.project.id)?.pr_enabled ?? null, cfg.autopilot.prEnabled);
+      const parallelism = parallelismBlock(b.maxSessions ?? 1, isolated);
+      phases = await decompose(inf, goal, b.prompt ?? cfg.autopilot.prompt, { notes }, models, parallelism);
     } catch {
       planJobs.fail(job.id, 'plan_parse_failed');
       d.bus.publish({ type: 'plan', jobId: job.id, status: 'failed', error: 'plan_parse_failed' });
@@ -1308,7 +1352,14 @@ export function createServer(d: ServerDeps): Hono<{ Variables: { user: User; tok
     // Replan: decompose the residual goal — async via a plan job scoped to this epic (so an agent
     // Pilot can do it; finalizePlanJob appends + ticks an active mission). One path, relay or agent.
     const cfg = d.config.get();
-    const job = planJobs.create({ goal: b.goal!.trim(), projectId: epic.project_id, epicId, dryRun: false, exec: b.exec });
+    // Carry the mission's intended concurrency into the replan so it keeps planning a wide DAG instead
+    // of collapsing back to a linear chain. Resolve isolation from the epic's PR label exactly as the
+    // runtime does, so the parallelism guidance matches how the replanned phases will actually run.
+    const replanOverride = epic.labels.includes('pr:on') ? true : epic.labels.includes('pr:off') ? false : null;
+    const replanIsolated = resolvePrEnabled(replanOverride, d.projects?.get(epic.project_id)?.pr_enabled ?? null, cfg.autopilot.prEnabled);
+    const replanMaxSessions = d.missions.get(`m-${epicId}`)?.max_sessions ?? 1;
+    const replanParallelism = parallelismBlock(replanMaxSessions, replanIsolated);
+    const job = planJobs.create({ goal: b.goal!.trim(), projectId: epic.project_id, epicId, dryRun: false, exec: b.exec, prEnabled: replanOverride, maxSessions: replanMaxSessions });
     d.bus.publish({ type: 'plan', jobId: job.id, status: 'planning' });
     if (cfg.autopilot.pilotExec && d.pilot) {
       void d.pilot(job, pathFor(epic.project_id)).catch((e) => { planJobs.fail(job.id, String(e)); d.bus.publish({ type: 'plan', jobId: job.id, status: 'failed', error: String(e) }); });
@@ -1318,7 +1369,7 @@ export function createServer(d: ServerDeps): Hono<{ Variables: { user: User; tok
     if (!key) return c.json({ error: 'autopilot_key_missing' }, 400);
     const inf = (d.makeInference ?? ((rc) => new RelayClient(rc)))({ baseUrl: cfg.autopilot.apiUrl, apiKey: key, model: cfg.autopilot.model });
     let phases: Phase[];
-    try { phases = await decompose(inf, b.goal!.trim(), b.prompt ?? cfg.autopilot.prompt, { notes: d.projects?.get(epic.project_id)?.notes }); }
+    try { phases = await decompose(inf, b.goal!.trim(), b.prompt ?? cfg.autopilot.prompt, { notes: d.projects?.get(epic.project_id)?.notes }, undefined, replanParallelism); }
     catch {
       planJobs.fail(job.id, 'plan_parse_failed');
       d.bus.publish({ type: 'plan', jobId: job.id, status: 'failed', error: 'plan_parse_failed' });
@@ -1408,9 +1459,18 @@ export function createServer(d: ServerDeps): Hono<{ Variables: { user: User; tok
     d.tasks.setStatus(taskId, 'in_progress'); // claim synchronously after the fresh check above
     // Baseline for the per-task change snapshot, under the checkout lock so it lands after any in-flight commit.
     await gitLock.run(cwd, async () => d.tasks.markBase(taskId, await projectHead(cwd)));
+    // When this is a resume (the task ran before), pin a note so the resumed agent knows it was
+    // restarted on purpose and should continue rather than wonder why it's running again. Re-read the
+    // description afterwards so the note rides along into the worker-resume prompt.
+    const resume = parseResumeLabel(task.labels);
+    // Only pin the generic manual-restart note when nothing more specific is already there — a
+    // review-reject rationale or a stuck-relaunch reason carries actionable context the user is
+    // restarting to address, so don't clobber it with boilerplate.
+    if (resume && !d.tasks.get(taskId)?.resume_note) d.tasks.setResumeNote(taskId, 'Manually restarted — continue from where you left off and finish the task.');
+    const resumeNote = d.tasks.get(taskId)?.resume_note ?? undefined;
     let session: string;
     try {
-      ({ session } = await d.spawn.launch({ projectId, projectPath: pathFor(projectId), taskId, agentName, spec, taskTitle: task.title, taskDescription: task.description, epicId: task.parent_id ?? undefined, resume: parseResumeLabel(task.labels) }));
+      ({ session } = await d.spawn.launch({ projectId, projectPath: pathFor(projectId), taskId, agentName, spec, taskTitle: task.title, taskDescription: task.description, resumeNote, epicId: task.parent_id ?? undefined, resume }));
     } catch (e) {
       // The task was already flipped to in_progress above; a spawn failure (bad cwd, missing tmux,
       // name collision) would otherwise leave it stuck with no live session until the stuck detector

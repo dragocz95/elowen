@@ -227,4 +227,41 @@ describe('TaskStore', () => {
     store.setResumeLabel('x', 'claude-code', "evil,id; rm -rf /");
     expect(store.get('x')?.labels).toEqual(['exec:sonnet']); // unsafe value dropped, no resume label stored
   });
+
+  it('setResumeNote stores the note in its own field, leaving the description untouched', () => {
+    store.create({ id: 'x', project_id: 1, title: 'X', description: 'Original brief' });
+    store.setResumeNote('x', 'Fix the failing test');
+    const t = store.get('x')!;
+    expect(t.description).toBe('Original brief'); // description is never mutated
+    expect(t.resume_note).toBe('Fix the failing test');
+  });
+
+  it('setResumeNote replaces the previous note instead of stacking', () => {
+    store.create({ id: 'x', project_id: 1, title: 'X', description: 'Original brief' });
+    store.setResumeNote('x', 'First feedback');
+    store.setResumeNote('x', 'Second feedback');
+    expect(store.get('x')!.resume_note).toBe('Second feedback'); // last write wins, no stacking
+  });
+
+  it('setResumeNote with a blank note clears the field back to null', () => {
+    store.create({ id: 'x', project_id: 1, title: 'X', description: 'Original brief' });
+    store.setResumeNote('x', 'Some feedback');
+    store.setResumeNote('x', '   ');
+    expect(store.get('x')!.resume_note).toBeNull();
+    expect(store.get('x')!.description).toBe('Original brief');
+  });
+
+  it('a clean (ok) close clears the resume note so it cannot mislead a later restart', () => {
+    store.create({ id: 'x', project_id: 1, title: 'X' });
+    store.setResumeNote('x', '[Review rejected] add the missing test');
+    store.close('x', { summary: 'done', outcome: 'ok' });
+    expect(store.get('x')!.resume_note).toBeNull();
+  });
+
+  it('a failing close keeps the resume note (the task may be re-spawned or escalated)', () => {
+    store.create({ id: 'x', project_id: 1, title: 'X' });
+    store.setResumeNote('x', 'Could not finish — see feedback');
+    store.close('x', { summary: 'blocked', outcome: 'fail' });
+    expect(store.get('x')!.resume_note).toBe('Could not finish — see feedback');
+  });
 });

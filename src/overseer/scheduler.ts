@@ -70,6 +70,7 @@ export class Scheduler {
           await this.d.spawn.launch({
             projectId: project.id, projectPath: cwd, taskId: task.id,
             agentName, spec, taskTitle: task.title, taskDescription: task.description,
+            resumeNote: task.resume_note ?? undefined,
             epicId: task.parent_id ?? undefined,
             resume: parseResumeLabel(task.labels),
           });

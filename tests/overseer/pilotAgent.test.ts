@@ -28,6 +28,15 @@ describe('pilotPrompt', () => {
   it('tells the Pilot to keep agent names to tmux-safe characters (O26)', () => {
     expect(pilotPrompt('g', 'pj-9').toLowerCase()).toContain('no spaces');
   });
+  it('instructs the Pilot to express phase dependencies as a DAG (id + dependsOn)', () => {
+    const p = pilotPrompt('g', 'pj-9');
+    expect(p).toContain('dependsOn');
+    expect(p.toLowerCase()).toContain('dag');
+  });
+  it('injects the provided parallelism block verbatim', () => {
+    const p = pilotPrompt('g', 'pj-9', undefined, 'orca', undefined, 'PLAN WIDE PLEASE');
+    expect(p).toContain('PLAN WIDE PLEASE');
+  });
 });
 
 describe('makePilot', () => {

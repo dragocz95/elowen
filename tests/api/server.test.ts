@@ -528,6 +528,26 @@ it('POST /tasks/:epicId/phases replans a residual goal into chained phases', asy
   expect(tasks.depsFor(r2.id)).toEqual([r1.id]); // R2 after R1
 });
 
+it('POST /tasks/:epicId/phases — a DAG replan does not overtake the epic\'s unfinished frontier', async () => {
+  const db = openDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'orca','/o')").run();
+  const tasks = new TaskStore(db); const config = new ConfigStore(db); config.update({ autopilot: { apiKey: 'k' } });
+  const app = createServer({
+    tasks, readiness: new Readiness(db), missions: new MissionStore(db), bus: new EventBus(),
+    engine: null as any, spawn: null as any, tmux: null as any,
+    project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' }, clock: new FakeClock(0), config,
+    // Replan returns a DAG: R2 depends on R1 (resolved within the new batch), R1 is independent.
+    makeInference: () => new FakeInference('[{"title":"R1","id":"r1","dependsOn":[]},{"title":"R2","id":"r2","dependsOn":["r1"]}]'),
+  });
+  const plan = await (await app.request('/tasks/plan', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ goal: 'epic', phases: [{ title: 'One' }] }) })).json() as { epic: { id: string }; phases: { id: string }[] };
+  const leaf = plan.phases[0].id; // the epic's current unfinished frontier
+  const res = await app.request(`/tasks/${plan.epic.id}/phases`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ goal: 'do more' }) });
+  expect(res.status).toBe(202);
+  const all = tasks.descendants(plan.epic.id);
+  const r1 = all.find(t => t.title === 'R1')!; const r2 = all.find(t => t.title === 'R2')!;
+  expect(tasks.depsFor(r1.id)).toEqual([leaf]);                  // independent new root still waits on the frontier
+  expect(tasks.depsFor(r2.id).sort()).toEqual([r1.id, leaf].sort()); // resolved-dep phase ALSO waits on the frontier, not just R1
+});
+
 it('POST /tasks/:epicId/phases returns 404 for a non-epic id', async () => {
   const db = openDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'orca','/o')").run();
   const app = createServer({

@@ -33,6 +33,7 @@ describe('sweepStuckTasks', () => {
     expect(r.reverted).toEqual(['t1']);
     expect(tasks.get('t1')!.status).toBe('open');
     expect(events.some((e) => e.type === 'task' && e.taskId === 't1' && e.status === 'open')).toBe(true);
+    expect(tasks.get('t1')!.resume_note).toContain('stalled'); // resume note tells the relaunched agent why
   });
 
   it('leaves a task whose agent session is still live', async () => {

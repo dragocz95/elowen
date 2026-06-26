@@ -85,13 +85,36 @@ describe('buildAgentCommand', () => {
   });
   it('tells a phase agent to build on prior phases instead of redoing the whole goal', () => {
     const cmd = buildAgentCommand({ program: 'opencode', model: 'm' }, { projectPath: '/o', taskId: 'orca-2', agentName: 'A', epicId: 'orca-epic' });
-    expect(cmd).toContain('ONE phase of a larger sequential mission');
-    expect(cmd).toContain('do NOT redo or re-verify');
+    expect(cmd).toContain('ONE phase of a larger mission');
+    expect(cmd).toContain('NOT redo or re-verify');
+    expect(cmd).toContain('edit ONLY the files your own deliverable needs'); // lane discipline for parallel phases
     expect(cmd).toContain('git status'); // nudged to check current repo state first
   });
   it('gives a standalone task the plain implement instruction (no phase framing)', () => {
     const cmd = buildAgentCommand({ program: 'opencode', model: 'm' }, { projectPath: '/o', taskId: 'orca-1', agentName: 'A' });
-    expect(cmd).not.toContain('ONE phase of a larger sequential mission');
+    expect(cmd).not.toContain('ONE phase of a larger mission');
+  });
+  it('renders a resume note as its own "new input" block, separate from the task details', () => {
+    const cmd = buildAgentCommand({ program: 'opencode', model: 'm' }, { projectPath: '/o', taskId: 'orca-1', agentName: 'A', taskDescription: 'Original brief', resumeNote: 'Review rejected: fix the failing test' });
+    expect(cmd).toContain('Original brief');                     // static details still present
+    expect(cmd).toContain('New input for this run');             // dedicated block header
+    expect(cmd).toContain('Review rejected: fix the failing test');
+  });
+  it('omits the resume-note block entirely on a clean first run (no note)', () => {
+    const cmd = buildAgentCommand({ program: 'opencode', model: 'm' }, { projectPath: '/o', taskId: 'orca-1', agentName: 'A', taskDescription: 'Original brief' });
+    expect(cmd).not.toContain('New input for this run');
+  });
+  it('renders the resume note in the phase template too (epicId set)', () => {
+    const cmd = buildAgentCommand({ program: 'opencode', model: 'm' }, { projectPath: '/o', taskId: 'orca-2', agentName: 'A', epicId: 'orca-epic', resumeNote: 'Review rejected: add the missing test' });
+    expect(cmd).toContain('ONE phase of a larger mission'); // confirms the worker-phase template
+    expect(cmd).toContain('New input for this run');
+    expect(cmd).toContain('Review rejected: add the missing test');
+  });
+  it('renders the resume note in the resume template too (reattached session)', () => {
+    const cmd = buildAgentCommand({ program: 'claude-code', model: 'sonnet' }, { projectPath: '/o', taskId: 'orca-1', agentName: 'A', resume: { program: 'claude-code', sessionId: 's1' }, resumeNote: 'Stalled and relaunched — re-check state' });
+    expect(cmd).toContain('resuming your earlier session'); // confirms the worker-resume template
+    expect(cmd).toContain('New input for this run');
+    expect(cmd).toContain('Stalled and relaunched — re-check state');
   });
   it('tells the agent to give long shell commands a generous timeout (opencode kills short-timeout commands)', () => {
     const cmd = buildAgentCommand({ program: 'opencode', model: 'm' }, { projectPath: '/o', taskId: 'orca-1', agentName: 'A' });

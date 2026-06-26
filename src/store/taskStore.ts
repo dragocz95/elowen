@@ -51,10 +51,16 @@ export class TaskStore {
     this.db.prepare('UPDATE tasks SET status = ? WHERE id = ?').run(status, id);
   }
 
-  /** Close a task, stamping the agent-reported result summary, outcome and completion time. */
+  /** Close a task, stamping the agent-reported result summary, outcome and completion time. A clean
+   *  ('ok') close also clears any pending resume note: the new input (review-reject/stuck/manual) has
+   *  been addressed, so it must not linger to mislead a later manual restart or show on the closed
+   *  task. A 'fail'/null close keeps it — the task may be re-spawned or escalated and still needs it. */
   close(id: string, opts?: { summary?: string | null; outcome?: string | null }): void {
     this.db.prepare(
-      `UPDATE tasks SET status = 'closed', result_summary = @summary, outcome = @outcome, closed_at = datetime('now') WHERE id = @id`
+      `UPDATE tasks SET status = 'closed', result_summary = @summary, outcome = @outcome,
+         closed_at = datetime('now'),
+         resume_note = CASE WHEN @outcome = 'ok' THEN NULL ELSE resume_note END
+       WHERE id = @id`
     ).run({ id, summary: opts?.summary ?? null, outcome: opts?.outcome ?? null });
   }
 
@@ -195,6 +201,14 @@ export class TaskStore {
       labels.push(`resume:${program}:${sessionId}`);
     }
     this.db.prepare('UPDATE tasks SET labels = ? WHERE id = ?').run(labels.join(','), id);
+  }
+
+  /** Pin the "resume note" — the new input a re-spawned agent should address (review feedback, a
+   *  stuck/manual relaunch reason). Stored as its own column, so setting it always REPLACES the
+   *  previous note (no stacking) and reading it needs no parsing. A blank note clears the field. On
+   *  re-spawn the note is rendered as a dedicated block in the worker prompt. */
+  setResumeNote(id: string, note: string): void {
+    this.db.prepare('UPDATE tasks SET resume_note = ? WHERE id = ?').run(note.trim() || null, id);
   }
 
   /** Tag the task with the agent (tmux session) running it, so task ↔ session is linkable. */

@@ -41,6 +41,10 @@ export function openDb(path: string): Db {
   addColumn(db, 'tasks', 'changed_files', 'TEXT');
   addColumn(db, 'tasks', 'base_sha', 'TEXT');
   addColumn(db, 'tasks', 'head_sha', 'TEXT');
+  // Transient input for a task's NEXT run — a review-reject rationale, or a stuck/manual relaunch
+  // reason — kept as a first-class field instead of being concatenated into the description, so it's
+  // set and read without parsing. Surfaces in the re-spawned agent's prompt. Old DBs default NULL.
+  addColumn(db, 'tasks', 'resume_note', 'TEXT');
   addColumn(db, 'users', 'is_admin', 'INTEGER NOT NULL DEFAULT 0');
   addColumn(db, 'users', 'allowed_execs', "TEXT NOT NULL DEFAULT ''");
   addColumn(db, 'users', 'name', "TEXT NOT NULL DEFAULT ''");

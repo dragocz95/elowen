@@ -140,6 +140,7 @@ export const cs = {
     fieldTitle: 'Název',
     titlePlaceholder: 'Co je potřeba udělat?',
     fieldDetails: 'Detaily',
+    resumeNote: 'Nový vstup pro další běh',
     detailsHint: 'Kontext pro agenta — co postavit, omezení, akceptační kritéria.',
     detailsPlaceholder: 'Popište úkol tak, aby agent přesně věděl, co má dělat…',
     fieldType: 'Typ',

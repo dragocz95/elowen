@@ -145,3 +145,88 @@ describe('async plan jobs (relay path)', () => {
     expect(await (await app.request('/tasks', { headers: { authorization: `Bearer ${token}` } })).json()).toEqual([]);
   });
 });
+
+describe('persistPlan — DAG from phase dependsOn', () => {
+  const post = (app: Awaited<ReturnType<typeof makeTestApp>>['app'], token: string, goal: string) =>
+    app.request('/tasks/plan', { method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: JSON.stringify({ goal }) });
+
+  it('wires per-phase dependsOn so independent phases are ready at once and a dependent one waits', async () => {
+    const fakePlan = JSON.stringify([
+      { title: 'API', type: 'feature', id: 'api', dependsOn: [] },
+      { title: 'Docs', type: 'chore', id: 'docs', dependsOn: [] },
+      { title: 'Wire', type: 'feature', id: 'wire', dependsOn: ['api', 'docs'] },
+    ]);
+    const { app, token, deps } = await makeTestApp({ fakePlan, apiKey: 'k' });
+    const { epicId } = await (await post(app, token, 'build it')).json() as { epicId: string };
+    const tasks = await (await app.request('/tasks', { headers: { authorization: `Bearer ${token}` } })).json() as { id: string; title: string }[];
+    const id = (t: string) => tasks.find((x) => x.title === t)!.id;
+
+    expect(deps.tasks.depsFor(id('API'))).toEqual([]);           // independent → no deps
+    expect(deps.tasks.depsFor(id('Docs'))).toEqual([]);
+    expect(deps.tasks.depsFor(id('Wire')).sort()).toEqual([id('API'), id('Docs')].sort());
+    // Two independent phases are ready simultaneously — the whole point of the DAG.
+    expect(deps.readiness.readyForEpic(epicId).map((t) => t.title).sort()).toEqual(['API', 'Docs']);
+  });
+
+  it('falls back to the legacy linear chain when no phase carries an id', async () => {
+    const fakePlan = JSON.stringify([{ title: 'P1' }, { title: 'P2' }, { title: 'P3' }]);
+    const { app, token, deps } = await makeTestApp({ fakePlan, apiKey: 'k' });
+    const { epicId } = await (await post(app, token, 'legacy')).json() as { epicId: string };
+    const tasks = await (await app.request('/tasks', { headers: { authorization: `Bearer ${token}` } })).json() as { id: string; title: string }[];
+    const id = (t: string) => tasks.find((x) => x.title === t)!.id;
+
+    expect(deps.tasks.depsFor(id('P1'))).toEqual([]);            // first phase, fresh epic → no leaves
+    expect(deps.tasks.depsFor(id('P2'))).toEqual([id('P1')]);    // chained
+    expect(deps.tasks.depsFor(id('P3'))).toEqual([id('P2')]);
+    expect(deps.readiness.readyForEpic(epicId).map((t) => t.title)).toEqual(['P1']); // one at a time
+  });
+
+  it('auto-enables PR mode (pr:on) when more than one session is requested and PR is left to default', async () => {
+    const { app, token } = await makeTestApp({ fakePlan: '[{"title":"P","type":"task"}]', apiKey: 'k' });
+    const { epicId } = await (await app.request('/tasks/plan', { method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: JSON.stringify({ goal: 'parallel work', maxSessions: 2 }) })).json() as { epicId: string };
+    const tasks = await (await app.request('/tasks', { headers: { authorization: `Bearer ${token}` } })).json() as { id: string; labels: string[] }[];
+    expect(tasks.find((t) => t.id === epicId)?.labels).toContain('pr:on');
+  });
+
+  it('does not override an explicit PR opt-out even when multiple sessions are requested', async () => {
+    const { app, token } = await makeTestApp({ fakePlan: '[{"title":"P","type":"task"}]', apiKey: 'k' });
+    const { epicId } = await (await app.request('/tasks/plan', { method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: JSON.stringify({ goal: 'parallel but no PR', maxSessions: 2, prEnabled: false }) })).json() as { epicId: string };
+    const tasks = await (await app.request('/tasks', { headers: { authorization: `Bearer ${token}` } })).json() as { id: string; labels: string[] }[];
+    expect(tasks.find((t) => t.id === epicId)?.labels).toContain('pr:off');
+  });
+
+  it('leaves PR to default for a single-session plan (no auto pr:on)', async () => {
+    const { app, token } = await makeTestApp({ fakePlan: '[{"title":"P","type":"task"}]', apiKey: 'k' });
+    const { epicId } = await (await app.request('/tasks/plan', { method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: JSON.stringify({ goal: 'solo', maxSessions: 1 }) })).json() as { epicId: string };
+    const tasks = await (await app.request('/tasks', { headers: { authorization: `Bearer ${token}` } })).json() as { id: string; labels: string[] }[];
+    expect((tasks.find((t) => t.id === epicId)?.labels ?? []).some((l) => l.startsWith('pr:'))).toBe(false);
+  });
+
+  it('does not let a phase with only unknown (typo\'d) deps start immediately — falls back to the previous phase', async () => {
+    const fakePlan = JSON.stringify([
+      { title: 'First', type: 'feature', id: 'first', dependsOn: [] },
+      { title: 'Second', type: 'feature', id: 'second', dependsOn: ['nope'] }, // references a phase that doesn't exist
+    ]);
+    const { app, token, deps } = await makeTestApp({ fakePlan, apiKey: 'k' });
+    const { epicId } = await (await post(app, token, 'typo deps')).json() as { epicId: string };
+    const tasks = await (await app.request('/tasks', { headers: { authorization: `Bearer ${token}` } })).json() as { id: string; title: string }[];
+    const id = (t: string) => tasks.find((x) => x.title === t)!.id;
+
+    expect(deps.tasks.depsFor(id('First'))).toEqual([]);             // genuinely independent → ready
+    expect(deps.tasks.depsFor(id('Second'))).toEqual([id('First')]); // declared-but-unmapped → waits on the previous phase, not ready now
+    expect(deps.readiness.readyForEpic(epicId).map((t) => t.title)).toEqual(['First']); // ordering preserved, no early parallel start
+  });
+
+  it('breaks a hallucinated dependency cycle instead of deadlocking the mission', async () => {
+    const fakePlan = JSON.stringify([
+      { title: 'A', id: 'a', dependsOn: ['b'] },
+      { title: 'B', id: 'b', dependsOn: ['a'] },
+    ]);
+    const { app, token, deps } = await makeTestApp({ fakePlan, apiKey: 'k' });
+    const { epicId } = await (await post(app, token, 'cycle')).json() as { epicId: string };
+    // Exactly one edge survives the cycle guard, so at least one phase is ready — never a deadlock.
+    const edges = deps.tasks.allDeps();
+    expect(edges).toHaveLength(1);
+    expect(deps.readiness.readyForEpic(epicId).length).toBeGreaterThan(0);
+  });
+});

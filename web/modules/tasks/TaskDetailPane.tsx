@@ -138,6 +138,12 @@ export function TaskDetailPane({ taskId, onEdit, onBack }: { taskId: string; onE
         </Field>
       ) : null}
 
+      {task.resume_note ? (
+        <Field label={t.tasks.resumeNote}>
+          <p className="whitespace-pre-wrap text-sm leading-relaxed text-text-muted">{task.resume_note}</p>
+        </Field>
+      ) : null}
+
       {depTasks.length > 0 ? (
         <Field label={t.tasks.dependencies}>
           <ul className="flex flex-col gap-1">

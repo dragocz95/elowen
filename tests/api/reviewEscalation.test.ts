@@ -70,7 +70,7 @@ describe('review escalation + self-heal', () => {
     await new Promise((r) => setTimeout(r, 40)); // verdict .then() re-opens + ticks (re-spawn)
     const phase = t.deps.tasks.get(childId)!;
     expect(phase.status).toBe('in_progress'); // re-spawned to fix
-    expect(phase.description).toContain('missing tests'); // review feedback injected for the fixing agent
+    expect(phase.resume_note).toContain('missing tests'); // review feedback pinned as the fixing agent's new input
     expect(phase.labels.some((l) => l === 'reviewfix:1')).toBe(true); // bounded counter bumped
     expect(t.deps.tasks.get(nextId)!.status).toBe('blocked'); // next phase still gated
   });

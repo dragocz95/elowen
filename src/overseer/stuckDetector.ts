@@ -66,6 +66,9 @@ export async function sweepStuckTasks(d: StuckDetectorDeps): Promise<{ reverted:
       d.bus.publish({ type: 'task', taskId: t.id, status: 'blocked' });
       escalated.push(t.id);
     } else {
+      // Tell the re-spawned agent WHY it's running again (it resumes its prior session, so without
+      // this it would have no signal it previously stalled). Single resume note → never stacks.
+      d.tasks.setResumeNote(t.id, 'Your previous run stalled and was relaunched — re-check the current state (git status, build/tests) and carry the task to completion.');
       d.tasks.setStatus(t.id, 'open');
       d.bus.publish({ type: 'task', taskId: t.id, status: 'open' });
       reverted.push(t.id);

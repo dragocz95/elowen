@@ -66,8 +66,15 @@ describe('worktree', () => {
     expect(git(repo, 'branch', '--list', 'orca/feat-5').trim()).toContain('orca/feat-5'); // branch survives
   });
 
-  it('detectBaseBranch falls back to main without a remote', async () => {
-    expect(await detectBaseBranch(repo, '')).toBe('main');
+  it('detectBaseBranch falls back to the current branch without a remote', async () => {
+    expect(await detectBaseBranch(repo, '')).toBe('main'); // repo is on `main`
+  });
+
+  it('detectBaseBranch returns the actual default branch on a master-named repo (no silent main fallback)', async () => {
+    // A local repo whose default is `master` (or anything non-main) must resolve to THAT branch, else
+    // `git worktree add ... main` fails and PR-native mode silently degrades to the shared checkout.
+    git(repo, 'branch', '-m', 'main', 'master');
+    expect(await detectBaseBranch(repo, '')).toBe('master');
   });
 
   it('detectBaseBranch honours an explicit configured base', async () => {

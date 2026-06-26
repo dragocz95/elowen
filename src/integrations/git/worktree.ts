@@ -89,5 +89,16 @@ export async function detectBaseBranch(repo: string, configured: string): Promis
     const ref = stdout.trim().replace(/^origin\//, '');
     if (ref) return ref;
   } catch { /* no origin/HEAD — fall through */ }
+  // No remote default — common for local-only project checkouts. Use the repo's CURRENT branch so a
+  // `master` (or any non-`main` default) still resolves to a REAL branch. Without this, the base falls
+  // back to a possibly-nonexistent `main`, `git worktree add` fails, and PR-native mode silently
+  // degrades to the shared checkout — which kills the parallelism the worktree was meant to enable.
+  try {
+    const { stdout } = await run('git', ['-C', cwd, 'symbolic-ref', '--short', 'HEAD']);
+    const ref = stdout.trim();
+    // Skip an `orca/…` ref: if the main checkout happens to sit on a prior mission branch, basing a new
+    // mission off it would chain unrelated work. Only a real base branch (main/master/…) qualifies here.
+    if (ref && !ref.startsWith('orca/')) return ref;
+  } catch { /* detached HEAD — fall through */ }
   return 'main';
 }

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parsePhases, decompose, planPrompt, modelsBlock, defaultPromptTemplate, _resetDefaultCache } from '../../src/overseer/planner.js';
+import { parsePhases, decompose, planPrompt, modelsBlock, parallelismBlock, defaultPromptTemplate, _resetDefaultCache } from '../../src/overseer/planner.js';
 import { FakeInference } from '../../src/inference/client.js';
 
 describe('planner.parsePhases', () => {
@@ -66,6 +66,31 @@ describe('planner.parsePhases', () => {
   it('throws when the array has no valid phases', () => {
     expect(() => parsePhases('[]')).toThrow();
   });
+
+  it('captures id and dependsOn (including an explicit empty array)', () => {
+    const phases = parsePhases('[{"title":"API","id":"api","dependsOn":[]},{"title":"UI","id":"ui","dependsOn":["api"]}]');
+    expect(phases[0].id).toBe('api');
+    expect(phases[0].dependsOn).toEqual([]); // [] = no deps, distinct from absent
+    expect(phases[1].id).toBe('ui');
+    expect(phases[1].dependsOn).toEqual(['api']);
+  });
+
+  it('sanitizes id and dependsOn to slug chars and drops empty entries', () => {
+    const phases = parsePhases('[{"title":"A","id":"my id!","dependsOn":["a b","ok-1",":x","   "]}]');
+    expect(phases[0].id).toBe('myid');
+    expect(phases[0].dependsOn).toEqual(['ab', 'ok-1', 'x']); // blank entry dropped
+  });
+
+  it('omits id/dependsOn for a legacy plan without them', () => {
+    const phases = parsePhases('[{"title":"A","type":"task"}]');
+    expect(phases[0].id).toBeUndefined();
+    expect(phases[0].dependsOn).toBeUndefined();
+  });
+
+  it('treats a non-array dependsOn as absent', () => {
+    const phases = parsePhases('[{"title":"A","id":"a","dependsOn":"api"}]');
+    expect(phases[0].dependsOn).toBeUndefined();
+  });
 });
 
 describe('planner.planPrompt', () => {
@@ -117,6 +142,19 @@ describe('planner.planPrompt', () => {
     expect(out.startsWith('- sonnet: coder')).toBe(true);
     expect(out).toContain('Plan: ship it');
   });
+  it('substitutes a parallelism block into a {{parallelism}} placeholder', () => {
+    const out = planPrompt('ship it', 'P:\n{{parallelism}}\nGoal: {{goal}}', undefined, undefined, 'RUN WIDE');
+    expect(out).toContain('RUN WIDE');
+    expect(out).not.toContain('{{parallelism}}');
+  });
+  it('prepends the parallelism block when the template has no {{parallelism}} placeholder', () => {
+    const out = planPrompt('ship it', 'Plan: {{goal}}', undefined, undefined, 'RUN WIDE');
+    expect(out.startsWith('RUN WIDE')).toBe(true);
+    expect(out).toContain('Plan: ship it');
+  });
+  it('default template carries a {{parallelism}} placeholder', () => {
+    expect(defaultPromptTemplate()).toContain('{{parallelism}}');
+  });
 });
 
 describe('planner.modelsBlock', () => {
@@ -130,6 +168,22 @@ describe('planner.modelsBlock', () => {
   it('returns empty string when nothing qualifies', () => {
     expect(modelsBlock(['sonnet'], {})).toBe('');
     expect(modelsBlock([], { sonnet: 'x' })).toBe('');
+  });
+});
+
+describe('planner.parallelismBlock', () => {
+  it('invites parallel branches only when >1 session AND isolated worktrees', () => {
+    const block = parallelismBlock(3, true);
+    expect(block).toMatch(/AT THE SAME TIME/);
+    expect(block).toMatch(/3 phases/);
+    expect(block).toMatch(/dependsOn: \[\]/);
+  });
+  it('asks for a sequential chain with a single session', () => {
+    expect(parallelismBlock(1, true)).toMatch(/ONE AT A TIME/);
+  });
+  it('asks for a sequential chain in a shared (non-isolated) checkout even with >1 session', () => {
+    // The single-writer gate would serialize anyway — emitting parallel phases there is false parallelism.
+    expect(parallelismBlock(2, false)).toMatch(/ONE AT A TIME/);
   });
 });
 

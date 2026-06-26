@@ -7,6 +7,7 @@ import type { TaskStore } from '../store/taskStore.js';
 import { logger } from '../shared/logger.js';
 import { createMissionWorktree, removeWorktree, commitAll, pushBranch, detectBaseBranch } from '../integrations/git/worktree.js';
 import { createPR, readPRReviews, mergePR, type MergeResult } from '../integrations/github/pr.js';
+import { resolvePrEnabled } from './prMode.js';
 
 const run = promisify(execFile);
 const log = logger('mission-git');
@@ -44,13 +45,12 @@ export class MissionGit {
 
   /** Whether the PR-native workflow is on for this mission. Resolution order, most specific first: the
    *  epic's own `pr:on`/`pr:off` label (the per-task choice from the task form), then the project's
-   *  `pr_enabled` override, then the global autopilot default. Lets one task opt in/out independently. */
+   *  `pr_enabled` override, then the global autopilot default. Lets one task opt in/out independently.
+   *  Shares the resolution algorithm with planning time via resolvePrEnabled (single source of truth). */
   private prEnabled(missionId: string): boolean {
     const epic = this.d.tasks.get(missionId.replace(/^m-/, ''));
-    if (epic?.labels.includes('pr:on')) return true;
-    if (epic?.labels.includes('pr:off')) return false;
-    const override = this.projectFor(missionId)?.pr_enabled ?? null;
-    return override ?? this.d.config.get().autopilot.prEnabled;
+    const override = epic?.labels.includes('pr:on') ? true : epic?.labels.includes('pr:off') ? false : null;
+    return resolvePrEnabled(override, this.projectFor(missionId)?.pr_enabled ?? null, this.d.config.get().autopilot.prEnabled);
   }
 
   /** The project a mission belongs to, resolved via its epic (mission id is `m-<epicId>`). */

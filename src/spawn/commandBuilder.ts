@@ -9,6 +9,10 @@ export interface SpawnCtx {
   /** Task title + details, injected into the agent prompt so it knows what to do. */
   taskTitle?: string;
   taskDescription?: string;
+  /** Transient input for THIS run — a review-reject rationale, or a stuck/manual relaunch reason —
+   *  rendered as its own block in the prompt so the agent addresses it (distinct from the static task
+   *  details). Empty/unset on a clean first run. */
+  resumeNote?: string;
   /** Shell command the agent runs to close its task when done. Defaults to `orca close <id>`. */
   closeCommand?: string;
   /** The parent epic's id, when this task is a mission phase. Lets the final-phase agent close the epic itself. */
@@ -49,16 +53,20 @@ export function buildAgentCommand(spec: AgentSpec, ctx: SpawnCtx): string {
   const closeCommand = ctx.closeCommand ?? `orca close ${ctx.taskId}`;
   const titlePart = ctx.taskTitle ? `: ${ctx.taskTitle}` : '';
   const detailsPart = ctx.taskDescription && ctx.taskDescription.trim() ? `\n\nDetails:\n${ctx.taskDescription.trim()}` : '';
+  // A relaunch carries fresh input the agent must address (review feedback, a stuck/manual restart
+  // reason). Render it as its own block — separate from the static task details — so it reads as "new
+  // this run", not as part of the original brief. Empty on a clean first run.
+  const resumePart = ctx.resumeNote && ctx.resumeNote.trim() ? `\n\nNew input for this run — address it:\n${ctx.resumeNote.trim()}` : '';
   // A resumed agent reattaches to its prior session — it already holds the full goal and what it did,
   // so re-injecting the whole worker preamble would make it restart from scratch. Send a short
-  // continuation instead: pick up where it left off, fold in any new input (details), then close.
+  // continuation instead: pick up where it left off, fold in any new input, then close.
   // A phase agent (epicId, not resumed) must NOT redo earlier phases — the phase template carries the
   // "build on prior phases" framing the standalone one lacks.
   let prompt = ctx.resume
-    ? render('worker-resume', { agentName: ctx.agentName, taskId: ctx.taskId, titlePart, detailsPart, closeCommand })
+    ? render('worker-resume', { agentName: ctx.agentName, taskId: ctx.taskId, titlePart, detailsPart, resumePart, closeCommand })
     : ctx.epicId
-      ? render('worker-phase', { agentName: ctx.agentName, taskId: ctx.taskId, titlePart, detailsPart, epicId: ctx.epicId, closeCommand, cli: ctx.cli ?? 'orca' })
-      : render('worker', { agentName: ctx.agentName, taskId: ctx.taskId, titlePart, detailsPart, closeCommand });
+      ? render('worker-phase', { agentName: ctx.agentName, taskId: ctx.taskId, titlePart, detailsPart, resumePart, epicId: ctx.epicId, closeCommand, cli: ctx.cli ?? 'orca' })
+      : render('worker', { agentName: ctx.agentName, taskId: ctx.taskId, titlePart, detailsPart, resumePart, closeCommand });
   if (ctx.epicId && ctx.epicCloseCommand) {
     // The agent owns mission completion: after closing its own phase, if it was the last
     // one, it closes the epic itself and writes the overall result summary.

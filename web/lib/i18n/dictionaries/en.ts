@@ -140,6 +140,7 @@ export const en = {
     fieldTitle: 'Title',
     titlePlaceholder: 'What needs doing?',
     fieldDetails: 'Details',
+    resumeNote: 'New input for next run',
     detailsHint: 'Context handed to the agent — what to build, constraints, acceptance.',
     detailsPlaceholder: 'Describe the task so the agent knows exactly what to do…',
     fieldType: 'Type',
