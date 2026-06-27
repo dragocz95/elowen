@@ -19,6 +19,7 @@ import { IconButton } from '../../components/ui/IconButton';
 import { Badge } from '../../components/ui/Badge';
 import { useToast } from '../../components/ui/Toast';
 import { LiveTail } from '../../components/terminal/LiveTail';
+import { TerminalModal } from '../../components/terminal/TerminalModal';
 import { useTranslation } from '../../lib/i18n';
 import { taskTypeMeta, taskTypeLabel, TASK_TYPES, PRIORITIES } from './taskMeta';
 import { DepPicker } from './DepPicker';
@@ -122,6 +123,8 @@ export function TaskModal({ task, onClose, initialSchedule, initialMode, initial
   const [planJobId, setPlanJobId] = useState<string | null>(null);
   const [planError, setPlanError] = useState<string | null>(null);
   const planJob = usePlanJob(planJobId);
+  // Clicking the planner's live tail blows it up into the full PTY terminal — same as any session.
+  const [openPlanTerm, setOpenPlanTerm] = useState(false);
   const [manual, setManual] = useState(false);
   const [manualPhases, setManualPhases] = useState<ManualPhase[]>([{ title: '', type: 'task' }]);
 
@@ -386,10 +389,15 @@ export function TaskModal({ task, onClose, initialSchedule, initialMode, initial
                 {planJob.data?.sessionName && (
                   <div className="flex flex-col gap-1.5">
                     <span className="text-xs font-medium uppercase tracking-wide text-text-muted">{t.tasks.plannerPreview}</span>
-                    <LiveTail name={planJob.data.sessionName} lines={16} heightClass="max-h-56" />
+                    <LiveTail name={planJob.data.sessionName} lines={16} heightClass="max-h-56" onExpand={() => setOpenPlanTerm(true)} />
                   </div>
                 )}
               </div>
+            )}
+            {/* The planner's full interactive terminal, opened from the live tail above. Portals to
+                <body> over this modal; auto-closes when the pilot session is reaped (planning done). */}
+            {openPlanTerm && planJob.data?.sessionName && (
+              <TerminalModal session={planJob.data.sessionName} onClose={() => setOpenPlanTerm(false)} />
             )}
             {planError && !planning && (
               <div className="flex items-start gap-2 rounded-md border border-warning/40 bg-warning/10 px-3 py-2.5 text-sm text-warning">
