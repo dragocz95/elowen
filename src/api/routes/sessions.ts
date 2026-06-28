@@ -1,5 +1,7 @@
 import { streamSSE } from 'hono/streaming';
 import { classifySession } from '../../overseer/sessionInfo.js';
+import { parseBody } from '../validation.js';
+import { launchSessionSchema, sessionKeysSchema, sessionInputSchema, sessionResizeSchema } from '../schemas/sessions.js';
 import type { OrcaApp, RouteContext } from '../context.js';
 
 /** Live tmux session surface: list, manual launch, kill, keystrokes/raw input, resize, pane capture,
@@ -19,7 +21,7 @@ export function registerSessionRoutes(app: OrcaApp, ctx: RouteContext): void {
       return { ...info, projectId: d.agents?.projectFor(s.slice('orca-'.length)) ?? undefined };
     })));
   app.post('/sessions', async (c) => {
-    const { taskId, exec } = await c.req.json() as { taskId: string; exec?: string };
+    const { taskId, exec } = await parseBody(c, launchSessionSchema);
     if (exec && !d.config.get().allowedExecs.includes(exec)) return c.json({ error: 'exec not allowed' }, 400);
     if (exec && !execAllowedForUser(c, exec)) return c.json({ error: 'exec not allowed for user' }, 403);
     const task = d.tasks.get(taskId);
@@ -49,14 +51,10 @@ export function registerSessionRoutes(app: OrcaApp, ctx: RouteContext): void {
   });
   app.post('/sessions/:name/keys', async c => {
     if (!sessionAccessible(c, c.req.param('name'))) return c.json({ error: 'forbidden' }, 403);
-    const { keys } = await c.req.json().catch(() => ({})) as { keys?: unknown };
-    // Validate before handing to `tmux send-keys`: it must be a non-empty list of plain key tokens.
-    // Reject anything starting with '-' so a crafted entry can't smuggle a tmux flag (e.g. `-t
-    // <other-session>`) and redirect keystrokes into a session the caller shouldn't reach.
-    if (!Array.isArray(keys) || keys.length === 0 || !keys.every((k) => typeof k === 'string' && k.length > 0 && !k.startsWith('-'))) {
-      return c.json({ error: 'keys must be a non-empty array of non-flag strings' }, 400);
-    }
-    await d.tmux.sendKeys(c.req.param('name'), keys as string[]);
+    // The schema validates a non-empty list of plain key tokens and rejects any leading-'-' entry, so a
+    // crafted token can't smuggle a tmux flag (e.g. `-t <other-session>`) into `tmux send-keys`.
+    const { keys } = await parseBody(c, sessionKeysSchema);
+    await d.tmux.sendKeys(c.req.param('name'), keys);
     return c.json({ ok: true });
   });
   app.post('/sessions/:name/input', async c => {
@@ -64,15 +62,13 @@ export function registerSessionRoutes(app: OrcaApp, ctx: RouteContext): void {
     // are forwarded verbatim to the pane via `send-keys -l`, so the advisor terminal behaves like a
     // real one. `-l` + `--` (in the driver) make a leading '-' safe, so no flag-token validation here.
     if (!sessionAccessible(c, c.req.param('name'))) return c.json({ error: 'forbidden' }, 403);
-    const { data } = await c.req.json().catch(() => ({})) as { data?: unknown };
-    if (typeof data !== 'string' || data.length === 0) return c.json({ error: 'data must be a non-empty string' }, 400);
+    const { data } = await parseBody(c, sessionInputSchema);
     await d.tmux.sendRaw(c.req.param('name'), data);
     return c.json({ ok: true });
   });
   app.post('/sessions/:name/resize', async c => {
     if (!sessionAccessible(c, c.req.param('name'))) return c.json({ error: 'forbidden' }, 403);
-    const { cols, rows } = await c.req.json() as { cols?: number; rows?: number };
-    if (typeof cols !== 'number' || typeof rows !== 'number') return c.json({ error: 'cols and rows required' }, 400);
+    const { cols, rows } = await parseBody(c, sessionResizeSchema);
     await d.tmux.resize(c.req.param('name'), cols, rows);
     return c.json({ ok: true });
   });

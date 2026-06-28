@@ -1,3 +1,5 @@
+import { parseBody } from '../validation.js';
+import { advisorStartSchema } from '../schemas/advisor.js';
 import type { OrcaApp, RouteContext } from '../context.js';
 
 /** Per-user advisor lifecycle (status/start/stop). Full-scope callers only — a spawned agent must not
@@ -14,8 +16,7 @@ export function registerAdvisorRoutes(app: OrcaApp, ctx: RouteContext): void {
   app.post('/advisor/start', async c => {
     if (!d.advisor) return c.json({ error: 'advisor unavailable' }, 503);
     if (c.get('tokenScope') === 'agent') return c.json({ error: 'forbidden' }, 403);
-    const { exec } = await c.req.json().catch(() => ({})) as { exec?: unknown };
-    if (typeof exec !== 'string' || !exec) return c.json({ error: 'exec required' }, 400);
+    const { exec } = await parseBody(c, advisorStartSchema);
     try { return c.json(await d.advisor.start(c.get('user').id, exec), 201); }
     catch (e) {
       // A permission rejection is the user's fault (403); a spawn/tmux failure is ours (500).

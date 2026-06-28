@@ -1,4 +1,6 @@
 import { assembleMissionDetail } from '../../store/missionDetail.js';
+import { parseBody } from '../validation.js';
+import { engageMissionSchema, missionActionSchema, overseerDecideSchema } from '../schemas/missions.js';
 import type { AccessCtx, OrcaApp, RouteContext } from '../context.js';
 
 /** Mission lifecycle + the overseer long-poll: list/detail, engage, pause/resume, disengage, manual
@@ -30,10 +32,9 @@ export function registerMissionRoutes(app: OrcaApp, ctx: RouteContext): void {
     return c.json({ ...detail, pr: d.missionGit?.prInfo(c.req.param('id')) ?? null });
   });
   app.post('/missions', async c => {
-    const b = await c.req.json().catch(() => ({})) as { epicId?: string; autonomy?: string; maxSessions?: number };
     // Validate the epic up front: an absent/unknown epicId would otherwise create a zombie mission
     // (id `m-undefined`, no epic to tick) that reports `active` over SSE but never progresses.
-    if (!b.epicId) return c.json({ error: 'epicId required' }, 400);
+    const b = await parseBody(c, engageMissionSchema);
     if (!d.tasks.get(b.epicId)) return c.json({ error: 'epic not found' }, 404);
     if (!missionAccessible(c, b.epicId)) return c.json({ error: 'forbidden' }, 403);
     // Default the engage params (mirrors /tasks/plan) so a partial body can't reach the engine with
@@ -50,7 +51,7 @@ export function registerMissionRoutes(app: OrcaApp, ctx: RouteContext): void {
     const mission = d.missions.get(id);
     if (!mission) return c.json({ error: 'mission not found' }, 404);
     if (!missionAccessible(c, mission.epic_id)) return c.json({ error: 'forbidden' }, 403);
-    const { action } = await c.req.json();
+    const { action } = await parseBody(c, missionActionSchema);
     if (action === 'pause') {
       await d.engine.pause(id); // kills running agents + reverts their tasks, then marks paused
     } else if (action === 'resume') {
@@ -117,8 +118,7 @@ export function registerMissionRoutes(app: OrcaApp, ctx: RouteContext): void {
   app.post('/missions/:id/overseer/decide', async (c) => {
     const id = c.req.param('id');
     if (overseerForbidden(c, id)) return c.json({ error: 'forbidden' }, 403);
-    const b = await c.req.json().catch(() => ({})) as { id?: string; approve?: boolean; confidence?: number; rationale?: string; choice?: string };
-    if (!b.id) return c.json({ error: 'id required' }, 400);
+    const b = await parseBody(c, overseerDecideSchema);
     const ok = decisionQueue.resolve(id, b.id, {
       approve: b.approve === true,
       confidence: typeof b.confidence === 'number' ? Math.max(0, Math.min(1, b.confidence)) : 0,
