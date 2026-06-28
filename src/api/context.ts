@@ -10,8 +10,13 @@ import { createTicketStore, type TicketStore } from '../terminal/ticketStore.js'
 import type { Phase } from '../overseer/planner.js';
 import type { EventProjectDeps } from './eventProject.js';
 import type { Task } from '../store/types.js';
+import type { Hono } from 'hono';
 import type { User, TokenScope } from '../store/userStore.js';
 import type { ServerDeps } from './deps.js';
+
+/** The daemon's Hono app, typed with the per-request variables the auth middleware sets. Shared by
+ *  `createServer` and every route-family registrar so they all agree on `c.get('user')` etc. */
+export type OrcaApp = Hono<{ Variables: { user: User; token: string; tokenScope: TokenScope } }>;
 
 /** Minimal structural view of the request context the access predicates read (the real Hono context
  *  satisfies it). Overloaded `get` so a caller can read both the user and the token scope. */

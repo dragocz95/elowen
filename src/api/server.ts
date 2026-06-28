@@ -2,8 +2,7 @@ import { basename, dirname, join } from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
-import { writeFileSync, readFileSync, existsSync, mkdirSync, unlinkSync } from 'node:fs';
-import { createHmac, timingSafeEqual } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { hermesStatus, installOrcaMcp } from '../integrations/hermesInstall.js';
 import { detectClis } from '../integrations/cliDetection.js';
 import { detectGithubAuth } from '../integrations/github/auth.js';
@@ -27,8 +26,8 @@ import { uniqueName } from '../daemon/uniqueName.js';
 import { isNewer } from '../cli/version.js';
 import { assembleMissionDetail } from '../store/missionDetail.js';
 import type { User, TokenScope } from '../store/userStore.js';
-import { authMiddleware } from './auth.js';
-import { createRouteContext, type AccessCtx } from './context.js';
+import { createRouteContext, type AccessCtx, type OrcaApp } from './context.js';
+import { registerRoutes } from './routes/index.js';
 import type { ServerDeps } from './deps.js';
 import { handleMcpRequest } from '../mcp/server.js';
 import type { WebPushSubscription } from '../store/pushSubscriptionStore.js';
@@ -87,7 +86,7 @@ export function createServer(d: ServerDeps): Hono<{ Variables: { user: User; tok
     pathFor, usagePathFor, checkoutPathFor, resolveTarget,
     persistPlan, reapPilotSession, finalizePlanJob, releaseGatedDependents,
   } = ctx;
-  const app = new Hono<{ Variables: { user: User; token: string; tokenScope: TokenScope } }>();
+  const app: OrcaApp = new Hono<{ Variables: { user: User; token: string; tokenScope: TokenScope } }>();
   app.use('*', cors());
   // Single source of truth for malformed-body handling: most POST/PATCH routes call `c.req.json()`
   // without a per-route catch, and Hono throws a SyntaxError on invalid JSON. Convert that to a clean
@@ -101,242 +100,7 @@ export function createServer(d: ServerDeps): Hono<{ Variables: { user: User; tok
   // Public: lets the web decide whether to show onboarding (no users yet) or the login form.
   app.get('/setup', c => c.json({ needsSetup: d.users ? d.users.count() === 0 : false }));
 
-  if (d.users) {
-    const users = d.users;
-    app.use('*', authMiddleware(users, () => d.config.get().security.tokenTtlDays));
-
-    // Capability gate for the agent service token. A spawned worker/overseer/pilot runs with
-    // --dangerously-skip-permissions, so a prompt-injected agent must NOT reach the admin surface
-    // (users, /config, project register/delete). Allow ONLY the verbs its CLI actually drives:
-    //   • close its task        → PATCH /tasks/:id
-    //   • submit a plan         → POST  /plan/:jobId/submit  (+ GET /plan/:jobId)
-    //   • overseer poll/decide  → GET /missions/:id/overseer/next, POST /missions/:id/overseer/decide
-    //   • read-only listings    → GET /tasks, /tasks/ready, /sessions   (orca ls|ready|sessions)
-    // Project ownership of the affected row is still enforced downstream (canAccessProject etc.),
-    // so the agent can't cross tenancy even within the allow-list.
-    const agentAllowed = (method: string, path: string): boolean => {
-      if (method === 'GET') {
-        if (path === '/tasks' || path === '/tasks/ready' || path === '/sessions') return true;
-        if (path === '/notes') return true; // read a mission's handoff notes (orca note ls)
-        if (/^\/plan\/[^/]+$/.test(path)) return true;
-        if (/^\/missions\/[^/]+\/overseer\/next$/.test(path)) return true;
-      }
-      if (method === 'PATCH' && /^\/tasks\/[^/]+$/.test(path)) return true;
-      if (method === 'POST') {
-        if (path === '/notes') return true; // leave a handoff note for later phases (orca note add)
-        if (/^\/plan\/[^/]+\/submit$/.test(path)) return true;
-        if (/^\/missions\/[^/]+\/overseer\/decide$/.test(path)) return true;
-      }
-      return false;
-    };
-    app.use('*', async (c, next) => {
-      if (c.get('tokenScope') !== 'agent') return next();
-      if (!agentAllowed(c.req.method, c.req.path)) return c.json({ error: 'forbidden' }, 403);
-      return next();
-    });
-
-    // Gate the project-scoped surface: a non-admin must be assigned to the daemon's project to
-    // touch its tasks/missions/sessions. Admin passes (canAccess checks is_admin). Without a
-    // userProjects store this is a no-op (single-user mode keeps full access).
-    if (d.userProjects) {
-      const up = d.userProjects;
-      // Every route family that exposes the daemon's project data — including the activity log and
-      // the live SSE event stream, which carry task/mission ids + statuses. Boundary-matched so
-      // '/tasksfoo' can't sneak past '/tasks'.
-      const GATED = ['/tasks', '/missions', '/sessions', '/activity', '/events', '/usage'];
-      app.use('*', async (c, next) => {
-        const p = c.req.path;
-        if (!GATED.some((g) => p === g || p.startsWith(g + '/'))) return next();
-        // An advisor session is per-user, not project-scoped: its access is governed by ownership in
-        // the route's own sessionAccessible check, so the project gate must not pre-empt it (the user
-        // need not be assigned to the daemon's project to reach their own advisor).
-        const sess = p.match(/^\/sessions\/([^/]+)/);
-        if (sess?.[1] && classifySession(decodeURIComponent(sess[1])).role === 'advisor') return next();
-        if (users.count() === 0) return next(); // setup mode — no users to gate yet
-        const u = c.get('user');
-        if (u && up.canAccess(u.id, d.project.id)) return next();
-        return c.json({ error: 'forbidden' }, 403);
-      });
-    }
-
-    // Brute-force guard for the only unauthenticated, credential-checking endpoint: a fixed window per
-    // client IP. Prefer x-real-ip (set by our nginx) over the client-spoofable x-forwarded-for. In-memory
-    // per-process is enough for the single-daemon deployment; entries self-expire and are swept when the
-    // map grows large so distinct-IP traffic can't leak memory.
-    const LOGIN_MAX = 10, LOGIN_WINDOW_MS = 5 * 60_000;
-    const loginHits = new Map<string, { count: number; resetAt: number }>();
-    const loginLimited = (ip: string, now: number): boolean => {
-      if (loginHits.size > 5000) for (const [k, v] of loginHits) if (now >= v.resetAt) loginHits.delete(k);
-      const h = loginHits.get(ip);
-      if (!h || now >= h.resetAt) { loginHits.set(ip, { count: 1, resetAt: now + LOGIN_WINDOW_MS }); return false; }
-      h.count++;
-      return h.count > LOGIN_MAX;
-    };
-    app.post('/auth/login', async (c) => {
-      const ip = c.req.header('x-real-ip') ?? c.req.header('x-forwarded-for')?.split(',')[0]?.trim() ?? 'unknown';
-      if (loginLimited(ip, d.clock.now())) return c.json({ error: 'too many login attempts, try again later' }, 429);
-      // Tolerate a missing/invalid JSON body: `c.req.json()` throws on empty input, which would surface
-      // as an unhandled 500. A malformed login is a client error → 400, not a server fault.
-      const body = await c.req.json().catch(() => null) as { username?: unknown; password?: unknown } | null;
-      if (typeof body?.username !== 'string' || typeof body?.password !== 'string') {
-        return c.json({ error: 'username and password required' }, 400);
-      }
-      const user = users.verify(body.username, body.password);
-      if (!user) return c.json({ error: 'invalid credentials' }, 401);
-      loginHits.delete(ip); // a valid login clears the counter so an earlier typo streak can't lock the user out
-      const token = users.issueToken(user.id);
-      void d.advisor?.ensureOnLogin(user.id); // fire-and-forget: bring the user's advisor back up; never block login
-      return c.json({ token, user });
-    });
-    app.post('/auth/logout', (c) => { const t = c.get('token'); if (t) users.revokeToken(t); return c.json({ ok: true }); });
-    app.get('/auth/me', (c) => c.json({ user: c.get('user') }));
-    // Self-service profile: name / email / preferred default executor. A user edits only their own.
-    app.patch('/auth/me', async (c) => {
-      const u = c.get('user');
-      const b = await c.req.json() as { name?: string; email?: string; default_exec?: string };
-      if (typeof b.default_exec === 'string' && b.default_exec) {
-        // The preferred default must be one the user is actually allowed to run.
-        const globalOk = d.config.get().allowedExecs.includes(b.default_exec);
-        const personalOk = u.allowed_execs.length === 0 || u.allowed_execs.includes(b.default_exec);
-        if (!globalOk || !personalOk) return c.json({ error: 'exec not allowed' }, 400);
-      }
-      return c.json(users.setProfile(u.id, { name: b.name, email: b.email, default_exec: b.default_exec }));
-    });
-    // Self-service password change: verify the current password, then swap in the new one. A wrong
-    // current password is rejected (401) so it can't be used to set a password without knowing it.
-    app.post('/auth/me/password', async (c) => {
-      const u = c.get('user');
-      const b = await c.req.json().catch(() => null) as { currentPassword?: unknown; newPassword?: unknown } | null;
-      if (typeof b?.currentPassword !== 'string' || typeof b?.newPassword !== 'string') {
-        return c.json({ error: 'currentPassword and newPassword required' }, 400);
-      }
-      if (b.newPassword.length < 8) return c.json({ error: 'new password too short (min 8)' }, 400);
-      if (!users.changePassword(u.id, b.currentPassword, b.newPassword)) {
-        return c.json({ error: 'current password is incorrect' }, 401);
-      }
-      return c.json({ ok: true });
-    });
-    // Avatar upload (multipart). Validated by type + size; stored as <userId>.<ext> under avatarsDir.
-    const AVATAR_EXT: Record<string, string> = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp', 'image/gif': 'gif' };
-    const AVATAR_MIME: Record<string, string> = { png: 'image/png', jpg: 'image/jpeg', webp: 'image/webp', gif: 'image/gif' };
-    app.post('/auth/me/avatar', async (c) => {
-      if (!d.avatarsDir) return c.json({ error: 'avatars unavailable' }, 400);
-      const u = c.get('user');
-      const form = await c.req.formData();
-      const file = form.get('avatar');
-      if (!(file instanceof File)) return c.json({ error: 'avatar file required' }, 400);
-      const ext = AVATAR_EXT[file.type];
-      if (!ext) return c.json({ error: 'unsupported image type' }, 415);
-      if (file.size > 2 * 1024 * 1024) return c.json({ error: 'image too large (max 2MB)' }, 413);
-      mkdirSync(d.avatarsDir, { recursive: true });
-      // Drop any prior avatar of a different extension so a user never keeps two files.
-      for (const e of Object.values(AVATAR_EXT)) { if (e !== ext) { const f = join(d.avatarsDir, `${u.id}.${e}`); if (existsSync(f)) { try { unlinkSync(f); } catch { /* best-effort */ } } } }
-      const filename = `${u.id}.${ext}`;
-      writeFileSync(join(d.avatarsDir, filename), Buffer.from(await file.arrayBuffer()));
-      return c.json(users.setAvatar(u.id, filename));
-    });
-    // Short-lived signed URL for a user's avatar. An <img> can't set an Authorization header, so the
-    // old approach put the long-lived session token in the query string (leaked into logs/referrer/
-    // history — finding W2). Instead, an AUTHENTICATED caller mints a signed link here; the link
-    // carries only an HMAC over (id, exp) that expires in minutes, so a leaked URL is near-worthless.
-    const AVATAR_URL_TTL_MS = 5 * 60 * 1000;
-    const signAvatar = (id: number, exp: number): string =>
-      createHmac('sha256', d.avatarSecret!).update(`${id}.${exp}`).digest('hex');
-    const avatarSigValid = (id: number, exp: number, sig: string): boolean => {
-      if (!d.avatarSecret || !Number.isFinite(exp) || exp < Date.now()) return false;
-      const expected = Buffer.from(signAvatar(id, exp), 'hex');
-      const got = Buffer.from(sig, 'hex');
-      return expected.length === got.length && timingSafeEqual(expected, got);
-    };
-    app.get('/users/:id/avatar/url', (c) => {
-      if (!d.avatarsDir || !d.avatarSecret) return c.json({ error: 'avatars unavailable' }, 400);
-      const id = Number(c.req.param('id'));
-      const target = users.get(id);
-      if (!target || !target.avatar) return c.json({ error: 'not found' }, 404);
-      const exp = Date.now() + AVATAR_URL_TTL_MS;
-      return c.json({ url: `/users/${id}/avatar?exp=${exp}&sig=${signAvatar(id, exp)}` });
-    });
-    // Serve a user's avatar bytes. Reachable as an <img> src via a short-lived `exp`+`sig` signature
-    // (minted above); the bearer path still works for direct API use.
-    app.get('/users/:id/avatar', (c) => {
-      if (!d.avatarsDir) return c.json({ error: 'not found' }, 404);
-      const id = Number(c.req.param('id'));
-      const exp = Number(c.req.query('exp'));
-      const sig = c.req.query('sig');
-      // Allow either a valid signature (the <img> path) or the authenticated session (bearer/token,
-      // which the auth middleware already validated for any non-signed request that reached here).
-      if (sig != null) { if (!avatarSigValid(id, exp, sig)) return c.json({ error: 'forbidden' }, 403); }
-      const target = users.get(id);
-      if (!target || !target.avatar) return c.json({ error: 'not found' }, 404);
-      const path = join(d.avatarsDir, target.avatar);
-      if (!existsSync(path)) return c.json({ error: 'not found' }, 404);
-      const ext = target.avatar.split('.').pop() ?? '';
-      const body = new Uint8Array(readFileSync(path)).buffer;
-      return c.body(body, 200, { 'content-type': AVATAR_MIME[ext] ?? 'application/octet-stream', 'cache-control': 'no-cache' });
-    });
-    app.get('/users', (c) => c.json(users.list()));
-    app.post('/users', async (c) => {
-      const { username, password } = await c.req.json();
-      // Allow creation during setup (no users yet), otherwise admin only
-      if (users.count() > 0) {
-        const actor = c.get('user');
-        if (!actor || !users.isAdmin(actor.id)) return c.json({ error: 'forbidden' }, 403);
-      }
-      try { return c.json(users.create(username, password), 201); }
-      catch { return c.json({ error: 'username taken' }, 409); }
-    });
-    app.delete('/users/:id', (c) => {
-      if (users.count() <= 1) return c.json({ error: 'cannot delete the last user' }, 400);
-      // Never delete the admin: it would lock out assignment management and (on restart) silently
-      // re-elect another user as admin. The flag must be transferred deliberately first.
-      if (users.isAdmin(Number(c.req.param('id')))) return c.json({ error: 'cannot delete the admin' }, 400);
-      users.delete(Number(c.req.param('id')));
-      return c.json({ ok: true });
-    });
-
-    // Admin edits another user's permissions: role (is_admin) and per-user model allow-list.
-    app.patch('/users/:id', async (c) => {
-      const actor = c.get('user');
-      if (!actor || !users.isAdmin(actor.id)) return c.json({ error: 'forbidden' }, 403);
-      const id = Number(c.req.param('id'));
-      const target = users.get(id);
-      if (!target) return c.json({ error: 'user not found' }, 404);
-      const b = await c.req.json() as { is_admin?: boolean; allowed_execs?: string[] };
-      if (typeof b.is_admin === 'boolean') {
-        // Refuse to demote the last admin — it would lock out role/assignment management.
-        if (!b.is_admin && target.is_admin && users.adminCount() <= 1) return c.json({ error: 'cannot demote the last admin' }, 400);
-        users.setAdmin(id, b.is_admin);
-      }
-      if (Array.isArray(b.allowed_execs)) {
-        // Can't grant beyond what the daemon globally allows; keep only known execs (dedup).
-        const globalAllowed = new Set(d.config.get().allowedExecs);
-        users.setAllowedExecs(id, [...new Set(b.allowed_execs.filter((e) => typeof e === 'string' && globalAllowed.has(e)))]);
-      }
-      return c.json(users.get(id));
-    });
-
-    // User ↔ project assignments. Only the bootstrap admin may view/manage them.
-    if (d.userProjects) {
-      const up = d.userProjects;
-      const adminOnly = (c: { get: (k: 'user') => User }) => up.isAdmin(c.get('user').id);
-      app.get('/users/:id/projects', (c) => {
-        if (!adminOnly(c)) return c.json({ error: 'forbidden' }, 403);
-        return c.json(up.forUser(Number(c.req.param('id'))));
-      });
-      app.post('/users/:id/projects', async (c) => {
-        if (!adminOnly(c)) return c.json({ error: 'forbidden' }, 403);
-        const { projectId } = await c.req.json() as { projectId?: number };
-        if (projectId == null) return c.json({ error: 'projectId required' }, 400);
-        up.assign(Number(c.req.param('id')), Number(projectId));
-        return c.json({ ok: true });
-      });
-      app.delete('/users/:id/projects/:pid', (c) => {
-        if (!adminOnly(c)) return c.json({ error: 'forbidden' }, 403);
-        up.unassign(Number(c.req.param('id')), Number(c.req.param('pid')));
-        return c.json({ ok: true });
-      });
-    }
-  }
+  registerRoutes(app, ctx);
 
   app.get('/projects', (c) => {
     const all = d.projects ? d.projects.list() : [];
