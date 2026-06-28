@@ -60,9 +60,11 @@ describe('POST /auth/me/password — self-service password change', () => {
     expect((await app.request('/auth/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ username: 'bob', password: 'pw' }) })).status).toBe(401);
     expect((await app.request('/auth/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ username: 'bob', password: 'brandnewpw' }) })).status).toBe(200);
   });
-  it('rejects a wrong current password with 401 and leaves the password unchanged', async () => {
+  it('rejects a wrong current password with 403 (not 401 — the session is valid) and leaves it unchanged', async () => {
     const { app, bobTok } = setup();
-    expect((await app.request('/auth/me/password', post(bobTok, { currentPassword: 'nope', newPassword: 'brandnewpw' }))).status).toBe(401);
+    // 403, not 401: the bearer is valid, so the web client must not treat this as session expiry and
+    // log the user out — a wrong current password is a refused action, not an auth failure.
+    expect((await app.request('/auth/me/password', post(bobTok, { currentPassword: 'nope', newPassword: 'brandnewpw' }))).status).toBe(403);
     expect((await app.request('/auth/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ username: 'bob', password: 'pw' }) })).status).toBe(200);
   });
   it('rejects a too-short new password with 400', async () => {

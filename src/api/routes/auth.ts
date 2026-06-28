@@ -57,8 +57,11 @@ export function registerAuthRoutes(app: OrcaApp, ctx: RouteContext): void {
   app.post('/auth/me/password', async (c) => {
     const u = c.get('user');
     const b = await parseBody(c, passwordChangeSchema);
+    // 403, not 401: the caller IS authenticated — this action is refused because the supplied current
+    // password is wrong. A 401 would make the web client treat it as session expiry and log the user
+    // out for a simple typo (req() clears the token on 401), and drop the explanatory body with it.
     if (!users.changePassword(u.id, b.currentPassword, b.newPassword)) {
-      return c.json({ error: 'current password is incorrect' }, 401);
+      return c.json({ error: 'current password is incorrect' }, 403);
     }
     return c.json({ ok: true });
   });
