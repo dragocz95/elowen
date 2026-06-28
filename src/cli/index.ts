@@ -34,6 +34,8 @@ TASKS
   ls                              list all tasks (JSON)
   ready                           list tasks ready to run (JSON)
   sessions                        list live agent sessions (JSON)
+  send <session> "<text>"         type a message into a live agent's tmux and submit it
+                                    --no-enter                send the text without pressing Enter
   close <id> [options]            close a task
                                     --summary "<text>"        closing note
                                     --outcome ok|fail         record the outcome
@@ -57,7 +59,7 @@ Docs & issues: https://github.com/dragocz1995/orcasynth`;
 /** Commands that talk to the daemon API — only these justify auto-starting it. Everything else
  *  (help, unknown verbs) must NOT spawn a daemon: a stray detached daemon squats the port and starves
  *  the systemd-managed one into a restart loop. */
-const API_COMMANDS = new Set(['ls', 'ready', 'sessions', 'close', 'note', 'plan', 'overseer', 'api']);
+const API_COMMANDS = new Set(['ls', 'ready', 'sessions', 'send', 'close', 'note', 'plan', 'overseer', 'api']);
 
 /** True only for verbs that need the daemon API up — the gate for ensureDaemon's auto-spawn. */
 export function needsDaemon(cmd: string | undefined): boolean {
@@ -97,6 +99,18 @@ export async function run(argv: string[], c: OrcaClient, env: NodeJS.ProcessEnv)
     case 'ls': console.log(JSON.stringify(await c.tasks(), null, 2)); break;
     case 'ready': console.log(JSON.stringify(await c.ready(), null, 2)); break;
     case 'sessions': console.log(JSON.stringify(await c.sessions(), null, 2)); break;
+    case 'send': {
+      // Type a message straight into a running agent's tmux — the manual unblock for when an agent
+      // asks a free-text question (which the deriver can't detect) and otherwise hangs forever.
+      const session = arg;
+      const noEnter = has(rest, '--no-enter');
+      const text = rest.filter((a) => a !== '--no-enter')[0];
+      if (!session || text === undefined || text === '') { console.error('usage: orca send <session> "<text>" [--no-enter]'); process.exit(1); }
+      // Default appends a newline so the agent actually receives the message (Enter submits);
+      // --no-enter types it without submitting (stage text, or send a lone control char).
+      await c.sendInput(session, noEnter ? text : `${text}\n`);
+      console.log(`sent to ${session}`); break;
+    }
     case 'api': {
       const code = await runApiCommand(argv.slice(1), env, { call: callOrcaApi, out: (s) => console.log(s), err: (s) => console.error(s) });
       process.exit(code);

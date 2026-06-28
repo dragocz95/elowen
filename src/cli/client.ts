@@ -21,6 +21,9 @@ export class OrcaClient {
   noteAdd(target: string, body: string) {
     return this.req('/notes', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ scope: 'mission', target, body }) });
   }
+  sendInput(name: string, data: string) {
+    return this.req(`/sessions/${encodeURIComponent(name)}/input`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ data }) });
+  }
   notes(target: string) {
     return this.req(`/notes?scope=mission&target=${encodeURIComponent(target)}`);
   }

@@ -21,6 +21,17 @@ describe('OrcaClient', () => {
     await expect(c.tasks()).rejects.toThrow(/non-JSON/);
   });
 
+  it('sendInput POSTs raw data to the session input endpoint with the bearer token', async () => {
+    const calls: any[] = [];
+    global.fetch = vi.fn(async (url: any, init: any) => { calls.push({ url, init }); return new Response(JSON.stringify({ ok: true }), { status: 200 }); }) as any;
+    const c = new OrcaClient('http://localhost:4400', 'svc-token');
+    await c.sendInput('orca-Nova', 'hi\n');
+    expect(calls[0].url).toBe('http://localhost:4400/sessions/orca-Nova/input');
+    expect(calls[0].init.method).toBe('POST');
+    expect(JSON.parse(calls[0].init.body)).toEqual({ data: 'hi\n' });
+    expect(new Headers(calls[0].init.headers).get('authorization')).toBe('Bearer svc-token');
+  });
+
   it('close PATCHes the task to closed and sends the bearer token', async () => {
     const calls: any[] = [];
     global.fetch = vi.fn(async (url: any, init: any) => { calls.push({ url, init }); return new Response(JSON.stringify({ id: 'orca-1', status: 'closed' }), { status: 200 }); }) as any;

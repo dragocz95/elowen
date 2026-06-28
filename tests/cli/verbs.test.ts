@@ -8,6 +8,7 @@ function fakeClient() {
     overseerPoll: vi.fn().mockResolvedValue({ id: 'd1', kind: 'task', context: {} }),
     overseerDecide: vi.fn().mockResolvedValue({}),
     close: vi.fn().mockResolvedValue({}),
+    sendInput: vi.fn().mockResolvedValue({}),
   } as unknown as OrcaClient;
 }
 
@@ -39,6 +40,29 @@ describe('cli reasoning verbs', () => {
     await expect(run(['close', 'orca-1', '--outcome', 'success'], c, {})).rejects.toThrow('exit');
     expect(exit).toHaveBeenCalledWith(2);
     expect((c.close as any)).not.toHaveBeenCalled();
+    err.mockRestore(); exit.mockRestore();
+  });
+  it('send appends a newline by default so the message is submitted', async () => {
+    const c = fakeClient();
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    await run(['send', 'orca-Nova', 'use variant B'], c, {});
+    expect((c.sendInput as any)).toHaveBeenCalledWith('orca-Nova', 'use variant B\n');
+    vi.restoreAllMocks();
+  });
+  it('send --no-enter types the text without submitting', async () => {
+    const c = fakeClient();
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    await run(['send', 'orca-Nova', 'draft text', '--no-enter'], c, {});
+    expect((c.sendInput as any)).toHaveBeenCalledWith('orca-Nova', 'draft text');
+    vi.restoreAllMocks();
+  });
+  it('send without a message errors out and sends nothing', async () => {
+    const c = fakeClient();
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const exit = vi.spyOn(process, 'exit').mockImplementation((() => { throw new Error('exit'); }) as never);
+    await expect(run(['send', 'orca-Nova'], c, {})).rejects.toThrow('exit');
+    expect(exit).toHaveBeenCalledWith(1);
+    expect((c.sendInput as any)).not.toHaveBeenCalled();
     err.mockRestore(); exit.mockRestore();
   });
   it('overseer decide maps --approve/--escalate and flags', async () => {
