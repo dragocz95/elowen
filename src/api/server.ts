@@ -1,8 +1,10 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
+import { ZodError } from 'zod';
 import type { User, TokenScope } from '../store/userStore.js';
 import { createRouteContext, type OrcaApp } from './context.js';
 import { registerRoutes } from './routes/index.js';
+import { formatZodError } from './validation.js';
 import type { ServerDeps } from './deps.js';
 import { ORCA_VERSION } from './version.js';
 
@@ -22,6 +24,8 @@ export function createServer(d: ServerDeps): Hono<{ Variables: { user: User; tok
   // 400 instead of leaking a default 500 with no useful body.
   app.onError((err, c) => {
     if (err instanceof SyntaxError) return c.json({ error: 'invalid JSON body' }, 400);
+    // A failed `parseBody` schema validation — the single source of truth for malformed request bodies.
+    if (err instanceof ZodError) return c.json({ error: formatZodError(err) }, 400);
     log.error('unhandled route error', err);
     return c.json({ error: 'internal error' }, 500);
   });

@@ -1,6 +1,8 @@
 import { join } from 'node:path';
 import { writeFileSync, readFileSync, existsSync, mkdirSync, unlinkSync } from 'node:fs';
 import { createHmac, timingSafeEqual } from 'node:crypto';
+import { parseBody } from '../validation.js';
+import { loginSchema, profilePatchSchema, passwordChangeSchema, userPermissionsSchema, projectAssignSchema } from '../schemas/auth.js';
 import type { User } from '../../store/userStore.js';
 import type { OrcaApp, RouteContext } from '../context.js';
 
@@ -27,12 +29,8 @@ export function registerAuthRoutes(app: OrcaApp, ctx: RouteContext): void {
   app.post('/auth/login', async (c) => {
     const ip = c.req.header('x-real-ip') ?? c.req.header('x-forwarded-for')?.split(',')[0]?.trim() ?? 'unknown';
     if (loginLimited(ip, d.clock.now())) return c.json({ error: 'too many login attempts, try again later' }, 429);
-    // Tolerate a missing/invalid JSON body: `c.req.json()` throws on empty input, which would surface
-    // as an unhandled 500. A malformed login is a client error → 400, not a server fault.
-    const body = await c.req.json().catch(() => null) as { username?: unknown; password?: unknown } | null;
-    if (typeof body?.username !== 'string' || typeof body?.password !== 'string') {
-      return c.json({ error: 'username and password required' }, 400);
-    }
+    // A missing/invalid body fails the schema → onError maps it to a 400, never an unhandled 500.
+    const body = await parseBody(c, loginSchema);
     const user = users.verify(body.username, body.password);
     if (!user) return c.json({ error: 'invalid credentials' }, 401);
     loginHits.delete(ip); // a valid login clears the counter so an earlier typo streak can't lock the user out
@@ -45,7 +43,7 @@ export function registerAuthRoutes(app: OrcaApp, ctx: RouteContext): void {
   // Self-service profile: name / email / preferred default executor. A user edits only their own.
   app.patch('/auth/me', async (c) => {
     const u = c.get('user');
-    const b = await c.req.json() as { name?: string; email?: string; default_exec?: string };
+    const b = await parseBody(c, profilePatchSchema);
     if (typeof b.default_exec === 'string' && b.default_exec) {
       // The preferred default must be one the user is actually allowed to run.
       const globalOk = d.config.get().allowedExecs.includes(b.default_exec);
@@ -58,11 +56,7 @@ export function registerAuthRoutes(app: OrcaApp, ctx: RouteContext): void {
   // current password is rejected (401) so it can't be used to set a password without knowing it.
   app.post('/auth/me/password', async (c) => {
     const u = c.get('user');
-    const b = await c.req.json().catch(() => null) as { currentPassword?: unknown; newPassword?: unknown } | null;
-    if (typeof b?.currentPassword !== 'string' || typeof b?.newPassword !== 'string') {
-      return c.json({ error: 'currentPassword and newPassword required' }, 400);
-    }
-    if (b.newPassword.length < 8) return c.json({ error: 'new password too short (min 8)' }, 400);
+    const b = await parseBody(c, passwordChangeSchema);
     if (!users.changePassword(u.id, b.currentPassword, b.newPassword)) {
       return c.json({ error: 'current password is incorrect' }, 401);
     }
@@ -153,7 +147,7 @@ export function registerAuthRoutes(app: OrcaApp, ctx: RouteContext): void {
     const id = Number(c.req.param('id'));
     const target = users.get(id);
     if (!target) return c.json({ error: 'user not found' }, 404);
-    const b = await c.req.json() as { is_admin?: boolean; allowed_execs?: string[] };
+    const b = await parseBody(c, userPermissionsSchema);
     if (typeof b.is_admin === 'boolean') {
       // Refuse to demote the last admin — it would lock out role/assignment management.
       if (!b.is_admin && target.is_admin && users.adminCount() <= 1) return c.json({ error: 'cannot demote the last admin' }, 400);
@@ -177,8 +171,7 @@ export function registerAuthRoutes(app: OrcaApp, ctx: RouteContext): void {
     });
     app.post('/users/:id/projects', async (c) => {
       if (!adminOnly(c)) return c.json({ error: 'forbidden' }, 403);
-      const { projectId } = await c.req.json() as { projectId?: number };
-      if (projectId == null) return c.json({ error: 'projectId required' }, 400);
+      const { projectId } = await parseBody(c, projectAssignSchema);
       up.assign(Number(c.req.param('id')), Number(projectId));
       return c.json({ ok: true });
     });
