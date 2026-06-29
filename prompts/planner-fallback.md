@@ -6,4 +6,6 @@ Give each phase a short unique "id"; set "dependsOn" to the ids that must finish
 
 {{models}}
 
+──────────────────────────  GOAL  ──────────────────────────
 Goal: {{goal}}
+─────────────────────────────────────────────────────────────

@@ -1,3 +1,4 @@
+──────────────────────  ORCA CONTROL · EPIC  ──────────────────────
 This task is a phase of epic {{epicId}}. After you close your own task, run `{{cli}} ls` to check the epic's other phases. If every other phase of this epic is already closed (i.e. you were the final phase), close the epic yourself and write your own summary of the whole mission — what was done across all phases and anything still left to do:
   {{epicCloseCommand}} --summary "<overall mission result: what happened + what's left>" --outcome ok
 If any sibling phase is still open or in progress, do NOT touch the epic — that agent will handle it.
