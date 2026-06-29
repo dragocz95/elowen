@@ -71,10 +71,19 @@ export function taskStartedMs(task: Pick<Task, 'labels' | 'created_at'>): number
 /** Raw elapsed milliseconds the agent has run, or null when it never started. A finished task's run
  *  is frozen at its close time — otherwise the duration keeps growing from 'now' and reads as if the
  *  agent were still working. Sums cleanly across a mission's phases for a total run time. */
-export function taskElapsedMs(task: Pick<Task, 'labels' | 'created_at' | 'closed_at' | 'status'>, nowMs: number): number | null {
+export function taskElapsedMs(task: Pick<Task, 'labels' | 'created_at' | 'closed_at' | 'status' | 'parent_id'>, nowMs: number): number | null {
+  const finished = task.status === 'closed' || task.status === 'cancelled';
+  // A mission phase that never spawned its agent has run for zero time. Its row was created up front
+  // at plan time, so the created_at fallback in taskStartedMs sits hours in the past — without this
+  // guard a pending phase ticks up from plan time as if it were working, and the mission's summed run
+  // time shows hours of phantom work across its not-yet-started phases. Require a real `started:`
+  // signal for an unfinished phase; standalone tasks (no parent) keep the created_at fallback, where
+  // creation ≈ start. A finished phase keeps the fallback too — it demonstrably ran.
+  const isPendingPhase = task.parent_id != null && !finished
+    && !(task.labels?.some((l) => l.startsWith('started:')) ?? false);
+  if (isPendingPhase) return null;
   const start = taskStartedMs(task);
   if (start == null) return null;
-  const finished = task.status === 'closed' || task.status === 'cancelled';
   const end = finished ? (parseTs(task.closed_at) ?? nowMs) : nowMs;
   return Math.max(0, end - start);
 }

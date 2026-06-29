@@ -74,6 +74,17 @@ describe('taskElapsed', () => {
     const t = task({ created_at: start, labels: [`started:${spawned}`], closed_at: '2026-06-18 10:28:00', status: 'closed' });
     expect(taskElapsed(t, at('2026-06-18T11:00:00Z'))).toBe('3m');
   });
+  it('counts zero for a pending mission phase that never spawned (no started: label)', () => {
+    // A phase row is created up front at plan time. Until its agent actually spawns it has run for
+    // zero time — it must NOT tick up from the plan-time created_at, or a freshly-planned mission
+    // reads hours of phantom run time summed across its queued phases.
+    const pending = task({ parent_id: 'epic-1', created_at: start, status: 'open' });
+    expect(taskElapsed(pending, at('2026-06-18T14:39:00Z'))).toBeNull();
+  });
+  it('still measures a standalone task from created_at (creation ≈ start, no plan gap)', () => {
+    // A standalone task (no parent) is created when work begins, so the created_at fallback is right.
+    expect(taskElapsed(task({ created_at: start, status: 'open' }), at('2026-06-18T10:03:00Z'))).toBe('3m');
+  });
 });
 
 describe('taskStartedMs', () => {
