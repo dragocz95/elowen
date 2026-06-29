@@ -22,6 +22,9 @@ export interface AdvisorDeps {
   advisorDir: (userId: number) => string;
   /** Daemon URL the advisor reaches the REST API at (ORCA_URL). */
   url: string;
+  /** URL of Orca's MCP server (the daemon's `/mcp` route). Passed to the spawn so codex gets it as a
+   *  `-c` launch flag; claude/opencode get it baked into the config file by `prepareMcp`. */
+  mcpUrl: string;
   /** Optional hook to write per-program MCP config into the session cwd before launch (Task 9). */
   prepareMcp?: (program: string, cwd: string, token: string, url: string) => Promise<void> | void;
   /** User-aware prompt renderer, so the advisor prompt resolves to the user's override (else default). */
@@ -76,6 +79,7 @@ export class AdvisorService {
       spec,
       rawPrompt,
       extraEnv: { ORCA_TOKEN: token, ORCA_URL: this.d.url },
+      mcpUrl: this.d.mcpUrl,
     });
     log.info(`advisor started for user ${userId} (${spec.program}/${spec.model})`);
     return { session: name };

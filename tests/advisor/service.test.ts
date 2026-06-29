@@ -12,10 +12,10 @@ function makeAdvisor(opts: { allowed: string[] }) {
   const config = new ConfigStore(db);
   config.update({ allowedExecs: opts.allowed });
   const tmux = new FakeTmuxDriver();
-  const spawnCalls: { agentName: string; extraEnv?: Record<string, string>; rawPrompt?: string }[] = [];
+  const spawnCalls: { agentName: string; extraEnv?: Record<string, string>; rawPrompt?: string; mcpUrl?: string }[] = [];
   const spawn = {
-    launch: async (input: { agentName: string; projectPath: string; extraEnv?: Record<string, string>; rawPrompt?: string }) => {
-      spawnCalls.push({ agentName: input.agentName, extraEnv: input.extraEnv, rawPrompt: input.rawPrompt });
+    launch: async (input: { agentName: string; projectPath: string; extraEnv?: Record<string, string>; rawPrompt?: string; mcpUrl?: string }) => {
+      spawnCalls.push({ agentName: input.agentName, extraEnv: input.extraEnv, rawPrompt: input.rawPrompt, mcpUrl: input.mcpUrl });
       await tmux.spawn(`orca-${input.agentName}`, { cwd: input.projectPath, command: '' });
       return { session: `orca-${input.agentName}` };
     },
@@ -24,6 +24,7 @@ function makeAdvisor(opts: { allowed: string[] }) {
     spawn: spawn as never, tmux, users, config,
     fallback: { program: 'claude-code', model: 'sonnet' },
     url: 'http://localhost:4400',
+    mcpUrl: 'http://localhost:4400/mcp',
     advisorDir: () => '/tmp/advisor',
   });
   return { svc, spawnCalls, users, u, tmux };
@@ -38,6 +39,7 @@ describe('AdvisorService', () => {
     expect(spawnCalls).toHaveLength(1);
     expect(spawnCalls[0].agentName).toBe(`advisor-${u.id}`);
     expect(spawnCalls[0].extraEnv?.ORCA_TOKEN).toBeTruthy(); // full advisor token injected
+    expect(spawnCalls[0].mcpUrl).toBe('http://localhost:4400/mcp'); // MCP server URL passed for codex `-c` wiring
     await svc.start(u.id, 'sonnet'); // already live
     expect(spawnCalls).toHaveLength(1); // not respawned
   });

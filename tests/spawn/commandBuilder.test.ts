@@ -39,6 +39,16 @@ describe('buildAgentCommand', () => {
     expect(cmd).not.toContain('--dangerously-bypass-approvals-and-sandbox');
     expect(cmd).toContain("--model 'gpt-5.4'");
   });
+  it('wires the orca MCP server into codex via `-c` flags when mcpUrl is set (codex ignores project-local config)', () => {
+    const cmd = buildAgentCommand({ program: 'codex', model: 'gpt-5.4' }, { projectPath: '/o', taskId: 'orca-1', agentName: 'A', mcpUrl: 'http://localhost:4600/mcp' });
+    expect(cmd).toContain("-c 'mcp_servers.orca.url=\"http://localhost:4600/mcp\"'"); // url override, shell-escaped
+    expect(cmd).toContain("-c 'mcp_servers.orca.bearer_token_env_var=\"ORCA_TOKEN\"'"); // token read from env, not the command line
+    expect(cmd).toContain("--model 'gpt-5.4'"); // MCP flags precede --model, before the positional prompt
+  });
+  it('omits the codex MCP flags when no mcpUrl is set (workers get no MCP wiring)', () => {
+    const cmd = buildAgentCommand({ program: 'codex', model: 'gpt-5.4' }, { projectPath: '/o', taskId: 'orca-1', agentName: 'A' });
+    expect(cmd).not.toContain('mcp_servers.orca');
+  });
   it('single-quotes the model so shell metacharacters cannot break out of the command (injection defense)', () => {
     // The model field can carry a task-supplied `exec:` value. Even if a bad value slips past the API
     // allow-list, single-quoting must neutralize it — the payload stays one literal --model argument.

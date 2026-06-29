@@ -1,5 +1,6 @@
 import { render, type PromptVars } from '../prompts/index.js';
 import { resumeProviderFor, type PendingResume } from './resume/index.js';
+import { codexMcpArgs } from '../advisor/mcpConfig.js';
 
 /** How worker preamble templates are rendered. Defaults to the file `render`; the spawn layer passes a
  *  user-aware renderer (resolves the task owner's prompt overrides) so an agent runs the right prompts. */
@@ -44,6 +45,10 @@ export interface SpawnCtx {
    *  the session's program still matches and the provider allows resume. When present, the prompt is a
    *  short continuation (worker-resume) rather than the full worker preamble. */
   resume?: PendingResume;
+  /** When set, the spawned CLI is wired to Orca's MCP server at this URL. claude/opencode are wired by
+   *  the config file `writeMcpConfig` drops into cwd; codex (which ignores project-local config) gets
+   *  `-c mcp_servers.orca.*` launch flags here. Set only for the advisor spawn; unset for workers. */
+  mcpUrl?: string;
 }
 
 const esc = (s: string) => `'${s.replace(/'/g, "'\\''")}'`;
@@ -114,7 +119,12 @@ function buildLaunchCommand(spec: AgentSpec, ctx: SpawnCtx, prompt: string): str
     const bin = ctx.bin || 'codex';
     // Positional prompt + autonomous approval bypass (codex's skip-permissions equivalent).
     const bypass = skip ? ' --dangerously-bypass-approvals-and-sandbox' : '';
-    return `${cd} && ${envExport}${bin}${resumeBefore}${bypass}${resumeAfter} --model ${esc(spec.model)}${extra} ${esc(prompt)}`;
+    // Codex ignores any project-local config, so its orca MCP server is injected via `-c` overrides
+    // (token read from the exported ORCA_TOKEN env, not the command line). codexMcpArgs alternates
+    // [flag, value, …]; the `-c` flags are our own literals, only the values are dynamic — quote just
+    // those (mirrors `--model ${esc(model)}`), so an odd-charactered URL can't break the shell.
+    const mcp = ctx.mcpUrl ? ' ' + codexMcpArgs(spec.program, ctx.mcpUrl).map((a, i) => i % 2 === 0 ? a : esc(a)).join(' ') : '';
+    return `${cd} && ${envExport}${bin}${resumeBefore}${bypass}${resumeAfter}${mcp} --model ${esc(spec.model)}${extra} ${esc(prompt)}`;
   }
   if (spec.program === 'kilo') {
     const bin = ctx.bin || 'kilo';

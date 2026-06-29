@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, rmSync, readFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { writeMcpConfig } from '../../src/advisor/mcpConfig.js';
+import { writeMcpConfig, codexMcpArgs } from '../../src/advisor/mcpConfig.js';
 
 let dir: string;
 beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'orca-mcp-')); });
@@ -25,16 +25,36 @@ describe('writeMcpConfig', () => {
     expect(cfg.mcp.orca.enabled).toBe(true);
   });
 
-  it('codex → a TOML config naming the orca mcp server', () => {
+  it('codex → writes NO project-local file (codex only reads $CODEX_HOME/config.toml)', () => {
+    // codex-cli 0.98 ignores any project-local config, so a dropped file would be dead. Its MCP server
+    // is wired at launch via codexMcpArgs instead — see the codexMcpArgs cases below.
     writeMcpConfig('codex', dir, 'tok', 'http://localhost:4600/mcp');
-    const toml = readFileSync(join(dir, '.codex-mcp.toml'), 'utf8');
-    expect(toml).toContain('[mcp_servers.orca]');
-    expect(toml).toContain('http://localhost:4600/mcp');
+    expect(existsSync(join(dir, '.codex-mcp.toml'))).toBe(false);
+    expect(existsSync(join(dir, 'config.toml'))).toBe(false);
   });
 
   it('an unknown program writes nothing', () => {
     writeMcpConfig('something-else', dir, 'tok', 'http://x/mcp');
     expect(existsSync(join(dir, '.mcp.json'))).toBe(false);
     expect(existsSync(join(dir, 'opencode.json'))).toBe(false);
+  });
+});
+
+describe('codexMcpArgs', () => {
+  it('codex → `-c` overrides for url and a bearer-token env var (no secret on the command line)', () => {
+    const args = codexMcpArgs('codex', 'http://localhost:4600/mcp');
+    // Values are parsed as TOML by codex, hence the inner quotes. Verified against codex-cli 0.98:
+    // `codex -c 'mcp_servers.orca.url=…' -c 'mcp_servers.orca.bearer_token_env_var="ORCA_TOKEN"' mcp list`
+    // lists orca as an enabled streamable_http server.
+    expect(args).toEqual([
+      '-c', 'mcp_servers.orca.url="http://localhost:4600/mcp"',
+      '-c', 'mcp_servers.orca.bearer_token_env_var="ORCA_TOKEN"',
+    ]);
+  });
+
+  it('non-codex programs get no launch args (they use a config file instead)', () => {
+    expect(codexMcpArgs('claude-code', 'http://x/mcp')).toEqual([]);
+    expect(codexMcpArgs('opencode', 'http://x/mcp')).toEqual([]);
+    expect(codexMcpArgs('something-else', 'http://x/mcp')).toEqual([]);
   });
 });

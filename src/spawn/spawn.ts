@@ -17,7 +17,7 @@ export type ProviderResolver = (program: string) => { bin?: string; args?: strin
 
 export class SpawnService {
   constructor(private d: { tmux: TmuxDriver; agents: AgentStore; orca?: OrcaCliConfig; providers?: ProviderResolver; prompts?: PromptService }) {}
-  async launch(input: { projectId: number; projectPath: string; taskId: string; agentName: string; spec: AgentSpec; taskTitle?: string; taskDescription?: string; resumeNote?: string; epicId?: string; extraEnv?: Record<string, string>; rawPrompt?: string; resume?: PendingResume; ownerId?: number | null }): Promise<{ session: string }> {
+  async launch(input: { projectId: number; projectPath: string; taskId: string; agentName: string; spec: AgentSpec; taskTitle?: string; taskDescription?: string; resumeNote?: string; epicId?: string; extraEnv?: Record<string, string>; rawPrompt?: string; resume?: PendingResume; ownerId?: number | null; mcpUrl?: string }): Promise<{ session: string }> {
     this.d.agents.upsert({ project_id: input.projectId, name: input.agentName, program: input.spec.program, model: input.spec.model });
     const session = `orca-${input.agentName}`;
     const orca = this.d.orca;
@@ -46,7 +46,7 @@ export class SpawnService {
       projectPath: input.projectPath, taskId: input.taskId, agentName: input.agentName,
       taskTitle: input.taskTitle, taskDescription: input.taskDescription, resumeNote: input.resumeNote,
       closeCommand, epicId: input.epicId, epicCloseCommand, cli, env, bin: provider?.bin, extraArgs: provider?.args,
-      skipPermissions: provider?.skipPermissions, rawPrompt: input.rawPrompt, resume,
+      skipPermissions: provider?.skipPermissions, rawPrompt: input.rawPrompt, resume, mcpUrl: input.mcpUrl,
     }, renderPrompt);
     await this.d.tmux.spawn(session, { cwd: input.projectPath, command });
     // Explicit spawn record: captures pilot/overseer launches too (they have no task row, so the

@@ -305,7 +305,7 @@ export function buildApp(opts: BuildOpts) {
   const mcpUrl = `${orcaCli.url}/mcp`; // the daemon hosts the MCP server on its own /mcp route
   const advisor = opts.dbPath === ':memory:' ? undefined : new AdvisorService({
     spawn, tmux, users, config, fallback: { program: 'claude-code', model: 'sonnet' },
-    projectId: opts.project.id, url: orcaCli.url,
+    projectId: opts.project.id, url: orcaCli.url, mcpUrl,
     advisorDir: (id) => { const p = join(dirname(opts.dbPath), 'advisor', String(id)); mkdirSync(p, { recursive: true }); return p; },
     prepareMcp: (program, cwd, token) => writeMcpConfig(program, cwd, token, mcpUrl),
     prompts,
