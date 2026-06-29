@@ -7,6 +7,8 @@ import { isNewer } from './version.js';
 import { start, stop } from './launcher.js';
 import { readInstallInfo } from './installInfo.js';
 import { SERVICES, systemctl } from './systemd.js';
+import { hasLiveMission } from './missionGate.js';
+import { fetchLatestVersion } from '../shared/registry.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -41,11 +43,20 @@ export function reinstallNpmArgs(prefix: string | null): string[] {
   return ['install', '-g', 'orcasynth@latest', ...(prefix ? ['--prefix', prefix] : [])];
 }
 
+/** Resolve npm to the SAME absolute path the sudoers drop-in pins (`orca install` also runs `which npm`),
+ *  so a sudo'd reinstall matches the pin instead of relying on root's `secure_path` resolving a bare
+ *  `npm` identically. Falls back to bare `npm` (PATH) if resolution fails. */
+async function resolveNpm(): Promise<string> {
+  try { const { stdout } = await execFileAsync('which', ['npm']); const p = stdout.trim(); if (p) return p; } catch { /* not resolvable — fall back to PATH */ }
+  return 'npm';
+}
+
 /** Injectable IO for the in-place reinstall, so the root-vs-not decision is unit-testable. */
 export interface ReinstallIO {
   packagesDir: () => string | null;
   prefix: () => string | null;
   writable: (dir: string) => Promise<boolean>;
+  npmPath: () => Promise<string>;
   exec: (cmd: string, args: string[]) => Promise<void>;
 }
 
@@ -53,29 +64,22 @@ const defaultReinstallIO: ReinstallIO = {
   packagesDir: selfPackagesDir,
   prefix: selfPrefix,
   writable: async (dir) => { try { await access(dir, constants.W_OK); return true; } catch { return false; } },
+  npmPath: resolveNpm,
   exec: async (cmd, args) => { await execFileAsync(cmd, args); },
 };
 
 /** Reinstall orcasynth in place. When the global packages dir isn't writable by the current user
  *  (the common "installed as root in /usr, daemon runs as a non-root service user" layout), route
  *  the npm install through `sudo` — `orca install` grants exactly this command via a pinned sudoers
- *  drop-in. A writable prefix (root, or a service-user-owned prefix) installs directly, no sudo. */
+ *  drop-in. A writable prefix (root, or a service-user-owned prefix) installs directly, no sudo. The
+ *  absolute npm path is used in BOTH branches so the sudo'd command matches the pinned absolute path. */
 export async function reinstall(io: ReinstallIO = defaultReinstallIO): Promise<void> {
   const args = reinstallNpmArgs(io.prefix());
   const dir = io.packagesDir();
   const needsRoot = dir !== null && !(await io.writable(dir));
-  if (needsRoot) await io.exec('sudo', ['npm', ...args]);
-  else await io.exec('npm', args);
-}
-
-/** Latest published version of orcasynth from the npm registry. Uses the bare registry JSON endpoint
- *  (no npm spawn) so a version check is cheap and offline-tolerant (throws → caller reports it). */
-async function checkLatest(fetchFn: typeof fetch = fetch): Promise<string> {
-  const r = await fetchFn('https://registry.npmjs.org/orcasynth/latest');
-  if (!r.ok) throw new Error(`registry returned ${r.status}`);
-  const body = await r.json() as { version?: string };
-  if (!body.version) throw new Error('registry returned no version');
-  return body.version;
+  const npm = await io.npmPath();
+  if (needsRoot) await io.exec('sudo', [npm, ...args]);
+  else await io.exec(npm, args);
 }
 
 export interface UpdateDeps {
@@ -85,27 +89,53 @@ export interface UpdateDeps {
   install?: () => Promise<void>;
   /** Restart running services after a successful install. */
   restart?: (env: NodeJS.ProcessEnv) => Promise<void>;
+  /** Re-checked RIGHT BEFORE the restart (after the multi-second npm install) — false means "don't
+   *  restart now". Defaults to "no mission is live", so a mission that started during the install isn't
+   *  killed by the restart. Injected for tests. */
+  confirmReadyToRestart?: () => boolean;
 }
 
-export interface UpdateResult { updated: boolean; from: string; to: string }
+/** `restartDeferred`: the new version installed but a restart was withheld (a mission went live during
+ *  the install) — it takes over on the next restart/boot. */
+export interface UpdateResult { updated: boolean; from: string; to: string; restartDeferred?: boolean }
 
 /** Check npm for a newer release; if there is one, install it and restart the (running) services so
  *  the new binary takes over. The DB migrates itself on the next boot (openDb runs additive
  *  migrations), so no migration step is needed here. Returns what happened for the menu to report. */
 export async function update(env: NodeJS.ProcessEnv, deps: UpdateDeps): Promise<UpdateResult> {
   const fetchFn = deps.fetch ?? fetch;
-  const latest = await checkLatest(fetchFn);
-  if (!isNewer(latest, deps.current)) return { updated: false, from: deps.current, to: latest };
+  const latest = await fetchLatestVersion(fetchFn);
+  // Registry unreachable (null) → can't tell if newer, so treat as a no-op rather than throwing, which
+  // would redden the hourly update timer on a transient blip.
+  if (latest === null || !isNewer(latest, deps.current)) return { updated: false, from: deps.current, to: latest ?? deps.current };
 
   const install = deps.install ?? (() => reinstall());
   await install();
+
+  // A mission may have started during the install — re-check before the restart (which would kill its
+  // agents). If so, leave the freshly-installed binary in place to take over on the next restart/boot.
+  const readyToRestart = deps.confirmReadyToRestart ?? (() => !hasLiveMission(env));
+  if (!readyToRestart()) return { updated: true, from: deps.current, to: latest, restartDeferred: true };
 
   // A box provisioned by `orca install` is systemd-managed — restart those units (sudo when not root).
   // A plain launcher install has no install.json — fall back to stop/start of our own spawned daemon.
   const restart = deps.restart ?? (async (e) => {
     if (readInstallInfo()) {
-      const r = await systemctl('restart', ...SERVICES);
-      if (r.code !== 0) throw new Error(`systemctl restart failed (code ${r.code})`);
+      // `--no-block`: a web-triggered update spawns this `orca update` INSIDE orca-daemon's systemd
+      // cgroup, so a blocking `systemctl restart orca-daemon orca-web` would have the daemon's own
+      // restart kill this process (and the waiting systemctl client) the instant orca-daemon stops —
+      // before the orca-web job is ever enqueued, leaving the web UI on the old build. With --no-block
+      // both jobs are handed to systemd (PID 1) up front and run to completion regardless of this
+      // process dying. (Cost: we can't observe the restart result — only that it was enqueued.)
+      const r = await systemctl('restart', '--no-block', ...SERVICES);
+      if (r.code === 0) return;
+      // A box provisioned before `--no-block` was added to the sudoers pin denies the new arg list
+      // (sudo matches arguments exactly), so the agent-user restart fails here. Fall back to the legacy
+      // command — which the old drop-in still permits — so self-update never hard-breaks. Re-running
+      // `orca install` re-pins sudoers with --no-block and restores the orca-web restart fix; until
+      // then a web-triggered update degrades to the old behavior (daemon restarts, web may not).
+      const legacy = await systemctl('restart', ...SERVICES);
+      if (legacy.code !== 0) throw new Error(`installed ${latest} but the restart failed (code ${legacy.code}) — services run the old build until restarted`);
       return;
     }
     await stop(e);

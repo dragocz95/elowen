@@ -3,6 +3,7 @@ import type { AgentStore } from '../store/agentStore.js';
 import { buildAgentCommand, type AgentSpec } from './commandBuilder.js';
 import type { PendingResume } from './resume/index.js';
 import type { PromptService } from '../prompts/promptService.js';
+import { renderPromptFor } from '../prompts/index.js';
 import { logger } from '../shared/logger.js';
 
 const log = logger('spawn');
@@ -25,9 +26,6 @@ export class SpawnService {
     // in a checkout). Shared by the close commands and the worker preamble's read-only verbs.
     const cli = orca ? orca.cli : undefined;
     const closeCommand = orca ? `${orca.cli} close ${input.taskId}` : undefined;
-    // A phase agent gets a close command for its parent epic too, so the final phase can
-    // close the epic itself with its own overall result summary.
-    const epicCloseCommand = orca && input.epicId ? `${orca.cli} close ${input.epicId}` : undefined;
     // Merge any caller-supplied env (e.g. ORCA_PLAN_JOB / ORCA_MISSION for reasoning agents) on top
     // of the daemon-reach env. ORCA_TASK lets a worker run `orca ask` without passing its own id;
     // reasoning agents ignore it. extraEnv alone still flows through when no orca config is present.
@@ -39,14 +37,14 @@ export class SpawnService {
     const resume = input.resume && input.resume.program === normalizedProgram && provider?.resume !== false
       ? input.resume : undefined;
     if (resume) log.info(`resuming ${resume.program} session ${resume.sessionId} for task ${input.taskId}`);
-    // Render the worker preamble through the task owner's prompt overrides (else file defaults). The
-    // rawPrompt path (Pilot/Overseer/Advisor) is rendered by its own caller, so this only affects workers.
-    const prompts = this.d.prompts;
-    const renderPrompt = prompts ? (name: string, vars?: Record<string, string>) => prompts.render(name, vars, input.ownerId) : undefined;
+    // Render the worker preamble through the task owner's overrides when a PromptService is present, else
+    // file defaults — via the shared resolver (renderPromptFor), not a re-spelled fallback. The rawPrompt
+    // path (Pilot/Overseer/Advisor) is rendered by its own caller, so this only affects workers.
+    const renderPrompt = (name: string, vars?: Record<string, string>) => renderPromptFor(this.d.prompts, name, vars, input.ownerId);
     const command = buildAgentCommand(input.spec, {
       projectPath: input.projectPath, taskId: input.taskId, agentName: input.agentName,
       taskTitle: input.taskTitle, taskDescription: input.taskDescription, resumeNote: input.resumeNote,
-      closeCommand, epicId: input.epicId, epicCloseCommand, cli, env, bin: provider?.bin, extraArgs: provider?.args,
+      closeCommand, epicId: input.epicId, cli, env, bin: provider?.bin, extraArgs: provider?.args,
       skipPermissions: provider?.skipPermissions, rawPrompt: input.rawPrompt, resume, mcpUrl: input.mcpUrl,
     }, renderPrompt);
     await this.d.tmux.spawn(session, { cwd: input.projectPath, command });

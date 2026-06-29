@@ -18,7 +18,10 @@ export function registerAuthGuards(app: OrcaApp, ctx: RouteContext): void {
   //   • submit a plan         → POST  /plan/:jobId/submit  (+ GET /plan/:jobId)
   //   • overseer poll/decide  → GET /missions/:id/overseer/next, POST /missions/:id/overseer/decide
   //   • read-only listings    → GET /tasks, /tasks/ready, /sessions   (orca ls|ready|sessions)
+  //   • handoff notes         → GET /notes, POST /notes   (orca note ls|add)
   //   • ask the autopilot     → POST /tasks/:id/ask, GET /tasks/:id/ask/:askId   (orca ask)
+  //   • read its control guide → GET /tasks/:id/guide   (orca help)
+  // Its task PATCH is field-scoped to status/outcome in the route (close only), not the full patch surface.
   // The human reply (POST /tasks/:id/ask/:askId/reply) is deliberately NOT allowed — an agent must
   // not answer its own question. Project ownership of the affected row is still enforced downstream
   // (canAccessProject etc.), so the agent can't cross tenancy even within the allow-list.
@@ -29,6 +32,7 @@ export function registerAuthGuards(app: OrcaApp, ctx: RouteContext): void {
       if (/^\/plan\/[^/]+$/.test(path)) return true;
       if (/^\/missions\/[^/]+\/overseer\/next$/.test(path)) return true;
       if (/^\/tasks\/[^/]+\/ask\/[^/]+$/.test(path)) return true; // long-poll an ask's reply (orca ask)
+      if (/^\/tasks\/[^/]+\/guide$/.test(path)) return true; // fetch the agent control guide (orca help)
     }
     if (method === 'PATCH' && /^\/tasks\/[^/]+$/.test(path)) return true;
     if (method === 'POST') {

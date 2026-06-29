@@ -20,10 +20,9 @@ export interface SpawnCtx {
   resumeNote?: string;
   /** Shell command the agent runs to close its task when done. Defaults to `orca close <id>`. */
   closeCommand?: string;
-  /** The parent epic's id, when this task is a mission phase. Lets the final-phase agent close the epic itself. */
+  /** The parent epic's id, when this task is a mission phase. Frames the preamble as one phase of a
+   *  mission; the epic-close instructions themselves live in the on-demand `{{cli}} help` guide. */
   epicId?: string;
-  /** Shell command the agent runs to close the parent epic (mirrors closeCommand but targets the epic). */
-  epicCloseCommand?: string;
   /** Env vars exported before the agent starts (e.g. ORCA_URL/ORCA_TOKEN so the close command reaches the daemon). */
   env?: Record<string, string>;
   /** Override the provider binary (e.g. an absolute path); defaults to the program's conventional name. */
@@ -71,16 +70,15 @@ export function buildAgentCommand(spec: AgentSpec, ctx: SpawnCtx, renderPrompt: 
   // continuation instead: pick up where it left off, fold in any new input, then close.
   // A phase agent (epicId, not resumed) must NOT redo earlier phases — the phase template carries the
   // "build on prior phases" framing the standalone one lacks.
-  let prompt = ctx.resume
+  // The preamble is deliberately short — it carries the task brief, a working-dir guard and a `close`
+  // floor, then points the agent at `{{cli}} help` for the full control guide (how to work, ask the
+  // autopilot, handoff notes, epic close). That guide is rendered on demand by the daemon from the
+  // task's live state, so the tutorial lives in ONE place instead of being copied into every preamble.
+  const prompt = ctx.resume
     ? renderPrompt('worker-resume', { agentName: ctx.agentName, taskId: ctx.taskId, titlePart, detailsPart, resumePart, closeCommand, cli: ctx.cli ?? 'orca' })
     : ctx.epicId
       ? renderPrompt('worker-phase', { agentName: ctx.agentName, taskId: ctx.taskId, titlePart, detailsPart, resumePart, epicId: ctx.epicId, closeCommand, cli: ctx.cli ?? 'orca' })
       : renderPrompt('worker', { agentName: ctx.agentName, taskId: ctx.taskId, titlePart, detailsPart, resumePart, closeCommand, cli: ctx.cli ?? 'orca' });
-  if (ctx.epicId && ctx.epicCloseCommand) {
-    // The agent owns mission completion: after closing its own phase, if it was the last
-    // one, it closes the epic itself and writes the overall result summary.
-    prompt += `\n\n${renderPrompt('worker-epic-close', { epicId: ctx.epicId, cli: ctx.cli ?? 'orca', epicCloseCommand: ctx.epicCloseCommand })}`;
-  }
   return buildLaunchCommand(spec, ctx, prompt);
 }
 
@@ -88,8 +86,14 @@ export function buildAgentCommand(spec: AgentSpec, ctx: SpawnCtx, renderPrompt: 
  *  by the worker path (assembled preamble) and the reasoning path (rawPrompt). */
 function buildLaunchCommand(spec: AgentSpec, ctx: SpawnCtx, prompt: string): string {
   const cd = `cd ${esc(ctx.projectPath)}`;
+  // Values are single-quote-escaped; KEYS are interpolated raw, so a malformed key would break the
+  // shell. They're always our own literals (ORCA_*) or caller extraEnv, but guard the invariant
+  // explicitly rather than trust every future caller — a bad key is a programming error, not input.
   const envExport = ctx.env && Object.keys(ctx.env).length > 0
-    ? Object.entries(ctx.env).map(([k, v]) => `export ${k}=${esc(v)}`).join(' && ') + ' && '
+    ? Object.entries(ctx.env).map(([k, v]) => {
+        if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(k)) throw new Error(`invalid env var name: ${JSON.stringify(k)}`);
+        return `export ${k}=${esc(v)}`;
+      }).join(' && ') + ' && '
     : '';
   const extra = ctx.extraArgs && ctx.extraArgs.trim() ? ` ${ctx.extraArgs.trim()}` : '';
   // Bypass interactive permission prompts unless the operator turned it off for this provider

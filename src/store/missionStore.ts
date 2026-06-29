@@ -42,6 +42,13 @@ export class MissionStore {
     return this.db.prepare(`SELECT ${COLS} FROM missions WHERE state='active'`).all() as Mission[];
   }
 
+  /** The ACTIVE mission driving a given epic, or null. Single source for the `active().find(m =>
+   *  m.epic_id === epicId)` lookup that the guide/ask/review/scheduler paths all need (a phase's
+   *  parent_id IS its epic id; the mission id is `m-<epicId>`). */
+  activeForEpic(epicId: string): Mission | null {
+    return (this.db.prepare(`SELECT ${COLS} FROM missions WHERE state='active' AND epic_id=?`).get(epicId) as Mission | undefined) ?? null;
+  }
+
   /** Missions the overseer should keep ticking: active ones plus 'stalled' ones (waiting on a
    *  human to unblock a child). A stalled mission resumes to 'active' on the tick after its
    *  blocker clears, so it must stay in the loop. */

@@ -7,9 +7,10 @@ import type { ServerDeps } from '../deps.js';
 const POLL_HEARTBEAT_MS = 25_000;
 /** How many of the most recent conversation turns the overseer is handed as context. */
 const HISTORY_TURNS = 30;
-/** Grace period after an exchange settles before its in-memory entry is evicted, so a late re-poll (or
- *  the route's access gate) still resolves it before it's GC'd. Keeps `exchanges` from growing unbounded
- *  over the daemon's lifetime. */
+/** Grace period after an exchange SETTLES before its in-memory entry is evicted, so a late re-poll (or
+ *  the route's access gate) still resolves it before it's GC'd. (An exchange parked on a human that is
+ *  never answered is held until it settles — by design: it stays on the Escalations page until a person
+ *  replies. That set is human-scale, bounded by the count of open escalations, not by agent traffic.) */
 const SETTLED_TTL_MS = 2 * 60_000;
 
 /** Delivered to the agent when neither the autopilot nor a human gave a decisive answer in time. Tells
@@ -61,9 +62,10 @@ export interface AskService {
 }
 
 /** The free-text worker↔autopilot exchange behind `orca ask`. Bridges the worker's long-poll to the
- *  parked overseer's decision queue (kind 'message'); on escalate/timeout/no-overseer it opens a bounded
- *  human window, then falls back to a proceed-anyway sentinel. Each turn (question + reply) is published
- *  as a `message` event on the task so the detail pane renders the conversation. */
+ *  parked overseer's decision queue (kind 'message'); on escalate/timeout/no-overseer it parks the
+ *  question on a HUMAN and waits — no auto-answer, no sentinel fallback (the worker holds until a person
+ *  replies on the Escalations page, or its own tool timeout gives up). Each turn (question + reply) is
+ *  published as a `message` event on the task so the detail pane renders the conversation. */
 export function createAskService({ d, decisionQueue }: AskServiceDeps): AskService {
   const exchanges = new Map<string, Exchange>();
 
@@ -117,7 +119,7 @@ export function createAskService({ d, decisionQueue }: AskServiceDeps): AskServi
     // Only an ACTIVE mission with a parked overseer can answer; otherwise escalate straight to a human
     // (waiting out the decision timeout for an overseer that will never poll is pointless).
     const task = d.tasks.get(taskId);
-    const mission = task?.parent_id ? d.missions.active().find((m) => m.epic_id === task.parent_id) : undefined;
+    const mission = task?.parent_id ? d.missions.activeForEpic(task.parent_id) ?? undefined : undefined;
     const overseerParked = !!mission && !!d.config.get().autopilot.overseerExec;
     if (overseerParked) {
       // Hand the overseer the whole thread (the just-asked question is its last entry) so it can answer

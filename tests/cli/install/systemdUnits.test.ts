@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { daemonUnit, webUnit, updateService, updateTimer, orcaSudoers, type UnitParams } from '../../../src/cli/install/systemdUnits.js';
+import { SERVICES } from '../../../src/cli/systemd.js';
 
 const p: UnitParams = {
   user: 'orca', home: '/var/lib/orca', nodePath: '/usr/bin/node',
@@ -78,11 +79,19 @@ describe('install/systemdUnits.updateTimer', () => {
 describe('install/systemdUnits.orcaSudoers', () => {
   const s = orcaSudoers('orca', '/usr/bin/npm install -g orcasynth@latest --prefix /usr');
   it('grants the service user passwordless systemctl for its own units only', () => {
-    expect(s).toMatch(/^orca ALL=\(root\) NOPASSWD: \/usr\/bin\/systemctl restart orca-daemon orca-web/m);
+    // --no-block: a web-triggered self-update must enqueue BOTH unit restarts before the daemon's own
+    // restart kills the updater process (else orca-web never restarts). The pin includes the flag.
+    expect(s).toMatch(/^orca ALL=\(root\) NOPASSWD: \/usr\/bin\/systemctl restart --no-block orca-daemon orca-web/m);
     expect(s).toContain('/usr/bin/systemctl is-active orca-daemon orca-web');
   });
   it('does not grant a blanket systemctl (least privilege)', () => {
     expect(s).not.toMatch(/NOPASSWD:\s*\/usr\/bin\/systemctl\s*$/m);
+  });
+  it('pins exactly the restart command the updater issues (sudo matches args positionally)', () => {
+    // The pinned restart string must equal what `systemctl('restart','--no-block',...SERVICES)` runs,
+    // or sudo denies it. Asserting against SERVICES guards the order coupling between the two files.
+    expect(s).toContain(`/usr/bin/systemctl restart --no-block ${SERVICES.join(' ')}`);
+    expect(s).toContain(`/usr/bin/systemctl is-active ${SERVICES.join(' ')}`);
   });
   it('pins the exact self-reinstall command for the service user', () => {
     expect(s).toMatch(/^orca ALL=\(root\) NOPASSWD: \/usr\/bin\/npm install -g orcasynth@latest --prefix \/usr$/m);

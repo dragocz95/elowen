@@ -16,7 +16,7 @@ export function registerTaskRoutes(app: OrcaApp, ctx: RouteContext): void {
     d, log, planJobs,
     canAccessProject, notAdmin, accessibleProjects, execAllowedForUser,
     pathFor, usagePathFor, checkoutPathFor, resolveTarget,
-    persistPlan, reapPilotSession, finalizePlanJob, releaseGatedDependents, reviewService, askService,
+    persistPlan, reapPilotSession, finalizePlanJob, releaseGatedDependents, reviewService, askService, guideService,
   } = ctx;
   app.get('/tasks', c => {
     const allowed = accessibleProjects(c);
@@ -78,6 +78,14 @@ export function registerTaskRoutes(app: OrcaApp, ctx: RouteContext): void {
     const existing = d.tasks.get(id);
     if (!existing) return c.json({ error: 'task not found' }, 404);
     if (!canAccessProject(c, existing.project_id)) return c.json({ error: 'forbidden' }, 403);
+    // An agent-scoped token (a spawned worker) may only CLOSE its task — set status + the closing
+    // summary/outcome. Block the rest of the patch surface (exec/title/priority/description/deps/…) so a
+    // prompt-injected worker running --dangerously-skip-permissions can't rewrite sibling tasks' fields
+    // within its project (intra-tenant integrity, finding S51). Humans/full tokens keep the full surface.
+    if (c.get('tokenScope') === 'agent') {
+      const allowed = new Set(['status', 'result_summary', 'outcome']);
+      if (Object.keys(b).some((k) => !allowed.has(k))) return c.json({ error: 'forbidden' }, 403);
+    }
     if (b.status) {
       if (b.status === 'closed') d.tasks.close(id, { summary: b.result_summary, outcome: b.outcome });
       else d.tasks.setStatus(id, b.status);
@@ -172,6 +180,11 @@ export function registerTaskRoutes(app: OrcaApp, ctx: RouteContext): void {
     const task = d.tasks.get(id);
     if (!task) return c.json({ error: 'task not found' }, 404);
     if (!canAccessProject(c, task.project_id)) return c.json({ error: 'forbidden' }, 403);
+    // Bound the per-task conversation so a prompt-injected worker in a loop can't inflate the events
+    // table — the same guard the notes route applies (both sides of the thread count). Size is capped
+    // by askSchema.text.max(); this caps the turn count.
+    const MAX_ASK_TURNS = 200;
+    if ((d.events?.list({ target: id, type: 'message' }) ?? []).length >= MAX_ASK_TURNS) return c.json({ error: 'too many questions on this task' }, 429);
     const b = await parseBody(c, askSchema);
     return c.json(askService.start(id, b.text));
   });
@@ -207,6 +220,23 @@ export function registerTaskRoutes(app: OrcaApp, ctx: RouteContext): void {
       .map((a) => { const task = d.tasks.get(a.taskId); return task ? { ...a, title: task.title, epicId: task.parent_id, projectId: task.project_id } : null; })
       .filter((a): a is NonNullable<typeof a> => a !== null && canAccessProject(c, a.projectId));
     return c.json(items);
+  });
+
+  // `orca help` (with ORCA_TASK set): a running agent fetches its context-aware control guide — how to
+  // work, ask the autopilot, leave handoff notes and close out (plus the epic, for a mission phase). The
+  // guide is rendered from the task's live state, so the spawn preamble stays short. In the agent
+  // allow-list (a worker token may reach it); still gated by the task's project.
+  app.get('/tasks/:id/guide', c => {
+    const id = c.req.param('id');
+    const task = d.tasks.get(id);
+    if (!task) return c.json({ error: 'task not found' }, 404);
+    if (!canAccessProject(c, task.project_id)) return c.json({ error: 'forbidden' }, 403);
+    const text = guideService.render(id);
+    if (text === null) return c.json({ error: 'task not found' }, 404);
+    // Lightweight observability: surfaces whether agents actually pull the guide (vs skipping it), so a
+    // "the agent never ran `orca help`" reliability gap is visible in the daemon log.
+    log.info(`guide fetched for ${id}${c.get('tokenScope') === 'agent' ? ' (agent)' : ''}`);
+    return c.json({ text });
   });
 
   app.get('/tasks/:id/deps', c => c.json(d.tasks.depsFor(c.req.param('id'))));

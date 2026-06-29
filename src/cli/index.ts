@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 import { spawn } from 'node:child_process';
-import { readFileSync, realpathSync } from 'node:fs';
+import { realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { readPkgVersion } from '../shared/pkgVersion.js';
 import { OrcaClient } from './client.js';
 import { defaultLifecycleDeps, runLifecycle, runApiCommand } from './commands.js';
 import { callOrcaApi } from '../shared/apiClient.js';
@@ -41,6 +42,7 @@ TASKS
                                     --outcome ok|fail         record the outcome
 
 AGENT-FACING                      (invoked by running agents — rarely needed by hand)
+  help                            print this task's Orca control guide (needs ORCA_TASK)
   ask "<text>"                    ask the autopilot a free-text question and wait for the reply
                                     (needs ORCA_TASK; the answer is printed to stdout)
                                     --history                 print this task's chat history instead
@@ -71,8 +73,7 @@ export function needsDaemon(cmd: string | undefined): boolean {
 
 /** This package's version, read from its package.json (two dirs up from dist/cli/index.js). */
 function pkgVersion(): string {
-  try { return (JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'package.json'), 'utf8')) as { version?: string }).version ?? '0.0.0'; }
-  catch { return '0.0.0'; }
+  return readPkgVersion(import.meta.url);
 }
 
 async function ensureDaemon() {
@@ -165,6 +166,16 @@ export async function run(argv: string[], c: OrcaClient, env: NodeJS.ProcessEnv)
       }
       break;
     }
+    case 'help': {
+      // `orca help` with ORCA_TASK set is the agent-facing path: print this task's context-aware control
+      // guide (how to work / ask / close), rendered by the daemon. The human `orca help` (no ORCA_TASK)
+      // never reaches here — main() prints the CLI usage and returns before dispatch.
+      const taskId = env.ORCA_TASK;
+      if (!taskId) { console.error(USAGE); process.exit(1); }
+      const { text } = await c.guide(taskId) as { text?: string };
+      if (typeof text === 'string') console.log(text);
+      break;
+    }
     case 'note': {
       // Handoff notes between agents working the same mission. `<missionId>` is the epic id (or `m-<epicId>`);
       // the daemon normalizes the prefix. add → leave a note; ls → read the mission's notes (oldest-first).
@@ -232,7 +243,17 @@ async function main() {
   // usage error from `run`, so scripts still get deterministic behavior.
   if (argv.length === 0 && process.stdin.isTTY) { await menu(process.env, version); return; }
   // Help / bare non-TTY invocation: print usage and stop. Must NOT fall through to ensureDaemon.
-  if (argv.length === 0 || argv[0] === '--help' || argv[0] === '-h' || argv[0] === 'help') { console.log(helpText(version)); return; }
+  if (argv.length === 0 || argv[0] === '--help' || argv[0] === '-h' || argv[0] === 'help') {
+    // A running agent invokes `orca help` with ORCA_TASK set to get its task control guide (not the CLI
+    // usage). That path DOES need the daemon, so start it and dispatch through `run`. The `-h`/`--help`
+    // flags and a human's bare `orca help` (no ORCA_TASK) still just print usage.
+    if (argv[0] === 'help' && process.env.ORCA_TASK) {
+      await ensureDaemon();
+      await run(['help'], new OrcaClient(BASE, process.env.ORCA_TOKEN), process.env);
+      return;
+    }
+    console.log(helpText(version)); return;
+  }
   if (argv[0] === '--version' || argv[0] === '-v') { console.log(version); return; }
   // `orca install` is the root provisioning wizard — it sets up systemd, the proxy and the admin
   // itself, so it must run BEFORE ensureDaemon (no auto-spawn) and before the lifecycle commands.
@@ -244,7 +265,11 @@ async function main() {
     const { autoUpdate } = await import('./autoUpdate.js');
     const out = await autoUpdate(process.env, { current: version });
     console.log(out.ran
-      ? (out.result.updated ? `Auto-updated ${out.result.from} → ${out.result.to}` : `Already up to date (${out.result.to})`)
+      ? (out.result.updated
+          ? (out.result.restartDeferred
+              ? `Installed ${out.result.to} — restart deferred (a mission went live); it takes over on the next restart`
+              : `Auto-updated ${out.result.from} → ${out.result.to}`)
+          : `Already up to date (${out.result.to})`)
       : out.reason === 'busy' ? 'Auto-update deferred — a mission is running' : 'Auto-update is off');
     return;
   }

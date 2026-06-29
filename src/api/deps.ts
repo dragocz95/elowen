@@ -40,6 +40,9 @@ export interface ServerDeps {
   gitLock?: KeyedMutex;
   project: { id: number; path: string };
   fallback: AgentSpec;
+  /** How spawned agents invoke the orca CLI (`orca` globally, or `node <path>` in a checkout). Same
+   *  value threaded to spawn/pilot/overseer; used by the guide service to render `orca help`. Absent → `orca`. */
+  cli?: string;
   clock: Clock;
   config: ConfigStore;
   users?: UserStore;

@@ -130,9 +130,11 @@ All LLM prompts are stored as Markdown templates under `prompts/` and rendered a
 | `pilot.md` | Pilot agent: repo-aware CLI planning | `{{goal}}`, `{{notes}}`, `{{submit}}`, `{{jobId}}`, `{{models}}` |
 | `overseer.md` | Parked overseer agent: per-mission decision loop | — |
 | `advisor.md` | Per-user assistant agent: drives Orca on the user's behalf | `{{userName}}` |
-| `worker.md` | Worker agent: general task execution | — |
-| `worker-phase.md` | Phase agent: epic child task execution | — |
-| `worker-epic-close.md` | Final-phase agent: also closes parent epic | — |
+| `worker.md` | Worker agent: short task-brief preamble (points at `orca help`) | — |
+| `worker-phase.md` | Phase agent: short phase-brief preamble (points at `orca help`) | `{{epicId}}` |
+| `worker-resume.md` | Resumed agent: short continuation preamble | — |
+| `agent-guide.md` | On-demand control guide an agent fetches with `orca help` | `{{cli}}`, `{{closeCommand}}` |
+| `agent-guide-phase.md` | Mission-phase appendix to the control guide (sibling rules, handoff, epic close) | `{{epicId}}`, `{{cli}}`, `{{epicCloseCommand}}` |
 | `decision-header.md` | Shared overseer decision header | — |
 | `decision-prompt.md` | Overseer prompt-gate decision body | — |
 | `decision-question.md` | Overseer multiple-choice question body | `{{autonomy}}`, `{{question}}`, `{{context}}`, `{{options}}` |

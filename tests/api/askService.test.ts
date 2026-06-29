@@ -9,7 +9,7 @@ function setup(opts: { overseerExec?: string; mission?: boolean } = {}) {
   const dq = new DecisionQueue();
   const d = {
     tasks: { get: (id: string) => (id === 't1' ? { id, parent_id: 'e1' } : undefined) },
-    missions: { active: () => (opts.mission === false ? [] : [{ id: 'm-e1', epic_id: 'e1' }]) },
+    missions: { activeForEpic: (epicId: string) => (opts.mission === false ? null : (epicId === 'e1' ? { id: 'm-e1', epic_id: 'e1' } : null)) },
     config: { get: () => ({ autopilot: { overseerExec: opts.overseerExec ?? 'sonnet' } }) },
     clock: { now: () => 1000 },
     bus: { publish: (e: { type: string; taskId: string; role: string; text: string }) => { if (e.type === 'message') recorded.push(e); } },

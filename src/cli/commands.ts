@@ -80,7 +80,9 @@ export async function runLifecycle(cmd: string | undefined, env: NodeJS.ProcessE
     case 'update': {
       deps.log('Checking for updates…');
       const r = await deps.update(env, { current: deps.version });
-      deps.log(r.updated ? `Updated ${r.from} → ${r.to}` : `Already up to date (${r.to})`);
+      deps.log(r.updated
+        ? (r.restartDeferred ? `Installed ${r.to} — restart deferred (a mission is running); it takes over on the next restart` : `Updated ${r.from} → ${r.to}`)
+        : `Already up to date (${r.to})`);
       return true;
     }
     default:

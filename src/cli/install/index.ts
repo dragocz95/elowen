@@ -7,6 +7,7 @@ import { ensureServiceUser, userHome, type ServiceUserChoice } from './serviceUs
 import { detectAgentClis, installCommand } from './agentClis.js';
 import { daemonUnit, webUnit, updateService, updateTimer, orcaSudoers, type UnitParams } from './systemdUnits.js';
 import { detectProxy, nginxVhost, apacheVhost, certbotCommand, type ProxyKind } from './proxy.js';
+import { SERVICES } from '../systemd.js';
 import { applySetup, buildSetupPlan, defaultExecForCli, isFirstRun, type SetupAnswers } from '../setup.js';
 import { selfPrefix, reinstallNpmArgs } from '../update.js';
 import { runSetupWizard } from '../setupWizard.js';
@@ -165,11 +166,10 @@ async function provisionSystemd(r: Runner, user: string, home: string, deploy: D
   await r.writeFile('/etc/systemd/system/orca-update.service', updateService(params));
   await r.writeFile('/etc/systemd/system/orca-update.timer', updateTimer());
   await must(r, 'systemctl', ['daemon-reload']);
-  await must(r, 'systemctl', ['enable', '--now', 'orca-daemon.service']);
-  await must(r, 'systemctl', ['enable', '--now', 'orca-web.service']);
+  for (const svc of SERVICES) await must(r, 'systemctl', ['enable', '--now', `${svc}.service`]);
   await must(r, 'systemctl', ['enable', '--now', 'orca-update.timer']);
 
-  for (const svc of ['orca-daemon', 'orca-web']) {
+  for (const svc of SERVICES) {
     const res = await r.exec('systemctl', ['is-active', svc]);
     if (res.stdout.trim() !== 'active') throw new Error(`${svc} did not start (journalctl -u ${svc})`);
   }

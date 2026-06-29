@@ -48,6 +48,10 @@ describe('S51 — spawned agent service token is capability-scoped, not admin', 
     tasks.setStatus('orca-t1', 'in_progress');
     // close its task (orca close → PATCH /tasks/:id)
     expect((await app.request('/tasks/orca-t1', patch(agentTok, { status: 'closed', outcome: 'ok' }))).status).toBe(200);
+    // but the PATCH is field-scoped to close: an agent can't rewrite exec/title/etc. on a task in its
+    // project (intra-tenant integrity) — those fields are 403 even though the route is reachable.
+    expect((await app.request('/tasks/orca-t1', patch(agentTok, { exec: 'codex:gpt-5.5' }))).status).toBe(403);
+    expect((await app.request('/tasks/orca-t1', patch(agentTok, { title: 'renamed' }))).status).toBe(403);
     // read-only listings (orca ls / ready / sessions)
     expect((await app.request('/tasks', auth(agentTok))).status).toBe(200);
     expect((await app.request('/tasks/ready', auth(agentTok))).status).toBe(200);
@@ -86,6 +90,17 @@ describe('S51 — spawned agent service token is capability-scoped, not admin', 
     expect((await app.request('/tasks/orca-ask/ask/bogus/reply', post(agentTok, { text: 'self-answer' }))).status).toBe(403);
     // the pending-ask inbox is a human surface — an agent token can't enumerate it
     expect((await app.request('/asks/pending', auth(agentTok))).status).toBe(403);
+  });
+
+  it('lets the worker fetch its control guide (`orca help`) but not a foreign task\'s', async () => {
+    const { app, tasks, agentTok } = setup();
+    tasks.create({ id: 'orca-guide', project_id: 1, title: 'guide me' });
+    tasks.setAgent('orca-guide', 'Worker'); tasks.setStatus('orca-guide', 'in_progress');
+    // its own guide is reachable (200), not 403
+    expect((await app.request('/tasks/orca-guide/guide', auth(agentTok))).status).toBe(200);
+    // a task in a project it isn't working in stays forbidden
+    tasks.create({ id: 'p2-guide', project_id: 2, title: 'not mine' });
+    expect((await app.request('/tasks/p2-guide/guide', auth(agentTok))).status).toBe(403);
   });
 
   it('cannot touch a task in a project it is not actively working in (no admin cross-project bypass)', async () => {

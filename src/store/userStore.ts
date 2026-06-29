@@ -105,7 +105,9 @@ export class UserStore {
     return mask(r);
   }
   list(): User[] {
-    return (this.db.prepare('SELECT * FROM users ORDER BY created_at').all() as Row[]).map(mask);
+    // created_at, id: id breaks ties deterministically so "first user" (the admin / service-principal
+    // fallback in resolveOwnerId) is stable even when two users share a created_at second.
+    return (this.db.prepare('SELECT * FROM users ORDER BY created_at, id').all() as Row[]).map(mask);
   }
   count(): number {
     return (this.db.prepare('SELECT COUNT(*) AS n FROM users').get() as { n: number }).n;

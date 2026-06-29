@@ -67,7 +67,7 @@ export function createReviewService({ d, log, gitLock, decisionQueue, checkoutPa
     // active with an agent overseer configured.
     const cfg = d.config.get();
     if (existing.parent_id) {
-      const mission = d.missions.active().find((m) => m.epic_id === existing.parent_id);
+      const mission = d.missions.activeForEpic(existing.parent_id) ?? undefined;
       // Tracks whether this close handed the phase to the overseer review gate. When it did, the
       // phase's worktree commit happens on the approving verdict (below); when it didn't, the close
       // is final and we commit right here — so a rejected phase never lands a commit.

@@ -11,6 +11,7 @@ function io(over: Partial<ReinstallIO> = {}): ReinstallIO & { ran: { cmd: string
     packagesDir: () => '/usr/lib/node_modules',
     prefix: () => '/usr',
     writable: async () => true,
+    npmPath: async () => 'npm',
     exec: async (cmd, args) => { ran.push({ cmd, args }); },
     ...over,
   };
@@ -29,9 +30,26 @@ describe('cli/update.update', () => {
       current: '1.2.0', fetch: registry('1.3.0'),
       install: async () => { order.push('install'); },
       restart: async () => { order.push('restart'); },
+      confirmReadyToRestart: () => true,
     });
     expect(r).toEqual({ updated: true, from: '1.2.0', to: '1.3.0' });
     expect(order).toEqual(['install', 'restart']);
+  });
+  it('installs but DEFERS the restart when a mission goes live during the install', async () => {
+    const order: string[] = [];
+    const r = await update({} as NodeJS.ProcessEnv, {
+      current: '1.2.0', fetch: registry('1.3.0'),
+      install: async () => { order.push('install'); },
+      restart: async () => { order.push('restart'); },
+      confirmReadyToRestart: () => false, // a mission went live after the gate, before the restart
+    });
+    expect(r).toEqual({ updated: true, from: '1.2.0', to: '1.3.0', restartDeferred: true });
+    expect(order).toEqual(['install']); // installed, but the restart was withheld
+  });
+  it('treats an unreachable registry as a no-op (so the hourly timer stays green)', async () => {
+    const down = (async () => new Response('nope', { status: 503 })) as unknown as typeof fetch;
+    const r = await update({} as NodeJS.ProcessEnv, { current: '1.2.0', fetch: down, install: async () => { throw new Error('must not install'); }, restart: async () => {} });
+    expect(r).toEqual({ updated: false, from: '1.2.0', to: '1.2.0' });
   });
 });
 

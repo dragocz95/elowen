@@ -1,14 +1,9 @@
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { readFileSync } from 'node:fs';
 import { spawn } from 'node:child_process';
+import { readPkgVersion } from '../shared/pkgVersion.js';
+import { fetchLatestVersion } from '../shared/registry.js';
 
-/** This package's version, read once from its package.json (two dirs up from dist/api/version.js, and
- *  likewise from src/api/version.ts in dev/tests). Surfaced on /health so the web UI can show it. */
-export const ORCA_VERSION = (() => {
-  try { return (JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'package.json'), 'utf8')) as { version?: string }).version ?? '0.0.0'; }
-  catch { return '0.0.0'; }
-})();
+/** This package's version, read once from its package.json. Surfaced on /health so the web UI can show it. */
+export const ORCA_VERSION = readPkgVersion(import.meta.url);
 
 /** Port the daemon listens on — the MCP route reaches back into this same daemon's REST API at it. */
 export const ORCA_PORT = Number(process.env.ORCA_PORT ?? 4400);
@@ -21,19 +16,16 @@ const LATEST_TTL_MS = 30 * 60 * 1000;
 export async function defaultLatestVersion(): Promise<string | null> {
   const now = Date.now();
   if (latestCache && now - latestCache.ts < LATEST_TTL_MS) return latestCache.val;
-  try {
-    const r = await fetch('https://registry.npmjs.org/orcasynth/latest');
-    if (!r.ok) throw new Error(`registry ${r.status}`);
-    const body = await r.json() as { version?: string };
-    latestCache = { ts: now, val: body.version ?? latestCache?.val ?? null };
-  } catch {
-    latestCache = { ts: now, val: latestCache?.val ?? null }; // keep last good; null until first success
-  }
+  const val = await fetchLatestVersion(); // null on any failure — keep last good below
+  latestCache = { ts: now, val: val ?? latestCache?.val ?? null };
   return latestCache.val;
 }
 
-/** Kick off a manual `orca update`, detached so it survives the very service restart it triggers
- *  (same mechanism as orca-update.service). The caller gates on missions first. */
+/** Kick off a manual `orca update`, detached so the HTTP request can return without waiting on the
+ *  install. The updater still runs inside orca-daemon's systemd cgroup, so it can't outlive the daemon
+ *  restart it triggers — that's why `update()` restarts the units with `systemctl --no-block`, handing
+ *  both jobs to PID 1 up front so orca-web restarts even after this process is killed. Caller gates on
+ *  missions first. */
 export function defaultStartUpdate(): void {
   spawn('orca', ['update'], { detached: true, stdio: 'ignore' }).unref();
 }

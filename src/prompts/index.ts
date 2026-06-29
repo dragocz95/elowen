@@ -61,3 +61,13 @@ export function render(name: string, vars: PromptVars = {}): string {
 export function rawTemplate(name: string): string {
   return readTemplate(name);
 }
+
+/** Minimal structural view of {@link PromptService} (avoids an import cycle with promptService.ts). */
+type UserAwareRenderer = { render(name: string, vars: PromptVars, userId?: number | null): string };
+
+/** Render `name` through a user's overrides when a PromptService is present, else the file default —
+ *  the single resolver every optional-`prompts`-dep call site shares (spawn preamble, guide), instead of
+ *  re-spelling the `prompts ? prompts.render(...) : render(...)` fallback at each one. */
+export function renderPromptFor(prompts: UserAwareRenderer | undefined, name: string, vars: PromptVars = {}, ownerId?: number | null): string {
+  return prompts ? prompts.render(name, vars, ownerId) : render(name, vars);
+}

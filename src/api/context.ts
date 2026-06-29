@@ -5,6 +5,7 @@ import { createPlanService } from './services/planService.js';
 import { createReviewService, type ReviewService } from './services/reviewService.js';
 import { createSessionService, type SessionService } from './services/sessionService.js';
 import { createAskService, type AskService } from './services/askService.js';
+import { createGuideService, type GuideService } from './services/guideService.js';
 import { KeyedMutex } from '../shared/keyedMutex.js';
 import { PlanJobStore, type PlanJob } from '../overseer/planJob.js';
 import { DecisionQueue } from '../overseer/decisionQueue.js';
@@ -82,6 +83,8 @@ export interface RouteContext {
   sessionService: SessionService;
   /** The free-text worker↔autopilot exchange behind `orca ask` (mission overseer → human window → sentinel). */
   askService: AskService;
+  /** Renders the context-aware control guide an agent fetches with `orca help` (GET /tasks/:id/guide). */
+  guideService: GuideService;
 }
 
 /** Build the shared {@link RouteContext} from the daemon's injected {@link ServerDeps}. Core reasoning
@@ -259,11 +262,15 @@ export function createRouteContext(d: ServerDeps): RouteContext {
   // worker's question reaches the same parked overseer that answers prompts/reviews.
   const askService = createAskService({ d, decisionQueue });
 
+  // The on-demand control guide an agent fetches with `orca help` — rendered from the task's live state
+  // (standalone vs mission phase), so the worker preamble can stay short and not duplicate the tutorial.
+  const guideService = createGuideService(d);
+
   return {
     d, log, planJobs, decisionQueue, tickets, gitLock,
     agentProjects, canAccessProject, notAdmin, accessibleProjects, missionAccessible,
     taskForSession, eventDeps, sessionAccessible, execAllowedForUser,
     pathFor, usagePathFor, checkoutPathFor, resolveTarget,
-    persistPlan, reapPilotSession, finalizePlanJob, releaseGatedDependents, reviewService, sessionService, askService,
+    persistPlan, reapPilotSession, finalizePlanJob, releaseGatedDependents, reviewService, sessionService, askService, guideService,
   };
 }

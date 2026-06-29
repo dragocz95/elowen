@@ -216,7 +216,7 @@ export function buildApp(opts: BuildOpts) {
   const missionIdForSession = (session: string): string | null => {
     const t = taskForSession(session);
     if (!t?.parent_id) return null;
-    return missions.active().find((m) => m.epic_id === t.parent_id)?.id ?? null;
+    return missions.activeForEpic(t.parent_id)?.id ?? null;
   };
   // Render an inline overseer decision prompt through the task owner's overrides (else file default),
   // so a user's edited decision-* prompts drive the auto-clear/choice verdicts for their own tasks.
@@ -231,7 +231,7 @@ export function buildApp(opts: BuildOpts) {
     autonomyFor: (session) => {
       const t = taskForSession(session);
       if (!t?.parent_id) return null;
-      return missions.active().find((m) => m.epic_id === t.parent_id)?.autonomy ?? null;
+      return missions.activeForEpic(t.parent_id)?.autonomy ?? null;
     },
     missionFor: missionIdForSession,
     // Overseer decision for an auto-cleared prompt: the parked agent (queue) when overseerExec is set
@@ -313,7 +313,7 @@ export function buildApp(opts: BuildOpts) {
   // Single-use ticket store for the terminal WebSocket stream — shared between the authenticated
   // `POST /sessions/:name/ws-ticket` route and the daemon's `/ws/terminal` upgrade handler.
   const tickets = createTicketStore();
-  const app = createServer({ tasks, readiness, missions, engine, missionGit, gitLock, spawn, tmux, bus, events, notes, agents, project: opts.project, fallback: { program: 'claude-code', model: 'sonnet' }, clock: new SystemClock(), config, users, projects, userProjects, pushSubscriptions, userPrompts, prompts, taskUsage, git, avatarsDir, avatarSecret, planJobs, decisionQueue, pilot, advisor, tickets });
+  const app = createServer({ tasks, readiness, missions, engine, missionGit, gitLock, spawn, tmux, bus, events, notes, agents, project: opts.project, fallback: { program: 'claude-code', model: 'sonnet' }, cli, clock: new SystemClock(), config, users, projects, userProjects, pushSubscriptions, userPrompts, prompts, taskUsage, git, avatarsDir, avatarSecret, planJobs, decisionQueue, pilot, advisor, tickets });
 
   // Root-cause recovery: after a daemon crash/restart, tasks left 'in_progress' whose tmux
   // session is gone are zombies — revert them to 'open' so they can be picked up again. No grace

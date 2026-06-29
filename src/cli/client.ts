@@ -45,4 +45,7 @@ export class OrcaClient {
   askHistory(taskId: string) {
     return this.req(`/activity?type=message&target=${encodeURIComponent(taskId)}`);
   }
+  guide(taskId: string) {
+    return this.req(`/tasks/${encodeURIComponent(taskId)}/guide`);
+  }
 }

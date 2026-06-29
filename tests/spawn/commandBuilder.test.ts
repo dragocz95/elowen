@@ -79,30 +79,21 @@ describe('buildAgentCommand', () => {
     const cmd = buildAgentCommand({ program: 'opencode', model: 'm' }, { projectPath: '/o', taskId: 'orca-1', agentName: 'A', bin: '/opt/oc/opencode', extraArgs: '--pure' });
     expect(cmd).toContain("/opt/oc/opencode --model 'm' --pure --prompt ");
   });
-  it('tells the final phase agent to close the epic itself when epicId is given', () => {
+  it('frames a phase preamble as one phase of its mission and points it at `<cli> help`', () => {
     const cmd = buildAgentCommand(
       { program: 'opencode', model: 'm' },
-      { projectPath: '/o', taskId: 'orca-2', agentName: 'A', epicId: 'orca-epic', epicCloseCommand: 'node /x/cli.js close orca-epic', cli: 'node /x/cli.js' },
+      { projectPath: '/o', taskId: 'orca-2', agentName: 'A', epicId: 'orca-epic', cli: 'node /x/cli.js' },
     );
-    expect(cmd).toContain('phase of epic orca-epic');
-    expect(cmd).toContain('node /x/cli.js close orca-epic --summary');
-    expect(cmd).toContain('node /x/cli.js ls'); // sibling-phase check uses the node CLI, not bare `orca`
-    expect(cmd).not.toContain('`orca ls`');
+    expect(cmd).toContain('ONE phase of mission orca-epic');
+    expect(cmd).toContain('node /x/cli.js help'); // the full control guide (incl. epic close) is fetched on demand
   });
-  it('omits the epic-close instruction for a standalone task (no epicId)', () => {
-    const cmd = buildAgentCommand({ program: 'opencode', model: 'm' }, { projectPath: '/o', taskId: 'orca-1', agentName: 'A' });
-    expect(cmd).not.toContain('phase of epic');
-  });
-  it('tells a phase agent to build on prior phases instead of redoing the whole goal', () => {
+  it('keeps the epic-close detail OUT of the preamble — it lives in the on-demand guide', () => {
     const cmd = buildAgentCommand({ program: 'opencode', model: 'm' }, { projectPath: '/o', taskId: 'orca-2', agentName: 'A', epicId: 'orca-epic' });
-    expect(cmd).toContain('ONE phase of a larger mission');
-    expect(cmd).toContain('NOT redo or re-verify');
-    expect(cmd).toContain('edit ONLY the files your own deliverable needs'); // lane discipline for parallel phases
-    expect(cmd).toContain('git status'); // nudged to check current repo state first
+    expect(cmd).not.toContain('close the epic yourself'); // moved to agent-guide-phase, not the spawn message
   });
-  it('gives a standalone task the plain implement instruction (no phase framing)', () => {
+  it('gives a standalone task no mission-phase framing', () => {
     const cmd = buildAgentCommand({ program: 'opencode', model: 'm' }, { projectPath: '/o', taskId: 'orca-1', agentName: 'A' });
-    expect(cmd).not.toContain('ONE phase of a larger mission');
+    expect(cmd).not.toContain('ONE phase of mission');
   });
   it('renders a resume note as its own "new input" block, separate from the task details', () => {
     const cmd = buildAgentCommand({ program: 'opencode', model: 'm' }, { projectPath: '/o', taskId: 'orca-1', agentName: 'A', taskDescription: 'Original brief', resumeNote: 'Review rejected: fix the failing test' });
@@ -116,7 +107,7 @@ describe('buildAgentCommand', () => {
   });
   it('renders the resume note in the phase template too (epicId set)', () => {
     const cmd = buildAgentCommand({ program: 'opencode', model: 'm' }, { projectPath: '/o', taskId: 'orca-2', agentName: 'A', epicId: 'orca-epic', resumeNote: 'Review rejected: add the missing test' });
-    expect(cmd).toContain('ONE phase of a larger mission'); // confirms the worker-phase template
+    expect(cmd).toContain('ONE phase of mission orca-epic'); // confirms the worker-phase template
     expect(cmd).toContain('New input for this run');
     expect(cmd).toContain('Review rejected: add the missing test');
   });
@@ -126,9 +117,11 @@ describe('buildAgentCommand', () => {
     expect(cmd).toContain('New input for this run');
     expect(cmd).toContain('Stalled and relaunched — re-check state');
   });
-  it('tells the agent to give long shell commands a generous timeout (opencode kills short-timeout commands)', () => {
-    const cmd = buildAgentCommand({ program: 'opencode', model: 'm' }, { projectPath: '/o', taskId: 'orca-1', agentName: 'A' });
-    expect(cmd).toContain('1200000 ms');
+  it('points a cold worker at the on-demand control guide (`<cli> help`) instead of inlining the tutorial', () => {
+    const cmd = buildAgentCommand({ program: 'opencode', model: 'm' }, { projectPath: '/o', taskId: 'orca-1', agentName: 'A', cli: 'node /x/cli.js' });
+    expect(cmd).toContain('node /x/cli.js help'); // bootstrap pointer to the guide
+    expect(cmd).not.toContain('1200000 ms'); // the long-timeout tip now lives in the guide, not the preamble
+    expect(cmd).toContain('Work only inside your current working directory'); // the safety floor stays inline
   });
   it('uses rawPrompt verbatim and skips the worker preamble (reasoning agents)', () => {
     const cmd = buildAgentCommand(
@@ -225,11 +218,12 @@ describe('buildAgentCommand', () => {
     it('omits resume tokens entirely when no resume is set (cold start unchanged)', () => {
       const cmd = buildAgentCommand({ program: 'claude-code', model: 'sonnet' }, { projectPath: '/o', taskId: 'orca-1', agentName: 'A' });
       expect(cmd).not.toContain('--resume');
-      expect(cmd).toContain('First read the project context'); // the normal worker preamble
+      expect(cmd).toContain('Before you do anything else, run'); // the normal (cold) worker bootstrap
     });
-    it('tells the worker how to ask the autopilot an open question, using the resolved cli', () => {
-      const cmd = buildAgentCommand({ program: 'claude-code', model: 'sonnet' }, { projectPath: '/o', taskId: 'orca-1', agentName: 'A', cli: 'node /x/cli.js' });
-      expect(cmd).toContain('node /x/cli.js ask'); // the ask guidance renders with the daemon cli, not the bare default
+    it('points the resumed worker at the control guide and ask, using the resolved cli', () => {
+      const cmd = buildAgentCommand({ program: 'claude-code', model: 'sonnet' }, { projectPath: '/o', taskId: 'orca-1', agentName: 'A', resume: { program: 'claude-code', sessionId: 's1' }, cli: 'node /x/cli.js' });
+      expect(cmd).toContain('node /x/cli.js help'); // refresher pointer renders with the daemon cli, not bare `orca`
+      expect(cmd).toContain('node /x/cli.js ask'); // the resume preamble still names the open-question channel
     });
   });
 });

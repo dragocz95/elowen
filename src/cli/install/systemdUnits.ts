@@ -1,5 +1,6 @@
 /** Pure renderers for the two systemd unit files `orca install` writes. Kept string-only and
  *  side-effect-free so they're unit-tested without touching /etc; the wizard writes + enables them. */
+import { SERVICES } from '../systemd.js';
 
 export interface UnitParams {
   /** Unprivileged system user the services run as (never root). */
@@ -95,8 +96,12 @@ WantedBy=timers.target
  *  pinned to the literal commands orca issues (least privilege); `reinstallCmd` is the absolute,
  *  fully-resolved npm command so sudo matches it. Validated with `visudo -c` before it's trusted. */
 export function orcaSudoers(user: string, reinstallCmd: string): string {
+  // Built from SERVICES so the pinned restart command can't drift from what `systemctl('restart',
+  // '--no-block', ...SERVICES)` actually issues (sudo matches arguments positionally). --no-block lets a
+  // web-triggered self-update enqueue BOTH unit restarts before the daemon's own restart kills it.
+  const units = SERVICES.join(' ');
   return `# Managed by orca install — lets the ${user} service user restart its own units and self-update in place (auto-update + manual update).
-${user} ALL=(root) NOPASSWD: /usr/bin/systemctl restart orca-daemon orca-web, /usr/bin/systemctl is-active orca-daemon orca-web
+${user} ALL=(root) NOPASSWD: /usr/bin/systemctl restart --no-block ${units}, /usr/bin/systemctl is-active ${units}
 ${user} ALL=(root) NOPASSWD: ${reinstallCmd}
 `;
 }

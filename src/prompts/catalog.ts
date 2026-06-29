@@ -22,7 +22,10 @@ export const EDITABLE_PROMPTS: PromptCatalogEntry[] = [
   { name: 'worker', group: 'workers', vars: [...WORKER_VARS, 'cli'], jsonContract: false },
   { name: 'worker-resume', group: 'workers', vars: [...WORKER_VARS, 'cli'], jsonContract: false },
   { name: 'worker-phase', group: 'workers', vars: [...WORKER_VARS, 'epicId', 'cli'], jsonContract: false },
-  { name: 'worker-epic-close', group: 'workers', vars: ['epicId', 'cli', 'epicCloseCommand'], jsonContract: false },
+  // The on-demand control guide an agent fetches with `orca help` (rendered by guideService). `agent-guide`
+  // is the base; `agent-guide-phase` is appended for a mission phase (sibling rules, handoff, epic close).
+  { name: 'agent-guide', group: 'workers', vars: ['cli', 'closeCommand'], jsonContract: false },
+  { name: 'agent-guide-phase', group: 'workers', vars: ['epicId', 'cli', 'epicCloseCommand'], jsonContract: false },
   { name: 'pilot', group: 'pilot', vars: ['goal', 'notes', 'submit', 'jobId', 'models', 'parallelism'], jsonContract: true },
   { name: 'planner', group: 'pilot', vars: ['goal', 'project', 'models', 'parallelism'], jsonContract: true },
   { name: 'overseer', group: 'overseer', vars: ['missionId', 'cli', 'codeReview'], jsonContract: false },

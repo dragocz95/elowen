@@ -1,7 +1,7 @@
 import { openDb } from '../store/db.js';
 import { ConfigStore } from '../store/configStore.js';
-import { MissionStore } from '../store/missionStore.js';
 import { dbPath } from './paths.js';
+import { hasLiveMission } from './missionGate.js';
 import { update, type UpdateResult } from './update.js';
 
 /** What `orca update --auto` (the hourly systemd timer) decided. It only upgrades when the operator
@@ -22,13 +22,15 @@ export interface AutoUpdateDeps {
 
 function readGate(env: NodeJS.ProcessEnv): { enabled: boolean; busy: boolean } {
   const db = openDb(dbPath(env));
+  let enabled: boolean;
   try {
-    const enabled = new ConfigStore(db).get().autoUpdate;
-    const busy = new MissionStore(db).live().length > 0;
-    return { enabled, busy };
+    enabled = new ConfigStore(db).get().autoUpdate;
   } finally {
     db.close();
   }
+  // `update()` re-checks this again right before the restart; reading it here too lets the timer skip
+  // the whole install when a mission is already live. Single source via hasLiveMission.
+  return { enabled, busy: hasLiveMission(env) };
 }
 
 /** Gate, then update. Never throws on the "skip" paths — a disabled or busy box is a normal no-op for
