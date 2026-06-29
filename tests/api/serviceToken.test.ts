@@ -74,6 +74,18 @@ describe('S51 — spawned agent service token is capability-scoped, not admin', 
     expect((await app.request('/missions/m-x/overseer/decide', post(agentTok, { id: 'nope', approve: true }))).status).not.toBe(403);
   });
 
+  it('lets the worker drive `orca ask` (start + poll) but never the human reply', async () => {
+    const { app, tasks, agentTok } = setup();
+    tasks.create({ id: 'orca-ask', project_id: 1, title: 'ask me' });
+    tasks.setAgent('orca-ask', 'Worker'); tasks.setStatus('orca-ask', 'in_progress');
+    // post an open question to the autopilot (orca ask) — reachable, not 403
+    expect((await app.request('/tasks/orca-ask/ask', post(agentTok, { text: 'A or B?' }))).status).toBe(200);
+    // long-poll its reply — reachable (404 'no such ask' for a bogus id, NOT 403)
+    expect((await app.request('/tasks/orca-ask/ask/bogus?timeoutMs=1', auth(agentTok))).status).not.toBe(403);
+    // the human reply is off-limits to the agent: it must not answer its own question
+    expect((await app.request('/tasks/orca-ask/ask/bogus/reply', post(agentTok, { text: 'self-answer' }))).status).toBe(403);
+  });
+
   it('cannot touch a task in a project it is not actively working in (no admin cross-project bypass)', async () => {
     const { app, tasks, agentTok } = setup();
     // A worker is live in project 1, but a task sits idle in project 2 — outside the working set.

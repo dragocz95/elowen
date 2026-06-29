@@ -18,20 +18,24 @@ export function registerAuthGuards(app: OrcaApp, ctx: RouteContext): void {
   //   • submit a plan         → POST  /plan/:jobId/submit  (+ GET /plan/:jobId)
   //   • overseer poll/decide  → GET /missions/:id/overseer/next, POST /missions/:id/overseer/decide
   //   • read-only listings    → GET /tasks, /tasks/ready, /sessions   (orca ls|ready|sessions)
-  // Project ownership of the affected row is still enforced downstream (canAccessProject etc.),
-  // so the agent can't cross tenancy even within the allow-list.
+  //   • ask the autopilot     → POST /tasks/:id/ask, GET /tasks/:id/ask/:askId   (orca ask)
+  // The human reply (POST /tasks/:id/ask/:askId/reply) is deliberately NOT allowed — an agent must
+  // not answer its own question. Project ownership of the affected row is still enforced downstream
+  // (canAccessProject etc.), so the agent can't cross tenancy even within the allow-list.
   const agentAllowed = (method: string, path: string): boolean => {
     if (method === 'GET') {
       if (path === '/tasks' || path === '/tasks/ready' || path === '/sessions') return true;
       if (path === '/notes') return true; // read a mission's handoff notes (orca note ls)
       if (/^\/plan\/[^/]+$/.test(path)) return true;
       if (/^\/missions\/[^/]+\/overseer\/next$/.test(path)) return true;
+      if (/^\/tasks\/[^/]+\/ask\/[^/]+$/.test(path)) return true; // long-poll an ask's reply (orca ask)
     }
     if (method === 'PATCH' && /^\/tasks\/[^/]+$/.test(path)) return true;
     if (method === 'POST') {
       if (path === '/notes') return true; // leave a handoff note for later phases (orca note add)
       if (/^\/plan\/[^/]+\/submit$/.test(path)) return true;
       if (/^\/missions\/[^/]+\/overseer\/decide$/.test(path)) return true;
+      if (/^\/tasks\/[^/]+\/ask$/.test(path)) return true; // post an open question to the autopilot (orca ask)
     }
     return false;
   };
