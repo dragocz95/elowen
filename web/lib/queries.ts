@@ -188,6 +188,11 @@ export const useProjectsCommits = (projectIds: number[], hours: number) =>
 export const useMe = () =>
   useQuery({ queryKey: ['me'], queryFn: orcaClient.me, staleTime: 5 * 60 * 1000 });
 
+/** The current user's editable agent prompts (defaults + their overrides). Edited via the account
+ *  section; mutations invalidate ['my-prompts']. */
+export const useMyPrompts = () =>
+  useQuery({ queryKey: ['my-prompts'], queryFn: orcaClient.myPrompts });
+
 export const useUserProjects = (userId: number | null, enabled = true) =>
   useQuery({ queryKey: ['user-projects', userId], queryFn: () => orcaClient.userProjects(userId as number), enabled: !!userId && enabled });
 

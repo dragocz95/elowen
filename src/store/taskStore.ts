@@ -25,14 +25,14 @@ export class TaskStore {
   constructor(private db: Db) {}
   create(input: CreateTaskInput): Task {
     this.db.prepare(
-      `INSERT INTO tasks (id, project_id, title, type, priority, parent_id, labels, description, scheduled_at, autostart)
-       VALUES (@id, @project_id, @title, @type, @priority, @parent_id, @labels, @description, @scheduled_at, @autostart)`
+      `INSERT INTO tasks (id, project_id, title, type, priority, parent_id, labels, description, scheduled_at, autostart, created_by)
+       VALUES (@id, @project_id, @title, @type, @priority, @parent_id, @labels, @description, @scheduled_at, @autostart, @created_by)`
     ).run({
       id: input.id, project_id: input.project_id, title: input.title,
       type: input.type ?? 'task', priority: input.priority ?? 'P2',
       parent_id: input.parent_id ?? null, labels: (input.labels ?? []).join(','),
       description: input.description ?? '', scheduled_at: input.scheduled_at ?? null,
-      autostart: input.autostart ? 1 : 0,
+      autostart: input.autostart ? 1 : 0, created_by: input.created_by ?? null,
     });
     return this.get(input.id)!;
   }

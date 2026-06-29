@@ -9,12 +9,17 @@ import { parseResumeLabel } from '../spawn/resume/index.js';
 import { projectHead } from '../integrations/projectFiles.js';
 import { checkoutBusy, checkoutOf } from './checkout.js';
 import { snapshotTaskChanges } from './taskSnapshot.js';
+import { resolveOwnerId } from '../prompts/owner.js';
 import { logger } from '../shared/logger.js';
 
 const log = logger('scheduler');
 
 export interface SchedulerDeps {
   tasks: TaskStore; spawn: SpawnService; bus: EventBus;
+  /** Stores used only to attribute a spawned agent to its owner (for per-user prompt resolution).
+   *  Optional: absent in minimal test wiring, where launches fall back to the file-default prompts. */
+  missions?: { get(id: string): { created_by: number | null } | null };
+  users?: { list(): { id: number }[] };
   /** Every registered project — the scheduler launches due tasks across all of them. */
   projects: { list(): { id: number; path: string }[]; get(id: number): { id: number; path: string } | null };
   fallback: AgentSpec;
@@ -74,6 +79,7 @@ export class Scheduler {
             resumeNote: task.resume_note ?? undefined,
             epicId: task.parent_id ?? undefined,
             resume: parseResumeLabel(task.labels),
+            ownerId: resolveOwnerId(this.d, { taskId: task.id }),
           });
         } catch (e) {
           // Spawn failed (tmux down, bin missing): roll back so the schedule isn't silently lost (O9).

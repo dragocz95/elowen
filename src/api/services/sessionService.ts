@@ -1,6 +1,7 @@
 import { resolveExecutor } from '../../overseer/routing.js';
 import { checkoutBusy, checkoutOf } from '../../overseer/checkout.js';
 import { parseResumeLabel } from '../../spawn/resume/index.js';
+import { resolveOwnerId } from '../../prompts/owner.js';
 import { projectHead } from '../../integrations/projectFiles.js';
 import { uniqueName } from '../../daemon/uniqueName.js';
 import type { KeyedMutex } from '../../shared/keyedMutex.js';
@@ -58,7 +59,7 @@ export function createSessionService(d: ServerDeps, gitLock: KeyedMutex, pathFor
     const resumeNote = d.tasks.get(taskId)?.resume_note ?? undefined;
     let session: string;
     try {
-      ({ session } = await d.spawn.launch({ projectId, projectPath: cwd, taskId, agentName, spec, taskTitle: task.title, taskDescription: task.description, resumeNote, epicId: task.parent_id ?? undefined, resume }));
+      ({ session } = await d.spawn.launch({ projectId, projectPath: cwd, taskId, agentName, spec, taskTitle: task.title, taskDescription: task.description, resumeNote, epicId: task.parent_id ?? undefined, resume, ownerId: resolveOwnerId(d, { taskId }) }));
     } catch (e) {
       // The task was already flipped to in_progress above; a spawn failure (bad cwd, missing tmux,
       // name collision) would otherwise leave it stuck with no live session until the stuck detector

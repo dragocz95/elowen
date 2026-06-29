@@ -16,6 +16,9 @@ export interface PlanJob {
    *  mission can opt in/out independently of the project/global default. Undefined/null = inherit. */
   prEnabled?: boolean | null;
   status: PlanJobStatus; phases: Phase[]; error?: string;
+  /** The user who triggered the plan. Stamped onto the epic + every phase (created_by) so the spawned
+   *  Pilot and phase agents resolve to this owner's prompt overrides. Null for system/legacy plans. */
+  createdBy?: number | null;
   /** tmux session of the Pilot agent in agent-mode planning, so the client can live-preview the
    *  planner's pane while it works. Unset for relay-mode planning (synchronous, no tmux). */
   sessionName?: string;
@@ -36,7 +39,7 @@ export class PlanJobStore {
 
   constructor(private now: () => number = Date.now) {}
 
-  create(input: { goal: string; name?: string; projectId: number; epicId: string | null; dryRun: boolean; exec?: string; autoModel?: boolean; engage?: { autonomy: string; maxSessions: number; preserveReviewBudget?: boolean }; prEnabled?: boolean | null; maxSessions?: number }): PlanJob {
+  create(input: { goal: string; name?: string; projectId: number; epicId: string | null; dryRun: boolean; exec?: string; autoModel?: boolean; engage?: { autonomy: string; maxSessions: number; preserveReviewBudget?: boolean }; prEnabled?: boolean | null; maxSessions?: number; createdBy?: number | null }): PlanJob {
     this.prune();
     const job: PlanJob = { id: `pj-${randomBytes(5).toString('hex')}`, status: 'planning', phases: [], ...input };
     this.jobs.set(job.id, job);

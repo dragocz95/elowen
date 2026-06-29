@@ -78,6 +78,9 @@ export function openDb(path: string): Db {
   // Who started the mission — drives per-mission push-notification routing (owner + admins). Nullable:
   // legacy/system missions have no owner and fall back to notifying admins only. Old DBs default NULL.
   addColumn(db, 'missions', 'created_by', 'INTEGER');
+  // Who created the task — used to attribute a spawned agent to a user so its prompts resolve to that
+  // user's overrides (else admin fallback). Nullable: legacy/system tasks have no owner. Old DBs NULL.
+  addColumn(db, 'tasks', 'created_by', 'INTEGER');
   // Seed the bootstrap admin on existing DBs: the lowest-id user, if none is flagged yet.
   db.exec("UPDATE users SET is_admin = 1 WHERE id = (SELECT MIN(id) FROM users) AND NOT EXISTS (SELECT 1 FROM users WHERE is_admin = 1)");
   return db;

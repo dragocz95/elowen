@@ -37,16 +37,24 @@ export function _resetPromptCache(): void { cache.clear(); }
 export type PromptVars = Record<string, string>;
 
 /**
- * Render a prompt template: load `<name>.md` and substitute every `{{key}}` token from `vars`.
- * Substitution is literal `replaceAll` (no regex), so placeholder values can contain any characters.
- * Unreferenced placeholders are left untouched; callers pass every variable a template uses.
+ * Substitute every `{{key}}` token in `text` from `vars`. Literal `replaceAll` (no regex), so
+ * placeholder values can contain any characters. Unreferenced placeholders are left untouched.
+ * Shared by the file renderer here and the user-aware PromptService (which feeds an override's text).
  */
-export function render(name: string, vars: PromptVars = {}): string {
-  let out = readTemplate(name);
+export function applyVars(text: string, vars: PromptVars = {}): string {
+  let out = text;
   for (const [key, value] of Object.entries(vars)) {
     out = out.replaceAll(`{{${key}}}`, value);
   }
   return out;
+}
+
+/**
+ * Render a prompt template: load `<name>.md` and substitute every `{{key}}` token from `vars`.
+ * The file-only path (no user context) — the default and the fallback the PromptService resolves to.
+ */
+export function render(name: string, vars: PromptVars = {}): string {
+  return applyVars(readTemplate(name), vars);
 }
 
 /** Load a raw template by name without substitution (e.g. the editable planner default). */

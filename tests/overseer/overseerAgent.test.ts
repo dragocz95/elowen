@@ -24,6 +24,20 @@ describe('overseerPrompt', () => {
   it('tells the agent it may exit cleanly so a crash/full-context overseer is restartable (O20)', () => {
     expect(overseerPrompt('m1').toLowerCase()).toContain('exit cleanly');
   });
+  it('injects the code-review criteria template into the review handling', () => {
+    const p = overseerPrompt('m1');
+    expect(p).not.toContain('{{codeReview}}'); // placeholder was substituted, not left raw
+    expect(p.toLowerCase()).toContain('code-review criteria'); // the injected section is present
+    expect(p.toLowerCase()).toContain('scope'); // a distinctive focus area from code-review.md
+  });
+  it('renders the code-review template via the same per-user renderer it is given', () => {
+    // overseerPrompt asks its renderer for BOTH 'overseer' and 'code-review' — a custom renderer
+    // (the per-user override path) must be consulted for the criteria too, not just the loop prompt.
+    const renderPrompt = vi.fn((name: string, vars: Record<string, string>) => name === 'code-review' ? 'CR-CRITERIA' : `loop: ${vars.codeReview}`);
+    const p = overseerPrompt('m1', 'orca', renderPrompt);
+    expect(renderPrompt).toHaveBeenCalledWith('code-review', {});
+    expect(p).toContain('CR-CRITERIA');
+  });
 });
 
 describe('makeOverseer', () => {

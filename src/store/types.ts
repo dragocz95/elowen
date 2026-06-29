@@ -17,9 +17,13 @@ export interface Task {
   /** Transient input for this task's next run — a review-reject rationale, or a stuck/manual relaunch
    *  reason — surfaced in the re-spawned agent's prompt. Null when there's nothing pending. */
   resume_note: string | null;
+  /** The user who created the task. Drives per-user prompt resolution for the agent it spawns (the
+   *  agent runs with this owner's prompt overrides, else the admin fallback). Null for legacy/system tasks. */
+  created_by: number | null;
 }
 export interface CreateTaskInput {
   id: string; project_id: number; title: string;
   type?: string; priority?: string; parent_id?: string | null; labels?: string[];
   description?: string; scheduled_at?: string | null; autostart?: number;
+  created_by?: number | null;
 }

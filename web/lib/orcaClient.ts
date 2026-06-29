@@ -1,4 +1,4 @@
-import type { Task, Mission, CreateTaskInput, UpdateTaskInput, PlanInput, PlanSubmitResult, PlanJob, InsertPhasesInput, InsertPhasesResult, EngageInput, OrcaConfig, ConfigPatch, MissionDetail, User, UserPatch, ProfilePatch, AuthResult, ActivityEvent, Project, ProjectGit, CommitLogEntry, Note, HermesStatus, HermesInstallInput, HermesInstallResult, CliDetectionResult, GithubAuthStatus, TokenUsage, ModelUsage, ResetUsageResult, FileNode, DirListing, SessionInfo, SystemInfo } from './types';
+import type { Task, Mission, CreateTaskInput, UpdateTaskInput, PlanInput, PlanSubmitResult, PlanJob, InsertPhasesInput, InsertPhasesResult, EngageInput, OrcaConfig, ConfigPatch, MissionDetail, User, UserPatch, ProfilePatch, UserPrompt, AuthResult, ActivityEvent, Project, ProjectGit, CommitLogEntry, Note, HermesStatus, HermesInstallInput, HermesInstallResult, CliDetectionResult, GithubAuthStatus, TokenUsage, ModelUsage, ResetUsageResult, FileNode, DirListing, SessionInfo, SystemInfo } from './types';
 import { clearToken } from './token';
 
 // Same-origin BFF base: the browser talks only to this web origin's /api proxy, which injects the
@@ -116,6 +116,9 @@ export const orcaClient = {
   updateMe: (patch: ProfilePatch) => req<User>('/auth/me', json(patch, 'PATCH')),
   uploadAvatar: (file: File) => { const fd = new FormData(); fd.append('avatar', file); return req<User>('/auth/me/avatar', { method: 'POST', body: fd }); },
   changePassword: (currentPassword: string, newPassword: string) => req<{ ok: boolean }>('/auth/me/password', json({ currentPassword, newPassword })),
+  myPrompts: () => req<UserPrompt[]>('/auth/me/prompts'),
+  saveMyPrompt: (name: string, content: string) => req<{ ok: boolean }>(`/auth/me/prompts/${encodeURIComponent(name)}`, json({ content }, 'PUT')),
+  resetMyPrompt: (name: string) => req<{ ok: boolean }>(`/auth/me/prompts/${encodeURIComponent(name)}`, { method: 'DELETE' }),
   // Mint a short-lived signed avatar URL. An <img> can't set an Authorization header, so instead of
   // leaking the long-lived session token into the query string (finding W2) we ask the daemon — over
   // an authenticated request — for an HMAC-signed link that expires in minutes.

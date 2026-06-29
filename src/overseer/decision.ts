@@ -1,5 +1,6 @@
 import type { InferenceClient } from '../inference/types.js';
 import { render } from '../prompts/index.js';
+import type { RenderPrompt } from '../spawn/commandBuilder.js';
 import { extractJson } from './llmParse.js';
 
 export interface PromptContext {
@@ -53,14 +54,14 @@ export function gateVerdict(
 /** Shared overseer prompt header (role + approve/escalate instruction + JSON output contract). Both
  *  the prompt-gate and task-gate builders render this, then append their own context fields — one
  *  source of truth for the verdict format so the two prompts can't drift apart. */
-function overseerHeader(subject: string, approveGuidance: string): string {
-  return render('decision-header', { subject, approveGuidance });
+function overseerHeader(subject: string, approveGuidance: string, renderPrompt: RenderPrompt = render): string {
+  return renderPrompt('decision-header', { subject, approveGuidance });
 }
 
-export function decisionPrompt(input: PromptContext): string {
+export function decisionPrompt(input: PromptContext, renderPrompt: RenderPrompt = render): string {
   const opts = input.options.map((o) => `- ${o.id}: ${o.label}`).join('\n');
-  const header = overseerHeader('agent. An agent has paused on a prompt and needs a decision', 'Approve routine, safe, clearly-correct actions. Escalate anything destructive, ambiguous, or high-stakes.');
-  const body = render('decision-prompt', {
+  const header = overseerHeader('agent. An agent has paused on a prompt and needs a decision', 'Approve routine, safe, clearly-correct actions. Escalate anything destructive, ambiguous, or high-stakes.', renderPrompt);
+  const body = renderPrompt('decision-prompt', {
     autonomy: input.autonomy,
     question: input.question,
     context: input.context,
@@ -79,9 +80,9 @@ export function parseDecision(text: string): Decision {
 }
 
 /** Decide whether to auto-approve a paused agent prompt or escalate to a human. */
-export async function decidePrompt(inf: InferenceClient, input: PromptContext): Promise<Decision> {
+export async function decidePrompt(inf: InferenceClient, input: PromptContext, renderPrompt: RenderPrompt = render): Promise<Decision> {
   try {
-    const { text } = await inf.decide(decisionPrompt(input));
+    const { text } = await inf.decide(decisionPrompt(input, renderPrompt));
     return parseDecision(text);
   } catch {
     // LLM unavailable/unparseable → be conservative: escalate.
@@ -109,9 +110,9 @@ export interface ChoiceVerdict {
   rationale: string;
 }
 
-export function choicePrompt(input: ChoiceContext): string {
+export function choicePrompt(input: ChoiceContext, renderPrompt: RenderPrompt = render): string {
   const opts = input.options.map((o) => `- ${o.id}: ${o.label}`).join('\n');
-  return render('decision-question', {
+  return renderPrompt('decision-question', {
     autonomy: input.autonomy,
     question: input.question,
     context: input.context,
@@ -130,9 +131,9 @@ export function parseChoice(text: string): ChoiceVerdict {
 
 /** Ask the overseer to pick one of the agent's options. On any inference/parse failure it escalates
  *  (choice 'escalate', confidence 0) — the deriver then routes the question to a human. */
-export async function decideChoice(inf: InferenceClient, input: ChoiceContext): Promise<ChoiceVerdict> {
+export async function decideChoice(inf: InferenceClient, input: ChoiceContext, renderPrompt: RenderPrompt = render): Promise<ChoiceVerdict> {
   try {
-    const { text } = await inf.decide(choicePrompt(input));
+    const { text } = await inf.decide(choicePrompt(input, renderPrompt));
     return parseChoice(text);
   } catch {
     return { choice: 'escalate', confidence: 0, rationale: 'overseer inference failed' };

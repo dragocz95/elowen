@@ -5,6 +5,7 @@ import type { ConfigStore } from '../store/configStore.js';
 import type { AgentSpec } from '../spawn/commandBuilder.js';
 import { resolveExecutor } from '../overseer/routing.js';
 import { render } from '../prompts/index.js';
+import type { PromptService } from '../prompts/promptService.js';
 import { logger } from '../shared/logger.js';
 
 const log = logger('advisor');
@@ -23,6 +24,8 @@ export interface AdvisorDeps {
   url: string;
   /** Optional hook to write per-program MCP config into the session cwd before launch (Task 9). */
   prepareMcp?: (program: string, cwd: string, token: string, url: string) => Promise<void> | void;
+  /** User-aware prompt renderer, so the advisor prompt resolves to the user's override (else default). */
+  prompts?: PromptService;
 }
 
 /** Per-user advisor lifecycle: a persistent `orca-advisor-<userId>` agent session that controls Orca
@@ -59,7 +62,9 @@ export class AdvisorService {
     const cwd = this.d.advisorDir(userId);
     await this.d.prepareMcp?.(spec.program, cwd, token, this.d.url);
     const u = this.d.users.get(userId)!;
-    const rawPrompt = render('advisor', { userName: u.name || u.username });
+    const rawPrompt = this.d.prompts
+      ? this.d.prompts.render('advisor', { userName: u.name || u.username }, userId)
+      : render('advisor', { userName: u.name || u.username });
     // agentName `advisor-<id>` → SpawnService names the tmux session `orca-advisor-<id>`. The full
     // advisor token overrides the daemon's agent service token via extraEnv, so the advisor acts with
     // the user's own rights. The cwd is a neutral per-user dir, not a project checkout.

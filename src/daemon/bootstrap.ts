@@ -36,6 +36,9 @@ import { KeyedMutex } from '../shared/keyedMutex.js';
 import { ProjectStore } from '../store/projectStore.js';
 import { UserProjectStore } from '../store/userProjectStore.js';
 import { PushSubscriptionStore } from '../store/pushSubscriptionStore.js';
+import { UserPromptStore } from '../store/userPromptStore.js';
+import { PromptService } from '../prompts/promptService.js';
+import { resolveOwnerId } from '../prompts/owner.js';
 import { TaskUsageStore } from '../store/taskUsageStore.js';
 import { UsageRecorder } from '../integrations/usage/recorder.js';
 import { captureResumeLabel } from '../integrations/usage/resumeCapture.js';
@@ -110,6 +113,8 @@ export function buildApp(opts: BuildOpts) {
   const projects = new ProjectStore(db);
   const userProjects = new UserProjectStore(db);
   const pushSubscriptions = new PushSubscriptionStore(db);
+  const userPrompts = new UserPromptStore(db);
+  const prompts = new PromptService(userPrompts);
   const taskUsage = new TaskUsageStore(db);
   const git = new RealGitReader();
   // Give spawned agents a way to close their task: the orca CLI path + daemon URL + a service token.
@@ -127,7 +132,7 @@ export function buildApp(opts: BuildOpts) {
   // mid-task (they hold the token they were spawned with); only mints fresh when none is valid.
   const serviceToken = users.count() > 0 ? users.ensureAgentToken(users.list()[0]!.id) : '';
   const orcaCli = { cli, url: `http://localhost:${process.env.ORCA_PORT ?? 4400}`, token: serviceToken };
-  const spawn = new SpawnService({ tmux, agents, orca: orcaCli, providers: (program) => config.get().providers[program] });
+  const spawn = new SpawnService({ tmux, agents, orca: orcaCli, providers: (program) => config.get().providers[program], prompts });
   const bus = new EventBus();
   const events = new EventStore(db);
   const notes = new NoteStore(db);
@@ -147,7 +152,7 @@ export function buildApp(opts: BuildOpts) {
   // the Overseer parks a per-mission agent that long-polls the decision queue.
   const planJobs = new PlanJobStore();
   const decisionQueue = new DecisionQueue();
-  const pilot = makePilot({ spawn, config, projects, planJobs, tmux, nameAgent: uniqueName, cli });
+  const pilot = makePilot({ spawn, config, projects, planJobs, tmux, nameAgent: uniqueName, cli, prompts });
 
   // PR-native git lifecycle (no-op unless Settings → PR workflow is enabled): each mission runs in an
   // isolated worktree on its own branch, commits per approved phase, and (later stages) opens a PR.
@@ -156,7 +161,7 @@ export function buildApp(opts: BuildOpts) {
 
   // The overseer must be parked INSIDE the mission's worktree (via missionGit) so its read-only
   // `git diff` judges the agent's actual work, not the unchanged main checkout.
-  const overseer = makeOverseer({ spawn, tmux, config, queue: decisionQueue, cli, missionGit });
+  const overseer = makeOverseer({ spawn, tmux, config, queue: decisionQueue, cli, missionGit, missions, prompts });
 
   // Phone push: a single bus subscriber maps lifecycle events (review escalation, needs_input, stall,
   // completion) to web-push notifications for the mission's owner + admins. No-op until a user
@@ -176,7 +181,7 @@ export function buildApp(opts: BuildOpts) {
   // commit+snapshot at close never interleaves with another agent's baseline read on the same checkout.
   const gitLock = new KeyedMutex();
   const engine = new MissionEngine({
-    tasks, readiness, missions, spawn, tmux, bus, projects,
+    tasks, readiness, missions, users, spawn, tmux, bus, projects,
     fallback: { program: 'claude-code', model: 'sonnet' }, nameAgent: uniqueName, clock: new SystemClock(),
     overseer, missionGit, gitLock,
     // On natural completion, ask the overseer model to write the mission's "what happened" prose.
@@ -188,7 +193,7 @@ export function buildApp(opts: BuildOpts) {
       return text;
     },
   });
-  const scheduler = new Scheduler({ tasks, spawn, bus, projects, fallback: { program: 'claude-code', model: 'sonnet' }, nameAgent: uniqueName, clock: new SystemClock(), gitLock, worktreeFor: (id) => missionGit?.worktreeFor(id) });
+  const scheduler = new Scheduler({ tasks, spawn, bus, missions, users, projects, fallback: { program: 'claude-code', model: 'sonnet' }, nameAgent: uniqueName, clock: new SystemClock(), gitLock, worktreeFor: (id) => missionGit?.worktreeFor(id) });
   // Deriver resolves a session's task via the agent registry / in-progress task (simplified: first in_progress child).
   // Resolve a session's task via its agent:<name> label. Agent names recur across missions,
   // so pick the MOST RECENT match (list is created_at ASC) — never an old same-named task,
@@ -213,6 +218,10 @@ export function buildApp(opts: BuildOpts) {
     if (!t?.parent_id) return null;
     return missions.active().find((m) => m.epic_id === t.parent_id)?.id ?? null;
   };
+  // Render an inline overseer decision prompt through the task owner's overrides (else file default),
+  // so a user's edited decision-* prompts drive the auto-clear/choice verdicts for their own tasks.
+  const decisionRenderer = (taskId: string) => (name: string, vars?: Record<string, string>) =>
+    prompts.render(name, vars, resolveOwnerId({ tasks, missions, users }, { taskId }));
   const deriver = new Deriver({
     tmux, agents, tasks, sink: bus, clock: new SystemClock(),
     // Resolve strictly via the agent:<name> label. No global "first in-progress task" fallback:
@@ -246,7 +255,7 @@ export function buildApp(opts: BuildOpts) {
       // No overseer wired at all: only L3 may wave a prompt through; L1/L2 escalate
       // instead of being blindly approved (that blanket-approve was the bug that collapsed L2 into L3).
       if (!inf) return noOverseerFallback(input.autonomy);
-      const d = await decidePrompt(inf, input);
+      const d = await decidePrompt(inf, input, decisionRenderer(input.taskId));
       const gated = gateVerdict(d, { minConfidence });
       recordPrompt(gated, d.rationale, d.confidence);
       return gated;
@@ -275,7 +284,7 @@ export function buildApp(opts: BuildOpts) {
       }
       const inf = overseerClient();
       if (!inf) return { choiceId: null };
-      const v = await decideChoice(inf, input);
+      const v = await decideChoice(inf, input, decisionRenderer(input.taskId));
       const res = gate(v.choice === 'escalate' ? undefined : v.choice, v.confidence);
       recordChoice(res, v.rationale, v.confidence);
       return res;
@@ -299,11 +308,12 @@ export function buildApp(opts: BuildOpts) {
     projectId: opts.project.id, url: orcaCli.url,
     advisorDir: (id) => { const p = join(dirname(opts.dbPath), 'advisor', String(id)); mkdirSync(p, { recursive: true }); return p; },
     prepareMcp: (program, cwd, token) => writeMcpConfig(program, cwd, token, mcpUrl),
+    prompts,
   });
   // Single-use ticket store for the terminal WebSocket stream — shared between the authenticated
   // `POST /sessions/:name/ws-ticket` route and the daemon's `/ws/terminal` upgrade handler.
   const tickets = createTicketStore();
-  const app = createServer({ tasks, readiness, missions, engine, missionGit, gitLock, spawn, tmux, bus, events, notes, agents, project: opts.project, fallback: { program: 'claude-code', model: 'sonnet' }, clock: new SystemClock(), config, users, projects, userProjects, pushSubscriptions, taskUsage, git, avatarsDir, avatarSecret, planJobs, decisionQueue, pilot, advisor, tickets });
+  const app = createServer({ tasks, readiness, missions, engine, missionGit, gitLock, spawn, tmux, bus, events, notes, agents, project: opts.project, fallback: { program: 'claude-code', model: 'sonnet' }, clock: new SystemClock(), config, users, projects, userProjects, pushSubscriptions, userPrompts, prompts, taskUsage, git, avatarsDir, avatarSecret, planJobs, decisionQueue, pilot, advisor, tickets });
 
   // Root-cause recovery: after a daemon crash/restart, tasks left 'in_progress' whose tmux
   // session is gone are zombies — revert them to 'open' so they can be picked up again. No grace
@@ -398,7 +408,7 @@ export function buildApp(opts: BuildOpts) {
         const cwd = missionGit.worktreeFor(`m-${epicId}`) ?? project.path;
         // engage flag → finalizePlanJob re-engages the mission AFTER the pilot pins the phases, so a
         // completed mission doesn't disengage in the gap between engage and the phases existing.
-        const job = planJobs.create({ goal, projectId: epic.project_id, epicId, dryRun: false, exec, engage });
+        const job = planJobs.create({ goal, projectId: epic.project_id, epicId, dryRun: false, exec, engage, createdBy: epic.created_by ?? null });
         bus.publish({ type: 'plan', jobId: job.id, status: 'planning' });
         void pilot(job, cwd).catch((e) => { planJobs.fail(job.id, String(e)); bus.publish({ type: 'plan', jobId: job.id, status: 'failed', error: String(e) }); });
         return true;

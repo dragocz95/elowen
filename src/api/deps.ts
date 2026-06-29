@@ -21,6 +21,8 @@ import type { NoteStore } from '../store/noteStore.js';
 import type { ProjectStore } from '../store/projectStore.js';
 import type { UserProjectStore } from '../store/userProjectStore.js';
 import type { PushSubscriptionStore } from '../store/pushSubscriptionStore.js';
+import type { UserPromptStore } from '../store/userPromptStore.js';
+import type { PromptService } from '../prompts/promptService.js';
 import type { TaskUsageStore } from '../store/taskUsageStore.js';
 import type { GitReader } from '../git/gitReader.js';
 
@@ -47,6 +49,11 @@ export interface ServerDeps {
   userProjects?: UserProjectStore;
   /** Per-user web-push device subscriptions. Absent → push subscribe/unsubscribe routes degrade to no-ops. */
   pushSubscriptions?: PushSubscriptionStore;
+  /** Per-user prompt overrides. Absent → the prompts API degrades and resolution uses file defaults only. */
+  userPrompts?: UserPromptStore;
+  /** User-aware prompt renderer (resolves a user's override else the file default). Absent → callers
+   *  fall back to the plain file `render`, i.e. defaults for everyone. */
+  prompts?: PromptService;
   taskUsage?: TaskUsageStore;
   /** Agent registry — records each spawned agent's project at spawn. Used to tag live sessions with
    *  their project (the daemon's single source of truth for session→repo). */

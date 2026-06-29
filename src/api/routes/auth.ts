@@ -2,7 +2,9 @@ import { join } from 'node:path';
 import { writeFileSync, readFileSync, existsSync, mkdirSync, unlinkSync } from 'node:fs';
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { parseBody } from '../validation.js';
-import { loginSchema, profilePatchSchema, passwordChangeSchema, userPermissionsSchema, projectAssignSchema } from '../schemas/auth.js';
+import { loginSchema, profilePatchSchema, passwordChangeSchema, userPermissionsSchema, projectAssignSchema, promptSaveSchema } from '../schemas/auth.js';
+import { EDITABLE_PROMPTS, isEditablePrompt } from '../../prompts/catalog.js';
+import { rawTemplate } from '../../prompts/index.js';
 import type { User } from '../../store/userStore.js';
 import type { OrcaApp, RouteContext } from '../context.js';
 
@@ -65,6 +67,33 @@ export function registerAuthRoutes(app: OrcaApp, ctx: RouteContext): void {
     if (!users.changePassword(u.id, b.currentPassword, b.newPassword)) {
       return c.json({ error: 'current password is incorrect' }, 403);
     }
+    return c.json({ ok: true });
+  });
+  // Self-service prompt overrides: each user edits their own agent prompts (workers/pilot/overseer/
+  // advisor/decision). The catalog is the allow-list of editable templates; `default` (the shipped
+  // `.md`) ships alongside the override so the UI can render diff/reset without a second fetch. Absence
+  // of an override row means "use the default" — so a fresh user automatically gets the shipped prompts.
+  app.get('/auth/me/prompts', (c) => {
+    const u = c.get('user');
+    const overrides = d.userPrompts?.getAll(u.id) ?? {};
+    return c.json(EDITABLE_PROMPTS.map((p) => ({
+      name: p.name, group: p.group, vars: p.vars, jsonContract: p.jsonContract,
+      default: rawTemplate(p.name), override: overrides[p.name] ?? null,
+    })));
+  });
+  app.put('/auth/me/prompts/:name', async (c) => {
+    if (!d.userPrompts) return c.json({ error: 'prompts unavailable' }, 400);
+    const name = c.req.param('name');
+    if (!isEditablePrompt(name)) return c.json({ error: 'unknown prompt' }, 400);
+    const b = await parseBody(c, promptSaveSchema);
+    d.userPrompts.set(c.get('user').id, name, b.content);
+    return c.json({ ok: true });
+  });
+  app.delete('/auth/me/prompts/:name', (c) => {
+    if (!d.userPrompts) return c.json({ error: 'prompts unavailable' }, 400);
+    const name = c.req.param('name');
+    if (!isEditablePrompt(name)) return c.json({ error: 'unknown prompt' }, 400);
+    d.userPrompts.remove(c.get('user').id, name);
     return c.json({ ok: true });
   });
   // Avatar upload (multipart). Validated by type + size; stored as <userId>.<ext> under avatarsDir.

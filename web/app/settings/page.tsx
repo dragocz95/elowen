@@ -23,6 +23,7 @@ import { Field } from '../../components/ui/Field';
 import { Badge } from '../../components/ui/Badge';
 import { Toggle } from '../../components/ui/Toggle';
 import { Segmented } from '../../components/ui/Segmented';
+import { FormFooter } from '../../components/ui/FormFooter';
 import { SettingCard } from '../../components/ui/SettingCard';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { HelpTip } from '../../components/ui/HelpTip';
@@ -98,7 +99,6 @@ export default function SettingsPage() {
   const [apiUrl, setApiUrl] = useState('');
   const [apiKey, setApiKey] = useState('');
   const [notes, setNotes] = useState('');
-  const [prompt, setPrompt] = useState('');
   const [providers, setProviders] = useState<Record<string, { bin: string; args: string; skipPermissions?: boolean; resume?: boolean }>>({});
   const [sampleGoal, setSampleGoal] = useState('');
   const [preview, setPreview] = useState<{ title: string; type: string; agent?: string; details?: string }[] | null>(null);
@@ -113,8 +113,9 @@ export default function SettingsPage() {
     setSubmittingPreview(true);
     try {
       // Planning is async: submit a dryRun job; usePlanJob then polls it until it resolves (the relay
-      // backend finishes inline; an agent backend takes longer).
-      const { jobId } = await orcaClient.planPreview({ goal: sampleGoal.trim(), prompt });
+      // backend finishes inline; an agent backend takes longer). The planner prompt is resolved
+      // per-user server-side (the caller's override, else the config default) — no prompt sent here.
+      const { jobId } = await orcaClient.planPreview({ goal: sampleGoal.trim() });
       setPreviewJobId(jobId);
     } catch (e) {
       if (e instanceof OrcaApiError && e.code === 'autopilot_key_missing') toast(t.settings.setApiKeyFirst, 'error');
@@ -173,7 +174,6 @@ export default function SettingsPage() {
       setReasoningMode((config.data.autopilot.pilotExec || config.data.autopilot.overseerExec) ? 'agents' : 'relay');
       setApiUrl(config.data.autopilot.apiUrl);
       setNotes(config.data.autopilot.notes);
-      setPrompt(config.data.autopilot.prompt);
       setProviders(config.data.providers ?? {});
       setDefExec(config.data.defaults.exec);
       setDefAutonomy(config.data.defaults.autonomy);
@@ -248,8 +248,8 @@ export default function SettingsPage() {
   const saveAutopilot = () => {
     update.mutate(
       { autopilot: reasoningMode === 'agents'
-        ? { pilotExec, overseerExec, reviewOnDone, notes, prompt }
-        : { model, overseerModel, apiUrl, pilotExec: '', overseerExec: '', notes, prompt, ...(apiKey ? { apiKey } : {}) } },
+        ? { pilotExec, overseerExec, reviewOnDone, notes }
+        : { model, overseerModel, apiUrl, pilotExec: '', overseerExec: '', notes, ...(apiKey ? { apiKey } : {}) } },
       { onSuccess: () => { toast(t.settings.autopilotSaved); setApiKey(''); }, onError: (e) => toast(String(e), 'error') },
     );
   };
@@ -326,39 +326,16 @@ export default function SettingsPage() {
   return (
     <ModuleShell moduleId="settings">
       <ModuleHeader title={t.page.settings} icon={SlidersHorizontal}>
-        {active && <Button variant="accent" icon={Save} onClick={active.onClick}>{active.label}</Button>}
+        <Segmented
+          aria-label={t.settings.sectionsNav}
+          options={SECTIONS.map(({ id, icon }) => ({ value: id, label: t.settings[id], icon }))}
+          value={category}
+          onChange={(v) => setCategory(v as Category)}
+        />
       </ModuleHeader>
 
-      <div className="flex flex-col gap-6 md:flex-row md:items-start">
-        {/* Left section nav — sticky on md+, horizontal scroll row on small screens */}
-        <nav
-          aria-label={t.settings.sectionsNav}
-          className="-mx-1 flex shrink-0 gap-1 overflow-x-auto px-1 pb-1 md:sticky md:top-[57px] md:mx-0 md:w-44 md:flex-col md:overflow-visible md:px-0 md:pb-0"
-        >
-          {SECTIONS.map(({ id, icon: Icon }) => {
-            const isActive = category === id;
-            return (
-              <button
-                key={id}
-                type="button"
-                aria-pressed={isActive}
-                onClick={() => setCategory(id)}
-                className={`inline-flex shrink-0 items-center gap-2.5 rounded-lg border px-3 py-2 text-sm font-medium transition-colors active:scale-[0.98] md:w-full ${
-                  isActive
-                    ? 'border-border-strong bg-elevated text-text'
-                    : 'border-transparent text-text-muted hover:bg-surface hover:text-text'
-                }`}
-                style={{ transitionDuration: 'var(--motion-fast)' }}
-              >
-                <Icon size={16} aria-hidden className={isActive ? 'text-accent' : ''} />
-                {t.settings[id]}
-              </button>
-            );
-          })}
-        </nav>
-
-        {/* Right content zone — the active category sits here directly, no Section frame */}
-        <div className="min-w-0 flex-1">
+      {/* Content zone — the active category sits here directly, no Section frame */}
+      <div className="min-w-0">
         {category === 'models' && (
           <>
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -498,13 +475,10 @@ export default function SettingsPage() {
               </SettingCard>
               <div className="sm:col-span-2 rounded-lg border border-border bg-surface p-4">
                 <div className="mb-2 flex items-center gap-1.5">
-                  <span className="text-sm font-medium text-text">{t.settings.plannerPrompt}</span>
-                  <HelpTip>{t.settings.plannerPromptHelp}</HelpTip>
+                  <span className="text-sm font-medium text-text">{t.settings.testPlan}</span>
+                  <HelpTip>{t.settings.testPlanHelp}</HelpTip>
                 </div>
-                <textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} rows={8} spellCheck={false} className={`${inputClass} resize-y font-mono text-xs leading-relaxed`} />
-
-                <div className="mt-3 flex flex-col gap-2 rounded-md border border-border bg-elevated/40 p-3">
-                  <span className="text-xs font-medium uppercase tracking-wide text-text-muted">{t.settings.testPlan}</span>
+                <div className="flex flex-col gap-2">
                   <div className="flex items-center gap-2">
                     <Input value={sampleGoal} onChange={(e) => setSampleGoal(e.target.value)} placeholder={t.settings.sampleGoalPlaceholder} />
                     <Button variant="default" disabled={previewing || !sampleGoal.trim()} onClick={runPreview}>{previewing ? t.settings.planning : t.settings.testPlan}</Button>
@@ -564,7 +538,7 @@ export default function SettingsPage() {
                 return (
                   <div key={p.id} className="flex flex-col gap-3 rounded-lg border border-border bg-surface p-4 sm:flex-row sm:items-start">
                     <div className="flex items-center gap-3 sm:w-44 sm:shrink-0 sm:pt-1">
-                      <ProviderLogo meta={p} alt={t.providers[p.id as keyof typeof t.providers]} />
+                      <ProviderLogo meta={p} alt={t.providers[p.id as keyof typeof t.providers]} size={56} />
                       <div className="min-w-0">
                         <div className="text-sm font-medium text-text">{t.providers[p.id as keyof typeof t.providers]}</div>
                         <div className="font-mono text-[11px] text-text-muted">{p.id}</div>
@@ -787,7 +761,12 @@ export default function SettingsPage() {
             </div>
           </div>
         )}
-        </div>
+
+        {active && (
+          <FormFooter>
+            <Button variant="accent" icon={Save} onClick={active.onClick}>{active.label}</Button>
+          </FormFooter>
+        )}
       </div>
 
       <ConfirmDialog

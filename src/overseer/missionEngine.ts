@@ -1,4 +1,5 @@
 import type { TaskStore } from '../store/taskStore.js';
+import { resolveOwnerId } from '../prompts/owner.js';
 import type { Task } from '../store/types.js';
 import type { Readiness } from '../store/readiness.js';
 import type { MissionStore, Mission } from '../store/missionStore.js';
@@ -22,6 +23,9 @@ const log = logger('overseer');
 export interface MissionEngineDeps {
   tasks: TaskStore; readiness: Readiness; missions: MissionStore;
   spawn: SpawnService; tmux: TmuxDriver; bus: EventBus;
+  /** User store, used only for the admin fallback when attributing a phase agent to its owner (per-user
+   *  prompt resolution). Optional: absent in minimal test wiring → file-default prompts. */
+  users?: { list(): { id: number }[] };
   /** Resolves a mission's project from its epic's project_id — the engine is project-agnostic and
    *  drives missions across every registered project, not a single fixed one. */
   projects: { get(id: number): { id: number; path: string } | null };
@@ -312,7 +316,7 @@ export class MissionEngine {
       // (a just-closed phase still committing) — then `git diff base..HEAD` captures exactly this phase.
       await this.gitLock.run(cwd, async () => { const base = await projectHead(cwd); if (base) this.d.tasks.markBase(task.id, base); });
       try {
-        await this.d.spawn.launch({ projectId: epic.project_id, projectPath: cwd, taskId: task.id, agentName, spec, taskTitle: task.title, taskDescription: task.description, resumeNote: task.resume_note ?? undefined, epicId: m.epic_id, resume: parseResumeLabel(task.labels) });
+        await this.d.spawn.launch({ projectId: epic.project_id, projectPath: cwd, taskId: task.id, agentName, spec, taskTitle: task.title, taskDescription: task.description, resumeNote: task.resume_note ?? undefined, epicId: m.epic_id, resume: parseResumeLabel(task.labels), ownerId: resolveOwnerId(this.d, { taskId: task.id }) });
       } catch (e) {
         // Spawn failed (tmux down, bin missing): roll back to open so the task doesn't sit in_progress
         // with no agent — which would otherwise burn the stuck-detector's relaunch budget before it

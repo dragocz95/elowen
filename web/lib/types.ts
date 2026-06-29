@@ -67,6 +67,18 @@ export interface MissionDetail {
 export interface User { id: number; username: string; created_at: string; is_admin: boolean; allowed_execs: string[]; name: string; email: string; avatar: string; default_exec: string; advisor_exec: string; advisor_autostart: boolean }
 export interface UserPatch { is_admin?: boolean; allowed_execs?: string[] }
 export interface ProfilePatch { name?: string; email?: string; default_exec?: string }
+
+/** A user-editable agent prompt: the shipped default plus this user's override (null = using default).
+ *  `vars` lists the `{{placeholders}}` the template substitutes; `jsonContract` flags prompts whose
+ *  model output is parsed as JSON (shown with a warning in the editor). */
+export interface UserPrompt {
+  name: string;
+  group: 'workers' | 'pilot' | 'overseer' | 'advisor';
+  vars: string[];
+  jsonContract: boolean;
+  default: string;
+  override: string | null;
+}
 // Login no longer surfaces a token to the browser — the proxy sets it as an httpOnly cookie and
 // returns only a success flag.
 export type AuthResult = { ok: true };

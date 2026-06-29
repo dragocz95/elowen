@@ -13,6 +13,12 @@ describe('TaskStore', () => {
     expect(t.title).toBe('A');
     expect(store.get('orca-1')?.labels).toEqual(['exec:sonnet']);
   });
+  it('persists created_by (owner) and defaults it to null', () => {
+    store.create({ id: 'orca-1', project_id: 1, title: 'A', created_by: 7 });
+    store.create({ id: 'orca-2', project_id: 1, title: 'B' });
+    expect(store.get('orca-1')?.created_by).toBe(7);
+    expect(store.get('orca-2')?.created_by).toBeNull();
+  });
   it('setStatus updates status', () => {
     store.create({ id: 'orca-1', project_id: 1, title: 'A' });
     store.setStatus('orca-1', 'closed');

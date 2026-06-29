@@ -3,14 +3,19 @@ import type { TmuxDriver } from '../tmux/types.js';
 import type { ConfigStore } from '../store/configStore.js';
 import type { DecisionQueue } from './decisionQueue.js';
 import { render } from '../prompts/index.js';
+import type { RenderPrompt } from '../spawn/commandBuilder.js';
+import type { PromptService } from '../prompts/promptService.js';
 import { resolveExecutor } from './routing.js';
 
 /** The parked overseer's loop prompt: poll for a decision, judge it, answer, repeat. It reasons but
  *  never edits the repo — its only side effects are the two orca CLI verbs. */
-export function overseerPrompt(missionId: string, cli: string = 'orca'): string {
+export function overseerPrompt(missionId: string, cli: string = 'orca', renderPrompt: RenderPrompt = render): string {
   // `cli` is the resolved orca invocation (the global `orca` command in production, or
   // `node <path-to-dist/cli/index.js>` in a source checkout) — see bootstrap's ORCA_CLI handling.
-  return render('overseer', { missionId, cli });
+  // The code-review criteria live in their own template (separately editable per user) and are
+  // injected into the overseer's review handling via the `{{codeReview}}` placeholder.
+  const codeReview = renderPrompt('code-review', {});
+  return renderPrompt('overseer', { missionId, cli, codeReview });
 }
 
 export interface OverseerController {
@@ -25,7 +30,7 @@ export interface OverseerController {
 /** Lifecycle of the parked per-mission overseer agent. When `overseerExec` is empty the controller
  *  is inert (the relay fallback in bootstrap handles decisions inline). The agent is parked: it
  *  long-polls and sits idle (0 tokens) until the engine/deriver enqueue a decision. */
-export function makeOverseer(deps: { spawn: SpawnService; tmux: TmuxDriver; config: ConfigStore; queue: DecisionQueue; cli?: string; missionGit?: { worktreeFor(missionId: string): string | null } }): OverseerController {
+export function makeOverseer(deps: { spawn: SpawnService; tmux: TmuxDriver; config: ConfigStore; queue: DecisionQueue; cli?: string; missionGit?: { worktreeFor(missionId: string): string | null }; missions?: { get(id: string): { created_by: number | null } | null }; prompts?: PromptService }): OverseerController {
   // Single source for the launch — every caller (engage/resume start, the tick watchdog's ensure,
   // the reconcile sweep) routes through here, so the idempotency guard lives here too.
   const park = async (missionId: string, projectId: number, projectPath: string): Promise<void> => {
@@ -42,9 +47,13 @@ export function makeOverseer(deps: { spawn: SpawnService; tmux: TmuxDriver; conf
     // in the worktree, not the main checkout. Run it in the main checkout and every phase false-rejects
     // as "fabricated" (the checkout shows zero changes), looping the mission forever.
     const cwd = deps.missionGit?.worktreeFor(missionId) ?? projectPath;
+    // Render the overseer prompt through the mission owner's overrides (else file default).
+    const prompts = deps.prompts;
+    const ownerId = deps.missions?.get(missionId)?.created_by ?? null;
+    const renderPrompt: RenderPrompt = prompts ? (name, vars) => prompts.render(name, vars, ownerId) : render;
     await deps.spawn.launch({
       projectId, projectPath: cwd, taskId: `overseer-${missionId}`, agentName: `overseer-${missionId}`, spec,
-      rawPrompt: overseerPrompt(missionId, deps.cli), extraEnv: { ORCA_MISSION: missionId },
+      rawPrompt: overseerPrompt(missionId, deps.cli, renderPrompt), extraEnv: { ORCA_MISSION: missionId }, ownerId,
     });
   };
   return {

@@ -32,4 +32,20 @@ describe('AccountView', () => {
 
     await waitFor(() => expect(patched?.default_exec).toBe('sonnet'));
   });
+
+  it('switches to the Prompts pill and renders the prompt editor', async () => {
+    localStorage.clear(); // start on the default (profile) section
+    server.use(
+      http.get('*/api/auth/me', () => HttpResponse.json({ user: meUser() })),
+      http.get('*/api/config', () => HttpResponse.json({ allowedExecs: ['sonnet'], customModels: [], hiddenPresets: [], autopilot: {}, providers: {}, defaults: {} })),
+      http.get('*/api/auth/me/prompts', () => HttpResponse.json([
+        { name: 'worker', group: 'workers', vars: ['taskId'], jsonContract: false, default: 'DEFAULT worker', override: null },
+      ])),
+    );
+    const { wrapper: Wrapper } = createWrapper();
+    render(<Wrapper><UiScaleProvider><ToastProvider><AccountView /></ToastProvider></UiScaleProvider></Wrapper>);
+
+    fireEvent.click(await screen.findByRole('radio', { name: 'Prompts' }));
+    expect(await screen.findByDisplayValue('DEFAULT worker')).toBeTruthy();
+  });
 });

@@ -1,6 +1,7 @@
 'use client';
 import { useState, useEffect, useRef } from 'react';
-import { UserCog, Mail, Cpu, Upload, ShieldCheck, Save, Check, User as UserIcon, KeyRound, ZoomIn, Bell } from 'lucide-react';
+import { UserCog, Mail, Cpu, Upload, ShieldCheck, Save, Check, User as UserIcon, KeyRound, ZoomIn, Bell, MessagesSquare } from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
 import { OrcaApiError } from '../../lib/orcaClient';
 import { useMe, useConfig } from '../../lib/queries';
 import { useUpdateMe, useUploadAvatar, useChangePassword } from '../../lib/mutations';
@@ -11,13 +12,17 @@ import { Badge } from '../../components/ui/Badge';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
 import { SettingCard } from '../../components/ui/SettingCard';
+import { Segmented } from '../../components/ui/Segmented';
 import { Slider } from '../../components/ui/Slider';
 import { ModuleHeader } from '../../components/ui/ModuleHeader';
+import { FormFooter } from '../../components/ui/FormFooter';
 import { LoadingState } from '../../components/ui/states';
 import { useToast } from '../../components/ui/Toast';
 import { useTranslation } from '../../lib/i18n';
+import { usePersistentState } from '../../lib/usePersistentState';
 import { useUiScale, MIN_SCALE, MAX_SCALE, DEFAULT_SCALE } from '../../lib/useUiScale';
 import { isPushSupported, enablePush, disablePush } from '../../lib/pushClient';
+import { PromptsSection } from './PromptsSection';
 
 export function AccountView() {
   const me = useMe();
@@ -30,6 +35,7 @@ export function AccountView() {
   const { scale, setScale } = useUiScale();
   const fileRef = useRef<HTMLInputElement>(null);
   const scalePct = Math.round(scale * 100);
+  const [section, setSection] = usePersistentState<'profile' | 'prompts'>('orca.account.section', 'profile', ['profile', 'prompts']);
 
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
@@ -116,12 +122,25 @@ export function AccountView() {
   };
   const canSubmitPassword = currentPassword.length > 0 && newPassword.length >= 8 && newPassword === confirmPassword;
 
+  const sections: { id: 'profile' | 'prompts'; icon: LucideIcon; label: string }[] = [
+    { id: 'profile', icon: UserCog, label: t.account.tabProfile },
+    { id: 'prompts', icon: MessagesSquare, label: t.account.tabPrompts },
+  ];
+
   return (
     <>
       <ModuleHeader title={t.account.title} icon={UserCog}>
-        <Button variant="accent" icon={Save} onClick={save} disabled={updateMe.isPending}>{t.account.save}</Button>
+        <Segmented
+          aria-label={t.account.sectionsNav}
+          options={sections.map(({ id, icon, label }) => ({ value: id, label, icon }))}
+          value={section}
+          onChange={(v) => setSection(v as 'profile' | 'prompts')}
+        />
       </ModuleHeader>
 
+      <div className="min-w-0">
+      {section === 'prompts' ? <PromptsSection /> : (
+      <>
       <div className="flex flex-col gap-6 lg:flex-row lg:items-start">
         {/* Left rail: the models you may run, big icons — tap one to make it your default. */}
         <div className="flex shrink-0 flex-col gap-2 lg:w-72">
@@ -248,6 +267,12 @@ export function AccountView() {
             </div>
           </SettingCard>
         </div>
+      </div>
+      <FormFooter>
+        <Button variant="accent" icon={Save} onClick={save} disabled={updateMe.isPending}>{t.account.save}</Button>
+      </FormFooter>
+      </>
+      )}
       </div>
     </>
   );

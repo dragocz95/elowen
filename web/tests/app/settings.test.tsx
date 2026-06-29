@@ -87,11 +87,11 @@ describe('SettingsPage', () => {
     // Models category is active by default; Autopilot save button is hidden
     expect(screen.queryByRole('button', { name: 'Save autopilot' })).toBeNull();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Autopilot' }));
+    fireEvent.click(screen.getByRole('radio', { name: 'Autopilot' }));
     expect(screen.getByRole('button', { name: 'Save autopilot' })).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Save models' })).toBeNull();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Defaults' }));
+    fireEvent.click(screen.getByRole('radio', { name: 'Defaults' }));
     expect(screen.getByRole('button', { name: 'Save defaults' })).toBeTruthy();
   });
 
@@ -100,7 +100,7 @@ describe('SettingsPage', () => {
     render(<Wrapper><ToastProvider><SettingsPage /></ToastProvider></Wrapper>);
     await waitFor(() => expect(screen.getByLabelText('Claude Sonnet 4.5')).toBeChecked());
 
-    fireEvent.click(screen.getByRole('button', { name: 'Autopilot' }));
+    fireEvent.click(screen.getByRole('radio', { name: 'Autopilot' }));
     expect(screen.getByText('How autopilot reasons')).toBeTruthy();
     expect(screen.getByText('Planner model')).toBeTruthy(); // same role labels in both modes
 
@@ -117,7 +117,7 @@ describe('SettingsPage', () => {
     render(<Wrapper><ToastProvider><SettingsPage /></ToastProvider></Wrapper>);
     await waitFor(() => expect(screen.getByLabelText('Claude Sonnet 4.5')).toBeChecked());
 
-    fireEvent.click(screen.getByRole('button', { name: 'Autopilot' }));
+    fireEvent.click(screen.getByRole('radio', { name: 'Autopilot' }));
     fireEvent.click(screen.getByText('CLI Tools')); // mode toggle
     expect(screen.getByText('Planner model')).toBeTruthy(); // unified label, not a separate "Pilot backend"
 
@@ -135,7 +135,7 @@ describe('SettingsPage', () => {
     render(<Wrapper><ToastProvider><SettingsPage /></ToastProvider></Wrapper>);
     await waitFor(() => expect(screen.getByLabelText('Claude Sonnet 4.5')).toBeChecked());
 
-    fireEvent.click(screen.getByRole('button', { name: 'GitHub' }));
+    fireEvent.click(screen.getByRole('radio', { name: 'GitHub' }));
     // The PR fields live in their own GitHub section now; the default toggle starts off.
     expect(screen.getByLabelText(/PR workflow/)).not.toBeChecked();
     expect(screen.getByText('Verify command')).toBeTruthy();
@@ -156,7 +156,7 @@ describe('SettingsPage', () => {
     render(<Wrapper><ToastProvider><SettingsPage /></ToastProvider></Wrapper>);
     await waitFor(() => expect(screen.getByLabelText('Claude Sonnet 4.5')).toBeChecked());
 
-    fireEvent.click(screen.getByRole('button', { name: 'Hermes' }));
+    fireEvent.click(screen.getByRole('radio', { name: 'Hermes' }));
     // Connect button present; header Save button hidden for this category
     expect(screen.getByRole('button', { name: 'Connect MCP' })).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Save models' })).toBeNull();
@@ -191,10 +191,10 @@ describe('Settings depth', () => {
     // Models category is active by default
     await waitFor(() => expect(screen.getAllByRole('switch').length).toBeGreaterThan(0)); // model toggle cards
 
-    fireEvent.click(screen.getByRole('button', { name: 'Autopilot' }));
+    fireEvent.click(screen.getByRole('radio', { name: 'Autopilot' }));
     expect(screen.getByDisplayValue('mind the guardrails')).toBeTruthy();                 // notes textarea
 
-    fireEvent.click(screen.getByRole('button', { name: 'Defaults' }));
+    fireEvent.click(screen.getByRole('radio', { name: 'Defaults' }));
     expect(screen.getAllByRole('radiogroup').length).toBeGreaterThan(0);                  // defaults segmented (autonomy/exec)
   });
 });

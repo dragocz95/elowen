@@ -36,7 +36,7 @@ export function registerTaskRoutes(app: OrcaApp, ctx: RouteContext): void {
     const target = resolveTarget(c, b.project_id);
     if ('error' in target) return c.json({ error: target.error }, target.status);
     const id = b.id ?? shortId(basename(target.project.path));
-    const created = d.tasks.create({ id, project_id: target.project.id, title: b.title, type: b.type, priority: b.priority, description: b.description, scheduled_at: b.scheduled_at, autostart: b.autostart });
+    const created = d.tasks.create({ id, project_id: target.project.id, title: b.title, type: b.type, priority: b.priority, description: b.description, scheduled_at: b.scheduled_at, autostart: b.autostart, created_by: c.get('user')?.id ?? null });
     if (Array.isArray(b.deps)) d.tasks.setDeps(created.id, b.deps);
     d.bus.publish({ type: 'task', taskId: created.id, status: created.status });
     return c.json(created, 201);
@@ -227,7 +227,7 @@ export function registerTaskRoutes(app: OrcaApp, ctx: RouteContext): void {
       const phases: Phase[] = b.phases.map((p) => ({ title: (p.title ?? '').trim(), type: VALID_PHASE_TYPES.has(p.type ?? '') ? p.type! : 'task' })).filter((p) => p.title);
       if (phases.length === 0) return c.json({ error: 'phases required' }, 400);
       if (b.dryRun === true) return c.json({ phases }); // playground preview, nothing persisted
-      const job = planJobs.create({ goal, name, projectId: target.project.id, epicId: null, dryRun: false, exec: b.exec, prEnabled });
+      const job = planJobs.create({ goal, name, projectId: target.project.id, epicId: null, dryRun: false, exec: b.exec, prEnabled, createdBy: c.get('user')?.id ?? null });
       job.phases = phases;
       const { epic, phases: created } = persistPlan(job);
       job.epicId = epic.id;
@@ -244,7 +244,7 @@ export function registerTaskRoutes(app: OrcaApp, ctx: RouteContext): void {
       // Auto mode lets the planner pick a model per phase, so no uniform exec rides along.
       exec: b.autoModel ? undefined : b.exec, autoModel: b.autoModel === true,
       engage: b.engage === true ? { autonomy: b.autonomy ?? 'L3', maxSessions: b.maxSessions ?? 1 } : undefined,
-      prEnabled, maxSessions: b.maxSessions ?? 1,
+      prEnabled, maxSessions: b.maxSessions ?? 1, createdBy: c.get('user')?.id ?? null,
     });
     d.bus.publish({ type: 'plan', jobId: job.id, status: 'planning' });
     if (cfg.autopilot.pilotExec && d.pilot) {
@@ -264,7 +264,10 @@ export function registerTaskRoutes(app: OrcaApp, ctx: RouteContext): void {
       // AND the mission will run PR-native (isolated worktrees), resolved exactly as runtime does.
       const isolated = resolvePrEnabled(prEnabled, d.projects?.get(target.project.id)?.pr_enabled ?? null, cfg.autopilot.prEnabled);
       const parallelism = parallelismBlock(b.maxSessions ?? 1, isolated);
-      phases = await decompose(inf, goal, b.prompt ?? cfg.autopilot.prompt, { notes }, models, parallelism);
+      // The triggering user's own `planner` override wins over the global admin template (an explicit
+      // request-body prompt still takes precedence over both — playground/manual overrides).
+      const userPlanner = c.get('user')?.id != null ? d.userPrompts?.get(c.get('user')!.id, 'planner') ?? null : null;
+      phases = await decompose(inf, goal, b.prompt ?? userPlanner ?? cfg.autopilot.prompt, { notes }, models, parallelism);
     } catch {
       planJobs.fail(job.id, 'plan_parse_failed');
       d.bus.publish({ type: 'plan', jobId: job.id, status: 'failed', error: 'plan_parse_failed' });
@@ -313,7 +316,7 @@ export function registerTaskRoutes(app: OrcaApp, ctx: RouteContext): void {
     if (Array.isArray(b.phases) && b.phases.length > 0) {
       const phases: Phase[] = b.phases.map((p) => ({ title: (p.title ?? '').trim(), type: VALID_PHASE_TYPES.has(p.type ?? '') ? p.type! : 'task', details: (p.details ?? '').trim() || undefined })).filter((p) => p.title);
       if (phases.length === 0) return c.json({ error: 'phases required' }, 400);
-      const job = planJobs.create({ goal: epic.description?.trim() || epic.title, projectId: epic.project_id, epicId, dryRun: false, exec: b.exec });
+      const job = planJobs.create({ goal: epic.description?.trim() || epic.title, projectId: epic.project_id, epicId, dryRun: false, exec: b.exec, createdBy: epic.created_by ?? c.get('user')?.id ?? null });
       job.phases = phases;
       const { phases: created } = persistPlan(job);
       const missionId = `m-${epicId}`;
@@ -332,7 +335,7 @@ export function registerTaskRoutes(app: OrcaApp, ctx: RouteContext): void {
     const replanIsolated = resolvePrEnabled(replanOverride, d.projects?.get(epic.project_id)?.pr_enabled ?? null, cfg.autopilot.prEnabled);
     const replanMaxSessions = d.missions.get(`m-${epicId}`)?.max_sessions ?? 1;
     const replanParallelism = parallelismBlock(replanMaxSessions, replanIsolated);
-    const job = planJobs.create({ goal: b.goal!.trim(), projectId: epic.project_id, epicId, dryRun: false, exec: b.exec, prEnabled: replanOverride, maxSessions: replanMaxSessions });
+    const job = planJobs.create({ goal: b.goal!.trim(), projectId: epic.project_id, epicId, dryRun: false, exec: b.exec, prEnabled: replanOverride, maxSessions: replanMaxSessions, createdBy: epic.created_by ?? c.get('user')?.id ?? null });
     d.bus.publish({ type: 'plan', jobId: job.id, status: 'planning' });
     if (cfg.autopilot.pilotExec && d.pilot) {
       void d.pilot(job, pathFor(epic.project_id)).catch((e) => { planJobs.fail(job.id, String(e)); d.bus.publish({ type: 'plan', jobId: job.id, status: 'failed', error: String(e) }); });
@@ -342,7 +345,10 @@ export function registerTaskRoutes(app: OrcaApp, ctx: RouteContext): void {
     if (!key) return c.json({ error: 'autopilot_key_missing' }, 400);
     const inf = (d.makeInference ?? ((rc) => new RelayClient(rc)))({ baseUrl: cfg.autopilot.apiUrl, apiKey: key, model: cfg.autopilot.model });
     let phases: Phase[];
-    try { phases = await decompose(inf, b.goal!.trim(), b.prompt ?? cfg.autopilot.prompt, { notes: d.projects?.get(epic.project_id)?.notes }, undefined, replanParallelism); }
+    // Preserve the epic owner's planner override across a replan; the current user is the fallback.
+    const replanUserId = epic.created_by ?? c.get('user')?.id ?? null;
+    const replanUserPlanner = replanUserId != null ? d.userPrompts?.get(replanUserId, 'planner') ?? null : null;
+    try { phases = await decompose(inf, b.goal!.trim(), b.prompt ?? replanUserPlanner ?? cfg.autopilot.prompt, { notes: d.projects?.get(epic.project_id)?.notes }, undefined, replanParallelism); }
     catch {
       planJobs.fail(job.id, 'plan_parse_failed');
       d.bus.publish({ type: 'plan', jobId: job.id, status: 'failed', error: 'plan_parse_failed' });

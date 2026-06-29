@@ -35,7 +35,7 @@ export function createPlanService(d: ServerDeps, planJobs: PlanJobStore, pathFor
       const prLabels = job.prEnabled === true ? ['pr:on'] : job.prEnabled === false ? ['pr:off'] : [];
       // Title = the short mission name when given (else the goal, so it's never blank); the full goal
       // always lands in the description. This is what lets the tasks UI show a tidy name + the full brief.
-      epic = d.tasks.create({ id: epicId, project_id: job.projectId, title: job.name?.trim() || job.goal, type: 'epic', description: job.goal, labels: prLabels });
+      epic = d.tasks.create({ id: epicId, project_id: job.projectId, title: job.name?.trim() || job.goal, type: 'epic', description: job.goal, labels: prLabels, created_by: job.createdBy ?? null });
       d.bus.publish({ type: 'task', taskId: epic.id, status: epic.status });
     }
     const existing = d.tasks.descendants(epic.id);
@@ -60,7 +60,7 @@ export function createPlanService(d: ServerDeps, planJobs: PlanJobStore, pathFor
       const childDesc = ph.details ? `${ph.details}\n\nOverall goal: ${overallGoal}` : `Overall goal: ${overallGoal}`;
       const agentLabels = ph.agent && !usedAgents.has(ph.agent) ? [`agent:${ph.agent}`] : [];
       if (agentLabels.length) usedAgents.add(ph.agent!);
-      const child = d.tasks.create({ id: newId(), project_id: job.projectId, title: ph.title, type: ph.type, parent_id: epic.id, labels: agentLabels, description: childDesc });
+      const child = d.tasks.create({ id: newId(), project_id: job.projectId, title: ph.title, type: ph.type, parent_id: epic.id, labels: agentLabels, description: childDesc, created_by: job.createdBy ?? null });
       if (ph.id) idMap.set(ph.id, child.id);
       // exec: auto mode takes the planner's per-phase pick, manual mode the job-level choice. Either
       // way it must be allow-listed — a halucinated/disabled exec is dropped so the child runs with

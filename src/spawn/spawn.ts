@@ -2,6 +2,7 @@ import type { TmuxDriver } from '../tmux/types.js';
 import type { AgentStore } from '../store/agentStore.js';
 import { buildAgentCommand, type AgentSpec } from './commandBuilder.js';
 import type { PendingResume } from './resume/index.js';
+import type { PromptService } from '../prompts/promptService.js';
 import { logger } from '../shared/logger.js';
 
 const log = logger('spawn');
@@ -15,8 +16,8 @@ export interface OrcaCliConfig { cli: string; url: string; token: string }
 export type ProviderResolver = (program: string) => { bin?: string; args?: string; skipPermissions?: boolean; resume?: boolean } | undefined;
 
 export class SpawnService {
-  constructor(private d: { tmux: TmuxDriver; agents: AgentStore; orca?: OrcaCliConfig; providers?: ProviderResolver }) {}
-  async launch(input: { projectId: number; projectPath: string; taskId: string; agentName: string; spec: AgentSpec; taskTitle?: string; taskDescription?: string; resumeNote?: string; epicId?: string; extraEnv?: Record<string, string>; rawPrompt?: string; resume?: PendingResume }): Promise<{ session: string }> {
+  constructor(private d: { tmux: TmuxDriver; agents: AgentStore; orca?: OrcaCliConfig; providers?: ProviderResolver; prompts?: PromptService }) {}
+  async launch(input: { projectId: number; projectPath: string; taskId: string; agentName: string; spec: AgentSpec; taskTitle?: string; taskDescription?: string; resumeNote?: string; epicId?: string; extraEnv?: Record<string, string>; rawPrompt?: string; resume?: PendingResume; ownerId?: number | null }): Promise<{ session: string }> {
     this.d.agents.upsert({ project_id: input.projectId, name: input.agentName, program: input.spec.program, model: input.spec.model });
     const session = `orca-${input.agentName}`;
     const orca = this.d.orca;
@@ -37,12 +38,16 @@ export class SpawnService {
     const resume = input.resume && input.resume.program === normalizedProgram && provider?.resume !== false
       ? input.resume : undefined;
     if (resume) log.info(`resuming ${resume.program} session ${resume.sessionId} for task ${input.taskId}`);
+    // Render the worker preamble through the task owner's prompt overrides (else file defaults). The
+    // rawPrompt path (Pilot/Overseer/Advisor) is rendered by its own caller, so this only affects workers.
+    const prompts = this.d.prompts;
+    const renderPrompt = prompts ? (name: string, vars?: Record<string, string>) => prompts.render(name, vars, input.ownerId) : undefined;
     const command = buildAgentCommand(input.spec, {
       projectPath: input.projectPath, taskId: input.taskId, agentName: input.agentName,
       taskTitle: input.taskTitle, taskDescription: input.taskDescription, resumeNote: input.resumeNote,
       closeCommand, epicId: input.epicId, epicCloseCommand, cli, env, bin: provider?.bin, extraArgs: provider?.args,
       skipPermissions: provider?.skipPermissions, rawPrompt: input.rawPrompt, resume,
-    });
+    }, renderPrompt);
     await this.d.tmux.spawn(session, { cwd: input.projectPath, command });
     // Explicit spawn record: captures pilot/overseer launches too (they have no task row, so the
     // bus 'task → in_progress' activity line never covers them).

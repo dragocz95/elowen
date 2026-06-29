@@ -116,6 +116,7 @@ export class UserStore {
     this.db.transaction(() => {
       this.db.prepare('DELETE FROM auth_tokens WHERE user_id = ?').run(id);
       this.db.prepare('DELETE FROM user_projects WHERE user_id = ?').run(id); // no orphan assignments
+      this.db.prepare('DELETE FROM user_prompts WHERE user_id = ?').run(id); // no orphan prompt overrides
       this.db.prepare('DELETE FROM users WHERE id = ?').run(id);
     })();
   }

@@ -168,6 +168,14 @@ export function useUploadAvatar() {
 export function useChangePassword() {
   return useMutation({ mutationFn: (v: { currentPassword: string; newPassword: string }) => orcaClient.changePassword(v.currentPassword, v.newPassword) });
 }
+export function useSaveMyPrompt() {
+  const qc = useQueryClient();
+  return useMutation({ mutationFn: (v: { name: string; content: string }) => orcaClient.saveMyPrompt(v.name, v.content), onSuccess: () => qc.invalidateQueries({ queryKey: ['my-prompts'] }) });
+}
+export function useResetMyPrompt() {
+  const qc = useQueryClient();
+  return useMutation({ mutationFn: (name: string) => orcaClient.resetMyPrompt(name), onSuccess: () => qc.invalidateQueries({ queryKey: ['my-prompts'] }) });
+}
 export function useCreateProject() {
   const qc = useQueryClient();
   return useMutation({ mutationFn: (v: { slug: string; path: string; notes?: string }) => orcaClient.createProject(v), onSuccess: () => qc.invalidateQueries({ queryKey: ['projects'] }) });
