@@ -1,8 +1,10 @@
 'use client';
 import { useMemo, useState } from 'react';
-import { Bot, GitCommit, Check, TriangleAlert, Compass, User } from 'lucide-react';
+import { Bot, GitCommit, Check, TriangleAlert, User } from 'lucide-react';
 import type { CommitLogEntry } from '../../lib/types';
-import { useTaskConversation, useTaskCommits, useTaskCommitFileDiff } from '../../lib/queries';
+import { useTaskConversation, useTaskCommits, useTaskCommitFileDiff, useTasks, useConfig } from '../../lib/queries';
+import { taskExec } from '../../lib/agentUtils';
+import { ModelIcon } from '../../components/ui/ModelIcon';
 import { useTranslation } from '../../lib/i18n';
 import { formatTaskTime, parseTs } from '../../lib/format';
 import { fileIcon } from '../../lib/fileIcon';
@@ -41,10 +43,14 @@ type FeedItem =
   | { kind: 'message'; ts: number; key: string; payload: MessagePayload }
   | { kind: 'commit'; ts: number; key: string; commit: CommitLogEntry };
 
-/** Message role → icon. The agent asks (Bot), the autopilot answers (Compass — the overseer/navigator),
- *  a human answers (User). One small visual cue so the thread reads as a back-and-forth. */
-function messageRole(role: MessageRole): typeof Bot {
-  return role === 'agent' ? Bot : role === 'human' ? User : Compass;
+/** Message role → avatar. The agent and the autopilot each show the brand icon of the model that is
+ *  actually running them (worker exec / overseer exec) so the thread reads as a back-and-forth between
+ *  the two models; a human reply shows a person. Falls back to a generic chip when the model is unknown. */
+function MessageAvatar({ role, workerExec, overseerExec }: { role: MessageRole; workerExec: string; overseerExec: string }) {
+  if (role === 'human') return <User size={14} className="shrink-0 text-text-muted" aria-hidden />;
+  const exec = role === 'agent' ? workerExec : overseerExec;
+  if (!exec) return <Bot size={14} className="shrink-0 text-text-muted" aria-hidden />;
+  return <ModelIcon name={exec} size={14} />;
 }
 
 /** Outcome → colored icon + class. Decisions and the post-done review share the same approve/escalate
@@ -61,6 +67,12 @@ export function TaskConversation({ task }: { task: { id: string } }) {
   const { t, locale } = useTranslation();
   const conversation = useTaskConversation(task.id);
   const commits = useTaskCommits(task.id);
+  // The two models talking: the worker's exec (this task's exec label) and the overseer's configured
+  // backend. Used to brand each message turn with the icon of the model that produced it.
+  const tasks = useTasks();
+  const config = useConfig();
+  const workerExec = taskExec(tasks.data?.find((x) => x.id === task.id)?.labels);
+  const overseerExec = config.data?.autopilot.overseerExec ?? '';
   // Track which commit's file is open so the modal shows THAT commit's diff (git show), not the
   // cumulative base..head diff — the feed is per-commit history.
   const [openFile, setOpenFile] = useState<{ hash: string; path: string } | null>(null);
@@ -137,12 +149,11 @@ export function TaskConversation({ task }: { task: { id: string } }) {
             );
           }
           if (it.kind === 'message') {
-            const RoleIcon = messageRole(it.payload.role);
             const roleLabel = it.payload.role === 'agent' ? t.tasks.msgRoleAgent : it.payload.role === 'human' ? t.tasks.msgRoleHuman : t.tasks.msgRoleAutopilot;
             return (
               <li key={it.key} className="rounded-lg border border-border bg-surface p-2.5 text-xs">
                 <div className="flex items-center gap-2">
-                  <RoleIcon size={14} className="shrink-0 text-text-muted" aria-hidden />
+                  <MessageAvatar role={it.payload.role} workerExec={workerExec} overseerExec={overseerExec} />
                   <span className="min-w-0 flex-1 truncate font-medium text-text">{roleLabel}</span>
                   {when.label ? <span className="shrink-0 text-text-muted" title={when.title}>{when.label}</span> : null}
                 </div>
