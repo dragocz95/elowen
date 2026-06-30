@@ -635,11 +635,14 @@ export default function SettingsPage() {
                       ? <Badge tone="warning">{t.settings.updateAvailable.replace('{v}', system.data.latest ?? '')}</Badge>
                       : system.data?.latest ? <Badge tone="success">{t.settings.upToDate}</Badge> : null}
                   </div>
-                  {system.data?.lastUpdatedAt && (
-                    <span className="text-xs text-text-muted" title={new Date(system.data.lastUpdatedAt).toLocaleString()}>
-                      {t.settings.lastUpdated.replace('{date}', new Date(system.data.lastUpdatedAt).toLocaleString())}
-                    </span>
-                  )}
+                  {system.data?.lastUpdatedAt && (() => {
+                    const lastUpdated = new Date(system.data.lastUpdatedAt).toLocaleString();
+                    return (
+                      <span className="text-xs text-text-muted" title={lastUpdated}>
+                        {t.settings.lastUpdated.replace('{date}', lastUpdated)}
+                      </span>
+                    );
+                  })()}
                   <button
                     type="button"
                     onClick={() => systemUpdate.mutate(undefined, {

@@ -9,7 +9,8 @@ const target = (home: string, root: string) => join(home, root, 'skills', 'orca-
 
 describe('skillService', () => {
   let home: string;
-  const svc = () => createSkillService({ home, readMaster: () => MASTER_V2 });
+  // Empty env so the provider config-dir overrides don't leak in from the test runner's environment.
+  const svc = () => createSkillService({ home, env: {}, readMaster: () => MASTER_V2 });
 
   beforeEach(() => {
     home = mkdtempSync(join(tmpdir(), 'orca-skill-'));
@@ -66,6 +67,30 @@ describe('skillService', () => {
     writeFileSync(foreign, 'do not touch', 'utf-8');
     svc().installAll();
     expect(readFileSync(foreign, 'utf-8')).toBe('do not touch');
+  });
+
+  it('honours provider config-dir env overrides for status + install', () => {
+    // Relocate codex and opencode away from the HOME-relative defaults; claude-code stays default.
+    const codexHome = join(home, 'xdg-codex');
+    const xdgHome = join(home, 'xdg-config');
+    mkdirSync(codexHome, { recursive: true });
+    mkdirSync(join(xdgHome, 'opencode'), { recursive: true });
+    const svc2 = () => createSkillService({ home, env: { CODEX_HOME: codexHome, XDG_CONFIG_HOME: xdgHome }, readMaster: () => MASTER_V2 });
+
+    const before = Object.fromEntries(svc2().status().map((s) => [s.provider, s]));
+    expect(before['codex']).toMatchObject({ present: true, installed: false });
+    expect(before['opencode']).toMatchObject({ present: true, installed: false });
+
+    svc2().installAll();
+    // Written under the overridden dirs, NOT the HOME-relative defaults.
+    expect(existsSync(join(codexHome, 'skills', 'orca-workflow', 'SKILL.md'))).toBe(true);
+    expect(existsSync(join(xdgHome, 'opencode', 'skills', 'orca-workflow', 'SKILL.md'))).toBe(true);
+    expect(existsSync(target(home, '.codex'))).toBe(false);
+    expect(existsSync(target(home, '.config/opencode'))).toBe(false);
+
+    const after = Object.fromEntries(svc2().status().map((s) => [s.provider, s]));
+    expect(after['codex']).toMatchObject({ installed: true, version: 2, upToDate: true });
+    expect(after['opencode']).toMatchObject({ installed: true, version: 2, upToDate: true });
   });
 
   it('fails soft for every provider when the master is unreadable', () => {

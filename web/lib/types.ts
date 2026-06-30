@@ -157,12 +157,12 @@ export interface SystemInfo {
   lastUpdatedAt: string | null;
 }
 
-/** Per-provider install/version status of the `orca-workflow` agent skill (Settings → System). */
+/** Per-provider install status of the `orca-workflow` agent skill (Settings → System). The backend also
+ *  returns a parsed `version`, but the panel renders only the derived state below, so it's omitted here. */
 export interface SkillStatus {
   provider: string;
   present: boolean;
   installed: boolean;
-  version: number | null;
   upToDate: boolean;
 }
 export interface SkillsInfo {
