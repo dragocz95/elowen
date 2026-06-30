@@ -270,4 +270,69 @@ describe('TaskStore', () => {
     store.close('x', { summary: 'blocked', outcome: 'fail' });
     expect(store.get('x')!.resume_note).toBe('Could not finish — see feedback');
   });
+
+  describe('reparent', () => {
+    it('promotes a plain target to an epic and sets the dragged task as its phase', () => {
+      store.create({ id: 'a', project_id: 1, title: 'A' });
+      store.create({ id: 'b', project_id: 1, title: 'B' });
+      const result = store.reparent('a', 'b');
+      expect(result).toEqual({ task: store.get('a') });
+      expect(store.get('a')!.parent_id).toBe('b');
+      expect(store.get('b')!.type).toBe('epic');
+    });
+    it('leaves an existing epic\'s type untouched', () => {
+      store.create({ id: 'epic', project_id: 1, title: 'Epic', type: 'epic' });
+      store.create({ id: 'a', project_id: 1, title: 'A' });
+      store.reparent('a', 'epic');
+      expect(store.get('epic')!.type).toBe('epic');
+      expect(store.get('a')!.parent_id).toBe('epic');
+    });
+    it('rejects reparenting a task onto itself', () => {
+      store.create({ id: 'a', project_id: 1, title: 'A' });
+      expect(store.reparent('a', 'a')).toEqual({ error: 'cannot reparent onto itself' });
+    });
+    it('rejects a cross-project reparent', () => {
+      db.prepare("INSERT INTO projects (id,slug,path) VALUES (2,'other','/var/www/other')").run();
+      store.create({ id: 'a', project_id: 1, title: 'A' });
+      store.create({ id: 'b', project_id: 2, title: 'B' });
+      expect(store.reparent('a', 'b')).toEqual({ error: 'cross-project reparent not allowed' });
+    });
+    it('rejects reparenting a task that already has children', () => {
+      store.create({ id: 'epic', project_id: 1, title: 'Epic', type: 'epic' });
+      store.create({ id: 'phase', project_id: 1, title: 'Phase', parent_id: 'epic' });
+      store.create({ id: 'b', project_id: 1, title: 'B' });
+      expect(store.reparent('epic', 'b')).toEqual({ error: 'task has its own children' });
+    });
+    it('rejects reparenting a task that is already a phase', () => {
+      store.create({ id: 'epic', project_id: 1, title: 'Epic', type: 'epic' });
+      store.create({ id: 'phase', project_id: 1, title: 'Phase', parent_id: 'epic' });
+      store.create({ id: 'b', project_id: 1, title: 'B' });
+      expect(store.reparent('phase', 'b')).toEqual({ error: 'task is already a phase' });
+    });
+    it('rejects targeting a task that is already a phase', () => {
+      store.create({ id: 'epic', project_id: 1, title: 'Epic', type: 'epic' });
+      store.create({ id: 'phase', project_id: 1, title: 'Phase', parent_id: 'epic' });
+      store.create({ id: 'a', project_id: 1, title: 'A' });
+      expect(store.reparent('a', 'phase')).toEqual({ error: 'target is already a phase' });
+    });
+    it('rejects reparenting a closed or cancelled task', () => {
+      store.create({ id: 'a', project_id: 1, title: 'A' });
+      store.create({ id: 'b', project_id: 1, title: 'B' });
+      store.setStatus('a', 'closed');
+      expect(store.reparent('a', 'b')).toEqual({ error: 'task is already finished' });
+      store.setStatus('a', 'cancelled');
+      expect(store.reparent('a', 'b')).toEqual({ error: 'task is already finished' });
+    });
+    it('rejects reparenting a task that is currently running', () => {
+      store.create({ id: 'a', project_id: 1, title: 'A' });
+      store.setStatus('a', 'in_progress');
+      store.create({ id: 'b', project_id: 1, title: 'B' });
+      expect(store.reparent('a', 'b')).toEqual({ error: 'task is currently running' });
+    });
+    it('rejects missing task or target ids', () => {
+      store.create({ id: 'a', project_id: 1, title: 'A' });
+      expect(store.reparent('missing', 'a')).toEqual({ error: 'task not found' });
+      expect(store.reparent('a', 'missing')).toEqual({ error: 'target not found' });
+    });
+  });
 });

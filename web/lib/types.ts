@@ -12,7 +12,7 @@ type Autonomy = 'L0' | 'L1' | 'L2' | 'L3';
 type MissionState = 'active' | 'paused' | 'disengaged' | 'stalled';
 export interface Mission { id: string; epic_id: string; autonomy: Autonomy; max_sessions: number; state: MissionState; pr?: MissionPrInfo | null }
 export interface CreateTaskInput { title: string; type?: string; priority?: string; description?: string; scheduled_at?: string | null; autostart?: number; deps?: string[]; project_id?: number }
-export interface UpdateTaskInput { title?: string; type?: string; priority?: string; description?: string; scheduled_at?: string | null; autostart?: number; deps?: string[] }
+export interface UpdateTaskInput { title?: string; type?: string; priority?: string; description?: string; scheduled_at?: string | null; autostart?: number; deps?: string[]; addDep?: string; parent_id?: string }
 export interface PlanInput { goal: string; name?: string; exec?: string; autoModel?: boolean; autonomy?: string; maxSessions?: number; engage?: boolean; phases?: { title: string; type?: string }[]; project_id?: number; prEnabled?: boolean | null }
 export interface PlanResult { epic: Task; phases: Task[]; mission?: Mission }
 interface PlanPhase { title: string; type: string; agent?: string; details?: string }

@@ -1,6 +1,7 @@
 'use client';
 import { Link2, Clock } from 'lucide-react';
 import type { Task } from '../../lib/types';
+import { useDropTarget } from '../tasks/useTaskDrop';
 import { Badge } from '../../components/ui/Badge';
 import { ModelIcon } from '../../components/ui/ModelIcon';
 import { AgentStatusDot } from '../../components/ui/AgentStatusDot';
@@ -18,7 +19,7 @@ import { useSessionStall } from '../../lib/useSessionStall';
 import { useTranslation } from '../../lib/i18n';
 
 /** Enriched kanban card: model icon, live-state dot, agent identity, context line, outcome. */
-export function KanbanCard({ task, blocked, blockers, dragging, statusLabel, isPhase = false, onSelect, onContextMenu, onDragStart, onDragEnd }: {
+export function KanbanCard({ task, blocked, blockers, dragging, statusLabel, isPhase = false, onSelect, onContextMenu, onDragStart, onDragEnd, onDropTask, dropTargetValid }: {
   task: Task;
   blocked: boolean;
   blockers: Task[];
@@ -29,8 +30,13 @@ export function KanbanCard({ task, blocked, blockers, dragging, statusLabel, isP
   onContextMenu?: (e: React.MouseEvent, t: Task) => void;
   onDragStart: (e: React.DragEvent) => void;
   onDragEnd: () => void;
+  /** Card-onto-card drop (make subtask / add dependency) — distinct from the column move above. */
+  onDropTask?: (e: React.DragEvent) => void;
+  /** Whether dropping the currently-dragged card onto THIS one would be a legal action. */
+  dropTargetValid?: boolean;
 }) {
   const { t, locale } = useTranslation();
+  const drop = useDropTarget(onDropTask, dropTargetValid);
   const { data: config } = useConfig();
   const sessions = useSessions();
   const sessionName = taskSessionName(task);
@@ -43,12 +49,16 @@ export function KanbanCard({ task, blocked, blockers, dragging, statusLabel, isP
 
   return (
     <div
-      draggable={!blocked}
+      draggable={!blocked && !isPhase}
       onDragStart={onDragStart}
       onDragEnd={onDragEnd}
+      onDragOver={drop.onDragOver}
+      onDragEnter={drop.onDragEnter}
+      onDragLeave={drop.onDragLeave}
+      onDrop={drop.onDrop}
       onClick={() => onSelect?.(task)}
       onContextMenu={onContextMenu ? (e) => onContextMenu(e, task) : undefined}
-      className={`flex gap-2.5 rounded-md border bg-bg p-2.5 transition-all ${blocked ? 'cursor-pointer border-danger/40' : 'cursor-grab border-border hover:border-border-strong'} ${isPhase ? 'ml-2 border-l-2 border-l-accent/40' : ''} ${dragging ? 'rotate-[1deg] opacity-50' : ''}`}
+      className={`flex gap-2.5 rounded-md border bg-bg p-2.5 transition-all ${blocked ? 'cursor-pointer border-danger/40' : 'cursor-grab border-border hover:border-border-strong'} ${isPhase ? 'ml-2 border-l-2 border-l-accent/40' : ''} ${dragging ? 'rotate-[1deg] opacity-50' : ''} ${drop.dragOver && dropTargetValid ? 'ring-2 ring-accent/60' : ''} ${drop.dragOver && dropTargetValid === false ? 'ring-2 ring-danger/40 opacity-60' : ''}`}
     >
       <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-border bg-elevated">
         {exec ? <ModelIcon name={exec} size={19} /> : <TypeIcon size={16} className="text-text-muted" aria-hidden />}

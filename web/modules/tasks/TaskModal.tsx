@@ -45,7 +45,7 @@ function isoToLocalInput(iso?: string | null): string {
 }
 const localInputToIso = (v: string): string | null => (v ? new Date(v).toISOString() : null);
 
-export function TaskModal({ task, onClose, initialSchedule, initialMode, initialGoal }: { task?: Task; onClose: () => void; initialSchedule?: string; initialMode?: 'single' | 'planning'; initialGoal?: string }) {
+export function TaskModal({ task, onClose, initialSchedule, initialMode, initialGoal, defaultProjectId }: { task?: Task; onClose: () => void; initialSchedule?: string; initialMode?: 'single' | 'planning'; initialGoal?: string; defaultProjectId?: number }) {
   const editing = !!task;
   const { data: config } = useConfig();
   const models = allModels(config?.customModels, config?.hiddenPresets)
@@ -63,10 +63,11 @@ export function TaskModal({ task, onClose, initialSchedule, initialMode, initial
 
   // Which project the task/mission lands in (and the agent runs in). Only offered when the user can
   // reach more than one project; the daemon defaults to its home project when project_id is omitted.
-  // Picked value overrides; otherwise fall through to the first accessible project (no once-seed bug).
+  // Picked value overrides; otherwise fall through to the caller's active project filter (if any —
+  // e.g. the Tasks page's project pill), then the first accessible project.
   const { data: projects } = useProjects();
   const [pickedProject, setPickedProject] = useState<number | undefined>(undefined);
-  const projectId = pickedProject ?? projects?.[0]?.id;
+  const projectId = pickedProject ?? defaultProjectId ?? projects?.[0]?.id;
 
   // Single-task fields
   const [title, setTitle] = useState(task?.title ?? '');

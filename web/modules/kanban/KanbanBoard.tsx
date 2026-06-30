@@ -8,6 +8,7 @@ import { KanbanCard } from './KanbanCard';
 import { KanbanEpicCard } from './KanbanEpicCard';
 import { statusLabel } from '../tasks/taskMeta';
 import { useTaskContextMenu } from '../tasks/useTaskContextMenu';
+import { useTaskDrop } from '../tasks/useTaskDrop';
 import { useTranslation } from '../../lib/i18n';
 
 const COLUMNS: { status: TaskStatus; labelKey: string; icon: LucideIcon; color: string }[] = [
@@ -28,6 +29,7 @@ export function KanbanBoard({ tasks, allTasks, onMove, onSelect, onEdit, blocked
   const childMap = epicChildren(fullTasks);
   const ctxMenu = useTaskContextMenu({ onSelect: (x) => onSelect?.(x), onEdit: (x) => onEdit?.(x), childMap, blockedBy: blockedBy ?? new Map(), missions: activeMissions });
   const phaseSet = phaseIds(fullTasks);
+  const taskDrop = useTaskDrop(fullTasks, childMap, phaseSet);
   // An epic is placed by its effective status (active mission / running phase → in progress,
   // all phases done → closed); its true task status is preserved on the card (title/tooltip).
   const effStatus = (task: Task) => (task.type === 'epic' ? epicEffectiveStatus(task, activeMissions, childMap.get(task.id) ?? []) : task.status);
@@ -54,6 +56,8 @@ export function KanbanBoard({ tasks, allTasks, onMove, onSelect, onEdit, blocked
         onContextMenu={ctxMenu.open}
         onDragStart={(e) => { e.dataTransfer.setData('text/plain', task.id); setDraggingId(task.id); }}
         onDragEnd={() => { setDraggingId(null); setDragOver(null); }}
+        onDropTask={(e) => taskDrop.handleDrop(e, task)}
+        dropTargetValid={draggingId ? taskDrop.isValidTarget(draggingId, task) : undefined}
       />
     );
   };
@@ -88,7 +92,7 @@ export function KanbanBoard({ tasks, allTasks, onMove, onSelect, onEdit, blocked
               const phases = childMap.get(task.id) ?? [];
               return (
                 <Fragment key={task.id}>
-                  <KanbanEpicCard epic={task} phases={phases} expanded={expanded.has(task.id)} onToggle={() => toggleEpic(task.id)} effectiveStatus={effStatus(task)} trueStatusLabel={statusLabel(t, task.status)} />
+                  <KanbanEpicCard epic={task} phases={phases} expanded={expanded.has(task.id)} onToggle={() => toggleEpic(task.id)} effectiveStatus={effStatus(task)} trueStatusLabel={statusLabel(t, task.status)} onDropTask={(e) => taskDrop.handleDrop(e, task)} dropTargetValid={draggingId ? taskDrop.isValidTarget(draggingId, task) : undefined} />
                   {expanded.has(task.id) ? phases.map((ph) => renderCard(ph, true)) : null}
                 </Fragment>
               );
@@ -102,6 +106,7 @@ export function KanbanBoard({ tasks, allTasks, onMove, onSelect, onEdit, blocked
     </div>
     {ctxMenu.menu}
     {ctxMenu.modals}
+    {taskDrop.popup}
     </>
   );
 }

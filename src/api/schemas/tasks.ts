@@ -27,6 +27,8 @@ export const patchTaskSchema = z.object({
   scheduled_at: z.string().nullable().optional(),
   autostart: z.number().optional(),
   deps: z.array(z.string()).optional(),
+  addDep: z.string().optional(),
+  parent_id: z.string().optional(),
 });
 
 /** A worker's free-text question to the autopilot (`orca ask`), or a human's reply to one. text is

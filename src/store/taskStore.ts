@@ -95,6 +95,30 @@ export class TaskStore {
     return this.db.transaction(() => ({ tasks: deleteTasksAndDeps(this.db, 'epic', epicId) }))();
   }
 
+  /** Reparent an existing top-level task under another top-level task, promoting the target to
+   *  `type: 'epic'` if it isn't already one. Used by the drag-a-card-onto-another-card "make
+   *  subtask" gesture. Keeps the tree exactly 2 levels deep (epic → phases): rejects either side
+   *  already being a phase, and rejects a dragged task that has children of its own (no nested
+   *  epics). Re-validates everything the UI already checks — defence in depth, not trusted input. */
+  reparent(taskId: string, epicId: string): { task: Task } | { error: string } {
+    const task = this.get(taskId);
+    const target = this.get(epicId);
+    if (!task) return { error: 'task not found' };
+    if (!target) return { error: 'target not found' };
+    if (taskId === epicId) return { error: 'cannot reparent onto itself' };
+    if (task.project_id !== target.project_id) return { error: 'cross-project reparent not allowed' };
+    if (task.parent_id) return { error: 'task is already a phase' };
+    if (target.parent_id) return { error: 'target is already a phase' };
+    if (task.status === 'closed' || task.status === 'cancelled') return { error: 'task is already finished' };
+    if (task.status === 'in_progress') return { error: 'task is currently running' };
+    if (this.descendants(taskId).length > 0) return { error: 'task has its own children' };
+    this.db.transaction(() => {
+      if (target.type !== 'epic') this.db.prepare("UPDATE tasks SET type = 'epic' WHERE id = ?").run(epicId);
+      this.db.prepare('UPDATE tasks SET parent_id = ? WHERE id = ?').run(epicId, taskId);
+    })();
+    return { task: this.get(taskId)! };
+  }
+
   /** Wipe ALL tasks, their dependency edges and every mission — the operational data reset used by
    *  the admin cleanup. Projects/users/config are untouched. Returns the row counts removed. */
   deleteAll(): { tasks: number; missions: number } {

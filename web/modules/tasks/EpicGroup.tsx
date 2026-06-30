@@ -13,6 +13,7 @@ import { orcaClient } from '../../lib/orcaClient';
 import { useDeleteMission, useEngage, usePauseMission, useResumeMission, useDisengage, useOpenMissionPr, useMergeMissionPr } from '../../lib/mutations';
 import { useSessions, useSessionSignals, useMissions, useConfig } from '../../lib/queries';
 import { TaskCard } from './TaskCard';
+import { useDropTarget } from './useTaskDrop';
 import { AddPhaseModal } from './AddPhaseModal';
 import { taskTypeMeta, statusLabel } from './taskMeta';
 import { statusTone } from '../dashboard/statusTone';
@@ -24,7 +25,7 @@ import { useTranslation } from '../../lib/i18n';
  *  (collapsed) until expanded, so the list shows the epic rather than every sub-task. The epic IS
  *  the mission — its lifecycle (engage / pause / resume / disengage) and rolled-up cost are driven
  *  right here, so there's no separate Missions page. */
-export function EpicGroup({ epic, phases, effectiveStatus, expanded, onToggle, onEdit, onSelect, onContextMenu, activeId, blockedBy }: {
+export function EpicGroup({ epic, phases, effectiveStatus, expanded, onToggle, onEdit, onSelect, onContextMenu, activeId, blockedBy, onDropTask, dropTargetValid }: {
   epic: Task;
   phases: Task[];
   effectiveStatus?: Task['status'];
@@ -35,8 +36,11 @@ export function EpicGroup({ epic, phases, effectiveStatus, expanded, onToggle, o
   onContextMenu?: (e: React.MouseEvent, t: Task) => void;
   activeId: string | null;
   blockedBy: Map<string, Task[]>;
+  onDropTask?: (e: React.DragEvent) => void;
+  dropTargetValid?: boolean;
 }) {
   const { t } = useTranslation();
+  const drop = useDropTarget(onDropTask, dropTargetValid);
   const sessions = useSessions();
   const signals = useSessionSignals();
   const missions = useMissions();
@@ -102,7 +106,13 @@ export function EpicGroup({ epic, phases, effectiveStatus, expanded, onToggle, o
   // below the card). Corners stay clean because the only child reaching them — the expanded phase
   // list — is rounded to match below (rounded-b-lg).
   return (
-    <div className={`group/epic rounded-lg border border-accent/30 transition-colors ${activeId === epic.id ? 'bg-accent/[0.07]' : 'bg-accent/[0.04] hover:bg-accent/[0.06]'}`}>
+    <div
+      onDragOver={drop.onDragOver}
+      onDragEnter={drop.onDragEnter}
+      onDragLeave={drop.onDragLeave}
+      onDrop={drop.onDrop}
+      className={`group/epic rounded-lg border border-accent/30 transition-colors ${activeId === epic.id ? 'bg-accent/[0.07]' : 'bg-accent/[0.04] hover:bg-accent/[0.06]'} ${drop.dragOver && dropTargetValid ? 'ring-2 ring-accent/60' : ''} ${drop.dragOver && dropTargetValid === false ? 'ring-2 ring-danger/40 opacity-60' : ''}`}
+    >
       <div className="flex items-center" onContextMenu={onContextMenu ? (e) => onContextMenu(e, epic) : undefined}>
         <button
           type="button"
@@ -196,7 +206,7 @@ export function EpicGroup({ epic, phases, effectiveStatus, expanded, onToggle, o
       {expanded ? (
         <div className="flex flex-col gap-2.5 rounded-b-lg border-t border-accent/20 bg-bg/30 p-2.5 pl-5">
           {phases.map((p) => (
-            <TaskCard key={p.id} task={p} onEdit={onEdit} onSelect={onSelect} onContextMenu={onContextMenu} active={activeId === p.id} blockers={blockedBy.get(p.id)} />
+            <TaskCard key={p.id} task={p} onEdit={onEdit} onSelect={onSelect} onContextMenu={onContextMenu} active={activeId === p.id} blockers={blockedBy.get(p.id)} isPhase />
           ))}
         </div>
       ) : null}

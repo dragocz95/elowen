@@ -25,7 +25,7 @@ beforeAll(() => server.listen());
 afterEach(() => server.resetHandlers());
 afterAll(() => server.close());
 
-function renderEpic() {
+function renderEpic(extra: Partial<React.ComponentProps<typeof EpicGroup>> = {}) {
   const { wrapper: W } = createWrapper();
   return render(
     <ToastProvider>
@@ -38,6 +38,7 @@ function renderEpic() {
         onSelect={() => {}}
         activeId={null}
         blockedBy={new Map()}
+        {...extra}
       />
     </ToastProvider>,
     { wrapper: W },
@@ -126,5 +127,29 @@ describe('EpicGroup — PR-native surface', () => {
     await screen.findByText('Ship feature'); // rendered
     expect(screen.queryByRole('link', { name: /view pull request/i })).toBeNull();
     expect(screen.queryByRole('button', { name: /open pr/i })).toBeNull();
+  });
+});
+
+describe('EpicGroup — drag a task card onto the group header', () => {
+  function makeDrop(taskId: string) {
+    return { dataTransfer: { getData: () => taskId, setData: () => {}, dropEffect: '' } };
+  }
+
+  it('routes a card-onto-header drop to onDropTask (the mission-attach gesture)', () => {
+    const onDropTask = vi.fn((e: React.DragEvent) => e.preventDefault());
+    renderEpic({ onDropTask, dropTargetValid: true });
+    fireEvent.drop(screen.getByText('Ship feature'), makeDrop('orca-other'));
+    expect(onDropTask).toHaveBeenCalledTimes(1);
+  });
+
+  it('applies an accent highlight while a valid drag hovers, and clears it after drop', () => {
+    const onDropTask = vi.fn((e: React.DragEvent) => e.preventDefault());
+    renderEpic({ onDropTask, dropTargetValid: true });
+    const header = screen.getByText('Ship feature');
+    fireEvent.dragEnter(header, makeDrop('orca-other'));
+    const card = header.closest('.group\\/epic')!;
+    expect(card.className).toMatch(/ring-accent/);
+    fireEvent.drop(header, makeDrop('orca-other'));
+    expect(card.className).not.toMatch(/ring-accent/);
   });
 });

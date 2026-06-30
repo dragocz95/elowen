@@ -22,16 +22,18 @@ import { useTranslation } from '../../lib/i18n';
 import { formatTaskTime } from '../../lib/format';
 import { taskTypeMeta, statusLabel } from './taskMeta';
 import { statusTone } from '../dashboard/statusTone';
+import { useDropTarget } from './useTaskDrop';
 
 /** A single task as a compact list row — mirrors the autopilot epic's collapsed row so the task
  *  list stays dense. Quick run controls + status sit on the row; the full detail (agent, usage,
  *  changes, context) opens in the detail pane on click, so nothing is lost by slimming the card. */
-export function TaskCard({ task, onEdit, onSelect, onContextMenu, active = false, blockers, selected = false, onToggleSelect, selecting = false }: { task: Task; onEdit: (t: Task) => void; onSelect?: (t: Task) => void; onContextMenu?: (e: React.MouseEvent, t: Task) => void; active?: boolean; blockers?: Task[]; selected?: boolean; onToggleSelect?: (id: string) => void; selecting?: boolean }) {
+export function TaskCard({ task, onEdit, onSelect, onContextMenu, active = false, blockers, selected = false, onToggleSelect, selecting = false, isPhase = false, dragging = false, onDragStart, onDragEnd, onDropTask, dropTargetValid }: { task: Task; onEdit: (t: Task) => void; onSelect?: (t: Task) => void; onContextMenu?: (e: React.MouseEvent, t: Task) => void; active?: boolean; blockers?: Task[]; selected?: boolean; onToggleSelect?: (id: string) => void; selecting?: boolean; isPhase?: boolean; dragging?: boolean; onDragStart?: (e: React.DragEvent) => void; onDragEnd?: () => void; onDropTask?: (e: React.DragEvent) => void; dropTargetValid?: boolean }) {
   const close = useCloseTask();
   const del = useDeleteTask();
   const { toast } = useToast();
   const { t, locale } = useTranslation();
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const drop = useDropTarget(isPhase ? undefined : onDropTask, dropTargetValid);
 
   const { data: config } = useConfig();
   const meta = taskTypeMeta(task.type);
@@ -54,10 +56,17 @@ export function TaskCard({ task, onEdit, onSelect, onContextMenu, active = false
     <div
       role="button"
       tabIndex={0}
+      draggable={!isPhase && !!onDragStart}
+      onDragStart={onDragStart}
+      onDragEnd={onDragEnd}
+      onDragOver={drop.onDragOver}
+      onDragEnter={drop.onDragEnter}
+      onDragLeave={drop.onDragLeave}
+      onDrop={drop.onDrop}
       onClick={open}
       onContextMenu={onContextMenu ? (e) => onContextMenu(e, task) : undefined}
       onKeyDown={(e) => { if (e.key === 'Enter') open(); }}
-      className={`card-interactive group relative flex cursor-pointer items-center gap-3 rounded-lg border p-2.5 ${selected || active ? 'border-accent bg-accent/[0.06]' : 'border-border bg-surface'}`}
+      className={`card-interactive group relative flex items-center gap-3 rounded-lg border p-2.5 ${onDragStart && !isPhase ? 'cursor-grab' : 'cursor-pointer'} ${selected || active ? 'border-accent bg-accent/[0.06]' : 'border-border bg-surface'} ${dragging ? 'rotate-[1deg] opacity-50' : ''} ${drop.dragOver && dropTargetValid ? 'ring-2 ring-accent/60' : ''} ${drop.dragOver && dropTargetValid === false ? 'ring-2 ring-danger/40 opacity-60' : ''}`}
     >
       {/* model-icon bubble — accent ring while the agent is live */}
       <span className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border-2 bg-elevated ${running ? 'border-accent' : 'border-border'}`}>

@@ -1,10 +1,17 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeAll, afterEach, afterAll } from 'vitest';
 import type { ReactNode } from 'react';
-import { render, screen, fireEvent, within } from '@testing-library/react';
+import { render, screen, fireEvent, within, waitFor } from '@testing-library/react';
+import { setupServer } from 'msw/node';
+import { http, HttpResponse } from 'msw';
 import { KanbanBoard } from '../../../modules/kanban/KanbanBoard';
 import { ToastProvider } from '../../../components/ui/Toast';
 import { createWrapper } from '../../test-utils';
 import type { Task } from '../../../lib/types';
+
+const server = setupServer();
+beforeAll(() => server.listen());
+afterEach(() => server.resetHandlers());
+afterAll(() => server.close());
 
 /** Board renders toasts via its context menu hook, so every render needs a ToastProvider too. */
 function wrap() {
@@ -82,6 +89,50 @@ describe('KanbanBoard', () => {
     const open = screen.getByTestId('column-open');
     fireEvent.drop(open, makeDrop('a'));
     expect(onMove).not.toHaveBeenCalled();
+  });
+
+  it('dropping a card onto another card opens the make-subtask/add-dependency choice, not a column move', () => {
+    const onMove = vi.fn();
+    const { wrapper: W } = wrap();
+    render(<KanbanBoard tasks={tasks} onMove={onMove} />, { wrapper: W });
+    // A real drag always fires dragstart on the source first — that's what arms `dropTargetValid`
+    // (read from React state, since dataTransfer.getData is unavailable during dragover/drop in a
+    // real browser for security reasons). Mirror that sequence here, not just the drop.
+    fireEvent.dragStart(screen.getByText('Alpha'), makeDrop('a'));
+    fireEvent.drop(screen.getByText('Beta'), makeDrop('a'));
+    expect(screen.getByRole('menuitem', { name: 'Make subtask of Beta' })).toBeTruthy();
+    expect(screen.getByRole('menuitem', { name: 'Add dependency on Beta' })).toBeTruthy();
+    expect(onMove).not.toHaveBeenCalled(); // the card drop must not also trigger the column's own onDrop
+  });
+
+  it('dropping a card onto an epic card reparents directly with no choice popup', async () => {
+    server.use(http.patch('*/api/tasks/:id', () => HttpResponse.json({ id: 'a', title: 'Alpha', status: 'open', type: 'task', parent_id: 'epic' })));
+    const epicTasks: Task[] = [
+      { id: 'a', title: 'Alpha', status: 'open' },
+      { id: 'epic', title: 'Mission Epic', status: 'open', type: 'epic' },
+    ];
+    const { wrapper: W } = wrap();
+    render(<KanbanBoard tasks={epicTasks} onMove={() => {}} />, { wrapper: W });
+    fireEvent.dragStart(screen.getByText('Alpha'), makeDrop('a'));
+    fireEvent.drop(screen.getByText('Mission Epic'), makeDrop('a'));
+    expect(screen.queryByRole('menuitem')).toBeNull(); // no choice — an epic target reparents directly
+    await waitFor(() => expect(screen.getByText('Added as a subtask of Mission Epic')).toBeTruthy());
+  });
+
+  it('dropping on an invalid target card (e.g. a closed task) lets the drop fall through to the column move', () => {
+    const onMove = vi.fn();
+    const closedAndOpen: Task[] = [
+      { id: 'a', title: 'Alpha', status: 'closed' },
+      { id: 'b', title: 'Beta', status: 'open' },
+    ];
+    const { wrapper: W } = wrap();
+    render(<KanbanBoard tasks={closedAndOpen} onMove={onMove} />, { wrapper: W });
+    fireEvent.dragStart(screen.getByText('Alpha'), makeDrop('a'));
+    // Beta sits in the 'open' column; dropping a closed task onto it is not a legal subtask/dependency
+    // target (closed tasks can't be reparented), so the drop must bubble to the column's status move.
+    fireEvent.drop(screen.getByText('Beta'), makeDrop('a'));
+    expect(screen.queryByRole('menuitem')).toBeNull();
+    expect(onMove).toHaveBeenCalledWith('a', 'open');
   });
 
   describe('allTasks rollup independence from date filter', () => {

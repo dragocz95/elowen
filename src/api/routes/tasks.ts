@@ -107,6 +107,19 @@ export function registerTaskRoutes(app: OrcaApp, ctx: RouteContext): void {
       d.tasks.update(id, { title: b.title, type: b.type, priority: b.priority, description: b.description, scheduled_at: b.scheduled_at, autostart: b.autostart });
     }
     if (Array.isArray(b.deps)) d.tasks.setDeps(id, b.deps);
+    // Single-edge add (the drag-onto-card "add dependency" gesture): atomic, unlike a client-side
+    // fetch-current-deps-then-PATCH-the-whole-array round trip, which races against a concurrent
+    // editor of the same task's deps. setDeps stays the bulk-replace path (the deps modal).
+    if (typeof b.addDep === 'string') d.tasks.addDep(id, b.addDep);
+    if (typeof b.parent_id === 'string') {
+      // Drag-a-card-onto-another-card "make subtask" gesture. reparent() promotes the target to an
+      // epic if needed; if its mission is already live, tick it so the new phase is picked up now
+      // instead of waiting for the next scheduled tick — same pattern as insert-phases below.
+      const result = d.tasks.reparent(id, b.parent_id);
+      if ('error' in result) return c.json({ error: result.error }, 400);
+      const missionId = `m-${b.parent_id}`;
+      if (d.engine?.isActive(missionId)) await d.engine.tick(missionId);
+    }
     return c.json(d.tasks.get(id));
   });
   // Diff of one file from a task's FROZEN change list (the commits it landed between base..head). Read

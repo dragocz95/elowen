@@ -11,12 +11,14 @@ import { useDeleteMission } from '../../lib/mutations';
 import { taskTypeMeta } from '../tasks/taskMeta';
 import { epicProgress, epicLive } from '../../lib/taskTree';
 import { useSessions, useSessionSignals } from '../../lib/queries';
+import { useDropTarget } from '../tasks/useTaskDrop';
 import { useTranslation } from '../../lib/i18n';
 
 /** Collapsible epic (autopilot) container on the board — header with progress + aggregate live
  *  state; its phases stay hidden until expanded so the board isn't flooded with sub-tasks. */
-export function KanbanEpicCard({ epic, phases, expanded, onToggle, effectiveStatus, trueStatusLabel }: { epic: Task; phases: Task[]; expanded: boolean; onToggle: () => void; effectiveStatus?: TaskStatus; trueStatusLabel?: string }) {
+export function KanbanEpicCard({ epic, phases, expanded, onToggle, effectiveStatus, trueStatusLabel, onDropTask, dropTargetValid }: { epic: Task; phases: Task[]; expanded: boolean; onToggle: () => void; effectiveStatus?: TaskStatus; trueStatusLabel?: string; onDropTask?: (e: React.DragEvent) => void; dropTargetValid?: boolean }) {
   const { t } = useTranslation();
+  const drop = useDropTarget(onDropTask, dropTargetValid);
   const sessions = useSessions();
   const signals = useSessionSignals();
   const { toast } = useToast();
@@ -42,7 +44,11 @@ export function KanbanEpicCard({ epic, phases, expanded, onToggle, effectiveStat
       title={titleText}
       onClick={onToggle}
       onKeyDown={(e) => { if (e.key === 'Enter') onToggle(); }}
-      className="group flex cursor-pointer flex-col gap-2 rounded-md border border-accent/30 bg-accent/[0.04] p-2.5 transition-colors hover:border-accent/50"
+      onDragOver={drop.onDragOver}
+      onDragEnter={drop.onDragEnter}
+      onDragLeave={drop.onDragLeave}
+      onDrop={drop.onDrop}
+      className={`group flex cursor-pointer flex-col gap-2 rounded-md border border-accent/30 bg-accent/[0.04] p-2.5 transition-colors hover:border-accent/50 ${drop.dragOver && dropTargetValid ? 'ring-2 ring-accent/60' : ''} ${drop.dragOver && dropTargetValid === false ? 'ring-2 ring-danger/40 opacity-60' : ''}`}
     >
       <div className="flex items-center gap-2">
         <ChevronRight size={14} className={`shrink-0 text-text-muted transition-transform ${expanded ? 'rotate-90' : ''}`} aria-hidden />
