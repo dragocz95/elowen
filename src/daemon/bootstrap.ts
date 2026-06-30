@@ -16,7 +16,7 @@ import { sweepStuckTasks, deadAgentTasks } from '../overseer/stuckDetector.js';
 import { decidePrompt, decideChoice, gateVerdict, minConfidenceFor, noOverseerFallback } from '../overseer/decision.js';
 import { PlanJobStore } from '../overseer/planJob.js';
 import { DecisionQueue, type DecisionResult } from '../overseer/decisionQueue.js';
-import { sweepAgentLiveness, checkAction, WORKER_IDLE_MS, OVERSEER_IDLE_MS, DECISION_GRACE_MS, DECISION_HARD_MS, DECISION_SWEEP_MS } from '../overseer/livenessSweep.js';
+import { sweepAgentLiveness, checkAction, WORKER_IDLE_MS, OVERSEER_IDLE_MS, DECISION_GRACE_MS, DECISION_HARD_MS, DECISION_SWEEP_MS, PROGRESS_REVIEW_MS } from '../overseer/livenessSweep.js';
 import { PaneActivityTracker } from '../overseer/paneActivity.js';
 import { detectAgentPrompt } from '../deriver/shellPatterns/index.js';
 import { makePilot } from '../overseer/pilotAgent.js';
@@ -399,6 +399,7 @@ export function buildApp(opts: BuildOpts) {
     // never just because it's thinking. `deadSince`/`inflightChecks`/`paneTracker` persist across sweeps.
     const decisionDeadSince = new Map<string, number>();
     const inflightChecks = new Set<string>();
+    const progressLastAt = new Map<string, number>();
     const paneTracker = new PaneActivityTracker();
     const NUDGE_MAX = 2;
     // Escalate a wedged worker to a human — but never if its mission was torn down meanwhile (drain race).
@@ -428,24 +429,32 @@ export function buildApp(opts: BuildOpts) {
     };
     // Wake the overseer about a worker whose screen has gone static and act on its verdict. Mirrors the
     // askService 'message' path: enqueue per-mission, fall straight to a human when there's no overseer.
-    const checkWorker = async (session: string, taskId: string, snapshot: string, idleMin: number): Promise<void> => {
+    const checkWorker = async (session: string, taskId: string, snapshot: string, idleMin: number, reason: 'idle' | 'progress'): Promise<void> => {
       const task = tasks.get(taskId);
       if (!task) return;
       const missionId = missionIdForSession(session);
-      if (!missionId || !config.get().autopilot.overseerExec) { escalateWorker(taskId); return; } // no overseer → human
+      // No overseer to ask: a wedged worker escalates to a human; a routine progress glance just no-ops —
+      // never block a healthy, working agent just because nobody happens to be watching.
+      if (!missionId || !config.get().autopilot.overseerExec) { if (reason === 'idle') escalateWorker(taskId); return; }
       let verdict: DecisionResult;
-      try { verdict = await decisionQueue.enqueue(missionId, 'check', { taskId, session, paneSnapshot: snapshot, idleMin }); }
+      try { verdict = await decisionQueue.enqueue(missionId, 'check', { taskId, session, paneSnapshot: snapshot, idleMin, reason }); }
       catch (e) { log.error(`check enqueue failed for ${session}`, e); return; }
       const m = missions.get(missionId);
       const fresh = tasks.get(taskId) ?? task;
       const nudges = Number(fresh.labels.find((l) => l.startsWith('nudge:'))?.slice('nudge:'.length)) || 0;
-      const action = checkAction(verdict, { missionLive: !!m && (m.state === 'active' || m.state === 'stalled'), nudges, nudgeMax: NUDGE_MAX });
+      const action = checkAction(verdict, { reason, missionLive: !!m && (m.state === 'active' || m.state === 'stalled'), nudges, nudgeMax: NUDGE_MAX });
       switch (action.type) {
         case 'noop': return;
         case 'nudge':
           await tmux.sendRaw(session, action.text);
           await tmux.sendKeys(session, ['Enter']);
           tasks.bumpNudge(taskId);
+          return;
+        case 'steer':
+          // Proactive course-correction to a working agent — delivered like a nudge but NOT counted against
+          // the wedge nudge budget (it isn't a "this agent is stuck" poke).
+          await tmux.sendRaw(session, action.text);
+          await tmux.sendKeys(session, ['Enter']);
           return;
         case 'restart': await restartWorker(fresh); return;
         case 'escalate': escalateWorker(taskId); return;
@@ -454,12 +463,14 @@ export function buildApp(opts: BuildOpts) {
     const stopDecisionSweep = clock.setInterval(() => {
       void sweepAgentLiveness({
         tmux, queue: decisionQueue, tracker: paneTracker, now: clock.now(),
-        deadSince: decisionDeadSince, inflightChecks,
+        deadSince: decisionDeadSince, inflightChecks, lastProgressAt: progressLastAt,
         sessionTaskId: (s) => taskForSession(s)?.id ?? null,
         programFor: (s) => agents.programFor(s.replace(/^orca-/, '')),
         hasPrompt: (content, program) => detectAgentPrompt(content, program) !== null,
         checkWorker,
         workerIdleMs: WORKER_IDLE_MS, overseerIdleMs: OVERSEER_IDLE_MS, graceMs: DECISION_GRACE_MS, hardMs: DECISION_HARD_MS,
+        // Routine progress checks only make sense when there's an overseer to do them (0 disables).
+        progressReviewMs: config.get().autopilot.overseerExec ? PROGRESS_REVIEW_MS : 0,
       })
         .then(({ escalated, checked }) => {
           if (escalated.length) log.warn(`liveness sweep escalated ${escalated.length} unanswered decision(s) to a human: ${escalated.join(', ')}`);

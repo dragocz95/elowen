@@ -17,24 +17,37 @@ export const DECISION_GRACE_MS = 90_000;
 export const DECISION_HARD_MS = 1_800_000; // 30 min
 /** How often the sweep runs from the daemon loop. */
 export const DECISION_SWEEP_MS = 30_000;
+/** A still-working worker gets a routine PROGRESS check this often — the overseer glances and may steer it,
+ *  but never escalates a healthy agent. The single cadence knob (gated by `overseerExec`; 0 disables). */
+export const PROGRESS_REVIEW_MS = 900_000; // 15 min
 /** Tail of pane lines captured for the change-detection hash (matches the deriver's window). */
 const PANE_TAIL = 60;
 
-/** What to do with the overseer's verdict on an idle-worker 'check'. */
+/** What to do with the overseer's verdict on a worker 'check'. */
 export type CheckAction =
   | { type: 'noop' }              // false alarm (still working) or mission torn down — leave it
-  | { type: 'nudge'; text: string } // deliver an instruction to the worker's terminal
+  | { type: 'nudge'; text: string } // wedge poke — delivered AND counted against the nudge budget
+  | { type: 'steer'; text: string } // progress course-correction — delivered, NOT counted, NEVER escalated
   | { type: 'restart' }           // kill + relaunch the worker
   | { type: 'escalate' };         // hand to a human
 
 /** Map a 'check' verdict to an action. Pure (no effects) so the mapping is unit-testable; the caller
  *  performs it and owns the nudge budget. Drain (mission gone) and a slow-then-answered overseer both
- *  reduce to no-op so a torn-down mission's worker is never disturbed. After `nudgeMax` nudges, a fresh
- *  nudge becomes an escalation instead — we stop poking and ask a human. */
-export function checkAction(verdict: DecisionResult, opts: { missionLive: boolean; nudges: number; nudgeMax: number }): CheckAction {
+ *  reduce to no-op so a torn-down mission's worker is never disturbed.
+ *  - reason 'idle' (wedge): after `nudgeMax` nudges a fresh nudge becomes an escalation; a bare reject
+ *    escalates too — a hung agent eventually reaches a human.
+ *  - reason 'progress' (routine glance at a WORKING agent): a message just steers it (no budget, no
+ *    escalation), and anything ambiguous (bare reject, fumbled flags, timeout) leaves it alone — a healthy
+ *    agent must never be handed to a human over a routine check. */
+export function checkAction(verdict: DecisionResult, opts: { reason: 'idle' | 'progress'; missionLive: boolean; nudges: number; nudgeMax: number }): CheckAction {
   if (!opts.missionLive || verdict.rationale === 'mission disengaged') return { type: 'noop' };
   if (verdict.approve) return { type: 'noop' };
   const text = verdict.message?.trim();
+  if (opts.reason === 'progress') {
+    if (text) return { type: 'steer', text };
+    if (verdict.restart) return { type: 'restart' };
+    return { type: 'noop' };
+  }
   if (text) return opts.nudges >= opts.nudgeMax ? { type: 'escalate' } : { type: 'nudge', text };
   if (verdict.restart) return { type: 'restart' };
   return { type: 'escalate' };
@@ -52,26 +65,32 @@ export interface AgentLivenessDeps {
   /** Sessions with a `check` decision already awaiting the overseer — guards against re-enqueuing every
    *  tick while the worker's pane stays static. The sweep adds/removes around `checkWorker`. */
   inflightChecks: Set<string>;
+  /** Per-session epoch ms of the last enqueued check (either reason) — throttles the routine progress
+   *  review and is seeded on first sight so a fresh agent gets a full interval before its first review.
+   *  Owned by the caller, persisted across sweeps, mutated in place. */
+  lastProgressAt: Map<string, number>;
   /** Resolve the task a worker session runs, or null (no task row → skip, like the deriver). */
   sessionTaskId: (session: string) => string | null;
   /** The agent program for a worker session, or null. */
   programFor: (session: string) => string | null;
   /** True when the pane shows a structured prompt the deriver already handles (needs_input) — not a wedge. */
   hasPrompt: (content: string, program: string) => boolean;
-  /** Wake the overseer about a wedged worker: enqueue a 'check' and act on the verdict. The sweep owns
-   *  the inflight guard around it (adds before, removes in finally). */
-  checkWorker: (session: string, taskId: string, snapshot: string, idleMin: number) => Promise<void>;
+  /** Wake the overseer about a worker: enqueue a 'check' (reason 'idle' = wedged, 'progress' = routine
+   *  glance at a working agent) and act on the verdict. The sweep owns the inflight guard around it. */
+  checkWorker: (session: string, taskId: string, snapshot: string, idleMin: number, reason: 'idle' | 'progress') => Promise<void>;
   workerIdleMs: number;
   overseerIdleMs: number;
   graceMs: number;
   hardMs: number;
+  /** How long a working worker may run between routine progress checks; 0 disables them entirely. */
+  progressReviewMs: number;
 }
 
 /**
  * One universal agent-liveness sweep. The signal is pane-content change (see `PaneActivityTracker`):
  * a working agent's screen keeps changing, a wedged one goes static. Per role:
  *  - **worker** idle past the bar (and not sitting on a prompt the deriver owns) → wake the overseer
- *    with a `check`.
+ *    with a wedge `check`; a still-working worker instead gets a throttled routine `progress` check.
  *  - **overseer** with pending decisions: escalate them only when it's genuinely unsupervised — its
  *    session dead past grace, OR its own pane static past the idle bar (wedged) — never just because it's
  *    thinking. A high absolute backstop covers the animating-but-not-polling edge case.
@@ -92,21 +111,32 @@ export async function sweepAgentLiveness(d: AgentLivenessDeps): Promise<{ escala
     const idle = d.tracker.seen(name, content, d.now);
     // Empty capture = the session vanished between list and capture — the dead-session stuck detector's
     // domain, never act on it here (acting would "restart" a corpse).
-    if (idle === null) { d.tracker.forget(name); continue; }
+    if (idle === null) { d.tracker.forget(name); d.lastProgressAt.delete(name); continue; }
 
     if (info.role === 'overseer') {
       if (info.missionId) overseerIdle.set(info.missionId, idle);
       continue; // overseer escalation is decided against the pending queue below
     }
-    // worker
-    if (idle < d.workerIdleMs) continue;
+    // worker — two mutually-exclusive triggers off the same idle clock:
+    //  - idle past the bar (static pane) → WEDGE check ('idle'): may nudge / restart / escalate.
+    //  - still working (idle under the bar) → a throttled PROGRESS check ('progress'): a routine glance
+    //    where the overseer may steer it but never escalates a healthy agent.
     const taskId = d.sessionTaskId(name); if (!taskId) continue;
     const program = d.programFor(name); if (!program) continue;
     if (d.hasPrompt(content, program)) continue;     // structured prompt → needs_input, deriver owns it
     if (d.inflightChecks.has(name)) continue;          // a check is already awaiting the overseer
+    const reason: 'idle' | 'progress' = idle >= d.workerIdleMs ? 'idle' : 'progress';
+    if (reason === 'progress') {
+      if (d.progressReviewMs <= 0) continue;           // routine review disabled (e.g. no overseer exec)
+      const last = d.lastProgressAt.get(name);
+      // First sight → start the clock and let it work a full interval before its first review.
+      if (last === undefined) { d.lastProgressAt.set(name, d.now); continue; }
+      if (d.now - last < d.progressReviewMs) continue; // not due yet
+    }
+    d.lastProgressAt.set(name, d.now);                 // reset cadence on EITHER trigger (no stale re-fire)
     d.inflightChecks.add(name);
     checked.push(name);
-    void d.checkWorker(name, taskId, content, Math.floor(idle / 60_000)).finally(() => d.inflightChecks.delete(name));
+    void d.checkWorker(name, taskId, content, Math.floor(idle / 60_000), reason).finally(() => d.inflightChecks.delete(name));
   }
 
   // Escalate unanswered decisions for missions whose overseer is genuinely unsupervised.
