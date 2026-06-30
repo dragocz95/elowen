@@ -5,11 +5,11 @@ import type { Clock } from '../shared/clock.js';
 import { detectAgentPrompt } from './shellPatterns/index.js';
 import type { SignalSink, DerivedSignal } from './types.js';
 import { logger } from '../shared/logger.js';
+import { textHash as hash } from '../shared/textHash.js';
 
 const log = logger('deriver');
 
 const PANE_TAIL = 60;
-function hash(s: string) { let h = 0; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0; return (h >>> 0).toString(36); }
 
 export interface DeriverDeps {
   tmux: TmuxDriver; agents: AgentStore; tasks: TaskStore;

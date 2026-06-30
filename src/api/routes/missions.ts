@@ -128,6 +128,8 @@ export function registerMissionRoutes(app: OrcaApp, ctx: RouteContext): void {
       // For a 'message' decision: the overseer's free-text reply. Absent ⇒ askService falls to the
       // human window (the overseer chose --escalate, or answered with nothing).
       ...(typeof b.message === 'string' ? { message: b.message } : {}),
+      // For a 'check' decision: restart the idle worker rather than nudge/escalate it.
+      ...(b.restart === true ? { restart: true } : {}),
     });
     return ok ? c.json({ ok: true }) : c.json({ error: 'no such decision' }, 404);
   });

@@ -33,7 +33,7 @@ export class OrcaClient {
   overseerPoll(missionId: string) {
     return this.req(`/missions/${encodeURIComponent(missionId)}/overseer/next`);
   }
-  overseerDecide(missionId: string, body: { id: string; approve: boolean; confidence: number; rationale: string; choice?: string; message?: string }) {
+  overseerDecide(missionId: string, body: { id: string; approve: boolean; confidence: number; rationale: string; choice?: string; message?: string; restart?: boolean }) {
     return this.req(`/missions/${encodeURIComponent(missionId)}/overseer/decide`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
   }
   askStart(taskId: string, text: string) {

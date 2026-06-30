@@ -25,4 +25,6 @@ export const overseerDecideSchema = z.object({
   /** For a 'message' decision: the overseer's free-text reply to the agent's question. Absent (with
    *  no choice/approve) ⇒ the overseer escalated → the ask falls to the human window. */
   message: z.string().optional(),
+  /** For a 'check' decision: kill + relaunch the idle worker (the overseer judged it stuck). */
+  restart: z.boolean().optional(),
 });

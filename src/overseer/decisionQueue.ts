@@ -1,10 +1,14 @@
 import { randomBytes } from 'node:crypto';
 
-export type DecisionKind = 'prompt' | 'review' | 'question' | 'message';
+export type DecisionKind = 'prompt' | 'review' | 'question' | 'message' | 'check';
 export interface DecisionResult {
   approve: boolean;
   confidence: number;
   rationale: string;
+  /** For a 'check' decision (the liveness sweep woke the overseer about an idle worker): the overseer
+   *  wants the worker killed and relaunched (it judged it genuinely stuck, not just slow). Distinct from
+   *  `message` (nudge it) and a bare `approve:false` (escalate to a human). */
+  restart?: boolean;
   /** For a 'question' decision: the option id the overseer picked. Absent ⇒ escalate to a human
    *  (also the shape of a timeout/drain verdict, which therefore escalates the question). */
   choice?: string;

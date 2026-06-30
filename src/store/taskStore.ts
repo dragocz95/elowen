@@ -264,6 +264,20 @@ export class TaskStore {
     return next;
   }
 
+  /** Increment this task's idle-nudge counter (a `nudge:<n>` label) and return the new value. Bounds how
+   *  many times the liveness sweep pokes a live-but-stuck worker before escalating it to a human — the
+   *  live-agent analogue of `bumpStuck` (which counts dead-agent relaunches). */
+  bumpNudge(id: string): number {
+    const t = this.get(id);
+    if (!t) return 0;
+    const cur = Number(t.labels.find((l) => l.startsWith('nudge:'))?.slice('nudge:'.length)) || 0;
+    const next = cur + 1;
+    const labels = t.labels.filter((l) => !l.startsWith('nudge:'));
+    labels.push(`nudge:${next}`);
+    this.db.prepare('UPDATE tasks SET labels = ? WHERE id = ?').run(labels.join(','), id);
+    return next;
+  }
+
   /** Increment this task's review-fix counter (a `reviewfix:<n>` label) and return the new value.
    *  Bounds how many times an L3 mission auto-re-spawns a phase that the post-done review rejected
    *  before escalating to a human — the review-gate analogue of `bumpStuck`. */

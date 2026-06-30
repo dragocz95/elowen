@@ -51,7 +51,7 @@ AGENT-FACING                      (invoked by running agents — rarely needed b
   api <METHOD> <path> [body]      generic authenticated REST call (needs ORCA_URL/ORCA_TOKEN)
   plan submit --phases '<json>'   submit an autopilot plan        (needs ORCA_PLAN_JOB)
   overseer poll                   wait for the next decision       (needs ORCA_MISSION)
-  overseer decide --id <id> …     resolve a decision: --approve | --escalate | --choice <optionId> | --message "<reply>"
+  overseer decide --id <id> …     resolve a decision: --approve | --escalate | --choice <optionId> | --message "<reply>" | --restart
                                     [--confidence <0..1>] [--rationale "<text>"]
 
 OPTIONS
@@ -219,15 +219,17 @@ export async function run(argv: string[], c: OrcaClient, env: NodeJS.ProcessEnv)
       }
       if (arg === 'decide') {
         const id = flag(rest, '--id');
-        if (!id) { console.error('usage: orca overseer decide --id <id> (--approve|--escalate|--choice <optionId>|--message "<reply>") [--confidence <0..1>] [--rationale "<text>"]'); process.exit(1); }
+        if (!id) { console.error('usage: orca overseer decide --id <id> (--approve|--escalate|--choice <optionId>|--message "<reply>"|--restart) [--confidence <0..1>] [--rationale "<text>"]'); process.exit(1); }
         // A 'question' decision picks an option (--choice <id>); a 'message' decision answers with free
         // text (--message); a permission/review decision approves or escalates (--approve|--escalate).
         // Either way confidence rides along for the autonomy gate; --escalate is the absence of all.
         const choice = flag(rest, '--choice');
         const message = flag(rest, '--message');
         const approve = has(rest, '--approve');
+        // A 'check' decision (idle worker) may instead --restart it; rides along like the other verbs.
+        const restart = has(rest, '--restart');
         const confidence = (approve || choice !== undefined || message !== undefined) ? Number(flag(rest, '--confidence') ?? '0.7') : 0;
-        await c.overseerDecide(missionId, { id, approve, confidence: Number.isFinite(confidence) ? confidence : 0, rationale: flag(rest, '--rationale') ?? '', ...(choice !== undefined ? { choice } : {}), ...(message !== undefined ? { message } : {}) });
+        await c.overseerDecide(missionId, { id, approve, confidence: Number.isFinite(confidence) ? confidence : 0, rationale: flag(rest, '--rationale') ?? '', ...(choice !== undefined ? { choice } : {}), ...(message !== undefined ? { message } : {}), ...(restart ? { restart: true } : {}) });
         console.log(`decided ${id}`); break;
       }
       console.error('usage: orca overseer <poll|decide ...>'); process.exit(1); break;
