@@ -15,6 +15,7 @@ import { sweepStuckTasks, deadAgentTasks } from '../overseer/stuckDetector.js';
 import { decidePrompt, decideChoice, gateVerdict, minConfidenceFor, noOverseerFallback } from '../overseer/decision.js';
 import { PlanJobStore } from '../overseer/planJob.js';
 import { DecisionQueue } from '../overseer/decisionQueue.js';
+import { sweepDecisionTimeouts, DECISION_GRACE_MS, DECISION_HARD_MS, DECISION_SWEEP_MS } from '../overseer/decisionTimeout.js';
 import { makePilot } from '../overseer/pilotAgent.js';
 import { makeOverseer } from '../overseer/overseerAgent.js';
 import { RelayClient } from '../inference/client.js';
@@ -388,6 +389,21 @@ export function buildApp(opts: BuildOpts) {
     // idempotent — it re-parks a missing overseer for each active mission and kills orphans — so run
     // it periodically, not just on boot.
     const stopOverseerWatchdog = clock.setInterval(() => { void reconcileOverseers().catch((e) => log.error('overseer watchdog failed', e)); }, 60000);
+    // Decision liveness sweep: escalate a parked decision to a human ONLY when its overseer is actually
+    // gone past the grace window (watchdog above didn't re-park it) or it's been wedged past the hard
+    // ceiling — never just because a live overseer is taking a while to answer (the old per-enqueue
+    // 120 s deadline did exactly that, falsely timing out heavy reviews under claude opus). `deadSince`
+    // persists across sweeps so the grace window measures continuous absence.
+    const decisionDeadSince = new Map<string, number>();
+    const stopDecisionSweep = clock.setInterval(() => {
+      void tmux.list()
+        .then((sessions) => {
+          const liveSessions = new Set(sessions.filter((s) => s.startsWith('orca-overseer-')));
+          const { escalated } = sweepDecisionTimeouts({ queue: decisionQueue, liveSessions, now: clock.now(), deadSince: decisionDeadSince, graceMs: DECISION_GRACE_MS, hardMs: DECISION_HARD_MS });
+          if (escalated.length) log.warn(`decision sweep escalated ${escalated.length} unanswered decision(s) to a human: ${escalated.join(', ')}`);
+        })
+        .catch((e) => log.error('decision sweep failed', e));
+    }, DECISION_SWEEP_MS);
     // Purge expired auth tokens hourly so the table can't grow unbounded over a long-running daemon.
     const purgeTokens = () => users?.purgeExpiredTokens(config.get().security.tokenTtlDays);
     purgeTokens();
@@ -432,7 +448,7 @@ export function buildApp(opts: BuildOpts) {
         .then((ids) => { if (ids.length) log.info(`PR feedback re-engaged ${ids.length} mission(s): ${ids.join(', ')}`); })
         .catch((e) => log.error('PR feedback sweep failed', e));
     }, 60_000);
-    return () => { stopDeriver(); stopOverseer(); stopScheduler(); stopJanitor(); stopStuck(); stopOverseerWatchdog(); stopTokenPurge(); stopEventPurge(); stopTicketSweep(); stopPrFeedback(); };
+    return () => { stopDeriver(); stopOverseer(); stopScheduler(); stopJanitor(); stopStuck(); stopOverseerWatchdog(); stopDecisionSweep(); stopTokenPurge(); stopEventPurge(); stopTicketSweep(); stopPrFeedback(); };
   };
   return { app, startLoops, tickets, tmux };
 }

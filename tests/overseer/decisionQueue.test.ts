@@ -30,15 +30,29 @@ describe('DecisionQueue', () => {
     vi.useRealTimers();
   });
 
-  it('enqueue() resolves to an escalate-to-human verdict on timeout (never auto-decides)', async () => {
+  it('enqueue() never self-times-out — a pending decision stays pending until answered or swept', async () => {
     vi.useFakeTimers();
     const q = new DecisionQueue();
-    const verdict = q.enqueue('m4', 'task', {}, 5000);
-    await vi.advanceTimersByTimeAsync(5000);
+    const verdict = q.enqueue('m4', 'task', {});
+    let settled = false;
+    void verdict.then(() => { settled = true; });
+    // A slow-but-alive overseer must not be escalated just for thinking: no timer fires it.
+    await vi.advanceTimersByTimeAsync(10 * 60_000);
+    expect(settled).toBe(false);
+    vi.useRealTimers();
+  });
+
+  it('pending() lists unanswered decisions; timeout() escalates one to a human (never auto-decides)', async () => {
+    const q = new DecisionQueue(() => 1000);
+    const verdict = q.enqueue('m4', 'task', {});
+    expect(q.pending()).toEqual([{ missionId: 'm4', id: expect.any(String), kind: 'task', enqueuedAt: 1000 }]);
+    expect(q.timeout('m4', q.pending()[0]!.id)).toBe(true);
     // `escalated: true` flags "no overseer verdict — hand to a human"; consumers must NOT treat this
     // like a real reject (e.g. an L3 review must not self-heal/re-run on it).
     await expect(verdict).resolves.toEqual({ approve: false, confidence: 0, rationale: 'overseer timeout', escalated: true });
-    vi.useRealTimers();
+    expect(q.pending()).toEqual([]);
+    // Already settled → a second timeout is a no-op (can't double-settle vs resolve/drain).
+    expect(q.timeout('m4', 'whatever')).toBe(false);
   });
 
   it('settles the verdict with exactly what the agent answered', async () => {
@@ -68,13 +82,11 @@ describe('DecisionQueue', () => {
   });
 
   it('a question that times out carries no choice (⇒ the deriver escalates)', async () => {
-    vi.useFakeTimers();
     const q = new DecisionQueue();
-    const verdict = q.enqueue('mqt', 'question', { question: '?' }, 5000);
-    await vi.advanceTimersByTimeAsync(5000);
+    const verdict = q.enqueue('mqt', 'question', { question: '?' });
+    q.timeout('mqt', q.pending()[0]!.id);
     const v = await verdict;
     expect(v.choice).toBeUndefined();
-    vi.useRealTimers();
   });
 
   it('drain() escalates all pending for a mission', async () => {
