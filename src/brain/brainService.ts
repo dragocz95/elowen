@@ -1,5 +1,8 @@
-import { createAgentSession, DefaultResourceLoader } from '@earendil-works/pi-coding-agent';
+import { createAgentSession, DefaultResourceLoader, formatSkillsForPrompt } from '@earendil-works/pi-coding-agent';
 import type { AgentSession, AgentSessionEvent, ResourceLoader } from '@earendil-works/pi-coding-agent';
+import type { PluginRegistry } from '../plugins/registry.js';
+import type { Policy } from '../plugins/policy.js';
+import { runWithPolicy } from '../plugins/policyContext.js';
 import type { BrainStore } from '../store/brainStore.js';
 import type { BrainProviderConfig } from './providers.js';
 import { buildBrainRegistry, resolveBrainModel } from './providers.js';
@@ -30,23 +33,28 @@ export interface BrainDeps {
   url: string;
   /** Working dir for the in-memory session (not a repo checkout). Default: process.cwd(). */
   cwd?: string;
+  /** Enabled plugins' aggregated contributions (tools/skills/prompt fragments). Absent → brain runs
+   *  exactly as before plugins existed. */
+  plugins?: PluginRegistry;
+  /** Resolves the repo-access Policy for a user; carried into plugin tool execution via AsyncLocalStorage. */
+  policy?: (userId: number) => Policy;
   /** Injected for tests; defaults to PI's createAgentSession. */
   createSession?: typeof createAgentSession;
   /** Injected for tests; builds the resource loader that carries the Orca system prompt. A test passes
    *  `() => undefined` so no disk-touching loader is constructed. */
-  resourceLoaderFactory?: (o: { cwd: string; systemPrompt: string }) => ResourceLoader | undefined;
+  resourceLoaderFactory?: (o: { cwd: string; systemPrompt: string; appendSystemPrompt?: string[] }) => ResourceLoader | undefined;
 }
 
-/** Default resource loader: carries the Orca persona as the session's system prompt and disables all
- *  disk discovery (extensions/skills/themes/context files) — the brain is a lean, in-process agent. */
-function defaultResourceLoaderFactory(o: { cwd: string; systemPrompt: string }): ResourceLoader {
+/** Default resource loader: carries the Orca persona as the system prompt, appends plugin skills +
+ *  fragments after it, and disables all disk discovery — the brain is a lean, in-process agent. */
+function defaultResourceLoaderFactory(o: { cwd: string; systemPrompt: string; appendSystemPrompt?: string[] }): ResourceLoader {
   return new DefaultResourceLoader({
-    cwd: o.cwd, agentDir: o.cwd, systemPrompt: o.systemPrompt,
+    cwd: o.cwd, agentDir: o.cwd, systemPrompt: o.systemPrompt, appendSystemPrompt: o.appendSystemPrompt,
     noExtensions: true, noSkills: true, noPromptTemplates: true, noThemes: true, noContextFiles: true,
   });
 }
 
-interface LiveBrain { session: AgentSession; sessionId: string; model: string; listeners: Set<(e: BrainEvent) => void> }
+interface LiveBrain { session: AgentSession; sessionId: string; model: string; policy: Policy; listeners: Set<(e: BrainEvent) => void> }
 
 /** Translate a PI session event into the stable BrainEvent contract. Defensive: unknown event types
  *  are dropped. Streaming shapes are refined by the Task 8 smoke; the contract never changes. */
@@ -95,12 +103,22 @@ export class BrainService {
     const token = this.d.users.ensureAdvisorToken(userId);
     const tools = buildOrcaTools({ url: this.d.url, token });
 
+    // Enabled plugins contribute tools, skills, and system-prompt fragments. Their tools read the active
+    // Policy at call time via AsyncLocalStorage (set in `send`), so they need no per-user construction.
+    const pluginTools = this.d.plugins?.tools ?? [];
+    const allTools = [...tools, ...pluginTools];
+    const skills = this.d.plugins?.skills ?? [];
+    const skillsBlock = skills.length ? formatSkillsForPrompt(skills) : '';
+    const fragments = this.d.plugins?.promptFragments ?? [];
+    const append = [skillsBlock, ...fragments].filter((s) => s.length > 0);
+    const policy = this.d.policy?.(userId) ?? { allowedProjectIds: 'all' as const, allowedPaths: () => [] };
+
     // Orca identity: the editable `advisor` prompt (per-user override aware) becomes the system prompt,
     // so the brain knows it is Orca — not the underlying model's default persona.
     const u = this.d.users.get(userId);
     const userName = u?.name || u?.username || 'Filip';
     const persona = this.d.prompts.render('advisor', { userName }, userId);
-    const resourceLoader = (this.d.resourceLoaderFactory ?? defaultResourceLoaderFactory)({ cwd, systemPrompt: persona });
+    const resourceLoader = (this.d.resourceLoaderFactory ?? defaultResourceLoaderFactory)({ cwd, systemPrompt: persona, appendSystemPrompt: append });
     // A resource loader passed to createAgentSession is NOT auto-reloaded (only one it builds itself is),
     // so its system prompt stays empty unless we reload it here. Without this the brain falls back to
     // pi's default "coding assistant" persona and misidentifies itself.
@@ -113,8 +131,8 @@ export class BrainService {
       modelRegistry: registry,
       model,
       resourceLoader,
-      customTools: tools,
-      tools: tools.map((t) => t.name),
+      customTools: allTools,
+      tools: allTools.map((t) => t.name),
       noTools: 'builtin',
     });
 
@@ -125,7 +143,7 @@ export class BrainService {
       if (be) for (const l of listeners) l(be);
     });
 
-    this.live.set(userId, { session, sessionId, model: model.id, listeners });
+    this.live.set(userId, { session, sessionId, model: model.id, policy, listeners });
     return { sessionId };
   }
 
@@ -140,7 +158,8 @@ export class BrainService {
     const b = this.live.get(userId);
     if (!b) throw new Error('brain not started for user');
     projectUserTurn(this.d.store, b.sessionId, text);
-    await b.session.prompt(text);
+    // Establish the user's repo Policy for any plugin tool this turn invokes (read via currentPolicy()).
+    await runWithPolicy(b.policy, () => b.session.prompt(text));
   }
 
   stop(userId: number): void {

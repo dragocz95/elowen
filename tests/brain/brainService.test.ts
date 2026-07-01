@@ -2,6 +2,9 @@ import { describe, it, expect, vi } from 'vitest';
 import { BrainService } from '../../src/brain/brainService.js';
 import { openDb } from '../../src/store/db.js';
 import { BrainStore } from '../../src/store/brainStore.js';
+import { PluginRegistry } from '../../src/plugins/registry.js';
+import { defineTool } from '@earendil-works/pi-coding-agent';
+import { Type } from 'typebox';
 
 function fakeDeps() {
   const listeners: ((e: unknown) => void)[] = [];
@@ -36,6 +39,28 @@ describe('BrainService', () => {
     expect(d.store.getSession('brain-1')).toBeDefined();
     expect(d.createSession).toHaveBeenCalledTimes(1);
     expect(d.prompts.render).toHaveBeenCalledWith('advisor', { userName: 'Filip' }, 1);
+  });
+
+  it('composes plugin tools and appends plugin fragments to the persona', async () => {
+    const d = fakeDeps();
+    const reg = new PluginRegistry();
+    const ctx = reg.contextFor('demo', {}, { info() {}, warn() {}, error() {} });
+    ctx.registerTool(defineTool({
+      name: 'demo_echo', label: 'Echo', description: 'echo', parameters: Type.Object({}),
+      execute: async () => ({ content: [{ type: 'text' as const, text: 'ok' }], details: {} }),
+    }));
+    ctx.registerSystemPromptFragment('Follow house style.');
+    (d as unknown as { plugins: PluginRegistry }).plugins = reg;
+    (d as unknown as { policy: () => unknown }).policy = () => ({ allowedProjectIds: 'all', allowedPaths: () => [] });
+    let seenAppend: string[] | undefined;
+    d.resourceLoaderFactory = (o: { appendSystemPrompt?: string[] }) => { seenAppend = o.appendSystemPrompt; return undefined; };
+
+    const svc = new BrainService(d as never);
+    await svc.start(1);
+    const opts = (d.createSession as unknown as { mock: { calls: [{ customTools: { name: string }[] }][] } }).mock.calls[0][0];
+    expect(opts.customTools.map((t) => t.name)).toContain('demo_echo');
+    expect(opts.customTools.map((t) => t.name)).toContain('orca_list_tasks');
+    expect(seenAppend).toContain('Follow house style.');
   });
 
   it('send forwards to the PI session, persists the turn, and emits events', async () => {
