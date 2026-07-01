@@ -37,6 +37,12 @@ describe('BrainClient', () => {
     expect(await c.history()).toEqual([{ role: 'user', text: 'hi' }]);
   });
 
+  it('status GETs /brain/status', async () => {
+    const f = vi.fn(async () => j(200, { running: true, sessionId: 'brain-1', model: 'kimi' })) as unknown as typeof fetch;
+    const c = new BrainClient({ base: 'http://x', token: 't', fetchImpl: f });
+    expect((await c.status()).model).toBe('kimi');
+  });
+
   it('maps a 401 to Unauthorized', async () => {
     const f = vi.fn(async () => new Response('no', { status: 401 })) as unknown as typeof fetch;
     const c = new BrainClient({ base: 'http://x', token: 't', fetchImpl: f });

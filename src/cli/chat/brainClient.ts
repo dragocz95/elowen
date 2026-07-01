@@ -55,6 +55,12 @@ export class BrainClient {
     await this.post('/brain/send', { text });
   }
 
+  async status(): Promise<{ running: boolean; sessionId: string | null; model: string }> {
+    const res = await this.f(`${this.o.base}/brain/status`, { headers: this.headers() });
+    if (res.status === 401) throw new Unauthorized();
+    return (await res.json()) as { running: boolean; sessionId: string | null; model: string };
+  }
+
   async history(): Promise<BrainMessageView[]> {
     const res = await this.f(`${this.o.base}/brain/messages`, { headers: this.headers() });
     if (res.status === 401) throw new Unauthorized();

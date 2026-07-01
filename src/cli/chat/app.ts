@@ -2,6 +2,7 @@ import { TUI, ProcessTerminal, Text, Markdown, Loader, Container, Spacer, matche
 import { Editor } from '@earendil-works/pi-tui';
 import { initTheme, getMarkdownTheme, getSelectListTheme } from '@earendil-works/pi-coding-agent';
 import { color, glyph } from './theme.js';
+import { UserBlock, StatusBar, metaLine } from './components.js';
 import { BrainClient } from './brainClient.js';
 import { fromHistory, pushUser, beginAssistant, reduce, type ChatView } from './render.js';
 
@@ -26,45 +27,48 @@ export interface RunChatOpts {
   client?: BrainClient;
 }
 
-/** Launch the interactive Orca chat TUI. Thin client: renders the brain's stream, posts user input.
- *  Styled to match the pi/opencode family (pi's own markdown renderer + a teal Orca accent). */
+/** Launch the interactive Orca chat TUI — an opencode-style layout (user blocks with a teal rail,
+ *  markdown replies with a metadata line, a bottom status bar) rendered on pi-tui + pi's markdown theme. */
 export async function runChat(opts: RunChatOpts): Promise<void> {
   if (!process.stdout.isTTY) {
     process.stderr.write('orca chat needs an interactive terminal (a TTY).\n');
     return;
   }
-  // pi's theme powers the markdown renderer (syntax highlighting, headings, code blocks) and the
-  // editor's autocomplete list — the look the pi/opencode CLIs ship with.
   initTheme();
   const mdTheme = getMarkdownTheme();
 
   const client = opts.client ?? new BrainClient({ base: opts.base, token: opts.token });
   await client.start(opts.model === 'anthropic' || opts.model === 'openai' ? opts.model : undefined);
+  const modelName = (await client.status().catch(() => ({ model: '' }))).model || opts.model || '';
   let view = fromHistory(await client.history().catch(() => []));
 
   const term = new ProcessTerminal();
   const tui = new TUI(term);
-  const modelLabel = opts.model ? `  ${color.dim('·')}  ${color.dim(opts.model)}` : '';
-  const header = new Text(` ${color.accent(`${glyph.whale} orca`)}${modelLabel}`, 1, 1);
   const messages = new Container();
   const spacer = new Spacer();
   const loader = new Loader(tui, color.accent, color.dim, 'přemýšlím…');
   const editor = new Editor(tui, { borderColor: color.accent, selectList: getSelectListTheme() }, {});
-  const footer = new Text(color.dim(`  enter ⏎ odeslat   ·   /quit konec`), 1, 0);
+  const statusUnder = new Text(`  ${color.accent(`${glyph.whale} orca`)}   ${color.dim('·')}   ${color.dim(modelName || '—')}`, 1, 0);
+  const bottomBar = new StatusBar(color.dim('  enter ⏎ odeslat'), color.dim('ctrl+c konec  '));
 
   const render = (): void => {
     for (const c of [...messages.children]) messages.removeChild(c);
+    if (view.turns.length === 0) {
+      messages.addChild(new Text('', 0, 1));
+      messages.addChild(new Text(`  ${color.accent(`${glyph.whale} orca`)}`, 1, 0));
+      messages.addChild(new Text(color.dim('  Zeptej se na cokoli — tasky, mise, plán, stav agentů…'), 1, 0));
+    }
     for (const turn of view.turns) {
       if (turn.role === 'you') {
-        messages.addChild(new Text(`${color.accent('▌')} ${color.bold('ty')}`, 1, 0));
-        if (turn.text) messages.addChild(new Text(color.dim(turn.text), 3, 0));
+        messages.addChild(new UserBlock(turn.text));
+        messages.addChild(new Text('', 0, 0));
       } else {
-        messages.addChild(new Text(`${color.accent(glyph.whale)} ${color.accent('orca')}`, 1, 0));
         for (const t of turn.tools) messages.addChild(new Text(color.dim(`  ${glyph.tool} ${t}`), 2, 0));
         if (turn.text) messages.addChild(new Markdown(turn.text, 2, 0, mdTheme));
         else if (turn.streaming) messages.addChild(new Text(color.dim('  …'), 2, 0));
+        messages.addChild(new Text(metaLine(modelName), 1, 0));
+        messages.addChild(new Text('', 0, 0));
       }
-      messages.addChild(new Text('', 0, 0));
     }
     // Spinner lives INSIDE the rebuilt message list, so it vanishes the moment the turn goes idle.
     if (view.thinking) { messages.addChild(loader); loader.start(); } else { loader.stop(); }
@@ -81,11 +85,11 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
     void client.send(trimmed).catch((e: Error) => { view = reduce(view, { type: 'error', message: e.message }); render(); });
   };
 
-  tui.addChild(header);
   tui.addChild(messages);
-  tui.addChild(spacer); // pushes the input to the bottom of the screen (opencode-style anchoring)
+  tui.addChild(spacer); // push the input to the bottom of the screen (opencode-style anchoring)
   tui.addChild(editor);
-  tui.addChild(footer);
+  tui.addChild(statusUnder);
+  tui.addChild(bottomBar);
   tui.setFocus(editor);
 
   const ac = new AbortController();
@@ -93,7 +97,6 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
   const finished = new Promise<void>((r) => { done = r; });
   const quit = (): void => { ac.abort(); tui.stop(); done(); };
 
-  // Global ctrl+c → quit (in raw mode SIGINT arrives as a key, not a signal).
   tui.addInputListener((data) => (matchesKey(data, 'ctrl+c') ? (quit(), { consume: true }) : undefined));
 
   tui.start();
