@@ -108,3 +108,24 @@ CREATE INDEX IF NOT EXISTS idx_tasks_project_status ON tasks(project_id, status)
 CREATE INDEX IF NOT EXISTS idx_tasks_parent ON tasks(parent_id);
 CREATE INDEX IF NOT EXISTS idx_missions_epic ON missions(epic_id);
 CREATE INDEX IF NOT EXISTS idx_missions_state ON missions(state);
+-- Embedded brain (advisor engine): per-user conversations. SQLite is the sole authoritative store —
+-- the PI agent session runs in-memory (SessionManager.inMemory) and every settled turn is projected
+-- here; on start the history is rehydrated back into a fresh in-memory session. No JSONL on disk.
+CREATE TABLE IF NOT EXISTS brain_sessions (
+  id TEXT PRIMARY KEY,
+  user_id INTEGER NOT NULL,
+  title TEXT NOT NULL DEFAULT '',
+  model TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_brain_sessions_user ON brain_sessions(user_id);
+CREATE TABLE IF NOT EXISTS brain_messages (
+  id TEXT PRIMARY KEY,
+  session_id TEXT NOT NULL,
+  parent_id TEXT,
+  role TEXT NOT NULL,
+  content TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_brain_messages_session ON brain_messages(session_id);
