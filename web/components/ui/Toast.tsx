@@ -16,12 +16,12 @@ function ToastCard({ item, meta, dismissLabel, onDismiss }: { item: ToastItem; m
   const [remaining, setRemaining] = useState(100);
   const paused = useRef(false);
 
-  // Dark toast that fits the dark UI: a deep, clearly-tinted fill (mixed into near-black, not a
-  // washed pale white) with a strong same-hue border + a bright lifted accent for icon/title, so it
-  // reads as a solid dark-green / dark-rose panel — not muddy, not pale.
-  const fill = `color-mix(in srgb, ${color} 22%, #0b0b0b)`;
-  const edge = `color-mix(in srgb, ${color} 58%, #0b0b0b)`;
-  const accent = `color-mix(in srgb, ${color} 82%, #ffffff)`;
+  // A clearly-tinted fill mixed into the theme's own elevated surface (near-black in dark mode, near-white
+  // in light) with a strong same-hue border + a lifted accent for icon/title, so it reads as a solid
+  // tinted panel on either palette — not muddy, not pale.
+  const fill = `color-mix(in srgb, ${color} 22%, var(--color-elevated))`;
+  const edge = `color-mix(in srgb, ${color} 58%, var(--color-elevated))`;
+  const accent = `color-mix(in srgb, ${color} 82%, var(--color-text))`;
 
   useEffect(() => {
     // rAF countdown that drives both the progress bar and auto-dismiss; pauses on hover.
@@ -59,7 +59,7 @@ function ToastCard({ item, meta, dismissLabel, onDismiss }: { item: ToastItem; m
         type="button"
         aria-label={dismissLabel}
         onClick={onDismiss}
-        className="-mr-1 -mt-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-white/10 hover:text-text"
+        className="-mr-1 -mt-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-elevated hover:text-text"
       >
         <X size={15} aria-hidden />
       </button>

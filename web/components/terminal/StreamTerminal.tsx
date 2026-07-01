@@ -4,7 +4,9 @@ import { Terminal as XTerm } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
 import { useTerminalStream } from '../../lib/useTerminalStream';
+import { useTheme } from '../../lib/useTheme';
 import { Terminal } from './Terminal';
+import { xtermTheme } from './xtermTheme';
 
 /** A real-PTY terminal: raw bytes stream over a WebSocket straight from a `tmux attach`, so the cursor,
  *  scrollback and redraws are native — no snapshot mirror. Fully interactive (keystrokes reach the
@@ -18,6 +20,7 @@ export function StreamTerminal({ name }: { name: string }) {
   // even though it's created inside the mount effect.
   const syncSizeRef = useRef<() => void>(() => {});
   const [fallback, setFallback] = useState(false);
+  const { resolvedTheme } = useTheme();
 
   // Push every inbound PTY byte straight into xterm. `termRef` is stable, so the callback identity
   // doesn't matter — the hook holds it in a ref and never reconnects on its account.
@@ -29,7 +32,7 @@ export function StreamTerminal({ name }: { name: string }) {
 
   useEffect(() => {
     if (!ref.current || fallback) return;
-    const term = new XTerm({ convertEol: false, cursorBlink: true, fontSize: 12, theme: { background: '#000000' } });
+    const term = new XTerm({ convertEol: false, cursorBlink: true, fontSize: 12, theme: xtermTheme(resolvedTheme) });
     const fit = new FitAddon();
     term.loadAddon(fit);
     term.open(ref.current);
@@ -63,6 +66,12 @@ export function StreamTerminal({ name }: { name: string }) {
       syncSizeRef.current = () => {};
     };
   }, [name, fallback]);
+
+  // Repaint the palette in place on theme toggle — avoids tearing down and recreating the terminal
+  // (which would drop scrollback and reset the PTY size negotiation).
+  useEffect(() => {
+    if (termRef.current) termRef.current.options.theme = xtermTheme(resolvedTheme);
+  }, [resolvedTheme]);
 
   // Re-push the size the moment the socket opens: the initial fit almost always runs before the WS is
   // ready, so without this the PTY never learns the real terminal size and the content can't fill the panel.

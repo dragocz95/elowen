@@ -2,7 +2,7 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Languages, User, ShieldAlert } from 'lucide-react';
+import { User, ShieldAlert } from 'lucide-react';
 import { modulesByGroup } from '../../modules/registry';
 import { useSidebarState } from '../../lib/useSidebarState';
 import { useHealth, useTasks, useMe, useEscalations, usePendingAsks } from '../../lib/queries';
@@ -11,6 +11,8 @@ import { NavGroup } from './NavGroup';
 import { OpsStatusBar } from './OpsStatusBar';
 import { NotificationBell } from '../ui/NotificationBell';
 import { Avatar } from '../ui/Avatar';
+import { ThemeToggle } from '../ui/ThemeToggle';
+import { LanguageSwitcher } from '../ui/LanguageSwitcher';
 
 const RAIL = 56;
 const DAEMON_STATUS = {
@@ -37,7 +39,7 @@ export function Sidebar({ mobileOpen = false, onMobileClose, side = 'left' }: { 
   const escalationCount = escalations.length + pendingAsks.length;
   const dragging = useRef(false);
 
-  const { t, locale, setLocale } = useTranslation();
+  const { t } = useTranslation();
 
   const [mobile, setMobile] = useState(false);
   useEffect(() => {
@@ -138,44 +140,40 @@ export function Sidebar({ mobileOpen = false, onMobileClose, side = 'left' }: { 
       <OpsStatusBar expanded={expanded} />
 
       {/* Thin footer: account link (avatar + name + role) with the live daemon-health as a corner
-          dot, plus the language toggle — one compact bar instead of a verbose status block. */}
-      <div className={`border-t border-border px-3 py-2 ${expanded ? 'flex items-center gap-2' : 'flex flex-col items-center gap-2'}`}>
-        <Link
-          href="/account"
-          className={`flex min-w-0 items-center gap-2 rounded-md py-1 transition-colors hover:bg-elevated ${expanded ? 'flex-1 px-1' : ''}`}
-          title={me.data?.user ? (me.data.user.name || me.data.user.username) : t.common.daemon}
-        >
-          <span className="relative flex shrink-0 items-center justify-center">
-            {me.data?.user
-              ? <Avatar user={me.data.user} size={28} />
-              : <span className="flex h-7 w-7 items-center justify-center rounded-full border border-border bg-elevated"><User size={14} className="text-text-muted" aria-hidden /></span>}
-            <span
-              role="status"
-              aria-label={up ? t.common.daemonUp : t.common.daemonDown}
-              title={status === 'fail' ? t.common.daemonOffline : status === 'busy' ? t.common.daemonBusy : t.common.daemonReady}
-              className={`absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border-2 border-surface ${up ? 'live-dot' : ''}`}
-              style={{ backgroundColor: DAEMON_STATUS[status].color, ['--live-ring' as string]: DAEMON_STATUS[status].ring }}
-            />
-          </span>
-          {expanded && me.data?.user && (
-            <span className="flex min-w-0 flex-col leading-tight">
-              <span className="truncate text-xs font-medium text-text">{me.data.user.name || me.data.user.username}</span>
-              <span className="truncate text-tiny text-text-muted">{me.data.user.is_admin ? t.users.admin : t.users.member}</span>
-            </span>
-          )}
-        </Link>
-        <NotificationBell />
-        {expanded && (
-          <button
-            type="button"
-            onClick={() => setLocale(locale === 'en' ? 'cs' : 'en')}
-            className="flex shrink-0 items-center gap-1 rounded-md border border-border px-2 py-1 text-tiny font-mono uppercase tracking-wide text-text-muted transition-colors hover:border-border-strong hover:text-text"
-            aria-label={t.common.switchLang}
+          dot, plus a controls row holding the theme toggle + language dropdown — one compact bar
+          instead of a verbose status block. */}
+      <div className="border-t border-border px-3 py-2">
+        <div className={expanded ? 'flex items-center gap-2' : 'flex flex-col items-center gap-2'}>
+          <Link
+            href="/account"
+            className={`flex min-w-0 items-center gap-2 rounded-md py-1 transition-colors hover:bg-elevated ${expanded ? 'flex-1 px-1' : ''}`}
+            title={me.data?.user ? (me.data.user.name || me.data.user.username) : t.common.daemon}
           >
-            <Languages size={12} aria-hidden />
-            {locale === 'en' ? 'CS' : 'EN'}
-          </button>
-        )}
+            <span className="relative flex shrink-0 items-center justify-center">
+              {me.data?.user
+                ? <Avatar user={me.data.user} size={28} />
+                : <span className="flex h-7 w-7 items-center justify-center rounded-full border border-border bg-elevated"><User size={14} className="text-text-muted" aria-hidden /></span>}
+              <span
+                role="status"
+                aria-label={up ? t.common.daemonUp : t.common.daemonDown}
+                title={status === 'fail' ? t.common.daemonOffline : status === 'busy' ? t.common.daemonBusy : t.common.daemonReady}
+                className={`absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border-2 border-surface ${up ? 'live-dot' : ''}`}
+                style={{ backgroundColor: DAEMON_STATUS[status].color, ['--live-ring' as string]: DAEMON_STATUS[status].ring }}
+              />
+            </span>
+            {expanded && me.data?.user && (
+              <span className="flex min-w-0 flex-col leading-tight">
+                <span className="truncate text-xs font-medium text-text">{me.data.user.name || me.data.user.username}</span>
+                <span className="truncate text-tiny text-text-muted">{me.data.user.is_admin ? t.users.admin : t.users.member}</span>
+              </span>
+            )}
+          </Link>
+          <NotificationBell />
+        </div>
+        <div className={`mt-2 flex gap-2 ${expanded ? 'items-center' : 'flex-col items-center'}`}>
+          <ThemeToggle collapsed={!expanded} />
+          <LanguageSwitcher collapsed={!expanded} />
+        </div>
       </div>
 
       {/* Version + authorship credit — its own line-separated footer at the very bottom. */}

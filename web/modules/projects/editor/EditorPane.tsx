@@ -1,8 +1,9 @@
 'use client';
 import { useRef } from 'react';
 import { MonacoEditor } from './monacoLoader';
-import { defineOledTheme } from './oledTheme';
+import { defineEditorThemes } from './oledTheme';
 import { langOf } from './helpers';
+import { useTheme } from '../../../lib/useTheme';
 
 /** Monaco editor for one file. Cmd/Ctrl+S saves (always the latest handler via a ref, so the
  *  keybinding never goes stale). */
@@ -11,12 +12,13 @@ export function EditorPane({ path, value, onChange, onSave, wordWrap }: {
 }) {
   const saveRef = useRef(onSave);
   saveRef.current = onSave;
+  const { resolvedTheme } = useTheme();
   return (
     <MonacoEditor
       key={path}
       height="100%"
-      theme="orca-oled"
-      beforeMount={defineOledTheme}
+      theme={resolvedTheme === 'light' ? 'orca-light' : 'orca-oled'}
+      beforeMount={defineEditorThemes}
       onMount={(editor, monaco) => { editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => saveRef.current()); }}
       language={langOf(path)}
       value={value}

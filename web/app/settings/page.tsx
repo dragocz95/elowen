@@ -677,7 +677,7 @@ export default function SettingsPage() {
                       style={{ transitionDuration: 'var(--motion-fast)' }}
                     >
                       <span
-                        className={`absolute top-1/2 h-5 w-5 -translate-y-1/2 rounded-full bg-white shadow-sm ${autoUpdate ? 'translate-x-[22px]' : 'translate-x-[3px]'}`}
+                        className={`absolute top-1/2 h-5 w-5 -translate-y-1/2 rounded-full shadow-sm ${autoUpdate ? 'bg-bg translate-x-[22px]' : 'bg-text-muted translate-x-[3px]'}`}
                         style={{ transition: 'transform var(--motion-base) var(--ease-spring)' }}
                       />
                     </button>

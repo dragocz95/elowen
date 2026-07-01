@@ -5,7 +5,9 @@ import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
 import { useSessionStream } from '../../lib/useSessionStream';
 import { orcaClient } from '../../lib/orcaClient';
+import { useTheme } from '../../lib/useTheme';
 import { composeFrame } from './frame';
+import { xtermTheme } from './xtermTheme';
 
 export function Terminal({ name, interactive = false }: { name: string; interactive?: boolean }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -15,10 +17,11 @@ export function Terminal({ name, interactive = false }: { name: string; interact
   const lastSize = useRef<string>('');
   const resizeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pane = useSessionStream(name);
+  const { resolvedTheme } = useTheme();
 
   useEffect(() => {
     if (!ref.current) return;
-    const term = new XTerm({ convertEol: true, cursorBlink: interactive, fontSize: 12, theme: { background: '#000000' } });
+    const term = new XTerm({ convertEol: true, cursorBlink: interactive, fontSize: 12, theme: xtermTheme(resolvedTheme) });
     const fit = new FitAddon();
     term.loadAddon(fit);
     term.open(ref.current);
@@ -68,6 +71,12 @@ export function Terminal({ name, interactive = false }: { name: string; interact
       fitRef.current = null;
     };
   }, [name, interactive]);
+
+  // Repaint the palette in place on theme toggle — no need to tear down and recreate the terminal
+  // (which would drop scrollback and the current pane frame).
+  useEffect(() => {
+    if (termRef.current) termRef.current.options.theme = xtermTheme(resolvedTheme);
+  }, [resolvedTheme]);
 
   useEffect(() => {
     const term = termRef.current;
