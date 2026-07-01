@@ -16,10 +16,12 @@ function fakeDeps() {
   const createSession = vi.fn(async () => ({ session }));
   return {
     store: new BrainStore(openDb(':memory:')),
-    users: { ensureAdvisorToken: () => 'full-token', get: () => ({ id: 1, name: 'Filip', username: 'filip' }) },
+    users: { ensureAdvisorToken: () => 'full-token', get: () => ({ name: 'Filip', username: 'filip' }) },
     config: { openai: { baseUrl: 'http://x/v1', apiKey: 'k', model: 'm' }, default: 'openai' as const },
+    prompts: { render: vi.fn((name: string, vars: Record<string, string>) => `PERSONA:${name}:${vars.userName}`) },
     url: 'http://x',
     createSession,
+    resourceLoaderFactory: () => undefined,
     session,
   };
 }
@@ -33,6 +35,7 @@ describe('BrainService', () => {
     expect(svc.status(1).running).toBe(true);
     expect(d.store.getSession('brain-1')).toBeDefined();
     expect(d.createSession).toHaveBeenCalledTimes(1);
+    expect(d.prompts.render).toHaveBeenCalledWith('advisor', { userName: 'Filip' }, 1);
   });
 
   it('send forwards to the PI session, persists the turn, and emits events', async () => {

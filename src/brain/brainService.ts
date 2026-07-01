@@ -1,5 +1,5 @@
-import { createAgentSession } from '@earendil-works/pi-coding-agent';
-import type { AgentSession, AgentSessionEvent } from '@earendil-works/pi-coding-agent';
+import { createAgentSession, DefaultResourceLoader } from '@earendil-works/pi-coding-agent';
+import type { AgentSession, AgentSessionEvent, ResourceLoader } from '@earendil-works/pi-coding-agent';
 import type { BrainStore } from '../store/brainStore.js';
 import type { BrainProviderConfig } from './providers.js';
 import { buildBrainRegistry, resolveBrainModel } from './providers.js';
@@ -19,14 +19,31 @@ export interface BrainMessageView { role: string; text: string }
 
 export interface BrainDeps {
   store: BrainStore;
-  users: { ensureAdvisorToken(userId: number): string };
+  users: {
+    ensureAdvisorToken(userId: number): string;
+    get(userId: number): { name?: string; username?: string } | null | undefined;
+  };
   config: BrainProviderConfig;
+  /** Renders the brain's system prompt from the editable `advisor` template (per-user override aware). */
+  prompts: { render(name: string, vars: Record<string, string>, userId?: number): string };
   /** Daemon REST base the brain's tools call (ORCA_URL). */
   url: string;
   /** Working dir for the in-memory session (not a repo checkout). Default: process.cwd(). */
   cwd?: string;
   /** Injected for tests; defaults to PI's createAgentSession. */
   createSession?: typeof createAgentSession;
+  /** Injected for tests; builds the resource loader that carries the Orca system prompt. A test passes
+   *  `() => undefined` so no disk-touching loader is constructed. */
+  resourceLoaderFactory?: (o: { cwd: string; systemPrompt: string }) => ResourceLoader | undefined;
+}
+
+/** Default resource loader: carries the Orca persona as the session's system prompt and disables all
+ *  disk discovery (extensions/skills/themes/context files) — the brain is a lean, in-process agent. */
+function defaultResourceLoaderFactory(o: { cwd: string; systemPrompt: string }): ResourceLoader {
+  return new DefaultResourceLoader({
+    cwd: o.cwd, agentDir: o.cwd, systemPrompt: o.systemPrompt,
+    noExtensions: true, noSkills: true, noPromptTemplates: true, noThemes: true, noContextFiles: true,
+  });
 }
 
 interface LiveBrain { session: AgentSession; sessionId: string; model: string; listeners: Set<(e: BrainEvent) => void> }
@@ -78,12 +95,24 @@ export class BrainService {
     const token = this.d.users.ensureAdvisorToken(userId);
     const tools = buildOrcaTools({ url: this.d.url, token });
 
+    // Orca identity: the editable `advisor` prompt (per-user override aware) becomes the system prompt,
+    // so the brain knows it is Orca — not the underlying model's default persona.
+    const u = this.d.users.get(userId);
+    const userName = u?.name || u?.username || 'Filip';
+    const persona = this.d.prompts.render('advisor', { userName }, userId);
+    const resourceLoader = (this.d.resourceLoaderFactory ?? defaultResourceLoaderFactory)({ cwd, systemPrompt: persona });
+    // A resource loader passed to createAgentSession is NOT auto-reloaded (only one it builds itself is),
+    // so its system prompt stays empty unless we reload it here. Without this the brain falls back to
+    // pi's default "coding assistant" persona and misidentifies itself.
+    if (resourceLoader) await resourceLoader.reload();
+
     const create = this.d.createSession ?? createAgentSession;
     const { session } = await create({
       cwd,
       sessionManager,
       modelRegistry: registry,
       model,
+      resourceLoader,
       customTools: tools,
       tools: tools.map((t) => t.name),
       noTools: 'builtin',

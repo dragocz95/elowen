@@ -324,7 +324,7 @@ export function buildApp(opts: BuildOpts) {
   const brainConfig = opts.dbPath === ':memory:' ? null : brainConfigFromOrca(config);
   const brain = brainConfig
     ? new BrainService({
-        store: new BrainStore(db), users, config: brainConfig, url: orcaCli.url,
+        store: new BrainStore(db), users, config: brainConfig, prompts, url: orcaCli.url,
         cwd: (() => { const p = join(dirname(opts.dbPath), 'brain'); mkdirSync(p, { recursive: true }); return p; })(),
       })
     : undefined;
