@@ -94,6 +94,7 @@ export function useOrcaEvents(opts?: { onReview?: (e: ReviewEvent) => void }): v
       let data: { taskId?: string };
       try { data = JSON.parse(e.data); } catch { return; } // skip malformed, keep the stream alive
       qc.invalidateQueries({ queryKey: QUERY_KEYS.tasks });
+      qc.invalidateQueries({ queryKey: ['mission-changed-files'] }); // the dashboard's live mission card
       if (data.taskId) {
         qc.invalidateQueries({ queryKey: ['task-commits', data.taskId] });
         qc.invalidateQueries({ queryKey: ['task-commit-diff', data.taskId] });

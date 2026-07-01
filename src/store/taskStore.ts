@@ -176,6 +176,12 @@ export class TaskStore {
     return this.db.prepare('SELECT task_id, depends_on_id FROM task_deps').all() as { task_id: string; depends_on_id: string }[];
   }
 
+  /** Direct children of a task, oldest first. Unlike descendants() this is a flat, non-recursive
+   *  query — use it when you only need the immediate level (e.g. an epic's phases). */
+  children(parentId: string): Task[] {
+    const rows = this.db.prepare('SELECT * FROM tasks WHERE parent_id = ? ORDER BY created_at').all(parentId) as Row[];
+    return rows.map(toTask);
+  }
   descendants(rootId: string): Task[] {
     const rows = this.db.prepare(
       `WITH RECURSIVE sub(id) AS (

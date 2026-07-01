@@ -1,4 +1,4 @@
-import type { Task, Mission, CreateTaskInput, UpdateTaskInput, PlanInput, PlanSubmitResult, PlanJob, InsertPhasesInput, InsertPhasesResult, EngageInput, OrcaConfig, ConfigPatch, MissionDetail, User, UserPatch, ProfilePatch, UserPrompt, AuthResult, ActivityEvent, PendingAsk, Project, ProjectGit, CommitLogEntry, Note, HermesStatus, HermesInstallInput, HermesInstallResult, CliDetectionResult, GithubAuthStatus, TokenUsage, ModelUsage, ResetUsageResult, FileNode, DirListing, SessionInfo, SystemInfo, SkillsInfo, SkillInstallResult } from './types';
+import type { Task, Mission, CreateTaskInput, UpdateTaskInput, PlanInput, PlanSubmitResult, PlanJob, InsertPhasesInput, InsertPhasesResult, EngageInput, OrcaConfig, ConfigPatch, MissionDetail, User, UserPatch, ProfilePatch, UserPrompt, AuthResult, ActivityEvent, PendingAsk, Project, ProjectGit, CommitLogEntry, CommitFileChange, Note, HermesStatus, HermesInstallInput, HermesInstallResult, CliDetectionResult, GithubAuthStatus, TokenUsage, ModelUsage, ResetUsageResult, FileNode, DirListing, SessionInfo, SystemInfo, SkillsInfo, SkillInstallResult } from './types';
 import { clearToken } from './token';
 
 // Same-origin BFF base: the browser talks only to this web origin's /api proxy, which injects the
@@ -58,6 +58,8 @@ export const orcaClient = {
   sessions: () => req<SessionInfo[]>('/sessions'),
   missions: () => req<Mission[]>('/missions'),
   getMissionDetail: (id: string) => req<MissionDetail>(`/missions/${encodeURIComponent(id)}`),
+  /** Files changed across all of a mission's phases, aggregated (summed per path) and churn-sorted. */
+  missionChangedFiles: (id: string) => req<CommitFileChange[]>(`/missions/${encodeURIComponent(id)}/changed-files`),
   health: () => req<{ ok: boolean; version?: string }>('/health'),
   setupStatus: () => req<{ needsSetup: boolean }>('/setup'),
   createTask: (input: CreateTaskInput) => req<Task>('/tasks', json(input)),

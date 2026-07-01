@@ -16,14 +16,9 @@
 @keyframes route-fade { from { opacity: 0; } to { opacity: 1; } }
 .animate-route { animation: route-fade 200ms var(--ease-out) both; }
 
-@keyframes aurora-drift {
-  from { transform: translate3d(0, 0, 0) scale(1); opacity: 0.85; }
-  to { transform: translate3d(5%, 3%, 0) scale(1.1); opacity: 1; }
-}
-
 @keyframes flow-pulse { 0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--color-accent) 0%, transparent); } 50% { box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-accent) 45%, transparent); } }
 
 @media (prefers-reduced-motion: reduce) {
-  .animate-fade-up, .animate-pop-in, .animate-route, .skeleton, .live-dot::after, .flow-active, .hero-aurora::before { animation: none !important; }
+  .animate-fade-up, .animate-pop-in, .animate-route, .skeleton, .live-dot::after, .flow-active { animation: none !important; }
   .card-interactive:hover { transform: none; }
 }

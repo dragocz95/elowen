@@ -37,7 +37,7 @@ function ShellLayout({ children }: { children: ReactNode }) {
               <button type="button" onClick={() => setDrawerOpen(true)} aria-label={t.common.toggleSidebar} className="flex h-9 w-9 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-elevated hover:text-text">
                 <Menu size={20} aria-hidden />
               </button>
-              <img src="/orca-logo.png" alt={t.common.appName} className="h-7 w-auto" />
+              <img src="/orca-logo.png" alt={t.common.appName} className="logo-adaptive h-7 w-auto" />
             </div>
             <div className="p-4">{children}</div>
           </main>

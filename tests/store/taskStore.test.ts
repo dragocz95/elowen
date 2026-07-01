@@ -65,6 +65,15 @@ describe('TaskStore', () => {
     expect(store.descendants('epic')).toEqual([]);
   });
 
+  it('children returns only the direct children, not grandchildren', () => {
+    store.create({ id: 'epic', project_id: 1, title: 'Epic', type: 'epic' });
+    store.create({ id: 'a', project_id: 1, title: 'A', parent_id: 'epic' });
+    store.create({ id: 'b', project_id: 1, title: 'B', parent_id: 'epic' });
+    store.create({ id: 'a1', project_id: 1, title: 'A1', parent_id: 'a' });
+    expect(store.children('epic').map((t) => t.id).sort()).toEqual(['a', 'b']);
+    expect(store.children('a').map((t) => t.id)).toEqual(['a1']);
+  });
+
   it('depsAmong returns only edges with both ends in the set', () => {
     store.create({ id: 'a', project_id: 1, title: 'A' });
     store.create({ id: 'b', project_id: 1, title: 'B' });

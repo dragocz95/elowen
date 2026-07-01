@@ -63,7 +63,7 @@ export function MissionFlow({ epic, phases, activeId, onSelectPhase, onContextMe
       {/* Hero header — the mission root. The title carries the full goal (autopilot stores the whole
        *  brief as the epic title), so it wraps and is shown in full. */}
       <div className="flex items-start gap-3">
-        <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-accent/30 bg-accent/10">
+        <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-border bg-elevated">
           <Rocket size={22} className="text-accent" aria-hidden />
         </span>
         <div className="min-w-0 flex-1">
@@ -76,7 +76,7 @@ export function MissionFlow({ epic, phases, activeId, onSelectPhase, onContextMe
       </div>
 
       {/* Result, lifted to the top — usually the thing you came to read. Hidden while in progress. */}
-      <ResultSummary task={epic} accent />
+      <ResultSummary task={epic} />
 
       {/* Headline metric pills. */}
       <div className="flex flex-wrap items-center gap-2">

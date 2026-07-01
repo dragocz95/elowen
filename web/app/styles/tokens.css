@@ -7,7 +7,7 @@
   --color-danger: oklch(0.55 0.20 25);
   --color-text: oklch(0.97 0 0);
   --color-text-muted: oklch(0.62 0 0);
-  --color-border-strong: oklch(0.38 0.005 256);
+  --color-border-strong: oklch(0.38 0 0);
   /* Tight, Vercel/Geist-style radii applied app-wide. Defining the whole scale here (not just a
      few keys) overrides Tailwind's larger defaults, so every rounded-* utility shrinks from one
      source of truth. rounded-full stays full. */
@@ -25,6 +25,9 @@
   --color-cancelled: #6b7280;
   --font-mono: var(--font-geist-mono), ui-monospace, "SF Mono", monospace;
   --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, "Fira Sans", "Droid Sans", "Helvetica Neue", sans-serif;
+  /* Rounded, playful display face for headings & nav labels; falls back to the system sans.
+     Data, code and mono contexts keep --font-mono. */
+  --font-display: var(--font-quicksand), var(--font-sans);
   --text-display: 2rem;
   --text-caption: 0.6875rem;
   --text-tiny: 0.5rem;
@@ -46,7 +49,7 @@ html[data-theme='light'] {
   --color-surface: #fafafa;
   --color-elevated: #f0f0f1;
   --color-border: oklch(0.92 0 0);
-  --color-border-strong: oklch(0.84 0.005 256);
+  --color-border-strong: oklch(0.84 0 0);
   --color-text: oklch(0.22 0 0);
   --color-text-muted: oklch(0.50 0 0);
   --shadow-card: 0 1px 2px 0 rgb(0 0 0 / 0.08);

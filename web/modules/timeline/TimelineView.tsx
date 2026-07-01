@@ -15,7 +15,7 @@ import { ProjectPill } from '../../components/ui/ProjectPill';
 import type { Task } from '../../lib/types';
 import { PatchView } from '../projects/editor/PatchView';
 import { LoadingState, ErrorState, EmptyState } from '../../components/ui/states';
-import type { Tone } from '../../components/ui/tone';
+import { TONE_TEXT, type Tone } from '../../components/ui/tone';
 import { useTranslation } from '../../lib/i18n';
 import { usePersistentState } from '../../lib/usePersistentState';
 import { useProjectFilter } from '../../lib/useProjectFilter';
@@ -26,10 +26,6 @@ import { DEFAULT_RANGE, parseRange, serializeRange, isStoredRange, inRange, rang
 const TONE_DOT: Record<Tone, string> = {
   accent: 'bg-accent', danger: 'bg-danger', success: 'bg-success',
   warning: 'bg-warning', muted: 'bg-text-muted', default: 'bg-text-muted',
-};
-const TONE_TEXT: Record<Tone, string> = {
-  accent: 'text-accent', danger: 'text-danger', success: 'text-success',
-  warning: 'text-warning', muted: 'text-text-muted', default: 'text-text-muted',
 };
 /** Soft tinted bubble (border + fill) for an icon in the given tone. */
 const TONE_BUBBLE: Record<Tone, string> = {

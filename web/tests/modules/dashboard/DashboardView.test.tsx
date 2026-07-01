@@ -7,21 +7,23 @@ import { DashboardView } from '../../../modules/dashboard/DashboardView';
 import { ToastProvider } from '../../../components/ui/Toast';
 import { createWrapper } from '../../test-utils';
 
-const config = {
-  models: [], customModels: [], hiddenPresets: [], modelNotes: {},
-  autopilot: { model: '', overseerModel: '', apiUrl: '', apiKeySet: false, notes: '', prompt: '', pilotExec: 'claude:sonnet', overseerExec: '', reviewOnDone: true },
-  providers: {}, defaults: { exec: 'claude:sonnet', autonomy: 'L3', maxSessions: 1 }, security: { tokenTtlDays: 30 },
-};
+const EVENTS = [
+  { id: 3, ts: '2026-06-30 12:00:00', type: 'review', target: 't1', detail: 'approved: ok', project_id: 1, label: 'Ship it' },
+  { id: 2, ts: '2026-06-30 11:59:00', type: 'task', target: 't1', detail: 'closed', project_id: 1, label: 'Build the thing' },
+  { id: 1, ts: '2026-06-30 11:58:00', type: 'mission', target: 'm-e', detail: 'active', project_id: 1, label: 'My mission' },
+];
 
 const server = setupServer(
-  http.get('*/api/tasks', () => HttpResponse.json([
-    { id: 't1', title: 'Alpha', status: 'open' },
-    { id: 't2', title: 'Beta', status: 'blocked' },
-  ])),
-  http.get('*/api/sessions', () => HttpResponse.json([{ name: 'orca-x', role: 'agent', agent: 'x' }])),
-  http.get('*/api/missions', () => HttpResponse.json([{ id: 'm1', epic_id: 'e', autonomy: 'L3', max_sessions: 1, state: 'active' }])),
-  http.get('*/api/config', () => HttpResponse.json(config)),
-  http.get('*/api/projects', () => HttpResponse.json([{ id: 1, name: 'demo', path: '/tmp/demo' }])),
+  http.get('*/api/tasks', () => HttpResponse.json([{ id: 't1', title: 'Alpha', status: 'open' }])),
+  http.get('*/api/tasks/deps', () => HttpResponse.json([])),
+  http.get('*/api/sessions', () => HttpResponse.json([{ name: 'orca-Iris', role: 'agent', agent: 'iris' }])),
+  http.get('*/api/sessions/:name/pane', () => HttpResponse.json({ pane: '' })),
+  http.get('*/api/missions', () => HttpResponse.json([])),
+  http.get('*/api/asks/pending', () => HttpResponse.json([])),
+  http.get('*/api/activity', ({ request }) => {
+    const type = new URL(request.url).searchParams.get('type');
+    return HttpResponse.json(type ? [] : EVENTS);
+  }),
   http.get('*/api/usage/by-model', () => HttpResponse.json([
     { exec: 'sonnet', usage: { input: 1000, output: 500, cacheRead: 0, cacheWrite: 0, total: 1500, costUsd: 3.5 } },
   ])),
@@ -29,30 +31,30 @@ const server = setupServer(
 beforeAll(() => server.listen({ onUnhandledRequest })); afterEach(() => server.resetHandlers()); afterAll(() => server.close());
 
 describe('DashboardView', () => {
-  it('renders the airy overview: system-overview stat cards and the configuration row', async () => {
-    const { wrapper: Wrapper } = createWrapper();
+  it('renders the living dashboard: signal labels, the agent constellation, live missions and the event stream', async () => {
+    const { wrapper: Wrapper, client } = createWrapper();
+    client.setQueryData(['session-signals'], { 'orca-Iris': { type: 'working' } });
     render(<Wrapper><ToastProvider><DashboardView /></ToastProvider></Wrapper>);
-    // System overview section + its stat labels.
-    expect(await screen.findByText('System overview')).toBeTruthy();
-    expect(screen.getByText('Projects')).toBeTruthy();
-    expect(screen.getByText('Active missions')).toBeTruthy();
-    expect(screen.getByText('Agents')).toBeTruthy();
-    // Configuration row reflects the daemon config (autonomy + review-on-done) — awaited because the
-    // pill values depend on the /config query resolving.
-    expect(screen.getByText('Configuration')).toBeTruthy();
-    expect(await screen.findByText('L3')).toBeTruthy();
-  });
 
-  it('renders the monthly usage card with the top model, tokens and cost', async () => {
-    const { wrapper: Wrapper } = createWrapper();
-    render(<Wrapper><ToastProvider><DashboardView /></ToastProvider></Wrapper>);
-    expect(await screen.findByText('sonnet')).toBeTruthy();
-    expect(screen.getByText('Top model')).toBeTruthy();
+    // The three headline signals.
+    expect(await screen.findByText('Agents active')).toBeTruthy();
+    expect(screen.getByText('Decisions waiting')).toBeTruthy();
+    expect(screen.getByText('Cost (month)')).toBeTruthy();
+
+    // The constellation shows the live agent by its friendly name.
+    expect(await screen.findByText('Iris')).toBeTruthy();
+    expect(screen.getByText('Agent map')).toBeTruthy();
+
+    // Live missions (empty) + the event stream heading and a formatted event sentence.
+    expect(screen.getByText('Live missions')).toBeTruthy();
+    expect(screen.getByText('Activity')).toBeTruthy();
+    expect(await screen.findByText('Approved')).toBeTruthy();
+    expect(screen.getByText('Build the thing')).toBeTruthy();
   });
 
   it('shows the needs-input banner when an agent is waiting', async () => {
     const { wrapper: Wrapper, client } = createWrapper();
-    client.setQueryData(['session-signals'], { 'orca-x': { type: 'needs_input', question: 'Proceed?' } });
+    client.setQueryData(['session-signals'], { 'orca-Iris': { type: 'needs_input', question: 'Proceed?' } });
     render(<Wrapper><ToastProvider><DashboardView /></ToastProvider></Wrapper>);
     expect(await screen.findByText('Needs attention')).toBeTruthy();
     expect(await screen.findByText('Proceed?')).toBeTruthy();

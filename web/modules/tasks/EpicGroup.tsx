@@ -111,7 +111,7 @@ export function EpicGroup({ epic, phases, effectiveStatus, expanded, onToggle, o
       onDragEnter={drop.onDragEnter}
       onDragLeave={drop.onDragLeave}
       onDrop={drop.onDrop}
-      className={`group/epic rounded-lg border border-accent/30 transition-colors ${activeId === epic.id ? 'bg-accent/[0.07]' : 'bg-accent/[0.04] hover:bg-accent/[0.06]'} ${drop.dragOver && dropTargetValid ? 'ring-2 ring-accent/60' : ''} ${drop.dragOver && dropTargetValid === false ? 'ring-2 ring-danger/40 opacity-60' : ''}`}
+      className={`group/epic rounded-lg border transition-colors ${activeId === epic.id ? 'border-accent bg-accent/[0.08]' : 'border-accent/25 bg-accent/[0.035] hover:bg-accent/[0.05]'} ${drop.dragOver && dropTargetValid ? 'ring-2 ring-accent/60' : ''} ${drop.dragOver && dropTargetValid === false ? 'ring-2 ring-danger/40 opacity-60' : ''}`}
     >
       <div className="flex items-center" onContextMenu={onContextMenu ? (e) => onContextMenu(e, epic) : undefined}>
         <button
@@ -128,7 +128,7 @@ export function EpicGroup({ epic, phases, effectiveStatus, expanded, onToggle, o
               {active ? <span className="live-dot h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: dotColor, ['--live-ring' as string]: dotRing }} aria-hidden /> : null}
             </div>
             <div className="flex items-center gap-2">
-              <ProgressRibbon phases={phases} className="max-w-[12rem] flex-1" />
+              <ProgressRibbon phases={phases} active={activeId === epic.id} className="max-w-[12rem] flex-1" />
               <span className="shrink-0 font-mono text-[11px] text-text-muted">{done}/{total} {t.tasks.phasesLabel}</span>
               {totalCost > 0 ? (
                 <span className="inline-flex shrink-0 items-center gap-0.5 rounded border border-approve/30 px-1.5 py-0.5 font-mono text-[11px] text-approve" title={`${t.usage.cost}: ${formatCost(totalCost)}`}>

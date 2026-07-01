@@ -3,36 +3,12 @@
 .card-interactive { box-shadow: var(--shadow-card); transition: border-color var(--motion-base) var(--ease-out), box-shadow var(--motion-base) var(--ease-out), transform var(--motion-base) var(--ease-out); }
 .card-interactive:hover { border-color: var(--color-border-strong); box-shadow: var(--shadow-raised); transform: translateY(-1px); }
 
-/* ── Premium hero: a soft accent aurora bleeding from behind a glass panel.
-   Used on the dashboard greeting. The glow stays subtle so the airy layout keeps its calm. */
-.hero-aurora { position: relative; isolation: isolate; }
-.hero-aurora::before {
-  content: '';
-  position: absolute;
-  z-index: -1;
-  inset: -40% -10%;
-  background:
-    radial-gradient(40% 50% at 22% 35%, color-mix(in srgb, var(--color-accent) 24%, transparent) 0%, transparent 70%),
-    radial-gradient(35% 45% at 82% 60%, color-mix(in srgb, var(--color-accent) 12%, transparent) 0%, transparent 70%);
-  filter: blur(44px);
-  pointer-events: none;
-  animation: aurora-drift 16s var(--ease-out) infinite alternate;
-}
-/* Glass surface: faint accent-tinted fill, a hairline accent border and a top inset highlight
-   (the lit "glass edge"), lifted off the page by the raised shadow. */
-.hero-glass {
-  border-radius: 1rem;
-  border: 1px solid color-mix(in srgb, var(--color-border-strong) 70%, var(--color-accent) 30%);
-  background: linear-gradient(180deg, color-mix(in srgb, var(--color-surface) 88%, var(--color-accent) 12%) 0%, var(--color-surface) 55%);
-  box-shadow: inset 0 1px 0 0 rgba(255, 255, 255, 0.07), var(--shadow-raised);
-}
-/* The clock numerals: a vertical text gradient with a faint accent glow — reads like lit glass. */
+/* The clock numerals: a vertical text gradient (flat — no glow). */
 .hero-clock {
   background: linear-gradient(180deg, var(--color-text) 35%, color-mix(in srgb, var(--color-text) 50%, transparent) 100%);
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
-  text-shadow: 0 0 26px color-mix(in srgb, var(--color-accent) 30%, transparent);
 }
 
 .skeleton { background: var(--color-elevated); border-radius: var(--radius-sm); animation: skel-pulse 1.4s ease-in-out infinite; }
@@ -42,3 +18,7 @@
 /* Active phase node (Mission Flow canvas): a crisp accent ring that pulses (no blur — stays within
    the flat OLED look). */
 .flow-active { animation: flow-pulse 1.8s ease-in-out infinite; }
+
+/* Orca wordmark is white line-art on transparent — invisible on the white light-mode surface.
+   Inverting the pure-white strokes yields pure black (alpha is preserved), so no separate asset. */
+html[data-theme='light'] .logo-adaptive { filter: invert(1); }

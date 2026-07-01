@@ -31,6 +31,25 @@ export function registerMissionRoutes(app: OrcaApp, ctx: RouteContext): void {
     if (!detail) return c.json({ error: 'mission not found' }, 404);
     return c.json({ ...detail, pr: d.missionGit?.prInfo(c.req.param('id')) ?? null });
   });
+  // Aggregate every phase's frozen change list into a single per-file churn summary for the mission —
+  // the dashboard's "files changed by this mission" view. A file touched by more than one phase has its
+  // added/deleted summed; the result is ordered by total churn (added+deleted) desc. Phases with no
+  // snapshot yet (open/in-progress) simply contribute nothing.
+  app.get('/missions/:id/changed-files', (c) => {
+    const mission = d.missions.get(c.req.param('id'));
+    if (!mission) return c.json({ error: 'mission not found' }, 404);
+    if (!missionAccessible(c, mission.epic_id)) return c.json({ error: 'forbidden' }, 403);
+    const totals = new Map<string, { path: string; added: number; deleted: number }>();
+    for (const phase of d.tasks.children(mission.epic_id)) { // the epic's direct phases only
+      for (const f of phase.changed_files) {
+        const cur = totals.get(f.path);
+        if (cur) { cur.added += f.added; cur.deleted += f.deleted; }
+        else totals.set(f.path, { path: f.path, added: f.added, deleted: f.deleted });
+      }
+    }
+    const files = [...totals.values()].sort((a, b) => (b.added + b.deleted) - (a.added + a.deleted));
+    return c.json(files);
+  });
   app.post('/missions', async c => {
     // Validate the epic up front: an absent/unknown epicId would otherwise create a zombie mission
     // (id `m-undefined`, no epic to tick) that reports `active` over SSE but never progresses.

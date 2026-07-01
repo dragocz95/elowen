@@ -1,6 +1,11 @@
 import './globals.css';
 import { GeistMono } from 'geist/font/mono';
+import { Quicksand } from 'next/font/google';
 import type { ReactNode } from 'react';
+
+// Rounded display face for headings & nav. latin-ext is required for Czech diacritics
+// (Přehled/Nastavení/…). Exposed as --font-quicksand, consumed via --font-display in tokens.css.
+const quicksand = Quicksand({ subsets: ['latin', 'latin-ext'], weight: ['500', '600', '700'], variable: '--font-quicksand', display: 'swap' });
 import { Shell } from '../components/shell/Shell';
 import { en } from '../lib/i18n/dictionaries/en';
 
@@ -29,7 +34,7 @@ const NO_FLASH_THEME = `(function(){try{var t=localStorage.getItem('orca:theme')
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
-    <html lang="en" className={GeistMono.variable} suppressHydrationWarning>
+    <html lang="en" className={`${GeistMono.variable} ${quicksand.variable}`} suppressHydrationWarning>
       <head><script dangerouslySetInnerHTML={{ __html: NO_FLASH_THEME }} /></head>
       <body><Shell>{children}</Shell></body>
     </html>

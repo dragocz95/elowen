@@ -90,7 +90,7 @@ export function Sidebar({ mobileOpen = false, onMobileClose, side = 'left' }: { 
     >
       <div className="flex h-14 items-center justify-center border-b border-border px-3 overflow-hidden">
         {expanded
-          ? <img src="/orca-logo.png" alt={t.common.appName} className="h-9 w-auto" />
+          ? <img src="/orca-logo.png" alt={t.common.appName} className="logo-adaptive h-9 w-auto" />
           : <img src="/icon.png" alt={t.common.appName} className="h-7 w-7 rounded-md" />}
       </div>
 
@@ -140,40 +140,36 @@ export function Sidebar({ mobileOpen = false, onMobileClose, side = 'left' }: { 
       <OpsStatusBar expanded={expanded} />
 
       {/* Thin footer: account link (avatar + name + role) with the live daemon-health as a corner
-          dot, plus a controls row holding the theme toggle + language dropdown — one compact bar
-          instead of a verbose status block. */}
-      <div className="border-t border-border px-3 py-2">
-        <div className={expanded ? 'flex items-center gap-2' : 'flex flex-col items-center gap-2'}>
-          <Link
-            href="/account"
-            className={`flex min-w-0 items-center gap-2 rounded-md py-1 transition-colors hover:bg-elevated ${expanded ? 'flex-1 px-1' : ''}`}
-            title={me.data?.user ? (me.data.user.name || me.data.user.username) : t.common.daemon}
-          >
-            <span className="relative flex shrink-0 items-center justify-center">
-              {me.data?.user
-                ? <Avatar user={me.data.user} size={28} />
-                : <span className="flex h-7 w-7 items-center justify-center rounded-full border border-border bg-elevated"><User size={14} className="text-text-muted" aria-hidden /></span>}
-              <span
-                role="status"
-                aria-label={up ? t.common.daemonUp : t.common.daemonDown}
-                title={status === 'fail' ? t.common.daemonOffline : status === 'busy' ? t.common.daemonBusy : t.common.daemonReady}
-                className={`absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border-2 border-surface ${up ? 'live-dot' : ''}`}
-                style={{ backgroundColor: DAEMON_STATUS[status].color, ['--live-ring' as string]: DAEMON_STATUS[status].ring }}
-              />
+          dot, then the notify bell + theme toggle + language dropdown — all on one compact row when
+          expanded, stacked in the narrow rail. */}
+      <div className={`flex border-t border-border px-3 py-2 ${expanded ? 'items-center gap-1.5' : 'flex-col items-center gap-2'}`}>
+        <Link
+          href="/account"
+          className={`flex min-w-0 items-center gap-2 rounded-md py-1 transition-colors hover:bg-elevated ${expanded ? 'flex-1 px-1' : ''}`}
+          title={me.data?.user ? (me.data.user.name || me.data.user.username) : t.common.daemon}
+        >
+          <span className="relative flex shrink-0 items-center justify-center">
+            {me.data?.user
+              ? <Avatar user={me.data.user} size={28} />
+              : <span className="flex h-7 w-7 items-center justify-center rounded-full border border-border bg-elevated"><User size={14} className="text-text-muted" aria-hidden /></span>}
+            <span
+              role="status"
+              aria-label={up ? t.common.daemonUp : t.common.daemonDown}
+              title={status === 'fail' ? t.common.daemonOffline : status === 'busy' ? t.common.daemonBusy : t.common.daemonReady}
+              className={`absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border-2 border-surface ${up ? 'live-dot' : ''}`}
+              style={{ backgroundColor: DAEMON_STATUS[status].color, ['--live-ring' as string]: DAEMON_STATUS[status].ring }}
+            />
+          </span>
+          {expanded && me.data?.user && (
+            <span className="flex min-w-0 flex-col leading-tight">
+              <span className="truncate text-xs font-medium text-text">{me.data.user.name || me.data.user.username}</span>
+              <span className="truncate text-tiny text-text-muted">{me.data.user.is_admin ? t.users.admin : t.users.member}</span>
             </span>
-            {expanded && me.data?.user && (
-              <span className="flex min-w-0 flex-col leading-tight">
-                <span className="truncate text-xs font-medium text-text">{me.data.user.name || me.data.user.username}</span>
-                <span className="truncate text-tiny text-text-muted">{me.data.user.is_admin ? t.users.admin : t.users.member}</span>
-              </span>
-            )}
-          </Link>
-          <NotificationBell />
-        </div>
-        <div className={`mt-2 flex gap-2 ${expanded ? 'items-center' : 'flex-col items-center'}`}>
-          <ThemeToggle collapsed={!expanded} />
-          <LanguageSwitcher collapsed={!expanded} side={side} />
-        </div>
+          )}
+        </Link>
+        <NotificationBell />
+        <ThemeToggle />
+        <LanguageSwitcher collapsed={!expanded} side={side} />
       </div>
 
       {/* Version + authorship credit — its own line-separated footer at the very bottom. */}
@@ -197,9 +193,9 @@ export function Sidebar({ mobileOpen = false, onMobileClose, side = 'left' }: { 
           type="button"
           aria-label={t.common.toggleSidebar}
           onClick={toggle}
-          className={`group absolute ${side === 'right' ? '-left-2' : '-right-2'} top-1/2 z-10 flex h-14 w-4 -translate-y-1/2 items-center justify-center`}
+          className={`group absolute ${side === 'right' ? '-left-2.5' : '-right-2.5'} top-1/2 z-10 flex h-14 w-4 -translate-y-1/2 cursor-pointer items-center justify-center`}
         >
-          <span className="h-9 w-1 rounded-full bg-border transition-all duration-200 group-hover:h-12 group-hover:bg-text-muted" />
+          <span className="h-9 w-1 rounded-full bg-border-strong transition-all duration-200 group-hover:h-12 group-hover:bg-text-muted" />
         </button>
       )}
 
