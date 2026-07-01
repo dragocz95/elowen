@@ -57,6 +57,8 @@ import { writeMcpConfig } from '../advisor/mcpConfig.js';
 import { BrainService } from '../brain/brainService.js';
 import { BrainStore } from '../store/brainStore.js';
 import { brainConfigFromOrca } from '../brain/config.js';
+import { loadPlugins } from '../plugins/loader.js';
+import { resolvePolicy } from '../plugins/policy.js';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { randomBytes } from 'node:crypto';
@@ -326,6 +328,15 @@ export function buildApp(opts: BuildOpts) {
     ? new BrainService({
         store: new BrainStore(db), users, config: brainConfig, prompts, url: orcaCli.url,
         cwd: (() => { const p = join(dirname(opts.dbPath), 'brain'); mkdirSync(p, { recursive: true }); return p; })(),
+        // Plugin loading is async and buildApp is sync, so hand the brain a loader thunk it resolves +
+        // memoizes on first use. Scans the bundled dist/plugins dir + the user's data-dir plugins/.
+        loadPlugins: () => {
+          const enabled = config.get().plugins.enabled;
+          const dirs = [join(dirname(fileURLToPath(import.meta.url)), '..', 'plugins'), join(dirname(opts.dbPath), 'plugins')];
+          const pluginConfig = Object.fromEntries(enabled.map((n) => [n, config.pluginConfig(n)]));
+          return loadPlugins({ dirs, enabled, config: pluginConfig, logger: log });
+        },
+        policy: (userId) => resolvePolicy({ userProjects, projects }, userId),
       })
     : undefined;
   // Single-use ticket store for the terminal WebSocket stream — shared between the authenticated

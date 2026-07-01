@@ -10,7 +10,7 @@ export interface Policy {
 
 export interface PolicyDeps {
   userProjects: { forUser(userId: number): number[]; isAdmin(userId: number): boolean };
-  projects: { get(id: number): { path: string } | undefined };
+  projects: { get(id: number): { path: string } | null | undefined };
 }
 
 /** Resolve the repo-access policy for a user from Orca's existing project assignments. */

@@ -34,8 +34,11 @@ export interface BrainDeps {
   /** Working dir for the in-memory session (not a repo checkout). Default: process.cwd(). */
   cwd?: string;
   /** Enabled plugins' aggregated contributions (tools/skills/prompt fragments). Absent → brain runs
-   *  exactly as before plugins existed. */
+   *  exactly as before plugins existed. Tests inject a ready registry directly. */
   plugins?: PluginRegistry;
+  /** Production supplies a thunk (buildApp is sync, plugin loading is async) — resolved and memoized on
+   *  first `start`, so the daemon stays synchronous while plugins load lazily on first brain use. */
+  loadPlugins?: () => Promise<PluginRegistry>;
   /** Resolves the repo-access Policy for a user; carried into plugin tool execution via AsyncLocalStorage. */
   policy?: (userId: number) => Policy;
   /** Injected for tests; defaults to PI's createAgentSession. */
@@ -74,9 +77,18 @@ function toBrainEvent(e: AgentSessionEvent): BrainEvent | null {
  *  user for step #1 (session id `brain-<userId>`); multi-conversation is a later sub-project. */
 export class BrainService {
   private live = new Map<number, LiveBrain>();
+  private pluginsMemo?: PluginRegistry;
   constructor(private d: BrainDeps) {}
 
   private sessionIdFor(userId: number): string { return `brain-${userId}`; }
+
+  /** The plugin registry: a directly-injected one (tests) or the memoized result of the async loader. */
+  private async resolvePlugins(): Promise<PluginRegistry | undefined> {
+    if (this.d.plugins) return this.d.plugins;
+    if (!this.d.loadPlugins) return undefined;
+    if (!this.pluginsMemo) this.pluginsMemo = await this.d.loadPlugins();
+    return this.pluginsMemo;
+  }
 
   status(userId: number): { running: boolean; sessionId: string | null; model: string } {
     const b = this.live.get(userId);
@@ -105,11 +117,12 @@ export class BrainService {
 
     // Enabled plugins contribute tools, skills, and system-prompt fragments. Their tools read the active
     // Policy at call time via AsyncLocalStorage (set in `send`), so they need no per-user construction.
-    const pluginTools = this.d.plugins?.tools ?? [];
+    const plugins = await this.resolvePlugins();
+    const pluginTools = plugins?.tools ?? [];
     const allTools = [...tools, ...pluginTools];
-    const skills = this.d.plugins?.skills ?? [];
+    const skills = plugins?.skills ?? [];
     const skillsBlock = skills.length ? formatSkillsForPrompt(skills) : '';
-    const fragments = this.d.plugins?.promptFragments ?? [];
+    const fragments = plugins?.promptFragments ?? [];
     const append = [skillsBlock, ...fragments].filter((s) => s.length > 0);
     const policy = this.d.policy?.(userId) ?? { allowedProjectIds: 'all' as const, allowedPaths: () => [] };
 
