@@ -15,6 +15,7 @@ export function projectEvent(store: BrainStore, sessionId: string, event: AgentS
   if (event.type !== 'agent_end') return;
   for (const m of event.messages) {
     const role = (m as { role?: string }).role ?? 'assistant';
+    if (role === 'user') continue; // the user turn is already persisted by projectUserTurn — avoid a dup
     store.appendMessage({ id: randomUUID(), sessionId, parentId: null, role, content: m });
   }
   store.touchSession(sessionId);

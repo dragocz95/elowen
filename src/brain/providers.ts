@@ -12,8 +12,10 @@ export interface BrainProviderConfig {
 const OPENAI_PROVIDER = 'orca-openai';
 const ANTHROPIC_PROVIDER = 'orca-anthropic';
 
-/** Normalize an OpenAI-compatible base so we never double up the `/v1` the client re-appends. */
-const normOpenAiBase = (base: string) => base.replace(/\/v1\/?$/, '');
+/** pi-ai's openai-completions client appends `/chat/completions` to the model's baseUrl, so the base
+ *  must already include the API version segment (e.g. `.../v1`). We only trim a trailing slash — we do
+ *  NOT strip `/v1` (doing so 404s against proxies whose route is `/v1/chat/completions`). */
+const normOpenAiBase = (base: string) => base.replace(/\/$/, '');
 
 /** Reasonable descriptor defaults — the brain is a chat agent, exact cost/window are not load-bearing
  *  here (usage accounting lives elsewhere), so we ship safe placeholders the model list requires. */
