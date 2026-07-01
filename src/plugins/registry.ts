@@ -1,5 +1,6 @@
 import type { ToolDefinition } from '@earendil-works/pi-coding-agent';
 import type { PluginContext, PluginHook, PluginLogger, PluginSkill, PlatformAdapter } from './api.js';
+import { assertPathAllowed, allowedRoots } from './pathGuard.js';
 
 /** Aggregates every enabled plugin's contributions, and hands each plugin a PluginContext scoped to its
  *  own config slice + a name-prefixed logger. Populated once per daemon by the loader. */
@@ -23,6 +24,8 @@ export class PluginRegistry {
       registerSystemPromptFragment: (f) => { this.promptFragments.push(f); },
       registerHook: (h) => { this.hooks.push(h); },
       registerPlatform: (p) => { this.platforms.push(p); },
+      assertPathAllowed,
+      allowedRoots,
       config,
       logger: scoped,
     };

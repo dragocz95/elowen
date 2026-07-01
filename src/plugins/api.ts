@@ -35,6 +35,13 @@ export interface PluginContext {
   registerHook(hook: PluginHook): void;
   /** STUB: record a platform adapter (not started by the foundation). */
   registerPlatform(adapter: PlatformAdapter): void;
+  /** Resolve + assert a filesystem path is inside the current user's accessible repos, returning the
+   *  absolute path (throws otherwise). File/terminal tools call this before any disk access. Evaluated at
+   *  tool-call time against the per-session Policy carried on AsyncLocalStorage. */
+  assertPathAllowed(path: string): string;
+  /** The repo roots the current session may operate in (empty for an admin's all-access). Used to default
+   *  a tool's working directory. */
+  allowedRoots(): string[];
   /** This plugin's own config slice (`config.plugins.config[name]`), secrets included daemon-side. */
   readonly config: Record<string, unknown>;
   readonly logger: PluginLogger;
