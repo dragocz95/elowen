@@ -10,7 +10,7 @@ import { createContext, useCallback, useContext, useEffect, useState, type React
 const KEY = 'orca:theme';
 export type Theme = 'light' | 'dark' | 'system';
 export type ResolvedTheme = 'light' | 'dark';
-export const DEFAULT_THEME: Theme = 'system';
+const DEFAULT_THEME: Theme = 'system';
 
 function read(): Theme {
   try {
