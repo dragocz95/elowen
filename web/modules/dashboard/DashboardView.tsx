@@ -1,10 +1,11 @@
 'use client';
 import Link from 'next/link';
-import { useState, useEffect } from 'react';
-import { Rocket, ArrowRight, Plus, Radio, Sparkles, Boxes, FolderGit2, Pause, Play, Power, Gauge, Layers, Cpu, ShieldCheck, type LucideIcon } from 'lucide-react';
-import { useTasks, useSessions, useMissions, useSessionSignals, useConfig, useProjects } from '../../lib/queries';
+import { useState, useEffect, useMemo } from 'react';
+import { Rocket, ArrowRight, Plus, Radio, Sparkles, Boxes, FolderGit2, Pause, Play, Power, Gauge, Layers, Cpu, ShieldCheck, Coins, type LucideIcon } from 'lucide-react';
+import { useTasks, useSessions, useMissions, useSessionSignals, useConfig, useProjects, useModelUsage } from '../../lib/queries';
 import { usePauseMission, useResumeMission, useDisengage } from '../../lib/mutations';
-import { deriveDashboardMetrics } from './metrics';
+import { deriveDashboardMetrics, currentMonthBounds } from './metrics';
+import { buildUsageSummary, type UsageSummary } from '../stats/usageBars';
 import { Badge } from '../../components/ui/Badge';
 import { StatCard } from '../../components/ui/StatCard';
 import type { Tone } from '../../components/ui/tone';
@@ -17,7 +18,7 @@ import { LoadingState, ErrorState, EmptyState } from '../../components/ui/states
 import { useToast } from '../../components/ui/Toast';
 import { useTranslation } from '../../lib/i18n';
 import { useSessionPane } from '../../lib/useSessionPane';
-import { tailSnippet, taskSessionName, taskForSession, taskExec } from '../../lib/agentUtils';
+import { tailSnippet, taskSessionName, taskForSession, taskExec, agentDisplayName } from '../../lib/agentUtils';
 import { allModels } from '../../lib/execPresets';
 import { useSessionStall } from '../../lib/useSessionStall';
 import { sessionActivity } from '../../lib/sessionActivity';
@@ -40,10 +41,38 @@ function LiveLane({ name, task }: { name: string; task?: Task }) {
       <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md border border-border bg-elevated">
         {exec ? <ModelIcon name={exec} size={13} /> : <Radio size={12} className="text-text-muted" aria-hidden />}
       </span>
-      <span className="shrink-0 font-mono text-xs text-text">{name}</span>
+      <span className="shrink-0 font-mono text-xs text-text">{agentDisplayName(name)}</span>
       <span className="min-w-0 flex-1 truncate text-[11px] text-text-muted">{line}</span>
       <Badge tone={activityTone as Tone}>{t.activity[activity]}</Badge>
     </Link>
+  );
+}
+
+/** The 5th overview card: this calendar month's usage — most-used model (by tokens), total tokens,
+ *  total cost. A fixed, non-user-selectable "this month" window (see `currentMonthBounds` in
+ *  `metrics.ts`) — unlike the Tasks/Stats `DateRangeFilter`, there's no filter control here. Shares
+ *  the other overview cards' outer shell for visual consistency but needs three stacked lines, so it
+ *  isn't built on `StatCard` itself. */
+function MonthlyUsageCard({ summary }: { summary: UsageSummary }) {
+  const { t } = useTranslation();
+  const top = summary.rows[0];
+  return (
+    <div className="flex flex-col gap-3 rounded-xl border border-border bg-surface p-5" style={{ boxShadow: 'var(--shadow-card)' }}>
+      <Coins size={18} className="text-text-muted" aria-hidden />
+      <div className="flex flex-col gap-2">
+        <div>
+          <div className="flex items-center gap-1.5 font-mono text-lg font-semibold leading-none text-text">
+            {top ? <ModelIcon name={top.exec} size={16} /> : null}
+            <span className="truncate">{top ? top.exec : '—'}</span>
+          </div>
+          <span className="text-[11px] uppercase tracking-wider text-text-muted">{t.dashboard.statTopModel}</span>
+        </div>
+        <div className="flex items-center justify-between gap-2 border-t border-border pt-2 font-mono text-xs tabular-nums text-text">
+          <span title={t.stats.cardTotalTokens}>{summary.totalTokensLabel}</span>
+          <span title={t.stats.cardTotalCost}>{summary.totalCostLabel}</span>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -89,6 +118,9 @@ export function DashboardView() {
   // Stable inventory counts (non-zero even when nothing is running) for the big overview cards.
   const modelCount = allModels(config.data?.customModels ?? [], config.data?.hiddenPresets ?? []).length;
   const projectCount = (projects.data ?? []).length;
+  const monthBounds = useMemo(() => currentMonthBounds(now.getTime()), [now]);
+  const monthlyUsage = useModelUsage(undefined, monthBounds);
+  const monthlySummary = buildUsageSummary(monthlyUsage.data);
 
   const hour = now.getHours();
   const greeting = hour < 12 ? t.dashboard.greetingMorning : hour < 18 ? t.dashboard.greetingAfternoon : t.dashboard.greetingEvening;
@@ -128,11 +160,12 @@ export function DashboardView() {
       {/* ── System overview: big stat cards ───────────────────── */}
       <section className="flex flex-col gap-3">
         <h2 className="text-[11px] font-semibold uppercase tracking-widest text-text-muted">{t.dashboard.systemOverview}</h2>
-        <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+        <div className="grid grid-cols-2 gap-4 lg:grid-cols-4 xl:grid-cols-5">
           <StatCard value={projectCount} label={t.dashboard.statProjects} icon={FolderGit2} />
           <StatCard value={modelCount} label={t.dashboard.models} icon={Boxes} />
           <StatCard value={metrics.activeMissions} label={t.dashboard.activeMissions} icon={Rocket} />
           <StatCard value={metrics.liveSessions} label={t.dashboard.statAgents} icon={Radio} />
+          <MonthlyUsageCard summary={monthlySummary} />
         </div>
       </section>
 

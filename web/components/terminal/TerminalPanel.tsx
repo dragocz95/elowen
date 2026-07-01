@@ -7,6 +7,7 @@ import { useKillSession } from '../../lib/mutations';
 import { useToast } from '../ui/Toast';
 import { useTranslation } from '../../lib/i18n';
 import { openTerminalWindow } from '../../lib/openTerminalWindow';
+import { agentDisplayName } from '../../lib/agentUtils';
 
 /** The full agent terminal: a single interactive xterm the user types directly into (all keys work),
  *  plus a slim footer carrying only the Kill action. There is no separate input box or key-button bar
@@ -27,7 +28,7 @@ export function TerminalPanel({ name, onKilled }: { name: string; onKilled?: () 
             variant="danger"
             disabled={kill.isPending}
             onClick={() => kill.mutate(name, {
-              onSuccess: () => { toast(t.sessions.killed.replace('{name}', name)); onKilled?.(); },
+              onSuccess: () => { toast(t.sessions.killed.replace('{name}', agentDisplayName(name))); onKilled?.(); },
               onError: (e) => toast(String(e), 'error'),
             })}
           >

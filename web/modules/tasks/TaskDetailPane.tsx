@@ -7,7 +7,7 @@ import { useCloseTask, useSetTaskStatus, useResumeMission } from '../../lib/muta
 import { apiErrorMessage } from '../../lib/orcaClient';
 import { useTaskControls } from '../../lib/useTaskControls';
 import { taskExec } from '../../lib/agentUtils';
-import { taskSessionName, taskAgentName, taskElapsed, phaseDetails } from '../../lib/agentUtils';
+import { taskSessionName, taskAgentName, taskElapsed, phaseDetails, agentDisplayName } from '../../lib/agentUtils';
 import { formatTaskTime } from '../../lib/format';
 import { Badge } from '../../components/ui/Badge';
 import { ModelIcon } from '../../components/ui/ModelIcon';
@@ -105,7 +105,7 @@ export function TaskDetailPane({ taskId, onEdit, onBack }: { taskId: string; onE
             <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 font-mono text-[11px] text-text-muted">
               <span>{task.id}</span>
               <IconButton icon={Copy} label={t.tasks.copyId} onClick={copyId} />
-              {agentName ? <><span aria-hidden className="opacity-50">·</span><span>{taskSessionName(task)}</span></> : null}
+              {agentName ? <><span aria-hidden className="opacity-50">·</span><span>{agentDisplayName(taskSessionName(task)!)}</span></> : null}
               {when.label ? <><span aria-hidden className="opacity-50">·</span><span title={when.title}>{when.label}</span></> : null}
               {ran ? <><span aria-hidden className="opacity-50">·</span><span className="inline-flex items-center gap-1" title={t.tasks.flowElapsed}><Timer size={11} aria-hidden />{ran}</span></> : null}
             </div>

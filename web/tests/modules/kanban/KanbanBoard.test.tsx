@@ -59,7 +59,7 @@ describe('KanbanBoard', () => {
     const { wrapper: W } = wrap();
     render(<KanbanBoard tasks={enriched} onMove={() => {}} />, { wrapper: W });
     const card = within(screen.getByTestId('column-closed'));
-    expect(card.getByText('orca-atlas')).toBeTruthy();              // resolved agent session name
+    expect(card.getByText('atlas')).toBeTruthy();                   // resolved agent session name (friendly, no orca- prefix)
     expect(card.getByText('npm test passed (132/132)')).toBeTruthy(); // result summary on the closed card
     expect(card.getByText('Success')).toBeTruthy();                  // outcome badge
   });

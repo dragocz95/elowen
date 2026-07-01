@@ -74,11 +74,15 @@ export const useTaskUsage = (taskId: string, live = false) =>
     staleTime: live ? 0 : 5 * 60 * 1000,
   });
 
-/** Total token/cost usage aggregated per model, for the stats page. Cost/tokens move slowly. */
-export const useModelUsage = (projectId?: number) =>
+/** Total token/cost usage aggregated per model, for the stats page and the dashboard's monthly usage
+ *  card. Cost/tokens move slowly. `window` (finite bounds only go into the key — an open `±Infinity`
+ *  bound collapses to `null` so every rolling/all-time preset shares one cache entry). */
+export const useModelUsage = (projectId?: number, window?: { fromMs: number; toMs: number }) =>
   useQuery({
-    queryKey: projectId == null ? QUERY_KEYS.usageByModel : ['usage-by-model', projectId],
-    queryFn: () => orcaClient.usageByModel(projectId),
+    queryKey: [...QUERY_KEYS.usageByModel, projectId ?? null,
+      Number.isFinite(window?.fromMs) ? window!.fromMs : null,
+      Number.isFinite(window?.toMs) ? window!.toMs : null],
+    queryFn: () => orcaClient.usageByModel(projectId, window),
     refetchInterval: 30_000,
   });
 

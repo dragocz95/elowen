@@ -30,11 +30,19 @@ export class TaskUsageStore {
   }
 
   /** Total usage per exec spec. When `projectIds` is given, scope to those projects (an empty array
-   *  yields nothing — no accessible projects). A bucket's cost is null only when no row in it has a
-   *  cost (so claude/codex-only models read as "—" while mixed/opencode buckets sum the real costs). */
-  aggregateByExec(projectIds?: number[]): { exec: string; usage: TokenUsage }[] {
+   *  yields nothing — no accessible projects). An optional `window` narrows to `captured_at` bounds
+   *  (ISO-8601 strings; SQLite's `datetime()` normalizes them to the same `YYYY-MM-DD HH:MM:SS` UTC
+   *  format the column stores, so the comparison is always apples-to-apples). A bucket's cost is null
+   *  only when no row in it has a cost (so claude/codex-only models read as "—" while mixed/opencode
+   *  buckets sum the real costs). */
+  aggregateByExec(projectIds?: number[], window?: { fromIso?: string; toIso?: string }): { exec: string; usage: TokenUsage }[] {
     if (projectIds && projectIds.length === 0) return [];
-    const where = projectIds ? `WHERE project_id IN (${projectIds.map(() => '?').join(',')})` : '';
+    const clauses: string[] = [];
+    const params: (string | number)[] = [];
+    if (projectIds) { clauses.push(`project_id IN (${projectIds.map(() => '?').join(',')})`); params.push(...projectIds); }
+    if (window?.fromIso) { clauses.push('captured_at >= datetime(?)'); params.push(window.fromIso); }
+    if (window?.toIso) { clauses.push('captured_at <= datetime(?)'); params.push(window.toIso); }
+    const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
     const rows = this.db.prepare(
       `SELECT exec,
          SUM(input) AS input, SUM(output) AS output, SUM(cache_read) AS cache_read,
@@ -42,7 +50,7 @@ export class TaskUsageStore {
          CASE WHEN COUNT(cost_usd) = 0 THEN NULL ELSE SUM(cost_usd) END AS cost_usd
        FROM task_usage ${where}
        GROUP BY exec`
-    ).all(...(projectIds ?? [])) as AggRow[];
+    ).all(...params) as AggRow[];
     return rows.map((r) => ({
       exec: r.exec,
       usage: {

@@ -1,8 +1,8 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { LanguageProvider } from '../../../lib/i18n';
-import { DateRangeFilter } from '../../../modules/tasks/DateRangeFilter';
-import { DEFAULT_RANGE } from '../../../modules/tasks/dateRange';
+import { DateRangeFilter } from '../../../components/ui/DateRangeFilter';
+import { DEFAULT_RANGE } from '../../../lib/dateRange';
 
 const renderFilter = (onChange = vi.fn()) => {
   render(

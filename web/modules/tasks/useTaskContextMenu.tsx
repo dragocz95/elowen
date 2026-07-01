@@ -8,7 +8,7 @@ import { useToast } from '../../components/ui/Toast';
 import { useTranslation } from '../../lib/i18n';
 import { apiErrorMessage } from '../../lib/orcaClient';
 import { openTerminalWindow } from '../../lib/openTerminalWindow';
-import { taskExec, taskSessionName } from '../../lib/agentUtils';
+import { taskExec, taskSessionName, agentDisplayName } from '../../lib/agentUtils';
 import { allModels } from '../../lib/execPresets';
 import { useSessions, useConfig } from '../../lib/queries';
 import {
@@ -82,9 +82,9 @@ export function useTaskContextMenu({ onSelect, onEdit, childMap, blockedBy }: In
 
     // Per-task run handlers — same behaviour as useTaskControls, recomputed here because that hook is
     // per-task and can't be called inside a click handler for an arbitrary row.
-    const start = () => spawn.mutate({ taskId: task.id, exec: exec || undefined }, { onSuccess: (r) => toast(t.tasks.launched.replace('{session}', r.session)), onError: fail });
+    const start = () => spawn.mutate({ taskId: task.id, exec: exec || undefined }, { onSuccess: (r) => toast(t.tasks.launched.replace('{session}', agentDisplayName(r.session))), onError: fail });
     const stop = () => { if (session) kill.mutate(session); setStatus.mutate({ id: task.id, status: 'open' }, { onSuccess: () => toast(t.tasks.stopped.replace('{id}', task.id)), onError: fail }); };
-    const pause = () => { if (session) send.mutate({ name: session, keys: ['C-c'] }, { onSuccess: () => toast(t.sessions.interrupted.replace('{name}', session)), onError: fail }); };
+    const pause = () => { if (session) send.mutate({ name: session, keys: ['C-c'] }, { onSuccess: () => toast(t.sessions.interrupted.replace('{name}', agentDisplayName(session))), onError: fail }); };
     const reopen = () => setStatus.mutate({ id: task.id, status: 'open' }, { onSuccess: () => toast(t.tasks.updated.replace('{id}', task.id)), onError: fail });
     const copyId = () => navigator.clipboard.writeText(task.id).then(() => toast(t.tasks.idCopied.replace('{id}', task.id)), () => toast(t.tasks.idCopyFailed, 'error'));
     const runReview = () => insert.mutate({ epicId: task.id, body: { phases: [{ title: t.tasks.reviewPhaseTitle.replace('{title}', task.title), type: 'chore' }] } }, { onSuccess: () => toast(t.tasks.reviewQueued), onError: fail });

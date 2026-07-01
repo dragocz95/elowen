@@ -25,8 +25,9 @@ import { TaskCard } from './TaskCard';
 import { TaskModal } from './TaskModal';
 import { useTaskContextMenu } from './useTaskContextMenu';
 import { useTaskDrop } from './useTaskDrop';
-import { DateRangeFilter } from './DateRangeFilter';
-import { DEFAULT_RANGE, serializeRange, parseRange, isStoredRange, inRange, taskDayMs } from './dateRange';
+import { DateRangeFilter } from '../../components/ui/DateRangeFilter';
+import { DEFAULT_RANGE, serializeRange, parseRange, isStoredRange, inRange } from '../../lib/dateRange';
+import { taskDayMs } from './dateRange';
 import { dayKey } from '../kanban/calendar';
 
 type Filter = 'all' | TaskStatus | 'autopilot';

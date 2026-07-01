@@ -19,6 +19,7 @@ const server = setupServer(
   http.get('*/api/sessions/:name/pane', () => HttpResponse.json({ pane: '' })),
   http.get('*/api/config', () => HttpResponse.json(config)),
   http.get('*/api/projects', () => HttpResponse.json([])),
+  http.get('*/api/usage/by-model', () => HttpResponse.json([])),
 );
 beforeAll(() => server.listen()); afterAll(() => server.close());
 
@@ -26,8 +27,8 @@ describe('DashPage', () => {
   it('renders the live agent lane and an empty autopilot section', async () => {
     const { wrapper: Wrapper } = createWrapper();
     render(<Wrapper><ToastProvider><DashPage /></ToastProvider></Wrapper>);
-    // The live agent shows up in its lane…
-    await waitFor(() => expect(screen.getByText('orca-SwiftLake')).toBeInTheDocument());
+    // The live agent shows up in its lane, with the friendly name (no orca- prefix)…
+    await waitFor(() => expect(screen.getByText('SwiftLake')).toBeInTheDocument());
     // …and the autopilot section renders its empty state.
     expect(screen.getAllByText(/no active missions/i).length).toBeGreaterThan(0);
   });

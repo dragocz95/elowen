@@ -2,12 +2,13 @@
 import { useEffect, useRef, useState } from 'react';
 import { CalendarDays, ChevronDown } from 'lucide-react';
 import { useTranslation } from '../../lib/i18n';
-import { Input } from '../../components/ui/Input';
-import type { DateRange, RangePreset } from './dateRange';
+import { Input } from './Input';
+import type { DateRange, RangePreset } from '../../lib/dateRange';
 
-/** Compact date-range control for the Tasks list: a trigger showing the active window, opening a
- *  popover with quick presets and a custom from/to picker. Pure presentational + a single onChange —
- *  all window maths live in `dateRange.ts`. */
+/** Compact date-range control shared by every view with a Today/7d/30d/90d/All/custom filter (Tasks,
+ *  Kanban, Stats): a trigger showing the active window, opening a popover with quick presets and a
+ *  custom from/to picker. Pure presentational + a single onChange — all window maths live in
+ *  `lib/dateRange.ts`. */
 export function DateRangeFilter({ value, onChange }: { value: DateRange; onChange: (r: DateRange) => void }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
@@ -21,8 +22,8 @@ export function DateRangeFilter({ value, onChange }: { value: DateRange; onChang
   }, [open]);
 
   const presetLabel: Record<RangePreset, string> = {
-    '7d': t.tasks.rangeLast7, '30d': t.tasks.rangeLast30, '90d': t.tasks.rangeLast90,
-    today: t.tasks.rangeToday, all: t.tasks.rangeAll, custom: t.tasks.rangeCustom,
+    '7d': t.common.rangeLast7, '30d': t.common.rangeLast30, '90d': t.common.rangeLast90,
+    today: t.common.rangeToday, all: t.common.rangeAll, custom: t.common.rangeCustom,
   };
   const label = value.preset === 'custom'
     ? `${value.from ?? '…'} – ${value.to ?? '…'}`
@@ -49,7 +50,7 @@ export function DateRangeFilter({ value, onChange }: { value: DateRange; onChang
       </button>
 
       {open && (
-        <div role="dialog" aria-label={t.tasks.rangeLabel} className="absolute right-0 z-30 mt-2 w-64 rounded-lg border border-border bg-surface p-3 shadow-[var(--shadow-raised)]">
+        <div role="dialog" aria-label={t.common.rangeLabel} className="absolute right-0 z-30 mt-2 w-64 rounded-lg border border-border bg-surface p-3 shadow-[var(--shadow-raised)]">
           <div className="flex flex-col gap-1">
             {PRESETS.map((p) => (
               <button
@@ -64,13 +65,13 @@ export function DateRangeFilter({ value, onChange }: { value: DateRange; onChang
             ))}
           </div>
           <div className="mt-3 border-t border-border pt-3">
-            <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-text-muted">{t.tasks.rangeCustom}</p>
+            <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-text-muted">{t.common.rangeCustom}</p>
             <label className="mb-2 flex items-center gap-2 text-xs text-text-muted">
-              <span className="w-7 shrink-0">{t.tasks.rangeFrom}</span>
+              <span className="w-7 shrink-0">{t.common.rangeFrom}</span>
               <Input type="date" value={value.from ?? ''} max={value.to ?? undefined} onChange={(e) => setFrom(e.target.value)} className="h-8" />
             </label>
             <label className="flex items-center gap-2 text-xs text-text-muted">
-              <span className="w-7 shrink-0">{t.tasks.rangeTo}</span>
+              <span className="w-7 shrink-0">{t.common.rangeTo}</span>
               <Input type="date" value={value.to ?? ''} min={value.from ?? undefined} onChange={(e) => setTo(e.target.value)} className="h-8" />
             </label>
           </div>

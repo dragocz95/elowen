@@ -32,7 +32,7 @@ function setup() {
     clock: new FakeClock(0), config: new ConfigStore(db),
     users, projects: new ProjectStore(db), userProjects: new UserProjectStore(db), taskUsage,
   });
-  return { app, taskUsage, adminTok: users.issueToken(admin.id), bobTok: users.issueToken(bob.id) };
+  return { app, db, taskUsage, adminTok: users.issueToken(admin.id), bobTok: users.issueToken(bob.id) };
 }
 const auth = (t: string | null) => ({ headers: t ? { authorization: `Bearer ${t}` } : {} });
 const post = (t: string | null) => ({ method: 'POST', headers: { ...(t ? { authorization: `Bearer ${t}` } : {}), 'content-type': 'application/json' }, body: '{}' });
@@ -49,6 +49,25 @@ describe('GET /usage/by-model', () => {
     expect(body[0].exec).toBe('sonnet');
     expect(body[0].usage.total).toBe(330);
     expect(body[0].usage.costUsd).toBe(1);
+  });
+
+  it('narrows to a ?from=&to= window', async () => {
+    const { app, db, taskUsage, adminTok } = setup();
+    taskUsage.record('old', 1, 'sonnet', usage);
+    db.prepare("UPDATE task_usage SET captured_at = '2020-01-01 00:00:00' WHERE task_id = 'old'").run();
+    taskUsage.record('recent', 1, 'sonnet', usage);
+    const res = await app.request('/usage/by-model?from=2026-06-01T00:00:00.000Z', auth(adminTok));
+    const body = await res.json();
+    expect(body).toHaveLength(1);
+    expect(body[0].usage.total).toBe(165); // only 'recent', 'old' excluded by the window
+  });
+
+  it('ignores a malformed ?from= (no 400, unfiltered result)', async () => {
+    const { app, taskUsage, adminTok } = setup();
+    taskUsage.record('t1', 1, 'sonnet', usage);
+    const res = await app.request('/usage/by-model?from=notadate', auth(adminTok));
+    expect(res.status).toBe(200);
+    expect((await res.json())[0].usage.total).toBe(165);
   });
 });
 

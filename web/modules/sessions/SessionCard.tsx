@@ -7,7 +7,7 @@ import { useKillSession, useSendInput } from '../../lib/mutations';
 import { useTasks, useSessionSignal, useConfig } from '../../lib/queries';
 import { taskTypeMeta } from '../tasks/taskMeta';
 import { taskExec } from '../../lib/agentUtils';
-import { taskForSession, missionEpicId, keysForOption } from '../../lib/agentUtils';
+import { taskForSession, missionEpicId, keysForOption, agentDisplayName } from '../../lib/agentUtils';
 import { execModel } from '../../lib/modelProvider';
 import type { SessionInfo } from '../../lib/types';
 import { ModelIcon } from '../../components/ui/ModelIcon';
@@ -55,8 +55,8 @@ export function SessionCard({ info, onOpenTerminal, compact = false }: { info: S
 
   // Action handlers defined once, shared between visible triggers and context menu.
   const handleTerminal = onOpenTerminal;
-  const handleInterrupt = () => send.mutate({ name, keys: ['C-c'] }, { onSuccess: () => toast(t.sessions.interrupted.replace('{name}', name)) });
-  const handleKill = () => kill.mutate(name, { onSuccess: () => toast(t.sessions.killed.replace('{name}', name)), onError: (e) => toast(String(e), 'error') });
+  const handleInterrupt = () => send.mutate({ name, keys: ['C-c'] }, { onSuccess: () => toast(t.sessions.interrupted.replace('{name}', agentDisplayName(name))) });
+  const handleKill = () => kill.mutate(name, { onSuccess: () => toast(t.sessions.killed.replace('{name}', agentDisplayName(name))), onError: (e) => toast(String(e), 'error') });
 
   const ctxItems: ContextMenuState['items'] = [
     { label: t.sessions.ctxTerminal, icon: TerminalSquare, onClick: handleTerminal },
@@ -117,14 +117,14 @@ export function SessionCard({ info, onOpenTerminal, compact = false }: { info: S
                 {/* The agent asked a multiple-choice question — let the human pick the actual option
                     (navigating the list), not just accept the focused default with a bare Enter. */}
                 {signal.options.map((o) => (
-                  <button key={o.id} type="button" title={o.label} onClick={() => send.mutate({ name, keys: keysForOption(o.id) }, { onSuccess: () => toast(t.sessions.answered.replace('{name}', name).replace('{option}', o.label)), onError: (e) => toast(String(e), 'error') })} className="max-w-full truncate rounded-md border border-accent/50 bg-accent/10 px-2.5 py-1 text-xs font-medium text-accent transition-colors hover:bg-accent hover:text-white active:scale-95"><span className="opacity-60">{o.id}.</span> {o.label}</button>
+                  <button key={o.id} type="button" title={o.label} onClick={() => send.mutate({ name, keys: keysForOption(o.id) }, { onSuccess: () => toast(t.sessions.answered.replace('{name}', agentDisplayName(name)).replace('{option}', o.label)), onError: (e) => toast(String(e), 'error') })} className="max-w-full truncate rounded-md border border-accent/50 bg-accent/10 px-2.5 py-1 text-xs font-medium text-accent transition-colors hover:bg-accent hover:text-white active:scale-95"><span className="opacity-60">{o.id}.</span> {o.label}</button>
                 ))}
-                <button type="button" onClick={() => send.mutate({ name, keys: ['Escape'] }, { onSuccess: () => toast(t.sessions.rejected.replace('{name}', name)), onError: (e) => toast(String(e), 'error') })} className="rounded-md border border-danger/50 bg-danger/10 px-2.5 py-1 text-xs font-medium text-danger transition-colors hover:bg-danger hover:text-white active:scale-95">{t.sessions.reject}</button>
+                <button type="button" onClick={() => send.mutate({ name, keys: ['Escape'] }, { onSuccess: () => toast(t.sessions.rejected.replace('{name}', agentDisplayName(name))), onError: (e) => toast(String(e), 'error') })} className="rounded-md border border-danger/50 bg-danger/10 px-2.5 py-1 text-xs font-medium text-danger transition-colors hover:bg-danger hover:text-white active:scale-95">{t.sessions.reject}</button>
               </>
             ) : (
               <>
-                <button type="button" onClick={() => send.mutate({ name, keys: ['Enter'] }, { onSuccess: () => toast(t.sessions.approved.replace('{name}', name)), onError: (e) => toast(String(e), 'error') })} className="rounded-md border border-approve/50 bg-approve/10 px-2.5 py-1 text-xs font-medium text-approve transition-colors hover:bg-approve hover:text-white active:scale-95">{t.sessions.allow}</button>
-                <button type="button" onClick={() => send.mutate({ name, keys: ['Escape'] }, { onSuccess: () => toast(t.sessions.rejected.replace('{name}', name)), onError: (e) => toast(String(e), 'error') })} className="rounded-md border border-danger/50 bg-danger/10 px-2.5 py-1 text-xs font-medium text-danger transition-colors hover:bg-danger hover:text-white active:scale-95">{t.sessions.reject}</button>
+                <button type="button" onClick={() => send.mutate({ name, keys: ['Enter'] }, { onSuccess: () => toast(t.sessions.approved.replace('{name}', agentDisplayName(name))), onError: (e) => toast(String(e), 'error') })} className="rounded-md border border-approve/50 bg-approve/10 px-2.5 py-1 text-xs font-medium text-approve transition-colors hover:bg-approve hover:text-white active:scale-95">{t.sessions.allow}</button>
+                <button type="button" onClick={() => send.mutate({ name, keys: ['Escape'] }, { onSuccess: () => toast(t.sessions.rejected.replace('{name}', agentDisplayName(name))), onError: (e) => toast(String(e), 'error') })} className="rounded-md border border-danger/50 bg-danger/10 px-2.5 py-1 text-xs font-medium text-danger transition-colors hover:bg-danger hover:text-white active:scale-95">{t.sessions.reject}</button>
               </>
             )}
           </div>

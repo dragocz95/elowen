@@ -64,7 +64,15 @@ export function registerTaskRoutes(app: OrcaApp, ctx: RouteContext): void {
       const pid = Number(pidRaw);
       if (Number.isFinite(pid)) projectIds = projectIds ? projectIds.filter((p) => p === pid) : [pid];
     }
-    return c.json(d.taskUsage?.aggregateByExec(projectIds) ?? []);
+    // Optional ?from=&to= ISO-8601 window narrowing task_usage.captured_at (the dashboard's fixed
+    // "this month" widget and the Stats page's date filter both go through this same param). Malformed
+    // values are silently ignored — same benevolent posture as project_id above (no 400s).
+    const fromRaw = c.req.query('from');
+    const toRaw = c.req.query('to');
+    const fromIso = fromRaw && !Number.isNaN(Date.parse(fromRaw)) ? fromRaw : undefined;
+    const toIso = toRaw && !Number.isNaN(Date.parse(toRaw)) ? toRaw : undefined;
+    const window = fromIso || toIso ? { fromIso, toIso } : undefined;
+    return c.json(d.taskUsage?.aggregateByExec(projectIds, window) ?? []);
   });
   // Reset the usage stats: wipe the `task_usage` snapshots. Admin-only and irreversible, but it only
   // clears Orca's own DB rows — the agents' CLI session transcripts are left untouched.

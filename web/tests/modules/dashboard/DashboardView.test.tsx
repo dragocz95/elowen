@@ -22,6 +22,9 @@ const server = setupServer(
   http.get('*/api/missions', () => HttpResponse.json([{ id: 'm1', epic_id: 'e', autonomy: 'L3', max_sessions: 1, state: 'active' }])),
   http.get('*/api/config', () => HttpResponse.json(config)),
   http.get('*/api/projects', () => HttpResponse.json([{ id: 1, name: 'demo', path: '/tmp/demo' }])),
+  http.get('*/api/usage/by-model', () => HttpResponse.json([
+    { exec: 'sonnet', usage: { input: 1000, output: 500, cacheRead: 0, cacheWrite: 0, total: 1500, costUsd: 3.5 } },
+  ])),
 );
 beforeAll(() => server.listen({ onUnhandledRequest })); afterEach(() => server.resetHandlers()); afterAll(() => server.close());
 
@@ -38,6 +41,13 @@ describe('DashboardView', () => {
     // pill values depend on the /config query resolving.
     expect(screen.getByText('Configuration')).toBeTruthy();
     expect(await screen.findByText('L3')).toBeTruthy();
+  });
+
+  it('renders the monthly usage card with the top model, tokens and cost', async () => {
+    const { wrapper: Wrapper } = createWrapper();
+    render(<Wrapper><ToastProvider><DashboardView /></ToastProvider></Wrapper>);
+    expect(await screen.findByText('sonnet')).toBeTruthy();
+    expect(screen.getByText('Top model')).toBeTruthy();
   });
 
   it('shows the needs-input banner when an agent is waiting', async () => {

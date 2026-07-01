@@ -2,7 +2,7 @@
 import type { Task } from './types';
 import { apiErrorMessage } from './orcaClient';
 import { taskExec } from './agentUtils';
-import { taskSessionName } from './agentUtils';
+import { taskSessionName, agentDisplayName } from './agentUtils';
 import { useSpawn, useKillSession, useSetTaskStatus, useSendInput } from './mutations';
 import { useSessions } from './queries';
 import { useToast } from '../components/ui/Toast';
@@ -33,12 +33,12 @@ export function useTaskControls(task: Task): TaskControls {
   const session = taskSessionName(task);
   const running = task.status === 'in_progress' && !!session && (sessions.data ?? []).includes(session);
 
-  const start = () => spawn.mutate({ taskId: task.id, exec: exec || undefined }, { onSuccess: (r) => toast(t.tasks.launched.replace('{session}', r.session)), onError: (e) => toast(apiErrorMessage(e), 'error') });
+  const start = () => spawn.mutate({ taskId: task.id, exec: exec || undefined }, { onSuccess: (r) => toast(t.tasks.launched.replace('{session}', agentDisplayName(r.session))), onError: (e) => toast(apiErrorMessage(e), 'error') });
   const stop = () => {
     if (session) kill.mutate(session);
     setStatus.mutate({ id: task.id, status: 'open' }, { onSuccess: () => toast(t.tasks.stopped.replace('{id}', task.id)), onError: (e) => toast(apiErrorMessage(e), 'error') });
   };
-  const pause = () => { if (session) send.mutate({ name: session, keys: ['C-c'] }, { onSuccess: () => toast(t.sessions.interrupted.replace('{name}', session)), onError: (e) => toast(apiErrorMessage(e), 'error') }); };
+  const pause = () => { if (session) send.mutate({ name: session, keys: ['C-c'] }, { onSuccess: () => toast(t.sessions.interrupted.replace('{name}', agentDisplayName(session))), onError: (e) => toast(apiErrorMessage(e), 'error') }); };
 
   return { session, running, start, stop, pause };
 }
