@@ -1,0 +1,8 @@
+{
+  "name": "files",
+  "version": "0.1.0",
+  "apiVersion": "1",
+  "description": "Read, write, and list files within the user's accessible Orca repositories.",
+  "entry": "index.mjs",
+  "provides": { "tools": ["read_file", "write_file", "list_dir"] }
+}
