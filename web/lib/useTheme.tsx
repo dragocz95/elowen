@@ -36,12 +36,14 @@ const ThemeContext = createContext<ThemeValue | null>(null);
 export function ThemeProvider({ children }: { children: ReactNode }) {
   const [theme, setThemeState] = useState<Theme>(DEFAULT_THEME);
   const [systemResolved, setSystemResolved] = useState<ResolvedTheme>('dark');
+  const [hydrated, setHydrated] = useState(false);
 
   // Hydrate from storage after mount (SSR-safe — server renders the default). The pre-hydration
   // script in app/layout.tsx has already painted the correct palette, so this just syncs React state.
   useEffect(() => {
     setThemeState(read());
     setSystemResolved(systemTheme());
+    setHydrated(true);
   }, []);
 
   // Track the OS preference so `system` follows it live (e.g. macOS auto light/dark at sunset).
@@ -54,10 +56,13 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
 
   const resolvedTheme: ResolvedTheme = theme === 'system' ? systemResolved : theme;
 
-  // Keep the document root's data-theme in lockstep with the resolved value on every change.
+  // Keep the document root's data-theme in lockstep with the resolved value on every change —
+  // but not before hydration finishes, or this would clobber the correct palette the
+  // pre-hydration script already painted with the pre-hydration default ('dark') for one frame.
   useEffect(() => {
+    if (!hydrated) return;
     document.documentElement.setAttribute('data-theme', resolvedTheme);
-  }, [resolvedTheme]);
+  }, [resolvedTheme, hydrated]);
 
   const setTheme = useCallback((t: Theme) => {
     setThemeState(t);

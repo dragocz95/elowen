@@ -172,7 +172,7 @@ export function Sidebar({ mobileOpen = false, onMobileClose, side = 'left' }: { 
         </div>
         <div className={`mt-2 flex gap-2 ${expanded ? 'items-center' : 'flex-col items-center'}`}>
           <ThemeToggle collapsed={!expanded} />
-          <LanguageSwitcher collapsed={!expanded} />
+          <LanguageSwitcher collapsed={!expanded} side={side} />
         </div>
       </div>
 

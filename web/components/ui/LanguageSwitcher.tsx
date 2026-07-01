@@ -16,7 +16,7 @@ const LANGS: { value: Locale; name: string }[] = [
  * the active option, Enter selects). Selection persists via the i18n store. The menu opens upward
  * (footer sits at the bottom) and sideways in the collapsed rail so it never clips off-screen.
  */
-export function LanguageSwitcher({ collapsed = false }: { collapsed?: boolean }) {
+export function LanguageSwitcher({ collapsed = false, side = 'left' }: { collapsed?: boolean; side?: 'left' | 'right' }) {
   const { locale, setLocale, t } = useTranslation();
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(0);
@@ -77,7 +77,7 @@ export function LanguageSwitcher({ collapsed = false }: { collapsed?: boolean })
           role="menu"
           aria-label={t.common.language}
           onKeyDown={onMenuKey}
-          className={`absolute z-50 min-w-[9rem] overflow-hidden rounded-lg border border-border bg-surface py-1 ${collapsed ? 'bottom-0 left-full ml-2' : 'bottom-full right-0 mb-2'}`}
+          className={`absolute z-50 min-w-[9rem] overflow-hidden rounded-lg border border-border bg-surface py-1 ${collapsed ? (side === 'right' ? 'bottom-0 right-full mr-2' : 'bottom-0 left-full ml-2') : 'bottom-full right-0 mb-2'}`}
           style={{ boxShadow: 'var(--shadow-raised)' }}
         >
           {LANGS.map((l, i) => {

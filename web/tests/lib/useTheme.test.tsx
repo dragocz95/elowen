@@ -74,4 +74,16 @@ describe('useTheme / ThemeProvider', () => {
     expect(screen.getByTestId('resolved').textContent).toBe('light');
     expect(document.documentElement.getAttribute('data-theme')).toBe('light');
   });
+
+  it('does not flash dark when a persisted light theme meets a dark OS preference', () => {
+    localStorage.setItem('orca:theme', 'light');
+    mockMatchMedia(true); // OS prefers dark
+    // Simulate the no-flash script in app/layout.tsx, which paints the resolved palette before React mounts.
+    document.documentElement.setAttribute('data-theme', 'light');
+    const setAttributeSpy = vi.spyOn(document.documentElement, 'setAttribute');
+    render(<ThemeProvider><Probe /></ThemeProvider>);
+    const dataThemeWrites = setAttributeSpy.mock.calls.filter(([name]) => name === 'data-theme').map(([, value]) => value);
+    expect(dataThemeWrites).not.toContain('dark');
+    expect(document.documentElement.getAttribute('data-theme')).toBe('light');
+  });
 });

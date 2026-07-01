@@ -56,4 +56,15 @@ describe('LanguageSwitcher', () => {
     fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' });
     expect(screen.queryByRole('menu')).not.toBeInTheDocument();
   });
+
+  it('opens the collapsed menu inward (right-full) when side is right', () => {
+    const { wrapper: Wrapper } = createWrapper();
+    render(<Wrapper><LanguageSwitcher collapsed side="right" /></Wrapper>);
+
+    fireEvent.click(screen.getByRole('button'));
+
+    const menu = screen.getByRole('menu');
+    expect(menu.className).toContain('right-full');
+    expect(menu.className).not.toContain('left-full');
+  });
 });
