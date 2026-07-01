@@ -1,7 +1,7 @@
 import type { BrainEvent, BrainMessageView } from '../../brain/brainService.js';
 
 /** One rendered conversation turn. `you` = the user, `orca` = the brain. */
-export interface ChatTurn { role: 'you' | 'orca'; text: string; tools: string[]; streaming: boolean }
+interface ChatTurn { role: 'you' | 'orca'; text: string; tools: string[]; streaming: boolean }
 /** The whole view model the TUI renders. Pure data — the reducer never touches the terminal. */
 export interface ChatView { turns: ChatTurn[]; thinking: boolean }
 

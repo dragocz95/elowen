@@ -31,6 +31,11 @@ SERVICE
   status                          show which services are running and healthy
   update                          update to the latest npm release and restart in place
 
+CHAT
+  chat                            open the interactive Orca chat (talk to Orca's brain in the terminal)
+                                    --model openai|anthropic  pick the configured provider
+  login                           sign in and cache a token for \`orca chat\` (no password prompt next time)
+
 TASKS
   ls                              list all tasks (JSON)
   ready                           list tasks ready to run (JSON)
@@ -64,7 +69,7 @@ Docs & issues: https://github.com/dragocz1995/orcasynth`;
 /** Commands that talk to the daemon API — only these justify auto-starting it. Everything else
  *  (help, unknown verbs) must NOT spawn a daemon: a stray detached daemon squats the port and starves
  *  the systemd-managed one into a restart loop. */
-const API_COMMANDS = new Set(['ls', 'ready', 'sessions', 'send', 'close', 'note', 'plan', 'overseer', 'api', 'ask']);
+const API_COMMANDS = new Set(['ls', 'ready', 'sessions', 'send', 'close', 'note', 'plan', 'overseer', 'api', 'ask', 'chat', 'login']);
 
 /** True only for verbs that need the daemon API up — the gate for ensureDaemon's auto-spawn. */
 export function needsDaemon(cmd: string | undefined): boolean {
@@ -97,12 +102,49 @@ function flag(args: string[], name: string): string | undefined {
 }
 function has(args: string[], name: string): boolean { return args.includes(name); }
 
+/** Prompt for a line on the TTY. `mute` hides typed characters (for passwords) by swallowing the
+ *  readline echo — the standard Node trick, since readline has no built-in masked input. */
+async function promptLine(question: string, mute = false): Promise<string> {
+  const { createInterface } = await import('node:readline');
+  const rl = createInterface({ input: process.stdin, output: process.stdout, terminal: true });
+  if (mute) {
+    const anyRl = rl as unknown as { _writeToOutput: (s: string) => void };
+    anyRl._writeToOutput = (s: string) => { if (s.includes('\n')) process.stdout.write('\n'); };
+  }
+  return new Promise((resolve) => rl.question(question, (a) => { rl.close(); resolve(a); }));
+}
+
+/** Interactive login → cache a full-scope token, returning it. Used by `orca login` and as the
+ *  fallback when `orca chat` finds no token in the env or cache. */
+async function interactiveLogin(env: NodeJS.ProcessEnv): Promise<string> {
+  const { login } = await import('./chat/token.js');
+  const username = await promptLine('Uživatel: ');
+  const password = await promptLine('Heslo: ', true);
+  return login(BASE, { username, password }, env);
+}
+
 export async function run(argv: string[], c: OrcaClient, env: NodeJS.ProcessEnv): Promise<void> {
   const [cmd, arg, ...rest] = argv;
   switch (cmd) {
     case 'ls': console.log(JSON.stringify(await c.tasks(), null, 2)); break;
     case 'ready': console.log(JSON.stringify(await c.ready(), null, 2)); break;
     case 'sessions': console.log(JSON.stringify(await c.sessions(), null, 2)); break;
+    case 'chat': {
+      // Interactive Orca chat: a thin pi-tui client over the server-side brain. Resolve a token
+      // (env → cache → interactive login), then launch the TUI.
+      const { runChat } = await import('./chat/app.js');
+      const { resolveToken, NeedsLogin } = await import('./chat/token.js');
+      let token: string;
+      try { token = resolveToken(env); }
+      catch (e) { if (e instanceof NeedsLogin) token = await interactiveLogin(env); else throw e; }
+      await runChat({ base: BASE, token, model: flag(argv.slice(1), '--model') });
+      break;
+    }
+    case 'login': {
+      await interactiveLogin(env);
+      console.log('Přihlášeno — token uložen.');
+      break;
+    }
     case 'send': {
       // Type a message straight into a running agent's tmux — the manual unblock for when an agent
       // asks a free-text question (which the deriver can't detect) and otherwise hangs forever.
