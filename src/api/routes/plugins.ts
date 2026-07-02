@@ -134,6 +134,13 @@ export function registerPluginRoutes(app: OrcaApp, ctx: RouteContext): void {
       if (oneShot ? typeof j.runAt !== 'string' || Number.isNaN(Date.parse(j.runAt)) : !isValidCronSchedule(j.schedule as string)) {
         return c.json({ error: `invalid schedule "${String(j.schedule)}" — use "every 15m", "every 2h", "daily 07:30" or "weekly sun 20:00"` }, 400);
       }
+      // Optional per-job model: either absent, or an object carrying non-empty provider + model strings.
+      if (j.model !== undefined) {
+        const m = j.model as { provider?: unknown; model?: unknown } | null;
+        if (typeof m !== 'object' || m === null || typeof m.provider !== 'string' || typeof m.model !== 'string' || !m.provider.trim() || !m.model.trim()) {
+          return c.json({ error: 'model must be omitted or an object with non-empty provider and model' }, 400);
+        }
+      }
     }
     // Runtime fields (lastRun/lastResult) belong to the SCHEDULER, not the client: the UI edits a
     // snapshot, and writing its stale lastRun back would make an interval job due again on the next
@@ -145,8 +152,12 @@ export function registerPluginRoutes(app: OrcaApp, ctx: RouteContext): void {
     catch { onDisk = []; }
     const prevById = new Map(onDisk.map((j) => [j.id, j]));
     const now = new Date().toISOString();
+    // Persist only known fields — the client edits a whole-list snapshot, so a whitelist keeps it from
+    // smuggling arbitrary keys into jobs.json that the scheduler would later read.
+    const FIELDS = ['id', 'name', 'schedule', 'prompt', 'hours', 'notifyChannelId', 'model', 'enabled', 'runAt', 'createdAt'] as const;
     const merged = body.map((j) => {
-      const { lastRun: _lr, lastResult: _lres, ...edit } = j;
+      const edit: Record<string, unknown> = {};
+      for (const k of FIELDS) if (j[k] !== undefined) edit[k] = j[k];
       const prev = prevById.get(j.id);
       // One-shot (runAt) jobs are excluded from arming: they fire exactly once while lastRun is EMPTY.
       const enabling = !j.runAt && edit.enabled !== false && (!prev || prev.enabled === false);
@@ -254,12 +265,17 @@ export function registerPluginRoutes(app: OrcaApp, ctx: RouteContext): void {
       if (!chRes.ok) return c.json([]);
       const channels = (await chRes.json()) as { id: string; name: string; type: number }[];
       const nameById = new Map(channels.map((ch) => [ch.id, ch.name]));
+      const typeById = new Map(channels.map((ch) => [ch.id, ch.type]));
       // Text-capable only: type 0 = guild text channel, 11/12 = public/private thread.
       const out: DiscordChannelOption[] = channels.filter((ch) => ch.type === 0).map((ch) => ({ id: ch.id, name: ch.name, type: 'channel' as const }));
       if (thRes.ok) {
         const { threads } = (await thRes.json()) as { threads?: { id: string; name: string; type: number; parent_id?: string }[] };
         for (const th of threads ?? []) {
           if (th.type !== 11 && th.type !== 12) continue;
+          // Skip forum/media posts: they're type-11 threads too, but their parent is a forum (15) or
+          // media (16) channel — the picker wants real text-channel threads, not forum posts.
+          const parentType = typeById.get(th.parent_id ?? '');
+          if (parentType === 15 || parentType === 16) continue;
           out.push({ id: th.id, name: th.name, type: 'thread', parentName: nameById.get(th.parent_id ?? '') });
         }
       }

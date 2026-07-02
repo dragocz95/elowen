@@ -1,7 +1,7 @@
 'use client';
 import { useState, useEffect } from 'react';
 import { useAutoSave } from '../../lib/useAutoSave';
-import { Cpu, Eye, SlidersHorizontal, MessageSquare, AtSign } from 'lucide-react';
+import { Cpu, Eye, Brain, SlidersHorizontal, MessageSquare, AtSign } from 'lucide-react';
 import { ExecutorPicker } from '../../components/ui/ExecutorPicker';
 import { SettingCard } from '../../components/ui/SettingCard';
 import { Input } from '../../components/ui/Input';
@@ -25,6 +25,7 @@ export function CliSection() {
   // The dropdown value pairs provider + model; '' = the server default. '::' never appears in ids.
   const [selection, setSelection] = useState('');
   const [visionSelection, setVisionSelection] = useState('');
+  const [thinkingLevel, setThinkingLevel] = useState('');
   const [autoCompact, setAutoCompact] = useState(false);
   const [autoCompactAt, setAutoCompactAt] = useState(80);
   const [advisorStyle, setAdvisorStyle] = useState('professional');
@@ -35,6 +36,7 @@ export function CliSection() {
     if (data) {
       setSelection(data.model ? `${data.modelProvider ?? ''}::${data.model}` : '');
       setVisionSelection(data.visionModel ? `${data.visionModelProvider ?? ''}::${data.visionModel}` : '');
+      setThinkingLevel(data.thinkingLevel ?? '');
       setAutoCompact(data.autoCompact);
       setAutoCompactAt(data.autoCompactAt);
       setAdvisorStyle(data.advisorStyle);
@@ -51,12 +53,14 @@ export function CliSection() {
       {
         model: selection ? rest.join('::') : '', modelProvider: selection ? (provider ?? '') : '',
         visionModel: visionSelection ? vRest.join('::') : '', visionModelProvider: visionSelection ? (vProvider ?? '') : '',
-        autoCompact, autoCompactAt, advisorStyle, discordUserId,
+        thinkingLevel, autoCompact, autoCompactAt, advisorStyle, discordUserId,
       },
       { onError: () => toast(t.cli.saveError, 'error') },
     );
   };
-  useAutoSave([selection, visionSelection, autoCompact, autoCompactAt, advisorStyle, discordUserId], persist, { ready: seeded });
+  useAutoSave([selection, visionSelection, thinkingLevel, autoCompact, autoCompactAt, advisorStyle, discordUserId], persist, { ready: seeded });
+
+  const thinkingOptions = ['', 'minimal', 'low', 'medium', 'high', 'xhigh'];
 
   const styleOptions: { value: string; label: string; hint: string }[] = [
     { value: 'professional', label: t.cli.styleProfessional, hint: t.cli.styleProfessionalHint },
@@ -103,6 +107,26 @@ export function CliSection() {
             kind="brain"
             defaultLabel={t.cli.visionModelDefault}
           />
+        </SettingCard>
+
+        <SettingCard title={t.cli.thinkingLabel} icon={Brain} description={t.cli.thinkingHint}>
+          <div className="flex flex-wrap gap-1.5">
+            {thinkingOptions.map((lv) => {
+              const on = thinkingLevel === lv;
+              return (
+                <button
+                  key={lv || 'default'}
+                  type="button"
+                  onClick={() => setThinkingLevel(lv)}
+                  aria-pressed={on}
+                  className={`inline-flex items-center rounded-md border px-2.5 py-1.5 text-xs font-medium transition-colors ${on ? 'border-accent/50 bg-accent/15 text-accent' : 'border-border bg-elevated text-text-muted hover:border-border-strong hover:text-text'}`}
+                  style={{ transitionDuration: 'var(--motion-fast)' }}
+                >
+                  {lv === '' ? t.cli.thinkingDefault : lv}
+                </button>
+              );
+            })}
+          </div>
         </SettingCard>
 
         <SettingCard title={t.cli.styleLabel} icon={MessageSquare} description={t.cli.styleHint}>

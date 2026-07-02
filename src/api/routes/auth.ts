@@ -112,18 +112,20 @@ export function registerAuthRoutes(app: OrcaApp, ctx: RouteContext): void {
   };
   app.get('/auth/me/cli-settings', (c) => {
     const u = c.get('user');
-    const s = d.userSettings?.cliSettings(u.id) ?? { model: '', modelProvider: '', visionModel: '', visionModelProvider: '', autoCompact: false, autoCompactAt: 80, advisorStyle: DEFAULT_ADVISOR_STYLE };
+    const s = d.userSettings?.cliSettings(u.id) ?? { model: '', modelProvider: '', visionModel: '', visionModelProvider: '', thinkingLevel: '', autoCompact: false, autoCompactAt: 80, advisorStyle: DEFAULT_ADVISOR_STYLE };
     return c.json({ ...s, serverDefault: serverDefaultModel() });
   });
   app.patch('/auth/me/cli-settings', async (c) => {
     if (!d.userSettings) return c.json({ error: 'settings unavailable' }, 400);
     const u = c.get('user');
-    const b = (await c.req.json().catch(() => ({}))) as { model?: unknown; modelProvider?: unknown; visionModel?: unknown; visionModelProvider?: unknown; autoCompact?: unknown; autoCompactAt?: unknown; advisorStyle?: unknown; discordUserId?: unknown };
-    const patch: { model?: string; modelProvider?: string; visionModel?: string; visionModelProvider?: string; autoCompact?: boolean; autoCompactAt?: number; advisorStyle?: string; discordUserId?: string } = {};
+    const b = (await c.req.json().catch(() => ({}))) as { model?: unknown; modelProvider?: unknown; visionModel?: unknown; visionModelProvider?: unknown; thinkingLevel?: unknown; autoCompact?: unknown; autoCompactAt?: unknown; advisorStyle?: unknown; discordUserId?: unknown };
+    const patch: { model?: string; modelProvider?: string; visionModel?: string; visionModelProvider?: string; thinkingLevel?: string; autoCompact?: boolean; autoCompactAt?: number; advisorStyle?: string; discordUserId?: string } = {};
     if (typeof b.model === 'string') patch.model = b.model.trim();
     if (typeof b.modelProvider === 'string') patch.modelProvider = b.modelProvider.trim();
     if (typeof b.visionModel === 'string') patch.visionModel = b.visionModel.trim();
     if (typeof b.visionModelProvider === 'string') patch.visionModelProvider = b.visionModelProvider.trim();
+    if (typeof b.thinkingLevel === 'string') patch.thinkingLevel = b.thinkingLevel.trim(); // store validates the level
+
     if (typeof b.autoCompact === 'boolean') patch.autoCompact = b.autoCompact;
     if (typeof b.autoCompactAt === 'number') patch.autoCompactAt = b.autoCompactAt;
     if (typeof b.discordUserId === 'string') patch.discordUserId = b.discordUserId.trim(); // store validates the snowflake shape

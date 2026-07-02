@@ -634,3 +634,128 @@ interface CheckoutResolver {
 ```
 
 `checkoutOf()` delegates to `usagePath()` — the same logic used for token-usage path resolution — so a task's working directory is always consistent between the spawn, the usage recorder, and the snapshot.
+
+---
+
+## Brain plugins (Discord, cron, memory, skills)
+
+Orca's embedded **brain** — the in-process chat assistant behind the web dock and `orca chat` — is
+extensible through a lightweight plugin system. Each plugin is a self-contained Node ESM module
+under `plugins/<name>/`, hand-written with no build step, paired with an `orca-plugin.json`
+manifest that declares a config schema and what the plugin `provides` (tools, chat platforms,
+skills). Plugins are either **bundled** (ship with Orca) or **user-installed** (dropped into the
+instance's own plugin directory); either way they're discovered by `discoverPlugins()` and
+toggled per-instance in **Settings → Plugins**. Enabling/disabling or saving a plugin's config
+calls `BrainService.reloadPlugins()`, which drops the memoized plugin registry and restarts every
+live brain session — the change applies to running conversations immediately, no daemon restart.
+
+A plugin's `register(ctx)` function gets a context exposing `ctx.registerTool()` (adds a tool to
+the brain's toolset), `ctx.registerPlatform()` (adds a chat-platform adapter — see Discord below),
+`ctx.registerSkill()`, `ctx.dataDir()` (a writable per-plugin data directory), `ctx.isAdminSession()`
+and `ctx.currentIdentity()` (who's driving the current turn), and `ctx.config`/`ctx.logger`.
+
+### Discord bot (`plugins/discord/`)
+
+A dependency-free Discord Gateway client (Node's built-in `WebSocket` + `fetch`, no discord.js):
+connects over the v10 gateway, resumes on reconnect, and answers channel messages by handing them
+to the brain as a **channel session** (`brain-ch-<platform>-<channelId>`) — a conversation that
+persists per channel/thread, separate from any user's own chat.
+
+- **Slash commands** — `/model` (pick the AI model for this channel), `/thinking` (reasoning
+  effort for this channel), `/new` (start a fresh conversation — bumps a per-channel generation
+  counter so the session key changes), `/help`.
+- **Operator-only pickers** — `/model` and `/thinking` change a setting **shared by everyone
+  talking in that channel**, so both are gated to the operator: a member whose Discord role maps
+  to a `rolePolicies` entry with `admin: true` (checked via `memberIsAdmin()`/`isAdminMember()`).
+  Anyone else gets a "only the operator can change this here" reply. The choice persists in a
+  small per-channel JSON store (`channel-state.json` in the plugin's data dir) and survives across
+  gateway reconnects and daemon restarts — it is *not* reset by `/new` (only the conversation
+  generation is).
+- **Runtime footer** — `footerLine()` appends a Hermes-style `-# model · NN %` subtext under the
+  final reply, sourced from the turn's `idle` event (model id + context-window fill). Config
+  `runtimeFooter` (default on) opts out.
+- **History backfill** — config `historyLimit` (0–100, default off) loads that many recent channel
+  messages as context, but **only** the first time a brand-new conversation starts (`fetchHistory()`
+  is called lazily via `src.history()`); an ongoing conversation never re-fetches. The block is
+  hard-framed as untrusted background data the brain must never treat as instructions, guarding
+  against a planted `"SYSTEM: …"` line in channel history steering a privileged session.
+- **Vision model** — config `visionModel`: an image-bearing turn is steered to this model
+  regardless of the channel's normal pick (a channel's default model may be text-only).
+- **Service language** — config `language` (`en` default, or `cs`): only affects the bot's own
+  service texts (slash-command replies, "thinking…" placeholders) — the brain's actual answers
+  are always in whatever language the user wrote in.
+- **`discord_api` tool** — raw Discord REST access (any method/path) for server management
+  (delete/purge messages, manage roles, edit channels). Gated to the true **owner** (`identity.owner
+  === true`), not merely `admin: true` — a foreign member holding an admin-mapped role must never
+  reach the raw bot token.
+- **Role policies** (`rolePolicies` config, structured editor in Settings) — each row maps a
+  Discord role id to a name, the Orca `projectIds` it may touch, an extra system-prompt fragment
+  (`rolePrompt()` — the Hermes role-instructions pattern), an optional tool allowlist, and the
+  `admin` flag. The **first matching role wins**; a sender with no mapped role (and any DM, which
+  carries no roles at all) is silently ignored — no REST/CDN work is spent on strangers.
+- Also handles: live streaming replies (edit-in-place with a tool-call trace, throttled to
+  Discord's ~5-edits/5s limit), status reactions (👀 → ✅/❌), image attachments (downloaded +
+  base64 for vision, capped at 4 images / 5 MB each), generated-image uploads (tool-produced PNGs
+  become real Discord file attachments, not dead relative links), and a thread allowlist
+  (`threadIds` config) to scope the bot to specific threads only.
+
+### Cron plugin (`plugins/cronjob/`)
+
+Recurring or one-shot prompts for the brain — the Hermes cronjob-tools idea sized for Orca. Jobs
+persist in the plugin's own `jobs.json`; a scheduler adapter ticks every 30 s and, when a job is
+due, feeds its prompt back into the brain with `admin: true` access (only an admin session can
+create a job in the first place, via the `cron_add`/`schedule_wakeup` tools).
+
+- **Schedule formats** — recurring: `"every <N>m"`, `"every <N>h"`, `"daily HH:MM"`,
+  `"weekly <mon..sun> HH:MM"`. One-shot wake-up: `"in <N>m"`, `"in <N>h"`, `"at HH:MM"` — the job
+  removes itself after firing once.
+- **Active-hours window** — an optional `"H-H"` guard (e.g. `"5-21"`, supports an overnight
+  wrap like `"22-5"`) that keeps a recurring job quiet outside those hours.
+- **Per-job model** — an optional model override; the job's channel session respawns on it
+  instead of the brain's configured default.
+- **Target channel** — `notifyChannelId` routes a job's result to a specific Discord
+  channel/thread instead of the plugin's configured default notification channel.
+- **Silent jobs** — a job whose reply is exactly `NOTHING_TO_REPORT` (or the Hermes-era
+  `[SILENT]`, leniently matched even wrapped in backticks/bold) is treated as "nothing to say" and
+  never posted — so a routine check-in job doesn't spam the channel every time there's no news.
+- **Live editing** — Settings → Plugins → cronjob (`CronJobsEditor`) edits the whole job list as
+  one auto-saved `PUT /plugins/cronjob/jobs`; the scheduler re-reads the file every tick, so
+  changes apply live. The editor whitelists persisted fields and preserves `lastRun`/`lastResult`
+  from disk (never trusts the client's stale snapshot), and arms a job that just became enabled
+  from the save moment — so it waits for its next natural slot instead of firing immediately.
+  Model and destination are clickable pills (first N shown, "+N more" expander); the channel
+  picker excludes forum-post threads (only real text channels and their threads are valid
+  destinations). A job's `lastResult` (its last reply, truncated) shows once it has fired.
+
+### Memory (`plugins/memory/`)
+
+Durable, cross-conversation memory backed by a self-hosted **mem0** REST server (the same shape
+Hermes uses) — the brain decides *what* to remember via `add_memory`/`search_memory`; the plugin
+only ferries the calls.
+
+- **Per-user identity** — `memoryUser()` resolves the mem0 `user_id` for the current turn: the
+  **operator** (the true owner, not merely an `admin`-flagged role) keeps the configured owner id
+  (continuity with any pre-Orca memory store, config `userId`, default `orca`). Everyone else gets
+  their **own namespaced store** so they can never read or pollute the operator's memory: a sender
+  whose platform account is linked to an Orca account gets `orca:<username>`; an unlinked sender
+  gets `<platform>:<id>` (e.g. `discord:123456789012345678`).
+- **Linking a Discord account** — set your Discord user id in **Account → CLI** (`discordUserId`).
+  Once linked, the brain resolves your Discord messages to your Orca account (`resolvePlatformUser()`),
+  giving your Discord turns a verified identity line and routing your memory through your own
+  `orca:<username>` store instead of an anonymous `discord:<id>` one.
+
+### Skills (`plugins/skills/`)
+
+A bundled reference plugin exposing Markdown skills to the brain — hand-written ESM with no build
+step, so it also doubles as the canonical example plugin format. It loads `.md` skills from its
+own `skills/` directory (bundled) plus the instance's writable plugin data dir (user-created), and
+registers each so the brain's system prompt advertises it.
+
+- **Bundled vs user** — bundled skills ship with the plugin and are read-only; user skills are
+  created via the `create_skill` tool (admin-only) or the **Settings → Plugins → skills** editor,
+  and can be deleted (bundled ones cannot). A user skill name may not shadow a bundled one.
+- **Format** — a skill is one Markdown file with a small YAML-ish frontmatter (`name`,
+  `description`) followed by the instruction body.
+- **Applying changes** — creating/deleting a skill hot-reloads the plugin registry, so **new**
+  conversations pick it up immediately; a conversation already in progress keeps its original
+  system prompt until it restarts.

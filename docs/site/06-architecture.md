@@ -206,6 +206,64 @@ daemon's project, per-route checks gate item operations and project file/git end
 per-user model allow-list restricts which exec a non-admin may use. Admins and single-user mode
 pass everything unrestricted.
 
+## Per-turn identity & policy (brain plugins)
+
+The embedded brain (`src/brain`) is a separate, in-process AI agent from the daemon's REST API
+above, with its own trust model layered over Orca's plugin tools (Discord, memory, cron,
+sub-agent delegation, …). Two primitives carry per-turn state across that boundary, both built on
+`AsyncLocalStorage` since pi-coding-agent tools receive no per-call session context of their own:
+
+- **Policy** (`runWithPolicy` / `currentPolicy()`) — the repo access scope (all-access, or an
+  explicit project-id set) that path-guarded tools enforce against.
+- **TurnIdentity** (`admin`, `owner`, `platform`, `userId`, `orcaUsername`) — who is driving this
+  turn, read via `currentIdentity()`.
+
+`BrainService` establishes both exactly once per turn: `send()` (the user's own chat) builds an
+identity straight from the Orca account and its policy; `channelSend()` (shared platform
+conversations) takes a caller-resolved `Policy` + `TurnIdentity` and runs the prompt inside the
+same `runWithPolicy(...)` wrapper. Either way, every plugin tool invoked during that one
+`session.prompt()` call reads whichever identity/policy was live when the turn started — no tool
+needs it passed as an argument, and no tool can read another turn's context.
+
+### Platform adapter → handler → channelSend
+
+A plugin that wants to bring an external conversation surface into the brain implements the
+minimal `PlatformAdapter` contract (`connect`, `listen`, `send`, optional `notify`) and calls
+`ctx.registerPlatform(adapter)`. At daemon startup `BrainService.startPlatforms()` calls
+`adapter.connect()` and wires one shared handler into `adapter.listen(handler)`:
+
+```
+adapter (Discord gateway / cron ticker / delegate tool)
+  → resolves a SessionSource: { platform, userId, roleIds, channelId, access, history?, images? }
+  → handler(src, text, onEvent?)              // set once by BrainService.startPlatforms
+      → resolves a Policy from src.access (admin → all-access, else role → project ids)
+      → resolves a TurnIdentity (owner iff the linked account IS the configured owner, or
+        internal automation — cron/subagent — carrying admin:true)
+      → BrainService.channelSend({ channelId, policy, identity, ... }, text)
+          → spawns/reuses a per-channel PI session (`brain-ch-<channelId>`)
+          → runWithPolicy(policy, () => session.prompt(...), identity)
+  ← returns the settled reply text (or streams it via onEvent)
+```
+
+Three built-in adapters share this one path with very different trust shapes:
+
+- **Discord** (`plugins/discord`) — one session per Discord channel/thread; `access` comes from
+  mapping the sender's roles through the plugin's own `rolePolicies` config. An unmapped sender
+  (or any DM, which carries no roles) never reaches `handler` at all.
+- **Cron** (`plugins/cronjob`) — one session per scheduled job (`job-<id>`); every tick calls
+  `handler` with `access.admin: true`, because only an admin session could have created the job
+  via `cron_add` / `schedule_wakeup` in the first place.
+- **Subagent** (`plugins/subagent`) — the `delegate` tool re-enters the SAME handler with a
+  brand-new channel id per call and `ctx.currentAccess()` (the calling turn's own access, never
+  widened), so a delegated sub-agent can't escalate its scope by spawning a child.
+
+`identity.owner` for a platform turn is true only when the linked Orca account resolves to the
+configured operator, or when the sender is one of the daemon's own internal automations
+(`cron`/`subagent`) that also carries `admin: true` — never merely because a Discord role happens
+to be admin-mapped. See `docs/SECURITY.md` (Brain plugin trust model) for the full `admin` vs
+`owner` rationale and the prompt-injection defenses this identity threading enables (sanitized
+sender names, untrusted-history framing).
+
 ## Testing
 
 Tests use Vitest with fake implementations — `FakeTmuxDriver` (in-memory sessions), `FakeClock`

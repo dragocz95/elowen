@@ -55,10 +55,18 @@ describe('BrainStore', () => {
       expect(hits[0]).toMatchObject({ sessionId: 'mine', sessionTitle: 'Mine', role: 'user' });
     });
 
-    it('is case-insensitive and includes channel sessions owned by the user', () => {
+    it('is case-insensitive over the user own chat sessions', () => {
+      store.createSession({ id: 'mine2', userId: 1, title: 'Ops', model: 'm' });
+      userMsg('m1', 'mine2', 'Restart NGINX please');
+      expect(store.searchMessages(1, 'nginx')[0]?.sessionId).toBe('mine2');
+    });
+
+    it('excludes shared channel and ephemeral subagent sessions (personal chat search only)', () => {
       store.createSession({ id: 'brain-ch-42', userId: 1, title: 'Discord', model: 'm' });
-      userMsg('m1', 'brain-ch-42', 'Restart NGINX please');
-      expect(store.searchMessages(1, 'nginx')[0]?.sessionId).toBe('brain-ch-42');
+      store.createSession({ id: 'brain-task-9', userId: 1, title: 'Subagent', model: 'm' });
+      userMsg('c1', 'brain-ch-42', 'Restart NGINX please');
+      userMsg('t1', 'brain-task-9', 'Restart NGINX please');
+      expect(store.searchMessages(1, 'nginx')).toHaveLength(0);
     });
 
     it('treats LIKE wildcards as literals', () => {

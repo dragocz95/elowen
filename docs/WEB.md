@@ -187,7 +187,7 @@ Self-hosted Monaco editor (`@monaco-editor/react`) with:
 
 ### Settings `/settings`
 
-Admin-only (non-admins see a lock screen with link to My Account). Inline in `app/settings/page.tsx`. 7-section sidebar navigation persists the active section in `localStorage`.
+Admin-only (non-admins see a lock screen with link to My Account). Inline in `app/settings/page.tsx`. Sidebar navigation persists the active section in `localStorage`.
 
 - **Models** — grid of executor presets + custom models with toggle switches, edit/delete, add modal
   - `ModelModal` — add/edit model: label, provider (Claude Code / OpenCode / Codex / Other), model ID
@@ -201,6 +201,11 @@ Admin-only (non-admins see a lock screen with link to My Account). Inline in `ap
   - Test plan button — submits dry-run, polls async plan job, shows preview
 - **GitHub** — PR workflow configuration: GitHub token, default PR settings (base branch, auto-open, verify command), status banner showing `gh` auth state
 - **Providers** — per-program binary paths and extra CLI args (Claude Code, OpenCode, Codex); skip-permissions toggle per provider; resume-sessions toggle per provider (when enabled, a re-spawned agent continues its prior CLI session)
+- **Plugins** — every plugin discovered on disk (bundled + user-installed), grouped into "Plugins" (platforms/infrastructure) and "Tools" (pure tool packs). Each card shows an enable toggle, a live-dot when running, and provides badges (tools/skills/platforms with counts); a configurable plugin gets a gear button into `PluginDetail` — a form generated from the plugin's manifest `configSchema`, grouped into collapsible sections (Connection: secrets/endpoints/ids; Behavior: everything else), with secrets round-tripping write-only. Toggling or saving applies **live** — the brain's plugin registry hot-reloads, no restart. Plugins with data beyond simple config get a dedicated editor section:
+  - **discord** — bot token, guild/thread scope, notification channel, behavior toggles (streaming replies, status reactions, mention-only vs. free response), service language, vision model for image turns, channel-history backfill limit, and a **role policies** editor (`RolePoliciesEditor`): each row maps a Discord role id → name, allowed Orca projects, an operator flag (`admin`, gates the shared per-channel `/model`/`/thinking` pickers to that role), a free-text role prompt, and a per-role tool allowlist (pills, "+N more" expander, empty = everything).
+  - **cronjob** (`CronJobsEditor`) — the job list as collapsible rows: status dot, name, schedule/destination badges and last-run time in the header; expanded shows name, schedule (with a live valid/invalid check mark), active-hours window, enabled toggle, prompt, destination channel pills (`ChannelPills` — searchable once the guild has many channels, forum-post threads excluded), and a per-job model override (`ModelPills`, first 8 shown alphabetically + "+N more", the current pick always stays visible). The whole list auto-saves as one `PUT`; a job's `lastResult` shows once it has fired. A confirm dialog guards row deletion.
+  - **skills** (`SkillsEditor`) — bundled and user skills as compact cards (name, source badge, description); an add form (kebab-case name, description, Markdown content) for new user skills; delete (with confirm) for user skills only — bundled ones have no delete action.
+  - **memory** — mem0 endpoint, API key, and the operator's own memory user id; other senders get their own namespaced store automatically (no UI needed for that).
 - **Defaults** — default executor, autonomy level, max sessions, login token TTL
   - The autonomy selector shows a contextual explainer text below the L0–L3 segmented control that updates in real time as the user switches levels. The texts (from i18n dictionaries) describe each level's behavior:
     - **L0**: "The Pilot only plans and proposes. Nothing runs until you approve it."
@@ -212,8 +217,8 @@ Admin-only (non-admins see a lock screen with link to My Account). Inline in `ap
 - **System** — version info, update posture, and service health:
   - **Hero card** — Orca logo, current version (`useSystem`, 60 s poll), update available badge, Update now button
   - **Auto-update toggle** — enables automatic daemon updates on new npm releases; saves immediately via `PUT /config`
-  - **Services** — live health cards for Daemon (`:4400`) and Web (`:4500`) with status dots
-  - Uses `useSystem` for version + update info, `useSystemUpdate` mutation for triggering updates
+  - **Services** — live health cards for Daemon (`:4400`) and Web (`:4500`) with status dots, each with a **restart button** (`RotateCcw` icon) that opens a confirm dialog before calling `useSystemRestart` (`POST /system/restart` with `target: 'daemon' | 'web'`); disabled while a restart is in flight
+  - Uses `useSystem` for version + update info, `useSystemUpdate`/`useSystemRestart` mutations for triggering updates/restarts
 - **Data** — danger zone with "Delete all data" (admin-only, `ConfirmDialog` + `useCleanupAll`); wipes tasks, missions, activity; keeps projects, users, settings
 
 ### Users `/users`
@@ -230,17 +235,38 @@ Admin-only (non-admins see a lock screen with link to My Account). Inline in `ap
 
 ### Account `/account`
 
-`AccountView` (`modules/account/AccountView.tsx`):
+`AccountView` (`modules/account/AccountView.tsx`), organized into a tabbed `SettingsLayout`
+(Profile / Security / Notifications / CLI / Prompts; the active tab persists in `localStorage`):
 
-- **Default model selector** — radiogroup of allowed models with `ModelIcon`
-- **Profile** — avatar (upload), name, email
-- **Admin badge** shown when user is admin
-- **Password change** — current + new + confirm with server-side validation
-- **Phone push toggle** — per-device opt-in for mission notifications (review escalation, needs_input, stall, completion)
+- **Profile** — avatar (upload), name, email, admin badge when applicable, a UI scale slider
+  (per-device display preference, live-preview via `useUiScale`, persisted in `localStorage`), and
+  a default-model selector (radiogroup of allowed models with `ModelIcon`)
+- **Security** — password change (current + new + confirm) with server-side validation
+- **Notifications** — phone push toggle, per-device opt-in for mission notifications (review
+  escalation, needs_input, stall, completion)
   - Checks `isPushSupported()`, queries existing subscription via `navigator.serviceWorker.getRegistration()`
   - `enablePush()` / `disablePush()` via `lib/pushClient.ts` — calls `POST /push/subscribe` / `POST /push/unsubscribe`
   - Inline action buttons in the notification (Allow/Reject, Approve/Rerun, Open)
-- **UI scale slider** — per-device display preference, live-preview via `useUiScale`, persisted in `localStorage`
+- **CLI** (`CliSection`) — per-user settings for the embedded brain assistant (`orca chat` / the
+  web chat dock), all auto-saving via `PATCH /auth/me/cli-settings`:
+  - **Model** — default model override for new conversations (`ExecutorPicker`, grouped Orca AI
+    catalog with provider tabs + OAuth badges); empty falls back to the configured server default
+    (shown by name in the picker's default option).
+  - **Vision model** — a separate fallback model used only when an image is sent to a conversation
+    whose current model isn't vision-capable; the session hops onto it for that turn and back once
+    text-only turns resume.
+  - **Reasoning effort** — pill row for the thinking level (`minimal` / `low` / `medium` / `high` /
+    `xhigh`, or "Default" to leave the model's own).
+  - **Communication style** — pill row (Professional / Friendly / Concise / Detailed) that shapes
+    the assistant's tone, verbosity, and Czech vykání/tykání; a hint line explains the selected style.
+  - **Discord ID** — a text field linking your Discord account (numeric snowflake) to your Orca
+    account, so the Discord bot recognizes you and your memories share your Orca identity instead
+    of an anonymous per-platform store.
+  - **Auto-compact** — toggle + a percentage slider (30–95%) for the context-fill threshold at
+    which a long conversation is automatically summarized.
+  - Saving restarts your live brain session so a model/settings change applies immediately;
+    conversation history rehydrates, nothing is lost.
+- **Prompts** (`PromptsSection`) — per-user overrides of select built-in prompt templates.
 
 ### Onboarding `/onboarding`
 
@@ -576,9 +602,25 @@ Status-to-tone mapping for task statuses in `modules/dashboard/statusTone.ts`:
 
 ### Assistant dock (`modules/advisor/`)
 
-The assistant (formerly "advisor") is a **docked, IDE-style side panel** (`AdvisorPanel`), not a floating box. It opens as a full-height column on the left or right (`useDockState`, persisted to `localStorage` under `advisor:dock`: open/side/width/panes/sizes). A vertical `ResizeHandle` on the inner edge resizes the panel vs. the page; the panel hosts a vertical stack of **panes** split by horizontal `ResizeHandle`s. Each pane is an `AdvisorPane`: the user's own assistant (start/stop lifecycle + agent picker with per-model brand icons) or, added via `SessionPicker`, a read-write `StreamTerminal` onto any running session — so you can watch the assistant and a worker at once.
+The assistant (formerly "advisor") is a **docked, IDE-style side panel** (`AdvisorPanel`), not a floating box. It opens as a full-height column on the left or right (`useDockState`, persisted to `localStorage` under `advisor:dock`: open/side/width/panes/sizes). A vertical `ResizeHandle` on the inner edge resizes the panel vs. the page; the panel hosts a vertical stack of **panes** split by horizontal `ResizeHandle`s.
 
-The advisor pane is **removable**: its header has a close control, removal persists an off intent, and it can be re-added from the "+" menu (`SessionPicker` shows a "Re-add advisor" option when the advisor pane is absent). When no panes remain, the dock renders an empty state with a hint. When the dock is closed, a floating `AdvisorLauncher` (a dark terminal icon) reopens it.
+The dock has two modes (`Segmented`, persisted under `orca.dock.mode`, chat first):
+
+- **Chat** — `BrainChat`, talking directly to the embedded brain over its own SSE stream
+  (`GET /brain/stream`), the same engine `orca chat` and the Discord bot run on. It keeps a
+  conversation picker (new / resume any past conversation) with a **debounced fulltext search**
+  box (`Search` icon, ≥2 characters, 300 ms debounce, `GET /brain/search`) — matching conversations
+  list with the hit snippet highlighted (`Highlight`). Supports image/text-file attachments, a
+  live tool-call trace while the agent works, a statusline (model + context-usage percentage), and
+  the same `/model` picker and `/compact` (manual context compaction) the CLI exposes.
+- **Terminal** — each pane is an `AdvisorPane`: the user's own tmux-spawned assistant (start/stop
+  lifecycle + agent picker with per-model brand icons) or, added via `SessionPicker`, a read-write
+  `StreamTerminal` onto any running session — so you can watch the assistant and a worker at once.
+  The advisor pane is **removable**: its header has a close control, removal persists an off
+  intent, and it can be re-added from the "+" menu (`SessionPicker` shows a "Re-add advisor"
+  option when the advisor pane is absent).
+
+When no panes remain, the dock renders an empty state with a hint. When the dock is closed, a floating `AdvisorLauncher` (a dark terminal icon) reopens it.
 
 The dock's thin global toolbar carries no pane title (each pane labels itself); running-state controls live in an overflow menu. The sidebar **mirrors to the right edge** when the dock is on the left, so the layout stays balanced whichever side you pick.
 

@@ -9,8 +9,13 @@ export interface TurnIdentity {
   userId: string;
   /** Set when the sender is (or linked to) a registered Orca account. */
   orcaUsername?: string;
-  /** The instance owner / an admin session — owner-scoped state (memory) stays under one identity. */
+  /** Full-access (all-access policy) turn — unlocks project-scoped power tools. NOT sufficient for
+   *  owner-only surfaces: a foreign platform member mapped to an admin role also lands here. */
   admin: boolean;
+  /** The turn is genuinely the instance OPERATOR — their own chat, their linked platform account, or
+   *  their own automation (cron). Owner-only surfaces (private long-term memory, the raw Discord API)
+   *  gate on THIS, never on `admin`, so an admin-role stranger can't reach the operator's private state. */
+  owner: boolean;
 }
 
 interface TurnScope { policy: Policy; identity?: TurnIdentity }

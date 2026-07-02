@@ -135,6 +135,22 @@ describe('discord LiveMessage (Hermes-style tool progress)', () => {
   });
 });
 
+describe('discord memberIsAdmin (operator-only picker gate)', () => {
+  it('is true only for a member holding a role mapped admin:true', async () => {
+    const { memberIsAdmin } = await import(join(repoRoot, 'plugins/discord/index.mjs')) as { memberIsAdmin: (r: unknown, p: unknown) => boolean };
+    const policies = [
+      { roleId: 'r-admin', admin: true, projectIds: [] },
+      { roleId: 'r-user', projectIds: [1] },
+    ];
+    expect(memberIsAdmin(['r-admin'], policies)).toBe(true);
+    expect(memberIsAdmin(['r-user'], policies)).toBe(false);       // mapped, but not admin
+    expect(memberIsAdmin(['r-user', 'r-admin'], policies)).toBe(true);
+    expect(memberIsAdmin(['r-nobody'], policies)).toBe(false);     // unmapped role
+    expect(memberIsAdmin([], policies)).toBe(false);
+    expect(memberIsAdmin(['r-admin'], undefined)).toBe(false);     // no policies configured
+  });
+});
+
 describe('discord toolEmoji (per-tool progress emoji)', () => {
   it('maps exact names, prefix patterns, and falls back to the wrench', async () => {
     const { toolEmoji } = await import(join(repoRoot, 'plugins/discord/index.mjs')) as { toolEmoji: (n: string) => string };

@@ -15,13 +15,16 @@ export function register(ctx) {
   const apiKey = typeof ctx.config.apiKey === 'string' ? ctx.config.apiKey.trim() : '';
   const ownerId = (typeof ctx.config.userId === 'string' && ctx.config.userId.trim()) || 'orca';
 
-  /** Memory identity for the CURRENT turn: the owner/admin keeps the configured id (continuity with
-   *  any pre-Orca memory store), a linked sender gets their Orca username, an unknown platform sender
-   *  a stable `<platform>:<id>` key. Outside a turn (no identity) → the owner id. */
+  /** Memory identity for the CURRENT turn: the OPERATOR keeps the configured id (continuity with any
+   *  pre-Orca memory store), everyone else gets their own namespaced store so they can never read or
+   *  pollute the operator's private memory. Gated on `owner` (the true operator), NOT `admin` — a
+   *  foreign platform member with an admin-mapped role is admin-but-not-owner. Non-owner keys are
+   *  prefixed (`orca:`/`<platform>:`) so a chosen username can't collide with the bare owner id.
+   *  Outside a turn (no identity) → the owner id. */
   const memoryUser = () => {
     const who = ctx.currentIdentity?.();
-    if (!who || who.admin) return ownerId;
-    if (who.orcaUsername) return who.orcaUsername;
+    if (!who || who.owner) return ownerId;
+    if (who.orcaUsername) return `orca:${who.orcaUsername}`;
     return `${who.platform}:${who.userId}`;
   };
 

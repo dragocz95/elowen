@@ -126,7 +126,7 @@ export interface UserPrompt {
 
 /** Per-user CLI/brain settings surfaced in Account → CLI. `model` empty → the configured brain default
  *  (`serverDefault`, response-only). */
-export interface CliSettings { model: string; modelProvider: string; visionModel: string; visionModelProvider: string; autoCompact: boolean; autoCompactAt: number; advisorStyle: string; discordUserId: string; serverDefault?: string }
+export interface CliSettings { model: string; modelProvider: string; visionModel: string; visionModelProvider: string; thinkingLevel: string; autoCompact: boolean; autoCompactAt: number; advisorStyle: string; discordUserId: string; serverDefault?: string }
 
 /** One installed daemon plugin as listed by GET /plugins (admin). */
 export interface PluginInfo {
@@ -178,6 +178,8 @@ export interface CronJob {
   hours?: string;
   /** Discord channel/thread the result is delivered to; empty = the plugin's default channel. */
   notifyChannelId?: string;
+  /** Brain model the job runs on; empty = the server default. */
+  model?: { provider: string; model: string };
   enabled?: boolean;
   runAt?: string;
   createdAt?: string;

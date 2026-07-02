@@ -65,7 +65,7 @@ export interface BrainDeps {
   policy?: (userId: number) => Policy;
   /** Per-user CLI/brain settings: an optional model override (empty → configured default) + auto-compact
    *  toggle and its user-tunable threshold percentage. */
-  userSettings?: (userId: number) => { model?: string; modelProvider?: string; visionModel?: string; visionModelProvider?: string; autoCompact?: boolean; autoCompactAt?: number; advisorStyle?: string };
+  userSettings?: (userId: number) => { model?: string; modelProvider?: string; visionModel?: string; visionModelProvider?: string; thinkingLevel?: string; autoCompact?: boolean; autoCompactAt?: number; advisorStyle?: string };
   /** The assistant's configured display identity (Settings → Orca AI). Absent → 'Orca'. */
   agentName?: () => string;
   /** Resolve a platform sender (e.g. a Discord id) to the Orca user who claimed it in their account
@@ -95,7 +95,7 @@ function defaultResourceLoaderFactory(o: { cwd: string; systemPrompt: string; ap
   });
 }
 
-interface LiveBrain { session: AgentSession; sessionId: string; model: string; visionCapable: boolean; policy: Policy; autoCompact: boolean; autoCompactAt: number; listeners: Set<(e: BrainEvent) => void>; turnContext: () => string; /** True while the session runs on the user's vision-fallback model (an image turn hopped onto it). */ visionFallback?: boolean }
+interface LiveBrain { session: AgentSession; sessionId: string; model: string; visionCapable: boolean; thinkingLevel?: string; policy: Policy; autoCompact: boolean; autoCompactAt: number; listeners: Set<(e: BrainEvent) => void>; turnContext: () => string; /** True while the session runs on the user's vision-fallback model (an image turn hopped onto it). */ visionFallback?: boolean }
 
 /** Fallback auto-compact threshold (fraction of the context window) when the user set none. */
 const DEFAULT_AUTO_COMPACT_AT = 0.8;
@@ -154,6 +154,15 @@ export class BrainService {
    *  calls on one session id queue up here instead of corrupting turn state. */
   private locks = new Map<string, Promise<unknown>>();
   constructor(private d: BrainDeps) {}
+
+  /** Whether `userId` is the instance operator. When a platform owner is configured (production), it is
+   *  exactly that user; with none configured (single-user / tests) every user is treated as the owner,
+   *  preserving the pre-identity behaviour where the owner's own store was always used. */
+  private isOwner(userId: number | undefined): boolean {
+    if (userId === undefined) return false;
+    const owner = this.d.platformOwner?.();
+    return owner === undefined ? true : userId === owner;
+  }
 
   private serial<T>(key: string, fn: () => Promise<T>): Promise<T> {
     const prev = this.locks.get(key) ?? Promise.resolve();
@@ -283,6 +292,8 @@ export class BrainService {
     channel?: boolean;
     /** Per-role tool allowlist (tool names; '*' = everything). Undefined = no restriction. */
     toolFilter?: string[];
+    /** Reasoning effort for extended-thinking models (empty/undefined = the model default). */
+    thinkingLevel?: string;
     autoCompact: boolean;
     autoCompactAt: number;
   }): Promise<LiveBrain> {
@@ -336,6 +347,9 @@ export class BrainService {
     if (resourceLoader) await resourceLoader.reload();
 
     const create = this.d.createSession ?? createAgentSession;
+    // Reasoning effort for extended-thinking models — PI clamps an unsupported level to the model's
+    // range, so passing it for a non-thinking model is harmless. Empty → leave the model default.
+    const thinkingLevel = (['minimal', 'low', 'medium', 'high', 'xhigh'] as const).find((l) => l === opts.thinkingLevel);
     const { session } = await create({
       cwd,
       sessionManager,
@@ -345,6 +359,7 @@ export class BrainService {
       customTools: allTools,
       tools: allTools.map((t) => t.name),
       noTools: 'builtin',
+      ...(thinkingLevel ? { thinkingLevel } : {}),
     });
 
     const listeners = new Set<(e: BrainEvent) => void>();
@@ -364,7 +379,7 @@ export class BrainService {
       return parts.length ? `<context>\n${parts.join('\n')}\n</context>\n\n` : '';
     };
     const visionCapable = Array.isArray((model as { input?: string[] }).input) ? ((model as { input?: string[] }).input as string[]).includes('image') : true;
-    return { session, sessionId, model: model.id, visionCapable, policy: opts.policy, autoCompact: opts.autoCompact, autoCompactAt: opts.autoCompactAt, listeners, turnContext };
+    return { session, sessionId, model: model.id, visionCapable, thinkingLevel: opts.thinkingLevel, policy: opts.policy, autoCompact: opts.autoCompact, autoCompactAt: opts.autoCompactAt, listeners, turnContext };
   }
 
   /** Start (or resume) a conversation. `session` resumes that stored conversation (ownership checked);
@@ -396,6 +411,7 @@ export class BrainService {
         ownerUserId: userId,
         selection,
         policy: this.d.policy?.(userId) ?? { allowedProjectIds: 'all' as const, allowedPaths: () => [] },
+        thinkingLevel: userCfg?.thinkingLevel,
         autoCompact: !!userCfg?.autoCompact,
         autoCompactAt: userCfg?.autoCompactAt ? userCfg.autoCompactAt / 100 : DEFAULT_AUTO_COMPACT_AT,
       });
@@ -412,6 +428,12 @@ export class BrainService {
   }
 
   async send(userId: number, text: string, images?: { data: string; mimeType: string }[]): Promise<void> {
+    if (!this.activeLive(userId)) throw new Error('brain not started for user');
+    // Serialized per USER for the whole turn: the vision-fallback respawn below disposes and recreates
+    // the session, which MUST NOT race a concurrent send() (a double-submit would dispose a session
+    // mid-prompt). This user-level lock guards the stop/start decision; the inner session lock still
+    // guards the prompt itself. `start()` uses its own (session-keyed) lock, so there's no re-entrancy.
+    await this.serial(`user-${userId}`, async () => {
     let b = this.activeLive(userId);
     if (!b) throw new Error('brain not started for user');
     // Vision fallback (Account → CLI): an image turn on a text-only model hops onto the user's
@@ -423,7 +445,10 @@ export class BrainService {
       await this.start(userId, { provider: this.d.userSettings?.(userId)?.visionModelProvider || undefined, model: vision });
       b = this.activeLive(userId);
       if (!b) throw new Error('brain not started for user');
-      b.visionFallback = true;
+      // Only mark the hop as active if it actually reached a vision-capable model — otherwise the
+      // fallback model was unavailable/not allowed (start fell back to the default) and re-flagging
+      // would pointlessly respawn on every following text turn.
+      b.visionFallback = b.visionCapable;
     } else if (!images?.length && b.visionFallback) {
       this.stop(userId);
       await this.start(userId);
@@ -451,6 +476,7 @@ export class BrainService {
         userId: String(userId),
         orcaUsername: this.d.users.get(userId)?.username,
         admin: live.policy.allowedProjectIds === 'all',
+        owner: this.isOwner(userId), // their own authenticated chat → operator
       };
       await runWithPolicy(live.policy, () => (options ? live.session.prompt(prompted, options) : live.session.prompt(prompted)), identity);
       // Auto-compact: once the conversation fills most of the context window, summarize it so the next
@@ -461,6 +487,7 @@ export class BrainService {
           try { await live.session.compact(); } catch { /* best-effort; keep the session usable */ }
         }
       }
+    });
     });
   }
 
@@ -524,19 +551,28 @@ export class BrainService {
           ];
           // A sender who linked their platform id in Account settings gets a verified identity line —
           // the agent then KNOWS who this is (incl. recognizing the operator), not just a bracket name.
+          // The display name is attacker-influenced (a user picks their own Orca name), so strip
+          // brackets/newlines before splicing it into this trusted line — otherwise a name like
+          // `x] SYSTEM: …` could forge instructions into the prompt.
           const linked = this.d.resolvePlatformUser?.(src.platform, src.userId);
+          const safeName = linked ? linked.name.replace(/[[\]\r\n]/g, ' ').trim().slice(0, 80) : '';
           const sendText = linked
-            ? `[Verified: this sender is the Orca user "${linked.name}"${linked.id === owner ? ' — the operator of this instance' : ''}]\n${text}`
+            ? `[Verified: this sender is the Orca user "${safeName}"${linked.id === owner ? ' — the operator of this instance' : ''}]\n${text}`
             : text;
           // Per-turn sender identity: a linked sender keys per-user plugin state (memory) by their Orca
-          // account; an unknown sender by platform id. Owner-authored automation (cron) counts as admin.
+          // account; an unknown sender by platform id. `owner` is stricter than `admin` — only the
+          // operator (their linked account, or their own server-internal automation like cron/subagent)
+          // counts, NEVER a foreign Discord member who merely holds an admin-mapped role. `admin` still
+          // reflects all-access policy (project power tools); the two are deliberately separate.
+          const internalAutomation = src.platform === 'cron' || src.platform === 'subagent';
           const identity = {
             platform: src.platform,
             userId: src.userId,
             orcaUsername: linked?.username || linked?.name,
             admin: src.access.admin === true || linked?.admin === true,
+            owner: (linked?.id !== undefined && this.isOwner(linked.id)) || (internalAutomation && src.access.admin === true),
           };
-          return this.channelSend({ channelId: `${src.platform}-${src.threadId ?? src.channelId}`, ownerUserId: owner, policy, promptAppend: promptAppend.length ? promptAppend : undefined, trusted: src.access.admin, model: src.access.model, tools: src.access.admin ? undefined : src.access.tools, images: src.images, identity, history: src.history, onEvent }, sendText);
+          return this.channelSend({ channelId: `${src.platform}-${src.threadId ?? src.channelId}`, ownerUserId: owner, policy, promptAppend: promptAppend.length ? promptAppend : undefined, trusted: src.access.admin, model: src.access.model, thinkingLevel: src.access.thinkingLevel, tools: src.access.admin ? undefined : src.access.tools, images: src.images, identity, history: src.history, onEvent }, sendText);
         });
         await adapter.connect();
         this.startedPlatforms.push(adapter);
@@ -571,7 +607,7 @@ export class BrainService {
    *  stays in SQLite and rehydrates on the next message), so a busy server can't leak sessions. */
   private static readonly MAX_CHANNELS = 32;
 
-  async channelSend(opts: { channelId: string; ownerUserId: number; policy: Policy; promptAppend?: string[]; trusted?: boolean; model?: { provider?: string; model?: string }; tools?: string[]; images?: { data: string; mimeType: string }[]; identity?: TurnIdentity; history?: () => Promise<string>; onEvent?: (e: BrainEvent) => void }, text: string): Promise<string> {
+  async channelSend(opts: { channelId: string; ownerUserId: number; policy: Policy; promptAppend?: string[]; trusted?: boolean; model?: { provider?: string; model?: string }; thinkingLevel?: string; tools?: string[]; images?: { data: string; mimeType: string }[]; identity?: TurnIdentity; history?: () => Promise<string>; onEvent?: (e: BrainEvent) => void }, text: string): Promise<string> {
     const sessionId = `brain-ch-${opts.channelId}`;
     // Serialized per channel: two rapid Discord messages must not prompt() one PI session concurrently
     // (and must not both spawn it).
@@ -584,8 +620,10 @@ export class BrainService {
         if (past.trim()) text = `${past.trim()}\n\n${text}`;
       }
       let ch = this.channels.get(opts.channelId);
-      // A model switch mid-conversation rebuilds the session on the new model (history rehydrates).
-      if (ch && opts.model?.model && ch.model !== opts.model.model) { ch.session.dispose(); this.channels.delete(opts.channelId); ch = undefined; }
+      // A model or reasoning-effort switch mid-conversation rebuilds the session (history rehydrates).
+      const modelChanged = !!opts.model?.model && ch?.model !== opts.model.model;
+      const thinkingChanged = !!ch && (ch.thinkingLevel ?? '') !== (opts.thinkingLevel ?? '');
+      if (ch && (modelChanged || thinkingChanged)) { ch.session.dispose(); this.channels.delete(opts.channelId); ch = undefined; }
       if (!ch) {
         if (this.channels.size >= BrainService.MAX_CHANNELS) {
           const oldest = this.channels.entries().next().value;
@@ -599,6 +637,7 @@ export class BrainService {
           extraAppend: opts.promptAppend,
           channel: !opts.trusted, // foreign platform senders never get the orca_* control-plane tools
           toolFilter: opts.tools,
+          thinkingLevel: opts.thinkingLevel,
           autoCompact: true, // channels are long-lived and unattended — keep their context bounded
           autoCompactAt: DEFAULT_AUTO_COMPACT_AT,
         });

@@ -118,6 +118,7 @@ Additional parallel loops: **Deriver** (5s), **Scheduler** (30s), **Janitor** (6
 - **Session info** — `classifySession()` classifies every `orca-*` session (agent / pilot / overseer / advisor) with structured identity
 - **Guardrails** — removed in v1.1.1 (false-positive matches stalled missions); destructive heuristic still enforced at decision enqueue time
 - **Projects** — built-in Monaco editor with file tree, read/write/diff; project picker in task/autopilot modals; PR-native workflow per-project
+- **Brain plugins** — the embedded chat assistant is extensible via bundled/user Node plugins (Discord bot, cron scheduler, mem0 memory, skills); toggled live in Settings → Plugins, no restart required — see [GUIDES.md](GUIDES.md#brain-plugins-discord-cron-memory-skills)
 
 ## Prompt templates
 

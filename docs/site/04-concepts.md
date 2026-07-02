@@ -279,6 +279,18 @@ prompt-injected agent from creating users, performing admin operations, or reach
 it isn't actively working in. Project ownership is still enforced downstream, so an agent
 cannot cross tenancy even within the allow-list.
 
+### Trust boundary: admin vs owner
+
+The token scopes above govern the REST API; the embedded **brain** (chat, Discord, cron,
+sub-agent delegation) layers a second, narrower distinction on top for its own plugin tools:
+`admin` (may use project-scoped power tools) and `owner` (is this genuinely the instance
+operator). A Discord role can be mapped to grant `admin` so trusted members reach project tools
+from chat — but only a linked account that resolves to the configured operator, or the daemon's
+own internal automation, ever counts as `owner`. Owner-only surfaces — long-term memory, the raw
+Discord API — gate on `owner`, so an admin-mapped Discord member can reach project tools but
+never the operator's private memory or the bot's server-management token. See
+[Architecture](/docs/architecture) for how this identity is carried through a prompt turn.
+
 ## Stuck detector
 
 An agent that exits without running `orca close` leaves its task `in_progress` with a dead

@@ -31,7 +31,7 @@ export interface SessionSource {
    *  so the brain can see what was said in the channel before it joined. Returns a ready context
    *  block (or '' when nothing is available). */
   history?: () => Promise<string>;
-  access?: { projectIds: number[]; prompt?: string; admin?: boolean; model?: { provider?: string; model?: string }; tools?: string[] };
+  access?: { projectIds: number[]; prompt?: string; admin?: boolean; model?: { provider?: string; model?: string }; thinkingLevel?: string; tools?: string[] };
 }
 /** A messaging channel a plugin attaches (Discord, …). The host calls `listen` + `connect` at startup;
  *  the handler returns the brain's reply (or undefined to stay silent) and the adapter delivers it. */

@@ -4,7 +4,7 @@ import type { BrainRuntimeConfig } from '../../src/brain/providers.js';
 
 const cfg: BrainRuntimeConfig = {
   providers: [
-    { id: 'relay', label: 'Relay', type: 'openai', baseUrl: 'https://coresynth.io/v1', models: ['gpt-x', 'kimi'], apiKey: 'cs-x' },
+    { id: 'relay', label: 'Relay', type: 'openai', baseUrl: 'https://relay.example.test/v1', models: ['gpt-x', 'kimi'], apiKey: 'cs-x' },
     { id: 'ant', label: 'Anthropic', type: 'anthropic', baseUrl: '', models: ['claude-x'], apiKey: 'sk-ant' },
   ],
 };
@@ -33,7 +33,7 @@ describe('brain providers', () => {
   it('keeps the /v1 segment in the openai base url (client appends /chat/completions)', () => {
     const reg = buildBrainRegistry(cfg);
     const m = resolveBrainModel(reg, cfg);
-    expect(m.baseUrl).toBe('https://coresynth.io/v1');
+    expect(m.baseUrl).toBe('https://relay.example.test/v1');
   });
 
   it('throws a clear error with no providers configured', () => {

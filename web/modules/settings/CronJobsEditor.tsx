@@ -1,6 +1,6 @@
 'use client';
 import { useEffect, useState } from 'react';
-import { CalendarClock, Check, ChevronDown, ChevronRight, Clock, Hash, MessageSquare, Plus, Trash2, X } from 'lucide-react';
+import { CalendarClock, Check, ChevronDown, ChevronRight, Clock, Cpu, Hash, MessageSquare, Plus, Trash2, X } from 'lucide-react';
 import { useAutoSave } from '../../lib/useAutoSave';
 import { compactElapsed, parseTs } from '../../lib/format';
 import { Badge } from '../../components/ui/Badge';
@@ -12,9 +12,11 @@ import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { LoadingState } from '../../components/ui/states';
 import { useToast } from '../../components/ui/Toast';
 import { useTranslation } from '../../lib/i18n';
-import { useCronJobs, useDiscordChannels } from '../../lib/queries';
+import { useCronJobs, useDiscordChannels, useBrainModels } from '../../lib/queries';
 import { useSaveCronJobs } from '../../lib/mutations';
-import type { CronJob, DiscordChannelOption } from '../../lib/types';
+import type { CronJob, DiscordChannelOption, BrainModelOption } from '../../lib/types';
+
+const MODEL_PREVIEW = 8; // pills shown before the "+N more" expander — keeps the row compact
 
 const textareaClass = 'w-full rounded-md border border-border bg-bg px-3 py-2 font-mono text-sm text-text placeholder:text-text-muted focus:border-accent';
 
@@ -73,6 +75,39 @@ function ChannelPills({ value, onChange, channels }: { value: string; onChange: 
   );
 }
 
+/** Model picker for a job: clickable pills, "Default" first, then each available brain model. Only the
+ *  first MODEL_PREVIEW pills show up front (+ the current pick if it falls past the cut); a "+N more"
+ *  toggle reveals the rest, so a long catalog doesn't dominate the row. `value` is "provider/model". */
+function ModelPills({ value, onChange, models }: { value: string; onChange: (v: string) => void; models: BrainModelOption[] }) {
+  const { t } = useTranslation();
+  const [expanded, setExpanded] = useState(false);
+  const pill = (active: boolean) =>
+    `inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[11px] transition-colors ${active ? 'border-accent bg-accent/15 text-accent' : 'border-border text-text-muted hover:bg-elevated'}`;
+  const keyOf = (m: BrainModelOption) => `${m.provider}/${m.model}`;
+  const selectedIdx = models.findIndex((m) => keyOf(m) === value);
+  // Collapsed view: the first N — but always include the current pick so a saved choice stays visible.
+  const shown = expanded ? models : models.filter((_m, i) => i < MODEL_PREVIEW || i === selectedIdx);
+  const hiddenCount = models.length - shown.length;
+  return (
+    <div className="flex flex-wrap items-center gap-1.5">
+      <button type="button" onClick={() => onChange('')} className={pill(value === '')}>{t.cron.modelDefault}</button>
+      {shown.map((m) => (
+        <button key={keyOf(m)} type="button" onClick={() => onChange(keyOf(m))} className={pill(value === keyOf(m))} title={m.providerLabel}>
+          <Cpu size={11} aria-hidden />{m.model}
+        </button>
+      ))}
+      {hiddenCount > 0 ? (
+        <button type="button" onClick={() => setExpanded(true)} className="text-[11px] text-accent hover:underline">
+          {t.cron.moreModels.replace('{n}', String(hiddenCount))}
+        </button>
+      ) : null}
+      {expanded && models.length > MODEL_PREVIEW ? (
+        <button type="button" onClick={() => setExpanded(false)} className="text-[11px] text-text-muted hover:underline">{t.cron.lessModels}</button>
+      ) : null}
+    </div>
+  );
+}
+
 /** Cron jobs manager (the cronjob plugin detail): each job is a collapsible row — status dot, name,
  *  schedule/destination badges and last run in the header; editable fields when expanded. Edits
  *  auto-persist as one PUT of the whole list; the plugin's scheduler re-reads the file every tick,
@@ -81,6 +116,7 @@ export function CronJobsEditor() {
   const { t } = useTranslation();
   const { data, isLoading } = useCronJobs();
   const channels = useDiscordChannels();
+  const models = useBrainModels();
   const save = useSaveCronJobs();
   const { toast } = useToast();
   const [jobs, setJobs] = useState<CronJob[]>([]);
@@ -132,6 +168,8 @@ export function CronJobsEditor() {
                   aria-hidden
                 />
                 <span className="truncate text-sm font-medium text-text">{job.name || t.cron.jobNew}</span>
+                {/* The badges are shrink-0 and would crowd the name off a narrow (mobile) row — the
+                    destination badge and last-run hide on mobile; only the compact schedule stays. */}
                 <span className="ml-auto flex shrink-0 items-center gap-1.5">
                   {lastRunMs != null ? (
                     <span className="hidden text-tiny text-text-muted sm:inline" title={new Date(lastRunMs).toLocaleString()}>
@@ -142,10 +180,12 @@ export function CronJobsEditor() {
                     {job.runAt ? <CalendarClock size={10} className="mr-1 inline-block align-[-1px]" aria-hidden /> : <Clock size={10} className="mr-1 inline-block align-[-1px]" aria-hidden />}
                     {job.schedule}
                   </Badge>
-                  <Badge>
-                    <Hash size={10} className="mr-1 inline-block align-[-1px]" aria-hidden />
-                    {dest ?? t.cron.channelDefault}
-                  </Badge>
+                  <span className="hidden sm:inline-flex">
+                    <Badge>
+                      <Hash size={10} className="mr-1 inline-block align-[-1px]" aria-hidden />
+                      {dest ?? t.cron.channelDefault}
+                    </Badge>
+                  </span>
                 </span>
               </button>
               <Button variant="ghost" icon={Trash2} aria-label={t.cron.removeJob} onClick={() => setPendingDelete(job.id)} />
@@ -184,6 +224,16 @@ export function CronJobsEditor() {
                     value={job.notifyChannelId ?? ''}
                     onChange={(v) => patch(job.id, { notifyChannelId: v || undefined })}
                     channels={channels.data ?? []}
+                  />
+                </Field>
+                <Field label={t.cron.model} hint={t.cron.modelHint}>
+                  <ModelPills
+                    value={job.model ? `${job.model.provider}/${job.model.model}` : ''}
+                    onChange={(v) => {
+                      const slash = v.indexOf('/');
+                      patch(job.id, { model: slash > 0 ? { provider: v.slice(0, slash), model: v.slice(slash + 1) } : undefined });
+                    }}
+                    models={models.data ?? []}
                   />
                 </Field>
                 {job.lastResult ? (

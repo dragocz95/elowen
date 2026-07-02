@@ -183,6 +183,82 @@ fields are updated. Returns the updated profile subset.
 { "error": "exec not allowed" }
 ```
 
+### CLI settings
+
+Per-user settings for the embedded brain assistant (`orca chat` / the web chat dock): a model
+override, a separate vision-model override, reasoning effort, communication style, auto-compact,
+and a linked Discord user id. Self-service — any authenticated user manages their own.
+
+```http
+GET /auth/me/cli-settings
+```
+
+**Response `200`**
+```json
+{
+  "model": "claude-sonnet-5",
+  "modelProvider": "anthropic",
+  "visionModel": "",
+  "visionModelProvider": "",
+  "thinkingLevel": "medium",
+  "autoCompact": true,
+  "autoCompactAt": 80,
+  "advisorStyle": "professional",
+  "discordUserId": "123456789012345678",
+  "serverDefault": "claude-sonnet-5"
+}
+```
+
+An empty `model`/`modelProvider` means "use the server default" — `serverDefault` tells the UI
+what that resolves to (the first configured brain provider's first model, else the autopilot
+relay model).
+
+```http
+PATCH /auth/me/cli-settings
+Content-Type: application/json
+
+{
+  "model": "claude-sonnet-5",
+  "modelProvider": "anthropic",
+  "visionModel": "gpt-5.5-vision",
+  "visionModelProvider": "openai",
+  "thinkingLevel": "high",
+  "autoCompact": true,
+  "autoCompactAt": 85,
+  "advisorStyle": "concise",
+  "discordUserId": "123456789012345678"
+}
+```
+
+All fields are optional — only provided fields are updated:
+
+- `model` / `modelProvider` — the brain's default model for new conversations. A complete pair
+  must be in the daemon's `allowedExecs` and (for a restricted non-admin) the caller's own
+  `allowed_execs`; clearing to `""` is always allowed.
+- `visionModel` / `visionModelProvider` — used automatically when an image is sent to a
+  conversation whose model isn't vision-capable; the same allow-list check applies.
+- `thinkingLevel` — reasoning effort for extended-thinking models: `minimal` \| `low` \|
+  `medium` \| `high` \| `xhigh`, or `""` to leave the model's own default. An unknown value is
+  silently ignored by the store.
+- `autoCompact` / `autoCompactAt` — auto-summarize the conversation once its context fill
+  crosses `autoCompactAt` percent (clamped 30–95). Off by default.
+- `advisorStyle` — communication style: `professional` \| `friendly` \| `concise` \| `detailed`
+  (shapes tone, verbosity, and Czech vykání/tykání). Unknown values are ignored.
+- `discordUserId` — a Discord snowflake (5–25 digits) linking this Orca account to a Discord
+  user; anything else clears the link. A linked sender is recognized by the Discord bot (a
+  verified identity line is added to their turns) and shares the operator's or their own
+  namespaced mem0 memory identity across platforms.
+
+Saving restarts the caller's live brain session so a model/settings change applies immediately
+(conversation history rehydrates, nothing is lost).
+
+**Response `200`** — the updated settings (same shape as the `GET`, plus `serverDefault`).
+
+**Error `400`**
+```json
+{ "error": "model not allowed" }
+```
+
 ### Change password
 
 ```http
@@ -2035,6 +2111,179 @@ from the agent.
 
 ---
 
+## Plugins
+
+Orca's embedded brain assistant is extensible through a lightweight plugin system: each plugin is
+a self-contained Node ESM module (bundled with Orca or dropped into the user plugins directory)
+declaring, via an `orca-plugin.json` manifest, what it contributes (tools, chat platforms, skills)
+and its configurable fields. Enabling/disabling and saving config apply **live** — the brain's
+plugin registry hot-reloads and running conversations restart on it, no daemon restart needed.
+All `/plugins` routes are admin-only (open in single-user mode).
+
+```http
+GET /plugins
+```
+
+Lists every plugin discovered on disk with its manifest metadata and current enabled state.
+
+**Response `200`**
+```json
+[
+  { "name": "discord", "version": "0.1.0", "description": "...", "provides": { "platforms": ["discord"], "tools": ["discord_api"] }, "source": "bundled", "enabled": true, "configurable": true }
+]
+```
+
+```http
+GET /plugins/:name
+```
+
+Detail for one plugin: its declared `configSchema`, current (non-secret) values, and which secret
+keys are set (secret values themselves never leave the daemon).
+
+```http
+PATCH /plugins/:name
+Content-Type: application/json
+
+{ "enabled": true }
+```
+
+Toggles a plugin on/off.
+
+```http
+PATCH /plugins/:name/config
+Content-Type: application/json
+
+{ "values": { "botToken": "...", "guildId": "123456789012345678" } }
+```
+
+Saves a plugin's config values. A secret field sent empty/omitted keeps its stored value (secrets
+round-trip write-only — the UI never reads them back).
+
+**Error `403`** (all routes above) — `{ "error": "forbidden" }`. **Error `404`** — `{ "error": "unknown plugin" }`.
+
+### Cron jobs (cronjob plugin)
+
+The cronjob plugin's admin tools (`cron_add`, `cron_list`, `cron_remove`, `schedule_wakeup`)
+persist jobs to a `jobs.json` file that its scheduler re-reads every 30 s; these routes edit that
+same file directly so the web UI can manage jobs without going through chat.
+
+```http
+GET /plugins/cronjob/jobs
+```
+
+**Response `200`**
+```json
+[
+  {
+    "id": "m6f3a2b1x9y2",
+    "name": "morning-digest",
+    "schedule": "daily 07:00",
+    "prompt": "Summarize overnight activity across my projects.",
+    "hours": "5-21",
+    "notifyChannelId": "998877665544332211",
+    "model": { "provider": "anthropic", "model": "claude-sonnet-5" },
+    "enabled": true,
+    "createdAt": "2026-06-01T07:00:00.000Z",
+    "lastRun": "2026-07-02T07:00:00.000Z",
+    "lastResult": "No incidents overnight."
+  }
+]
+```
+
+Recurring jobs use `schedule` (`"every <N>m"`, `"every <N>h"`, `"daily HH:MM"`, or
+`"weekly <mon..sun> HH:MM"`); a one-shot wake-up carries `runAt` (ISO timestamp) instead and is
+removed once it fires. `hours` is an optional `"H-H"` active-hours guard (supports overnight
+windows like `"22-5"`); outside it the job stays quiet. `model` is an optional per-job override
+(provider + model) — otherwise the job runs on the brain's default model. `notifyChannelId` routes
+the job's result to a specific Discord channel/thread instead of the plugin's configured default.
+
+```http
+PUT /plugins/cronjob/jobs
+Content-Type: application/json
+
+[ { "id": "...", "name": "...", "schedule": "daily 07:00", "prompt": "...", "enabled": true } ]
+```
+
+Replaces the whole jobs array (the UI edits a full-list snapshot). Every job needs a non-empty
+`id`/`name`/`schedule` (or `runAt` for a one-shot) and `prompt`; an invalid schedule string is
+rejected. Runtime fields (`lastRun`, `lastResult`) are preserved from disk, not taken from the
+client — and a job that just flipped from disabled/new to enabled is armed from **now**, so it
+waits for its next natural slot instead of firing immediately on save.
+
+**Response `200`** (`GET`) — the array above. **Response `200`** (`PUT`) — `{ "ok": true }`.
+
+**Error `400`**
+```json
+{ "error": "invalid schedule \"...\" — use \"every 15m\", \"every 2h\", \"daily 07:30\" or \"weekly sun 20:00\"" }
+```
+
+### Skills (skills plugin)
+
+Bundled markdown skills ship read-only inside the plugin; user-created skills (also writable by
+the brain's own `create_skill` tool) live one `.md` file per skill in the plugin's data directory.
+
+```http
+GET /plugins/skills/list
+```
+
+**Response `200`**
+```json
+[
+  { "name": "deploy-checklist", "description": "Steps to ship a release", "source": "user" },
+  { "name": "code-review", "description": "How to review a diff", "source": "bundled" }
+]
+```
+
+```http
+POST /plugins/skills
+Content-Type: application/json
+
+{ "name": "deploy-checklist", "description": "Steps to ship a release", "content": "1. ...\n2. ..." }
+```
+
+Creates a user skill. `name` must be kebab-case (`a-z`, `0-9`, dashes, max 64 chars) and must not
+shadow a bundled skill's name. Applies live — new conversations pick it up immediately.
+
+**Response `201`** — `{ "ok": true }`.
+
+**Error `400`**
+```json
+{ "error": "name must be kebab-case (a-z, 0-9, dashes), max 64 chars" }
+```
+```json
+{ "error": "a bundled skill named \"...\" already exists" }
+```
+
+```http
+DELETE /plugins/skills/:name
+```
+
+Deletes a user skill. Bundled skills cannot be deleted.
+
+**Response `200`** — `{ "ok": true }`. **Error `400`** — `{ "error": "bundled skills cannot be deleted" }`.
+**Error `404`** — `{ "error": "unknown skill" }`.
+
+### Discord channels (discord plugin)
+
+```http
+GET /plugins/discord/channels
+```
+
+Text-capable destinations of the configured guild — text channels and active, non-forum threads —
+for the cron-job destination picker. Requires the plugin's `botToken` and `guildId` to be
+configured; degrades to `[]` on any missing config or upstream failure. Cached 60 s (Discord
+rate-limits the guild routes).
+
+**Response `200`**
+```json
+[
+  { "id": "111", "name": "general", "type": "channel" },
+  { "id": "222", "name": "release-notes", "type": "thread", "parentName": "announcements" }
+]
+```
+
+---
+
 ## Assistant (per-user advisor)
 
 The assistant is a persistent, per-user agent session that drives Orca on the user's behalf through
@@ -2110,6 +2359,33 @@ Kills the caller's advisor tmux session. The advisor token is untouched (reused 
 ```json
 { "ok": true }
 ```
+
+---
+
+## Brain (embedded assistant)
+
+The **brain** is Orca's in-process AI conversation engine — the "Assistant" chat dock and
+`orca chat` talk to it directly (in-process agent sessions, not a spawned tmux CLI). Every route
+below is scoped to the caller's own conversations; agent-scoped tokens are refused (`403`).
+
+### Search conversations
+
+```http
+GET /brain/search?q=deploy
+```
+
+Fulltext search across the caller's own stored conversations (including chat-platform sessions
+that carry their user id), newest match first, up to 50 hits. Queries under 2 characters return
+`[]`.
+
+**Response `200`**
+```json
+[
+  { "sessionId": "brain-1", "sessionTitle": "Deploy checklist", "role": "assistant", "snippet": "…run the deploy script and…", "ts": "2026-07-02 09:00:00" }
+]
+```
+
+**Error `403`** — `{ "error": "forbidden" }` (agent-scoped token).
 
 ---
 
@@ -2328,6 +2604,32 @@ while a mission is live — the update restarts services, which would kill runni
 ```json
 { "error": "mission_running" }
 ```
+
+**Error `403`**
+```json
+{ "error": "forbidden" }
+```
+
+### Restart a service
+
+```http
+POST /system/restart
+Content-Type: application/json
+
+{ "target": "daemon" }
+```
+
+Admin-only. Restarts one of the two systemd units in place: `"daemon"` or `"web"`. The response
+is sent **before** the restart actually fires — restarting the daemon kills the very process
+handling the request, so the underlying `systemctl restart --no-block` is deferred a beat and
+carried out by PID 1, not this request's process.
+
+**Response `200`**
+```json
+{ "ok": true }
+```
+
+**Error `400`** — `target` must be `"daemon"` or `"web"` (Zod-validated body).
 
 **Error `403`**
 ```json
@@ -2696,3 +2998,17 @@ also include `jobId` and `epicId` where applicable:
 | 92 | `GET` | `/config` | Bearer | Config |
 | 93 | `PUT` | `/config` | Bearer (admin/setup) | Config |
 | 94 | `GET` | `/ws/terminal` | Ticket | Terminal |
+| 95 | `GET` | `/auth/me/cli-settings` | Bearer | Authentication |
+| 96 | `PATCH` | `/auth/me/cli-settings` | Bearer | Authentication |
+| 97 | `GET` | `/plugins` | Bearer (admin/open) | Plugins |
+| 98 | `GET` | `/plugins/:name` | Bearer (admin/open) | Plugins |
+| 99 | `PATCH` | `/plugins/:name` | Bearer (admin/open) | Plugins |
+| 100 | `PATCH` | `/plugins/:name/config` | Bearer (admin/open) | Plugins |
+| 101 | `GET` | `/plugins/cronjob/jobs` | Bearer (admin/open) | Plugins |
+| 102 | `PUT` | `/plugins/cronjob/jobs` | Bearer (admin/open) | Plugins |
+| 103 | `GET` | `/plugins/skills/list` | Bearer (admin/open) | Plugins |
+| 104 | `POST` | `/plugins/skills` | Bearer (admin/open) | Plugins |
+| 105 | `DELETE` | `/plugins/skills/:name` | Bearer (admin/open) | Plugins |
+| 106 | `GET` | `/plugins/discord/channels` | Bearer (admin/open) | Plugins |
+| 107 | `GET` | `/brain/search` | Bearer (full) | Brain |
+| 108 | `POST` | `/system/restart` | Bearer (admin) | System |

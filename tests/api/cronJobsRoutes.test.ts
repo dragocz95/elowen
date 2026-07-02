@@ -132,6 +132,19 @@ describe('cron jobs routes', () => {
     expect((await app.request('/plugins/cronjob/jobs', put(adminTok, [job({ runAt: 'not-a-date' })]))).status).toBe(400);
   });
 
+  it('PUT round-trips a valid per-job model and rejects a malformed one (400)', async () => {
+    const { app, dataRoot, adminTok } = setup();
+    const ok = await app.request('/plugins/cronjob/jobs', put(adminTok, [job({ model: { provider: 'anthropic', model: 'claude-sonnet-5' } })]));
+    expect(ok.status).toBe(200);
+    const saved = JSON.parse(readFileSync(join(dataRoot, 'cronjob', 'jobs.json'), 'utf-8'))[0];
+    expect(saved.model).toEqual({ provider: 'anthropic', model: 'claude-sonnet-5' });
+    // Malformed model objects are rejected; an absent model is fine (default model runs).
+    for (const model of [{ provider: 'anthropic' }, { model: 'x' }, { provider: '', model: 'x' }, 'anthropic/x']) {
+      expect((await app.request('/plugins/cronjob/jobs', put(adminTok, [job({ model })]))).status, JSON.stringify(model)).toBe(400);
+    }
+    expect((await app.request('/plugins/cronjob/jobs', put(adminTok, [job()]))).status).toBe(200); // no model → ok
+  });
+
   it('PUT rejects a non-array body and a job missing required fields (400)', async () => {
     const { app, adminTok } = setup();
     expect((await app.request('/plugins/cronjob/jobs', put(adminTok, { jobs: [] }))).status).toBe(400);

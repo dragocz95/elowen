@@ -72,7 +72,7 @@ describe('memory plugin', () => {
     }
   });
 
-  it('keys the memory on the turn identity: owner → config id, linked → username, unknown → platform id', async () => {
+  it('keys the memory on the turn identity: owner → config id, non-owner linked → namespaced username, unknown → platform id', async () => {
     const calls: { body: { user_id: string } }[] = [];
     const origFetch = globalThis.fetch;
     globalThis.fetch = (async (_url: string | URL, init?: RequestInit) => {
@@ -86,19 +86,20 @@ describe('memory plugin', () => {
       });
       const add = reg.tools.find((t) => t.name === 'add_memory')!;
       const userPolicy = { allowedProjectIds: new Set<number>(), allowedPaths: () => [] };
-      // Admin/owner turn → the configured owner id (continuity with a pre-Orca memory store).
+      // OWNER turn → the configured owner id (continuity with a pre-Orca memory store).
       await runWithPolicy({ allowedProjectIds: 'all', allowedPaths: () => [] },
         () => add.execute('t1', { text: 'f' }, undefined as never, undefined as never),
-        { platform: 'discord', userId: '999', orcaUsername: 'admin', admin: true });
-      // Linked non-admin sender → their Orca username.
-      await runWithPolicy(userPolicy,
+        { platform: 'discord', userId: '999', orcaUsername: 'admin', admin: true, owner: true });
+      // Admin-but-NOT-owner (foreign member with an admin role) must NOT reach the owner store — they
+      // get their own namespaced key, never the bare owner id.
+      await runWithPolicy({ allowedProjectIds: 'all', allowedPaths: () => [] },
         () => add.execute('t2', { text: 'f' }, undefined as never, undefined as never),
-        { platform: 'discord', userId: '111', orcaUsername: 'amy', admin: false });
+        { platform: 'discord', userId: '111', orcaUsername: 'amy', admin: true, owner: false });
       // Unknown platform sender → stable platform-scoped key.
       await runWithPolicy(userPolicy,
         () => add.execute('t3', { text: 'f' }, undefined as never, undefined as never),
-        { platform: 'discord', userId: '222', admin: false });
-      expect(calls.map((c) => c.body.user_id)).toEqual(['alex', 'amy', 'discord:222']);
+        { platform: 'discord', userId: '222', admin: false, owner: false });
+      expect(calls.map((c) => c.body.user_id)).toEqual(['alex', 'orca:amy', 'discord:222']);
     } finally {
       globalThis.fetch = origFetch;
     }

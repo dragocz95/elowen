@@ -52,10 +52,12 @@ export class BrainStore {
       .all(sessionId) as BrainMessageRow[];
   }
 
-  /** Case-insensitive fulltext search across the user's conversations (channel sessions included —
-   *  they carry the owner's user_id). The LIKE over the raw content JSON is a coarse prefilter;
-   *  each candidate is confirmed against its extracted display text (so JSON keys never match)
-   *  and shaped into a ±60-char snippet. Newest first. */
+  /** Case-insensitive fulltext search across the user's OWN chat conversations. Shared platform
+   *  sessions (`brain-ch-*`, which carry other members' messages) and ephemeral subagent runs
+   *  (`brain-task-*`) are excluded — the search backs the personal chat sidebar, not the Discord logs.
+   *  The LIKE over the raw content JSON is a coarse prefilter; each candidate is confirmed against its
+   *  extracted display text (so JSON keys never match) and shaped into a ±60-char snippet. Newest first.
+   *  The SQL row scan is bounded (recent-biased) so a broad `%q%` can't scan the whole table. */
   searchMessages(userId: number, query: string, limit = 50): BrainSearchHit[] {
     const q = query.trim();
     if (q.length < 2) return [];
@@ -64,7 +66,9 @@ export class BrainStore {
       `SELECT m.session_id, s.title, m.role, m.content, m.created_at
          FROM brain_messages m JOIN brain_sessions s ON s.id = m.session_id
         WHERE s.user_id = ? AND m.role IN ('user', 'assistant') AND m.content LIKE ? ESCAPE '\\'
-        ORDER BY m.created_at DESC, m.rowid DESC`
+          AND m.session_id NOT LIKE 'brain-ch-%' AND m.session_id NOT LIKE 'brain-task-%'
+        ORDER BY m.created_at DESC, m.rowid DESC
+        LIMIT 500`
     ).all(userId, like) as { session_id: string; title: string; role: string; content: string; created_at: string }[];
     const needle = q.toLowerCase();
     const hits: BrainSearchHit[] = [];

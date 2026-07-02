@@ -101,7 +101,12 @@ class CronAdapter {
       this.log.info(`running job ${job.id} (${job.name})`);
       const reply = await this.handler({
         platform: 'cron', userId: 'cron', roleIds: [], channelId: `job-${job.id}`,
-        access: { projectIds: [], admin: true, prompt: `This is a scheduled ${job.runAt ? 'wake-up' : 'job'} ("${job.name}"). Do the task and summarize the outcome briefly.` },
+        access: {
+          projectIds: [], admin: true,
+          prompt: `This is a scheduled ${job.runAt ? 'wake-up' : 'job'} ("${job.name}"). Do the task and summarize the outcome briefly.`,
+          // Optional per-job model — the channel session respawns on it (else the server default runs).
+          model: job.model?.provider && job.model?.model ? { provider: job.model.provider, model: job.model.model } : undefined,
+        },
       }, job.prompt).catch((e) => `Error: ${e?.message ?? e}`);
       if (job.runAt) this.store.save(this.store.all().filter((j) => j.id !== job.id)); // one-shot: done → gone
       else this.store.patch(job.id, { lastResult: String(reply ?? '').slice(0, 500) });
@@ -136,6 +141,7 @@ export function register(ctx) {
       prompt: Type.String({ description: 'The prompt to run on schedule' }),
       hours: Type.Optional(Type.String({ description: 'Active-hours window "H-H" (e.g. "5-21") — outside it the job stays quiet' })),
       notifyChannelId: Type.Optional(Type.String({ description: 'Deliver results to this channel/thread instead of the default notification channel' })),
+      model: Type.Optional(Type.String({ description: 'Run this job on a specific brain model, as "provider/model" (e.g. "anthropic/claude-sonnet-5"). Empty = the server default.' })),
       enabled: Type.Optional(Type.Boolean({ description: 'false = create the job paused' })),
     }),
     execute: async (_id, p) => {
@@ -144,9 +150,12 @@ export function register(ctx) {
         if (!parseSchedule(p.schedule)) return ok('Error: invalid schedule — use "every 15m", "every 2h", "daily 07:30" or "weekly sun 20:00".');
         const jobs = store.all();
         const id = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+        // "provider/model" → {provider, model}; a bare or malformed value is ignored (server default runs).
+        const slash = typeof p.model === 'string' ? p.model.indexOf('/') : -1;
+        const model = slash > 0 ? { provider: p.model.slice(0, slash), model: p.model.slice(slash + 1) } : undefined;
         // lastRun starts at creation time so a fresh job waits for its NEXT natural slot — a
         // "daily 06:00" created at 15:00 must not fire immediately.
-        jobs.push({ id, name: p.name, schedule: p.schedule, prompt: p.prompt, hours: p.hours, notifyChannelId: p.notifyChannelId, enabled: p.enabled, createdAt: new Date().toISOString(), lastRun: new Date().toISOString() });
+        jobs.push({ id, name: p.name, schedule: p.schedule, prompt: p.prompt, hours: p.hours, notifyChannelId: p.notifyChannelId, model, enabled: p.enabled, createdAt: new Date().toISOString(), lastRun: new Date().toISOString() });
         store.save(jobs);
         return ok(`Scheduled "${p.name}" (${p.schedule}) — id ${id}. Results accumulate in its own conversation.`);
       } catch (e) { return fail(e); }

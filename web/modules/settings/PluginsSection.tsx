@@ -22,12 +22,13 @@ function ProvidesBadges({ p }: { p: PluginInfo }) {
     { label: t.plugins.platforms, count: p.provides.platforms?.length ?? 0, Icon: MessageSquare },
   ].filter((x) => x.count > 0);
   if (parts.length === 0) return null;
+  // Own wrapping row, indented past the icon (w-9 + gap-3 = pl-12) so badges never crowd the name.
   return (
-    <span className="flex shrink-0 items-center gap-1.5">
+    <div className="flex flex-wrap items-center gap-1.5 pl-12">
       {parts.map(({ label, count, Icon }) => (
         <Badge key={label}><Icon size={10} className="mr-1 inline-block align-[-1px]" aria-hidden />{count} {label}</Badge>
       ))}
-    </span>
+    </div>
   );
 }
 
@@ -48,19 +49,21 @@ function PluginCard({ p, onFlip, onDetail, busy }: { p: PluginInfo; onFlip: (ena
           <Icon size={17} aria-hidden />
           {p.enabled ? <span className="live-dot absolute -right-1 -top-1 h-2.5 w-2.5 rounded-full border border-surface bg-success" aria-hidden /> : null}
         </span>
+        {/* Name + version only — the provides badges live on their own wrapping row below, so a
+            narrow (mobile) card never squeezes the name down to nothing behind shrink-0 badges. */}
         <div className="flex min-w-0 flex-1 items-center gap-2">
           <span className="truncate text-sm font-semibold text-text">{p.name}</span>
           <span className="flex shrink-0 items-center gap-1 font-mono text-tiny text-text-muted" title={p.source === 'bundled' ? t.plugins.bundled : t.plugins.user}>
             {p.source === 'bundled' ? <Package size={11} aria-hidden /> : <UserIcon size={11} aria-hidden />}
             v{p.version}
           </span>
-          <ProvidesBadges p={p} />
         </div>
         {p.configurable || CUSTOM_EDITOR_PLUGINS.has(p.name) ? (
           <IconButton icon={Settings2} label={`${p.name}: ${t.plugins.configure}`} onClick={onDetail} />
         ) : null}
         <Toggle checked={p.enabled} onChange={onFlip} label={`${p.name}: ${p.enabled ? t.plugins.disable : t.plugins.enable}`} disabled={busy} />
       </div>
+      <ProvidesBadges p={p} />
       <p className="line-clamp-1 text-xs text-text-muted" title={description}>{description}</p>
     </div>
   );
