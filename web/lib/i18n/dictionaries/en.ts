@@ -931,6 +931,17 @@ export const en = {
     applyHint: 'File and terminal tools always respect each user’s repository access.',
     configure: 'Configure',
   },
+  brainChat: {
+    modeNav: 'Dock mode',
+    modeChat: 'Chat',
+    modeTerminal: 'Terminal',
+    newChat: 'New chat',
+    untitled: 'Untitled',
+    empty: 'Ask Orca anything — tasks, missions, your repositories.',
+    thinking: 'Thinking…',
+    placeholder: 'Write a message… (Enter to send)',
+    send: 'Send',
+  },
   pluginCfg: {
     back: 'Plugins',
     save: 'Save configuration',

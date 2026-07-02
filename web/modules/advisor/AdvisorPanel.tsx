@@ -1,9 +1,12 @@
 'use client';
 import { useRef, useState } from 'react';
-import { X, Plus, PanelLeft, PanelRight } from 'lucide-react';
+import { X, Plus, PanelLeft, PanelRight, MessageCircle, SquareTerminal } from 'lucide-react';
 import { useTranslation } from '../../lib/i18n';
 import { ResizeHandle } from '../../components/ui/ResizeHandle';
+import { Segmented } from '../../components/ui/Segmented';
+import { usePersistentState } from '../../lib/usePersistentState';
 import { AdvisorPane } from './AdvisorPane';
+import { BrainChat } from './BrainChat';
 import { SessionPicker } from './SessionPicker';
 import type { UseDockState } from '../../lib/useDockState';
 
@@ -17,6 +20,8 @@ export function AdvisorPanel({ dock }: { dock: UseDockState }) {
   const { state, setOpen, setSide, setWidth, setSizes, addSessionPane, removePane, addAdvisorPane } = dock;
   const stackRef = useRef<HTMLDivElement>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
+  // Chat = the embedded brain (same one `orca chat` talks to); Terminal = the tmux panes. Chat first.
+  const [mode, setMode] = usePersistentState<'chat' | 'terminal'>('orca.dock.mode', 'chat', ['chat', 'terminal']);
 
   // Width drag: on the right the panel grows as the divider moves left (negative dx), so the sign
   // flips by side.
@@ -49,6 +54,16 @@ export function AdvisorPanel({ dock }: { dock: UseDockState }) {
       {/* Thin global toolbar for the whole dock (it may hold several panes), so it carries no pane
           title — each pane labels itself below. Controls are right-aligned. */}
       <div className="flex items-center gap-1 border-b border-border px-2 py-1.5">
+        <Segmented
+          aria-label={t.brainChat.modeNav}
+          size="sm"
+          options={[
+            { value: 'chat', label: t.brainChat.modeChat, icon: MessageCircle },
+            { value: 'terminal', label: t.brainChat.modeTerminal, icon: SquareTerminal },
+          ]}
+          value={mode}
+          onChange={(v) => setMode(v as 'chat' | 'terminal')}
+        />
         <div className="flex-1" />
         <button
           type="button"
@@ -59,7 +74,7 @@ export function AdvisorPanel({ dock }: { dock: UseDockState }) {
         >
           {state.side === 'right' ? <PanelLeft size={16} aria-hidden /> : <PanelRight size={16} aria-hidden />}
         </button>
-        <div className="relative">
+        <div className="relative" style={mode === 'chat' ? { display: 'none' } : undefined}>
           <button
             type="button"
             onClick={() => setPickerOpen((v) => !v)}
@@ -89,6 +104,7 @@ export function AdvisorPanel({ dock }: { dock: UseDockState }) {
         </button>
       </div>
 
+      {mode === 'chat' ? <div className="min-h-0 flex-1"><BrainChat /></div> : (
       <div ref={stackRef} className="flex min-h-0 flex-1 flex-col">
         {state.panes.length === 0 ? (
           <div className="flex h-full flex-col items-center justify-center gap-1 p-6 text-center text-text-muted">
@@ -106,6 +122,7 @@ export function AdvisorPanel({ dock }: { dock: UseDockState }) {
           </div>
         ))}
       </div>
+      )}
     </div>
   );
 

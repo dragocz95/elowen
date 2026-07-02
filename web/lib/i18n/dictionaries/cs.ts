@@ -931,6 +931,17 @@ export const cs = {
     applyHint: 'Souborové a terminálové nástroje vždy respektují přístup uživatele k repozitářům.',
     configure: 'Nastavit',
   },
+  brainChat: {
+    modeNav: 'Režim panelu',
+    modeChat: 'Chat',
+    modeTerminal: 'Terminál',
+    newChat: 'Nová konverzace',
+    untitled: 'Bez názvu',
+    empty: 'Zeptejte se Orcy na cokoliv — úkoly, mise, vaše repozitáře.',
+    thinking: 'Přemýšlím…',
+    placeholder: 'Napište zprávu… (Enter odešle)',
+    send: 'Odeslat',
+  },
   pluginCfg: {
     back: 'Pluginy',
     save: 'Uložit konfiguraci',

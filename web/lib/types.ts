@@ -56,6 +56,10 @@ export interface BrainProvider {
 }
 /** One pickable brain model (Account → CLI dropdown), grouped by provider. */
 export interface BrainModelOption { provider: string; providerLabel: string; model: string }
+/** One brain conversation in the session picker (web chat + CLI). */
+export interface BrainSessionInfo { id: string; title: string; model: string; updated_at: string; running: boolean; active: boolean }
+/** A stored brain turn shaped for display. */
+export interface BrainMessage { role: string; text: string }
 /** A running OAuth connect flow, as polled by the settings UI. */
 export interface OAuthFlowState {
   id: string;

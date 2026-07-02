@@ -224,6 +224,10 @@ export const usePlugins = () =>
 export const usePluginDetail = (name: string | null) =>
   useQuery({ queryKey: ['plugin', name], queryFn: () => orcaClient.pluginDetail(name as string), enabled: !!name });
 
+/** The caller's brain conversations (web chat session picker). */
+export const useBrainSessions = () =>
+  useQuery({ queryKey: ['brain-sessions'], queryFn: orcaClient.brainSessions });
+
 /** Pickable brain models across all configured providers (the Account → CLI dropdown source). */
 export const useBrainModels = () =>
   useQuery({ queryKey: ['brain-models'], queryFn: orcaClient.brainModels });
