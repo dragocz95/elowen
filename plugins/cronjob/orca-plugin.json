@@ -1,0 +1,8 @@
+{
+  "name": "cronjob",
+  "version": "0.1.0",
+  "apiVersion": "1",
+  "description": "Scheduled prompts: the brain can plan recurring jobs (\"every 30m\", \"daily 07:30\") that run as its own conversations with full owner powers. Managing jobs is admin-only.",
+  "entry": "index.mjs",
+  "provides": { "tools": ["cron_add", "cron_list", "cron_remove"], "platforms": ["cron"] }
+}

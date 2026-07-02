@@ -1,13 +1,88 @@
 // Bundled reference plugin: exposes markdown skills to the brain. Hand-written ESM (no build step) so
 // it doubles as the canonical example of the plugin format. It reads .md skills from its own `skills/`
-// directory using pi's loader, and registers each so the brain's system prompt advertises them.
-import { loadSkillsFromDir } from '@earendil-works/pi-coding-agent';
+// directory plus the instance's user skills dir (where create_skill writes), and registers each so the
+// brain's system prompt advertises them. The creator tools are admin-only — skills are shared state.
+import { loadSkillsFromDir, defineTool } from '@earendil-works/pi-coding-agent';
+import { Type } from 'typebox';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { readdirSync, readFileSync, writeFileSync, unlinkSync, existsSync } from 'node:fs';
+
+const ok = (text) => ({ content: [{ type: 'text', text }], details: {} });
+const fail = (e) => ok(`Error: ${e instanceof Error ? e.message : String(e)}`);
+const NAME_RE = /^[a-z0-9][a-z0-9-]{1,63}$/;
 
 export function register(ctx) {
   const here = dirname(fileURLToPath(import.meta.url));
-  const { skills } = loadSkillsFromDir({ dir: join(here, 'skills'), source: 'orca-plugin:skills' });
-  for (const skill of skills) ctx.registerSkill(skill);
-  ctx.logger.info(`registered ${skills.length} skill(s)`);
+  const userDir = ctx.dataDir(); // instance-local skills created at runtime
+  let count = 0;
+  for (const { dir, source } of [
+    { dir: join(here, 'skills'), source: 'orca-plugin:skills' },
+    { dir: userDir, source: 'orca-user:skills' },
+  ]) {
+    if (!existsSync(dir)) continue;
+    const { skills } = loadSkillsFromDir({ dir, source });
+    for (const skill of skills) ctx.registerSkill(skill);
+    count += skills.length;
+  }
+
+  const adminOnly = () => { if (!ctx.isAdminSession()) throw new Error('skills can only be managed from an admin session'); };
+
+  ctx.registerTool(defineTool({
+    name: 'create_skill', label: 'Create skill',
+    description: 'Create (or overwrite) a reusable markdown skill. It becomes part of your system prompt for NEW conversations after a brain restart. Admin only.',
+    parameters: Type.Object({
+      name: Type.String({ description: 'kebab-case identifier, e.g. deploy-checklist' }),
+      description: Type.String({ description: 'One line: when to use this skill' }),
+      content: Type.String({ description: 'The skill body (markdown instructions)' }),
+    }),
+    execute: async (_id, p) => {
+      try {
+        adminOnly();
+        if (!NAME_RE.test(p.name)) return ok('Error: name must be kebab-case (a-z, 0-9, dashes), max 64 chars.');
+        const body = `---\nname: ${p.name}\ndescription: ${p.description.replaceAll('\n', ' ')}\n---\n\n${p.content}\n`;
+        writeFileSync(join(userDir, `${p.name}.md`), body, 'utf-8');
+        return ok(`Skill "${p.name}" saved. It loads into new conversations after the plugins reload (Settings → Plugins toggle, or daemon restart).`);
+      } catch (e) { return fail(e); }
+    },
+  }));
+
+  ctx.registerTool(defineTool({
+    name: 'list_skills', label: 'List skills',
+    description: 'List available skills (bundled + user-created). Admin only.',
+    parameters: Type.Object({}),
+    execute: async () => {
+      try {
+        adminOnly();
+        const rows = [];
+        for (const { dir, tag } of [{ dir: join(here, 'skills'), tag: 'bundled' }, { dir: userDir, tag: 'user' }]) {
+          if (!existsSync(dir)) continue;
+          for (const f of readdirSync(dir).filter((f) => f.endsWith('.md'))) {
+            const head = readFileSync(join(dir, f), 'utf-8').slice(0, 400);
+            const desc = /description:\s*(.+)/.exec(head)?.[1] ?? '';
+            rows.push(`- ${f.replace(/\.md$/, '')} (${tag}) — ${desc}`);
+          }
+        }
+        return ok(rows.length ? rows.join('\n') : 'No skills found.');
+      } catch (e) { return fail(e); }
+    },
+  }));
+
+  ctx.registerTool(defineTool({
+    name: 'delete_skill', label: 'Delete skill',
+    description: 'Delete a user-created skill by name (bundled skills cannot be deleted). Admin only.',
+    parameters: Type.Object({ name: Type.String() }),
+    execute: async (_id, p) => {
+      try {
+        adminOnly();
+        if (!NAME_RE.test(p.name)) return ok('Error: invalid skill name.');
+        const file = join(userDir, `${p.name}.md`);
+        if (!existsSync(file)) return ok(`Error: no user skill named "${p.name}".`);
+        unlinkSync(file);
+        return ok(`Skill "${p.name}" deleted.`);
+      } catch (e) { return fail(e); }
+    },
+  }));
+
+  ctx.logger.info(`registered ${count} skill(s) + creator tools`);
 }

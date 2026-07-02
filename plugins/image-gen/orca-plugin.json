@@ -1,0 +1,14 @@
+{
+  "name": "image-gen",
+  "version": "0.1.0",
+  "apiVersion": "1",
+  "description": "Image generation via the OpenAI Images API (gpt-image-1 by default). Generated images show directly in the chat.",
+  "entry": "index.mjs",
+  "requires": { "config": ["apiKey"] },
+  "provides": { "tools": ["generate_image"] },
+  "configSchema": [
+    { "key": "apiKey", "label": "OpenAI API key", "type": "secret", "required": true, "hint": "platform.openai.com — needs access to the Images API." },
+    { "key": "model", "label": "Model", "type": "string", "hint": "Default: gpt-image-1." },
+    { "key": "size", "label": "Size", "type": "string", "hint": "1024x1024 (default), 1536x1024 or 1024x1536." }
+  ]
+}
