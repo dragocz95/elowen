@@ -2,8 +2,41 @@ import { readdirSync, existsSync, readFileSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { parseManifest } from './manifest.js';
+import type { PluginManifest } from './manifest.js';
 import { PluginRegistry } from './registry.js';
 import type { PluginLogger, PluginModule } from './api.js';
+
+/** A plugin found on disk (manifest parsed, code NOT imported). What the admin UI lists. */
+export interface DiscoveredPlugin {
+  manifest: PluginManifest;
+  dir: string;
+  /** Which scan root it came from: the Orca install ('bundled') or the instance data dir ('user'). */
+  source: 'bundled' | 'user';
+}
+
+/** Scan `dirs` for plugin folders and parse their manifests WITHOUT importing any code — safe to call
+ *  from a request handler. The first occurrence of a name wins (bundled dir is scanned first), matching
+ *  the loader's dedupe rule. A folder with a broken manifest is skipped silently (the loader logs it at
+ *  load time; the listing simply doesn't show it as installable). */
+export function discoverPlugins(dirs: string[]): DiscoveredPlugin[] {
+  const found: DiscoveredPlugin[] = [];
+  const seen = new Set<string>();
+  dirs.forEach((dir, i) => {
+    if (!existsSync(dir)) return;
+    for (const name of readdirSync(dir)) {
+      if (seen.has(name)) continue;
+      const pluginDir = join(dir, name);
+      try {
+        if (!statSync(pluginDir).isDirectory()) continue;
+        const manifest = parseManifest(JSON.parse(readFileSync(join(pluginDir, 'orca-plugin.json'), 'utf-8')));
+        if (manifest.name !== name) continue;
+        seen.add(name);
+        found.push({ manifest, dir: pluginDir, source: i === 0 ? 'bundled' : 'user' });
+      } catch { /* not a plugin folder (or broken manifest) → not listed */ }
+    }
+  });
+  return found;
+}
 
 export interface LoadPluginsOptions {
   /** Directories scanned for plugin folders (bundled first, then user). */

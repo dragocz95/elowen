@@ -58,6 +58,8 @@ export interface ServerDeps {
   userPrompts?: UserPromptStore;
   /** Per-user CLI/brain settings (model override, auto-compact). Absent → the settings API degrades. */
   userSettings?: UserSettingStore;
+  /** Plugin scan roots (bundled first, then user) for the admin /plugins listing. Absent → empty list. */
+  pluginDirs?: string[];
   /** User-aware prompt renderer (resolves a user's override else the file default). Absent → callers
    *  fall back to the plain file `render`, i.e. defaults for everyone. */
   prompts?: PromptService;

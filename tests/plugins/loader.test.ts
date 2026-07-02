@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll } from 'vitest';
 import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { loadPlugins } from '../../src/plugins/loader.js';
+import { loadPlugins, discoverPlugins } from '../../src/plugins/loader.js';
 
 const log = { info() {}, warn() {}, error() {} };
 
@@ -59,5 +59,27 @@ describe('loadPlugins', () => {
   it('tolerates a missing directory', async () => {
     const reg = await loadPlugins({ dirs: [join(root, 'nope')], enabled: ['good'], logger: log });
     expect(reg.skills).toHaveLength(0);
+  });
+});
+
+describe('discoverPlugins', () => {
+  it('lists valid manifests without importing code, skipping bad apiVersions', () => {
+    const root = mkdtempSync(join(tmpdir(), 'orca-discover-'));
+    makePlugin(root, 'alpha', `export function register(){ throw new Error('never imported'); }`);
+    makePlugin(root, 'badver', `export function register(){}`, '999');
+    const found = discoverPlugins([root]);
+    expect(found.map((p) => p.manifest.name)).toEqual(['alpha']); // badver skipped, alpha's code never ran
+    expect(found[0]?.source).toBe('bundled');
+  });
+
+  it('dedupes by name across dirs (first dir wins) and labels sources', () => {
+    const a = mkdtempSync(join(tmpdir(), 'orca-disc-a-'));
+    const b = mkdtempSync(join(tmpdir(), 'orca-disc-b-'));
+    makePlugin(a, 'dup', `export function register(){}`);
+    makePlugin(b, 'dup', `export function register(){}`);
+    makePlugin(b, 'solo', `export function register(){}`);
+    const found = discoverPlugins([a, b]);
+    expect(found.find((p) => p.manifest.name === 'dup')?.source).toBe('bundled');
+    expect(found.find((p) => p.manifest.name === 'solo')?.source).toBe('user');
   });
 });

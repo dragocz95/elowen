@@ -195,6 +195,21 @@ export class BrainService {
     }
   }
 
+  /** Restart a user's live session so changed settings (model override, plugins) apply immediately.
+   *  No-op when not running. History survives — it rehydrates from SQLite on the fresh start. */
+  async restart(userId: number): Promise<void> {
+    if (!this.live.has(userId)) return;
+    this.stop(userId);
+    await this.start(userId);
+  }
+
+  /** Drop the memoized plugin registry and restart every live session — called when the admin flips a
+   *  plugin on/off so the change applies without a daemon restart. */
+  async reloadPlugins(): Promise<void> {
+    this.pluginsMemo = undefined;
+    for (const userId of [...this.live.keys()]) await this.restart(userId);
+  }
+
   stop(userId: number): void {
     const b = this.live.get(userId);
     if (!b) return;

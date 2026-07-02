@@ -9,6 +9,7 @@ import { registerAdvisorRoutes } from './advisor.js';
 import { registerBrainRoutes } from './brain.js';
 import { registerMissionRoutes } from './missions.js';
 import { registerConfigRoutes } from './config.js';
+import { registerPluginRoutes } from './plugins.js';
 import { registerTaskRoutes } from './tasks.js';
 
 /** Register every route family on the app. Order matters: the auth/tenancy guards are global
@@ -26,4 +27,5 @@ export function registerRoutes(app: OrcaApp, ctx: RouteContext): void {
   registerBrainRoutes(app, ctx);
   registerMissionRoutes(app, ctx);
   registerConfigRoutes(app, ctx);
+  registerPluginRoutes(app, ctx);
 }
