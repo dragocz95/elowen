@@ -2,7 +2,7 @@ import { TUI, ProcessTerminal, Text, Markdown, Loader, Container, Spacer, matche
 import { Editor } from '@earendil-works/pi-tui';
 import { initTheme, getMarkdownTheme, getSelectListTheme } from '@earendil-works/pi-coding-agent';
 import { color, glyph } from './theme.js';
-import { UserBlock, StatusBar, banner, toolChip } from './components.js';
+import { UserBlock, StatusBar, TitleBar, banner, toolChip, metaLine, titleBarContent } from './components.js';
 import { BrainClient } from './brainClient.js';
 import { fromHistory, pushUser, beginAssistant, reduce, type ChatView } from './render.js';
 
@@ -112,6 +112,7 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
 
   const term = new ProcessTerminal();
   const tui = new TUI(term);
+  const titleBar = new TitleBar();
   const messages = new Container();
   const spacer = new Spacer();
   const loader = new Loader(tui, color.accent, color.dim, 'přemýšlím…');
@@ -129,20 +130,23 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
         messages.addChild(new UserBlock(turn.text));
         messages.addChild(new Text('', 0, 0));
       } else {
-        // No speaker label — just the tool chips (if any) then the markdown reply.
+        // No speaker label — tool chips (if any), the markdown reply, then a compact model footer.
         for (const t of turn.tools) messages.addChild(new Text(toolChip(t), 1, 0));
         if (turn.text) messages.addChild(new Markdown(turn.text, 2, 0, mdTheme));
         else if (turn.streaming) messages.addChild(new Text(color.faint('  …'), 1, 0));
+        if (turn.text && !turn.streaming) messages.addChild(new Text(metaLine(modelName), 1, 0));
         messages.addChild(new Text('', 0, 0));
       }
     }
     if (notice) for (const line of notice.split('\n')) messages.addChild(new Text(`  ${line}`, 1, 0));
     // Spinner lives INSIDE the rebuilt message list, so it vanishes the moment the turn goes idle.
     if (view.thinking) { messages.addChild(loader); loader.start(); } else { loader.stop(); }
-    const title = sessionTitle ? `${color.faint('  ·  ')}${color.dim(sessionTitle.slice(0, 40))}` : '';
-    statusUnder.setText(`  ${color.accent(`${glyph.whale} Orca AI`)}${color.faint('  ·  ')}${color.accentDim(modelName || '—')}${title}`);
+    // Top bar: conversation title on the left, usage stats (tokens · ctx% · cost) on the right.
+    const bar = titleBarContent(sessionTitle, usage);
+    titleBar.set(bar.left, bar.right);
+    // The line above the input shows the model; the statusline plugin adds context/tokens when enabled.
     const line = statusline(lineCfg, usage, modelName);
-    bottomBar.setLeft(line ? color.faint(`  ${line}`) : color.faint('  ⏎ odeslat   ·   /help příkazy'));
+    statusUnder.setText(line ? color.faint(`  ${line}`) : `  ${color.accentDim(modelName || '—')}`);
     tui.requestRender();
   };
 
@@ -212,6 +216,7 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
     void client.send(trimmed).catch((e: Error) => { view = reduce(view, { type: 'error', message: e.message }); render(); });
   };
 
+  tui.addChild(titleBar);   // top: conversation title + usage stats
   tui.addChild(messages);
   tui.addChild(spacer); // push the input to the bottom of the screen (opencode-style anchoring)
   tui.addChild(editor);
