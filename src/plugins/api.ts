@@ -42,6 +42,9 @@ export interface PluginContext {
   /** Append a chunk of instructions to the brain's system prompt, after the Orca persona. */
   registerSystemPromptFragment(fragment: string): void;
   registerHook(hook: PluginHook): void;
+  /** Register a provider of EPHEMERAL per-turn context (date/time, live status…). Its string is injected
+   *  into each user message — NOT the system prompt — so the cacheable prompt prefix stays stable. */
+  registerTurnContext(fn: () => string): void;
   /** STUB: record a platform adapter (not started by the foundation). */
   registerPlatform(adapter: PlatformAdapter): void;
   /** Resolve + assert a filesystem path is inside the current user's accessible repos, returning the

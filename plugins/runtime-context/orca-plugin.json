@@ -1,0 +1,11 @@
+{
+  "name": "runtime-context",
+  "version": "0.1.0",
+  "apiVersion": "1",
+  "description": "Injects the current date, time, weekday and timezone into every turn so Orca never guesses about \"now\". Cache-safe: it rides the user message, not the system prompt.",
+  "entry": "index.mjs",
+  "provides": {},
+  "configSchema": [
+    { "key": "timezone", "label": "Timezone", "type": "string", "hint": "IANA timezone, e.g. Europe/Prague (default). Used for the injected date/time." }
+  ]
+}

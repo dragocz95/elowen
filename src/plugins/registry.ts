@@ -12,6 +12,7 @@ export class PluginRegistry {
   readonly skills: PluginSkill[] = [];
   readonly promptFragments: string[] = [];
   readonly hooks: PluginHook[] = [];
+  readonly turnContexts: (() => string)[] = [];
   readonly platforms: PlatformAdapter[] = [];
 
   /** Absorb another registry's contributions (the loader stages each plugin and merges on success). */
@@ -20,6 +21,7 @@ export class PluginRegistry {
     this.skills.push(...other.skills);
     this.promptFragments.push(...other.promptFragments);
     this.hooks.push(...other.hooks);
+    this.turnContexts.push(...other.turnContexts);
     this.platforms.push(...other.platforms);
   }
 
@@ -36,6 +38,7 @@ export class PluginRegistry {
       registerSkill: (s) => { this.skills.push(s); },
       registerSystemPromptFragment: (f) => { this.promptFragments.push(f); },
       registerHook: (h) => { this.hooks.push(h); },
+      registerTurnContext: (f) => { this.turnContexts.push(f); },
       registerPlatform: (p) => { this.platforms.push(p); },
       assertPathAllowed,
       allowedRoots,

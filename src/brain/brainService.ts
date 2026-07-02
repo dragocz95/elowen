@@ -78,7 +78,7 @@ function defaultResourceLoaderFactory(o: { cwd: string; systemPrompt: string; ap
   });
 }
 
-interface LiveBrain { session: AgentSession; sessionId: string; model: string; policy: Policy; autoCompact: boolean; autoCompactAt: number; listeners: Set<(e: BrainEvent) => void> }
+interface LiveBrain { session: AgentSession; sessionId: string; model: string; policy: Policy; autoCompact: boolean; autoCompactAt: number; listeners: Set<(e: BrainEvent) => void>; turnContext: () => string }
 
 /** Fallback auto-compact threshold (fraction of the context window) when the user set none. */
 const DEFAULT_AUTO_COMPACT_AT = 0.8;
@@ -256,7 +256,14 @@ export class BrainService {
       for (const l of listeners) l(be);
     });
 
-    return { session, sessionId, model: model.id, policy: opts.policy, autoCompact: opts.autoCompact, autoCompactAt: opts.autoCompactAt, listeners };
+    // Ephemeral per-turn context (date/time, …) is injected into each user message — see send() — so it
+    // stays fresh WITHOUT invalidating the cached system-prompt prefix.
+    const providers = plugins?.turnContexts ?? [];
+    const turnContext = (): string => {
+      const parts = providers.map((f) => { try { return f(); } catch { return ''; } }).filter((x) => x && x.trim());
+      return parts.length ? `<context>\n${parts.join('\n')}\n</context>\n\n` : '';
+    };
+    return { session, sessionId, model: model.id, policy: opts.policy, autoCompact: opts.autoCompact, autoCompactAt: opts.autoCompactAt, listeners, turnContext };
   }
 
   /** Start (or resume) a conversation. `session` resumes that stored conversation (ownership checked);
@@ -315,7 +322,9 @@ export class BrainService {
         ? { images: images.map((i) => ({ type: 'image' as const, data: i.data, mimeType: i.mimeType })) }
         : undefined;
       // Establish the user's repo Policy for any plugin tool this turn invokes (read via currentPolicy()).
-      await runWithPolicy(b.policy, () => (options ? b.session.prompt(text, options) : b.session.prompt(text)));
+      // The turn-context prefix rides only in the live prompt (not stored history) → fresh + cache-safe.
+      const prompted = b.turnContext() + text;
+      await runWithPolicy(b.policy, () => (options ? b.session.prompt(prompted, options) : b.session.prompt(prompted)));
       // Auto-compact: once the conversation fills most of the context window, summarize it so the next
       // turn keeps room. Opt-in per user; failures are non-fatal (a full window still works, just tighter).
       if (b.autoCompact) {
@@ -429,11 +438,12 @@ export class BrainService {
       }
       this.channels.set(opts.channelId, ch);
       projectUserTurn(this.d.store, sessionId, text);
+      const prompted = ch.turnContext() + text;
       // Optional live streaming (Discord edit-in-place): forward this turn's events to the caller.
       const onEvent = opts.onEvent;
       const detach = onEvent ? (ch.listeners.add(onEvent), () => ch.listeners.delete(onEvent)) : undefined;
       try {
-        await runWithPolicy(opts.policy, () => ch.session.prompt(text));
+        await runWithPolicy(opts.policy, () => ch.session.prompt(prompted));
       } finally { detach?.(); }
       const usage = ch.session.getContextUsage();
       if (usage?.tokens && usage.contextWindow > 0 && usage.tokens / usage.contextWindow >= ch.autoCompactAt) {

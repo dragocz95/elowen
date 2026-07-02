@@ -175,6 +175,25 @@ describe('BrainService', () => {
     expect(hist?.text).toContain('1× obrázek');
   });
 
+  it('injects turn-context into the prompt but keeps stored history clean (cache-safe)', async () => {
+    const d = fakeDeps();
+    const reg = new PluginRegistry();
+    const ctx = reg.contextFor('rt', {}, { info() {}, warn() {}, error() {} });
+    ctx.registerTurnContext(() => 'NOW: 2026-07-02 12:00');
+    (d as unknown as { plugins: PluginRegistry }).plugins = reg;
+    const svc = new BrainService(d as never);
+    await svc.start(1);
+    await svc.send(1, 'kolik je hodin?');
+    // The live prompt saw the context prefix …
+    const spawned = await (d.createSession as unknown as { mock: { results: { value: Promise<{ session: { prompt: { mock: { calls: [string][] } } } }> }[] } }).mock.results[0]!.value;
+    expect(spawned.session.prompt.mock.calls.at(-1)![0]).toContain('NOW: 2026-07-02 12:00');
+    expect(spawned.session.prompt.mock.calls.at(-1)![0]).toContain('kolik je hodin?');
+    // … but the persisted history stays clean (no volatile timestamp baked in → no cache churn on replay).
+    const stored = svc.history(1).find((m) => m.role === 'user');
+    expect(stored?.text).toBe('kolik je hodin?');
+    expect(stored?.text).not.toContain('NOW:');
+  });
+
   it('rejects resuming a foreign or channel session', async () => {
     const d = fakeDeps();
     const svc = new BrainService(d as never);

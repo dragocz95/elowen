@@ -46,10 +46,14 @@ export function registerBrainRoutes(app: OrcaApp, ctx: RouteContext): void {
     if (forbidden(c)) return c.json({ error: 'forbidden' }, 403);
     const file = c.req.param('file');
     if (!d.pluginDataRoot || !/^[a-z0-9]+\.png$/.test(file)) return c.json({ error: 'not found' }, 404);
-    try {
-      const body = readFileSync(join(d.pluginDataRoot, 'image-gen', file));
-      return c.body(new Uint8Array(body), 200, { 'content-type': 'image/png', 'cache-control': 'private, max-age=31536000' });
-    } catch { return c.json({ error: 'not found' }, 404); }
+    // Generated + edited images live in their respective plugin data dirs; try each.
+    for (const dir of ['image-gen', 'image-edit']) {
+      try {
+        const body = readFileSync(join(d.pluginDataRoot, dir, file));
+        return c.body(new Uint8Array(body), 200, { 'content-type': 'image/png', 'cache-control': 'private, max-age=31536000' });
+      } catch { /* try the next dir */ }
+    }
+    return c.json({ error: 'not found' }, 404);
   });
 
   app.delete('/brain/sessions/:id', async c => {
