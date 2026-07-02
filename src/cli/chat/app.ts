@@ -138,7 +138,7 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
     if (view.turns.length === 0) {
       for (const line of banner(modelName)) messages.addChild(new Text(line, 1, 0));
     }
-    for (const turn of view.turns) {
+    for (const [i, turn] of view.turns.entries()) {
       if (turn.role === 'you') {
         messages.addChild(new UserBlock(turn.text));
         messages.addChild(new Text('', 0, 0));
@@ -154,7 +154,9 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
           } else { hasText = true; messages.addChild(new Markdown(seg.text, 2, 0, mdTheme)); }
         }
         if (!hasText && turn.streaming) messages.addChild(new Text(color.faint('  …'), 1, 0));
-        if (hasText && !turn.streaming) messages.addChild(new Text(metaLine(modelName), 1, 0));
+        // One footer per reply: a stored turn can span several assistant rows — only the last gets it.
+        const nextIsOrca = view.turns[i + 1]?.role === 'orca';
+        if (hasText && !turn.streaming && !nextIsOrca) messages.addChild(new Text(metaLine(modelName), 1, 0));
         messages.addChild(new Text('', 0, 0));
       }
     }
