@@ -8,8 +8,8 @@ export class Unauthorized extends Error {
 export interface BrainClientOpts { base: string; token: string; fetchImpl?: typeof fetch }
 
 /** Statusline display toggles (the statusline plugin's config; null when the plugin is disabled). */
-export interface StatuslineConfig { showModel?: boolean; showContext?: boolean; showTokens?: boolean; showCost?: boolean }
-export interface BrainUsageView { tokens: number | null; contextWindow: number; percent: number | null; totalTokens: number; cost: number }
+interface StatuslineConfig { showModel?: boolean; showContext?: boolean; showTokens?: boolean; showCost?: boolean }
+interface BrainUsageView { tokens: number | null; contextWindow: number; percent: number | null; totalTokens: number; cost: number }
 export interface BrainStatus { running: boolean; sessionId: string | null; model: string; usage: BrainUsageView | null; statusline: StatuslineConfig | null }
 
 /** Parse accumulated SSE text into complete frames, returning the events and the unconsumed tail.
