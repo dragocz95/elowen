@@ -547,7 +547,7 @@ export const en = {
     providers: 'Providers',
     defaults: 'Defaults',
     plugins: 'Plugins',
-    brain: 'Brain',
+    brain: 'Orca AI',
     data: 'Data',
     githubIntro: 'Connect to GitHub to work through pull requests. The token and default behaviour are global; whether a given project uses the PR flow is set on that project (it overrides this default).',
     githubSaved: 'GitHub settings saved',
@@ -854,7 +854,7 @@ export const en = {
     sectionsNav: 'Account sections',
   },
   brain: {
-    intro: 'Model providers for the Orca brain (orca chat). Add custom OpenAI-compatible endpoints, the Anthropic API, or connect an account — users then pick their model in Account → CLI.',
+    intro: 'Model providers for Orca AI (the chat and the orca chat CLI). Add OpenAI-compatible endpoints, the Anthropic API, or connect an account — users pick their model in Account → CLI.',
     accounts: 'Connected accounts (OAuth)',
     providers: 'Providers',
     addProvider: 'Add provider',

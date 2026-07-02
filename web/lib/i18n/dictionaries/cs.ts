@@ -547,7 +547,7 @@ export const cs = {
     providers: 'Poskytovatelé',
     defaults: 'Výchozí',
     plugins: 'Pluginy',
-    brain: 'Mozek',
+    brain: 'Orca AI',
     data: 'Data',
     githubIntro: 'Propojení s GitHubem pro práci přes pull requesty. Token a výchozí chování platí globálně; jestli konkrétní projekt jede přes PR, zapnete u daného projektu (přepíše tento výchozí stav).',
     githubSaved: 'Nastavení GitHubu uloženo',
@@ -854,7 +854,7 @@ export const cs = {
     sectionsNav: 'Sekce účtu',
   },
   brain: {
-    intro: 'Poskytovatelé modelů pro mozek Orcy (orca chat). Přidejte vlastní OpenAI-kompatibilní endpointy, Anthropic API nebo připojte účet — uživatelé si pak vyberou model v Účet → CLI.',
+    intro: 'Poskytovatelé modelů pro Orca AI (chat i orca chat v terminálu). Přidejte vlastní OpenAI-kompatibilní endpointy, Anthropic API nebo připojte účet — uživatelé si pak vyberou model v Účet → CLI.',
     accounts: 'Připojené účty (OAuth)',
     providers: 'Poskytovatelé',
     addProvider: 'Přidat poskytovatele',
