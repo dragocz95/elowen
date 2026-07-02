@@ -5,6 +5,8 @@ import { useUsers, useMe, useProjects, useUserProjects, useConfig } from '../../
 import { useCreateUser, useDeleteUser, useLogout, useAssignProject, useUpdateUser } from '../../lib/mutations';
 import type { Project, User as OrcaUser } from '../../lib/types';
 import { allModels } from '../../lib/execPresets';
+import { execProvider, type ProviderId } from '../../lib/modelProvider';
+import { PROVIDERS, providerMeta } from '../settings/providers';
 import { clearToken } from '../../lib/token';
 import { useToast } from '../../components/ui/Toast';
 import { Avatar } from '../../components/ui/Avatar';
@@ -50,7 +52,8 @@ function ProjectChips({ userId, projects }: { userId: number; projects: Project[
 }
 
 /** Admin-only: restrict which models a user may run on tasks. Empty selection → no restriction
- *  (the user may use any globally-allowed model). Choices are the global allow-list. */
+ *  (the user may use any globally-allowed model). Choices are the global allow-list, grouped the
+ *  same way as the executor picker: pick the engine, then toggle its models. */
 function ModelChips({ user, globalExecs, custom }: { user: OrcaUser; globalExecs: string[]; custom: { label: string; exec: string }[] }) {
   const { t } = useTranslation();
   const update = useUpdateUser();
@@ -61,6 +64,14 @@ function ModelChips({ user, globalExecs, custom }: { user: OrcaUser; globalExecs
     ?? (exec.startsWith('orca:') ? exec.slice(exec.indexOf('/') + 1) : exec);
   const iconNameOf = (exec: string) => (exec.startsWith('orca:') ? exec.slice(exec.indexOf('/') + 1) : exec);
   const set = new Set(user.allowed_execs);
+  const byProvider = new Map<ProviderId, string[]>();
+  for (const exec of globalExecs) {
+    const prov = execProvider(exec);
+    byProvider.set(prov, [...(byProvider.get(prov) ?? []), exec]);
+  }
+  const groups = PROVIDERS.filter((prov) => (byProvider.get(prov.id as ProviderId) ?? []).length > 0);
+  const [openProvider, setOpenProvider] = useState<ProviderId | null>(null);
+  const active = openProvider ?? (groups[0]?.id as ProviderId | undefined) ?? null;
   if (globalExecs.length === 0) return null;
   const toggle = (exec: string) => {
     const next = new Set(set);
@@ -71,23 +82,47 @@ function ModelChips({ user, globalExecs, custom }: { user: OrcaUser; globalExecs
     });
   };
   return (
-    <div className="mt-2 flex flex-wrap items-center gap-1.5">
+    <div className="mt-2 flex flex-col gap-1.5">
       <span className="inline-flex items-center gap-1 text-[11px] uppercase tracking-wide text-text-muted"><Cpu size={12} aria-hidden />{t.users.allowedModels}</span>
-      {globalExecs.map((exec) => {
-        const on = set.has(exec);
-        return (
-          <button
-            key={exec}
-            type="button"
-            onClick={() => toggle(exec)}
-            disabled={update.isPending}
-            className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs transition-colors ${on ? 'border-accent bg-accent/15 text-accent' : 'border-border text-text-muted hover:bg-elevated'}`}
-          >
-            <ModelIcon name={iconNameOf(exec)} size={14} />{labelOf(exec)}
-          </button>
-        );
-      })}
-      {set.size === 0 ? <span className="text-[11px] italic text-text-muted">{t.users.allModelsHint}</span> : null}
+      <div className="flex flex-wrap gap-1.5" role="tablist" aria-label={t.tasks.pickProvider}>
+        {groups.map((prov) => {
+          const meta = providerMeta(prov.id)!;
+          const execs = byProvider.get(prov.id as ProviderId) ?? [];
+          const picked = execs.filter((e) => set.has(e)).length;
+          return (
+            <button
+              key={prov.id}
+              type="button"
+              role="tab"
+              aria-selected={active === prov.id}
+              onClick={() => setOpenProvider(prov.id as ProviderId)}
+              className={`inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-medium transition-colors ${active === prov.id ? 'border-border-strong bg-elevated text-text' : 'border-border text-text-muted hover:bg-elevated hover:text-text'}`}
+            >
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={meta.icon} alt="" width={13} height={13} style={{ objectFit: 'contain' }} className={meta.embedded ? 'logo-adaptive' : undefined} aria-hidden />
+              {meta.label}
+              {picked > 0 ? <span className="rounded bg-accent/15 px-1 font-mono text-[10px] text-accent">{picked}</span> : null}
+            </button>
+          );
+        })}
+      </div>
+      <div className="flex flex-wrap items-center gap-1.5 border-l-2 border-border pl-2.5">
+        {(byProvider.get(active as ProviderId) ?? []).map((exec) => {
+          const on = set.has(exec);
+          return (
+            <button
+              key={exec}
+              type="button"
+              onClick={() => toggle(exec)}
+              disabled={update.isPending}
+              className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs transition-colors ${on ? 'border-accent bg-accent/15 text-accent' : 'border-border text-text-muted hover:bg-elevated'}`}
+            >
+              <ModelIcon name={iconNameOf(exec)} size={14} />{labelOf(exec)}
+            </button>
+          );
+        })}
+        {set.size === 0 ? <span className="text-[11px] italic text-text-muted">{t.users.allModelsHint}</span> : null}
+      </div>
     </div>
   );
 }

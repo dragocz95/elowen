@@ -1,6 +1,6 @@
 'use client';
 import { useState, useEffect, useRef } from 'react';
-import { UserCog, Mail, Cpu, Upload, ShieldCheck, Save, Check, User as UserIcon, KeyRound, ZoomIn, Bell, MessagesSquare, TerminalSquare } from 'lucide-react';
+import { UserCog, Mail, Cpu, Upload, ShieldCheck, Check, User as UserIcon, KeyRound, ZoomIn, Bell, MessagesSquare, TerminalSquare } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { OrcaApiError } from '../../lib/orcaClient';
 import { useMe, useConfig } from '../../lib/queries';
@@ -14,11 +14,11 @@ import { Input } from '../../components/ui/Input';
 import { SettingCard } from '../../components/ui/SettingCard';
 import { Slider } from '../../components/ui/Slider';
 import { ModuleHeader } from '../../components/ui/ModuleHeader';
-import { FormFooter } from '../../components/ui/FormFooter';
 import { LoadingState } from '../../components/ui/states';
 import { useToast } from '../../components/ui/Toast';
 import { useTranslation } from '../../lib/i18n';
 import { usePersistentState } from '../../lib/usePersistentState';
+import { useAutoSave } from '../../lib/useAutoSave';
 import { useUiScale, MIN_SCALE, MAX_SCALE, DEFAULT_SCALE } from '../../lib/useUiScale';
 import { isPushSupported, enablePush, disablePush } from '../../lib/pushClient';
 import { SettingsLayout } from '../../components/ui/SettingsLayout';
@@ -50,13 +50,22 @@ export function AccountView() {
   const [pushOn, setPushOn] = useState(false);
   const [pushBusy, setPushBusy] = useState(false);
 
+  const [formSeeded, setFormSeeded] = useState(false);
   useEffect(() => {
     if (me.data?.user) {
       setName(me.data.user.name);
       setEmail(me.data.user.email);
       setDefaultExec(me.data.user.default_exec);
+      setFormSeeded(true);
     }
   }, [me.data]);
+
+  // Auto-persist the profile shortly after any change — no Save button.
+  const saveProfile = () => updateMe.mutate(
+    { name: name.trim(), email: email.trim(), default_exec: defaultExec },
+    { onError: () => toast(t.account.saveError, 'error') },
+  );
+  useAutoSave([name, email, defaultExec], saveProfile, { ready: formSeeded });
 
   useEffect(() => {
     const supported = isPushSupported();
@@ -100,10 +109,6 @@ export function AccountView() {
   const pickable = restricted ? u.allowed_execs : (config?.allowedExecs ?? []);
   const labelOf = (exec: string) => allModels(custom).find((m) => m.exec === exec)?.label ?? exec;
 
-  const save = () => updateMe.mutate(
-    { name: name.trim(), email: email.trim(), default_exec: defaultExec },
-    { onSuccess: () => toast(t.account.saved), onError: () => toast(t.account.saveError, 'error') },
-  );
   const onFile = (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0];
     if (f) uploadAvatar.mutate(f, { onSuccess: () => toast(t.account.avatarSaved), onError: () => toast(t.account.saveError, 'error') });
@@ -179,9 +184,6 @@ export function AccountView() {
           </div>
         </SettingCard>
 
-        <FormFooter>
-          <Button variant="accent" icon={Save} onClick={save} disabled={updateMe.isPending}>{t.account.save}</Button>
-        </FormFooter>
       </div>
 
       {/* Right rail: the models you may run, big brand icons — tap one to make it your default. */}

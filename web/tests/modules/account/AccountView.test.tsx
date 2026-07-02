@@ -27,8 +27,7 @@ describe('AccountView', () => {
     expect(await screen.findByText('@bob')).toBeTruthy();
     // Restricted to 'sonnet' (admin allow-list) → only that model is pickable (a radio chip).
     const chip = screen.getByRole('radio', { name: /Claude Sonnet/ });
-    fireEvent.click(chip);
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    fireEvent.click(chip); // auto-persists shortly after — no Save button
 
     await waitFor(() => expect(patched?.default_exec).toBe('sonnet'));
   });

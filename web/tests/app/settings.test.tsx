@@ -41,11 +41,11 @@ describe('SettingsPage', () => {
     const { wrapper: Wrapper } = createWrapper();
     render(<Wrapper><ToastProvider><SettingsPage /></ToastProvider></Wrapper>);
     await waitFor(() => expect(screen.getByLabelText('Claude Sonnet 4.5')).toBeChecked());
-    // Each model card carries an "Add description" affordance; the first preset is GLM 5.2.
+    // Cards are grouped by provider (claude-code first), so the first card is Sonnet.
     fireEvent.click(screen.getAllByRole('button', { name: 'Add description' })[0]);
     fireEvent.change(screen.getByLabelText('Model description'), { target: { value: 'Strong at refactoring' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
-    await waitFor(() => expect((putBody as { modelNotes: Record<string, string> }).modelNotes).toMatchObject({ 'ollama-cloud/glm-5.2': 'Strong at refactoring' }));
+    await waitFor(() => expect((putBody as { modelNotes: Record<string, string> }).modelNotes).toMatchObject({ sonnet: 'Strong at refactoring' }));
   });
 
   it('renders the Add model affordance', async () => {
@@ -78,20 +78,16 @@ describe('SettingsPage', () => {
     });
   });
 
-  it('switches categories via the top pills', async () => {
+  it('switches categories via the sidebar nav', async () => {
     const { wrapper: Wrapper } = createWrapper();
     render(<Wrapper><ToastProvider><SettingsPage /></ToastProvider></Wrapper>);
     await waitFor(() => expect(screen.getByLabelText('Claude Sonnet 4.5')).toBeChecked());
 
-    // Models category is active by default; Autopilot save button is hidden
-    expect(screen.queryByRole('button', { name: 'Save autopilot' })).toBeNull();
-
     fireEvent.click(screen.getByRole('radio', { name: 'Autopilot' }));
-    expect(screen.getByRole('button', { name: 'Save autopilot' })).toBeTruthy();
-    expect(screen.queryByRole('button', { name: 'Save models' })).toBeNull();
+    expect(screen.getByText('How autopilot reasons')).toBeTruthy();
 
     fireEvent.click(screen.getByRole('radio', { name: 'Defaults' }));
-    expect(screen.getByRole('button', { name: 'Save defaults' })).toBeTruthy();
+    expect(screen.getByText('Executor')).toBeTruthy();
   });
 
   it('defaults to Relay mode and saves relay fields (execs cleared)', async () => {
@@ -103,7 +99,9 @@ describe('SettingsPage', () => {
     expect(screen.getByText('How autopilot reasons')).toBeTruthy();
     expect(screen.getByText('Planner model')).toBeTruthy(); // same role labels in both modes
 
-    fireEvent.click(screen.getByRole('button', { name: 'Save autopilot' }));
+    // Auto-persist: nudging any autopilot field saves shortly after (no Save button exists).
+    putBody = null;
+    fireEvent.change(screen.getByPlaceholderText('claude-opus-4-8'), { target: { value: 'relay-model-x' } });
     await waitFor(() => {
       const ap = (putBody as { autopilot: { pilotExec: string; overseerExec: string } }).autopilot;
       expect(ap.pilotExec).toBe(''); // relay mode clears the agent execs
@@ -117,10 +115,10 @@ describe('SettingsPage', () => {
     await waitFor(() => expect(screen.getByLabelText('Claude Sonnet 4.5')).toBeChecked());
 
     fireEvent.click(screen.getByRole('radio', { name: 'Autopilot' }));
-    fireEvent.click(screen.getByText('CLI Tools')); // mode toggle
+    putBody = null;
+    fireEvent.click(screen.getByText('CLI Tools')); // mode toggle — auto-persists the agent execs
     expect(screen.getByText('Planner model')).toBeTruthy(); // unified label, not a separate "Pilot backend"
 
-    fireEvent.click(screen.getByRole('button', { name: 'Save autopilot' }));
     await waitFor(() => {
       const ap = (putBody as { autopilot: { pilotExec: string; overseerExec: string; reviewOnDone: boolean } }).autopilot;
       expect(ap.pilotExec).not.toBe(''); // seeded with a default model on switch
@@ -139,10 +137,9 @@ describe('SettingsPage', () => {
     expect(screen.getByLabelText(/PR workflow/)).not.toBeChecked();
     expect(screen.getByText('Verify command')).toBeTruthy();
 
+    putBody = null;
     fireEvent.click(screen.getByLabelText(/PR workflow/));
     fireEvent.change(screen.getByPlaceholderText('e.g. npm test'), { target: { value: 'npm test' } });
-    putBody = null;
-    fireEvent.click(screen.getByRole('button', { name: 'Save GitHub' }));
     await waitFor(() => {
       const ap = (putBody as { autopilot: { prEnabled: boolean; prVerifyCommand: string } }).autopilot;
       expect(ap.prEnabled).toBe(true);

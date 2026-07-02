@@ -1,8 +1,8 @@
 'use client';
 export const dynamic = 'force-dynamic';
 import { useEffect, useState, useRef } from 'react';
-import { Save, Boxes, Bot, SlidersHorizontal, Plus, X, Pencil, Plug, Radio, Cpu, Gauge, Layers, Link2, KeyRound, FileText, Eye, Lock, Trash2, GitPullRequest, GitBranch, TerminalSquare, Github, RefreshCw, Server, Sparkles, Puzzle, BrainCircuit, type LucideIcon } from 'lucide-react';
-import { PROVIDERS, ProviderLogo, ProviderTag } from '../../modules/settings/providers';
+import { Boxes, Bot, SlidersHorizontal, Plus, X, Pencil, Plug, Radio, Cpu, Gauge, Layers, Link2, KeyRound, FileText, Eye, Lock, Trash2, GitPullRequest, GitBranch, TerminalSquare, Github, RefreshCw, Server, Sparkles, Puzzle, BrainCircuit, type LucideIcon } from 'lucide-react';
+import { PROVIDERS, ProviderLogo } from '../../modules/settings/providers';
 import { ModelIcon } from '../../components/ui/ModelIcon';
 import { ExecutorPicker } from '../../components/ui/ExecutorPicker';
 import { ModelModal } from '../../modules/settings/ModelModal';
@@ -12,6 +12,7 @@ import { PluginsSection } from '../../modules/settings/PluginsSection';
 import { BrainSection } from '../../modules/settings/BrainSection';
 import { execProvider, execModel, type ProviderId } from '../../lib/modelProvider';
 import { useBrainModels, useConfig, useMe, usePlanJob, useSystem, useSystemSkills } from '../../lib/queries';
+import { useAutoSave } from '../../lib/useAutoSave';
 import { useUpdateConfig, useCleanupAll, useSystemUpdate, useInstallSkills } from '../../lib/mutations';
 import { orcaClient, OrcaApiError } from '../../lib/orcaClient';
 import { allModels, isPresetExec, removeModel, upsertModel } from '../../lib/execPresets';
@@ -24,7 +25,6 @@ import { Field } from '../../components/ui/Field';
 import { Badge } from '../../components/ui/Badge';
 import { Toggle } from '../../components/ui/Toggle';
 import { Segmented } from '../../components/ui/Segmented';
-import { FormFooter } from '../../components/ui/FormFooter';
 import { SettingCard } from '../../components/ui/SettingCard';
 import { SettingsLayout } from '../../components/ui/SettingsLayout';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
@@ -186,6 +186,43 @@ export default function SettingsPage() {
     }
   }, [config.data]);
 
+  // Persist only the active mode's fields, and explicitly clear the other backend so the two never
+  // coexist (relay clears the execs; agents leave the relay model/key untouched but unused).
+  const saveAutopilot = () => {
+    update.mutate(
+      { autopilot: reasoningMode === 'agents'
+        ? { pilotExec, overseerExec, reviewOnDone, notes }
+        : { model, overseerModel, apiUrl, pilotExec: '', overseerExec: '', notes, ...(apiKey ? { apiKey } : {}) } },
+      { onSuccess: () => { if (apiKey) setApiKey(''); }, onError: (e) => toast(String(e), 'error') },
+    );
+  };
+
+  // GitHub / PR-native settings live in their own section. The global prEnabled is the DEFAULT for new
+  // projects; each project can override it. The ghToken is write-only — sent only when freshly typed.
+  const saveGithub = () => {
+    update.mutate(
+      { autopilot: { prEnabled, prBaseBranch, prAutoOpen, prVerifyCommand, ...(ghToken ? { ghToken } : {}) } },
+      { onSuccess: () => { if (ghToken) setGhToken(''); }, onError: (e) => toast(String(e), 'error') },
+    );
+  };
+
+  const saveProviders = () =>
+    update.mutate({ providers }, { onError: (e) => toast(String(e), 'error') });
+
+  const saveDefaults = () =>
+    update.mutate(
+      { defaults: { exec: defExec, autonomy: defAutonomy, maxSessions: defMaxSessions }, security: { tokenTtlDays: defTokenTtl }, autoUpdate },
+      { onError: (e) => toast(String(e), 'error') },
+    );
+
+  // Auto-persist: every settings form saves itself shortly after a change (no Save buttons anywhere).
+  // Secrets (apiKey/ghToken) ride along only when freshly typed, exactly as with the old buttons.
+  const ready = seeded.current;
+  useAutoSave([reasoningMode, pilotExec, overseerExec, reviewOnDone, notes, model, overseerModel, apiUrl, apiKey], saveAutopilot, { ready });
+  useAutoSave([prEnabled, prBaseBranch, prAutoOpen, prVerifyCommand, ghToken], saveGithub, { ready });
+  useAutoSave([providers], saveProviders, { ready });
+  useAutoSave([defExec, defAutonomy, defMaxSessions, defTokenTtl, autoUpdate], saveDefaults, { ready });
+
   if (config.isLoading) return <ModuleShell moduleId="settings"><ModuleHeader title={t.page.settings} icon={SlidersHorizontal} /><LoadingState /></ModuleShell>;
   if (config.isError) return <ModuleShell moduleId="settings"><ModuleHeader title={t.page.settings} icon={SlidersHorizontal} /><ErrorState message={t.common.daemonUnreachable} onRetry={() => config.refetch()} /></ModuleShell>;
   // Administration surface — admins only. A non-admin who deep-links here gets a clear stop.
@@ -246,37 +283,6 @@ export default function SettingsPage() {
     resetForm();
   };
 
-  // Persist only the active mode's fields, and explicitly clear the other backend so the two never
-  // coexist (relay clears the execs; agents leave the relay model/key untouched but unused).
-  const saveAutopilot = () => {
-    update.mutate(
-      { autopilot: reasoningMode === 'agents'
-        ? { pilotExec, overseerExec, reviewOnDone, notes }
-        : { model, overseerModel, apiUrl, pilotExec: '', overseerExec: '', notes, ...(apiKey ? { apiKey } : {}) } },
-      { onSuccess: () => { toast(t.settings.autopilotSaved); setApiKey(''); }, onError: (e) => toast(String(e), 'error') },
-    );
-  };
-
-  // GitHub / PR-native settings live in their own section. The global prEnabled is the DEFAULT for new
-  // projects; each project can override it. The ghToken is write-only — sent only when freshly typed.
-  const saveGithub = () => {
-    update.mutate(
-      { autopilot: { prEnabled, prBaseBranch, prAutoOpen, prVerifyCommand, ...(ghToken ? { ghToken } : {}) } },
-      { onSuccess: () => { toast(t.settings.githubSaved); setGhToken(''); }, onError: (e) => toast(String(e), 'error') },
-    );
-  };
-
-  const saveProviders = () =>
-    update.mutate(
-      { providers },
-      { onSuccess: () => toast(t.settings.providersSaved), onError: (e) => toast(String(e), 'error') },
-    );
-
-  const saveDefaults = () =>
-    update.mutate(
-      { defaults: { exec: defExec, autonomy: defAutonomy, maxSessions: defMaxSessions }, security: { tokenTtlDays: defTokenTtl }, autoUpdate },
-      { onSuccess: () => toast(t.settings.defaultsSaved), onError: (e) => toast(String(e), 'error') },
-    );
 
 
   const SECTIONS: { id: Category; icon: LucideIcon }[] = [
@@ -294,13 +300,6 @@ export default function SettingsPage() {
   // 'models' auto-saves; 'data' is a one-off danger action; 'system'
   // auto-saves its toggle + has its own update button; 'plugins' toggles apply instantly — none of
   // these use the shared footer save button.
-  const saveAction: Record<Exclude<Category, 'models' | 'data' | 'system' | 'plugins' | 'brain'>, { label: string; onClick: () => void }> = {
-    autopilot: { label: t.settings.saveAutopilot, onClick: saveAutopilot },
-    github: { label: t.settings.saveGithub, onClick: saveGithub },
-    providers: { label: t.settings.saveProviders, onClick: saveProviders },
-    defaults: { label: t.settings.saveDefaults, onClick: saveDefaults },
-  };
-  const active = category === 'models' || category === 'data' || category === 'system' || category === 'plugins' || category === 'brain' ? null : saveAction[category];
 
   const models = allModels(customModels, hiddenPresets);
 
@@ -333,100 +332,102 @@ export default function SettingsPage() {
       >
         {category === 'models' && (
           <>
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              {models.map((p) => {
-                const isCustom = !isPresetExec(p.exec);
-                return (
-                  <div key={p.exec} className="card-interactive group relative flex flex-col gap-3.5 rounded-xl border border-border bg-surface p-5">
-                    {/* Always visible on touch (no hover exists on phones, so hover-only buttons are
-                     *  unreachable — you could only toggle a model, never edit/delete it). On desktop
-                     *  (sm+) keep the clean hover-reveal, plus focus-within for keyboard access. */}
-                    <div className="absolute right-3 top-3 z-10 flex gap-1 opacity-100 transition-opacity sm:opacity-0 sm:group-hover:opacity-100 sm:focus-within:opacity-100" style={{ transitionDuration: 'var(--motion-fast)' }}>
-                      <button
-                        type="button"
-                        aria-label={t.settings.editLabel.replace('{exec}', p.exec)}
-                        title={t.settings.editLabel.replace('{exec}', p.exec)}
-                        onClick={() => startEdit(p)}
-                        className="flex h-6 w-6 items-center justify-center rounded-md border border-border bg-surface text-text-muted transition-colors hover:border-border-strong hover:text-text"
-                        style={{ transitionDuration: 'var(--motion-fast)' }}
-                      >
-                        <Pencil size={13} aria-hidden />
-                      </button>
-                      <button
-                        type="button"
-                        aria-label={t.settings.deleteLabel.replace('{exec}', p.exec)}
-                        title={t.settings.deleteLabel.replace('{exec}', p.exec)}
-                        onClick={() => setPendingDelete(p.exec)}
-                        className="flex h-6 w-6 items-center justify-center rounded-md border border-danger/60 bg-surface text-danger transition-colors hover:bg-danger hover:text-white"
-                        style={{ transitionDuration: 'var(--motion-fast)' }}
-                      >
-                        <X size={13} aria-hidden />
-                      </button>
-                    </div>
-                    <div className="flex items-start gap-3 pr-14">
-                      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-border bg-elevated">
-                        <ModelIcon name={p.exec} size={20} />
-                      </span>
-                      <div className="flex min-w-0 flex-col gap-1">
-                        <span className="truncate text-sm font-medium text-text">{p.label}{!isCustom ? <span className="ml-1.5 text-tiny uppercase tracking-wide text-text-muted/70">{t.settings.presetTag}</span> : null}</span>
-                        <span className="truncate font-mono text-xs text-text-muted">{execModel(p.exec)}</span>
-                      </div>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => setNoteFor({ label: p.label, exec: p.exec })}
-                      title={t.settings.modelNoteEdit}
-                      className={`line-clamp-2 min-h-[2.25rem] text-left text-xs ${modelNotes[p.exec]?.trim() ? 'text-text-muted hover:text-text' : 'italic text-text-muted/60 hover:text-text-muted'}`}
-                    >
-                      {modelNotes[p.exec]?.trim() || t.settings.modelNoteAdd}
-                    </button>
-                    <div className="flex items-center justify-between gap-2">
-                      <Toggle checked={allowed.includes(p.exec)} onChange={() => toggle(p.exec)} label={p.label} />
-                      <ProviderTag id={execProvider(p.exec)} />
-                    </div>
+            {/* One catalog, grouped by the engine that runs the model — the same grouping the
+             *  executor picker uses, so what admins configure here matches what users pick. */}
+            {PROVIDERS.map((prov) => {
+              const cliItems = models.filter((m) => execProvider(m.exec) === prov.id);
+              const orcaItems = prov.id === 'orca' ? (brainModels.data ?? []) : [];
+              if (cliItems.length === 0 && orcaItems.length === 0) return null;
+              const groupExecs = [...cliItems.map((m) => m.exec), ...orcaItems.map((m) => m.exec)];
+              const enabledCount = groupExecs.filter((e) => allowed.includes(e)).length;
+              return (
+                <div key={prov.id} className="flex flex-col gap-3">
+                  <div className="flex items-center gap-2.5">
+                    <ProviderLogo meta={prov} size={28} />
+                    <span className="text-sm font-semibold text-text">{prov.label}</span>
+                    <span className="font-mono text-tiny text-text-muted">{enabledCount}/{groupExecs.length}</span>
+                    {prov.embedded ? <span className="text-tiny text-text-muted">· {t.settings.orcaModelsHint}</span> : null}
                   </div>
-                );
-              })}
-            </div>
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                    {cliItems.map((p) => {
+                      const isCustom = !isPresetExec(p.exec);
+                      return (
+                        <div key={p.exec} className="card-interactive group relative flex flex-col gap-3.5 rounded-xl border border-border bg-surface p-5">
+                          {/* Always visible on touch (no hover exists on phones, so hover-only buttons are
+                           *  unreachable — you could only toggle a model, never edit/delete it). On desktop
+                           *  (sm+) keep the clean hover-reveal, plus focus-within for keyboard access. */}
+                          <div className="absolute right-3 top-3 z-10 flex gap-1 opacity-100 transition-opacity sm:opacity-0 sm:group-hover:opacity-100 sm:focus-within:opacity-100" style={{ transitionDuration: 'var(--motion-fast)' }}>
+                            <button
+                              type="button"
+                              aria-label={t.settings.editLabel.replace('{exec}', p.exec)}
+                              title={t.settings.editLabel.replace('{exec}', p.exec)}
+                              onClick={() => startEdit(p)}
+                              className="flex h-6 w-6 items-center justify-center rounded-md border border-border bg-surface text-text-muted transition-colors hover:border-border-strong hover:text-text"
+                              style={{ transitionDuration: 'var(--motion-fast)' }}
+                            >
+                              <Pencil size={13} aria-hidden />
+                            </button>
+                            <button
+                              type="button"
+                              aria-label={t.settings.deleteLabel.replace('{exec}', p.exec)}
+                              title={t.settings.deleteLabel.replace('{exec}', p.exec)}
+                              onClick={() => setPendingDelete(p.exec)}
+                              className="flex h-6 w-6 items-center justify-center rounded-md border border-danger/60 bg-surface text-danger transition-colors hover:bg-danger hover:text-white"
+                              style={{ transitionDuration: 'var(--motion-fast)' }}
+                            >
+                              <X size={13} aria-hidden />
+                            </button>
+                          </div>
+                          <div className="flex items-start gap-3 pr-14">
+                            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-border bg-elevated">
+                              <ModelIcon name={p.exec} size={20} />
+                            </span>
+                            <div className="flex min-w-0 flex-col gap-1">
+                              <span className="truncate text-sm font-medium text-text">{p.label}{!isCustom ? <span className="ml-1.5 text-tiny uppercase tracking-wide text-text-muted/70">{t.settings.presetTag}</span> : null}</span>
+                              <span className="truncate font-mono text-xs text-text-muted">{execModel(p.exec)}</span>
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setNoteFor({ label: p.label, exec: p.exec })}
+                            title={t.settings.modelNoteEdit}
+                            className={`line-clamp-2 min-h-[2.25rem] text-left text-xs ${modelNotes[p.exec]?.trim() ? 'text-text-muted hover:text-text' : 'italic text-text-muted/60 hover:text-text-muted'}`}
+                          >
+                            {modelNotes[p.exec]?.trim() || t.settings.modelNoteAdd}
+                          </button>
+                          <div className="mt-auto flex items-center gap-2">
+                            <Toggle checked={allowed.includes(p.exec)} onChange={() => toggle(p.exec)} label={p.label} />
+                          </div>
+                        </div>
+                      );
+                    })}
+                    {orcaItems.map((m) => (
+                      <div key={m.exec} className="card-interactive flex flex-col gap-3.5 rounded-xl border border-border bg-surface p-5">
+                        <div className="flex items-start gap-3">
+                          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-border bg-elevated">
+                            <ModelIcon name={m.model} size={20} />
+                          </span>
+                          <div className="flex min-w-0 flex-col gap-1">
+                            <span className="truncate text-sm font-medium text-text">{m.model}</span>
+                            <span className="truncate font-mono text-xs text-text-muted">{m.exec}</span>
+                          </div>
+                        </div>
+                        <div className="mt-auto flex items-center justify-between gap-2">
+                          <Toggle checked={allowed.includes(m.exec)} onChange={() => toggle(m.exec)} label={m.model} />
+                          <Badge>{m.providerLabel}</Badge>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
 
-            <div className="mt-4">
+            <div>
               <Button variant="ghost" icon={Plus} onClick={() => { setEditingExec(null); setShowAddForm(true); }}>
                 {t.settings.addModel}
               </Button>
             </div>
-
-            {/* Orca AI (brain) catalog — live from the configured providers, never hardcoded. Enabling
-             *  a model adds its `orca:<provider>/<model>` exec to the same global allow-list the CLI
-             *  execs use, so the users admin UI and all pickers share one source of truth. */}
-            {(brainModels.data?.length ?? 0) > 0 && (
-              <div className="mt-6 flex flex-col gap-4">
-                <div className="flex flex-col gap-1">
-                  <span className="flex items-center gap-2 text-sm font-semibold text-text">
-                    <BrainCircuit size={16} className="text-accent" aria-hidden />{t.settings.orcaModels}
-                  </span>
-                  <p className="text-xs text-text-muted">{t.settings.orcaModelsHint}</p>
-                </div>
-                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                  {(brainModels.data ?? []).map((m) => (
-                    <div key={m.exec} className="card-interactive flex flex-col gap-3.5 rounded-xl border border-border bg-surface p-5">
-                      <div className="flex items-start gap-3">
-                        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-border bg-elevated">
-                          <ModelIcon name={m.model} size={20} />
-                        </span>
-                        <div className="flex min-w-0 flex-col gap-1">
-                          <span className="truncate text-sm font-medium text-text">{m.model}</span>
-                          <span className="truncate font-mono text-xs text-text-muted">{m.exec}</span>
-                        </div>
-                      </div>
-                      <div className="flex items-center justify-between gap-2">
-                        <Toggle checked={allowed.includes(m.exec)} onChange={() => toggle(m.exec)} label={m.model} />
-                        <Badge>{m.providerLabel}</Badge>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
           </>
         )}
 
@@ -797,11 +798,6 @@ export default function SettingsPage() {
           </div>
         )}
 
-        {active && (
-          <FormFooter>
-            <Button variant="accent" icon={Save} onClick={active.onClick}>{active.label}</Button>
-          </FormFooter>
-        )}
       </SettingsLayout>
 
       <ConfirmDialog

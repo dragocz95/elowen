@@ -1,6 +1,7 @@
 'use client';
 import { useEffect, useState } from 'react';
-import { ArrowLeft, Save, Plus, Trash2, KeyRound, Settings2 } from 'lucide-react';
+import { ArrowLeft, Plus, Trash2, KeyRound, Settings2 } from 'lucide-react';
+import { useAutoSave } from '../../lib/useAutoSave';
 import { pluginIcon } from './pluginMeta';
 import { Badge } from '../../components/ui/Badge';
 import { Button } from '../../components/ui/Button';
@@ -8,7 +9,6 @@ import { Input } from '../../components/ui/Input';
 import { Field } from '../../components/ui/Field';
 import { Toggle } from '../../components/ui/Toggle';
 import { Checkbox } from '../../components/ui/Checkbox';
-import { FormFooter } from '../../components/ui/FormFooter';
 import { SettingCard } from '../../components/ui/SettingCard';
 import { LoadingState } from '../../components/ui/states';
 import { useToast } from '../../components/ui/Toast';
@@ -78,16 +78,19 @@ export function PluginDetail({ name, onBack }: { name: string; onBack: () => voi
   const { toast } = useToast();
   const { t } = useTranslation();
   const [values, setValues] = useState<Record<string, unknown>>({});
+  const [seeded, setSeeded] = useState(false);
 
-  useEffect(() => { if (data) setValues(data.config); }, [data]);
+  useEffect(() => { if (data) { setValues(data.config); setSeeded(true); } }, [data]);
+
+  // Auto-persist shortly after any field change; the daemon hot-reloads the brain on save.
+  useAutoSave([values], () => save.mutate(
+    { name, values },
+    { onSuccess: () => toast(t.pluginCfg.saved), onError: () => toast(t.pluginCfg.saveError, 'error') },
+  ), { ready: seeded, delay: 1200 });
 
   if (isLoading || !data) return <LoadingState />;
 
   const set = (key: string, v: unknown) => setValues((cur) => ({ ...cur, [key]: v }));
-  const onSave = () => save.mutate(
-    { name, values },
-    { onSuccess: () => toast(t.pluginCfg.saved), onError: () => toast(t.pluginCfg.saveError, 'error') },
-  );
 
   const renderField = (f: PluginConfigField) => {
     switch (f.type) {
@@ -163,9 +166,6 @@ export function PluginDetail({ name, onBack }: { name: string; onBack: () => voi
         </SettingCard>
       ) : null}
 
-      <FormFooter>
-        <Button variant="accent" icon={Save} onClick={onSave} disabled={save.isPending}>{t.pluginCfg.save}</Button>
-      </FormFooter>
     </div>
   );
 }

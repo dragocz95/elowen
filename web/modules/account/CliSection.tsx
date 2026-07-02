@@ -1,11 +1,10 @@
 'use client';
 import { useState, useEffect } from 'react';
-import { Cpu, SlidersHorizontal, Save } from 'lucide-react';
+import { useAutoSave } from '../../lib/useAutoSave';
+import { Cpu, SlidersHorizontal } from 'lucide-react';
 import { SettingCard } from '../../components/ui/SettingCard';
 import { Toggle } from '../../components/ui/Toggle';
 import { Slider } from '../../components/ui/Slider';
-import { Button } from '../../components/ui/Button';
-import { FormFooter } from '../../components/ui/FormFooter';
 import { ModelIcon } from '../../components/ui/ModelIcon';
 import { LoadingState } from '../../components/ui/states';
 import { useToast } from '../../components/ui/Toast';
@@ -27,13 +26,25 @@ export function CliSection() {
   const [autoCompact, setAutoCompact] = useState(false);
   const [autoCompactAt, setAutoCompactAt] = useState(80);
 
+  const [seeded, setSeeded] = useState(false);
   useEffect(() => {
     if (data) {
       setSelection(data.model ? `${data.modelProvider ?? ''}::${data.model}` : '');
       setAutoCompact(data.autoCompact);
       setAutoCompactAt(data.autoCompactAt);
+      setSeeded(true);
     }
   }, [data]);
+
+  // Auto-persist shortly after any change (the daemon restarts a running brain with the new model).
+  const persist = () => {
+    const [provider, ...rest] = selection.split('::');
+    save.mutate(
+      { model: selection ? rest.join('::') : '', modelProvider: selection ? (provider ?? '') : '', autoCompact, autoCompactAt },
+      { onError: () => toast(t.cli.saveError, 'error') },
+    );
+  };
+  useAutoSave([selection, autoCompact, autoCompactAt], persist, { ready: seeded });
 
   if (isLoading || !data) return <LoadingState />;
 
@@ -42,13 +53,6 @@ export function CliSection() {
   const groups = [...new Set(options.map((o) => o.providerLabel))];
   const selected = options.find((o) => `${o.provider}::${o.model}` === selection);
 
-  const onSave = () => {
-    const [provider, ...rest] = selection.split('::');
-    save.mutate(
-      { model: selection ? rest.join('::') : '', modelProvider: selection ? (provider ?? '') : '', autoCompact, autoCompactAt },
-      { onSuccess: () => toast(t.cli.saved), onError: () => toast(t.cli.saveError, 'error') },
-    );
-  };
 
   return (
     <>
@@ -95,9 +99,6 @@ export function CliSection() {
         </SettingCard>
       </div>
 
-      <FormFooter>
-        <Button variant="accent" icon={Save} onClick={onSave} disabled={save.isPending}>{t.cli.save}</Button>
-      </FormFooter>
     </>
   );
 }
