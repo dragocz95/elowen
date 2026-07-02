@@ -352,6 +352,13 @@ export function buildApp(opts: BuildOpts) {
         },
         policy: (userId) => resolvePolicy({ userProjects, projects }, userId),
         userSettings: (userId) => userSettings.cliSettings(userId),
+        // Platform channels (Discord, …): role mappings resolve to project-scoped policies; the admin's
+        // token anchors the channel sessions.
+        policyForProjects: (ids) => ({
+          allowedProjectIds: new Set(ids),
+          allowedPaths: () => ids.map((id) => projects.get(id)?.path).filter((p): p is string => !!p),
+        }),
+        platformOwner: () => users.list().find((u) => u.is_admin)?.id,
       })
     : undefined;
   // Single-use ticket store for the terminal WebSocket stream — shared between the authenticated
@@ -394,6 +401,8 @@ export function buildApp(opts: BuildOpts) {
     // One-shot startup sweeps. Log on failure (e.g. tmux missing) so a silent rejection can't leave
     // zombies un-reverted — that would stall every mission until the next restart.
     void reconcileZombies().catch((e) => log.error('reconcileZombies failed', e));
+    // Bring up plugin platform channels (Discord bot, …). Fail-open per adapter.
+    void brain?.startPlatforms(log).catch((e) => log.error('startPlatforms failed', e));
     void reconcileOverseers().catch((e) => log.error('reconcileOverseers failed', e)); // re-park overseers for active missions / kill orphans
     // Self-heal the agent-workflow skill: (re)install the bundled `orca-workflow` SKILL.md into every
     // present provider on boot. Best-effort — installAll catches its own per-provider errors and never

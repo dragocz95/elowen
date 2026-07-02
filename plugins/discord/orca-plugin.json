@@ -1,0 +1,14 @@
+{
+  "name": "discord",
+  "version": "0.1.0",
+  "apiVersion": "1",
+  "description": "Discord bot channel: mention the bot and it answers from the Orca brain. Each Discord role maps to allowed Orca projects and an extra role prompt.",
+  "entry": "index.mjs",
+  "provides": { "platforms": ["discord"] },
+  "requires": { "config": ["botToken"] },
+  "configSchema": [
+    { "key": "botToken", "label": "Bot token", "type": "secret", "required": true, "hint": "Discord Developer Portal → Bot → Token. Enable the Message Content intent." },
+    { "key": "guildId", "label": "Guild ID", "type": "string", "hint": "Optional: only respond in this server (empty = all servers the bot is in)." },
+    { "key": "rolePolicies", "label": "Role policies", "type": "rolePolicies", "hint": "First matching role wins. Users with no mapped role are ignored." }
+  ]
+}

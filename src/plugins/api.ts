@@ -7,19 +7,24 @@ export type PluginSkill = Skill;
 /** A named lifecycle callback. The concrete hook set stays intentionally minimal for the foundation. */
 export interface PluginHook { name: string; run: (payload: unknown) => void | Promise<void> }
 
-/** STUB — Discord and other channels land in later sub-projects. A messaging channel a plugin attaches;
- *  interface only for now so a later platform plugin just fills in the body (no runtime wiring yet). */
+/** Where a channel message came from + what its sender may access. The adapter resolves `access` from
+ *  its own role mapping (e.g. Discord role → projects + prompt); a message without `access` is ignored
+ *  (an unmapped user gets no brain). */
 export interface SessionSource {
   platform: string;
   userId: string;
   roleIds: string[];
-  channelId?: string;
+  channelId: string;
   threadId?: string;
+  access?: { projectIds: number[]; prompt?: string };
 }
+/** A messaging channel a plugin attaches (Discord, …). The host calls `listen` + `connect` at startup;
+ *  the handler returns the brain's reply (or undefined to stay silent) and the adapter delivers it. */
 export interface PlatformAdapter {
   name: string;
   connect(): Promise<void>;
-  listen(onMessage: (src: SessionSource, text: string) => void | Promise<void>): void;
+  disconnect?(): void;
+  listen(onMessage: (src: SessionSource, text: string) => Promise<string | undefined>): void;
   send(channelId: string, text: string): Promise<void>;
 }
 

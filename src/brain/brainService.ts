@@ -49,6 +49,10 @@ export interface BrainDeps {
   /** Per-user CLI/brain settings: an optional model override (empty → configured default) + auto-compact
    *  toggle and its user-tunable threshold percentage. */
   userSettings?: (userId: number) => { model?: string; modelProvider?: string; autoCompact?: boolean; autoCompactAt?: number };
+  /** Build a Policy from an explicit project-id set (platform role mappings resolve through this). */
+  policyForProjects?: (projectIds: number[]) => Policy;
+  /** The Orca user that anchors platform channel sessions (their token drives the tools) — the admin. */
+  platformOwner?: () => number | undefined;
   /** Injected for tests; defaults to PI's createAgentSession. */
   createSession?: typeof createAgentSession;
   /** Injected for tests; builds the resource loader that carries the Orca system prompt. A test passes
@@ -89,6 +93,7 @@ function toBrainEvent(e: AgentSessionEvent): BrainEvent | null {
 export class BrainService {
   private live = new Map<number, LiveBrain>();
   private channels = new Map<string, LiveBrain>();
+  private startedPlatforms: { name: string; disconnect?(): void }[] = [];
   private pluginsMemo?: PluginRegistry;
   constructor(private d: BrainDeps) {}
 
@@ -243,6 +248,34 @@ export class BrainService {
     this.pluginsMemo = undefined;
     for (const userId of [...this.live.keys()]) await this.restart(userId);
     for (const [id, ch] of [...this.channels]) { ch.session.dispose(); this.channels.delete(id); }
+    // Platform adapters were built by the old registry — disconnect them and start the fresh set.
+    for (const p of this.startedPlatforms) { try { p.disconnect?.(); } catch { /* already down */ } }
+    this.startedPlatforms = [];
+    await this.startPlatforms();
+  }
+
+  /** Start every plugin-contributed platform adapter (Discord bot, …): wire its messages into channel
+   *  sessions and let it deliver the replies. Fail-open per adapter; called once at daemon startup and
+   *  re-run by reloadPlugins. */
+  async startPlatforms(log?: { info(m: string): void; error(m: string): void }): Promise<void> {
+    const plugins = await this.resolvePlugins();
+    for (const adapter of plugins?.platforms ?? []) {
+      try {
+        adapter.listen(async (src, text) => {
+          const owner = this.d.platformOwner?.();
+          if (owner === undefined || !src.access) return undefined; // unmapped sender → stay silent
+          const policy = this.d.policyForProjects?.(src.access.projectIds)
+            ?? { allowedProjectIds: new Set(src.access.projectIds), allowedPaths: () => [] };
+          const promptAppend = src.access.prompt ? [src.access.prompt] : undefined;
+          return this.channelSend({ channelId: `${src.platform}-${src.threadId ?? src.channelId}`, ownerUserId: owner, policy, promptAppend }, text);
+        });
+        await adapter.connect();
+        this.startedPlatforms.push(adapter);
+        log?.info(`platform connected: ${adapter.name}`);
+      } catch (e) {
+        log?.error(`platform failed: ${adapter.name}: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
   }
 
   /** Send one channel message (e.g. a Discord mention) into that channel's own conversation and return

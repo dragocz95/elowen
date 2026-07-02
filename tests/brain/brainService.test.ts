@@ -111,6 +111,33 @@ describe('BrainService', () => {
     expect(roles).toContain('assistant');
   });
 
+  it('startPlatforms wires an adapter: mapped sender gets a reply, unmapped stays silent', async () => {
+    const d = fakeDeps();
+    const reg = new PluginRegistry();
+    const ctx = reg.contextFor('discord', {}, { info() {}, warn() {}, error() {} });
+    let handler: ((src: unknown, text: string) => Promise<string | undefined>) | null = null;
+    let connected = false;
+    ctx.registerPlatform({
+      name: 'fake',
+      connect: async () => { connected = true; },
+      listen: (h) => { handler = h; },
+      send: async () => {},
+    });
+    (d as unknown as { plugins: PluginRegistry }).plugins = reg;
+    (d as unknown as { platformOwner: () => number }).platformOwner = () => 1;
+    (d as unknown as { policyForProjects: (ids: number[]) => unknown }).policyForProjects =
+      (ids) => ({ allowedProjectIds: new Set(ids), allowedPaths: () => ['/repo/x'] });
+
+    const svc = new BrainService(d as never);
+    await svc.startPlatforms();
+    expect(connected).toBe(true);
+
+    const mapped = await handler!({ platform: 'fake', userId: 'u1', roleIds: ['r'], channelId: 'c1', access: { projectIds: [1], prompt: 'Role dev.' } }, 'hello');
+    expect(mapped).toBe('echo:hello');
+    const unmapped = await handler!({ platform: 'fake', userId: 'u2', roleIds: [], channelId: 'c1' }, 'hi');
+    expect(unmapped).toBeUndefined();
+  });
+
   it('stop disposes the session and reports not running', async () => {
     const d = fakeDeps();
     const svc = new BrainService(d as never);
