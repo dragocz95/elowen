@@ -121,6 +121,13 @@ class DiscordAdapter {
     }
   }
 
+  /** Host-initiated push (cron/tick echoes) → the configured notification channel. No-op without one. */
+  async notify(text) {
+    const channelId = typeof this.cfg.notifyChannelId === 'string' ? this.cfg.notifyChannelId.trim() : '';
+    if (!channelId) return;
+    await this.reply(channelId, text);
+  }
+
   async rest(method, path, body, attempt = 0) {
     const res = await fetch(`${API}${path}`, {
       method,

@@ -196,6 +196,24 @@ describe('BrainService', () => {
     expect(roles).toContain('assistant');
   });
 
+  it('notify fans out to started platforms that implement notify()', async () => {
+    const d = fakeDeps();
+    const reg = new PluginRegistry();
+    const ctx = reg.contextFor('discord', {}, { info() {}, warn() {}, error() {} });
+    const pushed: string[] = [];
+    ctx.registerPlatform({
+      name: 'discord', connect: async () => {}, listen: () => {}, send: async () => {},
+      notify: async (t: string) => { pushed.push(t); },
+    });
+    // a second adapter WITHOUT notify must be skipped without error
+    ctx.registerPlatform({ name: 'cron', connect: async () => {}, listen: () => {}, send: async () => {} });
+    (d as unknown as { plugins: PluginRegistry }).plugins = reg;
+    const svc = new BrainService(d as never);
+    await svc.startPlatforms();
+    await svc.notify('ahoj svete');
+    expect(pushed).toEqual(['ahoj svete']);
+  });
+
   it('startPlatforms wires an adapter: mapped sender gets a reply, unmapped stays silent', async () => {
     const d = fakeDeps();
     const reg = new PluginRegistry();

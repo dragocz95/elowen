@@ -115,7 +115,7 @@ export class BrainService {
   private live = new Map<string, LiveBrain>();
   private active = new Map<number, string>();
   private channels = new Map<string, LiveBrain>();
-  private startedPlatforms: { name: string; disconnect?(): void }[] = [];
+  private startedPlatforms: { name: string; disconnect?(): void; notify?(t: string): Promise<void> }[] = [];
   private pluginsMemo?: PluginRegistry;
   /** Per-conversation exclusivity: PI sessions are single-conversation, so concurrent prompt()/spawn
    *  calls on one session id queue up here instead of corrupting turn state. */
@@ -352,6 +352,17 @@ export class BrainService {
     for (const p of this.startedPlatforms) { try { p.disconnect?.(); } catch { /* already down */ } }
     this.startedPlatforms = [];
     await this.startPlatforms();
+  }
+
+  /** Push a proactive message to every started platform that has a notification channel (Discord, …).
+   *  Fail-open per adapter — a broken sink must not break the cron tick that triggered it. */
+  async notify(text: string): Promise<void> {
+    for (const p of this.startedPlatforms) {
+      const adapter = p as { notify?(t: string): Promise<void> };
+      if (typeof adapter.notify === 'function') {
+        try { await adapter.notify(text); } catch { /* one sink down must not block the rest */ }
+      }
+    }
   }
 
   /** Start every plugin-contributed platform adapter (Discord bot, …): wire its messages into channel

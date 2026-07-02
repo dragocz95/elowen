@@ -47,6 +47,8 @@ export interface LoadPluginsOptions {
   config?: Record<string, Record<string, unknown>>;
   /** Root for per-plugin writable data dirs (ctx.dataDir()). */
   dataRoot?: string;
+  /** Proactive-notification sink exposed to plugins as ctx.notify(). */
+  notify?: (text: string) => Promise<void>;
   logger: PluginLogger;
 }
 
@@ -72,7 +74,7 @@ export async function loadPlugins(opts: LoadPluginsOptions): Promise<PluginRegis
         // Stage the plugin's contributions in a scratch registry and merge only after a clean
         // register() — a plugin that throws halfway must not leave half its tools live.
         const staging = new PluginRegistry();
-        const ctx = staging.contextFor(name, opts.config?.[name] ?? {}, opts.logger, opts.dataRoot);
+        const ctx = staging.contextFor(name, opts.config?.[name] ?? {}, opts.logger, opts.dataRoot, opts.notify);
         await mod.register(ctx);
         registry.merge(staging);
         loaded.add(name);

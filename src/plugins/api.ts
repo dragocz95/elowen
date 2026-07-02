@@ -27,6 +27,9 @@ export interface PlatformAdapter {
   disconnect?(): void;
   listen(onMessage: (src: SessionSource, text: string) => Promise<string | undefined>): void;
   send(channelId: string, text: string): Promise<void>;
+  /** Deliver a proactive (host-initiated) message to this platform's configured notification channel.
+   *  Optional — an adapter without a notify channel simply omits it. Used for cron/tick echoes. */
+  notify?(text: string): Promise<void>;
 }
 
 /** Scoped logger handed to a plugin (prefixed with the plugin name by the registry). */
@@ -56,6 +59,9 @@ export interface PluginContext {
   /** The current turn's access (admin flag + project ids) — a plugin forwards this when delegating to
    *  a sub-agent so the child inherits exactly the caller's scope, never more. */
   currentAccess(): { projectIds: number[]; admin: boolean };
+  /** Push a proactive message out to every platform that has a notification channel configured (e.g.
+   *  Discord). Fire-and-forget; no-op when nothing is wired. Used by cron/tick to echo results. */
+  notify(text: string): Promise<void>;
   /** This plugin's own config slice (`config.plugins.config[name]`), secrets included daemon-side. */
   readonly config: Record<string, unknown>;
   readonly logger: PluginLogger;

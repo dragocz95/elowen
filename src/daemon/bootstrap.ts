@@ -339,7 +339,7 @@ export function buildApp(opts: BuildOpts) {
   // Live provider resolver: adding a provider / connecting an account in Settings applies to the next
   // brain start without a daemon restart.
   const brainConfig = () => brainConfigFromOrca(config, brainAuth);
-  const brain = opts.dbPath !== ':memory:'
+  const brain: BrainService | undefined = opts.dbPath !== ':memory:'
     ? new BrainService({
         store: new BrainStore(db), users, config: brainConfig, prompts, url: orcaCli.url,
         authStorage: brainAuth,
@@ -349,7 +349,7 @@ export function buildApp(opts: BuildOpts) {
         loadPlugins: () => {
           const enabled = config.get().plugins.enabled;
           const pluginConfig = Object.fromEntries(enabled.map((n) => [n, config.pluginConfig(n)]));
-          return loadPlugins({ dirs: pluginDirs, enabled, config: pluginConfig, dataRoot: pluginDataRoot, logger: log });
+          return loadPlugins({ dirs: pluginDirs, enabled, config: pluginConfig, dataRoot: pluginDataRoot, notify: (t) => brain?.notify(t) ?? Promise.resolve(), logger: log });
         },
         policy: (userId) => resolvePolicy({ userProjects, projects }, userId),
         userSettings: (userId) => userSettings.cliSettings(userId),

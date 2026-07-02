@@ -57,7 +57,7 @@ export function isDue(job, now) {
 
 class CronAdapter {
   name = 'cron';
-  constructor(store, logger) { this.store = store; this.log = logger; this.handler = null; }
+  constructor(store, logger, notify) { this.store = store; this.log = logger; this.notify = notify; this.handler = null; }
   listen(onMessage) { this.handler = onMessage; }
   async connect() {
     this.timer = setInterval(() => void this.tick().catch((e) => this.log.error(`tick failed: ${e?.message ?? e}`)), TICK_MS);
@@ -78,6 +78,8 @@ class CronAdapter {
       }, job.prompt).catch((e) => `Error: ${e?.message ?? e}`);
       if (job.runAt) this.store.save(this.store.all().filter((j) => j.id !== job.id)); // one-shot: done → gone
       else this.store.patch(job.id, { lastResult: String(reply ?? '').slice(0, 500) });
+      // Echo the outcome to the notification channel (Discord) so it reaches the user proactively.
+      if (reply) await this.notify(`⏰ **${job.name}**\n${String(reply).slice(0, 1800)}`).catch(() => {});
     }
   }
 }
@@ -170,6 +172,6 @@ export function register(ctx) {
     },
   }));
 
-  ctx.registerPlatform(new CronAdapter(store, ctx.logger));
+  ctx.registerPlatform(new CronAdapter(store, ctx.logger, ctx.notify));
   ctx.logger.info('cron tools + scheduler registered');
 }

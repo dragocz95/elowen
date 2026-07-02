@@ -9,6 +9,7 @@
   "configSchema": [
     { "key": "botToken", "label": "Bot token", "type": "secret", "required": true, "hint": "Discord Developer Portal → Bot → Token. Enable the Message Content intent." },
     { "key": "guildId", "label": "Guild ID", "type": "string", "hint": "Optional: only respond in this server (empty = all servers the bot is in)." },
+    { "key": "notifyChannelId", "label": "Notification channel ID", "type": "string", "hint": "Where proactive messages (cron/tick results, escalations) are posted. Empty = no proactive pushes." },
     { "key": "rolePolicies", "label": "Role policies", "type": "rolePolicies", "hint": "First matching role wins. Users with no mapped role are ignored." }
   ]
 }
