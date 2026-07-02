@@ -7,7 +7,7 @@ export const PLUGIN_API_VERSION = '1';
 /** One declared config field of a plugin — the settings UI renders a form from these. `secret` values
  *  are write-only (the API returns only whether they are set); `rolePolicies` renders the structured
  *  role → projects + prompt mapping editor (the Discord pattern borrowed from Hermes). */
-export interface PluginConfigField {
+interface PluginConfigField {
   key: string;
   label: string;
   type: 'string' | 'secret' | 'boolean' | 'number' | 'textarea' | 'rolePolicies';
