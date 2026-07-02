@@ -34,6 +34,26 @@ describe('cronjob plugin', () => {
     expect(isDue({ schedule: 'every 15m', lastRun: new Date(now - 16 * 60_000).toISOString() }, now)).toBe(true);
   });
 
+  it('parses one-shot wakeups and fires them exactly once', async () => {
+    const { parseOneShot, isDue } = await import(join(pluginsDir, 'cronjob/index.mjs')) as {
+      parseOneShot: (s: string, now: number) => number | null;
+      isDue: (j: { schedule: string; runAt?: string; lastRun?: string }, now: number) => boolean;
+    };
+    const now = new Date('2026-07-02T10:00:00Z').getTime();
+    expect(parseOneShot('in 20m', now)).toBe(now + 20 * 60_000);
+    expect(parseOneShot('in 2h', now)).toBe(now + 2 * 3_600_000);
+    expect(parseOneShot('in 10s', now)).toBeNull();
+    expect(parseOneShot('every 5m', now)).toBeNull();
+    const at = parseOneShot('at 18:30', now)!;
+    expect(new Date(at).getHours()).toBe(18);
+    expect(at).toBeGreaterThan(now);
+
+    const job = { schedule: 'in 20m', runAt: new Date(now + 20 * 60_000).toISOString() };
+    expect(isDue(job, now)).toBe(false);
+    expect(isDue(job, now + 21 * 60_000)).toBe(true);
+    expect(isDue({ ...job, lastRun: new Date(now + 21 * 60_000).toISOString() }, now + 30 * 60_000)).toBe(false); // ran → never again
+  });
+
   it('cron_add/list/remove work in an admin session and are refused otherwise', async () => {
     const dataRoot = freshDataRoot();
     const reg = await loadPlugins({ dirs: [pluginsDir], enabled: ['cronjob'], dataRoot, logger: log });
@@ -114,5 +134,62 @@ describe('image-gen plugin', () => {
     } finally {
       globalThis.fetch = origFetch;
     }
+  });
+});
+
+describe('terminal plugin background processes', () => {
+  it('runs a command in the background, reads its output, and lists/kills it', async () => {
+    const dataRoot = freshDataRoot();
+    const reg = await loadPlugins({ dirs: [pluginsDir], enabled: ['terminal'], dataRoot, logger: log });
+    const names = reg.tools.map((t) => t.name).sort();
+    expect(names).toEqual(['kill_process', 'list_processes', 'read_process_output', 'run_command']);
+    const run = reg.tools.find((t) => t.name === 'run_command')!;
+    const read = reg.tools.find((t) => t.name === 'read_process_output')!;
+    const list = reg.tools.find((t) => t.name === 'list_processes')!;
+
+    await runWithPolicy(ADMIN, async () => {
+      const started = asText(await run.execute('t', { command: 'echo hello-bg', cwd: '/tmp', background: true }, undefined as never, undefined as never));
+      const id = /background process (\w+):/.exec(started)![1]!;
+      expect(asText(await list.execute('t', {}, undefined as never, undefined as never))).toContain(id);
+      // give the child a moment to flush + exit
+      await new Promise((r) => setTimeout(r, 300));
+      const out = asText(await read.execute('t', { id, all: true }, undefined as never, undefined as never));
+      expect(out).toContain('hello-bg');
+    });
+  });
+});
+
+describe('subagent plugin', () => {
+  it('delegate forwards the caller access + task to the host handler and returns its reply', async () => {
+    const dataRoot = freshDataRoot();
+    const reg = await loadPlugins({ dirs: [pluginsDir], enabled: ['subagent'], dataRoot, logger: log });
+    expect(reg.platforms.map((p) => p.name)).toEqual(['subagent']);
+    const delegate = reg.tools.find((t) => t.name === 'delegate')!;
+
+    // Before the host wires the platform handler, delegate fails gracefully.
+    await runWithPolicy(LIMITED, async () => {
+      expect(asText(await delegate.execute('t', { task: 'x' }, undefined as never, undefined as never))).toMatch(/not wired up/);
+    });
+
+    // Capture the handler the way the host does, then delegate under a scoped policy.
+    let seen: { access?: { projectIds: number[]; admin: boolean } } | null = null;
+    reg.platforms[0]!.listen(async (src, text) => { seen = src; return `sub did: ${text}`; });
+    await runWithPolicy(LIMITED, async () => {
+      const out = asText(await delegate.execute('t', { task: 'najdi bug' }, undefined as never, undefined as never));
+      expect(out).toBe('sub did: najdi bug');
+    });
+    expect(seen!.access).toMatchObject({ projectIds: [1], admin: false }); // inherits caller scope, not admin
+  });
+
+  it('delegate inherits admin access from an admin session', async () => {
+    const dataRoot = freshDataRoot();
+    const reg = await loadPlugins({ dirs: [pluginsDir], enabled: ['subagent'], dataRoot, logger: log });
+    const delegate = reg.tools.find((t) => t.name === 'delegate')!;
+    let seen: { access?: { admin: boolean } } | null = null;
+    reg.platforms[0]!.listen(async (src) => { seen = src; return 'ok'; });
+    await runWithPolicy(ADMIN, async () => {
+      await delegate.execute('t', { task: 'cokoliv' }, undefined as never, undefined as never);
+    });
+    expect(seen!.access).toMatchObject({ admin: true });
   });
 });

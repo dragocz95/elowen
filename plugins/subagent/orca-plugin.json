@@ -1,0 +1,8 @@
+{
+  "name": "subagent",
+  "version": "0.1.0",
+  "apiVersion": "1",
+  "description": "Delegation: spin up a fresh isolated sub-agent to handle a self-contained task and return its result. The sub-agent inherits the caller's access, never more.",
+  "entry": "index.mjs",
+  "provides": { "tools": ["delegate"], "platforms": ["subagent"] }
+}

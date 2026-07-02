@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { ToolDefinition } from '@earendil-works/pi-coding-agent';
 import type { PluginContext, PluginHook, PluginLogger, PluginSkill, PlatformAdapter } from './api.js';
-import { assertPathAllowed, allowedRoots, isAllAccess } from './pathGuard.js';
+import { assertPathAllowed, allowedRoots, isAllAccess, currentAccess } from './pathGuard.js';
 
 /** Aggregates every enabled plugin's contributions, and hands each plugin a PluginContext scoped to its
  *  own config slice + a name-prefixed logger. Populated once per daemon by the loader. */
@@ -40,6 +40,7 @@ export class PluginRegistry {
       assertPathAllowed,
       allowedRoots,
       isAdminSession: isAllAccess,
+      currentAccess,
       dataDir: () => {
         const dir = join(dataRoot ?? join(tmpdir(), 'orca-plugins-data'), name);
         mkdirSync(dir, { recursive: true });

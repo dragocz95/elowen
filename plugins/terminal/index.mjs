@@ -1,16 +1,48 @@
-// Terminal plugin: runs a shell command with the working directory confined to the caller's accessible
-// repos (cwd guarded via ctx.assertPathAllowed). NOTE: the cwd is enforced, but a shell can still read
-// absolute paths outside the repo — hard isolation (a jail/namespace) for untrusted roles is a deferred
-// hardening step. Safe under the admin-trusted plugin model where the operator enables it deliberately.
+// Terminal plugin: shell commands with the working directory confined to the caller's accessible
+// repos (cwd guarded via ctx.assertPathAllowed). Long-running work goes to the background: a process
+// registry (the Hermes process_registry idea) keeps spawned children + their rolling output, and the
+// list/read/kill tools manage them. NOTE: the cwd is enforced, but a shell can still read absolute
+// paths outside the repo — hard isolation for untrusted roles is a deferred hardening step. Safe under
+// the admin-trusted plugin model where the operator enables it deliberately.
 import { defineTool } from '@earendil-works/pi-coding-agent';
 import { Type } from 'typebox';
 import { spawn } from 'node:child_process';
 
-const MAX = 60_000;
-const TIMEOUT_MS = 120_000;
+const MAX = 60_000;              // output cap per foreground run / background buffer
+const TIMEOUT_MS = 120_000;      // foreground runs get killed after this
+const MAX_BG = 16;               // concurrent background processes
 const ok = (text) => ({ content: [{ type: 'text', text }], details: {} });
+const fail = (e) => ok(`Error: ${e instanceof Error ? e.message : String(e)}`);
 
-function run(command, cwd) {
+/** One background child: rolling output buffer + exit state, addressable by a short id. */
+class BgProcess {
+  constructor(id, command, cwd) {
+    this.id = id;
+    this.command = command;
+    this.cwd = cwd;
+    this.output = '';
+    this.readOffset = 0;
+    this.exitCode = null;
+    this.startedAt = new Date().toISOString();
+    this.child = spawn(command, { cwd, shell: true, env: process.env, detached: false });
+    const onData = (d) => {
+      this.output += d.toString();
+      if (this.output.length > MAX) { // keep the tail; new-output reads follow the trim
+        const drop = this.output.length - MAX;
+        this.output = this.output.slice(drop);
+        this.readOffset = Math.max(0, this.readOffset - drop);
+      }
+    };
+    this.child.stdout.on('data', onData);
+    this.child.stderr.on('data', onData);
+    this.child.on('close', (code) => { this.exitCode = code ?? -1; });
+    this.child.on('error', (e) => { this.output += `\n[spawn error: ${e.message}]`; this.exitCode = -1; });
+  }
+  get running() { return this.exitCode === null; }
+  kill() { try { this.child.kill('SIGKILL'); } catch { /* already gone */ } }
+}
+
+function runForeground(command, cwd) {
   return new Promise((done) => {
     const child = spawn(command, { cwd, shell: true, env: process.env });
     let out = '';
@@ -29,21 +61,76 @@ function run(command, cwd) {
 }
 
 export function register(ctx) {
+  const processes = new Map(); // id → BgProcess
+
+  const guardCwd = (cwd) => ctx.assertPathAllowed(cwd ?? ctx.allowedRoots()[0] ?? process.cwd());
+
   ctx.registerTool(defineTool({
     name: 'run_command', label: 'Run command',
-    description: 'Run a shell command. The working directory is confined to your accessible repositories; '
-      + 'pass cwd (a repo path) or it defaults to your first repo.',
+    description: 'Run a shell command. Foreground by default (120 s limit); pass background=true for '
+      + 'long-running work (dev servers, builds) and manage it with list_processes / read_process_output / kill_process. '
+      + 'The working directory is confined to your accessible repositories.',
     parameters: Type.Object({
       command: Type.String({ description: 'The shell command to run' }),
       cwd: Type.Optional(Type.String({ description: 'Working directory (must be within your repositories)' })),
+      background: Type.Optional(Type.Boolean({ description: 'Run detached and return a process id' })),
     }),
     execute: async (_id, p) => {
       try {
-        const roots = ctx.allowedRoots();
-        const cwd = ctx.assertPathAllowed(p.cwd ?? roots[0] ?? process.cwd());
-        return ok(await run(p.command, cwd));
-      } catch (e) { return ok(`Error: ${e instanceof Error ? e.message : String(e)}`); }
+        const cwd = guardCwd(p.cwd);
+        if (!p.background) return ok(await runForeground(p.command, cwd));
+        // prune finished processes before the cap check so dead entries don't block new work
+        for (const [id, bg] of processes) { if (!bg.running) processes.delete(id); }
+        if (processes.size >= MAX_BG) return ok(`Error: too many background processes (${MAX_BG}); kill one first.`);
+        const id = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`;
+        processes.set(id, new BgProcess(id, p.command, cwd));
+        return ok(`Started background process ${id}: ${p.command}\n(cwd: ${cwd})\nUse read_process_output("${id}") to check on it.`);
+      } catch (e) { return fail(e); }
     },
   }));
-  ctx.logger.info('registered run_command');
+
+  ctx.registerTool(defineTool({
+    name: 'list_processes', label: 'List processes',
+    description: 'List background processes started with run_command(background=true).',
+    parameters: Type.Object({}),
+    execute: async () => {
+      if (processes.size === 0) return ok('No background processes.');
+      return ok([...processes.values()].map((bg) =>
+        `- ${bg.id} ${bg.running ? 'RUNNING' : `exited(${bg.exitCode})`} since ${bg.startedAt}\n  $ ${bg.command}`
+      ).join('\n'));
+    },
+  }));
+
+  ctx.registerTool(defineTool({
+    name: 'read_process_output', label: 'Read process output',
+    description: 'Read NEW output of a background process since the last read (pass all=true for the full buffer).',
+    parameters: Type.Object({
+      id: Type.String(),
+      all: Type.Optional(Type.Boolean({ description: 'Return the whole buffer instead of just new output' })),
+    }),
+    execute: async (_id, p) => {
+      const bg = processes.get(p.id);
+      if (!bg) return ok(`Error: no background process ${p.id}.`);
+      const text = p.all ? bg.output : bg.output.slice(bg.readOffset);
+      bg.readOffset = bg.output.length;
+      const state = bg.running ? '[still running]' : `[exited ${bg.exitCode}]`;
+      if (!bg.running) processes.delete(p.id); // final read collects the corpse
+      return ok(`${text || '(no new output)'}\n${state}`);
+    },
+  }));
+
+  ctx.registerTool(defineTool({
+    name: 'kill_process', label: 'Kill process',
+    description: 'Kill a background process by id.',
+    parameters: Type.Object({ id: Type.String() }),
+    execute: async (_id, p) => {
+      const bg = processes.get(p.id);
+      if (!bg) return ok(`Error: no background process ${p.id}.`);
+      bg.kill();
+      processes.delete(p.id);
+      return ok(`Killed ${p.id} ($ ${bg.command}).`);
+    },
+  }));
+
+  ctx.logger.info('registered run_command (+background), list/read/kill process tools');
 }

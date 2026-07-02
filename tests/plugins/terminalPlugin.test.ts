@@ -27,8 +27,8 @@ describe('terminal plugin', () => {
     dir = mkdtempSync(join(tmpdir(), 'orca-term-'));
   });
 
-  it('registers run_command', () => {
-    expect(reg.tools.map((t) => t.name)).toEqual(['run_command']);
+  it('registers run_command + background process tools', () => {
+    expect(reg.tools.map((t) => t.name).sort()).toEqual(['kill_process', 'list_processes', 'read_process_output', 'run_command']);
   });
 
   it('runs a command in an allowed repo (default cwd = first root)', async () => {

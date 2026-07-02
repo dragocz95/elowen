@@ -53,6 +53,9 @@ export interface PluginContext {
   /** Whether the CURRENT turn runs with the owner's all-access policy (admin chat session). Tools that
    *  manage shared state (cron jobs, skills) gate on this so channel senders can't reach them. */
   isAdminSession(): boolean;
+  /** The current turn's access (admin flag + project ids) — a plugin forwards this when delegating to
+   *  a sub-agent so the child inherits exactly the caller's scope, never more. */
+  currentAccess(): { projectIds: number[]; admin: boolean };
   /** This plugin's own config slice (`config.plugins.config[name]`), secrets included daemon-side. */
   readonly config: Record<string, unknown>;
   readonly logger: PluginLogger;

@@ -11,6 +11,24 @@ const TICK_MS = 30_000;
 const ok = (text) => ({ content: [{ type: 'text', text }], details: {} });
 const fail = (e) => ok(`Error: ${e instanceof Error ? e.message : String(e)}`);
 
+/** Resolve a one-shot spec — "in 20m", "in 2h", "at 18:30" (today, or tomorrow when past) — to an
+ *  absolute run time in ms, relative to `now`. Returns null when the spec isn't a one-shot. */
+export function parseOneShot(spec, now) {
+  let m = /^in\s+(\d+)\s*(m|h)$/i.exec(spec.trim());
+  if (m) {
+    const ms = Number(m[1]) * (m[2].toLowerCase() === 'h' ? 3_600_000 : 60_000);
+    return ms >= 60_000 ? now + ms : null;
+  }
+  m = /^at\s+([01]?\d|2[0-3]):([0-5]\d)$/i.exec(spec.trim());
+  if (m) {
+    const at = new Date(now);
+    at.setHours(Number(m[1]), Number(m[2]), 0, 0);
+    if (at.getTime() <= now) at.setDate(at.getDate() + 1); // past today → tomorrow
+    return at.getTime();
+  }
+  return null;
+}
+
 /** Parse "every 15m" / "every 2h" / "daily 07:30" into a matcher. Returns null when invalid. */
 export function parseSchedule(spec) {
   let m = /^every\s+(\d+)\s*(m|h)$/i.exec(spec.trim());
@@ -24,8 +42,10 @@ export function parseSchedule(spec) {
   return null;
 }
 
-/** Whether a job is due at `now` given its last run. Daily jobs fire once after today's HH:MM. */
+/** Whether a job is due at `now` given its last run. Daily jobs fire once after today's HH:MM;
+ *  one-shot (wakeup) jobs fire exactly once at their stored runAt. */
 export function isDue(job, now) {
+  if (job.runAt) return !job.lastRun && now >= Date.parse(job.runAt);
   const sched = parseSchedule(job.schedule);
   if (!sched) return false;
   const last = job.lastRun ? Date.parse(job.lastRun) : 0;
@@ -54,9 +74,10 @@ class CronAdapter {
       this.log.info(`running job ${job.id} (${job.name})`);
       const reply = await this.handler({
         platform: 'cron', userId: 'cron', roleIds: [], channelId: `job-${job.id}`,
-        access: { projectIds: [], admin: true, prompt: `This is a scheduled job ("${job.name}"). Do the task and summarize the outcome briefly.` },
+        access: { projectIds: [], admin: true, prompt: `This is a scheduled ${job.runAt ? 'wake-up' : 'job'} ("${job.name}"). Do the task and summarize the outcome briefly.` },
       }, job.prompt).catch((e) => `Error: ${e?.message ?? e}`);
-      this.store.patch(job.id, { lastResult: String(reply ?? '').slice(0, 500) });
+      if (job.runAt) this.store.save(this.store.all().filter((j) => j.id !== job.id)); // one-shot: done → gone
+      else this.store.patch(job.id, { lastResult: String(reply ?? '').slice(0, 500) });
     }
   }
 }
@@ -97,6 +118,28 @@ export function register(ctx) {
   }));
 
   ctx.registerTool(defineTool({
+    name: 'schedule_wakeup', label: 'Schedule wake-up',
+    description: 'Wake yourself up ONCE after a delay ("in 20m", "in 2h") or at a time ("at 18:30") to run a prompt. The job removes itself after running. Admin only.',
+    parameters: Type.Object({
+      name: Type.String({ description: 'Short human name, e.g. check-deploy' }),
+      when: Type.String({ description: '"in <N>m", "in <N>h" or "at HH:MM"' }),
+      prompt: Type.String({ description: 'What to do when you wake up' }),
+    }),
+    execute: async (_id, p) => {
+      try {
+        adminOnly();
+        const runAt = parseOneShot(p.when, Date.now());
+        if (!runAt) return ok('Error: invalid time — use "in 20m", "in 2h" or "at 18:30".');
+        const jobs = store.all();
+        const id = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+        jobs.push({ id, name: p.name, schedule: p.when, prompt: p.prompt, runAt: new Date(runAt).toISOString(), createdAt: new Date().toISOString() });
+        store.save(jobs);
+        return ok(`Wake-up "${p.name}" set for ${new Date(runAt).toISOString()} — id ${id}.`);
+      } catch (e) { return fail(e); }
+    },
+  }));
+
+  ctx.registerTool(defineTool({
     name: 'cron_list', label: 'List jobs',
     description: 'List scheduled jobs with their last run and last result. Admin only.',
     parameters: Type.Object({}),
@@ -106,7 +149,7 @@ export function register(ctx) {
         const jobs = store.all();
         if (jobs.length === 0) return ok('No scheduled jobs.');
         return ok(jobs.map((j) =>
-          `- ${j.id} "${j.name}" ${j.schedule}\n  last run: ${j.lastRun ?? 'never'}\n  last result: ${j.lastResult ?? '—'}`
+          `- ${j.id} "${j.name}" ${j.schedule}${j.runAt ? ` (one-shot @ ${j.runAt})` : ''}\n  last run: ${j.lastRun ?? 'never'}\n  last result: ${j.lastResult ?? '—'}`
         ).join('\n'));
       } catch (e) { return fail(e); }
     },

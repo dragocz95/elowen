@@ -13,6 +13,14 @@ export function isAllAccess(): boolean {
   return currentPolicy()?.allowedProjectIds === 'all';
 }
 
+/** The current turn's access as a plain descriptor a plugin can forward when delegating to a sub-agent:
+ *  admin (all repos) or an explicit project-id list. */
+export function currentAccess(): { projectIds: number[]; admin: boolean } {
+  const p = currentPolicy();
+  if (!p || p.allowedProjectIds === 'all') return { projectIds: [], admin: p?.allowedProjectIds === 'all' };
+  return { projectIds: [...p.allowedProjectIds], admin: false };
+}
+
 /** Resolve to the REAL absolute path (symlinks followed), so a link inside an allowed repo pointing
  *  outside it can't smuggle access past the prefix check. A not-yet-existing target (a new file)
  *  resolves through its closest existing ancestor instead. */
