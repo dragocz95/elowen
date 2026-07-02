@@ -468,11 +468,16 @@ export class BrainService {
   /** The user's stored conversation, shaped for display (channels render this on connect). Reads the
    *  sole store; no live session required, so it works before/independently of `start`. */
   history(userId: number): BrainMessageView[] {
-    return this.d.store.getMessages(this.activeSessionId(userId)).map((row) => {
-      let text = '';
-      try { text = extractText(JSON.parse(row.content)); } catch { /* malformed row → empty text */ }
-      return { role: row.role, text };
-    });
+    return this.d.store.getMessages(this.activeSessionId(userId))
+      // Only user + assistant turns are shown. toolResult / bashExecution / summary rows are persisted
+      // for rehydration (the model needs them for context) but must NEVER surface as chat text.
+      .filter((row) => row.role === 'user' || row.role === 'assistant')
+      .map((row) => {
+        let text = '';
+        try { text = extractText(JSON.parse(row.content)); } catch { /* malformed row → empty text */ }
+        return { role: row.role, text };
+      })
+      .filter((m) => m.text.trim().length > 0); // drop tool-only assistant turns (no visible text)
   }
 }
 

@@ -123,7 +123,7 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
   const messages = new Container();
   const spacer = new Spacer();
   const loader = new Loader(tui, color.accent, color.dim, 'thinking…');
-  const editor = new Editor(tui, { borderColor: color.accent, selectList: getSelectListTheme() }, {});
+  const editor = new Editor(tui, { borderColor: color.faint, selectList: getSelectListTheme() }, {});
   const statusUnder = new Text('', 1, 0);
   const bottomBar = new StatusBar(color.faint('  ⏎ send   ·   /help commands'), color.faint('ctrl+c quit  '));
 

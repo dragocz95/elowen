@@ -4,17 +4,21 @@ import type { Component } from '@earendil-works/pi-tui';
 /** opencode-style visual building blocks, hand-rolled on pi-tui's Component contract (render(width)
  *  → lines). Kept separate from app.ts so the layout logic stays readable and these are unit-testable. */
 
-const BLUE = '38;5;75';                    // opencode-style accent blue
-const FAINT = '38;5;240';
+// Exact opencode default theme (dark), truecolor.
+const BLUE = '38;2;92;156;245';            // secondary #5c9cf5 — user rail
+const TEXT = '38;2;238;238;238';           // step12 #eeeeee — bright text (logo)
+const MUTED = '38;2;128;128;128';          // step11 #808080 — tool lines, stats
+const FAINT = '38;2;96;96;96';             // step8 #606060 — subtle hints
 const BAR = `\x1b[${BLUE}m▌\x1b[0m`;        // blue left rail (half-block, reads as a clean edge)
-const BG = '48;5;236';                     // subtle raised background (title bar)
-const BG_USER = '48;5;237';                // gray background for the user message block
+const BG = '48;2;20;20;20';                // backgroundPanel #141414 (title bar)
+const BG_USER = '48;2;30;30;30';           // backgroundElement #1e1e1e (user block)
 const BG_CLOSE = '\x1b[0m';
 /** Bold that resets ONLY bold (\x1b[22m), so it never clears the surrounding background. */
 const bold = (s: string): string => `\x1b[1m${s}\x1b[22m`;
 
 const ACCENT = (t: string): string => `\x1b[${BLUE}m${t}\x1b[0m`;
-const DIM = (t: string): string => `\x1b[90m${t}\x1b[0m`;
+const WHITE = (t: string): string => `\x1b[${TEXT}m${t}\x1b[0m`;
+const DIM = (t: string): string => `\x1b[${MUTED}m${t}\x1b[0m`;
 const FAINTC = (t: string): string => `\x1b[${FAINT}m${t}\x1b[0m`;
 
 /** A full-width bar with a subtle background and left/right justified content (the top title bar).
@@ -32,8 +36,8 @@ export class TitleBar implements Component {
   }
 }
 
-/** A full-width user message: a teal left rail and a raised gray background with bold text, padded to
- *  width. The rows are wrapped in one blank raised row top and bottom for breathing room. */
+/** A full-width user message: a blue left rail and a raised gray background (opencode backgroundElement),
+ *  padded to width. The rows are wrapped in one blank raised row top and bottom for breathing room. */
 export class UserBlock implements Component {
   constructor(private text: string) {}
   invalidate(): void { /* stateless — rebuilt fresh each render */ }
@@ -68,12 +72,14 @@ const ORCA_ART = [
   '█████ █   █ █████ █   █',
 ];
 
-/** The empty-conversation welcome: a centered ANSI "ORCA" logo, the model, and a one-line hint. */
+/** The empty-conversation welcome: a centered two-tone "ORCA" logo (opencode-style: dim + bright halves),
+ *  the model, and a one-line hint. */
 export function banner(model?: string): string[] {
   const cols = process.stdout.columns || 80;
   const pad = Math.max(0, Math.floor((cols - ORCA_ART[0]!.length) / 2));
   const indent = ' '.repeat(pad);
-  const art = ORCA_ART.map((l) => `${indent}${ACCENT(l)}`);
+  // Split each row "OR" | "CA" (each letter 5 cells + 1 space → boundary at 12) for the two-tone logo.
+  const art = ORCA_ART.map((l) => `${indent}${DIM(l.slice(0, 12))}${WHITE(l.slice(12))}`);
   const centered = (t: string): string => `${' '.repeat(Math.max(0, Math.floor((cols - visibleWidth(t)) / 2)))}${t}`;
   return [
     '', '',
@@ -93,11 +99,11 @@ export function fmtCount(n: number): string {
 
 /** The top title-bar content: the conversation title (left) and usage stats (right, when available). */
 export function titleBarContent(title: string, usage?: { totalTokens: number; percent: number | null; cost: number } | null): { left: string; right: string } {
-  const left = bold(title || 'New conversation');
+  const left = bold(WHITE(title || 'New conversation'));
   if (!usage) return { left, right: '' };
-  const parts = [FAINTC(fmtCount(usage.totalTokens))];
-  if (usage.percent != null) parts.push(FAINTC(`${Math.round(usage.percent)}%`));
-  if (usage.cost > 0) parts.push(FAINTC(`($${usage.cost.toFixed(2)})`));
+  const parts = [DIM(fmtCount(usage.totalTokens))];
+  if (usage.percent != null) parts.push(DIM(`${Math.round(usage.percent)}%`));
+  if (usage.cost > 0) parts.push(DIM(`($${usage.cost.toFixed(2)})`));
   return { left, right: parts.join('  ') };
 }
 
@@ -106,12 +112,12 @@ function toolGlyph(name: string): string {
   return /read|glob|list|ls|cat|open|dir|file|scan/i.test(name) ? '→' : '*';
 }
 
-/** A single dim tool-call line above an assistant reply: `* web_search` / `→ read_file`. */
+/** A single muted tool-call line above an assistant reply: `* web_search` / `→ read_file`. */
 export function toolChip(name: string): string {
-  return `  ${FAINTC(`${toolGlyph(name)} ${name}`)}`;
+  return `  ${DIM(`${toolGlyph(name)} ${name}`)}`;
 }
 
-/** The compact footer under an assistant reply: `▪ <model>` (small teal square + dim model). */
+/** The compact footer under an assistant reply: `▪ <model>` (small blue square + muted model). */
 export function metaLine(model?: string): string {
   return `  ${ACCENT('▪')} ${DIM(model || 'orca')}`;
 }

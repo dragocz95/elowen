@@ -1,17 +1,17 @@
-/** Orca's terminal accent in one place. Raw ANSI (no chalk dep) — an opencode-style blue for rails and
- *  highlights, plus muted/faint helpers. The rich markdown/editor rendering comes from pi's own theme
- *  (getMarkdownTheme/getSelectListTheme); this file only carries the accent and glyphs. */
+/** Orca's terminal palette — the exact opencode default theme (dark) in truecolor ANSI, so the CLI reads
+ *  1:1 with opencode. The rich markdown/editor rendering still comes from pi's own theme
+ *  (getMarkdownTheme/getSelectListTheme); this file carries the accents, chrome colors and glyphs. */
 
 const wrap = (code: string) => (s: string): string => `\x1b[${code}m${s}\x1b[0m`;
 
 export const color = {
-  accent: wrap('38;5;75'),    // opencode blue — primary
-  accentDim: wrap('38;5;68'), // muted blue — secondary
+  accent: wrap('38;2;92;156;245'),    // secondary #5c9cf5 — user rail, highlights
+  accentDim: wrap('38;2;61;125;216'), // darker blue
   bold: wrap('1'),
-  dim: wrap('90'),            // secondary text
-  faint: wrap('38;5;240'),    // tertiary text (dividers, hints)
-  error: wrap('38;5;203'),    // soft red
-  success: wrap('38;5;114'),  // soft green
+  dim: wrap('38;2;128;128;128'),      // textMuted #808080 — tool lines, hints
+  faint: wrap('38;2;96;96;96'),       // subtle dividers / secondary hints
+  error: wrap('38;2;224;108;117'),    // #e06c75
+  success: wrap('38;2;127;216;143'),  // #7fd88f
 };
 
 /** Brand glyphs and labels. */
