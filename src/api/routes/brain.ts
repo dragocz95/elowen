@@ -1,4 +1,6 @@
 import { streamSSE } from 'hono/streaming';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { parseBody } from '../validation.js';
 import { brainStartSchema, brainSendSchema } from '../schemas/brain.js';
 import { brainConfigFromOrca } from '../../brain/config.js';
@@ -37,6 +39,17 @@ export function registerBrainRoutes(app: OrcaApp, ctx: RouteContext): void {
     if (!d.brain) return c.json([]);
     if (forbidden(c)) return c.json({ error: 'forbidden' }, 403);
     return c.json(d.brain.listSessions(c.get('user').id));
+  });
+
+  // Generated images (image-gen plugin) — name is strictly sanitized, path stays inside the data dir.
+  app.get('/brain/images/:file', async c => {
+    if (forbidden(c)) return c.json({ error: 'forbidden' }, 403);
+    const file = c.req.param('file');
+    if (!d.pluginDataRoot || !/^[a-z0-9]+\.png$/.test(file)) return c.json({ error: 'not found' }, 404);
+    try {
+      const body = readFileSync(join(d.pluginDataRoot, 'image-gen', file));
+      return c.body(new Uint8Array(body), 200, { 'content-type': 'image/png', 'cache-control': 'private, max-age=31536000' });
+    } catch { return c.json({ error: 'not found' }, 404); }
   });
 
   app.delete('/brain/sessions/:id', async c => {

@@ -14,7 +14,6 @@ import { execProvider, execModel, type ProviderId } from '../../lib/modelProvide
 import { useConfig, useMe, usePlanJob, useSystem, useSystemSkills } from '../../lib/queries';
 import { useUpdateConfig, useCleanupAll, useSystemUpdate, useInstallSkills } from '../../lib/mutations';
 import { orcaClient, OrcaApiError } from '../../lib/orcaClient';
-import { useHermesForm } from '../../modules/settings/useHermesForm';
 import { allModels, isPresetExec, removeModel, upsertModel } from '../../lib/execPresets';
 import { usePersistentState } from '../../lib/usePersistentState';
 import { useToast } from '../../components/ui/Toast';
@@ -62,7 +61,7 @@ function ModelInput({ value, onChange, placeholder }: { value: string; onChange:
   );
 }
 
-const CATEGORY_VALUES = ['models', 'autopilot', 'github', 'providers', 'defaults', 'brain', 'plugins', 'hermes', 'system', 'data'] as const;
+const CATEGORY_VALUES = ['models', 'providers', 'defaults', 'brain', 'plugins', 'autopilot', 'github', 'system', 'data'] as const;
 type Category = (typeof CATEGORY_VALUES)[number];
 
 export default function SettingsPage() {
@@ -152,8 +151,6 @@ export default function SettingsPage() {
   // Pending delete (drives the ConfirmDialog)
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
 
-  // Hermes integration form — state + status + install shared with Onboarding (useHermesForm).
-  const { home: hHome, setHome: setHHome, url: hUrl, setUrl: setHUrl, token: hToken, setToken: setHToken, status: hermesStatus, install: hermesInstall } = useHermesForm();
 
   // Seed the form from the config ONCE. useConfig is stale-while-revalidate, so it refetches on
   // window focus; re-seeding on every refetch would wipe a model the user just added before they
@@ -279,38 +276,29 @@ export default function SettingsPage() {
       { onSuccess: () => toast(t.settings.defaultsSaved), onError: (e) => toast(String(e), 'error') },
     );
 
-  const installHermes = () =>
-    hermesInstall.mutate(
-      { home: hHome.trim() || undefined, url: hUrl.trim(), token: hToken.trim() },
-      {
-        onSuccess: () => toast(t.settings.hermesInstalled),
-        onError: (e) => toast(String(e), 'error'),
-      },
-    );
 
   const SECTIONS: { id: Category; icon: LucideIcon }[] = [
     { id: 'models', icon: Boxes },
-    { id: 'autopilot', icon: Bot },
-    { id: 'github', icon: Github },
     { id: 'providers', icon: Plug },
     { id: 'defaults', icon: SlidersHorizontal },
     { id: 'brain', icon: BrainCircuit },
     { id: 'plugins', icon: Puzzle },
-    { id: 'hermes', icon: Radio },
+    { id: 'autopilot', icon: Bot },
+    { id: 'github', icon: Github },
     { id: 'system', icon: Server },
     { id: 'data', icon: Trash2 },
   ];
 
-  // 'models' auto-saves; 'hermes' has its own form; 'data' is a one-off danger action; 'system'
+  // 'models' auto-saves; 'data' is a one-off danger action; 'system'
   // auto-saves its toggle + has its own update button; 'plugins' toggles apply instantly — none of
   // these use the shared footer save button.
-  const saveAction: Record<Exclude<Category, 'hermes' | 'models' | 'data' | 'system' | 'plugins' | 'brain'>, { label: string; onClick: () => void }> = {
+  const saveAction: Record<Exclude<Category, 'models' | 'data' | 'system' | 'plugins' | 'brain'>, { label: string; onClick: () => void }> = {
     autopilot: { label: t.settings.saveAutopilot, onClick: saveAutopilot },
     github: { label: t.settings.saveGithub, onClick: saveGithub },
     providers: { label: t.settings.saveProviders, onClick: saveProviders },
     defaults: { label: t.settings.saveDefaults, onClick: saveDefaults },
   };
-  const active = category === 'hermes' || category === 'models' || category === 'data' || category === 'system' || category === 'plugins' || category === 'brain' ? null : saveAction[category];
+  const active = category === 'models' || category === 'data' || category === 'system' || category === 'plugins' || category === 'brain' ? null : saveAction[category];
 
   const models = allModels(customModels, hiddenPresets);
 
@@ -747,55 +735,6 @@ export default function SettingsPage() {
                 </div>
               </div>
             </div>
-        )}
-
-        {category === 'hermes' && (
-          <div className="flex flex-col gap-4">
-            <img
-              src="/hermes-banner.png"
-              alt="Hermes"
-              className="w-full max-w-md self-start rounded-lg border border-border bg-surface object-contain"
-            />
-            <p className="text-sm text-text-muted">{t.settings.hermesDesc}</p>
-
-            {/* MCP status — pills up top: red until registered + enabled, then green. */}
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="text-[11px] font-semibold uppercase tracking-wide text-text-muted">{t.settings.hermesStatusLine}</span>
-              {hermesStatus.isLoading ? (
-                <Badge tone="muted">{t.common.loading}</Badge>
-              ) : hermesStatus.isError ? (
-                <Badge tone="warning">{t.settings.hermesStatusError}</Badge>
-              ) : (
-                <>
-                  <Badge tone={hermesStatus.data?.registered ? 'success' : 'danger'}>
-                    {hermesStatus.data?.registered ? t.settings.hermesStatusInstalled : t.settings.hermesStatusNotInstalled}
-                  </Badge>
-                  <Badge tone={hermesStatus.data?.enabled ? 'success' : 'danger'}>
-                    {hermesStatus.data?.enabled ? t.settings.hermesStatusEnabled : t.settings.hermesStatusDisabled}
-                  </Badge>
-                </>
-              )}
-            </div>
-
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              <Field label={t.settings.hermesHome}>
-                <Input value={hHome} onChange={(e) => setHHome(e.target.value)} className="font-mono text-xs" />
-              </Field>
-              <Field label={t.settings.hermesUrl}>
-                <Input value={hUrl} onChange={(e) => setHUrl(e.target.value)} className="font-mono text-xs" />
-              </Field>
-              <Field label={t.settings.hermesToken}>
-                <Input type="password" value={hToken} onChange={(e) => setHToken(e.target.value)} className="font-mono text-xs" />
-              </Field>
-            </div>
-
-            <div className="flex flex-col gap-3">
-              <Button variant="accent" className="self-start" disabled={hermesInstall.isPending || !hUrl.trim() || !hToken.trim()} onClick={installHermes}>
-                {hermesInstall.isPending ? t.settings.hermesInstalling : t.settings.hermesInstall}
-              </Button>
-              <p className="text-xs text-text-muted">{t.settings.hermesRestartNote}</p>
-            </div>
-          </div>
         )}
 
         {category === 'brain' && <BrainSection />}

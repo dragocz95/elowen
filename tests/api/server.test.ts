@@ -607,9 +607,3 @@ it('POST /sessions reverts the task to open when spawn.launch fails', async () =
   expect(events.some((e) => e.type === 'task' && e.taskId === 'orca-s1' && e.status === 'open')).toBe(true);
 });
 
-it('GET /integrations/hermes/status rejects a home override outside the Hermes root', async () => {
-  const { app } = makeApp();
-  const res = await app.request('/integrations/hermes/status?home=/etc', {});
-  expect(res.status).toBe(400);
-  expect(await res.json()).toEqual({ error: 'home must be under the Hermes root' });
-});

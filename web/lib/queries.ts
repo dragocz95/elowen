@@ -2,7 +2,7 @@ import { useMemo } from 'react';
 import { useQuery, useQueries } from '@tanstack/react-query';
 import { orcaClient } from './orcaClient';
 import { pendingEscalations, type Escalation } from './escalations';
-import type { DerivedSignal, HermesStatus, CliDetectionResult, GithubAuthStatus, PlanJob } from './types';
+import type { DerivedSignal, CliDetectionResult, GithubAuthStatus, PlanJob } from './types';
 
 /** Poll an async plan job until it leaves the 'planning' state. The SSE `plan` handler also pushes
  *  updates into this cache (keyed by jobId) so the poll is a fallback. Disabled when jobId is null. */
@@ -22,7 +22,6 @@ export const QUERY_KEYS = {
   health: ['health'] as const,
   config: ['config'] as const,
   sessionSignals: ['session-signals'] as const,
-  hermesStatus: ['hermes-status'] as const,
   advisorStatus: ['advisor-status'] as const,
   system: ['system'] as const,
   systemSkills: ['system-skills'] as const,
@@ -238,13 +237,6 @@ export const useBrainOauthStatus = () =>
 
 export const useUserProjects = (userId: number | null, enabled = true) =>
   useQuery({ queryKey: ['user-projects', userId], queryFn: () => orcaClient.userProjects(userId as number), enabled: !!userId && enabled });
-
-export const useHermesStatus = (home?: string) =>
-  useQuery<HermesStatus>({
-    queryKey: home ? ['hermes-status', home] : QUERY_KEYS.hermesStatus,
-    queryFn: () => orcaClient.hermesStatus(home),
-    retry: false,
-  });
 
 export const useCliStatus = () =>
   useQuery<CliDetectionResult>({

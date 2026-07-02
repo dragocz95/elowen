@@ -3,7 +3,6 @@ import { registerAuthGuards } from '../middleware.js';
 import { registerAuthRoutes } from './auth.js';
 import { registerProjectRoutes } from './projects.js';
 import { registerActivityRoutes } from './activity.js';
-import { registerIntegrationRoutes } from './integrations.js';
 import { registerSessionRoutes } from './sessions.js';
 import { registerAdvisorRoutes } from './advisor.js';
 import { registerBrainRoutes } from './brain.js';
@@ -21,7 +20,6 @@ export function registerRoutes(app: OrcaApp, ctx: RouteContext): void {
   registerTaskRoutes(app, ctx);
   registerProjectRoutes(app, ctx);
   registerActivityRoutes(app, ctx);
-  registerIntegrationRoutes(app, ctx);
   registerSessionRoutes(app, ctx);
   registerAdvisorRoutes(app, ctx);
   registerBrainRoutes(app, ctx);

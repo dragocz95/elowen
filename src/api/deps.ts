@@ -62,6 +62,8 @@ export interface ServerDeps {
   userSettings?: UserSettingStore;
   /** Plugin scan roots (bundled first, then user) for the admin /plugins listing. Absent → empty list. */
   pluginDirs?: string[];
+  /** Root of per-plugin writable data dirs (serves generated images from plugins-data/image-gen). */
+  pluginDataRoot?: string;
   /** Brain provider OAuth flows (connect Anthropic/Copilot/OpenAI accounts). Absent → routes degrade. */
   brainOauth?: BrainOAuthManager;
   /** The brain's credential store — lets /brain/models surface connected OAuth accounts' catalogs. */

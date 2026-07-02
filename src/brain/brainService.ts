@@ -364,10 +364,14 @@ export class BrainService {
         adapter.listen(async (src, text) => {
           const owner = this.d.platformOwner?.();
           if (owner === undefined || !src.access) return undefined; // unmapped sender → stay silent
-          const policy = this.d.policyForProjects?.(src.access.projectIds)
-            ?? { allowedProjectIds: new Set(src.access.projectIds), allowedPaths: () => [] };
+          // Owner-authored automation (cron) runs with the owner's full powers; foreign senders get
+          // their role's project scope and no orca_* tools.
+          const policy = src.access.admin
+            ? { allowedProjectIds: 'all' as const, allowedPaths: () => [] }
+            : this.d.policyForProjects?.(src.access.projectIds)
+              ?? { allowedProjectIds: new Set(src.access.projectIds), allowedPaths: () => [] };
           const promptAppend = src.access.prompt ? [src.access.prompt] : undefined;
-          return this.channelSend({ channelId: `${src.platform}-${src.threadId ?? src.channelId}`, ownerUserId: owner, policy, promptAppend }, text);
+          return this.channelSend({ channelId: `${src.platform}-${src.threadId ?? src.channelId}`, ownerUserId: owner, policy, promptAppend, trusted: src.access.admin }, text);
         });
         await adapter.connect();
         this.startedPlatforms.push(adapter);
@@ -386,7 +390,7 @@ export class BrainService {
    *  stays in SQLite and rehydrates on the next message), so a busy server can't leak sessions. */
   private static readonly MAX_CHANNELS = 32;
 
-  async channelSend(opts: { channelId: string; ownerUserId: number; policy: Policy; promptAppend?: string[] }, text: string): Promise<string> {
+  async channelSend(opts: { channelId: string; ownerUserId: number; policy: Policy; promptAppend?: string[]; trusted?: boolean }, text: string): Promise<string> {
     const sessionId = `brain-ch-${opts.channelId}`;
     // Serialized per channel: two rapid Discord messages must not prompt() one PI session concurrently
     // (and must not both spawn it).
@@ -403,7 +407,7 @@ export class BrainService {
           selection: {},
           policy: opts.policy,
           extraAppend: opts.promptAppend,
-          channel: true, // platform senders are not Orca users — no orca_* control-plane tools
+          channel: !opts.trusted, // foreign platform senders never get the orca_* control-plane tools
           autoCompact: true, // channels are long-lived and unattended — keep their context bounded
           autoCompactAt: DEFAULT_AUTO_COMPACT_AT,
         });

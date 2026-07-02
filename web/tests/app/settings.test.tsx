@@ -11,7 +11,6 @@ let putBody: unknown = null;
 const server = setupServer(
   http.get('*/api/config', () => HttpResponse.json({ allowedExecs: ['sonnet', 'codex:gpt-5.4'], customModels: [], autopilot: { model: 'mimo-v2.5', apiUrl: 'https://relay.example/v1', apiKeySet: false, notes: '' }, providers: { 'claude-code': { bin: 'claude', args: '' }, opencode: { bin: 'opencode', args: '' }, codex: { bin: 'codex', args: '' } }, defaults: { exec: 'sonnet', autonomy: 'L1', maxSessions: 1 }, security: { tokenTtlDays: 30 } })),
   http.put('*/api/config', async ({ request }) => { putBody = await request.json(); return HttpResponse.json({ allowedExecs: ['sonnet'], customModels: [], autopilot: { model: 'mimo-v2.5', apiUrl: 'https://relay.example/v1', apiKeySet: false, notes: '' }, defaults: { exec: 'sonnet', autonomy: 'L1', maxSessions: 1 }, security: { tokenTtlDays: 30 } }); }),
-  http.get('*/api/integrations/hermes/status', () => HttpResponse.json({ home: '/home/orca/.hermes', exists: true, registered: true, enabled: false })),
 );
 beforeAll(() => server.listen({ onUnhandledRequest })); afterEach(() => server.resetHandlers()); afterAll(() => server.close());
 
@@ -151,20 +150,6 @@ describe('SettingsPage', () => {
     });
   });
 
-  it('shows the Hermes panel with status badges and no header save button', async () => {
-    const { wrapper: Wrapper } = createWrapper();
-    render(<Wrapper><ToastProvider><SettingsPage /></ToastProvider></Wrapper>);
-    await waitFor(() => expect(screen.getByLabelText('Claude Sonnet 4.5')).toBeChecked());
-
-    fireEvent.click(screen.getByRole('radio', { name: 'Hermes' }));
-    // Connect button present; header Save button hidden for this category
-    expect(screen.getByRole('button', { name: 'Connect MCP' })).toBeTruthy();
-    expect(screen.queryByRole('button', { name: 'Save models' })).toBeNull();
-    expect(screen.getByRole('img', { name: 'Hermes' })).toBeTruthy();
-    // Status badges reflect the mocked status (registered, disabled)
-    await waitFor(() => expect(screen.getByText('registered')).toBeTruthy());
-    expect(screen.getByText('disabled')).toBeTruthy();
-  });
 
   it('opens the ConfirmDialog when deleting a custom model', async () => {
     server.use(http.get('*/api/config', () => HttpResponse.json({ allowedExecs: ['sonnet', 'my/custom'], customModels: [{ label: 'My Custom Model', exec: 'my/custom' }], autopilot: { model: 'm', apiUrl: 'u', apiKeySet: false, notes: '' }, defaults: { exec: 'sonnet', autonomy: 'L1', maxSessions: 1 }, security: { tokenTtlDays: 30 } })));

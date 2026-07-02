@@ -330,6 +330,7 @@ export function buildApp(opts: BuildOpts) {
   // Plugin scan roots: the bundled dist/plugins dir + the instance data-dir plugins/. Shared by the
   // brain's lazy loader and the admin /plugins listing so both always see the same set.
   const pluginDirs = [join(dirname(fileURLToPath(import.meta.url)), '..', 'plugins'), join(dirname(opts.dbPath), 'plugins')];
+  const pluginDataRoot = join(dirname(opts.dbPath), 'plugins-data');
   // The brain's credential store: OAuth tokens (Anthropic/Copilot/OpenAI accounts) persist here and
   // pi refreshes them in place. Lives next to the brain's cwd, never inside a repo checkout.
   const brainDir = (() => { const p = join(dirname(opts.dbPath), 'brain'); mkdirSync(p, { recursive: true }); return p; })();
@@ -348,7 +349,7 @@ export function buildApp(opts: BuildOpts) {
         loadPlugins: () => {
           const enabled = config.get().plugins.enabled;
           const pluginConfig = Object.fromEntries(enabled.map((n) => [n, config.pluginConfig(n)]));
-          return loadPlugins({ dirs: pluginDirs, enabled, config: pluginConfig, logger: log });
+          return loadPlugins({ dirs: pluginDirs, enabled, config: pluginConfig, dataRoot: pluginDataRoot, logger: log });
         },
         policy: (userId) => resolvePolicy({ userProjects, projects }, userId),
         userSettings: (userId) => userSettings.cliSettings(userId),
@@ -364,7 +365,7 @@ export function buildApp(opts: BuildOpts) {
   // Single-use ticket store for the terminal WebSocket stream — shared between the authenticated
   // `POST /sessions/:name/ws-ticket` route and the daemon's `/ws/terminal` upgrade handler.
   const tickets = createTicketStore();
-  const app = createServer({ tasks, readiness, missions, engine, missionGit, gitLock, spawn, tmux, bus, events, notes, agents, project: opts.project, fallback: { program: 'claude-code', model: 'sonnet' }, cli, clock: new SystemClock(), config, users, projects, userProjects, pushSubscriptions, userPrompts, userSettings, pluginDirs, brainOauth, brainAuth, prompts, taskUsage, git, avatarsDir, avatarSecret, planJobs, decisionQueue, pilot, advisor, brain, tickets });
+  const app = createServer({ tasks, readiness, missions, engine, missionGit, gitLock, spawn, tmux, bus, events, notes, agents, project: opts.project, fallback: { program: 'claude-code', model: 'sonnet' }, cli, clock: new SystemClock(), config, users, projects, userProjects, pushSubscriptions, userPrompts, userSettings, pluginDirs, pluginDataRoot, brainOauth, brainAuth, prompts, taskUsage, git, avatarsDir, avatarSecret, planJobs, decisionQueue, pilot, advisor, brain, tickets });
 
   // Root-cause recovery: after a daemon crash/restart, tasks left 'in_progress' whose tmux
   // session is gone are zombies — revert them to 'open' so they can be picked up again. No grace

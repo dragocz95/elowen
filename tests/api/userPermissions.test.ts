@@ -99,14 +99,6 @@ describe('per-user model allow-list enforcement', () => {
 });
 
 describe('admin gates & input validation (batch 1 audit fixes)', () => {
-  it('hermes status/install are admin-only (non-admin → 403)', async () => {
-    const { app, adminTok, bobTok } = setup();
-    expect((await app.request('/integrations/hermes/status', auth(bobTok))).status).toBe(403);
-    expect((await app.request('/integrations/hermes/install', post(bobTok, { url: 'http://x', token: 't' }))).status).toBe(403);
-    // admin clears the gate (status reads cleanly even if hermes isn't present)
-    expect((await app.request('/integrations/hermes/status', auth(adminTok))).status).toBe(200);
-  });
-
   it('POST /missions rejects a missing epicId (400) and an unknown epic (404) before touching the engine', async () => {
     const { app, adminTok } = setup();
     expect((await app.request('/missions', post(adminTok, {}))).status).toBe(400);

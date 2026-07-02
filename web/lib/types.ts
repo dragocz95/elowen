@@ -166,21 +166,6 @@ export interface CommitLogEntry { hash: string; subject: string; author: string;
 /** A handoff note one agent left for later agents on the same mission. */
 export interface Note { id: number; scope: string; target: string; author: string; body: string; created_at: string }
 
-export interface HermesStatus {
-  home: string;
-  exists: boolean;
-  registered: boolean;
-  enabled: boolean;
-}
-export interface HermesInstallInput { home?: string; url: string; token: string }
-export interface HermesInstallResult {
-  mcpUrl: string;
-  registered: boolean;
-  enabled: boolean;
-  envWritten: boolean;
-  backedUp: boolean;
-  status: HermesStatus;
-}
 
 export interface CliStatus {
   name: string;

@@ -9,14 +9,15 @@ export interface PluginHook { name: string; run: (payload: unknown) => void | Pr
 
 /** Where a channel message came from + what its sender may access. The adapter resolves `access` from
  *  its own role mapping (e.g. Discord role → projects + prompt); a message without `access` is ignored
- *  (an unmapped user gets no brain). */
+ *  (an unmapped user gets no brain). `admin: true` runs the turn with the owner's full powers (all
+ *  repos + orca_* tools) — reserve it for owner-authored automation (cron), never for foreign senders. */
 export interface SessionSource {
   platform: string;
   userId: string;
   roleIds: string[];
   channelId: string;
   threadId?: string;
-  access?: { projectIds: number[]; prompt?: string };
+  access?: { projectIds: number[]; prompt?: string; admin?: boolean };
 }
 /** A messaging channel a plugin attaches (Discord, …). The host calls `listen` + `connect` at startup;
  *  the handler returns the brain's reply (or undefined to stay silent) and the adapter delivers it. */
@@ -47,6 +48,11 @@ export interface PluginContext {
   /** The repo roots the current session may operate in (empty for an admin's all-access). Used to default
    *  a tool's working directory. */
   allowedRoots(): string[];
+  /** Per-plugin writable data directory (created on first call) — cron job files, generated images… */
+  dataDir(): string;
+  /** Whether the CURRENT turn runs with the owner's all-access policy (admin chat session). Tools that
+   *  manage shared state (cron jobs, skills) gate on this so channel senders can't reach them. */
+  isAdminSession(): boolean;
   /** This plugin's own config slice (`config.plugins.config[name]`), secrets included daemon-side. */
   readonly config: Record<string, unknown>;
   readonly logger: PluginLogger;

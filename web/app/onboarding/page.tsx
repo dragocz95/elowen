@@ -11,14 +11,12 @@ import { ModuleShell } from '../../components/shell/ModuleShell';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
 import { Field } from '../../components/ui/Field';
-import { Badge } from '../../components/ui/Badge';
 import { useToast } from '../../components/ui/Toast';
 import { LoadingState } from '../../components/ui/states';
 import { useTranslation } from '../../lib/i18n';
 import { useCliStatus, useConfig, useUsers } from '../../lib/queries';
 import { useUpdateConfig, useCreateUser } from '../../lib/mutations';
 import { PROVIDERS } from '../../modules/settings/providers';
-import { useHermesForm } from '../../modules/settings/useHermesForm';
 import { Segmented } from '../../components/ui/Segmented';
 import { ExecutorPicker } from '../../components/ui/ExecutorPicker';
 import { allModels } from '../../lib/execPresets';
@@ -89,8 +87,6 @@ export default function OnboardingPage() {
   const [pilotExec, setPilotExec] = useState('');
   const [overseerExec, setOverseerExec] = useState('');
 
-  // Hermes form — state + status + install shared with Settings (useHermesForm).
-  const { home: hHome, setHome: setHHome, url: hUrl, setUrl: setHUrl, token: hToken, setToken: setHToken, status: hermesStatus, install: hermesInstall } = useHermesForm();
 
   // User form
   const [newUsername, setNewUsername] = useState('');
@@ -162,12 +158,6 @@ export default function OnboardingPage() {
     );
   };
 
-  const handleInstallHermes = () => {
-    hermesInstall.mutate(
-      { home: hHome.trim() || undefined, url: hUrl.trim(), token: hToken.trim() },
-      { onSuccess: () => toast(t.onboarding.mcpConnected), onError: (e) => toast(String(e), 'error') },
-    );
-  };
 
   // The autopilot backend is ready with EITHER a relay API key OR a configured CLI agent.
   // Explicit isFresh guard: while CLI status is still loading (isFresh undefined) the backend
@@ -380,48 +370,6 @@ export default function OnboardingPage() {
                     {t.onboarding.createUser}
                   </Button>
                 </div>
-              </div>
-            </SectionCard>
-
-            {/* Hermes */}
-            <SectionCard title={t.onboarding.hermes} icon={Radio}>
-              <p className="mb-4 text-xs text-text-muted">{t.onboarding.hermesDesc}</p>
-
-              <div className="flex flex-wrap items-center gap-2 mb-4">
-                <span className="text-xs font-semibold uppercase tracking-wide text-text-muted">{t.onboarding.mcpStatus}</span>
-                {hermesStatus.isLoading ? (
-                  <Badge tone="muted">{t.common.loading}</Badge>
-                ) : hermesStatus.isError ? (
-                  <Badge tone="warning">{t.onboarding.statusUnknown}</Badge>
-                ) : (
-                  <>
-                    <Badge tone={hermesStatus.data?.registered ? 'success' : 'danger'}>
-                      {hermesStatus.data?.registered ? t.onboarding.statusInstalled : t.onboarding.statusNotInstalled}
-                    </Badge>
-                    <Badge tone={hermesStatus.data?.enabled ? 'success' : 'danger'}>
-                      {hermesStatus.data?.enabled ? t.onboarding.statusEnabled : t.onboarding.statusDisabled}
-                    </Badge>
-                  </>
-                )}
-              </div>
-
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                <Field label={t.onboarding.fieldHome}>
-                  <Input value={hHome} onChange={(e) => setHHome(e.target.value)} className="font-mono text-xs" />
-                </Field>
-                <Field label={t.onboarding.fieldUrl}>
-                  <Input value={hUrl} onChange={(e) => setHUrl(e.target.value)} className="font-mono text-xs" />
-                </Field>
-                <Field label={t.onboarding.fieldToken}>
-                  <Input type="password" value={hToken} onChange={(e) => setHToken(e.target.value)} className="font-mono text-xs" />
-                </Field>
-              </div>
-
-              <div className="mt-4 flex flex-col gap-3">
-                <Button variant="accent" className="self-start" disabled={hermesInstall.isPending || !hUrl.trim() || !hToken.trim()} onClick={handleInstallHermes}>
-                  {hermesInstall.isPending ? t.onboarding.installing : t.onboarding.connectMcp}
-                </Button>
-                <p className="text-xs text-text-muted">{t.onboarding.restartNote}</p>
               </div>
             </SectionCard>
 
