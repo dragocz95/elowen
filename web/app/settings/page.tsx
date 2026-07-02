@@ -26,7 +26,7 @@ import { Toggle } from '../../components/ui/Toggle';
 import { Segmented } from '../../components/ui/Segmented';
 import { FormFooter } from '../../components/ui/FormFooter';
 import { SettingCard } from '../../components/ui/SettingCard';
-import { SettingsShell } from '../../components/ui/SettingsShell';
+import { SettingsLayout } from '../../components/ui/SettingsLayout';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { HelpTip } from '../../components/ui/HelpTip';
 import { LoadingState, ErrorState, EmptyState } from '../../components/ui/states';
@@ -321,17 +321,15 @@ export default function SettingsPage() {
 
   return (
     <ModuleShell moduleId="settings">
-      <ModuleHeader title={t.page.settings} icon={SlidersHorizontal}>
-        <Segmented
-          aria-label={t.settings.sectionsNav}
-          options={SECTIONS.map(({ id, icon }) => ({ value: id, label: t.settings[id], icon }))}
-          value={category}
-          onChange={(v) => setCategory(v as Category)}
-        />
-      </ModuleHeader>
+      <ModuleHeader title={t.page.settings} icon={SlidersHorizontal} />
 
-      {/* Content zone — the active category sits in a centered, dashboard-like lane */}
-      <SettingsShell>
+      {/* Sidebar layout: sticky category rail on the left, section content beside it. */}
+      <SettingsLayout
+        ariaLabel={t.settings.sectionsNav}
+        sections={SECTIONS.map(({ id, icon }) => ({ id, label: t.settings[id], icon }))}
+        value={category}
+        onChange={(v) => setCategory(v as Category)}
+      >
         {category === 'models' && (
           <>
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
@@ -761,7 +759,7 @@ export default function SettingsPage() {
             <Button variant="accent" icon={Save} onClick={active.onClick}>{active.label}</Button>
           </FormFooter>
         )}
-      </SettingsShell>
+      </SettingsLayout>
 
       <ConfirmDialog
         open={pendingDelete !== null}

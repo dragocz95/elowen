@@ -12,7 +12,6 @@ import { Badge } from '../../components/ui/Badge';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
 import { SettingCard } from '../../components/ui/SettingCard';
-import { Segmented } from '../../components/ui/Segmented';
 import { Slider } from '../../components/ui/Slider';
 import { ModuleHeader } from '../../components/ui/ModuleHeader';
 import { FormFooter } from '../../components/ui/FormFooter';
@@ -22,7 +21,7 @@ import { useTranslation } from '../../lib/i18n';
 import { usePersistentState } from '../../lib/usePersistentState';
 import { useUiScale, MIN_SCALE, MAX_SCALE, DEFAULT_SCALE } from '../../lib/useUiScale';
 import { isPushSupported, enablePush, disablePush } from '../../lib/pushClient';
-import { SettingsShell } from '../../components/ui/SettingsShell';
+import { SettingsLayout } from '../../components/ui/SettingsLayout';
 import { PromptsSection } from './PromptsSection';
 import { CliSection } from './CliSection';
 
@@ -135,20 +134,19 @@ export function AccountView() {
 
   return (
     <>
-      <ModuleHeader title={t.account.title} icon={UserCog}>
-        <Segmented
-          aria-label={t.account.sectionsNav}
-          options={sections.map(({ id, icon, label }) => ({ value: id, label, icon }))}
-          value={section}
-          onChange={(v) => setSection(v as typeof section)}
-        />
-      </ModuleHeader>
+      <ModuleHeader title={t.account.title} icon={UserCog} />
 
-      <SettingsShell>
+      <SettingsLayout
+        ariaLabel={t.account.sectionsNav}
+        sections={sections.map(({ id, icon, label }) => ({ id, label, icon }))}
+        value={section}
+        onChange={(v) => setSection(v as typeof section)}
+      >
       {section === 'cli' ? <CliSection /> : section === 'prompts' ? <PromptsSection /> : null}
 
       {section === 'profile' ? (
-      <>
+      <div className="flex flex-col gap-6 lg:flex-row lg:items-start">
+      <div className="flex min-w-0 flex-1 flex-col gap-6">
         {/* Identity hero — avatar, display name, admin badge, avatar upload. */}
         <div className="flex items-center gap-4 rounded-xl border border-border bg-surface p-5" style={{ boxShadow: 'var(--shadow-card)' }}>
           <Avatar user={u} size={72} />
@@ -172,40 +170,6 @@ export function AccountView() {
           </SettingCard>
         </div>
 
-        {/* The models you may run, brand icons — tap one to make it your default. */}
-        <SettingCard title={t.account.defaultModel} icon={Cpu} description={restricted ? t.account.restrictedHint : t.account.defaultModelHint}>
-          {pickable.length === 0 ? (
-            <p className="text-xs italic text-text-muted">{t.account.noModelLimit}</p>
-          ) : (
-            <div role="radiogroup" className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-              {pickable.map((exec) => {
-                const on = defaultExec === exec;
-                return (
-                  <button
-                    key={exec}
-                    type="button"
-                    role="radio"
-                    aria-checked={on}
-                    aria-label={labelOf(exec)}
-                    onClick={() => setDefaultExec(on ? '' : exec)}
-                    className={`group flex items-center gap-3 rounded-lg border p-3 text-left transition-colors ${on ? 'border-accent bg-accent/10' : 'border-border bg-surface hover:bg-elevated'}`}
-                    style={{ transitionDuration: 'var(--motion-fast)' }}
-                  >
-                    <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-border bg-elevated">
-                      <ModelIcon name={exec} size={28} />
-                    </span>
-                    <span className="flex min-w-0 flex-col">
-                      <span className="truncate text-sm font-medium text-text">{labelOf(exec)}</span>
-                      <span className="truncate font-mono text-tiny text-text-muted">{exec}</span>
-                    </span>
-                    {on ? <Check size={16} className="ml-auto shrink-0 text-accent" aria-hidden /> : null}
-                  </button>
-                );
-              })}
-            </div>
-          )}
-        </SettingCard>
-
         {/* Whole-app zoom — a per-device display preference, applied live via the UiScaleProvider. */}
         <SettingCard title={t.account.uiScale} icon={ZoomIn} description={t.account.uiScaleHint}>
           <div className="flex items-center gap-4">
@@ -218,7 +182,46 @@ export function AccountView() {
         <FormFooter>
           <Button variant="accent" icon={Save} onClick={save} disabled={updateMe.isPending}>{t.account.save}</Button>
         </FormFooter>
-      </>
+      </div>
+
+      {/* Right rail: the models you may run, big brand icons — tap one to make it your default. */}
+      <div className="flex shrink-0 flex-col gap-2 lg:w-72">
+        <span className="flex items-center gap-2 text-sm font-medium text-text">
+          <Cpu size={16} className="text-text-muted" aria-hidden />{t.account.defaultModel}
+        </span>
+        <p className="text-xs text-text-muted">{restricted ? t.account.restrictedHint : t.account.defaultModelHint}</p>
+        {pickable.length === 0 ? (
+          <p className="mt-1 text-xs italic text-text-muted">{t.account.noModelLimit}</p>
+        ) : (
+          <div role="radiogroup" className="mt-1 flex flex-col gap-2">
+            {pickable.map((exec) => {
+              const on = defaultExec === exec;
+              return (
+                <button
+                  key={exec}
+                  type="button"
+                  role="radio"
+                  aria-checked={on}
+                  aria-label={labelOf(exec)}
+                  onClick={() => setDefaultExec(on ? '' : exec)}
+                  className={`group flex items-center gap-3 rounded-lg border p-3 text-left transition-colors ${on ? 'border-accent bg-accent/10' : 'border-border bg-surface hover:bg-elevated'}`}
+                  style={{ transitionDuration: 'var(--motion-fast)' }}
+                >
+                  <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-border bg-elevated">
+                    <ModelIcon name={exec} size={28} />
+                  </span>
+                  <span className="flex min-w-0 flex-col">
+                    <span className="truncate text-sm font-medium text-text">{labelOf(exec)}</span>
+                    <span className="truncate font-mono text-tiny text-text-muted">{exec}</span>
+                  </span>
+                  {on ? <Check size={16} className="ml-auto shrink-0 text-accent" aria-hidden /> : null}
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </div>
+      </div>
       ) : null}
 
       {section === 'security' ? (
@@ -278,7 +281,7 @@ export function AccountView() {
           </SettingCard>
         ) : <p className="text-sm text-text-muted">{t.push.unsupported}</p>
       ) : null}
-      </SettingsShell>
+      </SettingsLayout>
     </>
   );
 }

@@ -22,3 +22,7 @@
 /* Orca wordmark is white line-art on transparent — invisible on the white light-mode surface.
    Inverting the pure-white strokes yields pure black (alpha is preserved), so no separate asset. */
 html[data-theme='light'] .logo-adaptive { filter: invert(1); }
+
+/* Hide the scrollbar on horizontally scrollable pill rows (settings/account category nav). */
+.scrollbar-none { scrollbar-width: none; -ms-overflow-style: none; }
+.scrollbar-none::-webkit-scrollbar { display: none; }
