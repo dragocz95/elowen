@@ -22,9 +22,16 @@ export function registerBrainRoutes(app: OrcaApp, ctx: RouteContext): void {
   app.post('/brain/start', async c => {
     if (!d.brain) return c.json({ error: 'brain unavailable' }, 503);
     if (forbidden(c)) return c.json({ error: 'forbidden' }, 403);
-    const { provider } = await parseBody(c, brainStartSchema);
-    try { return c.json(await d.brain.start(c.get('user').id, provider ? { provider } : undefined), 201); }
+    const { provider, session, fresh } = await parseBody(c, brainStartSchema);
+    try { return c.json(await d.brain.start(c.get('user').id, { provider, session, fresh }), 201); }
     catch (e) { return c.json({ error: (e as Error).message }, 500); }
+  });
+
+  // The caller's conversations (most recent first) for the session pickers in web chat and the CLI.
+  app.get('/brain/sessions', async c => {
+    if (!d.brain) return c.json([]);
+    if (forbidden(c)) return c.json({ error: 'forbidden' }, 403);
+    return c.json(d.brain.listSessions(c.get('user').id));
   });
 
   app.get('/brain/messages', async c => {

@@ -45,6 +45,11 @@ export class BrainStore {
       .all(sessionId) as BrainMessageRow[];
   }
 
+  /** Set a session's display title (derived from its first user message; set once). */
+  setTitle(id: string, title: string): void {
+    this.db.prepare('UPDATE brain_sessions SET title = ? WHERE id = ?').run(title, id);
+  }
+
   touchSession(id: string, model?: string): void {
     if (model === undefined) {
       this.db.prepare("UPDATE brain_sessions SET updated_at = datetime('now') WHERE id = ?").run(id);

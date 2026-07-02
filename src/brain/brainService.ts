@@ -91,13 +91,26 @@ function toBrainEvent(e: AgentSessionEvent): BrainEvent | null {
  *  but holds an in-process PI AgentSession instead of spawning an external CLI. One conversation per
  *  user for step #1 (session id `brain-<userId>`); multi-conversation is a later sub-project. */
 export class BrainService {
-  private live = new Map<number, LiveBrain>();
+  /** Live user sessions keyed by session id; `active` points at each user's current conversation. */
+  private live = new Map<string, LiveBrain>();
+  private active = new Map<number, string>();
   private channels = new Map<string, LiveBrain>();
   private startedPlatforms: { name: string; disconnect?(): void }[] = [];
   private pluginsMemo?: PluginRegistry;
   constructor(private d: BrainDeps) {}
 
-  private sessionIdFor(userId: number): string { return `brain-${userId}`; }
+  /** The user's current conversation id: the explicit active pointer, else their most recent stored
+   *  session, else the legacy default id (first-ever conversation). Channel sessions never count. */
+  private activeSessionId(userId: number): string {
+    const set = this.active.get(userId);
+    if (set) return set;
+    const recent = this.d.store.listSessions(userId).find((s) => !s.id.startsWith('brain-ch-'));
+    return recent?.id ?? `brain-${userId}`;
+  }
+
+  private activeLive(userId: number): LiveBrain | undefined {
+    return this.live.get(this.activeSessionId(userId));
+  }
 
   /** The current provider set (live-resolved when a thunk was injected). */
   private runtimeConfig(): BrainRuntimeConfig {
@@ -115,8 +128,16 @@ export class BrainService {
   }
 
   status(userId: number): { running: boolean; sessionId: string | null; model: string } {
-    const b = this.live.get(userId);
+    const b = this.activeLive(userId);
     return { running: !!b, sessionId: b?.sessionId ?? null, model: b?.model ?? '' };
+  }
+
+  /** The user's conversations (channel sessions excluded), most recent first, with live/active flags. */
+  listSessions(userId: number): { id: string; title: string; model: string; updated_at: string; running: boolean; active: boolean }[] {
+    const activeId = this.activeSessionId(userId);
+    return this.d.store.listSessions(userId)
+      .filter((s) => !s.id.startsWith('brain-ch-'))
+      .map((s) => ({ id: s.id, title: s.title, model: s.model, updated_at: s.updated_at, running: this.live.has(s.id), active: s.id === activeId }));
   }
 
   /** Everything shared by a user session and a channel session: registry + store row + rehydration +
@@ -191,35 +212,52 @@ export class BrainService {
     return { session, sessionId, model: model.id, policy: opts.policy, autoCompact: opts.autoCompact, autoCompactAt: opts.autoCompactAt, listeners };
   }
 
-  async start(userId: number, opts?: { provider?: string }): Promise<{ sessionId: string }> {
-    const existing = this.live.get(userId);
-    if (existing) return { sessionId: existing.sessionId }; // idempotent
+  /** Start (or resume) a conversation. `session` resumes that stored conversation (ownership checked);
+   *  `fresh` opens a brand-new one. Either way it becomes the user's active conversation. Idempotent
+   *  when the target is already live. */
+  async start(userId: number, opts?: { provider?: string; session?: string; fresh?: boolean }): Promise<{ sessionId: string }> {
+    let sessionId: string;
+    if (opts?.fresh) {
+      sessionId = `brain-${userId}-${Date.now().toString(36)}`;
+    } else if (opts?.session) {
+      const row = this.d.store.getSession(opts.session);
+      if (!row || row.user_id !== userId || opts.session.startsWith('brain-ch-')) throw new Error('unknown session');
+      sessionId = opts.session;
+    } else {
+      sessionId = this.activeSessionId(userId);
+    }
+    this.active.set(userId, sessionId);
+    const existing = this.live.get(sessionId);
+    if (existing) return { sessionId }; // idempotent resume of a live conversation
 
     // Model selection: an explicit start option wins, else the user's saved provider+model override,
     // else the first configured provider's first model.
     const userCfg = this.d.userSettings?.(userId);
     const live = await this.spawnLive({
-      sessionId: this.sessionIdFor(userId),
+      sessionId,
       ownerUserId: userId,
       selection: { provider: opts?.provider ?? userCfg?.modelProvider, model: userCfg?.model },
       policy: this.d.policy?.(userId) ?? { allowedProjectIds: 'all' as const, allowedPaths: () => [] },
       autoCompact: !!userCfg?.autoCompact,
       autoCompactAt: userCfg?.autoCompactAt ? userCfg.autoCompactAt / 100 : DEFAULT_AUTO_COMPACT_AT,
     });
-    this.live.set(userId, live);
-    return { sessionId: live.sessionId };
+    this.live.set(sessionId, live);
+    return { sessionId };
   }
 
   subscribe(userId: number, listener: (e: BrainEvent) => void): () => void {
-    const b = this.live.get(userId);
+    const b = this.activeLive(userId);
     if (!b) throw new Error('brain not started for user');
     b.listeners.add(listener);
     return () => b.listeners.delete(listener);
   }
 
   async send(userId: number, text: string): Promise<void> {
-    const b = this.live.get(userId);
+    const b = this.activeLive(userId);
     if (!b) throw new Error('brain not started for user');
+    // First user message names the conversation (once) so the session list reads naturally.
+    const row = this.d.store.getSession(b.sessionId);
+    if (row && !row.title) this.d.store.setTitle(b.sessionId, text.slice(0, 60));
     projectUserTurn(this.d.store, b.sessionId, text);
     // Establish the user's repo Policy for any plugin tool this turn invokes (read via currentPolicy()).
     await runWithPolicy(b.policy, () => b.session.prompt(text));
@@ -236,7 +274,7 @@ export class BrainService {
   /** Restart a user's live session so changed settings (model override, plugins) apply immediately.
    *  No-op when not running. History survives — it rehydrates from SQLite on the fresh start. */
   async restart(userId: number): Promise<void> {
-    if (!this.live.has(userId)) return;
+    if (!this.activeLive(userId)) return;
     this.stop(userId);
     await this.start(userId);
   }
@@ -246,7 +284,11 @@ export class BrainService {
    *  the next inbound message re-opens them with the fresh registry. */
   async reloadPlugins(): Promise<void> {
     this.pluginsMemo = undefined;
-    for (const userId of [...this.live.keys()]) await this.restart(userId);
+    for (const userId of [...this.active.keys()]) await this.restart(userId);
+    // Non-active live sessions just drop; they respawn with the new registry on next resume.
+    for (const [id, b] of [...this.live]) {
+      if (![...this.active.values()].includes(id)) { b.session.dispose(); this.live.delete(id); }
+    }
     for (const [id, ch] of [...this.channels]) { ch.session.dispose(); this.channels.delete(id); }
     // Platform adapters were built by the old registry — disconnect them and start the fresh set.
     for (const p of this.startedPlatforms) { try { p.disconnect?.(); } catch { /* already down */ } }
@@ -310,16 +352,16 @@ export class BrainService {
   }
 
   stop(userId: number): void {
-    const b = this.live.get(userId);
+    const b = this.activeLive(userId);
     if (!b) return;
     b.session.dispose();
-    this.live.delete(userId);
+    this.live.delete(b.sessionId);
   }
 
   /** The user's stored conversation, shaped for display (channels render this on connect). Reads the
    *  sole store; no live session required, so it works before/independently of `start`. */
   history(userId: number): BrainMessageView[] {
-    return this.d.store.getMessages(this.sessionIdFor(userId)).map((row) => {
+    return this.d.store.getMessages(this.activeSessionId(userId)).map((row) => {
       let text = '';
       try { text = extractText(JSON.parse(row.content)); } catch { /* malformed row → empty text */ }
       return { role: row.role, text };

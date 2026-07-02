@@ -98,6 +98,34 @@ describe('BrainService', () => {
     expect(svc.history(1)).toEqual([{ role: 'user', text: 'ahoj' }, { role: 'assistant', text: 'čau' }]);
   });
 
+  it('fresh start opens a new conversation; session param resumes; list shows both', async () => {
+    const d = fakeDeps();
+    const svc = new BrainService(d as never);
+    const first = await svc.start(1);
+    await svc.send(1, 'první konverzace');
+    const second = await svc.start(1, { fresh: true });
+    expect(second.sessionId).not.toBe(first.sessionId);
+    await svc.send(1, 'druhá konverzace');
+    // Active follows the fresh session; history reads the active one.
+    expect(svc.status(1).sessionId).toBe(second.sessionId);
+    expect(svc.history(1).map((m) => m.text)).toContain('druhá konverzace');
+    // Resume the first → active flips back.
+    await svc.start(1, { session: first.sessionId });
+    expect(svc.status(1).sessionId).toBe(first.sessionId);
+    const list = svc.listSessions(1);
+    expect(list.map((s) => s.id).sort()).toEqual([first.sessionId, second.sessionId].sort());
+    expect(list.find((s) => s.id === first.sessionId)?.active).toBe(true);
+    expect(list.find((s) => s.id === first.sessionId)?.title).toBe('první konverzace');
+  });
+
+  it('rejects resuming a foreign or channel session', async () => {
+    const d = fakeDeps();
+    const svc = new BrainService(d as never);
+    d.store.createSession({ id: 'brain-99', userId: 99, model: 'm' });
+    await expect(svc.start(1, { session: 'brain-99' })).rejects.toThrow(/unknown session/);
+    await expect(svc.start(1, { session: 'brain-ch-x' })).rejects.toThrow(/unknown session/);
+  });
+
   it('channelSend opens a channel session, applies its policy, and returns the reply', async () => {
     const d = fakeDeps();
     const svc = new BrainService(d as never);
