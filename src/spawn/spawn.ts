@@ -16,9 +16,22 @@ export interface OrcaCliConfig { cli: string; url: string; token: string }
  *  undefined here means "use the built-in default" (bypass on / resume on). */
 export type ProviderResolver = (program: string) => { bin?: string; args?: string; skipPermissions?: boolean; resume?: boolean } | undefined;
 
+/** The subset of SpawnService.launch input a brain worker needs (no tmux/CLI concerns). */
+export interface BrainWorkerLauncher {
+  launch(input: { projectId: number; projectPath: string; taskId: string; agentName: string; spec: AgentSpec; taskTitle?: string; taskDescription?: string; resumeNote?: string; rawPrompt?: string; ownerId?: number | null }): Promise<{ session: string }>;
+}
+
 export class SpawnService {
-  constructor(private d: { tmux: TmuxDriver; agents: AgentStore; orca?: OrcaCliConfig; providers?: ProviderResolver; prompts?: PromptService }) {}
+  constructor(private d: { tmux: TmuxDriver; agents: AgentStore; orca?: OrcaCliConfig; providers?: ProviderResolver; prompts?: PromptService; brainWorker?: BrainWorkerLauncher }) {}
   async launch(input: { projectId: number; projectPath: string; taskId: string; agentName: string; spec: AgentSpec; taskTitle?: string; taskDescription?: string; resumeNote?: string; epicId?: string; extraEnv?: Record<string, string>; rawPrompt?: string; resume?: PendingResume; ownerId?: number | null; mcpUrl?: string }): Promise<{ session: string }> {
+    // `orca:<provider>/<model>` execs run on the embedded brain — no binary, no tmux pane. The one
+    // seam for every caller (scheduler, mission engine, session routes); task states flow identically.
+    if (input.spec.program === 'orca') {
+      if (!this.d.brainWorker) throw new Error('orca exec engine not available (brain not configured)');
+      if (input.rawPrompt) throw new Error('orca exec engine does not support pilot/overseer raw prompts');
+      this.d.agents.upsert({ project_id: input.projectId, name: input.agentName, program: 'orca', model: input.spec.model });
+      return this.d.brainWorker.launch(input);
+    }
     this.d.agents.upsert({ project_id: input.projectId, name: input.agentName, program: input.spec.program, model: input.spec.model });
     const session = `orca-${input.agentName}`;
     const orca = this.d.orca;

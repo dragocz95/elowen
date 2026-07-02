@@ -541,6 +541,8 @@ export const cs = {
     },
   },
   settings: {
+    orcaModels: 'Orca AI modely',
+    orcaModelsHint: 'Živý katalog z vašich Orca AI poskytovatelů. Povolené modely lze přiřadit uživatelům a vybírat v chatu (web i CLI).',
     models: 'Modely',
     autopilot: 'Autopilot',
     github: 'GitHub',

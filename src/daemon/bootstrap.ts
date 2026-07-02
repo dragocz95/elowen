@@ -67,6 +67,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
+import { isExecAllowedForUser } from '../shared/execs.js';
 
 const log = logger('daemon');
 
@@ -359,6 +360,9 @@ export function buildApp(opts: BuildOpts) {
         },
         policy: (userId) => resolvePolicy({ userProjects, projects }, userId),
         userSettings: (userId) => userSettings.cliSettings(userId),
+        // Same allow-list semantics as the task/session routes: admins unrestricted, everyone else
+        // bounded by the global list AND their personal whitelist (empty personal = global only).
+        execAllowed: (userId, exec) => isExecAllowedForUser(users.get(userId), config.get().allowedExecs, exec),
         // Platform channels (Discord, …): role mappings resolve to project-scoped policies; the admin's
         // token anchors the channel sessions.
         policyForProjects: (ids) => ({

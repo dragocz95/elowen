@@ -28,7 +28,7 @@ function setup() {
     userSettings: new UserSettingStore(db),
     brain: { restart } as never,
   });
-  return { app, restart, amyTok: users.issueToken(amy.id) };
+  return { app, restart, users, config, amyTok: users.issueToken(amy.id) };
 }
 const auth = (t: string) => ({ headers: { authorization: `Bearer ${t}` } });
 const patch = (t: string, body: unknown) => ({ method: 'PATCH', headers: { authorization: `Bearer ${t}`, 'content-type': 'application/json' }, body: JSON.stringify(body) });
@@ -46,5 +46,20 @@ describe('cli-settings routes', () => {
     const res = await app.request('/auth/me/cli-settings', patch(amyTok, { model: 'ollama/kimi-k2.7-code', modelProvider: 'relay', autoCompact: true, autoCompactAt: 70 }));
     expect(await res.json()).toEqual({ model: 'ollama/kimi-k2.7-code', modelProvider: 'relay', autoCompact: true, autoCompactAt: 70, serverDefault: 'claude-opus-4-8' });
     expect(restart).toHaveBeenCalledTimes(1);
+  });
+
+  it('PATCH rejects a model outside a non-admin caller allow-list, accepts an allowed one', async () => {
+    const { app, users, config } = setup();
+    const bob = users.create('bob', 'pw');
+    const bobTok = users.issueToken(bob.id);
+    // Not on the global list → 400, nothing saved.
+    const denied = await app.request('/auth/me/cli-settings', patch(bobTok, { model: 'kimi', modelProvider: 'relay' }));
+    expect(denied.status).toBe(400);
+    // Admin allows it globally → save succeeds.
+    config.update({ allowedExecs: ['orca:relay/kimi'] } as never);
+    const ok = await app.request('/auth/me/cli-settings', patch(bobTok, { model: 'kimi', modelProvider: 'relay' }));
+    expect(ok.status).toBe(200);
+    // Clearing the override is always fine.
+    expect((await app.request('/auth/me/cli-settings', patch(bobTok, { model: '', modelProvider: '' }))).status).toBe(200);
   });
 });

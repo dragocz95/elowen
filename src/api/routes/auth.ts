@@ -4,6 +4,7 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
 import { parseBody } from '../validation.js';
 import { loginSchema, profilePatchSchema, passwordChangeSchema, userPermissionsSchema, projectAssignSchema, promptSaveSchema } from '../schemas/auth.js';
 import { EDITABLE_PROMPTS, isEditablePrompt, isAppendOnlyPrompt } from '../../prompts/catalog.js';
+import { orcaExec, isExecAllowedForUser } from '../../shared/execs.js';
 import { rawTemplate } from '../../prompts/index.js';
 import type { User } from '../../store/userStore.js';
 import type { OrcaApp, RouteContext } from '../context.js';
@@ -122,6 +123,11 @@ export function registerAuthRoutes(app: OrcaApp, ctx: RouteContext): void {
     if (typeof b.modelProvider === 'string') patch.modelProvider = b.modelProvider.trim();
     if (typeof b.autoCompact === 'boolean') patch.autoCompact = b.autoCompact;
     if (typeof b.autoCompactAt === 'number') patch.autoCompactAt = b.autoCompactAt;
+    // A complete provider+model pick must be on the caller's allow-list (clearing is always fine).
+    if (patch.model && patch.modelProvider
+      && !isExecAllowedForUser(u, d.config.get().allowedExecs, orcaExec(patch.modelProvider, patch.model))) {
+      return c.json({ error: 'model not allowed' }, 400);
+    }
     d.userSettings.setCliSettings(u.id, patch);
     // Apply live: a running brain restarts with the new settings (history rehydrates from SQLite),
     // so a model change takes effect immediately instead of on the next daemon/chat restart.

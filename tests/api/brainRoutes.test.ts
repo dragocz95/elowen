@@ -79,3 +79,44 @@ describe('brain routes', () => {
     expect((await app.request('/brain/messages', auth(agentTok))).status).toBe(403);
   });
 });
+
+describe('GET /brain/models allow-list', () => {
+  function setupWithProviders() {
+    const db = openDb(':memory:');
+    db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'orca','/o')").run();
+    const users = new UserStore(db);
+    const admin = users.create('admin', 'pw');
+    const amy = users.create('amy', 'pw');
+    const config = new ConfigStore(db);
+    config.update({ brain: { providers: [
+      { id: 'relay', label: 'Relay', type: 'openai', baseUrl: 'http://x', models: ['kimi', 'glm'], apiKey: 'k' },
+    ] } } as never);
+    const app = createServer({
+      tasks: new TaskStore(db), readiness: new Readiness(db), missions: new MissionStore(db), bus: new EventBus(),
+      engine: null as never, spawn: null as never, tmux: null as never,
+      project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },
+      clock: new FakeClock(0), config, users, projects: new ProjectStore(db), userProjects: new UserProjectStore(db),
+      brain: fakeBrain() as never,
+    });
+    return { app, db, users, config, adminTok: users.issueToken(admin.id), amy, amyTok: users.issueToken(amy.id) };
+  }
+
+  it('every item carries its orca exec spec; admin sees everything', async () => {
+    const { app, adminTok } = setupWithProviders();
+    const models = await (await app.request('/brain/models', auth(adminTok))).json() as { exec: string }[];
+    expect(models.map((m) => m.exec)).toEqual(['orca:relay/kimi', 'orca:relay/glm']);
+  });
+
+  it('a non-admin only sees models the global + personal allow-lists permit', async () => {
+    const { app, users, config, amy, amyTok } = setupWithProviders();
+    // Nothing globally allowed → nothing visible.
+    expect(await (await app.request('/brain/models', auth(amyTok))).json()).toEqual([]);
+    config.update({ allowedExecs: ['orca:relay/kimi', 'orca:relay/glm'] } as never);
+    let models = await (await app.request('/brain/models', auth(amyTok))).json() as { exec: string }[];
+    expect(models.map((m) => m.exec)).toEqual(['orca:relay/kimi', 'orca:relay/glm']);
+    // A personal whitelist narrows further.
+    users.setAllowedExecs(amy.id, ['orca:relay/glm']);
+    models = await (await app.request('/brain/models', auth(amyTok))).json() as { exec: string }[];
+    expect(models.map((m) => m.exec)).toEqual(['orca:relay/glm']);
+  });
+});

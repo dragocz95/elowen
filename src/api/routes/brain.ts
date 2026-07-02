@@ -5,6 +5,7 @@ import { parseBody } from '../validation.js';
 import { brainStartSchema, brainSendSchema, brainModelSchema } from '../schemas/brain.js';
 import { brainConfigFromOrca } from '../../brain/config.js';
 import { listBrainModels } from '../../brain/models.js';
+import { orcaExec, isExecAllowedForUser } from '../../shared/execs.js';
 import type { BrainEvent } from '../../brain/brainService.js';
 import type { OrcaApp, RouteContext } from '../context.js';
 
@@ -70,12 +71,19 @@ export function registerBrainRoutes(app: OrcaApp, ctx: RouteContext): void {
   });
 
   // The pickable models across every configured brain provider — dedicated entries, connected OAuth
-  // accounts, or the relay fallback (feeds the Account → CLI dropdown).
+  // accounts, or the relay fallback (feeds the Account → CLI dropdown and the CLI /model picker).
+  // Every item carries its exec spec (`orca:<provider>/<model>`) so pickers, the users admin UI and
+  // the settings catalog all speak the same identifier. Non-admins only see models their allow-list
+  // permits — this single server-side filter covers web AND CLI.
   app.get('/brain/models', async c => {
     if (forbidden(c)) return c.json({ error: 'forbidden' }, 403);
     const cfg = brainConfigFromOrca(d.config, d.brainAuth);
     if (!cfg) return c.json([]);
-    return c.json(await listBrainModels(cfg));
+    const models = (await listBrainModels(cfg)).map((m) => ({ ...m, exec: orcaExec(m.provider, m.model) }));
+    const u = d.users ? c.get('user') : undefined;
+    if (!u || u.is_admin) return c.json(models);
+    const globalExecs = d.config.get().allowedExecs;
+    return c.json(models.filter((m) => isExecAllowedForUser(u, globalExecs, m.exec)));
   });
 
   // Stop the streaming turn (the Esc key in chat clients).

@@ -11,7 +11,7 @@ import { GithubStatusBanner } from '../../modules/settings/GithubStatusBanner';
 import { PluginsSection } from '../../modules/settings/PluginsSection';
 import { BrainSection } from '../../modules/settings/BrainSection';
 import { execProvider, execModel, type ProviderId } from '../../lib/modelProvider';
-import { useConfig, useMe, usePlanJob, useSystem, useSystemSkills } from '../../lib/queries';
+import { useBrainModels, useConfig, useMe, usePlanJob, useSystem, useSystemSkills } from '../../lib/queries';
 import { useUpdateConfig, useCleanupAll, useSystemUpdate, useInstallSkills } from '../../lib/mutations';
 import { orcaClient, OrcaApiError } from '../../lib/orcaClient';
 import { allModels, isPresetExec, removeModel, upsertModel } from '../../lib/execPresets';
@@ -74,6 +74,7 @@ export default function SettingsPage() {
   const installSkills = useInstallSkills();
   const cleanup = useCleanupAll();
   const me = useMe();
+  const brainModels = useBrainModels();
   const { toast } = useToast();
   const { t } = useTranslation();
   // Drives the "delete all data" confirm dialog (Data section).
@@ -393,6 +394,39 @@ export default function SettingsPage() {
                 {t.settings.addModel}
               </Button>
             </div>
+
+            {/* Orca AI (brain) catalog — live from the configured providers, never hardcoded. Enabling
+             *  a model adds its `orca:<provider>/<model>` exec to the same global allow-list the CLI
+             *  execs use, so the users admin UI and all pickers share one source of truth. */}
+            {(brainModels.data?.length ?? 0) > 0 && (
+              <div className="mt-6 flex flex-col gap-4">
+                <div className="flex flex-col gap-1">
+                  <span className="flex items-center gap-2 text-sm font-semibold text-text">
+                    <BrainCircuit size={16} className="text-accent" aria-hidden />{t.settings.orcaModels}
+                  </span>
+                  <p className="text-xs text-text-muted">{t.settings.orcaModelsHint}</p>
+                </div>
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  {(brainModels.data ?? []).map((m) => (
+                    <div key={m.exec} className="card-interactive flex flex-col gap-3.5 rounded-xl border border-border bg-surface p-5">
+                      <div className="flex items-start gap-3">
+                        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-border bg-elevated">
+                          <ModelIcon name={m.model} size={20} />
+                        </span>
+                        <div className="flex min-w-0 flex-col gap-1">
+                          <span className="truncate text-sm font-medium text-text">{m.model}</span>
+                          <span className="truncate font-mono text-xs text-text-muted">{m.exec}</span>
+                        </div>
+                      </div>
+                      <div className="flex items-center justify-between gap-2">
+                        <Toggle checked={allowed.includes(m.exec)} onChange={() => toggle(m.exec)} label={m.model} />
+                        <Badge>{m.providerLabel}</Badge>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </>
         )}
 

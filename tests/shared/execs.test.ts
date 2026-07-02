@@ -3,15 +3,19 @@ import {
   PROGRAM_PREFIXES,
   DEFAULT_BINS,
   KNOWN_EXECS,
+  parseOrcaExec,
+  orcaExec,
+  isExecAllowedForUser,
   EXEC_NOTES,
   isWellFormedExec,
   isAllowedExec,
 } from '../../src/shared/execs.js';
 
 describe('shared/execs', () => {
-  it('maps every prefix to a program that has a default bin', () => {
+  it('maps every prefix to a program with a default-bin entry (orca is binary-less by design)', () => {
     for (const program of Object.values(PROGRAM_PREFIXES)) {
-      expect(DEFAULT_BINS[program]).toBeTruthy();
+      expect(DEFAULT_BINS[program]).toBe(program === 'orca' ? '' : DEFAULT_BINS[program]);
+      expect(program === 'orca' ? true : !!DEFAULT_BINS[program]).toBe(true);
     }
   });
 
@@ -73,6 +77,40 @@ describe('shared/execs', () => {
     });
     it('rejects a bare bogus spec that is not allow-listed', () => {
       expect(isAllowedExec('foo', allowed)).toBe(false);
+    });
+  });
+
+  describe('orca exec specs', () => {
+    it('round-trips provider/model through orcaExec + parseOrcaExec', () => {
+      expect(parseOrcaExec(orcaExec('relay', 'kimi-k2.7'))).toEqual({ provider: 'relay', model: 'kimi-k2.7' });
+    });
+    it('splits on the FIRST slash so the model part may contain more', () => {
+      expect(parseOrcaExec('orca:relay/ollama/kimi-k2.7-code')).toEqual({ provider: 'relay', model: 'ollama/kimi-k2.7-code' });
+    });
+    it('rejects malformed specs', () => {
+      expect(parseOrcaExec('orca:relay')).toBeNull();
+      expect(parseOrcaExec('orca:/model')).toBeNull();
+      expect(parseOrcaExec('orca:relay/')).toBeNull();
+      expect(parseOrcaExec('codex:gpt-5.5')).toBeNull();
+    });
+    it('routes the orca: prefix to the orca program', () => {
+      expect(PROGRAM_PREFIXES['orca:']).toBe('orca');
+    });
+  });
+
+  describe('isExecAllowedForUser', () => {
+    const globalExecs = ['orca:relay/kimi', 'sonnet'];
+    it('admin and open mode are unrestricted', () => {
+      expect(isExecAllowedForUser({ is_admin: true, allowed_execs: [] }, globalExecs, 'orca:x/y')).toBe(true);
+      expect(isExecAllowedForUser(null, globalExecs, 'orca:x/y')).toBe(true);
+    });
+    it('non-admin is bounded by the global list', () => {
+      expect(isExecAllowedForUser({ is_admin: false, allowed_execs: [] }, globalExecs, 'orca:x/y')).toBe(false);
+      expect(isExecAllowedForUser({ is_admin: false, allowed_execs: [] }, globalExecs, 'orca:relay/kimi')).toBe(true);
+    });
+    it('a non-empty personal list narrows further', () => {
+      expect(isExecAllowedForUser({ is_admin: false, allowed_execs: ['sonnet'] }, globalExecs, 'orca:relay/kimi')).toBe(false);
+      expect(isExecAllowedForUser({ is_admin: false, allowed_execs: ['orca:relay/kimi'] }, globalExecs, 'orca:relay/kimi')).toBe(true);
     });
   });
 });

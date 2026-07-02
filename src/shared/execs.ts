@@ -8,8 +8,9 @@
  * now import from here so adding/changing an executor is a one-line edit. See audit #43/S21/O22.
  */
 
-/** Agent program ids understood by spawn() / resolveExecutor. */
-export type Program = 'claude-code' | 'opencode' | 'codex' | 'kilo' | 'pi' | 'omp';
+/** Agent program ids understood by spawn() / resolveExecutor. `orca` is the embedded brain —
+ *  it runs in-process on an Orca AI provider instead of spawning an external CLI. */
+export type Program = 'claude-code' | 'opencode' | 'codex' | 'kilo' | 'pi' | 'omp' | 'orca';
 
 /** Explicit `<prefix>:<model>` spec prefixes, in match order, mapped to their program. */
 export const PROGRAM_PREFIXES: Readonly<Record<string, Program>> = {
@@ -19,6 +20,7 @@ export const PROGRAM_PREFIXES: Readonly<Record<string, Program>> = {
   'kilo:': 'kilo',
   'pi:': 'pi',
   'omp:': 'omp',
+  'orca:': 'orca',
 };
 
 /** Program a bare (prefix-less) spec routes to depending on whether it looks like `provider/model`. */
@@ -36,7 +38,41 @@ export const DEFAULT_BINS: Readonly<Record<Program, string>> = {
   'kilo': 'kilo',
   'pi': 'pi',
   'omp': 'omp',
+  'orca': '', // embedded brain — no binary is spawned
 };
+
+/**
+ * Brain-model exec spec: `orca:<provider>/<model>`. The provider id never contains a slash, so we
+ * split on the FIRST one — the model part may carry more (e.g. `orca:relay/ollama/kimi-k2.7-code`).
+ * Returns null for anything that isn't a well-formed orca exec.
+ */
+export function parseOrcaExec(spec: string): { provider: string; model: string } | null {
+  if (!spec.startsWith('orca:')) return null;
+  const rest = spec.slice('orca:'.length);
+  const slash = rest.indexOf('/');
+  if (slash <= 0 || slash === rest.length - 1) return null;
+  return { provider: rest.slice(0, slash), model: rest.slice(slash + 1) };
+}
+
+/** Compose the exec spec for a brain model (the single place the format is produced). */
+export function orcaExec(provider: string, model: string): string {
+  return `orca:${provider}/${model}`;
+}
+
+/**
+ * Per-user exec permission, shared by the API routes and the brain: admins may use anything;
+ * everyone else is bounded by the global allow-list AND their personal whitelist (an empty
+ * personal list means "everything the global list allows"). `user` null/undefined = open mode.
+ */
+export function isExecAllowedForUser(
+  user: { is_admin: boolean; allowed_execs: readonly string[] } | null | undefined,
+  globalExecs: readonly string[],
+  exec: string,
+): boolean {
+  if (!user || user.is_admin) return true;
+  if (!globalExecs.includes(exec)) return false;
+  return user.allowed_execs.length === 0 || user.allowed_execs.includes(exec);
+}
 
 /** Built-in exec labels offered/allowed out of the box (the default `allowedExecs`). Keep in sync
  *  with the web preset list (`web/lib/execPresets.ts`) and the default notes below. */

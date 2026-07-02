@@ -55,7 +55,11 @@ function ModelChips({ user, globalExecs, custom }: { user: OrcaUser; globalExecs
   const { t } = useTranslation();
   const update = useUpdateUser();
   const { toast } = useToast();
-  const labelOf = (exec: string) => allModels(custom).find((m) => m.exec === exec)?.label ?? exec;
+  // Orca AI execs (`orca:<provider>/<model>`) have no preset entry — show the model part, and give
+  // ModelIcon the model name so the brand mark resolves (the raw exec string matches nothing).
+  const labelOf = (exec: string) => allModels(custom).find((m) => m.exec === exec)?.label
+    ?? (exec.startsWith('orca:') ? exec.slice(exec.indexOf('/') + 1) : exec);
+  const iconNameOf = (exec: string) => (exec.startsWith('orca:') ? exec.slice(exec.indexOf('/') + 1) : exec);
   const set = new Set(user.allowed_execs);
   if (globalExecs.length === 0) return null;
   const toggle = (exec: string) => {
@@ -79,7 +83,7 @@ function ModelChips({ user, globalExecs, custom }: { user: OrcaUser; globalExecs
             disabled={update.isPending}
             className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs transition-colors ${on ? 'border-accent bg-accent/15 text-accent' : 'border-border text-text-muted hover:bg-elevated'}`}
           >
-            <ModelIcon name={exec} size={14} />{labelOf(exec)}
+            <ModelIcon name={iconNameOf(exec)} size={14} />{labelOf(exec)}
           </button>
         );
       })}

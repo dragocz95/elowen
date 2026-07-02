@@ -7,6 +7,7 @@ import type { AuthStorage } from '@earendil-works/pi-coding-agent';
 import type { BrainStore } from '../store/brainStore.js';
 import type { BrainRuntimeConfig } from './providers.js';
 import { buildBrainRegistry, resolveBrainModel } from './providers.js';
+import { orcaExec } from '../shared/execs.js';
 import { buildOrcaTools } from './tools/index.js';
 import { projectEvent, projectUserTurn, rehydrate } from './persistence.js';
 
@@ -66,6 +67,10 @@ export interface BrainDeps {
   /** Per-user CLI/brain settings: an optional model override (empty → configured default) + auto-compact
    *  toggle and its user-tunable threshold percentage. */
   userSettings?: (userId: number) => { model?: string; modelProvider?: string; autoCompact?: boolean; autoCompactAt?: number };
+  /** Per-user brain-model permission, keyed by exec spec `orca:<provider>/<model>`. Absent → no
+   *  restriction (open mode / tests). Enforced on explicit picks; a saved-but-revoked default
+   *  silently falls back to the server default instead of erroring. */
+  execAllowed?: (userId: number, exec: string) => boolean;
   /** Build a Policy from an explicit project-id set (platform role mappings resolve through this). */
   policyForProjects?: (projectIds: number[]) => Policy;
   /** The Orca user that anchors platform channel sessions (their token drives the tools) — the admin. */
@@ -201,10 +206,18 @@ export class BrainService {
     await b.session.abort();
   }
 
+  /** Whether the user may run this provider+model pair. Only complete selections are judged —
+   *  partial ones resolve to the server default, which stays admin-controlled by definition. */
+  private selectionAllowed(userId: number, sel?: { provider?: string; model?: string }): boolean {
+    if (!this.d.execAllowed || !sel?.provider || !sel.model) return true;
+    return this.d.execAllowed(userId, orcaExec(sel.provider, sel.model));
+  }
+
   /** Switch the active conversation to another configured model (the /model picker). Mirrors the
    *  channel pattern: dispose the live session and respawn on the new selection — history rehydrates
    *  from the store, so the conversation continues seamlessly. */
   async switchModel(userId: number, sel: { provider?: string; model?: string }): Promise<{ model: string }> {
+    if (!this.selectionAllowed(userId, sel)) throw new Error('model not allowed for user');
     const sessionId = this.activeSessionId(userId);
     return this.serial(sessionId, async () => {
       const old = this.live.get(sessionId);
@@ -352,12 +365,15 @@ export class BrainService {
     return this.serial(sessionId, async () => {
       if (this.live.has(sessionId)) return { sessionId }; // idempotent resume of a live conversation
       // Model selection: an explicit start option wins, else the user's saved provider+model override,
-      // else the first configured provider's first model.
+      // else the first configured provider's first model. A saved model the user is no longer
+      // allowed to run falls back to the server default rather than blocking the brain.
       const userCfg = this.d.userSettings?.(userId);
+      let selection: { provider?: string; model?: string } = { provider: opts?.provider ?? userCfg?.modelProvider, model: userCfg?.model };
+      if (!this.selectionAllowed(userId, selection)) selection = {};
       const live = await this.spawnLive({
         sessionId,
         ownerUserId: userId,
-        selection: { provider: opts?.provider ?? userCfg?.modelProvider, model: userCfg?.model },
+        selection,
         policy: this.d.policy?.(userId) ?? { allowedProjectIds: 'all' as const, allowedPaths: () => [] },
         autoCompact: !!userCfg?.autoCompact,
         autoCompactAt: userCfg?.autoCompactAt ? userCfg.autoCompactAt / 100 : DEFAULT_AUTO_COMPACT_AT,

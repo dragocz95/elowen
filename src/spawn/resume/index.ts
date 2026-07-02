@@ -21,6 +21,9 @@ const RESUME_PROVIDERS: Readonly<Record<Program, ResumeProvider>> = {
   'kilo': kiloResume,
   'pi': piResume,
   'omp': ompResume,
+  // The embedded brain doesn't splice CLI flags — a relaunch on the same `brain-task-<id>` session
+  // rehydrates the full history from SQLite, so there is nothing to resume at the command level.
+  'orca': { program: 'orca', resumeArgs: () => null },
 };
 
 /** The resume strategy for a program id ('opencode…' variants normalize to 'opencode'), or undefined. */

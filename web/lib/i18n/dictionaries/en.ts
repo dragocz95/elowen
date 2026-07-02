@@ -541,6 +541,8 @@ export const en = {
     },
   },
   settings: {
+    orcaModels: 'Orca AI models',
+    orcaModelsHint: 'Live catalog from your Orca AI providers. Enabled models can be assigned to users and picked in chat (web and CLI).',
     models: 'Models',
     autopilot: 'Autopilot',
     github: 'GitHub',

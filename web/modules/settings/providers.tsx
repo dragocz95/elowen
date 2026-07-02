@@ -5,8 +5,6 @@ export const PROVIDERS: ProviderMeta[] = [
   { id: 'opencode', label: 'OpenCode', color: '#7c8cff', binHint: 'opencode', argsHint: '--pure', icon: '/providers/opencode.png' },
   { id: 'codex', label: 'Codex', color: '#ededed', binHint: 'codex', argsHint: '--full-auto', icon: '/providers/openai.svg' },
   { id: 'kilo', label: 'Kilo Code', color: '#c2e812', binHint: 'kilo', argsHint: '', icon: '/providers/kilo.svg', noBypassFlag: true },
-  { id: 'pi', label: 'Pi', color: '#e4e4e7', binHint: 'pi', argsHint: '', icon: '/providers/pi.svg', noBypassFlag: true },
-  { id: 'omp', label: 'oh-my-pi', color: '#9b4dff', binHint: 'omp', argsHint: '', icon: '/providers/omp.svg' },
 ];
 
 export function ProviderLogo({ meta, alt, size = 36 }: { meta: ProviderMeta; alt?: string; size?: number }) {
