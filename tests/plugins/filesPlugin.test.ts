@@ -48,8 +48,8 @@ describe('files plugin', () => {
     expect(res.content[0].text).toContain('1 replacement');
     expect(readFileSync(f, 'utf-8')).toBe('line one\nline 2\nline three');
     const diff = (res as { details?: { diff?: string } }).details?.diff ?? '';
-    expect(diff).toContain('2 - line two');
-    expect(diff).toContain('2 + line 2');
+    expect(diff).toContain('-    2 line two');
+    expect(diff).toContain('+    2 line 2');
   });
 
   it('edit_file refuses an ambiguous match unless replaceAll is set', async () => {
@@ -66,12 +66,12 @@ describe('files plugin', () => {
     writeFileSync(f, 'a\nb\nc');
     const res = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'write_file', { path: f, content: 'a\nX\nc' }));
     const diff = (res as { details?: { diff?: string } }).details?.diff ?? '';
-    expect(diff).toContain('2 - b');
-    expect(diff).toContain('2 + X');
+    expect(diff).toContain('-    2 b');
+    expect(diff).toContain('+    2 X');
     const fresh = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'write_file', { path: join(dir, 'new.txt'), content: 'n1\nn2' }));
     const freshDiff = (fresh as { details?: { diff?: string } }).details?.diff ?? '';
-    expect(freshDiff).toContain('1 + n1');
-    expect(freshDiff).toContain('2 + n2');
+    expect(freshDiff).toContain('+    1 n1');
+    expect(freshDiff).toContain('+    2 n2');
   });
 
   it('refuses a path outside the allowed roots', async () => {

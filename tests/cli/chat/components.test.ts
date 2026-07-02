@@ -1,8 +1,10 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeAll } from 'vitest';
 import { visibleWidth } from '@earendil-works/pi-tui';
-import { UserBlock, StatusBar, TitleBar, metaLine, banner, toolChip, titleBarContent, fmtCount } from '../../../src/cli/chat/components.js';
+import { initTheme } from '@earendil-works/pi-coding-agent';
+import { UserBlock, StatusBar, TitleBar, metaLine, banner, toolChip, diffBlock, titleBarContent, fmtCount } from '../../../src/cli/chat/components.js';
 
 describe('chat components', () => {
+  beforeAll(() => { initTheme(); }); // renderDiff needs the pi theme
   it('UserBlock renders full-width rows with a left rail and padding', () => {
     const lines = new UserBlock('ahoj').render(20);
     // blank top, one text row, blank bottom
@@ -49,6 +51,22 @@ describe('chat components', () => {
 
   it('fmtCount groups thousands', () => {
     expect(fmtCount(39413)).toBe('39,413');
+  });
+
+  it('diffBlock renders the pi format via renderDiff and the legacy format with row colors', () => {
+    const pi = diffBlock('-    2 line two\n+    2 line 2');
+    expect(pi.join('\n')).toContain('line two');
+    expect(pi.join('\n')).toContain('line 2');
+    const legacy = diffBlock('   2 - old\n   2 + new');
+    expect(legacy[0]).toContain('old');
+    expect(legacy[1]).toContain('new');
+  });
+
+  it('diffBlock caps long diffs with a more-lines note', () => {
+    const diff = Array.from({ length: 70 }, (_, i) => `+ ${String(i + 1).padStart(4)} row`).join('\n');
+    const out = diffBlock(diff);
+    expect(out).toHaveLength(61);
+    expect(out[60]).toContain('+10 more lines');
   });
 
   it('toolChip renders Claude-Code style: dot, name, args in parens', () => {

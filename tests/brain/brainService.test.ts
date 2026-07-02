@@ -16,7 +16,7 @@ function fakeDeps() {
       listeners.forEach((l) => l({ type: 'agent_end', willRetry: false, messages: [{ role: 'assistant', content: `echo:${t}` }] }));
     }),
     subscribe: (l: (e: unknown) => void) => { listeners.push(l); return () => {}; },
-    setModel: vi.fn(), dispose: vi.fn(), messages, isStreaming: false,
+    setModel: vi.fn(), dispose: vi.fn(), abort: vi.fn(async () => {}), messages, isStreaming: false,
     getContextUsage: () => undefined, compact: vi.fn(async () => {}),
   };
   const createSession = vi.fn(async () => ({ session }));
@@ -109,6 +109,29 @@ describe('BrainService', () => {
     ]);
     // The raw toolResult content never leaks into the view.
     expect(JSON.stringify(h)).not.toContain('RAW OUTPUT');
+  });
+
+  it('abort stops the streaming turn; without a live session it throws', async () => {
+    const d = fakeDeps();
+    const svc = new BrainService(d as never);
+    await expect(svc.abort(1)).rejects.toThrow(/brain not started/);
+    await svc.start(1);
+    await svc.abort(1);
+    expect(d.session.abort).toHaveBeenCalledTimes(1);
+  });
+
+  it('switchModel disposes the live session and respawns on the picked model', async () => {
+    const d = fakeDeps();
+    const svc = new BrainService(d as never);
+    await svc.start(1);
+    expect(d.createSession).toHaveBeenCalledTimes(1);
+    const r = await svc.switchModel(1, { provider: 'relay', model: 'm' });
+    expect(d.session.dispose).toHaveBeenCalledTimes(1);
+    expect(d.createSession).toHaveBeenCalledTimes(2);
+    expect(r.model).toBe('m');
+    // The conversation stays usable on the new session.
+    await svc.send(1, 'after switch');
+    expect(d.session.prompt).toHaveBeenCalled();
   });
 
   it('fresh start opens a new conversation; session param resumes; list shows both', async () => {

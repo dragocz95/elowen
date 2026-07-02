@@ -12,8 +12,9 @@ const DIFF_MAX_LINES = 200;
 const ok = (text, details = {}) => ({ content: [{ type: 'text', text }], details });
 const fail = (e) => ok(`Error: ${e instanceof Error ? e.message : String(e)}`);
 
-/** One numbered diff row: `  12 - old` / `  13 + new` / `  11   context`. */
-const diffRow = (n, sign, text) => `${String(n).padStart(4)} ${sign} ${text}`;
+/** One numbered diff row in pi's display format (sign first, so pi's renderDiff can color it with
+ *  intra-line highlighting): `-   12 old` / `+   13 new` / `    11 context`. */
+const diffRow = (n, sign, text) => `${sign}${String(n).padStart(5)} ${text}`;
 
 /** Build a numbered display diff for a localized replacement: context, removed, added, context. */
 export function replacementDiff(before, matchIndex, oldText, newText) {

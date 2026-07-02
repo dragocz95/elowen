@@ -2,7 +2,7 @@ import { streamSSE } from 'hono/streaming';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { parseBody } from '../validation.js';
-import { brainStartSchema, brainSendSchema } from '../schemas/brain.js';
+import { brainStartSchema, brainSendSchema, brainModelSchema } from '../schemas/brain.js';
 import { brainConfigFromOrca } from '../../brain/config.js';
 import { listBrainModels } from '../../brain/models.js';
 import type { BrainEvent } from '../../brain/brainService.js';
@@ -76,6 +76,24 @@ export function registerBrainRoutes(app: OrcaApp, ctx: RouteContext): void {
     const cfg = brainConfigFromOrca(d.config, d.brainAuth);
     if (!cfg) return c.json([]);
     return c.json(await listBrainModels(cfg));
+  });
+
+  // Stop the streaming turn (the Esc key in chat clients).
+  app.post('/brain/abort', async c => {
+    if (!d.brain) return c.json({ error: 'brain unavailable' }, 503);
+    if (forbidden(c)) return c.json({ error: 'forbidden' }, 403);
+    try { await d.brain.abort(c.get('user').id); return c.json({ ok: true }); }
+    catch (e) { return c.json({ error: (e as Error).message }, 409); }
+  });
+
+  // Switch the active conversation to another configured model (the /model picker). Existing event
+  // streams die with the old session — clients reopen their stream after this call.
+  app.post('/brain/model', async c => {
+    if (!d.brain) return c.json({ error: 'brain unavailable' }, 503);
+    if (forbidden(c)) return c.json({ error: 'forbidden' }, 403);
+    const sel = await parseBody(c, brainModelSchema);
+    try { return c.json(await d.brain.switchModel(c.get('user').id, sel)); }
+    catch (e) { return c.json({ error: (e as Error).message }, 409); }
   });
 
   // Manual context compaction (the /compact command in chat clients). Returns the fresh usage numbers.

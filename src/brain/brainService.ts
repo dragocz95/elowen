@@ -193,6 +193,37 @@ export class BrainService {
     return usageOf(b.session);
   }
 
+  /** Stop the streaming turn (the Esc key in chat clients). The agent settles into agent_end → the
+   *  idle event, so subscribed clients wind down on their own. */
+  async abort(userId: number): Promise<void> {
+    const b = this.activeLive(userId);
+    if (!b) throw new Error('brain not started');
+    await b.session.abort();
+  }
+
+  /** Switch the active conversation to another configured model (the /model picker). Mirrors the
+   *  channel pattern: dispose the live session and respawn on the new selection — history rehydrates
+   *  from the store, so the conversation continues seamlessly. */
+  async switchModel(userId: number, sel: { provider?: string; model?: string }): Promise<{ model: string }> {
+    const sessionId = this.activeSessionId(userId);
+    return this.serial(sessionId, async () => {
+      const old = this.live.get(sessionId);
+      if (old) { old.session.dispose(); this.live.delete(sessionId); }
+      const userCfg = this.d.userSettings?.(userId);
+      const live = await this.spawnLive({
+        sessionId,
+        ownerUserId: userId,
+        selection: sel, // the explicit pick wins over the user's saved default
+        policy: this.d.policy?.(userId) ?? { allowedProjectIds: 'all' as const, allowedPaths: () => [] },
+        autoCompact: !!userCfg?.autoCompact,
+        autoCompactAt: userCfg?.autoCompactAt ? userCfg.autoCompactAt / 100 : DEFAULT_AUTO_COMPACT_AT,
+      });
+      this.live.set(sessionId, live);
+      this.active.set(userId, sessionId);
+      return { model: live.model };
+    });
+  }
+
   status(userId: number): { running: boolean; sessionId: string | null; model: string; usage: BrainUsage | null } {
     const b = this.activeLive(userId);
     return { running: !!b, sessionId: b?.sessionId ?? null, model: b?.model ?? '', usage: b ? usageOf(b.session) : null };

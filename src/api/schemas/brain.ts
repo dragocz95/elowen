@@ -9,6 +9,12 @@ export const brainStartSchema = z.object({
   fresh: z.boolean().optional(),
 });
 
+/** Switch the active conversation to another configured provider/model (the /model picker). */
+export const brainModelSchema = z.object({
+  provider: z.string().optional(),
+  model: z.string().optional(),
+});
+
 /** One attached image: base64 payload + its mime type. ~7 MB of base64 ≈ 5 MB binary — enough for
  *  screenshots and photos while keeping a request bounded. */
 const imageSchema = z.object({

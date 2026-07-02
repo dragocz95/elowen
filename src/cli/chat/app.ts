@@ -1,8 +1,9 @@
-import { TUI, ProcessTerminal, Text, Markdown, Loader, Container, Spacer, matchesKey } from '@earendil-works/pi-tui';
-import { Editor } from '@earendil-works/pi-tui';
+import { TUI, ProcessTerminal, Text, Markdown, Loader, Container, Spacer, matchesKey, CombinedAutocompleteProvider } from '@earendil-works/pi-tui';
+import type { SlashCommand } from '@earendil-works/pi-tui';
 import { initTheme, getMarkdownTheme, getSelectListTheme } from '@earendil-works/pi-coding-agent';
 import { color, glyph } from './theme.js';
 import { UserBlock, StatusBar, TitleBar, banner, toolChip, diffBlock, metaLine, titleBarContent } from './components.js';
+import { ChatEditor, sessionItems, modelItems, parseModelValue, openPicker } from './picker.js';
 import { BrainClient } from './brainClient.js';
 import { fromHistory, pushUser, beginAssistant, reduce, type ChatView } from './render.js';
 
@@ -34,7 +35,7 @@ export function viewToPlainText(view: ChatView): string[] {
 
 /** Local slash-command routing: returns the recognized command (with its argument) or null for a
  *  regular chat message. Pure, so the command surface is unit-testable without a TTY. */
-export function parseCommand(text: string): { cmd: 'quit' | 'new' | 'sessions' | 'resume' | 'delete' | 'compact' | 'help'; arg?: string } | null {
+export function parseCommand(text: string): { cmd: 'quit' | 'new' | 'sessions' | 'resume' | 'delete' | 'model' | 'compact' | 'help'; arg?: string } | null {
   const m = /^\/(\w+)(?:\s+(.+))?$/.exec(text.trim());
   if (!m) return null;
   switch (m[1]) {
@@ -43,6 +44,7 @@ export function parseCommand(text: string): { cmd: 'quit' | 'new' | 'sessions' |
     case 'sessions': return { cmd: 'sessions' };
     case 'resume': return { cmd: 'resume', arg: m[2] };
     case 'delete': return { cmd: 'delete', arg: m[2] };
+    case 'model': return { cmd: 'model' };
     case 'compact': return { cmd: 'compact' };
     case 'help': return { cmd: 'help' };
     default: return null;
@@ -85,8 +87,9 @@ export interface RunChatOpts {
 const HELP = [
   '/new — new conversation',
   '/sessions — list conversations',
-  '/resume <n> — resume a conversation',
+  '/resume [n] — resume a conversation (no argument opens the picker)',
   '/delete <n> — delete a conversation',
+  '/model — switch the model (picker)',
   '/compact — summarize the conversation to free context',
   '/quit — exit',
 ].join('\n');
@@ -131,10 +134,33 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
   const messages = new Container();
   const spacer = new Spacer();
   const loader = new Loader(tui, color.accent, color.dim, 'thinking…');
-  const editor = new Editor(tui, { borderColor: color.faint, selectList: getSelectListTheme() }, {});
+  const editor = new ChatEditor(tui, { borderColor: color.faint, selectList: getSelectListTheme() }, {});
+  /** The picker temporarily replaces the editor in this slot (the pi modal pattern). */
+  const editorSlot = new Container();
+  editorSlot.addChild(editor);
   const statusUnder = new Text('', 1, 0);
   const bottomBar = new StatusBar(color.faint('  ⏎ send   ·   /help commands'), color.faint('ctrl+c quit  '));
 
+  // Slash-command autocomplete: typing `/` pops the command menu; /resume and /delete complete their
+  // conversation number from the live session list.
+  const numberCompletions = async (): Promise<{ value: string; label: string; description?: string }[]> => {
+    const list = await client.sessions().catch(() => []);
+    listed = list.map((s) => ({ id: s.id, title: s.title }));
+    return list.map((s, i) => ({ value: String(i + 1), label: `${i + 1}`, description: s.title || '(untitled)' }));
+  };
+  const SLASH_COMMANDS: SlashCommand[] = [
+    { name: 'new', description: 'new conversation' },
+    { name: 'sessions', description: 'list conversations' },
+    { name: 'resume', description: 'resume a conversation', argumentHint: '[n]', getArgumentCompletions: numberCompletions },
+    { name: 'delete', description: 'delete a conversation', argumentHint: '<n>', getArgumentCompletions: numberCompletions },
+    { name: 'model', description: 'switch the model' },
+    { name: 'compact', description: 'summarize the conversation to free context' },
+    { name: 'help', description: 'show commands' },
+    { name: 'quit', description: 'exit' },
+  ];
+  editor.setAutocompleteProvider(new CombinedAutocompleteProvider(SLASH_COMMANDS, process.cwd()));
+
+  let thinkStart = 0;
   const render = (): void => {
     for (const c of [...messages.children]) messages.removeChild(c);
     if (view.turns.length === 0) {
@@ -164,7 +190,19 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
     }
     if (notice) for (const line of notice.split('\n')) messages.addChild(new Text(`  ${line}`, 1, 0));
     // Spinner lives INSIDE the rebuilt message list, so it vanishes the moment the turn goes idle.
-    if (view.thinking) { messages.addChild(loader); loader.start(); } else { loader.stop(); }
+    if (view.thinking) {
+      if (!thinkStart) thinkStart = Date.now();
+      loader.setMessage(`thinking… ${Math.max(0, Math.round((Date.now() - thinkStart) / 1000))}s`);
+      messages.addChild(loader);
+      loader.start();
+    } else {
+      thinkStart = 0;
+      loader.stop();
+    }
+    // Contextual footer: while streaming, Esc interrupts.
+    bottomBar.setLeft(view.thinking
+      ? color.faint('  esc interrupt   ·   /help commands')
+      : color.faint('  ⏎ send   ·   /help commands'));
     // Top bar: conversation title on the left, usage stats (tokens · ctx% · cost) on the right.
     const bar = titleBarContent(sessionTitle, usage);
     titleBar.set(bar.left, bar.right);
@@ -218,10 +256,44 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
           }).catch((e: Error) => { notice = color.error(`error: ${e.message}`); render(); });
           return;
         case 'resume': {
+          if (!command.arg) {
+            // No argument → arrow-key picker over the stored conversations.
+            void client.sessions().then((list) => {
+              listed = list.map((s) => ({ id: s.id, title: s.title }));
+              openPicker({
+                tui, slot: editorSlot, editor, title: 'Resume conversation', items: sessionItems(list),
+                onPick: (id) => void switchTo({ session: id }).catch((e: Error) => { notice = color.error(`error: ${e.message}`); render(); }),
+              });
+            }).catch((e: Error) => { notice = color.error(`error: ${e.message}`); render(); });
+            return;
+          }
           const n = Number(command.arg);
           const target = Number.isInteger(n) && n >= 1 ? listed[n - 1]?.id : command.arg;
           if (!target) { notice = color.dim('use /sessions then /resume <n>'); render(); return; }
           void switchTo({ session: target }).catch((e: Error) => { notice = color.error(`error: ${e.message}`); render(); });
+          return;
+        }
+        case 'model': {
+          void client.models().then((models) => {
+            if (models.length === 0) { notice = color.dim('no models configured'); render(); return; }
+            openPicker({
+              tui, slot: editorSlot, editor, title: 'Switch model', items: modelItems(models, modelName),
+              onPick: (value) => {
+                notice = color.dim('switching model…');
+                render();
+                void client.setModel(parseModelValue(value)).then(async (r) => {
+                  modelName = r.model;
+                  // The server rebuilt the session — the old event stream is dead, reopen it.
+                  streamAc.abort();
+                  streamAc = new AbortController();
+                  openStream();
+                  await refreshMeta();
+                  notice = color.dim(`switched to ${r.model}`);
+                  render();
+                }).catch((e: Error) => { notice = color.error(`error: ${e.message}`); render(); });
+              },
+            });
+          }).catch((e: Error) => { notice = color.error(`error: ${e.message}`); render(); });
           return;
         }
         case 'delete': {
@@ -248,10 +320,15 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
     void client.send(trimmed).catch((e: Error) => { view = reduce(view, { type: 'error', message: e.message }); render(); });
   };
 
+  // Esc while a turn streams aborts it server-side (agent_end → idle winds the spinner down).
+  editor.onEscape = (): void => {
+    if (view.thinking) void client.abort().catch(() => { /* already idle */ });
+  };
+
   tui.addChild(titleBar);   // top: conversation title + usage stats
   tui.addChild(messages);
   tui.addChild(spacer); // push the input to the bottom of the screen (opencode-style anchoring)
-  tui.addChild(editor);
+  tui.addChild(editorSlot);
   tui.addChild(statusUnder);
   tui.addChild(bottomBar);
   tui.setFocus(editor);

@@ -78,6 +78,26 @@ export class BrainClient {
     return ((await res.json()) as { usage?: BrainUsageView }).usage ?? null;
   }
 
+  /** Stop the streaming turn (Esc). */
+  async abort(): Promise<void> {
+    await this.post('/brain/abort', {});
+  }
+
+  /** Switch the active conversation to another configured model; resolves with the live model name.
+   *  The server rebuilds the session, so the caller must reopen its event stream afterwards. */
+  async setModel(sel: { provider?: string; model?: string }): Promise<{ model: string }> {
+    const res = await this.post('/brain/model', sel);
+    return (await res.json()) as { model: string };
+  }
+
+  /** The pickable models across every configured brain provider (drives the /model picker). */
+  async models(): Promise<{ provider: string; providerLabel: string; model: string }[]> {
+    const res = await this.f(`${this.o.base}/brain/models`, { headers: this.headers() });
+    if (res.status === 401) throw new Unauthorized();
+    if (!res.ok) throw new Error(`orca brain ${res.status} on /brain/models`);
+    return (await res.json()) as { provider: string; providerLabel: string; model: string }[];
+  }
+
   async status(): Promise<BrainStatus> {
     const res = await this.f(`${this.o.base}/brain/status`, { headers: this.headers() });
     if (res.status === 401) throw new Unauthorized();

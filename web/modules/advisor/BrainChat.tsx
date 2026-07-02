@@ -91,8 +91,9 @@ function TextSegment({ text }: { text: string }) {
 }
 
 const DIFF_MAX_ROWS = 60;
-/** A diff row is `  12 - text` (the files plugin's numbered format) or a bare unified `-text`/`+text`. */
-const DIFF_SIGN = /^\s*\d+ ([-+ ]) |^([-+])/;
+/** A diff row is `-   12 text` (current pi-compatible format), `  12 - text` (legacy stored rows),
+ *  or a bare unified `-text`/`+text`. */
+const DIFF_SIGN = /^([+-])\s*\d+ |^\s*\d+ ([-+ ]) |^([-+])/;
 
 /** An edit's display diff, Claude-Code style: added rows green-tinted, removed red, context muted. */
 function DiffBlock({ diff }: { diff: string }) {
@@ -101,7 +102,7 @@ function DiffBlock({ diff }: { diff: string }) {
     <pre className="max-w-full overflow-x-auto rounded-md border border-border bg-elevated p-2 font-mono text-tiny leading-relaxed">
       {lines.slice(0, DIFF_MAX_ROWS).map((l, i) => {
         const m = DIFF_SIGN.exec(l);
-        const sign = m?.[1] ?? m?.[2];
+        const sign = m?.[1] ?? m?.[2] ?? m?.[3];
         const cls = sign === '+' ? 'bg-success/15 text-success' : sign === '-' ? 'bg-danger/15 text-danger' : 'text-text-muted';
         return <div key={i} className={cls}>{l || ' '}</div>;
       })}

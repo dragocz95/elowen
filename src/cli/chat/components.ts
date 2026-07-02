@@ -1,5 +1,6 @@
 import { visibleWidth, wrapTextWithAnsi } from '@earendil-works/pi-tui';
 import type { Component } from '@earendil-works/pi-tui';
+import { renderDiff } from '@earendil-works/pi-coding-agent';
 
 /** opencode-style visual building blocks, hand-rolled on pi-tui's Component contract (render(width)
  *  → lines). Kept separate from app.ts so the layout logic stays readable and these are unit-testable. */
@@ -114,24 +115,26 @@ export function toolChip(name: string, detail?: string): string {
   return `  ${ACCENT('⏺')} ${name}${DIM(args)}`;
 }
 
-// Claude-Code-style diff rows: colored text on a tinted full-row background.
+// Claude-Code-style diff rows for the LEGACY stored format (`  12 - text`, number first).
 const DIFF_ADD = (t: string): string => `\x1b[48;2;28;54;38m\x1b[38;2;127;216;143m${t}\x1b[0m`;
 const DIFF_DEL = (t: string): string => `\x1b[48;2;62;30;34m\x1b[38;2;224;108;117m${t}\x1b[0m`;
-/** A diff row is `  12 - text` (our numbered format) or a bare unified `-text` / `+text`. */
-const DIFF_SIGN = /^\s*\d+ ([-+ ]) |^([-+])/;
+const LEGACY_SIGN = /^\s*\d+ ([-+ ]) /;
 
-/** Render a display diff Claude-Code style: added rows on a green-tinted background, removed on red,
- *  context muted; indented under the tool line and capped so a huge edit can't flood the conversation. */
+/** Render a display diff: pi's renderDiff handles the current format (sign first — colored rows with
+ *  intra-line change highlighting); older stored diffs (number first) keep the simple row coloring.
+ *  Indented under the tool line and capped so a huge edit can't flood the conversation. */
 export function diffBlock(diff: string, maxLines = 60): string[] {
-  const lines = diff.replace(/\n+$/, '').split('\n');
-  const shown = lines.slice(0, maxLines).map((l) => {
-    const sign = DIFF_SIGN.exec(l);
-    const s = sign?.[1] ?? sign?.[2];
-    if (s === '+') return `    ${DIFF_ADD(l)}`;
-    if (s === '-') return `    ${DIFF_DEL(l)}`;
-    return `    ${FAINTC(l)}`;
-  });
-  if (lines.length > maxLines) shown.push(`    ${FAINTC(`… +${lines.length - maxLines} more lines`)}`);
+  const raw = diff.replace(/\n+$/, '');
+  // Every plugin diff has at least one changed row; sign-first marks the current pi-compatible format.
+  const isPiFormat = raw.split('\n').some((l) => /^[-+]\s*\d+ /.test(l));
+  const rendered = isPiFormat
+    ? renderDiff(raw).replace(/\n+$/, '').split('\n')
+    : raw.split('\n').map((l) => {
+        const s = LEGACY_SIGN.exec(l)?.[1];
+        return s === '+' ? DIFF_ADD(l) : s === '-' ? DIFF_DEL(l) : FAINTC(l);
+      });
+  const shown = rendered.slice(0, maxLines).map((l) => `    ${l}`);
+  if (rendered.length > maxLines) shown.push(`    ${FAINTC(`… +${rendered.length - maxLines} more lines`)}`);
   return shown;
 }
 
