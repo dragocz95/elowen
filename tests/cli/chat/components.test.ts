@@ -51,9 +51,10 @@ describe('chat components', () => {
     expect(fmtCount(39413)).toBe('39,413');
   });
 
-  it('toolChip shows the tool name with a glyph (star for search, arrow for reads)', () => {
-    expect(toolChip('web_search')).toContain('* web_search');
-    expect(toolChip('read_file')).toContain('→ read_file');
+  it('toolChip renders Claude-Code style: dot, name, args in parens', () => {
+    expect(toolChip('web_search')).toContain('⏺');
+    expect(toolChip('web_search')).toContain('web_search');
+    expect(toolChip('read_file', 'src/a.ts')).toContain('(src/a.ts)');
   });
 
   it('banner renders the ORCA block-letter logo and the model', () => {

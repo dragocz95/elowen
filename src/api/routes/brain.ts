@@ -78,6 +78,14 @@ export function registerBrainRoutes(app: OrcaApp, ctx: RouteContext): void {
     return c.json(await listBrainModels(cfg));
   });
 
+  // Manual context compaction (the /compact command in chat clients). Returns the fresh usage numbers.
+  app.post('/brain/compact', async c => {
+    if (!d.brain) return c.json({ error: 'brain unavailable' }, 503);
+    if (forbidden(c)) return c.json({ error: 'forbidden' }, 403);
+    try { return c.json({ usage: await d.brain.compact(c.get('user').id) }); }
+    catch (e) { return c.json({ error: (e as Error).message }, 409); }
+  });
+
   app.post('/brain/send', async c => {
     if (!d.brain) return c.json({ error: 'brain unavailable' }, 503);
     if (forbidden(c)) return c.json({ error: 'forbidden' }, 403);

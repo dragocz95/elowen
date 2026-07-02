@@ -34,7 +34,7 @@ export function viewToPlainText(view: ChatView): string[] {
 
 /** Local slash-command routing: returns the recognized command (with its argument) or null for a
  *  regular chat message. Pure, so the command surface is unit-testable without a TTY. */
-export function parseCommand(text: string): { cmd: 'quit' | 'new' | 'sessions' | 'resume' | 'delete' | 'help'; arg?: string } | null {
+export function parseCommand(text: string): { cmd: 'quit' | 'new' | 'sessions' | 'resume' | 'delete' | 'compact' | 'help'; arg?: string } | null {
   const m = /^\/(\w+)(?:\s+(.+))?$/.exec(text.trim());
   if (!m) return null;
   switch (m[1]) {
@@ -43,6 +43,7 @@ export function parseCommand(text: string): { cmd: 'quit' | 'new' | 'sessions' |
     case 'sessions': return { cmd: 'sessions' };
     case 'resume': return { cmd: 'resume', arg: m[2] };
     case 'delete': return { cmd: 'delete', arg: m[2] };
+    case 'compact': return { cmd: 'compact' };
     case 'help': return { cmd: 'help' };
     default: return null;
   }
@@ -86,6 +87,7 @@ const HELP = [
   '/sessions — list conversations',
   '/resume <n> — resume a conversation',
   '/delete <n> — delete a conversation',
+  '/compact — summarize the conversation to free context',
   '/quit — exit',
 ].join('\n');
 
@@ -228,6 +230,14 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
           if (!target) { notice = color.dim('use /sessions then /delete <n>'); render(); return; }
           void client.deleteSession(target)
             .then(() => { listed = listed.filter((s) => s.id !== target); notice = color.dim('conversation deleted'); render(); })
+            .catch((e: Error) => { notice = color.error(`error: ${e.message}`); render(); });
+          return;
+        }
+        case 'compact': {
+          notice = color.dim('compacting…');
+          render();
+          void client.compact()
+            .then(async (u) => { if (u) usage = u; await refreshMeta(); notice = color.dim('conversation compacted'); render(); })
             .catch((e: Error) => { notice = color.error(`error: ${e.message}`); render(); });
           return;
         }

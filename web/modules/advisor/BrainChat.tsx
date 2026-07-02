@@ -42,7 +42,7 @@ async function readAttachment(file: File): Promise<Attachment | null> {
 /** An assistant turn is an ordered list of segments so text and tool calls render in the sequence they
  *  actually happened. Consecutive tool calls (no new text between them) collapse into ONE tools segment
  *  → the Claude-Code "grouped pills" look. */
-type ToolPill = { name: string; detail?: string };
+type ToolPill = { name: string; detail?: string; diff?: string };
 type Segment = { kind: 'text'; text: string } | { kind: 'tools'; tools: ToolPill[] };
 type Turn = { role: 'user'; text: string } | { role: 'assistant'; segments: Segment[] };
 
@@ -68,23 +68,62 @@ function appendTool(cur: Turn[], tool: ToolPill): Turn[] {
   return [...cur.slice(0, -1), { role: 'assistant', segments: segs }];
 }
 
+/** Attach an edit's diff to the most recent tool call of the running assistant turn. */
+function appendDiff(cur: Turn[], diff: string): Turn[] {
+  const last = cur[cur.length - 1];
+  if (last?.role !== 'assistant') return cur;
+  const segs = [...last.segments];
+  for (let i = segs.length - 1; i >= 0; i--) {
+    const seg = segs[i];
+    if (seg?.kind !== 'tools') continue;
+    const tools = [...seg.tools];
+    tools[tools.length - 1] = { ...tools[tools.length - 1], diff };
+    segs[i] = { kind: 'tools', tools };
+    return [...cur.slice(0, -1), { role: 'assistant', segments: segs }];
+  }
+  return cur;
+}
+
 /** Sanitized-markdown block for one assistant text segment (marked + DOMPurify, no bubble). */
 function TextSegment({ text }: { text: string }) {
   const html = useMemo(() => DOMPurify.sanitize(marked.parse(text, { async: false }) as string), [text]);
   return <div className="chat-markdown text-sm leading-relaxed text-text" dangerouslySetInnerHTML={{ __html: html }} />;
 }
 
+const DIFF_MAX_ROWS = 60;
+/** A diff row is `  12 - text` (the files plugin's numbered format) or a bare unified `-text`/`+text`. */
+const DIFF_SIGN = /^\s*\d+ ([-+ ]) |^([-+])/;
+
+/** An edit's display diff, Claude-Code style: added rows green-tinted, removed red, context muted. */
+function DiffBlock({ diff }: { diff: string }) {
+  const lines = diff.replace(/\n+$/, '').split('\n');
+  return (
+    <pre className="max-w-full overflow-x-auto rounded-md border border-border bg-elevated p-2 font-mono text-tiny leading-relaxed">
+      {lines.slice(0, DIFF_MAX_ROWS).map((l, i) => {
+        const m = DIFF_SIGN.exec(l);
+        const sign = m?.[1] ?? m?.[2];
+        const cls = sign === '+' ? 'bg-success/15 text-success' : sign === '-' ? 'bg-danger/15 text-danger' : 'text-text-muted';
+        return <div key={i} className={cls}>{l || ' '}</div>;
+      })}
+      {lines.length > DIFF_MAX_ROWS ? <div className="text-text-muted">… +{lines.length - DIFF_MAX_ROWS} more lines</div> : null}
+    </pre>
+  );
+}
+
 /** A grouped row of tool-call pills (one segment = tools that ran together). The argument summary
- *  (file path, query…) rides muted next to the name, opencode-style. */
+ *  (file path, query…) rides muted next to the name; an edit's diff renders under the row. */
 function ToolPills({ tools }: { tools: ToolPill[] }) {
   return (
-    <span className="flex flex-wrap gap-1">
-      {tools.map((tool, i) => (
-        <span key={i} title={tool.detail} className="inline-flex max-w-full items-center gap-1 rounded-full border border-border bg-elevated px-2 py-0.5 font-mono text-tiny text-text-muted">
-          <Wrench size={9} aria-hidden className="shrink-0" />{tool.name}
-          {tool.detail ? <span className="truncate opacity-60">{tool.detail}</span> : null}
-        </span>
-      ))}
+    <span className="flex flex-col gap-1">
+      <span className="flex flex-wrap gap-1">
+        {tools.map((tool, i) => (
+          <span key={i} title={tool.detail} className="inline-flex max-w-full items-center gap-1 rounded-full border border-border bg-elevated px-2 py-0.5 font-mono text-tiny text-text-muted">
+            <Wrench size={9} aria-hidden className="shrink-0" />{tool.name}
+            {tool.detail ? <span className="truncate opacity-60">{tool.detail}</span> : null}
+          </span>
+        ))}
+      </span>
+      {tools.filter((t) => t.diff).map((tool, i) => <DiffBlock key={i} diff={tool.diff!} />)}
     </span>
   );
 }
@@ -156,7 +195,7 @@ export function BrainChat() {
           segments.push({ kind: 'text', text: seg.text });
         } else {
           const tail = segments[segments.length - 1];
-          const pill = { name: seg.name, detail: seg.detail };
+          const pill = { name: seg.name, detail: seg.detail, diff: seg.diff };
           if (tail?.kind === 'tools') tail.tools.push(pill);
           else segments.push({ kind: 'tools', tools: [pill] });
         }
@@ -182,6 +221,10 @@ export function BrainChat() {
     es.addEventListener('tool', (e) => {
       const { name, detail } = JSON.parse((e as MessageEvent).data) as { name: string; detail?: string };
       setTurns((cur) => appendTool(cur, { name, detail }));
+    });
+    es.addEventListener('diff', (e) => {
+      const { diff } = JSON.parse((e as MessageEvent).data) as { diff: string };
+      setTurns((cur) => appendDiff(cur, diff));
     });
     es.addEventListener('idle', (e) => {
       setBusy(false);

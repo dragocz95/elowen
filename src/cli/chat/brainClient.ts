@@ -47,7 +47,11 @@ export class BrainClient {
   private async post(path: string, body: unknown): Promise<Response> {
     const res = await this.f(`${this.o.base}${path}`, { method: 'POST', headers: this.headers(true), body: JSON.stringify(body) });
     if (res.status === 401) throw new Unauthorized();
-    if (!res.ok) throw new Error(`orca brain ${res.status} on ${path}`);
+    if (!res.ok) {
+      // Surface the server's message ("Nothing to compact…") instead of a bare status code.
+      const message = (await res.json().catch(() => null) as { error?: string } | null)?.error;
+      throw new Error(message || `orca brain ${res.status} on ${path}`);
+    }
     return res;
   }
 
@@ -66,6 +70,12 @@ export class BrainClient {
 
   async send(text: string): Promise<void> {
     await this.post('/brain/send', { text });
+  }
+
+  /** Manually compact the active conversation; resolves with the post-compaction usage. */
+  async compact(): Promise<BrainUsageView | null> {
+    const res = await this.post('/brain/compact', {});
+    return ((await res.json()) as { usage?: BrainUsageView }).usage ?? null;
   }
 
   async status(): Promise<BrainStatus> {

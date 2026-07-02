@@ -184,6 +184,15 @@ export class BrainService {
     return this.pluginsMemo;
   }
 
+  /** Manually compact the active conversation (the /compact command): summarize the history so the
+   *  context shrinks while the session stays usable. Throws when nothing is running. */
+  async compact(userId: number): Promise<BrainUsage> {
+    const b = this.activeLive(userId);
+    if (!b) throw new Error('brain not started');
+    await b.session.compact();
+    return usageOf(b.session);
+  }
+
   status(userId: number): { running: boolean; sessionId: string | null; model: string; usage: BrainUsage | null } {
     const b = this.activeLive(userId);
     return { running: !!b, sessionId: b?.sessionId ?? null, model: b?.model ?? '', usage: b ? usageOf(b.session) : null };

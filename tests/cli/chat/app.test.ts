@@ -21,6 +21,7 @@ describe('parseCommand', () => {
     expect(parseCommand('/new')).toEqual({ cmd: 'new' });
     expect(parseCommand('/sessions')).toEqual({ cmd: 'sessions' });
     expect(parseCommand('/resume 2')).toEqual({ cmd: 'resume', arg: '2' });
+    expect(parseCommand('/compact')).toEqual({ cmd: 'compact' });
     expect(parseCommand('/quit')).toEqual({ cmd: 'quit' });
     expect(parseCommand('/exit')).toEqual({ cmd: 'quit' });
     expect(parseCommand('/help')).toEqual({ cmd: 'help' });
