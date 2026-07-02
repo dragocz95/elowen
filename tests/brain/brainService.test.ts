@@ -118,6 +118,28 @@ describe('BrainService', () => {
     expect(list.find((s) => s.id === first.sessionId)?.title).toBe('první konverzace');
   });
 
+  it('channel sessions get NO orca_* control-plane tools (the owner token stays unreachable)', async () => {
+    const d = fakeDeps();
+    const svc = new BrainService(d as never);
+    const policy = { allowedProjectIds: new Set([1]), allowedPaths: () => ['/repo/a'] };
+    await svc.channelSend({ channelId: 'c-sec', ownerUserId: 1, policy }, 'ahoj');
+    const opts = (d.createSession as unknown as { mock: { calls: [{ customTools: { name: string }[] }][] } }).mock.calls[0][0];
+    expect(opts.customTools.filter((t) => t.name.startsWith('orca_'))).toHaveLength(0);
+  });
+
+  it('serializes concurrent channelSend calls on one channel (single spawn, ordered turns)', async () => {
+    const d = fakeDeps();
+    const svc = new BrainService(d as never);
+    const policy = { allowedProjectIds: 'all' as const, allowedPaths: () => [] };
+    const [a, b] = await Promise.all([
+      svc.channelSend({ channelId: 'c-par', ownerUserId: 1, policy }, 'one'),
+      svc.channelSend({ channelId: 'c-par', ownerUserId: 1, policy }, 'two'),
+    ]);
+    expect(d.createSession).toHaveBeenCalledTimes(1); // no double spawn
+    expect(a).toBe('echo:one'); // each turn reads ITS OWN reply, not the other's
+    expect(b).toBe('echo:two');
+  });
+
   it('rejects resuming a foreign or channel session', async () => {
     const d = fakeDeps();
     const svc = new BrainService(d as never);

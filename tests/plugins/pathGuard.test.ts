@@ -39,3 +39,25 @@ describe('assertPathAllowed', () => {
     expect(allowedRoots()).toEqual([]);
   });
 });
+
+describe('symlink escape', () => {
+  it('rejects a symlink inside an allowed root that points outside it', async () => {
+    const { mkdtempSync, mkdirSync, writeFileSync, symlinkSync } = await import('node:fs');
+    const { join } = await import('node:path');
+    const { tmpdir } = await import('node:os');
+    const base = mkdtempSync(join(tmpdir(), 'orca-guard-'));
+    const repo = join(base, 'repo'); const outside = join(base, 'outside');
+    mkdirSync(repo); mkdirSync(outside);
+    writeFileSync(join(outside, 'secret.txt'), 'x');
+    symlinkSync(join(outside, 'secret.txt'), join(repo, 'link.txt'));
+    const policy = { allowedProjectIds: new Set([1]), allowedPaths: () => [repo] };
+    runWithPolicy(policy, () => {
+      expect(() => assertPathAllowed(join(repo, 'link.txt'))).toThrow(/not allowed/);
+      // a genuine file in the repo still passes
+      writeFileSync(join(repo, 'ok.txt'), 'y');
+      expect(assertPathAllowed(join(repo, 'ok.txt'))).toContain('ok.txt');
+      // a brand-new (not yet existing) file inside the repo passes too
+      expect(assertPathAllowed(join(repo, 'new.txt'))).toContain('new.txt');
+    });
+  });
+});

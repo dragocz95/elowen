@@ -67,8 +67,12 @@ export async function loadPlugins(opts: LoadPluginsOptions): Promise<PluginRegis
         const entryUrl = pathToFileURL(resolve(pluginDir, manifest.entry)).href;
         const mod = (await import(entryUrl)) as Partial<PluginModule>;
         if (typeof mod.register !== 'function') throw new Error('entry does not export register()');
-        const ctx = registry.contextFor(name, opts.config?.[name] ?? {}, opts.logger);
+        // Stage the plugin's contributions in a scratch registry and merge only after a clean
+        // register() — a plugin that throws halfway must not leave half its tools live.
+        const staging = new PluginRegistry();
+        const ctx = staging.contextFor(name, opts.config?.[name] ?? {}, opts.logger);
         await mod.register(ctx);
+        registry.merge(staging);
         loaded.add(name);
         opts.logger.info(`plugin loaded: ${name}@${manifest.version}`);
       } catch (err) {

@@ -11,6 +11,15 @@ export class PluginRegistry {
   readonly hooks: PluginHook[] = [];
   readonly platforms: PlatformAdapter[] = [];
 
+  /** Absorb another registry's contributions (the loader stages each plugin and merges on success). */
+  merge(other: PluginRegistry): void {
+    this.tools.push(...other.tools);
+    this.skills.push(...other.skills);
+    this.promptFragments.push(...other.promptFragments);
+    this.hooks.push(...other.hooks);
+    this.platforms.push(...other.platforms);
+  }
+
   /** Build the context passed to one plugin's `register()`. `config` is that plugin's own slice. */
   contextFor(name: string, config: Record<string, unknown>, logger: PluginLogger): PluginContext {
     const scoped: PluginLogger = {

@@ -97,7 +97,17 @@ export class BrainService {
   private channels = new Map<string, LiveBrain>();
   private startedPlatforms: { name: string; disconnect?(): void }[] = [];
   private pluginsMemo?: PluginRegistry;
+  /** Per-conversation exclusivity: PI sessions are single-conversation, so concurrent prompt()/spawn
+   *  calls on one session id queue up here instead of corrupting turn state. */
+  private locks = new Map<string, Promise<unknown>>();
   constructor(private d: BrainDeps) {}
+
+  private serial<T>(key: string, fn: () => Promise<T>): Promise<T> {
+    const prev = this.locks.get(key) ?? Promise.resolve();
+    const next = prev.then(fn, fn);
+    this.locks.set(key, next.catch(() => undefined));
+    return next;
+  }
 
   /** The user's current conversation id: the explicit active pointer, else their most recent stored
    *  session, else the legacy default id (first-ever conversation). Channel sessions never count. */
@@ -149,6 +159,9 @@ export class BrainService {
     policy: Policy;
     /** Extra system-prompt chunks appended after the plugin fragments (e.g. a Discord role prompt). */
     extraAppend?: string[];
+    /** Platform channel session (Discord, …): the sender is NOT an Orca user, so the owner's
+     *  full-scope orca_* API tools are withheld — only Policy-guarded plugin tools load. */
+    channel?: boolean;
     autoCompact: boolean;
     autoCompactAt: number;
   }): Promise<LiveBrain> {
@@ -166,8 +179,8 @@ export class BrainService {
 
     const cwd = this.d.cwd ?? process.cwd();
     const sessionManager = rehydrate(this.d.store, sessionId, cwd);
-    const token = this.d.users.ensureAdvisorToken(ownerUserId);
-    const tools = buildOrcaTools({ url: this.d.url, token });
+    // Channel senders must never reach the owner's full-scope API token — no orca_* tools there.
+    const tools = opts.channel ? [] : buildOrcaTools({ url: this.d.url, token: this.d.users.ensureAdvisorToken(ownerUserId) });
 
     // Enabled plugins contribute tools, skills, and system-prompt fragments. Their tools read the active
     // Policy at call time via AsyncLocalStorage (set around each prompt), no per-session construction.
@@ -227,22 +240,23 @@ export class BrainService {
       sessionId = this.activeSessionId(userId);
     }
     this.active.set(userId, sessionId);
-    const existing = this.live.get(sessionId);
-    if (existing) return { sessionId }; // idempotent resume of a live conversation
-
-    // Model selection: an explicit start option wins, else the user's saved provider+model override,
-    // else the first configured provider's first model.
-    const userCfg = this.d.userSettings?.(userId);
-    const live = await this.spawnLive({
-      sessionId,
-      ownerUserId: userId,
-      selection: { provider: opts?.provider ?? userCfg?.modelProvider, model: userCfg?.model },
-      policy: this.d.policy?.(userId) ?? { allowedProjectIds: 'all' as const, allowedPaths: () => [] },
-      autoCompact: !!userCfg?.autoCompact,
-      autoCompactAt: userCfg?.autoCompactAt ? userCfg.autoCompactAt / 100 : DEFAULT_AUTO_COMPACT_AT,
+    // Serialized per conversation: two concurrent starts would both spawn and leak one PI session.
+    return this.serial(sessionId, async () => {
+      if (this.live.has(sessionId)) return { sessionId }; // idempotent resume of a live conversation
+      // Model selection: an explicit start option wins, else the user's saved provider+model override,
+      // else the first configured provider's first model.
+      const userCfg = this.d.userSettings?.(userId);
+      const live = await this.spawnLive({
+        sessionId,
+        ownerUserId: userId,
+        selection: { provider: opts?.provider ?? userCfg?.modelProvider, model: userCfg?.model },
+        policy: this.d.policy?.(userId) ?? { allowedProjectIds: 'all' as const, allowedPaths: () => [] },
+        autoCompact: !!userCfg?.autoCompact,
+        autoCompactAt: userCfg?.autoCompactAt ? userCfg.autoCompactAt / 100 : DEFAULT_AUTO_COMPACT_AT,
+      });
+      this.live.set(sessionId, live);
+      return { sessionId };
     });
-    this.live.set(sessionId, live);
-    return { sessionId };
   }
 
   subscribe(userId: number, listener: (e: BrainEvent) => void): () => void {
@@ -255,26 +269,31 @@ export class BrainService {
   async send(userId: number, text: string): Promise<void> {
     const b = this.activeLive(userId);
     if (!b) throw new Error('brain not started for user');
-    // First user message names the conversation (once) so the session list reads naturally.
-    const row = this.d.store.getSession(b.sessionId);
-    if (row && !row.title) this.d.store.setTitle(b.sessionId, text.slice(0, 60));
-    projectUserTurn(this.d.store, b.sessionId, text);
-    // Establish the user's repo Policy for any plugin tool this turn invokes (read via currentPolicy()).
-    await runWithPolicy(b.policy, () => b.session.prompt(text));
-    // Auto-compact: once the conversation fills most of the context window, summarize it so the next
-    // turn keeps room. Opt-in per user; failures are non-fatal (a full window still works, just tighter).
-    if (b.autoCompact) {
-      const usage = b.session.getContextUsage();
-      if (usage?.tokens && usage.contextWindow > 0 && usage.tokens / usage.contextWindow >= b.autoCompactAt) {
-        try { await b.session.compact(); } catch { /* best-effort; keep the session usable */ }
+    // Serialized per conversation: concurrent prompt() calls on one PI session corrupt turn state.
+    await this.serial(b.sessionId, async () => {
+      // First user message names the conversation (once) so the session list reads naturally.
+      const row = this.d.store.getSession(b.sessionId);
+      if (row && !row.title) this.d.store.setTitle(b.sessionId, text.slice(0, 60));
+      projectUserTurn(this.d.store, b.sessionId, text);
+      // Establish the user's repo Policy for any plugin tool this turn invokes (read via currentPolicy()).
+      await runWithPolicy(b.policy, () => b.session.prompt(text));
+      // Auto-compact: once the conversation fills most of the context window, summarize it so the next
+      // turn keeps room. Opt-in per user; failures are non-fatal (a full window still works, just tighter).
+      if (b.autoCompact) {
+        const usage = b.session.getContextUsage();
+        if (usage?.tokens && usage.contextWindow > 0 && usage.tokens / usage.contextWindow >= b.autoCompactAt) {
+          try { await b.session.compact(); } catch { /* best-effort; keep the session usable */ }
+        }
       }
-    }
+    });
   }
 
   /** Restart a user's live session so changed settings (model override, plugins) apply immediately.
    *  No-op when not running. History survives — it rehydrates from SQLite on the fresh start. */
   async restart(userId: number): Promise<void> {
-    if (!this.activeLive(userId)) return;
+    const b = this.activeLive(userId);
+    if (!b) return;
+    await this.locks.get(b.sessionId); // let an in-flight turn settle before disposing the session
     this.stop(userId);
     await this.start(userId);
   }
@@ -324,31 +343,46 @@ export class BrainService {
    *  the final assistant text. The session is keyed by the channel — NOT the Orca user — and runs with
    *  the caller-resolved Policy (role → projects) plus optional role prompt fragments. Persisted like
    *  any brain conversation (`brain-ch-<id>`), owned by `ownerUserId` (whose token drives the tools). */
+  /** Live channel sessions are capped: past this the least-recently-used one is disposed (its history
+   *  stays in SQLite and rehydrates on the next message), so a busy server can't leak sessions. */
+  private static readonly MAX_CHANNELS = 32;
+
   async channelSend(opts: { channelId: string; ownerUserId: number; policy: Policy; promptAppend?: string[] }, text: string): Promise<string> {
     const sessionId = `brain-ch-${opts.channelId}`;
-    let ch = this.channels.get(opts.channelId);
-    if (!ch) {
-      ch = await this.spawnLive({
-        sessionId,
-        ownerUserId: opts.ownerUserId,
-        selection: {},
-        policy: opts.policy,
-        extraAppend: opts.promptAppend,
-        autoCompact: true, // channels are long-lived and unattended — keep their context bounded
-        autoCompactAt: DEFAULT_AUTO_COMPACT_AT,
-      });
+    // Serialized per channel: two rapid Discord messages must not prompt() one PI session concurrently
+    // (and must not both spawn it).
+    return this.serial(sessionId, async () => {
+      let ch = this.channels.get(opts.channelId);
+      if (!ch) {
+        if (this.channels.size >= BrainService.MAX_CHANNELS) {
+          const oldest = this.channels.entries().next().value;
+          if (oldest) { oldest[1].session.dispose(); this.channels.delete(oldest[0]); }
+        }
+        ch = await this.spawnLive({
+          sessionId,
+          ownerUserId: opts.ownerUserId,
+          selection: {},
+          policy: opts.policy,
+          extraAppend: opts.promptAppend,
+          channel: true, // platform senders are not Orca users — no orca_* control-plane tools
+          autoCompact: true, // channels are long-lived and unattended — keep their context bounded
+          autoCompactAt: DEFAULT_AUTO_COMPACT_AT,
+        });
+      } else {
+        this.channels.delete(opts.channelId); // re-insert below → Map order doubles as LRU order
+      }
       this.channels.set(opts.channelId, ch);
-    }
-    projectUserTurn(this.d.store, sessionId, text);
-    await runWithPolicy(opts.policy, () => ch.session.prompt(text));
-    const usage = ch.session.getContextUsage();
-    if (usage?.tokens && usage.contextWindow > 0 && usage.tokens / usage.contextWindow >= ch.autoCompactAt) {
-      try { await ch.session.compact(); } catch { /* best-effort */ }
-    }
-    // The reply = the last assistant message of the settled turn.
-    const msgs = ch.session.messages as { role?: string }[];
-    const last = [...msgs].reverse().find((m) => m.role === 'assistant');
-    return last ? extractText(last) : '';
+      projectUserTurn(this.d.store, sessionId, text);
+      await runWithPolicy(opts.policy, () => ch.session.prompt(text));
+      const usage = ch.session.getContextUsage();
+      if (usage?.tokens && usage.contextWindow > 0 && usage.tokens / usage.contextWindow >= ch.autoCompactAt) {
+        try { await ch.session.compact(); } catch { /* best-effort */ }
+      }
+      // The reply = the last assistant message of the settled turn.
+      const msgs = ch.session.messages as { role?: string }[];
+      const last = [...msgs].reverse().find((m) => m.role === 'assistant');
+      return last ? extractText(last) : '';
+    });
   }
 
   stop(userId: number): void {

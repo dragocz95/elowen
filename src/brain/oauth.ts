@@ -32,6 +32,10 @@ export class BrainOAuthManager {
 
   start(provider: string): OAuthFlowState {
     const flow: Flow = { id: randomUUID(), provider, status: 'pending', needsInput: false };
+    // Prune settled flows so the map stays bounded (admin-only, but no reason to leak entries).
+    for (const [id, f] of this.flows) {
+      if (f.status === 'success' || f.status === 'error') this.flows.delete(id);
+    }
     this.flows.set(flow.id, flow);
     const waitForInput = (): Promise<string> => new Promise<string>((resolve) => {
       flow.needsInput = true;

@@ -12,14 +12,17 @@ const cache = new Map<string, { at: number; models: string[] }>();
  *  account page doesn't hammer the upstream. Failures degrade to the manually configured list. */
 async function fetchOpenAiModels(p: BrainProviderEntry, fetchImpl: typeof fetch): Promise<string[]> {
   const base = (p.baseUrl || 'https://api.openai.com/v1').replace(/\/$/, '');
-  const hit = cache.get(base);
+  // Key by endpoint AND credential — two providers sharing a baseUrl with different keys (or a key
+  // change within the TTL) must not serve each other's cached catalog.
+  const key = `${base}\u0000${p.apiKey ?? ''}`;
+  const hit = cache.get(key);
   if (hit && Date.now() - hit.at < FETCH_TTL_MS) return hit.models;
   try {
     const res = await fetchImpl(`${base}/models`, { headers: p.apiKey ? { authorization: `Bearer ${p.apiKey}` } : {} });
     if (!res.ok) return [];
     const body = (await res.json()) as { data?: { id?: unknown }[] };
     const models = (body.data ?? []).map((m) => m.id).filter((id): id is string => typeof id === 'string').sort();
-    cache.set(base, { at: Date.now(), models });
+    cache.set(key, { at: Date.now(), models });
     return models;
   } catch { return []; }
 }
