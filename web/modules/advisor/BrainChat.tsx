@@ -39,36 +39,68 @@ async function readAttachment(file: File): Promise<Attachment | null> {
   return { name: file.name, kind: 'text', mimeType: file.type || 'text/plain', data: text };
 }
 
-interface Turn { role: 'user' | 'assistant'; text: string; tools?: string[] }
+/** An assistant turn is an ordered list of segments so text and tool calls render in the sequence they
+ *  actually happened. Consecutive tool calls (no new text between them) collapse into ONE tools segment
+ *  → the Claude-Code "grouped pills" look. */
+type Segment = { kind: 'text'; text: string } | { kind: 'tools'; names: string[] };
+type Turn = { role: 'user'; text: string } | { role: 'assistant'; segments: Segment[] };
 
-/** One rendered bubble: user turns as plain accent-tinted text, assistant turns as sanitized markdown
- *  (the same marked + DOMPurify pairing the project editor's preview uses). */
-function Bubble({ turn }: { turn: Turn }) {
-  const html = useMemo(
-    () => (turn.role === 'assistant' ? DOMPurify.sanitize(marked.parse(turn.text, { async: false }) as string) : ''),
-    [turn.role, turn.text],
+/** Append a text delta to the running assistant turn, extending its last text segment or starting one. */
+function appendText(cur: Turn[], delta: string): Turn[] {
+  const last = cur[cur.length - 1];
+  if (last?.role !== 'assistant') return [...cur, { role: 'assistant', segments: [{ kind: 'text', text: delta }] }];
+  const segs = [...last.segments];
+  const tail = segs[segs.length - 1];
+  if (tail?.kind === 'text') segs[segs.length - 1] = { kind: 'text', text: tail.text + delta };
+  else segs.push({ kind: 'text', text: delta });
+  return [...cur.slice(0, -1), { role: 'assistant', segments: segs }];
+}
+
+/** Append a tool call, grouping it with the immediately preceding tool calls (no text in between). */
+function appendTool(cur: Turn[], name: string): Turn[] {
+  const last = cur[cur.length - 1];
+  if (last?.role !== 'assistant') return [...cur, { role: 'assistant', segments: [{ kind: 'tools', names: [name] }] }];
+  const segs = [...last.segments];
+  const tail = segs[segs.length - 1];
+  if (tail?.kind === 'tools') segs[segs.length - 1] = { kind: 'tools', names: [...tail.names, name] };
+  else segs.push({ kind: 'tools', names: [name] });
+  return [...cur.slice(0, -1), { role: 'assistant', segments: segs }];
+}
+
+/** Sanitized-markdown block for one assistant text segment (marked + DOMPurify, no bubble). */
+function TextSegment({ text }: { text: string }) {
+  const html = useMemo(() => DOMPurify.sanitize(marked.parse(text, { async: false }) as string), [text]);
+  return <div className="chat-markdown text-sm leading-relaxed text-text" dangerouslySetInnerHTML={{ __html: html }} />;
+}
+
+/** A grouped row of tool-call pills (one segment = tools that ran together). */
+function ToolPills({ names }: { names: string[] }) {
+  return (
+    <span className="flex flex-wrap gap-1">
+      {names.map((name, i) => (
+        <span key={i} className="inline-flex items-center gap-1 rounded-full border border-border bg-elevated px-2 py-0.5 font-mono text-tiny text-text-muted">
+          <Wrench size={9} aria-hidden />{name}
+        </span>
+      ))}
+    </span>
   );
+}
+
+/** One message row. User turns keep an accent bubble; assistant turns are bubble-free — plain markdown
+ *  and tool-pill rows in their true order. */
+function Message({ turn }: { turn: Turn }) {
   if (turn.role === 'user') {
     return (
-      <div className="ml-8 self-end rounded-lg rounded-br-sm border border-accent/30 bg-accent/10 px-3 py-2 text-sm text-text">
+      <div className="ml-8 self-end whitespace-pre-wrap rounded-lg rounded-br-sm border border-accent/30 bg-accent/10 px-3 py-2 text-sm text-text">
         {turn.text}
       </div>
     );
   }
   return (
-    <div className="mr-4 flex flex-col gap-1 self-start">
-      {turn.tools?.length ? (
-        <span className="flex flex-wrap gap-1">
-          {turn.tools.map((name, i) => (
-            <span key={i} className="inline-flex items-center gap-1 rounded-full border border-border bg-elevated px-2 py-0.5 font-mono text-tiny text-text-muted">
-              <Wrench size={9} aria-hidden />{name}
-            </span>
-          ))}
-        </span>
-      ) : null}
-      {turn.text ? (
-        <div className="chat-markdown rounded-lg rounded-bl-sm border border-border bg-surface px-3 py-2 text-sm leading-relaxed text-text" dangerouslySetInnerHTML={{ __html: html }} />
-      ) : null}
+    <div className="mr-4 flex flex-col gap-1.5 self-start">
+      {turn.segments.map((seg, i) => (seg.kind === 'text'
+        ? <TextSegment key={i} text={seg.text} />
+        : <ToolPills key={i} names={seg.names} />))}
     </div>
   );
 }
@@ -107,7 +139,8 @@ export function BrainChat() {
 
   const loadHistory = async () => {
     const msgs = await orcaClient.brainMessages();
-    setTurns(msgs.filter((m: BrainMessage) => m.text).map((m: BrainMessage) => ({ role: m.role === 'user' ? 'user' : 'assistant', text: m.text })));
+    setTurns(msgs.filter((m: BrainMessage) => m.text).map((m: BrainMessage): Turn =>
+      m.role === 'user' ? { role: 'user', text: m.text } : { role: 'assistant', segments: [{ kind: 'text', text: m.text }] }));
   };
 
   // Boot: start (resume) the brain, load history, open the stream. Re-runs when the conversation flips.
@@ -121,19 +154,11 @@ export function BrainChat() {
     const es = new EventSource(`${BASE}/brain/stream`);
     es.addEventListener('text', (e) => {
       const { delta } = JSON.parse((e as MessageEvent).data) as { delta: string };
-      setTurns((cur) => {
-        const last = cur[cur.length - 1];
-        if (last?.role === 'assistant') return [...cur.slice(0, -1), { ...last, text: last.text + delta }];
-        return [...cur, { role: 'assistant', text: delta }];
-      });
+      setTurns((cur) => appendText(cur, delta));
     });
     es.addEventListener('tool', (e) => {
       const { name } = JSON.parse((e as MessageEvent).data) as { name: string };
-      setTurns((cur) => {
-        const last = cur[cur.length - 1];
-        if (last?.role === 'assistant') return [...cur.slice(0, -1), { ...last, tools: [...(last.tools ?? []), name] }];
-        return [...cur, { role: 'assistant', text: '', tools: [name] }];
-      });
+      setTurns((cur) => appendTool(cur, name));
     });
     es.addEventListener('idle', (e) => {
       setBusy(false);
@@ -240,7 +265,7 @@ export function BrainChat() {
         {turns.length === 0 && ready ? (
           <p className="m-auto max-w-[220px] text-center text-xs text-text-muted">{t.brainChat.empty}</p>
         ) : null}
-        {turns.map((turn, i) => <Bubble key={i} turn={turn} />)}
+        {turns.map((turn, i) => <Message key={i} turn={turn} />)}
         {busy ? <span className="ml-1 animate-pulse text-xs text-text-muted">{t.brainChat.thinking}</span> : null}
       </div>
 
