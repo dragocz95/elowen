@@ -7,7 +7,7 @@ import type { Component } from '@earendil-works/pi-tui';
 const TEAL = '38;5;44';
 const FAINT = '38;5;240';
 const BAR = `\x1b[${TEAL}m▌\x1b[0m`;       // teal left rail (half-block, reads as a clean edge)
-const BG_OPEN = '\x1b[48;5;236m';          // subtle raised background for the user block
+const BG_OPEN = '\x1b[48;5;238m';          // raised gray background for the user block (clearly visible)
 const BG_CLOSE = '\x1b[0m';
 /** Bold that resets ONLY bold (\x1b[22m), so it never clears the surrounding background. */
 const bold = (s: string): string => `\x1b[1m${s}\x1b[22m`;
@@ -59,12 +59,7 @@ export function banner(model?: string): string[] {
   return ['', top, ...rows, bottom, `${FAINTC('  /help')} ${FAINTC('pro příkazy')}`, ''];
 }
 
-/** The speaker header shown above each assistant reply: `🐋 orca · <model>`. */
-export function assistantHeader(model?: string): string {
-  return `${ACCENT('🐋 orca')}${model ? FAINTC(`  ·  ${model}`) : ''}`;
-}
-
-/** A single tool-call chip under the assistant header: `⏺ <tool>`. */
+/** A single tool-call chip above an assistant reply: `⏺ <tool>`. */
 export function toolChip(name: string): string {
   return `  ${ACCENT('⏺')} ${DIM(name)}`;
 }

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { visibleWidth } from '@earendil-works/pi-tui';
-import { UserBlock, StatusBar, metaLine, banner, assistantHeader, toolChip } from '../../../src/cli/chat/components.js';
+import { UserBlock, StatusBar, metaLine, banner, toolChip } from '../../../src/cli/chat/components.js';
 
 describe('chat components', () => {
   it('UserBlock renders full-width rows with a left rail and padding', () => {
@@ -23,13 +23,6 @@ describe('chat components', () => {
     expect(m).toContain('orca');
     expect(m).toContain('kimi');
     expect(m).toContain('5.2s');
-  });
-
-  it('assistantHeader shows the speaker and model', () => {
-    const h = assistantHeader('opus');
-    expect(h).toContain('orca');
-    expect(h).toContain('opus');
-    expect(assistantHeader()).toContain('orca'); // model optional
   });
 
   it('toolChip shows the tool name with the dot glyph', () => {
