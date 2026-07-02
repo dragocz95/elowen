@@ -43,6 +43,9 @@ export function CliSection() {
 
         <SettingCard title={t.cli.modelLabel} icon={Cpu} description={t.cli.modelHint}>
           <Input value={model} onChange={(e) => setModel(e.target.value)} placeholder={t.cli.modelPlaceholder} className="font-mono" />
+          {data.serverDefault ? (
+            <p className="mt-2 text-xs text-text-muted">{t.cli.serverDefault}: <span className="font-mono">{data.serverDefault}</span></p>
+          ) : null}
         </SettingCard>
 
         <SettingCard title={t.cli.autoCompact} icon={SlidersHorizontal} description={t.cli.autoCompactHint}>

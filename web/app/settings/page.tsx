@@ -1,13 +1,14 @@
 'use client';
 export const dynamic = 'force-dynamic';
 import { useEffect, useState, useRef } from 'react';
-import { Save, Boxes, Bot, SlidersHorizontal, Plus, X, Pencil, Plug, Radio, Cpu, Gauge, Layers, Link2, KeyRound, FileText, Eye, Lock, Trash2, GitPullRequest, GitBranch, TerminalSquare, Github, RefreshCw, Server, Sparkles, type LucideIcon } from 'lucide-react';
+import { Save, Boxes, Bot, SlidersHorizontal, Plus, X, Pencil, Plug, Radio, Cpu, Gauge, Layers, Link2, KeyRound, FileText, Eye, Lock, Trash2, GitPullRequest, GitBranch, TerminalSquare, Github, RefreshCw, Server, Sparkles, Puzzle, type LucideIcon } from 'lucide-react';
 import { PROVIDERS, ProviderLogo, ProviderTag } from '../../modules/settings/providers';
 import { ModelIcon } from '../../components/ui/ModelIcon';
 import { ExecutorPicker } from '../../components/ui/ExecutorPicker';
 import { ModelModal } from '../../modules/settings/ModelModal';
 import { ModelNoteModal } from '../../modules/settings/ModelNoteModal';
 import { GithubStatusBanner } from '../../modules/settings/GithubStatusBanner';
+import { PluginsSection } from '../../modules/settings/PluginsSection';
 import { execProvider, execModel, type ProviderId } from '../../lib/modelProvider';
 import { useConfig, useMe, usePlanJob, useSystem, useSystemSkills } from '../../lib/queries';
 import { useUpdateConfig, useCleanupAll, useSystemUpdate, useInstallSkills } from '../../lib/mutations';
@@ -60,7 +61,7 @@ function ModelInput({ value, onChange, placeholder }: { value: string; onChange:
   );
 }
 
-const CATEGORY_VALUES = ['models', 'autopilot', 'github', 'providers', 'defaults', 'hermes', 'system', 'data'] as const;
+const CATEGORY_VALUES = ['models', 'autopilot', 'github', 'providers', 'defaults', 'plugins', 'hermes', 'system', 'data'] as const;
 type Category = (typeof CATEGORY_VALUES)[number];
 
 export default function SettingsPage() {
@@ -292,20 +293,22 @@ export default function SettingsPage() {
     { id: 'github', icon: Github },
     { id: 'providers', icon: Plug },
     { id: 'defaults', icon: SlidersHorizontal },
+    { id: 'plugins', icon: Puzzle },
     { id: 'hermes', icon: Radio },
     { id: 'system', icon: Server },
     { id: 'data', icon: Trash2 },
   ];
 
   // 'models' auto-saves; 'hermes' has its own form; 'data' is a one-off danger action; 'system'
-  // auto-saves its toggle + has its own update button — none use the shared footer save button.
-  const saveAction: Record<Exclude<Category, 'hermes' | 'models' | 'data' | 'system'>, { label: string; onClick: () => void }> = {
+  // auto-saves its toggle + has its own update button; 'plugins' toggles apply instantly — none of
+  // these use the shared footer save button.
+  const saveAction: Record<Exclude<Category, 'hermes' | 'models' | 'data' | 'system' | 'plugins'>, { label: string; onClick: () => void }> = {
     autopilot: { label: t.settings.saveAutopilot, onClick: saveAutopilot },
     github: { label: t.settings.saveGithub, onClick: saveGithub },
     providers: { label: t.settings.saveProviders, onClick: saveProviders },
     defaults: { label: t.settings.saveDefaults, onClick: saveDefaults },
   };
-  const active = category === 'hermes' || category === 'models' || category === 'data' || category === 'system' ? null : saveAction[category];
+  const active = category === 'hermes' || category === 'models' || category === 'data' || category === 'system' || category === 'plugins' ? null : saveAction[category];
 
   const models = allModels(customModels, hiddenPresets);
 
@@ -792,6 +795,8 @@ export default function SettingsPage() {
             </div>
           </div>
         )}
+
+        {category === 'plugins' && <PluginsSection />}
 
         {category === 'data' && (
           <div className="flex flex-col gap-4">

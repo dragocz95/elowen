@@ -97,9 +97,12 @@ export function registerAuthRoutes(app: OrcaApp, ctx: RouteContext): void {
     return c.json({ ok: true });
   });
   // Per-user CLI/brain settings (model override + auto-compact) — self-service, consumed by `orca chat`.
+  // `serverDefault` tells the UI what "empty model" resolves to.
+  const serverDefaultModel = () => d.config.get().autopilot.model;
   app.get('/auth/me/cli-settings', (c) => {
     const u = c.get('user');
-    return c.json(d.userSettings?.cliSettings(u.id) ?? { model: '', autoCompact: false });
+    const s = d.userSettings?.cliSettings(u.id) ?? { model: '', autoCompact: false, autoCompactAt: 80 };
+    return c.json({ ...s, serverDefault: serverDefaultModel() });
   });
   app.patch('/auth/me/cli-settings', async (c) => {
     if (!d.userSettings) return c.json({ error: 'settings unavailable' }, 400);
@@ -110,7 +113,10 @@ export function registerAuthRoutes(app: OrcaApp, ctx: RouteContext): void {
     if (typeof b.autoCompact === 'boolean') patch.autoCompact = b.autoCompact;
     if (typeof b.autoCompactAt === 'number') patch.autoCompactAt = b.autoCompactAt;
     d.userSettings.setCliSettings(u.id, patch);
-    return c.json(d.userSettings.cliSettings(u.id));
+    // Apply live: a running brain restarts with the new settings (history rehydrates from SQLite),
+    // so a model change takes effect immediately instead of on the next daemon/chat restart.
+    await d.brain?.restart(u.id);
+    return c.json({ ...d.userSettings.cliSettings(u.id), serverDefault: serverDefaultModel() });
   });
   // Avatar upload (multipart). Validated by type + size; stored as <userId>.<ext> under avatarsDir.
   const AVATAR_EXT: Record<string, string> = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp', 'image/gif': 'gif' };

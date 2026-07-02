@@ -216,6 +216,10 @@ export const useMyPrompts = () =>
 export const useMyCliSettings = () =>
   useQuery({ queryKey: ['my-cli-settings'], queryFn: orcaClient.myCliSettings });
 
+/** Installed daemon plugins (admin). Toggling invalidates ['plugins']. */
+export const usePlugins = () =>
+  useQuery({ queryKey: ['plugins'], queryFn: orcaClient.plugins });
+
 export const useUserProjects = (userId: number | null, enabled = true) =>
   useQuery({ queryKey: ['user-projects', userId], queryFn: () => orcaClient.userProjects(userId as number), enabled: !!userId && enabled });
 

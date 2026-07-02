@@ -187,6 +187,10 @@ export function useSaveMyCliSettings() {
   const qc = useQueryClient();
   return useMutation({ mutationFn: (patch: Partial<CliSettings>) => orcaClient.saveMyCliSettings(patch), onSuccess: () => qc.invalidateQueries({ queryKey: ['my-cli-settings'] }) });
 }
+export function useTogglePlugin() {
+  const qc = useQueryClient();
+  return useMutation({ mutationFn: (v: { name: string; enabled: boolean }) => orcaClient.togglePlugin(v.name, v.enabled), onSuccess: () => qc.invalidateQueries({ queryKey: ['plugins'] }) });
+}
 export function useResetMyPrompt() {
   const qc = useQueryClient();
   return useMutation({ mutationFn: (name: string) => orcaClient.resetMyPrompt(name), onSuccess: () => qc.invalidateQueries({ queryKey: ['my-prompts'] }) });
