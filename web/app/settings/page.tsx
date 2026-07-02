@@ -572,6 +572,14 @@ export default function SettingsPage() {
                         <div className="font-mono text-[11px] text-text-muted">{p.id}</div>
                       </div>
                     </div>
+                    {p.embedded ? (
+                      <div className="flex flex-1 flex-col justify-center gap-2 sm:pt-1">
+                        <p className="text-xs leading-relaxed text-text-muted">{t.settings.embeddedProviderHint}</p>
+                        <button type="button" onClick={() => setCategory('brain')} className="self-start text-xs font-medium text-accent hover:underline">
+                          {t.settings.embeddedProviderLink}
+                        </button>
+                      </div>
+                    ) : (
                     <div className="flex flex-1 flex-col gap-3">
                       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                         <Field label={t.settings.binary}>
@@ -600,6 +608,7 @@ export default function SettingsPage() {
                         <Toggle checked={cur.resume !== false} onChange={(v) => set({ resume: v })} label={t.settings.resumeSessions} />
                       </label>
                     </div>
+                    )}
                   </div>
                 );
               })}

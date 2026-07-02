@@ -16,10 +16,11 @@ beforeEach(() => localStorage.setItem('orca.dock.mode', 'terminal'));
 
 function fakeDock(over: Partial<UseDockState['state']> = {}): UseDockState {
   return {
-    state: { open: true, side: 'right', width: 560, advisor: true, panes: [{ id: 'advisor', kind: 'advisor' }], sizes: [1], ...over },
+    state: { open: true, side: 'right', width: 560, height: 420, advisor: true, panes: [{ id: 'advisor', kind: 'advisor' }], sizes: [1], ...over },
     setOpen: vi.fn(),
     setSide: vi.fn(),
     setWidth: vi.fn(),
+    setHeight: vi.fn(),
     setSizes: vi.fn(),
     addSessionPane: vi.fn(),
     removePane: vi.fn(),
@@ -43,10 +44,11 @@ describe('AdvisorPanel', () => {
     expect(dock.setOpen).toHaveBeenCalledWith(false);
   });
 
-  it('toggles the dock side', () => {
+  it('offers all four dock positions from the position menu', () => {
     const dock = fakeDock({ side: 'right' });
     renderPanel(dock);
-    fireEvent.click(screen.getByRole('button', { name: /dock left|ukotvit vlevo/i }));
-    expect(dock.setSide).toHaveBeenCalledWith('left');
+    fireEvent.click(screen.getByRole('button', { name: /dock position|pozice panelu/i }));
+    fireEvent.click(screen.getByRole('button', { name: /dock to bottom|ukotvit dolů/i }));
+    expect(dock.setSide).toHaveBeenCalledWith('bottom');
   });
 });

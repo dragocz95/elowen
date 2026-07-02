@@ -93,6 +93,7 @@ export const cs = {
     rangeTo: 'Do',
   },
   providers: {
+    orca: 'Orca AI',
     'claude-code': 'Claude Code',
     opencode: 'OpenCode',
     codex: 'Codex',
@@ -106,6 +107,7 @@ export const cs = {
     passwordPlaceholder: 'Heslo',
   },
   tasks: {
+    pickProvider: 'Poskytovatel',
     brainTranscript: 'Konverzace workera',
     newTask: 'Nový úkol',
     searchPlaceholder: 'Hledat úkoly…',
@@ -379,6 +381,9 @@ export const cs = {
     stuck: 'Zaseknuto {min}m',
   },
   advisor: {
+    dockTop: 'Ukotvit nahoru',
+    dockBottom: 'Ukotvit dolů',
+    dockPosition: 'Pozice panelu',
     title: 'Asistent',
     open: 'Otevřít asistenta',
     close: 'Zavřít',
@@ -542,6 +547,8 @@ export const cs = {
     },
   },
   settings: {
+    embeddedProviderHint: 'Běží přímo uvnitř Orca daemonu — žádná binárka ani parametry. Workeři na Orca AI modelech běží in-process a své úkoly uzavírají sami.',
+    embeddedProviderLink: 'Poskytovatele a klíče spravujete v sekci Orca AI →',
     orcaModels: 'Orca AI modely',
     orcaModelsHint: 'Živý katalog z vašich Orca AI poskytovatelů. Povolené modely lze přiřadit uživatelům a vybírat v chatu (web i CLI).',
     models: 'Modely',

@@ -1,6 +1,6 @@
 'use client';
 import { useRef, useState } from 'react';
-import { X, Plus, PanelLeft, PanelRight, MessageCircle, SquareTerminal } from 'lucide-react';
+import { X, Plus, PanelLeft, PanelRight, PanelTop, PanelBottom, MessageCircle, SquareTerminal } from 'lucide-react';
 import { useTranslation } from '../../lib/i18n';
 import { ResizeHandle } from '../../components/ui/ResizeHandle';
 import { Segmented } from '../../components/ui/Segmented';
@@ -9,6 +9,7 @@ import { AdvisorPane } from './AdvisorPane';
 import { BrainChat } from './BrainChat';
 import { SessionPicker } from './SessionPicker';
 import type { UseDockState } from '../../lib/useDockState';
+import type { DockSide } from '../../lib/useDockState';
 
 const MIN_WEIGHT = 0.12;
 
@@ -17,15 +18,26 @@ const MIN_WEIGHT = 0.12;
  *  on its inner edge and draggable dividers between stacked panes. */
 export function AdvisorPanel({ dock }: { dock: UseDockState }) {
   const { t } = useTranslation();
-  const { state, setOpen, setSide, setWidth, setSizes, addSessionPane, removePane, addAdvisorPane } = dock;
+  const { state, setOpen, setSide, setWidth, setHeight, setSizes, addSessionPane, removePane, addAdvisorPane } = dock;
   const stackRef = useRef<HTMLDivElement>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [sideMenuOpen, setSideMenuOpen] = useState(false);
   // Chat = the embedded brain (same one `orca chat` talks to); Terminal = the tmux panes. Chat first.
   const [mode, setMode] = usePersistentState<'chat' | 'terminal'>('orca.dock.mode', 'chat', ['chat', 'terminal']);
+  const horizontal = state.side === 'left' || state.side === 'right';
 
   // Width drag: on the right the panel grows as the divider moves left (negative dx), so the sign
-  // flips by side.
+  // flips by side. Same logic vertically: a bottom dock grows as the divider moves up (negative dy).
   const onWidthDelta = (dx: number) => setWidth(state.width + (state.side === 'right' ? -dx : dx));
+  const onHeightDelta = (dy: number) => setHeight(state.height + (state.side === 'bottom' ? -dy : dy));
+
+  const SIDE_OPTIONS: { side: DockSide; Icon: typeof PanelLeft; label: string }[] = [
+    { side: 'left', Icon: PanelLeft, label: t.advisor.dockLeft },
+    { side: 'right', Icon: PanelRight, label: t.advisor.dockRight },
+    { side: 'top', Icon: PanelTop, label: t.advisor.dockTop },
+    { side: 'bottom', Icon: PanelBottom, label: t.advisor.dockBottom },
+  ];
+  const ActiveSideIcon = SIDE_OPTIONS.find((o) => o.side === state.side)!.Icon;
 
   // Vertical drag between pane i and i+1: convert the pixel delta to a flex-weight shift relative to
   // the stack height and move it from the lower pane to the upper one (dragging down grows pane i).
@@ -48,8 +60,8 @@ export function AdvisorPanel({ dock }: { dock: UseDockState }) {
 
   const column = (
     <div
-      className="flex h-full shrink-0 flex-col overflow-hidden border-border bg-surface"
-      style={{ width: `min(${state.width}px, 100vw)` }}
+      className={`flex shrink-0 flex-col overflow-hidden border-border bg-surface ${horizontal ? 'h-full' : 'w-full'}`}
+      style={horizontal ? { width: `min(${state.width}px, 100vw)` } : { height: `min(${state.height}px, 85vh)` }}
     >
       {/* Thin global toolbar for the whole dock (it may hold several panes), so it carries no pane
           title — each pane labels itself below. Controls are right-aligned. */}
@@ -65,15 +77,34 @@ export function AdvisorPanel({ dock }: { dock: UseDockState }) {
           onChange={(v) => setMode(v as 'chat' | 'terminal')}
         />
         <div className="flex-1" />
-        <button
-          type="button"
-          onClick={() => setSide(state.side === 'right' ? 'left' : 'right')}
-          aria-label={state.side === 'right' ? t.advisor.dockLeft : t.advisor.dockRight}
-          title={state.side === 'right' ? t.advisor.dockLeft : t.advisor.dockRight}
-          className="flex h-7 w-7 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-elevated hover:text-text"
-        >
-          {state.side === 'right' ? <PanelLeft size={16} aria-hidden /> : <PanelRight size={16} aria-hidden />}
-        </button>
+        <div className="relative">
+          <button
+            type="button"
+            onClick={() => setSideMenuOpen((v) => !v)}
+            aria-label={t.advisor.dockPosition}
+            title={t.advisor.dockPosition}
+            aria-expanded={sideMenuOpen}
+            className="flex h-7 w-7 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-elevated hover:text-text"
+          >
+            <ActiveSideIcon size={16} aria-hidden />
+          </button>
+          {sideMenuOpen ? (
+            <div className={`absolute z-30 flex gap-0.5 rounded-md border border-border bg-surface p-0.5 shadow-lg ${state.side === 'top' ? 'top-full mt-1' : 'bottom-auto top-8'} right-0`}>
+              {SIDE_OPTIONS.map(({ side, Icon, label }) => (
+                <button
+                  key={side}
+                  type="button"
+                  onClick={() => { setSide(side); setSideMenuOpen(false); }}
+                  aria-label={label}
+                  title={label}
+                  className={`flex h-7 w-7 items-center justify-center rounded ${side === state.side ? 'bg-accent/15 text-accent' : 'text-text-muted hover:bg-elevated hover:text-text'}`}
+                >
+                  <Icon size={15} aria-hidden />
+                </button>
+              ))}
+            </div>
+          ) : null}
+        </div>
         <div className="relative" style={mode === 'chat' ? { display: 'none' } : undefined}>
           <button
             type="button"
@@ -126,8 +157,11 @@ export function AdvisorPanel({ dock }: { dock: UseDockState }) {
     </div>
   );
 
-  // The width divider sits on the panel's inner edge: left of the column when docked right, right of it
-  // when docked left.
+  // The size divider sits on the panel's inner edge: left of the column when docked right, right of
+  // it when docked left; below it when docked top, above it when docked bottom.
+  const heightHandle = <ResizeHandle orientation="horizontal" onDelta={onHeightDelta} className="w-full" />;
+  if (state.side === 'top') return <div className="flex w-full flex-col border-b border-border">{column}{heightHandle}</div>;
+  if (state.side === 'bottom') return <div className="flex w-full flex-col border-t border-border">{heightHandle}{column}</div>;
   return state.side === 'right'
     ? <>{widthHandle}{column}</>
     : <>{column}{widthHandle}</>;

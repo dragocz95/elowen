@@ -10,11 +10,15 @@ export interface DockPane {
   name?: string;
 }
 
+export type DockSide = 'left' | 'right' | 'top' | 'bottom';
+
 export interface DockState {
   open: boolean;
-  side: 'left' | 'right';
-  /** Panel width in px (desktop). */
+  side: DockSide;
+  /** Panel width in px (when docked left/right). */
   width: number;
+  /** Panel height in px (when docked top/bottom). */
+  height: number;
   /** Whether the advisor pane is shown. Off lets a user keep only their own terminal panes, with the
    *  advisor re-addable from the "+" menu. */
   advisor: boolean;
@@ -25,10 +29,15 @@ export interface DockState {
 }
 
 const ADVISOR_PANE: DockPane = { id: 'advisor', kind: 'advisor' };
-const DEFAULT: DockState = { open: false, side: 'right', width: 560, advisor: true, panes: [ADVISOR_PANE], sizes: [1] };
+const DEFAULT: DockState = { open: false, side: 'right', width: 560, height: 420, advisor: true, panes: [ADVISOR_PANE], sizes: [1] };
 
 const clampWidth = (w: number) =>
   Math.max(360, Math.min(w, (typeof window !== 'undefined' ? window.innerWidth : 1920) * 0.96));
+
+const clampHeight = (h: number) =>
+  Math.max(240, Math.min(h, (typeof window !== 'undefined' ? window.innerHeight : 1080) * 0.85));
+
+const SIDES: readonly DockSide[] = ['left', 'right', 'top', 'bottom'];
 
 function read(): DockState {
   try {
@@ -47,8 +56,9 @@ function read(): DockState {
     const sizes = panes.map((_, i) => (Number.isFinite(storedSizes[i]) && storedSizes[i]! > 0 ? storedSizes[i]! : 1));
     return {
       open: !!p.open,
-      side: p.side === 'left' ? 'left' : 'right',
+      side: SIDES.includes(p.side as DockSide) ? (p.side as DockSide) : 'right',
       width: clampWidth(Number(p.width ?? DEFAULT.width)),
+      height: clampHeight(Number(p.height ?? DEFAULT.height)),
       advisor,
       panes,
       sizes,
@@ -79,8 +89,9 @@ export function useDockState() {
   }, []);
 
   const setOpen = useCallback((open: boolean) => update((s) => ({ ...s, open })), [update]);
-  const setSide = useCallback((side: 'left' | 'right') => update((s) => ({ ...s, side })), [update]);
+  const setSide = useCallback((side: DockSide) => update((s) => ({ ...s, side })), [update]);
   const setWidth = useCallback((width: number) => update((s) => ({ ...s, width: clampWidth(width) })), [update]);
+  const setHeight = useCallback((height: number) => update((s) => ({ ...s, height: clampHeight(height) })), [update]);
   const setSizes = useCallback((sizes: number[]) => update((s) => ({ ...s, sizes })), [update]);
 
   const addSessionPane = useCallback((name: string) => update((s) => {
@@ -106,7 +117,7 @@ export function useDockState() {
     return { ...s, advisor: true, panes: [ADVISOR_PANE, ...s.panes], sizes: [1, ...s.sizes] };
   }), [update]);
 
-  return { state, setOpen, setSide, setWidth, setSizes, addSessionPane, removePane, addAdvisorPane };
+  return { state, setOpen, setSide, setWidth, setHeight, setSizes, addSessionPane, removePane, addAdvisorPane };
 }
 
 export type UseDockState = ReturnType<typeof useDockState>;

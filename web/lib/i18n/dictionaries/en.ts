@@ -93,6 +93,7 @@ export const en = {
     rangeTo: 'To',
   },
   providers: {
+    orca: 'Orca AI',
     'claude-code': 'Claude Code',
     opencode: 'OpenCode',
     codex: 'Codex',
@@ -106,6 +107,7 @@ export const en = {
     passwordPlaceholder: 'Password',
   },
   tasks: {
+    pickProvider: 'Provider',
     brainTranscript: 'Worker conversation',
     newTask: 'New task',
     searchPlaceholder: 'Search tasks…',
@@ -379,6 +381,9 @@ export const en = {
     stuck: 'Stuck {min}m',
   },
   advisor: {
+    dockTop: 'Dock to top',
+    dockBottom: 'Dock to bottom',
+    dockPosition: 'Dock position',
     title: 'Assistant',
     open: 'Open assistant',
     close: 'Close',
@@ -542,6 +547,8 @@ export const en = {
     },
   },
   settings: {
+    embeddedProviderHint: 'Runs inside the Orca daemon — no binary or flags to configure. Workers on Orca AI models execute in-process and close their tasks themselves.',
+    embeddedProviderLink: 'Manage providers & keys in the Orca AI section →',
     orcaModels: 'Orca AI models',
     orcaModelsHint: 'Live catalog from your Orca AI providers. Enabled models can be assigned to users and picked in chat (web and CLI).',
     models: 'Models',

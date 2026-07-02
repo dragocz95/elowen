@@ -1,10 +1,11 @@
-export interface ProviderMeta { id: string; label: string; color: string; binHint: string; argsHint: string; icon: string; /** Provider has no skip-permissions command-line flag (its tools either run without confirmation or auto-approval is set in the tool's own config), so the toggle is a no-op and hidden. */ noBypassFlag?: boolean }
+export interface ProviderMeta { id: string; label: string; color: string; binHint: string; argsHint: string; icon: string; /** Provider has no skip-permissions command-line flag (its tools either run without confirmation or auto-approval is set in the tool's own config), so the toggle is a no-op and hidden. */ noBypassFlag?: boolean; /** Runs inside the Orca daemon (embedded brain) — no binary/args to configure. */ embedded?: boolean }
 
 export const PROVIDERS: ProviderMeta[] = [
   { id: 'claude-code', label: 'Claude Code', color: '#d97757', binHint: 'claude', argsHint: '--permission-mode acceptEdits', icon: '/providers/anthropic.png' },
   { id: 'opencode', label: 'OpenCode', color: '#7c8cff', binHint: 'opencode', argsHint: '--pure', icon: '/providers/opencode.png' },
   { id: 'codex', label: 'Codex', color: '#ededed', binHint: 'codex', argsHint: '--full-auto', icon: '/providers/openai.svg' },
   { id: 'kilo', label: 'Kilo Code', color: '#c2e812', binHint: 'kilo', argsHint: '', icon: '/providers/kilo.svg', noBypassFlag: true },
+  { id: 'orca', label: 'Orca AI', color: '#3b82f6', binHint: '', argsHint: '', icon: '/orca-icon.png', embedded: true },
 ];
 
 export function ProviderLogo({ meta, alt, size = 36 }: { meta: ProviderMeta; alt?: string; size?: number }) {
@@ -14,7 +15,7 @@ export function ProviderLogo({ meta, alt, size = 36 }: { meta: ProviderMeta; alt
       style={{ width: size, height: size }}
     >
       {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img src={meta.icon} alt={alt ?? meta.label} width={size * 0.62} height={size * 0.62} style={{ objectFit: 'contain' }} />
+      <img src={meta.icon} alt={alt ?? meta.label} width={size * 0.62} height={size * 0.62} style={{ objectFit: 'contain' }} className={meta.embedded ? 'logo-adaptive' : undefined} />
     </span>
   );
 }
@@ -28,7 +29,7 @@ export function ProviderTag({ id }: { id: string }) {
   return (
     <span className="inline-flex items-center gap-1.5 rounded-md border border-border bg-elevated/60 px-2 py-1 text-[11px] text-text-muted">
       {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img src={meta.icon} alt="" width={13} height={13} style={{ objectFit: 'contain' }} aria-hidden />
+      <img src={meta.icon} alt="" width={13} height={13} style={{ objectFit: 'contain' }} className={meta.embedded ? 'logo-adaptive' : undefined} aria-hidden />
       {meta.label}
     </span>
   );

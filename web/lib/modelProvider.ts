@@ -1,10 +1,11 @@
 // Provider ↔ exec-string mapping. Mirrors the daemon's src/overseer/routing.ts so the UI
 // shows and edits the SAME provider the spawn path will actually resolve.
-export type ProviderId = 'claude-code' | 'opencode' | 'codex' | 'kilo' | 'pi' | 'omp';
+export type ProviderId = 'claude-code' | 'opencode' | 'codex' | 'kilo' | 'pi' | 'omp' | 'orca';
 
 /** Explicit `<prefix>:<model>` spec prefixes, in match order, mapped to their provider. Mirrors the
  *  daemon's PROGRAM_PREFIXES (src/shared/execs.ts) so the UI parses execs the same way spawn does. */
 const PROVIDER_PREFIXES: readonly [string, ProviderId][] = [
+  ['orca:', 'orca'],
   ['codex:', 'codex'],
   ['opencode:', 'opencode'],
   ['claude:', 'claude-code'],
@@ -33,6 +34,7 @@ export function execModel(exec: string): string {
 /** Compose an exec string from a chosen provider + bare model id (inverse of the parse above). */
 export function buildExec(provider: ProviderId, model: string): string {
   const m = model.trim();
+  if (provider === 'orca') return `orca:${m}`;
   if (provider === 'codex') return `codex:${m}`;
   if (provider === 'kilo') return `kilo:${m}`;
   if (provider === 'pi') return `pi:${m}`;
