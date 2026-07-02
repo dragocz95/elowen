@@ -36,4 +36,12 @@ describe('PromptService.render', () => {
     store.set(1, 'planner-fallback', 'SHOULD NOT WIN');
     expect(prompts.render('planner-fallback', {}, 1)).toBe(rawTemplate('planner-fallback'));
   });
+
+  it('appends (never replaces) the advisor override — the system identity stays intact', () => {
+    store.set(1, 'advisor', 'Always answer in Czech for {{userName}}.');
+    const out = prompts.render('advisor', { userName: 'Filip' }, 1);
+    expect(out.startsWith(rawTemplate('advisor').replaceAll('{{userName}}', 'Filip'))).toBe(true);
+    expect(out).toContain('## User preferences (added by the user)');
+    expect(out).toContain('Always answer in Czech for Filip.');
+  });
 });

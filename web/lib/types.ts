@@ -116,6 +116,8 @@ export interface UserPrompt {
   group: 'workers' | 'pilot' | 'overseer' | 'advisor';
   vars: string[];
   jsonContract: boolean;
+  /** System-managed template: the user's text appends to it instead of replacing it (default hidden). */
+  appendOnly?: boolean;
   default: string;
   override: string | null;
 }

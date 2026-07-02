@@ -22,6 +22,7 @@ import { useTranslation } from '../../lib/i18n';
 import { usePersistentState } from '../../lib/usePersistentState';
 import { useUiScale, MIN_SCALE, MAX_SCALE, DEFAULT_SCALE } from '../../lib/useUiScale';
 import { isPushSupported, enablePush, disablePush } from '../../lib/pushClient';
+import { SettingsShell } from '../../components/ui/SettingsShell';
 import { PromptsSection } from './PromptsSection';
 import { CliSection } from './CliSection';
 
@@ -36,7 +37,8 @@ export function AccountView() {
   const { scale, setScale } = useUiScale();
   const fileRef = useRef<HTMLInputElement>(null);
   const scalePct = Math.round(scale * 100);
-  const [section, setSection] = usePersistentState<'profile' | 'prompts' | 'cli'>('orca.account.section', 'profile', ['profile', 'prompts', 'cli']);
+  const [section, setSection] = usePersistentState<'profile' | 'security' | 'notifications' | 'prompts' | 'cli'>(
+    'orca.account.section', 'profile', ['profile', 'security', 'notifications', 'prompts', 'cli']);
 
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
@@ -123,8 +125,10 @@ export function AccountView() {
   };
   const canSubmitPassword = currentPassword.length > 0 && newPassword.length >= 8 && newPassword === confirmPassword;
 
-  const sections: { id: 'profile' | 'prompts' | 'cli'; icon: LucideIcon; label: string }[] = [
+  const sections: { id: 'profile' | 'security' | 'notifications' | 'prompts' | 'cli'; icon: LucideIcon; label: string }[] = [
     { id: 'profile', icon: UserCog, label: t.account.tabProfile },
+    { id: 'security', icon: KeyRound, label: t.account.tabSecurity },
+    { id: 'notifications', icon: Bell, label: t.account.tabNotifications },
     { id: 'cli', icon: TerminalSquare, label: t.account.tabCli },
     { id: 'prompts', icon: MessagesSquare, label: t.account.tabPrompts },
   ];
@@ -136,24 +140,44 @@ export function AccountView() {
           aria-label={t.account.sectionsNav}
           options={sections.map(({ id, icon, label }) => ({ value: id, label, icon }))}
           value={section}
-          onChange={(v) => setSection(v as 'profile' | 'prompts' | 'cli')}
+          onChange={(v) => setSection(v as typeof section)}
         />
       </ModuleHeader>
 
-      <div className="min-w-0">
-      {section === 'cli' ? <CliSection /> : section === 'prompts' ? <PromptsSection /> : (
+      <SettingsShell>
+      {section === 'cli' ? <CliSection /> : section === 'prompts' ? <PromptsSection /> : null}
+
+      {section === 'profile' ? (
       <>
-      <div className="flex flex-col gap-6 lg:flex-row lg:items-start">
-        {/* Left rail: the models you may run, big icons — tap one to make it your default. */}
-        <div className="flex shrink-0 flex-col gap-2 lg:w-72">
-          <span className="flex items-center gap-2 text-sm font-medium text-text">
-            <Cpu size={16} className="text-text-muted" aria-hidden />{t.account.defaultModel}
-          </span>
-          <p className="text-xs text-text-muted">{restricted ? t.account.restrictedHint : t.account.defaultModelHint}</p>
+        {/* Identity hero — avatar, display name, admin badge, avatar upload. */}
+        <div className="flex items-center gap-4 rounded-xl border border-border bg-surface p-5" style={{ boxShadow: 'var(--shadow-card)' }}>
+          <Avatar user={u} size={72} />
+          <div className="flex min-w-0 flex-1 flex-col gap-1">
+            <span className="flex items-center gap-2">
+              <span className="truncate text-lg font-semibold text-text">{u.name || u.username}</span>
+              {u.is_admin ? <Badge tone="accent"><ShieldCheck size={11} className="mr-1" aria-hidden />{t.users.admin}</Badge> : null}
+            </span>
+            <span className="truncate font-mono text-xs text-text-muted">@{u.username}</span>
+          </div>
+          <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/webp,image/gif" className="hidden" onChange={onFile} />
+          <Button variant="ghost" icon={Upload} onClick={() => fileRef.current?.click()} disabled={uploadAvatar.isPending}>{t.account.uploadAvatar}</Button>
+        </div>
+
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <SettingCard title={t.account.name} icon={UserIcon}>
+            <Input value={name} onChange={(e) => setName(e.target.value)} />
+          </SettingCard>
+          <SettingCard title={t.account.email} icon={Mail}>
+            <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
+          </SettingCard>
+        </div>
+
+        {/* The models you may run, brand icons — tap one to make it your default. */}
+        <SettingCard title={t.account.defaultModel} icon={Cpu} description={restricted ? t.account.restrictedHint : t.account.defaultModelHint}>
           {pickable.length === 0 ? (
-            <p className="mt-1 text-xs italic text-text-muted">{t.account.noModelLimit}</p>
+            <p className="text-xs italic text-text-muted">{t.account.noModelLimit}</p>
           ) : (
-            <div role="radiogroup" className="mt-1 flex flex-col gap-2">
+            <div role="radiogroup" className="grid grid-cols-1 gap-2 sm:grid-cols-2">
               {pickable.map((exec) => {
                 const on = defaultExec === exec;
                 return (
@@ -180,102 +204,81 @@ export function AccountView() {
               })}
             </div>
           )}
-        </div>
+        </SettingCard>
 
-        {/* Main: identity + profile, full width. */}
-        <div className="flex min-w-0 flex-1 flex-col gap-4">
-          <div className="flex items-center gap-4 rounded-lg border border-border bg-surface p-5">
-            <Avatar user={u} size={72} />
-            <div className="flex min-w-0 flex-1 flex-col gap-1">
-              <span className="flex items-center gap-2">
-                <span className="truncate text-lg font-semibold text-text">{u.name || u.username}</span>
-                {u.is_admin ? <Badge tone="accent"><ShieldCheck size={11} className="mr-1" aria-hidden />{t.users.admin}</Badge> : null}
-              </span>
-              <span className="truncate font-mono text-xs text-text-muted">@{u.username}</span>
-            </div>
-            <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/webp,image/gif" className="hidden" onChange={onFile} />
-            <Button variant="ghost" icon={Upload} onClick={() => fileRef.current?.click()} disabled={uploadAvatar.isPending}>{t.account.uploadAvatar}</Button>
+        {/* Whole-app zoom — a per-device display preference, applied live via the UiScaleProvider. */}
+        <SettingCard title={t.account.uiScale} icon={ZoomIn} description={t.account.uiScaleHint}>
+          <div className="flex items-center gap-4">
+            <Slider value={scalePct} min={MIN_SCALE * 100} max={MAX_SCALE * 100} step={5} onChange={(v) => setScale(v / 100)} aria-label={t.account.uiScale} />
+            <span className="w-12 shrink-0 text-right font-mono text-sm tabular-nums text-text">{scalePct}%</span>
+            <Button variant="ghost" onClick={() => setScale(DEFAULT_SCALE)} disabled={scalePct === DEFAULT_SCALE * 100}>{t.account.uiScaleReset}</Button>
           </div>
+        </SettingCard>
 
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <SettingCard title={t.account.name} icon={UserIcon}>
-              <Input value={name} onChange={(e) => setName(e.target.value)} />
-            </SettingCard>
-            <SettingCard title={t.account.email} icon={Mail}>
-              <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
-            </SettingCard>
-          </div>
-
-          {/* Password change — verified server-side against the current password. */}
-          <SettingCard title={t.account.password} icon={KeyRound}>
-            <p className="mb-3 text-xs text-text-muted">{t.account.passwordHint}</p>
-            <form
-              className="flex flex-col gap-3"
-              onSubmit={(e) => { e.preventDefault(); submitPassword(); }}
-            >
-              {/* Username hint helps password managers associate the credential. */}
-              <input type="text" name="username" autoComplete="username" value={u.username} readOnly hidden />
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-                <Input
-                  type="password"
-                  autoComplete="current-password"
-                  placeholder={t.account.currentPassword}
-                  aria-label={t.account.currentPassword}
-                  value={currentPassword}
-                  onChange={(e) => setCurrentPassword(e.target.value)}
-                />
-                <Input
-                  type="password"
-                  autoComplete="new-password"
-                  placeholder={t.account.newPassword}
-                  aria-label={t.account.newPassword}
-                  value={newPassword}
-                  onChange={(e) => setNewPassword(e.target.value)}
-                />
-                <Input
-                  type="password"
-                  autoComplete="new-password"
-                  placeholder={t.account.confirmPassword}
-                  aria-label={t.account.confirmPassword}
-                  value={confirmPassword}
-                  onChange={(e) => setConfirmPassword(e.target.value)}
-                />
-              </div>
-              <div className="flex justify-end">
-                <Button type="submit" variant="accent" icon={KeyRound} disabled={!canSubmitPassword || changePassword.isPending}>
-                  {t.account.changePassword}
-                </Button>
-              </div>
-            </form>
-          </SettingCard>
-
-          {/* Phone push — a per-device opt-in. Subscribes this browser/device for off-device alerts. */}
-          {pushSupported ? (
-            <SettingCard title={t.push.title} icon={Bell} description={t.push.hint}>
-              <div className="flex justify-end">
-                <Button variant={pushOn ? 'ghost' : 'accent'} icon={Bell} onClick={togglePush} disabled={pushBusy}>
-                  {pushOn ? t.push.disable : t.push.enable}
-                </Button>
-              </div>
-            </SettingCard>
-          ) : null}
-
-          {/* Whole-app zoom — a per-device display preference, applied live via the UiScaleProvider. */}
-          <SettingCard title={t.account.uiScale} icon={ZoomIn} description={t.account.uiScaleHint}>
-            <div className="flex items-center gap-4">
-              <Slider value={scalePct} min={MIN_SCALE * 100} max={MAX_SCALE * 100} step={5} onChange={(v) => setScale(v / 100)} aria-label={t.account.uiScale} />
-              <span className="w-12 shrink-0 text-right font-mono text-sm tabular-nums text-text">{scalePct}%</span>
-              <Button variant="ghost" onClick={() => setScale(DEFAULT_SCALE)} disabled={scalePct === DEFAULT_SCALE * 100}>{t.account.uiScaleReset}</Button>
-            </div>
-          </SettingCard>
-        </div>
-      </div>
-      <FormFooter>
-        <Button variant="accent" icon={Save} onClick={save} disabled={updateMe.isPending}>{t.account.save}</Button>
-      </FormFooter>
+        <FormFooter>
+          <Button variant="accent" icon={Save} onClick={save} disabled={updateMe.isPending}>{t.account.save}</Button>
+        </FormFooter>
       </>
-      )}
-      </div>
+      ) : null}
+
+      {section === 'security' ? (
+        /* Password change — verified server-side against the current password. */
+        <SettingCard title={t.account.password} icon={KeyRound}>
+          <p className="mb-3 text-xs text-text-muted">{t.account.passwordHint}</p>
+          <form
+            className="flex flex-col gap-3"
+            onSubmit={(e) => { e.preventDefault(); submitPassword(); }}
+          >
+            {/* Username hint helps password managers associate the credential. */}
+            <input type="text" name="username" autoComplete="username" value={u.username} readOnly hidden />
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+              <Input
+                type="password"
+                autoComplete="current-password"
+                placeholder={t.account.currentPassword}
+                aria-label={t.account.currentPassword}
+                value={currentPassword}
+                onChange={(e) => setCurrentPassword(e.target.value)}
+              />
+              <Input
+                type="password"
+                autoComplete="new-password"
+                placeholder={t.account.newPassword}
+                aria-label={t.account.newPassword}
+                value={newPassword}
+                onChange={(e) => setNewPassword(e.target.value)}
+              />
+              <Input
+                type="password"
+                autoComplete="new-password"
+                placeholder={t.account.confirmPassword}
+                aria-label={t.account.confirmPassword}
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+              />
+            </div>
+            <div className="flex justify-end">
+              <Button type="submit" variant="accent" icon={KeyRound} disabled={!canSubmitPassword || changePassword.isPending}>
+                {t.account.changePassword}
+              </Button>
+            </div>
+          </form>
+        </SettingCard>
+      ) : null}
+
+      {section === 'notifications' ? (
+        /* Phone push — a per-device opt-in. Subscribes this browser/device for off-device alerts. */
+        pushSupported ? (
+          <SettingCard title={t.push.title} icon={Bell} description={t.push.hint}>
+            <div className="flex justify-end">
+              <Button variant={pushOn ? 'ghost' : 'accent'} icon={Bell} onClick={togglePush} disabled={pushBusy}>
+                {pushOn ? t.push.disable : t.push.enable}
+              </Button>
+            </div>
+          </SettingCard>
+        ) : <p className="text-sm text-text-muted">{t.push.unsupported}</p>
+      ) : null}
+      </SettingsShell>
     </>
   );
 }

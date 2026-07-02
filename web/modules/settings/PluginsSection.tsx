@@ -1,7 +1,8 @@
 'use client';
 import { useState } from 'react';
-import { Puzzle, Package, User as UserIcon, Settings2 } from 'lucide-react';
+import { Package, User as UserIcon, Settings2, Wrench, GraduationCap, MessageSquare } from 'lucide-react';
 import { PluginDetail } from './PluginDetail';
+import { pluginIcon } from './pluginMeta';
 import { Badge } from '../../components/ui/Badge';
 import { Button } from '../../components/ui/Button';
 import { Toggle } from '../../components/ui/Toggle';
@@ -12,18 +13,20 @@ import { usePlugins } from '../../lib/queries';
 import { useTogglePlugin } from '../../lib/mutations';
 import type { PluginInfo } from '../../lib/types';
 
-/** What one plugin contributes, as compact badges (tools/skills/platforms counts). */
+/** What one plugin contributes, as compact icon badges (tools/skills/platforms with counts). */
 function ProvidesBadges({ p }: { p: PluginInfo }) {
   const { t } = useTranslation();
-  const parts: { label: string; count: number }[] = [
-    { label: t.plugins.tools, count: p.provides.tools?.length ?? 0 },
-    { label: t.plugins.skills, count: p.provides.skills?.length ?? 0 },
-    { label: t.plugins.platforms, count: p.provides.platforms?.length ?? 0 },
+  const parts = [
+    { label: t.plugins.tools, count: p.provides.tools?.length ?? 0, Icon: Wrench },
+    { label: t.plugins.skills, count: p.provides.skills?.length ?? 0, Icon: GraduationCap },
+    { label: t.plugins.platforms, count: p.provides.platforms?.length ?? 0, Icon: MessageSquare },
   ].filter((x) => x.count > 0);
   if (parts.length === 0) return null;
   return (
     <span className="flex flex-wrap gap-1.5">
-      {parts.map((x) => <Badge key={x.label}>{x.label}</Badge>)}
+      {parts.map(({ label, count, Icon }) => (
+        <Badge key={label}><Icon size={10} className="mr-1 inline-block align-[-1px]" aria-hidden />{count} {label}</Badge>
+      ))}
     </span>
   );
 }
@@ -52,34 +55,38 @@ export function PluginsSection() {
   return (
     <div className="flex flex-col gap-4">
       <p className="text-xs text-text-muted">{t.plugins.intro}</p>
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        {data.map((p) => (
-          <div key={p.name} className={`flex flex-col gap-3 rounded-lg border p-4 transition-colors ${p.enabled ? 'border-accent/40 bg-accent/5' : 'border-border bg-surface'}`} style={{ transitionDuration: 'var(--motion-fast)' }}>
-            <div className="flex items-start gap-3">
-              <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border ${p.enabled ? 'border-accent/40 bg-accent/10 text-accent' : 'border-border bg-elevated text-text-muted'}`}>
-                <Puzzle size={20} aria-hidden />
-              </span>
-              <div className="flex min-w-0 flex-1 flex-col">
-                <span className="flex items-center gap-2">
-                  <span className="truncate text-sm font-semibold text-text">{p.name}</span>
-                  <span className="font-mono text-tiny text-text-muted">v{p.version}</span>
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        {data.map((p) => {
+          const Icon = pluginIcon(p.name);
+          return (
+            <div key={p.name} className={`card-interactive flex flex-col gap-3 rounded-xl border p-5 transition-colors ${p.enabled ? 'border-accent/40' : 'border-border'} bg-surface`} style={{ transitionDuration: 'var(--motion-fast)' }}>
+              <div className="flex items-start gap-3">
+                <span className={`relative flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border ${p.enabled ? 'border-accent/40 bg-accent/10 text-accent' : 'border-border bg-elevated text-text-muted'}`}>
+                  <Icon size={19} aria-hidden />
+                  {p.enabled ? <span className="live-dot absolute -right-1 -top-1 h-2.5 w-2.5 rounded-full border border-surface bg-success" aria-hidden /> : null}
                 </span>
-                <span className="flex items-center gap-1 text-tiny text-text-muted">
-                  {p.source === 'bundled' ? <Package size={11} aria-hidden /> : <UserIcon size={11} aria-hidden />}
-                  {p.source === 'bundled' ? t.plugins.bundled : t.plugins.user}
-                </span>
+                <div className="flex min-w-0 flex-1 flex-col">
+                  <span className="flex items-center gap-2">
+                    <span className="truncate text-sm font-semibold text-text">{p.name}</span>
+                    <span className="font-mono text-tiny text-text-muted">v{p.version}</span>
+                  </span>
+                  <span className="flex items-center gap-1 text-tiny text-text-muted">
+                    {p.source === 'bundled' ? <Package size={11} aria-hidden /> : <UserIcon size={11} aria-hidden />}
+                    {p.source === 'bundled' ? t.plugins.bundled : t.plugins.user}
+                  </span>
+                </div>
+                <Toggle checked={p.enabled} onChange={(v) => flip(p, v)} label={`${p.name}: ${p.enabled ? t.plugins.disable : t.plugins.enable}`} disabled={toggle.isPending} />
               </div>
-              <Toggle checked={p.enabled} onChange={(v) => flip(p, v)} label={`${p.name}: ${p.enabled ? t.plugins.disable : t.plugins.enable}`} disabled={toggle.isPending} />
+              <p className="line-clamp-2 text-xs leading-relaxed text-text-muted">{p.description}</p>
+              <div className="mt-auto flex items-center justify-between">
+                <ProvidesBadges p={p} />
+                {p.configurable ? (
+                  <Button variant="ghost" icon={Settings2} onClick={() => setDetail(p.name)}>{t.plugins.configure}</Button>
+                ) : null}
+              </div>
             </div>
-            <p className="text-xs leading-relaxed text-text-muted">{p.description}</p>
-            <div className="flex items-center justify-between">
-              <ProvidesBadges p={p} />
-              {p.configurable ? (
-                <Button variant="ghost" icon={Settings2} onClick={() => setDetail(p.name)}>{t.plugins.configure}</Button>
-              ) : null}
-            </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
       <p className="text-xs text-text-muted">{t.plugins.applyHint}</p>
     </div>

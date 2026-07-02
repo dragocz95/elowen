@@ -1,5 +1,5 @@
 import { applyVars, rawTemplate, type PromptVars } from './index.js';
-import { isEditablePrompt } from './catalog.js';
+import { isEditablePrompt, isAppendOnlyPrompt } from './catalog.js';
 import type { UserPromptStore } from '../store/userPromptStore.js';
 
 /** User-aware prompt rendering: resolves a template to the given user's override (if they've edited it
@@ -11,6 +11,11 @@ export class PromptService {
 
   render(name: string, vars: PromptVars = {}, userId?: number | null): string {
     const override = userId != null && isEditablePrompt(name) ? this.userPrompts.get(userId, name) : null;
+    // Append-only templates (the advisor identity) keep the shipped default; the user's text rides
+    // along as extra instructions instead of replacing the system prompt.
+    if (override && isAppendOnlyPrompt(name)) {
+      return applyVars(`${rawTemplate(name)}\n\n## User preferences (added by the user)\n${override}`, vars);
+    }
     return applyVars(override ?? rawTemplate(name), vars);
   }
 }

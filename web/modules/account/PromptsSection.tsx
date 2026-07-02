@@ -43,7 +43,9 @@ export function PromptsSection() {
           <div className="flex flex-col divide-y divide-border">
             {items.map((p) => {
               const overridden = p.override !== null;
-              const preview = (p.override ?? p.default).replace(/\s+/g, ' ').slice(0, 120);
+              const preview = p.appendOnly
+                ? (p.override ?? t.prompts.appendEmpty).replace(/\s+/g, ' ').slice(0, 120)
+                : (p.override ?? p.default).replace(/\s+/g, ' ').slice(0, 120);
               return (
                 <button
                   key={p.name}
@@ -53,8 +55,9 @@ export function PromptsSection() {
                 >
                   <div className="flex min-w-0 flex-1 flex-col gap-0.5">
                     <span className="flex items-center gap-2">
-                      <span className="font-mono text-xs font-medium text-text">{p.name}</span>
-                      {overridden ? <Badge tone="accent">{t.prompts.badgeOverridden}</Badge> : null}
+                      <span className="font-mono text-xs font-medium text-text">{p.appendOnly ? t.prompts.appendTitle : p.name}</span>
+                      {p.appendOnly ? <Badge tone="muted">{t.prompts.badgeManaged}</Badge> : null}
+                      {overridden ? <Badge tone="accent">{p.appendOnly ? t.prompts.badgeCustomized : t.prompts.badgeOverridden}</Badge> : null}
                       {p.jsonContract ? <Badge tone="warning">{t.prompts.badgeJson}</Badge> : null}
                     </span>
                     <span className="truncate text-tiny text-text-muted">{preview}</span>
@@ -71,17 +74,20 @@ export function PromptsSection() {
   );
 }
 
-/** The Monaco editing modal for one template: markdown highlighting, vars hint, reset + save. */
+/** The editing modal for one template. Regular prompts get the full Monaco editor; append-only ones
+ *  (the Orca advisor identity) get a plain textarea for the user's OWN extra instructions — the system
+ *  prompt itself is managed server-side and never shown or replaced. */
 function PromptModal({ prompt, onClose }: { prompt: UserPrompt; onClose: () => void }) {
   const { t } = useTranslation();
   const { toast } = useToast();
   const { resolvedTheme } = useTheme();
   const save = useSaveMyPrompt();
   const reset = useResetMyPrompt();
-  const [draft, setDraft] = useState(prompt.override ?? prompt.default);
+  const appendOnly = prompt.appendOnly === true;
+  const [draft, setDraft] = useState(appendOnly ? (prompt.override ?? '') : (prompt.override ?? prompt.default));
 
   const overridden = prompt.override !== null;
-  const dirty = draft !== (prompt.override ?? prompt.default);
+  const dirty = draft !== (appendOnly ? (prompt.override ?? '') : (prompt.override ?? prompt.default));
   const onSave = () => {
     if (!draft.trim()) { toast(t.prompts.empty, 'error'); return; }
     save.mutate({ name: prompt.name, content: draft }, {
@@ -95,28 +101,45 @@ function PromptModal({ prompt, onClose }: { prompt: UserPrompt; onClose: () => v
   });
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" role="dialog" aria-modal="true" aria-label={prompt.name}>
-      <div className="flex h-[85vh] w-full max-w-4xl flex-col overflow-hidden rounded-lg border border-border bg-surface">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" role="dialog" aria-modal="true" aria-label={appendOnly ? t.prompts.appendTitle : prompt.name}>
+      <div className={`flex w-full flex-col overflow-hidden rounded-lg border border-border bg-surface ${appendOnly ? 'max-w-2xl' : 'h-[85vh] max-w-4xl'}`}>
         <div className="flex items-center gap-2 border-b border-border px-4 py-2.5">
-          <span className="font-mono text-sm font-semibold text-text">{prompt.name}</span>
-          <Badge tone={overridden ? 'accent' : 'default'}>{overridden ? t.prompts.badgeOverridden : t.prompts.badgeDefault}</Badge>
+          <span className="font-mono text-sm font-semibold text-text">{appendOnly ? t.prompts.appendTitle : prompt.name}</span>
+          {appendOnly
+            ? <Badge tone="muted">{t.prompts.badgeManaged}</Badge>
+            : <Badge tone={overridden ? 'accent' : 'default'}>{overridden ? t.prompts.badgeOverridden : t.prompts.badgeDefault}</Badge>}
           {prompt.jsonContract ? <Badge tone="warning">{t.prompts.badgeJson}</Badge> : null}
           <button type="button" onClick={onClose} aria-label={t.common.cancel} className="ml-auto flex h-7 w-7 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-elevated hover:text-text">
             <X size={16} aria-hidden />
           </button>
         </div>
-        <div className="min-h-0 flex-1">
-          <MonacoEditor
-            language="markdown"
-            value={draft}
-            onChange={(v) => setDraft(v ?? '')}
-            theme={resolvedTheme === 'light' ? 'orca-light' : 'orca-oled'}
-            beforeMount={defineEditorThemes}
-            options={{ fontSize: 13, minimap: { enabled: false }, scrollBeyondLastLine: false, automaticLayout: true, padding: { top: 12 }, wordWrap: 'on', lineNumbers: 'off', folding: false }}
-          />
-        </div>
+        {appendOnly ? (
+          <div className="flex flex-col gap-3 p-4">
+            <p className="text-xs leading-relaxed text-text-muted">{t.prompts.appendHint}</p>
+            <textarea
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              rows={10}
+              maxLength={4000}
+              placeholder={t.prompts.appendPlaceholder}
+              aria-label={t.prompts.appendTitle}
+              className="w-full resize-none rounded-md border border-border bg-bg px-3 py-2 text-sm text-text placeholder:text-text-muted focus:border-accent"
+            />
+          </div>
+        ) : (
+          <div className="min-h-0 flex-1">
+            <MonacoEditor
+              language="markdown"
+              value={draft}
+              onChange={(v) => setDraft(v ?? '')}
+              theme={resolvedTheme === 'light' ? 'orca-light' : 'orca-oled'}
+              beforeMount={defineEditorThemes}
+              options={{ fontSize: 13, minimap: { enabled: false }, scrollBeyondLastLine: false, automaticLayout: true, padding: { top: 12 }, wordWrap: 'on', lineNumbers: 'off', folding: false }}
+            />
+          </div>
+        )}
         <div className="flex items-center gap-2 border-t border-border px-4 py-2.5">
-          {prompt.vars.length > 0 ? (
+          {!appendOnly && prompt.vars.length > 0 ? (
             <p className="min-w-0 flex-1 truncate font-mono text-tiny text-text-muted">
               {t.prompts.varsLabel} {prompt.vars.map((v) => `{{${v}}}`).join('  ')}
             </p>

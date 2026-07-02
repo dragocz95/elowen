@@ -1,6 +1,7 @@
 'use client';
 import { useEffect, useState } from 'react';
-import { ArrowLeft, Save, Plus, Trash2, Puzzle, KeyRound } from 'lucide-react';
+import { ArrowLeft, Save, Plus, Trash2, KeyRound, Settings2 } from 'lucide-react';
+import { pluginIcon } from './pluginMeta';
 import { Badge } from '../../components/ui/Badge';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
@@ -8,6 +9,7 @@ import { Field } from '../../components/ui/Field';
 import { Toggle } from '../../components/ui/Toggle';
 import { Checkbox } from '../../components/ui/Checkbox';
 import { FormFooter } from '../../components/ui/FormFooter';
+import { SettingCard } from '../../components/ui/SettingCard';
 import { LoadingState } from '../../components/ui/states';
 import { useToast } from '../../components/ui/Toast';
 import { useTranslation } from '../../lib/i18n';
@@ -112,29 +114,54 @@ export function PluginDetail({ name, onBack }: { name: string; onBack: () => voi
     }
   };
 
-  return (
+  const Icon = pluginIcon(data.name);
+  const secretFields = data.configSchema.filter((f) => f.type === 'secret');
+  const plainFields = data.configSchema.filter((f) => f.type !== 'secret');
+  const fieldList = (fields: PluginConfigField[]) => (
     <div className="flex flex-col gap-4">
-      <div className="flex items-center gap-3">
+      {fields.map((f) => (
+        <Field key={f.key} label={f.label} hint={f.hint}>
+          {renderField(f)}
+        </Field>
+      ))}
+    </div>
+  );
+
+  return (
+    <div className="flex flex-col gap-5">
+      <div>
         <Button variant="ghost" icon={ArrowLeft} onClick={onBack}>{t.pluginCfg.back}</Button>
-        <span className="flex items-center gap-2 text-sm font-semibold text-text">
-          <Puzzle size={16} className="text-accent" aria-hidden />{data.name}
-          <span className="font-mono text-tiny text-text-muted">v{data.version}</span>
-          {data.secretsSet.length > 0 ? <Badge tone="accent"><KeyRound size={10} className="mr-1" aria-hidden />{t.brain.keySet}</Badge> : null}
+      </div>
+
+      {/* Hero header: the plugin's identity card, with the live enable toggle. */}
+      <div className="flex items-start gap-4 rounded-xl border border-border bg-surface p-5" style={{ boxShadow: 'var(--shadow-card)' }}>
+        <span className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-xl border ${data.enabled ? 'border-accent/40 bg-accent/10 text-accent' : 'border-border bg-elevated text-text-muted'}`}>
+          <Icon size={22} aria-hidden />
         </span>
-        <span className="ml-auto flex items-center gap-2 text-sm text-text-muted">
+        <div className="flex min-w-0 flex-1 flex-col gap-1">
+          <span className="flex flex-wrap items-center gap-2 text-sm font-semibold text-text">
+            {data.name}
+            <span className="font-mono text-tiny text-text-muted">v{data.version}</span>
+            {data.secretsSet.length > 0 ? <Badge tone="accent"><KeyRound size={10} className="mr-1" aria-hidden />{t.brain.keySet}</Badge> : null}
+          </span>
+          <p className="text-xs leading-relaxed text-text-muted">{data.description}</p>
+        </div>
+        <span className="flex shrink-0 items-center gap-2 pt-1 text-sm text-text-muted">
           {data.enabled ? t.plugins.disable : t.plugins.enable}
           <Toggle checked={data.enabled} onChange={(v) => toggle.mutate({ name, enabled: v })} label={data.name} disabled={toggle.isPending} />
         </span>
       </div>
-      <p className="text-xs text-text-muted">{data.description}</p>
 
-      <div className="flex max-w-3xl flex-col gap-4">
-        {data.configSchema.map((f) => (
-          <Field key={f.key} label={f.label} hint={f.hint}>
-            {renderField(f)}
-          </Field>
-        ))}
-      </div>
+      {plainFields.length > 0 ? (
+        <SettingCard title={t.pluginCfg.groupConfig} icon={Settings2}>
+          {fieldList(plainFields)}
+        </SettingCard>
+      ) : null}
+      {secretFields.length > 0 ? (
+        <SettingCard title={t.pluginCfg.groupSecrets} description={t.pluginCfg.groupSecretsHint} icon={KeyRound}>
+          {fieldList(secretFields)}
+        </SettingCard>
+      ) : null}
 
       <FormFooter>
         <Button variant="accent" icon={Save} onClick={onSave} disabled={save.isPending}>{t.pluginCfg.save}</Button>

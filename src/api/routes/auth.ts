@@ -3,7 +3,7 @@ import { writeFileSync, readFileSync, existsSync, mkdirSync, unlinkSync } from '
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { parseBody } from '../validation.js';
 import { loginSchema, profilePatchSchema, passwordChangeSchema, userPermissionsSchema, projectAssignSchema, promptSaveSchema } from '../schemas/auth.js';
-import { EDITABLE_PROMPTS, isEditablePrompt } from '../../prompts/catalog.js';
+import { EDITABLE_PROMPTS, isEditablePrompt, isAppendOnlyPrompt } from '../../prompts/catalog.js';
 import { rawTemplate } from '../../prompts/index.js';
 import type { User } from '../../store/userStore.js';
 import type { OrcaApp, RouteContext } from '../context.js';
@@ -78,7 +78,10 @@ export function registerAuthRoutes(app: OrcaApp, ctx: RouteContext): void {
     const overrides = d.userPrompts?.getAll(u.id) ?? {};
     return c.json(EDITABLE_PROMPTS.map((p) => ({
       name: p.name, group: p.group, vars: p.vars, jsonContract: p.jsonContract,
-      default: rawTemplate(p.name), override: overrides[p.name] ?? null,
+      appendOnly: p.appendOnly === true,
+      // Append-only templates are system-managed: the shipped text stays server-side (the user only
+      // writes their extra instructions), so don't ship the default to the browser.
+      default: p.appendOnly ? '' : rawTemplate(p.name), override: overrides[p.name] ?? null,
     })));
   });
   app.put('/auth/me/prompts/:name', async (c) => {
@@ -86,6 +89,8 @@ export function registerAuthRoutes(app: OrcaApp, ctx: RouteContext): void {
     const name = c.req.param('name');
     if (!isEditablePrompt(name)) return c.json({ error: 'unknown prompt' }, 400);
     const b = await parseBody(c, promptSaveSchema);
+    // Append-only templates take a short instructions block, not a whole prompt document.
+    if (isAppendOnlyPrompt(name) && b.content.length > 4000) return c.json({ error: 'too long (max 4000 chars)' }, 400);
     d.userPrompts.set(c.get('user').id, name, b.content);
     return c.json({ ok: true });
   });

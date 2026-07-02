@@ -14,6 +14,9 @@ export interface PromptCatalogEntry {
   vars: string[];
   /** The model output is parsed as JSON downstream; editing this risks the contract (repair softens it). */
   jsonContract: boolean;
+  /** The template itself is system-managed: the user's saved text is APPENDED to the default as extra
+   *  instructions instead of replacing it (the Orca advisor identity stays intact). */
+  appendOnly?: boolean;
 }
 
 const WORKER_VARS = ['agentName', 'taskId', 'titlePart', 'detailsPart', 'resumePart', 'closeCommand'];
@@ -33,7 +36,7 @@ export const EDITABLE_PROMPTS: PromptCatalogEntry[] = [
   { name: 'decision-header', group: 'overseer', vars: ['subject', 'approveGuidance'], jsonContract: true },
   { name: 'decision-prompt', group: 'overseer', vars: ['autonomy', 'question', 'context', 'options'], jsonContract: true },
   { name: 'decision-question', group: 'overseer', vars: ['autonomy', 'question', 'context', 'options'], jsonContract: true },
-  { name: 'advisor', group: 'advisor', vars: ['userName'], jsonContract: false },
+  { name: 'advisor', group: 'advisor', vars: ['userName'], jsonContract: false, appendOnly: true },
 ];
 
 const EDITABLE_NAMES = new Set(EDITABLE_PROMPTS.map((p) => p.name));
@@ -41,4 +44,11 @@ const EDITABLE_NAMES = new Set(EDITABLE_PROMPTS.map((p) => p.name));
 /** Whether a template name is a user-overridable prompt (guards the override API + resolution path). */
 export function isEditablePrompt(name: string): boolean {
   return EDITABLE_NAMES.has(name);
+}
+
+const APPEND_ONLY = new Set(EDITABLE_PROMPTS.filter((p) => p.appendOnly).map((p) => p.name));
+
+/** True when the user's saved text appends to the default instead of replacing it. */
+export function isAppendOnlyPrompt(name: string): boolean {
+  return APPEND_ONLY.has(name);
 }

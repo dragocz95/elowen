@@ -26,6 +26,7 @@ import { Toggle } from '../../components/ui/Toggle';
 import { Segmented } from '../../components/ui/Segmented';
 import { FormFooter } from '../../components/ui/FormFooter';
 import { SettingCard } from '../../components/ui/SettingCard';
+import { SettingsShell } from '../../components/ui/SettingsShell';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { HelpTip } from '../../components/ui/HelpTip';
 import { LoadingState, ErrorState, EmptyState } from '../../components/ui/states';
@@ -329,15 +330,15 @@ export default function SettingsPage() {
         />
       </ModuleHeader>
 
-      {/* Content zone — the active category sits here directly, no Section frame */}
-      <div className="min-w-0">
+      {/* Content zone — the active category sits in a centered, dashboard-like lane */}
+      <SettingsShell>
         {category === 'models' && (
           <>
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               {models.map((p) => {
                 const isCustom = !isPresetExec(p.exec);
                 return (
-                  <div key={p.exec} className="card-interactive group relative flex flex-col gap-3.5 rounded-lg border border-border bg-surface p-5">
+                  <div key={p.exec} className="card-interactive group relative flex flex-col gap-3.5 rounded-xl border border-border bg-surface p-5">
                     {/* Always visible on touch (no hover exists on phones, so hover-only buttons are
                      *  unreachable — you could only toggle a model, never edit/delete it). On desktop
                      *  (sm+) keep the clean hover-reveal, plus focus-within for keyboard access. */}
@@ -420,7 +421,7 @@ export default function SettingsPage() {
         {category === 'autopilot' && (
             <div className="flex flex-col gap-4">
               {/* One clear choice: how the planner + overseer reason. Relay (API) OR CLI agents. */}
-              <div className="rounded-lg border border-border bg-surface p-4">
+              <div className="card-interactive rounded-xl border border-border bg-surface p-5">
                 <div className="mb-2 flex items-center gap-1.5">
                   <span className="text-sm font-medium text-text">{t.settings.backendMode}</span>
                   <HelpTip>{t.settings.backendModeHelp}</HelpTip>
@@ -468,7 +469,7 @@ export default function SettingsPage() {
               <SettingCard title={t.settings.notes} description={t.settings.notesDesc} icon={FileText}>
                 <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={3} className={`${inputClass} resize-none`} />
               </SettingCard>
-              <div className="sm:col-span-2 rounded-lg border border-border bg-surface p-4">
+              <div className="sm:col-span-2 card-interactive rounded-xl border border-border bg-surface p-5">
                 <div className="mb-2 flex items-center gap-1.5">
                   <span className="text-sm font-medium text-text">{t.settings.testPlan}</span>
                   <HelpTip>{t.settings.testPlanHelp}</HelpTip>
@@ -531,7 +532,7 @@ export default function SettingsPage() {
                 const cur = providers[p.id] ?? { bin: p.binHint, args: '', skipPermissions: true, resume: true };
                 const set = (patch: Partial<{ bin: string; args: string; skipPermissions: boolean; resume: boolean }>) => setProviders((prev) => ({ ...prev, [p.id]: { ...cur, ...patch } }));
                 return (
-                  <div key={p.id} className="flex flex-col gap-3 rounded-lg border border-border bg-surface p-4 sm:flex-row sm:items-start">
+                  <div key={p.id} className="card-interactive flex flex-col gap-3 rounded-xl border border-border bg-surface p-5 sm:flex-row sm:items-start">
                     <div className="flex items-center gap-3 sm:w-44 sm:shrink-0 sm:pt-1">
                       <ProviderLogo meta={p} alt={t.providers[p.id as keyof typeof t.providers]} size={56} />
                       <div className="min-w-0">
@@ -743,7 +744,7 @@ export default function SettingsPage() {
 
         {category === 'data' && (
           <div className="flex flex-col gap-4">
-            <div className="rounded-lg border border-danger/40 bg-danger/[0.04] p-4">
+            <div className="rounded-xl border border-danger/40 bg-danger/[0.04] p-5">
               <div className="flex items-center gap-2 text-sm font-semibold text-danger">
                 <Trash2 size={15} aria-hidden /> {t.settings.dangerZone}
               </div>
@@ -760,7 +761,7 @@ export default function SettingsPage() {
             <Button variant="accent" icon={Save} onClick={active.onClick}>{active.label}</Button>
           </FormFooter>
         )}
-      </div>
+      </SettingsShell>
 
       <ConfirmDialog
         open={pendingDelete !== null}

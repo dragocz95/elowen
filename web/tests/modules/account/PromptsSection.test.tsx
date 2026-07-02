@@ -21,6 +21,7 @@ beforeAll(() => server.listen({ onUnhandledRequest })); afterEach(() => server.r
 const PROMPTS = [
   { name: 'worker', group: 'workers', vars: ['taskId'], jsonContract: false, default: 'DEFAULT worker {{taskId}}', override: null },
   { name: 'decision-question', group: 'overseer', vars: ['question'], jsonContract: true, default: 'DEFAULT dq', override: 'MY dq' },
+  { name: 'advisor', group: 'advisor', vars: ['userName'], jsonContract: false, appendOnly: true, default: '', override: null },
 ];
 
 function renderSection() {
@@ -65,5 +66,21 @@ describe('PromptsSection', () => {
     await screen.findByDisplayValue('MY dq');
     fireEvent.click(screen.getByRole('button', { name: 'Reset to default' }));
     await waitFor(() => expect(deleted).toBe(true));
+  });
+
+  it('advisor is append-only: a plain textarea for own preferences, no Monaco, PUT saves the text', async () => {
+    let putBody: unknown = null;
+    server.use(
+      http.get('*/api/auth/me/prompts', () => HttpResponse.json(PROMPTS)),
+      http.put('*/api/auth/me/prompts/advisor', async ({ request }) => { putBody = await request.json(); return HttpResponse.json({ ok: true }); }),
+    );
+    renderSection();
+    fireEvent.click(await screen.findByText('Orca — your preferences'));
+    // Append-only editor is a textarea (the managed system prompt is never shown).
+    const box = await screen.findByPlaceholderText(/Always answer in Czech/);
+    expect(screen.queryByTestId('monaco')).toBeNull();
+    fireEvent.change(box, { target: { value: 'Be brief.' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(putBody).toEqual({ content: 'Be brief.' }));
   });
 });
