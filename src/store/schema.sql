@@ -182,7 +182,8 @@ CREATE TABLE IF NOT EXISTS memories (
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now')),
   last_used_at TEXT,
-  use_count INTEGER NOT NULL DEFAULT 0
+  use_count INTEGER NOT NULL DEFAULT 0,
+  category_id INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_memories_user_status ON memories(user_id, status);
 -- One embedding per memory. content_hash pins which body text was embedded, so a body edit can mark the
@@ -212,3 +213,19 @@ CREATE TABLE IF NOT EXISTS memory_events (
 );
 CREATE INDEX IF NOT EXISTS idx_memory_events_memory ON memory_events(memory_id);
 CREATE INDEX IF NOT EXISTS idx_memory_events_user ON memory_events(user_id, id DESC);
+
+-- Per-user memory categories (v1: user-scoped). name is the label; description is the LLM-facing guide
+-- text the categorizer classifies against; color is an optional UI hint; is_builtin marks seeded ones.
+-- Referenced by memories.category_id (soft, id-addressed — see below). UNIQUE(user_id,name) makes a
+-- name the natural key per user; the classifier still binds by id so a rename never re-tags memories.
+CREATE TABLE IF NOT EXISTS memory_categories (
+  id INTEGER PRIMARY KEY,
+  user_id INTEGER NOT NULL,
+  name TEXT NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  color TEXT NOT NULL DEFAULT '',
+  is_builtin INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(user_id, name)
+);
+CREATE INDEX IF NOT EXISTS idx_memory_categories_user ON memory_categories(user_id);

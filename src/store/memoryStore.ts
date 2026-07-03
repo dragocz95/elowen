@@ -15,6 +15,7 @@ export interface MemoryRow {
   updated_at: string;
   last_used_at: string | null;
   use_count: number;
+  category_id: number | null;
 }
 
 /** One packed-Float32 embedding per memory. content_hash pins which body text was embedded. */
@@ -60,6 +61,7 @@ export interface MemoryPatch {
 export interface ListMemoriesOpts {
   status?: string; // default 'active'; pass '' or 'all' to include every status
   kind?: string;
+  categoryId?: number | null; // undefined = no filter; null = uncategorized; a number = that category
   limit?: number;
   offset?: number;
 }
@@ -127,6 +129,10 @@ export class MemoryStore {
     const params: (string | number)[] = [userId];
     if (status !== '' && status !== 'all') { clauses.push('status = ?'); params.push(status); }
     if (opts.kind !== undefined) { clauses.push('kind = ?'); params.push(opts.kind); }
+    if (opts.categoryId !== undefined) {
+      if (opts.categoryId === null) clauses.push('category_id IS NULL');
+      else { clauses.push('category_id = ?'); params.push(opts.categoryId); }
+    }
     let sql = `SELECT * FROM memories WHERE ${clauses.join(' AND ')} ORDER BY updated_at DESC, id DESC`;
     if (opts.limit !== undefined) { sql += ' LIMIT ?'; params.push(opts.limit); }
     if (opts.offset !== undefined) { sql += ' OFFSET ?'; params.push(opts.offset); }
@@ -214,6 +220,24 @@ export class MemoryStore {
       "UPDATE memories SET use_count = use_count + 1, last_used_at = datetime('now') WHERE id = ? AND user_id = ?"
     );
     this.db.transaction(() => { for (const id of ids) stmt.run(id, userId); })();
+  }
+
+  /** Assign (or clear with null) a memory's category. Owner-scoped; a non-null categoryId must be one
+   *  of this user's own categories (else no-op → false). Bumps updated_at, audits 'categorize'. */
+  setCategory(userId: number, id: number, categoryId: number | null, actor: string, reason: string): boolean {
+    return this.db.transaction(() => {
+      const before = this.get(userId, id);
+      if (!before) return false;
+      if (categoryId !== null) {
+        const owned = this.db.prepare('SELECT 1 FROM memory_categories WHERE id = ? AND user_id = ?').get(categoryId, userId);
+        if (!owned) return false; // foreign/unknown category → reject, never write a dangling id
+      }
+      this.db.prepare("UPDATE memories SET category_id = ?, updated_at = datetime('now') WHERE id = ? AND user_id = ?")
+        .run(categoryId, id, userId);
+      const after = this.get(userId, id)!;
+      this.audit(userId, id, 'categorize', before, after, actor, reason);
+      return true;
+    })();
   }
 
   /** Read the embedding for a memory owned by this user (join enforces ownership). */

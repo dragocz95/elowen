@@ -84,6 +84,10 @@ export function openDb(path: string): Db {
   // Who created the task — used to attribute a spawned agent to a user so its prompts resolve to that
   // user's overrides (else admin fallback). Nullable: legacy/system tasks have no owner. Old DBs NULL.
   addColumn(db, 'tasks', 'created_by', 'INTEGER');
+  // Memory categories: a memory's assigned category (nullable, id-addressed — a rename never re-tags).
+  // Index created here (not schema.sql) so it runs after the column exists on migrated DBs.
+  addColumn(db, 'memories', 'category_id', 'INTEGER');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_memories_user_category ON memories(user_id, category_id)');
   // Seed the bootstrap admin on existing DBs: the lowest-id user, if none is flagged yet.
   db.exec("UPDATE users SET is_admin = 1 WHERE id = (SELECT MIN(id) FROM users) AND NOT EXISTS (SELECT 1 FROM users WHERE is_admin = 1)");
   return db;

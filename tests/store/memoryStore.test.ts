@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { openDb } from '../../src/store/db.js';
 import { MemoryStore, hashBody } from '../../src/store/memoryStore.js';
+import { MemoryCategoryStore } from '../../src/store/memoryCategoryStore.js';
 
 describe('MemoryStore', () => {
   let store: MemoryStore;
@@ -172,5 +173,67 @@ describe('MemoryStore', () => {
 
     const hits = store.search(1, 'dark', 10);
     expect(hits.map((m) => m.id)).toEqual([a.id]); // deleted excluded
+  });
+
+  it('add defaults category_id to null', () => {
+    const m = store.add(1, { body: 'x' }, 'agent', '');
+    expect(m.category_id).toBeNull();
+  });
+});
+
+describe('MemoryStore category assignment', () => {
+  let db: ReturnType<typeof openDb>;
+  let store: MemoryStore;
+  let cats: MemoryCategoryStore;
+  beforeEach(() => {
+    db = openDb(':memory:');
+    store = new MemoryStore(db);
+    cats = new MemoryCategoryStore(db);
+  });
+
+  it('setCategory assigns an owned category, bumps updated_at, and audits categorize', () => {
+    const c = cats.create(1, { name: 'Práce' });
+    const m = store.add(1, { body: 'x' }, 'agent', '');
+    expect(store.setCategory(1, m.id, c.id, 'user:1', 'tag')).toBe(true);
+    expect(store.get(1, m.id)?.category_id).toBe(c.id);
+
+    const ev = store.listEvents(1).find((e) => e.action === 'categorize')!;
+    expect(ev).toMatchObject({ memory_id: m.id, actor: 'user:1', reason: 'tag' });
+    expect(JSON.parse(ev.before_json!).category_id).toBeNull();
+    expect(JSON.parse(ev.after_json!).category_id).toBe(c.id);
+  });
+
+  it('setCategory(null) clears the category', () => {
+    const c = cats.create(1, { name: 'Práce' });
+    const m = store.add(1, { body: 'x' }, 'agent', '');
+    store.setCategory(1, m.id, c.id, 'user:1', 'tag');
+    expect(store.setCategory(1, m.id, null, 'user:1', 'clear')).toBe(true);
+    expect(store.get(1, m.id)?.category_id).toBeNull();
+  });
+
+  it('setCategory rejects a foreign category id (no dangling write)', () => {
+    const foreign = cats.create(2, { name: 'Other' });
+    const m = store.add(1, { body: 'x' }, 'agent', '');
+    expect(store.setCategory(1, m.id, foreign.id, 'user:1', 'tag')).toBe(false);
+    expect(store.get(1, m.id)?.category_id).toBeNull();
+    // No categorize audit was written.
+    expect(store.listEvents(1).some((e) => e.action === 'categorize')).toBe(false);
+  });
+
+  it('setCategory returns false for a memory not owned by the user', () => {
+    const c = cats.create(1, { name: 'Práce' });
+    const m = store.add(1, { body: 'x' }, 'agent', '');
+    expect(store.setCategory(2, m.id, c.id, 'user:2', 'tag')).toBe(false);
+  });
+
+  it('list filters by categoryId (number, null, and undefined)', () => {
+    const c = cats.create(1, { name: 'Práce' });
+    const tagged = store.add(1, { body: 'tagged' }, 'agent', '');
+    const untagged = store.add(1, { body: 'untagged' }, 'agent', '');
+    store.setCategory(1, tagged.id, c.id, 'user:1', 'tag');
+
+    expect(store.list(1, { categoryId: c.id }).map((m) => m.id)).toEqual([tagged.id]);
+    expect(store.list(1, { categoryId: null }).map((m) => m.id)).toEqual([untagged.id]);
+    expect(store.list(1).map((m) => m.id).sort()).toEqual([tagged.id, untagged.id].sort());
   });
 });
