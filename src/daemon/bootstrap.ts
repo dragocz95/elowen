@@ -68,7 +68,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
-import { isExecAllowedForUser } from '../shared/execs.js';
+import { isExecAllowedForUser, isModelVisibleForUser, orcaExec } from '../shared/execs.js';
 import { BrainWorkerService } from '../brain/worker/brainWorker.js';
 
 const log = logger('daemon');
@@ -360,7 +360,17 @@ export function buildApp(opts: BuildOpts) {
     return loadPlugins({
       dirs: pluginDirs, enabled, config: pluginConfig, dataRoot: pluginDataRoot,
       notify: (t, channelId) => brain?.notify(t, channelId) ?? Promise.resolve(),
-      listModels: () => { const c = brainConfig(); return c ? listBrainModels(c) : Promise.resolve([]); },
+      // The Discord /model picker is an operator-shared channel setting, so it offers the platform
+      // owner's CURATED list: their personal allow-list narrows the picker even though, as admin, they
+      // could run anything (display filter, not the enforcement gate). Empty personal list = all global.
+      listModels: () => {
+        const c = brainConfig();
+        if (!c) return Promise.resolve([]);
+        const owner = users.list().find((u) => u.is_admin);
+        const globalExecs = config.get().allowedExecs;
+        return listBrainModels(c).then((models) =>
+          models.filter((m) => isModelVisibleForUser(owner, globalExecs, orcaExec(m.provider, m.model))));
+      },
       resolveProvider,
       logger: log,
     });

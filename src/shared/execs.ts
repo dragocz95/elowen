@@ -74,6 +74,22 @@ export function isExecAllowedForUser(
   return user.allowed_execs.length === 0 || user.allowed_execs.includes(exec);
 }
 
+/**
+ * Which execs a user's PICKER should OFFER — a display filter, not a permission gate. Unlike
+ * `isExecAllowedForUser`, an admin's own non-empty personal whitelist still narrows their picker: a
+ * curated shortlist is a preference, not a restriction, so it applies even though the admin *could*
+ * run anything. Empty personal list = everything the global list allows. `user` null = open mode.
+ */
+export function isModelVisibleForUser(
+  user: { allowed_execs: readonly string[] } | null | undefined,
+  globalExecs: readonly string[],
+  exec: string,
+): boolean {
+  if (!globalExecs.includes(exec)) return false;
+  if (!user) return true;
+  return user.allowed_execs.length === 0 || user.allowed_execs.includes(exec);
+}
+
 /** Built-in exec labels offered/allowed out of the box (the default `allowedExecs`). Keep in sync
  *  with the web preset list (`web/lib/execPresets.ts`) and the default notes below. */
 export const KNOWN_EXECS: readonly string[] = [

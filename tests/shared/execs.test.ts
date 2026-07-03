@@ -6,6 +6,7 @@ import {
   parseOrcaExec,
   orcaExec,
   isExecAllowedForUser,
+  isModelVisibleForUser,
   EXEC_NOTES,
   isWellFormedExec,
   isAllowedExec,
@@ -111,6 +112,23 @@ describe('shared/execs', () => {
     it('a non-empty personal list narrows further', () => {
       expect(isExecAllowedForUser({ is_admin: false, allowed_execs: ['sonnet'] }, globalExecs, 'orca:relay/kimi')).toBe(false);
       expect(isExecAllowedForUser({ is_admin: false, allowed_execs: ['orca:relay/kimi'] }, globalExecs, 'orca:relay/kimi')).toBe(true);
+    });
+  });
+
+  describe('isModelVisibleForUser (picker display filter)', () => {
+    const globalExecs = ['orca:relay/kimi', 'sonnet'];
+    it("an admin's personal list narrows their picker (unlike the enforcement gate)", () => {
+      // Same admin that isExecAllowedForUser would wave through — here the curated list still applies.
+      expect(isModelVisibleForUser({ allowed_execs: ['sonnet'] }, globalExecs, 'orca:relay/kimi')).toBe(false);
+      expect(isModelVisibleForUser({ allowed_execs: ['sonnet'] }, globalExecs, 'sonnet')).toBe(true);
+    });
+    it('empty personal list = everything the global list allows', () => {
+      expect(isModelVisibleForUser({ allowed_execs: [] }, globalExecs, 'orca:relay/kimi')).toBe(true);
+      expect(isModelVisibleForUser({ allowed_execs: [] }, globalExecs, 'orca:x/y')).toBe(false); // not global
+    });
+    it('null user = open mode (all global)', () => {
+      expect(isModelVisibleForUser(null, globalExecs, 'sonnet')).toBe(true);
+      expect(isModelVisibleForUser(undefined, globalExecs, 'orca:x/y')).toBe(false);
     });
   });
 });
