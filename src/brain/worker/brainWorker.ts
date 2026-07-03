@@ -1,5 +1,5 @@
-import { createAgentSession, DefaultResourceLoader, defineTool, formatSkillsForPrompt } from '@earendil-works/pi-coding-agent';
-import type { AgentSession, AgentSessionEvent, AuthStorage, ResourceLoader } from '@earendil-works/pi-coding-agent';
+import { defineTool, formatSkillsForPrompt } from '@earendil-works/pi-coding-agent';
+import type { AgentSession, AuthStorage, ResourceLoader, createAgentSession } from '@earendil-works/pi-coding-agent';
 import { Type } from 'typebox';
 import type { BrainStore } from '../../store/brainStore.js';
 import type { TaskStore } from '../../store/taskStore.js';
@@ -7,8 +7,9 @@ import type { TaskUsageStore } from '../../store/taskUsageStore.js';
 import type { EventBus } from '../../api/sse.js';
 import type { BrainRuntimeConfig } from '../providers.js';
 import { buildBrainRegistry, resolveBrainModel } from '../providers.js';
-import { projectEvent, projectUserTurn, rehydrate } from '../persistence.js';
+import { projectUserTurn } from '../persistence.js';
 import { taskSessionId } from '../sessionId.js';
+import { BrainSessionFactory } from '../session/factory.js';
 import { runWithPolicy } from '../../plugins/policyContext.js';
 import type { PluginRegistryProvider } from '../../plugins/pluginsProvider.js';
 import { callOrcaApi } from '../../shared/apiClient.js';
@@ -105,8 +106,12 @@ function sessionUsage(session: AgentSession): TokenUsage {
 export class BrainWorkerService {
   private live = new Map<string, LiveWorker>();
   private watchdog: ReturnType<typeof setInterval> | undefined;
+  /** Shared session assembly — the same factory the chat brain uses. */
+  private factory: BrainSessionFactory;
 
-  constructor(private d: BrainWorkerDeps) {}
+  constructor(private d: BrainWorkerDeps) {
+    this.factory = new BrainSessionFactory({ store: d.store, createSession: d.createSession, resourceLoaderFactory: d.resourceLoaderFactory });
+  }
 
   /** tmux-style session names (`orca-<agentName>`) for the stuck detector's composite lister. */
   liveSessionNames(): string[] { return [...this.live.keys()]; }
@@ -124,12 +129,8 @@ export class BrainWorkerService {
     const model = resolveBrainModel(registry, cfg, selectionFor(cfg, input.spec.model));
     const sessionId = taskSessionId(input.taskId);
     const resumed = !!this.d.store.getSession(sessionId);
-    if (!resumed) this.d.store.createSession({ id: sessionId, userId: input.ownerId ?? 0, model: model.id });
-    else this.d.store.touchSession(sessionId, model.id);
-    if (!this.d.store.getSession(sessionId)?.title) this.d.store.setTitle(sessionId, `${input.taskId}${input.taskTitle ? `: ${input.taskTitle}` : ''}`.slice(0, 60));
 
     const cwd = input.projectPath;
-    const sessionManager = rehydrate(this.d.store, sessionId, cwd);
     const plugins = await this.d.plugins?.get();
     const pluginTools = plugins?.tools ?? [];
     const skills = plugins?.skills ?? [];
@@ -163,19 +164,13 @@ export class BrainWorkerService {
       resumePart: input.resumeNote?.trim() ? `\n\nNew input for this run — address it:\n${input.resumeNote.trim()}` : '',
     };
     const systemPrompt = renderPromptFor(this.d.prompts, 'worker-brain', vars, input.ownerId);
-    const resourceLoader = this.d.resourceLoaderFactory
-      ? this.d.resourceLoaderFactory({ cwd, systemPrompt, appendSystemPrompt: append })
-      : new DefaultResourceLoader({
-          cwd, agentDir: cwd, systemPrompt, appendSystemPrompt: append,
-          noExtensions: true, noSkills: true, noPromptTemplates: true, noThemes: true, noContextFiles: true,
-        });
-    if (resourceLoader) await resourceLoader.reload();
-
-    const allTools = [closeTool, ...pluginTools];
-    const create = this.d.createSession ?? createAgentSession;
-    const { session } = await create({
-      cwd, sessionManager, modelRegistry: registry, model, resourceLoader,
-      customTools: allTools, tools: allTools.map((t) => t.name), noTools: 'builtin',
+    // The shared assembly (store row + rehydrate + resource loader + PI session + persistence
+    // subscription) — identical to the chat brain's, so the two can never drift.
+    const { session } = await this.factory.create({
+      sessionId, ownerUserId: input.ownerId ?? 0, registry, model, cwd,
+      systemPrompt, appendSystemPrompt: append,
+      tools: [closeTool, ...pluginTools],
+      title: `${input.taskId}${input.taskTitle ? `: ${input.taskTitle}` : ''}`,
     });
 
     const worker: LiveWorker = {
@@ -183,10 +178,7 @@ export class BrainWorkerService {
       model: model.id, lastEventAt: this.now(), nudged: false, closed: false,
     };
     this.live.set(sessionName, worker);
-    session.subscribe((e: AgentSessionEvent) => {
-      worker.lastEventAt = this.now();
-      projectEvent(this.d.store, sessionId, e);
-    });
+    session.subscribe(() => { worker.lastEventAt = this.now(); }); // liveness for the idle watchdog
 
     // The worker's file/terminal tools are confined to the task's checkout for the whole run.
     const policy = { allowedProjectIds: new Set([input.projectId]), allowedPaths: () => [cwd] };

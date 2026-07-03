@@ -1,5 +1,5 @@
-import { createAgentSession, DefaultResourceLoader, formatSkillsForPrompt } from '@earendil-works/pi-coding-agent';
-import type { AgentSession, AgentSessionEvent, ResourceLoader } from '@earendil-works/pi-coding-agent';
+import { formatSkillsForPrompt } from '@earendil-works/pi-coding-agent';
+import type { AgentSession, AgentSessionEvent, ResourceLoader, createAgentSession } from '@earendil-works/pi-coding-agent';
 import type { PluginRegistry } from '../plugins/registry.js';
 import type { PluginRegistryProvider } from '../plugins/pluginsProvider.js';
 import type { Policy } from '../plugins/policy.js';
@@ -12,7 +12,8 @@ import { buildBrainRegistry, resolveBrainModel } from './providers.js';
 import { orcaExec } from '../shared/execs.js';
 import { buildOrcaTools } from './tools/index.js';
 import { personalityText } from './personality.js';
-import { projectEvent, projectUserTurn, rehydrate } from './persistence.js';
+import { projectUserTurn } from './persistence.js';
+import { BrainSessionFactory } from './session/factory.js';
 import { shapeBrainMessages, extractText } from './messageView.js';
 import type { BrainMessageView } from './messageView.js';
 import { toBrainEvent, usageOf } from './events.js';
@@ -67,15 +68,6 @@ export interface BrainDeps {
   resourceLoaderFactory?: (o: { cwd: string; systemPrompt: string; appendSystemPrompt?: string[] }) => ResourceLoader | undefined;
 }
 
-/** Default resource loader: carries the Orca persona as the system prompt, appends plugin skills +
- *  fragments after it, and disables all disk discovery — the brain is a lean, in-process agent. */
-function defaultResourceLoaderFactory(o: { cwd: string; systemPrompt: string; appendSystemPrompt?: string[] }): ResourceLoader {
-  return new DefaultResourceLoader({
-    cwd: o.cwd, agentDir: o.cwd, systemPrompt: o.systemPrompt, appendSystemPrompt: o.appendSystemPrompt,
-    noExtensions: true, noSkills: true, noPromptTemplates: true, noThemes: true, noContextFiles: true,
-  });
-}
-
 interface LiveBrain { session: AgentSession; sessionId: string; model: string; visionCapable: boolean; thinkingLevel?: string; policy: Policy; autoCompact: boolean; autoCompactAt: number; listeners: Set<(e: BrainEvent) => void>; turnContext: () => string; /** True while the session runs on the user's vision-fallback model (an image turn hopped onto it). */ visionFallback?: boolean }
 
 /** Fallback auto-compact threshold (fraction of the context window) when the user set none. */
@@ -92,7 +84,12 @@ export class BrainService {
   /** Per-conversation exclusivity: PI sessions are single-conversation, so concurrent prompt()/spawn
    *  calls on one session id queue up here instead of corrupting turn state. */
   private locks = new Map<string, Promise<unknown>>();
-  constructor(private d: BrainDeps) {}
+  /** Shared session assembly (store row + rehydrate + resource loader + PI session) — the same
+   *  factory the orca-exec brain workers use. */
+  private factory: BrainSessionFactory;
+  constructor(private d: BrainDeps) {
+    this.factory = new BrainSessionFactory({ store: d.store, createSession: d.createSession, resourceLoaderFactory: d.resourceLoaderFactory });
+  }
 
   /** Whether `userId` is the instance operator. When a platform owner is configured (production), it is
    *  exactly that user; with none configured (single-user / tests) every user is treated as the owner,
@@ -256,18 +253,10 @@ export class BrainService {
   }): Promise<LiveBrain> {
     const { sessionId, ownerUserId } = opts;
 
-    // Ensure the store row (sole source of truth) exists before rehydration.
     const cfg = this.runtimeConfig();
     const registry = buildBrainRegistry(cfg, this.d.authStorage);
     const model = resolveBrainModel(registry, cfg, opts.selection);
-    if (!this.d.store.getSession(sessionId)) {
-      this.d.store.createSession({ id: sessionId, userId: ownerUserId, model: model.id });
-    } else {
-      this.d.store.touchSession(sessionId, model.id);
-    }
-
     const cwd = this.d.cwd ?? process.cwd();
-    const sessionManager = rehydrate(this.d.store, sessionId, cwd);
     // Channel senders must never reach the owner's full-scope API token — no orca_* tools there.
     const tools = opts.channel ? [] : buildOrcaTools({ url: this.d.url, token: this.d.users.ensureAdvisorToken(ownerUserId) });
 
@@ -297,31 +286,15 @@ export class BrainService {
     const persona = opts.channel
       ? this.d.prompts.render('advisor-channel', { ownerName: userName, personality, agentName }, ownerUserId)
       : this.d.prompts.render('advisor', { userName, personality, agentName }, ownerUserId);
-    const resourceLoader = (this.d.resourceLoaderFactory ?? defaultResourceLoaderFactory)({ cwd, systemPrompt: persona, appendSystemPrompt: append });
-    // A resource loader passed to createAgentSession is NOT auto-reloaded (only one it builds itself is),
-    // so its system prompt stays empty unless we reload it here. Without this the brain falls back to
-    // pi's default "coding assistant" persona and misidentifies itself.
-    if (resourceLoader) await resourceLoader.reload();
 
-    const create = this.d.createSession ?? createAgentSession;
-    // Reasoning effort for extended-thinking models — PI clamps an unsupported level to the model's
-    // range, so passing it for a non-thinking model is harmless. Empty → leave the model default.
-    const thinkingLevel = (['minimal', 'low', 'medium', 'high', 'xhigh'] as const).find((l) => l === opts.thinkingLevel);
-    const { session } = await create({
-      cwd,
-      sessionManager,
-      modelRegistry: registry,
-      model,
-      resourceLoader,
-      customTools: allTools,
-      tools: allTools.map((t) => t.name),
-      noTools: 'builtin',
-      ...(thinkingLevel ? { thinkingLevel } : {}),
+    const { session } = await this.factory.create({
+      sessionId, ownerUserId, registry, model, cwd,
+      systemPrompt: persona, appendSystemPrompt: append,
+      tools: allTools, thinkingLevel: opts.thinkingLevel,
     });
 
     const listeners = new Set<(e: BrainEvent) => void>();
     session.subscribe((e: AgentSessionEvent) => {
-      projectEvent(this.d.store, sessionId, e); // persist settled turns (agent_end)
       const be = toBrainEvent(e);
       if (!be) return;
       if (be.type === 'idle') { be.usage = usageOf(session); be.model = model.id; } // statusline data rides the idle event
