@@ -984,6 +984,7 @@ export const cs = {
     save: 'Uložit konfiguraci',
     saveError: 'Uložení konfigurace selhalo',
     secretSet: 'Nastaveno — prázdné = ponechat',
+    noProviders: 'Žádný vhodný poskytovatel — přidejte ho v Nastavení → Brain.',
     noRoles: 'Zatím žádné role — uživatelé bez namapované role jsou ignorováni.',
     roleNew: 'Nová role',
     roleProjectsCount: '{n} projektů',

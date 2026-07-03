@@ -152,9 +152,11 @@ export interface PluginI18n {
 export interface PluginConfigField {
   key: string;
   label: string;
-  type: 'string' | 'secret' | 'boolean' | 'number' | 'textarea' | 'rolePolicies' | 'model';
+  type: 'string' | 'secret' | 'boolean' | 'number' | 'textarea' | 'rolePolicies' | 'model' | 'provider';
   hint?: string;
   required?: boolean;
+  /** For `provider` fields: restrict the picker to configured providers of this type (e.g. `openai`). */
+  providerType?: string;
 }
 
 /** One role → access mapping row in a plugin's `rolePolicies` config (the Discord pattern). */

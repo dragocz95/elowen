@@ -195,7 +195,7 @@ const MESSAGES = {
     thinkingSet: (l) => `✅ Reasoning effort set to **${l}**.`,
     thinking: '💭 …',
     voiceSet: (on) => on ? '🔊 Spoken replies **on** in this channel.' : '🔇 Spoken replies **off** in this channel.',
-    voiceNeedsKey: '⚠️ Spoken replies need an OpenAI API key in the Discord plugin settings.',
+    voiceNeedsKey: '⚠️ Spoken replies need a voice provider set in the Discord plugin settings.',
     help: (name) => [
       `**${name} on Discord**`,
       'Write to me and I answer.',
@@ -217,7 +217,7 @@ const MESSAGES = {
     thinkingSet: (l) => `✅ Úroveň uvažování nastavena na **${l}**.`,
     thinking: '💭 …',
     voiceSet: (on) => on ? '🔊 Mluvené odpovědi v tomto kanálu **zapnuté**.' : '🔇 Mluvené odpovědi v tomto kanálu **vypnuté**.',
-    voiceNeedsKey: '⚠️ Mluvené odpovědi potřebují OpenAI API klíč v nastavení Discord pluginu.',
+    voiceNeedsKey: '⚠️ Mluvené odpovědi potřebují nastaveného poskytovatele hlasu v nastavení Discord pluginu.',
     help: (name) => [
       `**${name} na Discordu**`,
       'Napište mi a odpovím.',
@@ -251,11 +251,12 @@ class StateStore {
 
 class DiscordAdapter {
   name = 'discord';
-  constructor(cfg, logger, state, listModels, imageDirs = []) {
+  constructor(cfg, logger, state, listModels, imageDirs = [], resolveProvider = () => null) {
     this.cfg = cfg;
     this.log = logger;
     this.state = state;
     this.listModels = listModels;
+    this.resolveProvider = resolveProvider; // central brain-provider key resolver (voice STT/TTS)
     this.imageDirs = imageDirs; // where the image-gen/image-edit plugins store their generated files
     this.handler = null;
     this.ws = null;
@@ -454,7 +455,7 @@ class DiscordAdapter {
     if (notes.length) text = [text, ...notes].filter(Boolean).join('\n');
     // Voice messages / audio uploads: transcribe with Whisper when STT is enabled + keyed, else note.
     for (const clip of audio) {
-      const transcript = (this.cfg.stt && this.cfg.openaiApiKey)
+      const transcript = (this.cfg.stt && this.voiceCreds())
         ? await this.transcribe(clip).catch((e) => { this.log.error(`STT failed: ${e?.message ?? e}`); return null; })
         : null;
       const line = transcript ? `[🎙️ Voice message: "${transcript}"]` : `[Attachment: ${clip.name} (${clip.type})]`;
@@ -499,7 +500,7 @@ class DiscordAdapter {
       else if (reply) await this.reply(m.channel_id, reply, m.id);
       // Spoken reply (per-channel /voice, default cfg.tts): attach an MP3 of the answer. Best-effort —
       // a TTS failure never blocks the text reply that already went out.
-      if (reply && this.cfg.openaiApiKey && this.voiceEnabled(m.channel_id)) {
+      if (reply && this.voiceEnabled(m.channel_id) && this.voiceCreds()) {
         await this.speakReply(m.channel_id, reply, m.id).catch((e) => this.log.error(`TTS failed: ${e?.message ?? e}`));
       }
       if (reactions) { await this.unreact(m.channel_id, m.id, '👀').catch(() => {}); void this.react(m.channel_id, m.id, '✅').catch(() => {}); }
@@ -566,7 +567,7 @@ class DiscordAdapter {
         const opt = (i.data?.options ?? []).find((o) => o.name === 'state')?.value;
         const next = opt === 'on' ? true : opt === 'off' ? false : !this.voiceEnabled(i.channel_id); // no arg = toggle
         this.state.patch(i.channel_id, { voice: next });
-        const note = next && !this.cfg.openaiApiKey ? `\n${this.msg.voiceNeedsKey}` : '';
+        const note = next && !this.voiceCreds() ? `\n${this.msg.voiceNeedsKey}` : '';
         return this.respond(i, 4, { content: `${this.msg.voiceSet(next)}${note}`, flags: 64 });
       }
     }
@@ -630,9 +631,21 @@ class DiscordAdapter {
     return res.json();
   }
 
-  /** Transcribe one audio attachment via OpenAI Whisper — download the CDN clip, then multipart it to
-   *  /audio/transcriptions. Returns the trimmed text, or null when it's empty/oversized. */
+  /** Resolve the voice provider's credentials (central brain provider chosen in config) → { apiKey,
+   *  baseUrl }, or null when unset/keyless. baseUrl carries the audio endpoints (e.g. …/v1). */
+  voiceCreds() {
+    const id = typeof this.cfg.voiceProvider === 'string' ? this.cfg.voiceProvider.trim() : '';
+    if (!id) return null;
+    const p = this.resolveProvider(id);
+    if (!p?.apiKey || !p.baseUrl) return null;
+    return { apiKey: p.apiKey, baseUrl: String(p.baseUrl).replace(/\/+$/, '') };
+  }
+
+  /** Transcribe one audio attachment via Whisper — download the CDN clip, then multipart it to the
+   *  provider's /audio/transcriptions. Returns the trimmed text, or null when empty/oversized/keyless. */
   async transcribe(clip) {
+    const creds = this.voiceCreds();
+    if (!creds) return null;
     if ((clip.size ?? 0) > MAX_AUDIO_BYTES) throw new Error('audio over Whisper size limit');
     const dl = await fetch(clip.url);
     if (!dl.ok) throw new Error(`download HTTP ${dl.status}`);
@@ -640,10 +653,10 @@ class DiscordAdapter {
     const form = new FormData();
     form.append('file', new Blob([buf], { type: clip.type || 'audio/ogg' }), clip.name || 'audio.ogg');
     form.append('model', String(this.cfg.sttModel || 'whisper-1'));
-    const res = await fetch('https://api.openai.com/v1/audio/transcriptions', {
-      method: 'POST', headers: { authorization: `Bearer ${this.cfg.openaiApiKey}` }, body: form,
+    const res = await fetch(`${creds.baseUrl}/audio/transcriptions`, {
+      method: 'POST', headers: { authorization: `Bearer ${creds.apiKey}` }, body: form,
     });
-    if (!res.ok) throw new Error(`OpenAI STT HTTP ${res.status}`);
+    if (!res.ok) throw new Error(`STT HTTP ${res.status}`);
     const j = await res.json().catch(() => ({}));
     const t = typeof j?.text === 'string' ? j.text.trim() : '';
     return t || null;
@@ -655,16 +668,18 @@ class DiscordAdapter {
     return typeof s === 'boolean' ? s : this.cfg.tts === true;
   }
 
-  /** Synthesize the reply text (markdown-stripped) with OpenAI TTS and attach it as an MP3. */
+  /** Synthesize the reply text (markdown-stripped) with the provider's TTS and attach it as an MP3. */
   async speakReply(channelId, text, replyToId) {
+    const creds = this.voiceCreds();
+    if (!creds) return;
     const input = stripForSpeech(text).slice(0, TTS_MAX_CHARS);
     if (!input) return;
-    const res = await fetch('https://api.openai.com/v1/audio/speech', {
+    const res = await fetch(`${creds.baseUrl}/audio/speech`, {
       method: 'POST',
-      headers: { authorization: `Bearer ${this.cfg.openaiApiKey}`, 'content-type': 'application/json' },
+      headers: { authorization: `Bearer ${creds.apiKey}`, 'content-type': 'application/json' },
       body: JSON.stringify({ model: String(this.cfg.ttsModel || 'gpt-4o-mini-tts'), voice: String(this.cfg.ttsVoice || 'alloy'), input, response_format: 'mp3' }),
     });
-    if (!res.ok) throw new Error(`OpenAI TTS HTTP ${res.status}`);
+    if (!res.ok) throw new Error(`TTS HTTP ${res.status}`);
     const buf = Buffer.from(await res.arrayBuffer());
     await this.uploadAudio(channelId, '', [{ name: 'reply.mp3', data: buf }], replyToId ? { message_reference: { message_id: replyToId } } : {});
   }
@@ -872,7 +887,7 @@ export function register(ctx) {
   const state = new StateStore(join(dataDir, 'channel-state.json'));
   // The image-gen/image-edit plugins are data-dir siblings — their generated PNGs upload from there.
   const imageDirs = [join(dataDir, '..', 'image-gen'), join(dataDir, '..', 'image-edit')];
-  const adapter = new DiscordAdapter({ ...ctx.config, botToken: token }, ctx.logger, state, ctx.listModels, imageDirs);
+  const adapter = new DiscordAdapter({ ...ctx.config, botToken: token }, ctx.logger, state, ctx.listModels, imageDirs, ctx.resolveProvider);
   ctx.registerPlatform(adapter);
 
   // Raw Discord REST access for the OWNER: delete/purge messages, manage roles, edit channels —

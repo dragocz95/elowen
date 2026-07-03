@@ -22,9 +22,12 @@ describe('parseManifest', () => {
         { key: 'k5', label: 'T', type: 'textarea' },
         { key: 'k6', label: 'R', type: 'rolePolicies' },
         { key: 'model', label: 'Model', type: 'model' },
+        { key: 'prov', label: 'Provider', type: 'provider', providerType: 'openai' },
       ],
     });
     expect(m.configSchema?.map((f) => f.type)).toContain('model');
+    expect(m.configSchema?.map((f) => f.type)).toContain('provider');
+    expect(m.configSchema?.find((f) => f.type === 'provider')?.providerType).toBe('openai');
   });
   it('rejects an unknown config field type', () => {
     expect(() => parseManifest({ ...good, configSchema: [{ key: 'k', label: 'L', type: 'wat' }] })).toThrow();

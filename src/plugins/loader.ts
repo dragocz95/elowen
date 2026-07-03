@@ -4,7 +4,7 @@ import { pathToFileURL } from 'node:url';
 import { parseManifest } from './manifest.js';
 import type { PluginManifest } from './manifest.js';
 import { PluginRegistry } from './registry.js';
-import type { PluginLogger, PluginModule } from './api.js';
+import type { PluginLogger, PluginModule, ProviderCredentials } from './api.js';
 
 /** Localized overrides for a plugin's user-facing manifest strings, keyed by field key. The manifest's
  *  own English strings stay the source/fallback; a `<lang>.json` supplies translations for other locales. */
@@ -77,6 +77,8 @@ export interface LoadPluginsOptions {
   notify?: (text: string, channelId?: string) => Promise<void>;
   /** Model catalog provider exposed to plugins as ctx.listModels(). */
   listModels?: () => Promise<{ provider: string; providerLabel: string; model: string }[]>;
+  /** Central provider credential resolver exposed to plugins as ctx.resolveProvider(id). */
+  resolveProvider?: (id: string) => ProviderCredentials | null;
   logger: PluginLogger;
 }
 
@@ -102,7 +104,7 @@ export async function loadPlugins(opts: LoadPluginsOptions): Promise<PluginRegis
         // Stage the plugin's contributions in a scratch registry and merge only after a clean
         // register() — a plugin that throws halfway must not leave half its tools live.
         const staging = new PluginRegistry();
-        const ctx = staging.contextFor(name, opts.config?.[name] ?? {}, opts.logger, opts.dataRoot, opts.notify, opts.listModels);
+        const ctx = staging.contextFor(name, opts.config?.[name] ?? {}, opts.logger, opts.dataRoot, opts.notify, opts.listModels, opts.resolveProvider);
         await mod.register(ctx);
         registry.merge(staging);
         loaded.add(name);

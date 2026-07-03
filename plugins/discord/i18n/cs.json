@@ -53,9 +53,9 @@
       "label": "Zobrazit uvažování",
       "hint": "Streamovat uvažování modelu do průběžné bubliny (modely s extended thinking). Výchozí = vypnuto — na Discordu je to většinou šum."
     },
-    "openaiApiKey": {
-      "label": "OpenAI API klíč (hlas)",
-      "hint": "Pohání hlas: Whisper přepis příchozích hlasových zpráv a mluvené odpovědi. Prázdné = hlas vypnutý."
+    "voiceProvider": {
+      "label": "Poskytovatel hlasu",
+      "hint": "Který nakonfigurovaný OpenAI-kompatibilní poskytovatel pohání hlas (Whisper STT + TTS) — použije jeho klíč, žádný zvlášť. Poskytovatele přidáte v Nastavení → Brain. Prázdné = hlas vypnutý."
     },
     "stt": {
       "label": "Přepisovat hlasové zprávy",

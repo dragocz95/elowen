@@ -12,10 +12,11 @@ import { Field } from '../../components/ui/Field';
 import { Toggle } from '../../components/ui/Toggle';
 import { Checkbox } from '../../components/ui/Checkbox';
 import { ExecutorPicker } from '../../components/ui/ExecutorPicker';
+import { Segmented } from '../../components/ui/Segmented';
 import { LoadingState } from '../../components/ui/states';
 import { useToast } from '../../components/ui/Toast';
 import { useTranslation } from '../../lib/i18n';
-import { usePluginDetail, usePlugins, useProjects } from '../../lib/queries';
+import { usePluginDetail, usePlugins, useProjects, useConfig } from '../../lib/queries';
 import { useSavePluginConfig, useTogglePlugin } from '../../lib/mutations';
 import type { PluginConfigField, RolePolicy } from '../../lib/types';
 
@@ -182,6 +183,24 @@ function RolePoliciesEditor({ value, onChange }: { value: RolePolicy[]; onChange
   );
 }
 
+/** Provider picker for a `provider`-type field: choose one of the configured brain providers (its key
+ *  is reused as the plugin's credentials, so no key is entered twice). Filtered to those with a key set
+ *  and — when the field declares `providerType` — that type (e.g. `openai`, the only one with audio). */
+function ProviderPicker({ value, onChange, providerType }: { value: string; onChange: (v: string) => void; providerType?: string }) {
+  const { data: config } = useConfig();
+  const { t } = useTranslation();
+  const providers = (config?.brain?.providers ?? []).filter((p) => p.apiKeySet && (!providerType || p.type === providerType));
+  if (providers.length === 0) return <p className="text-xs text-text-muted">{t.pluginCfg.noProviders}</p>;
+  return (
+    <Segmented
+      size="sm"
+      options={providers.map((p) => ({ value: p.id, label: p.label }))}
+      value={value}
+      onChange={onChange}
+    />
+  );
+}
+
 // Connection-ish plain keys that belong with the secrets section (endpoints/ids), not with behavior.
 const CONNECTION_KEYS = new Set(['guildId', 'threadIds', 'notifyChannelId', 'channelId', 'apiUrl', 'baseUrl', 'url', 'endpoint', 'host', 'port', 'appId', 'clientId', 'webhookUrl']);
 
@@ -230,6 +249,9 @@ export function PluginDetail({ name, onBack }: { name: string; onBack: () => voi
       case 'model':
         // Brain-only picker: full Orca AI catalog (incl. OAuth accounts) — image gen never runs a CLI worker.
         return <ExecutorPicker value={String(values[f.key] ?? '')} onChange={(v) => set(f.key, v)} models={[]} allowDefault={false} kind="brain" />;
+      case 'provider':
+        // Reuse a configured brain provider's key as this plugin's credentials (voice, image gen).
+        return <ProviderPicker value={String(values[f.key] ?? '')} onChange={(v) => set(f.key, v)} providerType={f.providerType} />;
       case 'rolePolicies':
         return <RolePoliciesEditor value={Array.isArray(values[f.key]) ? (values[f.key] as RolePolicy[]) : []} onChange={(v) => set(f.key, v)} />;
       default:

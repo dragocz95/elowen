@@ -984,6 +984,7 @@ export const en = {
     save: 'Save configuration',
     saveError: 'Saving the configuration failed',
     secretSet: 'Set — leave empty to keep',
+    noProviders: 'No suitable provider — add one in Settings → Brain.',
     noRoles: 'No roles mapped yet — users without a mapped role are ignored.',
     roleNew: 'New role',
     roleProjectsCount: '{n} projects',

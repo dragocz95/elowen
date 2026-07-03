@@ -121,10 +121,12 @@ describe('skills plugin creator tools', () => {
 });
 
 describe('image-gen plugin', () => {
-  it('registers nothing without an API key, generates + saves a PNG with one', async () => {
+  const resolveProvider = (id: string) => id === 'oai'
+    ? { id, label: 'OpenAI', type: 'openai', baseUrl: 'https://api.openai.com/v1', apiKey: 'sk-test' } : null;
+  it('registers nothing without a provider, generates + saves a PNG with one', async () => {
     const dataRoot = freshDataRoot();
-    const none = await loadPlugins({ dirs: [pluginsDir], enabled: ['image-gen'], dataRoot, logger: log });
-    expect(none.tools).toHaveLength(0);
+    const none = await loadPlugins({ dirs: [pluginsDir], enabled: ['image-gen'], dataRoot, resolveProvider, logger: log });
+    expect(none.tools).toHaveLength(0); // no provider selected → tool not registered
 
     const origFetch = globalThis.fetch;
     globalThis.fetch = (async () =>
@@ -132,8 +134,8 @@ describe('image-gen plugin', () => {
     ) as typeof fetch;
     try {
       const reg = await loadPlugins({
-        dirs: [pluginsDir], enabled: ['image-gen'], dataRoot, logger: log,
-        config: { 'image-gen': { apiKey: 'sk-test' } },
+        dirs: [pluginsDir], enabled: ['image-gen'], dataRoot, logger: log, resolveProvider,
+        config: { 'image-gen': { provider: 'oai' } },
       });
       const tool = reg.tools.find((t) => t.name === 'generate_image')!;
       const out = asText(await tool.execute('t', { prompt: 'orca ve vlnách' }, undefined as never, undefined as never));

@@ -6,7 +6,7 @@
   "entry": "index.mjs",
   "requires": {
     "config": [
-      "apiKey"
+      "provider"
     ]
   },
   "provides": {
@@ -16,17 +16,12 @@
   },
   "configSchema": [
     {
-      "key": "apiKey",
-      "label": "OpenAI API key",
-      "type": "secret",
+      "key": "provider",
+      "label": "Provider",
+      "type": "provider",
+      "providerType": "openai",
       "required": true,
-      "hint": "platform.openai.com — needs access to the Images API."
-    },
-    {
-      "key": "baseUrl",
-      "label": "API base URL",
-      "type": "string",
-      "hint": "OpenAI-compatible Images API base (default: https://api.openai.com/v1). Point it at a proxy to use OAuth-backed models."
+      "hint": "Which configured OpenAI-compatible provider to use (reuses its key + base URL). Add providers in Settings → Brain."
     },
     {
       "key": "model",

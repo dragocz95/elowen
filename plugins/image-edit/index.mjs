@@ -27,10 +27,12 @@ function resolveBase(raw) {
   return s || 'https://api.openai.com/v1';
 }
 export function register(ctx) {
-  const apiKey = typeof ctx.config.apiKey === 'string' ? ctx.config.apiKey.trim() : '';
-  if (!apiKey) { ctx.logger.warn('enabled but no OpenAI API key configured — tool not registered'); return; }
+  // Credentials come from a configured brain provider (chosen in settings) — one central key.
+  const provider = ctx.resolveProvider(typeof ctx.config.provider === 'string' ? ctx.config.provider.trim() : '');
+  if (!provider?.apiKey) { ctx.logger.warn('enabled but no image provider configured — tool not registered'); return; }
+  const apiKey = provider.apiKey;
+  const base = resolveBase(provider.baseUrl);
   const model = resolveModel(ctx.config.model);
-  const base = resolveBase(ctx.config.baseUrl);
 
   ctx.registerTool(defineTool({
     name: 'edit_image', label: 'Edit image',

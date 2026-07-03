@@ -343,6 +343,12 @@ export function buildApp(opts: BuildOpts) {
   // Live provider resolver: adding a provider / connecting an account in Settings applies to the next
   // brain start without a daemon restart.
   const brainConfig = () => brainConfigFromOrca(config, brainAuth);
+  // Central provider credential resolver exposed to plugins (voice STT/TTS, image gen) so they reuse the
+  // operator's configured provider key instead of duplicating a secret. Reads live config each call.
+  const resolveProvider = (id: string) => {
+    const p = config.brainProviders().find((x) => x.id === id);
+    return p ? { id: p.id, label: p.label, type: p.type, baseUrl: p.baseUrl, apiKey: p.apiKey } : null;
+  };
   const brainStore = new BrainStore(db);
   const brain: BrainService | undefined = opts.dbPath !== ':memory:'
     ? new BrainService({
@@ -358,6 +364,7 @@ export function buildApp(opts: BuildOpts) {
             dirs: pluginDirs, enabled, config: pluginConfig, dataRoot: pluginDataRoot,
             notify: (t, channelId) => brain?.notify(t, channelId) ?? Promise.resolve(),
             listModels: () => { const c = brainConfig(); return c ? listBrainModels(c) : Promise.resolve([]); },
+            resolveProvider,
             logger: log,
           });
         },
@@ -395,6 +402,7 @@ export function buildApp(opts: BuildOpts) {
         dirs: pluginDirs, enabled, config: pluginConfig, dataRoot: pluginDataRoot,
         notify: (t, channelId) => brain?.notify(t, channelId) ?? Promise.resolve(),
         listModels: () => { const c = brainConfig(); return c ? listBrainModels(c) : Promise.resolve([]); },
+        resolveProvider,
         logger: log,
       });
     },

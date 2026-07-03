@@ -50,6 +50,11 @@ export interface PlatformAdapter {
 /** Scoped logger handed to a plugin (prefixed with the plugin name by the registry). */
 export interface PluginLogger { info(msg: string): void; warn(msg: string): void; error(msg: string): void }
 
+/** A configured brain provider's usable credentials, resolved by id from the central provider list —
+ *  so a plugin (voice STT/TTS, image gen) reads ONE shared key instead of duplicating it. `apiKey` is
+ *  null for OAuth providers (no static key). */
+export interface ProviderCredentials { id: string; label: string; type: string; baseUrl: string; apiKey: string | null }
+
 /** What a plugin's `register(ctx)` receives. Every `register*` call feeds the shared PluginRegistry. */
 export interface PluginContext {
   registerTool(tool: ToolDefinition): void;
@@ -86,6 +91,10 @@ export interface PluginContext {
   /** Pickable brain models across every configured provider (feeds the Discord /model dropdown).
    *  Empty when nothing is wired. */
   listModels(): Promise<{ provider: string; providerLabel: string; model: string }[]>;
+  /** Resolve a configured brain provider's credentials (baseUrl + apiKey) by id — lets a plugin reuse
+   *  the operator's central provider key (voice STT/TTS, image gen) instead of its own secret field.
+   *  Null when the id is unknown. Reads live config, so a key change applies on the next call. */
+  resolveProvider(id: string): ProviderCredentials | null;
   /** This plugin's own config slice (`config.plugins.config[name]`), secrets included daemon-side. */
   readonly config: Record<string, unknown>;
   readonly logger: PluginLogger;

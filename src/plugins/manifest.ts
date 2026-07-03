@@ -7,13 +7,17 @@ export const PLUGIN_API_VERSION = '1';
 /** One declared config field of a plugin — the settings UI renders a form from these. `secret` values
  *  are write-only (the API returns only whether they are set); `rolePolicies` renders the structured
  *  role → projects + prompt mapping editor (the Discord pattern borrowed from Hermes); `model` renders
- *  the grouped provider→model picker sourced from the user's configured model catalog. */
+ *  the grouped provider→model picker sourced from the user's configured model catalog; `provider`
+ *  renders a picker of configured brain providers (its value is the provider id) so the plugin reuses
+ *  that provider's central key — `providerType` narrows it to one type (e.g. `openai` for audio). */
 interface PluginConfigField {
   key: string;
   label: string;
-  type: 'string' | 'secret' | 'boolean' | 'number' | 'textarea' | 'rolePolicies' | 'model';
+  type: 'string' | 'secret' | 'boolean' | 'number' | 'textarea' | 'rolePolicies' | 'model' | 'provider';
   hint?: string;
   required?: boolean;
+  /** For `provider` fields: restrict the picker to providers of this type (e.g. `openai`). */
+  providerType?: string;
 }
 
 /** The parsed, validated shape of an `orca-plugin.json`. `provides` is declarative (display/validation
@@ -53,10 +57,11 @@ const ManifestSchema = Type.Object({
     type: Type.Union([
       Type.Literal('string'), Type.Literal('secret'), Type.Literal('boolean'),
       Type.Literal('number'), Type.Literal('textarea'), Type.Literal('rolePolicies'),
-      Type.Literal('model'),
+      Type.Literal('model'), Type.Literal('provider'),
     ]),
     hint: Type.Optional(Type.String()),
     required: Type.Optional(Type.Boolean()),
+    providerType: Type.Optional(Type.String()),
   }))),
 });
 

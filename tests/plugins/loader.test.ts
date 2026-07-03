@@ -28,6 +28,7 @@ describe('loadPlugins', () => {
     makePlugin(root, 'disabled', `export function register(ctx){ ctx.registerSkill(${SKILL('x')}); }`);
     makePlugin(root, 'badver', `export function register(ctx){ ctx.registerSkill(${SKILL('v')}); }`, '999');
     makePlugin(root, 'usesconfig', `export function register(ctx){ ctx.registerSystemPromptFragment(ctx.config.msg); }`);
+    makePlugin(root, 'usesprovider', `export function register(ctx){ const p = ctx.resolveProvider(ctx.config.pid); ctx.registerSystemPromptFragment(p ? p.baseUrl + '|' + p.apiKey : 'none'); }`);
   });
 
   it('loads only enabled plugins and aggregates their contributions', async () => {
@@ -54,6 +55,17 @@ describe('loadPlugins', () => {
   it('passes each plugin its own config slice', async () => {
     const reg = await loadPlugins({ dirs: [root], enabled: ['usesconfig'], config: { usesconfig: { msg: 'hi' } }, logger: log });
     expect(reg.promptFragments).toEqual(['hi']);
+  });
+
+  it('exposes the central provider resolver to plugins (ctx.resolveProvider)', async () => {
+    const resolveProvider = (id: string) => id === 'oai' ? { id, label: 'OpenAI', type: 'openai', baseUrl: 'https://api.openai.com/v1', apiKey: 'sk-test' } : null;
+    const reg = await loadPlugins({ dirs: [root], enabled: ['usesprovider'], config: { usesprovider: { pid: 'oai' } }, resolveProvider, logger: log });
+    expect(reg.promptFragments).toEqual(['https://api.openai.com/v1|sk-test']);
+  });
+
+  it('resolveProvider returns null for an unknown id (and defaults to null when unwired)', async () => {
+    const reg = await loadPlugins({ dirs: [root], enabled: ['usesprovider'], config: { usesprovider: { pid: 'ghost' } }, logger: log });
+    expect(reg.promptFragments).toEqual(['none']);
   });
 
   it('tolerates a missing directory', async () => {

@@ -58,12 +58,14 @@ describe('security-scan plugin', () => {
 });
 
 describe('image-edit plugin', () => {
-  it('registers nothing without an API key', async () => {
-    const reg = await loadPlugins({ dirs: [pluginsDir], enabled: ['image-edit'], dataRoot: freshDataRoot(), logger: log });
+  const resolveProvider = (id: string) => id === 'oai'
+    ? { id, label: 'OpenAI', type: 'openai', baseUrl: 'https://api.openai.com/v1', apiKey: 'sk-x' } : null;
+  it('registers nothing without a provider', async () => {
+    const reg = await loadPlugins({ dirs: [pluginsDir], enabled: ['image-edit'], dataRoot: freshDataRoot(), resolveProvider, logger: log });
     expect(reg.tools).toHaveLength(0);
   });
-  it('registers edit_image with an API key', async () => {
-    const reg = await loadPlugins({ dirs: [pluginsDir], enabled: ['image-edit'], dataRoot: freshDataRoot(), logger: log, config: { 'image-edit': { apiKey: 'sk-x' } } });
+  it('registers edit_image with a provider', async () => {
+    const reg = await loadPlugins({ dirs: [pluginsDir], enabled: ['image-edit'], dataRoot: freshDataRoot(), logger: log, resolveProvider, config: { 'image-edit': { provider: 'oai' } } });
     expect(reg.tools.map((t) => t.name)).toEqual(['edit_image']);
   });
 });

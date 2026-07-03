@@ -92,10 +92,11 @@
       "hint": "Stream the model's reasoning into the progress bubble (extended-thinking models). Off by default — it's usually noise on Discord."
     },
     {
-      "key": "openaiApiKey",
-      "label": "OpenAI API key (voice)",
-      "type": "secret",
-      "hint": "Powers voice: Whisper speech-to-text on incoming voice messages and text-to-speech replies. Leave empty to keep voice off."
+      "key": "voiceProvider",
+      "label": "Voice provider",
+      "type": "provider",
+      "providerType": "openai",
+      "hint": "Which configured OpenAI-compatible provider powers voice (Whisper STT + TTS) — reuses that provider's key, no separate key here. Add providers in Settings → Brain. Leave empty to keep voice off."
     },
     {
       "key": "stt",
