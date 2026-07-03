@@ -139,3 +139,76 @@ CREATE TABLE IF NOT EXISTS brain_messages (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_brain_messages_session ON brain_messages(session_id);
+
+-- Per-user, per-platform personality profiles: named prompt bodies that shape how Orca behaves on a
+-- given surface ('web'/'discord'/'cli', future keys allowed). A user may keep several named profiles
+-- per platform; the single active one per platform is pinned in personality_active_profiles. user_id
+-- is INTEGER (joins users.id) — the spec's TEXT predates Orca's integer user ids.
+CREATE TABLE IF NOT EXISTS personality_profiles (
+  id INTEGER PRIMARY KEY,
+  user_id INTEGER NOT NULL,
+  platform TEXT NOT NULL,
+  name TEXT NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  tone TEXT NOT NULL DEFAULT '',
+  style TEXT NOT NULL DEFAULT '',
+  prompt TEXT NOT NULL,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(user_id, platform, name)
+);
+CREATE INDEX IF NOT EXISTS idx_personality_profiles_user_platform ON personality_profiles(user_id, platform);
+CREATE TABLE IF NOT EXISTS personality_active_profiles (
+  user_id INTEGER NOT NULL,
+  platform TEXT NOT NULL,
+  profile_id INTEGER NOT NULL,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (user_id, platform)
+);
+
+-- Orca RAW memory (v1: user-scoped only). Durable facts/preferences/instructions/corrections about a
+-- user. Vectors live inline as packed Float32 BLOBs in memory_embeddings (no external vector DB).
+-- Deletes are SOFT (status='deleted') so the UI can restore; every mutation is audited in memory_events.
+CREATE TABLE IF NOT EXISTS memories (
+  id INTEGER PRIMARY KEY,
+  user_id INTEGER NOT NULL,
+  body TEXT NOT NULL,
+  kind TEXT NOT NULL DEFAULT 'fact',
+  importance INTEGER NOT NULL DEFAULT 3,
+  confidence REAL NOT NULL DEFAULT 0.8,
+  source TEXT NOT NULL DEFAULT 'agent',
+  status TEXT NOT NULL DEFAULT 'active',
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  last_used_at TEXT,
+  use_count INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_memories_user_status ON memories(user_id, status);
+-- One embedding per memory. content_hash pins which body text was embedded, so a body edit can mark the
+-- vector stale and enqueue a re-embed. ON DELETE CASCADE cleans vectors if a memory is ever hard-deleted.
+CREATE TABLE IF NOT EXISTS memory_embeddings (
+  memory_id INTEGER PRIMARY KEY,
+  provider TEXT NOT NULL,
+  model TEXT NOT NULL,
+  dimensions INTEGER NOT NULL,
+  vector BLOB NOT NULL,
+  content_hash TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  FOREIGN KEY (memory_id) REFERENCES memories(id) ON DELETE CASCADE
+);
+-- Append-only audit of every memory mutation (add/update/merge/delete/restore). before/after are JSON
+-- snapshots; actor is 'agent'|'user:<id>'|'admin:<id>'. memory_id is nullable so a purge still audits.
+CREATE TABLE IF NOT EXISTS memory_events (
+  id INTEGER PRIMARY KEY,
+  memory_id INTEGER,
+  user_id INTEGER NOT NULL,
+  action TEXT NOT NULL,
+  before_json TEXT,
+  after_json TEXT,
+  actor TEXT NOT NULL,
+  reason TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_memory_events_memory ON memory_events(memory_id);
+CREATE INDEX IF NOT EXISTS idx_memory_events_user ON memory_events(user_id, id DESC);
