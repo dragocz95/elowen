@@ -1,7 +1,7 @@
 'use client';
 import { useState, useEffect } from 'react';
 import { useAutoSave } from '../../lib/useAutoSave';
-import { Cpu, Eye, Brain, SlidersHorizontal, MessageSquare, AtSign } from 'lucide-react';
+import { Eye, Brain, SlidersHorizontal, MessageSquare, AtSign } from 'lucide-react';
 import { ExecutorPicker } from '../../components/ui/ExecutorPicker';
 import { SettingCard } from '../../components/ui/SettingCard';
 import { Input } from '../../components/ui/Input';
@@ -23,7 +23,7 @@ export function CliSection() {
   const { t } = useTranslation();
 
   // The dropdown value pairs provider + model; '' = the server default. '::' never appears in ids.
-  const [selection, setSelection] = useState('');
+  // (The PRIMARY Orca AI chat model lives in Account → Profile now; this tab keeps the vision override.)
   const [visionSelection, setVisionSelection] = useState('');
   const [thinkingLevel, setThinkingLevel] = useState('');
   const [autoCompact, setAutoCompact] = useState(false);
@@ -34,7 +34,6 @@ export function CliSection() {
   const [seeded, setSeeded] = useState(false);
   useEffect(() => {
     if (data) {
-      setSelection(data.model ? `${data.modelProvider ?? ''}::${data.model}` : '');
       setVisionSelection(data.visionModel ? `${data.visionModelProvider ?? ''}::${data.visionModel}` : '');
       setThinkingLevel(data.thinkingLevel ?? '');
       setAutoCompact(data.autoCompact);
@@ -45,20 +44,19 @@ export function CliSection() {
     }
   }, [data]);
 
-  // Auto-persist shortly after any change (the daemon restarts a running brain with the new model).
+  // Auto-persist shortly after any change (the daemon restarts a running brain with the new settings).
+  // Sends only the fields this tab owns — the PATCH merges, so the Profile tab's chat-model pick stays.
   const persist = () => {
-    const [provider, ...rest] = selection.split('::');
     const [vProvider, ...vRest] = visionSelection.split('::');
     save.mutate(
       {
-        model: selection ? rest.join('::') : '', modelProvider: selection ? (provider ?? '') : '',
         visionModel: visionSelection ? vRest.join('::') : '', visionModelProvider: visionSelection ? (vProvider ?? '') : '',
         thinkingLevel, autoCompact, autoCompactAt, advisorStyle, discordUserId,
       },
       { onError: () => toast(t.cli.saveError, 'error') },
     );
   };
-  useAutoSave([selection, visionSelection, thinkingLevel, autoCompact, autoCompactAt, advisorStyle, discordUserId], persist, { ready: seeded });
+  useAutoSave([visionSelection, thinkingLevel, autoCompact, autoCompactAt, advisorStyle, discordUserId], persist, { ready: seeded });
 
   const thinkingOptions = ['', 'minimal', 'low', 'medium', 'high', 'xhigh'];
 
@@ -73,28 +71,12 @@ export function CliSection() {
 
   const options = models.data ?? [];
   // The picker speaks exec strings; this section stores provider::model — translate at the edges.
-  const selectedExec = options.find((o) => `${o.provider}::${o.model}` === selection)?.exec ?? '';
   const selectedVisionExec = options.find((o) => `${o.provider}::${o.model}` === visionSelection)?.exec ?? '';
 
   return (
     <>
       <div className="flex flex-col gap-4">
         <p className="text-xs text-text-muted">{t.cli.intro}</p>
-
-        <SettingCard title={t.cli.modelLabel} icon={Cpu} description={t.cli.modelHint}>
-          {/* Same grouped Orca AI picker as everywhere else (provider tabs + OAuth badge). The server
-              already scopes the catalog per-user, so what renders here is exactly what may run. */}
-          <ExecutorPicker
-            value={selectedExec}
-            onChange={(exec) => {
-              const o = options.find((x) => x.exec === exec);
-              setSelection(o ? `${o.provider}::${o.model}` : '');
-            }}
-            models={[]}
-            kind="brain"
-            defaultLabel={t.cli.serverDefaultOption.replace('{model}', data.serverDefault ?? '')}
-          />
-        </SettingCard>
 
         <SettingCard title={t.cli.visionModelLabel} icon={Eye} description={t.cli.visionModelHint}>
           <ExecutorPicker
