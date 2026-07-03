@@ -9,6 +9,9 @@ import {
   type BrainNode, type CategoryNode, type MemoryNode,
 } from './brainLayout';
 
+/** Neutral synapse tint for uncategorized / color-less categories — the app accent (a calm blue). */
+const ACCENT_BLUE = 'var(--color-accent)';
+
 /** Curved Bézier between two points, bowed slightly perpendicular so edges read as soft synapses rather
  *  than a straight web. Coordinates are viewBox percent (preserveAspectRatio="none" maps them to the box). */
 function synapsePath(x1: number, y1: number, x2: number, y2: number): string {
@@ -62,6 +65,15 @@ export function MemoryBrainMap({ memories, categories, onSelectMemory }: {
   const gid = (edgeId: string) => `${uid}-${edgeId.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
   const selectedNode = selected ? nodeById.get(selected) ?? null : null;
 
+  /** Each synapse is tinted with its category's own color: a hub's `category.color` drives both the
+   *  core→hub and hub→leaf fibers, falling back to accent-blue when the category has no color. Core→leaf
+   *  synapses (uncategorized memories) get a neutral accent-blue. Subtle, not neon. */
+  const edgeColor = (from: string, to: string): string => {
+    const hub = nodeById.get(to.startsWith('cat:') ? to : from);
+    if (hub && hub.kind === 'category') return (hub.category.color ?? '').trim() || ACCENT_BLUE;
+    return ACCENT_BLUE;
+  };
+
   return (
     <div className="brain-map @container">
       <BrainStyles />
@@ -88,11 +100,12 @@ export function MemoryBrainMap({ memories, categories, onSelectMemory }: {
                 const a = nodeById.get(e.from);
                 const b = nodeById.get(e.to);
                 if (!a || !b) return null;
+                const color = edgeColor(e.from, e.to);
                 return (
                   <linearGradient key={`g-${e.id}`} id={gid(e.id)} gradientUnits="userSpaceOnUse" x1={a.x} y1={a.y} x2={b.x} y2={b.y}>
-                    <stop offset="0%" stopColor={a.color} stopOpacity="0.9" />
-                    <stop offset="50%" stopColor="#ffffff" stopOpacity="0.72" />
-                    <stop offset="100%" stopColor={b.color} stopOpacity="0.9" />
+                    <stop offset="0%" stopColor={color} stopOpacity="0.9" />
+                    <stop offset="50%" stopColor={color} stopOpacity="0.5" />
+                    <stop offset="100%" stopColor={color} stopOpacity="0.9" />
                   </linearGradient>
                 );
               })}
@@ -172,7 +185,6 @@ function CoreNodeView({ label, x, y, lit, active, onSelect }: { label: string; x
       <span className="relative flex h-16 w-16 items-center justify-center rounded-full border border-accent/50 bg-black/40 backdrop-blur-[1px]">
         <span aria-hidden className="brain-core-pulse absolute inset-0 rounded-full" />
         <span aria-hidden className="absolute -inset-2 rounded-full" style={{ boxShadow: `0 0 34px 8px color-mix(in srgb, var(--color-accent) ${active ? 60 : 38}%, transparent)` }} />
-        <Brain size={26} className="relative text-accent" aria-hidden />
       </span>
       <span className={`rounded-md bg-black/55 px-2 py-0.5 text-[11px] font-semibold tracking-wide text-white backdrop-blur-sm transition-opacity ${active ? 'opacity-100' : 'opacity-85'}`}>
         {label}
