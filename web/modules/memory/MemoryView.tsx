@@ -1,8 +1,8 @@
 'use client';
 import { useMemo, useState } from 'react';
-import { Brain, Search, Plus, GitMerge, X, ListChecks, Sparkles, Hash, Gauge } from 'lucide-react';
-import type { Memory } from '../../lib/types';
-import { useMemories } from '../../lib/queries';
+import { Brain, Search, Plus, GitMerge, X, ListChecks, Sparkles, Hash, Gauge, Tags } from 'lucide-react';
+import type { Memory, MemoryCategory } from '../../lib/types';
+import { useMemories, useMemoryCategories } from '../../lib/queries';
 import { useCreateMemory, useMergeMemories } from '../../lib/mutations';
 import { apiErrorMessage } from '../../lib/orcaClient';
 import { ModuleHeader } from '../../components/ui/ModuleHeader';
@@ -19,8 +19,9 @@ import { useTranslation } from '../../lib/i18n';
 import { usePersistentState } from '../../lib/usePersistentState';
 import { MemoryDetail } from './MemoryDetail';
 import { MemoryOverview } from './MemoryOverview';
+import { CategoryManager } from './CategoryManager';
 import { RetrievalDebugPanel } from './RetrievalDebugPanel';
-import { memoryStatusTone, memoryStatusLabel, distinctKinds } from './memoryMeta';
+import { memoryStatusTone, memoryStatusLabel, distinctKinds, categoriesById, categorySwatch } from './memoryMeta';
 
 type Tab = 'list' | 'retrieval';
 type StatusFilter = 'active' | 'archived' | 'deleted' | 'all';
@@ -36,12 +37,18 @@ export function MemoryView() {
   const [status, setStatus] = usePersistentState<StatusFilter>('orca.memory.status', 'active', STATUS_VALUES);
   const [query, setQuery] = useState('');
   const [kind, setKind] = useState<string>('all');
+  // Category filter — 'all' | 'none' (uncategorized) | a stringified category id. Client-side over the
+  // loaded list, mirroring how `kind` narrows the same in-memory rows.
+  const [categoryFilter, setCategoryFilter] = useState<string>('all');
+  const [showCategories, setShowCategories] = useState(false);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [creating, setCreating] = useState(false);
   const [merging, setMerging] = useState(false);
 
   const memories = useMemories(status === 'all' ? undefined : { status });
+  const categories = useMemoryCategories();
+  const categoryById = useMemo(() => categoriesById(categories.data ?? []), [categories.data]);
 
   const kinds = useMemo(() => distinctKinds(memories.data ?? []), [memories.data]);
 
@@ -49,9 +56,11 @@ export function MemoryView() {
     const q = query.trim().toLowerCase();
     return (memories.data ?? [])
       .filter((m) => kind === 'all' || m.kind === kind)
+      .filter((m) => categoryFilter === 'all'
+        || (categoryFilter === 'none' ? m.category_id == null : m.category_id === Number(categoryFilter)))
       .filter((m) => !q || `${m.body} ${m.kind} ${m.source}`.toLowerCase().includes(q))
       .sort((a, b) => (b.updated_at > a.updated_at ? 1 : b.updated_at < a.updated_at ? -1 : 0));
-  }, [memories.data, kind, query]);
+  }, [memories.data, kind, categoryFilter, query]);
 
   const toggleSelect = (id: number) => setSelected((cur) => { const n = new Set(cur); n.has(id) ? n.delete(id) : n.add(id); return n; });
   const clearSelection = () => setSelected(new Set());
@@ -87,6 +96,26 @@ export function MemoryView() {
                 {kinds.map((k) => <option key={k} value={k}>{k}</option>)}
               </select>
             ) : null}
+            {(categories.data?.length ?? 0) > 0 ? (
+              <select
+                value={categoryFilter}
+                onChange={(e) => setCategoryFilter(e.target.value)}
+                aria-label={t.memory.categoryFilter}
+                className="h-9 rounded-md border border-border bg-surface px-3 text-sm text-text focus:border-accent focus:outline-none"
+              >
+                <option value="all">{t.memory.categoryAll}</option>
+                <option value="none">{t.memory.categoryUncategorized}</option>
+                {(categories.data ?? []).map((c) => <option key={c.id} value={String(c.id)}>{c.name}</option>)}
+              </select>
+            ) : null}
+            <Button
+              variant={showCategories ? 'accent' : 'default'}
+              icon={Tags}
+              aria-pressed={showCategories}
+              onClick={() => setShowCategories((v) => !v)}
+            >
+              {t.memory.categoriesTitle}
+            </Button>
             <Button variant="accent" icon={Plus} onClick={() => setCreating(true)}>{t.memory.newMemory}</Button>
           </>
         ) : null}
@@ -97,6 +126,7 @@ export function MemoryView() {
         : memories.isError ? <ErrorState message={t.common.daemonUnreachable} onRetry={() => memories.refetch()} />
         : (
           <div className="flex flex-col gap-5">
+            {showCategories ? <CategoryManager memories={memories.data ?? []} /> : null}
             <MemoryOverview memories={memories.data ?? []} />
 
             {(memories.data?.length ?? 0) === 0 ? (
@@ -112,6 +142,7 @@ export function MemoryView() {
                       <MemoryRow
                         key={m.id}
                         memory={m}
+                        category={m.category_id != null ? categoryById.get(m.category_id) : undefined}
                         active={selectedId === m.id}
                         selected={selected.has(m.id)}
                         onSelect={() => setSelectedId(m.id)}
@@ -159,9 +190,9 @@ export function MemoryView() {
   );
 }
 
-/** One memory in the list: selection checkbox, body snippet, kind/importance/usage meta. */
-function MemoryRow({ memory, active, selected, onSelect, onToggleSelect }: {
-  memory: Memory; active: boolean; selected: boolean; onSelect: () => void; onToggleSelect: () => void;
+/** One memory in the list: selection checkbox, body snippet, category chip + kind/importance/usage meta. */
+function MemoryRow({ memory, category, active, selected, onSelect, onToggleSelect }: {
+  memory: Memory; category?: MemoryCategory; active: boolean; selected: boolean; onSelect: () => void; onToggleSelect: () => void;
 }) {
   const { t } = useTranslation();
   return (
@@ -173,6 +204,12 @@ function MemoryRow({ memory, active, selected, onSelect, onToggleSelect }: {
         <p className="line-clamp-2 text-sm leading-snug text-text">{memory.body}</p>
         <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
           {memory.status !== 'active' ? <Badge tone={memoryStatusTone(memory.status)}>{memoryStatusLabel(t, memory.status)}</Badge> : null}
+          {category ? (
+            <span className="inline-flex items-center gap-1 rounded-md border border-border bg-elevated px-2 py-0.5 text-[11px] font-medium text-text">
+              <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: categorySwatch(category.color) }} aria-hidden />
+              {category.name}
+            </span>
+          ) : null}
           {memory.kind ? <Badge><Hash size={10} className="mr-0.5" aria-hidden />{memory.kind}</Badge> : null}
           <span className="inline-flex items-center gap-1 font-mono text-[10px] text-text-muted"><Gauge size={11} aria-hidden />{memory.importance}/5</span>
           {memory.use_count > 0 ? <span className="font-mono text-[10px] text-text-muted">{t.memory.useCount.replace('{n}', String(memory.use_count))}</span> : null}

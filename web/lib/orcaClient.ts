@@ -1,4 +1,4 @@
-import type { Task, Mission, CreateTaskInput, UpdateTaskInput, PlanInput, PlanSubmitResult, PlanJob, InsertPhasesInput, InsertPhasesResult, EngageInput, OrcaConfig, ConfigPatch, MissionDetail, User, UserPatch, ProfilePatch, UserPrompt, PersonalityProfile, PersonalityCreate, PersonalityPatch, PersonalityPreview, CliSettings, PluginInfo, PluginDetail, PluginContributions, PluginLogs, PluginHookExecutions, CronJob, DiscordChannelOption, PluginSkill, BrainModelOption, BrainSessionInfo, BrainSearchHit, BrainMessage, BrainStatus, OAuthFlowState, AuthResult, ActivityEvent, PendingAsk, Project, ProjectGit, CommitLogEntry, CommitFileChange, Note, CliDetectionResult, GithubAuthStatus, TokenUsage, ModelUsage, ResetUsageResult, FileNode, DirListing, SessionInfo, SystemInfo, SkillsInfo, SkillInstallResult, Memory, MemoryEvent, MemoryCreate, MemoryPatch, MemoryFilters, EmbeddingSettings, EmbeddingSettingsPatch, RetrievalResult } from './types';
+import type { Task, Mission, CreateTaskInput, UpdateTaskInput, PlanInput, PlanSubmitResult, PlanJob, InsertPhasesInput, InsertPhasesResult, EngageInput, OrcaConfig, ConfigPatch, MissionDetail, User, UserPatch, ProfilePatch, UserPrompt, PersonalityProfile, PersonalityCreate, PersonalityPatch, PersonalityPreview, CliSettings, PluginInfo, PluginDetail, PluginContributions, PluginLogs, PluginHookExecutions, CronJob, DiscordChannelOption, PluginSkill, BrainModelOption, BrainSessionInfo, BrainSearchHit, BrainMessage, BrainStatus, OAuthFlowState, AuthResult, ActivityEvent, PendingAsk, Project, ProjectGit, CommitLogEntry, CommitFileChange, Note, CliDetectionResult, GithubAuthStatus, TokenUsage, ModelUsage, ResetUsageResult, FileNode, DirListing, SessionInfo, SystemInfo, SkillsInfo, SkillInstallResult, Memory, MemoryEvent, MemoryCreate, MemoryPatch, MemoryFilters, EmbeddingSettings, EmbeddingSettingsPatch, RetrievalResult, MemoryCategory, MemoryCategoryCreate, MemoryCategoryPatch, CategorizationSettings, CategorizationSettingsPatch } from './types';
 import { clearToken } from './token';
 
 // Same-origin BFF base: the browser talks only to this web origin's /api proxy, which injects the
@@ -242,6 +242,8 @@ export const orcaClient = {
     if (params?.q) qs.set('q', params.q);
     if (params?.limit != null) qs.set('limit', String(params.limit));
     if (params?.offset != null) qs.set('offset', String(params.offset));
+    // categoryId: key present (even null) filters; null/empty → uncategorized, number → that category.
+    if (params && 'categoryId' in params) qs.set('categoryId', params.categoryId == null ? '' : String(params.categoryId));
     const s = qs.toString();
     return req<Memory[]>(`/memory${s ? `?${s}` : ''}`);
   },
@@ -258,6 +260,16 @@ export const orcaClient = {
   retrievalDebug: (query: string) => req<RetrievalResult>('/memory/retrieve', json({ query })),
   /** Re-embed the caller's memories that still need an embedding (bounded, best-effort). */
   reindexMemories: () => req<{ embedded: number }>('/memory/reindex', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }),
+  /** The caller's own memory categories (built-in + user-defined). */
+  memoryCategories: () => req<MemoryCategory[]>('/memory/categories'),
+  createMemoryCategory: (body: MemoryCategoryCreate) => req<MemoryCategory>('/memory/categories', json(body)),
+  updateMemoryCategory: (cid: number, patch: MemoryCategoryPatch) => req<MemoryCategory>(`/memory/categories/${cid}`, json(patch, 'PATCH')),
+  deleteMemoryCategory: (cid: number) => req<{ ok: boolean }>(`/memory/categories/${cid}`, { method: 'DELETE' }),
+  /** Workspace-level categorization provider settings. */
+  categorizationSettings: () => req<CategorizationSettings>('/memory/categorization'),
+  saveCategorizationSettings: (patch: CategorizationSettingsPatch) => req<CategorizationSettings>('/memory/categorization', json(patch, 'PUT')),
+  /** Re-run categorization over the caller's memories (owner-scoped, bounded). */
+  reclassifyMemories: (body?: { limit?: number; includeCategorized?: boolean }) => req<{ scanned: number; classified: number }>('/memory/reclassify', json(body ?? {})),
   embeddingSettings: () => req<EmbeddingSettings>('/memory/embedding'),
   saveEmbeddingSettings: (patch: EmbeddingSettingsPatch) => req<EmbeddingSettings>('/memory/embedding', json(patch, 'PUT')),
   /** Admin: probe the embedding provider with a tiny sample. An embed failure resolves 200 `{ ok:false }`

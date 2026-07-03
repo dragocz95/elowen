@@ -28,6 +28,8 @@ export const QUERY_KEYS = {
   usageByModel: ['usage-by-model'] as const,
   memories: ['memories'] as const,
   embeddingSettings: ['embedding-settings'] as const,
+  memoryCategories: ['memory-categories'] as const,
+  categorizationSettings: ['categorization-settings'] as const,
 };
 
 /** The current user's advisor session state, polled so the dock reflects start/stop/crash. */
@@ -298,6 +300,14 @@ export const useMemoryEvents = (id: number | null) =>
 /** Workspace embedding provider settings (Memory → embedding section). Mutations invalidate this key. */
 export const useEmbeddingSettings = () =>
   useQuery({ queryKey: QUERY_KEYS.embeddingSettings, queryFn: orcaClient.embeddingSettings });
+
+/** The caller's own memory categories (built-in + user-defined). Category/reclassify mutations invalidate this key. */
+export const useMemoryCategories = () =>
+  useQuery({ queryKey: QUERY_KEYS.memoryCategories, queryFn: orcaClient.memoryCategories });
+
+/** Workspace categorization provider settings (Memory → categorization section). Mutations invalidate this key. */
+export const useCategorizationSettings = () =>
+  useQuery({ queryKey: QUERY_KEYS.categorizationSettings, queryFn: orcaClient.categorizationSettings });
 
 export const useCliStatus = () =>
   useQuery<CliDetectionResult>({

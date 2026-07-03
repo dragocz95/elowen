@@ -405,6 +405,39 @@ export interface Memory {
   updated_at: string;
   last_used_at: string | null;
   use_count: number;
+  category_id: number | null;
+}
+
+/** One user-defined (or built-in) memory category (mirrors the daemon's MemoryCategoryRow). Per-user.
+ *  `is_builtin` is 0/1 and `color` is a hex/token string used by the UI badge. */
+export interface MemoryCategory {
+  id: number;
+  user_id: number;
+  name: string;
+  description: string;
+  color: string;
+  is_builtin: number;
+  created_at: string;
+}
+
+/** Body for POST /memory/categories — only `name` is required (409 on duplicate name). */
+export interface MemoryCategoryCreate { name: string; description?: string; color?: string }
+/** Any subset of the mutable fields for PATCH /memory/categories/:cid (409 on duplicate name). */
+export interface MemoryCategoryPatch { name?: string; description?: string; color?: string }
+
+/** Workspace-level categorization provider settings (GET /memory/categorization). `configured` reflects
+ *  whether provider/model/baseUrl are complete enough to classify. */
+export interface CategorizationSettings {
+  providerId: string;
+  model: string;
+  baseUrl: string;
+  configured: boolean;
+}
+/** Patch for PUT /memory/categorization (admin-gated). */
+export interface CategorizationSettingsPatch {
+  providerId?: string;
+  model?: string;
+  baseUrl?: string;
 }
 
 /** One entry of a memory's audit trail (mirrors the daemon's MemoryEventRow). `memory_id` is null for
@@ -424,9 +457,10 @@ export interface MemoryEvent {
 /** Body for POST /memory — only `body` is required. */
 export interface MemoryCreate { body: string; kind?: string; importance?: number; confidence?: number }
 /** Any subset of the mutable fields for PATCH /memory/:id. */
-export interface MemoryPatch { body?: string; kind?: string; importance?: number; confidence?: number; status?: 'active' | 'archived' | 'deleted' }
-/** Query filters for GET /memory. A non-blank `q` switches the daemon to fulltext search. */
-export interface MemoryFilters { status?: string; kind?: string; q?: string; limit?: number; offset?: number }
+export interface MemoryPatch { body?: string; kind?: string; importance?: number; confidence?: number; status?: 'active' | 'archived' | 'deleted'; categoryId?: number | null }
+/** Query filters for GET /memory. A non-blank `q` switches the daemon to fulltext search. `categoryId`
+ *  present-and-null/empty lists uncategorized, a number lists that category, absent (key omitted) lists all. */
+export interface MemoryFilters { status?: string; kind?: string; q?: string; limit?: number; offset?: number; categoryId?: number | null }
 
 /** Workspace-level embedding provider settings (GET /memory/embedding). `configured` reflects whether the
  *  provider/model/baseUrl are complete enough to embed. */

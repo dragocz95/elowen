@@ -2,7 +2,7 @@
 import { useEffect, useState } from 'react';
 import { Brain, Pencil, Trash2, RotateCcw, Check, X, Hash, Gauge, ShieldCheck, Clock, Activity } from 'lucide-react';
 import type { Memory } from '../../lib/types';
-import { useMemory } from '../../lib/queries';
+import { useMemory, useMemoryCategories } from '../../lib/queries';
 import { useUpdateMemory, useDeleteMemory, useRestoreMemory } from '../../lib/mutations';
 import { apiErrorMessage } from '../../lib/orcaClient';
 import { useToast } from '../../components/ui/Toast';
@@ -15,7 +15,7 @@ import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { EmptyState } from '../../components/ui/states';
 import { useTranslation } from '../../lib/i18n';
 import { formatTaskTime } from '../../lib/format';
-import { memoryStatusTone, memoryStatusLabel, pct01 } from './memoryMeta';
+import { memoryStatusTone, memoryStatusLabel, pct01, categorySwatch } from './memoryMeta';
 import { MemoryAuditFeed } from './MemoryAuditFeed';
 
 /** Persistent memory detail: full editable body, metadata, lifecycle actions and audit trail. Resolves
@@ -35,20 +35,24 @@ function MemoryDetailBody({ memory, t, locale }: { memory: Memory; t: ReturnType
   const update = useUpdateMemory();
   const del = useDeleteMemory();
   const restore = useRestoreMemory();
+  const categories = useMemoryCategories();
 
   const [editing, setEditing] = useState(false);
   const [body, setBody] = useState(memory.body);
   const [kind, setKind] = useState(memory.kind);
   const [importance, setImportance] = useState(memory.importance);
   const [confidence, setConfidence] = useState(memory.confidence);
+  const [categoryId, setCategoryId] = useState<number | null>(memory.category_id);
   const [confirmDelete, setConfirmDelete] = useState(false);
 
   // Re-sync the draft whenever the underlying memory changes (a save/reselect), unless mid-edit.
   useEffect(() => {
     if (editing) return;
     setBody(memory.body); setKind(memory.kind); setImportance(memory.importance); setConfidence(memory.confidence);
+    setCategoryId(memory.category_id);
   }, [memory, editing]);
 
+  const category = memory.category_id != null ? (categories.data ?? []).find((c) => c.id === memory.category_id) : undefined;
   const isDeleted = memory.status === 'deleted';
   const created = formatTaskTime(memory.created_at, Date.now(), locale);
   const updated = formatTaskTime(memory.updated_at, Date.now(), locale);
@@ -56,13 +60,14 @@ function MemoryDetailBody({ memory, t, locale }: { memory: Memory; t: ReturnType
 
   const cancel = () => {
     setBody(memory.body); setKind(memory.kind); setImportance(memory.importance); setConfidence(memory.confidence);
+    setCategoryId(memory.category_id);
     setEditing(false);
   };
   const save = () => {
     const next = body.trim();
     if (!next) { toast(t.memory.bodyRequired, 'error'); return; }
     update.mutate(
-      { id: memory.id, patch: { body: next, kind: kind.trim(), importance, confidence } },
+      { id: memory.id, patch: { body: next, kind: kind.trim(), importance, confidence, categoryId } },
       { onSuccess: () => { toast(t.memory.saved); setEditing(false); }, onError: (e) => toast(apiErrorMessage(e), 'error') },
     );
   };
@@ -89,6 +94,12 @@ function MemoryDetailBody({ memory, t, locale }: { memory: Memory; t: ReturnType
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-1.5">
               <Badge tone={memoryStatusTone(memory.status)}>{memoryStatusLabel(t, memory.status)}</Badge>
+              {category ? (
+                <span className="inline-flex items-center gap-1 rounded-md border border-border bg-elevated px-2 py-0.5 text-[11px] font-medium text-text">
+                  <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: categorySwatch(category.color) }} aria-hidden />
+                  {category.name}
+                </span>
+              ) : null}
               {memory.kind ? <Badge><Hash size={10} className="mr-0.5" aria-hidden />{memory.kind}</Badge> : null}
               {memory.source ? <Badge tone="muted">{memory.source}</Badge> : null}
             </div>
@@ -136,6 +147,19 @@ function MemoryDetailBody({ memory, t, locale }: { memory: Memory; t: ReturnType
           <Section label={t.memory.fieldKind}>
             <Input value={kind} onChange={(e) => setKind(e.target.value)} placeholder={t.memory.fieldKindPlaceholder} />
           </Section>
+          {(categories.data?.length ?? 0) > 0 ? (
+            <Section label={t.memory.categoryFilter}>
+              <select
+                value={categoryId == null ? '' : String(categoryId)}
+                onChange={(e) => setCategoryId(e.target.value === '' ? null : Number(e.target.value))}
+                aria-label={t.memory.categoryFilter}
+                className="h-9 w-full rounded-md border border-border bg-surface px-3 text-sm text-text focus:border-accent focus:outline-none"
+              >
+                <option value="">{t.memory.categoryChipNone}</option>
+                {(categories.data ?? []).map((c) => <option key={c.id} value={String(c.id)}>{c.name}</option>)}
+              </select>
+            </Section>
+          ) : null}
           <div className="grid grid-cols-1 gap-4 @sm:grid-cols-2">
             <RankSlider label={t.memory.fieldImportance} icon={Gauge} value={importance} onChange={setImportance} />
             <WeightSlider label={t.memory.fieldConfidence} icon={ShieldCheck} value={confidence} onChange={setConfidence} />

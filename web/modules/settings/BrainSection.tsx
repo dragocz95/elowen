@@ -7,6 +7,7 @@ import { Input } from '../../components/ui/Input';
 import { Field } from '../../components/ui/Field';
 import { Segmented } from '../../components/ui/Segmented';
 import { ModelIcon } from '../../components/ui/ModelIcon';
+import { ModelPillsPicker } from '../../components/ui/ModelPillsPicker';
 import { LoadingState } from '../../components/ui/states';
 import { useToast } from '../../components/ui/Toast';
 import { useTranslation } from '../../lib/i18n';
@@ -77,41 +78,6 @@ function OAuthConnectDialog({ flow: initial, onDone }: { flow: OAuthFlowState; o
   );
 }
 
-/** Clickable model pills over a catalog, with a search box once the list gets long. Each pill carries
- *  its brand icon (ModelIcon matches by name). Selected pills read as active; empty selection means
- *  "the whole catalog". Shared by the OAuth account picker and the API-provider dialog. */
-function ModelPillsPicker({ catalog, selected, onChange }: {
-  catalog: string[]; selected: string[]; onChange: (models: string[]) => void;
-}) {
-  const { t } = useTranslation();
-  const [query, setQuery] = useState('');
-  const picked = new Set(selected);
-  const toggle = (m: string) => onChange(picked.has(m) ? selected.filter((x) => x !== m) : [...selected, m]);
-  const q = query.trim().toLowerCase();
-  const shown = q ? catalog.filter((m) => m.toLowerCase().includes(q)) : catalog;
-  return (
-    <div className="flex flex-col gap-2">
-      {catalog.length > 8 ? (
-        <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={t.brain.searchModels} aria-label={t.brain.searchModels} />
-      ) : null}
-      <div className="flex max-h-80 flex-wrap content-start gap-1.5 overflow-y-auto">
-        {shown.map((m) => {
-          const on = picked.has(m);
-          return (
-            <button key={m} type="button" onClick={() => toggle(m)} aria-pressed={on}
-              className={`inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 font-mono text-xs transition-colors ${on ? 'border-accent/50 bg-accent/15 text-accent' : 'border-border bg-elevated text-text-muted hover:border-border-strong hover:text-text'}`}
-              style={{ transitionDuration: 'var(--motion-fast)' }}>
-              <ModelIcon name={m} size={14} />{m}
-            </button>
-          );
-        })}
-        {shown.length === 0 ? <span className="text-xs italic text-text-muted">{t.brain.searchNoMatch}</span> : null}
-      </div>
-      <span className="text-tiny text-text-muted">{picked.size === 0 ? t.brain.pickModelsAll : t.brain.pickModelsCount.replace('{n}', String(picked.size))}</span>
-    </div>
-  );
-}
-
 /** The OAuth account's built-in catalog, loaded once, rendered as clickable pills. */
 function OauthCatalogPicker({ type, selected, onChange }: {
   type: BrainProviderType; selected: string[]; onChange: (models: string[]) => void;
@@ -122,7 +88,7 @@ function OauthCatalogPicker({ type, selected, onChange }: {
     void orcaClient.brainOauthCatalog(type).then((r) => setCatalog(r.models)).catch(() => setCatalog([]));
   }, [type]);
   if (catalog === null) return <LoadingState />;
-  return <ModelPillsPicker catalog={catalog} selected={selected} onChange={onChange} />;
+  return <ModelPillsPicker mode="multi" catalog={catalog} value={selected} onChange={onChange} />;
 }
 
 /** Model picker for a connected OAuth account. The selection is stored as an explicit provider
@@ -205,7 +171,7 @@ function ProviderModal({ draft: initial, existingIds, onSave, onClose }: {
           {probed === 'loading' ? (
             <LoadingState />
           ) : Array.isArray(probed) ? (
-            <ModelPillsPicker catalog={probed} selected={selectedModels.filter((m) => probed.includes(m))} onChange={(models) => setD({ ...d, models: models.join('\n') })} />
+            <ModelPillsPicker mode="multi" catalog={probed} value={selectedModels.filter((m) => probed.includes(m))} onChange={(models) => setD({ ...d, models: models.join('\n') })} />
           ) : (
             <textarea
               value={d.models}

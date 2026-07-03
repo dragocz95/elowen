@@ -1,6 +1,6 @@
 import type { Tone } from '../../components/ui/tone';
 import type { LocaleDict } from '../../lib/i18n/types';
-import type { Memory, MemoryEvent } from '../../lib/types';
+import type { Memory, MemoryCategory, MemoryEvent } from '../../lib/types';
 
 /** Memory status → badge tone. Single source of truth for how a memory's lifecycle colors. */
 const STATUS_TONE: Record<Memory['status'], Tone> = {
@@ -50,6 +50,38 @@ export function distinctKinds(memories: Memory[]): string[] {
 /** A 0..1 weight as an integer percent for compact display. */
 export function pct01(v: number): number {
   return Math.round(Math.max(0, Math.min(1, v)) * 100);
+}
+
+/** Fallback swatch color for a category whose `color` is blank. A muted token so the chip still reads. */
+const CATEGORY_FALLBACK_COLOR = 'var(--color-text-muted)';
+
+/** Preset swatch palette offered in the category create/edit modal — tasteful, spread across the wheel. */
+export const CATEGORY_COLORS: readonly string[] = [
+  '#6366f1', '#8b5cf6', '#ec4899', '#ef4444', '#f97316',
+  '#eab308', '#22c55e', '#14b8a6', '#0ea5e9', '#64748b',
+];
+
+/** A category's swatch color, falling back to a muted token when the stored color is blank. */
+export function categorySwatch(color: string | null | undefined): string {
+  const c = (color ?? '').trim();
+  return c || CATEGORY_FALLBACK_COLOR;
+}
+
+/** Per-category memory counts (by category id) plus the uncategorized tally. Pure — drives the manager
+ *  chips and any breakdown without a second server round-trip. */
+export function countByCategory(memories: Memory[]): { byId: Map<number, number>; uncategorized: number } {
+  const byId = new Map<number, number>();
+  let uncategorized = 0;
+  for (const m of memories) {
+    if (m.category_id == null) uncategorized += 1;
+    else byId.set(m.category_id, (byId.get(m.category_id) ?? 0) + 1);
+  }
+  return { byId, uncategorized };
+}
+
+/** Index categories by id for O(1) chip resolution in list rows / detail. */
+export function categoriesById(categories: MemoryCategory[]): Map<number, MemoryCategory> {
+  return new Map(categories.map((c) => [c.id, c]));
 }
 
 /** One bar in an overview breakdown: label, absolute count, and a max-normalized 0..100 width. */

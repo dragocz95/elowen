@@ -2,7 +2,7 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { orcaClient } from './orcaClient';
 import { QUERY_KEYS } from './queries';
-import type { CreateTaskInput, UpdateTaskInput, PlanInput, EngageInput, ConfigPatch, InsertPhasesInput, UserPatch, ProfilePatch, CliSettings, CronJob, PersonalityCreate, PersonalityPatch, MemoryCreate, MemoryPatch, EmbeddingSettingsPatch } from './types';
+import type { CreateTaskInput, UpdateTaskInput, PlanInput, EngageInput, ConfigPatch, InsertPhasesInput, UserPatch, ProfilePatch, CliSettings, CronJob, PersonalityCreate, PersonalityPatch, MemoryCreate, MemoryPatch, EmbeddingSettingsPatch, MemoryCategoryCreate, MemoryCategoryPatch, CategorizationSettingsPatch } from './types';
 
 export function useSpawn() {
   const qc = useQueryClient();
@@ -421,6 +421,46 @@ export function useSaveEmbeddingSettings() {
   return useMutation({
     mutationFn: (patch: EmbeddingSettingsPatch) => orcaClient.saveEmbeddingSettings(patch),
     onSuccess: () => qc.invalidateQueries({ queryKey: QUERY_KEYS.embeddingSettings }),
+  });
+}
+/** Create a memory category. Refreshes the category list and the memory list (badges/filters). */
+export function useCreateMemoryCategory() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: MemoryCategoryCreate) => orcaClient.createMemoryCategory(body),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: QUERY_KEYS.memoryCategories }); qc.invalidateQueries({ queryKey: QUERY_KEYS.memories }); },
+  });
+}
+/** Patch a memory category (name/description/color). Refreshes the category list and the memory list. */
+export function useUpdateMemoryCategory() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { cid: number; patch: MemoryCategoryPatch }) => orcaClient.updateMemoryCategory(v.cid, v.patch),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: QUERY_KEYS.memoryCategories }); qc.invalidateQueries({ queryKey: QUERY_KEYS.memories }); },
+  });
+}
+/** Delete a memory category (clears category_id on referencing memories). Refreshes categories and memories. */
+export function useDeleteMemoryCategory() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (cid: number) => orcaClient.deleteMemoryCategory(cid),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: QUERY_KEYS.memoryCategories }); qc.invalidateQueries({ queryKey: QUERY_KEYS.memories }); },
+  });
+}
+/** Save the workspace categorization provider settings (admin). Refreshes the settings query. */
+export function useSaveCategorizationSettings() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (patch: CategorizationSettingsPatch) => orcaClient.saveCategorizationSettings(patch),
+    onSuccess: () => qc.invalidateQueries({ queryKey: QUERY_KEYS.categorizationSettings }),
+  });
+}
+/** Re-run categorization over the caller's memories. Refreshes the memory list (new category assignments). */
+export function useReclassifyMemories() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body?: { limit?: number; includeCategorized?: boolean }) => orcaClient.reclassifyMemories(body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: QUERY_KEYS.memories }),
   });
 }
 export function useAdvisorStart() {

@@ -1,0 +1,160 @@
+'use client';
+import { useState } from 'react';
+import { Plus, Pencil, Trash2, Tags } from 'lucide-react';
+import type { Memory, MemoryCategory } from '../../lib/types';
+import { useMemoryCategories } from '../../lib/queries';
+import { useCreateMemoryCategory, useUpdateMemoryCategory, useDeleteMemoryCategory } from '../../lib/mutations';
+import { apiErrorMessage } from '../../lib/orcaClient';
+import { Button } from '../../components/ui/Button';
+import { Input } from '../../components/ui/Input';
+import { Field } from '../../components/ui/Field';
+import { IconButton } from '../../components/ui/IconButton';
+import { Modal, ModalBody, ModalFooter } from '../../components/ui/Modal';
+import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
+import { useToast } from '../../components/ui/Toast';
+import { useTranslation } from '../../lib/i18n';
+import { categorySwatch, countByCategory, CATEGORY_COLORS } from './memoryMeta';
+
+/** Compact category management surface: colored chips with a per-category memory count, a "New category"
+ *  action, and inline edit/delete. Built-in categories can be renamed/recolored but not deleted (the
+ *  daemon seeds them). Counts are derived from the already-loaded memory list — no extra round-trip. */
+export function CategoryManager({ memories }: { memories: Memory[] }) {
+  const { t } = useTranslation();
+  const categories = useMemoryCategories();
+  const [creating, setCreating] = useState(false);
+  const [editing, setEditing] = useState<MemoryCategory | null>(null);
+
+  const counts = countByCategory(memories);
+  const rows = categories.data ?? [];
+
+  return (
+    <div className="flex flex-col gap-3 rounded-xl border border-border bg-surface p-4" style={{ boxShadow: 'var(--shadow-card)' }}>
+      <div className="flex items-center justify-between gap-3">
+        <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-text-muted">
+          <Tags size={13} aria-hidden />{t.memory.categoriesTitle}
+        </span>
+        <Button variant="accent" icon={Plus} onClick={() => setCreating(true)}>{t.memory.categoryNew}</Button>
+      </div>
+
+      {rows.length === 0 ? (
+        <p className="text-xs italic text-text-muted">{t.memory.categoriesEmpty}</p>
+      ) : (
+        <ul className="flex flex-wrap gap-2">
+          {rows.map((c) => (
+            <li
+              key={c.id}
+              className="group inline-flex items-center gap-2 rounded-full border border-border bg-elevated py-1 pl-2.5 pr-1.5"
+            >
+              <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: categorySwatch(c.color) }} aria-hidden />
+              <span className="text-sm text-text">{c.name}</span>
+              <span className="font-mono text-[11px] text-text-muted" title={c.description || undefined}>
+                {t.memory.memoryCount.replace('{n}', String(counts.byId.get(c.id) ?? 0))}
+              </span>
+              <span className="flex items-center gap-0.5 opacity-60 transition-opacity group-hover:opacity-100">
+                <IconButton icon={Pencil} label={t.memory.categoryEdit} onClick={() => setEditing(c)} />
+                {!c.is_builtin ? <DeleteCategory category={c} /> : null}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {creating ? <CategoryModal onClose={() => setCreating(false)} /> : null}
+      {editing ? <CategoryModal category={editing} onClose={() => setEditing(null)} /> : null}
+    </div>
+  );
+}
+
+/** Create or edit a category (name required, optional description, a preset color). One 409 → duplicate
+ *  name; the server message is surfaced. */
+function CategoryModal({ category, onClose }: { category?: MemoryCategory; onClose: () => void }) {
+  const { t } = useTranslation();
+  const { toast } = useToast();
+  const create = useCreateMemoryCategory();
+  const update = useUpdateMemoryCategory();
+  const isEdit = category != null;
+
+  const [name, setName] = useState(category?.name ?? '');
+  const [description, setDescription] = useState(category?.description ?? '');
+  const [color, setColor] = useState(category?.color?.trim() || CATEGORY_COLORS[0]);
+
+  const pending = create.isPending || update.isPending;
+
+  const submit = () => {
+    const next = name.trim();
+    if (!next) { toast(t.memory.categoryNameRequired, 'error'); return; }
+    const body = { name: next, description: description.trim(), color };
+    const onSuccess = () => { toast(t.memory.categorySaved); onClose(); };
+    const onError = (e: unknown) => toast(apiErrorMessage(e) || t.memory.categorySaveError, 'error');
+    if (isEdit) update.mutate({ cid: category.id, patch: body }, { onSuccess, onError });
+    else create.mutate(body, { onSuccess, onError });
+  };
+
+  return (
+    <Modal title={isEdit ? t.memory.categoryEdit : t.memory.categoryNew} onClose={onClose} size="sm" icon={Tags}>
+      <ModalBody>
+        <Field label={t.memory.categoryName}>
+          <Input value={name} onChange={(e) => setName(e.target.value)} autoFocus placeholder={t.memory.categoryNamePlaceholder} />
+        </Field>
+        <Field label={t.memory.categoryDescription}>
+          <textarea
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            rows={3}
+            placeholder={t.memory.categoryDescriptionPlaceholder}
+            className="w-full resize-y rounded-md border border-border bg-surface px-3 py-2 text-sm leading-relaxed text-text placeholder:text-text-muted focus:border-accent focus:outline-none"
+          />
+        </Field>
+        <Field label={t.memory.categoryColor}>
+          <div className="flex flex-wrap gap-2">
+            {CATEGORY_COLORS.map((c) => (
+              <button
+                key={c}
+                type="button"
+                onClick={() => setColor(c)}
+                aria-label={c}
+                aria-pressed={color === c}
+                className={`h-7 w-7 rounded-full border-2 transition-transform ${color === c ? 'scale-110 border-text' : 'border-transparent hover:scale-105'}`}
+                style={{ backgroundColor: c }}
+              />
+            ))}
+          </div>
+        </Field>
+      </ModalBody>
+      <ModalFooter>
+        <Button variant="ghost" onClick={onClose}>{t.memory.cancel}</Button>
+        <Button variant="accent" onClick={submit} disabled={pending}>{isEdit ? t.memory.save : t.memory.categoryCreate}</Button>
+      </ModalFooter>
+    </Modal>
+  );
+}
+
+/** Delete a single category behind a confirm. Clears category_id on referencing memories (server-side). */
+function DeleteCategory({ category }: { category: MemoryCategory }) {
+  const { t } = useTranslation();
+  const { toast } = useToast();
+  const del = useDeleteMemoryCategory();
+  const [confirm, setConfirm] = useState(false);
+
+  const doDelete = () => {
+    setConfirm(false);
+    del.mutate(category.id, {
+      onSuccess: () => toast(t.memory.categoryDeleted),
+      onError: (e) => toast(apiErrorMessage(e), 'error'),
+    });
+  };
+
+  return (
+    <>
+      <IconButton icon={Trash2} label={t.memory.categoryDelete} variant="danger" onClick={() => setConfirm(true)} />
+      <ConfirmDialog
+        open={confirm}
+        title={t.memory.categoryDeleteConfirmTitle}
+        description={t.memory.categoryDeleteConfirmBody}
+        confirmLabel={t.memory.categoryDelete}
+        onClose={() => setConfirm(false)}
+        onConfirm={doDelete}
+      />
+    </>
+  );
+}
