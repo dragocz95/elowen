@@ -225,6 +225,7 @@ export function registerAuthRoutes(app: OrcaApp, ctx: RouteContext): void {
     d.userSettings?.removeForUser(id); // drop the user's CLI/brain settings so no orphan rows linger
     d.personalityStore?.removeForUser(id); // drop the user's personality profiles + active pointers so no orphan rows linger
     d.memoryStore?.removeForUser(id); // hard-delete the user's memories (+cascade embeddings) and audit events
+    d.memoryCategoryStore?.removeForUser(id); // drop the user's memory categories so no orphan rows linger
     return c.json({ ok: true });
   });
 

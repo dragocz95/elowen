@@ -4,6 +4,8 @@ import { toEmbeddingConfig } from '../../store/configStore.js';
 import { isEmbeddingConfigured } from '../../embeddings/embeddingService.js';
 import {
   memoryCreateSchema, memoryPatchSchema, memoryMergeSchema, memoryRetrieveSchema, embeddingUpdateSchema,
+  memoryCategoryCreateSchema, memoryCategoryPatchSchema, memoryCategorySetSchema,
+  categorizationUpdateSchema, memoryReclassifySchema,
 } from '../schemas/memory.js';
 import type { OrcaApp, RouteContext } from '../context.js';
 
@@ -11,6 +13,13 @@ import type { OrcaApp, RouteContext } from '../context.js';
  *  backlog can't turn a single request into a long-running provider hammer — the rest drains via the
  *  background queue. */
 const REINDEX_MAX = 100;
+
+/** True for a better-sqlite3 UNIQUE-constraint violation (the per-user category-name key). The category
+ *  store lets the SqliteError propagate so the route can map it to a 409 without a pre-check race. */
+function isUniqueViolation(err: unknown): boolean {
+  return !!err && typeof err === 'object' && 'code' in err
+    && (err as { code?: unknown }).code === 'SQLITE_CONSTRAINT_UNIQUE';
+}
 
 /** Per-user private RAW memory: durable facts a user (or the brain on their behalf) stores, with a
  *  semantic-retrieval debugging surface and a self-service re-embed. Identity is ALWAYS the caller
@@ -120,19 +129,97 @@ export function registerMemoryRoutes(app: OrcaApp, ctx: RouteContext): void {
     return c.json(store.list(Number(c.req.param('id'))));
   });
 
+  // --- Memory categories (owner-scoped) + the workspace categorization model. All literal `/memory/*`
+  //     sub-paths, so they MUST stay above `/memory/:id` or the id route would swallow them. ---
+
+  // The caller's categories, name-sorted. Own categories only.
+  app.get('/memory/categories', (c) => {
+    const cats = d.memoryCategoryStore;
+    if (!cats) return c.json({ error: 'memory unavailable' }, 400);
+    return c.json(cats.list(c.get('user').id));
+  });
+
+  // Create a category for the caller. A duplicate name (UNIQUE(user_id,name)) → 409.
+  app.post('/memory/categories', async (c) => {
+    const cats = d.memoryCategoryStore;
+    if (!cats) return c.json({ error: 'memory unavailable' }, 400);
+    const b = await parseBody(c, memoryCategoryCreateSchema);
+    try {
+      return c.json(cats.create(c.get('user').id, b), 201);
+    } catch (err) {
+      if (isUniqueViolation(err)) return c.json({ error: 'category name already exists' }, 409);
+      throw err;
+    }
+  });
+
+  // Partial update (owner-scoped → 404 on a foreign/missing id). A name collision → 409.
+  app.patch('/memory/categories/:cid', async (c) => {
+    const cats = d.memoryCategoryStore;
+    if (!cats) return c.json({ error: 'memory unavailable' }, 400);
+    const b = await parseBody(c, memoryCategoryPatchSchema);
+    try {
+      const updated = cats.update(c.get('user').id, Number(c.req.param('cid')), b);
+      if (!updated) return c.json({ error: 'not found' }, 404);
+      return c.json(updated);
+    } catch (err) {
+      if (isUniqueViolation(err)) return c.json({ error: 'category name already exists' }, 409);
+      throw err;
+    }
+  });
+
+  // Delete a category (idempotent). The store atomically clears the category off referencing memories
+  // before removing it, so no memory is left pointing at a dangling id.
+  app.delete('/memory/categories/:cid', (c) => {
+    const cats = d.memoryCategoryStore;
+    if (!cats) return c.json({ error: 'memory unavailable' }, 400);
+    cats.delete(c.get('user').id, Number(c.req.param('cid')));
+    return c.json({ ok: true });
+  });
+
+  // Read the workspace categorization model block plus a computed `configured` flag (for the settings
+  // UI). Any authed user may read it; only an admin may change it (PUT below).
+  app.get('/memory/categorization', (c) => {
+    const block = d.config.categorizationConfig();
+    return c.json({ ...block, configured: !!(block.providerId && block.model) });
+  });
+
+  // Update the workspace categorization provider/model. Admin-gated (mirrors PUT /memory/embedding):
+  // during setup (no users yet) it's open so onboarding can configure it before the first admin exists.
+  app.put('/memory/categorization', async (c) => {
+    if (d.users && d.users.count() > 0) {
+      const u = c.get('user');
+      if (!u || !d.users.isAdmin(u.id)) return c.json({ error: 'forbidden' }, 403);
+    }
+    const b = await parseBody(c, categorizationUpdateSchema);
+    return c.json(d.config.update({ categorization: b }).categorization);
+  });
+
+  // Manual (re)classify pass over the caller's active memories. Owner-scoped (NOT admin) — a user
+  // reclassifies their OWN memories. 400 when the categorizer isn't wired or has no model configured.
+  app.post('/memory/reclassify', async (c) => {
+    const categorizer = d.memoryCategorizer;
+    if (!categorizer) return c.json({ error: 'memory unavailable' }, 400);
+    if (!categorizer.configured()) return c.json({ error: 'categorization not configured' }, 400);
+    const b = await parseBody(c, memoryReclassifySchema);
+    return c.json(await categorizer.reclassify(c.get('user').id, b));
+  });
+
   // --- Collection + id-addressed CRUD (owner-scoped). ---
 
-  // List the caller's memories, optionally narrowed (?status=&kind=&limit=&offset=). A `?q=` runs the
-  // store's keyword search instead. Own memories only.
+  // List the caller's memories, optionally narrowed (?status=&kind=&categoryId=&limit=&offset=). A `?q=`
+  // runs the store's keyword search instead. `categoryId` empty/`null` = uncategorized, a number = that
+  // category, absent = no category filter. Own memories only.
   app.get('/memory', (c) => {
     if (!store) return c.json({ error: 'memory unavailable' }, 400);
     const userId = c.get('user').id;
     const q = c.req.query('q');
     const limit = c.req.query('limit');
     if (q && q.trim() !== '') return c.json(store.search(userId, q, limit ? Number(limit) : 50));
+    const cat = c.req.query('categoryId');
     return c.json(store.list(userId, {
       status: c.req.query('status'),
       kind: c.req.query('kind'),
+      categoryId: cat === undefined ? undefined : (cat === '' || cat === 'null' ? null : Number(cat)),
       limit: limit ? Number(limit) : undefined,
       offset: c.req.query('offset') ? Number(c.req.query('offset')) : undefined,
     }));
@@ -180,6 +267,19 @@ export function registerMemoryRoutes(app: OrcaApp, ctx: RouteContext): void {
     const ok = store.restore(userId, Number(c.req.param('id')), `user:${userId}`, 'restored via API');
     if (!ok) return c.json({ error: 'not found' }, 404);
     return c.json({ ok: true });
+  });
+
+  // Assign (or clear with null) a memory's category — a separately-audited 'categorize' write, not a
+  // field on PATCH. Owner-scoped: the store rejects a foreign/missing memory AND a categoryId not owned
+  // by the caller, so a bad id can't plant a dangling/foreign category → both surface as 404.
+  app.put('/memory/:id/category', async (c) => {
+    if (!store) return c.json({ error: 'memory unavailable' }, 400);
+    const userId = c.get('user').id;
+    const id = Number(c.req.param('id'));
+    const b = await parseBody(c, memoryCategorySetSchema);
+    const ok = store.setCategory(userId, id, b.categoryId, `user:${userId}`, 'categorized via API');
+    if (!ok) return c.json({ error: 'not found' }, 404);
+    return c.json(store.get(userId, id));
   });
 
   // That one memory's audit trail (owner-scoped): verify ownership, then filter the user's event feed to

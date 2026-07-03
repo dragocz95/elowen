@@ -103,6 +103,11 @@ export interface ServerDeps {
   personalityStore?: PersonalityStore;
   /** Orca RAW memory persistence (user-scoped): facts, packed-Float32 embeddings, audit events. */
   memoryStore?: import('../store/memoryStore.js').MemoryStore;
+  /** Per-user memory categories (labels + LLM-facing descriptions). Absent → the category routes 400. */
+  memoryCategoryStore?: import('../store/memoryCategoryStore.js').MemoryCategoryStore;
+  /** Assigns memories to one of the owner's categories via a cheap model (owner-scoped). Absent → the
+   *  manual reclassify route 400s and the curator never auto-categorizes new memories. */
+  memoryCategorizer?: import('../brain/memoryCategorizer.js').MemoryCategorizer;
   /** Text→vector embeddings via an OpenAI-compatible /v1/embeddings endpoint, reusing brain provider creds. Absent → memory retrieval (Phase 4) has no embedder. */
   embeddings?: EmbeddingService;
   /** The ONE shared plugin registry provider (merged contributions of every enabled plugin). Feeds the

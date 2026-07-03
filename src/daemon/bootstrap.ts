@@ -64,6 +64,9 @@ import { BrainStore } from '../store/brainStore.js';
 import { PersonalityStore } from '../store/personalityStore.js';
 import { PersonalityService } from '../brain/personalityService.js';
 import { MemoryStore } from '../store/memoryStore.js';
+import { MemoryCategoryStore } from '../store/memoryCategoryStore.js';
+import { MemoryCategorizer } from '../brain/memoryCategorizer.js';
+import type { InferenceClient } from '../inference/types.js';
 import { EmbeddingService } from '../embeddings/embeddingService.js';
 import { EmbeddingQueue } from '../embeddings/embedQueue.js';
 import { MemoryService } from '../brain/memoryService.js';
@@ -397,6 +400,21 @@ export function buildApp(opts: BuildOpts) {
     if (!key) return null;
     return new RelayClient({ baseUrl: cfg.autopilot.apiUrl, apiKey: key, model: cfg.autopilot.model });
   };
+  // Per-user memory categories + the auto-categorizer. The categorizer has its OWN workspace model
+  // (Settings → Memory categorization): it resolves the referenced brain provider's endpoint+key at call
+  // time (no second secret stored), mirroring how embeddings reuse the brain key. Null when unconfigured
+  // or the provider/key is missing → the categorizer no-ops (classify/reclassify return empty).
+  const memoryCategoryStore = new MemoryCategoryStore(db);
+  const categorizerInference = (): InferenceClient | null => {
+    const block = config.get().categorization;
+    if (!block.providerId || !block.model) return null;
+    const provider = resolveProvider(block.providerId);
+    if (!provider || !provider.apiKey) return null;
+    return new RelayClient({ baseUrl: block.baseUrl || provider.baseUrl, apiKey: provider.apiKey, model: block.model });
+  };
+  const memoryCategorizer = new MemoryCategorizer({
+    categories: memoryCategoryStore, memories: memoryStore, inference: categorizerInference, logger: log,
+  });
   // ONE shared plugin registry for the whole daemon (brain chat + orca-exec workers + platforms):
   // loading is lazy (buildApp is sync), and a plugin toggle invalidates every consumer at once —
   // a per-service memo would leave the workers on a stale registry until a daemon restart.
@@ -454,6 +472,8 @@ export function buildApp(opts: BuildOpts) {
         // Private long-term memory: the owner-chat memory tools + per-turn retrieval injection + the
         // post-turn curator. All owner-gated inside BrainService (channels/workers never reach them).
         memoryStore, memoryService, inference: curatorInference,
+        // Auto-categorize newly-added durable memories (fire-and-forget from the curator).
+        memoryCategorizer,
       })
     : undefined;
   // The orca exec engine: tasks with an `orca:` exec run on an embedded PI session instead of a
@@ -471,7 +491,7 @@ export function buildApp(opts: BuildOpts) {
   // Single-use ticket store for the terminal WebSocket stream — shared between the authenticated
   // `POST /sessions/:name/ws-ticket` route and the daemon's `/ws/terminal` upgrade handler.
   const tickets = createTicketStore();
-  const app = createServer({ tasks, readiness, missions, engine, missionGit, gitLock, spawn, tmux, bus, events, notes, agents, project: opts.project, fallback: { program: 'claude-code', model: 'sonnet' }, cli, clock: new SystemClock(), config, users, projects, userProjects, pushSubscriptions, userPrompts, userSettings, pluginDirs, pluginDataRoot, brainOauth, brainAuth, prompts, taskUsage, git, avatarsDir, avatarSecret, planJobs, decisionQueue, pilot, advisor, brain, brainWorkers, brainStore, personalityStore, memoryStore, embeddings, plugins: pluginProvider, pluginLogs, hookAudit, tickets });
+  const app = createServer({ tasks, readiness, missions, engine, missionGit, gitLock, spawn, tmux, bus, events, notes, agents, project: opts.project, fallback: { program: 'claude-code', model: 'sonnet' }, cli, clock: new SystemClock(), config, users, projects, userProjects, pushSubscriptions, userPrompts, userSettings, pluginDirs, pluginDataRoot, brainOauth, brainAuth, prompts, taskUsage, git, avatarsDir, avatarSecret, planJobs, decisionQueue, pilot, advisor, brain, brainWorkers, brainStore, personalityStore, memoryStore, memoryCategoryStore, memoryCategorizer, embeddings, plugins: pluginProvider, pluginLogs, hookAudit, tickets });
 
   // Root-cause recovery: after a daemon crash/restart, tasks left 'in_progress' whose tmux
   // session is gone are zombies — revert them to 'open' so they can be picked up again. No grace

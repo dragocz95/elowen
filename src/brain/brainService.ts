@@ -13,6 +13,7 @@ import { buildBrainRegistry, resolveBrainModel } from './providers.js';
 import { orcaExec } from '../shared/execs.js';
 import { buildOrcaTools, buildMemoryTools } from './tools/index.js';
 import { MemoryCurator } from './memoryCurator.js';
+import type { MemoryCategorizer } from './memoryCategorizer.js';
 import { extractText } from './messageView.js';
 import { logger } from '../shared/logger.js';
 import type { MemoryStore } from '../store/memoryStore.js';
@@ -100,6 +101,9 @@ export interface BrainDeps {
   /** Builds a CHEAP inference client for the post-turn memory curator (mirrors the overseer relay,
    *  keyed on autopilot.model). Returns null when no key/model is configured → the curator no-ops. */
   inference?: () => InferenceClient | null;
+  /** Auto-categorizer handed to the curator so a newly-added durable memory is classified into one of
+   *  the owner's categories (fire-and-forget). Absent → new memories are left uncategorized. */
+  memoryCategorizer?: MemoryCategorizer;
   /** Injected for tests; defaults to PI's createAgentSession. */
   createSession?: typeof createAgentSession;
   /** Injected for tests; builds the resource loader that carries the Orca system prompt. A test passes
@@ -144,7 +148,8 @@ export class BrainService {
     if (d.memoryStore && d.memoryService) {
       this.curator = new MemoryCurator({
         store: d.memoryStore, service: d.memoryService,
-        inference: d.inference ?? (() => null), logger: logger('memory-curator'),
+        inference: d.inference ?? (() => null), categorizer: d.memoryCategorizer,
+        logger: logger('memory-curator'),
       });
     }
   }

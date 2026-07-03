@@ -1,5 +1,6 @@
 import type { MemoryStore } from '../store/memoryStore.js';
 import type { MemoryService } from './memoryService.js';
+import type { MemoryCategorizer } from './memoryCategorizer.js';
 import type { InferenceClient } from '../inference/types.js';
 import type { Logger } from '../shared/logger.js';
 
@@ -31,17 +32,22 @@ export class MemoryCurator {
   private readonly store: MemoryStore;
   private readonly service: MemoryService;
   private readonly inference: () => InferenceClient | null;
+  private readonly categorizer?: MemoryCategorizer;
   private readonly logger?: Logger;
 
   constructor(deps: {
     store: MemoryStore;
     service: MemoryService;
     inference: () => InferenceClient | null;
+    /** Optional auto-categorizer: after a genuinely NEW add, best-effort classifies the memory into one
+     *  of the owner's categories (fire-and-forget). Absent → new memories are simply left uncategorized. */
+    categorizer?: MemoryCategorizer;
     logger?: Logger;
   }) {
     this.store = deps.store;
     this.service = deps.service;
     this.inference = deps.inference;
+    this.categorizer = deps.categorizer;
     this.logger = deps.logger;
   }
 
@@ -87,8 +93,12 @@ export class MemoryCurator {
             'agent', 'curator: refreshed near-duplicate');
           return;
         }
-        this.store.add(userId, { body, kind: op.kind, importance: op.importance, source: 'agent' },
+        const row = this.store.add(userId, { body, kind: op.kind, importance: op.importance, source: 'agent' },
           'agent', 'curator: new durable fact');
+        // Fire-and-forget auto-categorization of the NEW memory only (not the near-duplicate refresh
+        // above). classifyMemory already swallows+logs every failure; the .catch is belt-and-suspenders
+        // so it never rejects into the op batch.
+        if (this.categorizer) void this.categorizer.classifyMemory(userId, row.id, 'agent').catch(() => { /* best-effort */ });
         return;
       }
       case 'update': {

@@ -11,6 +11,9 @@ import { UserStore } from '../../src/store/userStore.js';
 import { ProjectStore } from '../../src/store/projectStore.js';
 import { UserProjectStore } from '../../src/store/userProjectStore.js';
 import { MemoryStore } from '../../src/store/memoryStore.js';
+import { MemoryCategoryStore } from '../../src/store/memoryCategoryStore.js';
+import { MemoryCategorizer } from '../../src/brain/memoryCategorizer.js';
+import type { InferenceClient } from '../../src/inference/types.js';
 import { EmbeddingService, type ProviderResolver } from '../../src/embeddings/embeddingService.js';
 
 /** A stub /v1/embeddings endpoint returning a fixed 3-dim vector for every input. */
@@ -213,5 +216,140 @@ describe('memory routes', () => {
     expect((await asAdmin.json())[0].body).toBe('bob memory');
     // amy is admin; bob cannot inspect anyone.
     expect((await app.request(`/memory/users/${bobId}`, auth(bobTok))).status).toBe(403);
+  });
+});
+
+/** Category setup: wires the memory-category store + a categorizer whose inference is a stub returning a
+ *  fixed reply (so classify decisions are deterministic and offline). `categorizationConfigured:false`
+ *  makes inference() null so the categorizer reports unconfigured. */
+function setupCat(opts: { categorizeReply?: string; categorizationConfigured?: boolean } = {}) {
+  const db = openDb(':memory:');
+  db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'orca','/o')").run();
+  const users = new UserStore(db);
+  const amy = users.create('amy', 'pw'); // first user → admin
+  const bob = users.create('bob', 'pw');
+  const config = new ConfigStore(db);
+  const memoryStore = new MemoryStore(db);
+  const memoryCategoryStore = new MemoryCategoryStore(db);
+  const configured = opts.categorizationConfigured !== false;
+  const stub: InferenceClient = { decide: async () => ({ text: opts.categorizeReply ?? 'none' }) };
+  const inference = (): InferenceClient | null => (configured ? stub : null);
+  const memoryCategorizer = new MemoryCategorizer({ categories: memoryCategoryStore, memories: memoryStore, inference });
+  const app = createServer({
+    tasks: new TaskStore(db), readiness: new Readiness(db), missions: new MissionStore(db), bus: new EventBus(),
+    engine: null as never, spawn: null as never, tmux: null as never,
+    project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },
+    clock: new FakeClock(0), config, users, projects: new ProjectStore(db), userProjects: new UserProjectStore(db),
+    memoryStore, memoryCategoryStore, memoryCategorizer,
+  });
+  const up = new UserProjectStore(db);
+  up.assign(bob.id, 1); // let bob's per-user surface through the project gate
+  return { app, memoryStore, memoryCategoryStore, config, users, amyId: amy.id, bobId: bob.id, amyTok: users.issueToken(amy.id), bobTok: users.issueToken(bob.id) };
+}
+
+describe('memory category routes', () => {
+  it('category CRUD roundtrip: create → list → patch, and a duplicate name → 409', async () => {
+    const { app, amyTok } = setupCat();
+    const created = await app.request('/memory/categories', post(amyTok, { name: 'Práce', description: 'work stuff', color: '#f00' }));
+    expect(created.status).toBe(201);
+    const cat = await created.json();
+    expect(cat).toMatchObject({ name: 'Práce', description: 'work stuff', color: '#f00', is_builtin: 0 });
+
+    const list = await (await app.request('/memory/categories', auth(amyTok))).json();
+    expect(list).toHaveLength(1);
+    expect(list[0].name).toBe('Práce');
+
+    const upd = await app.request(`/memory/categories/${cat.id}`, patch(amyTok, { name: 'Rodina' }));
+    expect(upd.status).toBe(200);
+    expect((await upd.json()).name).toBe('Rodina');
+
+    // A second category then renaming it onto an existing name → 409.
+    const other = await (await app.request('/memory/categories', post(amyTok, { name: 'Zdraví' }))).json();
+    expect((await app.request(`/memory/categories/${other.id}`, patch(amyTok, { name: 'Rodina' }))).status).toBe(409);
+    // Creating a duplicate name outright → 409 too.
+    expect((await app.request('/memory/categories', post(amyTok, { name: 'Rodina' }))).status).toBe(409);
+  });
+
+  it('category ownership boundary — bob never sees or mutates amy\'s categories', async () => {
+    const { app, amyTok, bobTok } = setupCat();
+    const cat = await (await app.request('/memory/categories', post(amyTok, { name: 'Soukromé' }))).json();
+    expect(await (await app.request('/memory/categories', auth(bobTok))).json()).toEqual([]);
+    // PATCH a foreign category id → 404 (owner-scoped miss).
+    expect((await app.request(`/memory/categories/${cat.id}`, patch(bobTok, { name: 'x' }))).status).toBe(404);
+    // DELETE is idempotent, but bob's foreign delete must not remove amy's category.
+    expect((await app.request(`/memory/categories/${cat.id}`, del(bobTok))).status).toBe(200);
+    expect(await (await app.request('/memory/categories', auth(amyTok))).json()).toHaveLength(1);
+  });
+
+  it('DELETE clears the category off referencing memories, then removes it', async () => {
+    const { app, amyTok } = setupCat();
+    const cat = await (await app.request('/memory/categories', post(amyTok, { name: 'Tech' }))).json();
+    const mem = await (await app.request('/memory', post(amyTok, { body: 'uses vim' }))).json();
+    // Assign the category, then delete it — the memory must fall back to uncategorized, not dangle.
+    const setRes = await app.request(`/memory/${mem.id}/category`, put(amyTok, { categoryId: cat.id }));
+    expect(setRes.status).toBe(200);
+    expect((await setRes.json()).category_id).toBe(cat.id);
+    expect((await app.request(`/memory/categories/${cat.id}`, del(amyTok))).status).toBe(200);
+    const after = await (await app.request(`/memory/${mem.id}`, auth(amyTok))).json();
+    expect(after.category_id).toBeNull();
+  });
+
+  it('PUT /memory/:id/category assigns/clears; a foreign categoryId → 404; ?categoryId filters', async () => {
+    const { app, amyTok, bobTok } = setupCat();
+    const cat = await (await app.request('/memory/categories', post(amyTok, { name: 'Fakta' }))).json();
+    const a = await (await app.request('/memory', post(amyTok, { body: 'lives in Prague' }))).json();
+    const b = await (await app.request('/memory', post(amyTok, { body: 'no category yet' }))).json();
+
+    expect((await app.request(`/memory/${a.id}/category`, put(amyTok, { categoryId: cat.id }))).status).toBe(200);
+    // Filter to that category → only a.
+    const inCat = await (await app.request(`/memory?categoryId=${cat.id}`, auth(amyTok))).json();
+    expect(inCat.map((m: { id: number }) => m.id)).toEqual([a.id]);
+    // Uncategorized filter → only b.
+    const uncat = await (await app.request('/memory?categoryId=null', auth(amyTok))).json();
+    expect(uncat.map((m: { id: number }) => m.id)).toEqual([b.id]);
+
+    // A foreign category id (bob's) must be rejected → 404, never written.
+    const bobCat = await (await app.request('/memory/categories', post(bobTok, { name: 'Bob' }))).json();
+    expect((await app.request(`/memory/${a.id}/category`, put(amyTok, { categoryId: bobCat.id }))).status).toBe(404);
+    // Clearing with null → 200 and category_id back to null.
+    const cleared = await app.request(`/memory/${a.id}/category`, put(amyTok, { categoryId: null }));
+    expect(cleared.status).toBe(200);
+    expect((await cleared.json()).category_id).toBeNull();
+    // A missing memory id → 404.
+    expect((await app.request('/memory/9999/category', put(amyTok, { categoryId: cat.id }))).status).toBe(404);
+  });
+
+  it('GET /memory/categorization exposes configured flag; PUT is admin-gated', async () => {
+    const { app, amyTok, bobTok } = setupCat();
+    const initial = await (await app.request('/memory/categorization', auth(amyTok))).json();
+    expect(initial).toMatchObject({ providerId: '', model: '', configured: false });
+    // amy (admin) may update.
+    const okRes = await app.request('/memory/categorization', put(amyTok, { providerId: 'openai', model: 'gpt-4o-mini' }));
+    expect(okRes.status).toBe(200);
+    expect(await okRes.json()).toMatchObject({ providerId: 'openai', model: 'gpt-4o-mini' });
+    // The configured flag flips once providerId + model are set.
+    expect((await (await app.request('/memory/categorization', auth(amyTok))).json()).configured).toBe(true);
+    // bob (non-admin) is forbidden.
+    expect((await app.request('/memory/categorization', put(bobTok, { model: 'x' }))).status).toBe(403);
+  });
+
+  it('POST /memory/reclassify 400s when categorization is unconfigured', async () => {
+    const { app, amyTok } = setupCat({ categorizationConfigured: false });
+    const res = await app.request('/memory/reclassify', post(amyTok, {}));
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: 'categorization not configured' });
+  });
+
+  it('POST /memory/reclassify tags the caller\'s uncategorized memories via the model', async () => {
+    const { app, amyTok } = setupCat({ categorizeReply: 'Práce' });
+    const cat = await (await app.request('/memory/categories', post(amyTok, { name: 'Práce', description: 'work' }))).json();
+    await app.request('/memory', post(amyTok, { body: 'deadline on Friday' }));
+    await app.request('/memory', post(amyTok, { body: 'standup at 9' }));
+    const res = await app.request('/memory/reclassify', post(amyTok, {}));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ scanned: 2, classified: 2 });
+    // Both memories now carry the category.
+    const inCat = await (await app.request(`/memory?categoryId=${cat.id}`, auth(amyTok))).json();
+    expect(inCat).toHaveLength(2);
   });
 });
