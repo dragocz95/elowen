@@ -16,6 +16,15 @@ export interface EmbeddingConfig {
   dimensions?: number;
 }
 
+/** The ONE definition of "embeddings are usable": a model plus some way to reach an endpoint (a
+ *  configured provider OR an explicit local baseUrl — `credentials()` supports either). Shared by the
+ *  embed queue (whether to embed) and MemoryService (whether to take the vector path) so the two can
+ *  never disagree — a divergence silently strands one side (e.g. queue no-ops while retrieval expects
+ *  vectors → empty results with no keyword fallback). */
+export function isEmbeddingConfigured(cfg: EmbeddingConfig | null | undefined): boolean {
+  return !!cfg && cfg.model.trim() !== '' && (!!cfg.providerId || !!cfg.baseUrl);
+}
+
 /** Hard cap on a single embeddings round-trip. A hung endpoint must not stall the caller
  *  (memory ingest / retrieval); there is no other timeout on this path. */
 const EMBEDDINGS_TIMEOUT_MS = 30_000;

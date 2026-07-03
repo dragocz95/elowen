@@ -75,6 +75,24 @@ describe('MemoryStore', () => {
     expect(row.content_hash).toBe('h2');
   });
 
+  it('listActiveWithEmbeddings returns active rows joined to their unpacked vectors, user-scoped', () => {
+    const a = store.add(1, { body: 'has vector' }, 'agent', '');
+    store.add(1, { body: 'no vector yet' }, 'agent', ''); // excluded: no embedding
+    const deleted = store.add(1, { body: 'deleted with vector' }, 'agent', '');
+    store.add(2, { body: "other user's" }, 'agent', '');
+
+    const va = new Float32Array([0.25, -1.5, 3]);
+    store.setEmbedding(1, a.id, { provider: 'p', model: 'm', dimensions: va.length, vector: va, contentHash: hashBody('has vector') });
+    store.setEmbedding(1, deleted.id, { provider: 'p', model: 'm', dimensions: 2, vector: new Float32Array([1, 2]), contentHash: 'h' });
+    store.softDelete(1, deleted.id, 'agent', ''); // now inactive → excluded
+
+    const rows = store.listActiveWithEmbeddings(1);
+    expect(rows.map((r) => r.memory.id)).toEqual([a.id]);
+    expect(Array.from(rows[0]!.vector)).toEqual(Array.from(va));
+    // user 2 sees nothing (their memory has no embedding, and A's is not theirs)
+    expect(store.listActiveWithEmbeddings(2)).toHaveLength(0);
+  });
+
   it('needsEmbedding detects missing and stale (body changed) embeddings', () => {
     const a = store.add(1, { body: 'has no vector' }, 'agent', '');
     const b = store.add(1, { body: 'fresh body' }, 'agent', '');
@@ -87,6 +105,20 @@ describe('MemoryStore', () => {
     // Edit b's body → its stored hash goes stale
     store.update(1, b.id, { body: 'edited body' }, 'user:1', 'fix');
     expect(store.needsEmbedding(1).map((m) => m.id).sort()).toEqual([a.id, b.id].sort());
+  });
+
+  it('needsEmbedding re-flags rows embedded under a different model/dimensions', () => {
+    const m = store.add(1, { body: 'stable body' }, 'agent', '');
+    store.setEmbedding(1, m.id, { provider: 'p', model: 'model-a', dimensions: 3, vector: new Float32Array([1, 2, 3]), contentHash: hashBody('stable body') });
+
+    // Same model+dims → not stale.
+    expect(store.needsEmbedding(1, { model: 'model-a', dimensions: 3 })).toHaveLength(0);
+    // Model switched → re-embed even though the body is unchanged.
+    expect(store.needsEmbedding(1, { model: 'model-b', dimensions: 3 }).map((r) => r.id)).toEqual([m.id]);
+    // Dimensions switched → re-embed.
+    expect(store.needsEmbedding(1, { model: 'model-a', dimensions: 768 }).map((r) => r.id)).toEqual([m.id]);
+    // No active config passed → falls back to body-hash staleness only (unchanged behavior).
+    expect(store.needsEmbedding(1)).toHaveLength(0);
   });
 
   it('markUsed bumps use_count and sets last_used_at', () => {

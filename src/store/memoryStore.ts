@@ -224,6 +224,24 @@ export class MemoryStore {
     ).get(memoryId, userId) as MemoryEmbeddingRow | undefined;
   }
 
+  /** Active memories that already carry an embedding, paired with their vector unpacked back to a
+   *  Float32Array. User-scoped (the join keys on this user's memories). Powers vector retrieval —
+   *  MemoryService cosine-scans this set. Rows without an embedding are excluded (INNER JOIN). */
+  listActiveWithEmbeddings(userId: number): { memory: MemoryRow; vector: Float32Array }[] {
+    const rows = this.db.prepare(
+      `SELECT m.*, e.vector AS vector
+         FROM memories m JOIN memory_embeddings e ON e.memory_id = m.id
+        WHERE m.user_id = ? AND m.status = 'active'
+        ORDER BY m.updated_at DESC, m.id DESC`
+    ).all(userId) as (MemoryRow & { vector: Buffer })[];
+    return rows.map(({ vector, ...memory }) => ({
+      memory: memory as MemoryRow,
+      // Unpack the little-endian BLOB. Slice to a fresh ArrayBuffer so the view isn't tied to the
+      // BLOB's byteOffset within a shared buffer (better-sqlite3 hands back a Node Buffer).
+      vector: new Float32Array(vector.buffer.slice(vector.byteOffset, vector.byteOffset + vector.byteLength)),
+    }));
+  }
+
   /** Upsert a memory's embedding. Packs a Float32Array into a raw BLOB (a Buffer is stored as-is). No-op
    *  if the memory isn't owned by this user — a foreign embedding must never be written. */
   setEmbedding(userId: number, memoryId: number, input: SetEmbeddingInput): void {
@@ -245,18 +263,25 @@ export class MemoryStore {
     });
   }
 
-  /** Active memories with no embedding, or whose stored content_hash no longer matches the current
-   *  body (a stale vector after an edit). Feeds the embed queue. */
-  needsEmbedding(userId: number): MemoryRow[] {
+  /** Active memories with no embedding, or whose stored vector is stale: the body changed (content_hash
+   *  mismatch) OR — when `active` is given — it was embedded under a different model/dimensions than the
+   *  currently configured one (so switching the embedding model re-vectorizes existing memories instead
+   *  of leaving old-width vectors that cosine to 0). Feeds the embed queue. */
+  needsEmbedding(userId: number, active?: { model?: string; dimensions?: number | null }): MemoryRow[] {
     const rows = this.db.prepare(
-      `SELECT m.*, e.content_hash AS embedded_hash
+      `SELECT m.*, e.content_hash AS embedded_hash, e.model AS embedded_model, e.dimensions AS embedded_dims
          FROM memories m LEFT JOIN memory_embeddings e ON e.memory_id = m.id
         WHERE m.user_id = ? AND m.status = 'active'
         ORDER BY m.created_at DESC, m.id DESC`
-    ).all(userId) as (MemoryRow & { embedded_hash: string | null })[];
+    ).all(userId) as (MemoryRow & { embedded_hash: string | null; embedded_model: string | null; embedded_dims: number | null })[];
     return rows
-      .filter((r) => r.embedded_hash === null || r.embedded_hash !== hashBody(r.body))
-      .map(({ embedded_hash, ...m }) => m as MemoryRow);
+      .filter((r) => {
+        if (r.embedded_hash === null || r.embedded_hash !== hashBody(r.body)) return true; // missing or body-stale
+        if (active?.model && r.embedded_model !== active.model) return true; // model changed
+        if (active?.dimensions != null && r.embedded_dims !== active.dimensions) return true; // dimensions changed
+        return false;
+      })
+      .map(({ embedded_hash, embedded_model, embedded_dims, ...m }) => m as MemoryRow);
   }
 
   /** Audit feed for a user, newest first. */

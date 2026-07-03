@@ -1,6 +1,30 @@
 import type { Db } from './db.js';
 import { defaultPromptTemplate } from '../overseer/planner.js';
 import { DEFAULT_BINS, EXEC_NOTES, KNOWN_EXECS, isAllowedExec } from '../shared/execs.js';
+import type { EmbeddingConfig } from '../embeddings/embeddingService.js';
+
+/** How the memory subsystem generates embeddings. `providerId` references a brain provider whose API
+ *  key is reused (no second secret is stored). `baseUrl` optionally overrides the provider's endpoint;
+ *  `dimensions` (when set) is forwarded to the API and asserted against every returned vector's width.
+ *  Empty `providerId`/`model` = embeddings disabled → retrieval degrades to keyword search. */
+export interface EmbeddingBlock {
+  providerId: string;
+  model: string;
+  baseUrl: string;
+  dimensions: number | null;
+}
+
+/** Map the persisted embedding block to an EmbeddingService config. The API key is NOT carried here —
+ *  EmbeddingService resolves it from the referenced brain provider (`providerId`) via its resolver.
+ *  An empty `providerId`/`model` yields a config the embed queue treats as "not configured". */
+export function toEmbeddingConfig(block: EmbeddingBlock): EmbeddingConfig {
+  return {
+    providerId: block.providerId || undefined,
+    model: block.model,
+    baseUrl: block.baseUrl || undefined,
+    dimensions: block.dimensions ?? undefined,
+  };
+}
 
 interface ProviderConfig { bin: string; args: string; skipPermissions: boolean; resume: boolean }
 export type Providers = Record<string, ProviderConfig>;
@@ -27,6 +51,8 @@ export interface OrcaConfig {
    *  the brain falls back to the autopilot relay endpoint. `agentName` is the assistant's display
    *  identity ("Orca" by default) — it feeds the persona prompts everywhere the brain speaks. */
   brain: { providers: BrainProviderPublic[]; agentName: string };
+  /** Memory embedding provider config (no secret — the API key comes from the referenced brain provider). */
+  embedding: EmbeddingBlock;
 }
 
 /** How a brain provider authenticates/talks upstream. `openai` = any OpenAI-compatible endpoint;
@@ -116,6 +142,7 @@ const DEFAULT_CONFIG: OrcaConfig = {
   webPush: { publicKey: '', publicKeySet: false },
   plugins: { enabled: [] },
   brain: { providers: [], agentName: 'Orca' },
+  embedding: { providerId: '', model: '', baseUrl: '', dimensions: null },
 };
 
 interface Stored {
@@ -136,6 +163,9 @@ interface Stored {
   plugins: { enabled: string[]; config: Record<string, Record<string, unknown>> };
   /** Brain provider entries with plaintext API keys — stripped to `apiKeySet` in the public view. */
   brain: { providers: BrainProviderStored[]; agentName: string };
+  /** Embedding provider config. Holds no secret (the key is reused from the brain provider), so this
+   *  block is safe to surface verbatim in the public view. */
+  embedding: EmbeddingBlock;
 }
 
 const defaultStored = (): Stored => ({
@@ -153,6 +183,7 @@ const defaultStored = (): Stored => ({
   webPush: null,
   plugins: { enabled: [], config: {} },
   brain: { providers: [], agentName: 'Orca' },
+  embedding: { providerId: '', model: '', baseUrl: '', dimensions: null },
 });
 
 export interface ConfigPatch {
@@ -169,6 +200,8 @@ export interface ConfigPatch {
   /** Brain providers replace wholesale (the UI edits the full list). A patched entry with an empty/absent
    *  apiKey KEEPS the currently stored key for that id — the UI never sees (or resends) secrets. */
   brain?: { providers?: unknown; agentName?: unknown };
+  /** Embedding config is merged per-field (like autopilot); `dimensions: null` clears the width hint. */
+  embedding?: { providerId?: string; model?: string; baseUrl?: string; dimensions?: number | null };
 }
 
 export class ConfigStore {
@@ -209,6 +242,12 @@ export class ConfigStore {
             }
           : { enabled: [], config: {} },
         brain: { providers: sanitizeBrainProviders(p.brain?.providers), agentName: typeof p.brain?.agentName === 'string' && p.brain.agentName.trim() ? p.brain.agentName.trim().slice(0, 40) : 'Orca' },
+        embedding: {
+          providerId: typeof p.embedding?.providerId === 'string' ? p.embedding.providerId : d.embedding.providerId,
+          model: typeof p.embedding?.model === 'string' ? p.embedding.model : d.embedding.model,
+          baseUrl: typeof p.embedding?.baseUrl === 'string' ? p.embedding.baseUrl : d.embedding.baseUrl,
+          dimensions: typeof p.embedding?.dimensions === 'number' && Number.isFinite(p.embedding.dimensions) ? p.embedding.dimensions : null,
+        },
       };
     } catch { return defaultStored(); } // corrupt row → defaults, never throw
   }
@@ -235,6 +274,8 @@ export class ConfigStore {
       // Only the enabled list surfaces; per-plugin config (possible secrets) stays daemon-side.
       plugins: { enabled: s.plugins.enabled },
       brain: { providers: s.brain.providers.map(({ apiKey, ...pub }) => ({ ...pub, apiKeySet: !!apiKey })), agentName: s.brain.agentName },
+      // No secret in the embedding block (the key is reused from the brain provider) → expose verbatim.
+      embedding: s.embedding,
     };
   }
 
@@ -301,9 +342,23 @@ export class ConfigStore {
           ? patch.brain.agentName.trim().slice(0, 40)
           : cur.brain.agentName,
       },
+      embedding: {
+        providerId: patch.embedding?.providerId ?? cur.embedding.providerId,
+        model: patch.embedding?.model ?? cur.embedding.model,
+        baseUrl: patch.embedding?.baseUrl ?? cur.embedding.baseUrl,
+        // A patched `dimensions` (including an explicit null to clear it) wins; a non-finite value is
+        // normalized to null so a bad hand-edited patch can't persist NaN.
+        dimensions: patch.embedding?.dimensions !== undefined
+          ? (typeof patch.embedding.dimensions === 'number' && Number.isFinite(patch.embedding.dimensions) ? patch.embedding.dimensions : null)
+          : cur.embedding.dimensions,
+      },
     });
     return this.get();
   }
+
+  /** The persisted embedding block (daemon-side). Empty `providerId`/`model` → embeddings disabled.
+   *  Map it to an EmbeddingService config via `toEmbeddingConfig`. */
+  embeddingConfig(): EmbeddingBlock { return this.read().embedding; }
 
   /** Daemon-side brain provider list including plaintext API keys. Never routed to any client. */
   brainProviders(): { id: string; label: string; type: BrainProviderType; baseUrl: string; models: string[]; apiKey: string | null }[] {
