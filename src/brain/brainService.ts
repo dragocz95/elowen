@@ -17,6 +17,7 @@ import { BrainSessionFactory } from './session/factory.js';
 import { composeSessionTools } from './session/capabilities.js';
 import { IdentityResolver } from './identity.js';
 import { decideVisionHop } from './visionFallback.js';
+import { LiveSessionRegistry } from './session/liveRegistry.js';
 import { shapeBrainMessages, extractText } from './messageView.js';
 import type { BrainMessageView } from './messageView.js';
 import { toBrainEvent, usageOf } from './events.js';
@@ -79,14 +80,11 @@ const DEFAULT_AUTO_COMPACT_AT = 0.8;
 /** Per-user embedded brain lifecycle. Mirrors AdvisorService's shape so daemon wiring is familiar,
  *  but holds in-process PI AgentSessions (one per conversation) instead of spawning an external CLI. */
 export class BrainService {
-  /** Live user sessions keyed by session id; `active` points at each user's current conversation. */
-  private live = new Map<string, LiveBrain>();
-  private active = new Map<number, string>();
-  private channels = new Map<string, LiveBrain>();
+  /** All mutable live-session state: user sessions, active pointers, channel LRU and the per-key
+   *  locks (PI sessions are single-conversation — concurrent prompt()/spawn calls on one session id
+   *  queue up instead of corrupting turn state). */
+  private sessions = new LiveSessionRegistry<LiveBrain>();
   private startedPlatforms: { name: string; disconnect?(): void; notify?(t: string, channelId?: string): Promise<void> }[] = [];
-  /** Per-conversation exclusivity: PI sessions are single-conversation, so concurrent prompt()/spawn
-   *  calls on one session id queue up here instead of corrupting turn state. */
-  private locks = new Map<string, Promise<unknown>>();
   /** Shared session assembly (store row + rehydrate + resource loader + PI session) — the same
    *  factory the orca-exec brain workers use. */
   private factory: BrainSessionFactory;
@@ -98,23 +96,20 @@ export class BrainService {
   }
 
   private serial<T>(key: string, fn: () => Promise<T>): Promise<T> {
-    const prev = this.locks.get(key) ?? Promise.resolve();
-    const next = prev.then(fn, fn);
-    this.locks.set(key, next.catch(() => undefined));
-    return next;
+    return this.sessions.withLock(key, fn);
   }
 
   /** The user's current conversation id: the explicit active pointer, else their most recent stored
    *  session, else the legacy default id (first-ever conversation). Channel sessions never count. */
   private activeSessionId(userId: number): string {
-    const set = this.active.get(userId);
+    const set = this.sessions.activeIdFor(userId);
     if (set) return set;
     const recent = this.d.store.listSessions(userId).find((s) => !isNonUserSession(s.id));
     return recent?.id ?? defaultUserSessionId(userId);
   }
 
   private activeLive(userId: number): LiveBrain | undefined {
-    return this.live.get(this.activeSessionId(userId));
+    return this.sessions.get(this.activeSessionId(userId));
   }
 
   /** The current provider set (live-resolved when a thunk was injected). */
@@ -160,8 +155,7 @@ export class BrainService {
     if (!this.selectionAllowed(userId, sel)) throw new Error('model not allowed for user');
     const sessionId = this.activeSessionId(userId);
     return this.serial(sessionId, async () => {
-      const old = this.live.get(sessionId);
-      if (old) { old.session.dispose(); this.live.delete(sessionId); }
+      this.sessions.dispose(sessionId);
       const userCfg = this.d.userSettings?.(userId);
       const live = await this.spawnLive({
         sessionId,
@@ -171,8 +165,8 @@ export class BrainService {
         autoCompact: !!userCfg?.autoCompact,
         autoCompactAt: userCfg?.autoCompactAt ? userCfg.autoCompactAt / 100 : DEFAULT_AUTO_COMPACT_AT,
       });
-      this.live.set(sessionId, live);
-      this.active.set(userId, sessionId);
+      this.sessions.set(sessionId, live);
+      this.sessions.setActive(userId, sessionId);
       return { model: live.model };
     });
   }
@@ -209,9 +203,8 @@ export class BrainService {
   deleteSession(userId: number, sessionId: string): void {
     const row = this.d.store.getSession(sessionId);
     if (!row || row.user_id !== userId || isNonUserSession(sessionId)) throw new Error('unknown session');
-    const live = this.live.get(sessionId);
-    if (live) { live.session.dispose(); this.live.delete(sessionId); }
-    if (this.active.get(userId) === sessionId) this.active.delete(userId);
+    this.sessions.dispose(sessionId);
+    if (this.sessions.activeIdFor(userId) === sessionId) this.sessions.clearActive(userId);
     this.d.store.deleteSession(sessionId);
   }
 
@@ -220,7 +213,7 @@ export class BrainService {
     const activeId = this.activeSessionId(userId);
     return this.d.store.listSessions(userId)
       .filter((s) => !isNonUserSession(s.id))
-      .map((s) => ({ id: s.id, title: s.title, model: s.model, updated_at: s.updated_at, running: this.live.has(s.id), active: s.id === activeId }));
+      .map((s) => ({ id: s.id, title: s.title, model: s.model, updated_at: s.updated_at, running: this.sessions.has(s.id), active: s.id === activeId }));
   }
 
   /** Fulltext search across the user's stored conversations (channel sessions included — they carry
@@ -322,10 +315,10 @@ export class BrainService {
     } else {
       sessionId = this.activeSessionId(userId);
     }
-    this.active.set(userId, sessionId);
+    this.sessions.setActive(userId, sessionId);
     // Serialized per conversation: two concurrent starts would both spawn and leak one PI session.
     return this.serial(sessionId, async () => {
-      if (this.live.has(sessionId)) return { sessionId }; // idempotent resume of a live conversation
+      if (this.sessions.has(sessionId)) return { sessionId }; // idempotent resume of a live conversation
       // Model selection: an explicit start option wins, else the user's saved provider+model override,
       // else the first configured provider's first model. A saved model the user is no longer
       // allowed to run falls back to the server default rather than blocking the brain.
@@ -341,7 +334,7 @@ export class BrainService {
         autoCompact: !!userCfg?.autoCompact,
         autoCompactAt: userCfg?.autoCompactAt ? userCfg.autoCompactAt / 100 : DEFAULT_AUTO_COMPACT_AT,
       });
-      this.live.set(sessionId, live);
+      this.sessions.set(sessionId, live);
       return { sessionId };
     });
   }
@@ -415,7 +408,7 @@ export class BrainService {
   async restart(userId: number): Promise<void> {
     const b = this.activeLive(userId);
     if (!b) return;
-    await this.locks.get(b.sessionId); // let an in-flight turn settle before disposing the session
+    await this.sessions.settled(b.sessionId); // let an in-flight turn settle before disposing the session
     this.stop(userId);
     await this.start(userId);
   }
@@ -426,12 +419,13 @@ export class BrainService {
    *  the orca-exec brain workers — their next launch composes from the fresh registry. */
   async reloadPlugins(): Promise<void> {
     this.d.plugins?.invalidate();
-    for (const userId of [...this.active.keys()]) await this.restart(userId);
+    for (const userId of this.sessions.activeUserIds()) await this.restart(userId);
     // Non-active live sessions just drop; they respawn with the new registry on next resume.
-    for (const [id, b] of [...this.live]) {
-      if (![...this.active.values()].includes(id)) { b.session.dispose(); this.live.delete(id); }
+    const activeIds = this.sessions.activeIds();
+    for (const [id] of this.sessions.liveEntries()) {
+      if (!activeIds.includes(id)) this.sessions.dispose(id);
     }
-    for (const [id, ch] of [...this.channels]) { ch.session.dispose(); this.channels.delete(id); }
+    this.sessions.channelDisposeAll();
     // Platform adapters were built by the old registry — disconnect them and start the fresh set.
     for (const p of this.startedPlatforms) { try { p.disconnect?.(); } catch { /* already down */ } }
     this.startedPlatforms = [];
@@ -520,16 +514,13 @@ export class BrainService {
         const past = await opts.history().catch(() => '');
         if (past.trim()) text = `${past.trim()}\n\n${text}`;
       }
-      let ch = this.channels.get(opts.channelId);
+      let ch = this.sessions.channelGet(opts.channelId);
       // A model or reasoning-effort switch mid-conversation rebuilds the session (history rehydrates).
       const modelChanged = !!opts.model?.model && ch?.model !== opts.model.model;
       const thinkingChanged = !!ch && (ch.thinkingLevel ?? '') !== (opts.thinkingLevel ?? '');
-      if (ch && (modelChanged || thinkingChanged)) { ch.session.dispose(); this.channels.delete(opts.channelId); ch = undefined; }
+      if (ch && (modelChanged || thinkingChanged)) { this.sessions.channelDispose(opts.channelId); ch = undefined; }
       if (!ch) {
-        if (this.channels.size >= BrainService.MAX_CHANNELS) {
-          const oldest = this.channels.entries().next().value;
-          if (oldest) { oldest[1].session.dispose(); this.channels.delete(oldest[0]); }
-        }
+        this.sessions.channelEvictOldestIfFull(BrainService.MAX_CHANNELS);
         ch = await this.spawnLive({
           sessionId,
           ownerUserId: opts.ownerUserId,
@@ -542,10 +533,8 @@ export class BrainService {
           autoCompact: true, // channels are long-lived and unattended — keep their context bounded
           autoCompactAt: DEFAULT_AUTO_COMPACT_AT,
         });
-      } else {
-        this.channels.delete(opts.channelId); // re-insert below → Map order doubles as LRU order
       }
-      this.channels.set(opts.channelId, ch);
+      this.sessions.channelTouch(opts.channelId, ch); // (re-)insert → Map order doubles as LRU order
       // Same image handling as send(): history keeps a marker, the pixels ride only the live prompt.
       projectUserTurn(this.d.store, sessionId, opts.images?.length ? `${text}\n[📎 ${opts.images.length}× obrázek]` : text);
       const prompted = ch.turnContext() + text;
@@ -571,9 +560,7 @@ export class BrainService {
 
   stop(userId: number): void {
     const b = this.activeLive(userId);
-    if (!b) return;
-    b.session.dispose();
-    this.live.delete(b.sessionId);
+    if (b) this.sessions.dispose(b.sessionId);
   }
 
   /** The user's stored conversation, shaped for display (channels render this on connect). Reads the
