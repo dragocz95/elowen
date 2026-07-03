@@ -239,6 +239,14 @@ export const usePlugins = () =>
 export const usePluginDetail = (name: string | null) =>
   useQuery({ queryKey: ['plugin', name], queryFn: () => orcaClient.pluginDetail(name as string), enabled: !!name });
 
+/** Runtime contributions owned by one plugin (tools/skills/platforms/hooks/…). Powers Tools + Hooks detail. */
+export const usePluginContributions = (name: string | null) =>
+  useQuery({ queryKey: ['plugin-contributions', name], queryFn: () => orcaClient.pluginContributions(name as string), enabled: !!name });
+
+/** The tail of one plugin's log ring buffer plus derived health (the Logs detail section). */
+export const usePluginLogs = (name: string | null) =>
+  useQuery({ queryKey: ['plugin-logs', name], queryFn: () => orcaClient.pluginLogs(name as string), enabled: !!name });
+
 /** The cronjob plugin's scheduled jobs (admin, the cronjob plugin detail). */
 export const useCronJobs = () =>
   useQuery({ queryKey: ['cron-jobs'], queryFn: orcaClient.cronJobs });

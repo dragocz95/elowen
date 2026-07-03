@@ -179,6 +179,9 @@ export interface PluginInfo {
   /** Per-locale manifest translations (from the plugin's `i18n/<lang>.json`). English lives in the
    *  manifest itself and is the fallback; a locale entry overrides `description` + per-field label/hint. */
   i18n?: Record<string, PluginI18n>;
+  /** Derived from the plugin's log ring buffer: `error` when a recent error entry exists, else `ok`.
+   *  Defaults to `ok` when the daemon has no log tap. */
+  health?: 'ok' | 'error';
 }
 
 /** Localized overrides for a plugin's manifest strings, keyed by config-field key. */
@@ -187,15 +190,32 @@ export interface PluginI18n {
   fields?: Record<string, { label?: string; hint?: string }>;
 }
 
-/** One declared plugin config field (drives the per-plugin settings form). */
+/** One declared plugin config field (drives the per-plugin settings form). Mirrors the backend
+ *  `PluginConfigField` in `src/plugins/manifest.ts` exactly. Field-type semantics:
+ *  - `section` — a labeled group header carrying no value.
+ *  - `enum` — a single choice from `options`; `multiSelect` — multiple choices from `options`.
+ *  - `code` — a code editor body; `language` hints the syntax mode. `prompt` — a prompt/markdown body.
+ *  - `json` — a JSON blob validated as text. `embeddingModel` — an embedding-model picker (parallels `model`). */
 export interface PluginConfigField {
   key: string;
   label: string;
-  type: 'string' | 'secret' | 'boolean' | 'number' | 'textarea' | 'rolePolicies' | 'model' | 'provider';
+  type:
+    | 'string' | 'secret' | 'boolean' | 'number' | 'textarea' | 'rolePolicies' | 'model' | 'provider'
+    | 'section' | 'enum' | 'multiSelect' | 'code' | 'prompt' | 'json' | 'embeddingModel';
   hint?: string;
   required?: boolean;
   /** For `provider` fields: restrict the picker to configured providers of this type (e.g. `openai`). */
   providerType?: string;
+  /** Choices for `enum`/`multiSelect` fields. */
+  options?: { value: string; label: string }[];
+  /** Syntax mode for `code` fields (e.g. `js`, `python`). */
+  language?: string;
+  /** Richer help text than the one-line `hint`. */
+  help?: string;
+  /** Per-field risk label surfaced in the UI. */
+  risk?: 'low' | 'medium' | 'high';
+  /** Conditional visibility: render this field only when field `key` currently equals `equals`. */
+  visibleWhen?: { key: string; equals: string | number | boolean };
 }
 
 /** One role → access mapping row in a plugin's `rolePolicies` config (the Discord pattern). */
@@ -206,6 +226,33 @@ export interface PluginDetail extends PluginInfo {
   configSchema: PluginConfigField[];
   config: Record<string, unknown>;
   secretsSet: string[];
+  /** Summary of the plugin's persistent data directory (`pluginDataRoot/<name>`). `path` is `''` and
+   *  `exists:false` when the data root is unset or the name is unsafe; `files`/`bytes` are recursive totals. */
+  data: { path: string; exists: boolean; files: number; bytes: number };
+}
+
+/** GET /plugins/:name/contributions — the runtime contribution report filtered to entries OWNED by the
+ *  requested plugin (every `plugin` field equals that name). Powers both the Tools and Hooks detail sections. */
+export interface PluginContributions {
+  tools: { name: string; plugin: string }[];
+  skills: { name: string; plugin: string }[];
+  platforms: { name: string; plugin: string }[];
+  promptFragments: { plugin: string }[];
+  turnContexts: { plugin: string }[];
+  hooks: { name: string; plugin: string }[];
+}
+
+/** One entry of a plugin's bounded log ring buffer (scope-stripped, oldest-first). */
+export interface PluginLogEntry {
+  ts: number;
+  level: 'debug' | 'info' | 'warn' | 'error';
+  message: string;
+}
+
+/** GET /plugins/:name/logs — the tail of the plugin's log ring buffer plus the derived health. */
+export interface PluginLogs {
+  entries: PluginLogEntry[];
+  health: 'ok' | 'error';
 }
 
 /** One scheduled job of the cronjob plugin (the raw jobs.json shape). `enabled: false` = paused;

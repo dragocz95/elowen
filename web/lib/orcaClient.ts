@@ -1,4 +1,4 @@
-import type { Task, Mission, CreateTaskInput, UpdateTaskInput, PlanInput, PlanSubmitResult, PlanJob, InsertPhasesInput, InsertPhasesResult, EngageInput, OrcaConfig, ConfigPatch, MissionDetail, User, UserPatch, ProfilePatch, UserPrompt, PersonalityProfile, PersonalityCreate, PersonalityPatch, PersonalityPreview, CliSettings, PluginInfo, PluginDetail, CronJob, DiscordChannelOption, PluginSkill, BrainModelOption, BrainSessionInfo, BrainSearchHit, BrainMessage, BrainStatus, OAuthFlowState, AuthResult, ActivityEvent, PendingAsk, Project, ProjectGit, CommitLogEntry, CommitFileChange, Note, CliDetectionResult, GithubAuthStatus, TokenUsage, ModelUsage, ResetUsageResult, FileNode, DirListing, SessionInfo, SystemInfo, SkillsInfo, SkillInstallResult } from './types';
+import type { Task, Mission, CreateTaskInput, UpdateTaskInput, PlanInput, PlanSubmitResult, PlanJob, InsertPhasesInput, InsertPhasesResult, EngageInput, OrcaConfig, ConfigPatch, MissionDetail, User, UserPatch, ProfilePatch, UserPrompt, PersonalityProfile, PersonalityCreate, PersonalityPatch, PersonalityPreview, CliSettings, PluginInfo, PluginDetail, PluginContributions, PluginLogs, CronJob, DiscordChannelOption, PluginSkill, BrainModelOption, BrainSessionInfo, BrainSearchHit, BrainMessage, BrainStatus, OAuthFlowState, AuthResult, ActivityEvent, PendingAsk, Project, ProjectGit, CommitLogEntry, CommitFileChange, Note, CliDetectionResult, GithubAuthStatus, TokenUsage, ModelUsage, ResetUsageResult, FileNode, DirListing, SessionInfo, SystemInfo, SkillsInfo, SkillInstallResult } from './types';
 import { clearToken } from './token';
 
 // Same-origin BFF base: the browser talks only to this web origin's /api proxy, which injects the
@@ -152,6 +152,12 @@ export const orcaClient = {
   togglePlugin: (name: string, enabled: boolean) => req<PluginInfo>(`/plugins/${encodeURIComponent(name)}`, json({ enabled }, 'PATCH')),
   pluginDetail: (name: string) => req<PluginDetail>(`/plugins/${encodeURIComponent(name)}`),
   savePluginConfig: (name: string, values: Record<string, unknown>) => req<{ ok: boolean }>(`/plugins/${encodeURIComponent(name)}/config`, json({ values }, 'PATCH')),
+  /** Runtime contributions (tools/skills/platforms/hooks/…) owned by one plugin — powers Tools + Hooks detail. */
+  pluginContributions: (name: string) => req<PluginContributions>(`/plugins/${encodeURIComponent(name)}/contributions`),
+  /** Tail of one plugin's log ring buffer plus derived health. */
+  pluginLogs: (name: string) => req<PluginLogs>(`/plugins/${encodeURIComponent(name)}/logs`),
+  /** Destructive — wipe the contents of the plugin's data directory (the dir itself is kept). */
+  clearPluginData: (name: string) => req<{ ok: true }>(`/plugins/${encodeURIComponent(name)}/data/clear`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }),
   /** The cronjob plugin's raw jobs list; saving replaces the whole array (applies live, no restart). */
   cronJobs: () => req<CronJob[]>('/plugins/cronjob/jobs'),
   saveCronJobs: (jobs: CronJob[]) => req<{ ok: boolean }>('/plugins/cronjob/jobs', json(jobs, 'PUT')),

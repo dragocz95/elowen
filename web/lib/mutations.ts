@@ -264,6 +264,14 @@ export function useSavePluginConfig() {
     onSuccess: (_r, v) => { void qc.invalidateQueries({ queryKey: ['plugin', v.name] }); void qc.invalidateQueries({ queryKey: ['plugins'] }); },
   });
 }
+/** Destructive — wipe the contents of a plugin's data directory. Refreshes that plugin's detail (data summary). */
+export function useClearPluginData() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (name: string) => orcaClient.clearPluginData(name),
+    onSuccess: (_r, name) => { void qc.invalidateQueries({ queryKey: ['plugin', name] }); },
+  });
+}
 /** Replace the brain provider list (Settings → Brain). Refreshes the config and the models dropdown. */
 export function useSaveBrainProviders() {
   const qc = useQueryClient();
