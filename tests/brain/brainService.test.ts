@@ -317,6 +317,18 @@ describe('BrainService', () => {
     expect(roles).toContain('assistant');
   });
 
+  it('channelSend hands onEvent a settled idle (model + usage) so a proactive cron footer always has data', async () => {
+    const d = fakeDeps();
+    const svc = new BrainService(d as never);
+    const policy = { allowedProjectIds: new Set([1]), allowedPaths: () => ['/repo/a'] };
+    const seen: { type: string; model?: string }[] = [];
+    await svc.channelSend({ channelId: 'disc-idle', ownerUserId: 1, policy, onEvent: (e) => seen.push(e) }, 'ahoj');
+    const idles = seen.filter((e) => e.type === 'idle');
+    expect(idles.length).toBeGreaterThan(0);
+    // The last idle is the deterministic post-turn one — it must carry the model for the footer.
+    expect(typeof idles[idles.length - 1].model).toBe('string');
+  });
+
   it('notify fans out to started platforms that implement notify()', async () => {
     const d = fakeDeps();
     const reg = new PluginRegistry();

@@ -3,6 +3,7 @@ import type { Policy } from '../plugins/policy.js';
 import type { TurnIdentity } from '../plugins/policyContext.js';
 import { runWithPolicy } from '../plugins/policyContext.js';
 import type { BrainEvent } from './events.js';
+import { usageOf } from './events.js';
 import { projectUserTurn } from './persistence.js';
 import { extractText } from './messageView.js';
 import { channelSessionId } from './sessionId.js';
@@ -93,6 +94,11 @@ export class ChannelSessionService {
       const detach = onEvent ? (ch.listeners.add(onEvent), () => ch.listeners.delete(onEvent)) : undefined;
       try {
         await runWithPolicy(opts.policy, () => (options ? ch.session.prompt(prompted, options) : ch.session.prompt(prompted)), opts.identity);
+        // Hand the caller a settled idle (model + context fill) deterministically, AFTER the turn ends.
+        // Proactive footers (every cron push builds `model · N %` from this) must not depend on the
+        // stream's own idle winning the race against prompt() resolution — otherwise the footer is
+        // silently dropped. A duplicate is harmless: onEvent consumers just overwrite their last idle.
+        onEvent?.({ type: 'idle', model: ch.model, usage: usageOf(ch.session) });
       } finally { detach?.(); }
       const usage = ch.session.getContextUsage();
       if (usage?.tokens && usage.contextWindow > 0 && usage.tokens / usage.contextWindow >= ch.autoCompactAt) {
