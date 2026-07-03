@@ -233,6 +233,38 @@ describe('BrainService', () => {
     expect(opts.customTools.filter((t) => t.name.startsWith('orca_'))).toHaveLength(0);
   });
 
+  it('an admin-role channel session gets NO orca_* tools, and a later non-admin in the same channel rides that clean session', async () => {
+    const d = fakeDeps();
+    const reg = new PluginRegistry();
+    const ctx = reg.contextFor('discord', {}, { info() {}, warn() {}, error() {} });
+    let handler: ((src: unknown, text: string) => Promise<string | undefined>) | null = null;
+    ctx.registerPlatform({ name: 'discord', connect: async () => {}, listen: (h) => { handler = h; }, send: async () => {} });
+    (d as unknown as { plugins: unknown }).plugins = new PluginRegistryProvider(async () => reg);
+    (d as unknown as { platformOwner: () => number }).platformOwner = () => 1;
+    (d as unknown as { policyForProjects: (ids: number[]) => unknown }).policyForProjects =
+      (ids) => ({ allowedProjectIds: new Set(ids), allowedPaths: () => [] });
+    const svc = new BrainService(d as never);
+    await svc.startPlatforms();
+    // Every orca_* tool composed into ANY spawned session so far — must always be empty for a channel.
+    const orcaNames = () => (d.createSession as unknown as { mock: { calls: [{ customTools: { name: string }[] }][] } })
+      .mock.calls.flatMap((c) => c[0].customTools.map((t) => t.name)).filter((n) => n.startsWith('orca_'));
+
+    // 1) An admin-role sender opens the shared channel. Even with admin:true it must resolve to
+    //    trusted-channel, NEVER owner-chat — so the owner's orca_* control-plane tools / API token are
+    //    never composed in.
+    await handler!({ platform: 'discord', userId: 'admin', roleIds: ['r-admin'], channelId: 'c-shared',
+      access: { admin: true, projectIds: [1], prompt: 'Admin.' } }, 'hi');
+    expect(d.createSession).toHaveBeenCalledTimes(1);
+    expect(orcaNames()).toHaveLength(0);
+
+    // 2) A later NON-admin sender in the SAME channel rides the same channel-keyed session (no respawn),
+    //    which is already free of the owner toolset — the admin role can't leak orca_* to the next sender.
+    await handler!({ platform: 'discord', userId: 'guest', roleIds: ['r-guest'], channelId: 'c-shared',
+      access: { admin: false, projectIds: [2], prompt: 'Guest.' } }, 'hello');
+    expect(d.createSession).toHaveBeenCalledTimes(1); // reused, not respawned
+    expect(orcaNames()).toHaveLength(0);
+  });
+
   it('serializes concurrent channelSend calls on one channel (single spawn, ordered turns)', async () => {
     const d = fakeDeps();
     const svc = new BrainService(d as never);

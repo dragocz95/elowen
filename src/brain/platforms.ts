@@ -32,8 +32,10 @@ export class PlatformOrchestrator {
         adapter.listen(async (src, text, onEvent) => {
           const owner = this.d.platformOwner?.();
           if (owner === undefined || !src.access) return undefined; // unmapped sender → stay silent
-          // Owner-authored automation (cron) runs with the owner's full powers; foreign senders get
-          // their role's project scope and no orca_* tools.
+          // An admin-role sender gets all-project Policy + the full plugin toolset (trusted-channel);
+          // a role-scoped sender gets only their role's projects and tool allowlist. NEITHER ever gets
+          // the owner's orca_* API tools or token — a shared channel is never the verified owner's own
+          // chat, whatever role the sender holds.
           const policy: Policy = src.access.admin
             ? { allowedProjectIds: 'all' as const, allowedPaths: () => [] }
             : this.d.policyForProjects?.(src.access.projectIds)
@@ -51,10 +53,10 @@ export class PlatformOrchestrator {
             ownerUserId: owner,
             policy,
             promptAppend: promptAppend.length ? promptAppend : undefined,
-            trusted: src.access.admin,
+            trusted: src.access.admin, // admin role → trusted-channel (all plugin tools), NOT owner-chat
             model: src.access.model,
             thinkingLevel: src.access.thinkingLevel,
-            tools: src.access.admin ? undefined : src.access.tools,
+            tools: src.access.admin ? undefined : src.access.tools, // admin → full plugin toolset; else role allowlist
             images: src.images,
             identity,
             history: src.history,

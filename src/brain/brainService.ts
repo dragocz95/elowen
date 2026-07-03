@@ -293,15 +293,16 @@ export class BrainService {
     // Enabled plugins contribute tools, skills, and system-prompt fragments. Their tools read the active
     // Policy at call time via AsyncLocalStorage (set around each prompt), no per-session construction.
     const plugins = await this.resolvePlugins();
-    // The security invariant (foreign channels never get the owner's orca_* control-plane tools)
-    // lives in composeSessionTools; the orca token is minted lazily so it never exists for them.
-    // Memory tools ride only owner-chat (composeSessionTools drops them for channels), and each one
-    // re-checks the acting user's identity at execute time — a trusted channel that maps to owner-chat
-    // is still refused there. Built lazily; only wired when the memory deps exist.
+    // The security invariant (a SHARED platform channel — trusted OR foreign — never gets the owner's
+    // orca_* control-plane tools or owner API token) lives in composeSessionTools; the token is minted
+    // lazily so it never exists for them. An admin-role Discord sender lands on 'trusted-channel', NOT
+    // 'owner-chat', so the channel-keyed session can't leak the owner toolset to a later non-admin
+    // sender in the same channel. Memory tools ride only owner-chat; the per-tool owner check is
+    // defense-in-depth. Built lazily; only wired when the memory deps exist.
     const memStore = this.d.memoryStore;
     const memService = this.d.memoryService;
     const allTools = composeSessionTools({
-      kind: opts.channel ? 'foreign-channel' : 'owner-chat',
+      kind: opts.channel ? (opts.trustedChannel ? 'trusted-channel' : 'foreign-channel') : 'owner-chat',
       orcaTools: () => buildOrcaTools({ url: this.d.url, token: this.d.users.ensureAdvisorToken(ownerUserId) }),
       memoryTools: memStore && memService ? () => buildMemoryTools({ store: memStore, service: memService }) : undefined,
       pluginTools: plugins?.tools ?? [],

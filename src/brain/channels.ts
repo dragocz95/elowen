@@ -16,6 +16,9 @@ export interface ChannelSendOpts {
   ownerUserId: number;
   policy: Policy;
   promptAppend?: string[];
+  /** Sender holds the operator's admin role: elevates the channel session to `trusted-channel`
+   *  (all-project Policy + full plugin toolset) — but it is STILL a shared channel, never owner-chat,
+   *  so it never receives orca_* tools or the owner API token. */
   trusted?: boolean;
   model?: { provider?: string; model?: string };
   thinkingLevel?: string;
@@ -75,7 +78,8 @@ export class ChannelSessionService {
           selection: opts.model ?? {},
           policy: opts.policy,
           extraAppend: opts.promptAppend,
-          channel: !opts.trusted, // foreign platform senders never get the orca_* control-plane tools
+          channel: true, // a shared platform channel is NEVER owner-chat — no orca_* tools, no owner token
+          trustedChannel: opts.trusted, // admin-role sender → trusted-channel (all projects + full plugin toolset), still no orca_*
           toolFilter: opts.tools,
           thinkingLevel: opts.thinkingLevel,
           // Channels are the shared, owner-anchored Discord surface — the personality chunk always resolves

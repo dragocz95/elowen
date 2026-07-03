@@ -378,7 +378,9 @@ class DiscordAdapter {
     return {
       roleIds,
       access: {
-        // admin:true = the operator's own role — full project scope, orca_* tools, cron management.
+        // admin:true = the operator's admin role — full project scope + the full plugin toolset
+        // (trusted-channel). It does NOT grant the owner's orca_* control-plane tools or API token:
+        // a shared channel is never the verified owner's own chat, whatever role the sender holds.
         admin: match.admin === true,
         projectIds: (match.projectIds ?? []).map(Number),
         prompt: rolePrompt(match),
