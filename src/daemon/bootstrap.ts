@@ -54,6 +54,7 @@ import type { TmuxDriver } from '../tmux/types.js';
 import { uniqueName } from './uniqueName.js';
 import { logger, setLogSink } from '../shared/logger.js';
 import { PluginLogBuffer } from '../shared/logBuffer.js';
+import { HookAuditBuffer } from '../shared/hookAudit.js';
 import { AdvisorService } from '../advisor/service.js';
 import { writeMcpConfig } from '../advisor/mcpConfig.js';
 import { BrainService } from '../brain/brainService.js';
@@ -420,12 +421,16 @@ export function buildApp(opts: BuildOpts) {
       logger: log,
     });
   });
+  // Bounded ring of recent mutating-hook execution records. The brain's owner-chat hook runner is the
+  // sole writer (via the audit sink below); the admin plugins API reads it (per-plugin hook-audit view).
+  const hookAudit = new HookAuditBuffer();
   const brain: BrainService | undefined = opts.dbPath !== ':memory:'
     ? new BrainService({
         store: brainStore, users, config: brainConfig, prompts, url: orcaCli.url,
         authStorage: brainAuth,
         cwd: brainDir,
         plugins: pluginProvider,
+        hookAudit,
         policy: (userId) => resolvePolicy({ userProjects, projects }, userId),
         userSettings: (userId) => userSettings.cliSettings(userId),
         activePersonality: (userId, platform) => personalityService.activeAppend(userId, platform),
@@ -466,7 +471,7 @@ export function buildApp(opts: BuildOpts) {
   // Single-use ticket store for the terminal WebSocket stream — shared between the authenticated
   // `POST /sessions/:name/ws-ticket` route and the daemon's `/ws/terminal` upgrade handler.
   const tickets = createTicketStore();
-  const app = createServer({ tasks, readiness, missions, engine, missionGit, gitLock, spawn, tmux, bus, events, notes, agents, project: opts.project, fallback: { program: 'claude-code', model: 'sonnet' }, cli, clock: new SystemClock(), config, users, projects, userProjects, pushSubscriptions, userPrompts, userSettings, pluginDirs, pluginDataRoot, brainOauth, brainAuth, prompts, taskUsage, git, avatarsDir, avatarSecret, planJobs, decisionQueue, pilot, advisor, brain, brainWorkers, brainStore, personalityStore, memoryStore, embeddings, plugins: pluginProvider, pluginLogs, tickets });
+  const app = createServer({ tasks, readiness, missions, engine, missionGit, gitLock, spawn, tmux, bus, events, notes, agents, project: opts.project, fallback: { program: 'claude-code', model: 'sonnet' }, cli, clock: new SystemClock(), config, users, projects, userProjects, pushSubscriptions, userPrompts, userSettings, pluginDirs, pluginDataRoot, brainOauth, brainAuth, prompts, taskUsage, git, avatarsDir, avatarSecret, planJobs, decisionQueue, pilot, advisor, brain, brainWorkers, brainStore, personalityStore, memoryStore, embeddings, plugins: pluginProvider, pluginLogs, hookAudit, tickets });
 
   // Root-cause recovery: after a daemon crash/restart, tasks left 'in_progress' whose tmux
   // session is gone are zombies — revert them to 'open' so they can be picked up again. No grace

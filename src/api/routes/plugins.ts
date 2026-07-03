@@ -112,6 +112,9 @@ export function registerPluginRoutes(app: OrcaApp, ctx: RouteContext): void {
       configSchema: schema,
       config,
       secretsSet: [...secretKeys].filter((k) => typeof stored[k] === 'string' && stored[k] !== ''),
+      // Declared capabilities (deny-by-default `{}` when the manifest omits them) so the UI can render the
+      // plugin's permission/risk section — what it may mutate, read, and whether it reaches the network.
+      capabilities: manifest.capabilities ?? {},
       data: dataSummary(name),
     });
   });
@@ -137,6 +140,17 @@ export function registerPluginRoutes(app: OrcaApp, ctx: RouteContext): void {
       entries: d.pluginLogs?.forPlugin(name) ?? [],
       health: d.pluginLogs?.health(name) ?? 'ok',
     });
+  });
+
+  // The plugin's recent mutating-hook execution records (newest-first), from the bounded hook-audit ring.
+  // Empty when the buffer isn't wired (tests build deps by hand). Powers the detail Hooks-activity view:
+  // per hook run, whether its context patch was accepted ('ok'), denied by the capability gate
+  // ('rejected'), or failed open ('threw'/'timeout').
+  app.get('/plugins/:name/hook-executions', (c) => {
+    if (notAdmin(c)) return c.json({ error: 'forbidden' }, 403);
+    const name = c.req.param('name');
+    if (!manifestOf(name)) return c.json({ error: 'unknown plugin' }, 404);
+    return c.json({ entries: d.hookAudit?.forPlugin(name) ?? [] });
   });
 
   // Destructive: wipe the CONTENTS of the plugin's own data dir (never the dir itself, never anything

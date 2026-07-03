@@ -123,6 +123,27 @@ describe('plugin routes', () => {
     expect(list.every((p) => p.health === 'ok')).toBe(true);
   });
 
+  it('GET /plugins/:name surfaces declared capabilities ({} when the manifest omits them)', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'orca-plugcaps-'));
+    makePlugin(root, 'enricher', { capabilities: { hooks: ['brain.turn.contextBuilt'], mutates: ['turnContext'], network: true } });
+    makePlugin(root, 'plain');
+    const db = openDb(':memory:');
+    const users = new UserStore(db);
+    const admin = users.create('admin', 'pw');
+    const app = createServer({
+      tasks: new TaskStore(db), readiness: new Readiness(db), missions: new MissionStore(db), bus: new EventBus(),
+      engine: null as never, spawn: null as never, tmux: null as never,
+      project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },
+      clock: new FakeClock(0), config: new ConfigStore(db), users, projects: new ProjectStore(db), userProjects: new UserProjectStore(db),
+      pluginDirs: [root], brainOauth: new BrainOAuthManager(AuthStorage.inMemory()),
+    });
+    const tok = users.issueToken(admin.id);
+    const enriched = await (await app.request('/plugins/enricher', auth(tok))).json() as { capabilities: Record<string, unknown> };
+    expect(enriched.capabilities).toEqual({ hooks: ['brain.turn.contextBuilt'], mutates: ['turnContext'], network: true });
+    const plain = await (await app.request('/plugins/plain', auth(tok))).json() as { capabilities: Record<string, unknown> };
+    expect(plain.capabilities).toEqual({});
+  });
+
   it('GET /plugins/:name includes a data summary', async () => {
     const { app, adminTok } = setup();
     const body = await (await app.request('/plugins/discord', auth(adminTok))).json() as { data: { exists: boolean; files: number; bytes: number } };
@@ -148,6 +169,16 @@ describe('plugin contributions + logs + data routes', () => {
     expect(await ok.json()).toEqual({ entries: [], health: 'ok' });
     expect((await app.request('/plugins/discord/logs', auth(amyTok))).status).toBe(403);
     expect((await app.request('/plugins/ghost/logs', auth(adminTok))).status).toBe(404);
+  });
+
+  it('GET /plugins/:name/hook-executions — admin 200 empty, non-admin 403, unknown 404', async () => {
+    const { app, adminTok, amyTok } = setup();
+    const ok = await app.request('/plugins/discord/hook-executions', auth(adminTok));
+    expect(ok.status).toBe(200);
+    // No hook-audit buffer wired in this test → empty entries (never a 500).
+    expect(await ok.json()).toEqual({ entries: [] });
+    expect((await app.request('/plugins/discord/hook-executions', auth(amyTok))).status).toBe(403);
+    expect((await app.request('/plugins/ghost/hook-executions', auth(adminTok))).status).toBe(404);
   });
 
   it('POST /plugins/:name/data/clear wipes the plugin data dir contents', async () => {
