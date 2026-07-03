@@ -428,6 +428,54 @@ describe('BrainService', () => {
   });
 });
 
+describe('BrainService personality layering', () => {
+  it('appends the active personality chunk (owner chat resolves platform web)', async () => {
+    const d = fakeDeps();
+    const seen: string[] = [];
+    (d as unknown as { activePersonality: (u: number, p: string) => string | undefined }).activePersonality =
+      (userId, platform) => { seen.push(`${userId}:${platform}`); return userId === 1 ? 'User personality for web:\nName: Zen' : undefined; };
+    let seenAppend: string[] | undefined;
+    d.resourceLoaderFactory = ((o: { appendSystemPrompt?: string[] }) => { seenAppend = o.appendSystemPrompt; return undefined; }) as never;
+    const svc = new BrainService(d as never);
+    await svc.start(1);
+    expect(seen).toContain('1:web'); // owner chat threads the default 'web' platform
+    expect((seenAppend ?? []).join('\n')).toContain('User personality for web:');
+    expect((seenAppend ?? []).join('\n')).toContain('Name: Zen');
+  });
+
+  it('appends NOTHING when the user has no active profile (cache-safe prefix)', async () => {
+    const d = fakeDeps();
+    (d as unknown as { activePersonality: () => string | undefined }).activePersonality = () => undefined;
+    let seenAppend: string[] | undefined;
+    d.resourceLoaderFactory = ((o: { appendSystemPrompt?: string[] }) => { seenAppend = o.appendSystemPrompt; return undefined; }) as never;
+    const svc = new BrainService(d as never);
+    await svc.start(1);
+    expect((seenAppend ?? []).join('\n')).not.toContain('User personality');
+  });
+
+  it('channel sessions resolve the owner personality on platform discord', async () => {
+    const d = fakeDeps();
+    const seen: string[] = [];
+    (d as unknown as { activePersonality: (u: number, p: string) => string | undefined }).activePersonality =
+      (userId, platform) => { seen.push(`${userId}:${platform}`); return undefined; };
+    const svc = new BrainService(d as never);
+    await svc.channelSend({ channelId: 'disc-p', ownerUserId: 1, policy: { allowedProjectIds: 'all' as const, allowedPaths: () => [] } }, 'ahoj');
+    expect(seen).toContain('1:discord'); // owner id + discord platform (never a per-sender id)
+  });
+
+  it('applyPersonalityChange restarts the owner session AND disposes channel sessions', async () => {
+    const d = fakeDeps();
+    const svc = new BrainService(d as never);
+    await svc.start(1); // owner chat live
+    await svc.channelSend({ channelId: 'disc-1', ownerUserId: 1, policy: { allowedProjectIds: 'all' as const, allowedPaths: () => [] } }, 'ahoj');
+    const before = d.createSession.mock.calls.length; // owner + channel spawn
+    d.session.dispose.mockClear();
+    await svc.applyPersonalityChange(1);
+    expect(d.session.dispose).toHaveBeenCalled(); // owner disposed on restart + channel dropped
+    expect(d.createSession.mock.calls.length).toBe(before + 1); // owner respawned once
+  });
+});
+
 describe('channel tool filtering (per-role allowlist)', () => {
   it('a channel session with access.tools only gets those plugin tools', async () => {
     const d = fakeDeps();

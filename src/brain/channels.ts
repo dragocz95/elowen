@@ -78,6 +78,11 @@ export class ChannelSessionService {
           channel: !opts.trusted, // foreign platform senders never get the orca_* control-plane tools
           toolFilter: opts.tools,
           thinkingLevel: opts.thinkingLevel,
+          // Channels are the shared, owner-anchored Discord surface — the personality chunk always resolves
+          // the OWNER's 'discord' active profile (never the per-sender id: that persona would leak to the
+          // next sender in the shared session). 'discord' is the only locked channel platform, so it's
+          // hardcoded here rather than threaded through ChannelSendOpts.
+          platform: 'discord',
           autoCompact: true, // channels are long-lived and unattended — keep their context bounded
           autoCompactAt: DEFAULT_AUTO_COMPACT_AT,
         });

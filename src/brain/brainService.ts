@@ -55,6 +55,11 @@ export interface BrainDeps {
   /** Per-user CLI/brain settings: an optional model override (empty → configured default) + auto-compact
    *  toggle and its user-tunable threshold percentage. */
   userSettings?: (userId: number) => { model?: string; modelProvider?: string; visionModel?: string; visionModelProvider?: string; thinkingLevel?: string; autoCompact?: boolean; autoCompactAt?: number; advisorStyle?: string };
+  /** The user's active personality profile as a ready-to-append system-prompt chunk, or undefined when
+   *  none is pinned (delegates to PersonalityService.activeAppend). Appended AFTER the persona in
+   *  appendSystemPrompt — the cache-safe seam. For Discord `userId` is the channel owner and `platform`
+   *  is 'discord', so it resolves the owner's one Discord persona (the locked shared-channel decision). */
+  activePersonality?: (userId: number, platform: string) => string | undefined;
   /** The assistant's configured display identity (Settings → Orca AI). Absent → 'Orca'. */
   agentName?: () => string;
   /** Resolve a platform sender (e.g. a Discord id) to the Orca user who claimed it in their account
@@ -258,7 +263,12 @@ export class BrainService {
     const skills = plugins?.skills ?? [];
     const skillsBlock = skills.length ? formatSkillsForPrompt(skills) : '';
     const fragments = plugins?.promptFragments ?? [];
-    const append = [skillsBlock, ...fragments, ...(opts.extraAppend ?? [])].filter((s) => s.length > 0);
+    // The user's active personality profile (owner's per-platform pin) layers AFTER the persona as a
+    // separate appended chunk — never the per-turn context (personality is stable system-prompt material,
+    // so putting it per-turn would waste the prompt cache). Undefined when no enabled profile is pinned →
+    // NOTHING appended, so the systemPrompt prefix stays byte-identical for users without one.
+    const persoAppend = this.d.activePersonality?.(ownerUserId, opts.platform ?? 'web');
+    const append = [skillsBlock, ...fragments, ...(opts.extraAppend ?? []), persoAppend ?? ''].filter((s) => s.length > 0);
 
     // Orca identity: the editable `advisor` prompt (per-user override aware) becomes the system prompt,
     // so the brain knows it is Orca — not the underlying model's default persona.
@@ -408,6 +418,18 @@ export class BrainService {
     await this.sessions.settled(b.sessionId); // let an in-flight turn settle before disposing the session
     this.stop(userId);
     await this.start(userId);
+  }
+
+  /** A user changed their active personality profile: respawn so the new persona chunk lands in the
+   *  system prompt. The user's own owner-chat session restarts (per-user, safe), AND every channel
+   *  session is dropped so a Discord room respawns on the owner's fresh 'discord' persona — the channel
+   *  session is owner-anchored and shared, so it must not keep the stale persona. History rehydrates from
+   *  SQLite on respawn. Rare operation; serialized on its own key so it never interleaves a reload. */
+  async applyPersonalityChange(userId: number): Promise<void> {
+    await this.serial(`personality-${userId}`, async () => {
+      await this.restart(userId);
+      this.sessions.channelDisposeAll();
+    });
   }
 
   /** Invalidate the shared plugin registry and restart every live session — called when the admin flips

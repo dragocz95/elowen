@@ -60,6 +60,7 @@ import { BrainOAuthManager } from '../brain/oauth.js';
 import { AuthStorage } from '@earendil-works/pi-coding-agent';
 import { BrainStore } from '../store/brainStore.js';
 import { PersonalityStore } from '../store/personalityStore.js';
+import { PersonalityService } from '../brain/personalityService.js';
 import { MemoryStore } from '../store/memoryStore.js';
 import { EmbeddingService } from '../embeddings/embeddingService.js';
 import { brainConfigFromOrca } from '../brain/config.js';
@@ -358,6 +359,14 @@ export function buildApp(opts: BuildOpts) {
   const embeddings = new EmbeddingService({ resolveProvider });
   const brainStore = new BrainStore(db);
   const personalityStore = new PersonalityStore(db);
+  // SINGLE SOURCE for the personality system-prompt chunk: the brain (activePersonality seam) and the
+  // preview route both render through this ONE instance, so the chunk/persona can never drift. Reuses the
+  // exact prompts/users/agentName seams the brain uses.
+  const personalityService = new PersonalityService({
+    store: personalityStore, prompts, users,
+    userSettings: (userId) => userSettings.cliSettings(userId),
+    agentName: () => config.get().brain.agentName,
+  });
   const memoryStore = new MemoryStore(db);
   // ONE shared plugin registry for the whole daemon (brain chat + orca-exec workers + platforms):
   // loading is lazy (buildApp is sync), and a plugin toggle invalidates every consumer at once —
@@ -391,6 +400,7 @@ export function buildApp(opts: BuildOpts) {
         plugins: pluginProvider,
         policy: (userId) => resolvePolicy({ userProjects, projects }, userId),
         userSettings: (userId) => userSettings.cliSettings(userId),
+        activePersonality: (userId, platform) => personalityService.activeAppend(userId, platform),
         agentName: () => config.get().brain.agentName,
         resolvePlatformUser: (platform, platformUserId) => {
           if (platform !== 'discord' || !platformUserId) return null;

@@ -35,6 +35,10 @@ export interface SpawnOpts {
   toolFilter?: string[];
   /** Reasoning effort for extended-thinking models (empty/undefined = the model default). */
   thinkingLevel?: string;
+  /** Which personality platform this session is: 'web'|'cli' for per-user owner chat, 'discord' for
+   *  shared owner-anchored channels. Selects which active profile the personality chunk resolves from
+   *  (owner's per-platform pin). Default 'web'. */
+  platform?: string;
   autoCompact: boolean;
   autoCompactAt: number;
 }
