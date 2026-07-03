@@ -1,7 +1,7 @@
 'use client';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import { User, ShieldAlert } from 'lucide-react';
 import { modulesByGroup } from '../../modules/registry';
 import { useSidebarState } from '../../lib/useSidebarState';
@@ -21,7 +21,12 @@ const DAEMON_STATUS = {
   fail: { color: 'var(--color-error)', ring: 'color-mix(in srgb, var(--color-error) 50%, transparent)' },
 } as const;
 
-export function Sidebar({ mobileOpen = false, onMobileClose, side = 'left' }: { mobileOpen?: boolean; onMobileClose?: () => void; side?: 'left' | 'right' }) {
+/** How the sidebar presents itself, decided by the shell from the MEASURED room it has (not the
+ *  viewport): `full` = user's pin decides expanded/rail · `rail` = forced icon rail (space is tight) ·
+ *  `drawer` = off-canvas hamburger drawer (very tight / phones). */
+export type SidebarMode = 'full' | 'rail' | 'drawer';
+
+export function Sidebar({ mode = 'full', drawerOpen = false, onDrawerClose, side = 'left' }: { mode?: SidebarMode; drawerOpen?: boolean; onDrawerClose?: () => void; side?: 'left' | 'right' }) {
   const pathname = usePathname();
   const { collapsed, width, toggle, setWidth } = useSidebarState();
   const { data } = useHealth();
@@ -41,22 +46,14 @@ export function Sidebar({ mobileOpen = false, onMobileClose, side = 'left' }: { 
 
   const { t } = useTranslation();
 
-  const [mobile, setMobile] = useState(false);
-  useEffect(() => {
-    const mq = window.matchMedia('(max-width: 767px)');
-    setMobile(mq.matches);
-    const handler = (e: MediaQueryListEvent) => setMobile(e.matches);
-    mq.addEventListener('change', handler);
-    return () => mq.removeEventListener('change', handler);
-  }, []);
+  const drawer = mode === 'drawer';
+  // Drawer shows full content; a forced rail (tight space) collapses; otherwise the user's pin decides.
+  const expanded = drawer ? true : mode === 'rail' ? false : !collapsed;
 
-  // On mobile the sidebar is a drawer (always full-width content); on desktop it collapses to a rail.
-  const expanded = mobile ? true : !collapsed;
-
-  // Close the mobile drawer after navigating. Keyed on `pathname` ALONE on purpose: `onMobileClose` is
-  // a fresh inline arrow each render, so listing it would fire this on every parent re-render (closing
-  // the drawer spuriously); `mobile` is read at run time. Only a route change should close it.
-  useEffect(() => { if (mobile) onMobileClose?.(); }, [pathname]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Close the drawer after navigating. Keyed on `pathname` ALONE on purpose: `onDrawerClose` is a fresh
+  // inline arrow each render, so listing it would fire this on every parent re-render (closing the
+  // drawer spuriously); `drawer` is read at run time. Only a route change should close it.
+  useEffect(() => { if (drawer) onDrawerClose?.(); }, [pathname]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const onPointerDown = useCallback((e: React.PointerEvent) => {
     dragging.current = true;
@@ -74,19 +71,19 @@ export function Sidebar({ mobileOpen = false, onMobileClose, side = 'left' }: { 
 
   return (
     <>
-      {mobile && (
+      {drawer && (
         <div
           aria-hidden
-          onClick={onMobileClose}
-          className={`fixed inset-0 z-40 bg-black/50 transition-opacity md:hidden ${mobileOpen ? 'opacity-100' : 'pointer-events-none opacity-0'}`}
+          onClick={onDrawerClose}
+          className={`fixed inset-0 z-40 bg-black/50 transition-opacity ${drawerOpen ? 'opacity-100' : 'pointer-events-none opacity-0'}`}
         />
       )}
     <nav
       aria-label={t.common.primaryNav}
-      className={mobile
-        ? `fixed inset-y-0 left-0 z-50 flex h-full w-[264px] flex-col overflow-hidden border-r border-border bg-surface transition-transform duration-200 md:hidden ${mobileOpen ? 'translate-x-0' : '-translate-x-full'}`
-        : `relative hidden h-full shrink-0 flex-col ${side === 'right' ? 'border-l' : 'border-r'} border-border bg-surface transition-[width] duration-200 md:flex`}
-      style={mobile ? { transitionTimingFunction: 'var(--ease-out)' } : { width: expanded ? width : RAIL, transitionTimingFunction: 'var(--ease-out)' }}
+      className={drawer
+        ? `fixed inset-y-0 left-0 z-50 flex h-full w-[264px] flex-col overflow-hidden border-r border-border bg-surface transition-transform duration-200 ${drawerOpen ? 'translate-x-0' : '-translate-x-full'}`
+        : `relative flex h-full shrink-0 flex-col ${side === 'right' ? 'border-l' : 'border-r'} border-border bg-surface transition-[width] duration-200`}
+      style={drawer ? { transitionTimingFunction: 'var(--ease-out)' } : { width: expanded ? width : RAIL, transitionTimingFunction: 'var(--ease-out)' }}
     >
       <div className="flex h-14 items-center justify-center border-b border-border px-3 overflow-hidden">
         {expanded
@@ -187,8 +184,9 @@ export function Sidebar({ mobileOpen = false, onMobileClose, side = 'left' }: { 
         </div>
       )}
 
-      {/* Pill handle toggle (pins collapsed/expanded) — desktop only */}
-      {!mobile && (
+      {/* Pill handle toggle (pins collapsed/expanded) — only when the user's pin actually decides
+          (`full`); a space-forced rail ignores the pin, so the toggle would be a no-op there. */}
+      {mode === 'full' && (
         <button
           type="button"
           aria-label={t.common.toggleSidebar}
@@ -199,7 +197,7 @@ export function Sidebar({ mobileOpen = false, onMobileClose, side = 'left' }: { 
         </button>
       )}
 
-      {!mobile && expanded && (
+      {!drawer && expanded && (
         <div
           data-testid="sidebar-resize"
           onPointerDown={onPointerDown}
