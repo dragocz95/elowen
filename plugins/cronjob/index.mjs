@@ -11,6 +11,18 @@ const TICK_MS = 30_000;
 const ok = (text) => ({ content: [{ type: 'text', text }], details: {} });
 const fail = (e) => ok(`Error: ${e instanceof Error ? e.message : String(e)}`);
 
+/** Runtime footer for a delivered cron result — `-# model · 42 %` (Discord subtext), built from the
+ *  turn's idle event (model id + context fill). Empty when the turn reported no usable numbers. Mirrors
+ *  the streaming reply's footer in the discord plugin so proactive cron pushes read the same. */
+export function cronFooter(idle) {
+  const parts = [];
+  const model = typeof idle?.model === 'string' ? idle.model.split('/').pop() : '';
+  if (model) parts.push(model);
+  const pct = idle?.usage?.percent;
+  if (typeof pct === 'number' && pct >= 0) parts.push(`${Math.round(pct)} %`);
+  return parts.length ? `-# ${parts.join(' · ')}` : '';
+}
+
 /** Resolve a one-shot spec — "in 20m", "in 2h", "at 18:30" (today, or tomorrow when past) — to an
  *  absolute run time in ms, relative to `now`. Returns null when the spec isn't a one-shot. */
 export function parseOneShot(spec, now) {
@@ -99,6 +111,9 @@ class CronAdapter {
       if (!isDue(job, now)) continue;
       this.store.patch(job.id, { lastRun: new Date(now).toISOString() }); // stamp BEFORE running — a slow job must not re-fire next tick
       this.log.info(`running job ${job.id} (${job.name})`);
+      // Capture the turn's idle event (model + context usage) so the proactive push can carry the same
+      // runtime footer a streamed reply gets — the handler forwards this onEvent into the brain session.
+      let idle = null;
       const reply = await this.handler({
         platform: 'cron', userId: 'cron', roleIds: [], channelId: `job-${job.id}`,
         access: {
@@ -107,13 +122,17 @@ class CronAdapter {
           // Optional per-job model — the channel session respawns on it (else the server default runs).
           model: job.model?.provider && job.model?.model ? { provider: job.model.provider, model: job.model.model } : undefined,
         },
-      }, job.prompt).catch((e) => `Error: ${e?.message ?? e}`);
+      }, job.prompt, (e) => { if (e?.type === 'idle') idle = e; }).catch((e) => `Error: ${e?.message ?? e}`);
       if (job.runAt) this.store.save(this.store.all().filter((j) => j.id !== job.id)); // one-shot: done → gone
       else this.store.patch(job.id, { lastResult: String(reply ?? '').slice(0, 500) });
       // Echo the outcome to the notification channel (Discord) so it reaches the user proactively.
       // A job with nothing to say answers with a quiet marker (isQuietReply) and stays silent.
       const trimmed = String(reply ?? '').trim();
-      if (trimmed && !isQuietReply(trimmed)) await this.deliver(`⏰ **${job.name}**\n${String(reply).slice(0, 1800)}`, job.notifyChannelId).catch(() => {});
+      if (trimmed && !isQuietReply(trimmed)) {
+        const footer = cronFooter(idle);
+        const body = `⏰ **${job.name}**\n${String(reply).slice(0, 1800)}${footer ? `\n\n${footer}` : ''}`;
+        await this.deliver(body, job.notifyChannelId).catch(() => {});
+      }
     }
   }
 }
