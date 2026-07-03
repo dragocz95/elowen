@@ -62,6 +62,7 @@ import { BrainStore } from '../store/brainStore.js';
 import { brainConfigFromOrca } from '../brain/config.js';
 import { listBrainModels } from '../brain/models.js';
 import { loadPlugins } from '../plugins/loader.js';
+import { PluginRegistryProvider } from '../plugins/pluginsProvider.js';
 import { resolvePolicy } from '../plugins/policy.js';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -350,24 +351,26 @@ export function buildApp(opts: BuildOpts) {
     return p ? { id: p.id, label: p.label, type: p.type, baseUrl: p.baseUrl, apiKey: p.apiKey } : null;
   };
   const brainStore = new BrainStore(db);
+  // ONE shared plugin registry for the whole daemon (brain chat + orca-exec workers + platforms):
+  // loading is lazy (buildApp is sync), and a plugin toggle invalidates every consumer at once —
+  // a per-service memo would leave the workers on a stale registry until a daemon restart.
+  const pluginProvider = new PluginRegistryProvider(() => {
+    const enabled = config.get().plugins.enabled;
+    const pluginConfig = Object.fromEntries(enabled.map((n) => [n, config.pluginConfig(n)]));
+    return loadPlugins({
+      dirs: pluginDirs, enabled, config: pluginConfig, dataRoot: pluginDataRoot,
+      notify: (t, channelId) => brain?.notify(t, channelId) ?? Promise.resolve(),
+      listModels: () => { const c = brainConfig(); return c ? listBrainModels(c) : Promise.resolve([]); },
+      resolveProvider,
+      logger: log,
+    });
+  });
   const brain: BrainService | undefined = opts.dbPath !== ':memory:'
     ? new BrainService({
         store: brainStore, users, config: brainConfig, prompts, url: orcaCli.url,
         authStorage: brainAuth,
         cwd: brainDir,
-        // Plugin loading is async and buildApp is sync, so hand the brain a loader thunk it resolves +
-        // memoizes on first use (re-resolved after reloadPlugins()).
-        loadPlugins: () => {
-          const enabled = config.get().plugins.enabled;
-          const pluginConfig = Object.fromEntries(enabled.map((n) => [n, config.pluginConfig(n)]));
-          return loadPlugins({
-            dirs: pluginDirs, enabled, config: pluginConfig, dataRoot: pluginDataRoot,
-            notify: (t, channelId) => brain?.notify(t, channelId) ?? Promise.resolve(),
-            listModels: () => { const c = brainConfig(); return c ? listBrainModels(c) : Promise.resolve([]); },
-            resolveProvider,
-            logger: log,
-          });
-        },
+        plugins: pluginProvider,
         policy: (userId) => resolvePolicy({ userProjects, projects }, userId),
         userSettings: (userId) => userSettings.cliSettings(userId),
         agentName: () => config.get().brain.agentName,
@@ -395,17 +398,7 @@ export function buildApp(opts: BuildOpts) {
     store: brainStore, tasks, bus, taskUsage,
     config: brainConfig, authStorage: brainAuth, prompts,
     url: orcaCli.url, token: orcaCli.token,
-    loadPlugins: () => {
-      const enabled = config.get().plugins.enabled;
-      const pluginConfig = Object.fromEntries(enabled.map((n) => [n, config.pluginConfig(n)]));
-      return loadPlugins({
-        dirs: pluginDirs, enabled, config: pluginConfig, dataRoot: pluginDataRoot,
-        notify: (t, channelId) => brain?.notify(t, channelId) ?? Promise.resolve(),
-        listModels: () => { const c = brainConfig(); return c ? listBrainModels(c) : Promise.resolve([]); },
-        resolveProvider,
-        logger: log,
-      });
-    },
+    plugins: pluginProvider, // the SAME shared registry — a plugin toggle reaches workers too
   });
   spawn.attachBrainWorker(brainWorkers);
   // Brain workers have no tmux pane — the stuck detector and startup reconcile must see their live

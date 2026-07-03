@@ -1,6 +1,7 @@
 import { createAgentSession, DefaultResourceLoader, formatSkillsForPrompt } from '@earendil-works/pi-coding-agent';
 import type { AgentSession, AgentSessionEvent, ResourceLoader } from '@earendil-works/pi-coding-agent';
 import type { PluginRegistry } from '../plugins/registry.js';
+import type { PluginRegistryProvider } from '../plugins/pluginsProvider.js';
 import type { Policy } from '../plugins/policy.js';
 import { runWithPolicy } from '../plugins/policyContext.js';
 import type { TurnIdentity } from '../plugins/policyContext.js';
@@ -37,12 +38,10 @@ export interface BrainDeps {
   url: string;
   /** Working dir for the in-memory session (not a repo checkout). Default: process.cwd(). */
   cwd?: string;
-  /** Enabled plugins' aggregated contributions (tools/skills/prompt fragments). Absent → brain runs
-   *  exactly as before plugins existed. Tests inject a ready registry directly. */
-  plugins?: PluginRegistry;
-  /** Production supplies a thunk (buildApp is sync, plugin loading is async) — resolved and memoized on
-   *  first `start`, so the daemon stays synchronous while plugins load lazily on first brain use. */
-  loadPlugins?: () => Promise<PluginRegistry>;
+  /** The daemon-wide shared plugin registry (lazy-loaded, memoized, invalidated on plugin toggles).
+   *  Shared with the brain workers and platform adapters so ALL consumers reload together. Absent →
+   *  brain runs exactly as before plugins existed. */
+  plugins?: PluginRegistryProvider;
   /** Resolves the repo-access Policy for a user; carried into plugin tool execution via AsyncLocalStorage. */
   policy?: (userId: number) => Policy;
   /** Per-user CLI/brain settings: an optional model override (empty → configured default) + auto-compact
@@ -90,7 +89,6 @@ export class BrainService {
   private active = new Map<number, string>();
   private channels = new Map<string, LiveBrain>();
   private startedPlatforms: { name: string; disconnect?(): void; notify?(t: string, channelId?: string): Promise<void> }[] = [];
-  private pluginsMemo?: PluginRegistry;
   /** Per-conversation exclusivity: PI sessions are single-conversation, so concurrent prompt()/spawn
    *  calls on one session id queue up here instead of corrupting turn state. */
   private locks = new Map<string, Promise<unknown>>();
@@ -132,12 +130,9 @@ export class BrainService {
     return cfg;
   }
 
-  /** The plugin registry: a directly-injected one (tests) or the memoized result of the async loader. */
+  /** The daemon-wide plugin registry (undefined when plugins aren't wired at all). */
   private async resolvePlugins(): Promise<PluginRegistry | undefined> {
-    if (this.d.plugins) return this.d.plugins;
-    if (!this.d.loadPlugins) return undefined;
-    if (!this.pluginsMemo) this.pluginsMemo = await this.d.loadPlugins();
-    return this.pluginsMemo;
+    return this.d.plugins?.get();
   }
 
   /** Manually compact the active conversation (the /compact command): summarize the history so the
@@ -463,11 +458,12 @@ export class BrainService {
     await this.start(userId);
   }
 
-  /** Drop the memoized plugin registry and restart every live session — called when the admin flips a
-   *  plugin on/off so the change applies without a daemon restart. Channel sessions are simply dropped;
-   *  the next inbound message re-opens them with the fresh registry. */
+  /** Invalidate the shared plugin registry and restart every live session — called when the admin flips
+   *  a plugin on/off so the change applies without a daemon restart. Channel sessions are simply dropped;
+   *  the next inbound message re-opens them with the fresh registry. The shared invalidation also covers
+   *  the orca-exec brain workers — their next launch composes from the fresh registry. */
   async reloadPlugins(): Promise<void> {
-    this.pluginsMemo = undefined;
+    this.d.plugins?.invalidate();
     for (const userId of [...this.active.keys()]) await this.restart(userId);
     // Non-active live sessions just drop; they respawn with the new registry on next resume.
     for (const [id, b] of [...this.live]) {

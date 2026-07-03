@@ -4,6 +4,7 @@ import { personalityText } from '../../src/brain/personality.js';
 import { openDb } from '../../src/store/db.js';
 import { BrainStore } from '../../src/store/brainStore.js';
 import { PluginRegistry } from '../../src/plugins/registry.js';
+import { PluginRegistryProvider } from '../../src/plugins/pluginsProvider.js';
 import { defineTool } from '@earendil-works/pi-coding-agent';
 import { Type } from 'typebox';
 
@@ -60,7 +61,7 @@ describe('BrainService', () => {
       execute: async () => ({ content: [{ type: 'text' as const, text: 'ok' }], details: {} }),
     }));
     ctx.registerSystemPromptFragment('Follow house style.');
-    (d as unknown as { plugins: PluginRegistry }).plugins = reg;
+    (d as unknown as { plugins: unknown }).plugins = new PluginRegistryProvider(async () => reg);
     (d as unknown as { policy: () => unknown }).policy = () => ({ allowedProjectIds: 'all', allowedPaths: () => [] });
     let seenAppend: string[] | undefined;
     d.resourceLoaderFactory = (o: { appendSystemPrompt?: string[] }) => { seenAppend = o.appendSystemPrompt; return undefined; };
@@ -85,7 +86,7 @@ describe('BrainService', () => {
       sourceInfo: { path: '/plugins/skills/skills/deploy-checklist.md', source: 'orca-plugin:skills', scope: 'user', origin: 'package' },
       disableModelInvocation: false,
     });
-    (d as unknown as { plugins: PluginRegistry }).plugins = reg;
+    (d as unknown as { plugins: unknown }).plugins = new PluginRegistryProvider(async () => reg);
     let seenAppend: string[] | undefined;
     d.resourceLoaderFactory = (o: { appendSystemPrompt?: string[] }) => { seenAppend = o.appendSystemPrompt; return undefined; };
 
@@ -281,7 +282,7 @@ describe('BrainService', () => {
     const reg = new PluginRegistry();
     const ctx = reg.contextFor('rt', {}, { info() {}, warn() {}, error() {} });
     ctx.registerTurnContext(() => 'NOW: 2026-07-02 12:00');
-    (d as unknown as { plugins: PluginRegistry }).plugins = reg;
+    (d as unknown as { plugins: unknown }).plugins = new PluginRegistryProvider(async () => reg);
     const svc = new BrainService(d as never);
     await svc.start(1);
     await svc.send(1, 'kolik je hodin?');
@@ -327,7 +328,7 @@ describe('BrainService', () => {
     });
     // a second adapter WITHOUT notify must be skipped without error
     ctx.registerPlatform({ name: 'cron', connect: async () => {}, listen: () => {}, send: async () => {} });
-    (d as unknown as { plugins: PluginRegistry }).plugins = reg;
+    (d as unknown as { plugins: unknown }).plugins = new PluginRegistryProvider(async () => reg);
     const svc = new BrainService(d as never);
     await svc.startPlatforms();
     await svc.notify('ahoj svete');
@@ -346,7 +347,7 @@ describe('BrainService', () => {
       listen: (h) => { handler = h; },
       send: async () => {},
     });
-    (d as unknown as { plugins: PluginRegistry }).plugins = reg;
+    (d as unknown as { plugins: unknown }).plugins = new PluginRegistryProvider(async () => reg);
     (d as unknown as { platformOwner: () => number }).platformOwner = () => 1;
     (d as unknown as { policyForProjects: (ids: number[]) => unknown }).policyForProjects =
       (ids) => ({ allowedProjectIds: new Set(ids), allowedPaths: () => ['/repo/x'] });
@@ -381,7 +382,7 @@ describe('BrainService', () => {
     const ctx = reg.contextFor('discord', {}, { info() {}, warn() {}, error() {} });
     let handler: ((src: unknown, text: string) => Promise<string | undefined>) | null = null;
     ctx.registerPlatform({ name: 'discord', connect: async () => {}, listen: (h) => { handler = h; }, send: async () => {} });
-    (d as unknown as { plugins: PluginRegistry }).plugins = reg;
+    (d as unknown as { plugins: unknown }).plugins = new PluginRegistryProvider(async () => reg);
     (d as unknown as { platformOwner: () => number }).platformOwner = () => 1;
     let seenAppend: string[] | undefined;
     d.resourceLoaderFactory = ((o: { appendSystemPrompt?: string[] }) => { seenAppend = o.appendSystemPrompt; return undefined; }) as never;
@@ -423,7 +424,7 @@ describe('channel tool filtering (per-role allowlist)', () => {
     const mk = (name: string) => defineTool({ name, label: name, description: name, parameters: Type.Object({}), execute: async () => ({ content: [{ type: 'text' as const, text: 'ok' }], details: {} }) });
     ctx.registerTool(mk('demo_echo'));
     ctx.registerTool(mk('demo_danger'));
-    (d as unknown as { plugins: PluginRegistry }).plugins = reg;
+    (d as unknown as { plugins: unknown }).plugins = new PluginRegistryProvider(async () => reg);
     const svc = new BrainService(d as never);
     await svc.channelSend({ channelId: 'discord-1', ownerUserId: 1, policy: { allowedProjectIds: new Set([1]), allowedPaths: () => [] }, tools: ['demo_echo'] }, 'hi');
     const opts = (d.createSession as unknown as { mock: { calls: [{ customTools: { name: string }[] }][] } }).mock.calls[0][0];

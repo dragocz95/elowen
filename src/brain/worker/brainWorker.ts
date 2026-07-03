@@ -10,7 +10,7 @@ import { buildBrainRegistry, resolveBrainModel } from '../providers.js';
 import { projectEvent, projectUserTurn, rehydrate } from '../persistence.js';
 import { taskSessionId } from '../sessionId.js';
 import { runWithPolicy } from '../../plugins/policyContext.js';
-import type { PluginRegistry } from '../../plugins/registry.js';
+import type { PluginRegistryProvider } from '../../plugins/pluginsProvider.js';
 import { callOrcaApi } from '../../shared/apiClient.js';
 import { renderPromptFor } from '../../prompts/index.js';
 import type { PromptService } from '../../prompts/promptService.js';
@@ -35,7 +35,9 @@ export interface BrainWorkerDeps {
   /** Daemon REST base + token the close tool calls (same reach-back the CLI workers use). */
   url: string;
   token: string;
-  loadPlugins?: () => Promise<PluginRegistry>;
+  /** The daemon-wide shared plugin registry — the SAME provider the chat brain uses, so a plugin
+   *  toggle invalidates both at once (a worker launched afterwards composes from the fresh registry). */
+  plugins?: PluginRegistryProvider;
   now?: () => number;
   idleMs?: number;
   createSession?: typeof createAgentSession;
@@ -102,7 +104,6 @@ function sessionUsage(session: AgentSession): TokenUsage {
  */
 export class BrainWorkerService {
   private live = new Map<string, LiveWorker>();
-  private pluginsMemo: Promise<PluginRegistry> | undefined;
   private watchdog: ReturnType<typeof setInterval> | undefined;
 
   constructor(private d: BrainWorkerDeps) {}
@@ -112,11 +113,6 @@ export class BrainWorkerService {
   isLive(sessionName: string): boolean { return this.live.has(sessionName); }
 
   private now(): number { return this.d.now?.() ?? Date.now(); }
-
-  private resolvePlugins(): Promise<PluginRegistry> | undefined {
-    if (!this.pluginsMemo && this.d.loadPlugins) this.pluginsMemo = this.d.loadPlugins();
-    return this.pluginsMemo;
-  }
 
   async launch(input: BrainWorkerLaunchInput): Promise<{ session: string }> {
     const cfg = this.d.config();
@@ -134,7 +130,7 @@ export class BrainWorkerService {
 
     const cwd = input.projectPath;
     const sessionManager = rehydrate(this.d.store, sessionId, cwd);
-    const plugins = await this.resolvePlugins();
+    const plugins = await this.d.plugins?.get();
     const pluginTools = plugins?.tools ?? [];
     const skills = plugins?.skills ?? [];
     const append = [skills.length ? formatSkillsForPrompt(skills) : '', ...(plugins?.promptFragments ?? [])].filter((s) => s.length > 0);
