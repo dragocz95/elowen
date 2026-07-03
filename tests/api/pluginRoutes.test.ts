@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, existsSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { openDb } from '../../src/store/db.js';
@@ -28,6 +28,7 @@ function makePlugin(root: string, name: string, extra: Record<string, unknown> =
 
 function setup() {
   const root = mkdtempSync(join(tmpdir(), 'orca-plugroutes-'));
+  const dataRoot = mkdtempSync(join(tmpdir(), 'orca-plugdata-'));
   makePlugin(root, 'skills');
   makePlugin(root, 'files');
   makePlugin(root, 'discord', {
@@ -50,10 +51,11 @@ function setup() {
     project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },
     clock: new FakeClock(0), config, users, projects: new ProjectStore(db), userProjects: new UserProjectStore(db),
     pluginDirs: [root],
+    pluginDataRoot: dataRoot,
     brain: { reloadPlugins } as never,
     brainOauth: new BrainOAuthManager(AuthStorage.inMemory()),
   });
-  return { app, config, reloadPlugins, adminTok: users.issueToken(admin.id), amyTok: users.issueToken(amy.id) };
+  return { app, config, reloadPlugins, dataRoot, adminTok: users.issueToken(admin.id), amyTok: users.issueToken(amy.id) };
 }
 const auth = (t: string) => ({ headers: { authorization: `Bearer ${t}` } });
 const patch = (t: string, body: unknown) => ({ method: 'PATCH', headers: { authorization: `Bearer ${t}`, 'content-type': 'application/json' }, body: JSON.stringify(body) });
@@ -113,6 +115,64 @@ describe('plugin routes', () => {
   it('validates the enabled field (400)', async () => {
     const { app, adminTok } = setup();
     expect((await app.request('/plugins/skills', patch(adminTok, { enabled: 'yes' }))).status).toBe(400);
+  });
+
+  it('lists a plugin health flag (defaults ok without a log buffer)', async () => {
+    const { app, adminTok } = setup();
+    const list = await (await app.request('/plugins', auth(adminTok))).json() as { name: string; health: string }[];
+    expect(list.every((p) => p.health === 'ok')).toBe(true);
+  });
+
+  it('GET /plugins/:name includes a data summary', async () => {
+    const { app, adminTok } = setup();
+    const body = await (await app.request('/plugins/discord', auth(adminTok))).json() as { data: { exists: boolean; files: number; bytes: number } };
+    expect(body.data).toEqual({ path: expect.any(String), exists: false, files: 0, bytes: 0 });
+  });
+});
+
+describe('plugin contributions + logs + data routes', () => {
+  it('GET /plugins/:name/contributions — admin 200, non-admin 403, unknown 404', async () => {
+    const { app, adminTok, amyTok } = setup();
+    const ok = await app.request('/plugins/discord/contributions', auth(adminTok));
+    expect(ok.status).toBe(200);
+    // No registry provider wired in this test → empty report (never a 500).
+    expect(await ok.json()).toEqual({ tools: [], skills: [], platforms: [], promptFragments: [], turnContexts: [], hooks: [] });
+    expect((await app.request('/plugins/discord/contributions', auth(amyTok))).status).toBe(403);
+    expect((await app.request('/plugins/ghost/contributions', auth(adminTok))).status).toBe(404);
+  });
+
+  it('GET /plugins/:name/logs — admin 200 empty, non-admin 403, unknown 404', async () => {
+    const { app, adminTok, amyTok } = setup();
+    const ok = await app.request('/plugins/discord/logs', auth(adminTok));
+    expect(ok.status).toBe(200);
+    expect(await ok.json()).toEqual({ entries: [], health: 'ok' });
+    expect((await app.request('/plugins/discord/logs', auth(amyTok))).status).toBe(403);
+    expect((await app.request('/plugins/ghost/logs', auth(adminTok))).status).toBe(404);
+  });
+
+  it('POST /plugins/:name/data/clear wipes the plugin data dir contents', async () => {
+    const { app, adminTok, amyTok, dataRoot } = setup();
+    const dir = join(dataRoot, 'discord');
+    mkdirSync(join(dir, 'nested'), { recursive: true });
+    writeFileSync(join(dir, 'a.txt'), 'x');
+    writeFileSync(join(dir, 'nested', 'b.txt'), 'y');
+    expect((await app.request('/plugins/discord/data/clear', { method: 'POST', headers: { authorization: `Bearer ${amyTok}` } })).status).toBe(403);
+    const res = await app.request('/plugins/discord/data/clear', { method: 'POST', headers: { authorization: `Bearer ${adminTok}` } });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true });
+    expect(existsSync(dir)).toBe(true); // the dir itself stays
+    expect(readdirSync(dir)).toEqual([]); // …but its contents are gone
+  });
+
+  it('POST /plugins/:name/data/clear refuses a name with a path separator (400) and leaves siblings intact', async () => {
+    const { app, adminTok, dataRoot } = setup();
+    const sibling = join(dataRoot, 'skills');
+    mkdirSync(sibling, { recursive: true });
+    writeFileSync(join(sibling, 'keep.txt'), 'z');
+    // %2F decodes to a slash in the :name param → path guard must refuse it before touching disk.
+    const res = await app.request('/plugins/..%2Fskills/data/clear', { method: 'POST', headers: { authorization: `Bearer ${adminTok}` } });
+    expect(res.status).toBe(400);
+    expect(existsSync(join(sibling, 'keep.txt'))).toBe(true);
   });
 });
 

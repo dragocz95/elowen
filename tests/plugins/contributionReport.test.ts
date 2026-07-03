@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { PluginRegistry } from '../../src/plugins/registry.js';
-import { buildContributionReport, emptyContributionReport } from '../../src/plugins/contributionReport.js';
+import { buildContributionReport, emptyContributionReport, pluginContributions } from '../../src/plugins/contributionReport.js';
 import type { PluginLogger, PluginSkill, PlatformAdapter } from '../../src/plugins/api.js';
 import type { ToolDefinition } from '@earendil-works/pi-coding-agent';
 
@@ -61,5 +61,48 @@ describe('buildContributionReport', () => {
     expect(emptyContributionReport()).toEqual({
       tools: [], skills: [], platforms: [], promptFragments: [], turnContexts: [], hooks: [],
     });
+  });
+});
+
+describe('pluginContributions', () => {
+  it('keeps only the named plugin\'s contributions across every list', () => {
+    const reg = new PluginRegistry();
+    stage(reg, 'alpha', (ctx) => {
+      ctx.registerTool(tool('a_tool'));
+      ctx.registerSkill(skill('a_skill'));
+      ctx.registerSystemPromptFragment('alpha fragment');
+      ctx.registerHook({ name: 'brain.turn.beforeSend', run: () => {} });
+      ctx.registerTurnContext(() => 'now');
+      ctx.registerPlatform(platform('a_platform'));
+    });
+    stage(reg, 'beta', (ctx) => {
+      ctx.registerTool(tool('b_tool'));
+      ctx.registerHook({ name: 'brain.turn.beforeSend', run: () => {} });
+      ctx.registerSystemPromptFragment('beta fragment');
+      ctx.registerSkill(skill('b_skill'));
+    });
+
+    expect(pluginContributions(reg, 'alpha')).toEqual({
+      tools: [{ name: 'a_tool', plugin: 'alpha' }],
+      skills: [{ name: 'a_skill', plugin: 'alpha' }],
+      platforms: [{ name: 'a_platform', plugin: 'alpha' }],
+      promptFragments: [{ plugin: 'alpha' }],
+      turnContexts: [{ plugin: 'alpha' }],
+      hooks: [{ name: 'brain.turn.beforeSend', plugin: 'alpha' }],
+    });
+    expect(pluginContributions(reg, 'beta')).toEqual({
+      tools: [{ name: 'b_tool', plugin: 'beta' }],
+      skills: [{ name: 'b_skill', plugin: 'beta' }],
+      platforms: [],
+      promptFragments: [{ plugin: 'beta' }],
+      turnContexts: [],
+      hooks: [{ name: 'brain.turn.beforeSend', plugin: 'beta' }],
+    });
+  });
+
+  it('reports an empty shape for a plugin with no contributions', () => {
+    const reg = new PluginRegistry();
+    stage(reg, 'alpha', (ctx) => ctx.registerTool(tool('a_tool')));
+    expect(pluginContributions(reg, 'ghost')).toEqual(emptyContributionReport());
   });
 });

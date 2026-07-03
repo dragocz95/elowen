@@ -1,7 +1,7 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { dirname, join, resolve, sep } from 'node:path';
 import { discoverPlugins } from '../../plugins/loader.js';
-import { buildContributionReport, emptyContributionReport } from '../../plugins/contributionReport.js';
+import { buildContributionReport, emptyContributionReport, pluginContributions } from '../../plugins/contributionReport.js';
 import { OAUTH_BUILTIN } from '../../brain/providers.js';
 import { oauthBuiltinCatalog } from '../../brain/models.js';
 import type { OrcaApp, RouteContext } from '../context.js';
@@ -40,10 +40,44 @@ export function registerPluginRoutes(app: OrcaApp, ctx: RouteContext): void {
       source: p.source,
       enabled: enabled.has(p.manifest.name),
       configurable: (p.manifest.configSchema?.length ?? 0) > 0,
+      // Coarse health for the marketplace card badge, derived from the log ring (default `ok` when
+      // the buffer isn't wired — e.g. in tests that build deps by hand).
+      health: d.pluginLogs?.health(p.manifest.name) ?? 'ok',
       i18n: p.i18n,
     }));
   };
   const manifestOf = (name: string) => discoverPlugins(d.pluginDirs ?? []).find((p) => p.manifest.name === name)?.manifest;
+
+  // A plugin's own writable data dir under the shared root, or null when the root is unset or the name
+  // is unsafe (path separator / traversal). Every data path — the summary and the destructive clear —
+  // funnels through here so nothing can ever resolve outside `pluginDataRoot`.
+  const pluginDataDir = (name: string): string | null => {
+    if (!d.pluginDataRoot) return null;
+    if (name === '' || name.includes('/') || name.includes('\\') || name.includes('..')) return null;
+    const root = resolve(d.pluginDataRoot);
+    const dir = resolve(root, name);
+    if (dir !== join(root, name) || !dir.startsWith(root + sep)) return null;
+    return dir;
+  };
+
+  // Summary of a plugin's on-disk data (for the detail Data section): total files + bytes, recursively.
+  // A missing dir (plugin never wrote anything) is a valid `exists:false`, not an error.
+  const dataSummary = (name: string): { path: string; exists: boolean; files: number; bytes: number } => {
+    const dir = pluginDataDir(name);
+    if (!dir) return { path: '', exists: false, files: 0, bytes: 0 };
+    if (!existsSync(dir)) return { path: dir, exists: false, files: 0, bytes: 0 };
+    let files = 0;
+    let bytes = 0;
+    const walk = (p: string): void => {
+      for (const ent of readdirSync(p, { withFileTypes: true })) {
+        const full = join(p, ent.name);
+        if (ent.isDirectory()) walk(full);
+        else if (ent.isFile()) { files += 1; bytes += statSync(full).size; }
+      }
+    };
+    walk(dir);
+    return { path: dir, exists: true, files, bytes };
+  };
 
   app.get('/plugins', (c) => {
     if (notAdmin(c)) return c.json({ error: 'forbidden' }, 403);
@@ -78,7 +112,46 @@ export function registerPluginRoutes(app: OrcaApp, ctx: RouteContext): void {
       configSchema: schema,
       config,
       secretsSet: [...secretKeys].filter((k) => typeof stored[k] === 'string' && stored[k] !== ''),
+      data: dataSummary(name),
     });
+  });
+
+  // The plugin's OWN runtime contributions (tools + hooks + the rest), filtered from the merged
+  // registry. Powers the detail Tools and Hooks sections. Falls back to an empty report when the
+  // registry provider isn't wired (tests build deps by hand) so it never 500s.
+  app.get('/plugins/:name/contributions', async (c) => {
+    if (notAdmin(c)) return c.json({ error: 'forbidden' }, 403);
+    const name = c.req.param('name');
+    if (!manifestOf(name)) return c.json({ error: 'unknown plugin' }, 404);
+    const registry = await d.plugins?.get();
+    return c.json(registry ? pluginContributions(registry, name) : emptyContributionReport());
+  });
+
+  // The plugin's recent log tail + coarse health, from the bounded log ring. Empty/`ok` when the
+  // buffer isn't wired.
+  app.get('/plugins/:name/logs', (c) => {
+    if (notAdmin(c)) return c.json({ error: 'forbidden' }, 403);
+    const name = c.req.param('name');
+    if (!manifestOf(name)) return c.json({ error: 'unknown plugin' }, 404);
+    return c.json({
+      entries: d.pluginLogs?.forPlugin(name) ?? [],
+      health: d.pluginLogs?.health(name) ?? 'ok',
+    });
+  });
+
+  // Destructive: wipe the CONTENTS of the plugin's own data dir (never the dir itself, never anything
+  // outside `pluginDataRoot`). `pluginDataDir` refuses any name with a separator/traversal, so a
+  // crafted `:name` can't escape the root.
+  app.post('/plugins/:name/data/clear', (c) => {
+    if (notAdmin(c)) return c.json({ error: 'forbidden' }, 403);
+    const name = c.req.param('name');
+    const dir = pluginDataDir(name);
+    if (!dir) return c.json({ error: 'invalid plugin name' }, 400);
+    if (!manifestOf(name)) return c.json({ error: 'unknown plugin' }, 404);
+    if (existsSync(dir)) {
+      for (const ent of readdirSync(dir)) rmSync(join(dir, ent), { recursive: true, force: true });
+    }
+    return c.json({ ok: true });
   });
 
   // Save a plugin's config values. A secret field arriving empty/absent keeps the stored value (the UI

@@ -39,3 +39,29 @@ export function buildContributionReport(registry: PluginRegistry): PluginContrib
 export function emptyContributionReport(): PluginContributionReport {
   return { tools: [], skills: [], platforms: [], promptFragments: [], turnContexts: [], hooks: [] };
 }
+
+/** Project the merged registry down to just the contributions OWNED BY `name`. Same shape as
+ *  buildContributionReport, filtered per-contribution: tools via the `toolOwner` Map, the flat lists
+ *  via their index-aligned owner arrays. Pure — powers the per-plugin Tools + Hooks detail sections. */
+export function pluginContributions(registry: PluginRegistry, name: string): PluginContributionReport {
+  return {
+    tools: registry.tools
+      .filter((t) => registry.toolOwner.get(t.name) === name)
+      .map((t) => ({ name: t.name, plugin: name })),
+    skills: registry.skills
+      .filter((_, i) => registry.skillOwners[i] === name)
+      .map((s) => ({ name: s.name, plugin: name })),
+    platforms: registry.platforms
+      .filter((_, i) => registry.platformOwners[i] === name)
+      .map((p) => ({ name: p.name, plugin: name })),
+    promptFragments: registry.promptFragments
+      .filter((_, i) => registry.promptFragmentOwners[i] === name)
+      .map(() => ({ plugin: name })),
+    turnContexts: registry.turnContexts
+      .filter((_, i) => registry.turnContextOwners[i] === name)
+      .map(() => ({ plugin: name })),
+    hooks: registry.hooks
+      .filter((_, i) => registry.hookOwners[i] === name)
+      .map((h) => ({ name: h.name, plugin: name })),
+  };
+}
