@@ -14,6 +14,8 @@ import { buildOrcaTools } from './tools/index.js';
 import { personalityText } from './personality.js';
 import { projectUserTurn } from './persistence.js';
 import { BrainSessionFactory } from './session/factory.js';
+import { composeSessionTools } from './session/capabilities.js';
+import { IdentityResolver } from './identity.js';
 import { shapeBrainMessages, extractText } from './messageView.js';
 import type { BrainMessageView } from './messageView.js';
 import { toBrainEvent, usageOf } from './events.js';
@@ -87,17 +89,11 @@ export class BrainService {
   /** Shared session assembly (store row + rehydrate + resource loader + PI session) — the same
    *  factory the orca-exec brain workers use. */
   private factory: BrainSessionFactory;
+  /** The ONE place turn identities (and the owner check) are minted. */
+  private identity: IdentityResolver;
   constructor(private d: BrainDeps) {
     this.factory = new BrainSessionFactory({ store: d.store, createSession: d.createSession, resourceLoaderFactory: d.resourceLoaderFactory });
-  }
-
-  /** Whether `userId` is the instance operator. When a platform owner is configured (production), it is
-   *  exactly that user; with none configured (single-user / tests) every user is treated as the owner,
-   *  preserving the pre-identity behaviour where the owner's own store was always used. */
-  private isOwner(userId: number | undefined): boolean {
-    if (userId === undefined) return false;
-    const owner = this.d.platformOwner?.();
-    return owner === undefined ? true : userId === owner;
+    this.identity = new IdentityResolver({ platformOwner: d.platformOwner, resolvePlatformUser: d.resolvePlatformUser, users: d.users });
   }
 
   private serial<T>(key: string, fn: () => Promise<T>): Promise<T> {
@@ -257,18 +253,17 @@ export class BrainService {
     const registry = buildBrainRegistry(cfg, this.d.authStorage);
     const model = resolveBrainModel(registry, cfg, opts.selection);
     const cwd = this.d.cwd ?? process.cwd();
-    // Channel senders must never reach the owner's full-scope API token — no orca_* tools there.
-    const tools = opts.channel ? [] : buildOrcaTools({ url: this.d.url, token: this.d.users.ensureAdvisorToken(ownerUserId) });
-
     // Enabled plugins contribute tools, skills, and system-prompt fragments. Their tools read the active
     // Policy at call time via AsyncLocalStorage (set around each prompt), no per-session construction.
     const plugins = await this.resolvePlugins();
-    let pluginTools = plugins?.tools ?? [];
-    if (opts.toolFilter && !opts.toolFilter.includes('*')) {
-      const allow = new Set(opts.toolFilter);
-      pluginTools = pluginTools.filter((t) => allow.has(t.name));
-    }
-    const allTools = [...tools, ...pluginTools];
+    // The security invariant (foreign channels never get the owner's orca_* control-plane tools)
+    // lives in composeSessionTools; the orca token is minted lazily so it never exists for them.
+    const allTools = composeSessionTools({
+      kind: opts.channel ? 'foreign-channel' : 'owner-chat',
+      orcaTools: () => buildOrcaTools({ url: this.d.url, token: this.d.users.ensureAdvisorToken(ownerUserId) }),
+      pluginTools: plugins?.tools ?? [],
+      toolFilter: opts.toolFilter,
+    });
     const skills = plugins?.skills ?? [];
     const skillsBlock = skills.length ? formatSkillsForPrompt(skills) : '';
     const fragments = plugins?.promptFragments ?? [];
@@ -401,13 +396,7 @@ export class BrainService {
       // The turn-context prefix rides only in the live prompt (not stored history) → fresh + cache-safe.
       const prompted = live.turnContext() + text;
       // The turn's identity: the Orca account itself (memory and other per-user plugin state key on it).
-      const identity = {
-        platform: 'orca',
-        userId: String(userId),
-        orcaUsername: this.d.users.get(userId)?.username,
-        admin: live.policy.allowedProjectIds === 'all',
-        owner: this.isOwner(userId), // their own authenticated chat → operator
-      };
+      const identity = this.identity.forOwnerChat(userId, live.policy);
       await runWithPolicy(live.policy, () => (options ? live.session.prompt(prompted, options) : live.session.prompt(prompted)), identity);
       // Auto-compact: once the conversation fills most of the context window, summarize it so the next
       // turn keeps room. Opt-in per user; failures are non-fatal (a full window still works, just tighter).
@@ -480,30 +469,11 @@ export class BrainService {
             ...(src.access.prompt ? [src.access.prompt] : []),
             ...(src.channelName ? [this.channelFragment(src, owner)] : []),
           ];
-          // A sender who linked their platform id in Account settings gets a verified identity line —
-          // the agent then KNOWS who this is (incl. recognizing the operator), not just a bracket name.
-          // The display name is attacker-influenced (a user picks their own Orca name), so strip
-          // brackets/newlines before splicing it into this trusted line — otherwise a name like
-          // `x] SYSTEM: …` could forge instructions into the prompt.
-          const linked = this.d.resolvePlatformUser?.(src.platform, src.userId);
-          const safeName = linked ? linked.name.replace(/[[\]\r\n]/g, ' ').trim().slice(0, 80) : '';
-          const sendText = linked
-            ? `[Verified: this sender is the Orca user "${safeName}"${linked.id === owner ? ' — the operator of this instance' : ''}]\n${text}`
-            : text;
-          // Per-turn sender identity: a linked sender keys per-user plugin state (memory) by their Orca
-          // account; an unknown sender by platform id. `owner` is stricter than `admin` — only the
-          // operator (their linked account, or their own server-internal automation like cron/subagent)
-          // counts, NEVER a foreign Discord member who merely holds an admin-mapped role. `admin` still
-          // reflects all-access policy (project power tools); the two are deliberately separate.
-          const internalAutomation = src.platform === 'cron' || src.platform === 'subagent';
-          const identity = {
-            platform: src.platform,
-            userId: src.userId,
-            orcaUsername: linked?.username || linked?.name,
-            admin: src.access.admin === true || linked?.admin === true,
-            owner: (linked?.id !== undefined && this.isOwner(linked.id)) || (internalAutomation && src.access.admin === true),
-          };
-          return this.channelSend({ channelId: `${src.platform}-${src.threadId ?? src.channelId}`, ownerUserId: owner, policy, promptAppend: promptAppend.length ? promptAppend : undefined, trusted: src.access.admin, model: src.access.model, thinkingLevel: src.access.thinkingLevel, tools: src.access.admin ? undefined : src.access.tools, images: src.images, identity, history: src.history, onEvent }, sendText);
+          // Per-turn sender identity + the verified-identity line for linked accounts (sanitized
+          // against prompt injection through display names) — minted by the IdentityResolver, the
+          // one auditable place `owner` vs `admin` semantics live.
+          const { identity, verifiedPrefix } = this.identity.forPlatformTurn(src, owner);
+          return this.channelSend({ channelId: `${src.platform}-${src.threadId ?? src.channelId}`, ownerUserId: owner, policy, promptAppend: promptAppend.length ? promptAppend : undefined, trusted: src.access.admin, model: src.access.model, thinkingLevel: src.access.thinkingLevel, tools: src.access.admin ? undefined : src.access.tools, images: src.images, identity, history: src.history, onEvent }, verifiedPrefix + text);
         });
         await adapter.connect();
         this.startedPlatforms.push(adapter);
