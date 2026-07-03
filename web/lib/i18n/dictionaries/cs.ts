@@ -1033,6 +1033,8 @@ export const cs = {
     embeddingProviderHint: 'API klíč se přebírá od zvoleného brain poskytovatele (Nastavení → Brain).',
     embeddingModel: 'Model',
     embeddingModelPlaceholder: 'např. text-embedding-3-small',
+    embeddingModelCustom: 'Vlastní model',
+    embeddingModelCustomHint: 'Pro embedding model, který není v seznamu výše, zadejte jeho id sem.',
     embeddingBaseUrl: 'API endpoint',
     embeddingBaseUrlHint: 'Včetně segmentu verze, např. https://api.openai.com/v1',
     embeddingDimensions: 'Dimenze',

@@ -1033,6 +1033,8 @@ export const en = {
     embeddingProviderHint: 'The API key is inherited from the selected brain provider (Settings → Brain).',
     embeddingModel: 'Model',
     embeddingModelPlaceholder: 'e.g. text-embedding-3-small',
+    embeddingModelCustom: 'Custom model',
+    embeddingModelCustomHint: 'For an embedding model that isn\'t in the list above, type its id here.',
     embeddingBaseUrl: 'API endpoint',
     embeddingBaseUrlHint: 'Include the version segment, e.g. https://api.openai.com/v1',
     embeddingDimensions: 'Dimensions',

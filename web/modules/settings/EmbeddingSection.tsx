@@ -1,16 +1,17 @@
 'use client';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Check, FlaskConical, RefreshCw } from 'lucide-react';
 import { Badge } from '../../components/ui/Badge';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
 import { Field } from '../../components/ui/Field';
 import { Segmented } from '../../components/ui/Segmented';
+import { ModelPillsPicker } from '../../components/ui/ModelPillsPicker';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { LoadingState } from '../../components/ui/states';
 import { useToast } from '../../components/ui/Toast';
 import { useTranslation } from '../../lib/i18n';
-import { useConfig, useEmbeddingSettings } from '../../lib/queries';
+import { useConfig, useEmbeddingSettings, useBrainModels } from '../../lib/queries';
 import { useSaveEmbeddingSettings, useReindexMemories } from '../../lib/mutations';
 import { orcaClient, OrcaApiError } from '../../lib/orcaClient';
 
@@ -21,6 +22,7 @@ export function EmbeddingSection() {
   const { t } = useTranslation();
   const { data: config } = useConfig();
   const { data: settings } = useEmbeddingSettings();
+  const { data: brainModels } = useBrainModels();
   const save = useSaveEmbeddingSettings();
   const reindex = useReindexMemories();
   const { toast } = useToast();
@@ -43,6 +45,14 @@ export function EmbeddingSection() {
       setSeeded(true);
     }
   }, [settings, seeded]);
+
+  // Model catalog scoped to the chosen provider (or all providers when none is picked). Deduped so a
+  // model offered by several providers shows once. Embedding model ids often aren't in the brain
+  // catalog — the custom Input below covers those.
+  const catalog = useMemo(() => {
+    const opts = (brainModels ?? []).filter((m) => !providerId || m.provider === providerId);
+    return Array.from(new Set(opts.map((m) => m.model)));
+  }, [brainModels, providerId]);
 
   if (!config || !settings) return <LoadingState />;
 
@@ -105,6 +115,10 @@ export function EmbeddingSection() {
         </Field>
 
         <Field label={t.memory.embeddingModel}>
+          <ModelPillsPicker mode="single" catalog={catalog} value={model || null} onChange={(v) => setModel(v ?? '')} />
+        </Field>
+
+        <Field label={t.memory.embeddingModelCustom} hint={t.memory.embeddingModelCustomHint}>
           <Input value={model} onChange={(e) => setModel(e.target.value)} placeholder={t.memory.embeddingModelPlaceholder} className="font-mono" />
         </Field>
 
