@@ -1,9 +1,10 @@
 'use client';
-import { useState } from 'react';
-import { Save, Copy, Trash2, Check, Plus, X, Sparkles, Eye } from 'lucide-react';
+import { useState, useEffect, type ReactNode } from 'react';
+import { Save, Copy, Trash2, Check, Plus, X, Sparkles } from 'lucide-react';
 import type { PersonalityProfile, PersonalityPreview } from '../../lib/types';
-import { usePersonalities, usePersonalityPreview } from '../../lib/queries';
-import { useCreatePersonality, useUpdatePersonality, useDeletePersonality, useActivatePersonality } from '../../lib/mutations';
+import { usePersonalities, usePersonalityPreview, useMyCliSettings } from '../../lib/queries';
+import { useCreatePersonality, useUpdatePersonality, useDeletePersonality, useActivatePersonality, useSaveMyCliSettings } from '../../lib/mutations';
+import { useAutoSave } from '../../lib/useAutoSave';
 import { MonacoEditor } from '../projects/editor/monacoLoader';
 import { defineEditorThemes } from '../projects/editor/oledTheme';
 import { useTheme } from '../../lib/useTheme';
@@ -30,8 +31,11 @@ export function activePersonalityId(profiles: PersonalityProfile[], preview: Per
   return match?.id ?? null;
 }
 
-/** Per-user personality profiles: pick a surface (web / discord), manage its named profiles, pin one
- *  active, and preview the resolved system prompt the model would actually receive. */
+const THINKING_LEVELS = ['', 'minimal', 'low', 'medium', 'high', 'xhigh'];
+
+/** Per-user personality: the assistant's behavior (communication style + reasoning effort, applied
+ *  everywhere) plus named persona profiles per surface (web / discord). One profile can be pinned
+ *  active; a live summary shows the resulting persona instead of the raw resolved prompt. */
 export function PersonalitySection() {
   const { t } = useTranslation();
   const [platform, setPlatform] = useState<Platform>('web');
@@ -39,9 +43,31 @@ export function PersonalitySection() {
   const profiles = usePersonalities(platform);
   const preview = usePersonalityPreview(platform);
 
+  // Behavior knobs live in cli-settings (shared with the Orca AI runtime section); this section owns
+  // the personality-facing subset. Autosave sends only these two — the PATCH merges server-side.
+  const cli = useMyCliSettings();
+  const saveCli = useSaveMyCliSettings();
+  const [advisorStyle, setAdvisorStyle] = useState('professional');
+  const [thinkingLevel, setThinkingLevel] = useState('');
+  const [seeded, setSeeded] = useState(false);
+  useEffect(() => {
+    if (cli.data && !seeded) {
+      setAdvisorStyle(cli.data.advisorStyle);
+      setThinkingLevel(cli.data.thinkingLevel ?? '');
+      setSeeded(true);
+    }
+  }, [cli.data, seeded]);
+  useAutoSave([advisorStyle, thinkingLevel], () => saveCli.mutate({ advisorStyle, thinkingLevel }), { ready: seeded });
+
   const platformOptions = [
     { value: 'web', label: t.personality.platformWeb },
     { value: 'discord', label: t.personality.platformDiscord },
+  ];
+  const styleOptions = [
+    { value: 'professional', label: t.personality.styleProfessional },
+    { value: 'friendly', label: t.personality.styleFriendly },
+    { value: 'concise', label: t.personality.styleConcise },
+    { value: 'detailed', label: t.personality.styleDetailed },
   ];
   const list = profiles.data ?? [];
   const activeId = activePersonalityId(list, preview.data);
@@ -58,56 +84,50 @@ export function PersonalitySection() {
         <Button variant="accent" icon={Plus} onClick={() => setEditing('new')}>{t.personality.newProfile}</Button>
       </div>
 
-      {platform === 'discord' ? <p className="text-tiny leading-relaxed text-text-muted">{t.personality.discordNote}</p> : null}
+      {/* Behavior: style + reasoning pills (applied everywhere, on top of any active profile) */}
+      <div className="flex flex-col gap-4 rounded-xl border border-border bg-surface p-5" style={{ boxShadow: 'var(--shadow-card)' }}>
+        <PillGroup label={t.personality.styleLabel}>
+          {styleOptions.map((o) => (
+            <Pill key={o.value} on={advisorStyle === o.value} onClick={() => setAdvisorStyle(o.value)}>{o.label}</Pill>
+          ))}
+        </PillGroup>
 
-      <div className="@container">
-      <div className="flex flex-col gap-4 @3xl:flex-row @3xl:items-start">
-        {/* Profiles list */}
-        <div className="flex min-w-0 flex-1 flex-col gap-2">
-          {profiles.isLoading ? (
-            <LoadingState />
-          ) : list.length === 0 ? (
-            <EmptyState title={t.personality.empty} icon={Sparkles} />
-          ) : (
-            <div className="flex flex-col divide-y divide-border rounded-xl border border-border bg-surface">
-              {list.map((p) => (
-                <button
-                  key={p.id}
-                  type="button"
-                  onClick={() => setEditing(p)}
-                  className="group flex items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-elevated/40"
-                >
-                  <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-                    <span className="flex items-center gap-2">
-                      <span className="truncate text-sm font-medium text-text">{p.name}</span>
-                      {p.id === activeId ? <Badge tone="success">{t.personality.badgeActive}</Badge> : null}
-                      {!p.enabled ? <Badge tone="muted">{t.personality.badgeDisabled}</Badge> : null}
-                    </span>
-                    {p.description ? <span className="truncate text-tiny text-text-muted">{p.description}</span> : null}
-                  </div>
-                  {p.id === activeId ? <Check size={15} className="shrink-0 text-success" aria-hidden /> : null}
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
+        <PillGroup label={t.personality.thinkingLabel}>
+          {THINKING_LEVELS.map((lv) => (
+            <Pill key={lv || 'default'} on={thinkingLevel === lv} onClick={() => setThinkingLevel(lv)}>
+              {lv === '' ? t.personality.thinkingDefault : lv}
+            </Pill>
+          ))}
+        </PillGroup>
+      </div>
 
-        {/* Resolved-prompt preview */}
-        <div className="flex shrink-0 flex-col gap-2 @3xl:w-80">
-          <div className="flex flex-col gap-0.5">
-            <span className="flex items-center gap-1.5 text-sm font-medium text-text"><Eye size={15} className="text-text-muted" aria-hidden />{t.personality.previewTitle}</span>
-            <span className="text-tiny text-text-muted">{t.personality.previewHint}</span>
-          </div>
-          <div className="max-h-[60vh] overflow-auto rounded-xl border border-border bg-bg p-3">
-            {preview.data ? (
-              <pre className="whitespace-pre-wrap break-words font-mono text-tiny leading-relaxed text-text">{preview.data.resolved}</pre>
-            ) : (
-              <p className="text-tiny italic text-text-muted">{t.personality.previewNone}</p>
-            )}
-          </div>
+      {/* Persona profiles */}
+      {profiles.isLoading ? (
+        <LoadingState />
+      ) : list.length === 0 ? (
+        <EmptyState title={t.personality.empty} icon={Sparkles} />
+      ) : (
+        <div className="flex flex-col divide-y divide-border rounded-xl border border-border bg-surface">
+          {list.map((p) => (
+            <button
+              key={p.id}
+              type="button"
+              onClick={() => setEditing(p)}
+              className="group flex items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-elevated/40"
+            >
+              <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                <span className="flex items-center gap-2">
+                  <span className="truncate text-sm font-medium text-text">{p.name}</span>
+                  {p.id === activeId ? <Badge tone="success">{t.personality.badgeActive}</Badge> : null}
+                  {!p.enabled ? <Badge tone="muted">{t.personality.badgeDisabled}</Badge> : null}
+                </span>
+                {p.description ? <span className="truncate text-tiny text-text-muted">{p.description}</span> : null}
+              </div>
+              {p.id === activeId ? <Check size={15} className="shrink-0 text-success" aria-hidden /> : null}
+            </button>
+          ))}
         </div>
-      </div>
-      </div>
+      )}
 
       {editing ? (
         <PersonalityModal
@@ -118,6 +138,30 @@ export function PersonalitySection() {
         />
       ) : null}
     </div>
+  );
+}
+
+/** A labelled row of single-select pills (accent when active), mirroring the app's pill styling. */
+function PillGroup({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div className="flex flex-col gap-2">
+      <span className="text-tiny font-semibold uppercase tracking-wide text-text-muted">{label}</span>
+      <div className="flex flex-wrap gap-1.5">{children}</div>
+    </div>
+  );
+}
+
+function Pill({ on, onClick, children }: { on: boolean; onClick: () => void; children: ReactNode }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={on}
+      className={`inline-flex items-center rounded-md border px-2.5 py-1.5 text-xs font-medium transition-colors ${on ? 'border-accent/50 bg-accent/15 text-accent' : 'border-border bg-elevated text-text-muted hover:border-border-strong hover:text-text'}`}
+      style={{ transitionDuration: 'var(--motion-fast)' }}
+    >
+      {children}
+    </button>
   );
 }
 

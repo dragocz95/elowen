@@ -1,6 +1,6 @@
 'use client';
 import { useState, useEffect, useRef } from 'react';
-import { UserCog, Mail, Cpu, Upload, ShieldCheck, Check, User as UserIcon, KeyRound, ZoomIn, Bell, MessagesSquare, TerminalSquare, Sparkles } from 'lucide-react';
+import { UserCog, Mail, Cpu, Upload, ShieldCheck, Check, User as UserIcon, KeyRound, ZoomIn, Bell, MessagesSquare, Sparkles, AtSign } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { OrcaApiError } from '../../lib/orcaClient';
 import { useMe, useConfig, useMyCliSettings, useBrainModels } from '../../lib/queries';
@@ -77,6 +77,8 @@ export function AccountView() {
   // cliSettings (not on the User) — seeded once, then this local state drives the picker highlight.
   const [orcaSel, setOrcaSel] = useState('');
   const [orcaSeeded, setOrcaSeeded] = useState(false);
+  // Discord account link lives in cliSettings; seeded alongside the Orca-AI default, autosaved on change.
+  const [discordUserId, setDiscordUserId] = useState('');
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -106,9 +108,12 @@ export function AccountView() {
   useEffect(() => {
     if (cli.data && !orcaSeeded) {
       setOrcaSel(cli.data.model ? `${cli.data.modelProvider ?? ''}::${cli.data.model}` : '');
+      setDiscordUserId(cli.data.discordUserId ?? '');
       setOrcaSeeded(true);
     }
   }, [cli.data, orcaSeeded]);
+  // Autosave the Discord link (cli-settings PATCH merges, so the model picks stay untouched).
+  useAutoSave([discordUserId], () => saveCli.mutate({ discordUserId }), { ready: orcaSeeded });
 
   // Picking an Orca AI model writes ONLY model+modelProvider (the cli-settings PATCH merges, so the
   // CLI tab's other fields are untouched) and the daemon restarts a running brain on the new model.
@@ -206,7 +211,7 @@ export function AccountView() {
     { id: 'profile', icon: UserCog, label: t.account.tabProfile },
     { id: 'security', icon: KeyRound, label: t.account.tabSecurity },
     { id: 'notifications', icon: Bell, label: t.account.tabNotifications },
-    { id: 'cli', icon: TerminalSquare, label: t.account.tabCli },
+    { id: 'cli', icon: Cpu, label: t.account.tabCli },
     { id: 'prompts', icon: MessagesSquare, label: t.account.tabPrompts },
     { id: 'personality', icon: Sparkles, label: t.account.tabPersonality },
   ];
@@ -259,6 +264,11 @@ export function AccountView() {
             <span className="w-12 shrink-0 text-right font-mono text-sm tabular-nums text-text">{scalePct}%</span>
             <Button variant="ghost" onClick={() => setScale(DEFAULT_SCALE)} disabled={scalePct === DEFAULT_SCALE * 100}>{t.account.uiScaleReset}</Button>
           </div>
+        </SettingCard>
+
+        {/* Discord account link — maps your Discord user to this Orca account (owner persona on Discord). */}
+        <SettingCard title={t.account.discordId} icon={AtSign} description={t.account.discordIdHint}>
+          <Input value={discordUserId} onChange={(e) => setDiscordUserId(e.target.value)} placeholder="123456789012345678" className="max-w-xs font-mono" aria-label={t.account.discordId} />
         </SettingCard>
 
       </div>
