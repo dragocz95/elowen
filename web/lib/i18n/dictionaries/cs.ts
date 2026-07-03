@@ -850,6 +850,7 @@ export const cs = {
     restrictedHint: 'Tyto modely vám povolil administrátor.',
     noModelLimit: 'Bez omezení — můžete spouštět všechny globálně povolené modely.',
     defaultWorker: 'Výchozí worker',
+    defaultWorkerHint: 'Spouští vaše úlohy — předvyplní se jako executor u nových tasků.',
     defaultOrcaAi: 'Výchozí Orca AI model',
     defaultOrcaAiHint: 'Používá se pro web chat i orca chat v terminálu.',
     save: 'Uložit',

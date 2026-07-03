@@ -278,7 +278,10 @@ export function AccountView() {
         {/* Default worker (default_exec) */}
         {workerGroups.length > 0 ? (
           <div className="flex flex-col gap-2.5">
-            <span className="text-tiny font-semibold uppercase tracking-wide text-text-muted">{t.account.defaultWorker}</span>
+            <div className="flex flex-col gap-0.5">
+              <span className="text-tiny font-semibold uppercase tracking-wide text-text-muted">{t.account.defaultWorker}</span>
+              <span className="text-tiny text-text-muted">{t.account.defaultWorkerHint}</span>
+            </div>
             {workerGroups.map((g) => (
               <div key={g.meta.id} className="flex flex-col gap-1.5">
                 <span className="flex items-center gap-1.5 text-xs text-text-muted"><ProviderLogo meta={g.meta} size={18} />{g.meta.label}</span>

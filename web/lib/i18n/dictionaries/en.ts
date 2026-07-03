@@ -850,6 +850,7 @@ export const en = {
     restrictedHint: 'These models were allowed by your admin.',
     noModelLimit: 'No limit — you can run any globally-allowed model.',
     defaultWorker: 'Default worker',
+    defaultWorkerHint: 'Runs your tasks — pre-filled as the executor for new ones.',
     defaultOrcaAi: 'Default Orca AI model',
     defaultOrcaAiHint: 'Used by the web chat and the orca chat CLI.',
     save: 'Save',
