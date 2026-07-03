@@ -1,8 +1,8 @@
 'use client';
 import { useState, useEffect, type ReactNode } from 'react';
 import { Save, Copy, Trash2, Check, Plus, X, Sparkles } from 'lucide-react';
-import type { PersonalityProfile, PersonalityPreview } from '../../lib/types';
-import { usePersonalities, usePersonalityPreview, useMyCliSettings } from '../../lib/queries';
+import type { PersonalityProfile } from '../../lib/types';
+import { usePersonalities, useMyCliSettings } from '../../lib/queries';
 import { useCreatePersonality, useUpdatePersonality, useDeletePersonality, useActivatePersonality, useSaveMyCliSettings } from '../../lib/mutations';
 import { useAutoSave } from '../../lib/useAutoSave';
 import { MonacoEditor } from '../projects/editor/monacoLoader';
@@ -21,16 +21,6 @@ import { useTranslation } from '../../lib/i18n';
 const PLATFORMS = ['web', 'discord'] as const;
 type Platform = (typeof PLATFORMS)[number];
 
-/** Which profile is currently pinned active, derived from the preview's append layer (the server's
- *  single source for the active chunk). `layers[1].text` embeds `Name: <name>` and ends with the
- *  profile's prompt, so we match on both — no separate active flag exists on the list response. */
-export function activePersonalityId(profiles: PersonalityProfile[], preview: PersonalityPreview | undefined): number | null {
-  const append = preview?.layers[1]?.text;
-  if (!append || append === 'no active profile') return null;
-  const match = profiles.find((p) => append.includes(`Name: ${p.name}`) && append.endsWith(p.prompt));
-  return match?.id ?? null;
-}
-
 const THINKING_LEVELS = ['', 'minimal', 'low', 'medium', 'high', 'xhigh'];
 
 /** Per-user personality: the assistant's behavior (communication style + reasoning effort, applied
@@ -41,7 +31,6 @@ export function PersonalitySection() {
   const [platform, setPlatform] = useState<Platform>('web');
   const [editing, setEditing] = useState<PersonalityProfile | 'new' | null>(null);
   const profiles = usePersonalities(platform);
-  const preview = usePersonalityPreview(platform);
 
   // Behavior knobs live in cli-settings (shared with the Orca AI runtime section); this section owns
   // the personality-facing subset. Autosave sends only these two — the PATCH merges server-side.
@@ -70,7 +59,8 @@ export function PersonalitySection() {
     { value: 'detailed', label: t.personality.styleDetailed },
   ];
   const list = profiles.data ?? [];
-  const activeId = activePersonalityId(list, preview.data);
+  // The list API carries an authoritative `active` flag (server single-source), so no preview parsing.
+  const activeId = list.find((p) => p.active)?.id ?? null;
 
   return (
     <div className="flex flex-col gap-4">

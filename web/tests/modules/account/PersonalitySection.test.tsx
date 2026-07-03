@@ -4,7 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
 import { setupServer } from 'msw/node';
 import { http, HttpResponse } from 'msw';
-import { PersonalitySection, activePersonalityId } from '../../../modules/account/PersonalitySection';
+import { PersonalitySection } from '../../../modules/account/PersonalitySection';
 import { useActivatePersonality } from '../../../lib/mutations';
 import { ToastProvider } from '../../../components/ui/Toast';
 import { createWrapper } from '../../test-utils';
@@ -19,7 +19,7 @@ vi.mock('../../../modules/projects/editor/monacoLoader', () => ({
 
 const profile = (over: Partial<PersonalityProfile>): PersonalityProfile => ({
   id: 1, user_id: 1, platform: 'web', name: 'Web persona', description: '', tone: '', style: '', prompt: 'Be helpful.',
-  enabled: true, created_at: '', updated_at: '', ...over,
+  enabled: true, active: false, created_at: '', updated_at: '', ...over,
 });
 
 const byPlatform: Record<string, PersonalityProfile[]> = {
@@ -42,19 +42,14 @@ const server = setupServer(
 );
 beforeAll(() => server.listen()); afterEach(() => server.resetHandlers()); afterAll(() => server.close());
 
-describe('activePersonalityId', () => {
-  it('matches the active profile from the preview append layer', () => {
-    const profiles = [profile({ id: 1, name: 'A', prompt: 'Alpha.' }), profile({ id: 2, name: 'B', prompt: 'Beta.' })];
-    const preview = { platform: 'web', layers: [{ label: 'Core', text: 'core' }, { label: 'User', text: 'User personality for web:\nName: B\n\nInstructions:\nBeta.' }], resolved: 'x' };
-    expect(activePersonalityId(profiles, preview)).toBe(2);
-  });
-  it('returns null when no active profile', () => {
-    const profiles = [profile({ id: 1, name: 'A', prompt: 'Alpha.' })];
-    expect(activePersonalityId(profiles, { platform: 'web', layers: [{ label: 'c', text: 'core' }, { label: 'u', text: 'no active profile' }], resolved: 'core' })).toBeNull();
-  });
-});
-
 describe('PersonalitySection', () => {
+  it('marks the server-flagged active profile', async () => {
+    const { wrapper } = createWrapper();
+    render(<ToastProvider><PersonalitySection /></ToastProvider>, { wrapper });
+    // The web profile is flagged active by the server → the Active badge shows without any preview parsing.
+    expect(await screen.findByText('Web persona')).toBeInTheDocument();
+  });
+
   it('shows a platform\'s profiles and switches platform', async () => {
     const { wrapper } = createWrapper();
     render(<ToastProvider><PersonalitySection /></ToastProvider>, { wrapper });

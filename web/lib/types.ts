@@ -137,6 +137,7 @@ export interface PersonalityProfile {
   style: string;
   prompt: string;
   enabled: boolean;
+  active: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -154,14 +155,6 @@ export interface PersonalityCreate {
 
 /** Any subset of the mutable fields for PATCH /personality/profiles/:id. */
 export type PersonalityPatch = Partial<Omit<PersonalityCreate, 'platform'>> & { platform?: string };
-
-/** Read-only render of the resolved system-prompt stack for the settings preview. `layers[0]` is the
- *  core persona, `layers[1]` the active personality chunk (text `'no active profile'` when none). */
-export interface PersonalityPreview {
-  platform: string;
-  layers: { label: string; text: string }[];
-  resolved: string;
-}
 
 /** Per-user CLI/brain settings surfaced in Account → CLI. `model` empty → the configured brain default
  *  (`serverDefault`, response-only). */

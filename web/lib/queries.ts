@@ -229,12 +229,6 @@ export const useMyCliSettings = () =>
 export const usePersonalities = (platform: string) =>
   useQuery({ queryKey: ['personalities', platform], queryFn: () => orcaClient.listPersonalities(platform) });
 
-/** The resolved system-prompt stack for one platform (core persona + active personality chunk). Also the
- *  UI's source of truth for WHICH profile is active — the append layer names it. Refetched after
- *  activate. `retry: false` so the store-absent 400 surfaces immediately instead of hammering. */
-export const usePersonalityPreview = (platform: string) =>
-  useQuery({ queryKey: ['personality-preview', platform], queryFn: () => orcaClient.personalityPreview(platform), retry: false });
-
 /** Installed daemon plugins (admin). Toggling invalidates ['plugins']. */
 export const usePlugins = () =>
   useQuery({ queryKey: ['plugins'], queryFn: orcaClient.plugins });
