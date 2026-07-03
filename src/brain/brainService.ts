@@ -1,10 +1,9 @@
 import { formatSkillsForPrompt } from '@earendil-works/pi-coding-agent';
-import type { AgentSession, AgentSessionEvent, ResourceLoader, createAgentSession } from '@earendil-works/pi-coding-agent';
+import type { AgentSessionEvent, ResourceLoader, createAgentSession } from '@earendil-works/pi-coding-agent';
 import type { PluginRegistry } from '../plugins/registry.js';
 import type { PluginRegistryProvider } from '../plugins/pluginsProvider.js';
 import type { Policy } from '../plugins/policy.js';
 import { runWithPolicy } from '../plugins/policyContext.js';
-import type { TurnIdentity } from '../plugins/policyContext.js';
 import type { AuthStorage } from '@earendil-works/pi-coding-agent';
 import type { BrainStore, BrainSearchHit } from '../store/brainStore.js';
 import type { BrainRuntimeConfig } from './providers.js';
@@ -18,11 +17,16 @@ import { composeSessionTools } from './session/capabilities.js';
 import { IdentityResolver } from './identity.js';
 import { decideVisionHop } from './visionFallback.js';
 import { LiveSessionRegistry } from './session/liveRegistry.js';
-import { shapeBrainMessages, extractText } from './messageView.js';
+import { DEFAULT_AUTO_COMPACT_AT } from './session/liveBrain.js';
+import type { LiveBrain, SpawnOpts } from './session/liveBrain.js';
+import { ChannelSessionService } from './channels.js';
+import type { ChannelSendOpts } from './channels.js';
+import { PlatformOrchestrator } from './platforms.js';
+import { shapeBrainMessages } from './messageView.js';
 import type { BrainMessageView } from './messageView.js';
 import { toBrainEvent, usageOf } from './events.js';
 import type { BrainEvent, BrainUsage } from './events.js';
-import { defaultUserSessionId, freshUserSessionId, channelSessionId, isNonUserSession } from './sessionId.js';
+import { defaultUserSessionId, freshUserSessionId, isNonUserSession } from './sessionId.js';
 
 export type { BrainMessageView } from './messageView.js';
 
@@ -72,27 +76,37 @@ export interface BrainDeps {
   resourceLoaderFactory?: (o: { cwd: string; systemPrompt: string; appendSystemPrompt?: string[] }) => ResourceLoader | undefined;
 }
 
-interface LiveBrain { session: AgentSession; sessionId: string; model: string; visionCapable: boolean; thinkingLevel?: string; policy: Policy; autoCompact: boolean; autoCompactAt: number; listeners: Set<(e: BrainEvent) => void>; turnContext: () => string; /** True while the session runs on the user's vision-fallback model (an image turn hopped onto it). */ visionFallback?: boolean }
-
-/** Fallback auto-compact threshold (fraction of the context window) when the user set none. */
-const DEFAULT_AUTO_COMPACT_AT = 0.8;
-
 /** Per-user embedded brain lifecycle. Mirrors AdvisorService's shape so daemon wiring is familiar,
- *  but holds in-process PI AgentSessions (one per conversation) instead of spawning an external CLI. */
+ *  but holds in-process PI AgentSessions (one per conversation) instead of spawning an external CLI.
+ *  A thin facade over the focused units: session state (LiveSessionRegistry), assembly
+ *  (BrainSessionFactory), identities (IdentityResolver), channel turns (ChannelSessionService) and
+ *  platform adapters (PlatformOrchestrator). */
 export class BrainService {
   /** All mutable live-session state: user sessions, active pointers, channel LRU and the per-key
    *  locks (PI sessions are single-conversation — concurrent prompt()/spawn calls on one session id
    *  queue up instead of corrupting turn state). */
   private sessions = new LiveSessionRegistry<LiveBrain>();
-  private startedPlatforms: { name: string; disconnect?(): void; notify?(t: string, channelId?: string): Promise<void> }[] = [];
   /** Shared session assembly (store row + rehydrate + resource loader + PI session) — the same
    *  factory the orca-exec brain workers use. */
   private factory: BrainSessionFactory;
   /** The ONE place turn identities (and the owner check) are minted. */
   private identity: IdentityResolver;
+  private channelService: ChannelSessionService;
+  private platforms: PlatformOrchestrator;
   constructor(private d: BrainDeps) {
     this.factory = new BrainSessionFactory({ store: d.store, createSession: d.createSession, resourceLoaderFactory: d.resourceLoaderFactory });
     this.identity = new IdentityResolver({ platformOwner: d.platformOwner, resolvePlatformUser: d.resolvePlatformUser, users: d.users });
+    this.channelService = new ChannelSessionService({
+      registry: this.sessions, store: d.store, users: d.users,
+      spawn: (o) => this.spawnLive(o), // composition stays here — single source
+    });
+    this.platforms = new PlatformOrchestrator({
+      plugins: () => this.resolvePlugins(),
+      platformOwner: d.platformOwner,
+      policyForProjects: d.policyForProjects,
+      identity: this.identity,
+      channels: this.channelService,
+    });
   }
 
   private serial<T>(key: string, fn: () => Promise<T>): Promise<T> {
@@ -224,23 +238,7 @@ export class BrainService {
 
   /** Everything shared by a user session and a channel session: registry + store row + rehydration +
    *  persona/plugins composition + PI session construction + persistence subscription. */
-  private async spawnLive(opts: {
-    sessionId: string;
-    ownerUserId: number;
-    selection: { provider?: string; model?: string };
-    policy: Policy;
-    /** Extra system-prompt chunks appended after the plugin fragments (e.g. a Discord role prompt). */
-    extraAppend?: string[];
-    /** Platform channel session (Discord, …): the sender is NOT an Orca user, so the owner's
-     *  full-scope orca_* API tools are withheld — only Policy-guarded plugin tools load. */
-    channel?: boolean;
-    /** Per-role tool allowlist (tool names; '*' = everything). Undefined = no restriction. */
-    toolFilter?: string[];
-    /** Reasoning effort for extended-thinking models (empty/undefined = the model default). */
-    thinkingLevel?: string;
-    autoCompact: boolean;
-    autoCompactAt: number;
-  }): Promise<LiveBrain> {
+  private async spawnLive(opts: SpawnOpts): Promise<LiveBrain> {
     const { sessionId, ownerUserId } = opts;
 
     const cfg = this.runtimeConfig();
@@ -427,135 +425,23 @@ export class BrainService {
     }
     this.sessions.channelDisposeAll();
     // Platform adapters were built by the old registry — disconnect them and start the fresh set.
-    for (const p of this.startedPlatforms) { try { p.disconnect?.(); } catch { /* already down */ } }
-    this.startedPlatforms = [];
-    await this.startPlatforms();
+    this.platforms.stopAll();
+    await this.platforms.startAll();
   }
 
-  /** Push a proactive message to every started platform that has a notification channel (Discord, …).
-   *  Fail-open per adapter — a broken sink must not break the cron tick that triggered it. */
+  /** Push a proactive message out through the platform adapters (cron/tick echoes). */
   async notify(text: string, channelId?: string): Promise<void> {
-    for (const p of this.startedPlatforms) {
-      const adapter = p as { notify?(t: string, channelId?: string): Promise<void> };
-      if (typeof adapter.notify === 'function') {
-        try { await adapter.notify(text, channelId); } catch { /* one sink down must not block the rest */ }
-      }
-    }
+    await this.platforms.notify(text, channelId);
   }
 
-  /** Start every plugin-contributed platform adapter (Discord bot, …): wire its messages into channel
-   *  sessions and let it deliver the replies. Fail-open per adapter; called once at daemon startup and
-   *  re-run by reloadPlugins. */
+  /** Start every plugin-contributed platform adapter — see PlatformOrchestrator. */
   async startPlatforms(log?: { info(m: string): void; error(m: string): void }): Promise<void> {
-    const plugins = await this.resolvePlugins();
-    for (const adapter of plugins?.platforms ?? []) {
-      try {
-        adapter.listen(async (src, text, onEvent) => {
-          const owner = this.d.platformOwner?.();
-          if (owner === undefined || !src.access) return undefined; // unmapped sender → stay silent
-          // Owner-authored automation (cron) runs with the owner's full powers; foreign senders get
-          // their role's project scope and no orca_* tools.
-          const policy = src.access.admin
-            ? { allowedProjectIds: 'all' as const, allowedPaths: () => [] }
-            : this.d.policyForProjects?.(src.access.projectIds)
-              ?? { allowedProjectIds: new Set(src.access.projectIds), allowedPaths: () => [] };
-          const promptAppend = [
-            ...(src.access.prompt ? [src.access.prompt] : []),
-            ...(src.channelName ? [this.channelFragment(src, owner)] : []),
-          ];
-          // Per-turn sender identity + the verified-identity line for linked accounts (sanitized
-          // against prompt injection through display names) — minted by the IdentityResolver, the
-          // one auditable place `owner` vs `admin` semantics live.
-          const { identity, verifiedPrefix } = this.identity.forPlatformTurn(src, owner);
-          return this.channelSend({ channelId: `${src.platform}-${src.threadId ?? src.channelId}`, ownerUserId: owner, policy, promptAppend: promptAppend.length ? promptAppend : undefined, trusted: src.access.admin, model: src.access.model, thinkingLevel: src.access.thinkingLevel, tools: src.access.admin ? undefined : src.access.tools, images: src.images, identity, history: src.history, onEvent }, verifiedPrefix + text);
-        });
-        await adapter.connect();
-        this.startedPlatforms.push(adapter);
-        log?.info(`platform connected: ${adapter.name}`);
-      } catch (e) {
-        log?.error(`platform failed: ${adapter.name}: ${e instanceof Error ? e.message : String(e)}`);
-      }
-    }
+    await this.platforms.startAll(log);
   }
 
-  /** Shared-channel system-prompt fragment: names the room (and its topic) and pins the multi-user
-   *  etiquette — senders arrive `[name]`-prefixed and are usually NOT the instance owner, so the brain
-   *  must never address a stranger as the owner. Applied only when the channel session spawns via
-   *  `promptAppend` → `extraAppend`; a later channel-name/topic change takes effect once the session
-   *  respawns (LRU eviction or a /new reset). */
-  private channelFragment(src: { platform: string; channelName?: string; channelTopic?: string }, ownerUserId: number): string {
-    const u = this.d.users.get(ownerUserId);
-    const ownerName = u?.name || u?.username || 'the owner';
-    const platform = src.platform.charAt(0).toUpperCase() + src.platform.slice(1);
-    const topic = src.channelTopic?.trim() ? ` The channel topic is: "${src.channelTopic.trim()}".` : '';
-    return `You are talking on ${platform} in #${src.channelName}.${topic}\n`
-      + `This is a shared channel: each user message is prefixed with the sender's name in [brackets]. `
-      + `Address each sender by their bracketed name — the person talking to you is usually NOT ${ownerName}, `
-      + `whose Orca instance you run on. Never assume the sender is ${ownerName} unless the prefix says so.`;
-  }
-
-  /** Send one channel message (e.g. a Discord mention) into that channel's own conversation and return
-   *  the final assistant text. The session is keyed by the channel — NOT the Orca user — and runs with
-   *  the caller-resolved Policy (role → projects) plus optional role prompt fragments. Persisted like
-   *  any brain conversation (`brain-ch-<id>`), owned by `ownerUserId` (whose token drives the tools). */
-  /** Live channel sessions are capped: past this the least-recently-used one is disposed (its history
-   *  stays in SQLite and rehydrates on the next message), so a busy server can't leak sessions. */
-  private static readonly MAX_CHANNELS = 32;
-
-  async channelSend(opts: { channelId: string; ownerUserId: number; policy: Policy; promptAppend?: string[]; trusted?: boolean; model?: { provider?: string; model?: string }; thinkingLevel?: string; tools?: string[]; images?: { data: string; mimeType: string }[]; identity?: TurnIdentity; history?: () => Promise<string>; onEvent?: (e: BrainEvent) => void }, text: string): Promise<string> {
-    const sessionId = channelSessionId(opts.channelId);
-    // Serialized per channel: two rapid Discord messages must not prompt() one PI session concurrently
-    // (and must not both spawn it).
-    return this.serial(sessionId, async () => {
-      // A BRAND-NEW conversation (no stored turns) may backfill what the platform channel said before
-      // the brain joined — fetched lazily so an ongoing conversation never pays for it. Prepended to
-      // the first user message (not the system prompt) so it persists as normal history.
-      if (opts.history && this.d.store.getMessages(sessionId).length === 0) {
-        const past = await opts.history().catch(() => '');
-        if (past.trim()) text = `${past.trim()}\n\n${text}`;
-      }
-      let ch = this.sessions.channelGet(opts.channelId);
-      // A model or reasoning-effort switch mid-conversation rebuilds the session (history rehydrates).
-      const modelChanged = !!opts.model?.model && ch?.model !== opts.model.model;
-      const thinkingChanged = !!ch && (ch.thinkingLevel ?? '') !== (opts.thinkingLevel ?? '');
-      if (ch && (modelChanged || thinkingChanged)) { this.sessions.channelDispose(opts.channelId); ch = undefined; }
-      if (!ch) {
-        this.sessions.channelEvictOldestIfFull(BrainService.MAX_CHANNELS);
-        ch = await this.spawnLive({
-          sessionId,
-          ownerUserId: opts.ownerUserId,
-          selection: opts.model ?? {},
-          policy: opts.policy,
-          extraAppend: opts.promptAppend,
-          channel: !opts.trusted, // foreign platform senders never get the orca_* control-plane tools
-          toolFilter: opts.tools,
-          thinkingLevel: opts.thinkingLevel,
-          autoCompact: true, // channels are long-lived and unattended — keep their context bounded
-          autoCompactAt: DEFAULT_AUTO_COMPACT_AT,
-        });
-      }
-      this.sessions.channelTouch(opts.channelId, ch); // (re-)insert → Map order doubles as LRU order
-      // Same image handling as send(): history keeps a marker, the pixels ride only the live prompt.
-      projectUserTurn(this.d.store, sessionId, opts.images?.length ? `${text}\n[📎 ${opts.images.length}× obrázek]` : text);
-      const prompted = ch.turnContext() + text;
-      const options = opts.images?.length
-        ? { images: opts.images.map((i) => ({ type: 'image' as const, data: i.data, mimeType: i.mimeType })) }
-        : undefined;
-      // Optional live streaming (Discord edit-in-place): forward this turn's events to the caller.
-      const onEvent = opts.onEvent;
-      const detach = onEvent ? (ch.listeners.add(onEvent), () => ch.listeners.delete(onEvent)) : undefined;
-      try {
-        await runWithPolicy(opts.policy, () => (options ? ch.session.prompt(prompted, options) : ch.session.prompt(prompted)), opts.identity);
-      } finally { detach?.(); }
-      const usage = ch.session.getContextUsage();
-      if (usage?.tokens && usage.contextWindow > 0 && usage.tokens / usage.contextWindow >= ch.autoCompactAt) {
-        try { await ch.session.compact(); } catch { /* best-effort */ }
-      }
-      // The reply = the last assistant message of the settled turn.
-      const msgs = ch.session.messages as { role?: string }[];
-      const last = [...msgs].reverse().find((m) => m.role === 'assistant');
-      return last ? extractText(last) : '';
-    });
+  /** Send one channel message (e.g. a Discord mention) — see ChannelSessionService. */
+  async channelSend(opts: ChannelSendOpts, text: string): Promise<string> {
+    return this.channelService.send(opts, text);
   }
 
   stop(userId: number): void {

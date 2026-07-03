@@ -3,7 +3,7 @@ import type { Policy } from '../plugins/policy.js';
 import type { SessionSource } from '../plugins/api.js';
 
 /** A platform sender resolved to the Orca account that claimed the platform id in Account settings. */
-export interface LinkedUser { id: number; name: string; username?: string; admin: boolean }
+interface LinkedUser { id: number; name: string; username?: string; admin: boolean }
 
 export interface IdentityDeps {
   /** The Orca user that anchors platform channel sessions (the admin). Undefined = single-user mode. */

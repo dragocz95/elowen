@@ -2,7 +2,7 @@ import type { ToolDefinition } from '@earendil-works/pi-coding-agent';
 
 /** What kind of session the tools are composed for — the explicit form of the security invariant that
  *  used to hide behind a `channel: !trusted` double negation. */
-export type SessionKind =
+type SessionKind =
   /** The operator's (or a user's) own authenticated chat — full orca_* control-plane tools. */
   | 'owner-chat'
   /** A platform channel whose turn is owner-authored automation (cron) — trusted like owner chat. */
