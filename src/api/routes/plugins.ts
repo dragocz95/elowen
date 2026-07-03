@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { discoverPlugins } from '../../plugins/loader.js';
+import { buildContributionReport, emptyContributionReport } from '../../plugins/contributionReport.js';
 import { OAUTH_BUILTIN } from '../../brain/providers.js';
 import { oauthBuiltinCatalog } from '../../brain/models.js';
 import type { OrcaApp, RouteContext } from '../context.js';
@@ -47,6 +48,16 @@ export function registerPluginRoutes(app: OrcaApp, ctx: RouteContext): void {
   app.get('/plugins', (c) => {
     if (notAdmin(c)) return c.json({ error: 'forbidden' }, 403);
     return c.json(listing());
+  });
+
+  // Runtime introspection: the ACTUAL contributions of the merged, loaded plugin registry — each tool /
+  // skill / platform / hook / prompt-fragment / turn-context tagged with the plugin that registered it.
+  // Distinct from GET /plugins (declarative manifest `provides`): this reflects what ended up live after
+  // load. Registered before `/plugins/:name` so the literal path isn't captured by the param route.
+  app.get('/plugins/runtime', async (c) => {
+    if (notAdmin(c)) return c.json({ error: 'forbidden' }, 403);
+    const registry = await d.plugins?.get();
+    return c.json(registry ? buildContributionReport(registry) : emptyContributionReport());
   });
 
   // Detail for the per-plugin settings section: the declared config fields + current values. Secret

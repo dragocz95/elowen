@@ -17,6 +17,15 @@ export class PluginRegistry {
   readonly hooks: PluginHook[] = [];
   readonly turnContexts: (() => string)[] = [];
   readonly platforms: PlatformAdapter[] = [];
+  // Per-contribution ownership for the flat lists above — index-aligned with their sibling array, so
+  // `skills[i]` was registered by `skillOwners[i]`. Tools use the `toolOwner` Map instead (tool names
+  // are unique and drive per-role filtering); these lists allow duplicates (two plugins can register the
+  // same hook name), so a Map would lose entries. Feeds the runtime plugin-contribution report.
+  readonly skillOwners: string[] = [];
+  readonly promptFragmentOwners: string[] = [];
+  readonly hookOwners: string[] = [];
+  readonly turnContextOwners: string[] = [];
+  readonly platformOwners: string[] = [];
 
   /** Absorb another registry's contributions (the loader stages each plugin and merges on success). */
   merge(other: PluginRegistry): void {
@@ -27,6 +36,11 @@ export class PluginRegistry {
     this.hooks.push(...other.hooks);
     this.turnContexts.push(...other.turnContexts);
     this.platforms.push(...other.platforms);
+    this.skillOwners.push(...other.skillOwners);
+    this.promptFragmentOwners.push(...other.promptFragmentOwners);
+    this.hookOwners.push(...other.hookOwners);
+    this.turnContextOwners.push(...other.turnContextOwners);
+    this.platformOwners.push(...other.platformOwners);
   }
 
   /** Build the context passed to one plugin's `register()`. `config` is that plugin's own slice;
@@ -39,11 +53,11 @@ export class PluginRegistry {
     };
     return {
       registerTool: (t) => { this.tools.push(t); this.toolOwner.set(t.name, name); },
-      registerSkill: (s) => { this.skills.push(s); },
-      registerSystemPromptFragment: (f) => { this.promptFragments.push(f); },
-      registerHook: (h) => { this.hooks.push(h); },
-      registerTurnContext: (f) => { this.turnContexts.push(f); },
-      registerPlatform: (p) => { this.platforms.push(p); },
+      registerSkill: (s) => { this.skills.push(s); this.skillOwners.push(name); },
+      registerSystemPromptFragment: (f) => { this.promptFragments.push(f); this.promptFragmentOwners.push(name); },
+      registerHook: (h) => { this.hooks.push(h); this.hookOwners.push(name); },
+      registerTurnContext: (f) => { this.turnContexts.push(f); this.turnContextOwners.push(name); },
+      registerPlatform: (p) => { this.platforms.push(p); this.platformOwners.push(name); },
       assertPathAllowed,
       allowedRoots,
       isAdminSession: isAllAccess,
