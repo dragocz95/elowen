@@ -26,6 +26,15 @@ export function toEmbeddingConfig(block: EmbeddingBlock): EmbeddingConfig {
   };
 }
 
+/** Memory categorization model config. `providerId` references a brain provider whose API key is reused
+ *  at call time (no second secret is stored); `baseUrl` optionally overrides the provider's endpoint.
+ *  Empty `providerId`/`model` = categorization disabled. Holds no secret → safe to expose verbatim. */
+export interface CategorizationBlock {
+  providerId: string;
+  model: string;
+  baseUrl: string;
+}
+
 interface ProviderConfig { bin: string; args: string; skipPermissions: boolean; resume: boolean }
 export type Providers = Record<string, ProviderConfig>;
 
@@ -53,6 +62,8 @@ export interface OrcaConfig {
   brain: { providers: BrainProviderPublic[]; agentName: string };
   /** Memory embedding provider config (no secret — the API key comes from the referenced brain provider). */
   embedding: EmbeddingBlock;
+  /** Memory categorization model (workspace-level; no secret — key reused from the brain provider). */
+  categorization: CategorizationBlock;
 }
 
 /** How a brain provider authenticates/talks upstream. `openai` = any OpenAI-compatible endpoint;
@@ -143,6 +154,7 @@ const DEFAULT_CONFIG: OrcaConfig = {
   plugins: { enabled: [] },
   brain: { providers: [], agentName: 'Orca' },
   embedding: { providerId: '', model: '', baseUrl: '', dimensions: null },
+  categorization: { providerId: '', model: '', baseUrl: '' },
 };
 
 interface Stored {
@@ -166,6 +178,8 @@ interface Stored {
   /** Embedding provider config. Holds no secret (the key is reused from the brain provider), so this
    *  block is safe to surface verbatim in the public view. */
   embedding: EmbeddingBlock;
+  /** Categorization model config. Holds no secret (key reused from the brain provider) → public verbatim. */
+  categorization: CategorizationBlock;
 }
 
 const defaultStored = (): Stored => ({
@@ -184,6 +198,7 @@ const defaultStored = (): Stored => ({
   plugins: { enabled: [], config: {} },
   brain: { providers: [], agentName: 'Orca' },
   embedding: { providerId: '', model: '', baseUrl: '', dimensions: null },
+  categorization: { providerId: '', model: '', baseUrl: '' },
 });
 
 export interface ConfigPatch {
@@ -202,6 +217,8 @@ export interface ConfigPatch {
   brain?: { providers?: unknown; agentName?: unknown };
   /** Embedding config is merged per-field (like autopilot); `dimensions: null` clears the width hint. */
   embedding?: { providerId?: string; model?: string; baseUrl?: string; dimensions?: number | null };
+  /** Categorization config merged per-field (like embedding). */
+  categorization?: { providerId?: string; model?: string; baseUrl?: string };
 }
 
 export class ConfigStore {
@@ -248,6 +265,11 @@ export class ConfigStore {
           baseUrl: typeof p.embedding?.baseUrl === 'string' ? p.embedding.baseUrl : d.embedding.baseUrl,
           dimensions: typeof p.embedding?.dimensions === 'number' && Number.isFinite(p.embedding.dimensions) ? p.embedding.dimensions : null,
         },
+        categorization: {
+          providerId: typeof p.categorization?.providerId === 'string' ? p.categorization.providerId : d.categorization.providerId,
+          model: typeof p.categorization?.model === 'string' ? p.categorization.model : d.categorization.model,
+          baseUrl: typeof p.categorization?.baseUrl === 'string' ? p.categorization.baseUrl : d.categorization.baseUrl,
+        },
       };
     } catch { return defaultStored(); } // corrupt row → defaults, never throw
   }
@@ -276,6 +298,8 @@ export class ConfigStore {
       brain: { providers: s.brain.providers.map(({ apiKey, ...pub }) => ({ ...pub, apiKeySet: !!apiKey })), agentName: s.brain.agentName },
       // No secret in the embedding block (the key is reused from the brain provider) → expose verbatim.
       embedding: s.embedding,
+      // Likewise no secret in the categorization block → expose verbatim.
+      categorization: s.categorization,
     };
   }
 
@@ -352,6 +376,11 @@ export class ConfigStore {
           ? (typeof patch.embedding.dimensions === 'number' && Number.isFinite(patch.embedding.dimensions) ? patch.embedding.dimensions : null)
           : cur.embedding.dimensions,
       },
+      categorization: {
+        providerId: patch.categorization?.providerId ?? cur.categorization.providerId,
+        model: patch.categorization?.model ?? cur.categorization.model,
+        baseUrl: patch.categorization?.baseUrl ?? cur.categorization.baseUrl,
+      },
     });
     return this.get();
   }
@@ -359,6 +388,11 @@ export class ConfigStore {
   /** The persisted embedding block (daemon-side). Empty `providerId`/`model` → embeddings disabled.
    *  Map it to an EmbeddingService config via `toEmbeddingConfig`. */
   embeddingConfig(): EmbeddingBlock { return this.read().embedding; }
+
+  /** The persisted categorization block (daemon-side). Empty `providerId`/`model` → categorization
+   *  disabled. The categorizer's inference client is built in bootstrap from the referenced brain
+   *  provider (endpoint+key), so no mapper is needed here. */
+  categorizationConfig(): CategorizationBlock { return this.read().categorization; }
 
   /** Daemon-side brain provider list including plaintext API keys. Never routed to any client. */
   brainProviders(): { id: string; label: string; type: BrainProviderType; baseUrl: string; models: string[]; apiKey: string | null }[] {
