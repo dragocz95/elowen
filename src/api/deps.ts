@@ -111,6 +111,11 @@ export interface ServerDeps {
   /** Bounded in-memory ring of recent log lines, tapped at the logger's emit() choke point. Feeds the
    *  admin per-plugin logs + health views. Absent → those views report empty/`ok`. */
   pluginLogs?: import('../shared/logBuffer.js').PluginLogBuffer;
+  /** Bounded in-memory ring of recent mutating-hook execution records (writer: the brain's hook
+   *  runner; reader: the admin plugins API). Feeds the per-plugin hook-audit view. Absent → that
+   *  view reports empty. Constructed in bootstrap's brain stage, shared with the hook bus as its
+   *  audit sink. */
+  hookAudit?: import('../shared/hookAudit.js').HookAuditBuffer;
   /** Single-use ticket store backing the terminal WebSocket stream. Shared with the daemon's
    *  `/ws/terminal` handler so a ticket minted here is redeemable there. Defaulted when absent. */
   tickets?: TicketStore;
