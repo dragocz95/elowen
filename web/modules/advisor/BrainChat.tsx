@@ -191,6 +191,8 @@ export function BrainChat() {
   const [results, setResults] = useState<BrainSearchHit[] | null>(null);
   const [usage, setUsage] = useState<BrainUsage | null>(null);
   const [lineCfg, setLineCfg] = useState<StatuslineConfig | null>(null);
+  /** Transient runtime line (rate-limit retry, context compaction) so a stalled turn explains itself. */
+  const [notice, setNotice] = useState('');
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -246,7 +248,25 @@ export function BrainChat() {
     const es = new EventSource(`${BASE}/brain/stream`);
     es.addEventListener('text', (e) => {
       const { delta } = JSON.parse((e as MessageEvent).data) as { delta: string };
+      setNotice(''); // first answer text clears any transient runtime notice
       setTurns((cur) => appendText(cur, delta));
+    });
+    // Runtime notices (retry/compaction) — mirror the CLI: show while the phase runs, clear on done.
+    es.addEventListener('notice', (e) => {
+      const { message, done } = JSON.parse((e as MessageEvent).data) as { message: string; done?: boolean };
+      setNotice(done ? '' : message);
+    });
+    es.addEventListener('error', (e) => {
+      // EventSource fires generic 'error' events on connection drops with no payload — only handle
+      // the brain's own error frames (they carry a JSON body with a message).
+      const data = (e as MessageEvent).data;
+      if (typeof data !== 'string') return;
+      try {
+        const { message } = JSON.parse(data) as { message: string };
+        setTurns((cur) => appendText(cur, `\n\n⚠️ ${message}`));
+      } catch { return; }
+      setNotice('');
+      setBusy(false);
     });
     es.addEventListener('reasoning', (e) => {
       const { delta } = JSON.parse((e as MessageEvent).data) as { delta: string };
@@ -262,6 +282,7 @@ export function BrainChat() {
     });
     es.addEventListener('idle', (e) => {
       setBusy(false);
+      setNotice(''); // turn settled → drop any transient runtime line
       try {
         const { usage: u } = JSON.parse((e as MessageEvent).data) as { usage?: BrainUsage };
         if (u) setUsage(u);
@@ -416,6 +437,7 @@ export function BrainChat() {
           <p className="m-auto max-w-[220px] text-center text-xs text-text-muted">{t.brainChat.empty}</p>
         ) : null}
         {turns.map((turn, i) => <Message key={i} turn={turn} />)}
+        {notice ? <span className="ml-1 text-tiny italic text-text-muted">· {notice}</span> : null}
         {busy ? <span className="ml-1 animate-pulse text-xs text-text-muted">{t.brainChat.thinking}</span> : null}
       </div>
 
