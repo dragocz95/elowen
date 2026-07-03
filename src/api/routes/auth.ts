@@ -223,6 +223,8 @@ export function registerAuthRoutes(app: OrcaApp, ctx: RouteContext): void {
     const id = Number(c.req.param('id'));
     users.delete(id);
     d.userSettings?.removeForUser(id); // drop the user's CLI/brain settings so no orphan rows linger
+    d.personalityStore?.removeForUser(id); // drop the user's personality profiles + active pointers so no orphan rows linger
+    d.memoryStore?.removeForUser(id); // hard-delete the user's memories (+cascade embeddings) and audit events
     return c.json({ ok: true });
   });
 

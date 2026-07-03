@@ -29,6 +29,8 @@ import type { TaskUsageStore } from '../store/taskUsageStore.js';
 import type { GitReader } from '../git/gitReader.js';
 import type { BrainOAuthManager } from '../brain/oauth.js';
 import type { AuthStorage } from '@earendil-works/pi-coding-agent';
+import type { PersonalityStore } from '../store/personalityStore.js';
+import type { EmbeddingService } from '../embeddings/embeddingService.js';
 
 /** Everything the daemon injects into the REST server. Lives in its own module (rather than server.ts)
  *  so the route context and the route families can depend on the dependency shape without importing
@@ -97,6 +99,15 @@ export interface ServerDeps {
   brainWorkers?: { isLive(session: string): boolean; abort(session: string): Promise<void> };
   /** Brain message store — feeds GET /tasks/:id/conversation for orca workers. */
   brainStore?: import('../store/brainStore.js').BrainStore;
+  /** Per-user, per-platform personality profiles (named prompt bodies). Absent → the personality API degrades. */
+  personalityStore?: PersonalityStore;
+  /** Orca RAW memory persistence (user-scoped): facts, packed-Float32 embeddings, audit events. */
+  memoryStore?: import('../store/memoryStore.js').MemoryStore;
+  /** Text→vector embeddings via an OpenAI-compatible /v1/embeddings endpoint, reusing brain provider creds. Absent → memory retrieval (Phase 4) has no embedder. */
+  embeddings?: EmbeddingService;
+  /** The ONE shared plugin registry provider (merged contributions of every enabled plugin). Feeds the
+   *  runtime plugin-contribution introspection endpoint. Absent → that endpoint reports an empty shape. */
+  plugins?: import('../plugins/pluginsProvider.js').PluginRegistryProvider;
   /** Single-use ticket store backing the terminal WebSocket stream. Shared with the daemon's
    *  `/ws/terminal` handler so a ticket minted here is redeemable there. Defaulted when absent. */
   tickets?: TicketStore;

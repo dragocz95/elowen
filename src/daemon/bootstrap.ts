@@ -59,6 +59,9 @@ import { BrainService } from '../brain/brainService.js';
 import { BrainOAuthManager } from '../brain/oauth.js';
 import { AuthStorage } from '@earendil-works/pi-coding-agent';
 import { BrainStore } from '../store/brainStore.js';
+import { PersonalityStore } from '../store/personalityStore.js';
+import { MemoryStore } from '../store/memoryStore.js';
+import { EmbeddingService } from '../embeddings/embeddingService.js';
 import { brainConfigFromOrca } from '../brain/config.js';
 import { listBrainModels } from '../brain/models.js';
 import { loadPlugins } from '../plugins/loader.js';
@@ -350,7 +353,12 @@ export function buildApp(opts: BuildOpts) {
     const p = config.brainProviders().find((x) => x.id === id);
     return p ? { id: p.id, label: p.label, type: p.type, baseUrl: p.baseUrl, apiKey: p.apiKey } : null;
   };
+  // Text→vector embedder for Orca memory (consumed by Phase-4 retrieval); reuses the operator's brain
+  // provider credentials via the same resolver plugins get. Pure network service, no DB access.
+  const embeddings = new EmbeddingService({ resolveProvider });
   const brainStore = new BrainStore(db);
+  const personalityStore = new PersonalityStore(db);
+  const memoryStore = new MemoryStore(db);
   // ONE shared plugin registry for the whole daemon (brain chat + orca-exec workers + platforms):
   // loading is lazy (buildApp is sync), and a plugin toggle invalidates every consumer at once —
   // a per-service memo would leave the workers on a stale registry until a daemon restart.
@@ -417,7 +425,7 @@ export function buildApp(opts: BuildOpts) {
   // Single-use ticket store for the terminal WebSocket stream — shared between the authenticated
   // `POST /sessions/:name/ws-ticket` route and the daemon's `/ws/terminal` upgrade handler.
   const tickets = createTicketStore();
-  const app = createServer({ tasks, readiness, missions, engine, missionGit, gitLock, spawn, tmux, bus, events, notes, agents, project: opts.project, fallback: { program: 'claude-code', model: 'sonnet' }, cli, clock: new SystemClock(), config, users, projects, userProjects, pushSubscriptions, userPrompts, userSettings, pluginDirs, pluginDataRoot, brainOauth, brainAuth, prompts, taskUsage, git, avatarsDir, avatarSecret, planJobs, decisionQueue, pilot, advisor, brain, brainWorkers, brainStore, tickets });
+  const app = createServer({ tasks, readiness, missions, engine, missionGit, gitLock, spawn, tmux, bus, events, notes, agents, project: opts.project, fallback: { program: 'claude-code', model: 'sonnet' }, cli, clock: new SystemClock(), config, users, projects, userProjects, pushSubscriptions, userPrompts, userSettings, pluginDirs, pluginDataRoot, brainOauth, brainAuth, prompts, taskUsage, git, avatarsDir, avatarSecret, planJobs, decisionQueue, pilot, advisor, brain, brainWorkers, brainStore, personalityStore, memoryStore, embeddings, plugins: pluginProvider, tickets });
 
   // Root-cause recovery: after a daemon crash/restart, tasks left 'in_progress' whose tmux
   // session is gone are zombies — revert them to 'open' so they can be picked up again. No grace
