@@ -1,6 +1,6 @@
 'use client';
 import { useEffect, useState, type ReactNode } from 'react';
-import { ArrowLeft, Plus, Trash2, KeyRound, ChevronDown, ChevronRight, Clock, Users, SlidersHorizontal, Link2, GraduationCap, Info, Wrench, Webhook, ShieldCheck, HardDrive, ScrollText, Search, Globe, type LucideIcon } from 'lucide-react';
+import { ArrowLeft, Plus, Trash2, KeyRound, ChevronDown, ChevronRight, Clock, Users, SlidersHorizontal, Link2, GraduationCap, Info, Wrench, Webhook, ShieldCheck, HardDrive, ScrollText, Search, Globe, Activity, type LucideIcon } from 'lucide-react';
 import { useAutoSave } from '../../lib/useAutoSave';
 import { useTheme } from '../../lib/useTheme';
 import { pluginIcon } from './pluginMeta';
@@ -22,9 +22,9 @@ import { EmptyState, LoadingState } from '../../components/ui/states';
 import type { Tone } from '../../components/ui/tone';
 import { useToast } from '../../components/ui/Toast';
 import { useTranslation } from '../../lib/i18n';
-import { usePluginDetail, usePluginContributions, usePluginLogs, usePlugins, useProjects, useConfig } from '../../lib/queries';
+import { usePluginDetail, usePluginContributions, usePluginLogs, usePluginHookExecutions, usePlugins, useProjects, useConfig } from '../../lib/queries';
 import { useSavePluginConfig, useTogglePlugin, useClearPluginData } from '../../lib/mutations';
-import type { PluginConfigField, PluginContributions, RolePolicy } from '../../lib/types';
+import type { PluginConfigField, PluginContributions, PluginHookExecution, RolePolicy } from '../../lib/types';
 
 const textareaClass = 'w-full rounded-md border border-border bg-bg px-3 py-2 font-mono text-sm text-text placeholder:text-text-muted focus:border-accent';
 
@@ -39,6 +39,14 @@ function formatBytes(bytes: number): string {
 
 /** Risk level → Badge tone (high danger, medium warning, low muted). */
 const RISK_TONE: Record<'low' | 'medium' | 'high', Tone> = { low: 'muted', medium: 'warning', high: 'danger' };
+
+/** Hook-execution outcome → Badge tone: accepted patch is success, fail-open (threw/timeout) is danger,
+ *  a capability-gate rejection is a warning (expected deny, not a fault). */
+const OUTCOME_TONE: Record<PluginHookExecution['outcome'], Tone> = { ok: 'success', threw: 'danger', timeout: 'danger', rejected: 'warning' };
+
+/** Mutation target → Badge tone by blast radius: tools/memory reach beyond the turn (danger),
+ *  prompt/turnContext ride only the ephemeral live prompt (warning). */
+const MUTATE_TONE: Record<'prompt' | 'turnContext' | 'tools' | 'memory', Tone> = { prompt: 'warning', turnContext: 'warning', tools: 'danger', memory: 'danger' };
 
 /** A collapsible section: an icon chip + title header with a rotating chevron, and content that hides
  *  when closed. Matches SettingCard styling so a group of these reads as one system. */
@@ -360,6 +368,7 @@ export function PluginDetail({ name, onBack }: { name: string; onBack: () => voi
   const { data, isLoading } = usePluginDetail(name);
   const { data: contributions } = usePluginContributions(name);
   const { data: logs } = usePluginLogs(name);
+  const { data: hookExecutions } = usePluginHookExecutions(name);
   const save = useSavePluginConfig();
   const toggle = useTogglePlugin();
   const { toast } = useToast();
@@ -492,6 +501,11 @@ export function PluginDetail({ name, onBack }: { name: string; onBack: () => voi
   const fieldHint = (f: PluginConfigField) => tr?.fields?.[f.key]?.hint ?? f.hint;
   const pluginDescription = tr?.description ?? detail.description;
   const riskText = (r: 'low' | 'medium' | 'high') => (r === 'high' ? t.pluginDetail.riskHigh : r === 'medium' ? t.pluginDetail.riskMedium : t.pluginDetail.riskLow);
+  const outcomeText = (o: PluginHookExecution['outcome']) =>
+    o === 'ok' ? t.pluginDetail.outcomeOk
+      : o === 'threw' ? t.pluginDetail.outcomeThrew
+        : o === 'timeout' ? t.pluginDetail.outcomeTimeout
+          : t.pluginDetail.outcomeRejected;
   // A field is shown unless its `visibleWhen` guard points at a value the form doesn't currently hold.
   const isVisible = (f: PluginConfigField) => !f.visibleWhen || values[f.visibleWhen.key] === f.visibleWhen.equals;
 
@@ -556,6 +570,12 @@ export function PluginDetail({ name, onBack }: { name: string; onBack: () => voi
   // Open Config first only when there's a required-but-unset secret to fill in; otherwise Overview.
   const hasUnsetRequiredSecret = schema.some((f) => f.type === 'secret' && f.required && !detail.secretsSet.includes(f.key));
   const health = logs?.health ?? detail.health ?? 'ok';
+
+  // Declared manifest capabilities — deny-by-default: an absent target means the plugin CANNOT do it.
+  const capabilities = detail.capabilities ?? {};
+  const mutates = capabilities.mutates ?? [];
+  const reads = capabilities.reads ?? [];
+  const hasCapabilities = mutates.length > 0 || reads.length > 0 || capabilities.network === true;
 
   return (
     <div className="flex flex-col gap-5">
@@ -630,17 +650,38 @@ export function PluginDetail({ name, onBack }: { name: string; onBack: () => voi
         <ContributionsList contributions={contributions} />
       </Collapsible>
 
-      {/* 4 — Hooks: the plugin's registered runtime hooks (subscriptions, not an execution audit). */}
+      {/* 4 — Hooks: the plugin's registered runtime hooks (subscriptions) + a recent-execution audit. */}
       <Collapsible icon={Webhook} title={t.pluginDetail.hooks}>
-        <div className="flex flex-col gap-3">
-          <p className="text-xs text-text-muted">{t.pluginDetail.hooksHint}</p>
-          {(contributions?.hooks.length ?? 0) === 0 ? (
-            <EmptyState title={t.pluginDetail.hooksEmpty} icon={Webhook} />
-          ) : (
-            <div className="flex flex-wrap gap-1.5">
-              {(contributions?.hooks ?? []).map((h, i) => <span key={`${h.name}-${i}`} className={namePill}>{h.name}</span>)}
-            </div>
-          )}
+        <div className="flex flex-col gap-5">
+          <div className="flex flex-col gap-3">
+            <p className="text-xs text-text-muted">{t.pluginDetail.hooksHint}</p>
+            {(contributions?.hooks.length ?? 0) === 0 ? (
+              <EmptyState title={t.pluginDetail.hooksEmpty} icon={Webhook} />
+            ) : (
+              <div className="flex flex-wrap gap-1.5">
+                {(contributions?.hooks ?? []).map((h, i) => <span key={`${h.name}-${i}`} className={namePill}>{h.name}</span>)}
+              </div>
+            )}
+          </div>
+          <div className="flex flex-col gap-3">
+            <span className="text-xs font-semibold uppercase tracking-wide text-text-muted">{t.pluginDetail.hookExecutions}</span>
+            <p className="text-xs text-text-muted">{t.pluginDetail.hookExecutionsHint}</p>
+            {!hookExecutions || hookExecutions.entries.length === 0 ? (
+              <EmptyState title={t.pluginDetail.hookExecutionsEmpty} icon={Activity} />
+            ) : (
+              <div className="max-h-72 overflow-auto rounded-md border border-border bg-bg p-3 text-[11px] leading-relaxed">
+                {hookExecutions.entries.map((e, i) => (
+                  <div key={i} className="flex items-center gap-2 py-1">
+                    <span className="shrink-0 font-mono text-text-muted">{new Date(e.ts).toLocaleTimeString(locale)}</span>
+                    <span className="min-w-0 flex-1 truncate font-mono text-text">{e.hook}</span>
+                    {e.changed ? <span className="shrink-0 font-mono text-text-muted">{e.changed}</span> : null}
+                    <span className="shrink-0 font-mono text-text-muted">{`${e.durationMs} ms`}</span>
+                    <Badge tone={OUTCOME_TONE[e.outcome]}>{outcomeText(e.outcome)}</Badge>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       </Collapsible>
 
@@ -653,6 +694,35 @@ export function PluginDetail({ name, onBack }: { name: string; onBack: () => voi
             {hasSecrets ? <Badge tone="accent"><KeyRound size={10} className="mr-1" aria-hidden />{t.brain.keySet}</Badge> : null}
             {declaresNetwork ? <Badge><Globe size={10} className="mr-1" aria-hidden />{t.pluginDetail.platforms}</Badge> : null}
             {toolCount > 0 ? <Badge>{`${toolCount} ${t.pluginDetail.tools}`}</Badge> : null}
+          </div>
+          {/* Declared manifest capabilities — the deny-by-default permission surface. */}
+          <div className="flex flex-col gap-2 rounded-md border border-border bg-bg p-3">
+            <span className="text-xs font-semibold uppercase tracking-wide text-text-muted">{t.pluginDetail.capabilities}</span>
+            <p className="text-xs text-text-muted">{t.pluginDetail.capabilitiesDeny}</p>
+            {hasCapabilities ? (
+              <div className="flex flex-col gap-2">
+                {mutates.length ? (
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span className="text-[11px] font-medium text-text-muted">{t.pluginDetail.capMutates}</span>
+                    {mutates.map((m) => <Badge key={m} tone={MUTATE_TONE[m]}>{m}</Badge>)}
+                  </div>
+                ) : null}
+                {capabilities.network === true ? (
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span className="text-[11px] font-medium text-text-muted">{t.pluginDetail.capNetwork}</span>
+                    <Badge tone="warning"><Globe size={10} className="mr-1" aria-hidden />{t.pluginDetail.capNetworkOn}</Badge>
+                  </div>
+                ) : null}
+                {reads.length ? (
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span className="text-[11px] font-medium text-text-muted">{t.pluginDetail.capReads}</span>
+                    {reads.map((r) => <span key={r} className={namePill}>{r}</span>)}
+                  </div>
+                ) : null}
+              </div>
+            ) : (
+              <p className="text-sm text-text-muted">{t.pluginDetail.capNone}</p>
+            )}
           </div>
           {requiredSecrets.length === 0 && requiredConfig.length === 0 ? (
             <p className="text-sm text-text-muted">{t.pluginDetail.requiresNone}</p>

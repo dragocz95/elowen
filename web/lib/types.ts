@@ -221,6 +221,17 @@ export interface PluginConfigField {
 /** One role → access mapping row in a plugin's `rolePolicies` config (the Discord pattern). */
 export interface RolePolicy { roleId: string; name: string; projectIds: number[]; prompt: string; tools?: string[]; admin?: boolean }
 
+/** A plugin's declared manifest capabilities — the deny-by-default permission surface. A missing entry
+ *  means the plugin CANNOT perform that action: `mutates` lists the runtime mutation targets it is allowed
+ *  to touch (only `turnContext` is runtime-wired in v1), `network` flags outbound access, `reads` names the
+ *  data surfaces it reads, `hooks` the hook points it subscribes to. `{}` = declares nothing → mutates nothing. */
+export interface PluginCapabilities {
+  hooks?: string[];
+  mutates?: ('prompt' | 'turnContext' | 'tools' | 'memory')[];
+  reads?: string[];
+  network?: boolean;
+}
+
 /** GET /plugins/:name — the detail behind each plugin's own settings section. */
 export interface PluginDetail extends PluginInfo {
   configSchema: PluginConfigField[];
@@ -229,6 +240,8 @@ export interface PluginDetail extends PluginInfo {
   /** Summary of the plugin's persistent data directory (`pluginDataRoot/<name>`). `path` is `''` and
    *  `exists:false` when the data root is unset or the name is unsafe; `files`/`bytes` are recursive totals. */
   data: { path: string; exists: boolean; files: number; bytes: number };
+  /** The plugin's declared manifest capabilities, or `{}` (deny-all) when the manifest omits them. */
+  capabilities?: PluginCapabilities;
 }
 
 /** GET /plugins/:name/contributions — the runtime contribution report filtered to entries OWNED by the
@@ -253,6 +266,24 @@ export interface PluginLogEntry {
 export interface PluginLogs {
   entries: PluginLogEntry[];
   health: 'ok' | 'error';
+}
+
+/** One recorded run of a plugin hook (the shared HookAuditBuffer). `outcome`: `ok` = a context patch was
+ *  accepted (`changed === 'turnContext'`); `rejected` = the capability gate denied the patch (deny-by-default,
+ *  no `changed`); `threw`/`timeout` = fail-open, the hook produced no patch (no `changed`). `ts` is epoch ms. */
+export interface PluginHookExecution {
+  ts: number;
+  plugin: string;
+  hook: string;
+  durationMs: number;
+  outcome: 'ok' | 'threw' | 'timeout' | 'rejected';
+  changed?: string;
+}
+
+/** GET /plugins/:name/hook-executions — the plugin's hook-run audit, NEWEST-FIRST. Empty when the
+ *  hook-audit buffer isn't wired. */
+export interface PluginHookExecutions {
+  entries: PluginHookExecution[];
 }
 
 /** One scheduled job of the cronjob plugin (the raw jobs.json shape). `enabled: false` = paused;

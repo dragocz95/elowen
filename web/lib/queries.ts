@@ -249,6 +249,10 @@ export const usePluginContributions = (name: string | null) =>
 export const usePluginLogs = (name: string | null) =>
   useQuery({ queryKey: ['plugin-logs', name], queryFn: () => orcaClient.pluginLogs(name as string), enabled: !!name });
 
+/** One plugin's hook-run audit, newest-first (the Hooks section's recent-executions panel). */
+export const usePluginHookExecutions = (name: string | null) =>
+  useQuery({ queryKey: ['plugin-hook-executions', name], queryFn: () => orcaClient.pluginHookExecutions(name as string), enabled: !!name });
+
 /** The cronjob plugin's scheduled jobs (admin, the cronjob plugin detail). */
 export const useCronJobs = () =>
   useQuery({ queryKey: ['cron-jobs'], queryFn: orcaClient.cronJobs });
