@@ -52,6 +52,30 @@
     "showReasoning": {
       "label": "Zobrazit uvažování",
       "hint": "Streamovat uvažování modelu do průběžné bubliny (modely s extended thinking). Výchozí = vypnuto — na Discordu je to většinou šum."
+    },
+    "openaiApiKey": {
+      "label": "OpenAI API klíč (hlas)",
+      "hint": "Pohání hlas: Whisper přepis příchozích hlasových zpráv a mluvené odpovědi. Prázdné = hlas vypnutý."
+    },
+    "stt": {
+      "label": "Přepisovat hlasové zprávy",
+      "hint": "Přepsat příchozí hlasové zprávy / audio přílohy přes Whisper, aby jim agent rozuměl. Vyžaduje OpenAI API klíč."
+    },
+    "sttModel": {
+      "label": "Model pro přepis řeči",
+      "hint": "Whisper model pro přepis (výchozí: whisper-1)."
+    },
+    "tts": {
+      "label": "Mluvené odpovědi (výchozí)",
+      "hint": "Výchozí pro kanály: připojit mluvenou audio verzi odpovědí. Živě přepínatelné per kanál přes /voice. Vyžaduje OpenAI API klíč."
+    },
+    "ttsModel": {
+      "label": "Model pro syntézu řeči",
+      "hint": "TTS model (výchozí: gpt-4o-mini-tts)."
+    },
+    "ttsVoice": {
+      "label": "Hlas TTS",
+      "hint": "Hlas: alloy, echo, fable, onyx, nova nebo shimmer (výchozí: alloy)."
     }
   }
 }

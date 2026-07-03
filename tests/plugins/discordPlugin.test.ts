@@ -135,6 +135,58 @@ describe('discord LiveMessage (Hermes-style tool progress)', () => {
   });
 });
 
+describe('discord reasoning stream (off by default, opt-in via cfg.showReasoning)', () => {
+  const load = async () => (await import(join(repoRoot, 'plugins/discord/index.mjs'))) as {
+    LiveMessage: new (adapter: unknown, channelId: string) => { onEvent: (e: unknown) => void; finalize: (reply?: string) => Promise<void> };
+  };
+  const mk = (cfg?: Record<string, unknown>) => {
+    const edits = new Map<string, string>();
+    let nextId = 0;
+    const adapter = {
+      cfg,
+      rest: async (method: string, path: string, body: { content: string }) => {
+        const id = method === 'POST' ? `m${++nextId}` : path.split('/').pop()!;
+        edits.set(id, body.content);
+        return { id };
+      },
+    };
+    return { edits, adapter };
+  };
+
+  it('drops reasoning entirely with no config (never opens a progress bubble)', async () => {
+    const { LiveMessage } = await load();
+    const { edits, adapter } = mk();
+    const lm = new LiveMessage(adapter, 'chan');
+    lm.onEvent({ type: 'reasoning', delta: 'thinking hard about it' });
+    await new Promise((r) => setTimeout(r, 20));
+    await lm.finalize('Answer.');
+    expect([...edits.values()]).toEqual(['Answer.']); // only the answer, no reasoning bubble
+  });
+
+  it('streams reasoning into the progress bubble when cfg.showReasoning is on', async () => {
+    const { LiveMessage } = await load();
+    const { edits, adapter } = mk({ showReasoning: true });
+    const lm = new LiveMessage(adapter, 'chan');
+    lm.onEvent({ type: 'reasoning', delta: 'let me reason ' });
+    lm.onEvent({ type: 'reasoning', delta: 'about this' });
+    await new Promise((r) => setTimeout(r, 20));
+    await lm.finalize('Answer.');
+    expect(edits.get('m1')).toContain('💭'); // reasoning surfaced in the progress bubble
+    expect(edits.get('m1')).toContain('let me reason about this');
+  });
+});
+
+describe('discord stripForSpeech (markdown → plain prose for TTS)', () => {
+  it('strips code, links, images and md punctuation into speakable text', async () => {
+    const { stripForSpeech } = await import(join(repoRoot, 'plugins/discord/index.mjs')) as { stripForSpeech: (s: string) => string };
+    expect(stripForSpeech('# Nadpis\n**tučně** a `kód`')).toBe('Nadpis tučně a kód');
+    expect(stripForSpeech('viz [odkaz](https://x.io) tady')).toBe('viz odkaz tady');
+    expect(stripForSpeech('```js\nconst x=1\n```\nhotovo')).toBe('hotovo');
+    expect(stripForSpeech('čistý http://a.b/c konec')).toBe('čistý konec');
+    expect(stripForSpeech('')).toBe('');
+  });
+});
+
 describe('discord memberIsAdmin (operator-only picker gate)', () => {
   it('is true only for a member holding a role mapped admin:true', async () => {
     const { memberIsAdmin } = await import(join(repoRoot, 'plugins/discord/index.mjs')) as { memberIsAdmin: (r: unknown, p: unknown) => boolean };

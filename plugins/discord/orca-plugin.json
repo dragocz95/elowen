@@ -92,6 +92,42 @@
       "hint": "Stream the model's reasoning into the progress bubble (extended-thinking models). Off by default — it's usually noise on Discord."
     },
     {
+      "key": "openaiApiKey",
+      "label": "OpenAI API key (voice)",
+      "type": "secret",
+      "hint": "Powers voice: Whisper speech-to-text on incoming voice messages and text-to-speech replies. Leave empty to keep voice off."
+    },
+    {
+      "key": "stt",
+      "label": "Transcribe voice messages",
+      "type": "boolean",
+      "hint": "Transcribe incoming voice messages / audio attachments with Whisper so the agent understands them. Needs the OpenAI API key."
+    },
+    {
+      "key": "sttModel",
+      "label": "Speech-to-text model",
+      "type": "string",
+      "hint": "Whisper transcription model (default: whisper-1)."
+    },
+    {
+      "key": "tts",
+      "label": "Speak replies (default)",
+      "type": "boolean",
+      "hint": "Default for channels: attach a spoken-audio version of replies. Toggle live per channel with /voice. Needs the OpenAI API key."
+    },
+    {
+      "key": "ttsModel",
+      "label": "Text-to-speech model",
+      "type": "string",
+      "hint": "TTS model (default: gpt-4o-mini-tts)."
+    },
+    {
+      "key": "ttsVoice",
+      "label": "TTS voice",
+      "type": "string",
+      "hint": "Voice: alloy, echo, fable, onyx, nova or shimmer (default: alloy)."
+    },
+    {
       "key": "rolePolicies",
       "label": "Role policies",
       "type": "rolePolicies",

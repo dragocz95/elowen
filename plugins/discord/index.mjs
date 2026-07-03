@@ -25,6 +25,23 @@ const CHUNK = 1990;
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024; // larger images are noted, not downloaded
 const MAX_IMAGES = 4;                    // vision cap per message
 const MAX_UPLOAD_IMAGES = 4;             // generated-image uploads per outgoing message
+const MAX_AUDIO_BYTES = 25 * 1024 * 1024; // Whisper's per-file limit — larger clips are just noted
+const TTS_MAX_CHARS = 4000;              // cap the spoken text (OpenAI TTS input limit is 4096)
+
+/** Flatten a markdown reply into plain prose for text-to-speech: drop code blocks, links, images and
+ *  markdown punctuation so the voice reads the words, not the syntax. */
+export function stripForSpeech(md) {
+  return String(md ?? '')
+    .replace(/```[\s\S]*?```/g, ' ')          // fenced code — unspeakable
+    .replace(/`([^`]+)`/g, '$1')              // inline code → its text
+    .replace(/!\[[^\]]*\]\([^)]*\)/g, ' ')    // images
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')  // links → label
+    .replace(/^#{1,6}\s+/gm, '')              // heading markers
+    .replace(/https?:\/\/\S+/g, ' ')          // bare URLs
+    .replace(/[*_>#~|`]+/g, ' ')              // leftover md punctuation
+    .replace(/\s+/g, ' ')
+    .trim();
+}
 const REPLY_EXCERPT = 300;               // quoted-reply excerpt length
 
 /** Find generated-image markdown links — `![…](…/brain/images/<name>.png)`, relative or absolute —
@@ -113,6 +130,7 @@ export function buildReplyContext(ref) {
  *  arrived). Attachment URLs are public CDN links; no auth header is needed. */
 async function collectAttachments(list) {
   const images = [];
+  const audio = [];
   const notes = [];
   for (const a of Array.isArray(list) ? list : []) {
     const type = String(a?.content_type ?? '');
@@ -125,11 +143,15 @@ async function collectAttachments(list) {
       } catch {
         notes.push(note); // download failed → degrade to a textual note
       }
+    } else if (type.startsWith('audio/')) {
+      // Voice messages / audio uploads: classify but never note here — onMessage either transcribes
+      // them (Whisper) or falls back to a note, depending on the STT config.
+      audio.push({ url: a.url, name: a?.filename ?? 'audio.ogg', type, size: a?.size ?? 0 });
     } else {
       notes.push(note); // non-image, oversized image, or over the per-message cap
     }
   }
-  return { images, notes };
+  return { images, audio, notes };
 }
 
 /** Split text into ≤CHUNK pieces WITHOUT breaking a fenced code block: if a cut lands inside ``` … ```,
@@ -172,12 +194,15 @@ const MESSAGES = {
     pickThinking: '🧠 Pick the reasoning effort for this channel:',
     thinkingSet: (l) => `✅ Reasoning effort set to **${l}**.`,
     thinking: '💭 …',
+    voiceSet: (on) => on ? '🔊 Spoken replies **on** in this channel.' : '🔇 Spoken replies **off** in this channel.',
+    voiceNeedsKey: '⚠️ Spoken replies need an OpenAI API key in the Discord plugin settings.',
     help: (name) => [
       `**${name} on Discord**`,
       'Write to me and I answer.',
       '',
       '`/model` — pick the AI model for this channel',
       '`/thinking` — set the reasoning effort for this channel',
+      '`/voice` — toggle spoken audio replies here',
       '`/new` — start a fresh conversation here',
       '`/help` — this message',
     ].join('\n'),
@@ -191,12 +216,15 @@ const MESSAGES = {
     pickThinking: '🧠 Vyberte úroveň uvažování pro tento kanál:',
     thinkingSet: (l) => `✅ Úroveň uvažování nastavena na **${l}**.`,
     thinking: '💭 …',
+    voiceSet: (on) => on ? '🔊 Mluvené odpovědi v tomto kanálu **zapnuté**.' : '🔇 Mluvené odpovědi v tomto kanálu **vypnuté**.',
+    voiceNeedsKey: '⚠️ Mluvené odpovědi potřebují OpenAI API klíč v nastavení Discord pluginu.',
     help: (name) => [
       `**${name} na Discordu**`,
       'Napište mi a odpovím.',
       '',
       '`/model` — výběr AI modelu pro tento kanál',
       '`/thinking` — úroveň uvažování pro tento kanál',
+      '`/voice` — přepnout mluvené odpovědi zde',
       '`/new` — začít novou konverzaci',
       '`/help` — tato zpráva',
     ].join('\n'),
@@ -267,6 +295,11 @@ class DiscordAdapter {
     const commands = [
       { name: 'model', description: 'Pick the AI model for this channel', type: 1 },
       { name: 'thinking', description: 'Set reasoning effort for this channel', type: 1 },
+      { name: 'voice', description: 'Toggle spoken audio replies in this channel', type: 1, options: [
+        { name: 'state', description: 'on or off (omit to toggle)', type: 3, required: false, choices: [
+          { name: 'on', value: 'on' }, { name: 'off', value: 'off' },
+        ] },
+      ] },
       { name: 'new', description: 'Start a fresh conversation in this channel', type: 1 },
       { name: 'help', description: 'What can Orca do here?', type: 1 },
     ];
@@ -417,8 +450,16 @@ class DiscordAdapter {
     const meta = await this.channelInfo(m.channel_id).catch(() => null);
     const channelNames = new Map([...this.channelMeta].map(([id, c]) => [id, c.name]).filter(([, n]) => n));
     text = resolveMentions(text, m.mentions ?? [], this.cfg.rolePolicies, channelNames);
-    const { images, notes } = await collectAttachments(m.attachments);
+    const { images, audio, notes } = await collectAttachments(m.attachments);
     if (notes.length) text = [text, ...notes].filter(Boolean).join('\n');
+    // Voice messages / audio uploads: transcribe with Whisper when STT is enabled + keyed, else note.
+    for (const clip of audio) {
+      const transcript = (this.cfg.stt && this.cfg.openaiApiKey)
+        ? await this.transcribe(clip).catch((e) => { this.log.error(`STT failed: ${e?.message ?? e}`); return null; })
+        : null;
+      const line = transcript ? `[🎙️ Voice message: "${transcript}"]` : `[Attachment: ${clip.name} (${clip.type})]`;
+      text = [text, line].filter(Boolean).join('\n');
+    }
     if (!text && images.length) text = '[The user sent an image]'; // an image-only turn must not be empty
     if (!text) return;
 
@@ -456,6 +497,11 @@ class DiscordAdapter {
       clearInterval(typing);
       if (stream) await stream.finalize(reply);
       else if (reply) await this.reply(m.channel_id, reply, m.id);
+      // Spoken reply (per-channel /voice, default cfg.tts): attach an MP3 of the answer. Best-effort —
+      // a TTS failure never blocks the text reply that already went out.
+      if (reply && this.cfg.openaiApiKey && this.voiceEnabled(m.channel_id)) {
+        await this.speakReply(m.channel_id, reply, m.id).catch((e) => this.log.error(`TTS failed: ${e?.message ?? e}`));
+      }
       if (reactions) { await this.unreact(m.channel_id, m.id, '👀').catch(() => {}); void this.react(m.channel_id, m.id, '✅').catch(() => {}); }
     } catch (e) {
       clearInterval(typing);
@@ -513,6 +559,15 @@ class DiscordAdapter {
           flags: 64,
           components: [{ type: 1, components: [{ type: 3, custom_id: 'pick_thinking', options, placeholder: 'Choose reasoning effort…' }] }],
         });
+      }
+      if (name === 'voice') {
+        // Spoken replies are a shared per-channel setting → operator-only, same gate as /model.
+        if (!this.isAdminMember(i.member)) return this.respond(i, 4, { content: this.msg.modelForbidden, flags: 64 });
+        const opt = (i.data?.options ?? []).find((o) => o.name === 'state')?.value;
+        const next = opt === 'on' ? true : opt === 'off' ? false : !this.voiceEnabled(i.channel_id); // no arg = toggle
+        this.state.patch(i.channel_id, { voice: next });
+        const note = next && !this.cfg.openaiApiKey ? `\n${this.msg.voiceNeedsKey}` : '';
+        return this.respond(i, 4, { content: `${this.msg.voiceSet(next)}${note}`, flags: 64 });
       }
     }
     if (i.type === 3 && i.data?.custom_id === 'pick_thinking') {
@@ -572,6 +627,64 @@ class DiscordAdapter {
       return this.uploadImages(channelId, content, files, attempt + 1, extra);
     }
     if (!res.ok) throw new Error(`discord API POST /channels/${channelId}/messages (upload) → HTTP ${res.status}`);
+    return res.json();
+  }
+
+  /** Transcribe one audio attachment via OpenAI Whisper — download the CDN clip, then multipart it to
+   *  /audio/transcriptions. Returns the trimmed text, or null when it's empty/oversized. */
+  async transcribe(clip) {
+    if ((clip.size ?? 0) > MAX_AUDIO_BYTES) throw new Error('audio over Whisper size limit');
+    const dl = await fetch(clip.url);
+    if (!dl.ok) throw new Error(`download HTTP ${dl.status}`);
+    const buf = Buffer.from(await dl.arrayBuffer());
+    const form = new FormData();
+    form.append('file', new Blob([buf], { type: clip.type || 'audio/ogg' }), clip.name || 'audio.ogg');
+    form.append('model', String(this.cfg.sttModel || 'whisper-1'));
+    const res = await fetch('https://api.openai.com/v1/audio/transcriptions', {
+      method: 'POST', headers: { authorization: `Bearer ${this.cfg.openaiApiKey}` }, body: form,
+    });
+    if (!res.ok) throw new Error(`OpenAI STT HTTP ${res.status}`);
+    const j = await res.json().catch(() => ({}));
+    const t = typeof j?.text === 'string' ? j.text.trim() : '';
+    return t || null;
+  }
+
+  /** Whether spoken replies are on for a channel: the per-channel /voice toggle wins, else cfg.tts. */
+  voiceEnabled(channelId) {
+    const s = this.state.get(channelId).voice;
+    return typeof s === 'boolean' ? s : this.cfg.tts === true;
+  }
+
+  /** Synthesize the reply text (markdown-stripped) with OpenAI TTS and attach it as an MP3. */
+  async speakReply(channelId, text, replyToId) {
+    const input = stripForSpeech(text).slice(0, TTS_MAX_CHARS);
+    if (!input) return;
+    const res = await fetch('https://api.openai.com/v1/audio/speech', {
+      method: 'POST',
+      headers: { authorization: `Bearer ${this.cfg.openaiApiKey}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ model: String(this.cfg.ttsModel || 'gpt-4o-mini-tts'), voice: String(this.cfg.ttsVoice || 'alloy'), input, response_format: 'mp3' }),
+    });
+    if (!res.ok) throw new Error(`OpenAI TTS HTTP ${res.status}`);
+    const buf = Buffer.from(await res.arrayBuffer());
+    await this.uploadAudio(channelId, '', [{ name: 'reply.mp3', data: buf }], replyToId ? { message_reference: { message_id: replyToId } } : {});
+  }
+
+  /** Multipart message post carrying MP3 audio attachments (mirrors uploadImages; distinct mime). */
+  async uploadAudio(channelId, content, files, extra = {}, attempt = 0) {
+    const form = new FormData();
+    form.append('payload_json', JSON.stringify({ content, ...extra }));
+    files.forEach((f, i) => form.append(`files[${i}]`, new Blob([f.data], { type: 'audio/mpeg' }), f.name));
+    const res = await fetch(`${API}/channels/${channelId}/messages`, {
+      method: 'POST',
+      headers: { authorization: `Bot ${this.cfg.botToken}` }, // fetch sets the multipart boundary
+      body: form,
+    });
+    if (res.status === 429 && attempt < 3) {
+      const wait = (Number(res.headers.get('retry-after')) || 1) * 1000;
+      await new Promise((r) => setTimeout(r, wait));
+      return this.uploadAudio(channelId, content, files, extra, attempt + 1);
+    }
+    if (!res.ok) throw new Error(`discord API POST /channels/${channelId}/messages (audio) → HTTP ${res.status}`);
     return res.json();
   }
 
