@@ -1078,6 +1078,20 @@ export const cs = {
     categoryDeleted: 'Kategorie smazána',
     categorySaveError: 'Uložení kategorie selhalo',
     memoryCount: '{n}',
+    // Záložky pohledu (Mozek / Seznam / Vyhledávání)
+    viewBrain: 'Mozek',
+    viewList: 'Seznam',
+    viewRetrieval: 'Vyhledávání',
+    // Neuronový mozek paměti
+    brainCore: 'Paměťový kortex',
+    brainCoreDesc: 'Střed vaší paměti. Vše, co si asistent trvale pamatuje, vychází odsud.',
+    brainEmpty: 'Zatím není co mapovat.',
+    brainEmptyHint: 'Jak vzpomínek přibývá, rozsvítí se zde jako živá neuronová mapa — kategorie jako uzly, vzpomínky jako synapse.',
+    brainSelectHint: 'Vyberte uzel a prohlédněte si ho.',
+    brainMoreNodes: '+{n} nezobrazeno',
+    brainCategoryCount: '{n} vzpomínek',
+    brainDetailCategory: 'Kategorie',
+    brainDetailMemory: 'Vzpomínka',
   },
   modelPicker: {
     searchPlaceholder: "Hledat modely…",

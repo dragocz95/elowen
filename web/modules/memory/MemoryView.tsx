@@ -18,14 +18,15 @@ import { useToast } from '../../components/ui/Toast';
 import { useTranslation } from '../../lib/i18n';
 import { usePersistentState } from '../../lib/usePersistentState';
 import { MemoryDetail } from './MemoryDetail';
+import { MemoryBrainMap } from './MemoryBrainMap';
 import { MemoryOverview } from './MemoryOverview';
 import { CategoryManager } from './CategoryManager';
 import { RetrievalDebugPanel } from './RetrievalDebugPanel';
 import { memoryStatusTone, memoryStatusLabel, distinctKinds, categoriesById, categorySwatch } from './memoryMeta';
 
-type Tab = 'list' | 'retrieval';
+type Tab = 'list' | 'brain' | 'retrieval';
 type StatusFilter = 'active' | 'archived' | 'deleted' | 'all';
-const TABS: readonly Tab[] = ['list', 'retrieval'];
+const TABS: readonly Tab[] = ['list', 'brain', 'retrieval'];
 const STATUS_VALUES: readonly StatusFilter[] = ['active', 'archived', 'deleted', 'all'];
 
 /** Memory module: a searchable master/detail list of the caller's private memories, a retrieval
@@ -66,8 +67,9 @@ export function MemoryView() {
   const clearSelection = () => setSelected(new Set());
 
   const TAB_OPTIONS = [
-    { value: 'list', label: t.page.memory, icon: ListChecks },
-    { value: 'retrieval', label: t.memory.retrievalHeading, icon: Sparkles },
+    { value: 'list', label: t.memory.viewList, icon: ListChecks },
+    { value: 'brain', label: t.memory.viewBrain, icon: Brain },
+    { value: 'retrieval', label: t.memory.viewRetrieval, icon: Sparkles },
   ];
   const STATUS_OPTIONS = STATUS_VALUES.map((s) => ({
     value: s,
@@ -116,12 +118,17 @@ export function MemoryView() {
             >
               {t.memory.categoriesTitle}
             </Button>
-            <Button variant="accent" icon={Plus} onClick={() => setCreating(true)}>{t.memory.newMemory}</Button>
           </>
         ) : null}
+        <Button variant="accent" icon={Plus} onClick={() => setCreating(true)}>{t.memory.newMemory}</Button>
       </ModuleHeader>
 
       {tab === 'retrieval' ? <RetrievalDebugPanel />
+        : tab === 'brain' ? (
+          memories.isLoading ? <LoadingState variant="cards" />
+          : memories.isError ? <ErrorState message={t.common.daemonUnreachable} onRetry={() => memories.refetch()} />
+          : <MemoryBrainMap memories={memories.data ?? []} categories={categories.data ?? []} onSelectMemory={(id) => { setSelectedId(id); setTab('list'); }} />
+        )
         : memories.isLoading ? <LoadingState variant="cards" />
         : memories.isError ? <ErrorState message={t.common.daemonUnreachable} onRetry={() => memories.refetch()} />
         : (

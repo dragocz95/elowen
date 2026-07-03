@@ -1078,6 +1078,20 @@ export const en = {
     categoryDeleted: 'Category deleted',
     categorySaveError: 'Saving the category failed',
     memoryCount: '{n}',
+    // View tabs (Brain / List / Retrieval)
+    viewBrain: 'Brain',
+    viewList: 'List',
+    viewRetrieval: 'Retrieval',
+    // Neural memory brain
+    brainCore: 'Memory cortex',
+    brainCoreDesc: 'The center of your memory. Everything the assistant durably knows radiates out from here.',
+    brainEmpty: 'Nothing to map yet.',
+    brainEmptyHint: 'As memories accumulate, they light up here as a living neural map — categories as hubs, memories as synapses.',
+    brainSelectHint: 'Select a node to inspect it.',
+    brainMoreNodes: '+{n} not shown',
+    brainCategoryCount: '{n} memories',
+    brainDetailCategory: 'Category',
+    brainDetailMemory: 'Memory',
   },
   modelPicker: {
     searchPlaceholder: "Search models…",
