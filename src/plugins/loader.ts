@@ -107,6 +107,9 @@ export async function loadPlugins(opts: LoadPluginsOptions): Promise<PluginRegis
         const ctx = staging.contextFor(name, opts.config?.[name] ?? {}, opts.logger, opts.dataRoot, opts.notify, opts.listModels, opts.resolveProvider);
         await mod.register(ctx);
         registry.merge(staging);
+        // Capture the plugin's declared capabilities (deny-by-default `{}` when absent) — the manifest
+        // is otherwise discarded here, but the hook bus needs these to gate this plugin's mutations.
+        registry.setCapabilities(name, manifest.capabilities ?? {});
         loaded.add(name);
         opts.logger.info(`plugin loaded: ${name}@${manifest.version}`);
       } catch (err) {

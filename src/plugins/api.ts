@@ -18,9 +18,35 @@ export type PluginHookName =
   | 'memory.write.before' | 'memory.write.after'
   | 'plugin.reload.before' | 'plugin.reload.after';
 
+/** A patch a hook may return to enrich the live turn. v1 wires ONLY `appendContext` (turnContext
+ *  enrichment): the string is appended, UNTRUSTED-framed, to the live prompt in owner chat — never
+ *  persisted, never the system prompt. prompt/tools/memory are declarable capability VALUES but not
+ *  patch-wired yet, so the patch type stays minimal until they are. */
+export interface HookPatch { appendContext?: string }
+
+/** What a hook may return. `patch` is the runtime-wired mutation (gated by the owner's declared
+ *  capabilities); `annotations`/`audit` are free-form observability the host may record. A hook that
+ *  returns nothing (void) stays a pure observer — the common case. */
+export interface HookResult { patch?: HookPatch; annotations?: Record<string, unknown>; audit?: string }
+
+/** A hook's return: either nothing (observational) or a HookResult (may carry a mutation patch). */
+export type HookOutcome = void | HookResult;
+
 /** A named lifecycle callback. The concrete hook set stays intentionally minimal for the foundation.
- *  Hooks are OBSERVATIONAL in v1 — they observe/annotate, never mutate the brain hot path. */
-export interface PluginHook { name: PluginHookName; run: (payload: unknown) => void | Promise<void> }
+ *  A hook returning void is a pure observer; a hook returning a HookResult may carry a `patch` that the
+ *  bus applies ONLY when its owning plugin declared the matching capability (deny-by-default). */
+export interface PluginHook { name: PluginHookName; run: (payload: unknown) => HookOutcome | Promise<HookOutcome> }
+
+/** What a plugin is ALLOWED to do, declared in its manifest (`capabilities`). Deny-by-default: a plugin
+ *  with no capabilities block can mutate nothing. `hooks` documents the lifecycle points it subscribes
+ *  to; `mutates` gates runtime patches (only `turnContext` is patch-wired in v1); `reads`/`network` are
+ *  declarative intent for the audit/UI. */
+export interface PluginCapabilities {
+  hooks?: PluginHookName[];
+  mutates?: ('prompt' | 'turnContext' | 'tools' | 'memory')[];
+  reads?: string[];
+  network?: boolean;
+}
 
 /** Where a channel message came from + what its sender may access. The adapter resolves `access` from
  *  its own role mapping (e.g. Discord role → projects + prompt); a message without `access` is ignored

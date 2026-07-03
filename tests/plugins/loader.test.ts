@@ -6,11 +6,11 @@ import { loadPlugins, discoverPlugins } from '../../src/plugins/loader.js';
 
 const log = { info() {}, warn() {}, error() {} };
 
-function makePlugin(root: string, name: string, body: string, apiVersion = '1') {
+function makePlugin(root: string, name: string, body: string, apiVersion = '1', extra: Record<string, unknown> = {}) {
   const dir = join(root, name);
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, 'orca-plugin.json'), JSON.stringify({
-    name, version: '0.1.0', apiVersion, description: name, entry: 'index.mjs',
+    name, version: '0.1.0', apiVersion, description: name, entry: 'index.mjs', ...extra,
   }));
   writeFileSync(join(dir, 'index.mjs'), body);
   return dir;
@@ -29,6 +29,17 @@ describe('loadPlugins', () => {
     makePlugin(root, 'badver', `export function register(ctx){ ctx.registerSkill(${SKILL('v')}); }`, '999');
     makePlugin(root, 'usesconfig', `export function register(ctx){ ctx.registerSystemPromptFragment(ctx.config.msg); }`);
     makePlugin(root, 'usesprovider', `export function register(ctx){ const p = ctx.resolveProvider(ctx.config.pid); ctx.registerSystemPromptFragment(p ? p.baseUrl + '|' + p.apiKey : 'none'); }`);
+    makePlugin(root, 'caps', `export function register(ctx){ ctx.registerSkill(${SKILL('c')}); }`, '1', { capabilities: { mutates: ['turnContext'] } });
+  });
+
+  it('records a loaded plugin\'s declared capabilities on the registry', async () => {
+    const reg = await loadPlugins({ dirs: [root], enabled: ['caps'], logger: log });
+    expect(reg.pluginCapabilities.get('caps')).toEqual({ mutates: ['turnContext'] });
+  });
+
+  it('defaults a capability-less plugin to an empty (deny-all) capabilities entry', async () => {
+    const reg = await loadPlugins({ dirs: [root], enabled: ['good'], logger: log });
+    expect(reg.pluginCapabilities.get('good')).toEqual({});
   });
 
   it('loads only enabled plugins and aggregates their contributions', async () => {

@@ -61,6 +61,20 @@ describe('parseManifest', () => {
     expect(code?.language).toBe('python');
     expect(code?.visibleWhen).toEqual({ key: 'mode', equals: 'a' });
   });
+  it('accepts a valid capabilities block', () => {
+    const m = parseManifest({
+      ...good,
+      capabilities: { hooks: ['brain.turn.beforeContext'], mutates: ['turnContext', 'tools'], reads: ['weather'], network: true },
+    });
+    expect(m.capabilities?.mutates).toEqual(['turnContext', 'tools']);
+    expect(m.capabilities?.network).toBe(true);
+  });
+  it('accepts a manifest with no capabilities (deny-by-default)', () => {
+    expect(parseManifest(good).capabilities).toBeUndefined();
+  });
+  it('rejects an invalid mutates literal', () => {
+    expect(() => parseManifest({ ...good, capabilities: { mutates: ['filesystem'] } })).toThrow();
+  });
   it('rejects an unknown config field type', () => {
     expect(() => parseManifest({ ...good, configSchema: [{ key: 'k', label: 'L', type: 'wat' }] })).toThrow();
   });

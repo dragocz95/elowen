@@ -57,6 +57,14 @@ describe('buildContributionReport', () => {
     expect(buildContributionReport(new PluginRegistry())).toEqual(emptyContributionReport());
   });
 
+  it('merge() carries each staged plugin\'s declared capabilities into the aggregate registry', () => {
+    const reg = new PluginRegistry();
+    const staging = new PluginRegistry();
+    staging.setCapabilities('alpha', { mutates: ['turnContext'], network: true });
+    reg.merge(staging);
+    expect(reg.pluginCapabilities.get('alpha')).toEqual({ mutates: ['turnContext'], network: true });
+  });
+
   it('emptyContributionReport has every list present and empty', () => {
     expect(emptyContributionReport()).toEqual({
       tools: [], skills: [], platforms: [], promptFragments: [], turnContexts: [], hooks: [],

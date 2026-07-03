@@ -1,5 +1,6 @@
 import { Type } from 'typebox';
 import { Check, Errors } from 'typebox/value';
+import type { PluginCapabilities } from './api.js';
 
 /** Bump when the plugin contract changes incompatibly; a plugin's manifest must match exactly. */
 export const PLUGIN_API_VERSION = '1';
@@ -61,6 +62,10 @@ export interface PluginManifest {
   provides?: { tools?: string[]; skills?: string[]; hooks?: string[]; platforms?: string[] };
   /** Declared config fields — drives the per-plugin settings form. */
   configSchema?: PluginConfigField[];
+  /** What the plugin is allowed to do (deny-by-default). Gates runtime hook mutations: a patch is
+   *  applied only if the matching value is listed in `mutates`. A manifest with no `capabilities` can
+   *  mutate nothing. */
+  capabilities?: PluginCapabilities;
 }
 
 const ManifestSchema = Type.Object({
@@ -107,6 +112,15 @@ const ManifestSchema = Type.Object({
       equals: Type.Union([Type.String(), Type.Number(), Type.Boolean()]),
     })),
   }))),
+  capabilities: Type.Optional(Type.Object({
+    hooks: Type.Optional(Type.Array(Type.String())),
+    mutates: Type.Optional(Type.Array(Type.Union([
+      Type.Literal('prompt'), Type.Literal('turnContext'),
+      Type.Literal('tools'), Type.Literal('memory'),
+    ]))),
+    reads: Type.Optional(Type.Array(Type.String())),
+    network: Type.Optional(Type.Boolean()),
+  })),
 });
 
 /** Validate a raw parsed `orca-plugin.json`. Throws a descriptive Error on any problem (bad shape or an

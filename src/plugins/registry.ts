@@ -2,7 +2,7 @@ import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { ToolDefinition } from '@earendil-works/pi-coding-agent';
-import type { PluginContext, PluginHook, PluginLogger, PluginSkill, PlatformAdapter, ProviderCredentials } from './api.js';
+import type { PluginCapabilities, PluginContext, PluginHook, PluginLogger, PluginSkill, PlatformAdapter, ProviderCredentials } from './api.js';
 import { assertPathAllowed, allowedRoots, isAllAccess, currentAccess } from './pathGuard.js';
 import { currentIdentity } from './policyContext.js';
 
@@ -26,6 +26,10 @@ export class PluginRegistry {
   readonly hookOwners: string[] = [];
   readonly turnContextOwners: string[] = [];
   readonly platformOwners: string[] = [];
+  /** Each plugin's declared capabilities (manifest `capabilities`, `{}` when absent), keyed by plugin
+   *  name. The hook bus looks these up by owner to gate a hook's mutation patch (deny-by-default). The
+   *  loader records this after a clean register+merge; the manifest is otherwise discarded. */
+  readonly pluginCapabilities = new Map<string, PluginCapabilities>();
 
   /** Absorb another registry's contributions (the loader stages each plugin and merges on success). */
   merge(other: PluginRegistry): void {
@@ -41,6 +45,13 @@ export class PluginRegistry {
     this.hookOwners.push(...other.hookOwners);
     this.turnContextOwners.push(...other.turnContextOwners);
     this.platformOwners.push(...other.platformOwners);
+    for (const [k, v] of other.pluginCapabilities) this.pluginCapabilities.set(k, v);
+  }
+
+  /** Record a plugin's declared capabilities (from its parsed manifest). Called by the loader after a
+   *  clean register+merge so the hook bus can gate that plugin's mutations. */
+  setCapabilities(name: string, caps: PluginCapabilities): void {
+    this.pluginCapabilities.set(name, caps);
   }
 
   /** Build the context passed to one plugin's `register()`. `config` is that plugin's own slice;
