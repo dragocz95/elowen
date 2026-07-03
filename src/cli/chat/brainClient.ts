@@ -1,4 +1,5 @@
-import type { BrainEvent, BrainMessageView } from '../../brain/brainService.js';
+import type { BrainEvent } from '../../brain/events.js';
+import type { BrainMessageView } from '../../brain/messageView.js';
 
 /** Thrown on a 401 so the caller can drop the cached token and re-login. */
 export class Unauthorized extends Error {

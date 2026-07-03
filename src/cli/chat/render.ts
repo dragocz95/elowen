@@ -1,4 +1,5 @@
-import type { BrainEvent, BrainMessageView } from '../../brain/brainService.js';
+import type { BrainEvent } from '../../brain/events.js';
+import type { BrainMessageView } from '../../brain/messageView.js';
 
 /** An assistant turn is an ordered list of segments so text and tool calls render in the sequence they
  *  happened. Consecutive tool calls (no new text between them) collapse into ONE tools segment — the

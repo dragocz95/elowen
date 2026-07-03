@@ -6,7 +6,7 @@ import { brainStartSchema, brainSendSchema, brainModelSchema } from '../schemas/
 import { brainConfigFromOrca } from '../../brain/config.js';
 import { listBrainModels, fetchOpenAiModels } from '../../brain/models.js';
 import { orcaExec, isExecAllowedForUser } from '../../shared/execs.js';
-import type { BrainEvent } from '../../brain/brainService.js';
+import type { BrainEvent } from '../../brain/events.js';
 import type { OrcaApp, RouteContext } from '../context.js';
 
 /** Per-user embedded brain (the new advisor engine): status / start / send / live event stream.

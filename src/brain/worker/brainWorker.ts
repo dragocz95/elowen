@@ -8,6 +8,7 @@ import type { EventBus } from '../../api/sse.js';
 import type { BrainRuntimeConfig } from '../providers.js';
 import { buildBrainRegistry, resolveBrainModel } from '../providers.js';
 import { projectEvent, projectUserTurn, rehydrate } from '../persistence.js';
+import { taskSessionId } from '../sessionId.js';
 import { runWithPolicy } from '../../plugins/policyContext.js';
 import type { PluginRegistry } from '../../plugins/registry.js';
 import { callOrcaApi } from '../../shared/apiClient.js';
@@ -125,7 +126,7 @@ export class BrainWorkerService {
 
     const registry = buildBrainRegistry(cfg, this.d.authStorage);
     const model = resolveBrainModel(registry, cfg, selectionFor(cfg, input.spec.model));
-    const sessionId = `brain-task-${input.taskId}`;
+    const sessionId = taskSessionId(input.taskId);
     const resumed = !!this.d.store.getSession(sessionId);
     if (!resumed) this.d.store.createSession({ id: sessionId, userId: input.ownerId ?? 0, model: model.id });
     else this.d.store.touchSession(sessionId, model.id);
