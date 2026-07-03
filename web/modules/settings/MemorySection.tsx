@@ -135,6 +135,10 @@ export function MemorySection() {
 
   return (
     <div className="@container flex flex-col gap-4">
+      {/* Read-only note: beyond the two models below, a third model — the post-turn memory curator —
+          runs on the Autopilot planner model, so the operator knows it exists. */}
+      <p className="text-xs text-text-muted">{t.memory.curatorNote}</p>
+
       {/* Embedding model */}
       <section className="flex flex-col gap-5 rounded-xl border border-border bg-surface p-5">
         <div className="flex flex-wrap items-center gap-2">

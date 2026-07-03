@@ -33,10 +33,6 @@ const server = setupServer(
     const platform = new URL(request.url).searchParams.get('platform') ?? 'web';
     return HttpResponse.json(byPlatform[platform] ?? []);
   }),
-  http.post('*/api/personality/preview', async ({ request }) => {
-    const { platform } = (await request.json()) as { platform: string };
-    return HttpResponse.json({ platform, layers: [{ label: 'Core persona', text: 'core' }, { label: `User personality (${platform})`, text: 'no active profile' }], resolved: 'core' });
-  }),
   http.post('*/api/personality/profiles/:id/activate', ({ params }) => HttpResponse.json(profile({ id: Number(params.id) })),
   ),
 );
@@ -63,7 +59,7 @@ describe('PersonalitySection', () => {
 });
 
 describe('useActivatePersonality', () => {
-  it('invalidates profiles and preview on success', async () => {
+  it('invalidates the profiles list on success', async () => {
     const client = new QueryClient();
     const spy = vi.spyOn(client, 'invalidateQueries');
     const wrapper = ({ children }: { children: ReactNode }) => <QueryClientProvider client={client}>{children}</QueryClientProvider>;
@@ -71,6 +67,5 @@ describe('useActivatePersonality', () => {
     result.current.mutate(2);
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(spy).toHaveBeenCalledWith({ queryKey: ['personalities'] });
-    expect(spy).toHaveBeenCalledWith({ queryKey: ['personality-preview'] });
   });
 });

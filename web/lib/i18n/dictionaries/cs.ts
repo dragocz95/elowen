@@ -878,7 +878,7 @@ export const cs = {
     tabSecurity: 'Zabezpečení',
     tabNotifications: 'Notifikace',
     tabPrompts: 'Prompty',
-    tabCli: 'Orca AI',
+    tabCli: 'Běh',
     tabPersonality: 'Osobnost',
     sectionsNav: 'Sekce účtu',
     discordId: 'Discord ID',
@@ -932,6 +932,7 @@ export const cs = {
   },
   memory: {
     intro: 'Dlouhodobá paměť asistenta — trvalé fakty, které si vybavuje napříč konverzacemi. Jsou pouze vaše a soukromé.',
+    curatorNote: 'Kurátor paměti po tahu, který rozhoduje, co se po každém tahu uloží, běží na plánovacím modelu Autopilota.',
     // Seznam
     searchPlaceholder: 'Hledat v paměti…',
     filterStatus: 'Stav',
@@ -1214,7 +1215,6 @@ export const cs = {
     hooksEmpty: 'Tento plugin neregistruje žádné háky.',
     hookExecutions: 'Nedávná spuštění',
     hookExecutionsHint: 'Každé spuštění háku tohoto pluginu, s výsledkem a délkou trvání.',
-    hookExecutionsEmpty: 'Zatím nebyla zaznamenána žádná spuštění háků.',
     outcomeOk: 'Aplikováno',
     outcomeThrew: 'Selhalo',
     outcomeTimeout: 'Vypršel čas',
@@ -1226,7 +1226,6 @@ export const cs = {
     capNetwork: 'Síť',
     capNetworkOn: 'Odchozí přístup',
     capReads: 'Čte',
-    capNone: 'Tento plugin nedeklaruje žádné schopnosti, takže nemůže nic měnit, přistupovat k síti ani číst chráněná data.',
     permissionsHint: 'Co tento plugin potřebuje a jak je citlivý.',
     requiresEnv: 'Vyžadované proměnné prostředí',
     requiresConfig: 'Vyžadovaná konfigurace',

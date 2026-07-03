@@ -16,8 +16,8 @@ import { useTranslation } from '../../lib/i18n';
 import { categorySwatch, countByCategory, CATEGORY_COLORS } from './memoryMeta';
 
 /** Compact category management surface: colored chips with a per-category memory count, a "New category"
- *  action, and inline edit/delete. Built-in categories can be renamed/recolored but not deleted (the
- *  daemon seeds them). Counts are derived from the already-loaded memory list — no extra round-trip. */
+ *  action, and inline edit/delete. Every category is user-defined, so all are freely editable and
+ *  deletable. Counts are derived from the already-loaded memory list — no extra round-trip. */
 export function CategoryManager({ memories }: { memories: Memory[] }) {
   const { t } = useTranslation();
   const categories = useMemoryCategories();
@@ -52,7 +52,7 @@ export function CategoryManager({ memories }: { memories: Memory[] }) {
               </span>
               <span className="flex shrink-0 items-center gap-0.5 opacity-60 transition-opacity group-hover:opacity-100">
                 <IconButton icon={Pencil} label={t.memory.categoryEdit} onClick={() => setEditing(c)} />
-                {!c.is_builtin ? <DeleteCategory category={c} /> : null}
+                <DeleteCategory category={c} />
               </span>
             </li>
           ))}

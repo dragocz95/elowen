@@ -1,6 +1,6 @@
 'use client';
 import { useEffect, useState, type ReactNode } from 'react';
-import { ArrowLeft, Plus, Trash2, KeyRound, ChevronDown, ChevronRight, Clock, Users, SlidersHorizontal, Link2, GraduationCap, Info, Wrench, Webhook, ShieldCheck, HardDrive, ScrollText, Search, Globe, Activity, type LucideIcon } from 'lucide-react';
+import { ArrowLeft, Plus, Trash2, KeyRound, ChevronDown, ChevronRight, Clock, Users, SlidersHorizontal, Link2, GraduationCap, Info, Wrench, Webhook, ShieldCheck, HardDrive, ScrollText, Search, Globe, type LucideIcon } from 'lucide-react';
 import { useAutoSave } from '../../lib/useAutoSave';
 import { useTheme } from '../../lib/useTheme';
 import { pluginIcon } from './pluginMeta';
@@ -665,12 +665,12 @@ export function PluginDetail({ name, onBack }: { name: string; onBack: () => voi
               </div>
             )}
           </div>
-          <div className="flex flex-col gap-3">
-            <span className="text-xs font-semibold uppercase tracking-wide text-text-muted">{t.pluginDetail.hookExecutions}</span>
-            <p className="text-xs text-text-muted">{t.pluginDetail.hookExecutionsHint}</p>
-            {!hookExecutions || hookExecutions.entries.length === 0 ? (
-              <EmptyState title={t.pluginDetail.hookExecutionsEmpty} icon={Activity} />
-            ) : (
+          {/* Recent-execution audit: only shown once at least one hook has actually run — an empty audit
+              is noise (no bundled plugin registers hooks), so the panel stays hidden until there's data. */}
+          {hookExecutions && hookExecutions.entries.length > 0 ? (
+            <div className="flex flex-col gap-3">
+              <span className="text-xs font-semibold uppercase tracking-wide text-text-muted">{t.pluginDetail.hookExecutions}</span>
+              <p className="text-xs text-text-muted">{t.pluginDetail.hookExecutionsHint}</p>
               <div className="max-h-72 overflow-auto rounded-md border border-border bg-bg p-3 text-[11px] leading-relaxed">
                 {hookExecutions.entries.map((e, i) => (
                   <div key={i} className="flex items-center gap-2 py-1">
@@ -682,8 +682,8 @@ export function PluginDetail({ name, onBack }: { name: string; onBack: () => voi
                   </div>
                 ))}
               </div>
-            )}
-          </div>
+            </div>
+          ) : null}
         </div>
       </Collapsible>
 
@@ -697,11 +697,13 @@ export function PluginDetail({ name, onBack }: { name: string; onBack: () => voi
             {declaresNetwork ? <Badge><Globe size={10} className="mr-1" aria-hidden />{t.pluginDetail.platforms}</Badge> : null}
             {toolCount > 0 ? <Badge>{`${toolCount} ${t.pluginDetail.tools}`}</Badge> : null}
           </div>
-          {/* Declared manifest capabilities — the deny-by-default permission surface. */}
-          <div className="flex flex-col gap-2 rounded-md border border-border bg-bg p-3">
-            <span className="text-xs font-semibold uppercase tracking-wide text-text-muted">{t.pluginDetail.capabilities}</span>
-            <p className="text-xs text-text-muted">{t.pluginDetail.capabilitiesDeny}</p>
-            {hasCapabilities ? (
+          {/* Declared manifest capabilities — the deny-by-default permission surface. Shown only when the
+              plugin actually declares something; an absent declaration means "cannot do anything", so an
+              empty panel carries no information and stays hidden. */}
+          {hasCapabilities ? (
+            <div className="flex flex-col gap-2 rounded-md border border-border bg-bg p-3">
+              <span className="text-xs font-semibold uppercase tracking-wide text-text-muted">{t.pluginDetail.capabilities}</span>
+              <p className="text-xs text-text-muted">{t.pluginDetail.capabilitiesDeny}</p>
               <div className="flex flex-col gap-2">
                 {mutates.length ? (
                   <div className="flex flex-wrap items-center gap-1.5">
@@ -722,10 +724,8 @@ export function PluginDetail({ name, onBack }: { name: string; onBack: () => voi
                   </div>
                 ) : null}
               </div>
-            ) : (
-              <p className="text-sm text-text-muted">{t.pluginDetail.capNone}</p>
-            )}
-          </div>
+            </div>
+          ) : null}
           {requiredSecrets.length === 0 && requiredConfig.length === 0 ? (
             <p className="text-sm text-text-muted">{t.pluginDetail.requiresNone}</p>
           ) : (

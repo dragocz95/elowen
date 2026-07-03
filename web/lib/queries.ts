@@ -295,7 +295,7 @@ export const useMemoryEvents = (id: number | null) =>
 export const useEmbeddingSettings = () =>
   useQuery({ queryKey: QUERY_KEYS.embeddingSettings, queryFn: orcaClient.embeddingSettings });
 
-/** The caller's own memory categories (built-in + user-defined). Category/reclassify mutations invalidate this key. */
+/** The caller's own memory categories. Category/reclassify mutations invalidate this key. */
 export const useMemoryCategories = () =>
   useQuery({ queryKey: QUERY_KEYS.memoryCategories, queryFn: orcaClient.memoryCategories });
 

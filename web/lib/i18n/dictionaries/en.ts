@@ -878,7 +878,7 @@ export const en = {
     tabSecurity: 'Security',
     tabNotifications: 'Notifications',
     tabPrompts: 'Prompts',
-    tabCli: 'Orca AI',
+    tabCli: 'Runtime',
     tabPersonality: 'Personality',
     sectionsNav: 'Account sections',
     discordId: 'Discord ID',
@@ -932,6 +932,7 @@ export const en = {
   },
   memory: {
     intro: 'The assistant\'s long-term memory — durable facts it recalls across conversations. These are yours alone and private.',
+    curatorNote: 'The post-turn memory curator — which decides what to save after each turn — runs on the Autopilot planner model.',
     // List
     searchPlaceholder: 'Search memories…',
     filterStatus: 'Status',
@@ -1214,7 +1215,6 @@ export const en = {
     hooksEmpty: 'This plugin registers no hooks.',
     hookExecutions: 'Recent executions',
     hookExecutionsHint: 'Each time one of this plugin’s hooks ran, with the outcome and how long it took.',
-    hookExecutionsEmpty: 'No hook executions recorded yet.',
     outcomeOk: 'Applied',
     outcomeThrew: 'Failed',
     outcomeTimeout: 'Timed out',
@@ -1226,7 +1226,6 @@ export const en = {
     capNetwork: 'Network',
     capNetworkOn: 'Outbound access',
     capReads: 'Reads',
-    capNone: 'This plugin declares no capabilities, so it cannot modify anything, reach the network, or read protected data.',
     permissionsHint: 'What this plugin needs and how sensitive it is.',
     requiresEnv: 'Required environment variables',
     requiresConfig: 'Required configuration',
