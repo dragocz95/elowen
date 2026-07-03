@@ -108,6 +108,9 @@ export interface ServerDeps {
   /** The ONE shared plugin registry provider (merged contributions of every enabled plugin). Feeds the
    *  runtime plugin-contribution introspection endpoint. Absent → that endpoint reports an empty shape. */
   plugins?: import('../plugins/pluginsProvider.js').PluginRegistryProvider;
+  /** Bounded in-memory ring of recent log lines, tapped at the logger's emit() choke point. Feeds the
+   *  admin per-plugin logs + health views. Absent → those views report empty/`ok`. */
+  pluginLogs?: import('../shared/logBuffer.js').PluginLogBuffer;
   /** Single-use ticket store backing the terminal WebSocket stream. Shared with the daemon's
    *  `/ws/terminal` handler so a ticket minted here is redeemable there. Defaulted when absent. */
   tickets?: TicketStore;

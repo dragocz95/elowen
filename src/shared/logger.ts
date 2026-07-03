@@ -13,8 +13,23 @@ import { join } from 'node:path';
  * caller — the console line is the durable channel of record.
  */
 
-type LogLevel = 'debug' | 'info' | 'warn' | 'error';
+export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 const ORDER: Record<LogLevel, number> = { debug: 0, info: 1, warn: 2, error: 3 };
+
+/** A structural tap on the emit() choke point. A sink sees every line the logger actually emits
+ *  (i.e. already above the min level), so it can mirror them into a bounded ring, a metrics probe,
+ *  etc. Console + file behaviour is unaffected — the sink is a pure side-observer, best-effort. */
+export interface LogSink {
+  push(entry: { ts: number; level: LogLevel; scope: string; message: string }): void;
+}
+
+let sink: LogSink | undefined;
+
+/** Install (or clear with `undefined`) the single process-wide log sink. Wired once at boot so an
+ *  in-memory ring buffer can back per-subsystem log views without the logger importing it. */
+export function setLogSink(s: LogSink | undefined): void {
+  sink = s;
+}
 
 const MIN: LogLevel = ((): LogLevel => {
   const v = (process.env.ORCA_LOG_LEVEL ?? '').toLowerCase();
@@ -57,6 +72,15 @@ function emit(level: LogLevel, scope: string, message: string, extra?: unknown):
   const line = `${stamp(now)}  ${level.toUpperCase().padEnd(5)}  [${scope}]  ${message}${fmtExtra(extra)}`;
   // Console first — the durable channel (systemd journal). Match severity to the right stream.
   (level === 'error' ? console.error : level === 'warn' ? console.warn : console.log)(line);
+  // Mirror into the optional sink (bounded ring buffer, …). Best-effort: a sink fault must never
+  // break logging. Fed the logical message + extra so downstream matching sees the full record.
+  if (sink) {
+    try {
+      sink.push({ ts: now.getTime(), level, scope, message: `${message}${fmtExtra(extra)}` });
+    } catch {
+      /* sink is a pure side-observer — the console line already carried the record */
+    }
+  }
   // Under vitest, skip the file sink so a test run doesn't litter the repo with a logs/ directory.
   if (process.env.VITEST) return;
   try {
