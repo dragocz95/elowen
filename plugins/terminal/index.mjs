@@ -1,9 +1,9 @@
 // Terminal plugin: shell commands with the working directory confined to the caller's accessible
 // repos (cwd guarded via ctx.assertPathAllowed). Long-running work goes to the background: a process
 // registry (the Hermes process_registry idea) keeps spawned children + their rolling output, and the
-// list/read/kill tools manage them. NOTE: the cwd is enforced, but a shell can still read absolute
-// paths outside the repo — hard isolation for untrusted roles is a deferred hardening step. Safe under
-// the admin-trusted plugin model where the operator enables it deliberately.
+// list/read/kill tools manage them. NOTE: cwd guarding does NOT contain a shell that reads absolute
+// paths outside the repo (e.g. the prod config DB), so ALL terminal tools are OWNER-ONLY: only the
+// verified operator may run them; role-scoped platform members (Discord) are refused (see denyNonOwner).
 import { defineTool } from '@earendil-works/pi-coding-agent';
 import { Type } from 'typebox';
 import { spawn } from 'node:child_process';
@@ -65,6 +65,14 @@ export function register(ctx) {
 
   const guardCwd = (cwd) => ctx.assertPathAllowed(cwd ?? ctx.allowedRoots()[0] ?? process.cwd());
 
+  // Owner-only gate. The shell runs with process.env and can read ANY absolute path — cwd guarding
+  // doesn't contain that (e.g. `cat /var/www/.config/orca/orca.db`). So these tools are reserved for
+  // the verified operator: a role-scoped platform member (Discord) is refused even with an admin role.
+  // Gate on `owner`, never `admin` — an admin-mapped stranger is admin-but-not-owner.
+  const denyNonOwner = () => (ctx.currentIdentity?.()?.owner === true
+    ? null
+    : ok('Error: terminal tools are only available to the operator.'));
+
   ctx.registerTool(defineTool({
     name: 'run_command', label: 'Run command',
     description: 'Run a shell command. Foreground by default (120 s limit); pass background=true for '
@@ -76,6 +84,8 @@ export function register(ctx) {
       background: Type.Optional(Type.Boolean({ description: 'Run detached and return a process id' })),
     }),
     execute: async (_id, p) => {
+      const denied = denyNonOwner();
+      if (denied) return denied;
       try {
         const cwd = guardCwd(p.cwd);
         if (!p.background) return ok(await runForeground(p.command, cwd));
@@ -94,6 +104,8 @@ export function register(ctx) {
     description: 'List background processes started with run_command(background=true).',
     parameters: Type.Object({}),
     execute: async () => {
+      const denied = denyNonOwner();
+      if (denied) return denied;
       if (processes.size === 0) return ok('No background processes.');
       return ok([...processes.values()].map((bg) =>
         `- ${bg.id} ${bg.running ? 'RUNNING' : `exited(${bg.exitCode})`} since ${bg.startedAt}\n  $ ${bg.command}`
@@ -109,6 +121,8 @@ export function register(ctx) {
       all: Type.Optional(Type.Boolean({ description: 'Return the whole buffer instead of just new output' })),
     }),
     execute: async (_id, p) => {
+      const denied = denyNonOwner();
+      if (denied) return denied;
       const bg = processes.get(p.id);
       if (!bg) return ok(`Error: no background process ${p.id}.`);
       const text = p.all ? bg.output : bg.output.slice(bg.readOffset);
@@ -124,6 +138,8 @@ export function register(ctx) {
     description: 'Kill a background process by id.',
     parameters: Type.Object({ id: Type.String() }),
     execute: async (_id, p) => {
+      const denied = denyNonOwner();
+      if (denied) return denied;
       const bg = processes.get(p.id);
       if (!bg) return ok(`Error: no background process ${p.id}.`);
       bg.kill();

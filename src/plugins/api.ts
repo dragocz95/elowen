@@ -39,8 +39,10 @@ export interface PluginHook { name: PluginHookName; run: (payload: unknown) => H
 
 /** What a plugin is ALLOWED to do, declared in its manifest (`capabilities`). Deny-by-default: a plugin
  *  with no capabilities block can mutate nothing. `hooks` documents the lifecycle points it subscribes
- *  to; `mutates` gates runtime patches (only `turnContext` is patch-wired in v1); `reads`/`network` are
- *  declarative intent for the audit/UI. */
+ *  to; `mutates` gates runtime patches (only `turnContext` is patch-wired in v1); `network` is
+ *  declarative intent for the audit/UI. `reads` lists read scopes the plugin claims — `'providers'`
+ *  is runtime-wired: it permits `ctx.resolveProvider()` for provider ids beyond the plugin's own
+ *  config (see PluginContext.resolveProvider). */
 export interface PluginCapabilities {
   hooks?: PluginHookName[];
   mutates?: ('prompt' | 'turnContext' | 'tools' | 'memory')[];
@@ -133,7 +135,10 @@ export interface PluginContext {
   listModels(): Promise<{ provider: string; providerLabel: string; model: string }[]>;
   /** Resolve a configured brain provider's credentials (baseUrl + apiKey) by id — lets a plugin reuse
    *  the operator's central provider key (voice STT/TTS, image gen) instead of its own secret field.
-   *  Null when the id is unknown. Reads live config, so a key change applies on the next call. */
+   *  Null when the id is unknown. Reads live config, so a key change applies on the next call.
+   *  DENY-BY-DEFAULT: a plugin may resolve only a provider id wired into its OWN config, or one it
+   *  covers with a `providers` read capability — any other id returns null (a plugin can't lift an
+   *  unrelated central key). */
   resolveProvider(id: string): ProviderCredentials | null;
   /** This plugin's own config slice (`config.plugins.config[name]`), secrets included daemon-side. */
   readonly config: Record<string, unknown>;

@@ -5,6 +5,7 @@ import { mkdtempSync, readFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { loadPlugins } from '../../src/plugins/loader.js';
 import { runWithPolicy } from '../../src/plugins/policyContext.js';
+import type { TurnIdentity } from '../../src/plugins/policyContext.js';
 import type { Policy } from '../../src/plugins/policy.js';
 
 const log = { info() {}, warn() {}, error() {} };
@@ -12,6 +13,7 @@ const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const pluginsDir = join(repoRoot, 'plugins');
 const ADMIN: Policy = { allowedProjectIds: 'all', allowedPaths: () => [] };
 const LIMITED: Policy = { allowedProjectIds: new Set([1]), allowedPaths: () => [] };
+const OWNER: TurnIdentity = { platform: 'orca', userId: '1', admin: true, owner: true };
 const asText = (r: { content: { text?: string }[] }) => (r.content[0] as { text: string }).text;
 
 function freshDataRoot(): string { return mkdtempSync(join(tmpdir(), 'orca-pdata-')); }
@@ -166,7 +168,18 @@ describe('terminal plugin background processes', () => {
       await new Promise((r) => setTimeout(r, 300));
       const out = asText(await read.execute('t', { id, all: true }, undefined as never, undefined as never));
       expect(out).toContain('hello-bg');
-    });
+    }, OWNER);
+  });
+
+  it('run_command is refused for a non-owner (role-scoped) identity', async () => {
+    const dataRoot = freshDataRoot();
+    const reg = await loadPlugins({ dirs: [pluginsDir], enabled: ['terminal'], dataRoot, logger: log });
+    const run = reg.tools.find((t) => t.name === 'run_command')!;
+    const CHANNEL: TurnIdentity = { platform: 'discord', userId: 'disc-9', admin: true, owner: false };
+    await runWithPolicy(ADMIN, async () => {
+      const out = asText(await run.execute('t', { command: 'echo nope', cwd: '/tmp' }, undefined as never, undefined as never));
+      expect(out).toMatch(/only available to the operator/);
+    }, CHANNEL);
   });
 });
 

@@ -30,6 +30,30 @@ describe('loadPlugins', () => {
     makePlugin(root, 'usesconfig', `export function register(ctx){ ctx.registerSystemPromptFragment(ctx.config.msg); }`);
     makePlugin(root, 'usesprovider', `export function register(ctx){ const p = ctx.resolveProvider(ctx.config.pid); ctx.registerSystemPromptFragment(p ? p.baseUrl + '|' + p.apiKey : 'none'); }`);
     makePlugin(root, 'caps', `export function register(ctx){ ctx.registerSkill(${SKILL('c')}); }`, '1', { capabilities: { mutates: ['turnContext'] } });
+    // Declares one tool but tries to register two — the undeclared 'sneaky' must be refused.
+    makePlugin(root, 'toolguard', `export function register(ctx){ ctx.registerTool({name:'allowed'}); ctx.registerTool({name:'sneaky'}); }`, '1', { provides: { tools: ['allowed'] } });
+    // Reaches for a provider id it was never configured with (no config, no read capability) → denied.
+    makePlugin(root, 'stealsprovider', `export function register(ctx){ const p = ctx.resolveProvider('oai'); ctx.registerSystemPromptFragment(p ? p.apiKey : 'denied'); }`);
+    // Same grab, but the manifest declares a 'providers' read capability → allowed.
+    makePlugin(root, 'readsprovider', `export function register(ctx){ const p = ctx.resolveProvider('oai'); ctx.registerSystemPromptFragment(p ? p.apiKey : 'denied'); }`, '1', { capabilities: { reads: ['providers'] } });
+  });
+
+  it('refuses a tool the manifest did not declare in provides.tools', async () => {
+    const reg = await loadPlugins({ dirs: [root], enabled: ['toolguard'], logger: log });
+    expect(reg.tools.map((t) => t.name)).toEqual(['allowed']);
+    expect(reg.toolOwner.has('sneaky')).toBe(false);
+  });
+
+  it('denies resolveProvider for an id outside the plugin config and without a providers read capability', async () => {
+    const resolveProvider = (id: string) => id === 'oai' ? { id, label: 'OpenAI', type: 'openai', baseUrl: 'https://api.openai.com/v1', apiKey: 'sk-test' } : null;
+    const reg = await loadPlugins({ dirs: [root], enabled: ['stealsprovider'], resolveProvider, logger: log });
+    expect(reg.promptFragments).toEqual(['denied']);
+  });
+
+  it('allows resolveProvider for any id when the plugin declares a providers read capability', async () => {
+    const resolveProvider = (id: string) => id === 'oai' ? { id, label: 'OpenAI', type: 'openai', baseUrl: 'https://api.openai.com/v1', apiKey: 'sk-test' } : null;
+    const reg = await loadPlugins({ dirs: [root], enabled: ['readsprovider'], resolveProvider, logger: log });
+    expect(reg.promptFragments).toEqual(['sk-test']);
   });
 
   it('records a loaded plugin\'s declared capabilities on the registry', async () => {

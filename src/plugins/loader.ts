@@ -104,7 +104,10 @@ export async function loadPlugins(opts: LoadPluginsOptions): Promise<PluginRegis
         // Stage the plugin's contributions in a scratch registry and merge only after a clean
         // register() — a plugin that throws halfway must not leave half its tools live.
         const staging = new PluginRegistry();
-        const ctx = staging.contextFor(name, opts.config?.[name] ?? {}, opts.logger, opts.dataRoot, opts.notify, opts.listModels, opts.resolveProvider);
+        // Pass the manifest's declared capabilities + provides so the context can enforce them at
+        // registration/resolve time (deny-by-default). Absent blocks default to unconstrained tools/
+        // platforms and a deny-all provider gate.
+        const ctx = staging.contextFor(name, opts.config?.[name] ?? {}, opts.logger, opts.dataRoot, opts.notify, opts.listModels, opts.resolveProvider, manifest.capabilities ?? {}, manifest.provides);
         await mod.register(ctx);
         registry.merge(staging);
         // Capture the plugin's declared capabilities (deny-by-default `{}` when absent) — the manifest
