@@ -1,7 +1,7 @@
 'use client';
 export const dynamic = 'force-dynamic';
 import { useEffect, useState, useRef } from 'react';
-import { Boxes, Bot, SlidersHorizontal, Plus, X, Pencil, Plug, Radio, Cpu, Gauge, Layers, Link2, KeyRound, FileText, Eye, Lock, Trash2, GitPullRequest, GitBranch, TerminalSquare, Github, RefreshCw, RotateCcw, Server, Sparkles, Puzzle, BrainCircuit, type LucideIcon } from 'lucide-react';
+import { Boxes, Bot, SlidersHorizontal, Plus, X, Pencil, Plug, Radio, Cpu, Gauge, Layers, Link2, KeyRound, FileText, Eye, Lock, Trash2, GitPullRequest, GitBranch, TerminalSquare, Github, RefreshCw, RotateCcw, Server, Sparkles, Puzzle, BrainCircuit, Database, type LucideIcon } from 'lucide-react';
 import { PROVIDERS, ProviderLogo } from '../../modules/settings/providers';
 import { ModelIcon } from '../../components/ui/ModelIcon';
 import { ExecutorPicker } from '../../components/ui/ExecutorPicker';
@@ -10,6 +10,7 @@ import { ModelNoteModal } from '../../modules/settings/ModelNoteModal';
 import { GithubStatusBanner } from '../../modules/settings/GithubStatusBanner';
 import { PluginsSection } from '../../modules/settings/PluginsSection';
 import { BrainSection } from '../../modules/settings/BrainSection';
+import { EmbeddingSection } from '../../modules/settings/EmbeddingSection';
 import { execProvider, execModel, type ProviderId } from '../../lib/modelProvider';
 import { useBrainModels, useConfig, useMe, usePlanJob, useSystem, useSystemSkills } from '../../lib/queries';
 import { useAutoSave } from '../../lib/useAutoSave';
@@ -62,7 +63,7 @@ function ModelInput({ value, onChange, placeholder }: { value: string; onChange:
   );
 }
 
-const CATEGORY_VALUES = ['models', 'providers', 'defaults', 'brain', 'plugins', 'autopilot', 'github', 'system', 'data'] as const;
+const CATEGORY_VALUES = ['models', 'providers', 'defaults', 'brain', 'embedding', 'plugins', 'autopilot', 'github', 'system', 'data'] as const;
 type Category = (typeof CATEGORY_VALUES)[number];
 
 export default function SettingsPage() {
@@ -293,6 +294,7 @@ export default function SettingsPage() {
     { id: 'providers', icon: Plug },
     { id: 'defaults', icon: SlidersHorizontal },
     { id: 'brain', icon: BrainCircuit },
+    { id: 'embedding', icon: Database },
     { id: 'plugins', icon: Puzzle },
     { id: 'autopilot', icon: Bot },
     { id: 'github', icon: Github },
@@ -791,6 +793,8 @@ export default function SettingsPage() {
         )}
 
         {category === 'brain' && <BrainSection />}
+
+        {category === 'embedding' && <EmbeddingSection />}
 
         {category === 'plugins' && <PluginsSection />}
 
