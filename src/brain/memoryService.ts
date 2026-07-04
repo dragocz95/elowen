@@ -22,6 +22,13 @@ const DEDUPE_COSINE = 0.97;
 const DEFAULT_MAX_COUNT = 6;
 const DEFAULT_CHAR_BUDGET = 1500;
 
+/** Minimum semantic (cosine) similarity for a memory to count as RELEVANT to a query. Below this the
+ *  memory is unrelated — dropping it stops a small memory store from injecting every fact into every
+ *  prompt (and keeps the manual search box on-topic). Cosine-scale, tuned for the current embedding
+ *  models: genuinely related pairs land well above (~0.5+), unrelated noise sits ~0.1–0.2. Only the raw
+ *  `semantic` component is floored; importance/recency/usage still reorder whatever survives. */
+const MIN_SEMANTIC = 0.3;
+
 /** Defaults for findSimilar(): at 0.85 cosine two bodies are near-duplicates for the curator/tool. */
 const DEFAULT_SIMILAR_THRESHOLD = 0.85;
 const DEFAULT_SIMILAR_LIMIT = 5;
@@ -178,6 +185,33 @@ export class MemoryService {
       .slice(0, limit);
   }
 
+  /** Semantic search for the manual memory browser (Settings → Memory search box): embed the query and
+   *  return the caller's active memories ranked by cosine (most similar first), keeping only those above
+   *  the relevance floor. Unlike retrieve() this does NOT markUsed — browsing isn't recall — and returns
+   *  raw rows for the list UI. Degrades to the store's keyword LIKE search when embeddings aren't
+   *  configured or the embed call throws, so the search box always returns something. */
+  async searchSemantic(userId: number, query: string, limit: number): Promise<MemoryRow[]> {
+    const q = query.trim();
+    if (q === '') return [];
+    const cfg = this.activeConfig();
+    if (cfg) {
+      try {
+        const queryVec = await this.embeddings.embed(cfg, q);
+        const hits = this.store.listActiveWithEmbeddings(userId)
+          .map(({ memory, vector }) => ({ memory, similarity: cosine(queryVec, vector) }))
+          .filter((r) => r.similarity >= MIN_SEMANTIC)
+          .sort((a, b) => b.similarity - a.similarity)
+          .slice(0, limit)
+          .map((r) => r.memory);
+        // Semantic found something on-topic → use it. When it comes back empty (nothing cleared the
+        // floor, or the matching memories aren't embedded yet) fall through to keyword so an exact-word
+        // search still finds a memory that exists.
+        if (hits.length > 0) return hits;
+      } catch { /* embed failed → keyword fallback below */ }
+    }
+    return this.store.search(userId, q, limit);
+  }
+
   /** Vector path: score every embedded memory, sort, dedupe, pack, markUsed. */
   private retrieveVector(
     userId: number,
@@ -201,7 +235,11 @@ export class MemoryService {
       })
       .sort((a, b) => b.score - a.score);
 
-    const picked = this.pack(ranked, maxCount, charBudget, true);
+    // Only memories actually related to the query are eligible for injection — an unrelated memory must
+    // not ride recency/importance into the prompt. `ranked` stays whole so the debug UI still explains
+    // every candidate (including the ones floored out).
+    const eligible = ranked.filter((c) => c.semantic >= MIN_SEMANTIC);
+    const picked = this.pack(eligible, maxCount, charBudget, true);
     this.store.markUsed(userId, picked.map((c) => c.memory.id));
     return {
       memories: picked.map((c) => c.memory),

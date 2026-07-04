@@ -225,14 +225,19 @@ export function registerMemoryRoutes(app: OrcaApp, ctx: RouteContext): void {
   // --- Collection + id-addressed CRUD (owner-scoped). ---
 
   // List the caller's memories, optionally narrowed (?status=&kind=&categoryId=&limit=&offset=). A `?q=`
-  // runs the store's keyword search instead. `categoryId` empty/`null` = uncategorized, a number = that
-  // category, absent = no category filter. Own memories only.
-  app.get('/memory', (c) => {
+  // runs a semantic (embedding) search — ranked by relevance to the query, on-topic only — degrading to
+  // the store's keyword LIKE search when embeddings aren't configured. `categoryId` empty/`null` =
+  // uncategorized, a number = that category, absent = no category filter. Own memories only.
+  app.get('/memory', async (c) => {
     if (!store) return c.json({ error: 'memory unavailable' }, 400);
     const userId = c.get('user').id;
     const q = c.req.query('q');
     const limit = c.req.query('limit');
-    if (q && q.trim() !== '') return c.json(store.search(userId, q, limit ? Number(limit) : 50));
+    if (q && q.trim() !== '') {
+      const lim = limit ? Number(limit) : 50;
+      if (ctx.memoryService) return c.json(await ctx.memoryService.searchSemantic(userId, q, lim));
+      return c.json(store.search(userId, q, lim));
+    }
     const cat = c.req.query('categoryId');
     return c.json(store.list(userId, {
       status: c.req.query('status'),

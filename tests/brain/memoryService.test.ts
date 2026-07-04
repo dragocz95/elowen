@@ -92,7 +92,8 @@ describe('MemoryService.retrieve', () => {
   });
 
   it('honors maxCount', async () => {
-    const table = { query: [1, 0, 0], one: [1, 0, 0], two: [0, 1, 0], three: [0, 0, 1] };
+    // All three above the relevance floor (cos ≥ 0.3) so maxCount — not the floor — does the capping.
+    const table = { query: [1, 0, 0], one: [1, 0, 0], two: [0.9, 0.436, 0], three: [0.8, 0.6, 0] };
     addWithVec(store, 1, 'one', table);
     addWithVec(store, 1, 'two', table);
     addWithVec(store, 1, 'three', table);
@@ -100,6 +101,20 @@ describe('MemoryService.retrieve', () => {
 
     const res = await svc.retrieve(1, 'query', { maxCount: 2 });
     expect(res.memories).toHaveLength(2);
+  });
+
+  it('floors out unrelated memories — importance/recency cannot drag a low-cosine memory in', async () => {
+    // "off" is semantically unrelated (cos 0) but maxed importance; it must NOT be injected.
+    const table = { query: [1, 0, 0], on: [0.8, 0.6, 0], off: [0, 1, 0] };
+    const idOn = addWithVec(store, 1, 'on', table, 1);
+    addWithVec(store, 1, 'off', table, 5);
+    const svc = makeService(store, table);
+
+    const res = await svc.retrieve(1, 'query');
+    expect(res.memories.map((m) => m.id)).toEqual([idOn]);
+    // debug still explains every candidate, including the floored-out one (not picked).
+    expect(res.debug.scores).toHaveLength(2);
+    expect(res.debug.scores.find((s) => s.semantic === 0)!.picked).toBe(false);
   });
 
   it('honors charBudget (top item always admitted, rest must fit)', async () => {
@@ -146,6 +161,53 @@ describe('MemoryService.retrieve', () => {
     expect(res.memories[0]!.body).toBe('loves keyword tea');
     // provider/model still reported even though the vector path failed
     expect(res.debug.provider).toBe('p');
+  });
+});
+
+describe('MemoryService.searchSemantic', () => {
+  let store: MemoryStore;
+  beforeEach(() => { store = new MemoryStore(openDb(':memory:')); });
+
+  it('ranks active memories by cosine, floors out unrelated, does not markUsed', async () => {
+    const table = { query: [1, 0, 0], near: [0.95, 0.31, 0], mid: [0.8, 0.6, 0], far: [0, 1, 0] };
+    const idNear = addWithVec(store, 1, 'near', table);
+    const idMid = addWithVec(store, 1, 'mid', table);
+    addWithVec(store, 1, 'far', table); // cos 0 → below floor, excluded
+    const svc = makeService(store, table);
+
+    const rows = await svc.searchSemantic(1, 'query', 50);
+    expect(rows.map((m) => m.id)).toEqual([idNear, idMid]);
+    // browsing is not recall — usage counters stay untouched
+    expect(store.get(1, idNear)!.use_count).toBe(0);
+  });
+
+  it('empty query returns nothing', async () => {
+    const svc = makeService(store, {});
+    expect(await svc.searchSemantic(1, '  ', 50)).toEqual([]);
+  });
+
+  it('falls back to keyword when semantic finds nothing (e.g. memory not embedded yet)', async () => {
+    // Embeddings ARE configured, but this memory has no stored vector → semantic returns []; an
+    // exact-word search must still surface it via keyword.
+    store.add(1, { body: 'likes espresso' }, 'agent', '');
+    const svc = makeService(store, { query: [1, 0, 0] });
+    const rows = await svc.searchSemantic(1, 'espresso', 50);
+    expect(rows.map((m) => m.body)).toEqual(['likes espresso']);
+  });
+
+  it('falls back to keyword search when embeddings are not configured', async () => {
+    store.add(1, { body: 'prefers dark mode' }, 'agent', '');
+    store.add(1, { body: 'uses vim' }, 'agent', '');
+    const svc = makeService(store, {}, { config: null });
+    const rows = await svc.searchSemantic(1, 'dark', 50);
+    expect(rows.map((m) => m.body)).toEqual(['prefers dark mode']);
+  });
+
+  it('falls back to keyword search when the embed call throws', async () => {
+    store.add(1, { body: 'keyword tea lover' }, 'agent', '');
+    const svc = makeService(store, {}, { failFor: 'keyword' });
+    const rows = await svc.searchSemantic(1, 'keyword', 50);
+    expect(rows.map((m) => m.body)).toEqual(['keyword tea lover']);
   });
 });
 
