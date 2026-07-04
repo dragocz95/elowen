@@ -1105,7 +1105,6 @@ export const cs = {
     categoryDescriptionPlaceholder: 'Co do této kategorie patří…',
     categoryColor: 'Barva',
     categoryIcon: 'Ikona',
-    categoryIconPick: 'Vyberte ikonu',
     categoryIconSuggest: 'Navrhnout ikonu',
     categoryCreate: 'Vytvořit',
     categoryEdit: 'Upravit kategorii',

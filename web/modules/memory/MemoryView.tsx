@@ -111,7 +111,7 @@ export function MemoryView() {
   const doEmptyTrash = () => {
     setConfirmEmptyTrash(false);
     emptyTrash.mutate(undefined, {
-      onSuccess: (r) => { toast(t.memory.emptyTrashDone.replace('{n}', String(r.purged))); clearSelection(); },
+      onSuccess: (r) => { toast(r.purged === 0 ? t.memory.emptyTrashEmpty : t.memory.emptyTrashDone.replace('{n}', String(r.purged))); clearSelection(); },
       onError: (e) => toast(apiErrorMessage(e), 'error'),
     });
   };

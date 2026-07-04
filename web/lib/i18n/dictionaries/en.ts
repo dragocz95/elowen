@@ -1105,7 +1105,6 @@ export const en = {
     categoryDescriptionPlaceholder: 'What belongs in this category…',
     categoryColor: 'Color',
     categoryIcon: 'Icon',
-    categoryIconPick: 'Pick an icon',
     categoryIconSuggest: 'Suggest an icon',
     categoryCreate: 'Create',
     categoryEdit: 'Edit category',

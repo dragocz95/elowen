@@ -4,8 +4,9 @@ import type { Memory } from '../../lib/types';
 import { useMemoryEvents } from '../../lib/queries';
 import { useTranslation } from '../../lib/i18n';
 
-/** Sticky sidebar overview: just the headline counts. The per-kind/status breakdowns moved to
- *  Statistics and reindex lives in Settings → Memory — this column stays a quiet at-a-glance summary. */
+/** Sticky sidebar overview: just the headline counts. The per-kind/status breakdowns were removed from
+ *  here (that shape belongs in Statistics, not this list column) and reindex lives in Settings → Memory —
+ *  so this column stays a quiet at-a-glance summary. */
 export function MemoryOverview({ memories }: { memories: Memory[] }) {
   const { t } = useTranslation();
   const events = useMemoryEvents(null);
