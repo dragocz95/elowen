@@ -14,10 +14,10 @@ import { PluginsSection } from '../../modules/settings/PluginsSection';
 import { BrainSection } from '../../modules/settings/BrainSection';
 import { MemorySection } from '../../modules/settings/MemorySection';
 import { execProvider, execModel, type ProviderId } from '../../lib/modelProvider';
-import { useBrainModels, useConfig, useMe, usePlanJob, useSystem, useSystemSkills } from '../../lib/queries';
+import { useBrainModels, useConfig, useMe, useSystem, useSystemSkills } from '../../lib/queries';
 import { useAutoSave } from '../../lib/useAutoSave';
 import { useUpdateConfig, useCleanupAll, useSystemUpdate, useSystemRestart, useInstallSkills } from '../../lib/mutations';
-import { orcaClient, OrcaApiError } from '../../lib/orcaClient';
+import { OrcaApiError } from '../../lib/orcaClient';
 import { allModels, isPresetExec, removeModel, upsertModel } from '../../lib/execPresets';
 import { usePersistentState } from '../../lib/usePersistentState';
 import { useToast } from '../../components/ui/Toast';
@@ -120,39 +120,6 @@ export default function SettingsPage() {
   );
   const [notes, setNotes] = useState('');
   const [providers, setProviders] = useState<Record<string, { bin: string; args: string; skipPermissions?: boolean; resume?: boolean }>>({});
-  const [sampleGoal, setSampleGoal] = useState('');
-  const [preview, setPreview] = useState<{ title: string; type: string; agent?: string; details?: string }[] | null>(null);
-  // Async plan preview is driven by usePlanJob (React Query polling) so it cleans up on unmount —
-  // no manual setTimeout loop that keeps firing after the user navigates away.
-  const [previewJobId, setPreviewJobId] = useState<string | null>(null);
-  const [submittingPreview, setSubmittingPreview] = useState(false);
-  const previewJob = usePlanJob(previewJobId);
-  const previewing = submittingPreview || previewJobId !== null;
-
-  const runPreview = async () => {
-    setSubmittingPreview(true);
-    try {
-      // Planning is async: submit a dryRun job; usePlanJob then polls it until it resolves (the relay
-      // backend finishes inline; an agent backend takes longer). The planner prompt is resolved
-      // per-user server-side (the caller's override, else the config default) — no prompt sent here.
-      const { jobId } = await orcaClient.planPreview({ goal: sampleGoal.trim() });
-      setPreviewJobId(jobId);
-    } catch (e) {
-      if (e instanceof OrcaApiError && e.code === 'autopilot_key_missing') toast(t.settings.setApiKeyFirst, 'error');
-      else toast(String(e), 'error');
-    } finally { setSubmittingPreview(false); }
-  };
-
-  // React to the async plan job: render phases on done, surface failures, then clear the job id. Keyed
-  // on the job data + id ALONE so it runs per job-state transition, not when `toast`/the translations/
-  // setters change identity (stable or run-time reads) — listing them would re-fire the toast.
-  useEffect(() => {
-    const job = previewJob.data;
-    if (!job || !previewJobId) return;
-    if (job.status === 'done') { setPreview(job.phases); setPreviewJobId(null); }
-    else if (job.status === 'failed') { toast(t.settings.planFailed, 'error'); setPreviewJobId(null); }
-  }, [previewJob.data, previewJobId]); // eslint-disable-line react-hooks/exhaustive-deps
-
   const [defExec, setDefExec] = useState('');
   const [defAutonomy, setDefAutonomy] = useState('');
   const [defMaxSessions, setDefMaxSessions] = useState(1);
@@ -495,10 +462,11 @@ export default function SettingsPage() {
                 <>
                   <SettingCard title={t.settings.apProvider} description={t.settings.apProviderDesc} icon={KeyRound} className="@sm:col-span-2">
                     <ProviderPicker
-                      providers={[{ id: '', label: t.settings.apManual }, ...(config.data?.brain?.providers ?? []).filter((p) => p.apiKeySet).map((p) => ({ id: p.id, label: p.label }))]}
+                      providers={(config.data?.brain?.providers ?? []).filter((p) => p.apiKeySet).map((p) => ({ id: p.id, label: p.label }))}
                       value={apProviderId}
                       onChange={setApProviderId}
                       label={t.settings.apProvider}
+                      emptyText={t.settings.apNoProviders}
                     />
                   </SettingCard>
                   <SettingCard title={t.settings.plannerModel} description={t.settings.plannerModelDesc} icon={Bot}>
@@ -511,8 +479,8 @@ export default function SettingsPage() {
                       ? <ModelPillsPicker mode="single" catalog={apCatalog} value={overseerModel || null} onChange={(m) => setOverseerModel(m ?? '')} />
                       : <ModelInput value={overseerModel} onChange={setOverseerModel} placeholder={t.settings.overseerPlaceholder} />}
                   </SettingCard>
-                  {/* Manual endpoint+key only when NO provider is picked — a chosen provider supplies both,
-                      so the key is never entered twice. */}
+                  {/* No provider picked → enter an endpoint + key directly. A chosen provider supplies both,
+                      so these fields simply don't render (no redundant "inherited" note). */}
                   {apProviderId === '' ? (
                     <>
                       <SettingCard title={t.settings.apiUrl} description={t.settings.apiUrlDesc} icon={Link2}>
@@ -522,11 +490,7 @@ export default function SettingsPage() {
                         <input type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder={apiKeySet ? t.settings.apiKeySetPlaceholder : t.settings.apiKeyPlaceholder} className={inputClass} />
                       </SettingCard>
                     </>
-                  ) : (
-                    <SettingCard title={t.settings.apiKey} description={t.settings.apInheritsKey} icon={KeyRound} className="@sm:col-span-2">
-                      <p className="text-xs italic text-text-muted">{t.settings.apInheritsKey}</p>
-                    </SettingCard>
-                  )}
+                  ) : null}
                 </>
               ) : (
                 <>
@@ -544,35 +508,6 @@ export default function SettingsPage() {
               <SettingCard title={t.settings.notes} description={t.settings.notesDesc} icon={FileText}>
                 <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={3} className={`${inputClass} resize-none`} />
               </SettingCard>
-              <div className="@sm:col-span-2 card-interactive rounded-xl border border-border bg-surface p-5">
-                <div className="mb-2 flex items-center gap-1.5">
-                  <span className="text-sm font-medium text-text">{t.settings.testPlan}</span>
-                  <HelpTip>{t.settings.testPlanHelp}</HelpTip>
-                </div>
-                <div className="flex flex-col gap-2">
-                  <div className="flex items-center gap-2">
-                    <Input value={sampleGoal} onChange={(e) => setSampleGoal(e.target.value)} placeholder={t.settings.sampleGoalPlaceholder} />
-                    <Button variant="default" disabled={previewing || !sampleGoal.trim()} onClick={runPreview}>{previewing ? t.settings.planning : t.settings.testPlan}</Button>
-                  </div>
-                  {preview && (
-                    <ul className="flex flex-col divide-y divide-border rounded-md border border-border">
-                      {preview.map((p, i) => (
-                        <li key={i} className="flex items-start gap-2 px-3 py-2 text-sm">
-                          <span className="w-4 shrink-0 font-mono text-xs text-text-muted">{i + 1}</span>
-                          <div className="min-w-0 flex-1">
-                            <div className="flex items-center gap-2">
-                              <span className="truncate text-text">{p.title}</span>
-                              <span className="shrink-0 rounded border border-border px-1 text-tiny uppercase text-text-muted">{p.type}</span>
-                              {p.agent ? <span className="shrink-0 rounded-md border border-accent/40 bg-accent/10 px-1.5 text-tiny text-accent">{p.agent}</span> : null}
-                            </div>
-                            {p.details ? <p className="mt-0.5 truncate text-xs text-text-muted">{p.details}</p> : null}
-                          </div>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </div>
-              </div>
               </div>
               </div>
             </div>

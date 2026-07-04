@@ -86,7 +86,6 @@ export const orcaClient = {
   resetUsage: () => req<ResetUsageResult>('/usage/reset', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }),
   allDeps: () => req<{ task_id: string; depends_on_id: string }[]>('/tasks/deps'),
   planTask: (input: PlanInput) => req<PlanSubmitResult>('/tasks/plan', json(input)),
-  planPreview: (input: { goal: string; prompt?: string }) => req<{ jobId: string }>('/tasks/plan', json({ ...input, dryRun: true })),
   getPlanJob: (jobId: string) => req<PlanJob>(`/plan/${encodeURIComponent(jobId)}`),
   insertPhases: (epicId: string, input: InsertPhasesInput) => req<InsertPhasesResult>(`/tasks/${encodeURIComponent(epicId)}/phases`, json(input)),
   engage: (input: EngageInput) => req<Mission>('/missions', json(input)),
