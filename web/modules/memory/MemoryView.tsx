@@ -1,9 +1,9 @@
 'use client';
-import { useEffect, useMemo, useState } from 'react';
-import { Brain, Search, Plus, GitMerge, X, ListChecks, Sparkles, Hash, Gauge, Tags } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Brain, Search, Plus, GitMerge, X, ListChecks, Sparkles, Hash, Gauge, Tags, Trash2, RotateCcw } from 'lucide-react';
 import type { Memory, MemoryCategory } from '../../lib/types';
 import { useMemories, useMemoryCategories } from '../../lib/queries';
-import { useCreateMemory, useMergeMemories } from '../../lib/mutations';
+import { useCreateMemory, useMergeMemories, useDeleteMemory, useRestoreMemory, usePurgeMemories, useEmptyTrash } from '../../lib/mutations';
 import { apiErrorMessage } from '../../lib/orcaClient';
 import { ModuleHeader } from '../../components/ui/ModuleHeader';
 import { Segmented } from '../../components/ui/Segmented';
@@ -13,16 +13,23 @@ import { Badge } from '../../components/ui/Badge';
 import { Field } from '../../components/ui/Field';
 import { Checkbox } from '../../components/ui/Checkbox';
 import { Modal, ModalBody, ModalFooter } from '../../components/ui/Modal';
+import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { LoadingState, ErrorState, EmptyState } from '../../components/ui/states';
 import { useToast } from '../../components/ui/Toast';
 import { useTranslation } from '../../lib/i18n';
 import { usePersistentState } from '../../lib/usePersistentState';
+import { useElementWidth } from '../../lib/useElementWidth';
+import { CategoryIcon } from '../../lib/categoryIcons';
 import { MemoryDetail } from './MemoryDetail';
 import { MemoryBrainMap } from './MemoryBrainMap';
 import { MemoryOverview } from './MemoryOverview';
 import { CategoryManager } from './CategoryManager';
 import { RetrievalDebugPanel } from './RetrievalDebugPanel';
 import { memoryStatusTone, memoryStatusLabel, distinctKinds, categoriesById, categorySwatch } from './memoryMeta';
+
+/** At/above this many px of measured content width the list+stats show side by side; below, they stack.
+ *  Measured (not a CSS `@container`) so the sticky stats column isn't confined to a container-type box. */
+const SPLIT_MIN = 768;
 
 type Tab = 'list' | 'brain' | 'retrieval';
 type StatusFilter = 'active' | 'archived' | 'deleted' | 'all';
@@ -46,6 +53,21 @@ export function MemoryView() {
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [creating, setCreating] = useState(false);
   const [merging, setMerging] = useState(false);
+  const [confirmPurge, setConfirmPurge] = useState(false);
+  const [confirmEmptyTrash, setConfirmEmptyTrash] = useState(false);
+
+  // Measure the list+stats wrapper's own width (dock-aware) to pick the two-column vs stacked layout.
+  // Kept off a CSS `@container` on purpose: container-type would confine the sticky stats column's
+  // `position: sticky` to the wrapper box (the ModuleHeader gotcha), so it would scroll away.
+  const splitRef = useRef<HTMLDivElement>(null);
+  const splitW = useElementWidth(splitRef);
+  const twoCol = splitW === 0 || splitW >= SPLIT_MIN; // default to the roomy split until measured
+
+  const { toast } = useToast();
+  const del = useDeleteMemory();
+  const restore = useRestoreMemory();
+  const purge = usePurgeMemories();
+  const emptyTrash = useEmptyTrash();
 
   const memories = useMemories(status === 'all' ? undefined : { status });
   const categories = useMemoryCategories();
@@ -65,6 +87,46 @@ export function MemoryView() {
 
   const toggleSelect = (id: number) => setSelected((cur) => { const n = new Set(cur); n.has(id) ? n.delete(id) : n.add(id); return n; });
   const clearSelection = () => setSelected(new Set());
+
+  // Select-all toggles the currently *filtered* rows: all already selected → clear, otherwise select them all.
+  const allSelected = filtered.length > 0 && filtered.every((m) => selected.has(m.id));
+  const toggleSelectAll = () => setSelected(allSelected ? new Set() : new Set(filtered.map((m) => m.id)));
+
+  const selectedIds = () => filtered.filter((m) => selected.has(m.id)).map((m) => m.id);
+
+  // Soft-delete / restore have no bulk endpoint, so fan out per id and report once. Purge/empty-trash
+  // are single bulk calls. Every handler clears the selection and toasts on completion.
+  const bulkDelete = async () => {
+    const ids = selectedIds();
+    try {
+      await Promise.all(ids.map((id) => del.mutateAsync(id)));
+      toast(t.memory.bulkDeleteDone.replace('{n}', String(ids.length)));
+      clearSelection();
+    } catch (e) { toast(apiErrorMessage(e), 'error'); }
+  };
+  const bulkRestore = async () => {
+    const ids = selectedIds();
+    try {
+      await Promise.all(ids.map((id) => restore.mutateAsync(id)));
+      toast(t.memory.bulkRestoreDone.replace('{n}', String(ids.length)));
+      clearSelection();
+    } catch (e) { toast(apiErrorMessage(e), 'error'); }
+  };
+  const bulkPurge = () => {
+    setConfirmPurge(false);
+    const ids = selectedIds();
+    purge.mutate(ids, {
+      onSuccess: () => { toast(t.memory.deletedPermanently); clearSelection(); },
+      onError: (e) => toast(apiErrorMessage(e), 'error'),
+    });
+  };
+  const doEmptyTrash = () => {
+    setConfirmEmptyTrash(false);
+    emptyTrash.mutate(undefined, {
+      onSuccess: (r) => { toast(t.memory.emptyTrashDone.replace('{n}', String(r.purged))); clearSelection(); },
+      onError: (e) => toast(apiErrorMessage(e), 'error'),
+    });
+  };
 
   // Keep selection consistent with what's on screen. When the filter/search narrows the visible set (or a
   // row is removed by a refetch), drop any selected ids that are no longer visible — otherwise the merge
@@ -154,54 +216,72 @@ export function MemoryView() {
         : (
           <div className="flex flex-col gap-5">
             {showCategories ? <CategoryManager memories={memories.data ?? []} /> : null}
-            <MemoryOverview memories={memories.data ?? []} />
 
             {(memories.data?.length ?? 0) === 0 ? (
               <EmptyState title={t.memory.empty} description={t.memory.emptyHint} icon={Brain} action={<Button variant="accent" icon={Plus} onClick={() => setCreating(true)}>{t.memory.newMemory}</Button>} />
-            ) : filtered.length === 0 ? (
-              <EmptyState title={t.memory.emptySearch} icon={Search} />
             ) : (
-              <div className="@container">
-                <div className="@3xl:flex @3xl:items-start @3xl:gap-5">
-                  {/* Left — memory list */}
-                  <div className="flex flex-col gap-2.5 @3xl:w-[42%] @3xl:shrink-0">
-                    {filtered.map((m) => (
-                      <MemoryRow
-                        key={m.id}
-                        memory={m}
-                        category={m.category_id != null ? categoryById.get(m.category_id) : undefined}
-                        active={selectedId === m.id}
-                        selected={selected.has(m.id)}
-                        onSelect={() => setSelectedId(m.id)}
-                        onToggleSelect={() => toggleSelect(m.id)}
-                      />
-                    ))}
+              // Measured split: list on the left (main), a sticky stats column on the right. Stacks below
+              // SPLIT_MIN. No `@container` here — the stats column stays `position: sticky`.
+              <div ref={splitRef} className={twoCol ? 'flex items-start gap-5' : 'flex flex-col gap-5'}>
+                {/* Left — memory list */}
+                <div className={`flex min-w-0 flex-col gap-2.5 ${twoCol ? 'w-[65%] shrink-0' : ''}`}>
+                  {/* List header: select-all over the filtered rows + (in the trash) an empty-trash action. */}
+                  <div className="flex items-center gap-2.5 px-1 py-1">
+                    <button
+                      type="button"
+                      onClick={toggleSelectAll}
+                      disabled={filtered.length === 0}
+                      aria-label={t.memory.selectAll}
+                      aria-pressed={allSelected}
+                      className="flex items-center gap-2 text-xs text-text-muted transition-colors hover:text-text disabled:opacity-40"
+                    >
+                      <Checkbox checked={allSelected} />
+                      {t.memory.selectAll}
+                    </button>
+                    <span className="ml-auto font-mono text-[11px] text-text-muted">{filtered.length}</span>
+                    {status === 'deleted' && filtered.length > 0 ? (
+                      <Button variant="danger" icon={Trash2} onClick={() => setConfirmEmptyTrash(true)}>{t.memory.emptyTrash}</Button>
+                    ) : null}
                   </div>
 
-                  {/* Right — detail pane */}
-                  <aside className="mt-5 min-w-0 @3xl:mt-0 @3xl:flex-1">
-                    {selectedId != null ? (
-                      <div className="rounded-lg border border-border bg-surface p-4" style={{ boxShadow: 'var(--shadow-card)' }}>
-                        <MemoryDetail memoryId={selectedId} />
-                      </div>
-                    ) : (
-                      <div className="hidden items-center justify-center gap-2 rounded-lg border border-dashed border-border py-20 text-sm text-text-muted @3xl:flex">
-                        <Brain size={14} className="shrink-0 text-text-muted/50" aria-hidden />{t.memory.intro}
-                      </div>
-                    )}
-                  </aside>
+                  {filtered.length === 0 ? (
+                    <EmptyState title={t.memory.emptySearch} icon={Search} />
+                  ) : filtered.map((m) => (
+                    <MemoryRow
+                      key={m.id}
+                      memory={m}
+                      category={m.category_id != null ? categoryById.get(m.category_id) : undefined}
+                      active={selectedId === m.id}
+                      selected={selected.has(m.id)}
+                      onSelect={() => setSelectedId(m.id)}
+                      onToggleSelect={() => toggleSelect(m.id)}
+                    />
+                  ))}
                 </div>
+
+                {/* Right — sticky stats column (counts + kind/status breakdowns + reindex). */}
+                <aside className={`min-w-0 ${twoCol ? 'sticky top-14 w-[32%] shrink-0' : 'w-full'}`}>
+                  <MemoryOverview memories={memories.data ?? []} />
+                </aside>
               </div>
             )}
           </div>
         )}
 
-      {/* Merge selection toolbar */}
-      {selected.size > 0 ? (
-        <div className="fixed bottom-6 left-1/2 z-40 flex -translate-x-1/2 items-center gap-2 rounded-xl border border-border bg-elevated px-3 py-2 shadow-[var(--shadow-raised)] animate-fade-up">
-          <span className="px-1 text-sm text-text">{t.memory.mergeSelected.replace('{n}', String(selected.size))}</span>
+      {/* Floating bulk toolbar. Merge needs ≥2; soft-delete shows outside the trash, restore inside it,
+          permanent delete everywhere (behind a confirm). Kept a sibling of the layout so it's never
+          clipped. */}
+      {tab === 'list' && selected.size > 0 ? (
+        <div className="fixed bottom-6 left-1/2 z-40 flex -translate-x-1/2 flex-wrap items-center justify-center gap-2 rounded-xl border border-border bg-elevated px-3 py-2 shadow-[var(--shadow-raised)] animate-fade-up">
+          <span className="px-1 text-sm text-text">{t.memory.selectedCount.replace('{n}', String(selected.size))}</span>
           <Button variant="accent" icon={GitMerge} disabled={selected.size < 2} onClick={() => setMerging(true)}>{t.memory.merge}</Button>
-          <button type="button" aria-label={t.memory.cancel} onClick={clearSelection} className="flex h-8 w-8 items-center justify-center rounded-md text-text-muted hover:bg-surface hover:text-text"><X size={15} /></button>
+          {status === 'deleted' ? (
+            <Button variant="default" icon={RotateCcw} onClick={bulkRestore}>{t.memory.bulkRestore}</Button>
+          ) : (
+            <Button variant="default" icon={Trash2} onClick={bulkDelete}>{t.memory.bulkDelete}</Button>
+          )}
+          <Button variant="danger" icon={Trash2} onClick={() => setConfirmPurge(true)}>{t.memory.purge}</Button>
+          <button type="button" aria-label={t.memory.clearSelection} onClick={clearSelection} className="flex h-8 w-8 items-center justify-center rounded-md text-text-muted hover:bg-surface hover:text-text"><X size={15} /></button>
         </div>
       ) : null}
 
@@ -213,6 +293,33 @@ export function MemoryView() {
           onMerged={(id) => { clearSelection(); setMerging(false); setSelectedId(id); }}
         />
       ) : null}
+
+      {/* Detail modal — the right column now holds stats, so a picked memory (list click or brain-map
+          navigation) opens here instead of a side pane. */}
+      {selectedId != null ? (
+        <Modal title={t.page.memory} icon={Brain} size="xl" onClose={() => setSelectedId(null)}>
+          <ModalBody>
+            <MemoryDetail memoryId={selectedId} />
+          </ModalBody>
+        </Modal>
+      ) : null}
+
+      <ConfirmDialog
+        open={confirmPurge}
+        title={t.memory.purgeConfirmTitle}
+        description={t.memory.purgeConfirmBody}
+        confirmLabel={t.memory.purgeConfirm}
+        onClose={() => setConfirmPurge(false)}
+        onConfirm={bulkPurge}
+      />
+      <ConfirmDialog
+        open={confirmEmptyTrash}
+        title={t.memory.emptyTrashConfirmTitle}
+        description={t.memory.emptyTrashConfirm}
+        confirmLabel={t.memory.emptyTrash}
+        onClose={() => setConfirmEmptyTrash(false)}
+        onConfirm={doEmptyTrash}
+      />
     </>
   );
 }
@@ -233,7 +340,7 @@ function MemoryRow({ memory, category, active, selected, onSelect, onToggleSelec
           {memory.status !== 'active' ? <Badge tone={memoryStatusTone(memory.status)}>{memoryStatusLabel(t, memory.status)}</Badge> : null}
           {category ? (
             <span className="inline-flex items-center gap-1 rounded-md border border-border bg-elevated px-2 py-0.5 text-[11px] font-medium text-text">
-              <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: categorySwatch(category.color) }} aria-hidden />
+              <span className="shrink-0" style={{ color: categorySwatch(category.color) }}><CategoryIcon name={category.icon} size={12} /></span>
               {category.name}
             </span>
           ) : null}

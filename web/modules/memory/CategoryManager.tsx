@@ -1,10 +1,11 @@
 'use client';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Plus, Pencil, Trash2, Tags } from 'lucide-react';
 import type { Memory, MemoryCategory } from '../../lib/types';
 import { useMemoryCategories } from '../../lib/queries';
 import { useCreateMemoryCategory, useUpdateMemoryCategory, useDeleteMemoryCategory } from '../../lib/mutations';
-import { apiErrorMessage } from '../../lib/orcaClient';
+import { apiErrorMessage, orcaClient } from '../../lib/orcaClient';
+import { CategoryIcon, ICON_NAMES } from '../../lib/categoryIcons';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
 import { Field } from '../../components/ui/Field';
@@ -45,7 +46,9 @@ export function CategoryManager({ memories }: { memories: Memory[] }) {
               key={c.id}
               className="group inline-flex min-w-0 max-w-full items-center gap-2 rounded-full border border-border bg-elevated py-1 pl-2.5 pr-1.5"
             >
-              <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: categorySwatch(c.color) }} aria-hidden />
+              <span className="shrink-0" style={{ color: categorySwatch(c.color) }}>
+                <CategoryIcon name={c.icon} size={14} />
+              </span>
               <span className="min-w-0 truncate text-sm text-text">{c.name}</span>
               <span className="shrink-0 font-mono text-[11px] text-text-muted" title={c.description || undefined}>
                 {t.memory.memoryCount.replace('{n}', String(counts.byId.get(c.id) ?? 0))}
@@ -77,13 +80,42 @@ function CategoryModal({ category, onClose }: { category?: MemoryCategory; onClo
   const [name, setName] = useState(category?.name ?? '');
   const [description, setDescription] = useState(category?.description ?? '');
   const [color, setColor] = useState(category?.color?.trim() || CATEGORY_COLORS[0]);
+  const [icon, setIcon] = useState(category?.icon || 'Folder');
+  const [suggesting, setSuggesting] = useState(false);
+  // Once the user picks (or an existing category is edited) we stop auto-suggesting so a manual choice
+  // is never overwritten as they keep typing the name.
+  const iconTouched = useRef(isEdit);
+
+  // On create, debounce a server icon suggestion off the name — until the user overrides the picker.
+  useEffect(() => {
+    if (isEdit || iconTouched.current) return;
+    const q = name.trim();
+    if (!q) return;
+    let cancelled = false;
+    const handle = setTimeout(() => {
+      orcaClient.suggestCategoryIcon(q)
+        .then((res) => { if (!cancelled && !iconTouched.current && res.icon) setIcon(res.icon); })
+        .catch(() => { /* fail-soft: keep the current icon */ });
+    }, 500);
+    return () => { cancelled = true; clearTimeout(handle); };
+  }, [name, isEdit]);
+
+  const pickIcon = (n: string) => { iconTouched.current = true; setIcon(n); };
+  const suggestIcon = async () => {
+    const q = name.trim();
+    if (!q || suggesting) return;
+    setSuggesting(true);
+    try { const res = await orcaClient.suggestCategoryIcon(q); if (res.icon) { setIcon(res.icon); iconTouched.current = true; } }
+    catch { /* fail-soft: keep the current icon */ }
+    finally { setSuggesting(false); }
+  };
 
   const pending = create.isPending || update.isPending;
 
   const submit = () => {
     const next = name.trim();
     if (!next) { toast(t.memory.categoryNameRequired, 'error'); return; }
-    const body = { name: next, description: description.trim(), color };
+    const body = { name: next, description: description.trim(), color, icon };
     const onSuccess = () => { toast(t.memory.categorySaved); onClose(); };
     const onError = (e: unknown) => toast(apiErrorMessage(e) || t.memory.categorySaveError, 'error');
     if (isEdit) update.mutate({ cid: category.id, patch: body }, { onSuccess, onError });
@@ -118,6 +150,33 @@ function CategoryModal({ category, onClose }: { category?: MemoryCategory; onClo
                 style={{ backgroundColor: c }}
               />
             ))}
+          </div>
+        </Field>
+        <Field label={t.memory.categoryIcon}>
+          <div className="flex flex-col gap-2">
+            <div className="grid grid-cols-8 gap-1.5">
+              {ICON_NAMES.map((n) => (
+                <button
+                  key={n}
+                  type="button"
+                  onClick={() => pickIcon(n)}
+                  aria-label={n}
+                  aria-pressed={icon === n}
+                  title={n}
+                  className={`flex aspect-square items-center justify-center rounded-md border transition-colors ${icon === n ? 'border-accent bg-accent/10 text-accent' : 'border-border bg-surface text-text-muted hover:border-text-muted hover:text-text'}`}
+                >
+                  <CategoryIcon name={n} size={16} />
+                </button>
+              ))}
+            </div>
+            <button
+              type="button"
+              onClick={suggestIcon}
+              disabled={!name.trim() || suggesting}
+              className="inline-flex w-fit items-center gap-1 text-[11px] font-medium text-accent hover:underline disabled:opacity-40 disabled:no-underline"
+            >
+              {t.memory.categoryIconSuggest}
+            </button>
           </div>
         </Field>
       </ModalBody>

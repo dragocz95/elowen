@@ -49,8 +49,10 @@ export function MemoryOverview({ memories }: { memories: Memory[] }) {
   );
 
   return (
-    <div className="@container flex flex-col gap-4">
-      <div className="grid grid-cols-1 gap-3 @sm:grid-cols-3">
+    <div className="flex flex-col gap-4">
+      {/* Vertical stat stack — this block lives in the sticky right column, so cards flow top-to-bottom
+          rather than in a horizontal strip. */}
+      <div className="grid grid-cols-1 gap-3">
         <StatCard value={memories.length} label={t.page.memory} icon={Brain} />
         <StatCard value={active} label={t.memory.statusActive} icon={CheckCircle2} />
         <StatCard value={recentAudit} label={t.memory.auditHeading} icon={History} />
@@ -80,7 +82,7 @@ export function MemoryOverview({ memories }: { memories: Memory[] }) {
       />
 
       {memories.length > 0 ? (
-        <div className="grid grid-cols-1 gap-4 @2xl:grid-cols-2">
+        <div className="grid grid-cols-1 gap-4">
           <Breakdown title={t.memory.filterKind} rows={byKind} />
           <Breakdown title={t.memory.filterStatus} rows={byStatus} />
         </div>

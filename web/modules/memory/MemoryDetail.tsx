@@ -17,6 +17,7 @@ import { useTranslation } from '../../lib/i18n';
 import { formatTaskTime } from '../../lib/format';
 import { memoryStatusTone, memoryStatusLabel, categorySwatch } from './memoryMeta';
 import { MemoryAuditFeed } from './MemoryAuditFeed';
+import { CategoryIcon } from '../../lib/categoryIcons';
 
 /** Persistent memory detail: full editable body, metadata, lifecycle actions and audit trail. Resolves
  *  the memory by id (any status) so a soft-deleted row stays reachable for restore. */
@@ -103,7 +104,9 @@ function MemoryDetailBody({ memory, t, locale }: { memory: Memory; t: ReturnType
               <Badge tone={memoryStatusTone(memory.status)}>{memoryStatusLabel(t, memory.status)}</Badge>
               {category ? (
                 <span className="inline-flex items-center gap-1 rounded-md border border-border bg-elevated px-2 py-0.5 text-[11px] font-medium text-text">
-                  <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: categorySwatch(category.color) }} aria-hidden />
+                  <span className="shrink-0" style={{ color: categorySwatch(category.color) }}>
+                    <CategoryIcon name={category.icon} size={12} />
+                  </span>
                   {category.name}
                 </span>
               ) : null}

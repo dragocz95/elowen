@@ -5,6 +5,7 @@ import { useMemoryEvents } from '../../lib/queries';
 import { useTranslation } from '../../lib/i18n';
 import { formatTaskTime } from '../../lib/format';
 import { TONE_TEXT } from '../../components/ui/tone';
+import { ModelIcon } from '../../components/ui/ModelIcon';
 import { memoryActionLabel, memoryActionTone, eventSummary } from './memoryMeta';
 
 const ACTION_ICON: Record<string, LucideIcon> = {
@@ -43,6 +44,15 @@ export function MemoryAuditFeed({ memoryId }: { memoryId: number | null }) {
                 </div>
                 {ev.reason ? <p className="mt-1 whitespace-pre-wrap pl-6 text-text-muted">{ev.reason}</p> : null}
                 {summary ? <p className="mt-1 truncate pl-6 text-text-muted/80" title={summary}>{summary}</p> : null}
+                {ev.model ? (
+                  <span
+                    className="mt-1 ml-6 inline-flex max-w-full items-center gap-1 rounded-md border border-border bg-elevated px-1.5 py-0.5 font-mono text-[10px] text-text-muted"
+                    title={`${t.memory.eventModel}: ${ev.model}`}
+                  >
+                    <ModelIcon name={ev.model} size={11} />
+                    <span className="min-w-0 truncate">{ev.model}</span>
+                  </span>
+                ) : null}
               </li>
             );
           })}

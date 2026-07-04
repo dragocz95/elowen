@@ -7,7 +7,7 @@ const mem = (over: Partial<Memory> = {}): Memory => ({
   status: 'active', created_at: '', updated_at: '', last_used_at: null, use_count: 0, category_id: null, ...over,
 });
 const cat = (over: Partial<MemoryCategory> = {}): MemoryCategory => ({
-  id: 1, user_id: 1, name: 'C', description: '', color: '#22c55e', is_builtin: 0, created_at: '', ...over,
+  id: 1, user_id: 1, name: 'C', description: '', color: '#22c55e', icon: '', is_builtin: 0, created_at: '', ...over,
 });
 
 describe('buildBrainGraph', () => {
