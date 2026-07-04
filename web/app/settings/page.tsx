@@ -330,7 +330,7 @@ export default function SettingsPage() {
                     <ProviderLogo meta={prov} size={28} />
                     <span className="text-sm font-semibold text-text">{prov.label}</span>
                     <span className="font-mono text-tiny text-text-muted">{enabledCount}/{groupExecs.length}</span>
-                    {prov.embedded ? <span className="text-tiny text-text-muted">· {t.settings.orcaModelsHint}</span> : null}
+                    {prov.embedded ? <HelpTip align="left">{t.help.orcaModels}</HelpTip> : null}
                   </div>
                   <div className="@container">
                   <div className="grid grid-cols-1 gap-4 @sm:grid-cols-2">
@@ -443,7 +443,7 @@ export default function SettingsPage() {
               <div className="card-interactive rounded-xl border border-border bg-surface p-5">
                 <div className="mb-2 flex items-center gap-1.5">
                   <span className="text-sm font-medium text-text">{t.settings.backendMode}</span>
-                  <HelpTip>{t.settings.backendModeHelp}</HelpTip>
+                  <HelpTip>{t.help.backendMode}</HelpTip>
                 </div>
                 <Segmented
                   value={reasoningMode}
@@ -460,7 +460,7 @@ export default function SettingsPage() {
               <div className="grid grid-cols-1 gap-4 @sm:grid-cols-2">
               {reasoningMode === 'relay' ? (
                 <>
-                  <SettingCard title={t.settings.apProvider} description={t.settings.apProviderDesc} icon={KeyRound} className="@sm:col-span-2">
+                  <SettingCard title={t.settings.apProvider} description={t.help.apProvider} icon={KeyRound} className="@sm:col-span-2">
                     <ProviderPicker
                       providers={(config.data?.brain?.providers ?? []).filter((p) => p.apiKeySet).map((p) => ({ id: p.id, label: p.label }))}
                       value={apProviderId}
@@ -469,12 +469,12 @@ export default function SettingsPage() {
                       emptyText={t.settings.apNoProviders}
                     />
                   </SettingCard>
-                  <SettingCard title={t.settings.plannerModel} description={t.settings.plannerModelDesc} icon={Bot}>
+                  <SettingCard title={t.settings.plannerModel} description={t.help.plannerModel} icon={Bot}>
                     {apProviderId && apCatalog.length > 0
                       ? <ModelPillsPicker mode="single" catalog={apCatalog} value={model || null} onChange={(m) => setModel(m ?? '')} />
                       : <ModelInput value={model} onChange={setModel} placeholder={t.settings.plannerPlaceholder} />}
                   </SettingCard>
-                  <SettingCard title={t.settings.overseerModel} description={t.settings.overseerModelDesc} icon={Eye}>
+                  <SettingCard title={t.settings.overseerModel} description={t.help.overseerModel} icon={Eye}>
                     {apProviderId && apCatalog.length > 0
                       ? <ModelPillsPicker mode="single" catalog={apCatalog} value={overseerModel || null} onChange={(m) => setOverseerModel(m ?? '')} />
                       : <ModelInput value={overseerModel} onChange={setOverseerModel} placeholder={t.settings.overseerPlaceholder} />}
@@ -483,10 +483,10 @@ export default function SettingsPage() {
                       so these fields simply don't render (no redundant "inherited" note). */}
                   {apProviderId === '' ? (
                     <>
-                      <SettingCard title={t.settings.apiUrl} description={t.settings.apiUrlDesc} icon={Link2}>
+                      <SettingCard title={t.settings.apiUrl} description={t.help.apiUrl} icon={Link2}>
                         <input value={apiUrl} onChange={(e) => setApiUrl(e.target.value)} className={inputClass} />
                       </SettingCard>
-                      <SettingCard title={t.settings.apiKey} description={apiKeySet ? t.settings.apiKeyDesc : t.settings.apiKeyNotSetDesc} icon={KeyRound}>
+                      <SettingCard title={t.settings.apiKey} description={apiKeySet ? t.help.apiKey : t.help.apiKeyNotSet} icon={KeyRound}>
                         <input type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder={apiKeySet ? t.settings.apiKeySetPlaceholder : t.settings.apiKeyPlaceholder} className={inputClass} />
                       </SettingCard>
                     </>
@@ -494,18 +494,18 @@ export default function SettingsPage() {
                 </>
               ) : (
                 <>
-                  <SettingCard title={t.settings.plannerModel} description={t.settings.plannerModelDesc} icon={Bot}>
+                  <SettingCard title={t.settings.plannerModel} description={t.help.plannerModel} icon={Bot}>
                     <BackendPicker value={pilotExec} onChange={setPilotExec} models={models} relayLabel={t.settings.relayOption} allowRelay={false} />
                   </SettingCard>
-                  <SettingCard title={t.settings.overseerModel} description={t.settings.overseerModelDesc} icon={Eye}>
+                  <SettingCard title={t.settings.overseerModel} description={t.help.overseerModel} icon={Eye}>
                     <BackendPicker value={overseerExec} onChange={setOverseerExec} models={models} relayLabel={t.settings.relayOption} allowRelay={false} />
                   </SettingCard>
-                  <SettingCard title={t.settings.reviewOnDone} description={t.settings.reviewOnDoneHint} icon={Eye}>
+                  <SettingCard title={t.settings.reviewOnDone} description={t.help.reviewOnDone} icon={Eye}>
                     <Toggle checked={reviewOnDone} onChange={setReviewOnDone} label={t.settings.reviewOnDone} />
                   </SettingCard>
                 </>
               )}
-              <SettingCard title={t.settings.notes} description={t.settings.notesDesc} icon={FileText}>
+              <SettingCard title={t.settings.notes} description={t.help.notes} icon={FileText}>
                 <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={3} className={`${inputClass} resize-none`} />
               </SettingCard>
               </div>
@@ -516,21 +516,20 @@ export default function SettingsPage() {
         {category === 'github' && (
           <div className="@container">
           <div className="grid grid-cols-1 gap-4 @sm:grid-cols-2">
-            <p className="@sm:col-span-2 text-sm text-text-muted">{t.settings.githubIntro}</p>
             <GithubStatusBanner />
-            <SettingCard title={t.settings.ghToken} description={ghTokenSet ? t.settings.ghTokenDesc : t.settings.ghTokenNotSetDesc} icon={KeyRound}>
+            <SettingCard title={t.settings.ghToken} description={ghTokenSet ? t.help.ghToken : t.help.ghTokenNotSet} icon={KeyRound}>
               <input type="password" value={ghToken} onChange={(e) => setGhToken(e.target.value)} placeholder={ghTokenSet ? t.settings.apiKeySetPlaceholder : t.settings.ghTokenPlaceholder} className={inputClass} />
             </SettingCard>
-            <SettingCard title={t.settings.prEnabled} description={t.settings.prEnabledHint} icon={GitPullRequest}>
+            <SettingCard title={t.settings.prEnabled} description={t.help.prEnabled} icon={GitPullRequest}>
               <Toggle checked={prEnabled} onChange={setPrEnabled} label={t.settings.prEnabled} />
             </SettingCard>
-            <SettingCard title={t.settings.prBaseBranch} description={t.settings.prBaseBranchHint} icon={GitBranch}>
+            <SettingCard title={t.settings.prBaseBranch} description={t.help.prBaseBranch} icon={GitBranch}>
               <input value={prBaseBranch} onChange={(e) => setPrBaseBranch(e.target.value)} placeholder={t.settings.prBaseBranchPlaceholder} className={inputClass} />
             </SettingCard>
-            <SettingCard title={t.settings.prAutoOpen} description={t.settings.prAutoOpenHint} icon={GitPullRequest}>
+            <SettingCard title={t.settings.prAutoOpen} description={t.help.prAutoOpen} icon={GitPullRequest}>
               <Toggle checked={prAutoOpen} onChange={setPrAutoOpen} label={t.settings.prAutoOpen} />
             </SettingCard>
-            <SettingCard title={t.settings.prVerifyCommand} description={t.settings.prVerifyCommandHint} icon={TerminalSquare}>
+            <SettingCard title={t.settings.prVerifyCommand} description={t.help.prVerifyCommand} icon={TerminalSquare}>
               <input value={prVerifyCommand} onChange={(e) => setPrVerifyCommand(e.target.value)} placeholder={t.settings.prVerifyCommandPlaceholder} className={`${inputClass} font-mono text-xs`} />
             </SettingCard>
           </div>
@@ -539,7 +538,6 @@ export default function SettingsPage() {
 
         {category === 'providers' && (
           <div>
-            <p className="mb-4 text-sm text-text-muted">{t.settings.providersDesc}</p>
             <div className="flex flex-col gap-3">
               {PROVIDERS.map((p) => {
                 const cur = providers[p.id] ?? { bin: p.binHint, args: '', skipPermissions: true, resume: true };
@@ -550,13 +548,15 @@ export default function SettingsPage() {
                     <div className="flex items-center gap-3 @sm:w-44 @sm:shrink-0 @sm:pt-1">
                       <ProviderLogo meta={p} alt={t.providers[p.id as keyof typeof t.providers]} size={56} />
                       <div className="min-w-0">
-                        <div className="text-sm font-medium text-text">{t.providers[p.id as keyof typeof t.providers]}</div>
+                        <div className="flex items-center gap-1.5 text-sm font-medium text-text">
+                          {t.providers[p.id as keyof typeof t.providers]}
+                          {p.embedded ? <HelpTip align="left">{t.help.embeddedProvider}</HelpTip> : null}
+                        </div>
                         <div className="font-mono text-[11px] text-text-muted">{p.id}</div>
                       </div>
                     </div>
                     {p.embedded ? (
                       <div className="flex flex-1 flex-col justify-center gap-2 @sm:pt-1">
-                        <p className="text-xs leading-relaxed text-text-muted">{t.settings.embeddedProviderHint}</p>
                         <button type="button" onClick={() => setCategory('brain')} className="self-start text-xs font-medium text-accent hover:underline">
                           {t.settings.embeddedProviderLink}
                         </button>
@@ -575,17 +575,17 @@ export default function SettingsPage() {
                         <div className="rounded-md border border-border bg-bg px-3 py-2 text-[11px] text-text-muted">{t.settings.skipPermissionsNoop}</div>
                       ) : (
                         <label className="flex items-center justify-between gap-3 rounded-md border border-border bg-bg px-3 py-2">
-                          <span className="min-w-0">
-                            <span className="block text-xs font-medium text-text">{t.settings.skipPermissions}</span>
-                            <span className="block text-[11px] text-text-muted">{t.settings.skipPermissionsHint}</span>
+                          <span className="flex min-w-0 items-center gap-1.5 text-xs font-medium text-text">
+                            {t.settings.skipPermissions}
+                            <HelpTip align="left">{t.help.skipPermissions}</HelpTip>
                           </span>
                           <Toggle checked={cur.skipPermissions !== false} onChange={(v) => set({ skipPermissions: v })} label={t.settings.skipPermissions} />
                         </label>
                       )}
                       <label className="flex items-center justify-between gap-3 rounded-md border border-border bg-bg px-3 py-2">
-                        <span className="min-w-0">
-                          <span className="block text-xs font-medium text-text">{t.settings.resumeSessions}</span>
-                          <span className="block text-[11px] text-text-muted">{t.settings.resumeSessionsHint}</span>
+                        <span className="flex min-w-0 items-center gap-1.5 text-xs font-medium text-text">
+                          {t.settings.resumeSessions}
+                          <HelpTip align="left">{t.help.resumeSessions}</HelpTip>
                         </span>
                         <Toggle checked={cur.resume !== false} onChange={(v) => set({ resume: v })} label={t.settings.resumeSessions} />
                       </label>
@@ -602,22 +602,22 @@ export default function SettingsPage() {
         {category === 'defaults' && (
             <div className="@container">
             <div className="grid grid-cols-1 gap-4 @sm:grid-cols-2">
-              <SettingCard title={t.settings.executor} description={t.settings.executorDesc} icon={Cpu}>
+              <SettingCard title={t.settings.executor} description={t.help.executor} icon={Cpu}>
                 {/* Same grouped picker the task modal uses (workers + Orca AI sections), so the
                     default executor can also be a brain model. A saved value missing from the
                     catalog still shows as its own pill. */}
                 <BackendPicker value={defExec} onChange={setDefExec} models={models} relayLabel={t.settings.relayOption} allowRelay={false} />
               </SettingCard>
-              <SettingCard title={t.settings.autonomy} description={t.settings.autonomyDesc} icon={Gauge}>
+              <SettingCard title={t.settings.autonomy} description={t.help.autonomy} icon={Gauge}>
                 <Segmented options={['L0', 'L1', 'L2', 'L3'].map((l) => ({ value: l, label: l }))} value={defAutonomy} onChange={setDefAutonomy} />
                 <p className="mt-2 text-xs leading-relaxed text-text-muted">
                   {({ L0: t.missions.autonomyL0Desc, L1: t.missions.autonomyL1Desc, L2: t.missions.autonomyL2Desc, L3: t.missions.autonomyL3Desc } as Record<string, string>)[defAutonomy]}
                 </p>
               </SettingCard>
-              <SettingCard title={t.settings.maxSessions} description={t.settings.maxSessionsDesc} icon={Layers}>
+              <SettingCard title={t.settings.maxSessions} description={t.help.maxSessions} icon={Layers}>
                 <input type="number" min={1} value={defMaxSessions} onChange={(e) => setDefMaxSessions(Number(e.target.value))} className={inputClass} />
               </SettingCard>
-              <SettingCard title={t.settings.tokenTtl} description={t.settings.tokenTtlDesc} icon={KeyRound}>
+              <SettingCard title={t.settings.tokenTtl} description={t.help.tokenTtl} icon={KeyRound}>
                 <input type="number" min={1} value={defTokenTtl} onChange={(e) => setDefTokenTtl(Number(e.target.value))} className={inputClass} />
               </SettingCard>
             </div>
@@ -731,6 +731,7 @@ export default function SettingsPage() {
                   <div className="flex items-center gap-2.5">
                     <Sparkles size={16} className="text-text-muted" aria-hidden />
                     <span className="text-sm font-medium text-text">{t.settings.agentSkills}</span>
+                    <HelpTip align="left">{t.help.agentSkills}</HelpTip>
                   </div>
                   <Button
                     variant="accent"
@@ -744,7 +745,6 @@ export default function SettingsPage() {
                     {installSkills.isPending ? t.settings.skillInstalling : t.settings.skillInstall}
                   </Button>
                 </div>
-                <p className="text-xs text-text-muted">{t.settings.agentSkillsDesc}</p>
                 <div className="flex flex-col gap-3">
                   {(systemSkills.data?.skills ?? []).map((s) => {
                     const tone = !s.present ? 'muted' : s.upToDate ? 'success' : s.installed ? 'warning' : 'default';

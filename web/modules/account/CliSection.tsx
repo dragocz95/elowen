@@ -59,9 +59,7 @@ export function CliSection() {
 
   return (
     <div className="flex flex-col gap-4">
-      <p className="text-xs text-text-muted">{t.cli.intro}</p>
-
-      <SettingCard title={t.cli.visionModelLabel} icon={Eye} description={t.cli.visionModelHint}>
+      <SettingCard title={t.cli.visionModelLabel} icon={Eye} description={t.help.cliVisionModel}>
         <ExecutorPicker
           value={selectedVisionExec}
           onChange={(exec) => {
@@ -74,7 +72,7 @@ export function CliSection() {
         />
       </SettingCard>
 
-      <SettingCard title={t.cli.autoCompact} icon={SlidersHorizontal} description={t.cli.autoCompactHint}>
+      <SettingCard title={t.cli.autoCompact} icon={SlidersHorizontal} description={t.help.cliAutoCompact}>
         <div className="flex flex-col gap-4">
           <label className="flex items-center gap-3 text-sm text-text">
             <Toggle checked={autoCompact} onChange={setAutoCompact} label={t.cli.autoCompactToggle} />

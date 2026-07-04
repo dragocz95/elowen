@@ -106,7 +106,7 @@ export function AddPhaseModal({ epicId, onClose }: { epicId: string; onClose: ()
             </button>
           </div>
         ) : (
-          <Field label={t.missions.addPhaseFieldGoal} hint={t.missions.addPhaseGoalHint}>
+          <Field label={t.missions.addPhaseFieldGoal} hint={t.help.addPhaseGoal}>
             <textarea
               value={goal}
               onChange={(e) => setGoal(e.target.value)}

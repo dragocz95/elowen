@@ -38,7 +38,7 @@ export function DepPickerModal({ task, onClose }: { task: Task; onClose: () => v
   return (
     <Modal title={t.tasks.depsTitle} description={task.id} onClose={onClose} size="md" icon={Link2}>
       <ModalBody>
-        <Field label={t.tasks.fieldDependsOn} hint={t.tasks.dependsOnHint}>
+        <Field label={t.tasks.fieldDependsOn} hint={t.help.taskDependsOn}>
           {candidates.length > 0
             ? <DepPicker candidates={candidates} selected={deps} onToggle={toggle} maxHeightClass="max-h-72" />
             : <p className="text-sm text-text-muted">{t.tasks.noMatches}</p>}

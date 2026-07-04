@@ -60,7 +60,7 @@ export function ModelModal({ initial, existingExecs, activeProviders, onClose, o
           <Input value={label} onChange={(e) => setLabel(e.target.value)} placeholder={t.settings.modelPlaceholder} autoFocus />
         </Field>
 
-        <Field label={t.settings.fieldProvider} hint={t.settings.providerHint}>
+        <Field label={t.settings.fieldProvider} hint={t.help.modelProvider}>
           <div className="@container">
           <div className="grid grid-cols-2 gap-2 @sm:grid-cols-4">
             {CHOICES.map((id) => {
@@ -87,11 +87,11 @@ export function ModelModal({ initial, existingExecs, activeProviders, onClose, o
         </Field>
 
         {provider === 'other' ? (
-          <Field label={t.settings.execLabel} hint={t.settings.execPlaceholder}>
-            <Input value={rawExec} onChange={(e) => setRawExec(e.target.value)} placeholder={t.settings.execPlaceholder} className="font-mono" />
+          <Field label={t.settings.execLabel} hint={t.help.execPlaceholder}>
+            <Input value={rawExec} onChange={(e) => setRawExec(e.target.value)} placeholder={t.help.execPlaceholder} className="font-mono" />
           </Field>
         ) : (
-          <Field label={t.settings.fieldModelId} hint={t.settings.modelIdHint}>
+          <Field label={t.settings.fieldModelId} hint={t.help.modelId}>
             <Input value={model} onChange={(e) => setModel(e.target.value)} placeholder={t.settings.modelIdPlaceholder} className="font-mono" />
           </Field>
         )}

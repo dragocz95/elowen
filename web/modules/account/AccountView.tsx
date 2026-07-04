@@ -260,7 +260,7 @@ export function AccountView() {
         </div>
 
         {/* Whole-app zoom — a per-device display preference, applied live via the UiScaleProvider. */}
-        <SettingCard title={t.account.uiScale} icon={ZoomIn} description={t.account.uiScaleHint}>
+        <SettingCard title={t.account.uiScale} icon={ZoomIn} description={t.help.accountUiScale}>
           <div className="flex items-center gap-4">
             <Slider value={scalePct} min={MIN_SCALE * 100} max={MAX_SCALE * 100} step={5} onChange={(v) => setScale(v / 100)} aria-label={t.account.uiScale} />
             <span className="w-12 shrink-0 text-right font-mono text-sm tabular-nums text-text">{scalePct}%</span>
@@ -269,7 +269,7 @@ export function AccountView() {
         </SettingCard>
 
         {/* Discord account link — maps your Discord user to this Orca account (owner persona on Discord). */}
-        <SettingCard title={t.account.discordId} icon={AtSign} description={t.account.discordIdHint}>
+        <SettingCard title={t.account.discordId} icon={AtSign} description={t.help.accountDiscordId}>
           <Input value={discordUserId} onChange={(e) => setDiscordUserId(e.target.value)} placeholder="123456789012345678" className="max-w-xs font-mono" aria-label={t.account.discordId} />
         </SettingCard>
 
@@ -390,7 +390,7 @@ export function AccountView() {
       {section === 'notifications' ? (
         /* Phone push — a per-device opt-in. Subscribes this browser/device for off-device alerts. */
         pushSupported ? (
-          <SettingCard title={t.push.title} icon={Bell} description={t.push.hint}>
+          <SettingCard title={t.push.title} icon={Bell} description={t.help.pushEnable}>
             <div className="flex justify-end">
               <Button variant={pushOn ? 'ghost' : 'accent'} icon={Bell} onClick={togglePush} disabled={pushBusy}>
                 {pushOn ? t.push.disable : t.push.enable}

@@ -21,7 +21,7 @@ export function ModelNoteModal({ label, exec, initial, onClose, onSave }: {
   return (
     <Modal title={t.settings.modelNoteLabel} description={label} onClose={onClose} size="md" icon={FileText}>
       <ModalBody>
-        <Field label={`${label} · ${exec}`} hint={t.settings.modelNoteHint}>
+        <Field label={`${label} · ${exec}`} hint={t.help.modelNote}>
           <textarea
             aria-label={t.settings.modelNoteLabel}
             value={note}

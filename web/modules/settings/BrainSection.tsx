@@ -251,8 +251,6 @@ export function BrainSection() {
 
   return (
     <div className="flex flex-col gap-6">
-      <p className="text-xs text-text-muted">{t.brain.intro}</p>
-
       {/* Identity: what the assistant calls itself, everywhere it speaks (chat, Discord, CLI). */}
       <div className="flex max-w-md flex-col gap-2">
         <span className="text-sm font-medium text-text">{t.brain.agentName}</span>

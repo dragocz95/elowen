@@ -235,16 +235,16 @@ export function ProjectsView() {
       {creating && (
         <Modal title={t.projects.newProject} onClose={() => setCreating(false)} size="md" icon={FolderGit2}>
           <ModalBody gap={4}>
-            <Field label={t.projects.fieldSlug} hint={t.projects.slugHint}>
+            <Field label={t.projects.fieldSlug} hint={t.help.projectSlug}>
               <Input value={slug} onChange={(e) => setSlug(e.target.value)} placeholder={t.projects.slugPlaceholder} autoFocus />
             </Field>
-            <Field label={t.projects.fieldPath} hint={t.projects.pathHint}>
+            <Field label={t.projects.fieldPath} hint={t.help.projectPath}>
               <div className="flex items-center gap-2">
                 <Input value={path} onChange={(e) => setPath(e.target.value)} placeholder={t.projects.pathPlaceholder} className="flex-1 font-mono text-xs" />
                 <Button icon={Folder} variant="default" onClick={() => setBrowsing(true)}>{t.projects.browse}</Button>
               </div>
             </Field>
-            <Field label={t.projects.fieldNotes} hint={t.projects.notesHint}>
+            <Field label={t.projects.fieldNotes} hint={t.help.projectNotes}>
               <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={4} className="w-full resize-none rounded-md border border-border bg-surface px-3 py-2 text-sm text-text placeholder:text-text-muted focus:border-accent focus:outline-none" />
             </Field>
           </ModalBody>
@@ -258,10 +258,10 @@ export function ProjectsView() {
       {editProject && (
         <Modal title={t.projects.editProject} onClose={() => setEditProject(null)} size="md" icon={FolderGit2}>
           <ModalBody gap={4}>
-            <Field label={t.projects.fieldSlug} hint={t.projects.slugImmutable}>
+            <Field label={t.projects.fieldSlug} hint={t.help.projectSlugImmutable}>
               <Input value={editProject.slug} disabled className="font-mono text-xs opacity-60" />
             </Field>
-            <Field label={t.projects.iconLabel} hint={t.projects.iconHint}>
+            <Field label={t.projects.iconLabel} hint={t.help.projectIcon}>
               {(() => {
                 // Live project so the preview reflects an icon just set via the picker (which invalidates ['projects']).
                 const live = projects.data?.find((x) => x.id === editProject.id) ?? editProject;
@@ -276,13 +276,13 @@ export function ProjectsView() {
                 );
               })()}
             </Field>
-            <Field label={t.projects.fieldPath} hint={t.projects.pathHint}>
+            <Field label={t.projects.fieldPath} hint={t.help.projectPath}>
               <Input value={editPath} onChange={(e) => setEditPath(e.target.value)} className="font-mono text-xs" />
             </Field>
-            <Field label={t.projects.fieldNotes} hint={t.projects.notesHint}>
+            <Field label={t.projects.fieldNotes} hint={t.help.projectNotes}>
               <textarea value={editNotes} onChange={(e) => setEditNotes(e.target.value)} rows={4} className="w-full resize-none rounded-md border border-border bg-surface px-3 py-2 text-sm text-text placeholder:text-text-muted focus:border-accent focus:outline-none" />
             </Field>
-            <Field label={t.projects.prFlowLabel} hint={t.projects.prFlowHint}>
+            <Field label={t.projects.prFlowLabel} hint={t.help.projectPrFlow}>
               <Segmented
                 value={editPrEnabled === null ? 'default' : editPrEnabled ? 'on' : 'off'}
                 onChange={(v) => setEditPrEnabled(v === 'default' ? null : v === 'on')}

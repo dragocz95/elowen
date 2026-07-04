@@ -1,8 +1,10 @@
 import type { ReactNode } from 'react';
 import type { LucideIcon } from 'lucide-react';
+import { HelpTip } from './HelpTip';
 
 /** One settings card: an icon chip, title + optional description, and the control below. `tone`
- *  switches the chip to the accent palette (used for the active/primary card in a group). */
+ *  switches the chip to the accent palette (used for the active/primary card in a group).
+ *  `description` renders as a HelpTip (?) next to the title rather than as text below it. */
 export function SettingCard({ title, description, icon: Icon, tone = 'default', className, children }: {
   title: string;
   description?: string;
@@ -24,8 +26,10 @@ export function SettingCard({ title, description, icon: Icon, tone = 'default', 
           </span>
         ) : null}
         <div className="flex min-w-0 flex-col gap-0.5">
-          <span className="text-sm font-medium text-text">{title}</span>
-          {description ? <span className="text-xs leading-relaxed text-text-muted">{description}</span> : null}
+          <span className="flex items-center gap-1.5 text-sm font-medium text-text">
+            {title}
+            {description ? <HelpTip align="left">{description}</HelpTip> : null}
+          </span>
         </div>
       </div>
       <div>{children}</div>

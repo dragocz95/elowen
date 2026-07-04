@@ -43,16 +43,14 @@ export function AccountMemorySection() {
 
   return (
     <div className="flex flex-col gap-4">
-      <p className="text-xs text-text-muted">{t.accountMemory.intro}</p>
-
-      <SettingCard title={t.accountMemory.recallTitle} icon={Search} description={t.accountMemory.recallHint}>
+      <SettingCard title={t.accountMemory.recallTitle} icon={Search} description={t.help.memoryRecall}>
         <label className="flex items-center gap-3 text-sm text-text">
           <Toggle checked={autoRecall} onChange={setAutoRecall} label={t.accountMemory.recallToggle} />
           <span>{t.accountMemory.recallToggle}</span>
         </label>
       </SettingCard>
 
-      <SettingCard title={t.accountMemory.saveTitle} icon={Save} description={t.accountMemory.saveHint}>
+      <SettingCard title={t.accountMemory.saveTitle} icon={Save} description={t.help.memorySave}>
         <label className="flex items-center gap-3 text-sm text-text">
           <Toggle checked={autoSave} onChange={setAutoSave} label={t.accountMemory.saveToggle} />
           <span>{t.accountMemory.saveToggle}</span>

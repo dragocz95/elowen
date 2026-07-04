@@ -179,7 +179,7 @@ function RolePoliciesEditor({ value, onChange }: { value: RolePolicy[]; onChange
                     <span className="text-tiny text-text-muted">{t.pluginCfg.roleAdminHint}</span>
                   </span>
                 </label>
-                <Field label={t.pluginCfg.roleProjects} hint={t.pluginCfg.roleProjectsHint}>
+                <Field label={t.pluginCfg.roleProjects} hint={t.help.roleProjects}>
                   <div className="flex flex-wrap gap-x-4 gap-y-2">
                     {(projects ?? []).map((p) => {
                       const on = r.projectIds.includes(p.id);
@@ -197,7 +197,7 @@ function RolePoliciesEditor({ value, onChange }: { value: RolePolicy[]; onChange
                 <Field label={t.pluginCfg.roleTools}>
                   <ToolPills allTools={allTools} selected={r.tools ?? []} onChange={(tools) => patch(i, { tools })} />
                 </Field>
-                <Field label={t.pluginCfg.rolePrompt} hint={t.pluginCfg.rolePromptHint}>
+                <Field label={t.pluginCfg.rolePrompt} hint={t.help.rolePrompt}>
                   <textarea value={r.prompt} onChange={(e) => patch(i, { prompt: e.target.value })} rows={3} className={textareaClass} />
                 </Field>
               </div>

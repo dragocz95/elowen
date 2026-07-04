@@ -5,6 +5,7 @@ import { Badge } from '../../components/ui/Badge';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
 import { Field } from '../../components/ui/Field';
+import { HelpTip } from '../../components/ui/HelpTip';
 import { ProviderPicker } from '../../components/ui/ProviderPicker';
 import { ModelPillsPicker } from '../../components/ui/ModelPillsPicker';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
@@ -126,21 +127,17 @@ export function MemorySection() {
 
   return (
     <div className="@container flex flex-col gap-4">
-      {/* Read-only note: beyond the two models below, a third model — the post-turn memory curator —
-          runs on the Autopilot planner model, so the operator knows it exists. */}
-      <p className="text-xs text-text-muted">{t.memory.curatorNote}</p>
-
       {/* Embedding model */}
       <section className="flex flex-col gap-5 rounded-xl border border-border bg-surface p-5">
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-sm font-semibold text-text">{t.memory.embeddingHeading}</span>
+          <HelpTip align="left">{t.help.embeddingIntro}</HelpTip>
           {embedding.configured
             ? <Badge tone="accent">{t.memory.embeddingConfigured}</Badge>
             : <Badge>{t.memory.embeddingUnconfigured}</Badge>}
         </div>
-        <p className="text-xs text-text-muted">{t.memory.embeddingIntro}</p>
 
-        <Field label={t.memory.embeddingProvider} hint={t.memory.embeddingProviderHint}>
+        <Field label={t.memory.embeddingProvider} hint={t.help.embeddingProvider}>
           <ProviderPicker providers={embeddingProviders} value={embProvider} onChange={setEmbProvider} label={t.memory.embeddingProvider} emptyText={t.memory.embeddingProviderPlaceholder} />
         </Field>
 
@@ -148,11 +145,11 @@ export function MemorySection() {
           <ModelPillsPicker mode="single" catalog={embCatalog} value={embModel || null} onChange={(v) => setEmbModel(v ?? '')} />
         </Field>
 
-        <Field label={t.memory.embeddingModelCustom} hint={t.memory.embeddingModelCustomHint}>
+        <Field label={t.memory.embeddingModelCustom} hint={t.help.embeddingModelCustom}>
           <Input value={embModel} onChange={(e) => setEmbModel(e.target.value)} placeholder={t.memory.embeddingModelPlaceholder} className="font-mono" />
         </Field>
 
-        <Field label={t.memory.embeddingDimensions} hint={t.memory.embeddingDimensionsHint}>
+        <Field label={t.memory.embeddingDimensions} hint={t.help.embeddingDimensions}>
           <Input
             type="number"
             inputMode="numeric"
@@ -189,11 +186,11 @@ export function MemorySection() {
       <section className="flex flex-col gap-5 rounded-xl border border-border bg-surface p-5">
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-sm font-semibold text-text">{t.categorization.title}</span>
+          <HelpTip align="left">{t.help.categorizationIntro}</HelpTip>
           {categorization.configured
             ? <Badge tone="accent">{t.categorization.configured}</Badge>
             : <Badge>{t.categorization.notConfigured}</Badge>}
         </div>
-        <p className="text-xs text-text-muted">{t.categorization.intro}</p>
 
         <Field label={t.categorization.providerLabel}>
           <ProviderPicker providers={providers} value={catProvider} onChange={setCatProvider} label={t.categorization.providerLabel} emptyText={t.memory.embeddingProviderPlaceholder} />

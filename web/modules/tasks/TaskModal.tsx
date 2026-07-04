@@ -212,28 +212,21 @@ export function TaskModal({ task, onClose, initialSchedule, initialMode, initial
     <Modal title={titleText} description={editing ? task!.id : undefined} onClose={onClose} size="xl" icon={headerIcon}>
       <ModalBody>
         {!editing && (
-          <div className="flex flex-col gap-2">
-            <Segmented
-              value={mode}
-              onChange={(v) => setMode(v as Mode)}
-              options={[
-                { value: 'single', label: t.tasks.singleTask, icon: ListChecks },
-                { value: 'planning', label: t.tasks.autopilotPlanning, icon: Sparkles },
-              ]}
-            />
-            <p className="text-xs text-text-muted">
-              {mode === 'single'
-                ? t.tasks.singleTaskDesc
-                : t.tasks.autopilotPlanningDesc}
-            </p>
-          </div>
+          <Segmented
+            value={mode}
+            onChange={(v) => setMode(v as Mode)}
+            options={[
+              { value: 'single', label: t.tasks.singleTask, icon: ListChecks },
+              { value: 'planning', label: t.tasks.autopilotPlanning, icon: Sparkles },
+            ]}
+          />
         )}
 
         {/* Project picker (pills): where the task/mission — and so the agent — runs. Only shown when
             the user can reach more than one project; one project means no choice to make. Not for an
             existing task (its project is fixed). */}
         {!editing && projects && projects.length > 1 && (
-          <Field label={t.tasks.fieldProject} hint={t.tasks.fieldProjectHint}>
+          <Field label={t.tasks.fieldProject} hint={t.help.taskProject}>
             <div className="flex flex-wrap gap-1.5">
               {projects.map((p) => {
                 const on = projectId === p.id;
@@ -259,7 +252,7 @@ export function TaskModal({ task, onClose, initialSchedule, initialMode, initial
             <Field label={t.tasks.fieldTitle}>
               <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder={t.tasks.titlePlaceholder} autoFocus />
             </Field>
-            <Field label={t.tasks.fieldDetails} hint={t.tasks.detailsHint}>
+            <Field label={t.tasks.fieldDetails} hint={t.help.taskDetails}>
               <textarea
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
@@ -279,7 +272,7 @@ export function TaskModal({ task, onClose, initialSchedule, initialMode, initial
               <Field label={t.tasks.fieldPriority}>
                 <Segmented value={priority} onChange={setPriority} options={PRIORITIES.map((p) => ({ value: p, label: p }))} />
               </Field>
-              <Field label={t.tasks.fieldSchedule} hint={t.tasks.scheduleHint}>
+              <Field label={t.tasks.fieldSchedule} hint={t.help.taskSchedule}>
                 <Input type="datetime-local" value={schedule} onChange={(e) => setSchedule(e.target.value)} />
               </Field>
             </div>
@@ -297,7 +290,7 @@ export function TaskModal({ task, onClose, initialSchedule, initialMode, initial
               </button>
             )}
             {depCandidates.length > 0 && (
-              <Field label={t.tasks.fieldDependsOn} hint={t.tasks.dependsOnHint}>
+              <Field label={t.tasks.fieldDependsOn} hint={t.help.taskDependsOn}>
                 <DepPicker candidates={depCandidates} selected={deps} onToggle={toggleDep} />
               </Field>
             )}
@@ -318,10 +311,10 @@ export function TaskModal({ task, onClose, initialSchedule, initialMode, initial
 
         {!editing && mode === 'planning' && !result && (
           <>
-            <Field label={t.tasks.fieldMissionName} hint={t.tasks.missionNameHint}>
+            <Field label={t.tasks.fieldMissionName} hint={t.help.taskMissionName}>
               <Input value={missionName} onChange={(e) => setMissionName(e.target.value)} placeholder={t.tasks.missionNamePlaceholder} />
             </Field>
-            <Field label={t.tasks.fieldGoal} hint={t.tasks.goalHint}>
+            <Field label={t.tasks.fieldGoal} hint={t.help.taskGoal}>
               <textarea
                 value={goal}
                 onChange={(e) => setGoal(e.target.value)}
@@ -338,10 +331,10 @@ export function TaskModal({ task, onClose, initialSchedule, initialMode, initial
                 <Input type="number" min={1} value={maxSessions} onChange={(e) => setMaxSessions(Number(e.target.value))} />
               </Field>
             </div>
-            <Field label={t.tasks.autoModelLabel} hint={t.tasks.autoModelHint}>
+            <Field label={t.tasks.autoModelLabel} hint={t.help.taskAutoModel}>
               <Toggle checked={autoModel} onChange={setAutoModel} label={t.tasks.autoModelLabel} />
             </Field>
-            <Field label={t.tasks.fieldPrMode} hint={t.tasks.prModeHint}>
+            <Field label={t.tasks.fieldPrMode} hint={t.help.taskPrMode}>
               <Segmented
                 value={prMode}
                 onChange={(v) => setPrMode(v as 'default' | 'on' | 'off')}

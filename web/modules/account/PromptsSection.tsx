@@ -37,7 +37,6 @@ export function PromptsSection() {
 
   return (
     <div className="flex flex-col gap-4">
-      <p className="text-xs text-text-muted">{t.prompts.intro}</p>
       {byGroup.map(({ group, items }) => (
         <SettingCard key={group} title={groupLabel[group]} icon={GROUP_ICON[group]}>
           <div className="flex flex-col divide-y divide-border">

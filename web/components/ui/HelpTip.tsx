@@ -16,6 +16,7 @@ export function HelpTip({ children, align = 'right' }: { children: ReactNode; al
       <button
         type="button"
         aria-label={t.common.help}
+        onClick={(e) => { e.preventDefault(); e.stopPropagation(); setOpen((o) => !o); }}
         onFocus={() => setOpen(true)}
         onBlur={() => setOpen(false)}
         className="inline-flex h-4 w-4 items-center justify-center text-text-muted transition-colors hover:text-text"

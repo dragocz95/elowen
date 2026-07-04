@@ -196,7 +196,7 @@ export function CronJobsEditor() {
                   <Field label={t.cron.name}>
                     <Input value={job.name} onChange={(e) => patch(job.id, { name: e.target.value })} placeholder="morning-digest" />
                   </Field>
-                  <Field label={t.cron.schedule} hint={t.cron.scheduleHint}>
+                  <Field label={t.cron.schedule} hint={t.help.cronSchedule}>
                     <div className="relative">
                       <Input value={job.schedule} onChange={(e) => patch(job.id, { schedule: e.target.value })} className="pr-8 font-mono" placeholder="daily 06:00" />
                       <span className="absolute right-2.5 top-1/2 -translate-y-1/2" title={validSchedule ? t.cron.scheduleValid : t.cron.scheduleInvalid}>
@@ -206,7 +206,7 @@ export function CronJobsEditor() {
                       </span>
                     </div>
                   </Field>
-                  <Field label={t.cron.hours} hint={t.cron.hoursHint}>
+                  <Field label={t.cron.hours} hint={t.help.cronHours}>
                     <Input value={job.hours ?? ''} onChange={(e) => patch(job.id, { hours: e.target.value || undefined })} className="font-mono" placeholder="5-21" />
                   </Field>
                   <Field label={t.cron.enabled}>
@@ -216,7 +216,7 @@ export function CronJobsEditor() {
                     </span>
                   </Field>
                 </div>
-                <Field label={t.cron.check} hint={t.cron.checkHint}>
+                <Field label={t.cron.check} hint={t.help.cronCheck}>
                   <textarea
                     value={job.check ?? ''}
                     onChange={(e) => patch(job.id, { check: e.target.value || undefined })}
@@ -225,17 +225,17 @@ export function CronJobsEditor() {
                     placeholder="test -n &quot;$(ls /new-bookings 2>/dev/null)&quot; &amp;&amp; cat /new-bookings/*"
                   />
                 </Field>
-                <Field label={t.cron.prompt} hint={t.cron.promptHint}>
+                <Field label={t.cron.prompt} hint={t.help.cronPrompt}>
                   <textarea value={job.prompt} onChange={(e) => patch(job.id, { prompt: e.target.value })} rows={5} className={textareaClass} />
                 </Field>
-                <Field label={t.cron.channel} hint={t.cron.channelHint}>
+                <Field label={t.cron.channel} hint={t.help.cronChannel}>
                   <ChannelPills
                     value={job.notifyChannelId ?? ''}
                     onChange={(v) => patch(job.id, { notifyChannelId: v || undefined })}
                     channels={channels.data ?? []}
                   />
                 </Field>
-                <Field label={t.cron.model} hint={t.cron.modelHint}>
+                <Field label={t.cron.model} hint={t.help.cronModel}>
                   <ModelPills
                     value={job.model ? `${job.model.provider}/${job.model.model}` : ''}
                     onChange={(v) => {
