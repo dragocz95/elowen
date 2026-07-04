@@ -216,6 +216,15 @@ export function CronJobsEditor() {
                     </span>
                   </Field>
                 </div>
+                <Field label={t.cron.check} hint={t.cron.checkHint}>
+                  <textarea
+                    value={job.check ?? ''}
+                    onChange={(e) => patch(job.id, { check: e.target.value || undefined })}
+                    rows={2}
+                    className={textareaClass}
+                    placeholder="test -n &quot;$(ls /new-bookings 2>/dev/null)&quot; &amp;&amp; cat /new-bookings/*"
+                  />
+                </Field>
                 <Field label={t.cron.prompt} hint={t.cron.promptHint}>
                   <textarea value={job.prompt} onChange={(e) => patch(job.id, { prompt: e.target.value })} rows={5} className={textareaClass} />
                 </Field>

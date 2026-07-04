@@ -9,6 +9,7 @@ const mod = await import(pluginPath) as {
   isDue(job: Record<string, unknown>, now: number): boolean;
   isQuietReply(reply: unknown): boolean;
   cronFooter(idle: unknown): string;
+  runCheck(command: string, logger?: { warn?: (m: string) => void }): Promise<{ skip: boolean; output?: string; reason?: string }>;
 };
 
 // Mon 2026-07-06 10:00 local
@@ -61,5 +62,27 @@ describe('cronjob schedule extensions', () => {
     expect(mod.cronFooter({ usage: { percent: 10 } })).toBe('-# 10 %');                // model missing → percent only
     expect(mod.cronFooter(null)).toBe('');                                             // no idle event → no footer
     expect(mod.cronFooter({ usage: { percent: null } })).toBe('');                     // no usable numbers
+  });
+
+  describe('runCheck (the cheap guard gate)', () => {
+    it('skips the brain turn when the guard prints nothing', async () => {
+      expect(await mod.runCheck('true')).toEqual({ skip: true, reason: 'nothing new' });
+      expect(await mod.runCheck('echo -n ""')).toEqual({ skip: true, reason: 'nothing new' });
+      expect(await mod.runCheck('printf "   \\n  "')).toEqual({ skip: true, reason: 'nothing new' }); // whitespace-only = nothing
+    });
+
+    it('runs the brain turn (skip:false) and hands over trimmed output when the guard prints', async () => {
+      const res = await mod.runCheck('echo "new booking: Patricie 14:00"');
+      expect(res.skip).toBe(false);
+      expect(res.output).toBe('new booking: Patricie 14:00');
+    });
+
+    it('skips (never runs the brain) when the guard exits non-zero — a broken signal is not new work', async () => {
+      const warns: string[] = [];
+      const res = await mod.runCheck('echo partial; exit 1', { warn: (m) => warns.push(m) });
+      expect(res.skip).toBe(true);
+      expect(res.reason).toMatch(/check failed/);
+      expect(warns.length).toBe(1); // the failure is logged, not swallowed silently
+    });
   });
 });

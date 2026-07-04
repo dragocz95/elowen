@@ -5,9 +5,35 @@
 import { defineTool } from '@earendil-works/pi-coding-agent';
 import { Type } from 'typebox';
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { join } from 'node:path';
 
+const execFileAsync = promisify(execFile);
 const TICK_MS = 30_000;
+const CHECK_TIMEOUT_MS = 60_000; // a guard shell must finish fast; a hung check never blocks the tick loop
+const CHECK_MAX_BUFFER = 1024 * 1024; // 1 MB of stdout is plenty of "what's new" to hand the brain
+
+/** Run a job's optional cheap guard command and classify the outcome, so the scheduler can decide
+ *  whether the (expensive) brain turn is even worth running. Admin-authored (jobs are admin-only), run
+ *  through `/bin/sh -c` like the brain's own run_command. Returns:
+ *   - { skip:true }  → nothing to do (empty stdout) or the check errored → DON'T spend an LLM turn.
+ *   - { skip:false, output } → fresh data on stdout → run the brain turn and feed it this output. */
+export async function runCheck(command, logger) {
+  try {
+    const { stdout } = await execFileAsync('/bin/sh', ['-c', command], {
+      timeout: CHECK_TIMEOUT_MS, maxBuffer: CHECK_MAX_BUFFER, encoding: 'utf-8',
+    });
+    const output = String(stdout ?? '').trim();
+    if (!output) return { skip: true, reason: 'nothing new' };
+    return { skip: false, output };
+  } catch (e) {
+    // A non-zero exit or timeout means the guard couldn't confirm new work — skip rather than run the
+    // brain on a broken signal (and never crash the tick loop).
+    logger?.warn?.(`cron check failed: ${e?.message ?? e}`);
+    return { skip: true, reason: `check failed: ${e?.message ?? e}` };
+  }
+}
 const ok = (text) => ({ content: [{ type: 'text', text }], details: {} });
 const fail = (e) => ok(`Error: ${e instanceof Error ? e.message : String(e)}`);
 
@@ -110,10 +136,27 @@ class CronAdapter {
     for (const job of this.store.all()) {
       if (!isDue(job, now)) continue;
       this.store.patch(job.id, { lastRun: new Date(now).toISOString() }); // stamp BEFORE running — a slow job must not re-fire next tick
+      // Cheap guard gate: if the job has a `check` command, run it FIRST (no LLM). Only spend a brain
+      // turn when the guard surfaces fresh work — an "every 5m" poll that finds nothing costs a shell
+      // exec, not a model call. The guard's output is fed into the turn so the brain acts on real data.
+      let checkOutput = null;
+      if (typeof job.check === 'string' && job.check.trim()) {
+        const res = await runCheck(job.check, this.log);
+        if (res.skip) {
+          this.store.patch(job.id, { lastResult: `⏭️ ${res.reason}` });
+          continue; // nothing new (or the guard errored) → skip the brain turn entirely
+        }
+        checkOutput = res.output;
+      }
       this.log.info(`running job ${job.id} (${job.name})`);
       // Capture the turn's idle event (model + context usage) so the proactive push can carry the same
       // runtime footer a streamed reply gets — the handler forwards this onEvent into the brain session.
       let idle = null;
+      // Hand the brain the guard's fresh output (if any) so it acts on it directly instead of re-running
+      // the collector via a tool — the whole point of the gate is one cheap check, not a check + a re-fetch.
+      const userText = checkOutput
+        ? `${job.prompt}\n\n--- Check output (fresh data to act on) ---\n${checkOutput.slice(0, 8000)}`
+        : job.prompt;
       const reply = await this.handler({
         platform: 'cron', userId: 'cron', roleIds: [], channelId: `job-${job.id}`,
         access: {
@@ -122,7 +165,7 @@ class CronAdapter {
           // Optional per-job model — the channel session respawns on it (else the server default runs).
           model: job.model?.provider && job.model?.model ? { provider: job.model.provider, model: job.model.model } : undefined,
         },
-      }, job.prompt, (e) => { if (e?.type === 'idle') idle = e; }).catch((e) => `Error: ${e?.message ?? e}`);
+      }, userText, (e) => { if (e?.type === 'idle') idle = e; }).catch((e) => `Error: ${e?.message ?? e}`);
       if (job.runAt) this.store.save(this.store.all().filter((j) => j.id !== job.id)); // one-shot: done → gone
       else this.store.patch(job.id, { lastResult: String(reply ?? '').slice(0, 500) });
       // Echo the outcome to the notification channel (Discord) so it reaches the user proactively.
@@ -158,6 +201,7 @@ export function register(ctx) {
       name: Type.String({ description: 'Short human name for the job' }),
       schedule: Type.String({ description: '"every <N>m", "every <N>h", "daily HH:MM" or "weekly <mon..sun> HH:MM"' }),
       prompt: Type.String({ description: 'The prompt to run on schedule' }),
+      check: Type.Optional(Type.String({ description: 'Optional cheap shell guard run BEFORE the prompt. If it prints nothing (or fails), the scheduled brain turn is skipped — no LLM call. If it prints output, the brain runs and receives that output. Use it to poll for new work without paying for a model call each tick, e.g. a collector script that only prints when there is something new.' })),
       hours: Type.Optional(Type.String({ description: 'Active-hours window "H-H" (e.g. "5-21") — outside it the job stays quiet' })),
       notifyChannelId: Type.Optional(Type.String({ description: 'Deliver results to this channel/thread instead of the default notification channel' })),
       model: Type.Optional(Type.String({ description: 'Run this job on a specific brain model, as "provider/model" (e.g. "anthropic/claude-sonnet-5"). Empty = the server default.' })),
@@ -174,7 +218,7 @@ export function register(ctx) {
         const model = slash > 0 ? { provider: p.model.slice(0, slash), model: p.model.slice(slash + 1) } : undefined;
         // lastRun starts at creation time so a fresh job waits for its NEXT natural slot — a
         // "daily 06:00" created at 15:00 must not fire immediately.
-        jobs.push({ id, name: p.name, schedule: p.schedule, prompt: p.prompt, hours: p.hours, notifyChannelId: p.notifyChannelId, model, enabled: p.enabled, createdAt: new Date().toISOString(), lastRun: new Date().toISOString() });
+        jobs.push({ id, name: p.name, schedule: p.schedule, prompt: p.prompt, check: p.check, hours: p.hours, notifyChannelId: p.notifyChannelId, model, enabled: p.enabled, createdAt: new Date().toISOString(), lastRun: new Date().toISOString() });
         store.save(jobs);
         return ok(`Scheduled "${p.name}" (${p.schedule}) — id ${id}. Results accumulate in its own conversation.`);
       } catch (e) { return fail(e); }

@@ -1347,6 +1347,8 @@ export const en = {
     scheduleInvalid: 'Invalid schedule',
     hours: 'Active hours',
     hoursHint: 'Optional “H-H” window (e.g. “5-21”) — outside it the job stays quiet.',
+    check: 'Check command',
+    checkHint: 'Optional cheap shell guard run before the prompt. If it prints nothing (or fails), the AI turn is skipped — no model call. If it prints output, the assistant runs and receives it. Ideal for polling for new work without paying for a model each tick.',
     prompt: 'Prompt',
     promptHint: 'What the assistant does on each run.',
     enabled: 'Enabled',

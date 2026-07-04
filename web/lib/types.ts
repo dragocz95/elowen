@@ -286,6 +286,9 @@ export interface CronJob {
   name: string;
   schedule: string;
   prompt: string;
+  /** Optional cheap shell guard run before the prompt — if it prints nothing (or fails) the brain turn
+   *  is skipped (no LLM call); if it prints output, the brain runs and receives it. */
+  check?: string;
   /** Optional "H-H" active-hours window (e.g. "5-21") outside which the job stays quiet. */
   hours?: string;
   /** Discord channel/thread the result is delivered to; empty = the plugin's default channel. */

@@ -1347,6 +1347,8 @@ export const cs = {
     scheduleInvalid: 'Neplatný plán',
     hours: 'Aktivní hodiny',
     hoursHint: 'Volitelné okno „H-H“ (např. „5-21“) — mimo něj úloha mlčí.',
+    check: 'Kontrolní příkaz',
+    checkHint: 'Volitelná levná shell kontrola spuštěná před promptem. Když nic nevypíše (nebo selže), AI se nespustí — žádné volání modelu. Když něco vypíše, asistent se spustí a dostane ten výstup. Ideální pro hlídání nové práce bez placení modelu při každém ticku.',
     prompt: 'Prompt',
     promptHint: 'Co má asistent při každém spuštění udělat.',
     enabled: 'Zapnuto',

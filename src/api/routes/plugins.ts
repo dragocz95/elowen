@@ -232,6 +232,10 @@ export function registerPluginRoutes(app: OrcaApp, ctx: RouteContext): void {
       if (oneShot ? typeof j.runAt !== 'string' || Number.isNaN(Date.parse(j.runAt)) : !isValidCronSchedule(j.schedule as string)) {
         return c.json({ error: `invalid schedule "${String(j.schedule)}" — use "every 15m", "every 2h", "daily 07:30" or "weekly sun 20:00"` }, 400);
       }
+      // Optional cheap guard command — must be a string when present (empty = no guard).
+      if (j.check !== undefined && typeof j.check !== 'string') {
+        return c.json({ error: 'check must be omitted or a string' }, 400);
+      }
       // Optional per-job model: either absent, or an object carrying non-empty provider + model strings.
       if (j.model !== undefined) {
         const m = j.model as { provider?: unknown; model?: unknown } | null;
@@ -252,7 +256,7 @@ export function registerPluginRoutes(app: OrcaApp, ctx: RouteContext): void {
     const now = new Date().toISOString();
     // Persist only known fields — the client edits a whole-list snapshot, so a whitelist keeps it from
     // smuggling arbitrary keys into jobs.json that the scheduler would later read.
-    const FIELDS = ['id', 'name', 'schedule', 'prompt', 'hours', 'notifyChannelId', 'model', 'enabled', 'runAt', 'createdAt'] as const;
+    const FIELDS = ['id', 'name', 'schedule', 'prompt', 'check', 'hours', 'notifyChannelId', 'model', 'enabled', 'runAt', 'createdAt'] as const;
     const merged = body.map((j) => {
       const edit: Record<string, unknown> = {};
       for (const k of FIELDS) if (j[k] !== undefined) edit[k] = j[k];
