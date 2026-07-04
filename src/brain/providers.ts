@@ -1,5 +1,6 @@
 import { AuthStorage, ModelRegistry } from '@earendil-works/pi-coding-agent';
 import type { Model, Api } from '@earendil-works/pi-ai';
+import { APP_IDENTITY_HEADERS } from '../inference/appIdentity.js';
 import type { BrainProviderType } from '../store/configStore.js';
 
 /** One brain model provider, daemon-side (API key included). `openai`/`anthropic` register a custom
@@ -58,6 +59,7 @@ export function buildBrainRegistry(cfg: BrainRuntimeConfig, authStorage: AuthSto
         api: 'openai-completions',
         baseUrl: normOpenAiBase(p.baseUrl || 'https://api.openai.com/v1'),
         apiKey: p.apiKey ?? undefined,
+        headers: { ...APP_IDENTITY_HEADERS },
         models: p.models.map(modelEntry),
       });
     } else if (p.type === 'anthropic') {
@@ -66,6 +68,7 @@ export function buildBrainRegistry(cfg: BrainRuntimeConfig, authStorage: AuthSto
         api: 'anthropic-messages',
         baseUrl: p.baseUrl || 'https://api.anthropic.com',
         apiKey: p.apiKey ?? undefined,
+        headers: { ...APP_IDENTITY_HEADERS },
         models: p.models.map(modelEntry),
       });
     }
@@ -111,6 +114,7 @@ export function resolveBrainModel(
       api: entry.type === 'openai' ? 'openai-completions' : 'anthropic-messages',
       baseUrl: entry.type === 'openai' ? normOpenAiBase(entry.baseUrl || 'https://api.openai.com/v1') : (entry.baseUrl || 'https://api.anthropic.com'),
       apiKey: entry.apiKey ?? undefined,
+      headers: { ...APP_IDENTITY_HEADERS },
       models: [...new Set([...entry.models, modelId])].map(modelEntry),
     });
     const added = registry.find(providerName, modelId);

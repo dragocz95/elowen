@@ -1,4 +1,5 @@
 import { AuthStorage } from '@earendil-works/pi-coding-agent';
+import { APP_IDENTITY_HEADERS } from '../inference/appIdentity.js';
 import type { BrainProviderEntry, BrainRuntimeConfig } from './providers.js';
 import { buildBrainRegistry, registryProviderName, OAUTH_BUILTIN } from './providers.js';
 
@@ -19,7 +20,7 @@ export async function fetchOpenAiModels(p: BrainProviderEntry, fetchImpl: typeof
   const hit = cache.get(key);
   if (hit && Date.now() - hit.at < FETCH_TTL_MS) return hit.models;
   try {
-    const res = await fetchImpl(`${base}/models`, { headers: p.apiKey ? { authorization: `Bearer ${p.apiKey}` } : {} });
+    const res = await fetchImpl(`${base}/models`, { headers: { ...(p.apiKey ? { authorization: `Bearer ${p.apiKey}` } : {}), ...APP_IDENTITY_HEADERS } });
     if (!res.ok) return [];
     const body = (await res.json()) as { data?: { id?: unknown }[] };
     const models = (body.data ?? []).map((m) => m.id).filter((id): id is string => typeof id === 'string').sort();

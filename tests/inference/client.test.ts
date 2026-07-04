@@ -20,6 +20,19 @@ describe('RelayClient', () => {
     expect(calledUrl).toBe('https://relay.example/v1/chat/completions');
   });
 
+  it('sends the Orca app-identity headers (X-Title + HTTP-Referer) so relays show "Orca", not "unknown"', async () => {
+    let sentHeaders: Record<string, string> = {};
+    global.fetch = vi.fn(async (_url: any, init: any) => {
+      sentHeaders = init.headers as Record<string, string>;
+      return new Response(JSON.stringify({ choices: [{ message: { content: 'ok' } }] }), { status: 200 });
+    }) as any;
+    const c = new RelayClient({ baseUrl: 'https://openrouter.ai/api/v1', apiKey: 'k', model: 'm' });
+    await c.decide('q');
+    expect(sentHeaders['x-title']).toBe('Orca');
+    expect(sentHeaders['http-referer']).toMatch(/^https:\/\//);
+    expect(sentHeaders.authorization).toBe('Bearer k'); // identity headers don't clobber auth
+  });
+
   it('throws a clear error on a 200 non-JSON (proxy HTML) response instead of a raw SyntaxError', async () => {
     global.fetch = vi.fn(async () => new Response('<html>502</html>', { status: 200, headers: { 'content-type': 'text/html' } })) as any;
     const c = new RelayClient({ baseUrl: 'https://relay.example', apiKey: 'k', model: 'm' });

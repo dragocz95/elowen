@@ -24,7 +24,9 @@ describe('listBrainModels', () => {
     const cfg: BrainRuntimeConfig = { providers: [openaiProvider()] };
     const models = await listBrainModels(cfg, f);
     expect(models.map((m) => m.model)).toEqual(['a', 'z']); // sorted
-    expect(f).toHaveBeenCalledWith('https://ai.example/v1/models', expect.objectContaining({ headers: { authorization: 'Bearer k' } }));
+    expect(f).toHaveBeenCalledWith('https://ai.example/v1/models', expect.objectContaining({
+      headers: expect.objectContaining({ authorization: 'Bearer k', 'x-title': 'Orca' }),
+    }));
   });
 
   it('caches the fetch briefly', async () => {

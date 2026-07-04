@@ -1,4 +1,5 @@
 import type { InferenceClient, RelayConfig } from './types.js';
+import { APP_IDENTITY_HEADERS } from './appIdentity.js';
 
 /** Normalize the configured base (with or without a trailing `/v1`) to the chat-completions URL. */
 const chatUrl = (base: string) => `${base.replace(/\/v1$/, '')}/v1/chat/completions`;
@@ -12,7 +13,7 @@ export class RelayClient implements InferenceClient {
   async decide(prompt: string): Promise<{ text: string }> {
     const res = await fetch(chatUrl(this.cfg.baseUrl), {
       method: 'POST',
-      headers: { 'content-type': 'application/json', authorization: `Bearer ${this.cfg.apiKey}` },
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${this.cfg.apiKey}`, ...APP_IDENTITY_HEADERS },
       body: JSON.stringify({ model: this.cfg.model, messages: [{ role: 'user', content: prompt }] }),
       signal: AbortSignal.timeout(RELAY_TIMEOUT_MS),
     });

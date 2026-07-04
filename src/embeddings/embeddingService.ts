@@ -1,3 +1,5 @@
+import { APP_IDENTITY_HEADERS } from '../inference/appIdentity.js';
+
 /** Resolves a configured brain provider to its credentials. Mirrors bootstrap.ts `resolveProvider`
  *  — injected via DI so this service never imports the config store directly. */
 export type ProviderResolver = (
@@ -73,6 +75,7 @@ export class EmbeddingService {
       headers: {
         'content-type': 'application/json',
         ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}),
+        ...APP_IDENTITY_HEADERS,
       },
       body: JSON.stringify(body),
       signal: AbortSignal.timeout(EMBEDDINGS_TIMEOUT_MS),
