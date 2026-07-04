@@ -31,6 +31,12 @@ describe('slash command registry', () => {
     }
   });
 
+  it('scopes /think to the CLI (the only surface that wires the reasoning picker)', () => {
+    expect(commandsFor('cli', true).some((c) => c.name === 'think')).toBe(true);
+    expect(commandsFor('web', true).some((c) => c.name === 'think')).toBe(false);
+    expect(commandsFor('discord', true).some((c) => c.name === 'think')).toBe(false);
+  });
+
   it('every command has a non-empty English description', () => {
     for (const c of SLASH_COMMANDS) expect(c.description.trim().length, c.name).toBeGreaterThan(0);
   });

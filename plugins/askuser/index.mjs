@@ -28,7 +28,7 @@ const optionSchema = Type.Union(
 const questionSchema = Type.Object({
   question: Type.String({ description: 'The full question. Put the choices in `options`; do NOT number them in the text.' }),
   options: Type.Array(optionSchema, { minItems: 2, maxItems: 5, description: '2–5 choices — a plain string each (e.g. "Blue"), or {label, description?}. A free-text "Other" is added automatically; do not include it.' }),
-  header: Type.Optional(Type.String({ description: 'Optional short chip label (≤12 chars), e.g. "Colour". Defaults to the start of the question.' })),
+  header: Type.Optional(Type.String({ description: 'Optional short chip label (kept to ~20 chars), e.g. "Colour". Defaults to the start of the question.' })),
   multiSelect: Type.Optional(Type.Boolean({ description: 'Optional — true lets the user pick several. Default false (pick one).' })),
 });
 

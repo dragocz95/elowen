@@ -16,7 +16,7 @@ export interface SlashCommandDef {
   /** One-line help shown in every surface's menu. English (surfaces localize their own chrome only). */
   description: string;
   kind: SlashKind;
-  /** Gated to the instance operator (owner). e.g. `restart`. */
+  /** Gated to admins (server-side check is `user.is_admin`). e.g. `restart`. */
   adminOnly?: boolean;
   /** Which surfaces expose it. Omitted → all three. The CLI conversation pickers are CLI-only. */
   surfaces?: SlashSurface[];
@@ -29,7 +29,9 @@ export const SLASH_COMMANDS: readonly SlashCommandDef[] = [
   { name: 'status', description: 'Session info — model, context and usage', kind: 'info' },
   { name: 'compact', description: 'Summarize the conversation to free up context', kind: 'action' },
   { name: 'model', description: 'Switch the AI model', kind: 'picker' },
-  { name: 'think', description: 'Set the reasoning effort', kind: 'picker' },
+  // CLI-only: the reasoning-effort picker is wired in the TUI. Discord tunes reasoning through its own
+  // native command surface; the web dock has no picker for it yet (would show a dead menu entry).
+  { name: 'think', description: 'Set the reasoning effort', kind: 'picker', surfaces: ['cli'] },
   { name: 'restart', description: 'Restart the Orca daemon', kind: 'action', adminOnly: true },
   { name: 'help', description: 'Show the available commands', kind: 'info' },
   // CLI-only conversation management (the other surfaces manage conversations through their own UI).
@@ -51,9 +53,3 @@ export function commandsFor(surface: SlashSurface, isAdmin: boolean): SlashComma
 export function findCommand(name: string): SlashCommandDef | undefined {
   return SLASH_COMMANDS.find((c) => c.name === name);
 }
-
-/** The server-dispatchable commands (`action`/`info`) — the ones `POST /brain/command` can run. Pickers
- *  are surface-local UI and never dispatch here. */
-export const DISPATCHABLE = new Set<string>(
-  SLASH_COMMANDS.filter((c) => c.kind === 'action' || c.kind === 'info').map((c) => c.name),
-);

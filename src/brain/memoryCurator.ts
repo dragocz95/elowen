@@ -65,8 +65,11 @@ export class MemoryCurator {
       // "same point, different wording" redundancy (e.g. "Filip" vs "Filip Džudža, operátor").
       let existing: { id: number; body: string }[] = [];
       try {
-        const r = await this.service.retrieve(userId, `${user}\n${assistantText}`, { maxCount: 8 });
-        existing = r.memories.map((m) => ({ id: m.id, body: m.body }));
+        // searchSemantic (NOT retrieve): the curator is BROWSING what's already stored to avoid
+        // paraphrase duplicates — it must not markUsed, or every curated turn would silently inflate
+        // use_count/last_used_at on tangentially-related memories and skew future recall ranking.
+        const rows = await this.service.searchSemantic(userId, `${user}\n${assistantText}`, 8);
+        existing = rows.map((m) => ({ id: m.id, body: m.body }));
       } catch { /* retrieval is best-effort — fall back to a blind curation pass */ }
       const { text } = await inf.decide(buildPrompt(user, assistantText, existing));
       const ops = parseOps(text);

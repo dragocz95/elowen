@@ -81,7 +81,7 @@ import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 import { dirname, join, sep } from 'node:path';
 import { randomBytes } from 'node:crypto';
-import { mkdirSync, writeFileSync, existsSync, unlinkSync } from 'node:fs';
+import { mkdirSync, writeFileSync, readFileSync, existsSync, unlinkSync } from 'node:fs';
 import { systemctl } from '../cli/systemd.js';
 import { isExecAllowedForUser, isModelVisibleForUser, orcaExec } from '../shared/execs.js';
 import { BrainWorkerService } from '../brain/worker/brainWorker.js';
@@ -523,10 +523,24 @@ export function buildApp(opts: BuildOpts) {
   // process is torn down. systemctl() self-elevates via sudo when not root (www-data has passwordless).
   const restartMarker = opts.dbPath !== ':memory:' ? join(dirname(opts.dbPath), '.restart-marker') : undefined;
   const restartDaemon = restartMarker
-    ? async (): Promise<void> => {
+    ? async (byUserId: number): Promise<void> => {
+        log.info(`/restart requested by user ${byUserId}`);
         await brain?.notify('🔄 **Restart** — Orca is restarting, back in a moment…').catch(() => { /* best-effort */ });
+        // Drop the marker (timestamped) so the NEXT boot echoes "back online" — but ONLY for a restart that
+        // actually takes. systemctl() resolves an exit code (never throws); on failure the daemon keeps
+        // running, so we must undo the marker + tell the operator, or a future unrelated boot would falsely
+        // announce recovery.
         try { writeFileSync(restartMarker, String(Date.now())); } catch { /* marker is a nicety, not required */ }
-        setTimeout(() => { void systemctl('restart', 'orca-daemon'); }, 800);
+        setTimeout(() => {
+          void systemctl('restart', 'orca-daemon').then((r) => {
+            if (r.code !== 0) {
+              log.error(`/restart failed (systemctl exit ${r.code}): ${r.stdout.trim()}`);
+              try { unlinkSync(restartMarker); } catch { /* nothing to undo */ }
+              void brain?.notify('⚠️ **Restart failed** — the daemon could not restart itself. Check the service logs.').catch(() => { /* best-effort */ });
+            }
+            // On success this process is torn down before the promise settles — nothing more to do.
+          });
+        }, 800);
       }
     : undefined;
 
@@ -572,7 +586,12 @@ export function buildApp(opts: BuildOpts) {
     // (so ordinary restarts/deploys stay quiet — only a user-triggered restart is echoed).
     void brain?.startPlatforms(log).then(async () => {
       if (restartMarker && existsSync(restartMarker)) {
-        await brain?.notify('✅ **Back online** — Orca restarted and is ready.').catch(() => { /* best-effort */ });
+        // Only echo "back online" for a restart that's actually RECENT. A stale marker (e.g. a failed
+        // restart whose cleanup didn't run, or a very old crash) must not make an ordinary later deploy
+        // falsely announce recovery. The marker holds the request timestamp.
+        let fresh = false;
+        try { fresh = Date.now() - Number(readFileSync(restartMarker, 'utf8')) < 5 * 60_000; } catch { /* unreadable → treat as stale */ }
+        if (fresh) await brain?.notify('✅ **Back online** — Orca restarted and is ready.').catch(() => { /* best-effort */ });
         try { unlinkSync(restartMarker); } catch { /* already gone */ }
       }
     }).catch((e) => log.error('startPlatforms failed', e));

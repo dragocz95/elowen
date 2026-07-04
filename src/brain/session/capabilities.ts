@@ -27,10 +27,11 @@ export interface CapabilitySpec {
   kind: SessionKind;
   /** Built lazily so the owner's API token is never even minted for sessions that must not have it. */
   orcaTools?: () => ToolDefinition[];
-  /** The owner's PRIVATE long-term memory tools — composed ONLY for 'owner-chat'. A shared platform
-   *  channel (trusted OR foreign) never maps to owner-chat, so these tools are not composed for it at
-   *  all. Defense-in-depth: each memory tool ALSO re-checks the acting identity at execute time
-   *  (currentIdentity().owner===true && platform==='orca'), so even a mis-composition can't leak. */
+  /** The operator's PRIVATE long-term memory tools — composed for 'owner-chat' AND 'trusted-channel'
+   *  (so the operator's own linked platform account reaches their memory too). Foreign channels and
+   *  task-workers never compose them. Defense-in-depth: each memory tool ALSO re-checks the acting
+   *  identity at execute time (owner===true && a resolved orcaUserId), so a non-owner sender in a
+   *  trusted channel — even an admin-role stranger — gets a locked no-op even if mis-composed. */
   memoryTools?: () => ToolDefinition[];
   pluginTools: ToolDefinition[];
   /** Per-role tool allowlist (tool names; '*' = everything). Undefined = no restriction. */
