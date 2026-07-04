@@ -113,6 +113,9 @@ export interface ServerDeps {
   /** The ONE shared plugin registry provider (merged contributions of every enabled plugin). Feeds the
    *  runtime plugin-contribution introspection endpoint. Absent → that endpoint reports an empty shape. */
   plugins?: import('../plugins/pluginsProvider.js').PluginRegistryProvider;
+  /** Installs/updates/removes plugins from the curated GitHub registry (shallow-clone cache → user plugin
+   *  dir). Feeds the marketplace endpoints. Absent → those endpoints return 503. */
+  marketplace?: import('../plugins/marketplace.js').MarketplaceService;
   /** Bounded in-memory ring of recent log lines, tapped at the logger's emit() choke point. Feeds the
    *  admin per-plugin logs + health views. Absent → those views report empty/`ok`. */
   pluginLogs?: import('../shared/logBuffer.js').PluginLogBuffer;

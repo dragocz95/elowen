@@ -73,7 +73,8 @@ import { MemoryService } from '../brain/memoryService.js';
 import { toEmbeddingConfig } from '../store/configStore.js';
 import { brainConfigFromOrca } from '../brain/config.js';
 import { listBrainModels } from '../brain/models.js';
-import { loadPlugins } from '../plugins/loader.js';
+import { discoverPlugins, loadPlugins } from '../plugins/loader.js';
+import { MarketplaceService } from '../plugins/marketplace.js';
 import { PluginRegistryProvider } from '../plugins/pluginsProvider.js';
 import { resolvePolicy } from '../plugins/policy.js';
 import { fileURLToPath } from 'node:url';
@@ -352,7 +353,8 @@ export function buildApp(opts: BuildOpts) {
   // with the spawn-CLI advisor — routes degrade to 503 when left unwired.
   // Plugin scan roots: the bundled dist/plugins dir + the instance data-dir plugins/. Shared by the
   // brain's lazy loader and the admin /plugins listing so both always see the same set.
-  const pluginDirs = [join(dirname(fileURLToPath(import.meta.url)), '..', 'plugins'), join(dirname(opts.dbPath), 'plugins')];
+  const userPluginDir = join(dirname(opts.dbPath), 'plugins');
+  const pluginDirs = [join(dirname(fileURLToPath(import.meta.url)), '..', 'plugins'), userPluginDir];
   const pluginDataRoot = join(dirname(opts.dbPath), 'plugins-data');
   // The brain's credential store: OAuth tokens (Anthropic/Copilot/OpenAI accounts) persist here and
   // pi refreshes them in place. Lives next to the brain's cwd, never inside a repo checkout.
@@ -491,7 +493,21 @@ export function buildApp(opts: BuildOpts) {
   // Single-use ticket store for the terminal WebSocket stream — shared between the authenticated
   // `POST /sessions/:name/ws-ticket` route and the daemon's `/ws/terminal` upgrade handler.
   const tickets = createTicketStore();
-  const app = createServer({ tasks, readiness, missions, engine, missionGit, gitLock, spawn, tmux, bus, events, notes, agents, project: opts.project, fallback: { program: 'claude-code', model: 'sonnet' }, cli, clock: new SystemClock(), config, users, projects, userProjects, pushSubscriptions, userPrompts, userSettings, pluginDirs, pluginDataRoot, brainOauth, brainAuth, prompts, taskUsage, git, avatarsDir, avatarSecret, planJobs, decisionQueue, pilot, advisor, brain, brainWorkers, brainStore, personalityStore, memoryStore, memoryCategoryStore, memoryCategorizer, embeddings, plugins: pluginProvider, pluginLogs, hookAudit, tickets });
+  // The plugin marketplace: install/update/remove plugins from the curated GitHub registry into the
+  // writable user plugin dir (pluginDirs[1]), applied live via the brain's plugin hot-reload. The registry
+  // repo is a shallow-clone cache next to the DB; ORCA_PLUGIN_REGISTRY overrides the repo URL (tests).
+  const marketplace = new MarketplaceService({
+    registryUrl: process.env.ORCA_PLUGIN_REGISTRY || undefined,
+    cacheDir: join(dirname(opts.dbPath), 'marketplace'),
+    userPluginsDir: userPluginDir,
+    pluginDataRoot,
+    discovered: () => discoverPlugins(pluginDirs),
+    getEnabled: () => config.get().plugins.enabled,
+    setEnabled: (names) => { config.update({ plugins: { enabled: names } }); },
+    reload: () => brain?.reloadPlugins() ?? Promise.resolve(),
+  });
+  marketplace.sweep(); // clear crash debris (.staging-*/.old-*) left by an interrupted install
+  const app = createServer({ tasks, readiness, missions, engine, missionGit, gitLock, spawn, tmux, bus, events, notes, agents, project: opts.project, fallback: { program: 'claude-code', model: 'sonnet' }, cli, clock: new SystemClock(), config, users, projects, userProjects, pushSubscriptions, userPrompts, userSettings, pluginDirs, pluginDataRoot, brainOauth, brainAuth, prompts, taskUsage, git, avatarsDir, avatarSecret, planJobs, decisionQueue, pilot, advisor, brain, brainWorkers, brainStore, personalityStore, memoryStore, memoryCategoryStore, memoryCategorizer, embeddings, plugins: pluginProvider, marketplace, pluginLogs, hookAudit, tickets });
 
   // Root-cause recovery: after a daemon crash/restart, tasks left 'in_progress' whose tmux
   // session is gone are zombies — revert them to 'open' so they can be picked up again. No grace

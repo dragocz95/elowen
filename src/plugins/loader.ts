@@ -1,5 +1,5 @@
 import { readdirSync, existsSync, readFileSync, statSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { join, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { parseManifest } from './manifest.js';
 import type { PluginManifest } from './manifest.js';
@@ -98,7 +98,16 @@ export async function loadPlugins(opts: LoadPluginsOptions): Promise<PluginRegis
         if (!statSync(pluginDir).isDirectory()) continue;
         const manifest = parseManifest(JSON.parse(readFileSync(join(pluginDir, 'orca-plugin.json'), 'utf-8')));
         if (manifest.name !== name) throw new Error(`manifest name "${manifest.name}" != folder "${name}"`);
-        const entryUrl = pathToFileURL(resolve(pluginDir, manifest.entry)).href;
+        // Resolve the entry inside the plugin dir and refuse one that escapes it (e.g. `../../x.mjs`) —
+        // resolve() would otherwise import an arbitrary file. Cheap belt-and-suspenders, and load-bearing
+        // once folders can arrive via the marketplace rather than only shipping in the trusted bundle.
+        const entryPath = resolve(pluginDir, manifest.entry);
+        if (entryPath !== pluginDir && !entryPath.startsWith(pluginDir + sep)) throw new Error(`entry "${manifest.entry}" escapes plugin dir`);
+        // Cache-bust the ESM import URL by version+mtime. Node caches modules by URL for the whole process
+        // life, so after an in-place marketplace update (same path, new bytes) a plain import() would keep
+        // returning the STALE module until a daemon restart. Keying on version+mtime imports fresh code on
+        // reload, while an unchanged plugin keeps a stable key across reloads.
+        const entryUrl = `${pathToFileURL(entryPath).href}?v=${encodeURIComponent(manifest.version)}-${statSync(entryPath).mtimeMs}`;
         const mod = (await import(entryUrl)) as Partial<PluginModule>;
         if (typeof mod.register !== 'function') throw new Error('entry does not export register()');
         // Stage the plugin's contributions in a scratch registry and merge only after a clean

@@ -228,6 +228,26 @@ export function useTogglePlugin() {
   const qc = useQueryClient();
   return useMutation({ mutationFn: (v: { name: string; enabled: boolean }) => orcaClient.togglePlugin(v.name, v.enabled), onSuccess: () => qc.invalidateQueries({ queryKey: ['plugins'] }) });
 }
+/** Refresh both the marketplace catalog and the installed list after any install/update/uninstall. */
+function invalidatePluginViews(qc: ReturnType<typeof useQueryClient>) {
+  void qc.invalidateQueries({ queryKey: ['marketplace'] });
+  void qc.invalidateQueries({ queryKey: ['plugins'] });
+}
+/** Install a registry plugin into the user plugin dir (enabled by default). Applies live via hot-reload. */
+export function useInstallPlugin() {
+  const qc = useQueryClient();
+  return useMutation({ mutationFn: (v: { name: string; enable?: boolean }) => orcaClient.installPlugin(v.name, v.enable ?? true), onSuccess: () => invalidatePluginViews(qc) });
+}
+/** Update an installed user plugin to the registry's newer version. */
+export function useUpdatePlugin() {
+  const qc = useQueryClient();
+  return useMutation({ mutationFn: (name: string) => orcaClient.updatePlugin(name), onSuccess: () => invalidatePluginViews(qc) });
+}
+/** Uninstall a user plugin — removes its folder AND its data. */
+export function useUninstallPlugin() {
+  const qc = useQueryClient();
+  return useMutation({ mutationFn: (name: string) => orcaClient.uninstallPlugin(name), onSuccess: () => invalidatePluginViews(qc) });
+}
 /** Replace the cronjob plugin's whole jobs array (auto-saved by the cron editor). */
 export function useSaveCronJobs() {
   const qc = useQueryClient();

@@ -1,4 +1,4 @@
-import type { Task, Mission, CreateTaskInput, UpdateTaskInput, PlanInput, PlanSubmitResult, PlanJob, InsertPhasesInput, InsertPhasesResult, EngageInput, OrcaConfig, ConfigPatch, MissionDetail, User, UserPatch, ProfilePatch, UserPrompt, PersonalityProfile, PersonalityCreate, PersonalityPatch, CliSettings, PluginInfo, PluginDetail, PluginContributions, PluginLogs, PluginHookExecutions, CronJob, DiscordChannelOption, PluginSkill, BrainModelOption, BrainSessionInfo, BrainSearchHit, BrainMessage, BrainStatus, OAuthFlowState, AuthResult, ActivityEvent, PendingAsk, Project, ProjectGit, CommitLogEntry, CommitFileChange, Note, CliDetectionResult, GithubAuthStatus, TokenUsage, ModelUsage, DayUsage, ResetUsageResult, FileNode, DirListing, SessionInfo, SystemInfo, SkillsInfo, SkillInstallResult, Memory, MemoryEvent, MemoryCreate, MemoryPatch, MemoryFilters, EmbeddingSettings, EmbeddingSettingsPatch, RetrievalResult, MemoryCategory, MemoryCategoryCreate, MemoryCategoryPatch, CategorizationSettings, CategorizationSettingsPatch } from './types';
+import type { Task, Mission, CreateTaskInput, UpdateTaskInput, PlanInput, PlanSubmitResult, PlanJob, InsertPhasesInput, InsertPhasesResult, EngageInput, OrcaConfig, ConfigPatch, MissionDetail, User, UserPatch, ProfilePatch, UserPrompt, PersonalityProfile, PersonalityCreate, PersonalityPatch, CliSettings, PluginInfo, PluginDetail, PluginContributions, PluginLogs, PluginHookExecutions, Marketplace, CronJob, DiscordChannelOption, PluginSkill, BrainModelOption, BrainSessionInfo, BrainSearchHit, BrainMessage, BrainStatus, OAuthFlowState, AuthResult, ActivityEvent, PendingAsk, Project, ProjectGit, CommitLogEntry, CommitFileChange, Note, CliDetectionResult, GithubAuthStatus, TokenUsage, ModelUsage, DayUsage, ResetUsageResult, FileNode, DirListing, SessionInfo, SystemInfo, SkillsInfo, SkillInstallResult, Memory, MemoryEvent, MemoryCreate, MemoryPatch, MemoryFilters, EmbeddingSettings, EmbeddingSettingsPatch, RetrievalResult, MemoryCategory, MemoryCategoryCreate, MemoryCategoryPatch, CategorizationSettings, CategorizationSettingsPatch } from './types';
 import { clearToken } from './token';
 
 // Same-origin BFF base: the browser talks only to this web origin's /api proxy, which injects the
@@ -166,6 +166,14 @@ export const orcaClient = {
   pluginHookExecutions: (name: string) => req<PluginHookExecutions>(`/plugins/${encodeURIComponent(name)}/hook-executions`),
   /** Destructive — wipe the contents of the plugin's data directory (the dir itself is kept). */
   clearPluginData: (name: string) => req<{ ok: true }>(`/plugins/${encodeURIComponent(name)}/data/clear`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }),
+  /** The plugin marketplace catalog (curated registry ✕ what's on disk). `refresh` forces a registry pull. */
+  marketplace: (refresh = false) => req<Marketplace>(`/plugins/marketplace${refresh ? '?refresh=1' : ''}`),
+  /** Download + install a registry plugin into the user plugin dir; enables it by default. Applies live. */
+  installPlugin: (name: string, enable = true) => req<PluginInfo>(`/plugins/marketplace/${encodeURIComponent(name)}/install`, json({ enable })),
+  /** Update an installed (user) plugin to the registry's newer version. Applies live. */
+  updatePlugin: (name: string) => req<PluginInfo>(`/plugins/marketplace/${encodeURIComponent(name)}/update`, json({})),
+  /** Uninstall a user plugin: removes its folder AND its data (built-in plugins can't be removed). */
+  uninstallPlugin: (name: string) => req<{ ok: true }>(`/plugins/${encodeURIComponent(name)}`, { method: 'DELETE' }),
   /** The cronjob plugin's raw jobs list; saving replaces the whole array (applies live, no restart). */
   cronJobs: () => req<CronJob[]>('/plugins/cronjob/jobs'),
   saveCronJobs: (jobs: CronJob[]) => req<{ ok: boolean }>('/plugins/cronjob/jobs', json(jobs, 'PUT')),

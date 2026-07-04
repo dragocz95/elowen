@@ -259,6 +259,10 @@ export const usePluginLogs = (name: string | null) =>
 export const usePluginHookExecutions = (name: string | null) =>
   useQuery({ queryKey: ['plugin-hook-executions', name], queryFn: () => orcaClient.pluginHookExecutions(name as string), enabled: !!name });
 
+/** The plugin marketplace catalog — the curated registry cross-referenced with what's on disk (admin). */
+export const useMarketplace = () =>
+  useQuery({ queryKey: ['marketplace'], queryFn: () => orcaClient.marketplace() });
+
 /** The cronjob plugin's scheduled jobs (admin, the cronjob plugin detail). */
 export const useCronJobs = () =>
   useQuery({ queryKey: ['cron-jobs'], queryFn: orcaClient.cronJobs });

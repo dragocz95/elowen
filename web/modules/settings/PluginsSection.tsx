@@ -2,21 +2,24 @@
 import { useMemo, useState } from 'react';
 import {
   Package, User as UserIcon, Wrench, GraduationCap, MessageSquare, ChevronRight,
-  Search, LayoutGrid, Database, Clock, Sparkles, ShieldCheck, Code2, type LucideIcon,
+  Search, LayoutGrid, Database, Clock, Sparkles, ShieldCheck, Code2, Download, Trash2,
+  ArrowUpCircle, type LucideIcon,
 } from 'lucide-react';
 import { PluginDetail } from './PluginDetail';
 import { pluginIcon } from './pluginMeta';
 import { Badge } from '../../components/ui/Badge';
+import { Button } from '../../components/ui/Button';
 import { IconButton } from '../../components/ui/IconButton';
 import { Input } from '../../components/ui/Input';
 import { Segmented } from '../../components/ui/Segmented';
 import { Toggle } from '../../components/ui/Toggle';
+import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { LoadingState, EmptyState } from '../../components/ui/states';
 import { useToast } from '../../components/ui/Toast';
 import { useTranslation } from '../../lib/i18n';
-import { usePlugins } from '../../lib/queries';
-import { useTogglePlugin } from '../../lib/mutations';
-import type { PluginInfo } from '../../lib/types';
+import { usePlugins, useMarketplace } from '../../lib/queries';
+import { useTogglePlugin, useInstallPlugin, useUpdatePlugin, useUninstallPlugin } from '../../lib/mutations';
+import type { PluginInfo, MarketplaceEntry } from '../../lib/types';
 
 /** Marketplace categories, derived from a plugin's `provides`/name (see `categorize`). */
 type Category = 'platforms' | 'tools' | 'memory' | 'automation' | 'ui' | 'security' | 'development';
@@ -25,9 +28,9 @@ type Category = 'platforms' | 'tools' | 'memory' | 'automation' | 'ui' | 'securi
  *  specificity. A plugin that ships a chat platform is always "Platforms"; after that we key off the
  *  plugin name (memory/cron/security/dev tooling/interface) and fall back to the generic "Tools" pack.
  *  This is a lightweight display heuristic, NOT a capability system. */
-function categorize(p: PluginInfo): Category {
-  if ((p.provides.platforms?.length ?? 0) > 0) return 'platforms';
-  const n = p.name.toLowerCase();
+function categorize(name: string, platformCount: number): Category {
+  if (platformCount > 0) return 'platforms';
+  const n = name.toLowerCase();
   if (/secur|scan|shield|audit/.test(n)) return 'security';
   if (/memor|embed|recall|vector/.test(n)) return 'memory';
   if (/cron|schedul|automat/.test(n)) return 'automation';
@@ -49,13 +52,14 @@ const CATEGORY_META: Record<Category, { icon: LucideIcon; key: 'catPlatforms' | 
 /** Stable display order of the category pills. */
 const CATEGORY_ORDER: Category[] = ['platforms', 'tools', 'memory', 'automation', 'ui', 'security', 'development'];
 
-/** What one plugin contributes, as compact icon badges (tools/skills/platforms with counts). */
-function ProvidesBadges({ p }: { p: PluginInfo }) {
+/** What one plugin contributes, as compact icon badges (tools/skills/platforms with counts). Works off
+ *  the array-valued `provides` of an installed plugin or the count-valued `provides` of a catalog entry. */
+function ProvidesBadges({ counts }: { counts: { tools: number; skills: number; platforms: number } }) {
   const { t } = useTranslation();
   const parts = [
-    { label: t.plugins.tools, count: p.provides.tools?.length ?? 0, Icon: Wrench },
-    { label: t.plugins.skills, count: p.provides.skills?.length ?? 0, Icon: GraduationCap },
-    { label: t.plugins.platforms, count: p.provides.platforms?.length ?? 0, Icon: MessageSquare },
+    { label: t.plugins.tools, count: counts.tools, Icon: Wrench },
+    { label: t.plugins.skills, count: counts.skills, Icon: GraduationCap },
+    { label: t.plugins.platforms, count: counts.platforms, Icon: MessageSquare },
   ].filter((x) => x.count > 0);
   if (parts.length === 0) return null;
   return (
@@ -67,10 +71,13 @@ function ProvidesBadges({ p }: { p: PluginInfo }) {
   );
 }
 
-/** One marketplace card: icon chip (live-dot when enabled), name + version + source glyph, a health
- *  badge, the enable toggle and a detail affordance; the provides badges and a one-line description sit
- *  below. Clicking the card body (anywhere but the toggle) opens the plugin's detail view. */
-function PluginCard({ p, onDetail, onFlip, busy }: { p: PluginInfo; onDetail: () => void; onFlip: (enabled: boolean) => void; busy: boolean }) {
+/** One installed-plugin card: icon chip (live-dot when enabled), name + version + source glyph, a health
+ *  badge, the enable toggle and a detail affordance; below sit the provides badges, description, and — for
+ *  user (marketplace) plugins — an update button when a newer version is available plus an uninstall action. */
+function PluginCard({ p, updatable, onDetail, onFlip, onUpdate, onUninstall, busy }: {
+  p: PluginInfo; updatable: boolean; onDetail: () => void; onFlip: (enabled: boolean) => void;
+  onUpdate: () => void; onUninstall: () => void; busy: boolean;
+}) {
   const { t, locale } = useTranslation();
   const Icon = pluginIcon(p.name);
   const description = p.i18n?.[locale]?.description ?? p.description;
@@ -100,68 +107,161 @@ function PluginCard({ p, onDetail, onFlip, busy }: { p: PluginInfo; onDetail: ()
         </div>
         {/* Trailing controls stay one shrink-0 cluster so the name block (flex-1 min-w-0) absorbs any
             squeeze first — the badge, toggle and chevron never clip or spill past the card edge. */}
-        <div className="flex shrink-0 items-center gap-2">
+        <div className="flex shrink-0 items-center gap-2" onClick={(e) => e.stopPropagation()}>
           {showHealth ? (
             <Badge tone={health === 'error' ? 'danger' : 'success'}>{health === 'error' ? t.plugins.healthError : t.plugins.healthOk}</Badge>
           ) : null}
+          {p.source === 'user' ? (
+            <IconButton icon={Trash2} label={`${p.name}: ${t.plugins.uninstall}`} onClick={onUninstall} disabled={busy} />
+          ) : null}
           {/* Isolate the toggle so flipping enable never bubbles up into the card's open-detail click. */}
-          <span onClick={(e) => e.stopPropagation()} className="shrink-0">
-            <Toggle checked={p.enabled} onChange={onFlip} label={`${p.name}: ${p.enabled ? t.plugins.disable : t.plugins.enable}`} disabled={busy} />
-          </span>
+          <Toggle checked={p.enabled} onChange={onFlip} label={`${p.name}: ${p.enabled ? t.plugins.disable : t.plugins.enable}`} disabled={busy} />
           <IconButton icon={ChevronRight} label={`${p.name}: ${t.common.goTo}`} onClick={onDetail} />
         </div>
       </div>
-      <ProvidesBadges p={p} />
+      <ProvidesBadges counts={{ tools: p.provides.tools?.length ?? 0, skills: p.provides.skills?.length ?? 0, platforms: p.provides.platforms?.length ?? 0 }} />
       <p className="line-clamp-1 text-xs text-text-muted" title={description}>{description}</p>
+      {updatable ? (
+        <div className="flex items-center justify-between gap-2 rounded-lg border border-accent/30 bg-accent/5 px-2.5 py-1.5" onClick={(e) => e.stopPropagation()}>
+          <span className="text-xs text-text-muted">{t.plugins.updateAvailable}</span>
+          <Button variant="accent" icon={ArrowUpCircle} onClick={onUpdate} disabled={busy} className="h-7 px-2.5 text-xs">{t.plugins.update}</Button>
+        </div>
+      ) : null}
     </div>
   );
 }
 
-/** Settings → Plugins: a marketplace catalog of every plugin found on disk. A search box + category
- *  pills narrow the grid client-side; each card toggles enable live (the daemon hot-reloads the brain's
- *  plugin registry, no restart) and opens a rich per-plugin detail view. */
+/** One available-plugin card (not yet installed): a muted icon chip, name + version + author, provides
+ *  badges, a one-line description, and an Install button that downloads it from the registry and enables it. */
+function MarketplaceCard({ e, onInstall, busy }: { e: MarketplaceEntry; onInstall: () => void; busy: boolean }) {
+  const { t } = useTranslation();
+  const Icon = pluginIcon(e.name);
+  return (
+    <div className="flex flex-col gap-2 rounded-xl border border-border bg-surface px-4 py-3">
+      <div className="flex items-center gap-3">
+        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-border bg-elevated text-text-muted">
+          <Icon size={17} aria-hidden />
+        </span>
+        <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+          <div className="flex min-w-0 items-center gap-2">
+            <span className="truncate text-sm font-semibold text-text">{e.name}</span>
+            <span className="shrink-0 font-mono text-tiny text-text-muted">v{e.version}</span>
+          </div>
+          {e.author ? <span className="truncate text-tiny text-text-muted">{e.author}</span> : null}
+        </div>
+        <Button variant="default" icon={Download} onClick={onInstall} disabled={busy} className="shrink-0">
+          {busy ? t.plugins.installing : t.plugins.install}
+        </Button>
+      </div>
+      <ProvidesBadges counts={{ tools: e.provides?.tools ?? 0, skills: e.provides?.skills ?? 0, platforms: e.provides?.platforms ?? 0 }} />
+      <p className="line-clamp-2 text-xs text-text-muted" title={e.description}>{e.description}</p>
+    </div>
+  );
+}
+
+/** Settings → Plugins: a marketplace with two views. **Installed** lists every plugin on disk (bundled +
+ *  downloaded), each toggling enable live and opening a rich detail view; user plugins can be updated (when
+ *  the registry has a newer version) or uninstalled. **Available** browses the curated GitHub registry for
+ *  plugins not yet installed and installs them with one click. A search box + category pills narrow both. */
 export function PluginsSection() {
   const { data, isLoading } = usePlugins();
+  const marketplace = useMarketplace();
   const toggle = useTogglePlugin();
+  const install = useInstallPlugin();
+  const update = useUpdatePlugin();
+  const uninstall = useUninstallPlugin();
   const { toast } = useToast();
   const { t } = useTranslation();
   const [detail, setDetail] = useState<string | null>(null);
+  const [view, setView] = useState<'installed' | 'available'>('installed');
   const [query, setQuery] = useState('');
   const [category, setCategory] = useState<Category | 'all'>('all');
+  const [confirmRemove, setConfirmRemove] = useState<string | null>(null);
+  const [pending, setPending] = useState<string | null>(null);
 
   const plugins = data ?? [];
-  // Category pills: "All" plus only the categories that actually have a plugin, in stable order.
+  // The catalog powers the Available view and, cross-referenced by name, the "update available" hint on
+  // installed cards. Names with a newer version in the registry.
+  const updatable = useMemo(
+    () => new Set((marketplace.data?.plugins ?? []).filter((e) => e.status === 'updateAvailable').map((e) => e.name)),
+    [marketplace.data],
+  );
+  const available = useMemo(
+    () => (marketplace.data?.plugins ?? []).filter((e) => e.status === 'available'),
+    [marketplace.data],
+  );
+
+  // Category pills: "All" plus only the categories present in the ACTIVE view, in stable order.
   const categoryOptions = useMemo(() => {
-    const present = new Set(plugins.map(categorize));
+    const present = new Set(view === 'installed'
+      ? plugins.map((p) => categorize(p.name, p.provides.platforms?.length ?? 0))
+      : available.map((e) => categorize(e.name, e.provides?.platforms ?? 0)));
     return [
       { value: 'all', label: t.plugins.catAll, icon: LayoutGrid },
       ...CATEGORY_ORDER.filter((c) => present.has(c)).map((c) => ({ value: c, label: t.plugins[CATEGORY_META[c].key], icon: CATEGORY_META[c].icon })),
     ];
-  }, [plugins, t]);
+  }, [plugins, available, view, t]);
 
-  const filtered = useMemo(() => {
+  const filteredInstalled = useMemo(() => {
     const q = query.trim().toLowerCase();
     return plugins.filter((p) => {
-      if (category !== 'all' && categorize(p) !== category) return false;
+      if (category !== 'all' && categorize(p.name, p.provides.platforms?.length ?? 0) !== category) return false;
       if (!q) return true;
       return p.name.toLowerCase().includes(q) || (p.description ?? '').toLowerCase().includes(q);
     });
   }, [plugins, query, category]);
 
+  const filteredAvailable = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return available.filter((e) => {
+      if (category !== 'all' && categorize(e.name, e.provides?.platforms ?? 0) !== category) return false;
+      if (!q) return true;
+      return e.name.toLowerCase().includes(q) || (e.description ?? '').toLowerCase().includes(q);
+    });
+  }, [available, query, category]);
+
   if (detail) return <PluginDetail name={detail} onBack={() => setDetail(null)} />;
   if (isLoading) return <LoadingState variant="cards" />;
-  if (plugins.length === 0) return <EmptyState title={t.plugins.empty} />;
 
   const flip = (p: PluginInfo, enabled: boolean) => toggle.mutate(
     { name: p.name, enabled },
-    {
-      onSuccess: () => toast(enabled ? t.plugins.enabledToast : t.plugins.disabledToast),
-      onError: () => toast(t.plugins.toggleError, 'error'),
-    },
+    { onSuccess: () => toast(enabled ? t.plugins.enabledToast : t.plugins.disabledToast), onError: () => toast(t.plugins.toggleError, 'error') },
   );
+  const doInstall = (name: string) => {
+    setPending(name);
+    install.mutate({ name }, {
+      onSuccess: () => { toast(t.plugins.installedToast); setView('installed'); },
+      onError: () => toast(t.plugins.installError, 'error'),
+      onSettled: () => setPending(null),
+    });
+  };
+  const doUpdate = (name: string) => {
+    setPending(name);
+    update.mutate(name, {
+      onSuccess: () => toast(t.plugins.updatedToast),
+      onError: () => toast(t.plugins.updateError, 'error'),
+      onSettled: () => setPending(null),
+    });
+  };
+  const doUninstall = (name: string) => {
+    setConfirmRemove(null);
+    setPending(name);
+    uninstall.mutate(name, {
+      onSuccess: () => toast(t.plugins.uninstallToast),
+      onError: () => toast(t.plugins.uninstallError, 'error'),
+      onSettled: () => setPending(null),
+    });
+  };
+
+  const viewOptions = [
+    { value: 'installed', label: t.plugins.tabInstalled, icon: Package },
+    { value: 'available', label: t.plugins.tabAvailable, icon: Download },
+  ];
 
   return (
     <div className="flex flex-col gap-5">
+      <Segmented value={view} onChange={(v) => { setView(v as 'installed' | 'available'); setCategory('all'); }} options={viewOptions} aria-label={t.plugins.tabInstalled} />
+
       <div className="flex flex-col gap-3">
         <div className="relative w-full @sm:max-w-xs">
           <Search size={14} aria-hidden className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" />
@@ -170,17 +270,51 @@ export function PluginsSection() {
         <Segmented value={category} onChange={(v) => setCategory(v as Category | 'all')} options={categoryOptions} aria-label={t.plugins.catAll} />
       </div>
 
-      {filtered.length === 0 ? (
+      {view === 'installed' ? (
+        plugins.length === 0 ? (
+          <EmptyState title={t.plugins.empty} />
+        ) : filteredInstalled.length === 0 ? (
+          <EmptyState title={t.plugins.noMatches} description={t.plugins.noMatchesHint} icon={Search} />
+        ) : (
+          <div className="@container">
+            <div className="grid grid-cols-1 gap-3 @2xl:grid-cols-2 @5xl:grid-cols-3">
+              {filteredInstalled.map((p) => (
+                <PluginCard
+                  key={p.name} p={p} updatable={updatable.has(p.name)}
+                  busy={pending === p.name || (toggle.isPending && toggle.variables?.name === p.name)}
+                  onFlip={(enabled) => flip(p, enabled)} onDetail={() => setDetail(p.name)}
+                  onUpdate={() => doUpdate(p.name)} onUninstall={() => setConfirmRemove(p.name)}
+                />
+              ))}
+            </div>
+          </div>
+        )
+      ) : marketplace.isLoading ? (
+        <LoadingState variant="cards" />
+      ) : marketplace.data?.registryError ? (
+        <EmptyState title={t.plugins.marketplaceError} description={marketplace.data.registryError} icon={Download} />
+      ) : available.length === 0 ? (
+        <EmptyState title={t.plugins.marketplaceEmpty} icon={Download} />
+      ) : filteredAvailable.length === 0 ? (
         <EmptyState title={t.plugins.noMatches} description={t.plugins.noMatchesHint} icon={Search} />
       ) : (
         <div className="@container">
           <div className="grid grid-cols-1 gap-3 @2xl:grid-cols-2 @5xl:grid-cols-3">
-            {filtered.map((p) => (
-              <PluginCard key={p.name} p={p} busy={toggle.isPending} onFlip={(enabled) => flip(p, enabled)} onDetail={() => setDetail(p.name)} />
+            {filteredAvailable.map((e) => (
+              <MarketplaceCard key={e.name} e={e} busy={pending === e.name} onInstall={() => doInstall(e.name)} />
             ))}
           </div>
         </div>
       )}
+
+      <ConfirmDialog
+        open={confirmRemove !== null}
+        title={t.plugins.uninstall}
+        description={t.plugins.uninstallConfirm.replace('{name}', confirmRemove ?? '')}
+        confirmLabel={t.plugins.uninstall}
+        onConfirm={() => confirmRemove && doUninstall(confirmRemove)}
+        onClose={() => setConfirmRemove(null)}
+      />
     </div>
   );
 }

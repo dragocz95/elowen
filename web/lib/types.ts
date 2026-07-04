@@ -183,6 +183,29 @@ export interface PluginI18n {
   fields?: Record<string, { label?: string; hint?: string }>;
 }
 
+/** One row of the plugin marketplace catalog (GET /plugins/marketplace): a curated-registry entry plus
+ *  its on-disk status. `available` — installable. `installed` — a user plugin, up to date. `updateAvailable`
+ *  — a user plugin with a newer version in the registry. `bundled` — the name is a built-in, so it's never
+ *  offered for install/update. */
+export interface MarketplaceEntry {
+  name: string;
+  version: string;
+  description: string;
+  category?: string;
+  author?: string;
+  homepage?: string;
+  provides?: { tools?: number; skills?: number; platforms?: number };
+  status: 'available' | 'installed' | 'updateAvailable' | 'bundled';
+  installedVersion?: string;
+}
+
+/** GET /plugins/marketplace. `registryError` is set when the registry couldn't be reached/refreshed, so
+ *  the UI can distinguish "unavailable" from a genuinely empty catalog. */
+export interface Marketplace {
+  plugins: MarketplaceEntry[];
+  registryError?: string;
+}
+
 /** One declared plugin config field (drives the per-plugin settings form). Mirrors the backend
  *  `PluginConfigField` in `src/plugins/manifest.ts` exactly. Field-type semantics:
  *  - `section` — a labeled group header carrying no value.

@@ -2,9 +2,18 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, unl
 import { dirname, join, resolve, sep } from 'node:path';
 import { discoverPlugins } from '../../plugins/loader.js';
 import { buildContributionReport, emptyContributionReport, pluginContributions } from '../../plugins/contributionReport.js';
+import { MarketplaceError } from '../../plugins/marketplace.js';
 import { OAUTH_BUILTIN } from '../../brain/providers.js';
 import { oauthBuiltinCatalog } from '../../brain/models.js';
+import type { ContentfulStatusCode } from 'hono/utils/http-status';
+import type { Context } from 'hono';
 import type { OrcaApp, RouteContext } from '../context.js';
+
+/** Map a marketplace service error to its HTTP status; unknown errors become a 500. */
+function marketplaceFail(c: Context, e: unknown) {
+  const status: ContentfulStatusCode = e instanceof MarketplaceError ? (e.status as ContentfulStatusCode) : 500;
+  return c.json({ error: e instanceof Error ? e.message : 'marketplace operation failed' }, status);
+}
 
 /** Whether a recurring cron-job schedule spec is valid. Mirrors `parseSchedule` in
  *  plugins/cronjob/index.mjs (the daemon can't import the plugin's untyped ESM entry):
@@ -92,6 +101,36 @@ export function registerPluginRoutes(app: OrcaApp, ctx: RouteContext): void {
     if (notAdmin(c)) return c.json({ error: 'forbidden' }, 403);
     const registry = await d.plugins?.get();
     return c.json(registry ? buildContributionReport(registry) : emptyContributionReport());
+  });
+
+  // ── Marketplace: browse the curated registry and install/update plugins from it. These literal paths
+  // are registered before `/plugins/:name` so the param route doesn't capture them. All admin-gated;
+  // degrade to 503 when the service isn't wired (older deps / hand-built test deps). ──
+  app.get('/plugins/marketplace', async (c) => {
+    if (notAdmin(c)) return c.json({ error: 'forbidden' }, 403);
+    if (!d.marketplace) return c.json({ error: 'marketplace unavailable' }, 503);
+    return c.json(await d.marketplace.catalog(c.req.query('refresh') === '1'));
+  });
+
+  app.post('/plugins/marketplace/:name/install', async (c) => {
+    if (notAdmin(c)) return c.json({ error: 'forbidden' }, 403);
+    if (!d.marketplace) return c.json({ error: 'marketplace unavailable' }, 503);
+    const name = c.req.param('name');
+    const body = (await c.req.json().catch(() => ({}))) as { enable?: unknown };
+    try {
+      await d.marketplace.install(name, typeof body.enable === 'boolean' ? { enable: body.enable } : {});
+      return c.json(listing().find((p) => p.name === name) ?? { ok: true });
+    } catch (e) { return marketplaceFail(c, e); }
+  });
+
+  app.post('/plugins/marketplace/:name/update', async (c) => {
+    if (notAdmin(c)) return c.json({ error: 'forbidden' }, 403);
+    if (!d.marketplace) return c.json({ error: 'marketplace unavailable' }, 503);
+    const name = c.req.param('name');
+    try {
+      await d.marketplace.update(name);
+      return c.json(listing().find((p) => p.name === name) ?? { ok: true });
+    } catch (e) { return marketplaceFail(c, e); }
   });
 
   // Detail for the per-plugin settings section: the declared config fields + current values. Secret
@@ -202,6 +241,18 @@ export function registerPluginRoutes(app: OrcaApp, ctx: RouteContext): void {
     // Apply live: drop the brain's memoized registry and restart running sessions with the new set.
     await d.brain?.reloadPlugins();
     return c.json(listing().find((p) => p.name === name));
+  });
+
+  // Uninstall a marketplace (user-source) plugin: disable it, delete its folder AND its data, hot-reload.
+  // Built-in plugins can't be removed (they live in the npm-owned bundled dir) — the service returns 409.
+  app.delete('/plugins/:name', async (c) => {
+    if (notAdmin(c)) return c.json({ error: 'forbidden' }, 403);
+    if (!d.marketplace) return c.json({ error: 'marketplace unavailable' }, 503);
+    const name = c.req.param('name');
+    try {
+      await d.marketplace.uninstall(name);
+      return c.json({ ok: true });
+    } catch (e) { return marketplaceFail(c, e); }
   });
 
   // ── Cron jobs (cronjob plugin): the raw jobs.json array, managed as one list. The plugin's
