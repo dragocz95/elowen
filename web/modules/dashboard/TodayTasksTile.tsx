@@ -31,8 +31,8 @@ export function TodayTasksTile({ now }: { now: number }) {
   const done = rows.filter((r) => r.status === 'closed').length;
 
   return (
-    <BentoTile tone="approve" icon={ListTodo} label={t.dashboard.todayTasks} span="wide"
-      trailing={rows.length > 0 ? <span className="rounded-full border border-border bg-elevated px-2.5 py-1 text-[11px] font-semibold text-text-muted">{t.dashboard.todayTasksCount.replace('{done}', String(done)).replace('{total}', String(rows.length))}</span> : undefined}>
+    <BentoTile tone="muted" icon={ListTodo} label={t.dashboard.todayTasks} span="wide"
+      trailing={rows.length > 0 ? <span className="font-mono text-[11px] tabular-nums text-text-muted">{t.dashboard.todayTasksCount.replace('{done}', String(done)).replace('{total}', String(rows.length))}</span> : undefined}>
       {rows.length === 0 ? (
         <p className="flex flex-1 items-center justify-center py-4 text-center text-xs text-text-muted">{t.dashboard.todayTasksEmpty}</p>
       ) : (
@@ -42,13 +42,13 @@ export function TodayTasksTile({ now }: { now: number }) {
             const running = task.status === 'in_progress';
             return (
               <div key={task.id} className="flex items-center gap-3 border-t border-border py-2.5 first:border-t-0">
-                <span className={`grid h-[17px] w-[17px] shrink-0 place-items-center rounded-[5px] border ${closed ? 'border-success bg-success text-white' : 'border-border-strong'}`}>
+                <span className={`grid h-[17px] w-[17px] shrink-0 place-items-center rounded-[5px] border ${closed ? 'border-accent bg-accent text-white' : 'border-border-strong'}`}>
                   {closed && <Check size={11} strokeWidth={3} aria-hidden />}
                 </span>
                 <span className={`flex-1 truncate text-[13.5px] ${closed ? 'text-text-muted line-through decoration-text-muted/50' : 'text-text'}`}>{task.title}</span>
                 {running && (
-                  <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-success/35 bg-success/15 px-2.5 py-0.5 text-[11px] font-semibold text-success">
-                    <span className="live-dot h-1.5 w-1.5 rounded-full bg-success" />{t.dashboard.nowPill}
+                  <span className="inline-flex shrink-0 items-center gap-1.5 font-mono text-[11px] text-text-muted">
+                    <span className="live-dot h-1.5 w-1.5 rounded-full bg-accent" aria-hidden />{t.dashboard.nowPill}
                   </span>
                 )}
               </div>

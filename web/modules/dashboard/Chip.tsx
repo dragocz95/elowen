@@ -1,34 +1,25 @@
 import type { LucideIcon } from 'lucide-react';
 
-/** The semantic hues a chip can carry — a superset of `Tone` (adds info/approve, drops the neutral
- *  aliases) mapped straight onto the design tokens in tokens.css. */
-export type ChipTone = 'accent' | 'success' | 'warning' | 'danger' | 'info' | 'approve' | 'muted';
+/** Chip emphasis. `muted` is the default, restrained look (a plain elevated square with a text-muted
+ *  glyph); the toned variants light up ONLY when the tile carries live meaning — accent for the active
+ *  agent, warning for a decision that's waiting. Color is a signal here, not decoration. */
+export type ChipTone = 'muted' | 'accent' | 'warning' | 'success' | 'danger';
 
-const TONE_VAR: Record<ChipTone, string> = {
-  accent: '--color-accent',
-  success: '--color-success',
-  warning: '--color-warning',
-  danger: '--color-danger',
-  info: '--color-info',
-  approve: '--color-approve',
-  muted: '--color-text-muted',
+const TONE: Record<ChipTone, string> = {
+  muted: 'border-border bg-elevated text-text-muted',
+  accent: 'border-accent/40 bg-accent/10 text-accent',
+  warning: 'border-warning/40 bg-warning/10 text-warning',
+  success: 'border-success/40 bg-success/10 text-success',
+  danger: 'border-danger/40 bg-danger/10 text-danger',
 };
 
-/** A small tinted square holding a colored icon — the iOS-Settings-style glyph that gives each bento
- *  tile its identity. The hue tints its own background (~13 %) and border (~32 %) via color-mix, so one
- *  token drives all three layers and it reads correctly in both themes. */
-export function Chip({ tone, icon: Icon, size = 'md' }: { tone: ChipTone; icon: LucideIcon; size?: 'sm' | 'md' }) {
-  const v = `var(${TONE_VAR[tone]})`;
+/** A small square holding a tile's glyph — muted by default, toned only when the tile is live. Mirrors
+ *  the icon-chip treatment used across the app (plugin cards, provider pills) so the dashboard reads as
+ *  part of the same restrained, monochrome-with-accent system. */
+export function Chip({ tone = 'muted', icon: Icon, size = 'md' }: { tone?: ChipTone; icon: LucideIcon; size?: 'sm' | 'md' }) {
   const box = size === 'sm' ? 'h-[26px] w-[26px] rounded-[7px]' : 'h-8 w-8 rounded-lg';
   return (
-    <span
-      className={`inline-grid shrink-0 place-items-center border ${box}`}
-      style={{
-        color: v,
-        background: `color-mix(in srgb, ${v} 13%, transparent)`,
-        borderColor: `color-mix(in srgb, ${v} 32%, transparent)`,
-      }}
-    >
+    <span className={`inline-grid shrink-0 place-items-center border ${box} ${TONE[tone]}`}>
       <Icon size={size === 'sm' ? 13 : 16} aria-hidden />
     </span>
   );

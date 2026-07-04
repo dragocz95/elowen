@@ -32,7 +32,7 @@ export function DecisionsTile() {
   const escalations = useEscalations();
   const count = (asks.data?.length ?? 0) + escalations.length;
   return (
-    <BentoTile tone="warning" icon={ShieldQuestion} label={t.dashboard.signalDecisionsWaiting} href={count > 0 ? '/escalations' : undefined}>
+    <BentoTile tone={count > 0 ? 'warning' : 'muted'} icon={ShieldQuestion} label={t.dashboard.signalDecisionsWaiting} href={count > 0 ? '/escalations' : undefined}>
       <div className="mt-auto flex items-baseline gap-2.5">
         <Metric value={String(count)} className={`text-[40px] ${count > 0 ? 'text-warning' : 'text-text'}`} />
         <Caption>{t.dashboard.decisionsUnit}</Caption>
@@ -65,12 +65,12 @@ export function SpendTile({ now }: { now: number }) {
   const todayLabel = today.cost != null ? formatCost(today.cost) : '—';
 
   return (
-    <BentoTile tone="success" icon={Coins} label={t.dashboard.signalMonthCost} trailing={<Metric value={summary.totalCostLabel} className="text-[15px]" />}>
+    <BentoTile tone="muted" icon={Coins} label={t.dashboard.signalMonthCost} trailing={<Metric value={summary.totalCostLabel} className="text-[15px]" />}>
       <div className="mt-auto flex h-10 items-end gap-1.5" aria-hidden>
         {days.map((d, i) => (
           <span
             key={d.day}
-            className={`flex-1 rounded-t-[3px] ${i === days.length - 1 ? 'bg-success' : 'bg-elevated'}`}
+            className={`flex-1 rounded-t-[3px] ${i === days.length - 1 ? 'bg-accent' : 'bg-elevated'}`}
             style={{ height: `${Math.max(6, (d.tokens / max) * 100)}%` }}
           />
         ))}
@@ -87,7 +87,7 @@ export function AgentsTile() {
   const infos = useSessionInfos();
   const count = (infos.data ?? []).filter((s: SessionInfo) => s.role === 'agent').length;
   return (
-    <BentoTile tone="accent" icon={Radio} label={t.dashboard.signalAgentsActive} href="/sessions">
+    <BentoTile tone="muted" icon={Radio} label={t.dashboard.signalAgentsActive} href="/sessions">
       <div className="mt-auto flex items-baseline gap-2.5">
         <Metric value={String(count)} className={`text-[40px] ${count > 0 ? 'text-accent' : 'text-text'}`} />
         <Caption>{count > 0 ? t.dashboard.agentsWorkingUnit : t.dashboard.allQuiet}</Caption>
@@ -112,7 +112,7 @@ export function CronTile({ now }: { now: number }) {
   }, [jobs.data, now]);
 
   return (
-    <BentoTile tone="info" icon={AlarmClock} label={t.dashboard.nextRunLabel} href={next ? '/settings?section=cron' : undefined}>
+    <BentoTile tone="muted" icon={AlarmClock} label={t.dashboard.nextRunLabel} href={next ? '/settings?section=cron' : undefined}>
       {next ? (
         <div className="mt-auto">
           <Metric value={new Date(next.at).toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' })} className="text-[28px]" />

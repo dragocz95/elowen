@@ -10,17 +10,6 @@ import { compactElapsed, parseTs } from '../../lib/format';
 import { useTranslation } from '../../lib/i18n';
 import type { SessionInfo } from '../../lib/types';
 
-/** A live equalizer — four dancing bars that only run while the agent is working. */
-function Equalizer() {
-  return (
-    <span className="flex h-3.5 items-end gap-[2.5px]" aria-hidden>
-      {[0, 0.18, 0.36, 0.54].map((d, i) => (
-        <span key={i} className="eq-bar w-[3px] rounded-[2px] bg-success" style={{ height: '100%', animationDelay: `${d}s` }} />
-      ))}
-    </span>
-  );
-}
-
 function Stat({ icon: Icon, value, label }: { icon: typeof FileCode2; value: string; label: string }) {
   return (
     <div className="flex items-center gap-2.5">
@@ -83,13 +72,13 @@ export function HeroNowTile({ now }: { now: number }) {
   // ── Resting: no live agent ──
   if (!primary) {
     return (
-      <BentoTile tone="accent" icon={Bot} label={t.dashboard.rightNow} span="hero">
+      <BentoTile tone="muted" icon={Bot} label={t.dashboard.rightNow} span="hero">
         <div className="flex flex-1 flex-col items-center justify-center gap-4 text-center">
           <div>
             <h2 className="font-display text-xl font-semibold tracking-[-0.02em]">{t.dashboard.resting}</h2>
             <p className="mt-1.5 text-sm text-text-muted">{t.dashboard.restingDesc}</p>
           </div>
-          <Link href="/tasks?new=1" className="inline-flex h-9 items-center gap-1.5 rounded-md border border-accent bg-accent px-3.5 text-sm font-medium text-white transition-[filter] hover:brightness-110">
+          <Link href="/tasks?new=1" className="inline-flex h-9 items-center gap-1.5 rounded-md border border-border bg-elevated px-3.5 text-sm font-medium text-text transition-colors hover:border-border-strong">
             <Plus size={14} aria-hidden />{t.tasks.newTask}
           </Link>
         </div>
@@ -99,15 +88,12 @@ export function HeroNowTile({ now }: { now: number }) {
 
   return (
     <BentoTile
-      tone="accent" icon={Bot} label={t.dashboard.rightNow} span="hero"
+      tone={working ? 'accent' : 'muted'} icon={Bot} label={t.dashboard.rightNow} span="hero"
       trailing={working ? (
-        <div className="flex items-center gap-2.5">
-          <Equalizer />
-          <span className="inline-flex items-center gap-1.5 rounded-full border border-success/35 bg-success/15 px-2.5 py-1 text-[11px] font-semibold text-success">
-            <span className="live-dot h-1.5 w-1.5 rounded-full bg-success" />
-            {elapsed ? t.dashboard.running.replace('{d}', elapsed) : t.dashboard.workingNow}
-          </span>
-        </div>
+        <span className="inline-flex items-center gap-2 font-mono text-[12px] tabular-nums text-text-muted">
+          <span className="live-dot h-1.5 w-1.5 rounded-full bg-accent" aria-hidden />
+          {elapsed ? t.dashboard.running.replace('{d}', elapsed) : t.dashboard.workingNow}
+        </span>
       ) : undefined}
     >
       <div className="mt-1 flex flex-col gap-1">

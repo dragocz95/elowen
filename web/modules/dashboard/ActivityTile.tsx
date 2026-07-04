@@ -1,19 +1,12 @@
 'use client';
 import { Activity } from 'lucide-react';
 import { BentoTile } from './BentoTile';
-import { Chip, type ChipTone } from './Chip';
-import { eventIcon, markerTone } from '../timeline/eventMeta';
+import { eventIcon } from '../timeline/eventMeta';
 import { useActivity } from '../../lib/queries';
 import { useTranslation } from '../../lib/i18n';
 import { parseTs, compactElapsed } from '../../lib/format';
-import type { Tone } from '../../components/ui/tone';
 import type { ActivityEvent } from '../../lib/types';
 import type { LocaleDict } from '../../lib/i18n/types';
-
-/** Marker tones collapse onto the chip palette (chips have no neutral `default`). */
-const TONE_CHIP: Record<Tone, ChipTone> = {
-  default: 'muted', muted: 'muted', accent: 'accent', success: 'success', warning: 'warning', danger: 'danger',
-};
 
 /** A short human verb for an event, from its type + status detail (moved here from the old EventStream).
  *  The detail is a status string ('open'/'closed'/'complete'/'active'/'paused'…) or a review verdict
@@ -39,13 +32,13 @@ function eventVerb(t: LocaleDict, type: string, detail: string): string {
 
 function EventRow({ event }: { event: ActivityEvent }) {
   const { t } = useTranslation();
-  const tone = markerTone(event.type, event.detail);
+  const Icon = eventIcon(event.type);
   const ts = parseTs(event.ts);
   return (
     <div className="flex items-center gap-3 rounded-lg px-1.5 py-2 transition-colors hover:bg-elevated">
-      <Chip tone={TONE_CHIP[tone]} icon={eventIcon(event.type)} size="sm" />
+      <Icon size={14} className="shrink-0 text-text-muted" aria-hidden />
       <span className="min-w-0 flex-1 truncate text-[13px]">
-        <span className="font-semibold">{eventVerb(t, event.type, event.detail)}</span>{' '}
+        <span className="font-medium text-text">{eventVerb(t, event.type, event.detail)}</span>{' '}
         <span className="text-text-muted">{event.label || event.target}</span>
       </span>
       {ts != null && <span className="shrink-0 font-mono text-[11px] tabular-nums text-text-muted">{compactElapsed(Date.now() - ts)}</span>}
@@ -54,14 +47,14 @@ function EventRow({ event }: { event: ActivityEvent }) {
 }
 
 /** The activity feed as a wide bento tile: the daemon's chronological log (signal churn filtered out),
- *  newest first, each row a colored chip + verb + subject + relative time. */
+ *  newest first, each row a monochrome icon + verb + subject + relative time. */
 export function ActivityTile({ limit = 5 }: { limit?: number }) {
   const { t } = useTranslation();
   const activity = useActivity();
   const rows = (activity.data ?? []).filter((e) => e.type !== 'signal').slice(0, limit);
   return (
-    <BentoTile tone="accent" icon={Activity} label={t.dashboard.eventStream} span="wide"
-      trailing={<span className="rounded-full border border-border bg-elevated px-2.5 py-1 text-[11px] font-semibold text-text-muted">{t.dashboard.live}</span>}>
+    <BentoTile tone="muted" icon={Activity} label={t.dashboard.eventStream} span="wide"
+      trailing={<span className="font-mono text-[11px] tabular-nums text-text-muted">{t.dashboard.live}</span>}>
       {rows.length === 0 ? (
         <p className="flex flex-1 items-center justify-center py-4 text-center text-xs text-text-muted">{t.dashboard.eventStreamEmpty}</p>
       ) : (
