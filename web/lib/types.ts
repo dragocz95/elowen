@@ -58,6 +58,8 @@ export interface BrainProvider {
 export interface BrainModelOption { provider: string; providerLabel: string; model: string; exec: string; source: 'api-key' | 'oauth' | 'relay' }
 /** One brain conversation in the session picker (web chat + CLI). */
 export interface BrainSessionInfo { id: string; title: string; model: string; updated_at: string; running: boolean; active: boolean }
+/** A row in the admin session-management panel (all brain sessions the operator anchors). */
+export interface ManagedSession { id: string; title: string; model: string; updated_at: string; running: boolean; active: boolean; kind: 'conversation' | 'channel' | 'task' }
 /** Mirror of the daemon's slash-command def (src/brain/slashCommands.ts) — published at GET /brain/commands. */
 export interface SlashCommandDef { name: string; description: string; kind: 'action' | 'info' | 'picker'; adminOnly?: boolean }
 /** One fulltext-search match across the caller's brain conversations. */

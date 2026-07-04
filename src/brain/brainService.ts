@@ -319,6 +319,42 @@ export class BrainService {
     return this.d.store.searchMessages(userId, query);
   }
 
+  /** ADMIN session-management view (the sessions/ panel): EVERY brain session this owner anchors — their
+   *  own conversations PLUS the platform channel sessions (Discord) and task-worker sessions. Nothing is
+   *  filtered out (unlike listSessions); each row is tagged with its `kind` so the UI can group + icon it. */
+  listManagedSessions(userId: number): { id: string; title: string; model: string; updated_at: string; running: boolean; active: boolean; kind: 'conversation' | 'channel' | 'task' }[] {
+    const activeId = this.activeSessionId(userId);
+    return this.d.store.listSessions(userId).map((s) => {
+      const channel = s.id.startsWith('brain-ch-');
+      const running = channel ? !!this.sessions.channelGet(s.id.slice('brain-ch-'.length)) : this.sessions.has(s.id);
+      return {
+        id: s.id, title: s.title, model: s.model, updated_at: s.updated_at, running, active: s.id === activeId,
+        kind: channel ? 'channel' as const : s.id.startsWith('brain-task-') ? 'task' as const : 'conversation' as const,
+      };
+    });
+  }
+
+  /** Delete ANY of the owner's brain sessions by id (admin panel) — disposing a live conversation or
+   *  channel session first. Deliberately bypasses the isNonUserSession guard: this IS the management
+   *  surface. Returns how many were deleted (0 or 1). */
+  deleteManagedSession(userId: number, id: string): number {
+    const row = this.d.store.getSession(id);
+    if (!row || row.user_id !== userId) return 0;
+    this.elicitation.cancelForSession(id, 'session deleted');
+    if (id.startsWith('brain-ch-')) this.sessions.channelDispose(id.slice('brain-ch-'.length));
+    else if (this.sessions.has(id)) this.sessions.dispose(id);
+    this.d.store.deleteSession(id);
+    return 1;
+  }
+
+  /** Delete ALL of the owner's brain sessions (the panel's "delete everything" — the client confirms).
+   *  Returns the count removed. */
+  deleteAllManagedSessions(userId: number): number {
+    let n = 0;
+    for (const s of this.d.store.listSessions(userId)) n += this.deleteManagedSession(userId, s.id);
+    return n;
+  }
+
   /** Everything shared by a user session and a channel session: registry + store row + rehydration +
    *  persona/plugins composition + PI session construction + persistence subscription. */
   private async spawnLive(opts: SpawnOpts): Promise<LiveBrain> {

@@ -43,6 +43,26 @@ export function registerBrainRoutes(app: OrcaApp, ctx: RouteContext): void {
     return c.json(d.brain.listSessions(c.get('user').id));
   });
 
+  // Admin session-management panel: EVERY brain session the operator anchors — their own conversations
+  // PLUS the platform channel (Discord) and task-worker sessions. Distinct base path from `/brain/sessions`
+  // so `:id` below never captures "managed-sessions". Admin-only (channel/task sessions are shared state).
+  app.get('/brain/managed-sessions', async c => {
+    if (!d.brain) return c.json([]);
+    if (forbidden(c) || !c.get('user').is_admin) return c.json({ error: 'forbidden' }, 403);
+    return c.json(d.brain.listManagedSessions(c.get('user').id));
+  });
+  // Delete EVERYTHING (the panel's confirmed "delete all"). Registered before the `/:id` variant.
+  app.delete('/brain/managed-sessions', async c => {
+    if (!d.brain) return c.json({ error: 'brain unavailable' }, 503);
+    if (forbidden(c) || !c.get('user').is_admin) return c.json({ error: 'forbidden' }, 403);
+    return c.json({ deleted: d.brain.deleteAllManagedSessions(c.get('user').id) });
+  });
+  app.delete('/brain/managed-sessions/:id', async c => {
+    if (!d.brain) return c.json({ error: 'brain unavailable' }, 503);
+    if (forbidden(c) || !c.get('user').is_admin) return c.json({ error: 'forbidden' }, 403);
+    return c.json({ deleted: d.brain.deleteManagedSession(c.get('user').id, c.req.param('id')) });
+  });
+
   // Fulltext search across the caller's own conversations (newest first). Queries under 2 chars
   // yield [] — the store enforces that, plus the ownership scoping.
   app.get('/brain/search', async c => {
@@ -150,6 +170,7 @@ export function registerBrainRoutes(app: OrcaApp, ctx: RouteContext): void {
   // (src/brain/slashCommands.ts). Every chat client renders its menu / registers its commands from this,
   // so a new command is added in one place and appears in CLI, Discord and the web dock at once.
   app.get('/brain/commands', c => {
+    if (forbidden(c)) return c.json({ error: 'forbidden' }, 403);
     const q = c.req.query('surface');
     const surface: SlashSurface = q === 'cli' || q === 'discord' ? q : 'web';
     return c.json({ commands: commandsFor(surface, !!c.get('user').is_admin) });
