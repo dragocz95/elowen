@@ -1,11 +1,12 @@
 'use client';
 export const dynamic = 'force-dynamic';
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef, useMemo } from 'react';
 import { Boxes, Bot, SlidersHorizontal, Plus, X, Pencil, Plug, Radio, Cpu, Gauge, Layers, Link2, KeyRound, FileText, Eye, Lock, Trash2, GitPullRequest, GitBranch, TerminalSquare, Github, RefreshCw, RotateCcw, Server, Sparkles, Puzzle, BrainCircuit, Database, type LucideIcon } from 'lucide-react';
 import { PROVIDERS, ProviderLogo } from '../../modules/settings/providers';
 import { ModelIcon } from '../../components/ui/ModelIcon';
 import { ExecutorPicker } from '../../components/ui/ExecutorPicker';
 import { ProviderPicker } from '../../components/ui/ProviderPicker';
+import { ModelPillsPicker } from '../../components/ui/ModelPillsPicker';
 import { ModelModal } from '../../modules/settings/ModelModal';
 import { ModelNoteModal } from '../../modules/settings/ModelNoteModal';
 import { GithubStatusBanner } from '../../modules/settings/GithubStatusBanner';
@@ -111,6 +112,12 @@ export default function SettingsPage() {
   // When set, the planner/overseer/curator reuse this brain provider's endpoint+key instead of a
   // separately-entered relay key — so a key is never typed twice. Empty = the legacy manual apiUrl/apiKey.
   const [apProviderId, setApProviderId] = useState('');
+  // Model catalog scoped to the picked autopilot provider — feeds the planner/overseer model pills (like
+  // Settings → Memory). Empty in Manual mode: no catalog for an arbitrary endpoint, so a free-text input runs.
+  const apCatalog = useMemo(
+    () => Array.from(new Set((brainModels.data ?? []).filter((m) => m.provider === apProviderId).map((m) => m.model))),
+    [brainModels.data, apProviderId],
+  );
   const [notes, setNotes] = useState('');
   const [providers, setProviders] = useState<Record<string, { bin: string; args: string; skipPermissions?: boolean; resume?: boolean }>>({});
   const [sampleGoal, setSampleGoal] = useState('');
@@ -227,7 +234,7 @@ export default function SettingsPage() {
   // Auto-persist: every settings form saves itself shortly after a change (no Save buttons anywhere).
   // Secrets (apiKey/ghToken) ride along only when freshly typed, exactly as with the old buttons.
   const ready = seeded.current;
-  useAutoSave([reasoningMode, pilotExec, overseerExec, reviewOnDone, notes, model, overseerModel, apiUrl, apiKey], saveAutopilot, { ready });
+  useAutoSave([reasoningMode, pilotExec, overseerExec, reviewOnDone, notes, model, overseerModel, apiUrl, apiKey, apProviderId], saveAutopilot, { ready });
   useAutoSave([prEnabled, prBaseBranch, prAutoOpen, prVerifyCommand, ghToken], saveGithub, { ready });
   useAutoSave([providers], saveProviders, { ready });
   useAutoSave([defExec, defAutonomy, defMaxSessions, defTokenTtl, autoUpdate], saveDefaults, { ready });
@@ -495,10 +502,14 @@ export default function SettingsPage() {
                     />
                   </SettingCard>
                   <SettingCard title={t.settings.plannerModel} description={t.settings.plannerModelDesc} icon={Bot}>
-                    <ModelInput value={model} onChange={setModel} placeholder={t.settings.plannerPlaceholder} />
+                    {apProviderId && apCatalog.length > 0
+                      ? <ModelPillsPicker mode="single" catalog={apCatalog} value={model || null} onChange={(m) => setModel(m ?? '')} />
+                      : <ModelInput value={model} onChange={setModel} placeholder={t.settings.plannerPlaceholder} />}
                   </SettingCard>
                   <SettingCard title={t.settings.overseerModel} description={t.settings.overseerModelDesc} icon={Eye}>
-                    <ModelInput value={overseerModel} onChange={setOverseerModel} placeholder={t.settings.overseerPlaceholder} />
+                    {apProviderId && apCatalog.length > 0
+                      ? <ModelPillsPicker mode="single" catalog={apCatalog} value={overseerModel || null} onChange={(m) => setOverseerModel(m ?? '')} />
+                      : <ModelInput value={overseerModel} onChange={setOverseerModel} placeholder={t.settings.overseerPlaceholder} />}
                   </SettingCard>
                   {/* Manual endpoint+key only when NO provider is picked — a chosen provider supplies both,
                       so the key is never entered twice. */}
