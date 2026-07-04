@@ -409,14 +409,16 @@ export interface MemoryCategory {
   name: string;
   description: string;
   color: string;
+  /** One of the shared lucide icon allowlist (see web/lib/categoryIcons.tsx). Empty string → Folder. */
+  icon: string;
   is_builtin: number;
   created_at: string;
 }
 
 /** Body for POST /memory/categories — only `name` is required (409 on duplicate name). */
-export interface MemoryCategoryCreate { name: string; description?: string; color?: string }
+export interface MemoryCategoryCreate { name: string; description?: string; color?: string; icon?: string }
 /** Any subset of the mutable fields for PATCH /memory/categories/:cid (409 on duplicate name). */
-export interface MemoryCategoryPatch { name?: string; description?: string; color?: string }
+export interface MemoryCategoryPatch { name?: string; description?: string; color?: string; icon?: string }
 
 /** Workspace-level categorization provider settings (GET /memory/categorization). `configured` reflects
  *  whether provider/model/baseUrl are complete enough to classify. */
@@ -444,6 +446,8 @@ export interface MemoryEvent {
   after_json: string | null;
   actor: string;
   reason: string;
+  /** Inference model that performed the action (curator/categorizer), or null for user/system events. */
+  model: string | null;
   created_at: string;
 }
 

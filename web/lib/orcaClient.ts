@@ -254,6 +254,10 @@ export const orcaClient = {
   setMemoryCategory: (id: number, categoryId: number | null) => req<Memory>(`/memory/${id}/category`, json({ categoryId }, 'PUT')),
   deleteMemory: (id: number) => req<{ ok: boolean }>(`/memory/${id}`, { method: 'DELETE' }),
   restoreMemory: (id: number) => req<{ ok: boolean }>(`/memory/${id}/restore`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }),
+  /** Hard-delete many owned memories in one call; returns how many were purged. Irreversible. */
+  purgeMemories: (ids: number[]) => req<{ purged: number }>('/memory/purge', json({ ids })),
+  /** Hard-delete ALL of the caller's status='deleted' memories (empty trash); returns the count. */
+  emptyTrash: () => req<{ purged: number }>('/memory/empty-trash', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }),
   mergeMemories: (ids: number[], body: string) => req<Memory>('/memory/merge', json({ ids, body })),
   /** A single memory's audit trail (`id` set) or the whole-user event feed (`id` omitted). */
   memoryEvents: (id?: number) => req<MemoryEvent[]>(id != null ? `/memory/${id}/events` : '/memory/events'),
@@ -267,6 +271,8 @@ export const orcaClient = {
   createMemoryCategory: (body: MemoryCategoryCreate) => req<MemoryCategory>('/memory/categories', json(body)),
   updateMemoryCategory: (cid: number, patch: MemoryCategoryPatch) => req<MemoryCategory>(`/memory/categories/${cid}`, json(patch, 'PATCH')),
   deleteMemoryCategory: (cid: number) => req<{ ok: boolean }>(`/memory/categories/${cid}`, { method: 'DELETE' }),
+  /** Let the model pick a lucide icon (from the shared allowlist) for a category name; fail-soft "Folder". */
+  suggestCategoryIcon: (name: string) => req<{ icon: string }>('/memory/categories/suggest-icon', json({ name })),
   /** Workspace-level categorization provider settings. */
   categorizationSettings: () => req<CategorizationSettings>('/memory/categorization'),
   saveCategorizationSettings: (patch: CategorizationSettingsPatch) => req<CategorizationSettings>('/memory/categorization', json(patch, 'PUT')),

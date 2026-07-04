@@ -403,6 +403,22 @@ export function useRestoreMemory() {
     },
   });
 }
+/** Hard-delete many owned memories in one call — irreversible. Refreshes the list and audit feed. */
+export function usePurgeMemories() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (ids: number[]) => orcaClient.purgeMemories(ids),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: QUERY_KEYS.memories }); qc.invalidateQueries({ queryKey: ['memory-events'] }); },
+  });
+}
+/** Empty the trash — hard-delete ALL of the caller's soft-deleted memories. Refreshes list and audit feed. */
+export function useEmptyTrash() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => orcaClient.emptyTrash(),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: QUERY_KEYS.memories }); qc.invalidateQueries({ queryKey: ['memory-events'] }); },
+  });
+}
 /** Merge several memories into a new one (sources soft-deleted). Refreshes the list and audit feed. */
 export function useMergeMemories() {
   const qc = useQueryClient();
