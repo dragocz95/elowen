@@ -60,10 +60,12 @@ export interface BrainModelOption { provider: string; providerLabel: string; mod
 export interface BrainSessionInfo { id: string; title: string; model: string; updated_at: string; running: boolean; active: boolean }
 /** One fulltext-search match across the caller's brain conversations. */
 export interface BrainSearchHit { sessionId: string; sessionTitle: string; role: string; snippet: string; ts: string }
+/** One item of the agent's todo checklist (from a todo tool's `details.todos`). */
+export interface BrainTodo { title: string; status: 'pending' | 'in_progress' | 'completed' }
 /** A stored brain turn shaped for display. */
 export type BrainSegment =
   | { kind: 'text'; text: string }
-  | { kind: 'tool'; name: string; detail?: string; diff?: string };
+  | { kind: 'tool'; name: string; detail?: string; diff?: string; todos?: BrainTodo[] };
 export interface BrainMessage { role: string; text: string; segments?: BrainSegment[] }
 /** Live statusline numbers for the active conversation. */
 export interface BrainUsage { tokens: number | null; contextWindow: number; percent: number | null; totalTokens: number; cost: number }

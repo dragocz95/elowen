@@ -1,5 +1,6 @@
 import type { AgentSession, AgentSessionEvent } from '@earendil-works/pi-coding-agent';
 import { toolDetail } from './messageView.js';
+import { normalizeTodos, type TodoItem } from './todos.js';
 
 /** What a channel (web/terminal/Discord) receives from the brain. Stable regardless of the underlying
  *  PI event shape — the mapping lives in one place (`toBrainEvent`). This is the wire contract every
@@ -12,6 +13,10 @@ export type BrainEvent =
   | { type: 'reasoning'; delta: string }
   | { type: 'tool'; name: string; detail?: string }
   | { type: 'diff'; diff: string }
+  /** The current todo checklist a tool produced on `result.details.todos` — rendered as a live panel
+   *  (CLI above the status bar, Discord in the streamed message), NOT inline under the tool. An empty
+   *  list clears the panel. Mirrors how `diff` is lifted off a tool result. */
+  | { type: 'todo'; todos: TodoItem[] }
   /** A tool produced a stored image (`/api/brain/images/…`) — channels attach it even when the
    *  model's final text forgets to repeat the markdown link. */
   | { type: 'image'; ref: string }
@@ -35,7 +40,7 @@ export interface BrainUsage {
 export function toBrainEvent(e: AgentSessionEvent): BrainEvent | null {
   if (e.type === 'agent_end') return { type: 'idle' };
   const anyE = e as {
-    type: string; toolName?: string; args?: unknown; result?: { details?: { diff?: unknown } };
+    type: string; toolName?: string; args?: unknown; result?: { details?: { diff?: unknown; todos?: unknown } };
     assistantMessageEvent?: { type?: string; delta?: string };
     attempt?: number; maxAttempts?: number; errorMessage?: string; success?: boolean;
   };
@@ -62,6 +67,9 @@ export function toBrainEvent(e: AgentSessionEvent): BrainEvent | null {
   if (anyE.type === 'tool_execution_end') {
     const diff = anyE.result?.details?.diff;
     if (typeof diff === 'string' && diff.trim()) return { type: 'diff', diff };
+    // A todo tool publishes its full list on `details.todos` — surface it as a live panel event.
+    const todos = anyE.result?.details?.todos;
+    if (Array.isArray(todos)) return { type: 'todo', todos: normalizeTodos(todos) };
     // Image tools return a markdown link to the stored file; surface it as a first-class event so
     // channel adapters can attach the real file (models often omit the link from their final text).
     const parts = (anyE.result as { content?: { type?: string; text?: string }[] } | undefined)?.content;

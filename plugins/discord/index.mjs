@@ -772,6 +772,8 @@ const TOOL_EMOJI = [
   ['add_memory', '🧠'], ['search_memory', '🧠'],
   ['cron_add', '⏰'], ['cron_list', '⏰'], ['cron_remove', '⏰'], ['schedule_wakeup', '⏰'],
   ['create_skill', '📖'], ['list_skills', '📖'], ['delete_skill', '📖'],
+  ['todo_*', '📋'],
+  ['discord_*', '💬'],
   ['discord_api', '💬'],
   ['orca_*', '🐋'],
   ['delegate', '🤝'],
@@ -787,6 +789,17 @@ export function toolEmoji(name) {
 /** One rendered progress line: `<emoji> \`tool\`` + optional `: "detail"` + optional ` ×N` counter. */
 function toolLine(c) {
   return `${toolEmoji(c.name)} \`${c.name}\`` + (c.detail ? `: "${c.detail}"` : '…') + (c.count > 1 ? ` ×${c.count}` : '');
+}
+
+/** The live todo checklist for the progress bubble — emoji per status (Discord has no task-list markdown),
+ *  completed items struck through. Capped so a long list can't blow the ~2k message limit. */
+function todoLines(todos, max = 15) {
+  if (!todos?.length) return [];
+  const glyph = (s) => (s === 'completed' ? '✅' : s === 'in_progress' ? '🔸' : '⬜');
+  const done = todos.filter((t) => t.status === 'completed').length;
+  const rows = todos.slice(0, max).map((t) => `${glyph(t.status)} ${t.status === 'completed' ? `~~${t.title}~~` : t.title}`);
+  if (todos.length > max) rows.push(`… +${todos.length - max}`);
+  return [`📋 **Todo** (${done}/${todos.length})`, ...rows];
 }
 
 /** Runtime footer, Hermes-style: `model · 42 %` as Discord subtext under the final answer. Empty
@@ -817,17 +830,19 @@ export class LiveMessage {
     this.imageRefs = [];  // generated-image refs from tool results — attached even if the reply omits them
     this.idle = null;     // the turn's settle event (model + context usage) → runtime footer
     this.reasoning = '';  // reasoning stream, only rendered when cfg.showReasoning (off by default)
+    this.todos = [];      // latest todo checklist snapshot (from a todo tool's details.todos)
   }
-  /** Re-render the progress bubble = tool lines + (opt-in) a truncated reasoning tail. */
+  /** Re-render the progress bubble = tool lines + (opt-in) a reasoning tail + the live todo checklist. */
   renderProgress() {
     const lines = this.toolCalls.map(toolLine);
     if (this.a.cfg?.showReasoning && this.reasoning.trim()) {
       const tail = this.reasoning.trim().slice(-280).replace(/\s+/g, ' ');
       lines.push(`💭 _${tail}_`);
     }
-    if (!lines.length) return;
+    const body = [...lines, ...todoLines(this.todos)];
+    if (!body.length) return;
     this.progress ??= new EditableMessage(this.a, this.channelId);
-    this.progress.update(lines.join('\n'));
+    this.progress.update(body.join('\n'));
   }
   onEvent(e) {
     if (e.type === 'tool' && e.name) {
@@ -848,6 +863,9 @@ export class LiveMessage {
       this.text += e.delta;
     } else if (e.type === 'image' && e.ref) {
       this.imageRefs.push(e.ref);
+    } else if (e.type === 'todo') {
+      this.todos = e.todos; // latest checklist snapshot → re-render the bubble with the updated todos
+      this.renderProgress();
     } else if (e.type === 'idle') {
       this.idle = e;
     }
@@ -919,5 +937,107 @@ export function register(ctx) {
     },
   }));
 
-  ctx.logger.info('discord platform registered (slash commands + model picker + streaming + discord_api)');
+  // ── Ergonomic server tools (structured wrappers over the REST surface, so the agent needn't know raw
+  // endpoints). Reads gate on an admin session; role WRITES gate on the operator (a role grant can hand out
+  // admin, so a foreign admin-mapped member must never reach them). ──
+  const cfgGuild = typeof ctx.config.guildId === 'string' ? ctx.config.guildId.trim() : '';
+  const requireGuild = (p) => {
+    const g = (p?.guildId && String(p.guildId).trim()) || cfgGuild;
+    if (!g) throw new Error('no guild id — set guildId in the plugin config or pass it as guildId');
+    return g;
+  };
+  const adminGate = () => { if (!ctx.isAdminSession()) throw new Error('available only in an admin session'); };
+  const ownerGate = () => { if (ctx.currentIdentity?.()?.owner !== true) throw new Error('available only to the operator'); };
+  const CHAN_TYPE = { 0: 'text', 2: 'voice', 4: 'category', 5: 'news', 10: 'news-thread', 11: 'thread', 12: 'private-thread', 13: 'stage', 15: 'forum' };
+
+  ctx.registerTool(defineTool({
+    name: 'discord_list_channels', label: 'List Discord channels',
+    description: 'List the guild\'s channels AND active threads (id, type, name, parent) so you can pick one to read or post to.',
+    parameters: Type.Object({ guildId: Type.Optional(Type.String({ description: 'Guild id (defaults to the configured one)' })) }),
+    execute: async (_id, p) => {
+      try {
+        adminGate();
+        const g = requireGuild(p);
+        const chans = (await adapter.rest('GET', `/guilds/${g}/channels`)) ?? [];
+        const active = ((await adapter.rest('GET', `/guilds/${g}/threads/active`)) ?? {}).threads ?? [];
+        const line = (c, t) => `${c.id}  [${t}]  ${c.name ?? ''}${c.parent_id ? `  (parent ${c.parent_id})` : ''}`;
+        const out = [...chans.map((c) => line(c, CHAN_TYPE[c.type] ?? c.type)), ...active.map((t) => line(t, 'active-thread'))];
+        return ok(out.length ? out.join('\n') : '(no channels)');
+      } catch (e) { return fail(e); }
+    },
+  }));
+
+  ctx.registerTool(defineTool({
+    name: 'discord_read_channel', label: 'Read Discord channel',
+    description: 'Read recent messages from a channel or thread by id (oldest→newest) — use it to load context from another thread. Returns "author: text" lines.',
+    parameters: Type.Object({
+      channelId: Type.String({ description: 'Channel or thread id' }),
+      limit: Type.Optional(Type.Number({ description: 'How many recent messages (default 30, max 100)' })),
+    }),
+    execute: async (_id, p) => {
+      try {
+        adminGate();
+        const limit = Math.min(Math.max(1, Number(p.limit) || 30), 100);
+        const msgs = (await adapter.rest('GET', `/channels/${encodeURIComponent(p.channelId)}/messages?limit=${limit}`)) ?? [];
+        const lines = msgs.reverse().map((m) => `${m.author?.username ?? m.author?.id ?? '?'}: ${(m.content ?? '').replace(/\s+/g, ' ').trim()}${m.attachments?.length ? `  [${m.attachments.length} attachment(s)]` : ''}`);
+        const text = lines.join('\n') || '(no messages)';
+        return ok(text.length > 6000 ? text.slice(-6000) : text);
+      } catch (e) { return fail(e); }
+    },
+  }));
+
+  ctx.registerTool(defineTool({
+    name: 'discord_list_roles', label: 'List Discord roles',
+    description: 'List the guild\'s roles (id, name) — get a roleId here before assigning/removing it.',
+    parameters: Type.Object({ guildId: Type.Optional(Type.String()) }),
+    execute: async (_id, p) => {
+      try {
+        adminGate();
+        const roles = (await adapter.rest('GET', `/guilds/${requireGuild(p)}/roles`)) ?? [];
+        return ok(roles.map((r) => `${r.id}  ${r.name}`).join('\n') || '(no roles)');
+      } catch (e) { return fail(e); }
+    },
+  }));
+
+  ctx.registerTool(defineTool({
+    name: 'discord_list_members', label: 'List Discord members',
+    description: 'List guild members (id, username, role ids) — needs the SERVER MEMBERS privileged intent. Use it to find a user id before assigning a role.',
+    parameters: Type.Object({ guildId: Type.Optional(Type.String()), limit: Type.Optional(Type.Number({ description: 'default 50, max 200' })) }),
+    execute: async (_id, p) => {
+      try {
+        adminGate();
+        const limit = Math.min(Math.max(1, Number(p.limit) || 50), 200);
+        const members = (await adapter.rest('GET', `/guilds/${requireGuild(p)}/members?limit=${limit}`)) ?? [];
+        return ok(members.map((m) => `${m.user?.id}  ${m.user?.username ?? ''}${m.roles?.length ? `  roles:[${m.roles.join(',')}]` : ''}`).join('\n') || '(no members)');
+      } catch (e) { return fail(e); }
+    },
+  }));
+
+  ctx.registerTool(defineTool({
+    name: 'discord_assign_role', label: 'Assign Discord role',
+    description: 'Give a guild member a role. Operator only. Get ids from discord_list_members + discord_list_roles.',
+    parameters: Type.Object({ userId: Type.String(), roleId: Type.String(), guildId: Type.Optional(Type.String()) }),
+    execute: async (_id, p) => {
+      try {
+        ownerGate();
+        await adapter.rest('PUT', `/guilds/${requireGuild(p)}/members/${encodeURIComponent(p.userId)}/roles/${encodeURIComponent(p.roleId)}`);
+        return ok(`Assigned role ${p.roleId} to member ${p.userId}.`);
+      } catch (e) { return fail(e); }
+    },
+  }));
+
+  ctx.registerTool(defineTool({
+    name: 'discord_remove_role', label: 'Remove Discord role',
+    description: 'Remove a role from a guild member. Operator only.',
+    parameters: Type.Object({ userId: Type.String(), roleId: Type.String(), guildId: Type.Optional(Type.String()) }),
+    execute: async (_id, p) => {
+      try {
+        ownerGate();
+        await adapter.rest('DELETE', `/guilds/${requireGuild(p)}/members/${encodeURIComponent(p.userId)}/roles/${encodeURIComponent(p.roleId)}`);
+        return ok(`Removed role ${p.roleId} from member ${p.userId}.`);
+      } catch (e) { return fail(e); }
+    },
+  }));
+
+  ctx.logger.info('discord platform registered (slash commands + model picker + streaming + server tools)');
 }

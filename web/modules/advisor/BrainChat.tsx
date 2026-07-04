@@ -43,7 +43,8 @@ async function readAttachment(file: File): Promise<Attachment | null> {
 /** An assistant turn is an ordered list of segments so text and tool calls render in the sequence they
  *  actually happened. Consecutive tool calls (no new text between them) collapse into ONE tools segment
  *  → the Claude-Code "grouped pills" look. */
-type ToolPill = { name: string; detail?: string; diff?: string };
+type Todo = { title: string; status: string };
+type ToolPill = { name: string; detail?: string; diff?: string; todos?: Todo[] };
 type Segment = { kind: 'text'; text: string } | { kind: 'reasoning'; text: string } | { kind: 'tools'; tools: ToolPill[] };
 type Turn = { role: 'user'; text: string } | { role: 'assistant'; segments: Segment[] };
 
@@ -96,6 +97,22 @@ function appendDiff(cur: Turn[], diff: string): Turn[] {
   return cur;
 }
 
+/** Attach the latest todo checklist snapshot to the most recent tool pill (mirrors `appendDiff`). */
+function appendTodos(cur: Turn[], todos: Todo[]): Turn[] {
+  const last = cur[cur.length - 1];
+  if (last?.role !== 'assistant') return cur;
+  const segs = [...last.segments];
+  for (let i = segs.length - 1; i >= 0; i--) {
+    const seg = segs[i];
+    if (seg?.kind !== 'tools') continue;
+    const tools = [...seg.tools];
+    tools[tools.length - 1] = { ...tools[tools.length - 1], todos };
+    segs[i] = { kind: 'tools', tools };
+    return [...cur.slice(0, -1), { role: 'assistant', segments: segs }];
+  }
+  return cur;
+}
+
 /** Sanitized-markdown block for one assistant text segment (marked + DOMPurify, no bubble). */
 function TextSegment({ text }: { text: string }) {
   const html = useMemo(() => DOMPurify.sanitize(marked.parse(text, { async: false }) as string), [text]);
@@ -123,8 +140,30 @@ function DiffBlock({ diff }: { diff: string }) {
   );
 }
 
+/** The agent's todo checklist under the tool row: done items struck through + green, in-progress accented,
+ *  pending muted — the web mirror of the CLI/Discord panel. */
+function TodoBlock({ todos }: { todos: Todo[] }) {
+  if (!todos.length) return null;
+  const done = todos.filter((t) => t.status === 'completed').length;
+  return (
+    <div className="rounded-md border border-border bg-elevated p-2 text-tiny">
+      <div className="mb-1 flex items-center gap-1.5 font-medium text-text-muted">☑ Todo <span className="tabular-nums opacity-70">{done}/{todos.length}</span></div>
+      <ul className="flex flex-col gap-0.5">
+        {todos.map((t, i) => (
+          <li key={i} className="flex items-start gap-1.5">
+            <span className={`shrink-0 ${t.status === 'completed' ? 'text-success' : t.status === 'in_progress' ? 'text-accent' : 'text-text-muted'}`}>
+              {t.status === 'completed' ? '✔' : t.status === 'in_progress' ? '◐' : '○'}
+            </span>
+            <span className={t.status === 'completed' ? 'text-text-muted line-through' : 'text-text'}>{t.title}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 /** A grouped row of tool-call pills (one segment = tools that ran together). The argument summary
- *  (file path, query…) rides muted next to the name; an edit's diff renders under the row. */
+ *  (file path, query…) rides muted next to the name; an edit's diff and a todo checklist render under the row. */
 function ToolPills({ tools }: { tools: ToolPill[] }) {
   return (
     <span className="flex flex-col gap-1">
@@ -137,6 +176,7 @@ function ToolPills({ tools }: { tools: ToolPill[] }) {
         ))}
       </span>
       {tools.filter((t) => t.diff).map((tool, i) => <DiffBlock key={i} diff={tool.diff!} />)}
+      {tools.filter((t) => t.todos).map((tool, i) => <TodoBlock key={`todo-${i}`} todos={tool.todos!} />)}
     </span>
   );
 }
@@ -227,7 +267,7 @@ export function BrainChat() {
           segments.push({ kind: 'text', text: seg.text });
         } else {
           const tail = segments[segments.length - 1];
-          const pill = { name: seg.name, detail: seg.detail, diff: seg.diff };
+          const pill = { name: seg.name, detail: seg.detail, diff: seg.diff, todos: seg.todos };
           if (tail?.kind === 'tools') tail.tools.push(pill);
           else segments.push({ kind: 'tools', tools: [pill] });
         }
@@ -281,6 +321,10 @@ export function BrainChat() {
     es.addEventListener('tool', (e) => {
       const { name, detail } = JSON.parse((e as MessageEvent).data) as { name: string; detail?: string };
       setTurns((cur) => appendTool(cur, { name, detail }));
+    });
+    es.addEventListener('todo', (e) => {
+      const { todos } = JSON.parse((e as MessageEvent).data) as { todos: Todo[] };
+      setTurns((cur) => appendTodos(cur, todos));
     });
     es.addEventListener('diff', (e) => {
       const { diff } = JSON.parse((e as MessageEvent).data) as { diff: string };

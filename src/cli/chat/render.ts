@@ -1,5 +1,18 @@
 import type { BrainEvent } from '../../brain/events.js';
 import type { BrainMessageView } from '../../brain/messageView.js';
+import type { TodoItem } from '../../brain/todos.js';
+
+/** The latest todo checklist across a resumed conversation — the todo panel's state on load. Scans
+ *  segments in order; the last tool that carried a todos snapshot wins (an empty array = list cleared). */
+export function latestTodos(msgs: BrainMessageView[]): TodoItem[] {
+  let todos: TodoItem[] = [];
+  for (const m of msgs) {
+    for (const seg of m.segments ?? []) {
+      if (seg.kind === 'tool' && seg.todos) todos = seg.todos;
+    }
+  }
+  return todos;
+}
 
 /** An assistant turn is an ordered list of segments so text and tool calls render in the sequence they
  *  happened. Consecutive tool calls (no new text between them) collapse into ONE tools segment — the

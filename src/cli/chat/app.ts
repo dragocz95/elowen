@@ -2,10 +2,11 @@ import { TUI, ProcessTerminal, Text, Markdown, Loader, Container, Spacer, matche
 import type { SlashCommand } from '@earendil-works/pi-tui';
 import { initTheme, getMarkdownTheme, getSelectListTheme } from '@earendil-works/pi-coding-agent';
 import { color, glyph } from './theme.js';
-import { UserBlock, StatusBar, TitleBar, banner, toolChip, diffBlock, metaLine, titleBarContent } from './components.js';
+import { UserBlock, StatusBar, TitleBar, TodoPanel, banner, toolChip, diffBlock, metaLine, titleBarContent } from './components.js';
 import { ChatEditor, sessionItems, modelItems, parseModelValue, openPicker } from './picker.js';
 import { BrainClient } from './brainClient.js';
-import { fromHistory, pushUser, beginAssistant, reduce, type ChatView } from './render.js';
+import { fromHistory, pushUser, beginAssistant, reduce, latestTodos, type ChatView } from './render.js';
+import type { TodoItem } from '../../brain/todos.js';
 
 /** Plain-text rendering of the view — used for the non-TTY fallback and unit tests (no ANSI, so it's
  *  deterministic to assert on). The rich terminal path uses pi-tui components instead. */
@@ -118,7 +119,12 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
   let thinkingLevel = boot?.thinkingLevel ?? '';
   let thinkingLevels = boot?.thinkingLevels ?? [];
   let sessionTitle = '';
-  let view = fromHistory(await client.history().catch(() => []));
+  const history0 = await client.history().catch(() => []);
+  let view = fromHistory(history0);
+  /** The live todo checklist (latest `details.todos` snapshot) — a persistent panel above the status bar,
+   *  tracked outside the ChatView like `usage`. Updated on each `todo` stream event; recomputed from
+   *  history on load / conversation switch. */
+  let todos: TodoItem[] = latestTodos(history0);
   /** The last /sessions listing, so /resume <n> can address by number. */
   let listed: { id: string; title: string }[] = [];
   /** Transient system lines (help, session list, errors) rendered under the conversation. */
@@ -144,6 +150,9 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
   /** The picker temporarily replaces the editor in this slot (the pi modal pattern). */
   const editorSlot = new Container();
   editorSlot.addChild(editor);
+  /** Persistent todo checklist panel, pinned above the status line (Claude-Code style) — lives in the
+   *  fixed tree, NOT the rebuilt messages container, so it stays put across turns. */
+  const todoPanel = new TodoPanel();
   const statusUnder = new Text('', 1, 0);
   const bottomBar = new StatusBar(color.faint('  ⏎ send   ·   /help commands'), color.faint('ctrl+c quit  '));
 
@@ -227,6 +236,7 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
     const base = line || (modelName || '—');
     const full = think ? `${base}  ·  ${think}` : base;
     statusUnder.setText(line ? color.faint(`  ${full}`) : `  ${color.accentDim(modelName || '—')}${think ? color.faint(`  ·  ${think}`) : ''}`);
+    todoPanel.set(todos);
     tui.requestRender();
   };
 
@@ -234,6 +244,7 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
   const openStream = (): void => {
     void client.stream((e) => {
       if (e.type === 'idle' && e.usage) usage = e.usage;
+      if (e.type === 'todo') todos = e.todos; // update the persistent panel (not part of the ChatView)
       view = reduce(view, e);
       render();
     }, streamAc.signal).catch(() => { /* aborted/gone */ });
@@ -244,7 +255,9 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
     streamAc.abort();
     streamAc = new AbortController();
     await client.start(target);
-    view = fromHistory(await client.history().catch(() => []));
+    const hist = await client.history().catch(() => []);
+    view = fromHistory(hist);
+    todos = latestTodos(hist);
     await refreshMeta();
     openStream();
     render();
@@ -382,6 +395,7 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
   tui.addChild(messages);
   tui.addChild(spacer); // push the input to the bottom of the screen (opencode-style anchoring)
   tui.addChild(editorSlot);
+  tui.addChild(todoPanel);  // persistent todo checklist, pinned above the status line
   tui.addChild(statusUnder);
   tui.addChild(bottomBar);
   tui.setFocus(editor);

@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import { visibleWidth } from '@earendil-works/pi-tui';
 import { initTheme } from '@earendil-works/pi-coding-agent';
-import { UserBlock, StatusBar, TitleBar, metaLine, banner, toolChip, diffBlock, titleBarContent, fmtCount } from '../../../src/cli/chat/components.js';
+import { UserBlock, StatusBar, TitleBar, TodoPanel, metaLine, banner, toolChip, diffBlock, todoBlock, titleBarContent, fmtCount } from '../../../src/cli/chat/components.js';
 
 describe('chat components', () => {
   beforeAll(() => { initTheme(); }); // renderDiff needs the pi theme
@@ -73,6 +73,39 @@ describe('chat components', () => {
     expect(toolChip('web_search')).toContain('⏺');
     expect(toolChip('web_search')).toContain('web_search');
     expect(toolChip('read_file', 'src/a.ts')).toContain('(src/a.ts)');
+  });
+
+  it('toolChip gives the todo tools a checklist glyph instead of the generic dot', () => {
+    expect(toolChip('todo_write')).toContain('☑');
+    expect(toolChip('todo_write')).not.toContain('⏺');
+  });
+
+  it('TodoPanel renders each todo as a real row and collapses when empty or all-done', () => {
+    const panel = new TodoPanel();
+    expect(panel.render(80)).toEqual([]); // empty → the panel disappears from the fixed stack
+    panel.set([{ title: 'One', status: 'pending' }, { title: 'Two', status: 'completed' }]);
+    const lines = panel.render(80);
+    expect(lines.length).toBe(3); // header + 2 rows, as separate lines (not one \n-joined string)
+    expect(lines.every((l) => !l.includes('\n'))).toBe(true);
+    // Everything completed → the work is done, so the panel collapses.
+    panel.set([{ title: 'One', status: 'completed' }, { title: 'Two', status: 'completed' }]);
+    expect(panel.render(80)).toEqual([]);
+  });
+
+  it('todoBlock renders a header count and per-status glyphs; empty → no lines', () => {
+    expect(todoBlock([])).toEqual([]);
+    const out = todoBlock([
+      { title: 'Alpha', status: 'completed' },
+      { title: 'Beta', status: 'in_progress' },
+      { title: 'Gamma', status: 'pending' },
+    ]);
+    expect(out[0]).toContain('Todos');
+    expect(out[0]).toContain('1/3');
+    const body = out.join('\n');
+    expect(body).toContain('✔'); // completed
+    expect(body).toContain('◐'); // in-progress
+    expect(body).toContain('○'); // pending
+    expect(body).toContain('Alpha');
   });
 
   it('banner renders the ORCA block-letter logo and the model', () => {

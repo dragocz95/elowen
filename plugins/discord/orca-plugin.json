@@ -1,15 +1,21 @@
 {
   "name": "discord",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "apiVersion": "1",
-  "description": "Discord bot: mention it and it answers from Orca AI. Slash commands (/model, /new, /help), a per-channel model picker, live streaming replies, status reactions and proactive cron/tick pushes. Each Discord role maps to allowed Orca projects + a role prompt.",
+  "description": "Discord bot: mention it and it answers from Orca AI. Slash commands (/model, /new, /help), a per-channel model picker, live streaming replies (with the agent's live todo checklist), status reactions and proactive cron/tick pushes. Server tools: list channels/threads, read a thread for context, list roles/members, assign/remove roles. Each Discord role maps to allowed Orca projects + a role prompt.",
   "entry": "index.mjs",
   "provides": {
     "platforms": [
       "discord"
     ],
     "tools": [
-      "discord_api"
+      "discord_api",
+      "discord_list_channels",
+      "discord_read_channel",
+      "discord_list_roles",
+      "discord_list_members",
+      "discord_assign_role",
+      "discord_remove_role"
     ]
   },
   "requires": {

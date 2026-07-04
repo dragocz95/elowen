@@ -17,10 +17,12 @@ const BG_CLOSE = '\x1b[0m';
 /** Bold that resets ONLY bold (\x1b[22m), so it never clears the surrounding background. */
 const bold = (s: string): string => `\x1b[1m${s}\x1b[22m`;
 
+const GREEN = '38;2;127;216;143';          // additions green — completed todos
 const ACCENT = (t: string): string => `\x1b[${BLUE}m${t}\x1b[0m`;
 const WHITE = (t: string): string => `\x1b[${TEXT}m${t}\x1b[0m`;
 const DIM = (t: string): string => `\x1b[${MUTED}m${t}\x1b[0m`;
 const FAINTC = (t: string): string => `\x1b[${FAINT}m${t}\x1b[0m`;
+const GREENC = (t: string): string => `\x1b[${GREEN}m${t}\x1b[0m`;
 
 /** A full-width bar with a subtle background and left/right justified content (the top title bar).
  *  Both sides carry their own ANSI; the whole row is painted with the background color. */
@@ -51,6 +53,17 @@ export class UserBlock implements Component {
     const rows = wrapped.map((l) => railed(` ${l}`));
     return [railed(''), ...rows, railed('')];
   }
+}
+
+/** The persistent todo checklist panel for the fixed bottom stack (pinned above the status line). A
+ *  multi-line Component so each row renders properly, collapsing to nothing when the list is empty. */
+export class TodoPanel implements Component {
+  private todos: { title: string; status: string }[] = [];
+  invalidate(): void { /* re-rendered on the next frame */ }
+  set(todos: { title: string; status: string }[]): void { this.todos = todos; }
+  /** Visible only while there's still open work: an empty list — or one where everything is completed —
+   *  collapses the panel (the task is done, nothing to track). */
+  render(): string[] { return this.todos.some((t) => t.status !== 'completed') ? todoBlock(this.todos) : []; }
 }
 
 /** A bottom status bar: left text and right text justified to the two edges. */
@@ -108,11 +121,31 @@ export function titleBarContent(title: string, usage?: { totalTokens: number; pe
   return { left, right: parts.join('  ') };
 }
 
-/** A tool-call line in the Claude Code style: `⏺ read_file(src/foo.ts)` — accent dot, plain name,
+/** A leading glyph for well-known tools (else the generic accent dot). Gives the todo tools a recognizable
+ *  checklist mark instead of the one-size-fits-all `⏺`. */
+const TOOL_GLYPH: Record<string, string> = { todo_write: '☑', todo_read: '☑' };
+
+/** A tool-call line in the Claude Code style: `⏺ read_file(src/foo.ts)` — accent glyph, plain name,
  *  muted argument summary in parens. */
 export function toolChip(name: string, detail?: string): string {
   const args = detail ? `(${detail})` : '';
-  return `  ${ACCENT('⏺')} ${name}${DIM(args)}`;
+  return `  ${ACCENT(TOOL_GLYPH[name] ?? '⏺')} ${name}${DIM(args)}`;
+}
+
+/** The todo checklist panel (Claude-Code style), pinned above the status bar and persistent across turns.
+ *  Completed items are green + checked and dimmed, the in-progress one accented, pending muted. Capped so a
+ *  long list can't eat the screen. Returns [] for an empty list so the panel collapses. */
+export function todoBlock(todos: { title: string; status: string }[], maxRows = 12): string[] {
+  if (!todos.length) return [];
+  const done = todos.filter((t) => t.status === 'completed').length;
+  const header = `  ${ACCENT('☑')} ${bold(WHITE('Todos'))} ${DIM(`${done}/${todos.length}`)}`;
+  const rows = todos.slice(0, maxRows).map((t) => {
+    if (t.status === 'completed') return `    ${GREENC('✔')} ${DIM(t.title)}`;
+    if (t.status === 'in_progress') return `    ${ACCENT('◐')} ${WHITE(t.title)}`;
+    return `    ${FAINTC('○')} ${DIM(t.title)}`;
+  });
+  if (todos.length > maxRows) rows.push(`    ${FAINTC(`… +${todos.length - maxRows} more`)}`);
+  return [header, ...rows];
 }
 
 // Claude-Code-style diff rows for the LEGACY stored format (`  12 - text`, number first).
