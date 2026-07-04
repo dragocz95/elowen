@@ -21,6 +21,14 @@ export function toolDetail(args: unknown): string | undefined {
   return s.length > 60 ? `${s.slice(0, 59)}…` : s;
 }
 
+/** Wrap untrusted content (retrieved memories, plugin-hook context) in a named frame, neutralizing any
+ *  literal closing delimiter inside the body so the content can't break out of the frame and have the
+ *  text after it read as un-framed prompt input. Single source for every untrusted live-prompt block. */
+export function frameUntrusted(tag: string, preface: string, body: string): string {
+  const safe = body.replace(new RegExp(`<\\s*/\\s*${tag}\\s*>`, 'gi'), `[/${tag}]`);
+  return `<${tag}>\n${preface}\n${safe}\n</${tag}>\n\n`;
+}
+
 /** Pull display text out of a stored message's content JSON. Content is either a plain string or an
  *  array of parts ({type:'text', text}); anything else yields an empty string. */
 export function extractText(msg: unknown): string {

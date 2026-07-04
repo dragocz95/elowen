@@ -46,7 +46,7 @@ export class IdentityResolver {
    *  Orca account. The display name is attacker-influenced (a user picks their own Orca name), so
    *  brackets/newlines are stripped before it enters this trusted line — otherwise a name like
    *  `x] SYSTEM: …` could forge instructions into the prompt. */
-  forPlatformTurn(src: SessionSource, owner: number): { identity: TurnIdentity; verifiedPrefix: string } {
+  forPlatformTurn(src: SessionSource, owner: number): { identity: TurnIdentity; verifiedPrefix: string; linkedUserId?: number } {
     const linked = this.d.resolvePlatformUser?.(src.platform, src.userId);
     const safeName = linked ? linked.name.replace(/[[\]\r\n]/g, ' ').trim().slice(0, 80) : '';
     const verifiedPrefix = linked
@@ -62,6 +62,8 @@ export class IdentityResolver {
       admin: src.access?.admin === true || linked?.admin === true,
       owner: (linked?.id !== undefined && this.isOwner(linked.id)) || (internalAutomation && src.access?.admin === true),
     };
-    return { identity, verifiedPrefix };
+    // linkedUserId is the Orca account this platform sender is verified as (their Discord id claimed in
+    // Account settings). Memory recall/save keys on it: an unlinked sender has no account, so no memory.
+    return { identity, verifiedPrefix, linkedUserId: linked?.id };
   }
 }

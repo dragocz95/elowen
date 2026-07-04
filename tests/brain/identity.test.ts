@@ -31,6 +31,13 @@ describe('IdentityResolver — owner vs admin gating', () => {
     expect(identity.owner).toBe(true);
   });
 
+  it('exposes linkedUserId (the sender\'s Orca account) only when the platform id is linked', () => {
+    const linked = resolver({ id: 2, name: 'Amy', username: 'amy', admin: false }).forPlatformTurn(src({}), 1);
+    expect(linked.linkedUserId).toBe(2); // channel memory recall/save keys on this
+    const unlinked = resolver(null).forPlatformTurn(src({}), 1);
+    expect(unlinked.linkedUserId).toBeUndefined(); // unlinked sender → no memory
+  });
+
   it('owner-authored internal automation (cron/subagent with admin access) IS owner', () => {
     for (const platform of ['cron', 'subagent']) {
       const { identity } = resolver(null).forPlatformTurn(src({ platform, userId: 'auto', access: { projectIds: [], admin: true } }), 1);

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { frameUntrusted } from '../../src/brain/brainService.js';
+import { frameUntrusted } from '../../src/brain/messageView.js';
 
 describe('frameUntrusted', () => {
   it('wraps content in the named frame with the preface', () => {

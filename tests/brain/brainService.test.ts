@@ -555,6 +555,21 @@ describe('BrainService memory integration', () => {
     expect(lastPrompt(d)).not.toContain('<user_memories>');
   });
 
+  it('autoRecall=false skips the <user_memories> block even when memories exist', async () => {
+    const d = fakeDeps();
+    (d as Record<string, unknown>).memoryStore = new MemoryStore(openDb(':memory:'));
+    const svc2 = fakeMemoryService([asRow('Filip preferuje TypeScript strict.')]);
+    (d as Record<string, unknown>).memoryService = svc2;
+    // The user turned auto-recall off in Account → Memory.
+    (d as Record<string, unknown>).userSettings = () => ({ autoRecall: false, autoSave: true });
+    const svc = new BrainService(d as never);
+    await svc.start(1);
+    await svc.send(1, 'jaký jazyk mám použít?');
+    expect(lastPrompt(d)).not.toContain('<user_memories>');
+    // Recall was gated before the vector lookup — retrieve must not even be called.
+    expect((svc2.retrieve as unknown as { mock: { calls: unknown[] } }).mock.calls.length).toBe(0);
+  });
+
   it('composes the memory tools into the owner-chat session', async () => {
     const d = fakeDeps();
     (d as Record<string, unknown>).memoryStore = new MemoryStore(openDb(':memory:'));

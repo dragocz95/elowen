@@ -4,8 +4,9 @@ import { DEFAULT_ADVISOR_STYLE, isAdvisorStyle } from '../brain/personality.js';
 /** Typed per-user CLI/brain settings. `model`/`modelProvider` empty → use the configured brain default.
  *  `autoCompactAt` is the context-window fill percentage at which the conversation is auto-summarized.
  *  `advisorStyle` picks the advisor's communication style (the `{{personality}}` prompt paragraph). */
-export interface CliSettings { model: string; modelProvider: string; visionModel: string; visionModelProvider: string; thinkingLevel: string; autoCompact: boolean; autoCompactAt: number; advisorStyle: string; discordUserId: string }
-const CLI_DEFAULTS: CliSettings = { model: '', modelProvider: '', visionModel: '', visionModelProvider: '', thinkingLevel: '', autoCompact: false, autoCompactAt: 80, advisorStyle: DEFAULT_ADVISOR_STYLE, discordUserId: '' };
+export interface CliSettings { model: string; modelProvider: string; visionModel: string; visionModelProvider: string; thinkingLevel: string; autoCompact: boolean; autoCompactAt: number; advisorStyle: string; discordUserId: string; autoRecall: boolean; autoSave: boolean }
+// autoRecall/autoSave default to true so upgrading users keep the prior always-on memory behaviour.
+const CLI_DEFAULTS: CliSettings = { model: '', modelProvider: '', visionModel: '', visionModelProvider: '', thinkingLevel: '', autoCompact: false, autoCompactAt: 80, advisorStyle: DEFAULT_ADVISOR_STYLE, discordUserId: '', autoRecall: true, autoSave: true };
 
 /** Reasoning-effort levels PI accepts (extended-thinking models). Empty = leave the model default. */
 const THINKING_LEVELS = ['minimal', 'low', 'medium', 'high', 'xhigh'] as const;
@@ -80,6 +81,8 @@ export class UserSettingStore {
       autoCompactAt: all.autoCompactAt !== undefined ? clampPercent(Number(all.autoCompactAt)) : CLI_DEFAULTS.autoCompactAt,
       advisorStyle: isAdvisorStyle(all.advisorStyle) ? all.advisorStyle : CLI_DEFAULTS.advisorStyle,
       discordUserId: all.discordUserId ?? CLI_DEFAULTS.discordUserId,
+      autoRecall: all.autoRecall !== undefined ? all.autoRecall === 'true' : CLI_DEFAULTS.autoRecall,
+      autoSave: all.autoSave !== undefined ? all.autoSave === 'true' : CLI_DEFAULTS.autoSave,
     };
   }
 
@@ -100,6 +103,8 @@ export class UserSettingStore {
       }
       if (patch.autoCompact !== undefined) this.set(userId, 'autoCompact', String(patch.autoCompact));
       if (patch.autoCompactAt !== undefined) this.set(userId, 'autoCompactAt', String(clampPercent(patch.autoCompactAt)));
+      if (patch.autoRecall !== undefined) this.set(userId, 'autoRecall', String(patch.autoRecall));
+      if (patch.autoSave !== undefined) this.set(userId, 'autoSave', String(patch.autoSave));
       if (patch.advisorStyle !== undefined && isAdvisorStyle(patch.advisorStyle)) this.set(userId, 'advisorStyle', patch.advisorStyle);
       // A Discord snowflake is digits-only; anything else (or empty) clears the link. A snowflake already
       // claimed by ANOTHER user is refused — otherwise a squatter could claim the operator's id and have

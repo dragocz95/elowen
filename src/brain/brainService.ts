@@ -14,7 +14,7 @@ import { orcaExec } from '../shared/execs.js';
 import { buildOrcaTools, buildMemoryTools } from './tools/index.js';
 import { MemoryCurator } from './memoryCurator.js';
 import type { MemoryCategorizer } from './memoryCategorizer.js';
-import { extractText } from './messageView.js';
+import { extractText, frameUntrusted } from './messageView.js';
 import { logger } from '../shared/logger.js';
 import type { MemoryStore } from '../store/memoryStore.js';
 import type { MemoryService } from './memoryService.js';
@@ -37,13 +37,6 @@ import { toBrainEvent, usageOf } from './events.js';
 import type { BrainEvent, BrainUsage } from './events.js';
 import { defaultUserSessionId, freshUserSessionId, isNonUserSession } from './sessionId.js';
 
-/** Wrap untrusted content (retrieved memories, plugin-hook context) in a named frame, neutralizing any
- *  literal closing delimiter inside the body so the content can't break out of the frame and have the
- *  text after it read as un-framed prompt input. Single source for every untrusted live-prompt block. */
-export function frameUntrusted(tag: string, preface: string, body: string): string {
-  const safe = body.replace(new RegExp(`<\\s*/\\s*${tag}\\s*>`, 'gi'), `[/${tag}]`);
-  return `<${tag}>\n${preface}\n${safe}\n</${tag}>\n\n`;
-}
 
 export interface BrainDeps {
   store: BrainStore;
@@ -73,7 +66,7 @@ export interface BrainDeps {
   policy?: (userId: number) => Policy;
   /** Per-user CLI/brain settings: an optional model override (empty → configured default) + auto-compact
    *  toggle and its user-tunable threshold percentage. */
-  userSettings?: (userId: number) => { model?: string; modelProvider?: string; visionModel?: string; visionModelProvider?: string; thinkingLevel?: string; autoCompact?: boolean; autoCompactAt?: number; advisorStyle?: string };
+  userSettings?: (userId: number) => { model?: string; modelProvider?: string; visionModel?: string; visionModelProvider?: string; thinkingLevel?: string; autoCompact?: boolean; autoCompactAt?: number; advisorStyle?: string; autoRecall?: boolean; autoSave?: boolean };
   /** The user's active personality profile as a ready-to-append system-prompt chunk, or undefined when
    *  none is pinned (delegates to PersonalityService.activeAppend). Appended AFTER the persona in
    *  appendSystemPrompt — the cache-safe seam. For Discord `userId` is the channel owner and `platform`
@@ -134,9 +127,20 @@ export class BrainService {
   constructor(private d: BrainDeps) {
     this.factory = new BrainSessionFactory({ store: d.store, createSession: d.createSession, resourceLoaderFactory: d.resourceLoaderFactory });
     this.identity = new IdentityResolver({ platformOwner: d.platformOwner, resolvePlatformUser: d.resolvePlatformUser, users: d.users });
+    // Built before the channel service so it can share the SAME curator instance — channel and
+    // owner-chat memory then run through one implementation.
+    if (d.memoryStore && d.memoryService) {
+      this.curator = new MemoryCurator({
+        store: d.memoryStore, service: d.memoryService,
+        inference: d.inference ?? (() => null), categorizer: d.memoryCategorizer,
+        logger: logger('memory-curator'),
+      });
+    }
     this.channelService = new ChannelSessionService({
       registry: this.sessions, store: d.store, users: d.users,
       spawn: (o) => this.spawnLive(o), // composition stays here — single source
+      // Verified channel senders get memory too, keyed on their linked account and their own toggles.
+      memoryService: d.memoryService, curator: this.curator, userSettings: d.userSettings,
     });
     this.platforms = new PlatformOrchestrator({
       plugins: () => this.resolvePlugins(),
@@ -145,13 +149,6 @@ export class BrainService {
       identity: this.identity,
       channels: this.channelService,
     });
-    if (d.memoryStore && d.memoryService) {
-      this.curator = new MemoryCurator({
-        store: d.memoryStore, service: d.memoryService,
-        inference: d.inference ?? (() => null), categorizer: d.memoryCategorizer,
-        logger: logger('memory-curator'),
-      });
-    }
   }
 
   private serial<T>(key: string, fn: () => Promise<T>): Promise<T> {
@@ -447,8 +444,11 @@ export class BrainService {
       // turnContext) and only in owner chat; channels get no retrieval. Best-effort: any failure skips
       // the block rather than breaking the turn. Framed as context, not instructions, so a stored
       // memory can't hijack the turn.
+      // Per-user memory toggles, read fresh each turn so a flip in Account → Memory applies immediately
+      // (no session restart). Absent settings default to on, preserving the prior always-on behaviour.
+      const memSettings = this.d.userSettings?.(userId);
       let memoryBlock = '';
-      if (this.d.memoryService && text.trim()) {
+      if (this.d.memoryService && text.trim() && memSettings?.autoRecall !== false) {
         try {
           const { memories } = await this.d.memoryService.retrieve(userId, text);
           if (memories.length) {
@@ -482,7 +482,7 @@ export class BrainService {
       await runWithPolicy(live.policy, () => (options ? live.session.prompt(prompted, options) : live.session.prompt(prompted)), identity);
       // Post-turn curator: extract durable facts from this exchange in the background. Fire-and-forget
       // (mirrors brainWorker) — never awaited, never touches live.session, swallows its own errors.
-      if (this.curator) {
+      if (this.curator && memSettings?.autoSave !== false) {
         const last = [...(live.session.messages as { role?: string }[])].reverse().find((m) => m.role === 'assistant');
         const assistantText = last ? extractText(last) : '';
         void this.curator.run(userId, text, assistantText).catch(() => { /* curator is best-effort */ });

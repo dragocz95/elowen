@@ -47,7 +47,7 @@ export class PlatformOrchestrator {
           // Per-turn sender identity + the verified-identity line for linked accounts (sanitized
           // against prompt injection through display names) — minted by the IdentityResolver, the
           // one auditable place `owner` vs `admin` semantics live.
-          const { identity, verifiedPrefix } = this.d.identity.forPlatformTurn(src, owner);
+          const { identity, verifiedPrefix, linkedUserId } = this.d.identity.forPlatformTurn(src, owner);
           return this.d.channels.send({
             channelId: `${src.platform}-${src.threadId ?? src.channelId}`,
             ownerUserId: owner,
@@ -59,6 +59,9 @@ export class PlatformOrchestrator {
             tools: src.access.admin ? undefined : src.access.tools, // admin → full plugin toolset; else role allowlist
             images: src.images,
             identity,
+            // The Orca account this sender is verified as — memory recall/save keys on it. Unlinked
+            // senders have no linkedUserId, so the channel turn gets no memory (shared-space privacy).
+            writerUserId: linkedUserId,
             history: src.history,
             onEvent,
           }, verifiedPrefix + text);
