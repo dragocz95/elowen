@@ -75,6 +75,21 @@ export function registerTaskRoutes(app: OrcaApp, ctx: RouteContext): void {
     const window = fromIso || toIso ? { fromIso, toIso } : undefined;
     return c.json(d.taskUsage?.aggregateByExec(projectIds, window) ?? []);
   });
+  // Daily spend/token totals over the last N days (default 7) for the dashboard's spend sparkline.
+  // Same project scoping as /usage/by-model; only days with settled tasks come back, so the client
+  // pads the missing days with zero. `?days=` is clamped to a sane 1..90 window.
+  app.get('/usage/by-day', c => {
+    const allowed = accessibleProjects(c);
+    let projectIds: number[] | undefined = allowed ? [...allowed] : undefined;
+    const pidRaw = c.req.query('project_id');
+    if (pidRaw !== undefined && pidRaw !== '') {
+      const pid = Number(pidRaw);
+      if (Number.isFinite(pid)) projectIds = projectIds ? projectIds.filter((p) => p === pid) : [pid];
+    }
+    const daysRaw = Number(c.req.query('days'));
+    const days = Number.isFinite(daysRaw) ? Math.min(90, Math.max(1, Math.floor(daysRaw))) : 7;
+    return c.json(d.taskUsage?.aggregateByDay(projectIds, days) ?? []);
+  });
   // Reset the usage stats: wipe the `task_usage` snapshots. Admin-only and irreversible, but it only
   // clears Orca's own DB rows — the agents' CLI session transcripts are left untouched.
   app.post('/usage/reset', c => {

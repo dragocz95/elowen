@@ -293,6 +293,8 @@ export interface CronJob {
   hours?: string;
   /** Discord channel/thread the result is delivered to; empty = the plugin's default channel. */
   notifyChannelId?: string;
+  /** true = deliver the reply as-is, without the "⏰ job name" header line. */
+  plain?: boolean;
   /** Brain model the job runs on; empty = the server default. */
   model?: { provider: string; model: string };
   enabled?: boolean;
@@ -520,6 +522,15 @@ export interface TokenUsage {
 export interface ModelUsage {
   exec: string;
   usage: TokenUsage;
+}
+
+/** One day's rolled-up spend, for the dashboard's 7-day trend. `day` is `YYYY-MM-DD` (UTC, by task
+ *  settlement date); `cost` is null when no task closed that day carried a cost (claude/codex → "—").
+ *  Only days with settled tasks are returned — the client pads the gaps with zero. */
+export interface DayUsage {
+  day: string;
+  tokens: number;
+  cost: number | null;
 }
 
 /** Result of a usage reset: how many task_usage snapshot rows were wiped. */

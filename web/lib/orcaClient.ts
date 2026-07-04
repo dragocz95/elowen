@@ -1,4 +1,4 @@
-import type { Task, Mission, CreateTaskInput, UpdateTaskInput, PlanInput, PlanSubmitResult, PlanJob, InsertPhasesInput, InsertPhasesResult, EngageInput, OrcaConfig, ConfigPatch, MissionDetail, User, UserPatch, ProfilePatch, UserPrompt, PersonalityProfile, PersonalityCreate, PersonalityPatch, CliSettings, PluginInfo, PluginDetail, PluginContributions, PluginLogs, PluginHookExecutions, CronJob, DiscordChannelOption, PluginSkill, BrainModelOption, BrainSessionInfo, BrainSearchHit, BrainMessage, BrainStatus, OAuthFlowState, AuthResult, ActivityEvent, PendingAsk, Project, ProjectGit, CommitLogEntry, CommitFileChange, Note, CliDetectionResult, GithubAuthStatus, TokenUsage, ModelUsage, ResetUsageResult, FileNode, DirListing, SessionInfo, SystemInfo, SkillsInfo, SkillInstallResult, Memory, MemoryEvent, MemoryCreate, MemoryPatch, MemoryFilters, EmbeddingSettings, EmbeddingSettingsPatch, RetrievalResult, MemoryCategory, MemoryCategoryCreate, MemoryCategoryPatch, CategorizationSettings, CategorizationSettingsPatch } from './types';
+import type { Task, Mission, CreateTaskInput, UpdateTaskInput, PlanInput, PlanSubmitResult, PlanJob, InsertPhasesInput, InsertPhasesResult, EngageInput, OrcaConfig, ConfigPatch, MissionDetail, User, UserPatch, ProfilePatch, UserPrompt, PersonalityProfile, PersonalityCreate, PersonalityPatch, CliSettings, PluginInfo, PluginDetail, PluginContributions, PluginLogs, PluginHookExecutions, CronJob, DiscordChannelOption, PluginSkill, BrainModelOption, BrainSessionInfo, BrainSearchHit, BrainMessage, BrainStatus, OAuthFlowState, AuthResult, ActivityEvent, PendingAsk, Project, ProjectGit, CommitLogEntry, CommitFileChange, Note, CliDetectionResult, GithubAuthStatus, TokenUsage, ModelUsage, DayUsage, ResetUsageResult, FileNode, DirListing, SessionInfo, SystemInfo, SkillsInfo, SkillInstallResult, Memory, MemoryEvent, MemoryCreate, MemoryPatch, MemoryFilters, EmbeddingSettings, EmbeddingSettingsPatch, RetrievalResult, MemoryCategory, MemoryCategoryCreate, MemoryCategoryPatch, CategorizationSettings, CategorizationSettingsPatch } from './types';
 import { clearToken } from './token';
 
 // Same-origin BFF base: the browser talks only to this web origin's /api proxy, which injects the
@@ -81,6 +81,14 @@ export const orcaClient = {
     if (window && Number.isFinite(window.toMs)) params.set('to', new Date(window.toMs).toISOString());
     const qs = params.toString();
     return req<ModelUsage[]>(`/usage/by-model${qs ? `?${qs}` : ''}`);
+  },
+  /** Daily spend/token totals over the last `days` days, for the dashboard's spend sparkline. Scoped
+   *  to the caller's projects; only days with settled tasks come back (client pads the gaps). */
+  usageByDay: (projectId?: number, days = 7) => {
+    const params = new URLSearchParams();
+    if (projectId != null) params.set('project_id', String(projectId));
+    params.set('days', String(days));
+    return req<DayUsage[]>(`/usage/by-day?${params.toString()}`);
   },
   /** Admin: destructively clear every executor's CLI session store. Refused (409) while agents run. */
   resetUsage: () => req<ResetUsageResult>('/usage/reset', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }),

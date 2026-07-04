@@ -71,6 +71,35 @@ describe('GET /usage/by-model', () => {
   });
 });
 
+describe('GET /usage/by-day', () => {
+  it('returns daily buckets for the caller (admin sees all projects)', async () => {
+    const { app, taskUsage, adminTok } = setup();
+    taskUsage.record('t1', 1, 'sonnet', usage);
+    taskUsage.record('t2', 1, 'opus', usage); // same day → merges into one bucket
+    const res = await app.request('/usage/by-day', auth(adminTok));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body).toHaveLength(1);
+    expect(body[0].tokens).toBe(330);
+    expect(body[0].cost).toBe(1);
+    expect(typeof body[0].day).toBe('string');
+  });
+
+  it('is gated — a user not assigned to the project is forbidden (403)', async () => {
+    const { app, taskUsage, bobTok } = setup();
+    taskUsage.record('t1', 1, 'sonnet', usage);
+    expect((await app.request('/usage/by-day', auth(bobTok))).status).toBe(403);
+  });
+
+  it('clamps ?days= to a sane window without erroring', async () => {
+    const { app, taskUsage, adminTok } = setup();
+    taskUsage.record('t1', 1, 'sonnet', usage);
+    expect((await app.request('/usage/by-day?days=0', auth(adminTok))).status).toBe(200);
+    expect((await app.request('/usage/by-day?days=99999', auth(adminTok))).status).toBe(200);
+    expect((await app.request('/usage/by-day?days=notanumber', auth(adminTok))).status).toBe(200);
+  });
+});
+
 describe('POST /usage/reset', () => {
   it('forbids a non-admin (403)', async () => {
     const { app, bobTok } = setup();

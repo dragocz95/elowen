@@ -26,6 +26,7 @@ export const QUERY_KEYS = {
   system: ['system'] as const,
   systemSkills: ['system-skills'] as const,
   usageByModel: ['usage-by-model'] as const,
+  usageByDay: ['usage-by-day'] as const,
   memories: ['memories'] as const,
   embeddingSettings: ['embedding-settings'] as const,
   memoryCategories: ['memory-categories'] as const,
@@ -89,13 +90,22 @@ export const useModelUsage = (projectId?: number, window?: { fromMs: number; toM
     refetchInterval: 30_000,
   });
 
+/** Daily spend over the last `days` days, for the dashboard's spend sparkline. Slow-moving, so a
+ *  gentle 60 s poll. Only days with settled tasks come back — the tile pads the missing days. */
+export const useUsageByDay = (projectId?: number, days = 7) =>
+  useQuery({
+    queryKey: [...QUERY_KEYS.usageByDay, projectId ?? null, days],
+    queryFn: () => orcaClient.usageByDay(projectId, days),
+    refetchInterval: 60_000,
+  });
+
 export const useMissions = () =>
   useQuery({ queryKey: QUERY_KEYS.missions, queryFn: orcaClient.missions });
 
 /** Files changed across a mission's phases (aggregated). Invalidated by the SSE `change` event
  *  (see useOrcaEvents), so the dashboard's live mission card stays fresh as phases land commits. */
 export const useMissionChangedFiles = (id: string) =>
-  useQuery({ queryKey: ['mission-changed-files', id], queryFn: () => orcaClient.missionChangedFiles(id) });
+  useQuery({ queryKey: ['mission-changed-files', id], queryFn: () => orcaClient.missionChangedFiles(id), enabled: !!id });
 
 export const useHealth = () =>
   useQuery({

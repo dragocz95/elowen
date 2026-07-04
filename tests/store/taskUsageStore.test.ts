@@ -78,6 +78,43 @@ describe('TaskUsageStore', () => {
     expect(store.aggregateByExec().find((r) => r.exec === 'sonnet')!.usage.total).toBe(150);
   });
 
+  it('merges same-day rows into one bucket (tokens summed across execs)', () => {
+    // All three are stamped "now" → the same date bucket, regardless of exec.
+    store.record('a', 1, 'sonnet', u(100, 0, 0, 0, 1));
+    store.record('b', 1, 'sonnet', u(50, 0, 0, 0, 2));
+    store.record('c', 1, 'opus', u(30, 0, 0, 0, null)); // null cost must not zero the day's cost
+    const rows = store.aggregateByDay(undefined, 7);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].tokens).toBe(180);
+    expect(rows[0].cost).toBe(3); // 1 + 2, the null row contributes nothing
+  });
+
+  it('reports a null daily cost only when no row that day carried a cost', () => {
+    store.record('a', 1, 'opus', u(10, 0, 0, 0, null));
+    store.record('b', 1, 'opus', u(20, 0, 0, 0, null));
+    const rows = store.aggregateByDay(undefined, 7);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].cost).toBeNull();
+    expect(rows[0].tokens).toBe(30);
+  });
+
+  it('excludes rows older than the last N-day window', () => {
+    store.record('recent', 1, 'sonnet', u(10, 0, 0, 0, 1)); // stamped "now"
+    store.record('ancient', 1, 'sonnet', u(20, 0, 0, 0, 1));
+    backdate('ancient', '2020-01-01 00:00:00');
+    const rows = store.aggregateByDay(undefined, 7);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].tokens).toBe(10);
+  });
+
+  it('scopes daily buckets to project ids (empty → nothing)', () => {
+    store.record('p1', 1, 'sonnet', u(10, 0, 0, 0, 1));
+    store.record('p2', 2, 'sonnet', u(20, 0, 0, 0, 1));
+    expect(store.aggregateByDay([1], 7).reduce((s, r) => s + r.tokens, 0)).toBe(10);
+    expect(store.aggregateByDay([1, 2], 7).reduce((s, r) => s + r.tokens, 0)).toBe(30);
+    expect(store.aggregateByDay([], 7)).toEqual([]);
+  });
+
   it('deleteAll empties the table and returns the row count', () => {
     store.record('t1', 1, 'sonnet', u(1, 0, 0, 0, null));
     store.record('t2', 1, 'opus', u(1, 0, 0, 0, null));

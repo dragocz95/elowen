@@ -60,6 +60,27 @@ export class TaskUsageStore {
     }));
   }
 
+  /** Daily spend/token totals over the last `days` days (UTC, by `captured_at` date), for the
+   *  dashboard's 7-day trend. Same project scoping as `aggregateByExec` (empty array → nothing).
+   *  Only days that actually have settled tasks appear — the client fills the gaps with zero. A day's
+   *  cost is null when no row that day carried a cost (claude/codex-only → "—"). Note the axis is the
+   *  task-settlement date, so this reads as "cost of tasks closed that day", not realtime burn. */
+  aggregateByDay(projectIds?: number[], days = 7): { day: string; tokens: number; cost: number | null }[] {
+    if (projectIds && projectIds.length === 0) return [];
+    const clauses: string[] = [`captured_at >= date('now', ?)`];
+    const params: (string | number)[] = [`-${Math.max(0, Math.floor(days) - 1)} days`];
+    if (projectIds) { clauses.push(`project_id IN (${projectIds.map(() => '?').join(',')})`); params.push(...projectIds); }
+    const rows = this.db.prepare(
+      `SELECT date(captured_at) AS day, SUM(total) AS tokens,
+         CASE WHEN COUNT(cost_usd) = 0 THEN NULL ELSE SUM(cost_usd) END AS cost
+       FROM task_usage
+       WHERE ${clauses.join(' AND ')}
+       GROUP BY day
+       ORDER BY day`
+    ).all(...params) as { day: string; tokens: number; cost: number | null }[];
+    return rows;
+  }
+
   /** Wipe all snapshots (the stats-page reset). Returns the number of rows removed. */
   deleteAll(): number {
     return this.db.prepare('DELETE FROM task_usage').run().changes;
