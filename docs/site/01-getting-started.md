@@ -7,116 +7,71 @@ eyebrow: Start here
 
 # Getting Started
 
-**Orcasynth** is a self-hosted daemon that orchestrates autonomous coding agents in
-isolated `tmux` sessions — with a REST API, a CLI, and a real-time web UI. This guide
-gets you from zero to your first running agent in about two minutes.
+**Orca** is your personal AI agent. It orchestrates autonomous coding agents,
+runs a built-in brain for chat and automation, supports plugins (Discord, cron,
+skills, memory, and more), and gives you a web UI and CLI to control everything.
+
+This guide gets you from zero to your first running agent in about two minutes.
 
 ## Prerequisites
 
-- **Node.js ≥ 22** — check with `node --version`
-- **tmux** — check with `tmux -V` (install via your package manager if missing)
+- **Node.js** ≥22 (ESM)
+- **tmux** ≥3.x (for running agents)
+- **npm**
+- A C toolchain (`python3`, `make`, `g++`) — optional, only needed when
+  `node-pty` has no prebuilt binary (terminals still work without it)
 
-## Install & start
-
-The fastest way to get running:
+## Quick install
 
 ```bash
 npm install -g orcasynth
+orca install        # provisions tmux, node-pty, systemd units
+```
+
+`orca install` runs a guided wizard that:
+
+1. Checks system dependencies (Node, tmux, git)
+2. Detects installed AI coding CLIs (Claude Code, OpenCode, Codex)
+3. Configures provider binary paths
+4. Sets up autopilot (relay LLM or CLI agents)
+5. Creates the first admin user
+6. Installs systemd units (`orca-daemon` + `orca-web`)
+7. Enables the auto-update timer
+
+## Start the daemon
+
+```bash
 orca up
 ```
 
-`orca up` starts the daemon on **`:4400`** and the web UI on **`:4500`** in the
-background. Open <http://localhost:4500> and you're greeted by the first-run
-onboarding wizard — no login needed until you create the first admin account.
+This starts the daemon on `http://localhost:4400` and the web UI on
+`http://localhost:4500`. Open `http://localhost:4500` in your browser and log in.
 
-### Docker
+## Your first task
 
-```dockerfile
-FROM node:22-alpine
-RUN apk add --no-cache tmux
-WORKDIR /app
-COPY package*.json ./
-RUN npm ci --omit=dev
-COPY . .
-RUN npm run build
-EXPOSE 4400
-CMD ["node", "dist/daemon/index.js"]
-```
+1. Open the web UI → **Tasks** → **New task**
+2. Give it a title like "Hello Orca"
+3. Pick an executor (e.g. Claude Sonnet)
+4. Hit **Create**
 
-Build and run:
+Or from the CLI:
 
 ```bash
-docker build -t orca .
-docker run -d \
-  --name orca \
-  -p 4400:4400 \
-  -v orca-data:/app/data \
-  -e ORCA_DB=/app/data/orca.db \
-  orca
+orca api POST /tasks '{"title":"Hello Orca","labels":["exec:sonnet"]}'
+orca ls                          # see your task
 ```
 
-## First-run onboarding
-
-The first time you open the web UI, the onboarding wizard walks you through:
-
-1. **System check** — detects installed agent CLIs (claude, opencode, codex) and tools
-   (node, tmux, git).
-2. **Provider binaries** — confirms binary paths and extra CLI args per provider.
-3. **Autopilot backend** — configure a Relay (API key + URL) or pick CLI Agents for the
-   pilot and overseer.
-4. **Admin account** — create the first user. After this step you're signed in.
-5. **Hermes** — optional MCP-server registration for a same-host Hermes instance.
-
-After onboarding you land on the **Dashboard**, signed in with a secure httpOnly cookie.
-
-## Quickstart: 5 steps to your first agent
-
-1. **Install and start** — `npm install -g orcasynth && orca up`
-2. **Open the web UI** — <http://localhost:4500> and complete the onboarding wizard
-3. **Configure your LLM** — go to **Settings → Autopilot / Models** and add your provider
-   and model
-4. **Create a task** — click **New task**, give it a title like "List the files in the
-   project root", pick an executor, and hit save
-5. **Watch it run** — open **Sessions** to see the agent work live, or open **Tasks** and
-   click the task to follow its output
-
-That's it. Your first agent is running.
-
-## Ports & data
-
-| What | Where |
-|---|---|
-| Daemon REST API + SSE | `:4400` |
-| Web UI (Next.js) | `:4500` |
-| Config, SQLite DB, logs | `~/.config/orca/` |
-
-## Run from source
-
-For development or to run without a global install:
+The daemon spawns the agent in an isolated tmux session. Watch it work in the
+**Sessions** page or via:
 
 ```bash
-# 1. Daemon
-npm install
-npm run build
-ORCA_BOOTSTRAP_USER=admin ORCA_BOOTSTRAP_PASS=changeme node dist/daemon/index.js
-
-# 2. Web UI (separate terminal)
-cd web
-npm install
-npm run build
-npm start -- -p 4500
+orca sessions
 ```
 
-The CLI talks to the daemon over the REST API:
+## What's next
 
-```bash
-node dist/cli/index.js ls          # list tasks
-node dist/cli/index.js close <id>  # close a task
-```
-
-## Next steps
-
-- [Concepts](/docs/concepts) — tasks, missions, autonomy levels, the overseer gate
-- [CLI](/docs/cli) — every command reference
-- [Architecture](/docs/architecture) — modules, timer loops, data flow
-- [Install](/docs/install) — detailed install options and troubleshooting
+- [Install](install) — detailed installation options
+- [Web UI](web-ui) — tour of the dashboard
+- [CLI](cli) — command reference
+- [Brain & Chat](brain-chat) — your AI assistant
+- [Plugins](plugins) — extend Orca with Discord, cron, skills, and more

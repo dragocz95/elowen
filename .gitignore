@@ -25,3 +25,4 @@ web-dist/
 
 # npm pack artifacts
 *.tgz
+.opencode/

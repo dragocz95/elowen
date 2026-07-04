@@ -13,7 +13,8 @@ npm ci --omit=dev
 npm run build
 ```
 
-`npm run build` runs `tsc -p tsconfig.json`, copies `src/store/schema.sql` into `dist/store/`, and copies the entire `prompts/` directory into `dist/prompts/`. The CLI entrypoint is `dist/cli/index.js`; the daemon entrypoint is `dist/daemon/index.js`.
+`npm run build` compiles TypeScript, copies `src/store/schema.sql` and
+`prompts/` into `dist/`.
 
 ## Running the daemon
 
@@ -23,70 +24,46 @@ npm run build
 node dist/daemon/index.js
 ```
 
-Starts on port 4400 (override with `ORCA_PORT`). The daemon auto-initializes the SQLite database from `dist/store/schema.sql` on first run.
+Starts on port 4400 (override with `ORCA_PORT`). Initializes SQLite on first run.
 
-### Environment block
-
-All supported environment variables (defaults shown):
+### Environment reference
 
 ```bash
 # Daemon
 ORCA_PORT=4400
-ORCA_HOST=127.0.0.1
+ORCA_HOST=127.0.0.1              # use 0.0.0.0 to expose externally
 ORCA_DB=$HOME/.config/orca/orca.db
 ORCA_PROJECT=orca
 ORCA_PROJECT_PATH=$PWD
-ORCA_ALLOW_OPEN=              # set to "1" to run without auth
-ORCA_BOOTSTRAP_USER=          # initial admin username (one-time seed)
-ORCA_BOOTSTRAP_PASS=          # initial admin password (one-time seed)
+ORCA_ALLOW_OPEN=                  # set to "1" for no-auth mode
+ORCA_BOOTSTRAP_USER=              # initial admin username
+ORCA_BOOTSTRAP_PASS=              # initial admin password
 
 # CLI
 ORCA_URL=http://localhost:4400
-ORCA_TOKEN=                   # bearer token for CLI requests
-ORCA_AUTOSTART=1              # set to "0" to disable CLI daemon autostart
+ORCA_TOKEN=
+ORCA_AUTOSTART=1
 
-# Autopilot relay (LLM)
+# Autopilot relay
 ORCA_RELAY_URL=
 ORCA_RELAY_KEY=
 ORCA_RELAY_MODEL=gpt-4o-mini
 
-# Logging (internal)
-ORCA_LOG_LEVEL=               # debug | info | warn | error (default info)
-ORCA_LOG_DIR=$PWD/logs        # log directory
+# Logging
+ORCA_LOG_LEVEL=                   # debug | info | warn | error
+ORCA_LOG_DIR=$PWD/logs
 
-# Web UI (Next.js)
-ORCA_WEB_PORT=4500            # port the web UI listens on
-# ORCA_WS_DIRECT_PORT=        # optional direct WebSocket port for PTY streaming (bypasses the proxy)
-# ORCA_DAEMON_URL=http://localhost:4400   # server-side only — the BFF proxy uses this to reach the daemon
+# Web UI
+ORCA_WEB_PORT=4500
+ORCA_DAEMON_URL=http://localhost:4400
 
-# VAPID keys for web push notifications — auto-generated on first boot and persisted
-# in the config store (no env var). The private key never leaves the daemon.
-
-# CLI binary path (set by the daemon or systemd unit; falls back to `node dist/cli/index.js`)
+# Agent-injected
 ORCA_CLI=orca
-
-# Agent-injected (set by the daemon on spawned agent env, not by the operator)
-# ORCA_PLAN_JOB=<jobId>       # Pilot agent
-# ORCA_MISSION=<missionId>    # Overseer agent
-# ORCA_TOKEN=<agent-scoped>   # every spawned agent
 ```
-
-A complete example launch:
-
-```bash
-ORCA_PORT=4400 \
-ORCA_DB=/opt/orca/data/orca.db \
-ORCA_PROJECT_PATH=/opt/orca \
-ORCA_BOOTSTRAP_USER=admin \
-ORCA_BOOTSTRAP_PASS=secure-pass \
-node dist/daemon/index.js
-```
-
-If no users exist and no `ORCA_BOOTSTRAP_USER`/`ORCA_BOOTSTRAP_PASS` is set, the daemon logs a warning — login will be impossible until a user is seeded.
 
 ### systemd service
 
-Create `/etc/systemd/system/orca.service`:
+Create `/etc/systemd/system/orca-daemon.service`:
 
 ```ini
 [Unit]
@@ -103,8 +80,27 @@ RestartSec=5
 Environment=NODE_ENV=production
 Environment=ORCA_DB=/opt/orca/data/orca.db
 Environment=ORCA_PROJECT_PATH=/opt/orca
-Environment=ORCA_BOOTSTRAP_USER=admin
-Environment=ORCA_BOOTSTRAP_PASS=change-me
+
+[Install]
+WantedBy=multi-user.target
+```
+
+And for the web UI (`orca-web.service`):
+
+```ini
+[Unit]
+Description=Orca web UI
+After=orca-daemon.service
+
+[Service]
+Type=simple
+User=orca
+WorkingDirectory=/opt/orca/web
+ExecStart=/usr/bin/npm start
+Restart=on-failure
+RestartSec=5
+Environment=ORCA_DAEMON_URL=http://localhost:4400
+Environment=NEXT_PRIVATE_STANDALONE=true
 
 [Install]
 WantedBy=multi-user.target
@@ -112,15 +108,15 @@ WantedBy=multi-user.target
 
 ```bash
 sudo systemctl daemon-reload
-sudo systemctl enable --now orca
-sudo journalctl -u orca -f     # tail logs
+sudo systemctl enable --now orca-daemon orca-web
+journalctl -u orca-daemon -f
 ```
 
 ### Docker
 
 ```dockerfile
 FROM node:22-alpine
-RUN apk add --no-cache tmux
+RUN apk add --no-cache tmux git
 WORKDIR /app
 COPY package*.json ./
 RUN npm ci --omit=dev
@@ -130,45 +126,25 @@ EXPOSE 4400
 CMD ["node", "dist/daemon/index.js"]
 ```
 
-Build and run:
-
 ```bash
 docker build -t orca .
-docker run -d \
-  --name orca \
-  -p 4400:4400 \
+docker run -d --name orca -p 4400:4400 \
   -v orca-data:/app/data \
   -e ORCA_DB=/app/data/orca.db \
+  -e ORCA_ALLOW_OPEN=1 \
   orca
-docker logs -f orca
 ```
 
 ## Web frontend
-
-### Build
 
 ```bash
 cd web
 npm ci --omit=dev
 npm run build
+npm start   # default port 3000
 ```
 
-The build runs `scripts/copy-monaco.mjs` first (copies Monaco editor workers into `public/`), then `next build`.
-
-### Serve
-
-Use the Next.js production server (not static export):
-
-```bash
-cd web
-npm start   # default port 3000, talks to daemon via the same-origin /api proxy
-```
-
-The web UI is typically served on port 4500:
-
-```bash
-ORCA_DAEMON_URL=http://your-server:4400 npx next start -p 4500
-```
+The web UI is typically served on port 4500 behind nginx.
 
 ### Reverse proxy (nginx)
 
@@ -183,20 +159,9 @@ server {
         proxy_http_version 1.1;
     }
 
-    # Service worker — must never be cached so updated notifications arrive immediately.
-    location = /sw.js {
-        proxy_pass http://127.0.0.1:4500;
-        proxy_http_version 1.1;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        add_header Cache-Control "no-cache, no-store, must-revalidate" always;
-    }
-
-    # Daemon API + SSE + MCP (direct, no rewrite prefix)
+    # Daemon API + SSE + MCP (BFF proxy — Next.js handles /api internally)
     location /api/ {
-        proxy_pass http://127.0.0.1:4400;
+        proxy_pass http://127.0.0.1:4500;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection "upgrade";
@@ -206,8 +171,7 @@ server {
         proxy_set_header x-real-ip $remote_addr;
     }
 
-    # Real-PTY terminal WebSocket (StreamTerminal). The Next.js BFF can't proxy a WS upgrade,
-    # so nginx proxies /ws/ straight to the daemon. A short-lived single-use ticket is the capability.
+    # Real-PTY WebSocket terminal (bypasses BFF, goes straight to daemon)
     location /ws/ {
         proxy_pass http://127.0.0.1:4400;
         proxy_http_version 1.1;
@@ -216,66 +180,20 @@ server {
         proxy_read_timeout 86400s;
         proxy_set_header x-real-ip $remote_addr;
     }
+
+    # Service worker — must never be cached
+    location = /sw.js {
+        proxy_pass http://127.0.0.1:4500;
+        add_header Cache-Control "no-cache, no-store, must-revalidate" always;
+    }
 }
 ```
 
 Notes:
-
-- SSE requires `proxy_buffering off` and a long `proxy_read_timeout` (86400 s = 24 h)
-- The `/ws/` location is required for the real-PTY terminal WebSocket (StreamTerminal); without it the terminal falls back to the snapshot mirror
-- Set `x-real-ip` so the login rate limiter sees the real client IP (it prefers `x-real-ip` over `x-forwarded-for`)
-- The daemon enables CORS for all origins; restrict it in code for production
-
-## Environment variables reference
-
-| Variable | Default | Description |
-|---|---|---|
-| `ORCA_URL` | `http://localhost:4400` | Daemon URL for CLI |
-| `ORCA_TOKEN` | — | API token for CLI requests |
-| `ORCA_AUTOSTART` | `1` | Let CLI auto-start the daemon; `0` disables |
-| `ORCA_DB` | `~/.config/orca/orca.db` | SQLite database path |
-| `ORCA_PORT` | `4400` | Daemon HTTP port |
-| `ORCA_HOST` | `127.0.0.1` | Daemon bind address (`0.0.0.0` to expose externally) |
-| `ORCA_PROJECT` | `orca` | Default project slug |
-| `ORCA_PROJECT_PATH` | `cwd` | Default project working directory |
-| `ORCA_RELAY_URL` | — | LLM relay base URL (for autopilot) |
-| `ORCA_RELAY_KEY` | — | LLM relay API key |
-| `ORCA_RELAY_MODEL` | `gpt-4o-mini` | LLM relay model name |
-| `ORCA_BOOTSTRAP_USER` | — | Initial admin username (one-time seed) |
-| `ORCA_BOOTSTRAP_PASS` | — | Initial admin password (one-time seed) |
-| `ORCA_ALLOW_OPEN` | — | Allow open (no auth) mode when set to `1` |
-| `ORCA_LOG_LEVEL` | `info` | `debug` / `info` / `warn` / `error` |
-| `ORCA_LOG_DIR` | `cwd/logs` | Log directory |
-| `HERMES_HOME` | `~/.hermes` | Hermes root for same-host MCP registration |
-| `ORCA_CLI` | `orca` | CLI binary path (set by daemon/systemd; falls back to `node dist/cli/index.js`) |
-| `ORCA_DAEMON_URL` | `http://localhost:4400` | Daemon URL for the web BFF proxy (server-side only) |
-
-### Runtime config
-
-Additional security + autopilot settings are managed via `GET/PUT /config` (stored in the SQLite `settings` table):
-
-- `security.tokenTtlDays` — auth token expiry in days (default 30); expired tokens are purged every hour
-- `allowedExecs` — list of executors that may be spawned
-- `autopilot.{model, overseerModel, pilotExec, overseerExec, apiUrl, apiKeySet, reviewOnDone, notes, prompt}` — planning + overseer config
-- `defaults.{exec, autonomy, maxSessions}` — new-task defaults
-- `providers.{claude-code, opencode, codex}.{bin, args}` — CLI binary config
-- Per-user `advisor_exec` + `advisor_autostart` — the user's chosen assistant model and login-autostart flag
-
-API keys are write-only: `apiKeySet` (boolean) is exposed in `GET /config`, the key value is never returned.
-
-## Database
-
-SQLite with WAL mode. Default path is `~/.config/orca/orca.db` (configurable via `ORCA_DB`).
-
-### Backup
-
-```bash
-sqlite3 /path/to/orca.db ".backup /backup/orca-$(date +%Y%m%d).db"
-```
-
-### Migration
-
-New tables or columns are added via `src/store/schema.sql` using `CREATE TABLE IF NOT EXISTS`. No migration framework — handle structural changes manually. The daemon reads the schema from `dist/store/schema.sql` (copied at build time).
+- SSE requires `proxy_buffering off` and `proxy_read_timeout 86400s`
+- The `/ws/` location is required for real-PTY terminal streaming; without it,
+  terminals fall back to snapshot mirror
+- Set `x-real-ip` for correct login rate limiting
 
 ## Monitoring
 
@@ -288,100 +206,50 @@ curl http://localhost:4400/health
 
 ### Logs
 
-With systemd:
-
 ```bash
-journalctl -u orca -f
-```
-
-With Docker:
-
-```bash
-docker logs -f orca
-```
-
-Application logs (file-based, controlled by `ORCA_LOG_DIR` / `ORCA_LOG_LEVEL`):
-
-```bash
-tail -f $PWD/logs/daemon.log
+journalctl -u orca-daemon -f
+tail -f $PWD/logs/daemon.log   # file-based (ORCA_LOG_DIR)
 ```
 
 ## Updating
 
-### Self-reinstall update flow
+### Self-update
 
-`orca update` (and the hourly auto-update timer) reinstalls the npm package in place and restarts the services. The update is **self-locating** — it computes the npm `--prefix` from its own binary path, so it works no matter where orca was globally installed (e.g. a www-data-owned prefix), without the operator having to remember any `--prefix`.
-
-```
+```bash
 orca update
-  → checkLatest() — fetch https://registry.npmjs.org/orcasynth/latest
-  → isNewer() — skip if already current
-  → reinstall() — npm install -g orcasynth@latest [--prefix <self-located>]
-  → restart — systemctl restart orca-daemon orca-web (sudo when not root)
 ```
 
-**Writability check + sudo fallback:** When orca is installed in a root-owned global prefix (e.g. `/usr`) but the daemon runs as a non-root service user, a plain `npm install -g` fails with `EACCES`. The update checks whether the `node_modules` directory is writable by the current user; when it isn't, it routes the in-place reinstall through `sudo`. `orca install` grants exactly this command via a pinned sudoers drop-in (`/etc/sudoers.d/orca`), built from one shared source (`reinstallNpmArgs()`) so the pinned and executed commands stay identical. A writable prefix (root, or a service-user-owned prefix) installs directly, no sudo.
+The update is **self-locating** — it computes the npm `--prefix` from its own
+binary path, so it works regardless of where Orca is installed. It handles
+root-owned prefixes transparently via sudo.
 
-**Auto-update timer:** `orca install` provisions a systemd timer (`orca-update.timer`) that fires hourly and triggers `orca-update.service` — a oneshot unit running `orca update --auto`. The `--auto` flag gates on two conditions before proceeding:
+### Auto-update timer
 
-1. The operator must have turned auto-update **on** in Settings (`config.autoUpdate`).
-2. No mission is currently running (a live mission would be interrupted by a restart).
+Provisioned by `orca install`. Checks hourly, respects running missions
+(won't restart while a mission is active). Toggle in Settings → System.
 
-If either condition fails, the service exits cleanly (exit 0) so `systemctl status orca-update` stays green — a disabled or busy box is a normal no-op, not a failure.
+## Database
 
-**systemd-aware restart:** After a successful install, the update restarts the systemd units (`orca-daemon` + `orca-web`) via `systemctl restart`, transparently through `sudo` when the caller isn't root. A plain launcher install (no `install.json`) falls back to stop/start of the daemon's own spawned process.
+SQLite with WAL mode. Default: `~/.config/orca/orca.db`.
+
+### Backup
+
+```bash
+sqlite3 /path/to/orca.db ".backup /backup/orca-$(date +%Y%m%d).db"
+```
+
+### Migration
+
+New tables/columns use `CREATE TABLE IF NOT EXISTS`. No migration framework.
 
 ## Troubleshooting
 
-### Daemon won't start
-
-- Check Node.js version: `node --version` (needs ≥22)
-- Check tmux is installed: `tmux -V`
-- Check port 4400 is free: `lsof -i :4400`
-- Check the SQLite path is writable (`ORCA_DB`)
-- Check `ORCA_ALLOW_OPEN=1` is set when running without users
-- Check `ORCA_BOOTSTRAP_USER`/`ORCA_BOOTSTRAP_PASS` are set on first run if you want auth
-
-### Sessions stuck
-
-If an agent dies without closing its task:
-
-```bash
-orca sessions                                                    # list sessions
-curl -X DELETE http://localhost:4400/sessions/orca-Agent42       # kill manually
-curl -X PATCH -d '{"status":"open"}' http://localhost:4400/tasks/task-id  # reset task
-```
-
-The **stuck detector** (60 s loop) usually handles this automatically — it reverts tasks whose agent died without `orca close` and escalates after 2 relaunch attempts. The **janitor** (60 s) kills zombie tmux sessions whose task is already closed/cancelled.
-
-### CLI can't reach daemon
-
-```bash
-ORCA_AUTOSTART=0 orca ls      # check if the daemon is truly down
-curl http://localhost:4400/health
-```
-
-If the daemon is stuck, kill it and let systemd/Docker restart it:
-
-```bash
-kill $(lsof -t -i :4400)
-```
-
-### Web UI shows "orca daemon unreachable"
-
-- Verify the daemon is running on port 4400
-- Check `ORCA_DAEMON_URL` (server-side) points to the correct address
-- Check CORS isn't blocked (daemon enables CORS for all origins)
-- If the dev server on :4500 serves broken CSS chunks, kill the :4500 pid and run `next start` (not `next dev`) — turbopack dev cache can go stale
-
-### Login returns 429
-
-The login rate limiter caps 10 attempts per 5-minute window per IP (prefers `x-real-ip`). Wait 5 minutes or restart the daemon to clear the in-memory counter. Ensure nginx sets `x-real-ip` so the limiter sees distinct clients.
-
-### Overseer died mid-mission
-
-The overseer watchdog (`reconcileOverseers()`, 60 s) re-parks a fresh overseer for any active mission whose agent session is missing, and kills orphan overseer sessions. No manual action needed; verify with `orca sessions` that `orca-overseer-<missionId>` reappears within a minute.
-
-### Assistant won't start
-
-The assistant is opt-in per daemon (disabled when the DB is `:memory:`). If `POST /advisor/start` returns `503 advisor unavailable`, you're running against an in-memory DB (tests). Otherwise verify the chosen `exec` is in the daemon's `allowedExecs` and (for a non-admin) the user's own `allowed_execs`. The assistant session is `orca-advisor-<userId>` — check it with `orca sessions`. If it crashes, restart via the dock or `POST /advisor/start`.
+| Symptom | Check |
+|---------|-------|
+| Daemon won't start | Node ≥22? tmux installed? Port 4400 free? DB path writable? |
+| Sessions stuck | `orca sessions` → kill with `DELETE /sessions/:name` |
+| CLI can't reach daemon | `curl http://localhost:4400/health` |
+| Web shows "unreachable" | Daemon running? `ORCA_DAEMON_URL` correct? |
+| Login returns 429 | Wait 5 min or restart daemon. Ensure nginx sets `x-real-ip`. |
+| Overseer died | Watchdog re-parks within 60s. Check `orca sessions` for `orca-overseer-*`. |
+| Assistant won't start | Exec in `allowedExecs`? Non-admin user's `allowed_execs`? |

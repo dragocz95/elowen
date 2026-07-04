@@ -1,23 +1,14 @@
 # Architecture
 
-> **This document has moved.** The Architecture documentation is now maintained as a single
-> source of truth under [`docs/site/`](./site), which also feeds the project website
-> (rendered under `/docs/architecture`).
+> This document has moved.
 
-👉 **[docs/site/06-architecture.md](./site/06-architecture.md)**
+The Architecture documentation is now maintained as part of the user docs:
 
-The `docs/site/` directory holds the web-facing documentation, one file per section:
+- **[Architecture](site/12-architecture.md)** — module overview, timer loops,
+  data flow, database schema
 
-| Section | File |
-|---|---|
-| Overview | [`site/01-overview.md`](./site/01-overview.md) |
-| Install | [`site/02-install.md`](./site/02-install.md) |
-| Using Orca | [`site/03-using-orca.md`](./site/03-using-orca.md) |
-| Concepts | [`site/04-concepts.md`](./site/04-concepts.md) |
-| CLI | [`site/05-cli.md`](./site/05-cli.md) |
-| Architecture | [`site/06-architecture.md`](./site/06-architecture.md) |
+For contributor-focused architecture details see:
 
-For deeper, contributor-focused references see the other documents in [`docs/`](.)
-([API](./API.md), [DEVELOPMENT](./DEVELOPMENT.md), [GUIDES](./GUIDES.md),
-[SECURITY](./SECURITY.md), [TESTING](./TESTING.md), [WEB](./WEB.md),
-[DEPLOYMENT](./DEPLOYMENT.md)).
+- [Development](DEVELOPMENT.md) — project structure, conventions, code style
+- [Guides](GUIDES.md) — internal mechanisms and patterns
+- [Web UI](WEB.md) — frontend architecture

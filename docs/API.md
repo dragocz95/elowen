@@ -1,6 +1,7 @@
 # API Reference
 
-The Orca daemon exposes a REST API. All endpoints return JSON. CORS is enabled for the web frontend.
+The Orca daemon exposes a REST API on port `4400`. All endpoints return JSON.
+CORS is enabled for the web frontend.
 
 **Base URL:** `http://localhost:4400`
 
@@ -10,3005 +11,366 @@ The Orca daemon exposes a REST API. All endpoints return JSON. CORS is enabled f
 
 ### Auth header
 
-Every route except `GET /health`, `GET /setup`, and `POST /auth/login` requires authentication:
+Every route except `GET /health` and `POST /auth/login` requires:
 
 ```
 Authorization: Bearer <token>
 ```
 
-The web UI uses the same-origin `/api` BFF proxy with an httpOnly session cookie — the token never reaches browser JS. For direct daemon access (CLI, scripts), use the `Authorization: Bearer <token>` header.
+The web UI uses the same-origin `/api` BFF proxy with an httpOnly session
+cookie — the token never reaches browser JS.
 
 ### Token scopes
 
-There are three token scopes:
-
 | Scope | Purpose |
-|---|---|
-| `full` | Interactive user sessions (web UI, CLI). Full access subject to project assignment. |
-| `agent` | Issued to spawned agents (`--dangerously-skip-permissions`). Restricted to a narrow allow-list: `PATCH /tasks/:id` (close), `POST /plan/:jobId/submit`, `GET /plan/:jobId`, `GET /tasks`, `GET /tasks/ready`, `GET /sessions`, `GET /missions/:id/overseer/next`, `POST /missions/:id/overseer/decide`. All other routes return 403. |
-| `advisor` | Per-user assistant session (`orca-advisor-<userId>`). Mapped to `full` at the guard so it has the user's own rights, but isolated from login tokens so rotating/stopping the advisor never touches `full` tokens. |
+|-------|---------|
+| `full` | Interactive user sessions — full access |
+| `agent` | Spawned agents — restricted allow-list (close tasks, submit plans) |
+| `advisor` | Per-user assistant — mapped to `full` rights |
 
-Project ownership is still enforced per-row even within the agent allow-list — agents cannot cross tenancy.
+### Multi-tenancy gates
+
+With multi-user mode (user projects store):
+
+1. **Global gate** — non-admin must be assigned to the home project
+2. **Per-project gate** — users only see assigned projects
+3. **Per-user exec allowlist** — restricts which executors a non-admin may use
 
 ### Executor validation
 
-Config has a global `allowedExecs` list. If an `exec` string is passed on any request, it must be in
-that list or the request is rejected with `400 { "error": "exec not allowed" }`.
-
-Additionally, a **per-user allowlist** holds per-user `allowed_execs`. When a non-admin user has a
-non-empty list, they may only use exec strings from that list. Violations return
-`403 { "error": "exec not allowed for user" }`. Admins and users with an empty list are unrestricted
-(subject only to the global `allowedExecs`).
-
-### Multi-tenancy / access control
-
-Single-user mode (no `userProjects` store) — all authenticated users see everything.
-
-Multi-user mode (with `userProjects` store) adds three gates:
-
-1. **Global gate** — a non-admin user must be assigned to the daemon's home project to access
-   `/tasks`, `/missions`, `/sessions`, `/activity`, or `/events`. Unassigned users get a blanket
-   `403 { "error": "forbidden" }` on those route families.
-
-2. **Per-project gate** — even users who pass the global gate may only see/operate projects they
-   are explicitly assigned to. The admin sees everything.
-
-3. **Per-user exec allowlist** — the non-admin's `allowed_execs` restricts which exec strings they
-   may use. An empty list (or an admin) means unrestricted (subject to the global `allowedExecs`).
-
-Agent-scoped tokens are confined to their live working set: workers → projects whose `agent:`-labelled
-tasks are in progress; overseers → projects of active missions' epics.
+Every `exec` string must be in `config.allowedExecs`. Non-admin users may
+be further restricted by their own `allowed_execs`.
 
 ---
 
-## Health & setup
+## Endpoints by group
 
-### Health check
+### Health & setup
 
-```http
-GET /health
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| `GET` | `/health` | No | Daemon health check |
+| `GET` | `/setup` | No | Setup/install status |
+| `GET` | `/cli-status` | No | CLI tool detection status |
+
+```
+GET /health → 200 { "ok": true }
+GET /setup  → 200 { "freshInstall": { "noConfigPersisted": true, … } }
 ```
 
-Public — no authentication required.
+### Auth
 
-**Response `200`**
-```json
-{ "ok": true }
-```
-
-### Setup status
-
-```http
-GET /setup
-```
-
-Public — no authentication required. Returns whether the daemon has no users yet (onboarding mode).
-Returns `false` when no user store is configured.
-
-**Response `200`**
-```json
-{ "needsSetup": true }
-```
-
----
-
-## Authentication
-
-### Login
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| `POST` | `/auth/login` | No | Login, returns bearer token |
+| `POST` | `/auth/logout` | Yes | Revoke current token |
+| `GET` | `/auth/me` | Yes | Current user profile |
+| `PATCH` | `/auth/me` | Yes | Update profile (name, email, default_exec) |
+| `POST` | `/auth/me/password` | Yes | Change password |
+| `POST` | `/auth/me/avatar` | Yes | Upload avatar image |
+| `PATCH` | `/auth/me/cli-settings` | Yes | Update brain CLI settings |
 
 ```http
 POST /auth/login
 Content-Type: application/json
+{ "username": "admin", "password": "test99" }
+→ 200 { "token": "abc123…", "user": { "id": 1, "username": "admin", … } }
 
-{ "username": "admin", "password": "secret" }
-```
-
-Returns a bearer token. Public — no auth required.
-
-**Response `200`**
-```json
-{
-  "token": "a1b2c3d4...",
-  "user": { "id": 1, "username": "admin", "is_admin": true, "created_at": "2026-06-17 12:00:00" }
-}
-```
-
-**Error `400`** — invalid JSON body:
-```json
-{ "error": "invalid JSON body" }
-```
-
-**Error `401`**
-```json
-{ "error": "invalid credentials" }
-```
-
-**Error `429`** — too many failed attempts (10 per 5 minutes per IP):
-```json
-{ "error": "too many login attempts, try again later" }
-```
-
-### Logout
-
-```http
-POST /auth/logout
-```
-
-Revokes the current bearer token.
-
-**Response `200`**
-```json
-{ "ok": true }
-```
-
-### Current user
-
-```http
-GET /auth/me
-```
-
-Returns the authenticated user. Requires `full` token scope — agent-scoped tokens are blocked.
-
-**Response `200`**
-```json
-{
-  "user": { "id": 1, "username": "admin", "name": null, "email": null, "is_admin": true, "default_exec": null, "allowed_execs": [], "avatar": null, "created_at": "2026-06-17 12:00:00" }
-}
-```
-
-### Update profile
-
-```http
-PATCH /auth/me
-Content-Type: application/json
-
-{
-  "name": "My Name",
-  "email": "me@example.com",
-  "default_exec": "sonnet"
-}
-```
-
-Updates the authenticated user's profile. The `default_exec` must be in the daemon's
-`allowedExecs` and the user's own `allowed_execs`. All fields are optional — only provided
-fields are updated. Returns the updated profile subset.
-
-**Response `200`**
-```json
-{ "name": "My Name", "email": "me@example.com", "default_exec": "sonnet" }
-```
-
-**Error `400`**
-```json
-{ "error": "exec not allowed" }
-```
-
-### CLI settings
-
-Per-user settings for the embedded brain assistant (`orca chat` / the web chat dock): a model
-override, a separate vision-model override, reasoning effort, communication style, auto-compact,
-and a linked Discord user id. Self-service — any authenticated user manages their own.
-
-```http
-GET /auth/me/cli-settings
-```
-
-**Response `200`**
-```json
-{
-  "model": "claude-sonnet-5",
-  "modelProvider": "anthropic",
-  "visionModel": "",
-  "visionModelProvider": "",
-  "thinkingLevel": "medium",
-  "autoCompact": true,
-  "autoCompactAt": 80,
-  "advisorStyle": "professional",
-  "discordUserId": "123456789012345678",
-  "serverDefault": "claude-sonnet-5"
-}
-```
-
-An empty `model`/`modelProvider` means "use the server default" — `serverDefault` tells the UI
-what that resolves to (the first configured brain provider's first model, else the autopilot
-relay model).
-
-```http
-PATCH /auth/me/cli-settings
-Content-Type: application/json
-
-{
-  "model": "claude-sonnet-5",
-  "modelProvider": "anthropic",
-  "visionModel": "gpt-5.5-vision",
-  "visionModelProvider": "openai",
-  "thinkingLevel": "high",
-  "autoCompact": true,
-  "autoCompactAt": 85,
-  "advisorStyle": "concise",
-  "discordUserId": "123456789012345678"
-}
-```
-
-All fields are optional — only provided fields are updated:
-
-- `model` / `modelProvider` — the brain's default model for new conversations. A complete pair
-  must be in the daemon's `allowedExecs` and (for a restricted non-admin) the caller's own
-  `allowed_execs`; clearing to `""` is always allowed.
-- `visionModel` / `visionModelProvider` — used automatically when an image is sent to a
-  conversation whose model isn't vision-capable; the same allow-list check applies.
-- `thinkingLevel` — reasoning effort for extended-thinking models: `minimal` \| `low` \|
-  `medium` \| `high` \| `xhigh`, or `""` to leave the model's own default. An unknown value is
-  silently ignored by the store.
-- `autoCompact` / `autoCompactAt` — auto-summarize the conversation once its context fill
-  crosses `autoCompactAt` percent (clamped 30–95). Off by default.
-- `advisorStyle` — communication style: `professional` \| `friendly` \| `concise` \| `detailed`
-  (shapes tone, verbosity, and Czech vykání/tykání). Unknown values are ignored.
-- `discordUserId` — a Discord snowflake (5–25 digits) linking this Orca account to a Discord
-  user; anything else clears the link. A linked sender is recognized by the Discord bot (a
-  verified identity line is added to their turns) and shares the operator's or their own
-  namespaced mem0 memory identity across platforms.
-
-Saving restarts the caller's live brain session so a model/settings change applies immediately
-(conversation history rehydrates, nothing is lost).
-
-**Response `200`** — the updated settings (same shape as the `GET`, plus `serverDefault`).
-
-**Error `400`**
-```json
-{ "error": "model not allowed" }
-```
-
-### Change password
-
-```http
 POST /auth/me/password
 Content-Type: application/json
-
-{ "currentPassword": "secret", "newPassword": "new-secure-pass" }
+{ "currentPassword": "old", "newPassword": "new-secure-pass" }
+→ 200 { "ok": true }
 ```
 
-Self-service password change. Verifies the current password before accepting the new one.
-New password must be at least 8 characters.
+Rate-limited: 10 attempts / 5 min / IP (prefers `x-real-ip`).
 
-**Response `200`**
-```json
-{ "ok": true }
-```
+### Tasks
 
-**Error `400`**
-```json
-{ "error": "currentPassword and newPassword required" }
-```
-```json
-{ "error": "new password too short (min 8)" }
-```
-
-**Error `401`**
-```json
-{ "error": "current password is incorrect" }
-```
-
-### Upload avatar
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/tasks` | List tasks |
+| `GET` | `/tasks/:id` | Get task detail |
+| `POST` | `/tasks` | Create task |
+| `PATCH` | `/tasks/:id` | Update task (close, status, exec) |
+| `PATCH` | `/tasks/:id/approve-gate` | Approve review gate |
+| `DELETE` | `/tasks/:id` | Delete task |
+| `GET` | `/tasks/:id/changed/diff` | Get file diff for closed task |
+| `POST` | `/tasks/plan` | Autopilot plan decomposition |
+| `POST` | `/tasks/:epicId/phases` | Replan — add phases mid-mission |
 
 ```http
-POST /auth/me/avatar
-Content-Type: multipart/form-data
+GET /tasks?project_id=1&status=open → 200 [ { "id": "task-abc", … } ]
 
---boundary
-Content-Disposition: form-data; name="avatar"; filename="photo.png"
-Content-Type: image/png
-
-<binary data>
---boundary--
-```
-
-Uploads a profile avatar. Supported types: PNG, JPEG, WebP, GIF (max 2 MB).
-Stored as `<userId>.<ext>` under the configured avatars directory. Any prior avatar of a
-different extension is removed so the user never keeps two files.
-
-**Response `200`** — returns the updated user object with `avatar` field set (e.g. `"1.png"`).
-
-**Error `400`**
-```json
-{ "error": "avatars unavailable" }
-```
-```json
-{ "error": "avatar file required" }
-```
-
-**Error `413`**
-```json
-{ "error": "image too large (max 2MB)" }
-```
-
-**Error `415`**
-```json
-{ "error": "unsupported image type" }
-```
-
-### Mint signed avatar URL
-
-```http
-GET /users/:id/avatar/url
-```
-
-Mints a short-lived (5 minute) signed URL for a user's avatar. An `<img>` element cannot set
-an `Authorization` header, so an authenticated caller mints a signed link here. The link carries
-only an HMAC over `(id, exp)` that expires in 5 minutes — a leaked URL is near-worthless.
-
-Requires `avatarsDir` and `avatarSecret` configured on the daemon.
-
-**Response `200`**
-```json
-{ "url": "/users/1/avatar?exp=1718900000000&sig=abc123def456..." }
-```
-
-**Error `400`**
-```json
-{ "error": "avatars unavailable" }
-```
-
-**Error `404`**
-```json
-{ "error": "not found" }
-```
-
-### Get user avatar
-
-```http
-GET /users/:id/avatar
-GET /users/:id/avatar?exp=<timestamp>&sig=<hmac>
-```
-
-Serves the avatar image bytes. Two auth paths:
-- **Signed** — `exp` + `sig` query params (for `<img>` elements). Must pass HMAC validation.
-- **Bearer** — standard `Authorization` header (for direct API use).
-
-Returns raw image bytes with correct `content-type` and `cache-control: no-cache`.
-
-**Response `200`** — binary image data with content-type header (image/png, image/jpeg, etc.).
-
-**Error `403`** — signed URL expired or signature mismatch:
-```json
-{ "error": "forbidden" }
-```
-
-**Error `404`** — user not found, no avatar, avatars directory not configured, or file missing on disk:
-```json
-{ "error": "not found" }
-```
-
----
-
-## Users
-
-All `/users` routes are admin-only. During setup (no users yet), `POST /users` is open to allow
-creating the first admin. Once users exist, only the admin can manage them. Non-admin users get
-`403`.
-
-### List users
-
-```http
-GET /users
-```
-
-**Response `200`**
-```json
-[
-  { "id": 1, "username": "admin", "is_admin": true, "created_at": "2026-06-17 12:00:00", ... }
-]
-```
-
-### Create user
-
-```http
-POST /users
-Content-Type: application/json
-
-{ "username": "dev", "password": "secure-pass" }
-```
-
-**Response `201`**
-```json
-{ "id": 2, "username": "dev", "is_admin": false, "created_at": "2026-06-17 14:00:00" }
-```
-
-**Error `409`**
-```json
-{ "error": "username taken" }
-```
-
-### Edit user
-
-```http
-PATCH /users/:id
-Content-Type: application/json
-
-{
-  "is_admin": true,
-  "allowed_execs": ["sonnet", "codex:gpt-5.4"]
-}
-```
-
-Admin-only. Toggles `is_admin` and/or updates the per-user model allow-list. Cannot demote the last
-admin. `allowed_execs` items not in the global `allowedExecs` are silently dropped. Only specified
-fields are updated.
-
-**Response `200`** — the full updated user object.
-
-**Error `400`**
-```json
-{ "error": "cannot demote the last admin" }
-```
-
-**Error `403`**
-```json
-{ "error": "forbidden" }
-```
-
-**Error `404`**
-```json
-{ "error": "user not found" }
-```
-
-### Delete user
-
-```http
-DELETE /users/:id
-```
-
-Cannot delete the last user or the admin (admin must be transferred first). Deleting the admin
-would lock out assignment management and silently re-elect another admin on restart.
-
-**Response `200`**
-```json
-{ "ok": true }
-```
-
-**Error `400`**
-```json
-{ "error": "cannot delete the last user" }
-```
-```json
-{ "error": "cannot delete the admin" }
-```
-
----
-
-## User ↔ Project assignments (admin)
-
-Assignments gate which projects a non-admin user may see/operate. The admin always has full access.
-Only available when `userProjects` store is configured. Non-admin callers get `403`.
-
-### List a user's projects
-
-```http
-GET /users/:id/projects
-```
-
-**Response `200`** — array of project IDs:
-```json
-[1, 3]
-```
-
-**Error `403`** — caller is not admin.
-
-### Assign a project
-
-```http
-POST /users/:id/projects
-Content-Type: application/json
-
-{ "projectId": 3 }
-```
-
-**Response `200`**
-```json
-{ "ok": true }
-```
-
-**Error `400`**
-```json
-{ "error": "projectId required" }
-```
-
-### Unassign a project
-
-```http
-DELETE /users/:id/projects/:pid
-```
-
-**Response `200`**
-```json
-{ "ok": true }
-```
-
----
-
-## Projects
-
-Multi-project mode. When `projectStore` is absent, only the daemon's home project exists.
-
-### List projects
-
-```http
-GET /projects
-```
-
-In multi-user mode, non-admin users see only their assigned projects. Admin sees all.
-
-**Response `200`**
-```json
-[
-  { "id": 1, "slug": "my-project", "path": "/srv/my-project", "notes": null }
-]
-```
-
-### Create project
-
-```http
-POST /projects
-Content-Type: application/json
-
-{
-  "slug": "my-project",
-  "path": "/srv/my-project",
-  "notes": "Optional pilot info"
-}
-```
-
-Admin-only when multi-user auth is on. Slug must be unique.
-
-**Response `201`**
-```json
-{ "id": 1, "slug": "my-project", "path": "/srv/my-project", "notes": "Optional pilot info" }
-```
-
-**Error `400`**
-```json
-{ "error": "projects unavailable" }
-```
-
-**Error `403`**
-```json
-{ "error": "forbidden" }
-```
-
-**Error `409`**
-```json
-{ "error": "slug taken" }
-```
-
-### Edit project
-
-```http
-PATCH /projects/:id
-Content-Type: application/json
-
-{ "path": "/srv/my-project/updated-path", "notes": "Updated pilot notes" }
-```
-
-Admin-only (when multi-user mode). Updates the path and/or Pilot notes. Slug stays immutable.
-Both fields are optional — only provided fields are updated.
-
-**Response `200`** — the full updated project object.
-
-**Error `400`**
-```json
-{ "error": "projects unavailable" }
-```
-
-**Error `403`**
-```json
-{ "error": "forbidden" }
-```
-
-**Error `404`**
-```json
-{ "error": "project not found" }
-```
-
-### Delete project
-
-```http
-DELETE /projects/:id
-```
-
-Admin-only. Cascades to the project's tasks, missions, agents, and access grants. Never touches
-files on disk. The daemon's home project cannot be removed.
-
-**Response `200`**
-```json
-{ "ok": true }
-```
-
-**Error `400`**
-```json
-{ "error": "projects unavailable" }
-```
-```json
-{ "error": "cannot remove the home project" }
-```
-
-**Error `403`**
-```json
-{ "error": "forbidden" }
-```
-
-**Error `404`**
-```json
-{ "error": "project not found" }
-```
-
-### Git info
-
-```http
-GET /projects/:id/git
-```
-
-Returns git status, branches, and recent commits for the project path. Gated by `canAccessProject`.
-Requires both `projectStore` and `gitReader` configured.
-
-**Response `200`**
-```json
-{
-  "isRepo": true,
-  "status": {
-    "branch": "main",
-    "dirty": 2,
-    "ahead": 1,
-    "behind": 0
-  },
-  "branches": [
-    { "name": "main", "current": true },
-    { "name": "feature-x", "current": false }
-  ],
-  "commits": [
-    { "hash": "abc123", "subject": "Fix header", "author": "dev", "relative": "2 hours ago" }
-  ]
-}
-```
-
-**Error `400`**
-```json
-{ "error": "projects unavailable" }
-```
-
-**Error `403`**
-```json
-{ "error": "forbidden" }
-```
-
-**Error `404`**
-```json
-{ "error": "project not found" }
-```
-
-### Filesystem directory browser
-
-```http
-GET /fs/dirs?path=/home
-```
-
-Browses the server's directory tree to pick a new project's path. Admin-only in multi-user
-mode — it lists directory names outside any project root. Directory-only, never returns file
-contents.
-
-**Response `200`**
-```json
-{
-  "path": "/home",
-  "parent": "/",
-  "entries": [
-    { "name": "projects", "path": "/home/projects" },
-    { "name": "www", "path": "/home/www" }
-  ]
-}
-```
-
-**Error `400`**
-```json
-{ "error": "cannot read directory" }
-```
-
-**Error `403`**
-```json
-{ "error": "forbidden" }
-```
-
----
-
-## Project file editor
-
-Browse, read, and write files in a project root, plus diffs. All paths are validated to stay inside
-the project root (symlink-escape safe). Every endpoint gated by `canAccessProject`.
-
-All endpoints return:
-- `400` `{ "error": "projects unavailable" }` — project store not configured
-- `403` `{ "error": "forbidden" }` — caller cannot access this project
-- `404` `{ "error": "project not found" }` — unknown project id
-
-### File tree
-
-```http
-GET /projects/:id/files
-```
-
-Flat list of files and directories, skipping `.git`, `node_modules`, `.next`, `dist`, etc.
-
-**Response `200`**
-```json
-[
-  { "path": "src", "type": "dir" },
-  { "path": "src/index.ts", "type": "file" }
-]
-```
-
-### Read a file
-
-```http
-GET /projects/:id/file?path=src/index.ts
-```
-
-Refused for files > 2 MB.
-
-**Response `200`**
-```json
-{ "path": "src/index.ts", "content": "console.log('hello');\n" }
-```
-
-**Error `400`**
-```json
-{ "error": "path required" }
-```
-```json
-{ "error": "invalid path" }
-```
-
-### Write a file
-
-```http
-PUT /projects/:id/file
-Content-Type: application/json
-
-{ "path": "src/index.ts", "content": "console.log('updated');\n" }
-```
-
-**Response `200`**
-```json
-{ "ok": true }
-```
-
-**Error `400`**
-```json
-{ "error": "path and content required" }
-```
-```json
-{ "error": "invalid path" }
-```
-
-### Binary file (image preview)
-
-```http
-GET /projects/:id/raw?path=src/logo.png
-```
-
-Returns raw file bytes for binary previews. Content-type from extension. Supports PNG, JPEG, WebP,
-GIF, SVG, ICO, BMP, AVIF.
-
-**Response `200`** — binary image data with appropriate content-type header.
-
-**Error `400`**
-```json
-{ "error": "path required" }
-```
-
-**Error `415`**
-```json
-{ "error": "not previewable" }
-```
-
-### Create file
-
-```http
-POST /projects/:id/new-file
-Content-Type: application/json
-
-{ "path": "src/new.ts" }
-```
-
-Creates an empty file.
-
-**Response `200`**
-```json
-{ "ok": true }
-```
-
-**Error `400`**
-```json
-{ "error": "path required" }
-```
-
-### Create directory
-
-```http
-POST /projects/:id/dir
-Content-Type: application/json
-
-{ "path": "src/components" }
-```
-
-**Response `200`**
-```json
-{ "ok": true }
-```
-
-**Error `400`**
-```json
-{ "error": "path required" }
-```
-
-### Rename / move
-
-```http
-POST /projects/:id/rename
-Content-Type: application/json
-
-{ "from": "src/old.ts", "to": "src/new.ts" }
-```
-
-**Response `200`**
-```json
-{ "ok": true }
-```
-
-**Error `400`**
-```json
-{ "error": "from and to required" }
-```
-
-### Copy
-
-```http
-POST /projects/:id/copy
-Content-Type: application/json
-
-{ "from": "src/original.ts", "to": "src/backup.ts" }
-```
-
-**Response `200`**
-```json
-{ "ok": true }
-```
-
-**Error `400`**
-```json
-{ "error": "from and to required" }
-```
-
-### Delete entry
-
-```http
-DELETE /projects/:id/entry?path=src/old.ts
-```
-
-**Response `200`**
-```json
-{ "ok": true }
-```
-
-**Error `400`**
-```json
-{ "error": "path required" }
-```
-
-### Per-file working diff
-
-```http
-GET /projects/:id/diff?path=src/index.ts
-```
-
-**Response `200`**
-```json
-{ "diff": "diff --git a/src/index.ts b/src/index.ts\n…" }
-```
-
-**Error `400`**
-```json
-{ "error": "path required" }
-```
-
-### File at HEAD
-
-```http
-GET /projects/:id/head?path=src/index.ts
-```
-
-Content of a file as it exists in the latest commit (before working-tree changes).
-
-**Response `200`**
-```json
-{ "content": "console.log('original');\n" }
-```
-
-**Error `400`**
-```json
-{ "error": "path required" }
-```
-
-### Changed files
-
-```http
-GET /projects/:id/changed
-```
-
-Returns the list of files changed in the working tree.
-
-**Response `200`**
-```json
-{ "changed": ["src/index.ts", "README.md"] }
-```
-
-### Full working diff
-
-```http
-GET /projects/:id/changes
-```
-
-Combined diff of all unstaged changes.
-
-**Response `200`**
-```json
-{ "diff": "diff --git a/…\n…" }
-```
-
-### Commit files + diff
-
-```http
-GET /projects/:id/commit/:hash
-```
-
-**Response `200`**
-```json
-{ "diff": "diff --git …", "files": ["src/index.ts"] }
-```
-
-### File diff in a commit
-
-```http
-GET /projects/:id/commit/:hash/diff?path=src/index.ts
-```
-
-**Response `200`**
-```json
-{ "diff": "diff --git …" }
-```
-
-**Error `400`**
-```json
-{ "error": "path required" }
-```
-
-### Commit log
-
-```http
-GET /projects/:id/commits?limit=30
-```
-
-Returns the commit log for the project. `limit` defaults to 30.
-
-**Response `200`**
-```json
-{
-  "commits": [
-    { "hash": "abc123", "author": "dev", "subject": "Fix header", "date": "2026-06-17 12:00:00", "relative": "2 hours ago" }
-  ]
-}
-```
-
-**Error `400`**
-```json
-{ "error": "projects unavailable" }
-```
-
-**Error `403`**
-```json
-{ "error": "forbidden" }
-```
-
-**Error `404`**
-```json
-{ "error": "project not found" }
-```
-
----
-
-## Tasks
-
-The basic unit of work. Each task belongs to a project and has a `type`, `status`, `priority`, and
-optional parent/child relationships (dependencies).
-
-### List tasks
-
-```http
-GET /tasks
-GET /tasks?project_id=1
-```
-
-In multi-user mode, returns only tasks belonging to the caller's accessible projects.
-The optional `?project_id=N` parameter narrows the result to a single project (access-gated —
-a non-admin cannot cross tenancy). Unknown or inaccessible project IDs return `[]`.
-
-**Response `200`**
-```json
-[
-  {
-    "id": "my-project-a1b2c3d4",
-    "project_id": 1,
-    "title": "Implement login page",
-    "type": "task",
-    "status": "open",
-    "priority": "P2",
-    "labels": [],
-    "parent_id": null,
-    "description": "",
-    "scheduled_at": null,
-    "autostart": 0,
-    "result_summary": null,
-    "outcome": null,
-    "closed_at": null,
-    "created_at": "2026-06-17 12:00:00"
-  }
-]
-```
-
-### Create task
-
-```http
 POST /tasks
 Content-Type: application/json
+{ "title": "Fix login bug", "labels": ["exec:sonnet"], "project_id": 1 }
+→ 201 { "id": "task-abc", "title": "Fix login bug", … }
 
-{
-  "title": "Add dark mode",
-  "type": "task",
-  "priority": "P3",
-  "id": "my-project-custom-id",
-  "description": "Add dark mode support to the app",
-  "scheduled_at": "2026-06-20T10:00:00Z",
-  "autostart": 1,
-  "deps": ["other-task-id"],
-  "project_id": 1
-}
-```
-
-Only `title` is required. If `id` is omitted, one is generated as `<project-slug>-<random-hex>`.
-`deps` optionally sets task dependencies immediately. `project_id` defaults to the caller's home
-project; arbitrary projects require access. `scheduled_at` and `autostart` control scheduled
-(auto-launch) behavior.
-
-**Response `201`** — the full created task object.
-
-**Error `403`**
-```json
-{ "error": "forbidden" }
-```
-
-**Error `404`**
-```json
-{ "error": "project not found" }
-```
-
-### Update task
-
-```http
-PATCH /tasks/:id
+PATCH /tasks/orca-abc123
 Content-Type: application/json
+{ "status": "closed", "outcome": "ok", "summary": "Fixed the issue" }
+→ 200 { "id": "orca-abc123", "status": "closed", … }
 
-{ "status": "in_progress" }
-```
-
-Supports partial updates:
-- `status` — triggers SSE event. Setting `"closed"` also accepts `result_summary` and `outcome`.
-- `exec` — sets executor label. Not re-validated on PATCH (the label is informational).
-- `title`, `type`, `priority`, `description` — updates metadata
-- `scheduled_at` — schedule for future execution (pass `null` to clear)
-- `autostart` — auto-launch when scheduled_at arrives
-- `deps` — replace task dependencies with the given array
-
-When a task with a parent (epic child) is closed and the config has `autopilot.reviewOnDone`
-+ `autopilot.overseerExec`, a **post-done review** decision is enqueued for the parked Overseer
-agent. If the verdict rejects the result (or flags it destructive), dependent phases are blocked
-until a human intervenes.
-
-**Response `200`** — the full updated task object.
-
-**Error `404`**
-```json
-{ "error": "task not found" }
-```
-
-**Error `403`**
-```json
-{ "error": "forbidden" }
-```
-
-### Delete task
-
-```http
-DELETE /tasks/:id
-DELETE /tasks/:id?subtree=1
-```
-
-Without `?subtree=1` — removes the single task, its dependency rows, and history from the database.
-Publishes a `cancelled` SSE event and purges activity events for the deleted task.
-
-With `?subtree=1` — removes the whole mission subtree: disengages the mission (stops its agents),
-then deletes the epic, every child task, their dependency edges, the mission row, and purges all
-related activity events. Only meaningful when the given id is an epic.
-
-**Response `200`**
-```json
-{ "ok": true }
-```
-
-With `?subtree=1`:
-```json
-{ "ok": true, "tasks": 5 }
-```
-
-**Error `404`**
-```json
-{ "error": "task not found" }
-```
-
-**Error `403`**
-```json
-{ "error": "forbidden" }
-```
-
-### Human approval of review gate
-
-```http
-POST /tasks/:id/approve-gate
-```
-
-Manually approve a phase that was escalated by the post-done review. Accepts the phase's
-result and releases only the dependents no other predecessor still gates. Used from the
-escalations inbox when the overseer escalates to a human.
-
-**Response `200`**
-```json
-{ "released": ["task-id"] }
-```
-
-`released` is the array of task IDs unblocked by this approval.
-
-**Error `404`**
-```json
-{ "error": "task not found" }
-```
-
-**Error `403`**
-```json
-{ "error": "forbidden" }
-```
-
-### List ready tasks
-
-```http
-GET /tasks/ready
-```
-
-Returns tasks in the daemon's home project whose dependencies are all fulfilled.
-Note: always filters by the daemon's home project (not per-user project scope).
-
-**Response `200`**
-```json
-[
-  { "id": "task-1", "title": "Fix header", "status": "open", ... }
-]
-```
-
-### List all dependencies
-
-```http
-GET /tasks/deps
-```
-
-All task dependency edges across all projects.
-
-**Response `200`**
-```json
-[
-  { "task_id": "phase-b", "depends_on_id": "phase-a" }
-]
-```
-
-### Get task dependencies
-
-```http
-GET /tasks/:id/deps
-```
-
-**Response `200`**
-```json
-["dependency-task-id-1", "dependency-task-id-2"]
-```
-
-### Task usage (tokens + cost)
-
-```http
-GET /tasks/:id/usage
-```
-
-Token/cost usage for the task's agent run, read from the executor CLI's local session storage
-(opencode / claude / codex). Portable — no relay needed. Passes sibling tasks and the task's
-own project path so usage can disambiguate concurrent agents by start-order.
-
-**Response `200`**
-```json
-{
-  "inputTokens": 12000,
-  "outputTokens": 3400,
-  "totalTokens": 15400,
-  "costUsd": 0.045,
-  "contextWindow": 200000,
-  "model": "claude-sonnet-4-20250514"
-}
-```
-
-`null` when no matching session is found.
-
-**Error `404`**
-```json
-{ "error": "not found" }
-```
-
-**Error `403`**
-```json
-{ "error": "forbidden" }
-```
-
-### Per-task change snapshot (frozen diff)
-
-```http
-GET /tasks/:id/changed/diff?path=src/index.ts
-```
-
-Returns the diff of one file from the task's frozen change list — the commits the task landed between `base_sha` (stamped at spawn) and `head_sha` (stamped at close). Read from the mission worktree while it's live, else the project checkout. Empty when the task has no snapshot, the file isn't in it, or the refs were GC'd by a later squash.
-
-**Response `200`**
-```json
-{ "diff": "diff --git a/src/index.ts b/src/index.ts\n…" }
-```
-
-Empty diff when no snapshot exists:
-```json
-{ "diff": "" }
-```
-
-**Error `404`** — `{ "error": "task not found" }`
-**Error `403`** — `{ "error": "forbidden" }`
-
----
-
-## Usage & Stats
-
-Aggregated token and cost usage across the daemon's projects. These endpoints read from the
-persisted `task_usage` snapshots (written by the `UsageRecorder` bus subscriber as each task
-settles), never re-scanning the CLI session stores.
-
-### Usage by model
-
-```http
-GET /usage/by-model?project_id=1
-```
-
-Returns total token/cost aggregated per model (exec spec). Scoped to the caller's accessible
-projects; optional `?project_id=N` narrows it to a single project.
-
-**Response `200`**
-```json
-[
-  { "exec": "sonnet", "usage": { "input": 120000, "output": 34000, "cacheRead": 15000, "cacheWrite": 5000, "total": 174000, "costUsd": 0.45 } },
-  { "exec": "claude:opus", "usage": { "input": 50000, "output": 12000, "cacheRead": 0, "cacheWrite": 0, "total": 62000, "costUsd": null } }
-]
-```
-
-### Reset usage stats
-
-```http
-POST /usage/reset
-```
-
-Admin-only. Wipes the `task_usage` snapshot rows from the database. Irreversible, but it only
-clears Orca's own DB — the agents' CLI session transcripts are untouched.
-
-**Response `200`**
-```json
-{ "ok": true, "cleared": 42 }
-```
-
-**Error `403`**
-```json
-{ "error": "forbidden" }
-```
-
----
-
-## Planning (AI plan decomposition)
-
-### Create plan (autopilot + manual)
-
-```http
 POST /tasks/plan
 Content-Type: application/json
+{ "goal": "Add a dark mode toggle", "project_id": 1, "engage": true }
+→ 202 { "jobId": "plan-job-xyz" }
 
-{
-  "goal": "Build a login page with OAuth support",
-  "exec": "sonnet",
-  "autoModel": false,
-  "autonomy": "L3",
-  "maxSessions": 1,
-  "engage": true,
-  "phases": [],
-  "dryRun": false,
-  "prompt": "",
-  "project_id": 1
-}
-```
-
-Decomposes a goal into ordered implementation phases. Each phase becomes a task, chained
-sequentially via dependencies. Optionally engages a mission immediately.
-
-When `autoModel: true`, the planner picks the best model per phase from the configured
-`modelNotes` descriptions — each phase gets its own `exec` field. When `autoModel: false`
-(default), all phases use the uniform `exec` value. `autoModel` and `exec` are mutually
-exclusive: if `autoModel` is true, `exec` is ignored.
-
-**Manual mode** (`phases` array supplied, non-empty): bypasses the LLM entirely. Phases are
-persisted synchronously and the endpoint returns `201` immediately. No API key needed.
-
-**Autopilot mode** (no `phases` supplied): always asynchronous — returns a plan job (`202`).
-Two backends:
-
-- **Relay backend** (default): the planner LLM decomposes the goal inline. API key
-  (`autopilot.apiKey`) must be set. If missing, returns `400 autopilot_key_missing`.
-- **Agent backend** (`config.autopilot.pilotExec` set): the **Pilot** spawns as a repo-aware CLI
-  agent that submits phases via `orca plan submit`. No API key needed.
-
-`dryRun: true` returns phases as a preview without persisting (playground mode). `prompt`
-overrides the saved autopilot prompt template. `project_id` targets a non-home project.
-
-**Response `201`** (manual mode)
-```json
-{
-  "epic": { "id": "my-project-a1b2c3d4", "title": "Build a login page...", "type": "epic", ... },
-  "phases": [
-    { "id": "my-project-b5c6d7e8", "title": "Set up OAuth provider", "status": "open", ... }
-  ],
-  "mission": { "id": "m-my-project-a1b2c3d4", "state": "active", ... }
-}
-```
-
-`mission` is present only when `engage: true`.
-
-**Response `202`** (autopilot — relay or agent backend)
-```json
-{
-  "jobId": "pj-1a2b3c",
-  "epicId": "my-project-a1b2c3d4"
-}
-```
-
-When the relay backend is used, `epicId` is present immediately. For the agent backend it arrives
-once the Pilot submits.
-
-**Response `200`** (dryRun)
-```json
-{
-  "phases": [
-    { "title": "Set up OAuth provider", "type": "feature" }
-  ]
-}
-```
-
-**Error `400`**
-```json
-{ "error": "goal required" }
-```
-```json
-{ "error": "exec not allowed" }
-```
-```json
-{ "error": "autopilot_key_missing" }
-```
-
-**Error `403`**
-```json
-{ "error": "exec not allowed for user" }
-```
-
-**Error `502`**
-```json
-{ "jobId": "pj-1a2b3c", "error": "plan_parse_failed" }
-```
-
-### Poll plan job
-
-```http
-GET /plan/:jobId
-```
-
-Returns the current state of an async planning job. The job id acts as a capability — agent-scoped
-tokens need no project access gate for their own job (the id is unguessable).
-
-**Response `200`**
-```json
-{
-  "id": "pj-1a2b3c",
-  "epicId": "my-project-a1b2c3d4",
-  "goal": "Build a login page with OAuth support",
-  "status": "done",
-  "phases": [
-    { "title": "Set up OAuth provider", "type": "feature" }
-  ]
-}
-```
-
-`status` is `planning` | `done` | `failed`.
-
-**Error `404`**
-```json
-{ "error": "not found" }
-```
-
-**Error `403`**
-```json
-{ "error": "forbidden" }
-```
-
-### Submit plan (Pilot agent)
-
-```http
-POST /plan/:jobId/submit
+POST /tasks/orca-epic123/phases
 Content-Type: application/json
-
-{
-  "phases": [
-    { "title": "Set up database", "type": "chore" },
-    { "title": "Create endpoints", "type": "feature" }
-  ]
-}
+{ "goal": "Add tests for dark mode" }
+→ 201 { "tasks": [ … ] }
 ```
 
-Used by the **Pilot agent** to submit phases for an async planning job. The submitted phases are
-parsed with the same validator as the relay planner output. On success, the plan is finalized
-(persisted, optionally engaged, SSE broadcast).
+### Missions
 
-**Response `200`** — the full updated plan job object.
-
-**Error `400`**
-```json
-{ "error": "invalid phases" }
-```
-
-**Error `404`**
-```json
-{ "error": "not found" }
-```
-
-**Error `403`**
-```json
-{ "error": "forbidden" }
-```
-
-### Insert / replan phases on an existing epic
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/missions` | List missions |
+| `GET` | `/missions/:id` | Get mission detail |
+| `PATCH` | `/missions/:id` | Update mission |
+| `PATCH` | `/missions/:id/state` | Engage / pause / resume / disengage |
+| `DELETE` | `/missions/:id` | Delete mission |
 
 ```http
-POST /tasks/:epicId/phases
+PATCH /missions/m-abc123/state
 Content-Type: application/json
-
-{
-  "phases": [{ "title": "Add rate limiting", "type": "feature" }],
-  "goal": "harden the auth flow",
-  "exec": "sonnet",
-  "autoModel": false,
-  "prompt": ""
-}
+{ "state": "paused" }
+→ 200 { "id": "m-abc123", "state": "paused", … }
 ```
 
-Appends new phases to an existing epic. Two modes:
+### Sessions
 
-- **Manual insert** (supply `phases` array): no LLM, no API key needed. Persisted synchronously.
-  Returns `201`.
-- **Replan** (supply `goal` string): the autopilot decomposes the residual goal. Async path —
-  returns `202` with a `jobId` scoped to this epic. Supports both relay and agent Pilot backends.
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/sessions` | List live sessions |
+| `GET` | `/sessions/:name/pane` | Get session terminal content |
+| `POST` | `/sessions/:name/keys` | Send keystrokes |
+| `DELETE` | `/sessions/:name` | Kill session |
+| `GET` | `/sessions/:name/stream` | SSE stream (terminal content) |
+| `POST` | `/sessions/:name/ws-ticket` | Mint WebSocket ticket for PTY |
 
-New phases are chained to run **after** the epic's current tail phases (leaves that nothing else
-depends on), then sequentially among themselves. If a mission is already active on the epic
-(`m-<epicId>`), it is ticked immediately. `exec`, when given, is set on every new phase. When
-`autoModel: true`, the planner picks the best model per phase from the configured `modelNotes`
-descriptions — each phase gets its own `exec` field, and the uniform `exec` is ignored.
-
-**Response `201`** (manual insert)
-```json
-{
-  "epic": { "id": "my-project-a1b2c3d4", "type": "epic", ... },
-  "phases": [
-    { "id": "my-project-b5c6d7e8", "title": "Add rate limiting", "status": "open", ... }
-  ]
-}
-```
-
-**Response `202`** (replan — async)
-```json
-{ "jobId": "pj-1a2b3c", "epicId": "my-project-a1b2c3d4" }
-```
-
-**Error `404`**
-```json
-{ "error": "epic not found" }
-```
-
-**Error `400`**
-```json
-{ "error": "phases or goal required" }
-```
-```json
-{ "error": "exec not allowed" }
-```
-```json
-{ "error": "autopilot_key_missing" }
-```
-
-**Error `403`**
-```json
-{ "error": "exec not allowed for user" }
-```
-```json
-{ "error": "forbidden" }
-```
-
-**Error `502`**
-```json
-{ "jobId": "pj-1a2b3c", "epicId": "my-project-a1b2c3d4", "error": "plan_parse_failed" }
-```
-
----
-
-## Admin
-
-### Cleanup (wipe operational data)
 
 ```http
-POST /admin/cleanup
-```
-
-Admin-only. Wipes ALL operational data — every task (including deps), every mission, and the
-entire activity feed — and stops every live agent session. Projects, users, and config are kept.
-**Irreversible.** Returns counts of removed data.
-
-**Response `200`**
-```json
-{
-  "ok": true,
-  "tasks": 42,
-  "missions": 3,
-  "events": 156
-}
-```
-
-**Error `403`**
-```json
-{ "error": "forbidden" }
-```
-
----
-
-## Sessions
-
-Sessions correspond to tmux sessions running a single coding agent on a single task.
-Every `orca-*` session is classified by role: `agent` (worker), `pilot` (planning), or
-`overseer` (per-mission decision loop).
-
-### List sessions
-
-```http
-GET /sessions
-```
-
-Returns classified live tmux sessions filtered to the `orca-` prefix.
-
-**Response `200`**
-```json
-[
-  { "name": "orca-SwiftLake0", "role": "agent", "agent": "SwiftLake0" },
-  { "name": "orca-pilot-Patricita", "role": "pilot", "agent": "Patricita" },
-  { "name": "orca-overseer-m-my-project-a1b2c3d4", "role": "overseer", "agent": "", "missionId": "m-my-project-a1b2c3d4" }
-]
-```
-
-### Spawn session
-
-```http
-POST /sessions
+POST /sessions/orca-Agent42/keys
 Content-Type: application/json
-
-{
-  "taskId": "my-project-a1b2c3d4",
-  "exec": "sonnet"
-}
-```
-
-Creates a tmux session named `orca-<uniqueName>`, sets the task `in_progress`, records the
-agent name, marks the started_at timestamp, and launches the agent in the task's own project
-directory. `exec` is validated against the global `allowedExecs` and the per-user `allowed_execs`.
-If the spawn fails, the task is immediately reverted to `open` (no stuck-detector delay).
-
-**Response `201`**
-```json
-{ "session": "orca-SwiftLake0" }
-```
-
-**Error `400`**
-```json
-{ "error": "exec not allowed" }
-```
-
-**Error `403`**
-```json
-{ "error": "exec not allowed for user" }
-```
-```json
-{ "error": "forbidden" }
-```
-
-**Error `404`**
-```json
-{ "error": "task not found" }
-```
-
-**Error `500`**
-```json
-{ "error": "spawn failed: <error message>" }
-```
-
-### Kill session
-
-```http
-DELETE /sessions/:name
-```
-
-Gated by session accessibility (caller must own the session's project). Kills the tmux session.
-
-**Response `200`**
-```json
-{ "ok": true }
-```
-
-**Error `403`**
-```json
-{ "error": "forbidden" }
-```
-
-### Send keys
-
-```http
-POST /sessions/:name/keys
-Content-Type: application/json
-
-{ "keys": ["y", "Enter"] }
-```
-
-Sends keystrokes to the tmux session (e.g., approve agent prompts, interrupt with `["C-c"]`).
-All key tokens are validated: must be a non-empty array of non-flag strings (keys starting with
-`-` are rejected to prevent tmux flag injection).
-
-**Response `200`**
-```json
-{ "ok": true }
-```
-
-**Error `400`**
-```json
-{ "error": "keys must be a non-empty array of non-flag strings" }
-```
-
-**Error `403`**
-```json
-{ "error": "forbidden" }
-```
-
-### Raw interactive input
-
-```http
-POST /sessions/:name/input
-Content-Type: application/json
-
-{ "data": "\u001b[A" }
-```
-
-Sends raw bytes to the tmux pane via `send-keys -l`. Used for interactive terminal input
-(xterm `onData` bytes including printable chars, control codes, and ESC sequences).
-
-**Response `200`**
-```json
-{ "ok": true }
-```
-
-**Error `400`**
-```json
-{ "error": "data must be a non-empty string" }
-```
-
-**Error `403`**
-```json
-{ "error": "forbidden" }
-```
-
-### Resize terminal
-
-```http
-POST /sessions/:name/resize
-Content-Type: application/json
-
-{ "cols": 120, "rows": 40 }
-```
-
-Resizes the tmux window. No hard clamping — the full dimensions are passed to tmux.
-
-**Response `200`**
-```json
-{ "ok": true }
-```
-
-**Error `400`**
-```json
-{ "error": "cols and rows required" }
-```
-
-**Error `403`**
-```json
-{ "error": "forbidden" }
-```
-
-### Capture pane
-
-```http
-GET /sessions/:name/pane
-GET /sessions/:name/pane?ansi=1
-```
-
-Returns the last 60 lines of the session's pane. When `?ansi=1`, ANSI escape codes are preserved
-(otherwise stripped for plain text).
-
-**Response `200`**
-```json
-{ "pane": "> orca ready\n1. Fix header\n2. Add footer\n" }
-```
-
-**Error `403`**
-```json
-{ "error": "forbidden" }
-```
-
-### Stream session output
-
-```http
-GET /sessions/:name/stream
-```
-
-Server-Sent Events stream of the tmux pane content (ANSI, last 200 lines, polled once per second).
-First frame is delivered synchronously so clients render immediately.
-
-```
-event: pane
-data: {"pane": "\u001b[0m\u001b[1m>\u001b[0m \u001b[32morca\u001b[0m ..."}
-```
-
-The stream stays alive even if the session dies (returns empty frames). After 5 consecutive write
-errors (client disconnected), the stream stops. Authentication via session-level access gate.
-
-**Error `403`**
-```json
-{ "error": "forbidden" }
-```
-
-### Mint a terminal-stream ticket
-
-```http
-POST /sessions/:name/ws-ticket
-```
-
-Issues a single-use, short-TTL ticket to open the real-PTY terminal WebSocket (below). Authenticated
-(Bearer/cookie) and ownership-gated by the same session access gate. The resulting stream is fully
-interactive (keystrokes reach the pane).
-
-```json
-{ "ticket": "a1b2c3…" }
-```
-
-**Error `403`** — `{ "error": "forbidden" }` when the caller can't access the session.
-
-### Terminal PTY stream (WebSocket)
-
-```http
-GET /ws/terminal?ticket=<ticket>
-```
-
-WebSocket upgrade served by the **daemon directly** (nginx proxies its `/ws/` location to :4400; the
-Next.js BFF can't proxy a WS upgrade). It carries no token — the single-use ticket is the capability,
-redeemed at upgrade. The daemon then bridges a `tmux attach` PTY (`node-pty`) to the socket:
-
-- **server → client:** raw terminal bytes (the PTY's stdout)
-- **client → server:** raw input bytes, or a JSON control frame `{"type":"resize","cols":N,"rows":M}`
-
-When the ticket is invalid or `node-pty` is unavailable, the socket is closed with application code
-**`4001`** (and no data frame), signalling the browser to fall back to the snapshot `/stream` mirror.
-
----
-
-## Missions
-
-A mission drives an epic's child tasks through the autopilot loop — picking ready tasks, spawning
-agents, and processing approvals. Missions are identified by `m-<epicId>`.
-
-### List active missions
-
-```http
-GET /missions
-```
-
-In multi-user mode, filtered to the caller's accessible projects (missions whose epic's project
-is accessible).
-
-**Response `200`**
-```json
-[
-  {
-    "id": "m-my-project-a1b2c3d4",
-    "epic_id": "my-project-a1b2c3d4",
-    "autonomy": "L2",
-    "max_sessions": 1,
-    "state": "active"
-  }
-]
-```
-
-### Get mission detail
-
-```http
-GET /missions/:id
-```
-
-Returns the mission with its epic, full task tree, dependencies, and progress breakdown.
-
-**Response `200`**
-```json
-{
-  "mission": { "id": "m-my-project-a1b2c3d4", "state": "active", "autonomy": "L2", "max_sessions": 1 },
-  "epic": { "id": "my-project-a1b2c3d4", "title": "Build login page", "type": "epic", "status": "in_progress", ... },
-  "tasks": [
-    { "id": "my-project-b5c6d7e8", "title": "Set up OAuth provider", "status": "closed", ... },
-    { "id": "my-project-c9d0e1f2", "title": "Build login form", "status": "open", ... }
-  ],
-  "deps": [
-    { "taskId": "my-project-c9d0e1f2", "dependsOnId": "my-project-b5c6d7e8" }
-  ],
-  "progress": { "total": 2, "open": 1, "inProgress": 0, "blocked": 0, "closed": 1, "cancelled": 0 }
-}
-```
-
-**Error `404`**
-```json
-{ "error": "mission not found" }
-```
-
-**Error `403`**
-```json
-{ "error": "forbidden" }
-```
-
-### Create mission (engage)
-
-```http
-POST /missions
-Content-Type: application/json
-
-{
-  "epicId": "my-project-a1b2c3d4",
-  "autonomy": "L2",
-  "maxSessions": 1
-}
-```
-
-Triggers an immediate tick cycle — picks ready tasks and spawns agents up to `maxSessions`.
-Validates the epic exists and is accessible. Defaults `autonomy` to `"L3"`, `maxSessions` to `1`.
-
-**Response `201`** — the full mission object.
-
-**Error `400`**
-```json
-{ "error": "epicId required" }
-```
-
-**Error `404`**
-```json
-{ "error": "epic not found" }
-```
-
-**Error `403`**
-```json
-{ "error": "forbidden" }
-```
-
-### Pause / Resume mission
-
-```http
-PATCH /missions/:id
-Content-Type: application/json
-
-{ "action": "pause" }
-```
-
-Actions: `pause` | `resume`
-
-`pause` kills running agents and reverts their tasks to `open`, then marks the mission `paused`.
-`resume` flips state to `active`, re-parks the overseer (if configured), then ticks immediately.
-
-**Response `200`** — the full updated mission object.
-
-**Error `404`**
-```json
-{ "error": "mission not found" }
-```
-
-**Error `403`**
-```json
-{ "error": "forbidden" }
-```
-
-### Disengage mission
-
-```http
-DELETE /missions/:id
-```
-
-Sets state to `disengaged` and kills all associated agent sessions.
-
-**Response `200`**
-```json
-{ "ok": true }
-```
-
-**Error `404`**
-```json
-{ "error": "mission not found" }
-```
-
-**Error `403`**
-```json
-{ "error": "forbidden" }
-```
-
-### PR-native workflow (optional)
-
-Active only when `config.autopilot.prEnabled` is set (see [CONCEPTS](CONCEPTS.md#pr-native-workflow-optional)). The mission's branch + PR metadata is attached to `GET /missions` and `GET /missions/:id` as a `pr` field (`{ branch, prNumber, prUrl, prState }`, or `null`).
-
-```http
-POST /missions/:id/pr
-```
-
-Manually open the PR for a PR-native mission (used when `prAutoOpen` is off). Runs the verify gate, pushes the branch and opens the PR via `gh`.
-
-**Response `200`**
-```json
-{ "url": "https://github.com/owner/repo/pull/42", "number": 42 }
-```
-
-**Error `422`** — the verify command failed (`{ "error": "...", "output": "..." }`), the project has no GitHub remote, or `gh` is unavailable/unauthenticated. **Error `400`** when PR workflow isn't enabled; **`404`** unknown mission; **`403`** forbidden.
-
-PR review feedback is ingested by a ~60 s daemon poller (`prFeedback`), not a request endpoint: fresh actionable feedback is routed through the pilot into 1..N fix phases (bounded by a 2-round fix budget), then the mission is re-engaged.
-
-### Merge PR
-
-```http
-POST /missions/:id/merge-pr
-```
-
-Squash-merges the mission's PR into the base branch. Runs the open/conflict/CI gate — a refusal
-returns 422 with a human reason.
-
-**Response `200`**
-```json
-{ "ok": true }
-```
-
-**Error `400`**
-```json
-{ "error": "PR workflow not enabled" }
-```
-
-**Error `403`**
-```json
-{ "error": "forbidden" }
-```
-
-**Error `404`**
-```json
-{ "error": "mission not found" }
-```
-
-**Error `422`**
-```json
-{ "error": "PR has conflicts" }
-```
-
-### Overseer long-poll (parked agent)
-
-Used by the parked per-mission Overseer agent when `config.autopilot.overseerExec` is set. The agent
-blocks on `next` until a decision is needed (or a heartbeat), then answers via `decide`. No model
-output is parsed — the agent posts a structured verdict; the local destructive heuristic is
-authoritative and applied at enqueue time.
-
-```http
-GET /missions/:id/overseer/next?timeoutMs=30000
-```
-
-Blocks until a decision is pending, then returns the decision request. Returns `{}` on a heartbeat
-(nothing pending). `timeoutMs` caps the long-poll (max 30 000).
-
-**Response `200`**
-```json
-{ "id": "d-abc", "kind": "task", "context": { "title": "...", "outcome": "ok", "summary": "..." } }
-```
-
-`kind` ∈ `task` | `prompt` | `review`.
-`context` contains `title`, `outcome`, `summary` for `review` kind, task/prompt details for others.
-
-**Heartbeat** (nothing pending after timeout):
-```json
-{}
-```
-
-**Error `403`**
-```json
-{ "error": "forbidden" }
-```
-
-```http
-POST /missions/:id/overseer/decide
-Content-Type: application/json
-
-{ "id": "d-abc", "approve": true, "confidence": 0.8, "rationale": "looks safe" }
-```
-
-Resolves the awaiting decision. `confidence` is clamped to 0–1. `destructive` in the verdict
-is always overwritten to `false` — the enqueue-time heuristic is authoritative, never trusted
-from the agent.
-
-**Response `200`**
-```json
-{ "ok": true }
-```
-
-**Error `400`**
-```json
-{ "error": "id required" }
-```
-
-**Error `403`**
-```json
-{ "error": "forbidden" }
-```
-
-**Error `404`**
-```json
-{ "error": "no such decision" }
-```
-
----
-
-## Plugins
-
-Orca's embedded brain assistant is extensible through a lightweight plugin system: each plugin is
-a self-contained Node ESM module (bundled with Orca or dropped into the user plugins directory)
-declaring, via an `orca-plugin.json` manifest, what it contributes (tools, chat platforms, skills)
-and its configurable fields. Enabling/disabling and saving config apply **live** — the brain's
-plugin registry hot-reloads and running conversations restart on it, no daemon restart needed.
-All `/plugins` routes are admin-only (open in single-user mode).
-
-```http
-GET /plugins
-```
-
-Lists every plugin discovered on disk with its manifest metadata and current enabled state.
-
-**Response `200`**
-```json
-[
-  { "name": "discord", "version": "0.1.0", "description": "...", "provides": { "platforms": ["discord"], "tools": ["discord_api"] }, "source": "bundled", "enabled": true, "configurable": true }
-]
-```
-
-```http
-GET /plugins/:name
-```
-
-Detail for one plugin: its declared `configSchema`, current (non-secret) values, and which secret
-keys are set (secret values themselves never leave the daemon).
-
-```http
-PATCH /plugins/:name
-Content-Type: application/json
-
-{ "enabled": true }
-```
-
-Toggles a plugin on/off.
-
-```http
-PATCH /plugins/:name/config
-Content-Type: application/json
-
-{ "values": { "botToken": "...", "guildId": "123456789012345678" } }
-```
-
-Saves a plugin's config values. A secret field sent empty/omitted keeps its stored value (secrets
-round-trip write-only — the UI never reads them back).
-
-**Error `403`** (all routes above) — `{ "error": "forbidden" }`. **Error `404`** — `{ "error": "unknown plugin" }`.
-
-### Cron jobs (cronjob plugin)
-
-The cronjob plugin's admin tools (`cron_add`, `cron_list`, `cron_remove`, `schedule_wakeup`)
-persist jobs to a `jobs.json` file that its scheduler re-reads every 30 s; these routes edit that
-same file directly so the web UI can manage jobs without going through chat.
-
-```http
-GET /plugins/cronjob/jobs
-```
-
-**Response `200`**
-```json
-[
-  {
-    "id": "m6f3a2b1x9y2",
-    "name": "morning-digest",
-    "schedule": "daily 07:00",
-    "prompt": "Summarize overnight activity across my projects.",
-    "hours": "5-21",
-    "notifyChannelId": "998877665544332211",
-    "model": { "provider": "anthropic", "model": "claude-sonnet-5" },
-    "enabled": true,
-    "createdAt": "2026-06-01T07:00:00.000Z",
-    "lastRun": "2026-07-02T07:00:00.000Z",
-    "lastResult": "No incidents overnight."
-  }
-]
-```
-
-Recurring jobs use `schedule` (`"every <N>m"`, `"every <N>h"`, `"daily HH:MM"`, or
-`"weekly <mon..sun> HH:MM"`); a one-shot wake-up carries `runAt` (ISO timestamp) instead and is
-removed once it fires. `hours` is an optional `"H-H"` active-hours guard (supports overnight
-windows like `"22-5"`); outside it the job stays quiet. `model` is an optional per-job override
-(provider + model) — otherwise the job runs on the brain's default model. `notifyChannelId` routes
-the job's result to a specific Discord channel/thread instead of the plugin's configured default.
-
-```http
-PUT /plugins/cronjob/jobs
-Content-Type: application/json
-
-[ { "id": "...", "name": "...", "schedule": "daily 07:00", "prompt": "...", "enabled": true } ]
-```
-
-Replaces the whole jobs array (the UI edits a full-list snapshot). Every job needs a non-empty
-`id`/`name`/`schedule` (or `runAt` for a one-shot) and `prompt`; an invalid schedule string is
-rejected. Runtime fields (`lastRun`, `lastResult`) are preserved from disk, not taken from the
-client — and a job that just flipped from disabled/new to enabled is armed from **now**, so it
-waits for its next natural slot instead of firing immediately on save.
-
-**Response `200`** (`GET`) — the array above. **Response `200`** (`PUT`) — `{ "ok": true }`.
-
-**Error `400`**
-```json
-{ "error": "invalid schedule \"...\" — use \"every 15m\", \"every 2h\", \"daily 07:30\" or \"weekly sun 20:00\"" }
-```
-
-### Skills (skills plugin)
-
-Bundled markdown skills ship read-only inside the plugin; user-created skills (also writable by
-the brain's own `create_skill` tool) live one `.md` file per skill in the plugin's data directory.
-
-```http
-GET /plugins/skills/list
-```
-
-**Response `200`**
-```json
-[
-  { "name": "deploy-checklist", "description": "Steps to ship a release", "source": "user" },
-  { "name": "code-review", "description": "How to review a diff", "source": "bundled" }
-]
-```
-
-```http
-POST /plugins/skills
-Content-Type: application/json
-
-{ "name": "deploy-checklist", "description": "Steps to ship a release", "content": "1. ...\n2. ..." }
-```
-
-Creates a user skill. `name` must be kebab-case (`a-z`, `0-9`, dashes, max 64 chars) and must not
-shadow a bundled skill's name. Applies live — new conversations pick it up immediately.
-
-**Response `201`** — `{ "ok": true }`.
-
-**Error `400`**
-```json
-{ "error": "name must be kebab-case (a-z, 0-9, dashes), max 64 chars" }
-```
-```json
-{ "error": "a bundled skill named \"...\" already exists" }
-```
-
-```http
-DELETE /plugins/skills/:name
-```
-
-Deletes a user skill. Bundled skills cannot be deleted.
-
-**Response `200`** — `{ "ok": true }`. **Error `400`** — `{ "error": "bundled skills cannot be deleted" }`.
-**Error `404`** — `{ "error": "unknown skill" }`.
-
-### Discord channels (discord plugin)
-
-```http
-GET /plugins/discord/channels
-```
-
-Text-capable destinations of the configured guild — text channels and active, non-forum threads —
-for the cron-job destination picker. Requires the plugin's `botToken` and `guildId` to be
-configured; degrades to `[]` on any missing config or upstream failure. Cached 60 s (Discord
-rate-limits the guild routes).
-
-**Response `200`**
-```json
-[
-  { "id": "111", "name": "general", "type": "channel" },
-  { "id": "222", "name": "release-notes", "type": "thread", "parentName": "announcements" }
-]
-```
-
----
-
-## Assistant (per-user advisor)
-
-The assistant is a persistent, per-user agent session that drives Orca on the user's behalf through
-the built-in MCP server. Each user gets their own `orca-advisor-<userId>` tmux session. Full-scope
-(non-`agent`) callers only — a spawned agent must not be able to start/stop a human's assistant.
-
-### Assistant status
-
-```http
-GET /advisor/status
-```
-
-Returns the caller's advisor session state.
-
-**Response `200`**
-```json
-{ "running": false, "exec": "sonnet", "session": null }
-```
-
-When `running`, `session` is the `orca-advisor-<userId>` tmux session name.
-
-**Response `200`** — feature disabled (in-memory DB / tests):
-```json
-{ "running": false, "exec": "", "session": null }
-```
-
-### Start assistant
-
-```http
-POST /advisor/start
-Content-Type: application/json
-
-{ "exec": "sonnet" }
-```
-
-Starts the caller's advisor session with the chosen executor. The exec must be in the daemon's
-`allowedExecs` and (for a restricted non-admin) the user's own `allowed_execs`. The chosen exec is
-remembered on the user record for autostart on next login. Idempotent — a no-op if already running.
-
-Internally: resolves the executor, mints a dedicated `advisor`-scoped token, writes a per-program
-MCP config into the advisor's cwd, and spawns `orca-advisor-<userId>` via tmux with the user's own
-token overriding the daemon's agent service token.
-
-**Response `201`**
-```json
-{ "session": "orca-advisor-1" }
-```
-
-**Error `400`**
-```json
-{ "error": "exec not allowed" }
-```
-
-**Error `403`**
-```json
-{ "error": "exec not allowed for user" }
-```
-
-**Error `503`** — advisor feature unavailable (in-memory DB):
-```json
-{ "error": "advisor unavailable" }
-```
-
-### Stop assistant
-
-```http
-POST /advisor/stop
-```
-
-Kills the caller's advisor tmux session. The advisor token is untouched (reused across restarts).
-
-**Response `200`**
-```json
-{ "ok": true }
-```
-
----
-
-## Brain (embedded assistant)
-
-The **brain** is Orca's in-process AI conversation engine — the "Assistant" chat dock and
-`orca chat` talk to it directly (in-process agent sessions, not a spawned tmux CLI). Every route
-below is scoped to the caller's own conversations; agent-scoped tokens are refused (`403`).
-
-### Search conversations
-
-```http
-GET /brain/search?q=deploy
-```
-
-Fulltext search across the caller's own stored conversations (including chat-platform sessions
-that carry their user id), newest match first, up to 50 hits. Queries under 2 characters return
-`[]`.
-
-**Response `200`**
-```json
-[
-  { "sessionId": "brain-1", "sessionTitle": "Deploy checklist", "role": "assistant", "snippet": "…run the deploy script and…", "ts": "2026-07-02 09:00:00" }
-]
-```
-
-**Error `403`** — `{ "error": "forbidden" }` (agent-scoped token).
-
----
-
-## MCP server
-
-The daemon exposes a built-in MCP server at `/mcp` so the assistant (and any other MCP-capable client)
-can drive Orca with native tools. Each request is handled statelessly: a fresh `McpServer` + transport
-bound to the request's bearer token, so every connection acts with exactly its user's rights.
-
-```http
-POST /mcp
-Authorization: Bearer <token>
-Content-Type: application/json
-
-<JSON-RPC request body>
-```
-
-The endpoint accepts the standard MCP Streamable HTTP transport protocol. Tools exposed:
-
-| Tool | Input | Purpose |
-|---|---|---|
-| `orca_request` | `method`, `path`, `body?` | Generic escape hatch — call any Orca REST endpoint |
-| `orca_tasks` | — | List all tasks |
-| `orca_create_task` | `title`, `project_id?`, `description?` | Create a task |
-| `orca_plan` | `goal`, `project_id?` | Plan a goal into an epic with phases (autopilot) |
-| `orca_sessions` | — | List live agent sessions |
-
-Every tool delegates to the shared `callOrcaApi` core (`src/shared/apiClient.ts`) — the same forward
-path as the `orca api` CLI verb, so a new REST endpoint works in both with zero edits.
-
-**Response `200`** — JSON-RPC response with the tool result as MCP `text` content.
-
----
-
-## Activity log
-
-```http
-GET /activity
-```
-
-Time-ordered event log.
-
-| Query param | Description |
-|---|---|
-| `limit` | Max events to return (number) |
-| `type` | Filter: `task`, `mission`, `signal`, `plan` |
-
-**Response `200`**
-```json
-[
-  { "id": 1, "type": "task", "target": "task-1", "detail": "created", "ts": "2026-06-17T12:00:00.000Z", "project_id": 1, "label": "" },
-  { "id": 2, "type": "signal", "target": "orca-SwiftLake0", "detail": "working", "ts": "2026-06-17T12:05:00.000Z", "project_id": 1, "label": "" }
-]
-```
-
-When no event store is configured, returns `[]`.
-
----
-
-## Inter-agent handoff notes
-
-Agents working on the same mission can leave free-form handoff notes for later phases. Notes are scoped to a mission (epic) and access-gated by the epic's project — an agent can only read/write notes for a mission it is actively working in.
-
-### List notes
-
-```http
-GET /notes?scope=mission&target=<epicId>
-```
-
-Returns notes for the given scope/target, oldest-first. `scope` defaults to `mission`. The `target` is an epic id (a leading `m-` from a mission id is stripped, so both `orca note ls <epicId>` and `orca note ls m-<epicId>` work). Accessible to agent-scoped tokens.
-
-**Response `200`**
-```json
-[
-  { "id": 1, "scope": "mission", "target": "my-project-a1b2c3d4", "author": "Atlas0", "body": "The DB schema is already migrated — skip the migration phase.", "created_at": "2026-06-17 12:00:00" }
-]
-```
-
-**Error `400`** — `{ "error": "target required" }`
-**Error `403`** — `{ "error": "forbidden" }` (caller cannot access the epic's project)
-**Error `404`** — `{ "error": "unknown target" }` (epic not found)
-
-### Add a note
-
-```http
-POST /notes
-Content-Type: application/json
-
-{ "scope": "mission", "target": "my-project-a1b2c3d4", "body": "The DB schema is already migrated — skip the migration phase.", "author": "Atlas0" }
-```
-
-Leaves a handoff note. `scope` defaults to `mission`. `author` is optional (empty string when omitted). Body is capped at 8 000 characters; a target is capped at 200 notes. Accessible to agent-scoped tokens.
-
-**Response `201`** — the full created note object.
-
-**Error `400`** — `{ "error": "target and body required" }` or `{ "error": "body too large" }` or `{ "error": "notes unavailable" }`
-**Error `403`** — `{ "error": "forbidden" }`
-**Error `404`** — `{ "error": "unknown target" }`
-**Error `429`** — `{ "error": "too many notes" }` (200-note cap per target)
-
----
-
-## Config
-
-### Get config
-
-```http
-GET /config
-```
-
-Returns the full daemon configuration. API keys are never exposed — `apiKeySet` is a boolean flag.
-The `prompt` field holds the raw custom planner template (empty = use built-in default).
-
-**Response `200`**
-```json
-{
-  "allowedExecs": ["sonnet", "opencode:deepseek-v4-flash", "codex:gpt-5.4"],
-  "customModels": [],
-  "hiddenPresets": [],
-  "modelNotes": {
-    "sonnet": "Fast, reliable everyday coder with strong tool use and instruction following.",
-    "opus": "Most capable reasoner; best for hard architecture and tricky debugging."
-  },
-  "defaults": { "exec": "sonnet", "autonomy": "L3", "maxSessions": 1 },
-  "autopilot": {
-    "model": "claude-opus-4-8",
-    "overseerModel": "",
-    "pilotExec": "",
-    "overseerExec": "",
-    "reviewOnDone": false,
-    "apiUrl": "https://relay.example/v1",
-    "apiKeySet": false,
-    "notes": "",
-    "prompt": ""
-  },
-  "providers": {
-    "claude-code": { "bin": "claude", "args": "" },
-    "opencode": { "bin": "opencode", "args": "" },
-    "codex": { "bin": "codex", "args": "" }
-  },
-  "security": { "tokenTtlDays": 30 }
-}
-```
-
-`modelNotes` is a map of exec → capability description. Seeded from `src/shared/execs.ts` (`EXEC_NOTES`) on first install. User edits persist and merge *under* built-in defaults so known models always carry a description. Used by the autopilot model picker (`autoModel`) to let the planner choose the best model per phase.
-
-Per-role reasoning backends:
-
-| Field | Effect |
-|---|---|
-| `autopilot.pilotExec` | When set (e.g. `claude:opus`), the **Pilot** runs as a repo-aware CLI agent that submits its plan via `orca plan submit`. Empty → relay model decomposes inline. |
-| `autopilot.overseerExec` | When set, the **Overseer** runs as a parked per-mission CLI agent that long-polls `GET /missions/:id/overseer/next`. Empty → decisions use the relay (`overseerModel` / `model`). |
-| `autopilot.reviewOnDone` | When `true` (and `overseerExec` is set), each closed mission phase enqueues a post-done review for the Overseer. Default `false`. |
-| `autopilot.model` | Planner model (for `POST /tasks/plan` relay backend). |
-| `autopilot.overseerModel` | Overseer decision model (falls back to `model` when empty). |
-| `autopilot.prompt` | Custom planner template (empty = built-in `planner.md`). |
-
-### Update config
+{ "keys": ["C-c"] }
+→ 200 { "ok": true }
+```
+
+### Projects
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/projects` | List projects |
+| `POST` | `/projects` | Create project |
+| `PATCH` | `/projects/:id` | Update project |
+| `DELETE` | `/projects/:id` | Delete project |
+| `GET` | `/projects/:id/files` | List files |
+| `GET` | `/projects/:id/files/:path` | Get file content |
+| `PUT` | `/projects/:id/files/:path` | Write file |
+| `GET` | `/projects/:id/git` | Git status |
+| `GET` | `/projects/:id/changed` | Changed files |
+| `GET` | `/projects/:id/changes` | Working diff |
+| `GET` | `/projects/:id/head` | HEAD file content |
+| `GET` | `/projects/:id/commits` | Recent commits |
+| `GET` | `/projects/:id/commits/:hash` | Commit detail |
+| `GET` | `/projects/:id/commits/:hash/diff/:path` | Commit file diff |
+| `POST` | `/projects/:id/files` | Create file/directory |
+| `PATCH` | `/projects/:id/files` | Rename/copy file |
+| `DELETE` | `/projects/:id/files/:path` | Delete file |
+| `GET` | `/projects/:id/branches` | List branches |
+
+### Config
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/config` | Get runtime config (API keys omitted) |
+| `PUT` | `/config` | Update runtime config |
 
 ```http
 PUT /config
 Content-Type: application/json
-
-{ "allowedExecs": ["sonnet"], "autopilot": { "apiKey": "sk-..." } }
+{ "allowedExecs": ["sonnet", "opencode:deepseek-v4-flash"], … }
+→ 200 { "allowedExecs": ["sonnet", …], … }
 ```
 
-Admin-only (when users exist). All fields are partial — only specified fields are updated. During
-setup (no users yet) it is open so onboarding can save providers before the first admin exists.
+### Brain
 
-**Response `200`** — the full updated config (same shape as `GET /config`).
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/brain/stream` | SSE chat stream |
+| `GET` | `/brain/messages` | Past messages for session |
+| `GET` | `/brain/sessions` | List brain sessions |
+| `POST` | `/brain/sessions` | Create new session |
+| `DELETE` | `/brain/sessions/:id` | Delete session |
+| `GET` | `/brain/search` | Fulltext search conversations |
+| `GET` | `/brain/models` | Aggregated model catalog |
+| `POST` | `/brain/providers/probe` | Probe provider endpoint for models |
+| `GET` | `/brain/oauth/status` | OAuth connection status |
+| `GET` | `/brain/oauth/:type/catalog` | OAuth provider model catalog |
+| `POST` | `/brain/oauth/:type/start` | Start OAuth connect flow |
+| `GET` | `/brain/oauth/flow/:id` | Poll OAuth flow status |
+| `POST` | `/brain/oauth/flow/:id/input` | Submit OAuth code |
+| `DELETE` | `/brain/oauth/:type` | Disconnect OAuth account |
 
-**Error `403`**
-```json
-{ "error": "forbidden" }
-```
+### Advisor (assistant)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/advisor/start` | Start assistant |
+| `POST` | `/advisor/stop` | Stop assistant |
+| `GET` | `/advisor/status` | Get assistant status |
+
+### Plugins
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/plugins` | List all plugins |
+| `PATCH` | `/plugins/:name/toggle` | Enable/disable plugin |
+| `GET` | `/plugins/:name/config` | Get plugin config |
+| `PUT` | `/plugins/:name/config` | Update plugin config |
+| `GET` | `/plugins/:name/logs` | Get plugin logs |
+| `GET` | `/plugins/:name/data/:path` | Get plugin data file |
+| `PUT` | `/plugins/:name/data/:path` | Write plugin data file |
+| `GET` | `/plugins/runtime` | Runtime contributions report |
+| `GET` | `/plugins/marketplace` | Plugin marketplace catalog |
+| `GET` | `/plugins/marketplace/:name` | Marketplace plugin detail |
+
+### Memory
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/memory` | List memories |
+| `POST` | `/memory` | Store memory |
+| `DELETE` | `/memory/:id` | Delete memory |
+| `GET` | `/memory/search` | Search memories |
+| `POST` | `/memory/reindex` | Reindex all memories |
+| `GET` | `/memory/categories` | List categories |
+| `POST` | `/memory/categories` | Create category |
+| `PATCH` | `/memory/categories/:id` | Update category |
+| `DELETE` | `/memory/categories/:id` | Delete category |
+| `POST` | `/memory/:id/classify` | Reclassify memory |
+| `GET` | `/memory/stats` | Memory statistics |
+| `POST` | `/memory/test-embed` | Test embedding connection |
+
+### Personality
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/personality/profiles` | List personalities |
+| `POST` | `/personality/profiles` | Create personality |
+| `PATCH` | `/personality/profiles/:id` | Update personality |
+| `DELETE` | `/personality/profiles/:id` | Delete personality |
+| `POST` | `/personality/profiles/:id/activate` | Activate personality |
+
+### Users
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/users` | List users |
+| `POST` | `/users` | Create user |
+| `PATCH` | `/users/:id` | Update user |
+| `DELETE` | `/users/:id` | Delete user |
+| `GET` | `/users/:id/projects` | Get user project assignments |
+| `POST` | `/users/:id/projects` | Assign project to user |
+| `DELETE` | `/users/:id/projects/:projectId` | Remove project assignment |
+| `GET` | `/users/:id/avatar/url` | Get avatar URL |
+
+### Activity & events
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/events` | List events (activity timeline) |
+| `GET` | `/activity` | Alias for events with optional type filter |
+
+### Notes
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/notes` | List notes (by scope + target) |
+| `POST` | `/notes` | Create note |
+
+### System
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/system` | Version info, update status |
+| `POST` | `/system/restart` | Restart daemon or web service |
+| `POST` | `/system/update` | Trigger update check |
+
+### Push notifications
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/push/vapid-public-key` | Get VAPID public key (no auth) |
+| `POST` | `/push/subscribe` | Subscribe to push |
+| `POST` | `/push/unsubscribe` | Unsubscribe from push |
+
+### MCP
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/mcp` | MCP tool execution |
+
+### Usage
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/usage/by-model` | Usage aggregated by model |
+| `POST` | `/usage/reset` | Reset usage data (admin) |
+
+### Integrations
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/integrations/cli-status` | Detect installed CLIs |
+| `GET` | `/integrations/github-status` | GitHub CLI auth status |
 
 ---
 
-## System
+## SSE events
 
-### System info
+Connect to `GET /events` for real-time updates:
 
-```http
-GET /system
 ```
-
-Read-only status panel: the running version, the latest published one, whether an update is
-available, and the auto-update opt-in. Any authenticated user may see it (non-admins still
-can't trigger an update).
-
-**Response `200`**
-```json
-{
-  "version": "1.4.46",
-  "latest": "1.4.46",
-  "updateAvailable": false,
-  "autoUpdate": true
-}
-```
-
-### Trigger update
-
-```http
-POST /system/update
-```
-
-Admin-only. Triggers an in-place update via `orca update` (detached). Refused with `409`
-while a mission is live — the update restarts services, which would kill running agents.
-
-**Response `200`**
-```json
-{ "started": true }
-```
-
-**Error `409`**
-```json
-{ "error": "mission_running" }
-```
-
-**Error `403`**
-```json
-{ "error": "forbidden" }
-```
-
-### Restart a service
-
-```http
-POST /system/restart
-Content-Type: application/json
-
-{ "target": "daemon" }
-```
-
-Admin-only. Restarts one of the two systemd units in place: `"daemon"` or `"web"`. The response
-is sent **before** the restart actually fires — restarting the daemon kills the very process
-handling the request, so the underlying `systemctl restart --no-block` is deferred a beat and
-carried out by PID 1, not this request's process.
-
-**Response `200`**
-```json
-{ "ok": true }
-```
-
-**Error `400`** — `target` must be `"daemon"` or `"web"` (Zod-validated body).
-
-**Error `403`**
-```json
-{ "error": "forbidden" }
-```
-
----
-
-## Events (SSE)
-
-```http
 GET /events
 Authorization: Bearer <token>
-```
 
-Server-Sent Events stream for real-time updates. The web UI connects through the same-origin `/api` BFF proxy with an httpOnly session cookie. The stream stays alive indefinitely, sleeping 30s between keep-alive cycles. Closes on client disconnect via `abort` signal.
-
-### Event types
-
-**task**
-```
 event: task
-data: {"type": "task", "taskId": "my-project-a1b2c3d4", "status": "in_progress"}
-```
+data: {"type":"task","target":"orca-abc123","detail":"closed"}
 
-**mission**
-```
 event: mission
-data: {"type": "mission", "missionId": "m-my-project-a1b2c3d4", "state": "active"}
-```
+data: {"type":"mission","target":"m-abc123","detail":"engaged"}
 
-**signal** (from deriver)
-```
 event: signal
-data: {"type": "signal", "session": "orca-Agent0", "signal": {"type": "working"}}
-```
+data: {"type":"signal","target":"orca-Agent42","detail":"needs_input"}
 
-Signal types: `working`, `needs_input`, `complete`.
-
-**plan** (async planning job)
-```
 event: plan
-data: {"type": "plan", "jobId": "pj-1a2b3c", "status": "done", "epicId": "my-project-a1b2c3d4", "phases": [{"title": "...", "type": "feature"}]}
+data: {"type":"plan","target":"plan-job-xyz","detail":"done"}
+
+event: review
+data: {"type":"review","target":"orca-abc123","detail":"approved"}
+
+event: decision
+data: {"type":"decision","taskId":"orca-abc123","kind":"prompt","outcome":"approved","rationale":"Safe operation","confidence":0.92}
 ```
 
-Emitted on `planning` (job created), `done` (plan finalized), `failed` (error). The `phases` array
-is present on `done`.
+Two SSE connections are used by the web UI:
+
+1. **Event bus** (`/events`) — global state changes
+2. **Pane stream** (`/sessions/:name/stream`) — per-session terminal content
 
 ---
 
-## Integrations
-
-### Hermes MCP status
-
-```http
-GET /integrations/hermes/status?home=~/.hermes
-```
-
-Reports whether Orca is registered as an MCP server (and enabled) in a same-host Hermes instance.
-`home` override is constrained to live under the daemon's configured Hermes root
-(`HERMES_HOME` env, default `~/.hermes`). Admin-only in multi-user mode.
-
-**Response `200`**
-```json
-{
-  "home": "~/.hermes",
-  "exists": true,
-  "registered": true,
-  "enabled": true
-}
-```
-
-**Error `400`**
-```json
-{ "error": "home must be under the Hermes root" }
-```
-
-**Error `403`**
-```json
-{ "error": "forbidden" }
-```
-
-### Register Orca MCP in Hermes
-
-```http
-POST /integrations/hermes/install
-Content-Type: application/json
-
-{
-  "home": "~/.hermes",
-  "url": "http://localhost:4400",
-  "token": "a1b2c3d4..."
-}
-```
-
-Writes the Orca bearer token into Hermes's `.env` (as `MCP_ORCA_API_KEY`) and adds an `orca` entry
-under `mcp_servers:` in its `config.yaml` (pointing at `<url>/mcp` with a bearer auth header). Backs
-up the config first. Admin-only (writes credentials into a host path).
-
-**Response `201`**
-```json
-{
-  "mcpUrl": "http://localhost:4400/mcp",
-  "registered": true,
-  "enabled": true,
-  "envWritten": true,
-  "backedUp": true,
-  "status": { "home": "~/.hermes", "exists": true, "registered": true, "enabled": true }
-}
-```
-
-**Error `400`**
-```json
-{ "error": "url and token required" }
-```
-```json
-{ "error": "home must be under the Hermes root" }
-```
-
-**Error `403`**
-```json
-{ "error": "forbidden" }
-```
-
-### CLI detection
-
-```http
-GET /integrations/cli-status
-```
-
-Detects which agent CLIs (claude, opencode, codex) are installed and usable, and whether the daemon
-has enough configuration to operate. Used by the onboarding wizard.
-
-**Response `200`**
-```json
-{
-  "tools": [
-    { "name": "claude", "installed": true, "functional": true, "version": "1.2.3", "error": null },
-    { "name": "opencode", "installed": false, "functional": false, "version": null, "error": "'opencode' not found on PATH" },
-    { "name": "codex", "installed": true, "functional": true, "version": "0.5.0", "error": null }
-  ],
-  "summary": { "allInstalled": false, "allFunctional": false },
-  "freshInstall": { "noConfigPersisted": false, "noApiKey": false, "noCustomSetup": false }
-}
-```
-
-### GitHub auth status
-
-```http
-GET /integrations/github-status
-```
-
-Reports the GitHub authentication posture for the PR-native workflow — whether a push would
-succeed (via a stored token or `gh` CLI's own login) and as whom. The token value is never
-exposed, only whether one is set.
-
-**Response `200`**
-```json
-{
-  "ghInstalled": true,
-  "ghAuthenticated": true,
-  "account": "dev",
-  "tokenSet": false,
-  "ready": true,
-  "method": "gh"
-}
-```
-
----
-
-## Push Notifications
-
-Web push notifications via VAPID. A browser subscribes with the user's bearer token, and the
-daemon sends push notifications for mission escalations, review requests, and other events.
-
-### VAPID public key
-
-```http
-GET /push/vapid-public-key
-```
-
-Returns the VAPID public key the browser needs to create a push subscription. Safe pre-auth
-(the key is public). Returns an empty string when push is not configured.
-
-**Response `200`**
-```json
-{ "publicKey": "BIsdf...abc" }
-```
-
-### Subscribe device
-
-```http
-POST /push/subscribe
-Content-Type: application/json
-
-{
-  "endpoint": "https://fcm.googleapis.com/...",
-  "keys": { "p256dh": "...", "auth": "..." }
-}
-```
-
-Registers a device push subscription for the authenticated user. Sending a duplicate endpoint
-updates the keys (idempotent).
-
-**Response `201`**
-```json
-{ "ok": true }
-```
-
-**Error `400`**
-```json
-{ "error": "endpoint and keys.{p256dh,auth} required" }
-```
-
-### Unsubscribe device
-
-```http
-POST /push/unsubscribe
-Content-Type: application/json
-
-{ "endpoint": "https://fcm.googleapis.com/..." }
-```
-
-Removes a device subscription. Scoped to the authenticated user — you can only remove your
-own device.
-
-**Response `200`**
-```json
-{ "ok": true }
-```
-
-**Error `400`**
-```json
-{ "error": "endpoint required" }
-```
-
----
-
-## Status codes
-
-| Code | Meaning |
-|---|---|
-| `200` | Success |
-| `201` | Created |
-| `202` | Accepted (async plan job) |
-| `400` | Bad request (invalid input, exec not allowed, missing fields, invalid JSON body) |
-| `401` | Unauthorized (missing or invalid token) |
-| `403` | Forbidden (not accessible for this user/project, exec not allowed for user, agent token capability limit) |
-| `404` | Not found |
-| `409` | Conflict (duplicate slug/username, checkout busy) |
-| `413` | Payload too large (avatar exceeds 2 MB) |
-| `429` | Too many requests (login rate limit: 10 per 5 minutes per IP) |
-| `415` | Unsupported media type (avatar image type not accepted) |
-| `502` | Bad gateway (AI plan parsing failed) |
-| `500` | Internal error (includes spawn failures) |
-
-## Error format
-
-All errors follow the same shape:
+## Error responses
 
 ```json
-{ "error": "descriptive message" }
+{ "error": "unauthorized" }           // 401
+{ "error": "forbidden" }              // 403
+{ "error": "exec not allowed" }       // 400
+{ "error": "checkout busy" }          // 409
+{ "error": "autopilot_key_missing" }  // 400
 ```
 
-The `POST /tasks/plan` and `POST /tasks/:epicId/phases` error responses for plan_parse_failed
-also include `jobId` and `epicId` where applicable:
-```json
-{ "jobId": "pj-1a2b3c", "epicId": "my-project-a1b2c3d4", "error": "plan_parse_failed" }
-```
-
-## Complete route index
-
-| # | Method | Path | Auth | Section |
-|---|---|---|---|---|
-| 1 | `GET` | `/health` | Public | Health & setup |
-| 2 | `GET` | `/setup` | Public | Health & setup |
-| 3 | `POST` | `/auth/login` | Public | Authentication |
-| 4 | `POST` | `/auth/logout` | Bearer | Authentication |
-| 5 | `GET` | `/auth/me` | Bearer (full) | Authentication |
-| 6 | `PATCH` | `/auth/me` | Bearer | Authentication |
-| 7 | `POST` | `/auth/me/password` | Bearer | Authentication |
-| 8 | `POST` | `/auth/me/avatar` | Bearer | Authentication |
-| 9 | `GET` | `/users/:id/avatar/url` | Bearer | Authentication |
-| 10 | `GET` | `/users/:id/avatar` | Bearer/signed | Authentication |
-| 11 | `GET` | `/users` | Bearer (admin) | Users |
-| 12 | `POST` | `/users` | Bearer (admin/open) | Users |
-| 13 | `PATCH` | `/users/:id` | Bearer (admin) | Users |
-| 14 | `DELETE` | `/users/:id` | Bearer (admin) | Users |
-| 15 | `GET` | `/users/:id/projects` | Bearer (admin) | Assignments |
-| 16 | `POST` | `/users/:id/projects` | Bearer (admin) | Assignments |
-| 17 | `DELETE` | `/users/:id/projects/:pid` | Bearer (admin) | Assignments |
-| 18 | `GET` | `/projects` | Bearer | Projects |
-| 19 | `POST` | `/projects` | Bearer (admin) | Projects |
-| 20 | `PATCH` | `/projects/:id` | Bearer (admin) | Projects |
-| 21 | `DELETE` | `/projects/:id` | Bearer (admin) | Projects |
-| 22 | `GET` | `/projects/:id/git` | Bearer | Projects |
-| 23 | `GET` | `/fs/dirs` | Bearer (admin) | Projects |
-| 24 | `GET` | `/projects/:id/files` | Bearer | File editor |
-| 25 | `GET` | `/projects/:id/file` | Bearer | File editor |
-| 26 | `PUT` | `/projects/:id/file` | Bearer | File editor |
-| 27 | `GET` | `/projects/:id/raw` | Bearer | File editor |
-| 28 | `POST` | `/projects/:id/new-file` | Bearer | File editor |
-| 29 | `POST` | `/projects/:id/dir` | Bearer | File editor |
-| 30 | `POST` | `/projects/:id/rename` | Bearer | File editor |
-| 31 | `POST` | `/projects/:id/copy` | Bearer | File editor |
-| 32 | `DELETE` | `/projects/:id/entry` | Bearer | File editor |
-| 33 | `GET` | `/projects/:id/diff` | Bearer | File editor |
-| 34 | `GET` | `/projects/:id/head` | Bearer | File editor |
-| 35 | `GET` | `/projects/:id/commit/:hash` | Bearer | File editor |
-| 36 | `GET` | `/projects/:id/commit/:hash/diff` | Bearer | File editor |
-| 37 | `GET` | `/projects/:id/commits` | Bearer | File editor |
-| 38 | `GET` | `/projects/:id/changed` | Bearer | File editor |
-| 39 | `GET` | `/projects/:id/changes` | Bearer | File editor |
-| 40 | `GET` | `/activity` | Bearer | Activity |
-| 41 | `GET` | `/notes` | Bearer (full + agent) | Handoff notes |
-| 42 | `POST` | `/notes` | Bearer (full + agent) | Handoff notes |
-| 43 | `GET` | `/tasks` | Bearer (full + agent) | Tasks |
-| 44 | `POST` | `/tasks` | Bearer | Tasks |
-| 45 | `GET` | `/tasks/ready` | Bearer (full + agent) | Tasks |
-| 46 | `GET` | `/tasks/deps` | Bearer | Tasks |
-| 47 | `GET` | `/tasks/:id/usage` | Bearer | Tasks |
-| 48 | `GET` | `/tasks/:id/changed/diff` | Bearer | Tasks |
-| 49 | `PATCH` | `/tasks/:id` | Bearer (full + agent) | Tasks |
-| 50 | `POST` | `/tasks/:id/approve-gate` | Bearer | Tasks |
-| 51 | `GET` | `/tasks/:id/deps` | Bearer | Tasks |
-| 52 | `DELETE` | `/tasks/:id` | Bearer | Tasks |
-| 53 | `POST` | `/admin/cleanup` | Bearer (admin) | Admin |
-| 54 | `GET` | `/usage/by-model` | Bearer | Usage & Stats |
-| 55 | `POST` | `/usage/reset` | Bearer (admin) | Usage & Stats |
-| 56 | `POST` | `/tasks/plan` | Bearer | Planning |
-| 57 | `GET` | `/plan/:jobId` | Bearer (full + agent) | Planning |
-| 58 | `POST` | `/plan/:jobId/submit` | Bearer (full + agent) | Planning |
-| 59 | `POST` | `/tasks/:epicId/phases` | Bearer | Planning |
-| 60 | `GET` | `/sessions` | Bearer (full + agent) | Sessions |
-| 61 | `POST` | `/sessions` | Bearer | Sessions |
-| 62 | `DELETE` | `/sessions/:name` | Bearer | Sessions |
-| 63 | `POST` | `/sessions/:name/keys` | Bearer | Sessions |
-| 64 | `POST` | `/sessions/:name/input` | Bearer | Sessions |
-| 65 | `POST` | `/sessions/:name/resize` | Bearer | Sessions |
-| 66 | `GET` | `/sessions/:name/pane` | Bearer | Sessions |
-| 67 | `GET` | `/sessions/:name/stream` | Bearer | Sessions |
-| 68 | `POST` | `/sessions/:name/ws-ticket` | Bearer | Sessions |
-| 69 | `GET` | `/missions` | Bearer | Missions |
-| 70 | `GET` | `/missions/:id` | Bearer | Missions |
-| 71 | `POST` | `/missions` | Bearer | Missions |
-| 72 | `PATCH` | `/missions/:id` | Bearer | Missions |
-| 73 | `DELETE` | `/missions/:id` | Bearer | Missions |
-| 74 | `POST` | `/missions/:id/pr` | Bearer | Missions |
-| 75 | `POST` | `/missions/:id/merge-pr` | Bearer | Missions |
-| 76 | `GET` | `/missions/:id/overseer/next` | Bearer (full + agent) | Missions |
-| 77 | `POST` | `/missions/:id/overseer/decide` | Bearer (full + agent) | Missions |
-| 78 | `GET` | `/advisor/status` | Bearer (full) | Assistant |
-| 79 | `POST` | `/advisor/start` | Bearer (full) | Assistant |
-| 80 | `POST` | `/advisor/stop` | Bearer (full) | Assistant |
-| 81 | `ALL` | `/mcp` | Bearer | MCP server |
-| 82 | `GET` | `/events` | Bearer | Events |
-| 83 | `GET` | `/integrations/hermes/status` | Bearer (admin) | Integrations |
-| 84 | `POST` | `/integrations/hermes/install` | Bearer (admin) | Integrations |
-| 85 | `GET` | `/integrations/cli-status` | Bearer | Integrations |
-| 86 | `GET` | `/integrations/github-status` | Bearer | Integrations |
-| 87 | `GET` | `/push/vapid-public-key` | Public/Bearer | Push Notifications |
-| 88 | `POST` | `/push/subscribe` | Bearer | Push Notifications |
-| 89 | `POST` | `/push/unsubscribe` | Bearer | Push Notifications |
-| 90 | `GET` | `/system` | Bearer | System |
-| 91 | `POST` | `/system/update` | Bearer (admin) | System |
-| 92 | `GET` | `/config` | Bearer | Config |
-| 93 | `PUT` | `/config` | Bearer (admin/setup) | Config |
-| 94 | `GET` | `/ws/terminal` | Ticket | Terminal |
-| 95 | `GET` | `/auth/me/cli-settings` | Bearer | Authentication |
-| 96 | `PATCH` | `/auth/me/cli-settings` | Bearer | Authentication |
-| 97 | `GET` | `/plugins` | Bearer (admin/open) | Plugins |
-| 98 | `GET` | `/plugins/:name` | Bearer (admin/open) | Plugins |
-| 99 | `PATCH` | `/plugins/:name` | Bearer (admin/open) | Plugins |
-| 100 | `PATCH` | `/plugins/:name/config` | Bearer (admin/open) | Plugins |
-| 101 | `GET` | `/plugins/cronjob/jobs` | Bearer (admin/open) | Plugins |
-| 102 | `PUT` | `/plugins/cronjob/jobs` | Bearer (admin/open) | Plugins |
-| 103 | `GET` | `/plugins/skills/list` | Bearer (admin/open) | Plugins |
-| 104 | `POST` | `/plugins/skills` | Bearer (admin/open) | Plugins |
-| 105 | `DELETE` | `/plugins/skills/:name` | Bearer (admin/open) | Plugins |
-| 106 | `GET` | `/plugins/discord/channels` | Bearer (admin/open) | Plugins |
-| 107 | `GET` | `/brain/search` | Bearer (full) | Brain |
-| 108 | `POST` | `/system/restart` | Bearer (admin) | System |
+All errors return a JSON body with an `error` string field.

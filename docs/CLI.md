@@ -1,23 +1,11 @@
-# CLI Reference
+# CLI
 
-> **This document has moved.** The CLI reference is now maintained as a single source of
-> truth under [`docs/site/`](./site), which also feeds the project website (rendered under
-> `/docs/cli`).
+> This document has moved.
 
-👉 **[docs/site/05-cli.md](./site/05-cli.md)**
+The CLI reference is now maintained as part of the user docs:
 
-The `docs/site/` directory holds the web-facing documentation, one file per section:
+- **[CLI](site/06-cli.md)** — all commands, environment variables
 
-| Section | File |
-|---|---|
-| Overview | [`site/01-overview.md`](./site/01-overview.md) |
-| Install | [`site/02-install.md`](./site/02-install.md) |
-| Using Orca | [`site/03-using-orca.md`](./site/03-using-orca.md) |
-| Concepts | [`site/04-concepts.md`](./site/04-concepts.md) |
-| CLI | [`site/05-cli.md`](./site/05-cli.md) |
-| Architecture | [`site/06-architecture.md`](./site/06-architecture.md) |
+For deeper CLI development details see:
 
-For deeper, contributor-focused references see the other documents in [`docs/`](.)
-([API](./API.md), [DEVELOPMENT](./DEVELOPMENT.md), [GUIDES](./GUIDES.md),
-[SECURITY](./SECURITY.md), [TESTING](./TESTING.md), [WEB](./WEB.md),
-[DEPLOYMENT](./DEPLOYMENT.md)).
+- [Development](DEVELOPMENT.md) — setup, scripts, and how to add commands

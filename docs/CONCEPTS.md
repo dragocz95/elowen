@@ -1,23 +1,15 @@
 # Concepts
 
-> **This document has moved.** The Concepts documentation is now maintained as a single
-> source of truth under [`docs/site/`](./site), which also feeds the project website
-> (rendered under `/docs/concepts`).
+> This document has moved.
 
-👉 **[docs/site/04-concepts.md](./site/04-concepts.md)**
+The Concepts documentation is now split into two dedicated guides:
 
-The `docs/site/` directory holds the web-facing documentation, one file per section:
+- **[Tasks & Missions](site/03-tasks-missions.md)** — task lifecycle, dependencies,
+  scheduling, autopilot missions
+- **[Agents & Autonomy](site/04-agents-autonomy.md)** — providers, L0–L3,
+  overseer gate, deriver, safety
 
-| Section | File |
-|---|---|
-| Overview | [`site/01-overview.md`](./site/01-overview.md) |
-| Install | [`site/02-install.md`](./site/02-install.md) |
-| Using Orca | [`site/03-using-orca.md`](./site/03-using-orca.md) |
-| Concepts | [`site/04-concepts.md`](./site/04-concepts.md) |
-| CLI | [`site/05-cli.md`](./site/05-cli.md) |
-| Architecture | [`site/06-architecture.md`](./site/06-architecture.md) |
+For deeper reference see the other documents in `docs/`:
 
-For deeper, contributor-focused references see the other documents in [`docs/`](.)
-([API](./API.md), [DEVELOPMENT](./DEVELOPMENT.md), [GUIDES](./GUIDES.md),
-[SECURITY](./SECURITY.md), [TESTING](./TESTING.md), [WEB](./WEB.md),
-[DEPLOYMENT](./DEPLOYMENT.md)).
+- [Guides](GUIDES.md) — advanced patterns and internal mechanisms
+- [API Reference](API.md) — REST API documentation

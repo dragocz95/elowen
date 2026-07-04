@@ -2,280 +2,122 @@
 
 # Orcasynth
 
-**Control autonomous coding agents — without losing control.**
+**Your personal AI agent.**
 
-Plan the work, launch isolated coding agents, watch every session live, and step in
-before a risky change ever reaches your codebase.
+`Chat · Plan · Delegate · Automate`
 
-`Plan · Dispatch · Observe · Intervene`
-
-Orcasynth is a self-hosted daemon that orchestrates autonomous coding agents
-(Claude Code, OpenCode, Codex, Kilo Code, Pi, oh-my-pi) in isolated `tmux` sessions — with
-a REST API, a CLI, and a real-time Next.js web UI. No SaaS, no lock-in: your machine, your
-agents, your code.
+Orca is a self-hosted personal AI agent that orchestrates autonomous coding
+agents, runs a built-in brain for chat and automation, supports plugins
+(Discord, cron, skills, memory, and more), and gives you a web UI and CLI
+to control everything. No SaaS, no lock-in — your machine, your agents, your
+code.
 
 [![CI](https://github.com/dragocz1995/orcasynth/actions/workflows/ci.yml/badge.svg)](https://github.com/dragocz1995/orcasynth/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
 [![Node](https://img.shields.io/badge/node-%3E%3D22-43853d.svg)](https://nodejs.org)
-[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](./CONTRIBUTING.md)
 
 </div>
 
 ---
 
-## Why Orcasynth
-
-Coding agents are powerful but messy to run at scale: one terminal per agent, no shared
-view of what's happening, and no safety net when an agent decides to `rm -rf` something.
-
-Orcasynth puts a control plane in front of them. Hand it a goal and it plans the work,
-spawns the right agent for each step in its own `tmux` session, streams every keystroke to
-your browser, and gates dangerous actions behind a human when you want it to. When you
-trust it more, you turn the autonomy up; when you trust it less, you turn it down.
-
 ## What it does
 
-- **Autopilot planning.** Give the Pilot a goal and an LLM decomposes it into a dependency
-  DAG of phases, chains them by dependency, and can name an agent per phase. Phases only
-  start once the phases they depend on are done — and independent phases run in parallel up
-  to your session limit, each in its own isolated worktree, instead of a forced linear chain.
-- **Per-model descriptions & per-phase model selection.** Write a capability description
-  for each model in Settings, flip on "Autopilot picks the model," and the planner chooses
-  the best-suited model for each phase from those descriptions — validated against your
-  allow-list, falling back to the default on anything invalid.
-- **PR-native autopilot.** Instead of editing your checkout mid-flight, a mission can run
-  like a disciplined engineer on a branch: it works in an isolated git worktree (under
-  `<repo-parent>/.orca-worktrees/`), commits each approved phase as it lands, then runs your
-  verify command, pushes the branch, and opens a GitHub pull request. Orca ingests the PR's
-  review feedback — `CHANGES_REQUESTED` and `COMMENTED` reviews (so bot reviewers and plain
-  human comments both count) plus inline diff comments — folds it back through the Pilot as
-  1..N fix phases, and pushes the fixes to the same PR. A fix-round budget (2 automatic
-  rounds) stops review ping-pong loops: once it's spent, the mission stalls and escalates to
-  a human instead of looping forever. The UI exposes a PR badge, the fix-round count, and
-  merge-to-main / continue-mission actions; merging gates on the PR being open, mergeable,
-  and CI-green. Auth uses a configured GitHub token or falls back to the machine's `gh` CLI
-  login. Configurable globally in **Settings → GitHub** and overridable per project
-  (**Inherit / On / Off**), so each project runs its own workflow.
-- **Agent-agnostic spawning.** Runs Claude Code, OpenCode, Codex, Kilo Code, Pi, or
-  oh-my-pi in isolated `tmux` sessions, configurable per task — as workers *and* as the
-  autopilot's Pilot/Overseer. Each provider is a first-class executor with its own brand
-  icon and launch flags in **Settings → Providers**, and each agent receives the task
-  context and closes its own task when it's done.
+- **Autopilot planning.** Give the Pilot a goal and an LLM decomposes it into
+  ordered phases with dependencies. Each phase spawns an agent in its own tmux
+  session. Independent phases can run in parallel up to your session limit.
 - **Autonomy levels (L0–L3).** Choose how much rope each mission gets — from
-  **L0 · Recommend** (plan only, nothing runs until you approve) through **L1 · Assist**
-  and **L2 · Pilot** to **L3 · Auto** (full autonomy). The overseer's decision engine
-  auto-clears agent permission prompts when confidence is high and the action is safe, and
-  escalates anything destructive or uncertain to a human. Operations like `rm -rf`, dropping
-  tables, force-pushes, or touching `.env` always escalate, whatever the level.
-- **Live web UI with one-click intervention.** Tasks, a kanban board with a calendar (and
-  date-range filtering), missions with phase progress, a timeline with an activity feed and a
-  "changes over time" view that turns recent git history into an interactive commit stream
-  plus a most-active-files roll-up, an escalations queue for review-gate decisions, and
-  real-time `tmux` session previews you can jump into and take over. The Pilot's planning run
-  streams live in the task modal too, expandable into the full session terminal. Each preview
-  is a real PTY streamed over a WebSocket (xterm), so you type straight into the agent —
-  native cursor, smooth scrolling, full key support — not a read-only mirror. A dedicated **Stats** page shows per-model token/cost breakdown. Creating a
-  project is point-and-click too: a **Browse** button opens a server-side folder picker to
-  choose the path instead of typing it, and you pick a project icon (from an image already
-  in the repo) right after creating it. Full EN/CS internationalization built in, and the
-  whole dashboard is responsive down to a phone.
-- **Phone push notifications.** Launch a swarm and walk away from the keyboard — Orca pings
-  your phone only when a mission actually needs you. A review escalation, an agent waiting on
-  input, or a stalled run arrives as a Web Push notification with inline action buttons
-  (**Approve / Re-run / Allow / Reject / Open**) that act through the service worker without
-  opening the app; mission-done / PR-opened arrives as a tap-to-open FYI. Opt in per device
-  from your Account, and notifications route to the mission's owner plus admins. A VAPID
-  keypair is generated on first boot and the private key never leaves the daemon.
-- **Self-healing.** A stuck-session detector revives agents that die without closing out
-  (and blocks the task after repeated failures instead of crash-looping). A janitor sweeps
-  up finished sessions. Live token and cost usage is shown per run.
-- **Multi-user RBAC with self-service.** Admin and member roles, per-project assignments,
-  per-user model allow-lists, profiles and avatars, and a first-run onboarding that needs
-  no login until the first admin is created. Users can change their password, upload an
-  avatar, and manage push-notification devices from their own account page.
-- **Per-user Assistant.** Each user gets a persistent assistant agent (`orca-advisor-<userId>`)
-  that drives Orca on their behalf through a built-in MCP server. The server exposes seven
-  tools — `orca_tasks`, `orca_create_task`, `orca_plan`, `orca_sessions`, `orca_note_add`,
-  `orca_notes`, and the generic `orca_request` passthrough that reaches any REST endpoint —
-  so a brand-new endpoint is callable with zero new tooling. Auto-starts on login, remembers
-  its model, and runs in a docked IDE-style side panel with a real-PTY terminal. Pop any
-  session terminal out into its own chromeless window for focus.
-- **Self-hosted & lightweight.** A single SQLite-backed daemon (Hono + SSE) plus a Next.js
-  front end. No external services required beyond your own LLM provider.
+  L0 (plan only) to L3 (full autonomy). The overseer's decision engine
+  auto-clears safe actions and escalates anything destructive.
+- **Brain & Chat.** A built-in AI assistant accessible via web dock, CLI
+  (`orca chat`), or Discord. Multi-provider model catalog with OAuth account
+  connect (Anthropic, Copilot, OpenAI). Memory, personality, and plugin support.
+- **Plugin system.** Extend the brain with tools, platforms, and skills.
+  12 bundled plugins: Discord bot, cron jobs, file tools, terminal, web
+  search, image generation/editing, skills, security scanning, subagent
+  delegation, statusline, runtime context.
+- **PR-native workflow.** Missions work in isolated git worktrees, commit
+  each approved phase, and open a GitHub pull request. Review feedback flows
+  back as fix phases — bounded to 2 rounds, then escalates.
+- **Agent-agnostic spawning.** Runs Claude Code, OpenCode, or Codex in
+  isolated tmux sessions, configurable per task.
+- **Real-time web UI.** Dashboard, tasks, kanban board, timeline, live session
+  previews with real PTY streaming, built-in Monaco editor, stats.
+- **Phone push notifications.** Web Push with inline action buttons (Allow,
+  Reject, Approve, Rerun) when a mission needs you.
+- **Self-healing.** Stuck detector revives dead agents, janitor cleans up
+  finished sessions. Token and cost usage shown per run.
+- **Multi-user RBAC.** Admin and member roles, per-project assignments,
+  per-user model allow-lists.
+- **Self-hosted & lightweight.** Single SQLite-backed daemon + Next.js front
+  end. No external services beyond your own LLM provider.
+
+## Install
+
+```bash
+npm install -g orcasynth
+orca                    # interactive menu
+orca install            # guided provisioning wizard
+orca up                 # start daemon (:4400) + web UI (:4500)
+```
+
+Requires **Node ≥ 22** and **tmux**. Open `http://localhost:4500` and log in.
+
+```bash
+orca chat               # talk to your AI assistant
+orca status             # check what's running
+orca update             # update to latest version
+```
 
 ## Screenshots
 
 <div align="center">
 
-**Dashboard** — live agents, active missions, the autopilot spotlight, and recent outcomes at a glance.
+**Dashboard** — live agents, active missions, autopilot spotlight.
 
 ![Dashboard](docs/screenshots/dashboard.png)
 
 </div>
 
-<div align="center">
-
-**Assistant panel** — a docked, dock-left/right, resizable IDE-style side column. Watch your always-on AI assistant and a running agent next to the main view, with a model picker that shows per-provider brand icons.
-
-![Assistant panel](docs/screenshots/assistant-panel.png)
-
-</div>
-
 | | |
 |---|---|
-| **Tasks** — list + detail with live agent output and token usage. ![Tasks](docs/screenshots/tasks.png) | **Kanban** — open / in-progress / blocked / closed, with mission progress and a calendar. ![Kanban](docs/screenshots/kanban.png) |
-| **Missions** — phase graph and task flow for an autopilot run (folded into Tasks). ![Missions](docs/screenshots/missions.png) | **Timeline** — a live activity feed across tasks, missions, and signals. ![Timeline](docs/screenshots/timeline.png) |
-| **Sessions** — real-time `tmux` agent previews with one-click intervention. ![Sessions](docs/screenshots/sessions.png) | **Terminal** — an interactive real-PTY agent terminal you type straight into, including human-in-the-loop approvals. ![Terminal](docs/screenshots/terminal.png) |
-| **Pop-out terminal** — pull any session into its own standalone, chromeless window for focus. ![Pop-out terminal](docs/screenshots/terminal-popout.png) | **Settings** — per-model descriptions with brand icons, providers, autopilot, a dedicated GitHub section for the PR-native workflow, and defaults. ![Settings](docs/screenshots/settings.png) |
-| **Projects** — a built-in Monaco editor with the project file tree. ![Projects editor](docs/screenshots/projects-editor.png) | |
-
-<div align="center">
-
-**Onboarding** — a first-run setup flow that needs no login until the first admin is created.
-
-![Onboarding](docs/screenshots/onboarding.png)
-
-</div>
-
-## Install
-
-Install globally from npm — one command brings up the daemon **and** the web UI:
-
-```bash
-npm install -g orcasynth
-orca            # interactive menu: start/stop · first-run setup · update · open web
-```
-
-Prefer it non-interactive? The same actions are plain subcommands:
-
-```bash
-orca up         # start the daemon (:4400) + web UI (:4500) in the background
-orca status     # show what's running
-orca down       # stop everything
-orca update     # update to the latest release from npm
-orca install    # guided provisioning wizard (domain/TLS, ports, first admin)
-```
-
-Requires **Node ≥ 22** and **tmux**. On first run, `orca` walks you through a quick
-setup — admin account, LLM provider + API key, and a default model. Your data (config,
-the SQLite database, and logs) lives in **`~/.config/orca/`** and survives every update.
-
-> **Interactive terminals** use [`node-pty`](https://www.npmjs.com/package/node-pty), an
-> optional native dependency. If its native addon can't build on your host, everything
-> else runs unchanged — the live session previews just fall back to a read-only mirror
-> instead of a type-into terminal.
-
-Then open <http://localhost:4500> and sign in.
-
-## Run from source
-
-For development, or to run without a global install. Requires **Node ≥ 22** and **tmux**.
-
-```bash
-# 1. Daemon (REST API on :4400)
-npm install
-npm run build
-ORCA_BOOTSTRAP_USER=admin ORCA_BOOTSTRAP_PASS=changeme node dist/daemon/index.js
-
-# 2. Web UI (on :4500)
-cd web
-npm install
-npm run build
-npm start -- -p 4500
-```
-
-Open <http://localhost:4500> and sign in. Configure your LLM provider and models in
-**Settings → Autopilot / Models**, then create a task or engage an autopilot mission.
-
-The CLI talks to the daemon over the REST API and auto-starts it if it isn't running:
-
-```bash
-node dist/cli/index.js ls          # list tasks
-node dist/cli/index.js close <id>  # close a task
-```
-
-## How it works
-
-```
-        goal
-         │
-         ▼
-   ┌───────────┐   phases + deps    ┌─────────────┐   spawn    ┌──────────────┐
-   │   Pilot   │ ─────────────────► │   Overseer  │ ─────────► │  Agent (tmux) │
-   │ (planner) │                    │ (scheduler, │            │ Claude Code / │
-   └───────────┘                    │  decisions) │ ◄───────── │ OpenCode /    │
-                                    └─────────────┘   signals  │ Codex / Kilo /│
-                                          │                    │ Pi / oh-my-pi │
-                                          │                    └──────────────┘
-                                          │ escalate
-                                          ▼
-                                    human-in-the-loop
-```
-
-The **Pilot** decomposes a goal into a dependency-ordered set of phases. The **Overseer**
-schedules ready phases, spawns the right **Agent** for each one in its own `tmux` session,
-and watches the output. A deriver reads each session and emits signals — `working`,
-`needs_input`, `complete`. When an agent hits a permission prompt, the decision engine
-either clears it automatically (high confidence, non-destructive, within the mission's
-autonomy level) or escalates it to a human.
-
-With the **PR-native workflow** enabled, that loop runs against an isolated git worktree
-rather than your live checkout: the Overseer commits each approved phase, and on completion
-verifies, pushes, and opens a pull request. PR review feedback flows back to the Pilot as
-fix phases that land on the same branch — bounded by a fix-round budget so the mission
-escalates to a human instead of trading comments with a reviewer indefinitely.
+| **Tasks** — list + detail with live output. ![Tasks](docs/screenshots/tasks.png) | **Kanban** — board and calendar view. ![Kanban](docs/screenshots/kanban.png) |
+| **Sessions** — real-time tmux previews. ![Sessions](docs/screenshots/sessions.png) | **Terminal** — interactive PTY streaming. ![Terminal](docs/screenshots/terminal.png) |
+| **Projects** — built-in Monaco editor. ![Editor](docs/screenshots/projects-editor.png) | **Settings** — models, providers, plugins. ![Settings](docs/screenshots/settings.png) |
 
 ## Architecture
 
-A daemon (`src/`) owns the database and the orchestration loop; the web app (`web/`)
-is a thin client over the REST API + SSE event stream.
+```
+                  ┌──────────────┐
+  Browser ───────▶│  Web (:4500) │───────┐
+                  │  Next.js BFF │       │
+                  └──────────────┘       │
+                                          ▼
+  orca chat ─────▶┌──────────────────┐ ┌──────────┐
+  orca ls  ──────▶│  Daemon (:4400)  │ │ SQLite   │
+  Discord  ──────▶│  REST + SSE + WS │ │ orca.db  │
+                  └────────┬─────────┘ └──────────┘
+                           │
+                    ┌──────┴──────┐
+                    │  tmux       │
+                    │  sessions   │
+                    └─────────────┘
+```
 
-| Layer | What lives there |
-|-------|------------------|
-| `src/store` | SQLite stores (tasks, missions, agents, config, users, projects, events) via `better-sqlite3` |
-| `src/overseer` | mission engine, planner, scheduler, decision engine, stuck-detector, janitor |
-| `src/spawn` · `src/tmux` | agent command building + tmux driver |
-| `src/advisor` | per-user assistant lifecycle (start/stop/autostart) + MCP config injection |
-| `src/mcp` | built-in MCP server exposing Orca's toolset to the assistant agent |
-| `src/terminal` | real-PTY WebSocket streaming (`node-pty` + `tmux attach`) |
-| `src/deriver` | derives signals from agent output (`working` / `needs_input` / `complete`) |
-| `src/integrations` | per-executor token/cost usage extraction, Hermes MCP registration, CLI detection |
-| `src/api` | Hono REST server + SSE event bus |
-| `src/cli` · `src/daemon` | the `orca` CLI (incl. `orca api` passthrough) and the daemon entrypoint |
-| `web/modules` | feature modules (tasks, kanban, sessions, timeline, projects, advisor, settings, …) |
-
-See [`docs/`](./docs) for the [documentation hub](./docs/index.md), [API](./docs/API.md),
-[architecture](./docs/ARCHITECTURE.md), [concepts](./docs/CONCEPTS.md), [CLI](./docs/CLI.md),
-[development](./docs/DEVELOPMENT.md), [deployment](./docs/DEPLOYMENT.md), and [web UI](./docs/WEB.md) guides.
+See [`docs/`](./docs) for the [documentation hub](./docs/index.md),
+[Getting Started](./docs/site/01-getting-started.md),
+[Brain & Chat](./docs/site/07-brain-chat.md), and [Plugins](./docs/site/08-plugins.md).
 
 ## Development
 
 ```bash
-npm test            # daemon tests (vitest)
-npm run build       # typecheck + build (also copies schema.sql + prompts/)
-npm run build:web   # standalone web UI bundle
-npm run serve       # daemon dev mode (direct TS via --experimental-strip-types)
-npm run lint        # ESLint (unused imports, hook deps)
-npm run depcruise   # dependency-cruiser architecture checks (no cycles, layer boundaries)
-cd web && npm test  # web tests
-cd web && npm run dev  # web dev server (turbopack)
+npm test            # daemon tests (~471 cases)
+npm run build       # typecheck + build
+cd web && npm test  # web tests (~313 cases)
+cd web && npm run dev  # web dev server
 ```
 
-See [`docs/DEVELOPMENT.md`](./docs/DEVELOPMENT.md), [`docs/TESTING.md`](./docs/TESTING.md),
-and [`docs/WEB.md`](./docs/WEB.md).
-
-## Contributing
-
-Contributors are welcome — whether it's a bug fix, a new feature, or just an idea.
-
-- 💡 **Have a suggestion?** Open a [feature request](https://github.com/dragocz1995/orcasynth/issues/new?template=feature_request.md) and tell us what would make Orcasynth better.
-- 🐛 **Found a bug?** File a [bug report](https://github.com/dragocz1995/orcasynth/issues/new?template=bug_report.md).
-- 🔧 **Want to hack on it?** Read [CONTRIBUTING.md](./CONTRIBUTING.md), open a PR, and check the [Code of Conduct](./CODE_OF_CONDUCT.md).
-
-Star the repo if you find it useful — it helps others discover the project.
+See [`docs/DEVELOPMENT.md`](./docs/DEVELOPMENT.md).
 
 ## License
 
 [MIT](./LICENSE)
-</content>
-</invoke>
