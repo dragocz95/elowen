@@ -1,10 +1,9 @@
 'use client';
 import { useState } from 'react';
-import { Brain, CheckCircle2, History, RefreshCw } from 'lucide-react';
+import { Brain, CheckCircle2, History, RefreshCw, type LucideIcon } from 'lucide-react';
 import type { Memory } from '../../lib/types';
 import { useMemoryEvents, useEmbeddingSettings } from '../../lib/queries';
 import { useReindexMemories } from '../../lib/mutations';
-import { StatCard } from '../../components/ui/StatCard';
 import { Button } from '../../components/ui/Button';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { useToast } from '../../components/ui/Toast';
@@ -50,12 +49,12 @@ export function MemoryOverview({ memories }: { memories: Memory[] }) {
 
   return (
     <div className="flex flex-col gap-4">
-      {/* Vertical stat stack — this block lives in the sticky right column, so cards flow top-to-bottom
-          rather than in a horizontal strip. */}
-      <div className="grid grid-cols-1 gap-3">
-        <StatCard value={memories.length} label={t.page.memory} icon={Brain} />
-        <StatCard value={active} label={t.memory.statusActive} icon={CheckCircle2} />
-        <StatCard value={recentAudit} label={t.memory.auditHeading} icon={History} />
+      {/* Compact stat rows — icon beside the value (not stacked above), sized to match the memory rows
+          on the left. Lives in the sticky right column, so they flow top-to-bottom. */}
+      <div className="flex flex-col gap-2.5">
+        <CompactStat value={memories.length} label={t.page.memory} icon={Brain} />
+        <CompactStat value={active} label={t.memory.statusActive} icon={CheckCircle2} />
+        <CompactStat value={recentAudit} label={t.memory.auditHeading} icon={History} />
       </div>
 
       {/* Re-embed the caller's own memories (self-service — no admin config needed). Disabled until an
@@ -87,6 +86,20 @@ export function MemoryOverview({ memories }: { memories: Memory[] }) {
           <Breakdown title={t.memory.filterStatus} rows={byStatus} />
         </div>
       ) : null}
+    </div>
+  );
+}
+
+/** A compact stat row for the sticky sidebar: icon beside the value + label, matching the memory-row
+ *  density on the left (rounded-lg border, p-3) rather than the tall stacked StatCard. */
+function CompactStat({ value, label, icon: Icon }: { value: number; label: string; icon: LucideIcon }) {
+  return (
+    <div className="flex items-center gap-3 rounded-lg border border-border bg-surface p-3" style={{ boxShadow: 'var(--shadow-card)' }}>
+      <Icon size={17} className="shrink-0 text-text-muted" aria-hidden />
+      <div className="flex items-baseline gap-2">
+        <span className="text-xl font-bold tabular-nums leading-none text-text">{value}</span>
+        <span className="text-[11px] font-semibold uppercase tracking-wider text-text-muted">{label}</span>
+      </div>
     </div>
   );
 }

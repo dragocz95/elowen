@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Brain, Search, Plus, GitMerge, X, ListChecks, Sparkles, Hash, Gauge, Tags, Trash2, RotateCcw } from 'lucide-react';
 import type { Memory, MemoryCategory } from '../../lib/types';
 import { useMemories, useMemoryCategories } from '../../lib/queries';
@@ -18,7 +18,6 @@ import { LoadingState, ErrorState, EmptyState } from '../../components/ui/states
 import { useToast } from '../../components/ui/Toast';
 import { useTranslation } from '../../lib/i18n';
 import { usePersistentState } from '../../lib/usePersistentState';
-import { useElementWidth } from '../../lib/useElementWidth';
 import { CategoryIcon } from '../../lib/categoryIcons';
 import { MemoryDetail } from './MemoryDetail';
 import { MemoryBrainMap } from './MemoryBrainMap';
@@ -26,10 +25,6 @@ import { MemoryOverview } from './MemoryOverview';
 import { CategoryManager } from './CategoryManager';
 import { RetrievalDebugPanel } from './RetrievalDebugPanel';
 import { memoryStatusTone, memoryStatusLabel, distinctKinds, categoriesById, categorySwatch } from './memoryMeta';
-
-/** At/above this many px of measured content width the list+stats show side by side; below, they stack.
- *  Measured (not a CSS `@container`) so the sticky stats column isn't confined to a container-type box. */
-const SPLIT_MIN = 768;
 
 type Tab = 'list' | 'brain' | 'retrieval';
 type StatusFilter = 'active' | 'archived' | 'deleted' | 'all';
@@ -55,13 +50,6 @@ export function MemoryView() {
   const [merging, setMerging] = useState(false);
   const [confirmPurge, setConfirmPurge] = useState(false);
   const [confirmEmptyTrash, setConfirmEmptyTrash] = useState(false);
-
-  // Measure the list+stats wrapper's own width (dock-aware) to pick the two-column vs stacked layout.
-  // Kept off a CSS `@container` on purpose: container-type would confine the sticky stats column's
-  // `position: sticky` to the wrapper box (the ModuleHeader gotcha), so it would scroll away.
-  const splitRef = useRef<HTMLDivElement>(null);
-  const splitW = useElementWidth(splitRef);
-  const twoCol = splitW === 0 || splitW >= SPLIT_MIN; // default to the roomy split until measured
 
   const { toast } = useToast();
   const del = useDeleteMemory();
@@ -220,11 +208,11 @@ export function MemoryView() {
             {(memories.data?.length ?? 0) === 0 ? (
               <EmptyState title={t.memory.empty} description={t.memory.emptyHint} icon={Brain} action={<Button variant="accent" icon={Plus} onClick={() => setCreating(true)}>{t.memory.newMemory}</Button>} />
             ) : (
-              // Measured split: list on the left (main), a sticky stats column on the right. Stacks below
-              // SPLIT_MIN. No `@container` here — the stats column stays `position: sticky`.
-              <div ref={splitRef} className={twoCol ? 'flex items-start gap-5' : 'flex flex-col gap-5'}>
+              // Split: list on the left (main), a sticky stats column on the right at lg+, stacked below.
+              // A viewport breakpoint (not a CSS `@container`, which would confine `position: sticky`).
+              <div className="flex flex-col gap-5 lg:flex-row lg:items-start">
                 {/* Left — memory list */}
-                <div className={`flex min-w-0 flex-col gap-2.5 ${twoCol ? 'w-[65%] shrink-0' : ''}`}>
+                <div className="flex min-w-0 flex-col gap-2.5 lg:w-[65%] lg:shrink-0">
                   {/* List header: select-all over the filtered rows + (in the trash) an empty-trash action. */}
                   <div className="flex items-center gap-2.5 px-1 py-1">
                     <button
@@ -259,8 +247,9 @@ export function MemoryView() {
                   ))}
                 </div>
 
-                {/* Right — sticky stats column (counts + kind/status breakdowns + reindex). */}
-                <aside className={`min-w-0 ${twoCol ? 'sticky top-14 w-[32%] shrink-0' : 'w-full'}`}>
+                {/* Right — sticky stats column at lg+ (counts + kind/status breakdowns + reindex);
+                    full-width below the list on narrower screens. */}
+                <aside className="w-full min-w-0 lg:sticky lg:top-14 lg:w-[34%] lg:shrink-0">
                   <MemoryOverview memories={memories.data ?? []} />
                 </aside>
               </div>
