@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { emptyView, fromHistory, pushUser, beginAssistant, reduce } from '../../../src/cli/chat/render.js';
+import { emptyView, fromHistory, pushUser, beginAssistant, reduce } from '../../../src/brain/transcript.js';
 
 describe('chat render reducer', () => {
   it('builds a view from history, dropping empty turns', () => {

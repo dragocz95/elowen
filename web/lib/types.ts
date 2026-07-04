@@ -58,20 +58,30 @@ export interface BrainProvider {
 export interface BrainModelOption { provider: string; providerLabel: string; model: string; exec: string; source: 'api-key' | 'oauth' | 'relay' }
 /** One brain conversation in the session picker (web chat + CLI). */
 export interface BrainSessionInfo { id: string; title: string; model: string; updated_at: string; running: boolean; active: boolean }
+/** Mirror of the daemon's slash-command def (src/brain/slashCommands.ts) — published at GET /brain/commands. */
+export interface SlashCommandDef { name: string; description: string; kind: 'action' | 'info' | 'picker'; adminOnly?: boolean }
 /** One fulltext-search match across the caller's brain conversations. */
 export interface BrainSearchHit { sessionId: string; sessionTitle: string; role: string; snippet: string; ts: string }
-/** One item of the agent's todo checklist (from a todo tool's `details.todos`). */
-export interface BrainTodo { title: string; status: 'pending' | 'in_progress' | 'completed' }
 /** A stored brain turn shaped for display. */
 export type BrainSegment =
   | { kind: 'text'; text: string }
-  | { kind: 'tool'; name: string; detail?: string; diff?: string; todos?: BrainTodo[] };
+  | { kind: 'tool'; name: string; detail?: string; diff?: string };
 export interface BrainMessage { role: string; text: string; segments?: BrainSegment[] }
+
+/** ask_user_question wire shapes (mirror src/brain/events.ts). The `ask` SSE event carries `id` +
+ *  `questions`; the client POSTs `answers` back to /brain/answer. */
+export interface AskOption { label: string; description?: string }
+export interface AskQuestion { question: string; header: string; multiSelect: boolean; options: AskOption[] }
+export interface AskAnswer { header: string; selected: string[]; other?: string }
+
+/** ctx.emitCard display card (mirror src/brain/events.ts) — a live panel keyed by `id`. */
+export interface BrainCardItem { text: string; status?: 'pending' | 'in_progress' | 'completed' }
+export interface BrainCard { id: string; title?: string; items?: BrainCardItem[]; body?: string; pinned?: boolean }
 /** Live statusline numbers for the active conversation. */
 export interface BrainUsage { tokens: number | null; contextWindow: number; percent: number | null; totalTokens: number; cost: number }
 /** The statusline plugin's display toggles (null = plugin disabled). */
 export interface StatuslineConfig { showModel?: boolean; showContext?: boolean; showTokens?: boolean; showCost?: boolean }
-export interface BrainStatus { running: boolean; sessionId: string | null; model: string; usage: BrainUsage | null; statusline: StatuslineConfig | null }
+export interface BrainStatus { running: boolean; sessionId: string | null; model: string; usage: BrainUsage | null; statusline: StatuslineConfig | null; pendingAsk?: { id: string; questions: AskQuestion[] } | null; cards?: BrainCard[] }
 /** A running OAuth connect flow, as polled by the settings UI. */
 export interface OAuthFlowState {
   id: string;

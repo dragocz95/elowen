@@ -16,6 +16,7 @@ const RULES: [RegExp, string][] = [
   [/mistral|mixtral|codestral|magistral|devstral/i, 'mistral'],
   [/grok/i, 'grok'],
   [/\bxai\b/i, 'xai'],
+  [/xiaomi|mimo/i, 'xiaomimimo'],
   [/glm|chatglm|zhipu/i, 'zhipu'],
   [/llama|meta[\s_-]?ai|\bmeta\b/i, 'metaai'],
   [/ollama/i, 'ollama'],

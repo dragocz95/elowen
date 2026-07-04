@@ -36,4 +36,12 @@ describe('decideVisionHop — the vision-fallback decision, isolated from sessio
     expect(decideVisionHop({ hasImages: true, visionCapable: true, onFallback: true, visionModel: 'v' }))
       .toEqual({ action: 'none' });
   });
+
+  it('does NOT hop when the current model already IS the vision model (no churn, image sent through)', () => {
+    // The common operator setup: main model and vision model both point at one multimodal model. Inline
+    // model descriptors carry no vision metadata (visionCapable=false), so without this guard every image
+    // turn would pointlessly dispose + respawn the session onto the model it is already on.
+    expect(decideVisionHop({ hasImages: true, visionCapable: false, onFallback: false, currentModel: 'kimi', visionModel: 'kimi', visionModelProvider: 'relay' }))
+      .toEqual({ action: 'none' });
+  });
 });

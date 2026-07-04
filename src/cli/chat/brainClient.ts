@@ -1,4 +1,4 @@
-import type { BrainEvent } from '../../brain/events.js';
+import type { AskAnswer, AskQuestion, BrainCard, BrainEvent } from '../../brain/events.js';
 import type { BrainMessageView } from '../../brain/messageView.js';
 
 /** Thrown on a 401 so the caller can drop the cached token and re-login. */
@@ -11,7 +11,7 @@ export interface BrainClientOpts { base: string; token: string; fetchImpl?: type
 /** Statusline display toggles (the statusline plugin's config; null when the plugin is disabled). */
 interface StatuslineConfig { showModel?: boolean; showContext?: boolean; showTokens?: boolean; showCost?: boolean }
 interface BrainUsageView { tokens: number | null; contextWindow: number; percent: number | null; totalTokens: number; cost: number }
-export interface BrainStatus { running: boolean; sessionId: string | null; model: string; usage: BrainUsageView | null; statusline: StatuslineConfig | null; thinkingLevel?: string; thinkingLevels?: string[] }
+export interface BrainStatus { running: boolean; sessionId: string | null; model: string; usage: BrainUsageView | null; statusline: StatuslineConfig | null; thinkingLevel?: string; thinkingLevels?: string[]; pendingAsk?: { id: string; questions: AskQuestion[] } | null; cards?: BrainCard[] }
 
 /** Parse accumulated SSE text into complete frames, returning the events and the unconsumed tail.
  *  Pure and buffer-safe (a frame split across chunks stays in `rest` until its blank-line terminator).
@@ -73,6 +73,11 @@ export class BrainClient {
     await this.post('/brain/send', { text });
   }
 
+  /** Answer a parked ask_user_question — settles the paused turn so it resumes with the user's picks. */
+  async answer(id: string, answers: AskAnswer[]): Promise<void> {
+    await this.post('/brain/answer', { id, answers });
+  }
+
   /** Manually compact the active conversation; resolves with the post-compaction usage. */
   async compact(): Promise<BrainUsageView | null> {
     const res = await this.post('/brain/compact', {});
@@ -82,6 +87,14 @@ export class BrainClient {
   /** Stop the streaming turn (Esc). */
   async abort(): Promise<void> {
     await this.post('/brain/abort', {});
+  }
+
+  /** Run a server-side (`action`) slash command through the shared dispatcher (`/stop`, `/new`,
+   *  `/compact`, `/restart`). Returns the human-readable result message when the server sends one. */
+  async command(name: string): Promise<{ message?: string } | null> {
+    const res = await this.post('/brain/command', { name });
+    if (!res.ok) throw new Error(((await res.json().catch(() => ({}))) as { error?: string }).error ?? `command failed (${res.status})`);
+    return (await res.json().catch(() => null)) as { message?: string } | null;
   }
 
   /** Switch the active conversation to another configured model; resolves with the live model name.

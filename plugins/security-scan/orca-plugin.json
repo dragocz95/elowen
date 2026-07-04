@@ -4,5 +4,6 @@
   "apiVersion": "1",
   "description": "Scan code or a repo file for dangerous patterns (eval, pickle.load, shell=True, unpinned deserialization, hardcoded secrets…) before you rely on it. Advisory — reports findings, never executes anything.",
   "entry": "index.mjs",
-  "provides": { "tools": ["scan_code"] }
+  "provides": { "tools": ["scan_code"] },
+  "icons": { "scan_code": "🛡️" }
 }

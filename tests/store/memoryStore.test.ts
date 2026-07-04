@@ -19,6 +19,22 @@ describe('MemoryStore', () => {
     expect(events[0]!.before_json).toBeNull();
   });
 
+  it('eventsForMemory scopes to the memory lifetime — a reused rowid never shows the prior memory\'s events', () => {
+    const db = openDb(':memory:');
+    const s = new MemoryStore(db);
+    const m = s.add(1, { body: 'VPS má 30 GB RAM' }, 'agent', 'curator: new durable fact');
+    // Simulate a PRIOR occupant of this rowid (what a hard purge + rowid reuse leaves behind): an event
+    // with the same memory_id but dated BEFORE this memory was created.
+    db.prepare(
+      `INSERT INTO memory_events (memory_id, user_id, action, after_json, actor, reason, created_at)
+       VALUES (?, 1, 'add', ?, 'agent', 'curator: new durable fact', '2000-01-01 00:00:00')`
+    ).run(m.id, JSON.stringify({ body: 'Projekt sarah_hair má dvě databáze' }));
+
+    const scoped = s.eventsForMemory(1, m.id);
+    expect(scoped.some((e) => (e.after_json ?? '').includes('sarah_hair'))).toBe(false);
+    expect(scoped.some((e) => (e.after_json ?? '').includes('VPS'))).toBe(true);
+  });
+
   it('list default excludes soft-deleted and orders updated_at DESC', () => {
     const a = store.add(1, { body: 'a' }, 'agent', '');
     const b = store.add(1, { body: 'b' }, 'agent', '');

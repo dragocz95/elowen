@@ -361,6 +361,20 @@ export class MemoryStore {
     ).all(userId, limit) as MemoryEventRow[];
   }
 
+  /** One memory's OWN audit trail (newest first), scoped to its lifetime. `memories.id` is a plain
+   *  rowid, so after a hard purge SQLite may REUSE that id for a new memory — and purged memories' events
+   *  are retained for audit. Filtering by memory_id alone would then surface the PRIOR occupant's events
+   *  (a "VPS RAM" memory showing a purged "sarah_hair" memory's history). Bounding to events at/after this
+   *  memory's created_at keeps the trail to this memory only. */
+  eventsForMemory(userId: number, memoryId: number): MemoryEventRow[] {
+    return this.db.prepare(
+      `SELECT e.* FROM memory_events e
+        WHERE e.memory_id = ? AND e.user_id = ?
+          AND e.created_at >= (SELECT created_at FROM memories WHERE id = ? AND user_id = ?)
+        ORDER BY e.id DESC`
+    ).all(memoryId, userId, memoryId, userId) as MemoryEventRow[];
+  }
+
   /** Hard-delete everything for a user (memories cascade to embeddings) plus their audit events.
    *  Used only by user-delete cleanup — normal deletes are soft. */
   removeForUser(userId: number): void {

@@ -1,6 +1,7 @@
 import { visibleWidth, wrapTextWithAnsi } from '@earendil-works/pi-tui';
 import type { Component } from '@earendil-works/pi-tui';
 import { renderDiff } from '@earendil-works/pi-coding-agent';
+import type { BrainCard } from '../../brain/events.js';
 
 /** opencode-style visual building blocks, hand-rolled on pi-tui's Component contract (render(width)
  *  → lines). Kept separate from app.ts so the layout logic stays readable and these are unit-testable. */
@@ -55,15 +56,19 @@ export class UserBlock implements Component {
   }
 }
 
-/** The persistent todo checklist panel for the fixed bottom stack (pinned above the status line). A
- *  multi-line Component so each row renders properly, collapsing to nothing when the list is empty. */
-export class TodoPanel implements Component {
-  private todos: { title: string; status: string }[] = [];
+/** The persistent card panel for the fixed bottom stack (pinned above the status line): renders every
+ *  `pinned` card a plugin emitted via ctx.emitCard (the todo checklist is the canonical one). A
+ *  multi-line Component; collapses to nothing when there are no pinned cards worth showing. */
+export class CardPanel implements Component {
+  private cards: BrainCard[] = [];
   invalidate(): void { /* re-rendered on the next frame */ }
-  set(todos: { title: string; status: string }[]): void { this.todos = todos; }
-  /** Visible only while there's still open work: an empty list — or one where everything is completed —
-   *  collapses the panel (the task is done, nothing to track). */
-  render(): string[] { return this.todos.some((t) => t.status !== 'completed') ? todoBlock(this.todos) : []; }
+  set(cards: BrainCard[]): void { this.cards = cards; }
+  render(_width?: number): string[] {
+    // Pinned cards only; a checklist whose items are ALL completed collapses (the work is done).
+    const visible = this.cards.filter((c) => c.pinned
+      && !(c.items && c.items.length > 0 && c.items.every((i) => i.status === 'completed')));
+    return visible.flatMap((c) => cardBlock(c));
+  }
 }
 
 /** A bottom status bar: left text and right text justified to the two edges. */
@@ -121,31 +126,33 @@ export function titleBarContent(title: string, usage?: { totalTokens: number; pe
   return { left, right: parts.join('  ') };
 }
 
-/** A leading glyph for well-known tools (else the generic accent dot). Gives the todo tools a recognizable
- *  checklist mark instead of the one-size-fits-all `⏺`. */
-const TOOL_GLYPH: Record<string, string> = { todo_write: '☑', todo_read: '☑' };
-
-/** A tool-call line in the Claude Code style: `⏺ read_file(src/foo.ts)` — accent glyph, plain name,
- *  muted argument summary in parens. */
-export function toolChip(name: string, detail?: string): string {
+/** A tool-call line in the Claude Code style: `⏺ read_file(src/foo.ts)` — leading glyph, plain name,
+ *  muted argument summary in parens. The glyph is the daemon-resolved per-tool `icon` (from the core map
+ *  + plugin manifest `icons`), falling back to the generic accent dot (e.g. on reloaded history, which
+ *  carries no icon). */
+export function toolChip(name: string, detail?: string, icon?: string): string {
   const args = detail ? `(${detail})` : '';
-  return `  ${ACCENT(TOOL_GLYPH[name] ?? '⏺')} ${name}${DIM(args)}`;
+  return `  ${icon ?? ACCENT('⏺')} ${name}${DIM(args)}`;
 }
 
-/** The todo checklist panel (Claude-Code style), pinned above the status bar and persistent across turns.
- *  Completed items are green + checked and dimmed, the in-progress one accented, pending muted. Capped so a
- *  long list can't eat the screen. Returns [] for an empty list so the panel collapses. */
-export function todoBlock(todos: { title: string; status: string }[], maxRows = 12): string[] {
-  if (!todos.length) return [];
-  const done = todos.filter((t) => t.status === 'completed').length;
-  const header = `  ${ACCENT('☑')} ${bold(WHITE('Todos'))} ${DIM(`${done}/${todos.length}`)}`;
-  const rows = todos.slice(0, maxRows).map((t) => {
-    if (t.status === 'completed') return `    ${GREENC('✔')} ${DIM(t.title)}`;
-    if (t.status === 'in_progress') return `    ${ACCENT('◐')} ${WHITE(t.title)}`;
-    return `    ${FAINTC('○')} ${DIM(t.title)}`;
-  });
-  if (todos.length > maxRows) rows.push(`    ${FAINTC(`… +${todos.length - maxRows} more`)}`);
-  return [header, ...rows];
+/** Render one display card (title + checklist items + freeform body) as fixed-panel rows — the item
+ *  glyphs match the todo look (✔ done / ◐ in-progress / ○ pending). `maxRows` bounds the WHOLE card
+ *  (items + body) so a big card can't overrun the fixed bottom stack and wreck the TUI. */
+export function cardBlock(card: BrainCard, maxRows = 12): string[] {
+  const items = card.items ?? [];
+  const done = items.filter((i) => i.status === 'completed').length;
+  const count = items.length ? ` ${DIM(`${done}/${items.length}`)}` : '';
+  const lines = [`  ${ACCENT('☑')} ${bold(WHITE(card.title ?? 'Card'))}${count}`];
+  const bodyLines = card.body ? card.body.split('\n') : [];
+  const shownItems = Math.min(items.length, Math.max(0, maxRows - bodyLines.length));
+  for (const it of items.slice(0, shownItems)) {
+    if (it.status === 'completed') lines.push(`    ${GREENC('✔')} ${DIM(it.text)}`);
+    else if (it.status === 'in_progress') lines.push(`    ${ACCENT('◐')} ${WHITE(it.text)}`);
+    else lines.push(`    ${FAINTC('○')} ${DIM(it.text)}`);
+  }
+  if (items.length > shownItems) lines.push(`    ${FAINTC(`… +${items.length - shownItems} more`)}`);
+  for (const l of bodyLines.slice(0, maxRows)) lines.push(`    ${DIM(l)}`);
+  return lines;
 }
 
 // Claude-Code-style diff rows for the LEGACY stored format (`  12 - text`, number first).

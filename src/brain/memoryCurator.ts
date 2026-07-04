@@ -56,14 +56,24 @@ export class MemoryCurator {
   async run(userId: number, userText: string, assistantText: string): Promise<void> {
     try {
       const inf = this.inference();
-      if (!inf) return; // no curator model configured → no-op (memory still works, just no auto-extraction)
+      if (!inf) return; // no memory model configured → no-op (memory still works via the explicit memory_* tools)
       const user = userText.trim();
       if (user === '') return;
-      const { text } = await inf.decide(buildPrompt(user, assistantText));
+      // Show the model the memories it ALREADY holds that are relevant to this exchange, so it can
+      // UPDATE/MERGE/skip instead of adding yet another paraphrase of a fact it already knows. The
+      // findSimilar guard in applyOne only catches near-identical (≥0.85 cosine); this catches the
+      // "same point, different wording" redundancy (e.g. "Filip" vs "Filip Džudža, operátor").
+      let existing: { id: number; body: string }[] = [];
+      try {
+        const r = await this.service.retrieve(userId, `${user}\n${assistantText}`, { maxCount: 8 });
+        existing = r.memories.map((m) => ({ id: m.id, body: m.body }));
+      } catch { /* retrieval is best-effort — fall back to a blind curation pass */ }
+      const { text } = await inf.decide(buildPrompt(user, assistantText, existing));
       const ops = parseOps(text);
-      if (ops.length === 0) return;
+      if (ops.length === 0) return; // model ran but distilled nothing durable this turn — expected + quiet
       // Record WHICH model distilled these facts on every add/update audit row.
       await this.apply(userId, ops.slice(0, MAX_OPS_PER_TURN), inf.model);
+      this.logger?.info('memory curator applied memory op(s)', { userId, ops: Math.min(ops.length, MAX_OPS_PER_TURN), model: inf.model });
     } catch (err) {
       this.logger?.warn('memory curator failed', { userId, error: String(err) });
     }
@@ -128,25 +138,37 @@ export class MemoryCurator {
 
 /** The extraction prompt: durable facts only, Czech-friendly, strict JSON, capped op count. Kept tight
  *  so the cheap model returns a small batch (or an empty array when nothing is worth remembering). */
-function buildPrompt(userText: string, assistantText: string): string {
+function buildPrompt(userText: string, assistantText: string, existing: { id: number; body: string }[] = []): string {
   const u = userText.slice(0, MAX_TEXT_CHARS);
   const a = assistantText.slice(0, MAX_TEXT_CHARS);
+  const knownBlock = existing.length
+    ? [
+        '',
+        'ALREADY-STORED relevant memories (id — text):',
+        ...existing.map((m) => `#${m.id} — ${m.body}`),
+        'ANTI-DUPLICATION RULE: if a new point is already covered by one of these, do NOT add a paraphrase.',
+        'Instead "update" the closest one (more precise/complete wording), or "merge" several into one. Only',
+        '"add" facts that are NOT already among the stored ones. Never keep two memories with the same meaning.',
+      ]
+    : [];
   return [
-    'Jsi kurátor dlouhodobé paměti asistenta Orca. Z JEDNÉ výměny níže vytáhni POUZE trvalé, znovu',
-    'použitelné fakty o uživateli: stabilní preference a pracovní styl, rozhodnutí, architektura',
-    'projektů, infrastruktura (cesty, endpointy, porty), netriviální gotchas.',
-    'NEUKLÁDEJ: pozdravy, chit-chat, přechodný stav, jednorázové debug kroky, ani nic zjevného.',
-    'Když nic trvalého nevzniklo, vrať prázdné pole [].',
+    'You are the long-term memory curator for the assistant Orca. From the SINGLE exchange below, extract',
+    'ONLY durable, reusable facts about the user: stable preferences and working style, decisions, project',
+    'architecture, infrastructure (paths, endpoints, ports), and non-trivial gotchas.',
+    'Do NOT store: greetings, chit-chat, transient state, one-off debug steps, or anything obvious.',
+    'If nothing durable came up, return an empty array [].',
+    'Write each memory `body` in the USER\'S OWN language (match the language of the exchange).',
     '',
-    `Vrať POUZE JSON pole, max ${MAX_OPS_PER_TURN} operací, bez dalšího textu. Formát každé operace:`,
-    '{"action":"add","body":"<fakt, samostatný, česky>","kind":"fact|preference|decision","importance":1-5}',
-    '{"action":"update","id":<id>,"body":"<nový text>"}',
+    `Return ONLY a JSON array, at most ${MAX_OPS_PER_TURN} operations, with no other text. Format per operation:`,
+    '{"action":"add","body":"<self-contained fact, in the user\'s language>","kind":"fact|preference|decision","importance":1-5}',
+    '{"action":"update","id":<id>,"body":"<new text>"}',
     '{"action":"delete","id":<id>}',
-    '{"action":"merge","ids":[<id>,...],"body":"<sloučený fakt>"}',
+    '{"action":"merge","ids":[<id>,...],"body":"<merged fact>"}',
+    ...knownBlock,
     '',
-    `Uživatel: ${u}`,
+    `User: ${u}`,
     '',
-    `Asistent: ${a}`,
+    `Assistant: ${a}`,
   ].join('\n');
 }
 

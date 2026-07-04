@@ -35,6 +35,7 @@ export class IdentityResolver {
     return {
       platform: 'orca',
       userId: String(userId),
+      orcaUserId: userId, // their own authenticated chat — the account IS the sender
       orcaUsername: this.d.users.get(userId)?.username,
       admin: policy.allowedProjectIds === 'all',
       owner: this.isOwner(userId), // their own authenticated chat → operator
@@ -58,6 +59,7 @@ export class IdentityResolver {
     const identity: TurnIdentity = {
       platform: src.platform,
       userId: src.userId,
+      orcaUserId: linked?.id, // the verified Orca account behind this platform sender (undefined = unlinked)
       orcaUsername: linked?.username || linked?.name,
       admin: src.access?.admin === true || linked?.admin === true,
       owner: (linked?.id !== undefined && this.isOwner(linked.id)) || (internalAutomation && src.access?.admin === true),

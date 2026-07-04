@@ -9,7 +9,9 @@ import { useToast } from '../../components/ui/Toast';
 import { useBrainSessions } from '../../lib/queries';
 import { orcaClient, BASE } from '../../lib/orcaClient';
 import { formatTaskTime } from '../../lib/format';
-import type { BrainSearchHit, BrainUsage, StatuslineConfig } from '../../lib/types';
+import type { AskQuestion, BrainCard, BrainSearchHit, BrainModelOption, BrainUsage, SlashCommandDef, StatuslineConfig } from '../../lib/types';
+import { fromHistory, pushUser, reduce, upsertCard, type ChatTurn, type ToolItem, type TranscriptEvent } from '../../lib/transcript';
+import { AskQuestionCard } from './AskQuestionCard';
 
 /** Compact token count: 999 → '999', 34 567 → '35k', 1 234 567 → '1.2M'. */
 const fmtK = (n: number): string => (n < 1000 ? String(n) : n < 1_000_000 ? `${Math.round(n / 1000)}k` : `${(n / 1_000_000).toFixed(1)}M`);
@@ -40,78 +42,11 @@ async function readAttachment(file: File): Promise<Attachment | null> {
   return { name: file.name, kind: 'text', mimeType: file.type || 'text/plain', data: text };
 }
 
-/** An assistant turn is an ordered list of segments so text and tool calls render in the sequence they
- *  actually happened. Consecutive tool calls (no new text between them) collapse into ONE tools segment
- *  → the Claude-Code "grouped pills" look. */
-type Todo = { title: string; status: string };
-type ToolPill = { name: string; detail?: string; diff?: string; todos?: Todo[] };
-type Segment = { kind: 'text'; text: string } | { kind: 'reasoning'; text: string } | { kind: 'tools'; tools: ToolPill[] };
-type Turn = { role: 'user'; text: string } | { role: 'assistant'; segments: Segment[] };
-
-/** Append a text delta to the running assistant turn, extending its last text segment or starting one. */
-function appendText(cur: Turn[], delta: string): Turn[] {
-  const last = cur[cur.length - 1];
-  if (last?.role !== 'assistant') return [...cur, { role: 'assistant', segments: [{ kind: 'text', text: delta }] }];
-  const segs = [...last.segments];
-  const tail = segs[segs.length - 1];
-  if (tail?.kind === 'text') segs[segs.length - 1] = { kind: 'text', text: tail.text + delta };
-  else segs.push({ kind: 'text', text: delta });
-  return [...cur.slice(0, -1), { role: 'assistant', segments: segs }];
-}
-
-/** Append a reasoning delta to the running assistant turn (its own dim segment, separate from text). */
-function appendReasoning(cur: Turn[], delta: string): Turn[] {
-  const last = cur[cur.length - 1];
-  if (last?.role !== 'assistant') return [...cur, { role: 'assistant', segments: [{ kind: 'reasoning', text: delta }] }];
-  const segs = [...last.segments];
-  const tail = segs[segs.length - 1];
-  if (tail?.kind === 'reasoning') segs[segs.length - 1] = { kind: 'reasoning', text: tail.text + delta };
-  else segs.push({ kind: 'reasoning', text: delta });
-  return [...cur.slice(0, -1), { role: 'assistant', segments: segs }];
-}
-
-/** Append a tool call, grouping it with the immediately preceding tool calls (no text in between). */
-function appendTool(cur: Turn[], tool: ToolPill): Turn[] {
-  const last = cur[cur.length - 1];
-  if (last?.role !== 'assistant') return [...cur, { role: 'assistant', segments: [{ kind: 'tools', tools: [tool] }] }];
-  const segs = [...last.segments];
-  const tail = segs[segs.length - 1];
-  if (tail?.kind === 'tools') segs[segs.length - 1] = { kind: 'tools', tools: [...tail.tools, tool] };
-  else segs.push({ kind: 'tools', tools: [tool] });
-  return [...cur.slice(0, -1), { role: 'assistant', segments: segs }];
-}
-
-/** Attach an edit's diff to the most recent tool call of the running assistant turn. */
-function appendDiff(cur: Turn[], diff: string): Turn[] {
-  const last = cur[cur.length - 1];
-  if (last?.role !== 'assistant') return cur;
-  const segs = [...last.segments];
-  for (let i = segs.length - 1; i >= 0; i--) {
-    const seg = segs[i];
-    if (seg?.kind !== 'tools') continue;
-    const tools = [...seg.tools];
-    tools[tools.length - 1] = { ...tools[tools.length - 1], diff };
-    segs[i] = { kind: 'tools', tools };
-    return [...cur.slice(0, -1), { role: 'assistant', segments: segs }];
-  }
-  return cur;
-}
-
-/** Attach the latest todo checklist snapshot to the most recent tool pill (mirrors `appendDiff`). */
-function appendTodos(cur: Turn[], todos: Todo[]): Turn[] {
-  const last = cur[cur.length - 1];
-  if (last?.role !== 'assistant') return cur;
-  const segs = [...last.segments];
-  for (let i = segs.length - 1; i >= 0; i--) {
-    const seg = segs[i];
-    if (seg?.kind !== 'tools') continue;
-    const tools = [...seg.tools];
-    tools[tools.length - 1] = { ...tools[tools.length - 1], todos };
-    segs[i] = { kind: 'tools', tools };
-    return [...cur.slice(0, -1), { role: 'assistant', segments: segs }];
-  }
-  return cur;
-}
+/** The transcript view-model + fold live in the shared `web/lib/transcript.ts` mirror (kept in lockstep
+ *  with the daemon's `src/brain/transcript.ts`) — the SSE handlers fold events through `reduce`, history
+ *  loads through `fromHistory`, and cards through `upsertCard`, exactly like the CLI TUI. The dock keeps
+ *  its own `busy`/`notice` React state, so `fold` takes only the reducer's resulting turns. */
+const fold = (turns: ChatTurn[], e: TranscriptEvent): ChatTurn[] => reduce({ turns, thinking: true }, e).turns;
 
 /** Sanitized-markdown block for one assistant text segment (marked + DOMPurify, no bubble). */
 function TextSegment({ text }: { text: string }) {
@@ -140,51 +75,59 @@ function DiffBlock({ diff }: { diff: string }) {
   );
 }
 
-/** The agent's todo checklist under the tool row: done items struck through + green, in-progress accented,
- *  pending muted — the web mirror of the CLI/Discord panel. */
-function TodoBlock({ todos }: { todos: Todo[] }) {
-  if (!todos.length) return null;
-  const done = todos.filter((t) => t.status === 'completed').length;
+/** A display card (ctx.emitCard) — the web mirror of the CLI/Discord panel: an optional title with a
+ *  done/total count, a checklist (done struck through + green, in-progress accented, pending muted), and
+ *  optional freeform body. The todo checklist is the canonical card. */
+function CardBlock({ card }: { card: BrainCard }) {
+  const items = card.items ?? [];
+  const done = items.filter((i) => i.status === 'completed').length;
   return (
     <div className="rounded-md border border-border bg-elevated p-2 text-tiny">
-      <div className="mb-1 flex items-center gap-1.5 font-medium text-text-muted">☑ Todo <span className="tabular-nums opacity-70">{done}/{todos.length}</span></div>
-      <ul className="flex flex-col gap-0.5">
-        {todos.map((t, i) => (
-          <li key={i} className="flex items-start gap-1.5">
-            <span className={`shrink-0 ${t.status === 'completed' ? 'text-success' : t.status === 'in_progress' ? 'text-accent' : 'text-text-muted'}`}>
-              {t.status === 'completed' ? '✔' : t.status === 'in_progress' ? '◐' : '○'}
-            </span>
-            <span className={t.status === 'completed' ? 'text-text-muted line-through' : 'text-text'}>{t.title}</span>
-          </li>
-        ))}
-      </ul>
+      {(card.title || items.length > 0) ? (
+        <div className="mb-1 flex items-center gap-1.5 font-medium text-text-muted">
+          ☑ {card.title ?? 'Card'}
+          {items.length > 0 ? <span className="tabular-nums opacity-70">{done}/{items.length}</span> : null}
+        </div>
+      ) : null}
+      {items.length > 0 ? (
+        <ul className="flex flex-col gap-0.5">
+          {items.map((t, i) => (
+            <li key={i} className="flex items-start gap-1.5">
+              <span className={`shrink-0 ${t.status === 'completed' ? 'text-success' : t.status === 'in_progress' ? 'text-accent' : 'text-text-muted'}`}>
+                {t.status === 'completed' ? '✔' : t.status === 'in_progress' ? '◐' : '○'}
+              </span>
+              <span className={t.status === 'completed' ? 'text-text-muted line-through' : 'text-text'}>{t.text}</span>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      {card.body ? <div className="whitespace-pre-wrap text-text-muted">{card.body}</div> : null}
     </div>
   );
 }
 
 /** A grouped row of tool-call pills (one segment = tools that ran together). The argument summary
- *  (file path, query…) rides muted next to the name; an edit's diff and a todo checklist render under the row. */
-function ToolPills({ tools }: { tools: ToolPill[] }) {
+ *  (file path, query…) rides muted next to the name; an edit's diff renders under the row. */
+function ToolPills({ tools }: { tools: ToolItem[] }) {
   return (
     <span className="flex flex-col gap-1">
       <span className="flex flex-wrap gap-1">
         {tools.map((tool, i) => (
           <span key={i} title={tool.detail} className="inline-flex max-w-full items-center gap-1 rounded-full border border-border bg-elevated px-2 py-0.5 font-mono text-tiny text-text-muted">
-            <Wrench size={9} aria-hidden className="shrink-0" />{tool.name}
+            {tool.icon ? <span aria-hidden className="shrink-0">{tool.icon}</span> : <Wrench size={9} aria-hidden className="shrink-0" />}{tool.name}
             {tool.detail ? <span className="truncate opacity-60">{tool.detail}</span> : null}
           </span>
         ))}
       </span>
       {tools.filter((t) => t.diff).map((tool, i) => <DiffBlock key={i} diff={tool.diff!} />)}
-      {tools.filter((t) => t.todos).map((tool, i) => <TodoBlock key={`todo-${i}`} todos={tool.todos!} />)}
     </span>
   );
 }
 
 /** One message row. User turns keep an accent bubble; assistant turns are bubble-free — plain markdown
  *  and tool-pill rows in their true order. */
-function Message({ turn }: { turn: Turn }) {
-  if (turn.role === 'user') {
+function Message({ turn }: { turn: ChatTurn }) {
+  if (turn.role === 'you') {
     return (
       <div className="ml-8 self-end whitespace-pre-wrap rounded-lg rounded-br-sm border border-accent/30 bg-accent/10 px-3 py-2 text-sm text-text">
         {turn.text}
@@ -197,7 +140,7 @@ function Message({ turn }: { turn: Turn }) {
         ? <TextSegment key={i} text={seg.text} />
         : seg.kind === 'reasoning'
         ? <p key={i} className="whitespace-pre-wrap border-l-2 border-border pl-2 text-tiny italic text-text-muted">{seg.text}</p>
-        : <ToolPills key={i} tools={seg.tools} />))}
+        : <ToolPills key={i} tools={seg.items} />))}
     </div>
   );
 }
@@ -222,7 +165,7 @@ export function BrainChat() {
   const { toast } = useToast();
   const qc = useQueryClient();
   const sessions = useBrainSessions();
-  const [turns, setTurns] = useState<Turn[]>([]);
+  const [turns, setTurns] = useState<ChatTurn[]>([]);
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
   const [ready, setReady] = useState(false);
@@ -233,8 +176,18 @@ export function BrainChat() {
   const [lineCfg, setLineCfg] = useState<StatuslineConfig | null>(null);
   /** Transient runtime line (rate-limit retry, context compaction) so a stalled turn explains itself. */
   const [notice, setNotice] = useState('');
+  /** A parked ask_user_question: the turn is paused until the user picks and we POST /brain/answer. */
+  const [ask, setAsk] = useState<{ id: string; questions: AskQuestion[] } | null>(null);
+  /** Live display cards (ctx.emitCard) — seeded from status, kept current from the `card` event. */
+  const [cards, setCards] = useState<BrainCard[]>([]);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const fileRef = useRef<HTMLInputElement>(null);
+  // Slash-command menu (single source of truth: GET /brain/commands). Level 0 = the command list; a
+  // `picker` command (model) opens level 1 with its options. Arrow-navigable, mirrors the CLI palette.
+  const [commands, setCommands] = useState<SlashCommandDef[]>([]);
+  const [slashIdx, setSlashIdx] = useState(0);
+  const [modelOpts, setModelOpts] = useState<BrainModelOption[] | null>(null);
+  useEffect(() => { void orcaClient.brainCommands().then((r) => setCommands(r.commands)).catch(() => { /* brain may be unwired */ }); }, []);
 
   const addFiles = async (files: Iterable<File>) => {
     for (const f of files) {
@@ -253,28 +206,7 @@ export function BrainChat() {
 
   const loadHistory = async () => {
     const msgs = await orcaClient.brainMessages();
-    const turns: Turn[] = [];
-    for (const m of msgs) {
-      if (m.role === 'user') {
-        if (m.text) turns.push({ role: 'user', text: m.text });
-        continue;
-      }
-      // Server-built segments preserve the true text/tool order; older rows fall back to flat text.
-      const source = m.segments ?? (m.text ? [{ kind: 'text' as const, text: m.text }] : []);
-      const segments: Segment[] = [];
-      for (const seg of source) {
-        if (seg.kind === 'text') {
-          segments.push({ kind: 'text', text: seg.text });
-        } else {
-          const tail = segments[segments.length - 1];
-          const pill = { name: seg.name, detail: seg.detail, diff: seg.diff, todos: seg.todos };
-          if (tail?.kind === 'tools') tail.tools.push(pill);
-          else segments.push({ kind: 'tools', tools: [pill] });
-        }
-      }
-      if (segments.length > 0) turns.push({ role: 'assistant', segments });
-    }
-    setTurns(turns);
+    setTurns(fromHistory(msgs).turns);
   };
 
   // Boot: start (resume) the brain, load history, open the stream. Re-runs when the conversation flips.
@@ -282,15 +214,17 @@ export function BrainChat() {
     esRef.current?.close();
     setReady(false);
     setNotice(''); // a fresh connection (mount / session switch) starts without a stale runtime line
+    setAsk(null); // drop any parked question from the previous conversation
+    setCards([]); // and any cards from the previous conversation
     await orcaClient.brainStart({});
     await loadHistory();
     const st = await orcaClient.brainStatus().catch(() => null);
-    if (st) { setUsage(st.usage); setLineCfg(st.statusline); }
+    if (st) { setUsage(st.usage); setLineCfg(st.statusline); if (st.pendingAsk) setAsk(st.pendingAsk); setCards(st.cards ?? []); }
     const es = new EventSource(`${BASE}/brain/stream`);
     es.addEventListener('text', (e) => {
       const { delta } = JSON.parse((e as MessageEvent).data) as { delta: string };
       setNotice(''); // first answer text clears any transient runtime notice
-      setTurns((cur) => appendText(cur, delta));
+      setTurns((cur) => fold(cur, { type: 'text', delta }));
     });
     // Runtime notices (retry/compaction) — mirror the CLI: show while the phase runs, clear on done.
     es.addEventListener('notice', (e) => {
@@ -316,23 +250,30 @@ export function BrainChat() {
     });
     es.addEventListener('reasoning', (e) => {
       const { delta } = JSON.parse((e as MessageEvent).data) as { delta: string };
-      setTurns((cur) => appendReasoning(cur, delta));
+      setTurns((cur) => fold(cur, { type: 'reasoning', delta }));
     });
     es.addEventListener('tool', (e) => {
-      const { name, detail } = JSON.parse((e as MessageEvent).data) as { name: string; detail?: string };
-      setTurns((cur) => appendTool(cur, { name, detail }));
+      const { name, detail, icon } = JSON.parse((e as MessageEvent).data) as { name: string; detail?: string; icon?: string };
+      setTurns((cur) => fold(cur, { type: 'tool', name, detail, icon }));
     });
-    es.addEventListener('todo', (e) => {
-      const { todos } = JSON.parse((e as MessageEvent).data) as { todos: Todo[] };
-      setTurns((cur) => appendTodos(cur, todos));
+    es.addEventListener('card', (e) => {
+      const { card } = JSON.parse((e as MessageEvent).data) as { card: BrainCard };
+      setCards((cur) => upsertCard(cur, card));
     });
     es.addEventListener('diff', (e) => {
       const { diff } = JSON.parse((e as MessageEvent).data) as { diff: string };
-      setTurns((cur) => appendDiff(cur, diff));
+      setTurns((cur) => fold(cur, { type: 'diff', diff }));
+    });
+    // ask_user_question parked the turn — render the inline choice card until the user answers.
+    es.addEventListener('ask', (e) => {
+      const { id, questions } = JSON.parse((e as MessageEvent).data) as { id: string; questions: AskQuestion[] };
+      setAsk({ id, questions });
     });
     es.addEventListener('idle', (e) => {
       setBusy(false);
       setNotice(''); // turn settled → drop any transient runtime line
+      setAsk(null); // a settled turn can't still be waiting on a question
+      setTurns((cur) => fold(cur, { type: 'idle' })); // finalize the streaming turn (parity with the CLI fold)
       try {
         const { usage: u } = JSON.parse((e as MessageEvent).data) as { usage?: BrainUsage };
         if (u) setUsage(u);
@@ -378,7 +319,7 @@ export function BrainChat() {
     setInput('');
     setAttachments([]);
     setBusy(true);
-    setTurns((cur) => [...cur, { role: 'user', text: shown }]);
+    setTurns((cur) => pushUser({ turns: cur, thinking: false }, shown).turns);
     try { await orcaClient.brainSend(text, images); } catch { setBusy(false); }
   };
 
@@ -396,6 +337,35 @@ export function BrainChat() {
     // Deleting the open conversation re-targets to the most recent remaining one (or a fresh state).
     if (wasActive) { setPickerOpen(false); await connect(); }
   };
+
+  // --- Slash menu (mirrors the CLI palette; single source of truth = GET /brain/commands). ---
+  const slashQuery = input.startsWith('/') && !/\s/.test(input) ? input.slice(1).toLowerCase() : null;
+  const slashMatches = slashQuery !== null ? commands.filter((c) => c.name.startsWith(slashQuery)) : [];
+  const runModel = async (m: BrainModelOption) => {
+    setInput(''); setModelOpts(null);
+    try { await orcaClient.brainSetModel({ provider: m.provider, model: m.model }); await connect(); toast(`${t.brainChat.modelSwitched} ${m.model}`, 'ok'); }
+    catch (e) { toast((e as Error).message ?? 'error', 'error'); }
+  };
+  const runSlash = async (cmd: SlashCommandDef) => {
+    if (cmd.name === 'model') { setInput(''); try { setModelOpts(await orcaClient.brainModels()); setSlashIdx(0); } catch { toast('no models', 'error'); } return; }
+    setInput('');
+    try {
+      if (cmd.name === 'new') { await switchSession({ fresh: true }); return; }
+      if (cmd.name === 'status') {
+        const s = await orcaClient.brainStatus(); const u = s.usage;
+        const parts = [s.model && `model: ${s.model}`, u?.percent != null && `context ${Math.round(u.percent)}%`, u && `Σ ${fmtK(u.totalTokens)} tok`, u && `$${u.cost.toFixed(2)}`].filter(Boolean) as string[];
+        toast(parts.join('  ·  ') || t.brainChat.noSession, 'ok'); return;
+      }
+      if (cmd.name === 'help') { toast(commands.map((c) => `/${c.name}`).join('  '), 'ok'); return; }
+      if (cmd.kind === 'action') { const r = await orcaClient.brainCommand(cmd.name); toast(r.message ?? `/${cmd.name}`, 'ok'); return; }
+      toast(`/${cmd.name}`, 'ok');
+    } catch (e) { toast((e as Error).message ?? String(e), 'error'); }
+  };
+  const slashItems: { key: string; label: string; desc?: string; run: () => void }[] = modelOpts
+    ? modelOpts.map((m) => ({ key: `${m.provider}/${m.model}`, label: m.model, desc: m.providerLabel, run: () => void runModel(m) }))
+    : slashMatches.map((c) => ({ key: c.name, label: `/${c.name}`, desc: c.description, run: () => void runSlash(c) }));
+  const slashOpen = slashItems.length > 0;
+  const slashSel = Math.min(slashIdx, slashItems.length - 1);
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -487,8 +457,16 @@ export function BrainChat() {
           <p className="m-auto max-w-[220px] text-center text-xs text-text-muted">{t.brainChat.empty}</p>
         ) : null}
         {turns.map((turn, i) => <Message key={i} turn={turn} />)}
+        {cards.map((card) => <CardBlock key={card.id} card={card} />)}
+        {ask ? (
+          <AskQuestionCard
+            key={ask.id}
+            questions={ask.questions}
+            onSubmit={(answers) => { void orcaClient.brainAnswer(ask.id, answers).catch(() => undefined); setAsk(null); }}
+          />
+        ) : null}
         {notice ? <span className="ml-1 text-tiny italic text-text-muted">· {notice}</span> : null}
-        {busy ? <span className="ml-1 animate-pulse text-xs text-text-muted">{t.brainChat.thinking}</span> : null}
+        {busy && !ask ? <span className="ml-1 animate-pulse text-xs text-text-muted">{t.brainChat.thinking}</span> : null}
       </div>
 
       {/* Statusline (the statusline plugin's toggles decide what shows; hidden when disabled). */}
@@ -527,9 +505,27 @@ export function BrainChat() {
 
       {/* Composer. */}
       <form
-        className="flex items-end gap-2 border-t border-border p-2"
+        className="relative flex items-end gap-2 border-t border-border p-2"
         onSubmit={(e) => { e.preventDefault(); void submit(); }}
       >
+        {slashOpen && (
+          <div className="absolute bottom-full left-2 mb-1 w-full max-w-md overflow-hidden rounded-lg border border-border bg-elevated shadow-lg">
+            <div className="max-h-60 overflow-y-auto py-1">
+              {slashItems.map((it, i) => (
+                <button
+                  key={it.key}
+                  type="button"
+                  onMouseDown={(e) => { e.preventDefault(); it.run(); }}
+                  onMouseEnter={() => setSlashIdx(i)}
+                  className={`flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm ${i === slashSel ? 'bg-accent/15 text-text' : 'text-text-muted'}`}
+                >
+                  <span className="shrink-0 font-mono">{it.label}</span>
+                  {it.desc && <span className="truncate text-tiny opacity-60">{it.desc}</span>}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
         <input
           ref={fileRef}
           type="file"
@@ -549,8 +545,16 @@ export function BrainChat() {
         </button>
         <textarea
           value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void submit(); } }}
+          onChange={(e) => { setInput(e.target.value); if (modelOpts) setModelOpts(null); setSlashIdx(0); }}
+          onKeyDown={(e) => {
+            if (slashOpen) {
+              if (e.key === 'ArrowDown') { e.preventDefault(); setSlashIdx((i) => (Math.min(i, slashItems.length - 1) + 1) % slashItems.length); return; }
+              if (e.key === 'ArrowUp') { e.preventDefault(); setSlashIdx((i) => (Math.min(i, slashItems.length - 1) - 1 + slashItems.length) % slashItems.length); return; }
+              if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); slashItems[slashSel]?.run(); return; }
+              if (e.key === 'Escape') { e.preventDefault(); setModelOpts(null); setInput(''); return; }
+            }
+            if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void submit(); }
+          }}
           onPaste={(e) => {
             const files = [...e.clipboardData.files].filter((f) => f.type.startsWith('image/'));
             if (files.length) { e.preventDefault(); void addFiles(files); }

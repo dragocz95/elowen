@@ -1,30 +1,60 @@
 import type { AgentSession, AgentSessionEvent } from '@earendil-works/pi-coding-agent';
 import { toolDetail } from './messageView.js';
-import { normalizeTodos, type TodoItem } from './todos.js';
 
 /** What a channel (web/terminal/Discord) receives from the brain. Stable regardless of the underlying
  *  PI event shape — the mapping lives in one place (`toBrainEvent`). This is the wire contract every
  *  chat client folds: `text`, `idle` and `error` are the minimum a client must handle; everything else
- *  may be ignored. The CLI reducer (`src/cli/chat/render.ts`) is the reference implementation. */
+ *  may be ignored. The shared reducer (`src/brain/transcript.ts`) is the reference implementation. */
 export type BrainEvent =
   | { type: 'text'; delta: string }
   /** The model's reasoning/thinking stream (extended-thinking models) — shown as a dim, separate
    *  segment. Surfaced from PI's `thinking_delta`; channels may choose to ignore it. */
   | { type: 'reasoning'; delta: string }
-  | { type: 'tool'; name: string; detail?: string }
+  /** A tool call starting. `icon` is resolved daemon-side from the core map + plugin manifest `icons`
+   *  (single source; clients render it, falling back to a generic glyph when absent). */
+  | { type: 'tool'; name: string; detail?: string; icon?: string }
   | { type: 'diff'; diff: string }
-  /** The current todo checklist a tool produced on `result.details.todos` — rendered as a live panel
-   *  (CLI above the status bar, Discord in the streamed message), NOT inline under the tool. An empty
-   *  list clears the panel. Mirrors how `diff` is lifted off a tool result. */
-  | { type: 'todo'; todos: TodoItem[] }
+  /** A structured display card a plugin pushed via `ctx.emitCard` — a live panel (CLI above the status
+   *  bar, Discord in the streamed message, web in a cards region) keyed by `card.id` so a re-emit
+   *  replaces it; an empty card (no items/body) removes it. Generalizes what the todo checklist used to
+   *  do with its own bespoke event. */
+  | { type: 'card'; card: BrainCard }
   /** A tool produced a stored image (`/api/brain/images/…`) — channels attach it even when the
    *  model's final text forgets to repeat the markdown link. */
   | { type: 'image'; ref: string }
   /** A transient runtime notice (rate-limit retry, context compaction) — so a stalled turn explains
    *  itself instead of just hanging on the spinner. `done` marks the end of that phase. */
   | { type: 'notice'; kind: 'retry' | 'compaction'; message: string; done?: boolean }
+  /** The agent is asking the user to pick from predefined options and has PARKED the turn until they
+   *  answer (see `ask_user_question` plugin + ElicitationRegistry). Synthetic — not derived from a PI
+   *  event; the elicitor emits it straight into `listeners`. A client renders the questions as
+   *  interactive choices and POSTs the answer to `/brain/answer` (Discord resolves it in-process). */
+  | { type: 'ask'; id: string; questions: AskQuestion[] }
   | { type: 'idle'; usage?: BrainUsage; model?: string }
   | { type: 'error'; message: string };
+
+/** One selectable option in an `ask` question. `description` is an optional one-line hint under the label. */
+export interface AskOption { label: string; description?: string }
+/** A single multiple-choice question the agent poses via `ask_user_question`. `header` is a short chip
+ *  label (≤12 chars); `multiSelect` allows more than one pick. Every question also implicitly offers a
+ *  free-text "Other" escape, surfaced by each client. */
+export interface AskQuestion { question: string; header: string; multiSelect: boolean; options: AskOption[] }
+/** The user's answer to one question: the picked option label(s) plus an optional free-text "Other". */
+export interface AskAnswer { header: string; selected: string[]; other?: string }
+
+/** One row of a card's checklist. `status` drives the glyph (○ pending / ◐ in-progress / ✔ done). */
+export interface BrainCardItem { text: string; status?: 'pending' | 'in_progress' | 'completed' }
+/** A structured display panel a plugin pushes via `ctx.emitCard` — a generic, reusable replacement for
+ *  the old bespoke todo widget. `id` is stable (a re-emit with the same id replaces the panel; an empty
+ *  card removes it). `title` is the header; `items` a checklist; `body` freeform markdown; `pinned` asks
+ *  the CLI to keep it above the status bar (the todo-panel behaviour) rather than letting it scroll. */
+export interface BrainCard {
+  id: string;
+  title?: string;
+  items?: BrainCardItem[];
+  body?: string;
+  pinned?: boolean;
+}
 
 /** Statusline data for one live conversation: current context fill + session totals. */
 export interface BrainUsage {
@@ -40,7 +70,7 @@ export interface BrainUsage {
 export function toBrainEvent(e: AgentSessionEvent): BrainEvent | null {
   if (e.type === 'agent_end') return { type: 'idle' };
   const anyE = e as {
-    type: string; toolName?: string; args?: unknown; result?: { details?: { diff?: unknown; todos?: unknown } };
+    type: string; toolName?: string; args?: unknown; result?: { details?: { diff?: unknown } };
     assistantMessageEvent?: { type?: string; delta?: string };
     attempt?: number; maxAttempts?: number; errorMessage?: string; success?: boolean;
   };
@@ -67,9 +97,6 @@ export function toBrainEvent(e: AgentSessionEvent): BrainEvent | null {
   if (anyE.type === 'tool_execution_end') {
     const diff = anyE.result?.details?.diff;
     if (typeof diff === 'string' && diff.trim()) return { type: 'diff', diff };
-    // A todo tool publishes its full list on `details.todos` — surface it as a live panel event.
-    const todos = anyE.result?.details?.todos;
-    if (Array.isArray(todos)) return { type: 'todo', todos: normalizeTodos(todos) };
     // Image tools return a markdown link to the stored file; surface it as a first-class event so
     // channel adapters can attach the real file (models often omit the link from their final text).
     const parts = (anyE.result as { content?: { type?: string; text?: string }[] } | undefined)?.content;

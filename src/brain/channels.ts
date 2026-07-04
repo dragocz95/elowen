@@ -2,8 +2,10 @@ import type { BrainStore } from '../store/brainStore.js';
 import type { Policy } from '../plugins/policy.js';
 import type { TurnIdentity } from '../plugins/policyContext.js';
 import { runWithPolicy } from '../plugins/policyContext.js';
-import type { BrainEvent } from './events.js';
+import type { AskQuestion, BrainEvent } from './events.js';
 import { usageOf } from './events.js';
+import type { ElicitationRegistry } from './elicitation.js';
+import { normalizeCard } from './cards.js';
 import { projectUserTurn } from './persistence.js';
 import { extractText, frameUntrusted } from './messageView.js';
 import { channelSessionId } from './sessionId.js';
@@ -52,6 +54,9 @@ export interface ChannelServiceDeps {
   curator?: MemoryCurator;
   /** Per-user memory toggles (autoRecall/autoSave), read fresh per turn for the verified writer. */
   userSettings?: (userId: number) => { autoRecall?: boolean; autoSave?: boolean };
+  /** Parked ask_user_question registry (shared with BrainService) — lets a channel turn's `ctx.askUser`
+   *  emit an `ask` event to the channel's clients and await the answer (settled by a Discord interaction). */
+  elicitation?: ElicitationRegistry;
 }
 
 /** Platform channel conversations (Discord threads, …): one session per channel — keyed by the
@@ -71,6 +76,10 @@ export class ChannelSessionService {
   async send(opts: ChannelSendOpts, text: string): Promise<string> {
     const sessionId = channelSessionId(opts.channelId);
     return this.d.registry.withLock(sessionId, async () => {
+      // The post-turn curator must distill ONLY this sender's own words — capture the message BEFORE the
+      // channel-history backfill (other members' chatter, injected as untrusted context) is prepended,
+      // so background from other users never lands in THIS sender's private memory.
+      const senderMessage = text;
       // A BRAND-NEW conversation (no stored turns) may backfill what the platform channel said before
       // the brain joined — fetched lazily so an ongoing conversation never pays for it. Prepended to
       // the first user message (not the system prompt) so it persists as normal history.
@@ -106,7 +115,7 @@ export class ChannelSessionService {
       }
       this.d.registry.channelTouch(opts.channelId, ch); // (re-)insert → Map order doubles as LRU order
       // Same image handling as send(): history keeps a marker, the pixels ride only the live prompt.
-      projectUserTurn(this.d.store, sessionId, opts.images?.length ? `${text}\n[📎 ${opts.images.length}× obrázek]` : text);
+      projectUserTurn(this.d.store, sessionId, opts.images?.length ? `${text}\n[📎 ${opts.images.length}× image]` : text);
       // Verified-sender memory recall: prepend THIS writer's most relevant durable memories, framed as
       // untrusted context, riding ONLY the live prompt (ephemeral, never persisted — same as owner chat).
       // Keyed on their linked Orca account and gated by their autoRecall toggle; an unlinked sender has
@@ -128,8 +137,17 @@ export class ChannelSessionService {
       // Optional live streaming (Discord edit-in-place): forward this turn's events to the caller.
       const onEvent = opts.onEvent;
       const detach = onEvent ? (ch.listeners.add(onEvent), () => ch.listeners.delete(onEvent)) : undefined;
+      // Turn-bound elicitor: ctx.askUser emits the `ask` event to the channel's listeners (so the Discord
+      // adapter renders the choice components) and parks the answer in the shared registry, resolved by
+      // the platform's interaction handler via BrainService.answerQuestion.
+      const elicit = this.d.elicitation
+        ? (qs: AskQuestion[]) => this.d.elicitation!.ask(sessionId, qs, (e) => { for (const l of ch.listeners) l(e); })
+        : undefined;
+      // Channel cards are broadcast-only: Discord's LiveMessage renders them per turn (its bubble is
+      // per-message), and status() never serves a channel session — so there's nothing to persist here.
+      const emitCard = (raw: unknown) => { const card = normalizeCard(raw); if (card) for (const l of ch.listeners) l({ type: 'card', card }); };
       try {
-        await runWithPolicy(opts.policy, () => (options ? ch.session.prompt(prompted, options) : ch.session.prompt(prompted)), opts.identity);
+        await runWithPolicy(opts.policy, () => (options ? ch.session.prompt(prompted, options) : ch.session.prompt(prompted)), opts.identity, elicit, emitCard);
         // Hand the caller a settled idle (model + context fill) deterministically, AFTER the turn ends.
         // Proactive footers (every cron push builds `model · N %` from this) must not depend on the
         // stream's own idle winning the race against prompt() resolution — otherwise the footer is
@@ -147,7 +165,7 @@ export class ChannelSessionService {
       // Post-turn curator for the verified sender: persist durable facts to THEIR account, gated by
       // their autoSave toggle. Fire-and-forget (mirrors owner chat) — never awaited, swallows errors.
       if (opts.writerUserId && this.d.curator && this.d.userSettings?.(opts.writerUserId)?.autoSave !== false) {
-        void this.d.curator.run(opts.writerUserId, text, assistantText).catch(() => { /* best-effort */ });
+        void this.d.curator.run(opts.writerUserId, senderMessage, assistantText).catch(() => { /* best-effort */ });
       }
       return assistantText;
     });

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { viewToPlainText } from '../../../src/cli/chat/app.js';
-import { beginAssistant, pushUser, reduce, emptyView } from '../../../src/cli/chat/render.js';
+import { beginAssistant, pushUser, reduce, emptyView } from '../../../src/brain/transcript.js';
 
 describe('viewToPlainText', () => {
   it('renders user and orca turns with labels, tools and text', () => {

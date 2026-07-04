@@ -832,6 +832,7 @@ export const MODEL_ICON_SLUGS: ReadonlySet<string> = new Set([
   'worldrouter',
   'xai-text',
   'xai',
+  'xiaomimimo-color',
   'xiaomimimo-text',
   'xiaomimimo',
   'xinference-color',

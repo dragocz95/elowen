@@ -1,5 +1,6 @@
 import type { Skill, ToolDefinition } from '@earendil-works/pi-coding-agent';
 import type { TurnIdentity } from './policyContext.js';
+import type { AskAnswer, AskQuestion, BrainCard } from '../brain/events.js';
 
 /** A skill contributed by a plugin. Reuses pi's file-backed `Skill` (name/description/filePath…), so it
  *  flows straight into `formatSkillsForPrompt` — skills are inherently markdown-file based. */
@@ -130,6 +131,21 @@ export interface PluginContext {
   /** Push a proactive message out to every platform that has a notification channel configured (e.g.
    *  Discord). Fire-and-forget; no-op when nothing is wired. Used by cron/tick to echo results. */
   notify(text: string, channelId?: string): Promise<void>;
+  /** Ask the current user one or more multiple-choice questions and await their pick(s). PARKS the turn
+   *  until the user answers (or a timeout elapses), then resolves with one AskAnswer per question. Only
+   *  valid inside a prompt turn driven by an interactive transport (chat/Discord); throws otherwise. */
+  askUser(questions: AskQuestion[]): Promise<AskAnswer[]>;
+  /** Deliver a user's answer to a parked ask_user_question back to its waiting turn — for interactive
+   *  transports (Discord) that receive the pick out-of-band via their own event loop rather than through
+   *  /brain/answer. Returns whether a pending question matched (false for an unknown/expired id). */
+  answerQuestion(id: string, answers: AskAnswer[]): boolean;
+  /** Push a structured display card to the current conversation's clients — a live panel keyed by
+   *  `card.id` so re-emitting the same id replaces it and an empty card (no items/body) removes it. The
+   *  generic, reusable way for a plugin to show a checklist / status panel without touching core
+   *  rendering. Web and Discord render every card; the CLI shows only `pinned` cards (in its fixed panel
+   *  above the status bar) — a non-pinned card won't surface there. No-op outside an interactive prompt
+   *  turn (cron/worker sessions wire no emitter). */
+  emitCard(card: BrainCard): void;
   /** Pickable brain models across every configured provider (feeds the Discord /model dropdown).
    *  Empty when nothing is wired. */
   listModels(): Promise<{ provider: string; providerLabel: string; model: string }[]>;

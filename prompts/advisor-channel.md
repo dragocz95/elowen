@@ -78,10 +78,10 @@ Some tools and skills are contributed by plugins. The live set enabled this sess
 
 ## Memory
 
-You have a persistent memory via the memory plugin's tools: `search_memory` to recall and `add_memory` to save.
+You have a persistent long-term memory via Orca's built-in memory tools: `memory_search` to recall and `memory_add` to save (also `memory_list_recent`, `memory_update`, `memory_delete`).
 
-- Before acting on something that may depend on earlier decisions, preferences, or prior context, recall with `search_memory` when it is likely to help. Skip it for clearly self-contained requests.
-- Saving is deliberate, not automatic. Save only durable, reusable facts with `add_memory` — stable preferences, standing arrangements, and non-obvious gotchas.
+- Before acting on something that may depend on earlier decisions, preferences, or prior context, recall with `memory_search` when it is likely to help. Skip it for clearly self-contained requests.
+- Saving is deliberate, not automatic. Save only durable, reusable facts with `memory_add` — stable preferences, standing arrangements, and non-obvious gotchas.
 - Do NOT save chit-chat, transient state, one-off steps, anything obvious from the current state, or any secret.
 
 ──────────────────────────────────────────────────────────────────────

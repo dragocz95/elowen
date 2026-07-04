@@ -6,25 +6,26 @@ import type { MemoryService } from '../memoryService.js';
 
 export interface MemoryToolDeps { store: MemoryStore; service: MemoryService }
 
-/** Message returned when a non-owner turn tries to touch memory. Memory is per-user and PRIVATE. */
-const LOCKED = 'Memory is only available in your personal chat.';
+/** Message returned when a non-owner turn tries to touch memory. Memory is per-user and PRIVATE —
+ *  reachable only from your own Orca chat or your linked platform account. */
+const LOCKED = 'Memory is only available to you — in your own Orca chat or from your linked platform account.';
 
 /** The PI tool text-result shape (mirrors orcaTools). Errors are surfaced as text, never thrown. */
 function text(t: string) {
   return { content: [{ type: 'text' as const, text: t }], details: {} };
 }
 
-/** The genuine owner behind THIS turn, or null when memory must stay locked. Read at EXECUTE time —
- *  never closed over at build time. The locked security invariant: memory is per-user + private, so it
- *  is only reachable from the operator's OWN Orca chat. A TRUSTED platform channel (admin-role sender)
- *  ALSO resolves to an owner-anchored 'owner-chat' session, so gating on session kind alone is NOT
- *  enough. The real guard is here: platform must be 'orca' (task-workers have currentIdentity()===null)
- *  AND owner must be true (an admin-role stranger in a trusted channel is admin, never owner). */
+/** The genuine owner's Orca ACCOUNT id behind THIS turn, or null when memory must stay locked. Read at
+ *  EXECUTE time — never closed over at build time. The invariant: memory is per-user + private, reachable
+ *  only by the OPERATOR — from their own Orca chat OR their linked platform account (e.g. their Discord
+ *  id claimed in Account settings), so it's the same memory across surfaces. The real guard is `owner`
+ *  (an admin-role stranger in a trusted channel is admin, NEVER owner) + a resolved `orcaUserId` (a
+ *  task-worker has currentIdentity()===null; an unlinked sender has no orcaUserId). Keys on orcaUserId,
+ *  never the raw `userId` (which for a platform turn is the platform id, not the Orca account). */
 function ownerUserId(): number | null {
   const id = currentIdentity();
-  if (!id || id.platform !== 'orca' || id.owner !== true) return null;
-  const userId = Number(id.userId);
-  return Number.isFinite(userId) ? userId : null;
+  if (!id || id.owner !== true || id.orcaUserId == null) return null;
+  return Number.isFinite(id.orcaUserId) ? id.orcaUserId : null;
 }
 
 /** One-line rendering of a memory for the model to reason over. */

@@ -315,13 +315,13 @@ export function registerMemoryRoutes(app: OrcaApp, ctx: RouteContext): void {
     return c.json(store.get(userId, id));
   });
 
-  // That one memory's audit trail (owner-scoped): verify ownership, then filter the user's event feed to
-  // rows for this memory.
+  // That one memory's audit trail (owner-scoped): verify ownership, then read events scoped to THIS
+  // memory's lifetime (a reused rowid must not surface the prior, purged memory's history).
   app.get('/memory/:id/events', (c) => {
     if (!store) return c.json({ error: 'memory unavailable' }, 400);
     const userId = c.get('user').id;
     const id = Number(c.req.param('id'));
     if (!store.get(userId, id)) return c.json({ error: 'not found' }, 404);
-    return c.json(store.listEvents(userId, { limit: 1000 }).filter((e) => e.memory_id === id));
+    return c.json(store.eventsForMemory(userId, id));
   });
 }

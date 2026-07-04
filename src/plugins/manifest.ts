@@ -60,6 +60,9 @@ export interface PluginManifest {
   entry: string;
   requires?: { env?: string[]; config?: string[] };
   provides?: { tools?: string[]; skills?: string[]; hooks?: string[]; platforms?: string[] };
+  /** Per-tool display icons (emoji), keyed by tool name — surfaced in the chat clients' tool-call lines.
+   *  Overrides the core default icon map; a tool without an entry falls back to it, then to a generic glyph. */
+  icons?: Record<string, string>;
   /** Declared config fields — drives the per-plugin settings form. */
   configSchema?: PluginConfigField[];
   /** What the plugin is allowed to do (deny-by-default). Gates runtime hook mutations: a patch is
@@ -84,6 +87,7 @@ const ManifestSchema = Type.Object({
     hooks: Type.Optional(Type.Array(Type.String())),
     platforms: Type.Optional(Type.Array(Type.String())),
   })),
+  icons: Type.Optional(Type.Record(Type.String(), Type.String())),
   configSchema: Type.Optional(Type.Array(Type.Object({
     key: Type.String({ minLength: 1 }),
     label: Type.String({ minLength: 1 }),

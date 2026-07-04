@@ -4,5 +4,6 @@
   "apiVersion": "1",
   "description": "Run shell commands (foreground or background) with the working directory confined to the user's accessible repositories. Background processes are managed with list/read/kill tools.",
   "entry": "index.mjs",
-  "provides": { "tools": ["run_command", "list_processes", "read_process_output", "kill_process"] }
+  "provides": { "tools": ["run_command", "list_processes", "read_process_output", "kill_process"] },
+  "icons": { "run_command": "💻", "list_processes": "💻", "read_process_output": "💻", "kill_process": "💻" }
 }

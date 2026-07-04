@@ -24,6 +24,7 @@ const EDIT_THROTTLE_MS = 1200; // Discord allows ~5 edits / 5 s per channel — 
 const CHUNK = 1990;
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024; // larger images are noted, not downloaded
 const MAX_IMAGES = 4;                    // vision cap per message
+const ASK_TTL_MS = 6 * 60_000;           // drop a pending ask_user_question after this (> the core 5-min timeout)
 const MAX_UPLOAD_IMAGES = 4;             // generated-image uploads per outgoing message
 const MAX_AUDIO_BYTES = 25 * 1024 * 1024; // Whisper's per-file limit — larger clips are just noted
 const TTS_MAX_CHARS = 4000;              // cap the spoken text (OpenAI TTS input limit is 4096)
@@ -251,13 +252,15 @@ class StateStore {
 
 class DiscordAdapter {
   name = 'discord';
-  constructor(cfg, logger, state, listModels, imageDirs = [], resolveProvider = () => null) {
+  constructor(cfg, logger, state, listModels, imageDirs = [], resolveProvider = () => null, answerQuestion = () => false) {
     this.cfg = cfg;
     this.log = logger;
     this.state = state;
     this.listModels = listModels;
     this.resolveProvider = resolveProvider; // central brain-provider key resolver (voice STT/TTS)
     this.imageDirs = imageDirs; // where the image-gen/image-edit plugins store their generated files
+    this.answerQuestion = answerQuestion; // deliver a parked ask_user_question answer back to the turn
+    this.pendingAsks = new Map(); // id → { channelId, messageId, questions, askerId, selected, awaitingText }
     this.handler = null;
     this.ws = null;
     this.botId = null;
@@ -437,6 +440,26 @@ class DiscordAdapter {
     if (!this.handler || m.author?.bot) return;
     if (!m.guild_id) return; // DMs carry no member roles → no policy can ever match; ignore them
     if (this.cfg.guildId && m.guild_id !== this.cfg.guildId) return;
+
+    // Free-text answer to a parked ask_user_question ("✏️ Other"): if this channel has a pending ask
+    // awaiting text from THIS sender, consume the message as that answer — not as a new brain turn.
+    for (const [id, pend] of this.pendingAsks) {
+      if (Date.now() - pend.createdAt > ASK_TTL_MS) { this.pendingAsks.delete(id); continue; } // stale (server-side timed out) → drop, never swallow a later message
+      if (!pend.awaitingText || pend.channelId !== m.channel_id || pend.askerId !== m.author.id) continue;
+      const other = String(m.content ?? '').trim();
+      const q0 = pend.questions[0];
+      const settled = this.answerQuestion(id, [{ header: q0.header, selected: pend.selected[0] ?? [], other: other || undefined }]);
+      this.pendingAsks.delete(id);
+      if (!settled) break; // already timed out server-side → fall through and treat the message as a normal turn
+      if (pend.messageId) {
+        const cs = this.cfg.language === 'cs';
+        void this.rest('PATCH', `/channels/${pend.channelId}/messages/${pend.messageId}`, {
+          embeds: [{ title: cs ? '✅ Odpovězeno' : '✅ Answered', description: `**${q0.header}:** ${other || '—'}`, color: 0x2ECC71 }],
+          components: [],
+        }).catch(() => {});
+      }
+      return; // this message was the answer
+    }
     // Thread allowlist: when configured, the bot only speaks inside these threads. A thread message's
     // channel_id IS the thread id, so we gate on it. Empty/unset = respond everywhere else allowed.
     const threadIds = new Set(String(this.cfg.threadIds ?? '').split(',').map((s) => s.trim()).filter(Boolean));
@@ -477,7 +500,12 @@ class DiscordAdapter {
 
     const reactions = this.cfg.reactions !== false;
     const streaming = this.cfg.streaming !== false;
-    const stream = streaming ? new LiveMessage(this, m.channel_id, m.id) : null;
+    const stream = streaming ? new LiveMessage(this, m.channel_id, m.id, m.author.id) : null;
+    // Even with live streaming OFF, ask_user_question must still render its choice message — otherwise the
+    // parked turn hangs until the timeout. Route events through the stream when present, else handle only `ask`.
+    const onEvent = stream
+      ? (e) => stream.onEvent(e)
+      : (e) => { if (e.type === 'ask' && Array.isArray(e.questions)) void this.postAsk(m.channel_id, m.id, m.author.id, e.id, e.questions).catch(() => {}); };
     const typing = setInterval(() => void this.rest('POST', `/channels/${m.channel_id}/typing`, {}).catch(() => {}), 8000);
     void this.rest('POST', `/channels/${m.channel_id}/typing`, {}).catch(() => {});
     if (reactions) void this.react(m.channel_id, m.id, '👀').catch(() => {}); // status: seen
@@ -495,7 +523,7 @@ class DiscordAdapter {
           history: () => this.fetchHistory(m.channel_id, m.id),
         },
         prefixed,
-        stream ? (e) => stream.onEvent(e) : undefined,
+        onEvent,
       );
       clearInterval(typing);
       if (stream) await stream.finalize(reply);
@@ -573,6 +601,10 @@ class DiscordAdapter {
         return this.respond(i, 4, { content: `${this.msg.voiceSet(next)}${note}`, flags: 64 });
       }
     }
+    // ask_user_question components (select menus + Submit/Other buttons) resolve a parked turn.
+    if (i.type === 3 && typeof i.data?.custom_id === 'string' && i.data.custom_id.startsWith('ask:')) {
+      return this.onAskInteraction(i);
+    }
     if (i.type === 3 && i.data?.custom_id === 'pick_thinking') {
       if (!this.isAdminMember(i.member)) return this.respond(i, 7, { content: this.msg.modelForbidden, components: [] });
       const v = String(i.data.values?.[0] ?? '');
@@ -592,6 +624,70 @@ class DiscordAdapter {
   /** Send an interaction callback (type 4 = message, 7 = update the component message). */
   async respond(i, type, data) {
     await this.rest('POST', `/interactions/${i.id}/${i.token}/callback`, { type, data });
+  }
+
+  /** Render a parked ask_user_question (from the brain's `ask` event) as a Hermes-style orange embed
+   *  plus one string-select per question and a Submit button (+ an "Other" free-text button for the
+   *  single-question case). Registers a pending entry the interaction/text handlers resolve. */
+  async postAsk(channelId, replyToId, askerId, id, questions) {
+    const cs = this.cfg.language === 'cs';
+    const title = `❓ ${this.cfg.agentName || 'Orca'} ${cs ? 'potřebuje tvůj vstup' : 'needs your input'}`;
+    const desc = questions.map((q) => `**${q.header}** — ${q.question}`).join('\n\n');
+    const rows = questions.slice(0, 4).map((q, qi) => ({
+      type: 1,
+      components: [{
+        type: 3,
+        custom_id: `ask:${id}:${qi}`,
+        placeholder: (q.multiSelect ? (cs ? `${q.header} — vyber jednu či víc` : `${q.header} — pick one or more`) : q.header).slice(0, 150),
+        min_values: q.multiSelect ? 0 : 1,
+        max_values: q.multiSelect ? Math.min(q.options.length, 25) : 1,
+        options: q.options.slice(0, 25).map((op, oi) => ({
+          label: String(op.label).slice(0, 100),
+          value: String(oi),
+          description: op.description ? String(op.description).slice(0, 100) : undefined,
+        })),
+      }],
+    }));
+    const buttons = [{ type: 2, style: 3, custom_id: `ask:${id}:submit`, label: cs ? 'Odeslat' : 'Submit' }];
+    if (questions.length === 1) buttons.push({ type: 2, style: 2, custom_id: `ask:${id}:other`, label: cs ? '✏️ Jiné' : '✏️ Other' });
+    const res = await this.rest('POST', `/channels/${channelId}/messages`, {
+      ...(replyToId ? { message_reference: { message_id: replyToId, fail_if_not_exists: false } } : {}),
+      embeds: [{ title, description: desc, color: 0xE67E22 }],
+      components: [...rows, { type: 1, components: buttons }],
+    }).catch((e) => { this.log.error(`postAsk failed: ${e?.message ?? e}`); return null; });
+    this.pendingAsks.set(id, { channelId, messageId: res?.id ?? null, questions, askerId, selected: {}, awaitingText: false, title, desc, createdAt: Date.now() });
+  }
+
+  /** Resolve an `ask:*` component interaction: a select stores that question's picks; Submit delivers all
+   *  answers to the parked turn; Other flips to free-text capture (the next channel message answers). */
+  async onAskInteraction(i) {
+    const cs = this.cfg.language === 'cs';
+    const [, id, part] = String(i.data.custom_id).split(':');
+    const pend = this.pendingAsks.get(id);
+    if (!pend) return this.respond(i, 7, { components: [] }); // expired → just strip the stale components
+    // Only the person the question was posed to (or the operator) may answer it.
+    const clickerId = i.member?.user?.id ?? i.user?.id;
+    if (clickerId && clickerId !== pend.askerId && !this.isAdminMember(i.member)) {
+      return this.respond(i, 4, { content: cs ? 'Na tuhle otázku odpovídá někdo jiný.' : 'This question is for someone else.', flags: 64 });
+    }
+    if (part === 'submit') {
+      const answers = pend.questions.map((q, qi) => ({ header: q.header, selected: pend.selected[qi] ?? [] }));
+      const settled = this.answerQuestion(id, answers);
+      this.pendingAsks.delete(id);
+      if (!settled) return this.respond(i, 7, { embeds: [{ title: cs ? '⏱ Otázka vypršela' : '⏱ Question expired', color: 0x95A5A6 }], components: [] });
+      const summary = answers.map((a) => `**${a.header}:** ${a.selected.join(', ') || '—'}`).join('\n');
+      return this.respond(i, 7, { embeds: [{ title: cs ? '✅ Odpovězeno' : '✅ Answered', description: summary, color: 0x2ECC71 }], components: [] });
+    }
+    if (part === 'other') {
+      pend.awaitingText = true;
+      const note = cs ? '✏️ Napiš odpověď do tohohle kanálu.' : '✏️ Type your answer in this channel.';
+      return this.respond(i, 7, { embeds: [{ title: pend.title, description: `${pend.desc}\n\n${note}`, color: 0x3498DB }], components: [] });
+    }
+    // Otherwise `part` is a question index → record that question's selected labels (client shows them).
+    const qi = Number(part);
+    const q = pend.questions[qi];
+    if (q) pend.selected[qi] = (i.data.values ?? []).map((v) => q.options[Number(v)]?.label).filter(Boolean);
+    return this.respond(i, 6, {}); // DEFERRED_UPDATE: ack without changing the message
   }
 
   async reply(channelId, text, replyToId) {
@@ -760,46 +856,25 @@ class EditableMessage {
   }
 }
 
-/** Per-tool progress emoji, data-driven: exact tool name, or a prefix when the pattern ends in `*`.
- *  First match wins; unknown tools fall back to the generic wrench. */
-const TOOL_EMOJI = [
-  ['sarah_hair*', '✂️'],
-  ['run_command', '💻'], ['list_processes', '💻'], ['read_process_output', '💻'], ['kill_process', '💻'],
-  ['read_file', '📄'], ['list_dir', '📄'],
-  ['write_file', '📝'], ['edit_file', '📝'],
-  ['web_search', '🔍'], ['web_fetch', '🌐'],
-  ['generate_image', '🎨'], ['edit_image', '🎨'],
-  ['add_memory', '🧠'], ['search_memory', '🧠'],
-  ['cron_add', '⏰'], ['cron_list', '⏰'], ['cron_remove', '⏰'], ['schedule_wakeup', '⏰'],
-  ['create_skill', '📖'], ['list_skills', '📖'], ['delete_skill', '📖'],
-  ['todo_*', '📋'],
-  ['discord_*', '💬'],
-  ['discord_api', '💬'],
-  ['orca_*', '🐋'],
-  ['delegate', '🤝'],
-  ['scan_code', '🛡️'],
-];
-export function toolEmoji(name) {
-  for (const [pat, emoji] of TOOL_EMOJI) {
-    if (pat.endsWith('*') ? name.startsWith(pat.slice(0, -1)) : name === pat) return emoji;
-  }
-  return '🔧';
-}
-
-/** One rendered progress line: `<emoji> \`tool\`` + optional `: "detail"` + optional ` ×N` counter. */
+/** One rendered progress line: `<icon> \`tool\`` + optional `: "detail"` + optional ` ×N` counter. The
+ *  icon is resolved daemon-side (core map + plugin manifest `icons`) and rides the `tool` event; the
+ *  generic wrench is the fallback when a tool declared none. */
 function toolLine(c) {
-  return `${toolEmoji(c.name)} \`${c.name}\`` + (c.detail ? `: "${c.detail}"` : '…') + (c.count > 1 ? ` ×${c.count}` : '');
+  return `${c.icon ?? '🔧'} \`${c.name}\`` + (c.detail ? `: "${c.detail}"` : '…') + (c.count > 1 ? ` ×${c.count}` : '');
 }
 
-/** The live todo checklist for the progress bubble — emoji per status (Discord has no task-list markdown),
- *  completed items struck through. Capped so a long list can't blow the ~2k message limit. */
-function todoLines(todos, max = 15) {
-  if (!todos?.length) return [];
+/** A display card (ctx.emitCard) for the progress bubble — title + checklist (emoji per status, since
+ *  Discord has no task-list markdown) + freeform body. Capped so a long card can't blow the ~2k limit. */
+function cardLines(card, max = 15) {
+  const items = Array.isArray(card?.items) ? card.items : [];
   const glyph = (s) => (s === 'completed' ? '✅' : s === 'in_progress' ? '🔸' : '⬜');
-  const done = todos.filter((t) => t.status === 'completed').length;
-  const rows = todos.slice(0, max).map((t) => `${glyph(t.status)} ${t.status === 'completed' ? `~~${t.title}~~` : t.title}`);
-  if (todos.length > max) rows.push(`… +${todos.length - max}`);
-  return [`📋 **Todo** (${done}/${todos.length})`, ...rows];
+  const done = items.filter((t) => t.status === 'completed').length;
+  const lines = [];
+  if (card?.title || items.length) lines.push(`📋 **${card?.title ?? 'Card'}**${items.length ? ` (${done}/${items.length})` : ''}`);
+  for (const t of items.slice(0, max)) lines.push(`${glyph(t.status)} ${t.status === 'completed' ? `~~${t.text}~~` : t.text}`);
+  if (items.length > max) lines.push(`… +${items.length - max}`);
+  if (card?.body) lines.push(String(card.body));
+  return lines;
 }
 
 /** Runtime footer, Hermes-style: `model · 42 %` as Discord subtext under the final answer. Empty
@@ -820,26 +895,27 @@ export function footerLine(idle) {
  *  not streamed into the channel, so the answer is always the LAST message (the summary), never buried
  *  under a tool trace. No tools → just the answer. */
 export class LiveMessage {
-  constructor(adapter, channelId, replyToId) {
+  constructor(adapter, channelId, replyToId, askerId) {
     this.a = adapter;
     this.channelId = channelId;
     this.replyToId = replyToId; // the triggering message — the final answer is a real reply to it
+    this.askerId = askerId;     // who to route an ask_user_question prompt to (and gate its answer on)
     this.toolCalls = []; // { name, detail?, count } — one entry per rendered line
     this.progress = null; // created lazily on the first tool event
     this.text = '';       // accumulated only as the finalize fallback (handler may return undefined)
     this.imageRefs = [];  // generated-image refs from tool results — attached even if the reply omits them
     this.idle = null;     // the turn's settle event (model + context usage) → runtime footer
     this.reasoning = '';  // reasoning stream, only rendered when cfg.showReasoning (off by default)
-    this.todos = [];      // latest todo checklist snapshot (from a todo tool's details.todos)
+    this.cards = new Map(); // latest display cards (ctx.emitCard) by id — the todo checklist is the canonical one
   }
-  /** Re-render the progress bubble = tool lines + (opt-in) a reasoning tail + the live todo checklist. */
+  /** Re-render the progress bubble = tool lines + (opt-in) a reasoning tail + the live display cards. */
   renderProgress() {
     const lines = this.toolCalls.map(toolLine);
     if (this.a.cfg?.showReasoning && this.reasoning.trim()) {
       const tail = this.reasoning.trim().slice(-280).replace(/\s+/g, ' ');
       lines.push(`💭 _${tail}_`);
     }
-    const body = [...lines, ...todoLines(this.todos)];
+    const body = [...lines, ...[...this.cards.values()].flatMap((c) => cardLines(c))];
     if (!body.length) return;
     this.progress ??= new EditableMessage(this.a, this.channelId);
     this.progress.update(body.join('\n'));
@@ -851,7 +927,7 @@ export class LiveMessage {
         last.count += 1;
         if (e.detail) last.detail = e.detail; // latest detail wins on a collapsed line
       } else {
-        this.toolCalls.push({ name: e.name, detail: e.detail, count: 1 });
+        this.toolCalls.push({ name: e.name, detail: e.detail, icon: e.icon, count: 1 });
       }
       this.renderProgress();
     } else if (e.type === 'reasoning' && e.delta) {
@@ -863,9 +939,15 @@ export class LiveMessage {
       this.text += e.delta;
     } else if (e.type === 'image' && e.ref) {
       this.imageRefs.push(e.ref);
-    } else if (e.type === 'todo') {
-      this.todos = e.todos; // latest checklist snapshot → re-render the bubble with the updated todos
+    } else if (e.type === 'card' && e.card?.id) {
+      // Upsert the card by id; an empty card (no items/body) removes it. Then re-render the bubble.
+      const empty = (!e.card.items || e.card.items.length === 0) && !e.card.body;
+      if (empty) this.cards.delete(e.card.id); else this.cards.set(e.card.id, e.card);
       this.renderProgress();
+    } else if (e.type === 'ask' && Array.isArray(e.questions)) {
+      // The turn parked on ask_user_question — post the interactive choice message (fire-and-forget; the
+      // turn stays blocked in the tool until the user answers via a component/text interaction).
+      void this.a.postAsk(this.channelId, this.replyToId, this.askerId, e.id, e.questions).catch(() => {});
     } else if (e.type === 'idle') {
       this.idle = e;
     }
@@ -907,7 +989,7 @@ export function register(ctx) {
   const state = new StateStore(join(dataDir, 'channel-state.json'));
   // The image-gen/image-edit plugins are data-dir siblings — their generated PNGs upload from there.
   const imageDirs = [join(dataDir, '..', 'image-gen'), join(dataDir, '..', 'image-edit')];
-  const adapter = new DiscordAdapter({ ...ctx.config, botToken: token }, ctx.logger, state, ctx.listModels, imageDirs, ctx.resolveProvider);
+  const adapter = new DiscordAdapter({ ...ctx.config, botToken: token }, ctx.logger, state, ctx.listModels, imageDirs, ctx.resolveProvider, ctx.answerQuestion);
   ctx.registerPlatform(adapter);
 
   // Raw Discord REST access for the OWNER: delete/purge messages, manage roles, edit channels —

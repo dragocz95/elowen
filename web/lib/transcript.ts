@@ -1,41 +1,43 @@
-import type { BrainEvent } from '../../brain/events.js';
-import type { BrainMessageView } from '../../brain/messageView.js';
-import type { TodoItem } from '../../brain/todos.js';
+import type { BrainCard, BrainMessage } from './types';
 
-/** The latest todo checklist across a resumed conversation — the todo panel's state on load. Scans
- *  segments in order; the last tool that carried a todos snapshot wins (an empty array = list cleared). */
-export function latestTodos(msgs: BrainMessageView[]): TodoItem[] {
-  let todos: TodoItem[] = [];
-  for (const m of msgs) {
-    for (const seg of m.segments ?? []) {
-      if (seg.kind === 'tool' && seg.todos) todos = seg.todos;
-    }
-  }
-  return todos;
-}
+/** Browser MIRROR of the daemon's `src/brain/transcript.ts` (same governance as `web/lib/types.ts`
+ *  mirroring `src/brain/events.ts`): the web dock is a standalone Next.js bundle whose Turbopack build
+ *  can't import the daemon's NodeNext source (its `./x.js` import specifiers resolve to `.ts` files that
+ *  don't exist on disk as `.js`). So this file is a faithful, hand-synced copy of the shared fold — keep
+ *  the two in lockstep. Pure data: the React layer folds SSE events through `reduce`/`upsertCard` and
+ *  reads the resulting `ChatView`, exactly like the CLI TUI. */
+
+/** The turn-affecting brain events this fold handles (mirror of the `src/brain/events.ts` union subset;
+ *  the out-of-band `card`/`ask` events are folded via `upsertCard` + the component's own question state). */
+export type TranscriptEvent =
+  | { type: 'text'; delta: string }
+  | { type: 'reasoning'; delta: string }
+  | { type: 'tool'; name: string; detail?: string; icon?: string }
+  | { type: 'diff'; diff: string }
+  | { type: 'notice'; kind: 'retry' | 'compaction'; message: string; done?: boolean }
+  | { type: 'idle' }
+  | { type: 'error'; message: string };
 
 /** An assistant turn is an ordered list of segments so text and tool calls render in the sequence they
- *  happened. Consecutive tool calls (no new text between them) collapse into ONE tools segment — the
- *  Claude-Code "grouped" look. Tool OUTPUT is never shown; only names, argument summaries and edit diffs. */
-interface ToolItem { name: string; detail?: string; diff?: string }
-type Segment =
+ *  happened. Consecutive tool calls (no new text between them) collapse into ONE tools segment → the
+ *  Claude-Code "grouped pills" look. Tool OUTPUT is never shown; only names, argument summaries, diffs. */
+export interface ToolItem { name: string; detail?: string; diff?: string; icon?: string }
+export type Segment =
   | { kind: 'text'; text: string }
-  /** The model's reasoning/thinking stream — rendered dim + separate from the answer. */
   | { kind: 'reasoning'; text: string }
   | { kind: 'tools'; items: ToolItem[] };
-type YouTurn = { role: 'you'; text: string };
-type OrcaTurn = { role: 'orca'; segments: Segment[]; streaming: boolean };
-type ChatTurn = YouTurn | OrcaTurn;
+export type YouTurn = { role: 'you'; text: string };
+export type OrcaTurn = { role: 'orca'; segments: Segment[]; streaming: boolean };
+export type ChatTurn = YouTurn | OrcaTurn;
 
-/** The whole view model the TUI renders. Pure data — the reducer never touches the terminal. `notice`
- *  is a transient runtime line (retry/compaction) cleared when the turn goes idle. */
+/** The whole view model the dock renders. `notice` is a transient runtime line (retry/compaction). */
 export interface ChatView { turns: ChatTurn[]; thinking: boolean; notice?: string }
 
 export const emptyView = (): ChatView => ({ turns: [], thinking: false });
 
-/** Build the initial view from stored history. Assistant turns keep their server-built segments
- *  (ordered text + tool calls with diffs), so a resumed conversation looks exactly like a live one. */
-export function fromHistory(msgs: BrainMessageView[]): ChatView {
+/** Build the initial view from stored history (`GET /brain/messages`). Server-built segments preserve
+ *  the true text/tool order; older rows fall back to a single flat text segment. */
+export function fromHistory(msgs: BrainMessage[]): ChatView {
   const turns: ChatTurn[] = [];
   for (const m of msgs) {
     if (m.role === 'user') {
@@ -58,20 +60,14 @@ export function fromHistory(msgs: BrainMessageView[]): ChatView {
   return { turns, thinking: false };
 }
 
-/** Append the user's turn (finalized) — called optimistically when they hit enter. */
+/** Append the user's turn (finalized) — called optimistically when they hit send. */
 export function pushUser(view: ChatView, text: string): ChatView {
   return { ...view, turns: [...view.turns, { role: 'you', text }] };
 }
 
-/** Open a fresh streaming assistant turn and switch on the thinking indicator. */
-export function beginAssistant(view: ChatView): ChatView {
-  return { thinking: true, turns: [...view.turns, { role: 'orca', segments: [], streaming: true }] };
-}
-
 /** Fold one brain event into the view. Pure: returns a new ChatView, never mutates the input. */
-export function reduce(view: ChatView, e: BrainEvent): ChatView {
+export function reduce(view: ChatView, e: TranscriptEvent): ChatView {
   const turns = view.turns.slice();
-  // Return a live streaming assistant turn, creating one if the last turn isn't it.
   const ensureOrca = (): OrcaTurn => {
     const last = turns[turns.length - 1];
     if (last && last.role === 'orca' && last.streaming) {
@@ -96,26 +92,24 @@ export function reduce(view: ChatView, e: BrainEvent): ChatView {
   switch (e.type) {
     case 'text': {
       addText(ensureOrca(), e.delta);
-      return { turns, thinking: true, notice: undefined }; // first answer text clears any transient notice
+      return { turns, thinking: true, notice: undefined };
     }
     case 'reasoning': {
       addReasoning(ensureOrca(), e.delta);
       return { turns, thinking: true, notice: view.notice };
     }
     case 'notice': {
-      // Transient runtime line (retry/compaction); `done` clears it, otherwise it shows until the next.
       return { turns, thinking: view.thinking, notice: e.done ? undefined : e.message };
     }
     case 'tool': {
       const t = ensureOrca();
-      const item: ToolItem = { name: e.name, detail: e.detail };
+      const item: ToolItem = { name: e.name, detail: e.detail, icon: e.icon };
       const tail = t.segments[t.segments.length - 1];
       if (tail?.kind === 'tools') t.segments[t.segments.length - 1] = { kind: 'tools', items: [...tail.items, item] };
       else t.segments.push({ kind: 'tools', items: [item] });
       return { turns, thinking: true, notice: view.notice };
     }
     case 'diff': {
-      // An edit finished — attach its diff to the most recent tool call of the streaming turn.
       const t = ensureOrca();
       for (let i = t.segments.length - 1; i >= 0; i--) {
         const seg = t.segments[i]!;
@@ -130,7 +124,7 @@ export function reduce(view: ChatView, e: BrainEvent): ChatView {
     case 'idle': {
       const last = turns[turns.length - 1];
       if (last && last.role === 'orca') turns[turns.length - 1] = { ...last, streaming: false };
-      return { turns, thinking: false, notice: undefined }; // turn settled → drop any transient notice
+      return { turns, thinking: false, notice: undefined };
     }
     case 'error': {
       const t = ensureOrca();
@@ -141,4 +135,12 @@ export function reduce(view: ChatView, e: BrainEvent): ChatView {
     default:
       return view;
   }
+}
+
+/** Fold a live `card` event into the card list: replace by id, append when new, drop when it came back
+ *  empty (a cleared panel). Mirrors the daemon `isEmptyCard`: a card with neither items nor body removes. */
+export function upsertCard(cards: BrainCard[], card: BrainCard): BrainCard[] {
+  const rest = cards.filter((c) => c.id !== card.id);
+  const empty = (!card.items || card.items.length === 0) && !card.body;
+  return empty ? rest : [...rest, card];
 }

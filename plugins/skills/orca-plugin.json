@@ -4,5 +4,6 @@
   "apiVersion": "1",
   "description": "Loads markdown skills from disk and exposes them to the Orca brain.",
   "entry": "index.mjs",
-  "provides": { "skills": ["*"] }
+  "provides": { "skills": ["*"] },
+  "icons": { "read_skill": "📖", "create_skill": "📖", "list_skills": "📖", "delete_skill": "📖" }
 }

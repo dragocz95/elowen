@@ -27,3 +27,15 @@ export const brainSendSchema = z.object({
   text: z.string().min(1),
   images: z.array(imageSchema).max(4).optional(),
 });
+
+/** The user's answer to a parked ask_user_question (POST /brain/answer). `id` is the question id carried
+ *  on the `ask` event; `answers` holds one entry per question with the picked label(s) + optional free
+ *  text. Bounds mirror the tool schema (≤4 questions, each with a handful of picks). */
+export const brainAnswerSchema = z.object({
+  id: z.string().min(1),
+  answers: z.array(z.object({
+    header: z.string().max(500),
+    selected: z.array(z.string().max(500)).max(16),
+    other: z.string().max(2000).optional(),
+  })).min(1).max(4),
+});

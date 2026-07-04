@@ -310,7 +310,7 @@ describe('BrainService', () => {
     const call = spawned.session.prompt.mock.calls.at(-1)!;
     expect(call[1]?.images).toEqual([{ type: 'image', data: 'aGVsbG8=', mimeType: 'image/png' }]);
     const hist = svc.history(1).find((m) => m.role === 'user');
-    expect(hist?.text).toContain('1× obrázek');
+    expect(hist?.text).toContain('1× image');
   });
 
   it('injects turn-context into the prompt but keeps stored history clean (cache-safe)', async () => {
@@ -420,7 +420,7 @@ describe('BrainService', () => {
     expect(call[1]?.images).toEqual([{ type: 'image', data: 'aGVsbG8=', mimeType: 'image/png' }]);
     // History keeps the marker, not the pixels.
     const user = d.store.getMessages('brain-ch-c-img').find((m) => m.role === 'user');
-    expect(JSON.stringify(user)).toContain('1× obrázek');
+    expect(JSON.stringify(user)).toContain('1× image');
     expect(JSON.stringify(user)).not.toContain('aGVsbG8=');
   });
 

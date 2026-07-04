@@ -5,7 +5,8 @@ import type { ToolDefinition } from '@earendil-works/pi-coding-agent';
 import type { PluginCapabilities, PluginContext, PluginHook, PluginLogger, PluginSkill, PlatformAdapter, ProviderCredentials } from './api.js';
 import type { PluginManifest } from './manifest.js';
 import { assertPathAllowed, allowedRoots, isAllAccess, currentAccess } from './pathGuard.js';
-import { currentIdentity } from './policyContext.js';
+import { currentIdentity, currentElicitor, currentCardEmitter } from './policyContext.js';
+import type { AskAnswer } from '../brain/events.js';
 
 /** Recursively collect every string value in a plugin's config slice — the set of provider ids the
  *  operator could legitimately have wired into THIS plugin. `resolveProvider()` is gated to this set so a
@@ -41,6 +42,9 @@ export class PluginRegistry {
    *  name. The hook bus looks these up by owner to gate a hook's mutation patch (deny-by-default). The
    *  loader records this after a clean register+merge; the manifest is otherwise discarded. */
   readonly pluginCapabilities = new Map<string, PluginCapabilities>();
+  /** Per-tool display icons declared across all plugin manifests (`icons`), keyed by tool name. Merged
+   *  with the core defaults by `makeToolIconResolver` when the daemon stamps a `tool` event's icon. */
+  readonly toolIcons = new Map<string, string>();
 
   /** Absorb another registry's contributions (the loader stages each plugin and merges on success). */
   merge(other: PluginRegistry): void {
@@ -65,9 +69,17 @@ export class PluginRegistry {
     this.pluginCapabilities.set(name, caps);
   }
 
+  /** Record a plugin's manifest tool icons (from its parsed manifest `icons`). Called by the loader
+   *  after a clean register+merge. First writer wins on a name clash (bundled dirs load first). */
+  setIcons(icons?: Record<string, string>): void {
+    for (const [tool, icon] of Object.entries(icons ?? {})) {
+      if (typeof icon === 'string' && icon.trim() && !this.toolIcons.has(tool)) this.toolIcons.set(tool, icon);
+    }
+  }
+
   /** Build the context passed to one plugin's `register()`. `config` is that plugin's own slice;
    *  `dataRoot` hosts per-plugin writable dirs (tests fall back to the OS tmpdir). */
-  contextFor(name: string, config: Record<string, unknown>, logger: PluginLogger, dataRoot?: string, notify?: (text: string, channelId?: string) => Promise<void>, listModels?: () => Promise<{ provider: string; providerLabel: string; model: string }[]>, resolveProvider?: (id: string) => ProviderCredentials | null, caps?: PluginCapabilities, provides?: PluginManifest['provides']): PluginContext {
+  contextFor(name: string, config: Record<string, unknown>, logger: PluginLogger, dataRoot?: string, notify?: (text: string, channelId?: string) => Promise<void>, listModels?: () => Promise<{ provider: string; providerLabel: string; model: string }[]>, resolveProvider?: (id: string) => ProviderCredentials | null, caps?: PluginCapabilities, provides?: PluginManifest['provides'], answerQuestion?: (id: string, answers: AskAnswer[]) => boolean): PluginContext {
     const scoped: PluginLogger = {
       info: (m) => logger.info(`[plugin:${name}] ${m}`),
       warn: (m) => logger.warn(`[plugin:${name}] ${m}`),
@@ -110,6 +122,17 @@ export class PluginRegistry {
       isAdminSession: isAllAccess,
       currentAccess,
       currentIdentity,
+      // Reads the turn-bound elicitor off the same AsyncLocalStorage as currentIdentity — no dependency
+      // to thread through contextFor. Throws outside an interactive turn (worker/cron sessions wire none).
+      askUser: (questions) => {
+        const e = currentElicitor();
+        if (!e) throw new Error('askUser is only available inside an interactive prompt turn');
+        return e(questions);
+      },
+      answerQuestion: answerQuestion ?? (() => false),
+      // Fire-and-forget display card into the current conversation (no-op outside an interactive turn —
+      // e.g. cron/worker sessions wire no emitter). Reads the emitter off the same ALS as askUser.
+      emitCard: (card) => { currentCardEmitter()?.(card); },
       notify: notify ?? (async () => { /* no notification sink wired */ }),
       listModels: listModels ?? (async () => []),
       // Gate central-key access (deny-by-default): a plugin may resolve a provider only if that id was

@@ -2,11 +2,13 @@ import { TUI, ProcessTerminal, Text, Markdown, Loader, Container, Spacer, matche
 import type { SlashCommand } from '@earendil-works/pi-tui';
 import { initTheme, getMarkdownTheme, getSelectListTheme } from '@earendil-works/pi-coding-agent';
 import { color, glyph } from './theme.js';
-import { UserBlock, StatusBar, TitleBar, TodoPanel, banner, toolChip, diffBlock, metaLine, titleBarContent } from './components.js';
+import { UserBlock, StatusBar, TitleBar, CardPanel, banner, toolChip, diffBlock, metaLine, titleBarContent } from './components.js';
 import { ChatEditor, sessionItems, modelItems, parseModelValue, openPicker } from './picker.js';
+import { runAskFlow } from './askFlow.js';
 import { BrainClient } from './brainClient.js';
-import { fromHistory, pushUser, beginAssistant, reduce, latestTodos, type ChatView } from './render.js';
-import type { TodoItem } from '../../brain/todos.js';
+import { fromHistory, pushUser, beginAssistant, reduce, upsertCard, type ChatView } from '../../brain/transcript.js';
+import { commandsFor } from '../../brain/slashCommands.js';
+import type { AskQuestion, BrainCard } from '../../brain/events.js';
 
 /** Plain-text rendering of the view — used for the non-TTY fallback and unit tests (no ANSI, so it's
  *  deterministic to assert on). The rich terminal path uses pi-tui components instead. */
@@ -38,12 +40,15 @@ export function viewToPlainText(view: ChatView): string[] {
 
 /** Local slash-command routing: returns the recognized command (with its argument) or null for a
  *  regular chat message. Pure, so the command surface is unit-testable without a TTY. */
-export function parseCommand(text: string): { cmd: 'quit' | 'new' | 'sessions' | 'resume' | 'delete' | 'model' | 'think' | 'compact' | 'help'; arg?: string } | null {
+export function parseCommand(text: string): { cmd: 'quit' | 'new' | 'stop' | 'status' | 'restart' | 'sessions' | 'resume' | 'delete' | 'model' | 'think' | 'compact' | 'help'; arg?: string } | null {
   const m = /^\/(\w+)(?:\s+(.+))?$/.exec(text.trim());
   if (!m) return null;
   switch (m[1]) {
     case 'quit': case 'exit': return { cmd: 'quit' };
     case 'new': return { cmd: 'new' };
+    case 'stop': return { cmd: 'stop' };
+    case 'status': return { cmd: 'status' };
+    case 'restart': return { cmd: 'restart' };
     case 'sessions': return { cmd: 'sessions' };
     case 'resume': return { cmd: 'resume', arg: m[2] };
     case 'delete': return { cmd: 'delete', arg: m[2] };
@@ -88,16 +93,8 @@ export interface RunChatOpts {
   client?: BrainClient;
 }
 
-const HELP = [
-  '/new — new conversation',
-  '/sessions — pick a conversation (arrows)',
-  '/resume [n] — resume a conversation (picker without argument)',
-  '/delete [n] — delete a conversation (picker + confirm)',
-  '/model — switch the model (picker)',
-  '/think — set reasoning effort (picker)',
-  '/compact — summarize the conversation to free context',
-  '/quit — exit',
-].join('\n');
+// Built from the SHARED command registry so /help never drifts from the actual command set.
+const HELP = commandsFor('cli', true).map((c) => `/${c.name} — ${c.description}`).join('\n');
 
 /** Launch the interactive Orca chat TUI — an opencode-style layout (user blocks with a teal rail,
  *  markdown replies with a metadata line, a bottom status bar) rendered on pi-tui + pi's markdown theme.
@@ -121,10 +118,9 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
   let sessionTitle = '';
   const history0 = await client.history().catch(() => []);
   let view = fromHistory(history0);
-  /** The live todo checklist (latest `details.todos` snapshot) — a persistent panel above the status bar,
-   *  tracked outside the ChatView like `usage`. Updated on each `todo` stream event; recomputed from
-   *  history on load / conversation switch. */
-  let todos: TodoItem[] = latestTodos(history0);
+  /** Live display cards (ctx.emitCard) — a persistent panel above the status bar, tracked outside the
+   *  ChatView like `usage`. Seeded from status (survives reconnect) and updated on each `card` event. */
+  let cards: BrainCard[] = boot?.cards ?? [];
   /** The last /sessions listing, so /resume <n> can address by number. */
   let listed: { id: string; title: string }[] = [];
   /** Transient system lines (help, session list, errors) rendered under the conversation. */
@@ -135,7 +131,7 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
       client.status().catch(() => null),
       client.sessions().catch(() => []),
     ]);
-    if (st) { modelName = st.model || modelName; lineCfg = st.statusline; usage = st.usage; thinkingLevel = st.thinkingLevel ?? ''; thinkingLevels = st.thinkingLevels ?? []; }
+    if (st) { modelName = st.model || modelName; lineCfg = st.statusline; usage = st.usage; thinkingLevel = st.thinkingLevel ?? ''; thinkingLevels = st.thinkingLevels ?? []; cards = st.cards ?? []; }
     sessionTitle = sessions.find((s) => s.active)?.title ?? '';
   };
   await refreshMeta();
@@ -150,9 +146,9 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
   /** The picker temporarily replaces the editor in this slot (the pi modal pattern). */
   const editorSlot = new Container();
   editorSlot.addChild(editor);
-  /** Persistent todo checklist panel, pinned above the status line (Claude-Code style) — lives in the
-   *  fixed tree, NOT the rebuilt messages container, so it stays put across turns. */
-  const todoPanel = new TodoPanel();
+  /** Persistent card panel (ctx.emitCard — the todo checklist is the canonical one), pinned above the
+   *  status line — lives in the fixed tree, NOT the rebuilt messages container, so it stays put across turns. */
+  const cardPanel = new CardPanel();
   const statusUnder = new Text('', 1, 0);
   const bottomBar = new StatusBar(color.faint('  ⏎ send   ·   /help commands'), color.faint('ctrl+c quit  '));
 
@@ -163,17 +159,15 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
     listed = list.map((s) => ({ id: s.id, title: s.title }));
     return list.map((s, i) => ({ value: String(i + 1), label: `${i + 1}`, description: s.title || '(untitled)' }));
   };
-  const SLASH_COMMANDS: SlashCommand[] = [
-    { name: 'new', description: 'new conversation' },
-    { name: 'sessions', description: 'pick a conversation' },
-    { name: 'resume', description: 'resume a conversation', argumentHint: '[n]', getArgumentCompletions: numberCompletions },
-    { name: 'delete', description: 'delete a conversation', argumentHint: '[n]', getArgumentCompletions: numberCompletions },
-    { name: 'model', description: 'switch the model' },
-    { name: 'think', description: 'set reasoning effort' },
-    { name: 'compact', description: 'summarize the conversation to free context' },
-    { name: 'help', description: 'show commands' },
-    { name: 'quit', description: 'exit' },
-  ];
+  // The command palette is derived from the SHARED registry (src/brain/slashCommands.ts) — the same
+  // source Discord and the web dock publish from — so a new command shows up everywhere at once. The CLI
+  // runs as the operator, so admin-only commands (restart) are included. Only the conversation-number
+  // pickers get their live argument completions grafted on.
+  const SLASH_COMMANDS: SlashCommand[] = commandsFor('cli', true).map((cmd) =>
+    cmd.name === 'resume' || cmd.name === 'delete'
+      ? { name: cmd.name, description: cmd.description, argumentHint: '[n]', getArgumentCompletions: numberCompletions }
+      : { name: cmd.name, description: cmd.description },
+  );
   editor.setAutocompleteProvider(new CombinedAutocompleteProvider(SLASH_COMMANDS, process.cwd()));
 
   let thinkStart = 0;
@@ -192,7 +186,7 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
         for (const seg of turn.segments) {
           if (seg.kind === 'tools') {
             for (const item of seg.items) {
-              messages.addChild(new Text(toolChip(item.name, item.detail), 1, 0));
+              messages.addChild(new Text(toolChip(item.name, item.detail, item.icon), 1, 0));
               if (item.diff) for (const line of diffBlock(item.diff)) messages.addChild(new Text(line, 1, 0));
             }
           } else if (seg.kind === 'reasoning') {
@@ -236,15 +230,28 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
     const base = line || (modelName || '—');
     const full = think ? `${base}  ·  ${think}` : base;
     statusUnder.setText(line ? color.faint(`  ${full}`) : `  ${color.accentDim(modelName || '—')}${think ? color.faint(`  ·  ${think}`) : ''}`);
-    todoPanel.set(todos);
+    cardPanel.set(cards);
     tui.requestRender();
+  };
+
+  // Drive the interactive picker flow for a parked ask_user_question, POST the answer (Esc aborts the
+  // turn). Shared by the live `ask` event and the reconnect restore (boot.pendingAsk).
+  const launchAsk = (id: string, questions: AskQuestion[]): void => {
+    runAskFlow({
+      tui, slot: editorSlot, editor, questions,
+      onComplete: (answers) => { void client.answer(id, answers).catch(() => { /* turn may have gone */ }); },
+      onCancel: () => { void client.abort().catch(() => { /* already settled */ }); },
+    });
   };
 
   let streamAc = new AbortController();
   const openStream = (): void => {
     void client.stream((e) => {
+      // ask_user_question parked the turn: drive the picker flow and skip the ChatView reducer (the
+      // questions aren't a conversation segment).
+      if (e.type === 'ask') { launchAsk(e.id, e.questions); return; }
       if (e.type === 'idle' && e.usage) usage = e.usage;
-      if (e.type === 'todo') todos = e.todos; // update the persistent panel (not part of the ChatView)
+      if (e.type === 'card') cards = upsertCard(cards, e.card); // update the persistent panel (not part of the ChatView)
       view = reduce(view, e);
       render();
     }, streamAc.signal).catch(() => { /* aborted/gone */ });
@@ -257,8 +264,7 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
     await client.start(target);
     const hist = await client.history().catch(() => []);
     view = fromHistory(hist);
-    todos = latestTodos(hist);
-    await refreshMeta();
+    await refreshMeta(); // also refreshes the card panel from the new conversation's status
     openStream();
     render();
   };
@@ -379,6 +385,39 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
             .catch((e: Error) => { notice = color.error(`error: ${e.message}`); render(); });
           return;
         }
+        case 'stop': {
+          if (!view.thinking) { notice = color.dim('nothing is running'); render(); return; }
+          notice = color.dim('stopping…');
+          render();
+          void client.abort()
+            .then(() => { notice = color.dim('agent stopped'); render(); })
+            .catch((e: Error) => { notice = color.error(`error: ${e.message}`); render(); });
+          return;
+        }
+        case 'status': {
+          void client.status().then((s) => {
+            const parts: string[] = [];
+            if (s?.model) parts.push(`model: ${s.model}`);
+            const u = s?.usage;
+            if (u) {
+              if (u.percent != null) parts.push(`context ${Math.round(u.percent)}% (${fmtK(u.tokens ?? 0)}/${fmtK(u.contextWindow)})`);
+              parts.push(`Σ ${fmtK(u.totalTokens)} tok`);
+              parts.push(`$${u.cost.toFixed(2)}`);
+            }
+            if (s?.thinkingLevel) parts.push(`reasoning: ${s.thinkingLevel}`);
+            notice = color.dim(parts.length ? parts.join('  ·  ') : 'no active session');
+            render();
+          }).catch((e: Error) => { notice = color.error(`error: ${e.message}`); render(); });
+          return;
+        }
+        case 'restart': {
+          notice = color.dim('restarting daemon…');
+          render();
+          void client.command('restart')
+            .then((r) => { notice = color.dim(r?.message ?? 'restarting…'); render(); })
+            .catch((e: Error) => { notice = color.error(`error: ${e.message}`); render(); });
+          return;
+        }
       }
     }
     view = beginAssistant(pushUser(view, trimmed));
@@ -395,7 +434,7 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
   tui.addChild(messages);
   tui.addChild(spacer); // push the input to the bottom of the screen (opencode-style anchoring)
   tui.addChild(editorSlot);
-  tui.addChild(todoPanel);  // persistent todo checklist, pinned above the status line
+  tui.addChild(cardPanel);  // persistent card panel (todo checklist etc.), pinned above the status line
   tui.addChild(statusUnder);
   tui.addChild(bottomBar);
   tui.setFocus(editor);
@@ -409,6 +448,9 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
   tui.start();
   render();
   openStream();
+  // Reconnect restore: if a question was already parked when this client attached (daemon restart, second
+  // client), re-render its picker instead of leaving the turn silently hanging until the timeout.
+  if (boot?.pendingAsk) launchAsk(boot.pendingAsk.id, boot.pendingAsk.questions);
 
   await finished;
 }

@@ -6,12 +6,15 @@ import { PluginHookBus } from '../plugins/hookBus.js';
 import type { HookAuditBuffer } from '../shared/hookAudit.js';
 import type { Policy } from '../plugins/policy.js';
 import { runWithPolicy } from '../plugins/policyContext.js';
+import { ElicitationRegistry } from './elicitation.js';
+import { CardRegistry } from './cards.js';
+import { makeToolIconResolver } from './toolIcons.js';
 import type { AuthStorage } from '@earendil-works/pi-coding-agent';
 import type { BrainStore, BrainSearchHit } from '../store/brainStore.js';
 import type { BrainRuntimeConfig } from './providers.js';
 import { buildBrainRegistry, resolveBrainModel } from './providers.js';
 import { orcaExec } from '../shared/execs.js';
-import { buildOrcaTools, buildMemoryTools } from './tools/index.js';
+import { buildOrcaTools, buildMemoryTools, BUILTIN_TOOL_ICONS } from './tools/index.js';
 import { MemoryCurator } from './memoryCurator.js';
 import type { MemoryCategorizer } from './memoryCategorizer.js';
 import { extractText, frameUntrusted } from './messageView.js';
@@ -34,7 +37,7 @@ import { PlatformOrchestrator } from './platforms.js';
 import { shapeBrainMessages } from './messageView.js';
 import type { BrainMessageView } from './messageView.js';
 import { toBrainEvent, usageOf } from './events.js';
-import type { BrainEvent, BrainUsage } from './events.js';
+import type { AskAnswer, AskQuestion, BrainCard, BrainEvent, BrainUsage } from './events.js';
 import { defaultUserSessionId, freshUserSessionId, isNonUserSession } from './sessionId.js';
 
 
@@ -124,6 +127,12 @@ export class BrainService {
   /** Post-turn memory curator — built only when the memory deps are wired. Runs fire-and-forget from
    *  send() (owner chat), never awaited. */
   private curator?: MemoryCurator;
+  /** Parked `ask_user_question` calls, shared by owner chat and channel sessions so `/brain/answer`
+   *  (web/CLI) and Discord interactions resolve through one registry. */
+  private elicitation = new ElicitationRegistry();
+  /** Live display cards (ctx.emitCard) per conversation — seeded to clients via status, kept current via
+   *  the `card` event. Shared by owner chat and channel sessions. */
+  private cards = new CardRegistry();
   constructor(private d: BrainDeps) {
     this.factory = new BrainSessionFactory({ store: d.store, createSession: d.createSession, resourceLoaderFactory: d.resourceLoaderFactory });
     this.identity = new IdentityResolver({ platformOwner: d.platformOwner, resolvePlatformUser: d.resolvePlatformUser, users: d.users });
@@ -141,6 +150,7 @@ export class BrainService {
       spawn: (o) => this.spawnLive(o), // composition stays here — single source
       // Verified channel senders get memory too, keyed on their linked account and their own toggles.
       memoryService: d.memoryService, curator: this.curator, userSettings: d.userSettings,
+      elicitation: this.elicitation, // one registry so Discord interactions resolve channel questions
     });
     this.platforms = new PlatformOrchestrator({
       plugins: () => this.resolvePlugins(),
@@ -194,7 +204,28 @@ export class BrainService {
   async abort(userId: number): Promise<void> {
     const b = this.activeLive(userId);
     if (!b) throw new Error('brain not started');
+    // A parked ask_user_question must fail cleanly when the turn is aborted, else the tool Promise
+    // (and the awaited prompt()) would hang forever. Reject before aborting the PI session.
+    if (b.sessionId) this.elicitation.cancelForSession(b.sessionId, 'aborted');
     await b.session.abort();
+  }
+
+  /** Settle a parked `ask_user_question` with the user's picks (from POST /brain/answer or a Discord
+   *  interaction). Deliberately NOT serialized: the parked turn holds the session lock, so resolving
+   *  through the lock would deadlock — it just resolves the registry Promise directly. Returns whether
+   *  a pending question matched (false for an unknown/expired id — tolerated). */
+  answerQuestion(id: string, answers: AskAnswer[], ownerUserId?: number): boolean {
+    // When answered via the owner HTTP route, authorize: the caller may only settle a question parked in
+    // their OWN owner-chat conversation — never someone else's, and never a shared channel session (those
+    // resolve in-process from the platform adapter, which gates the interaction itself). Omitted for the
+    // trusted in-process path (Discord), which has already authorized the responder.
+    if (ownerUserId !== undefined) {
+      const sid = this.elicitation.sessionOf(id);
+      if (!sid || isNonUserSession(sid)) return false;
+      const row = this.d.store.getSession(sid);
+      if (!row || row.user_id !== ownerUserId) return false;
+    }
+    return this.elicitation.answer(id, answers);
   }
 
   /** Whether the user may run this provider+model pair. Only complete selections are judged —
@@ -210,6 +241,9 @@ export class BrainService {
   async switchModel(userId: number, sel: { provider?: string; model?: string }): Promise<{ model: string }> {
     if (!this.selectionAllowed(userId, sel)) throw new Error('model not allowed for user');
     const sessionId = this.activeSessionId(userId);
+    // A parked ask_user_question holds this session's serial lock — release it FIRST (outside the lock)
+    // so the switch doesn't wait out the question's timeout.
+    this.elicitation.cancelForSession(sessionId, 'model switched');
     return this.serial(sessionId, async () => {
       this.sessions.dispose(sessionId);
       const userCfg = this.d.userSettings?.(userId);
@@ -242,7 +276,7 @@ export class BrainService {
     return { thinkingLevel: (sess.thinkingLevel as string) ?? level };
   }
 
-  status(userId: number): { running: boolean; sessionId: string | null; model: string; usage: BrainUsage | null; thinkingLevel: string; thinkingLevels: string[] } {
+  status(userId: number): { running: boolean; sessionId: string | null; model: string; usage: BrainUsage | null; thinkingLevel: string; thinkingLevels: string[]; pendingAsk: { id: string; questions: AskQuestion[] } | null; cards: BrainCard[] } {
     const b = this.activeLive(userId);
     const sess = b?.session as { thinkingLevel?: string; supportsThinking?: () => boolean; getAvailableThinkingLevels?: () => string[] } | undefined;
     const supports = sess?.supportsThinking?.() ?? false;
@@ -250,6 +284,11 @@ export class BrainService {
       running: !!b, sessionId: b?.sessionId ?? null, model: b?.model ?? '', usage: b ? usageOf(b.session) : null,
       thinkingLevel: (sess?.thinkingLevel as string) ?? b?.thinkingLevel ?? '',
       thinkingLevels: supports ? (sess?.getAvailableThinkingLevels?.() ?? []) : [],
+      // A question parked for the active conversation, so a client reconnecting mid-question (refresh, SSE
+      // drop) restores the picker instead of hanging until the timeout.
+      pendingAsk: b ? this.elicitation.pendingForSession(b.sessionId) : null,
+      // The active conversation's live display cards (ctx.emitCard) so a reconnecting client restores them.
+      cards: b ? this.cards.forSession(b.sessionId) : [],
     };
   }
 
@@ -259,6 +298,8 @@ export class BrainService {
   deleteSession(userId: number, sessionId: string): void {
     const row = this.d.store.getSession(sessionId);
     if (!row || row.user_id !== userId || isNonUserSession(sessionId)) throw new Error('unknown session');
+    this.elicitation.cancelForSession(sessionId, 'conversation deleted'); // release a parked turn before dropping its session
+    this.cards.clearSession(sessionId);
     this.sessions.dispose(sessionId);
     if (this.sessions.activeIdFor(userId) === sessionId) this.sessions.clearActive(userId);
     this.d.store.deleteSession(sessionId);
@@ -334,11 +375,18 @@ export class BrainService {
       tools: allTools, thinkingLevel: opts.thinkingLevel,
     });
 
+    // Resolve tool→icon once per session and stamp it on each tool event, so every client renders the
+    // same icon without its own hardcoded map. Icons live with their owner: built-in tools declare them
+    // co-located (BUILTIN_TOOL_ICONS), plugins in their manifest — a plugin entry overrides a built-in.
+    const iconMap = new Map<string, string>(Object.entries(BUILTIN_TOOL_ICONS));
+    for (const [k, v] of plugins?.toolIcons ?? []) iconMap.set(k, v);
+    const iconOf = makeToolIconResolver(iconMap);
     const listeners = new Set<(e: BrainEvent) => void>();
     session.subscribe((e: AgentSessionEvent) => {
       const be = toBrainEvent(e);
       if (!be) return;
       if (be.type === 'idle') { be.usage = usageOf(session); be.model = model.id; } // statusline data rides the idle event
+      if (be.type === 'tool') be.icon = iconOf(be.name);
       for (const l of listeners) l(be);
     });
 
@@ -367,6 +415,11 @@ export class BrainService {
     } else {
       sessionId = this.activeSessionId(userId);
     }
+    // Switching AWAY from a conversation that's parked on an ask_user_question: release its question so
+    // the abandoned turn settles and stops holding the per-user send() lock (else the next message on the
+    // new conversation would queue behind it until the question times out).
+    const prevActive = this.sessions.activeIdFor(userId);
+    if (prevActive && prevActive !== sessionId) this.elicitation.cancelForSession(prevActive, 'switched conversation');
     this.sessions.setActive(userId, sessionId);
     // Serialized per conversation: two concurrent starts would both spawn and leak one PI session.
     return this.serial(sessionId, async () => {
@@ -413,17 +466,18 @@ export class BrainService {
     const settings = this.d.userSettings?.(userId);
     const hop = decideVisionHop({
       hasImages: !!images?.length, visionCapable: b.visionCapable, onFallback: !!b.visionFallback,
-      visionModel: settings?.visionModel, visionModelProvider: settings?.visionModelProvider,
+      currentModel: b.model, visionModel: settings?.visionModel, visionModelProvider: settings?.visionModelProvider,
     });
     if (hop.action !== 'none') {
       this.stop(userId);
       await this.start(userId, hop.action === 'hop' ? { provider: hop.provider, model: hop.model } : undefined);
       b = this.activeLive(userId);
       if (!b) throw new Error('brain not started for user');
-      // Only mark the hop as active if it actually reached a vision-capable model — otherwise the
-      // fallback model was unavailable/not allowed (start fell back to the default) and re-flagging
-      // would pointlessly respawn on every following text turn.
-      if (hop.action === 'hop') b.visionFallback = b.visionCapable;
+      // Mark the fallback active only if start() actually reached the requested vision model (not the
+      // configured default because the vision model was unavailable/disallowed) — so the NEXT text turn
+      // hops back. Compare the reached model id directly: inline model descriptors don't carry vision
+      // metadata, so `visionCapable` can't be trusted as the "did we land on it" signal.
+      if (hop.action === 'hop') b.visionFallback = b.model === hop.model;
     }
     const live = b;
     // Serialized per conversation: concurrent prompt() calls on one PI session corrupt turn state.
@@ -433,7 +487,7 @@ export class BrainService {
       if (row && !row.title) this.d.store.setTitle(live.sessionId, text.slice(0, 60));
       // History stores the text plus an attachment marker; the image bytes live only in the live
       // context (a rehydrated conversation keeps the marker, not the pixels).
-      projectUserTurn(this.d.store, live.sessionId, images?.length ? `${text}\n[📎 ${images.length}× obrázek]` : text);
+      projectUserTurn(this.d.store, live.sessionId, images?.length ? `${text}\n[📎 ${images.length}× image]` : text);
       const options = images?.length
         ? { images: images.map((i) => ({ type: 'image' as const, data: i.data, mimeType: i.mimeType })) }
         : undefined;
@@ -479,7 +533,13 @@ export class BrainService {
       const prompted = memoryBlock + hookBlock + live.turnContext() + text;
       // The turn's identity: the Orca account itself (memory and other per-user plugin state key on it).
       const identity = this.identity.forOwnerChat(userId, live.policy);
-      await runWithPolicy(live.policy, () => (options ? live.session.prompt(prompted, options) : live.session.prompt(prompted)), identity);
+      // Turn-bound elicitor for ctx.askUser: emit the `ask` event to this conversation's clients and park
+      // the answer in the shared registry (settled by /brain/answer). Resolving it does NOT re-enter the
+      // held session lock, so it can't deadlock the parked turn.
+      const elicit = (qs: AskQuestion[]) => this.elicitation.ask(live.sessionId, qs, (e) => { for (const l of live.listeners) l(e); });
+      // ctx.emitCard: update the conversation's card registry and broadcast a `card` event to its clients.
+      const emitCard = (raw: unknown) => { const card = this.cards.set(live.sessionId, raw); if (card) for (const l of live.listeners) l({ type: 'card', card }); };
+      await runWithPolicy(live.policy, () => (options ? live.session.prompt(prompted, options) : live.session.prompt(prompted)), identity, elicit, emitCard);
       // Post-turn curator: extract durable facts from this exchange in the background. Fire-and-forget
       // (mirrors brainWorker) — never awaited, never touches live.session, swallows its own errors.
       if (this.curator && memSettings?.autoSave !== false) {
@@ -504,6 +564,8 @@ export class BrainService {
   async restart(userId: number): Promise<void> {
     const b = this.activeLive(userId);
     if (!b) return;
+    // Release a parked ask_user_question first, else `settled` waits out its full timeout.
+    this.elicitation.cancelForSession(b.sessionId, 'session restarted');
     await this.sessions.settled(b.sessionId); // let an in-flight turn settle before disposing the session
     this.stop(userId);
     await this.start(userId);
@@ -529,6 +591,9 @@ export class BrainService {
     // Serialized: two rapid plugin toggles must not interleave stopAll()/startAll() and leave
     // duplicate connected adapters (a distinct lock key from any session, so it never blocks a turn).
     await this.serial('plugins-reload', async () => {
+      // Every live session is about to be torn down — release any parked ask_user_question across all of
+      // them so a pending question can't stall the reload (or leave a turn hanging on a disposed session).
+      this.elicitation.cancelAll('plugins reloaded');
       // Let plugins observe the reload boundary. Observational only (fail-open, no mutation) — fires on
       // the CURRENT registry's hooks before we swap it out.
       const before = await this.d.plugins?.get();
@@ -567,7 +632,7 @@ export class BrainService {
 
   stop(userId: number): void {
     const b = this.activeLive(userId);
-    if (b) this.sessions.dispose(b.sessionId);
+    if (b) { this.elicitation.cancelForSession(b.sessionId, 'session stopped'); this.sessions.dispose(b.sessionId); }
   }
 
   /** The user's stored conversation, shaped for display (channels render this on connect). Reads the

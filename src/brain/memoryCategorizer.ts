@@ -119,13 +119,13 @@ export class MemoryCategorizer {
 /** The icon prompt: strict single-token reply constrained to the allowlist, mirroring the classify tone. */
 function buildIconPrompt(name: string): string {
   return [
-    'Vyber PRÁVĚ JEDNU ikonu z povoleného seznamu níže, která nejlépe vystihuje kategorii vzpomínek.',
-    'Odpověz POUZE názvem ikony (přesně jak je uveden), bez dalšího textu. Nevymýšlej nové názvy.',
+    'Pick EXACTLY ONE icon from the allowed list below that best represents this memory category.',
+    'Reply with ONLY the icon name (exactly as listed), no other text. Do not invent new names.',
     '',
-    'Povolené ikony:',
+    'Allowed icons:',
     ICON_ALLOWLIST.join(', '),
     '',
-    `Kategorie: ${name}`,
+    `Category: ${name}`,
   ].join('\n');
 }
 
@@ -149,19 +149,19 @@ function coerceIcon(reply: string): string {
   return DEFAULT_ICON;
 }
 
-/** The classify prompt: strict single-token reply, Czech-friendly, mirrors memoryCurator's tone. Lists
- *  every category as `- <name>: <description>` so the model classifies against the descriptions, and
- *  forbids inventing a new category. */
+/** The classify prompt: strict single-token reply, mirrors memoryCurator's tone. Lists every category as
+ *  `- <name>: <description>` so the model classifies against the descriptions, and forbids inventing a
+ *  new category. English prompt; the memory body itself stays in the user's own language. */
 function buildClassifyPrompt(body: string, cats: MemoryCategoryRow[]): string {
   return [
-    'Jsi klasifikátor paměti asistenta Orca. Zařaď následující vzpomínku do PRÁVĚ JEDNÉ z kategorií níže.',
-    'Rozhoduj se podle popisu každé kategorie. Když se nehodí žádná, odpověz slovem "none".',
-    'Odpověz POUZE názvem kategorie (přesně jak je uveden), bez dalšího textu. Nevymýšlej nové kategorie.',
+    'You are the memory classifier for the assistant Orca. Assign the memory below to EXACTLY ONE of the categories.',
+    'Decide by each category\'s description. If none fits, reply with the word "none".',
+    'Reply with ONLY the category name (exactly as listed), no other text. Do not invent new categories.',
     '',
-    'Kategorie:',
+    'Categories:',
     cats.map((c) => `- ${c.name}: ${c.description}`).join('\n'),
     '',
-    `Vzpomínka: ${body}`,
+    `Memory: ${body}`,
   ].join('\n');
 }
 

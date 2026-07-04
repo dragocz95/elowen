@@ -11,5 +11,6 @@
       "edit_file",
       "list_dir"
     ]
-  }
+  },
+  "icons": { "read_file": "📄", "list_dir": "📄", "write_file": "📝", "edit_file": "📝" }
 }

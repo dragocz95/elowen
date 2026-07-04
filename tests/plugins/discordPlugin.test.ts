@@ -64,8 +64,8 @@ describe('discord LiveMessage (Hermes-style tool progress)', () => {
     };
     const lm = new LiveMessage(adapter, 'chan');
     lm.onEvent({ type: 'text', delta: 'Mrknu na to… ' }); // narration BEFORE tools must not create a message
-    lm.onEvent({ type: 'tool', name: 'run_command', detail: 'apt list --upgradable' });
-    lm.onEvent({ type: 'tool', name: 'read_file' });
+    lm.onEvent({ type: 'tool', name: 'run_command', detail: 'apt list --upgradable', icon: '💻' });
+    lm.onEvent({ type: 'tool', name: 'read_file', icon: '📄' });
     await new Promise((r) => setTimeout(r, 20));
     await lm.finalize('Hotovo, vše běží.');
     expect(posts.length).toBe(2);
@@ -97,14 +97,49 @@ describe('discord LiveMessage (Hermes-style tool progress)', () => {
       },
     };
     const lm = new LiveMessage(adapter, 'chan');
-    lm.onEvent({ type: 'tool', name: 'sarah_hair', detail: 'list_services' });
-    lm.onEvent({ type: 'tool', name: 'sarah_hair', detail: 'list_bookings' });
-    lm.onEvent({ type: 'tool', name: 'sarah_hair' }); // detail-less repeat keeps the latest detail
-    lm.onEvent({ type: 'tool', name: 'read_file' });  // different tool → new line
-    lm.onEvent({ type: 'tool', name: 'sarah_hair' }); // NON-consecutive → a fresh line, no merge back
+    // The icon now rides the tool event (daemon resolves it from the core map + plugin manifest icons);
+    // the progress line renders event.icon and falls back to the generic wrench when absent.
+    lm.onEvent({ type: 'tool', name: 'sarah_hair', detail: 'list_services', icon: '✂️' });
+    lm.onEvent({ type: 'tool', name: 'sarah_hair', detail: 'list_bookings', icon: '✂️' });
+    lm.onEvent({ type: 'tool', name: 'sarah_hair', icon: '✂️' }); // detail-less repeat keeps the latest detail
+    lm.onEvent({ type: 'tool', name: 'read_file', icon: '📄' });  // different tool → new line
+    lm.onEvent({ type: 'tool', name: 'sarah_hair', icon: '✂️' }); // NON-consecutive → a fresh line, no merge back
     await new Promise((r) => setTimeout(r, 20));
     await lm.finalize('done');
     expect(edits.get('m1')).toBe('✂️ `sarah_hair`: "list_bookings" ×3\n📄 `read_file`…\n✂️ `sarah_hair`…');
+  });
+
+  it('renders a ctx.emitCard card in the progress bubble; an empty card removes it', async () => {
+    const { LiveMessage } = await load();
+    const mk = () => {
+      const edits = new Map<string, string>();
+      let nextId = 0;
+      const adapter = { rest: async (method: string, path: string, body: { content: string }) => {
+        const id = method === 'POST' ? `m${++nextId}` : path.split('/').pop()!;
+        edits.set(id, body.content); return { id };
+      } };
+      return { edits, adapter };
+    };
+    // Present: a tool line + a card → the settled bubble (flushed on finalize) carries the card.
+    const a = mk();
+    const lmA = new LiveMessage(a.adapter, 'chan');
+    lmA.onEvent({ type: 'tool', name: 'todo_write', icon: '📋' });
+    lmA.onEvent({ type: 'card', card: { id: 'todos', title: 'Todos', pinned: true, items: [{ text: 'Alpha', status: 'completed' }, { text: 'Beta', status: 'in_progress' }] } });
+    await new Promise((r) => setTimeout(r, 20));
+    await lmA.finalize('done');
+    const bubbleA = a.edits.get('m1')!;
+    expect(bubbleA).toContain('📋 **Todos** (1/2)');
+    expect(bubbleA).toContain('~~Alpha~~'); // completed struck through
+    expect(bubbleA).toContain('🔸 Beta');   // in-progress
+    // Remove: a later empty card (no items/body) drops it from the settled bubble.
+    const b = mk();
+    const lmB = new LiveMessage(b.adapter, 'chan');
+    lmB.onEvent({ type: 'tool', name: 'todo_write', icon: '📋' });
+    lmB.onEvent({ type: 'card', card: { id: 'todos', title: 'Todos', pinned: true, items: [{ text: 'Alpha' }] } });
+    lmB.onEvent({ type: 'card', card: { id: 'todos', items: [] } });
+    await new Promise((r) => setTimeout(r, 20));
+    await lmB.finalize('done');
+    expect(b.edits.get('m1')!).not.toContain('Todos');
   });
 
   it('the idle event yields a runtime footer under the final answer (opt-out via config)', async () => {
@@ -200,21 +235,6 @@ describe('discord memberIsAdmin (operator-only picker gate)', () => {
     expect(memberIsAdmin(['r-nobody'], policies)).toBe(false);     // unmapped role
     expect(memberIsAdmin([], policies)).toBe(false);
     expect(memberIsAdmin(['r-admin'], undefined)).toBe(false);     // no policies configured
-  });
-});
-
-describe('discord toolEmoji (per-tool progress emoji)', () => {
-  it('maps exact names, prefix patterns, and falls back to the wrench', async () => {
-    const { toolEmoji } = await import(join(repoRoot, 'plugins/discord/index.mjs')) as { toolEmoji: (n: string) => string };
-    expect(toolEmoji('sarah_hair')).toBe('✂️');
-    expect(toolEmoji('sarah_hair_public')).toBe('✂️'); // prefix match
-    expect(toolEmoji('run_command')).toBe('💻');
-    expect(toolEmoji('write_file')).toBe('📝');
-    expect(toolEmoji('web_search')).toBe('🔍');
-    expect(toolEmoji('orca_list_tasks')).toBe('🐋'); // prefix match
-    expect(toolEmoji('cron_add')).toBe('⏰');
-    expect(toolEmoji('delegate')).toBe('🤝');
-    expect(toolEmoji('totally_unknown')).toBe('🔧');
   });
 });
 

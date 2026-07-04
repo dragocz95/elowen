@@ -2,11 +2,12 @@ import { streamSSE } from 'hono/streaming';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { parseBody } from '../validation.js';
-import { brainStartSchema, brainSendSchema, brainModelSchema } from '../schemas/brain.js';
+import { brainStartSchema, brainSendSchema, brainModelSchema, brainAnswerSchema } from '../schemas/brain.js';
 import { brainConfigFromOrca } from '../../brain/config.js';
 import { listBrainModels, fetchOpenAiModels } from '../../brain/models.js';
 import { orcaExec, isExecAllowedForUser } from '../../shared/execs.js';
 import type { BrainEvent } from '../../brain/events.js';
+import { commandsFor, findCommand, type SlashSurface } from '../../brain/slashCommands.js';
 import type { OrcaApp, RouteContext } from '../context.js';
 
 /** Per-user embedded brain (the new advisor engine): status / start / send / live event stream.
@@ -145,12 +146,56 @@ export function registerBrainRoutes(app: OrcaApp, ctx: RouteContext): void {
     catch (e) { return c.json({ error: (e as Error).message }, 409); }
   });
 
+  // The published slash-command catalog for one surface + user — the SINGLE source of truth
+  // (src/brain/slashCommands.ts). Every chat client renders its menu / registers its commands from this,
+  // so a new command is added in one place and appears in CLI, Discord and the web dock at once.
+  app.get('/brain/commands', c => {
+    const q = c.req.query('surface');
+    const surface: SlashSurface = q === 'cli' || q === 'discord' ? q : 'web';
+    return c.json({ commands: commandsFor(surface, !!c.get('user').is_admin) });
+  });
+
+  // Execute a server-side (`action`) slash command through ONE dispatch path for every surface. Pickers
+  // (`model`/`think`) and info (`status`/`help`) stay client-side (their own endpoints / rendering).
+  app.post('/brain/command', async c => {
+    if (!d.brain) return c.json({ error: 'brain unavailable' }, 503);
+    if (forbidden(c)) return c.json({ error: 'forbidden' }, 403);
+    const user = c.get('user');
+    const body = (await c.req.json().catch(() => ({}))) as { name?: unknown };
+    const cmd = typeof body.name === 'string' ? findCommand(body.name) : undefined;
+    if (!cmd || cmd.kind !== 'action') return c.json({ error: 'unknown command' }, 400);
+    if (cmd.adminOnly && !user.is_admin) return c.json({ error: 'forbidden' }, 403);
+    try {
+      switch (cmd.name) {
+        case 'stop': await d.brain.abort(user.id); return c.json({ ok: true, message: 'Agent stopped.' });
+        case 'new': return c.json({ ok: true, message: 'Started a fresh conversation.', data: await d.brain.start(user.id, { fresh: true }) });
+        case 'compact': return c.json({ ok: true, message: 'Conversation compacted.', data: { usage: await d.brain.compact(user.id) } });
+        case 'restart':
+          if (!d.restartDaemon) return c.json({ error: 'restart is not available on this deployment' }, 501);
+          await d.restartDaemon(user.id);
+          return c.json({ ok: true, message: 'Restarting the Orca daemon…' });
+        default: return c.json({ error: 'command is not server-dispatchable' }, 400);
+      }
+    } catch (e) { return c.json({ error: (e as Error).message }, 409); }
+  });
+
   app.post('/brain/send', async c => {
     if (!d.brain) return c.json({ error: 'brain unavailable' }, 503);
     if (forbidden(c)) return c.json({ error: 'forbidden' }, 403);
     const { text, images } = await parseBody(c, brainSendSchema);
     try { await d.brain.send(c.get('user').id, text, images); return c.json({ ok: true }); }
     catch (e) { return c.json({ error: (e as Error).message }, 409); } // not started yet
+  });
+
+  // Answer a parked ask_user_question. Deliberately bypasses the per-turn send() lock (the parked turn
+  // holds it) — it just resolves the registry Promise, so it never deadlocks. An unknown/expired id is a
+  // tolerated no-op (matched:false) rather than an error, so a late double-click is harmless.
+  app.post('/brain/answer', async c => {
+    if (!d.brain) return c.json({ error: 'brain unavailable' }, 503);
+    if (forbidden(c)) return c.json({ error: 'forbidden' }, 403);
+    const { id, answers } = await parseBody(c, brainAnswerSchema);
+    const matched = d.brain.answerQuestion(id, answers, c.get('user').id); // owner route: only the caller's own question
+    return c.json({ ok: true, matched });
   });
 
   app.get('/brain/stream', c => {

@@ -1,12 +1,10 @@
 import type { BrainMessageRow } from '../store/brainStore.js';
-import { normalizeTodos, type TodoItem } from './todos.js';
 
 /** One display piece of an assistant turn, in the order it happened: a text block, or a tool call
- *  (with a short argument summary and, for edits, the display diff, and for a todo tool, the checklist
- *  snapshot it produced so a resumed conversation restores the live panel). */
+ *  (with a short argument summary and, for edits, the display diff). */
 type BrainSegment =
   | { kind: 'text'; text: string }
-  | { kind: 'tool'; name: string; detail?: string; diff?: string; todos?: TodoItem[] };
+  | { kind: 'tool'; name: string; detail?: string; diff?: string };
 
 /** A stored turn shaped for display (the `GET /brain/messages` payload consumed by channels).
  *  `text` is the flat reply (title derivation, plain clients); `segments` preserve the true order. */
@@ -17,7 +15,7 @@ export interface BrainMessageView { role: string; text: string; segments?: Brain
 export function toolDetail(args: unknown): string | undefined {
   if (!args || typeof args !== 'object') return undefined;
   const a = args as Record<string, unknown>;
-  const raw = a.path ?? a.file_path ?? a.filename ?? a.command ?? a.pattern ?? a.query ?? a.url ?? a.text;
+  const raw = a.path ?? a.file_path ?? a.filename ?? a.command ?? a.pattern ?? a.query ?? a.url ?? a.name ?? a.text;
   if (typeof raw !== 'string' || !raw.trim()) return undefined;
   const s = raw.replace(/\s+/g, ' ').trim();
   return s.length > 60 ? `${s.slice(0, 59)}…` : s;
@@ -50,17 +48,13 @@ export function shapeBrainMessages(rows: BrainMessageRow[]): BrainMessageView[] 
   // Edit diffs live on the toolResult rows (never shown raw) — index them so the matching
   // assistant toolCall segment can carry its diff.
   const diffs = new Map<string, string>();
-  // Todo checklists live on toolResult `details.todos` too — index them so the matching toolCall segment
-  // carries the snapshot (a resumed conversation restores the live todo panel).
-  const todos = new Map<string, TodoItem[]>();
   for (const row of rows) {
     if (row.role !== 'toolResult') continue;
     try {
-      const m = JSON.parse(row.content) as { toolCallId?: string; details?: { diff?: unknown; todos?: unknown } };
+      const m = JSON.parse(row.content) as { toolCallId?: string; details?: { diff?: unknown } };
       if (!m.toolCallId) continue;
       if (typeof m.details?.diff === 'string' && m.details.diff.trim()) diffs.set(m.toolCallId, m.details.diff);
-      if (Array.isArray(m.details?.todos)) todos.set(m.toolCallId, normalizeTodos(m.details.todos));
-    } catch { /* malformed row → no diff/todos */ }
+    } catch { /* malformed row → no diff */ }
   }
   const views: BrainMessageView[] = [];
   for (const row of rows) {
@@ -81,7 +75,7 @@ export function shapeBrainMessages(rows: BrainMessageRow[]): BrainMessageView[] 
         text += p.text;
         segments.push({ kind: 'text', text: p.text });
       } else if (p.type === 'toolCall' && typeof p.name === 'string') {
-        segments.push({ kind: 'tool', name: p.name, detail: toolDetail(p.arguments), diff: p.id ? diffs.get(p.id) : undefined, todos: p.id ? todos.get(p.id) : undefined });
+        segments.push({ kind: 'tool', name: p.name, detail: toolDetail(p.arguments), diff: p.id ? diffs.get(p.id) : undefined });
       }
     }
     if (typeof msg.content === 'string' && msg.content.trim()) { text = msg.content; segments.push({ kind: 'text', text }); }

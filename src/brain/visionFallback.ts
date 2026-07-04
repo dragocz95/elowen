@@ -14,10 +14,15 @@ export function decideVisionHop(i: {
   visionCapable: boolean;
   /** Whether the session currently runs on the vision-fallback model. */
   onFallback: boolean;
+  /** The model the CURRENT session runs on — so we never hop onto the model we're already on. */
+  currentModel?: string;
   visionModel?: string;
   visionModelProvider?: string;
 }): VisionHop {
-  if (i.hasImages && !i.visionCapable && i.visionModel) {
+  // Hop only when an image turn lands on a model that can't take images AND a DIFFERENT vision model is
+  // configured. If the current model already IS the vision model (common when the operator points both
+  // at one multimodal model), there's nothing to hop to — send the image straight through, no churn.
+  if (i.hasImages && !i.visionCapable && i.visionModel && i.visionModel !== i.currentModel) {
     return { action: 'hop', provider: i.visionModelProvider || undefined, model: i.visionModel };
   }
   if (!i.hasImages && i.onFallback) return { action: 'hop-back' };

@@ -44,9 +44,12 @@ export interface CapabilitySpec {
 export function composeSessionTools(spec: CapabilitySpec): ToolDefinition[] {
   const ownerChat = spec.kind === 'owner-chat';
   const orcaTools = ownerChat ? (spec.orcaTools?.() ?? []) : [];
-  // Memory tools ride only owner-chat (like orca_*) — never a trusted/foreign channel or task-worker.
-  // The role toolFilter never applies here — it scopes plugin tools.
-  const memoryTools = ownerChat ? (spec.memoryTools?.() ?? []) : [];
+  // Memory tools ride owner-chat AND trusted channels: the operator's OWN linked platform account (e.g.
+  // their Discord id) should reach their private memory too, same as their web/CLI chat. The tools
+  // themselves re-check identity at execute time (owner + resolved orcaUserId), so a non-owner sender in
+  // a trusted channel — even an admin-role stranger — still gets a locked no-op. Foreign channels and
+  // task-workers never compose them. The role toolFilter never applies here — it scopes plugin tools.
+  const memoryTools = (ownerChat || spec.kind === 'trusted-channel') ? (spec.memoryTools?.() ?? []) : [];
   let pluginTools = spec.pluginTools;
   if (spec.toolFilter && !spec.toolFilter.includes('*')) {
     const allow = new Set(spec.toolFilter);

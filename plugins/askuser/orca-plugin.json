@@ -1,0 +1,15 @@
+{
+  "name": "askuser",
+  "version": "0.2.0",
+  "apiVersion": "1",
+  "description": "Ask the user a multiple-choice question and wait for their answer before continuing. The agent poses one or more questions with predefined options; the user picks in the chat (CLI/web) or via Discord buttons, and the turn resumes with their choice.",
+  "entry": "index.mjs",
+  "provides": {
+    "tools": [
+      "ask_user_question"
+    ]
+  },
+  "icons": {
+    "ask_user_question": "❓"
+  }
+}

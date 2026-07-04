@@ -81,7 +81,8 @@ import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 import { dirname, join, sep } from 'node:path';
 import { randomBytes } from 'node:crypto';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, writeFileSync, existsSync, unlinkSync } from 'node:fs';
+import { systemctl } from '../cli/systemd.js';
 import { isExecAllowedForUser, isModelVisibleForUser, orcaExec } from '../shared/execs.js';
 import { BrainWorkerService } from '../brain/worker/brainWorker.js';
 
@@ -396,19 +397,13 @@ export function buildApp(opts: BuildOpts) {
   const embedQueue = new EmbeddingQueue({
     memoryStore, embeddings, users: { list: () => users.list() }, embeddingConfig, logger: log,
   });
-  // Cheap inference for the post-turn memory curator — mirrors overseerClient but keyed on the (cheaper)
-  // planner model. Null when no relay key is set → the curator no-ops (memory still works via tools).
-  const curatorInference = () => {
-    const cfg = config.get(); const relay = config.autopilotRelay();
-    if (!relay) return null;
-    return new RelayClient({ baseUrl: relay.baseUrl, apiKey: relay.apiKey, model: cfg.autopilot.model });
-  };
-  // Per-user memory categories + the auto-categorizer. The categorizer has its OWN workspace model
-  // (Settings → Memory categorization): it resolves the referenced brain provider's endpoint+key at call
-  // time (no second secret stored), mirroring how embeddings reuse the brain key. Null when unconfigured
-  // or the provider/key is missing → the categorizer no-ops (classify/reclassify return empty).
+  // The workspace-level MEMORY model (Settings → Memory). ONE cheap model drives BOTH post-turn
+  // auto-save (the curator distilling durable facts) AND category classification — it resolves the
+  // referenced brain provider's endpoint+key at call time (no second secret stored), mirroring how
+  // embeddings reuse the brain key. Null when unconfigured/keyless → both no-op (memory still works via
+  // the explicit memory_* tools). NOTE: deliberately NOT the autopilot model — memory is its own concern.
   const memoryCategoryStore = new MemoryCategoryStore(db);
-  const categorizerInference = (): InferenceClient | null => {
+  const memoryModelInference = (): InferenceClient | null => {
     const block = config.get().categorization;
     if (!block.providerId || !block.model) return null;
     const provider = resolveProvider(block.providerId);
@@ -416,7 +411,7 @@ export function buildApp(opts: BuildOpts) {
     return new RelayClient({ baseUrl: block.baseUrl || provider.baseUrl, apiKey: provider.apiKey, model: block.model });
   };
   const memoryCategorizer = new MemoryCategorizer({
-    categories: memoryCategoryStore, memories: memoryStore, inference: categorizerInference, logger: log,
+    categories: memoryCategoryStore, memories: memoryStore, inference: memoryModelInference, logger: log,
   });
   // ONE shared plugin registry for the whole daemon (brain chat + orca-exec workers + platforms):
   // loading is lazy (buildApp is sync), and a plugin toggle invalidates every consumer at once —
@@ -427,6 +422,8 @@ export function buildApp(opts: BuildOpts) {
     return loadPlugins({
       dirs: pluginDirs, enabled, config: pluginConfig, dataRoot: pluginDataRoot,
       notify: (t, channelId) => brain?.notify(t, channelId) ?? Promise.resolve(),
+      // Interactive transports (Discord) hand a parked ask_user_question's answer straight back in-process.
+      answerQuestion: (id, answers) => brain?.answerQuestion(id, answers) ?? false,
       // The Discord /model picker is an operator-shared channel setting, so it offers the platform
       // owner's CURATED list: their personal allow-list narrows the picker even though, as admin, they
       // could run anything (display filter, not the enforcement gate). Empty personal list = all global.
@@ -474,7 +471,7 @@ export function buildApp(opts: BuildOpts) {
         platformOwner: () => users.list().find((u) => u.is_admin)?.id,
         // Private long-term memory: the owner-chat memory tools + per-turn retrieval injection + the
         // post-turn curator. All owner-gated inside BrainService (channels/workers never reach them).
-        memoryStore, memoryService, inference: curatorInference,
+        memoryStore, memoryService, inference: memoryModelInference,
         // Auto-categorize newly-added durable memories (fire-and-forget from the curator).
         memoryCategorizer,
       })
@@ -520,7 +517,20 @@ export function buildApp(opts: BuildOpts) {
     reload: () => brain?.reloadPlugins() ?? Promise.resolve(),
   });
   marketplace.sweep(); // clear crash debris (.staging-*/.old-*) left by an interrupted install
-  const app = createServer({ tasks, readiness, missions, engine, missionGit, gitLock, spawn, tmux, bus, events, notes, agents, project: opts.project, fallback: { program: 'claude-code', model: 'sonnet' }, cli, clock: new SystemClock(), config, users, projects, userProjects, pushSubscriptions, userPrompts, userSettings, pluginDirs, pluginDataRoot, brainOauth, brainAuth, prompts, taskUsage, git, avatarsDir, avatarSecret, planJobs, decisionQueue, pilot, advisor, brain, brainWorkers, brainStore, personalityStore, memoryStore, memoryCategoryStore, memoryCategorizer, embeddings, plugins: pluginProvider, marketplace, pluginLogs, hookAudit, tickets });
+  // The admin-only `/restart` slash command: announce it on the platforms (Discord main channel), drop a
+  // marker so the NEXT boot announces "back online", then hand off to systemd. Runs in prod only (a
+  // :memory: test DB has no config dir + no units). `setTimeout` lets the HTTP response flush before the
+  // process is torn down. systemctl() self-elevates via sudo when not root (www-data has passwordless).
+  const restartMarker = opts.dbPath !== ':memory:' ? join(dirname(opts.dbPath), '.restart-marker') : undefined;
+  const restartDaemon = restartMarker
+    ? async (): Promise<void> => {
+        await brain?.notify('🔄 **Restart** — Orca is restarting, back in a moment…').catch(() => { /* best-effort */ });
+        try { writeFileSync(restartMarker, String(Date.now())); } catch { /* marker is a nicety, not required */ }
+        setTimeout(() => { void systemctl('restart', 'orca-daemon'); }, 800);
+      }
+    : undefined;
+
+  const app = createServer({ tasks, readiness, missions, engine, missionGit, gitLock, spawn, tmux, bus, events, notes, agents, project: opts.project, fallback: { program: 'claude-code', model: 'sonnet' }, cli, clock: new SystemClock(), config, users, projects, userProjects, pushSubscriptions, userPrompts, userSettings, pluginDirs, pluginDataRoot, brainOauth, brainAuth, prompts, taskUsage, git, avatarsDir, avatarSecret, planJobs, decisionQueue, pilot, advisor, brain, restartDaemon, brainWorkers, brainStore, personalityStore, memoryStore, memoryCategoryStore, memoryCategorizer, embeddings, plugins: pluginProvider, marketplace, pluginLogs, hookAudit, tickets });
 
   // Root-cause recovery: after a daemon crash/restart, tasks left 'in_progress' whose tmux
   // session is gone are zombies — revert them to 'open' so they can be picked up again. No grace
@@ -557,8 +567,15 @@ export function buildApp(opts: BuildOpts) {
     // One-shot startup sweeps. Log on failure (e.g. tmux missing) so a silent rejection can't leave
     // zombies un-reverted — that would stall every mission until the next restart.
     void reconcileZombies().catch((e) => log.error('reconcileZombies failed', e));
-    // Bring up plugin platform channels (Discord bot, …). Fail-open per adapter.
-    void brain?.startPlatforms(log).catch((e) => log.error('startPlatforms failed', e));
+    // Bring up plugin platform channels (Discord bot, …). Fail-open per adapter. If this boot follows an
+    // operator `/restart`, announce "back online" once the platforms are connected, then clear the marker
+    // (so ordinary restarts/deploys stay quiet — only a user-triggered restart is echoed).
+    void brain?.startPlatforms(log).then(async () => {
+      if (restartMarker && existsSync(restartMarker)) {
+        await brain?.notify('✅ **Back online** — Orca restarted and is ready.').catch(() => { /* best-effort */ });
+        try { unlinkSync(restartMarker); } catch { /* already gone */ }
+      }
+    }).catch((e) => log.error('startPlatforms failed', e));
     void reconcileOverseers().catch((e) => log.error('reconcileOverseers failed', e)); // re-park overseers for active missions / kill orphans
     // Self-heal the agent-workflow skill: (re)install the bundled `orca-workflow` SKILL.md into every
     // present provider on boot. Best-effort — installAll catches its own per-provider errors and never

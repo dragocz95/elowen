@@ -5,6 +5,7 @@ import { parseManifest } from './manifest.js';
 import type { PluginManifest } from './manifest.js';
 import { PluginRegistry } from './registry.js';
 import type { PluginLogger, PluginModule, ProviderCredentials } from './api.js';
+import type { AskAnswer } from '../brain/events.js';
 
 /** Localized overrides for a plugin's user-facing manifest strings, keyed by field key. The manifest's
  *  own English strings stay the source/fallback; a `<lang>.json` supplies translations for other locales. */
@@ -79,6 +80,9 @@ export interface LoadPluginsOptions {
   listModels?: () => Promise<{ provider: string; providerLabel: string; model: string }[]>;
   /** Central provider credential resolver exposed to plugins as ctx.resolveProvider(id). */
   resolveProvider?: (id: string) => ProviderCredentials | null;
+  /** Deliver a parked ask_user_question answer, exposed to plugins as ctx.answerQuestion() — for
+   *  interactive transports (Discord) that gather the pick out-of-band. */
+  answerQuestion?: (id: string, answers: AskAnswer[]) => boolean;
   logger: PluginLogger;
 }
 
@@ -116,12 +120,13 @@ export async function loadPlugins(opts: LoadPluginsOptions): Promise<PluginRegis
         // Pass the manifest's declared capabilities + provides so the context can enforce them at
         // registration/resolve time (deny-by-default). Absent blocks default to unconstrained tools/
         // platforms and a deny-all provider gate.
-        const ctx = staging.contextFor(name, opts.config?.[name] ?? {}, opts.logger, opts.dataRoot, opts.notify, opts.listModels, opts.resolveProvider, manifest.capabilities ?? {}, manifest.provides);
+        const ctx = staging.contextFor(name, opts.config?.[name] ?? {}, opts.logger, opts.dataRoot, opts.notify, opts.listModels, opts.resolveProvider, manifest.capabilities ?? {}, manifest.provides, opts.answerQuestion);
         await mod.register(ctx);
         registry.merge(staging);
         // Capture the plugin's declared capabilities (deny-by-default `{}` when absent) — the manifest
         // is otherwise discarded here, but the hook bus needs these to gate this plugin's mutations.
         registry.setCapabilities(name, manifest.capabilities ?? {});
+        registry.setIcons(manifest.icons);
         loaded.add(name);
         opts.logger.info(`plugin loaded: ${name}@${manifest.version}`);
       } catch (err) {
