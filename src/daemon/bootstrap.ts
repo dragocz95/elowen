@@ -543,6 +543,9 @@ export function buildApp(opts: BuildOpts) {
         }, 800);
       }
     : undefined;
+  // Late-bind the restart handler onto the brain so a platform `/restart` slash (Discord) reaches the
+  // same systemd path the web/CLI command uses. Built here (needs the units + marker), wired now.
+  if (brain && restartDaemon) brain.restartHandler = restartDaemon;
 
   const app = createServer({ tasks, readiness, missions, engine, missionGit, gitLock, spawn, tmux, bus, events, notes, agents, project: opts.project, fallback: { program: 'claude-code', model: 'sonnet' }, cli, clock: new SystemClock(), config, users, projects, userProjects, pushSubscriptions, userPrompts, userSettings, pluginDirs, pluginDataRoot, brainOauth, brainAuth, prompts, taskUsage, git, avatarsDir, avatarSecret, planJobs, decisionQueue, pilot, advisor, brain, restartDaemon, brainWorkers, brainStore, personalityStore, memoryStore, memoryCategoryStore, memoryCategorizer, embeddings, plugins: pluginProvider, marketplace, pluginLogs, hookAudit, tickets });
 

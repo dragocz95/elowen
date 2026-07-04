@@ -197,6 +197,14 @@ const MESSAGES = {
     thinking: '💭 …',
     voiceSet: (on) => on ? '🔊 Spoken replies **on** in this channel.' : '🔇 Spoken replies **off** in this channel.',
     voiceNeedsKey: '⚠️ Spoken replies need a voice provider set in the Discord plugin settings.',
+    stopped: '⏹️ Stopped the running agent.',
+    nothingRunning: '💤 Nothing is running in this channel.',
+    noSession: '💤 No active conversation in this channel yet.',
+    status: (model, pct, tokens) => `🧠 **${model}**\n📊 Context ${pct}% · ${tokens} tokens`,
+    compacted: (pct) => `🗜️ Context compacted — now at ${pct}%.`,
+    restarting: '🔄 Restarting the Orca daemon…',
+    restartForbidden: '🔒 Only an admin can restart the daemon.',
+    restartUnavailable: '⚠️ Restart isn’t available on this deployment.',
     help: (name) => [
       `**${name} on Discord**`,
       'Write to me and I answer.',
@@ -205,6 +213,10 @@ const MESSAGES = {
       '`/thinking` — set the reasoning effort for this channel',
       '`/voice` — toggle spoken audio replies here',
       '`/new` — start a fresh conversation here',
+      '`/stop` — stop the running agent',
+      '`/status` — model, context and usage',
+      '`/compact` — summarize to free up context',
+      '`/restart` — restart the Orca daemon (admin)',
       '`/help` — this message',
     ].join('\n'),
   },
@@ -219,6 +231,14 @@ const MESSAGES = {
     thinking: '💭 …',
     voiceSet: (on) => on ? '🔊 Mluvené odpovědi v tomto kanálu **zapnuté**.' : '🔇 Mluvené odpovědi v tomto kanálu **vypnuté**.',
     voiceNeedsKey: '⚠️ Mluvené odpovědi potřebují nastaveného poskytovatele hlasu v nastavení Discord pluginu.',
+    stopped: '⏹️ Zastavil jsem běžícího agenta.',
+    nothingRunning: '💤 V tomto kanálu nic neběží.',
+    noSession: '💤 V tomto kanálu zatím není žádná aktivní konverzace.',
+    status: (model, pct, tokens) => `🧠 **${model}**\n📊 Kontext ${pct}% · ${tokens} tokenů`,
+    compacted: (pct) => `🗜️ Kontext sesumarizován — nyní na ${pct}%.`,
+    restarting: '🔄 Restartuji Orca daemon…',
+    restartForbidden: '🔒 Restartovat daemon může jen admin.',
+    restartUnavailable: '⚠️ Restart není na tomto nasazení dostupný.',
     help: (name) => [
       `**${name} na Discordu**`,
       'Napište mi a odpovím.',
@@ -227,6 +247,10 @@ const MESSAGES = {
       '`/thinking` — úroveň uvažování pro tento kanál',
       '`/voice` — přepnout mluvené odpovědi zde',
       '`/new` — začít novou konverzaci',
+      '`/stop` — zastavit běžícího agenta',
+      '`/status` — model, kontext a využití',
+      '`/compact` — sesumarizovat a uvolnit kontext',
+      '`/restart` — restart Orca daemonu (admin)',
       '`/help` — tato zpráva',
     ].join('\n'),
   },
@@ -262,6 +286,7 @@ class DiscordAdapter {
     this.answerQuestion = answerQuestion; // deliver a parked ask_user_question answer back to the turn
     this.pendingAsks = new Map(); // id → { channelId, messageId, questions, askerId, selected, awaitingText }
     this.handler = null;
+    this.ctl = null; // host channel-control surface (stop/status/compact/restart), wired via control()
     this.ws = null;
     this.botId = null;
     this.appId = null;
@@ -276,6 +301,12 @@ class DiscordAdapter {
   }
 
   listen(onMessage) { this.handler = onMessage; }
+  /** Host wires the channel-control surface here (stop/status/compact/restart) right after listen(). */
+  control(api) { this.ctl = api; }
+
+  /** The channel conversation reference for slash commands: same identity onMessage reports (channel id
+   *  folded with the /new generation), so a command targets the exact session a message would. */
+  channelRef(channelId) { return { platform: 'discord', channelId: `${channelId}#${this.state.get(channelId).gen ?? 0}` }; }
 
   async connect() {
     // Validate the token up front so a bad config fails loudly at startup, not silently in the gateway.
@@ -305,6 +336,10 @@ class DiscordAdapter {
         ] },
       ] },
       { name: 'new', description: 'Start a fresh conversation in this channel', type: 1 },
+      { name: 'stop', description: 'Stop the running agent in this channel', type: 1 },
+      { name: 'status', description: 'Show the model, context and usage for this channel', type: 1 },
+      { name: 'compact', description: 'Summarize the conversation to free up context', type: 1 },
+      { name: 'restart', description: 'Restart the Orca daemon (admin only)', type: 1 },
       { name: 'help', description: 'What can Orca do here?', type: 1 },
     ];
     const path = this.cfg.guildId
@@ -600,6 +635,42 @@ class DiscordAdapter {
         const note = next && !this.voiceCreds() ? `\n${this.msg.voiceNeedsKey}` : '';
         return this.respond(i, 4, { content: `${this.msg.voiceSet(next)}${note}`, flags: 64 });
       }
+      // Channel-session control (stop/status/compact) + daemon restart — routed through the host control
+      // surface. `this.ctl` is wired by the orchestrator after listen(); guard so a message-only host
+      // (or a not-yet-connected one) degrades gracefully instead of throwing.
+      if (name === 'stop') {
+        if (!this.ctl) return this.respond(i, 4, { content: this.msg.nothingRunning, flags: 64 });
+        const live = this.ctl.status(this.channelRef(i.channel_id));
+        this.ctl.abort(this.channelRef(i.channel_id));
+        return this.respond(i, 4, { content: live ? this.msg.stopped : this.msg.nothingRunning, flags: 64 });
+      }
+      if (name === 'status') {
+        const st = this.ctl?.status(this.channelRef(i.channel_id));
+        if (!st) return this.respond(i, 4, { content: this.msg.noSession, flags: 64 });
+        const tokens = st.usage.tokens ?? 0;
+        const pct = st.usage.contextWindow > 0 ? Math.round((tokens / st.usage.contextWindow) * 100) : 0;
+        return this.respond(i, 4, { content: this.msg.status(st.model, pct, tokens), flags: 64 });
+      }
+      if (name === 'compact') {
+        if (!this.ctl) return this.respond(i, 4, { content: this.msg.noSession, flags: 64 });
+        // Compaction runs an LLM summary → defer (type 5), then edit the deferred reply with the result.
+        await this.respond(i, 5, { flags: 64 });
+        const usage = await this.ctl.compact(this.channelRef(i.channel_id)).catch(() => null);
+        const content = usage
+          ? this.msg.compacted(usage.contextWindow > 0 ? Math.round(((usage.tokens ?? 0) / usage.contextWindow) * 100) : 0)
+          : this.msg.noSession;
+        return this.editOriginal(i, { content });
+      }
+      if (name === 'restart') {
+        if (!this.isAdminMember(i.member)) return this.respond(i, 4, { content: this.msg.restartForbidden, flags: 64 });
+        if (!this.ctl) return this.respond(i, 4, { content: this.msg.restartUnavailable, flags: 64 });
+        try {
+          await this.ctl.restart();
+          return this.respond(i, 4, { content: this.msg.restarting, flags: 64 });
+        } catch {
+          return this.respond(i, 4, { content: this.msg.restartUnavailable, flags: 64 });
+        }
+      }
     }
     // ask_user_question components (select menus + Submit/Other buttons) resolve a parked turn.
     if (i.type === 3 && typeof i.data?.custom_id === 'string' && i.data.custom_id.startsWith('ask:')) {
@@ -621,9 +692,14 @@ class DiscordAdapter {
     }
   }
 
-  /** Send an interaction callback (type 4 = message, 7 = update the component message). */
+  /** Send an interaction callback (type 4 = message, 5 = defer, 7 = update the component message). */
   async respond(i, type, data) {
     await this.rest('POST', `/interactions/${i.id}/${i.token}/callback`, { type, data });
+  }
+
+  /** Edit the original (deferred) interaction reply — used after a type-5 defer for slow work. */
+  async editOriginal(i, data) {
+    await this.rest('PATCH', `/webhooks/${this.appId}/${i.token}/messages/@original`, data);
   }
 
   /** Render a parked ask_user_question (from the brain's `ask` event) as a Hermes-style orange embed

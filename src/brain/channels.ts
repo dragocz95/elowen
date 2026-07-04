@@ -2,7 +2,7 @@ import type { BrainStore } from '../store/brainStore.js';
 import type { Policy } from '../plugins/policy.js';
 import type { TurnIdentity } from '../plugins/policyContext.js';
 import { runWithPolicy } from '../plugins/policyContext.js';
-import type { AskQuestion, BrainEvent } from './events.js';
+import type { AskQuestion, BrainEvent, BrainUsage } from './events.js';
 import { usageOf } from './events.js';
 import type { ElicitationRegistry } from './elicitation.js';
 import { normalizeCard } from './cards.js';
@@ -168,6 +168,32 @@ export class ChannelSessionService {
         void this.d.curator.run(opts.writerUserId, senderMessage, assistantText).catch(() => { /* best-effort */ });
       }
       return assistantText;
+    });
+  }
+
+  /** Live status of a channel session (model + context usage) for a platform `/status` slash. Null when
+   *  the channel has no live session yet (never spawned, or LRU-evicted). Read-only — no lock needed. */
+  status(channelId: string): { model: string; usage: BrainUsage } | null {
+    const ch = this.d.registry.channelGet(channelId);
+    return ch ? { model: ch.model, usage: usageOf(ch.session) } : null;
+  }
+
+  /** Abort the in-flight turn on a channel session (a platform `/stop` slash). No-op when idle/absent.
+   *  Fire-and-forget: abort() signals cancellation into the prompt running under the channel's lock. */
+  abort(channelId: string): void {
+    const ch = this.d.registry.channelGet(channelId);
+    void ch?.session.abort().catch(() => { /* nothing in flight / already settling */ });
+  }
+
+  /** Compact a channel session's context (a platform `/compact` slash), serialized against its turns so
+   *  it can't race an in-flight prompt. Returns the post-compaction usage, or null if there's no session. */
+  async compact(channelId: string): Promise<BrainUsage | null> {
+    const sessionId = channelSessionId(channelId);
+    return this.d.registry.withLock(sessionId, async () => {
+      const ch = this.d.registry.channelGet(channelId);
+      if (!ch) return null;
+      await ch.session.compact();
+      return usageOf(ch.session);
     });
   }
 

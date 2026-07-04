@@ -88,6 +88,27 @@ export interface PlatformAdapter {
    *  platform's configured notification channel. Optional — an adapter without a notify channel
    *  simply omits it. Used for cron/tick echoes. */
   notify?(text: string, channelId?: string): Promise<void>;
+  /** Optional out-of-band control the host wires right after `listen`, for slash commands that act on a
+   *  channel SESSION (stop/status/compact) or the daemon (restart) instead of sending a message. Omit for
+   *  a message-only adapter. */
+  control?(api: PlatformControlApi): void;
+}
+
+/** A channel-scoped conversation reference — the SAME identity an adapter reports to `listen` (so a slash
+ *  command targets the exact session a message from that channel would). */
+export interface ChannelRef { platform: string; channelId: string; threadId?: string }
+
+/** The control surface the host grants an adapter. Channel-scoped ops no-op on an unknown/idle channel. */
+export interface PlatformControlApi {
+  /** Live model + context usage of the channel's session, or null when nothing is spawned. */
+  status(ref: ChannelRef): { model: string; usage: { tokens: number | null; contextWindow: number } } | null;
+  /** Abort the channel's in-flight turn (no-op when idle). */
+  abort(ref: ChannelRef): void;
+  /** Compact the channel session's context; resolves to the post-compaction usage (null if no session). */
+  compact(ref: ChannelRef): Promise<{ tokens: number | null; contextWindow: number } | null>;
+  /** Admin-only daemon restart (attributed to the instance operator); rejects when restart isn't
+   *  available on this deployment. The caller is responsible for its own admin gate. */
+  restart(): Promise<void>;
 }
 
 /** Scoped logger handed to a plugin (prefixed with the plugin name by the registry). */

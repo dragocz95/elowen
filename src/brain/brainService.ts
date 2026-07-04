@@ -158,8 +158,13 @@ export class BrainService {
       policyForProjects: d.policyForProjects,
       identity: this.identity,
       channels: this.channelService,
+      restart: () => this.restartHandler,
     });
   }
+
+  /** Admin daemon-restart handler for a platform `/restart` slash. Late-bound: it's built after the brain
+   *  (it needs the systemd units + marker path), so bootstrap sets it once ready. Undefined ⇒ unavailable. */
+  restartHandler?: (byUserId: number) => Promise<void>;
 
   private serial<T>(key: string, fn: () => Promise<T>): Promise<T> {
     return this.sessions.withLock(key, fn);

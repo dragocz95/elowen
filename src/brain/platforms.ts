@@ -1,4 +1,5 @@
 import type { PluginRegistry } from '../plugins/registry.js';
+import type { ChannelRef } from '../plugins/api.js';
 import type { Policy } from '../plugins/policy.js';
 import type { IdentityResolver } from './identity.js';
 import type { ChannelSessionService } from './channels.js';
@@ -12,7 +13,14 @@ export interface PlatformOrchestratorDeps {
   policyForProjects?: (projectIds: number[]) => Policy;
   identity: IdentityResolver;
   channels: ChannelSessionService;
+  /** Admin daemon restart for a platform `/restart` slash. Lazily resolved: the handler is built after
+   *  the brain (it needs systemd + the marker path), so this returns undefined until it's wired. */
+  restart?: () => ((byUserId: number) => Promise<void>) | undefined;
 }
+
+/** THE single expression mapping an inbound conversation to its registry channel key — used by both the
+ *  message pipeline and the control surface so a slash command targets the exact session a message would. */
+const keyOf = (ref: ChannelRef): string => `${ref.platform}-${ref.threadId ?? ref.channelId}`;
 
 /** Lifecycle + turn pipeline of the plugin-contributed platform adapters (Discord bot, …): connect
  *  them, translate each inbound message into a channel-session turn (policy → identity → send), and
@@ -49,7 +57,7 @@ export class PlatformOrchestrator {
           // one auditable place `owner` vs `admin` semantics live.
           const { identity, verifiedPrefix, linkedUserId } = this.d.identity.forPlatformTurn(src, owner);
           return this.d.channels.send({
-            channelId: `${src.platform}-${src.threadId ?? src.channelId}`,
+            channelId: keyOf(src),
             ownerUserId: owner,
             policy,
             promptAppend: promptAppend.length ? promptAppend : undefined,
@@ -65,6 +73,18 @@ export class PlatformOrchestrator {
             history: src.history,
             onEvent,
           }, verifiedPrefix + text);
+        });
+        // Out-of-band channel control for slash commands (stop/status/compact/restart). Optional: an
+        // adapter that doesn't implement `control` simply keeps its message-only behaviour.
+        adapter.control?.({
+          status: (ref) => this.d.channels.status(keyOf(ref)),
+          abort: (ref) => this.d.channels.abort(keyOf(ref)),
+          compact: (ref) => this.d.channels.compact(keyOf(ref)),
+          restart: async () => {
+            const fn = this.d.restart?.();
+            if (!fn) throw new Error('restart is not available on this deployment');
+            await fn(this.d.platformOwner?.() ?? 0); // attributed to the instance operator
+          },
         });
         await adapter.connect();
         this.started.push(adapter);
