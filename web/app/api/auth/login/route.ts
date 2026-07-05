@@ -1,4 +1,4 @@
-import { daemonUrl, sessionCookie, requireSameOrigin, jsonError, isHttps } from '../../../../lib/proxy';
+import { daemonUrl, sessionCookie, namedCookie, requireSameOrigin, jsonError, isHttps, RETURN_COOKIE, IMPERSONATING_COOKIE } from '../../../../lib/proxy';
 
 // Proxy-owned login: forward credentials to the daemon, and on success mint the httpOnly session
 // cookie here. The daemon token is placed in the cookie and never returned to the browser body, so
@@ -31,8 +31,12 @@ export async function POST(req: Request): Promise<Response> {
   // Persist the cookie for the token's full lifetime. Fall back to 30 days to match the daemon default
   // if an older daemon doesn't report its TTL, so the cookie is never a short-lived session cookie.
   const ttlDays = typeof tokenTtlDays === 'number' && tokenTtlDays > 0 ? tokenTtlDays : 30;
-  return new Response(JSON.stringify({ ok: true }), {
-    status: 200,
-    headers: { 'content-type': 'application/json', 'set-cookie': sessionCookie(token, isHttps(req), ttlDays * 86400) },
-  });
+  // A fresh login starts a clean session — clear any stale impersonation stash so a previous admin's
+  // "sign in as" token can't survive across a re-login on the same browser.
+  const secure = isHttps(req);
+  const resHeaders = new Headers({ 'content-type': 'application/json' });
+  resHeaders.append('set-cookie', sessionCookie(token, secure, ttlDays * 86400));
+  resHeaders.append('set-cookie', namedCookie(RETURN_COOKIE, '', secure, 0));
+  resHeaders.append('set-cookie', namedCookie(IMPERSONATING_COOKIE, '', secure, 0, false));
+  return new Response(JSON.stringify({ ok: true }), { status: 200, headers: resHeaders });
 }

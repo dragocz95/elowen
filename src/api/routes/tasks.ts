@@ -43,7 +43,14 @@ export function registerTaskRoutes(app: OrcaApp, ctx: RouteContext): void {
     return c.json(created, 201);
   });
   app.get('/tasks/ready', c => c.json(d.readiness.ready(d.project.id)));
-  app.get('/tasks/deps', c => c.json(d.tasks.allDeps()));
+  app.get('/tasks/deps', c => {
+    const allowed = accessibleProjects(c);
+    const deps = d.tasks.allDeps();
+    if (!allowed) return c.json(deps); // admin / open mode → unrestricted
+    // Non-admin: keep only edges whose task belongs to a project the caller can access.
+    const visible = new Set(d.tasks.list().filter(t => allowed.has(t.project_id)).map(t => t.id));
+    return c.json(deps.filter(e => visible.has(e.task_id)));
+  });
   // Token/cost usage for a task's agent run, read from the executor CLI's local session storage
   // (opencode / claude / codex) — portable, no relay. Null usage → no matching session found.
   app.get('/tasks/:id/usage', c => {
@@ -52,7 +59,10 @@ export function registerTaskRoutes(app: OrcaApp, ctx: RouteContext): void {
     if (!canAccessProject(c, task.project_id)) return c.json({ error: 'forbidden' }, 403);
     // Pass the task's own project siblings so usage can disambiguate concurrent agents by start-order
     // rank, and read sessions from that project's path (not the daemon home, under multi-project).
-    return c.json(readTaskUsage(task, d.tasks.list({ project_id: task.project_id }), usagePathFor(task), d.fallback));
+    const live = readTaskUsage(task, d.tasks.list({ project_id: task.project_id }), usagePathFor(task), d.fallback);
+    // Embedded-brain (orca:) runs have no on-disk CLI transcript for the live reader — fall back to the
+    // snapshot the BrainWorkerService recorded at close (this is where provider-reported cost lives).
+    return c.json(live ?? d.taskUsage?.get(task.id) ?? null);
   });
   // Total token/cost usage aggregated per model (exec spec). Read straight from the `task_usage`
   // snapshots (the UsageRecorder writes one per task as it settles), so this never re-scans the CLIs'
@@ -287,7 +297,12 @@ export function registerTaskRoutes(app: OrcaApp, ctx: RouteContext): void {
     return c.json({ text });
   });
 
-  app.get('/tasks/:id/deps', c => c.json(d.tasks.depsFor(c.req.param('id'))));
+  app.get('/tasks/:id/deps', c => {
+    const task = d.tasks.get(c.req.param('id'));
+    if (!task) return c.json({ error: 'not found' }, 404);
+    if (!canAccessProject(c, task.project_id)) return c.json({ error: 'forbidden' }, 403);
+    return c.json(d.tasks.depsFor(c.req.param('id')));
+  });
   app.delete('/tasks/:id', async c => {
     const id = c.req.param('id');
     const existing = d.tasks.get(id);

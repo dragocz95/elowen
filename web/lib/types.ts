@@ -41,7 +41,7 @@ export interface OrcaConfig {
   security: { tokenTtlDays: number };
   autoUpdate: boolean;
   plugins?: { enabled: string[] };
-  brain?: { providers: BrainProvider[]; agentName?: string };
+  brain?: { providers: BrainProvider[]; agentName?: string; maxSteps?: number; modelContextWindows?: Record<string, number> };
 }
 
 /** How a brain provider talks upstream: a custom endpoint (API key) or a connected OAuth account. */
@@ -55,7 +55,7 @@ export interface BrainProvider {
   apiKeySet: boolean;
 }
 /** One Orca AI (brain) model. `source` = how its provider authenticates (drives the OAuth badge). */
-export interface BrainModelOption { provider: string; providerLabel: string; model: string; exec: string; source: 'api-key' | 'oauth' | 'relay' }
+export interface BrainModelOption { provider: string; providerLabel: string; model: string; exec: string; source: 'api-key' | 'oauth' | 'relay'; contextWindow: number; contextWindowSet: boolean }
 /** One brain conversation in the session picker (web chat + CLI). */
 export interface BrainSessionInfo { id: string; title: string; model: string; updated_at: string; running: boolean; active: boolean }
 /** A row in the admin session-management panel (all brain sessions the operator anchors). */
@@ -106,7 +106,7 @@ export interface ConfigPatch {
   security?: { tokenTtlDays?: number };
   autoUpdate?: boolean;
   /** Wholesale brain provider list; an entry may carry `apiKey` to (re)set that provider's secret. */
-  brain?: { providers?: (Omit<BrainProvider, 'apiKeySet'> & { apiKey?: string })[]; agentName?: string };
+  brain?: { providers?: (Omit<BrainProvider, 'apiKeySet'> & { apiKey?: string })[]; agentName?: string; maxSteps?: number; modelContextWindows?: Record<string, number> };
 }
 export interface MissionTask { id: string; title: string; status: TaskStatus; type: string; parent_id: string | null; labels?: string[]; outcome?: TaskOutcome | null }
 interface MissionProgress { total: number; open: number; inProgress: number; blocked: number; closed: number; cancelled: number }
@@ -120,8 +120,8 @@ export interface MissionDetail {
   progress: MissionProgress;
   pr?: MissionPrInfo | null;
 }
-export interface User { id: number; username: string; created_at: string; is_admin: boolean; allowed_execs: string[]; name: string; email: string; avatar: string; default_exec: string; advisor_exec: string; advisor_autostart: boolean }
-export interface UserPatch { is_admin?: boolean; allowed_execs?: string[] }
+export interface User { id: number; username: string; created_at: string; is_admin: boolean; allowed_execs: string[]; disabled_tools: string[]; name: string; email: string; avatar: string; default_exec: string; advisor_exec: string; advisor_autostart: boolean }
+export interface UserPatch { is_admin?: boolean; allowed_execs?: string[]; disabled_tools?: string[] }
 export interface ProfilePatch { name?: string; email?: string; default_exec?: string }
 
 /** A user-editable agent prompt: the shipped default plus this user's override (null = using default).
@@ -251,9 +251,10 @@ export interface PluginConfigField {
 /** One role → access mapping row in a plugin's `rolePolicies` config (the Discord pattern). */
 export interface RolePolicy { roleId: string; name: string; projectIds: number[]; prompt: string; tools?: string[]; admin?: boolean }
 
-/** One external MCP server row in a plugin's `mcpServers` config (the MCP-bridge pattern). `command` +
- *  `args` launch a stdio MCP server; `env` are extra environment vars; `enabled` gates connection. */
-export interface McpServerSpec { name: string; command: string; args: string[]; env: Record<string, string>; enabled: boolean }
+/** One external MCP server row in a plugin's `mcpServers` config (the MCP-bridge pattern). `transport`
+ *  picks how to reach it: `stdio` launches a local process (`command` + `args`, `env` extra vars — the
+ *  default, backward-compatible when absent); `http`/`sse` connect to a remote `url`. `enabled` gates it. */
+export interface McpServerSpec { name: string; command: string; args: string[]; env: Record<string, string>; enabled: boolean; transport?: 'stdio' | 'http' | 'sse'; url?: string }
 
 /** A plugin's declared manifest capabilities — the deny-by-default permission surface. A missing entry
  *  means the plugin CANNOT perform that action: `mutates` lists the runtime mutation targets it is allowed
@@ -549,20 +550,57 @@ export interface RetrievalResult {
   };
 }
 
-/** Token/cost usage for a task's agent run, read from the executor CLI's local session storage. */
+/** Where a cost figure came from, so the UI never presents an estimate as billed truth. */
+export type CostSource = 'provider_reported' | 'calculated' | 'unavailable';
+
+/** Token/cost usage for a task's agent run, read from the executor CLI's local session storage or the
+ *  embedded brain's session (+ the provider's reported cost, when it sends one). */
 export interface TokenUsage {
   input: number;
   output: number;
   cacheRead: number;
   cacheWrite: number;
   total: number;
+  /** Reasoning tokens — a subset of `output` (display only). Absent on legacy rows. */
+  reasoning?: number;
   costUsd: number | null;
+  /** Currency of `costUsd` (practically always 'USD'); null when there's no cost. Absent on legacy rows. */
+  currency?: string | null;
+  /** Provenance of `costUsd`. Absent on legacy rows (treat as unknown). */
+  costSource?: CostSource;
 }
 
 /** Total token/cost usage aggregated for one model (exec spec). */
 export interface ModelUsage {
   exec: string;
   usage: TokenUsage;
+}
+
+/** Whether a user can reach a tool. `allowed` = they can invoke it; `inherited` = granted by session
+ *  role (e.g. memory tools every session gets), not a per-user grant; `disabled` = an admin switched
+ *  this plugin tool off for the user; `unavailable` = out of reach (e.g. the operator-only orca_*
+ *  control plane for a non-admin). */
+export type UserToolState = 'allowed' | 'inherited' | 'disabled' | 'unavailable';
+
+/** One tool on the users-panel access overview. `icon` is a manifest/built-in emoji, or null → the
+ *  client renders a fallback glyph. `plugin` is the owning plugin id, or null for built-ins.
+ *  `toggleable` is true for plugin tools the admin can switch on/off per user (built-ins are fixed). */
+export interface UserToolPill {
+  name: string;
+  label: string;
+  icon: string | null;
+  plugin: string | null;
+  group: 'orca' | 'memory' | 'plugin';
+  state: UserToolState;
+  toggleable: boolean;
+}
+
+/** Compact per-user overview stats for the users panel. `topModel` is the model used in the most brain
+ *  sessions over the whole history, or null when the user has no sessions with a recorded model. */
+export interface UserStats {
+  memoryCount: number;
+  sessionCount: number;
+  topModel: string | null;
 }
 
 /** One day's rolled-up spend, for the dashboard's 7-day trend. `day` is `YYYY-MM-DD` (UTC, by task

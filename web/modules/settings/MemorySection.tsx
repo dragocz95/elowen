@@ -1,6 +1,6 @@
 'use client';
 import { useEffect, useMemo, useState } from 'react';
-import { Check, FlaskConical, RefreshCw } from 'lucide-react';
+import { FlaskConical, RefreshCw } from 'lucide-react';
 import { Badge } from '../../components/ui/Badge';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
@@ -14,6 +14,7 @@ import { useToast } from '../../components/ui/Toast';
 import { useTranslation } from '../../lib/i18n';
 import { useConfig, useEmbeddingSettings, useCategorizationSettings, useBrainModels } from '../../lib/queries';
 import { useSaveEmbeddingSettings, useReindexMemories, useSaveCategorizationSettings, useReclassifyMemories } from '../../lib/mutations';
+import { useAutoSave } from '../../lib/useAutoSave';
 import { orcaClient, OrcaApiError } from '../../lib/orcaClient';
 import type { BrainModelOption } from '../../lib/types';
 
@@ -56,7 +57,7 @@ export function MemorySection() {
 
   const [seeded, setSeeded] = useState(false);
 
-  // Seed both forms once from the persisted settings; edits stay local until Save.
+  // Seed both forms once from the persisted settings; edits auto-persist shortly after.
   useEffect(() => {
     if (embedding && categorization && !seeded) {
       setEmbProvider(embedding.providerId);
@@ -74,22 +75,33 @@ export function MemorySection() {
   const embCatalog = useProviderCatalog(embeddingModels, embProvider);
   const catCatalog = useProviderCatalog(brainModels, catProvider);
 
-  if (!config || !embedding || !categorization) return <LoadingState />;
-
-  const providers = config.brain?.providers ?? [];
-  // Same reason: the embedding provider picker only offers providers that can actually embed
-  // (API-key / OpenAI-compatible / relay) — OAuth accounts are excluded.
-  const embeddingProviders = providers.filter((p) => !p.type.startsWith('oauth-'));
-
   // baseUrl is intentionally omitted from the UI — the referenced provider already carries the API
   // endpoint. We send '' so any previously stored override is cleared and the provider endpoint wins.
   const onSaveEmbedding = () => {
     const dim = dimensions.trim();
     saveEmbedding.mutate(
       { providerId: embProvider.trim(), model: embModel.trim(), baseUrl: '', dimensions: dim ? Number(dim) : null },
-      { onSuccess: () => toast(t.memory.embeddingSaved), onError: () => toast(t.memory.embeddingSaveError, 'error') },
+      { onError: () => toast(t.memory.embeddingSaveError, 'error') },
     );
   };
+
+  const onSaveCategorization = () => {
+    saveCategorization.mutate(
+      { providerId: catProvider.trim(), model: (catModel ?? '').trim(), baseUrl: '' },
+      { onError: () => toast(t.categorization.saveError, 'error') },
+    );
+  };
+
+  // Auto-persist like the rest of Settings (silent on success, toast on error) — no Save buttons.
+  useAutoSave([embProvider, embModel, dimensions], onSaveEmbedding, { ready: seeded });
+  useAutoSave([catProvider, catModel], onSaveCategorization, { ready: seeded });
+
+  if (!config || !embedding || !categorization) return <LoadingState />;
+
+  const providers = config.brain?.providers ?? [];
+  // Same reason: the embedding provider picker only offers providers that can actually embed
+  // (API-key / OpenAI-compatible / relay) — OAuth accounts are excluded.
+  const embeddingProviders = providers.filter((p) => !p.type.startsWith('oauth-'));
 
   const onTest = () => {
     setTesting(true);
@@ -109,13 +121,6 @@ export function MemorySection() {
       onSuccess: (r) => toast(t.memory.reindexDone.replace('{n}', String(r.embedded))),
       onError: () => toast(t.memory.reindexError, 'error'),
     });
-  };
-
-  const onSaveCategorization = () => {
-    saveCategorization.mutate(
-      { providerId: catProvider.trim(), model: (catModel ?? '').trim(), baseUrl: '' },
-      { onSuccess: () => toast(t.categorization.saved), onError: () => toast(t.categorization.saveError, 'error') },
-    );
   };
 
   const onReclassify = () => {
@@ -161,7 +166,6 @@ export function MemorySection() {
         </Field>
 
         <div className="flex flex-wrap gap-2">
-          <Button variant="accent" icon={Check} disabled={saveEmbedding.isPending} onClick={onSaveEmbedding}>{t.memory.embeddingSave}</Button>
           <Button variant="default" icon={FlaskConical} disabled={testing} onClick={onTest}>{testing ? t.memory.embeddingTesting : t.memory.embeddingTest}</Button>
         </div>
 
@@ -199,10 +203,6 @@ export function MemorySection() {
         <Field label={t.categorization.modelLabel}>
           <ModelPillsPicker mode="single" catalog={catCatalog} value={catModel} onChange={setCatModel} />
         </Field>
-
-        <div className="flex flex-wrap gap-2">
-          <Button variant="accent" icon={Check} disabled={saveCategorization.isPending} onClick={onSaveCategorization}>{t.categorization.save}</Button>
-        </div>
 
         {/* Reclassify: runs the categorization model over the caller's uncategorized memories. Needs a
             configured model first. */}

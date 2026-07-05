@@ -14,7 +14,7 @@ beforeAll(() => server.listen({ onUnhandledRequest })); afterEach(() => server.r
 const meUser = (over: Record<string, unknown> = {}) => ({ id: 2, username: 'bob', name: '', email: '', avatar: '', default_exec: '', is_admin: false, allowed_execs: ['sonnet'], created_at: '2026-01-01', ...over });
 
 describe('AccountView', () => {
-  it('shows the user identity and their allowed models, and saves a chosen default', async () => {
+  it('shows the user identity, and saves a default picked on the Orca AI tab', async () => {
     let patched: Record<string, unknown> | null = null;
     server.use(
       http.get('*/api/auth/me', () => HttpResponse.json({ user: meUser() })),
@@ -25,6 +25,8 @@ describe('AccountView', () => {
     render(<Wrapper><UiScaleProvider><ToastProvider><AccountView /></ToastProvider></UiScaleProvider></Wrapper>);
 
     expect(await screen.findByText('@bob')).toBeTruthy();
+    // The default-model rail lives on the Orca AI tab (with the other per-user AI settings).
+    fireEvent.click(screen.getByRole('radio', { name: 'Orca AI' }));
     // Restricted to 'sonnet' (admin allow-list) → only that model is pickable (a radio chip).
     const chip = screen.getByRole('radio', { name: /Claude Sonnet/ });
     fireEvent.click(chip); // auto-persists shortly after — no Save button

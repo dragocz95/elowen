@@ -9,14 +9,23 @@ const openaiProvider = (models: string[] = []) => ({
 describe('listBrainModels', () => {
   beforeEach(clearModelsCache);
 
-  it('uses the manual model list when set (no fetch)', async () => {
-    const f = vi.fn() as unknown as typeof fetch;
+  it('keeps the manual model list for WHICH models appear, enriching context from /models', async () => {
+    // The manual list decides which models exist; the /models fetch only enriches with context windows.
+    const f = vi.fn(async () => new Response(JSON.stringify({ data: [{ id: 'a', context_length: 32000 }] }), { status: 200 })) as unknown as typeof fetch;
     const cfg: BrainRuntimeConfig = { providers: [openaiProvider(['a', 'b'])] };
-    expect(await listBrainModels(cfg, f)).toEqual([
-      { provider: 'relay', providerLabel: 'Relay', model: 'a', source: 'api-key' },
-      { provider: 'relay', providerLabel: 'Relay', model: 'b', source: 'api-key' },
-    ]);
-    expect(f).not.toHaveBeenCalled();
+    const models = await listBrainModels(cfg, f);
+    expect(models.map((m) => m.model)).toEqual(['a', 'b']); // manual list wins on which models appear
+    expect(models.find((m) => m.model === 'a')!.contextWindow).toBe(32000); // provider-reported enrichment
+    expect(models.find((m) => m.model === 'a')!.contextWindowSet).toBe(false); // reported ≠ operator override
+    expect(models.find((m) => m.model === 'b')!.contextWindow).toBe(200000); // default when not reported
+  });
+
+  it('an operator override wins over the provider-reported context window', async () => {
+    const f = vi.fn(async () => new Response(JSON.stringify({ data: [{ id: 'a', context_length: 32000 }] }), { status: 200 })) as unknown as typeof fetch;
+    const cfg: BrainRuntimeConfig = { providers: [openaiProvider(['a'])], contextWindows: { 'relay/a': 8000 } };
+    const models = await listBrainModels(cfg, f);
+    expect(models[0]!.contextWindow).toBe(8000);
+    expect(models[0]!.contextWindowSet).toBe(true);
   });
 
   it('auto-fetches /models for an openai provider with no manual list', async () => {

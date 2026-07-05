@@ -5,11 +5,16 @@ import { parseBody } from '../validation.js';
 import { loginSchema, profilePatchSchema, passwordChangeSchema, userPermissionsSchema, projectAssignSchema, promptSaveSchema } from '../schemas/auth.js';
 import { EDITABLE_PROMPTS, isEditablePrompt, isAppendOnlyPrompt } from '../../prompts/catalog.js';
 import { orcaExec, isExecAllowedForUser } from '../../shared/execs.js';
+import { BUILTIN_TOOL_ICONS, builtinToolMetas } from '../../brain/tools/index.js';
+import { makeToolIconResolver } from '../../brain/toolIcons.js';
 import { ADVISOR_STYLES, DEFAULT_ADVISOR_STYLE } from '../../brain/personality.js';
 import { rawTemplate } from '../../prompts/index.js';
 import { DiscordIdConflictError } from '../../store/userSettingStore.js';
 import type { User } from '../../store/userStore.js';
 import type { OrcaApp, RouteContext } from '../context.js';
+import { logger } from '../../shared/logger.js';
+
+const log = logger('auth');
 
 /** Auth + user-management routes: login (rate-limited), session lifecycle, self-service profile /
  *  password / avatar, admin user CRUD and user↔project assignments. No-op without a user store. */
@@ -217,7 +222,14 @@ export function registerAuthRoutes(app: OrcaApp, ctx: RouteContext): void {
     const body = new Uint8Array(readFileSync(path)).buffer;
     return c.body(body, 200, { 'content-type': AVATAR_MIME[ext] ?? 'application/octet-stream', 'cache-control': 'no-cache' });
   });
-  app.get('/users', (c) => c.json(users.list()));
+  app.get('/users', (c) => {
+    // Admin-only directory, but stay open during setup (no users yet) so onboarding can read it.
+    if (users.count() > 0) {
+      const actor = c.get('user');
+      if (!actor || !users.isAdmin(actor.id)) return c.json({ error: 'forbidden' }, 403);
+    }
+    return c.json(users.list());
+  });
   app.post('/users', async (c) => {
     const { username, password } = await c.req.json();
     // Allow creation during setup (no users yet), otherwise admin only
@@ -229,6 +241,10 @@ export function registerAuthRoutes(app: OrcaApp, ctx: RouteContext): void {
     catch { return c.json({ error: 'username taken' }, 409); }
   });
   app.delete('/users/:id', (c) => {
+    // Admin-only — mirrors POST/PATCH /users. Without this a non-admin could delete other users
+    // and cascade-wipe their settings/personality/memory.
+    const actor = c.get('user');
+    if (!actor || !users.isAdmin(actor.id)) return c.json({ error: 'forbidden' }, 403);
     if (users.count() <= 1) return c.json({ error: 'cannot delete the last user' }, 400);
     // Never delete the admin: it would lock out assignment management and (on restart) silently
     // re-elect another user as admin. The flag must be transferred deliberately first.
@@ -256,11 +272,78 @@ export function registerAuthRoutes(app: OrcaApp, ctx: RouteContext): void {
       users.setAdmin(id, b.is_admin);
     }
     if (Array.isArray(b.allowed_execs)) {
-      // Can't grant beyond what the daemon globally allows; keep only known execs (dedup).
+      // Can't grant beyond what the daemon globally allows; keep only known execs (dedup). Brain execs
+      // (orca:…) are bounded by the configured providers, not KNOWN_EXECS, so they're granted directly.
       const globalAllowed = new Set(d.config.get().allowedExecs);
-      users.setAllowedExecs(id, [...new Set(b.allowed_execs.filter((e) => typeof e === 'string' && globalAllowed.has(e)))]);
+      users.setAllowedExecs(id, [...new Set(b.allowed_execs.filter((e) => typeof e === 'string' && (e.startsWith('orca:') || globalAllowed.has(e))))]);
+    }
+    if (Array.isArray(b.disabled_tools)) {
+      users.setDisabledTools(id, b.disabled_tools.filter((t) => typeof t === 'string'));
     }
     return c.json(users.get(id));
+  });
+
+  // Admin: the tools a user can actually reach, for the users-panel pills. One pass over the live plugin
+  // registry + the built-in tool catalog — no N+1. State is DERIVED (there's no stored per-user tool
+  // grant): orca_* control-plane is operator/admin-only; memory_* is inherited by every interactive
+  // session (per-user scoped); plugin tools ride along for the user's sessions (path-level access is
+  // still enforced at execute). `icon` is the manifest/built-in emoji, or null → the client's fallback.
+  app.get('/users/:id/tools', async (c) => {
+    const actor = c.get('user');
+    if (!actor || !users.isAdmin(actor.id)) return c.json({ error: 'forbidden' }, 403);
+    const id = Number(c.req.param('id'));
+    const target = users.get(id);
+    if (!target) return c.json({ error: 'user not found' }, 404);
+    const registry = await d.plugins?.get();
+    const iconMap = new Map(Object.entries(BUILTIN_TOOL_ICONS));
+    for (const [k, v] of registry?.toolIcons ?? []) iconMap.set(k, v);
+    const iconOf = makeToolIconResolver(iconMap);
+    const targetIsAdmin = users.isAdmin(id);
+    // Per-user deny-list: a plugin tool the admin switched off for this user's own brain sessions.
+    const disabled = new Set(users.get(id)?.disabled_tools ?? []);
+    type ToolState = 'allowed' | 'inherited' | 'unavailable' | 'disabled';
+    const pills: { name: string; label: string; icon: string | null; plugin: string | null; group: 'orca' | 'memory' | 'plugin'; state: ToolState; toggleable: boolean }[] = [];
+    for (const m of builtinToolMetas()) {
+      const state: ToolState = m.group === 'orca' ? (targetIsAdmin ? 'allowed' : 'unavailable') : 'inherited';
+      pills.push({ name: m.name, label: m.label, icon: iconOf(m.name) ?? null, plugin: null, group: m.group, state, toggleable: false });
+    }
+    for (const t of registry?.tools ?? []) {
+      // Plugin tools are toggleable per-user: allowed unless the admin disabled them for this user.
+      const state: ToolState = disabled.has(t.name) ? 'disabled' : 'allowed';
+      pills.push({ name: t.name, label: t.label ?? t.name, icon: iconOf(t.name) ?? null, plugin: registry?.toolOwner.get(t.name) ?? null, group: 'plugin', state, toggleable: true });
+    }
+    // Allowed first, then inherited, then disabled/unavailable; alphabetical within each band.
+    const rank: Record<ToolState, number> = { allowed: 0, inherited: 1, disabled: 2, unavailable: 3 };
+    pills.sort((a, b) => rank[a.state] - rank[b.state] || a.name.localeCompare(b.name));
+    return c.json(pills);
+  });
+
+  // Admin: compact per-user overview stats for the users panel (memory count, brain-session count, and
+  // the model used in the most sessions over the whole history). Cheap aggregates on indexed columns.
+  app.get('/users/:id/stats', (c) => {
+    const actor = c.get('user');
+    if (!actor || !users.isAdmin(actor.id)) return c.json({ error: 'forbidden' }, 403);
+    const id = Number(c.req.param('id'));
+    if (!users.get(id)) return c.json({ error: 'user not found' }, 404);
+    const memoryCount = d.memoryStore?.count(id) ?? 0;
+    const { sessionCount, topModel } = d.brainStore?.userStats(id) ?? { sessionCount: 0, topModel: null };
+    return c.json({ memoryCount, sessionCount, topModel });
+  });
+
+  // Admin "sign in as" — issue a full-scope token for another user so an admin can see exactly what
+  // that user sees (support/debugging). Admin-only; the web BFF swaps the session cookie to this token
+  // and stashes the admin's own token so it can restore. The returned token is a normal token (revoked
+  // when the admin ends the impersonation via logout).
+  app.post('/users/:id/impersonate', (c) => {
+    const actor = c.get('user');
+    if (!actor || !users.isAdmin(actor.id)) return c.json({ error: 'forbidden' }, 403);
+    const id = Number(c.req.param('id'));
+    if (id === actor.id) return c.json({ error: 'cannot impersonate yourself' }, 400);
+    const target = users.get(id);
+    if (!target) return c.json({ error: 'user not found' }, 404);
+    const token = users.issueToken(id);
+    log.warn(`admin ${actor.username} (#${actor.id}) is now impersonating ${target.username} (#${id})`);
+    return c.json({ token, user: target, tokenTtlDays: d.config.get().security.tokenTtlDays });
   });
 
   // User ↔ project assignments. Only the bootstrap admin may view/manage them.

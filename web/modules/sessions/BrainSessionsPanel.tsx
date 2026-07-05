@@ -3,10 +3,14 @@ import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Trash2, MessageSquare, Circle } from 'lucide-react';
 import { orcaClient } from '../../lib/orcaClient';
+import { openBrainSession } from '../../lib/brainDock';
 import { localDateTime } from '../../lib/format';
 import { useTranslation } from '../../lib/i18n';
 import { useToast } from '../../components/ui/Toast';
+import { useMe } from '../../lib/queries';
+import { usePersistentState } from '../../lib/usePersistentState';
 import { ModelIcon } from '../../components/ui/ModelIcon';
+import { Segmented } from '../../components/ui/Segmented';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { HelpTip } from '../../components/ui/HelpTip';
 
@@ -16,25 +20,41 @@ function fmtTokens(n: number): string {
   return n >= 1000 ? `${(n / 1000).toFixed(n >= 10_000 ? 0 : 1)}k` : String(n);
 }
 
-/** Right rail on the sessions page — mirrors the Account "default model" column: a heading, then one
- *  card per brain session the operator anchors (web/CLI conversations + Discord channels + task workers)
- *  with the same large-icon card style, showing model icon, title and token count. Delete on hover +
- *  delete-all. Admin-only endpoint; a non-admin just gets an empty state. */
+interface Row { id: string; title: string; model: string; updated_at: string; running: boolean; kind: 'conversation' | 'channel' | 'task'; tokens?: number }
+
+/** Right rail on the sessions page: brain conversations, model icon + title, clickable to open/continue
+ *  in the web chat. A regular user sees ONLY their own conversations; an admin defaults to every user's
+ *  (oversight) and can toggle to just their own. Delete on hover; delete-all only in the admin "all" view. */
 export function BrainSessionsPanel() {
   const { t, locale } = useTranslation();
   const { toast } = useToast();
   const qc = useQueryClient();
+  const me = useMe();
+  const isAdmin = me.data?.user?.is_admin ?? false;
+  const [adminView, setAdminView] = usePersistentState<'all' | 'mine'>('orca.sessions.brainView', 'all', ['all', 'mine']);
+  // A non-admin only ever has their own; the toggle applies to admins.
+  const view: 'all' | 'mine' = isAdmin ? adminView : 'mine';
   const [confirmId, setConfirmId] = useState<string | null>(null);
   const [confirmAll, setConfirmAll] = useState(false);
 
-  const q = useQuery({ queryKey: ['brain-managed-sessions'], queryFn: () => orcaClient.brainManagedSessions() });
-  const sessions = q.data ?? [];
-  const refresh = () => qc.invalidateQueries({ queryKey: ['brain-managed-sessions'] });
+  const managed = useQuery({ queryKey: ['brain-managed-sessions'], queryFn: orcaClient.brainManagedSessions, enabled: isAdmin && view === 'all' });
+  const own = useQuery({ queryKey: ['brain-sessions'], queryFn: orcaClient.brainSessions, enabled: view === 'mine' });
+  const q = view === 'all' ? managed : own;
+  // Own sessions carry no kind/tokens — they're always continuable conversations.
+  const sessions: Row[] = view === 'all'
+    ? (managed.data ?? [])
+    : (own.data ?? []).map((s) => ({ ...s, kind: 'conversation' as const }));
+
+  const refresh = () => qc.invalidateQueries({ queryKey: view === 'all' ? ['brain-managed-sessions'] : ['brain-sessions'] });
 
   const doDelete = async (id: string) => {
     setConfirmId(null);
-    try { await orcaClient.brainDeleteManagedSession(id); await refresh(); toast(t.sessionsPanel.deleted, 'ok'); }
-    catch { toast(t.common.error, 'error'); }
+    try {
+      if (view === 'all') await orcaClient.brainDeleteManagedSession(id);
+      else await orcaClient.brainDeleteSession(id);
+      await refresh();
+      toast(t.sessionsPanel.deleted, 'ok');
+    } catch { toast(t.common.error, 'error'); }
   };
   const doDeleteAll = async () => {
     setConfirmAll(false);
@@ -51,32 +71,54 @@ export function BrainSessionsPanel() {
           {sessions.length > 0 ? <span className="text-xs font-normal text-text-muted">{sessions.length}</span> : null}
           <HelpTip align="right">{t.help.sessionsPanel}</HelpTip>
         </span>
-        {sessions.length > 0 ? (
+        {isAdmin && view === 'all' && sessions.length > 0 ? (
           <button type="button" onClick={() => setConfirmAll(true)} className="text-tiny text-text-muted transition-colors hover:text-danger">
             {t.sessionsPanel.deleteAll}
           </button>
         ) : null}
       </div>
 
+      {/* Admins toggle between every user's conversations and just their own. */}
+      {isAdmin ? (
+        <Segmented
+          size="sm"
+          value={view}
+          onChange={(v) => setAdminView(v as 'all' | 'mine')}
+          aria-label={t.sessionsPanel.tab}
+          options={[{ value: 'all', label: t.sessionsPanel.viewAll }, { value: 'mine', label: t.sessionsPanel.viewMine }]}
+        />
+      ) : null}
+
       {q.isLoading ? <p className="text-xs italic text-text-muted">{t.common.loading}</p>
         : q.isError ? <p className="text-xs italic text-text-muted">{t.common.daemonUnreachable}</p>
         : sessions.length === 0 ? <p className="text-xs italic text-text-muted">{t.sessionsPanel.empty}</p>
         : (
           <div className="flex max-h-[70vh] flex-col gap-2 overflow-y-auto pr-1">
-            {sessions.map((s) => (
+            {sessions.map((s) => {
+              // Own conversations (web/CLI) resume & continue in the web chat; channel (Discord) and
+              // task-worker sessions open read-only (the daemon won't let the owner post into them).
+              const continuable = s.kind === 'conversation';
+              const label = continuable ? t.sessionsPanel.openInChat : t.sessionsPanel.viewInChat;
+              return (
               <div key={s.id} className="group flex items-center gap-3 rounded-lg border border-border bg-surface p-3 transition-colors hover:bg-elevated">
                 <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-border bg-elevated">
                   <ModelIcon name={s.model} size={28} />
                 </span>
-                <span className="flex min-w-0 flex-1 flex-col">
+                <button
+                  type="button"
+                  onClick={() => openBrainSession(s.id, continuable)}
+                  title={label}
+                  aria-label={`${label}: ${s.title || t.sessionsPanel.untitled}`}
+                  className="flex min-w-0 flex-1 cursor-pointer flex-col text-left"
+                >
                   <span className="flex items-center gap-1.5">
                     <span className="truncate text-sm font-medium text-text">{s.title || t.sessionsPanel.untitled}</span>
                     {s.running ? <Circle size={7} className="shrink-0 fill-success text-success" aria-label={t.sessionsPanel.running} /> : null}
                   </span>
                   <span className="truncate font-mono text-tiny text-text-muted">
-                    {`${fmtTokens(s.tokens)} ${t.sessionsPanel.tok} · ${localDateTime(s.updated_at, locale, false)}`}
+                    {s.tokens != null ? `${fmtTokens(s.tokens)} ${t.sessionsPanel.tok} · ` : ''}{localDateTime(s.updated_at, locale, false)}
                   </span>
-                </span>
+                </button>
                 <button
                   type="button"
                   onClick={() => setConfirmId(s.id)}
@@ -87,7 +129,8 @@ export function BrainSessionsPanel() {
                   <Trash2 size={14} aria-hidden />
                 </button>
               </div>
-            ))}
+              );
+            })}
           </div>
         )}
 

@@ -8,7 +8,7 @@ import { nextCronRun } from '../../lib/cron';
 import { formatCost } from '../../lib/format';
 import { useTranslation } from '../../lib/i18n';
 import {
-  usePendingAsks, useEscalations, useModelUsage, useUsageByDay, useSessionInfos, useCronJobs,
+  usePendingAsks, useEscalations, useModelUsage, useUsageByDay, useSessionInfos, useCronJobs, useMe,
 } from '../../lib/queries';
 import type { SessionInfo } from '../../lib/types';
 
@@ -101,7 +101,8 @@ export function AgentsTile() {
  *  The jobs endpoint is admin-only, so a non-admin simply sees the empty state (no data, no error). */
 export function CronTile({ now }: { now: number }) {
   const { t, locale } = useTranslation();
-  const jobs = useCronJobs();
+  const me = useMe();
+  const jobs = useCronJobs(me.data?.user?.is_admin ?? false); // admin-only endpoint — skip for non-admins
   const next = useMemo(() => {
     let best: { at: number; name: string } | null = null;
     for (const j of jobs.data ?? []) {

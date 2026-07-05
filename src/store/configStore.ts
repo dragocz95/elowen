@@ -58,8 +58,10 @@ export interface OrcaConfig {
   plugins: { enabled: string[] };
   /** The brain's dedicated model providers (public view: API keys stripped to `apiKeySet`). Empty →
    *  the brain falls back to the autopilot relay endpoint. `agentName` is the assistant's display
-   *  identity ("Orca" by default) — it feeds the persona prompts everywhere the brain speaks. */
-  brain: { providers: BrainProviderPublic[]; agentName: string };
+   *  identity ("Orca" by default) — it feeds the persona prompts everywhere the brain speaks.
+   *  `maxSteps` caps the agent's per-run model round-trips; `modelContextWindows` lets the operator pin a
+   *  max context window per Orca AI model (`providerId/model`) for endpoints that don't report one. */
+  brain: { providers: BrainProviderPublic[]; agentName: string; maxSteps: number; modelContextWindows: Record<string, number> };
   /** Memory embedding provider config (no secret — the API key comes from the referenced brain provider). */
   embedding: EmbeddingBlock;
   /** Memory categorization model (workspace-level; no secret — key reused from the brain provider). */
@@ -140,6 +142,23 @@ function sanitizeProviders(input: unknown): Providers {
 const clampTtlDays = (next: number | undefined, fallback: number): number =>
   typeof next === 'number' && Number.isFinite(next) && next >= 1 ? Math.floor(next) : fallback;
 
+/** Default and bounds for the brain's per-run agent step ceiling. A whole number in [1, 200]; anything
+ *  invalid falls back to the current value. Enforced in BrainService (turn_start counting → abort). */
+const DEFAULT_MAX_STEPS = 20;
+const clampMaxSteps = (next: number | undefined, fallback: number): number =>
+  typeof next === 'number' && Number.isFinite(next) ? Math.min(200, Math.max(1, Math.floor(next))) : fallback;
+
+/** Per-model context-window overrides, keyed `providerId/model`. Some endpoints don't report a reliable
+ *  max token count, so the operator can pin one. Keep only positive whole numbers; drop anything else. */
+function sanitizeContextWindows(input: unknown): Record<string, number> {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return {};
+  const out: Record<string, number> = {};
+  for (const [k, v] of Object.entries(input as Record<string, unknown>)) {
+    if (k && typeof v === 'number' && Number.isFinite(v) && v > 0) out[k] = Math.floor(v);
+  }
+  return out;
+}
+
 const DEFAULT_CONFIG: OrcaConfig = {
   allowedExecs: [...KNOWN_EXECS],
   customModels: [],
@@ -152,7 +171,7 @@ const DEFAULT_CONFIG: OrcaConfig = {
   autoUpdate: false,
   webPush: { publicKey: '', publicKeySet: false },
   plugins: { enabled: [] },
-  brain: { providers: [], agentName: 'Orca' },
+  brain: { providers: [], agentName: 'Orca', maxSteps: DEFAULT_MAX_STEPS, modelContextWindows: {} },
   embedding: { providerId: '', model: '', baseUrl: '', dimensions: null },
   categorization: { providerId: '', model: '', baseUrl: '' },
 };
@@ -174,7 +193,7 @@ interface Stored {
   /** Enabled plugin names + each plugin's own config slice (secrets included, never serialized to API). */
   plugins: { enabled: string[]; config: Record<string, Record<string, unknown>> };
   /** Brain provider entries with plaintext API keys — stripped to `apiKeySet` in the public view. */
-  brain: { providers: BrainProviderStored[]; agentName: string };
+  brain: { providers: BrainProviderStored[]; agentName: string; maxSteps: number; modelContextWindows: Record<string, number> };
   /** Embedding provider config. Holds no secret (the key is reused from the brain provider), so this
    *  block is safe to surface verbatim in the public view. */
   embedding: EmbeddingBlock;
@@ -196,7 +215,7 @@ const defaultStored = (): Stored => ({
   autoUpdate: false,
   webPush: null,
   plugins: { enabled: [], config: {} },
-  brain: { providers: [], agentName: 'Orca' },
+  brain: { providers: [], agentName: 'Orca', maxSteps: DEFAULT_MAX_STEPS, modelContextWindows: {} },
   embedding: { providerId: '', model: '', baseUrl: '', dimensions: null },
   categorization: { providerId: '', model: '', baseUrl: '' },
 });
@@ -214,7 +233,7 @@ export interface ConfigPatch {
   plugins?: { enabled?: string[]; config?: Record<string, Record<string, unknown>> };
   /** Brain providers replace wholesale (the UI edits the full list). A patched entry with an empty/absent
    *  apiKey KEEPS the currently stored key for that id — the UI never sees (or resends) secrets. */
-  brain?: { providers?: unknown; agentName?: unknown };
+  brain?: { providers?: unknown; agentName?: unknown; maxSteps?: number; modelContextWindows?: Record<string, number> };
   /** Embedding config is merged per-field (like autopilot); `dimensions: null` clears the width hint. */
   embedding?: { providerId?: string; model?: string; baseUrl?: string; dimensions?: number | null };
   /** Categorization config merged per-field (like embedding). */
@@ -258,7 +277,12 @@ export class ConfigStore {
                 ? (p.plugins.config as Record<string, Record<string, unknown>>) : {},
             }
           : { enabled: [], config: {} },
-        brain: { providers: sanitizeBrainProviders(p.brain?.providers), agentName: typeof p.brain?.agentName === 'string' && p.brain.agentName.trim() ? p.brain.agentName.trim().slice(0, 40) : 'Orca' },
+        brain: {
+          providers: sanitizeBrainProviders(p.brain?.providers),
+          agentName: typeof p.brain?.agentName === 'string' && p.brain.agentName.trim() ? p.brain.agentName.trim().slice(0, 40) : 'Orca',
+          maxSteps: clampMaxSteps(p.brain?.maxSteps, d.brain.maxSteps),
+          modelContextWindows: sanitizeContextWindows(p.brain?.modelContextWindows),
+        },
         embedding: {
           providerId: typeof p.embedding?.providerId === 'string' ? p.embedding.providerId : d.embedding.providerId,
           model: typeof p.embedding?.model === 'string' ? p.embedding.model : d.embedding.model,
@@ -295,7 +319,7 @@ export class ConfigStore {
       webPush: { publicKey: s.webPush?.publicKey ?? '', publicKeySet: !!s.webPush },
       // Only the enabled list surfaces; per-plugin config (possible secrets) stays daemon-side.
       plugins: { enabled: s.plugins.enabled },
-      brain: { providers: s.brain.providers.map(({ apiKey, ...pub }) => ({ ...pub, apiKeySet: !!apiKey })), agentName: s.brain.agentName },
+      brain: { providers: s.brain.providers.map(({ apiKey, ...pub }) => ({ ...pub, apiKeySet: !!apiKey })), agentName: s.brain.agentName, maxSteps: s.brain.maxSteps, modelContextWindows: s.brain.modelContextWindows },
       // No secret in the embedding block (the key is reused from the brain provider) → expose verbatim.
       embedding: s.embedding,
       // Likewise no secret in the categorization block → expose verbatim.
@@ -380,6 +404,11 @@ export class ConfigStore {
         agentName: typeof patch.brain?.agentName === 'string' && patch.brain.agentName.trim()
           ? patch.brain.agentName.trim().slice(0, 40)
           : cur.brain.agentName,
+        maxSteps: clampMaxSteps(patch.brain?.maxSteps, cur.brain.maxSteps),
+        // Context-window overrides replace wholesale (the UI edits the full map).
+        modelContextWindows: patch.brain?.modelContextWindows !== undefined
+          ? sanitizeContextWindows(patch.brain.modelContextWindows)
+          : cur.brain.modelContextWindows,
       },
       embedding: {
         providerId: patch.embedding?.providerId ?? cur.embedding.providerId,

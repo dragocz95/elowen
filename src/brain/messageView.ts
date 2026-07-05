@@ -29,13 +29,31 @@ export function frameUntrusted(tag: string, preface: string, body: string): stri
   return `<${tag}>\n${preface}\n${safe}\n</${tag}>\n\n`;
 }
 
+/** Strip inline chain-of-thought that some models (notably the vision-fallback endpoints) emit INSIDE
+ *  the text content as literal `<think>…</think>` / `<thinking>…</thinking>` tags instead of through a
+ *  separate reasoning channel. pi-ai maps such content to `text_delta`, so without this it leaks into
+ *  the user-visible reply. Removes complete blocks, an unclosed trailing block (a stream cut off before
+ *  the answer), and a leading close tag (reasoning that streamed before any open tag). Native-reasoning
+ *  models are unaffected — their thinking never appears in the text at all. A reply that is ONLY
+ *  reasoning yields '', which every caller already treats as "no text". */
+export function stripInlineReasoning(text: string): string {
+  if (!/<\/?think(?:ing)?\b/i.test(text)) return text;
+  let out = text
+    .replace(/<think(?:ing)?\b[^>]*>[\s\S]*?<\/think(?:ing)?>/gi, '') // complete <think>…</think> blocks
+    .replace(/<think(?:ing)?\b[^>]*>[\s\S]*$/i, '');                   // an unclosed trailing block
+  const lead = /^[\s\S]*?<\/think(?:ing)?>/i.exec(out); // reasoning that streamed before an open tag
+  if (lead) out = out.slice(lead[0].length);
+  return out.trim();
+}
+
 /** Pull display text out of a stored message's content JSON. Content is either a plain string or an
- *  array of parts ({type:'text', text}); anything else yields an empty string. */
+ *  array of parts ({type:'text', text}); anything else yields an empty string. Inline reasoning tags are
+ *  stripped here (single source) so no consumer — reply, curator, title — ever sees leaked chain-of-thought. */
 export function extractText(msg: unknown): string {
   const content = (msg as { content?: unknown }).content;
-  if (typeof content === 'string') return content;
+  if (typeof content === 'string') return stripInlineReasoning(content);
   if (Array.isArray(content)) {
-    return content.map((p) => (p && typeof p === 'object' && 'text' in p ? String((p as { text: unknown }).text) : '')).join('');
+    return stripInlineReasoning(content.map((p) => (p && typeof p === 'object' && 'text' in p ? String((p as { text: unknown }).text) : '')).join(''));
   }
   return '';
 }
@@ -71,14 +89,19 @@ export function shapeBrainMessages(rows: BrainMessageRow[]): BrainMessageView[] 
     let text = '';
     for (const part of Array.isArray(msg.content) ? msg.content : []) {
       const p = part as { type?: string; text?: unknown; id?: string; name?: string; arguments?: unknown };
-      if (p.type === 'text' && typeof p.text === 'string' && p.text.trim()) {
-        text += p.text;
-        segments.push({ kind: 'text', text: p.text });
+      if (p.type === 'text' && typeof p.text === 'string') {
+        // Strip leaked inline <think> tags here too — same as extractText(); otherwise a model that emits
+        // reasoning as literal tags would surface them in stored history / task-conversation views.
+        const clean = stripInlineReasoning(p.text);
+        if (clean.trim()) { text += clean; segments.push({ kind: 'text', text: clean }); }
       } else if (p.type === 'toolCall' && typeof p.name === 'string') {
         segments.push({ kind: 'tool', name: p.name, detail: toolDetail(p.arguments), diff: p.id ? diffs.get(p.id) : undefined });
       }
     }
-    if (typeof msg.content === 'string' && msg.content.trim()) { text = msg.content; segments.push({ kind: 'text', text }); }
+    if (typeof msg.content === 'string') {
+      const clean = stripInlineReasoning(msg.content);
+      if (clean.trim()) { text = clean; segments.push({ kind: 'text', text }); }
+    }
     if (segments.length > 0) views.push({ role: 'assistant', text, segments });
   }
   return views;

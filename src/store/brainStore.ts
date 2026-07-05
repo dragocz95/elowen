@@ -36,6 +36,17 @@ export class BrainStore {
       .all(userId) as BrainSessionRow[];
   }
 
+  /** Per-user overview stats for the users admin panel: total session count and the model used in the
+   *  most sessions over the whole history (indexed on user_id). One count + one grouped query, no N+1.
+   *  `topModel` is null when the user has no sessions with a recorded model. */
+  userStats(userId: number): { sessionCount: number; topModel: string | null } {
+    const sessionCount = (this.db.prepare('SELECT COUNT(*) AS n FROM brain_sessions WHERE user_id = ?').get(userId) as { n: number }).n;
+    const top = this.db.prepare(
+      "SELECT model, COUNT(*) AS c FROM brain_sessions WHERE user_id = ? AND model != '' GROUP BY model ORDER BY c DESC, model ASC LIMIT 1"
+    ).get(userId) as { model: string; c: number } | undefined;
+    return { sessionCount, topModel: top?.model ?? null };
+  }
+
   /** Cumulative token total per session (summed from each stored assistant message's usage) for the
    *  session-management panel. One grouped query — no N+1. Sessions with no usage-bearing messages
    *  come back 0. Persisted messages only, so a mid-turn session reads slightly stale (acceptable). */

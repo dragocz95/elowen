@@ -1,0 +1,18 @@
+{
+  "name": "mcp",
+  "version": "0.1.1",
+  "apiVersion": "1",
+  "description": "Bridge external MCP servers (stdio, HTTP, SSE) into the assistant's toolset.",
+  "entry": "index.mjs",
+  "icons": { "mcp_*": "🧩" },
+  "provides": { "hooks": ["plugin.reload.before"] },
+  "capabilities": {},
+  "configSchema": [
+    {
+      "key": "servers",
+      "label": "MCP servers",
+      "type": "mcpServers",
+      "help": "External MCP servers to connect and expose as tools. Choose a transport per server: stdio launches a local process (e.g. npx …); HTTP or SSE connect to a remote URL. stdio servers run in their own process group and are killed as a group on reload, so npx child processes are never orphaned."
+    }
+  ]
+}

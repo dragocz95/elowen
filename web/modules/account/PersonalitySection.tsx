@@ -1,5 +1,5 @@
 'use client';
-import { useState, useEffect, type ReactNode } from 'react';
+import { useState, useEffect } from 'react';
 import { Save, Copy, Trash2, Check, Plus, X, Sparkles } from 'lucide-react';
 import type { PersonalityProfile } from '../../lib/types';
 import { usePersonalities, useMyCliSettings } from '../../lib/queries';
@@ -17,36 +17,33 @@ import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { LoadingState, EmptyState } from '../../components/ui/states';
 import { useToast } from '../../components/ui/Toast';
 import { useTranslation } from '../../lib/i18n';
+import { Pill, PillGroup } from './pills';
 
 const PLATFORMS = ['web', 'discord'] as const;
 type Platform = (typeof PLATFORMS)[number];
 
-const THINKING_LEVELS = ['', 'minimal', 'low', 'medium', 'high', 'xhigh'];
-
-/** Per-user personality: the assistant's behavior (communication style + reasoning effort, applied
- *  everywhere) plus named persona profiles per surface (web / discord). One profile can be pinned
- *  active; a live summary shows the resulting persona instead of the raw resolved prompt. */
+/** Per-user personality: how the assistant communicates (style, applied everywhere) plus named
+ *  persona profiles per surface (web / discord). One profile can be pinned active. Runtime knobs
+ *  (models, thinking level, context) live in the account's Orca AI section. */
 export function PersonalitySection() {
   const { t } = useTranslation();
   const [platform, setPlatform] = useState<Platform>('web');
   const [editing, setEditing] = useState<PersonalityProfile | 'new' | null>(null);
   const profiles = usePersonalities(platform);
 
-  // Behavior knobs live in cli-settings (shared with the Orca AI runtime section); this section owns
-  // the personality-facing subset. Autosave sends only these two — the PATCH merges server-side.
+  // The communication style lives in cli-settings (shared record with the Orca AI section); this
+  // section owns only this personality-facing field. The PATCH merges server-side.
   const cli = useMyCliSettings();
   const saveCli = useSaveMyCliSettings();
   const [advisorStyle, setAdvisorStyle] = useState('professional');
-  const [thinkingLevel, setThinkingLevel] = useState('');
   const [seeded, setSeeded] = useState(false);
   useEffect(() => {
     if (cli.data && !seeded) {
       setAdvisorStyle(cli.data.advisorStyle);
-      setThinkingLevel(cli.data.thinkingLevel ?? '');
       setSeeded(true);
     }
   }, [cli.data, seeded]);
-  useAutoSave([advisorStyle, thinkingLevel], () => saveCli.mutate({ advisorStyle, thinkingLevel }), { ready: seeded });
+  useAutoSave([advisorStyle], () => saveCli.mutate({ advisorStyle }), { ready: seeded });
 
   const platformOptions = [
     { value: 'web', label: t.personality.platformWeb },
@@ -74,19 +71,11 @@ export function PersonalitySection() {
         <Button variant="accent" icon={Plus} onClick={() => setEditing('new')}>{t.personality.newProfile}</Button>
       </div>
 
-      {/* Behavior: style + reasoning pills (applied everywhere, on top of any active profile) */}
+      {/* Communication style pills (applied everywhere, on top of any active profile) */}
       <div className="flex flex-col gap-4 rounded-xl border border-border bg-surface p-5" style={{ boxShadow: 'var(--shadow-card)' }}>
         <PillGroup label={t.personality.styleLabel}>
           {styleOptions.map((o) => (
             <Pill key={o.value} on={advisorStyle === o.value} onClick={() => setAdvisorStyle(o.value)}>{o.label}</Pill>
-          ))}
-        </PillGroup>
-
-        <PillGroup label={t.personality.thinkingLabel}>
-          {THINKING_LEVELS.map((lv) => (
-            <Pill key={lv || 'default'} on={thinkingLevel === lv} onClick={() => setThinkingLevel(lv)}>
-              {lv === '' ? t.personality.thinkingDefault : lv}
-            </Pill>
           ))}
         </PillGroup>
       </div>
@@ -128,30 +117,6 @@ export function PersonalitySection() {
         />
       ) : null}
     </div>
-  );
-}
-
-/** A labelled row of single-select pills (accent when active), mirroring the app's pill styling. */
-function PillGroup({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <div className="flex flex-col gap-2">
-      <span className="text-tiny font-semibold uppercase tracking-wide text-text-muted">{label}</span>
-      <div className="flex flex-wrap gap-1.5">{children}</div>
-    </div>
-  );
-}
-
-function Pill({ on, onClick, children }: { on: boolean; onClick: () => void; children: ReactNode }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-pressed={on}
-      className={`inline-flex items-center rounded-md border px-2.5 py-1.5 text-xs font-medium transition-colors ${on ? 'border-accent/50 bg-accent/15 text-accent' : 'border-border bg-elevated text-text-muted hover:border-border-strong hover:text-text'}`}
-      style={{ transitionDuration: 'var(--motion-fast)' }}
-    >
-      {children}
-    </button>
   );
 }
 

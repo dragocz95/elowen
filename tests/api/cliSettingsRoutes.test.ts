@@ -48,17 +48,19 @@ describe('cli-settings routes', () => {
     expect(restart).toHaveBeenCalledTimes(1);
   });
 
-  it('PATCH rejects a model outside a non-admin caller allow-list, accepts an allowed one', async () => {
-    const { app, users, config } = setup();
+  it('PATCH accepts any configured brain model for a non-admin, but a personal allow-list still narrows it', async () => {
+    const { app, users } = setup();
     const bob = users.create('bob', 'pw');
     const bobTok = users.issueToken(bob.id);
-    // Not on the global list → 400, nothing saved.
-    const denied = await app.request('/auth/me/cli-settings', patch(bobTok, { model: 'kimi', modelProvider: 'relay' }));
-    expect(denied.status).toBe(400);
-    // Admin allows it globally → save succeeds.
-    config.update({ allowedExecs: ['orca:relay/kimi'] } as never);
-    const ok = await app.request('/auth/me/cli-settings', patch(bobTok, { model: 'kimi', modelProvider: 'relay' }));
-    expect(ok.status).toBe(200);
+    // `orca:relay/kimi` is a brain exec — bounded by configured providers, not the global CLI allow-list —
+    // so an unrestricted non-admin may select it (guards the empty-picker bug).
+    expect((await app.request('/auth/me/cli-settings', patch(bobTok, { model: 'kimi', modelProvider: 'relay' }))).status).toBe(200);
+    // A personal allow-list that EXCLUDES it → 400.
+    users.setAllowedExecs(bob.id, ['orca:relay/glm']);
+    expect((await app.request('/auth/me/cli-settings', patch(bobTok, { model: 'kimi', modelProvider: 'relay' }))).status).toBe(400);
+    // …and one that INCLUDES it → 200.
+    users.setAllowedExecs(bob.id, ['orca:relay/kimi']);
+    expect((await app.request('/auth/me/cli-settings', patch(bobTok, { model: 'kimi', modelProvider: 'relay' }))).status).toBe(200);
     // Clearing the override is always fine.
     expect((await app.request('/auth/me/cli-settings', patch(bobTok, { model: '', modelProvider: '' }))).status).toBe(200);
   });

@@ -81,7 +81,9 @@ describe('BrainWorkerService', () => {
     expect(init.method).toBe('PATCH');
     expect(JSON.parse(String(init.body))).toEqual({ status: 'closed', result_summary: 'done', outcome: 'ok' });
     expect(recorded).toHaveLength(1);
-    expect(recorded[0]).toEqual(['T-1', 1, 'orca:kimi', { input: 10, output: 5, cacheRead: 0, cacheWrite: 0, total: 15, costUsd: 0.02 }]);
+    // No OpenRouter fetch ran in this test, so the meter reports nothing — pi-ai's price-sheet cost
+    // (0.02) is kept but flagged as a calculated estimate, not provider-reported.
+    expect(recorded[0]).toEqual(['T-1', 1, 'orca:kimi', { input: 10, output: 5, cacheRead: 0, cacheWrite: 0, total: 15, reasoning: 0, costUsd: 0.02, currency: 'USD', costSource: 'calculated' }]);
   });
 
   it('an unclosed agent_end gets one nudge, then the task reverts to open with a resume note', async () => {

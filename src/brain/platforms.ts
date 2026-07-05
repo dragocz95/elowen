@@ -1,6 +1,7 @@
 import type { PluginRegistry } from '../plugins/registry.js';
 import type { ChannelRef } from '../plugins/api.js';
 import type { Policy } from '../plugins/policy.js';
+import type { ToolPolicy } from '../plugins/policyContext.js';
 import type { IdentityResolver } from './identity.js';
 import type { ChannelSessionService } from './channels.js';
 
@@ -11,6 +12,11 @@ export interface PlatformOrchestratorDeps {
   platformOwner?: () => number | undefined;
   /** Build a Policy from an explicit project-id set (platform role mappings resolve through this). */
   policyForProjects?: (projectIds: number[]) => Policy;
+  /** A LINKED platform sender runs fully through their Orca account: this resolves that account's own
+   *  project Policy (same as their web chat). Absent → falls back to the role policy. */
+  policyForUser?: (userId: number) => Policy;
+  /** A linked user's own tool deny-list (their Account → disabled tools), applied for their platform turns. */
+  disabledToolsFor?: (userId: number) => string[];
   identity: IdentityResolver;
   channels: ChannelSessionService;
   /** Admin daemon restart for a platform `/restart` slash. Lazily resolved: the handler is built after
@@ -40,14 +46,6 @@ export class PlatformOrchestrator {
         adapter.listen(async (src, text, onEvent) => {
           const owner = this.d.platformOwner?.();
           if (owner === undefined || !src.access) return undefined; // unmapped sender → stay silent
-          // An admin-role sender gets all-project Policy + the full plugin toolset (trusted-channel);
-          // a role-scoped sender gets only their role's projects and tool allowlist. NEITHER ever gets
-          // the owner's orca_* API tools or token — a shared channel is never the verified owner's own
-          // chat, whatever role the sender holds.
-          const policy: Policy = src.access.admin
-            ? { allowedProjectIds: 'all' as const, allowedPaths: () => [] }
-            : this.d.policyForProjects?.(src.access.projectIds)
-              ?? { allowedProjectIds: new Set(src.access.projectIds), allowedPaths: () => [] };
           const promptAppend = [
             ...(src.access.prompt ? [src.access.prompt] : []),
             ...(src.channelName ? [this.d.channels.fragmentFor(src, owner)] : []),
@@ -56,6 +54,30 @@ export class PlatformOrchestrator {
           // against prompt injection through display names) — minted by the IdentityResolver, the
           // one auditable place `owner` vs `admin` semantics live.
           const { identity, verifiedPrefix, linkedUserId } = this.d.identity.forPlatformTurn(src, owner);
+          // ONE unified access decision. A LINKED sender runs fully through their Orca account — their
+          // own project Policy AND their own tool deny-list — exactly as in their web chat (the role
+          // policy is bypassed for them). An UNLINKED sender falls back to the Role-ID policy: all-project
+          // for an admin role, else the role's projects, plus the role's tool allowlist. Neither ever gets
+          // the owner's orca_* API tools/token — a shared channel is never the verified owner's own chat.
+          let policy: Policy;
+          let toolPolicy: ToolPolicy | undefined;
+          if (linkedUserId != null && this.d.policyForUser) {
+            policy = this.d.policyForUser(linkedUserId);
+            const denied = this.d.disabledToolsFor?.(linkedUserId) ?? [];
+            toolPolicy = denied.length ? { deny: new Set(denied) } : undefined;
+          } else {
+            policy = src.access.admin
+              ? { allowedProjectIds: 'all' as const, allowedPaths: () => [] }
+              : this.d.policyForProjects?.(src.access.projectIds)
+                ?? { allowedProjectIds: new Set(src.access.projectIds), allowedPaths: () => [] };
+            // Admin role → full plugin toolset (no allowlist). Otherwise the role's tool allowlist — but
+            // the Discord convention (plugins/discord/index.mjs) is that an empty list OR ['*'] means
+            // "everything", so it must map to NO restriction, not an allow-list of the literal "*" (which
+            // would match no real tool name and deny the whole toolset).
+            const roleTools = src.access.tools;
+            const unrestricted = !roleTools?.length || roleTools.includes('*');
+            toolPolicy = !src.access.admin && !unrestricted ? { allow: new Set(roleTools) } : undefined;
+          }
           return this.d.channels.send({
             channelId: keyOf(src),
             ownerUserId: owner,
@@ -64,7 +86,7 @@ export class PlatformOrchestrator {
             trusted: src.access.admin, // admin role → trusted-channel (all plugin tools), NOT owner-chat
             model: src.access.model,
             thinkingLevel: src.access.thinkingLevel,
-            tools: src.access.admin ? undefined : src.access.tools, // admin → full plugin toolset; else role allowlist
+            toolPolicy,
             images: src.images,
             identity,
             // The Orca account this sender is verified as — memory recall/save keys on it. Unlinked

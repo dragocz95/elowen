@@ -1,4 +1,5 @@
 import type { ToolDefinition } from '@earendil-works/pi-coding-agent';
+import { currentToolPolicy, toolPermitted, type ToolPolicy } from '../../plugins/policyContext.js';
 
 /** What kind of session the tools are composed for — the explicit form of the security invariant that
  *  used to hide behind a `channel: !trusted` double negation. Every kind here is actually produced:
@@ -27,34 +28,79 @@ export interface CapabilitySpec {
   kind: SessionKind;
   /** Built lazily so the owner's API token is never even minted for sessions that must not have it. */
   orcaTools?: () => ToolDefinition[];
-  /** The operator's PRIVATE long-term memory tools — composed for 'owner-chat' AND 'trusted-channel'
-   *  (so the operator's own linked platform account reaches their memory too). Foreign channels and
-   *  task-workers never compose them. Defense-in-depth: each memory tool ALSO re-checks the acting
-   *  identity at execute time (owner===true && a resolved orcaUserId), so a non-owner sender in a
-   *  trusted channel — even an admin-role stranger — gets a locked no-op even if mis-composed. */
+  /** PRIVATE per-user long-term memory tools — composed for every interactive session (owner-chat + all
+   *  channel kinds), NOT task-workers. Each memory tool re-checks the acting identity at execute time and
+   *  keys on a resolved orcaUserId, so a caller only ever reaches their OWN memory and an unlinked/
+   *  anonymous sender (no orcaUserId) or a task-worker (no identity) gets a locked no-op. */
   memoryTools?: () => ToolDefinition[];
   pluginTools: ToolDefinition[];
-  /** Per-role tool allowlist (tool names; '*' = everything). Undefined = no restriction. */
-  toolFilter?: string[];
+}
+
+/** Wrap a plugin tool so its access is decided at EXECUTE time from the current turn's ToolPolicy.
+ *  This is the single, shared enforcement point: whether a tool is gated by a user's own `disabled_tools`
+ *  (deny) or a platform role's tool allowlist (allow), the decision funnels through one predicate on the
+ *  per-turn identity — mirroring how memory tools re-check identity at call time. A denied tool returns a
+ *  clear locked no-op instead of running, so the model always gets something to reason over. Because a
+ *  channel session is shared across senders, the tool SET is fixed at spawn; this per-turn gate is what
+ *  makes access correct for whoever is actually speaking. */
+function gateToolAccess(tool: ToolDefinition): ToolDefinition {
+  if (typeof tool.execute !== 'function') return tool; // defensive (test stubs) — nothing to gate
+  const run = tool.execute.bind(tool);
+  const execute = ((...args: Parameters<ToolDefinition['execute']>) => {
+    if (!toolPermitted(tool.name, currentToolPolicy())) {
+      return Promise.resolve({ content: [{ type: 'text' as const, text: `The tool "${tool.name}" is not available to you in this conversation.` }], details: {} });
+    }
+    return run(...args);
+  }) as ToolDefinition['execute'];
+  return { ...tool, execute };
 }
 
 /** Compose the tool set for one session. THE security invariant lives here: `trusted-channel`,
  *  `foreign-channel` and `task-worker` sessions NEVER receive the owner's orca_* control-plane tools —
  *  ONLY `owner-chat` does. A shared channel sender (even one holding the admin role) reaching the
- *  owner's full-scope API token would be a privilege escalation. */
+ *  owner's full-scope API token would be a privilege escalation. Plugin tools are always composed but
+ *  wrapped with the per-turn access gate (see gateToolAccess) — the effective allow/deny is decided at
+ *  execute time from the acting identity's ToolPolicy, one shared mechanism for every session kind. */
 export function composeSessionTools(spec: CapabilitySpec): ToolDefinition[] {
   const ownerChat = spec.kind === 'owner-chat';
   const orcaTools = ownerChat ? (spec.orcaTools?.() ?? []) : [];
-  // Memory tools ride owner-chat AND trusted channels: the operator's OWN linked platform account (e.g.
-  // their Discord id) should reach their private memory too, same as their web/CLI chat. The tools
-  // themselves re-check identity at execute time (owner + resolved orcaUserId), so a non-owner sender in
-  // a trusted channel — even an admin-role stranger — still gets a locked no-op. Foreign channels and
-  // task-workers never compose them. The role toolFilter never applies here — it scopes plugin tools.
-  const memoryTools = (ownerChat || spec.kind === 'trusted-channel') ? (spec.memoryTools?.() ?? []) : [];
-  let pluginTools = spec.pluginTools;
-  if (spec.toolFilter && !spec.toolFilter.includes('*')) {
-    const allow = new Set(spec.toolFilter);
-    pluginTools = pluginTools.filter((t) => allow.has(t.name));
-  }
+  // Memory tools ride every INTERACTIVE session (owner-chat + all channel kinds): memory is per-user, so
+  // any linked sender reaches THEIR OWN memory from any surface (web/CLI chat or a Discord channel). The
+  // tools re-check identity at execute time and key on the resolved orcaUserId, so an unlinked/anonymous
+  // sender gets a locked no-op and no one can reach another user's memory. Task-workers (no identity)
+  // never compose them.
+  const memoryTools = spec.kind !== 'task-worker' ? (spec.memoryTools?.() ?? []) : [];
+  const pluginTools = spec.pluginTools.map(gateToolAccess);
   return [...orcaTools, ...memoryTools, ...pluginTools];
+}
+
+/** The names a turn's ToolPolicy is allowed to HIDE from the model, given the full tool set and which of
+ *  them are plugin tools. Mirrors the execute-time gate's scope with one deliberate asymmetry:
+ *   - a role's `allow`-list narrows ONLY plugin tools — built-in `orca_*` / `memory_*` (composed per
+ *     SessionKind) stay visible, so a channel never loses its core abilities to a narrow role grant;
+ *   - a user's own `deny`-list (their `disabled_tools`) may hide ANY tool it names, plugin or not.
+ *  No policy → the full set is visible. */
+export function visibleToolNames(all: string[], pluginNames: Set<string>, tp: ToolPolicy | undefined): string[] {
+  if (!tp) return all;
+  return all.filter((name) => (pluginNames.has(name) ? toolPermitted(name, tp) : !tp.deny?.has(name)));
+}
+
+/** The minimal PI-session surface tool visibility needs — typed structurally so the logic stays unit-testable
+ *  without a real AgentSession. */
+export interface ToolVisibilityTarget {
+  getAllTools(): { name: string }[];
+  getActiveToolNames(): string[];
+  setActiveToolsByName(names: string[]): void;
+}
+
+/** Narrow which tools the model SEES this turn to those the acting sender may use, so a shared channel
+ *  advertises each sender only their own toolset — not just blocks a disallowed call after the fact. PI
+ *  rebuilds the system prompt on a change, so we skip the call when the desired set already matches the
+ *  active one: consecutive same-sender turns keep the prompt cache warm, and it only re-slices when the
+ *  sender (hence their ToolPolicy) actually changes. The execute-time gate stays as defense-in-depth. */
+export function applyToolVisibility(session: ToolVisibilityTarget, pluginNames: Set<string>, tp: ToolPolicy | undefined): void {
+  const desired = visibleToolNames(session.getAllTools().map((t) => t.name), pluginNames, tp);
+  const current = session.getActiveToolNames();
+  if (desired.length === current.length && desired.every((n) => current.includes(n))) return;
+  session.setActiveToolsByName(desired);
 }

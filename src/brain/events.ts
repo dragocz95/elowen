@@ -30,11 +30,40 @@ export type BrainEvent =
    *  event; the elicitor emits it straight into `listeners`. A client renders the questions as
    *  interactive choices and POSTs the answer to `/brain/answer` (Discord resolves it in-process). */
   | { type: 'ask'; id: string; questions: AskQuestion[] }
+  /** A new agent step (one model round-trip / turn) started within the current run. `step` is 1-based;
+   *  `maxSteps` is the configured ceiling (0 = unlimited). Clients render a `Step N / MAX` counter in
+   *  their live status without spawning a new message. Synthetic — counted daemon-side, not a raw PI event. */
+  | { type: 'step'; step: number; maxSteps: number }
   | { type: 'idle'; usage?: BrainUsage; model?: string }
   | { type: 'error'; message: string };
 
+/** Result of a manual/auto context compaction. `compacted` is false when there was nothing to compact
+ *  (session too small / already compacted) — a benign no-op the clients report as a friendly notice
+ *  rather than an error. `usage` is always the fresh post-call context fill. */
+export interface CompactResult { usage: BrainUsage; compacted: boolean; message?: string }
+
+/** PI throws (not a status) when there's nothing to compact — a small/already-compacted session. Treat
+ *  it as a benign no-op instead of a hard error so `/compact` never surfaces an opaque failure. */
+function isNoopCompactError(e: unknown): boolean {
+  const m = e instanceof Error ? e.message : String(e);
+  return /nothing to compact|already compacted|session too small/i.test(m);
+}
+
+/** Run a session compaction and normalize the no-op case into a benign result. `session` needs only the
+ *  compact() call and a usage snapshot — shared by owner chat and channel sessions so both report
+ *  "nothing to compact" identically. */
+export async function runCompaction(session: AgentSession): Promise<CompactResult> {
+  try {
+    await session.compact();
+    return { usage: usageOf(session), compacted: true };
+  } catch (e) {
+    if (isNoopCompactError(e)) return { usage: usageOf(session), compacted: false, message: 'Nothing to compact yet.' };
+    throw e;
+  }
+}
+
 /** One selectable option in an `ask` question. `description` is an optional one-line hint under the label. */
-export interface AskOption { label: string; description?: string }
+interface AskOption { label: string; description?: string }
 /** A single multiple-choice question the agent poses via `ask_user_question`. `header` is a short chip
  *  label (≤12 chars); `multiSelect` allows more than one pick. Every question also implicitly offers a
  *  free-text "Other" escape, surfaced by each client. */

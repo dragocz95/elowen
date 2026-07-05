@@ -84,11 +84,13 @@ export function ModalBody({ children, gap = 5 }: { children: ReactNode; gap?: 4 
   return <div className={`flex min-h-0 flex-1 flex-col overflow-y-auto p-5 ${gapClass}`}>{children}</div>;
 }
 
-/** Pinned action row at the bottom of a modal, divided from the scrollable body. */
-export function ModalFooter({ children }: { children: ReactNode }) {
+/** Pinned action row at the bottom of a modal, divided from the scrollable body. An optional `status`
+ *  node (e.g. the auto-save indicator) sits on the left while actions stay right-aligned. */
+export function ModalFooter({ children, status }: { children?: ReactNode; status?: ReactNode }) {
   return (
-    <div className="flex shrink-0 items-center justify-end gap-2 border-t border-border px-5 py-3">
-      {children}
+    <div className={`flex shrink-0 items-center gap-2 border-t border-border px-5 py-3 ${status ? 'justify-between' : 'justify-end'}`}>
+      {status ? <div className="min-w-0">{status}</div> : null}
+      <div className="flex items-center gap-2">{children}</div>
     </div>
   );
 }

@@ -49,9 +49,13 @@ export function registerAuthGuards(app: OrcaApp, ctx: RouteContext): void {
     return next();
   });
 
-  // Gate the project-scoped surface: a non-admin must be assigned to the daemon's project to
-  // touch its tasks/missions/sessions. Admin passes (canAccess checks is_admin). Without a
-  // userProjects store this is a no-op (single-user mode keeps full access).
+  // Gate the project-scoped surface: a non-admin must be assigned to AT LEAST ONE project to touch
+  // tasks/missions/sessions/activity/events/usage. This is only a coarse "has any access" pre-filter —
+  // every gated route family then scopes to the caller's accessible projects (accessibleProjects /
+  // canAccessProject / the SSE per-subscriber filter), so a user assigned to a non-home project sees
+  // exactly that project's data and nothing else. Keying on the daemon's home project would wrongly
+  // lock out users assigned only to other registered projects. Admin passes; no userProjects store
+  // (single-user mode) is a no-op with full access.
   if (d.userProjects) {
     const up = d.userProjects;
     // Every route family that exposes the daemon's project data — including the activity log and
@@ -68,7 +72,7 @@ export function registerAuthGuards(app: OrcaApp, ctx: RouteContext): void {
       if (sess?.[1] && classifySession(decodeURIComponent(sess[1])).role === 'advisor') return next();
       if (users.count() === 0) return next(); // setup mode — no users to gate yet
       const u = c.get('user');
-      if (u && up.canAccess(u.id, d.project.id)) return next();
+      if (u && (up.isAdmin(u.id) || up.forUser(u.id).length > 0)) return next();
       return c.json({ error: 'forbidden' }, 403);
     });
   }

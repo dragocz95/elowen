@@ -105,9 +105,10 @@ export interface PlatformControlApi {
   status(ref: ChannelRef): { model: string; streaming: boolean; usage: { tokens: number | null; contextWindow: number; percent: number | null } } | null;
   /** Abort the channel's in-flight turn (no-op when idle). */
   abort(ref: ChannelRef): void;
-  /** Compact the channel session's context; resolves to the post-compaction usage (null if no session).
-   *  Rejects if compaction itself fails, so the caller can tell "no session" from a real error. */
-  compact(ref: ChannelRef): Promise<{ tokens: number | null; contextWindow: number; percent: number | null } | null>;
+  /** Compact the channel session's context; resolves to `{ usage, compacted }` (null if no session).
+   *  `compacted:false` is a benign no-op (nothing to compact yet), not an error — only a real compaction
+   *  failure rejects, so the caller can tell "no session" from "nothing to do" from a genuine error. */
+  compact(ref: ChannelRef): Promise<{ usage: { tokens: number | null; contextWindow: number; percent: number | null }; compacted: boolean; message?: string } | null>;
   /** Admin-only daemon restart (attributed to the instance operator); rejects when restart isn't
    *  available on this deployment. The caller is responsible for its own admin gate. */
   restart(): Promise<void>;

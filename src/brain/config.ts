@@ -38,5 +38,5 @@ export function brainConfigFromOrca(config: ConfigStore, authStorage?: AuthStora
     if (!apiKey || !s.autopilot.apiUrl || !s.autopilot.model) return null;
     providers.push({ id: 'relay', label: 'Relay', type: 'openai', baseUrl: s.autopilot.apiUrl, models: [s.autopilot.model], apiKey, origin: 'relay' });
   }
-  return { providers };
+  return { providers, contextWindows: config.get().brain.modelContextWindows };
 }

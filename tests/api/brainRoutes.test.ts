@@ -118,11 +118,10 @@ describe('GET /brain/models allow-list', () => {
     expect(models.map((m) => m.exec)).toEqual(['orca:relay/kimi', 'orca:relay/glm']);
   });
 
-  it('a non-admin only sees models the global + personal allow-lists permit', async () => {
-    const { app, users, config, amy, amyTok } = setupWithProviders();
-    // Nothing globally allowed → nothing visible.
-    expect(await (await app.request('/brain/models', auth(amyTok))).json()).toEqual([]);
-    config.update({ allowedExecs: ['orca:relay/kimi', 'orca:relay/glm'] } as never);
+  it('a non-admin sees every configured brain model (not global-bounded), narrowed only by their personal list', async () => {
+    const { app, users, amy, amyTok } = setupWithProviders();
+    // Brain execs aren't bounded by allowedExecs (CLI-only) — an empty personal list = every configured
+    // brain model. (The bug this guards against: a non-admin getting an EMPTY model picker.)
     let models = await (await app.request('/brain/models', auth(amyTok))).json() as { exec: string }[];
     expect(models.map((m) => m.exec)).toEqual(['orca:relay/kimi', 'orca:relay/glm']);
     // A personal whitelist narrows further.

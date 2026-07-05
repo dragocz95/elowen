@@ -381,7 +381,7 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
           notice = color.dim('compacting…');
           render();
           void client.compact()
-            .then(async (u) => { if (u) usage = u; await refreshMeta(); notice = color.dim('conversation compacted'); render(); })
+            .then(async (r) => { if (r.usage) usage = r.usage; await refreshMeta(); notice = color.dim(r.compacted ? 'conversation compacted' : (r.message ?? 'nothing to compact yet')); render(); })
             .catch((e: Error) => { notice = color.error(`error: ${e.message}`); render(); });
           return;
         }

@@ -140,7 +140,7 @@ describe('terminal plugin background processes', () => {
       await new Promise((r) => setTimeout(r, 300));
       const out = asText(await read.execute('t', { id, all: true }, undefined as never, undefined as never));
       expect(out).toContain('hello-bg');
-    }, OWNER);
+    }, { identity: OWNER });
   });
 
   it('run_command is refused for a non-owner (role-scoped) identity', async () => {
@@ -151,7 +151,7 @@ describe('terminal plugin background processes', () => {
     await runWithPolicy(ADMIN, async () => {
       const out = asText(await run.execute('t', { command: 'echo nope', cwd: '/tmp' }, undefined as never, undefined as never));
       expect(out).toMatch(/only available to the operator/);
-    }, CHANNEL);
+    }, { identity: CHANNEL });
   });
 });
 

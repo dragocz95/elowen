@@ -9,7 +9,7 @@ export type SlashSurface = 'cli' | 'discord' | 'web';
  *  - `action`: a server-side effect with no chooser (new, stop, compact, restart) — POST /brain/command.
  *  - `info`:   fetch + render data (status, help) — no state change.
  *  - `picker`: opens a surface-local chooser (model, think, and the CLI conversation pickers). */
-export type SlashKind = 'action' | 'info' | 'picker';
+type SlashKind = 'action' | 'info' | 'picker';
 
 export interface SlashCommandDef {
   name: string;

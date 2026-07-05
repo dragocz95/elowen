@@ -141,6 +141,12 @@ export class MemoryStore {
     return this.db.prepare(sql).all(...params) as MemoryRow[];
   }
 
+  /** Count a user's active memories (indexed on user_id+status — cheap enough for a page-load stat). */
+  count(userId: number): number {
+    const r = this.db.prepare("SELECT COUNT(*) AS n FROM memories WHERE user_id = ? AND status = 'active'").get(userId) as { n: number };
+    return r.n;
+  }
+
   /** Active memories, most-recently created first. */
   listRecent(userId: number, limit: number): MemoryRow[] {
     return this.db.prepare(

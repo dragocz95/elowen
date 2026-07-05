@@ -41,4 +41,17 @@ describe('brain providers', () => {
     const reg = buildBrainRegistry(empty);
     expect(() => resolveBrainModel(reg, empty)).toThrow(/no brain provider/);
   });
+
+  it('applies a per-model context-window override (keyed providerId/model), else the default', () => {
+    const withWindows: BrainRuntimeConfig = { ...cfg, contextWindows: { 'relay/kimi': 32000 } };
+    const reg = buildBrainRegistry(withWindows);
+    expect(resolveBrainModel(reg, withWindows, { provider: 'relay', model: 'kimi' }).contextWindow).toBe(32000);
+    expect(resolveBrainModel(reg, withWindows, { provider: 'relay', model: 'gpt-x' }).contextWindow).toBe(200000);
+  });
+
+  it('applies the override to an ad-hoc (hand-typed) model registered on the fly', () => {
+    const withWindows: BrainRuntimeConfig = { ...cfg, contextWindows: { 'relay/typed-x': 16000 } };
+    const reg = buildBrainRegistry(withWindows);
+    expect(resolveBrainModel(reg, withWindows, { provider: 'relay', model: 'typed-x' }).contextWindow).toBe(16000);
+  });
 });

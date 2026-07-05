@@ -100,35 +100,38 @@ describe('shared/execs', () => {
   });
 
   describe('isExecAllowedForUser', () => {
-    const globalExecs = ['orca:relay/kimi', 'sonnet'];
+    const globalExecs = ['sonnet']; // the CLI global list; brain (orca:) execs are NOT bounded by it
     it('admin and open mode are unrestricted', () => {
       expect(isExecAllowedForUser({ is_admin: true, allowed_execs: [] }, globalExecs, 'orca:x/y')).toBe(true);
       expect(isExecAllowedForUser(null, globalExecs, 'orca:x/y')).toBe(true);
     });
-    it('non-admin is bounded by the global list', () => {
-      expect(isExecAllowedForUser({ is_admin: false, allowed_execs: [] }, globalExecs, 'orca:x/y')).toBe(false);
-      expect(isExecAllowedForUser({ is_admin: false, allowed_execs: [] }, globalExecs, 'orca:relay/kimi')).toBe(true);
+    it('CLI execs are bounded by the global list', () => {
+      expect(isExecAllowedForUser({ is_admin: false, allowed_execs: [] }, globalExecs, 'opus')).toBe(false); // not global
+      expect(isExecAllowedForUser({ is_admin: false, allowed_execs: [] }, globalExecs, 'sonnet')).toBe(true);
     });
-    it('a non-empty personal list narrows further', () => {
-      expect(isExecAllowedForUser({ is_admin: false, allowed_execs: ['sonnet'] }, globalExecs, 'orca:relay/kimi')).toBe(false);
+    it('brain (orca:) execs skip the global bound — empty personal list = every configured brain model', () => {
+      // The reported bug: without this a non-admin gets an EMPTY brain-model picker.
+      expect(isExecAllowedForUser({ is_admin: false, allowed_execs: [] }, globalExecs, 'orca:any/model')).toBe(true);
+    });
+    it('a non-empty personal list narrows further (CLI and brain alike)', () => {
+      expect(isExecAllowedForUser({ is_admin: false, allowed_execs: ['orca:relay/kimi'] }, globalExecs, 'orca:other/m')).toBe(false);
       expect(isExecAllowedForUser({ is_admin: false, allowed_execs: ['orca:relay/kimi'] }, globalExecs, 'orca:relay/kimi')).toBe(true);
     });
   });
 
   describe('isModelVisibleForUser (picker display filter)', () => {
-    const globalExecs = ['orca:relay/kimi', 'sonnet'];
-    it("an admin's personal list narrows their picker (unlike the enforcement gate)", () => {
-      // Same admin that isExecAllowedForUser would wave through — here the curated list still applies.
+    const globalExecs = ['sonnet']; // CLI global list; brain execs bounded by providers, not this
+    it('a personal list narrows the picker (CLI and brain)', () => {
       expect(isModelVisibleForUser({ allowed_execs: ['sonnet'] }, globalExecs, 'orca:relay/kimi')).toBe(false);
       expect(isModelVisibleForUser({ allowed_execs: ['sonnet'] }, globalExecs, 'sonnet')).toBe(true);
     });
-    it('empty personal list = everything the global list allows', () => {
-      expect(isModelVisibleForUser({ allowed_execs: [] }, globalExecs, 'orca:relay/kimi')).toBe(true);
-      expect(isModelVisibleForUser({ allowed_execs: [] }, globalExecs, 'orca:x/y')).toBe(false); // not global
+    it('empty personal list = every configured brain model + the global CLI list', () => {
+      expect(isModelVisibleForUser({ allowed_execs: [] }, globalExecs, 'orca:relay/kimi')).toBe(true); // brain not global-bounded
+      expect(isModelVisibleForUser({ allowed_execs: [] }, globalExecs, 'opus')).toBe(false); // CLI not in global
     });
-    it('null user = open mode (all global)', () => {
+    it('null user = open mode (all global CLI + all brain)', () => {
       expect(isModelVisibleForUser(null, globalExecs, 'sonnet')).toBe(true);
-      expect(isModelVisibleForUser(undefined, globalExecs, 'orca:x/y')).toBe(false);
+      expect(isModelVisibleForUser(undefined, globalExecs, 'orca:x/y')).toBe(true); // brain always visible in open mode
     });
   });
 });

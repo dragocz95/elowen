@@ -108,4 +108,28 @@ describe('BrainStore', () => {
       expect(store.searchMessages(1, 'needle', 3).map((h) => h.snippet)).toEqual(['needle 4', 'needle 3', 'needle 2']);
     });
   });
+
+  describe('userStats', () => {
+    it('counts a user\'s sessions and picks the model used in the most of them', () => {
+      store.createSession({ id: 'a', userId: 1, model: 'anthropic/opus' });
+      store.createSession({ id: 'b', userId: 1, model: 'anthropic/opus' });
+      store.createSession({ id: 'c', userId: 1, model: 'relay/kimi' });
+      store.createSession({ id: 'd', userId: 2, model: 'other/model' }); // another user — excluded
+      const stats = store.userStats(1);
+      expect(stats.sessionCount).toBe(3);
+      expect(stats.topModel).toBe('anthropic/opus');
+    });
+
+    it('returns a zero count and null top model for a user with no sessions', () => {
+      expect(store.userStats(99)).toEqual({ sessionCount: 0, topModel: null });
+    });
+
+    it('ignores sessions with an empty model when choosing the top model', () => {
+      store.createSession({ id: 'a', userId: 5, model: '' });
+      store.createSession({ id: 'b', userId: 5, model: 'relay/glm' });
+      const stats = store.userStats(5);
+      expect(stats.sessionCount).toBe(2); // both counted
+      expect(stats.topModel).toBe('relay/glm'); // but the blank-model one isn't the "top"
+    });
+  });
 });

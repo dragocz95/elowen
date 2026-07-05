@@ -27,12 +27,24 @@ function fakeDeps() {
     setModel: vi.fn(), dispose: vi.fn(), abort: vi.fn(async () => {}), messages, isStreaming: false,
     steer: vi.fn(async () => {}),
     getContextUsage: () => undefined, compact: vi.fn(async () => {}),
+    // Tool-visibility surface (applyToolVisibility): getAllTools mirrors the composed customTools (wired
+    // by createSession below), active starts as the full set, and setActiveToolsByName is a spy so tests
+    // can assert the per-turn slice.
+    __tools: [] as { name: string }[],
+    __active: [] as string[],
+    getAllTools(this: { __tools: { name: string }[] }) { return this.__tools; },
+    getActiveToolNames(this: { __active: string[] }) { return this.__active; },
+    setActiveToolsByName: vi.fn(function (this: { __active: string[] }, names: string[]) { this.__active = names; }),
     thinkingLevel: '' as string,
     supportsThinking: () => true,
     getAvailableThinkingLevels: () => ['minimal', 'low', 'medium', 'high', 'xhigh'],
     setThinkingLevel: vi.fn(function (this: { thinkingLevel: string }, l: string) { session.thinkingLevel = l; }),
   };
-  const createSession = vi.fn(async () => ({ session }));
+  const createSession = vi.fn(async (opts: { customTools?: { name: string }[] }) => {
+    session.__tools = opts.customTools ?? [];
+    session.__active = session.__tools.map((t) => t.name); // PI starts every tool active
+    return { session };
+  });
   return {
     /** Push a raw PI session event through everything subscribed via spawnLive (tests event mapping). */
     emit: (e: unknown) => listeners.forEach((l) => l(e)),
@@ -205,6 +217,35 @@ describe('BrainService', () => {
     await expect(svc.abort(1)).rejects.toThrow(/brain not started/);
     await svc.start(1);
     await svc.abort(1);
+    expect(d.session.abort).toHaveBeenCalledTimes(1);
+  });
+
+  it('compact returns { compacted:true } normally and a benign no-op when there is nothing to compact', async () => {
+    const d = fakeDeps();
+    const svc = new BrainService(d as never);
+    await expect(svc.compact(1)).rejects.toThrow(/brain not started/);
+    await svc.start(1);
+    const ok = await svc.compact(1);
+    expect(ok.compacted).toBe(true);
+    expect(d.session.compact).toHaveBeenCalledTimes(1);
+    // A too-small session throws inside PI — the service maps it to compacted:false, not an error.
+    d.session.compact.mockImplementationOnce(async () => { throw new Error('Nothing to compact (session too small)'); });
+    const noop = await svc.compact(1);
+    expect(noop.compacted).toBe(false);
+  });
+
+  it('enforces maxSteps: counts turn_start events and aborts the run past the ceiling', async () => {
+    const d = fakeDeps();
+    const svc = new BrainService({ ...d, maxSteps: () => 2 } as never);
+    const steps: number[] = [];
+    await svc.start(1);
+    svc.subscribe(1, (e) => { if ((e as { type: string }).type === 'step') steps.push((e as { step: number }).step); });
+    d.emit({ type: 'agent_start' });
+    d.emit({ type: 'turn_start' }); // step 1
+    d.emit({ type: 'turn_start' }); // step 2 (== max)
+    expect(d.session.abort).not.toHaveBeenCalled();
+    d.emit({ type: 'turn_start' }); // step 3 (> max) → abort
+    expect(steps).toEqual([1, 2]);
     expect(d.session.abort).toHaveBeenCalledTimes(1);
   });
 
@@ -699,8 +740,8 @@ describe('BrainService plugin context-hook enrichment', () => {
   });
 });
 
-describe('channel tool filtering (per-role allowlist)', () => {
-  it('a channel session with access.tools only gets those plugin tools', async () => {
+describe('channel tool composition + per-turn gate', () => {
+  it('composes ALL plugin tools (shared channel session); the role allowlist is enforced at execute time', async () => {
     const d = fakeDeps();
     const reg = new PluginRegistry();
     const ctx = reg.contextFor('demo', {}, { info() {}, warn() {}, error() {} });
@@ -709,11 +750,18 @@ describe('channel tool filtering (per-role allowlist)', () => {
     ctx.registerTool(mk('demo_danger'));
     (d as unknown as { plugins: unknown }).plugins = new PluginRegistryProvider(async () => reg);
     const svc = new BrainService(d as never);
-    await svc.channelSend({ channelId: 'discord-1', ownerUserId: 1, policy: { allowedProjectIds: new Set([1]), allowedPaths: () => [] }, tools: ['demo_echo'] }, 'hi');
+    // The orchestrator hands the sender's effective access as a per-turn ToolPolicy (here a role
+    // allowlist). The channel session is shared across senders, so BOTH tools are composed/advertised;
+    // the gate (unit-tested in identity.test) denies the non-allowed one at execute time per turn.
+    await svc.channelSend({ channelId: 'discord-1', ownerUserId: 1, policy: { allowedProjectIds: new Set([1]), allowedPaths: () => [] }, toolPolicy: { allow: new Set(['demo_echo']) } }, 'hi');
     const opts = (d.createSession as unknown as { mock: { calls: [{ customTools: { name: string }[] }][] } }).mock.calls[0][0];
     const names = opts.customTools.map((t) => t.name);
     expect(names).toContain('demo_echo');
-    expect(names).not.toContain('demo_danger');
+    expect(names).toContain('demo_danger'); // advertised — access decided per turn, not at compose
     expect(reg.toolOwner.get('demo_echo')).toBe('demo');
+    // ...and the per-turn slice hid the non-allowed plugin tool from the MODEL (not just the executor):
+    // applyToolVisibility narrowed the active set to the role's allow-list before prompting.
+    expect(d.session.setActiveToolsByName).toHaveBeenCalledWith(['demo_echo']);
+    expect(d.session.getActiveToolNames()).toEqual(['demo_echo']);
   });
 });

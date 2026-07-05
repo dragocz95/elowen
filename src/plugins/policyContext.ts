@@ -32,18 +32,35 @@ export interface TurnIdentity {
   owner: boolean;
 }
 
-interface TurnScope { policy: Policy; identity?: TurnIdentity; elicit?: Elicitor; emitCard?: CardEmitter }
+/** Per-turn tool access — the SINGLE abstraction both sources (a user's Orca account and a platform
+ *  role policy) resolve into, so tool gating has one shape everywhere. `allow` (when set) is an
+ *  allow-list: only those plugin tools are permitted (a role's tool allowlist for an unlinked sender).
+ *  `deny` is a deny-list: those plugin tools are withheld (a user's own `disabled_tools`). Both may be
+ *  set; deny is applied after allow. Undefined ToolPolicy = no restriction (every plugin tool). */
+export interface ToolPolicy { allow?: Set<string>; deny?: Set<string> }
+
+/** Whether a plugin tool name is permitted under a ToolPolicy (undefined policy → always permitted). */
+export function toolPermitted(name: string, tp: ToolPolicy | undefined): boolean {
+  if (!tp) return true;
+  if (tp.allow && !tp.allow.has(name)) return false;
+  if (tp.deny && tp.deny.has(name)) return false;
+  return true;
+}
+
+interface TurnScope { policy: Policy; identity?: TurnIdentity; elicit?: Elicitor; emitCard?: CardEmitter; toolPolicy?: ToolPolicy }
 
 /** pi tools have no per-call session context, so a plugin tool can't be told which user's policy applies
- *  through its arguments. We carry the resolved Policy (+ the sender's identity) on an AsyncLocalStorage
- *  (the Node equivalent of Hermes' security contextvar): BrainService runs each prompt inside
- *  `runWithPolicy`, and a plugin tool reads `currentPolicy()`/`currentIdentity()` at execution time. */
+ *  through its arguments. We carry the resolved Policy (+ the sender's identity + their effective tool
+ *  access) on an AsyncLocalStorage (the Node equivalent of Hermes' security contextvar): BrainService
+ *  runs each prompt inside `runWithPolicy`, and a plugin tool reads `currentPolicy()`/`currentIdentity()`/
+ *  `currentToolPolicy()` at execution time. */
 const store = new AsyncLocalStorage<TurnScope>();
 
-/** Run `fn` (a brain prompt turn) with `policy` (and optionally the sender's identity + a turn-bound
- *  elicitor for `ctx.askUser`) established for any plugin tool it invokes. */
-export function runWithPolicy<T>(policy: Policy, fn: () => T, identity?: TurnIdentity, elicit?: Elicitor, emitCard?: CardEmitter): T {
-  return store.run({ policy, identity, elicit, emitCard }, fn);
+/** Run `fn` (a brain prompt turn) with `policy` established for any plugin tool it invokes. `opts`
+ *  carries the sender's identity, a turn-bound elicitor/card-emitter, and the effective tool policy —
+ *  all read at tool-execute time via the `current*()` accessors. */
+export function runWithPolicy<T>(policy: Policy, fn: () => T, opts?: { identity?: TurnIdentity; elicit?: Elicitor; emitCard?: CardEmitter; toolPolicy?: ToolPolicy }): T {
+  return store.run({ policy, identity: opts?.identity, elicit: opts?.elicit, emitCard: opts?.emitCard, toolPolicy: opts?.toolPolicy }, fn);
 }
 
 /** The Policy in effect for the current prompt turn, or undefined outside a `runWithPolicy` scope. */
@@ -54,6 +71,12 @@ export function currentPolicy(): Policy | undefined {
 /** The sender identity of the current prompt turn, or null when none was established. */
 export function currentIdentity(): TurnIdentity | null {
   return store.getStore()?.identity ?? null;
+}
+
+/** The effective tool policy for the current turn (used by the plugin-tool execute-time gate), or
+ *  undefined when none was established (→ every plugin tool permitted). */
+export function currentToolPolicy(): ToolPolicy | undefined {
+  return store.getStore()?.toolPolicy;
 }
 
 /** The turn-bound elicitor for `ctx.askUser`, or null outside a prompt turn (or when the transport

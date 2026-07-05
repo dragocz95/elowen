@@ -1,7 +1,7 @@
 'use client';
 import { useState, useEffect } from 'react';
 import { useAutoSave } from '../../lib/useAutoSave';
-import { Eye, SlidersHorizontal } from 'lucide-react';
+import { Eye, Gauge, SlidersHorizontal } from 'lucide-react';
 import { ExecutorPicker } from '../../components/ui/ExecutorPicker';
 import { SettingCard } from '../../components/ui/SettingCard';
 import { Toggle } from '../../components/ui/Toggle';
@@ -11,10 +11,13 @@ import { useToast } from '../../components/ui/Toast';
 import { useTranslation } from '../../lib/i18n';
 import { useMyCliSettings, useBrainModels } from '../../lib/queries';
 import { useSaveMyCliSettings } from '../../lib/mutations';
+import { Pill } from './pills';
+
+const THINKING_LEVELS = ['', 'minimal', 'low', 'medium', 'high', 'xhigh'];
 
 /** Account → Orca AI: per-user runtime settings for the embedded brain (web chat + `orca chat`).
- *  Vision fallback + auto-compact. Behavior/personality knobs live in the Personality section, the
- *  primary chat model in Profile — this section owns runtime only. Its own load/save + autosave. */
+ *  Thinking level + vision fallback + auto-compact; the default model pickers render beside this
+ *  section in AccountView. Communication style lives in Personality. Its own load/save + autosave. */
 export function CliSection() {
   const { data, isLoading } = useMyCliSettings();
   const models = useBrainModels();
@@ -24,6 +27,7 @@ export function CliSection() {
 
   // The picker value pairs provider + model; '' = the server default. '::' never appears in ids.
   const [visionSelection, setVisionSelection] = useState('');
+  const [thinkingLevel, setThinkingLevel] = useState('');
   const [autoCompact, setAutoCompact] = useState(false);
   const [autoCompactAt, setAutoCompactAt] = useState(80);
 
@@ -31,6 +35,7 @@ export function CliSection() {
   useEffect(() => {
     if (data) {
       setVisionSelection(data.visionModel ? `${data.visionModelProvider ?? ''}::${data.visionModel}` : '');
+      setThinkingLevel(data.thinkingLevel ?? '');
       setAutoCompact(data.autoCompact);
       setAutoCompactAt(data.autoCompactAt);
       setSeeded(true);
@@ -38,18 +43,18 @@ export function CliSection() {
   }, [data]);
 
   // Auto-persist shortly after any change. Sends only the fields this section owns — the PATCH merges,
-  // so the Personality/Profile picks stay untouched.
+  // so the Personality/default-model picks stay untouched.
   const persist = () => {
     const [vProvider, ...vRest] = visionSelection.split('::');
     save.mutate(
       {
         visionModel: visionSelection ? vRest.join('::') : '', visionModelProvider: visionSelection ? (vProvider ?? '') : '',
-        autoCompact, autoCompactAt,
+        thinkingLevel, autoCompact, autoCompactAt,
       },
       { onError: () => toast(t.cli.saveError, 'error') },
     );
   };
-  useAutoSave([visionSelection, autoCompact, autoCompactAt], persist, { ready: seeded });
+  useAutoSave([visionSelection, thinkingLevel, autoCompact, autoCompactAt], persist, { ready: seeded });
 
   if (isLoading || !data) return <LoadingState />;
 
@@ -59,6 +64,16 @@ export function CliSection() {
 
   return (
     <div className="flex flex-col gap-4">
+      <SettingCard title={t.cli.thinkingLabel} icon={Gauge} description={t.help.cliThinking}>
+        <div className="flex flex-wrap gap-1.5">
+          {THINKING_LEVELS.map((lv) => (
+            <Pill key={lv || 'default'} on={thinkingLevel === lv} onClick={() => setThinkingLevel(lv)}>
+              {lv === '' ? t.cli.thinkingDefault : lv}
+            </Pill>
+          ))}
+        </div>
+      </SettingCard>
+
       <SettingCard title={t.cli.visionModelLabel} icon={Eye} description={t.help.cliVisionModel}>
         <ExecutorPicker
           value={selectedVisionExec}

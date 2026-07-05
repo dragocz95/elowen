@@ -57,6 +57,20 @@ export function extractImageRefs(text) {
   return { cleaned, files };
 }
 
+/** Strip inline chain-of-thought (`<think>…</think>` / `<thinking>…</thinking>`) that some vision-fallback
+ *  models emit into the text stream instead of a separate reasoning channel. Mirrors the daemon's
+ *  `stripInlineReasoning` so the Discord fallback path (`this.text`, used when the daemon reply is empty)
+ *  never leaks reasoning into the visible answer. */
+export function stripThinking(text) {
+  if (!/<\/?think(?:ing)?\b/i.test(text)) return text;
+  let out = text
+    .replace(/<think(?:ing)?\b[^>]*>[\s\S]*?<\/think(?:ing)?>/gi, '')
+    .replace(/<think(?:ing)?\b[^>]*>[\s\S]*$/i, '');
+  const lead = /^[\s\S]*?<\/think(?:ing)?>/i.exec(out);
+  if (lead) out = out.slice(lead[0].length);
+  return out.trim();
+}
+
 /** Post a final text to a channel. Generated-image links become real Discord file uploads (their
  *  relative daemon URLs are dead text on Discord): the links are stripped and the files ride the
  *  FIRST chunk of the (possibly split) message. Text without image links — or an adapter without
@@ -203,6 +217,7 @@ const MESSAGES = {
     noSession: '💤 No active conversation in this channel yet.',
     status: (model, pct, tokens) => `🧠 **${model}**\n📊 Context ${pct}% · ${tokens} tokens`,
     compacted: (pct) => `🗜️ Context compacted — now at ${pct}%.`,
+    nothingToCompact: '✅ Nothing to compact yet — the context is still small.',
     compactFailed: '⚠️ Compaction failed — check the logs.',
     restarting: '🔄 Restarting the Orca daemon…',
     restartForbidden: '🔒 Only an admin can restart the daemon.',
@@ -239,6 +254,7 @@ const MESSAGES = {
     noSession: '💤 V tomto kanálu zatím není žádná aktivní konverzace.',
     status: (model, pct, tokens) => `🧠 **${model}**\n📊 Kontext ${pct}% · ${tokens} tokenů`,
     compacted: (pct) => `🗜️ Kontext sesumarizován — nyní na ${pct}%.`,
+    nothingToCompact: '✅ Zatím není co sumarizovat — kontext je ještě malý.',
     compactFailed: '⚠️ Sumarizace selhala — zkontroluj logy.',
     restarting: '🔄 Restartuji Orca daemon…',
     restartForbidden: '🔒 Restartovat daemon může jen admin.',
@@ -667,11 +683,13 @@ class DiscordAdapter {
           return this.respond(i, 4, { content: this.msg.status(st.model, st.usage.percent ?? 0, st.usage.tokens ?? 0), flags: 64 });
         }
         // /compact runs an LLM summary → defer (type 5), then edit the deferred reply with the result.
-        // Distinguish "no session" (null) from a real compaction failure (throw) so the copy isn't misleading.
+        // Three outcomes: no session (null), a benign no-op (compacted:false → nothing to compact yet),
+        // or a real compaction failure (throw).
         await this.respond(i, 5, { flags: 64 });
         try {
-          const usage = await this.ctl.compact(ref);
-          return this.editOriginal(i, { content: usage ? this.msg.compacted(usage.percent ?? 0) : this.msg.noSession });
+          const res = await this.ctl.compact(ref);
+          if (!res) return this.editOriginal(i, { content: this.msg.noSession });
+          return this.editOriginal(i, { content: res.compacted ? this.msg.compacted(res.usage.percent ?? 0) : this.msg.nothingToCompact });
         } catch {
           return this.editOriginal(i, { content: this.msg.compactFailed });
         }
@@ -998,18 +1016,28 @@ export class LiveMessage {
     this.idle = null;     // the turn's settle event (model + context usage) → runtime footer
     this.reasoning = '';  // reasoning stream, only rendered when cfg.showReasoning (off by default)
     this.cards = new Map(); // latest display cards (ctx.emitCard) by id — the todo checklist is the canonical one
+    this.step = 0;        // current agent step (model round-trip) in this run
+    this.maxSteps = 0;    // configured ceiling (0 = unlimited / not surfaced)
   }
-  /** Re-render the progress bubble = tool lines + (opt-in) a reasoning tail + the live display cards. */
+  /** Re-render the progress bubble in ONE edited message: an optional `Step N / MAX` counter, the tool
+   *  trace, an opt-in reasoning tail, then each live display card (todo checklist) as its OWN block set
+   *  apart by a thin subtext divider — so the plan never reads as just another tool line. */
   renderProgress() {
-    const lines = this.toolCalls.map(toolLine);
+    const toolLines = [];
+    if (this.maxSteps > 0) toolLines.push(`-# ⚙️ Step ${Math.min(this.step, this.maxSteps)} / ${this.maxSteps}`);
+    toolLines.push(...this.toolCalls.map(toolLine));
     if (this.a.cfg?.showReasoning && this.reasoning.trim()) {
       const tail = this.reasoning.trim().slice(-280).replace(/\s+/g, ' ');
-      lines.push(`💭 _${tail}_`);
+      toolLines.push(`💭 _${tail}_`);
     }
-    const body = [...lines, ...[...this.cards.values()].flatMap((c) => cardLines(c))];
-    if (!body.length) return;
+    // Each card becomes its own section; a subtext divider separates the tool trace from the checklist(s).
+    const cards = [...this.cards.values()].map((c) => cardLines(c).join('\n')).filter(Boolean);
+    const sections = [];
+    if (toolLines.length) sections.push(toolLines.join('\n'));
+    sections.push(...cards);
+    if (!sections.length) return;
     this.progress ??= new EditableMessage(this.a, this.channelId);
-    this.progress.update(body.join('\n'));
+    this.progress.update(sections.join('\n-# ┈┈┈┈┈┈┈┈┈┈\n'));
   }
   onEvent(e) {
     if (e.type === 'tool' && e.name) {
@@ -1035,6 +1063,10 @@ export class LiveMessage {
       const empty = (!e.card.items || e.card.items.length === 0) && !e.card.body;
       if (empty) this.cards.delete(e.card.id); else this.cards.set(e.card.id, e.card);
       this.renderProgress();
+    } else if (e.type === 'step' && e.maxSteps) {
+      // A new agent step — update the live counter in the SAME progress bubble (no new message).
+      this.step = e.step; this.maxSteps = e.maxSteps;
+      this.renderProgress();
     } else if (e.type === 'ask' && Array.isArray(e.questions)) {
       // The turn parked on ask_user_question — post the interactive choice message (fire-and-forget; the
       // turn stays blocked in the tool until the user answers via a component/text interaction).
@@ -1055,18 +1087,33 @@ export class LiveMessage {
     // refs. That's the mid-run-injection case — the message was steered into another turn that streams its
     // own bubble — so don't post a "(no response)" placeholder here.
     if (!reply && !this.text && !this.progress && !this.imageRefs.length) return;
-    let full = reply || this.text || '(no response)';
-    // Models often forget to repeat the generated-image markdown in their final text — append any
-    // tool-produced refs that are missing so the files always reach the channel.
-    for (const ref of this.imageRefs) {
-      if (!full.includes(ref.slice(ref.lastIndexOf('/') + 1))) full += `\n![image](${ref})`;
+    // strip any leaked <think> reasoning (vision-fallback models) before it ever reaches the channel.
+    const full = stripThinking(reply || this.text || '(no response)');
+    // Generated images this turn produced: links the model repeated in its text PLUS tool-produced refs
+    // it forgot to repeat. They go into their OWN message posted BEFORE the final text, so the artifact
+    // reads as a standalone attachment ABOVE the agent's status/footer line — not a file pinned under the
+    // usage stats. Discord orders messages by send time, so posting the image first puts it on top.
+    const { cleaned, files } = extractImageRefs(full);
+    const names = new Set(files);
+    for (const ref of this.imageRefs) names.add(ref.slice(ref.lastIndexOf('/') + 1));
+    let posted = false;
+    if (names.size && typeof this.a.resolveImageFiles === 'function' && typeof this.a.uploadImages === 'function') {
+      const data = this.a.resolveImageFiles([...names]);
+      if (data.length) { await this.a.uploadImages(this.channelId, '', data, 0, {}).catch(() => {}); posted = true; }
     }
-    // Hermes-style runtime footer (model · context %) under the very last message, opt-out via config.
-    if (this.a.cfg?.runtimeFooter !== false) {
-      const footer = footerLine(this.idle);
-      if (footer) full += `\n\n${footer}`;
+    // Hermes-style runtime footer (model · context %) rides the text message only, opt-out via config.
+    const footer = this.a.cfg?.runtimeFooter !== false ? footerLine(this.idle) : '';
+    if (posted) {
+      // The images are their own message now — the text reply carries no image markdown. Skip an empty
+      // text bubble for an image-only reply (the image message already stands alone as the answer).
+      const body = cleaned.trim() ? (footer ? `${cleaned}\n\n${footer}` : cleaned) : '';
+      if (body) await postWithImages(this.a, this.channelId, body, this.replyToId).catch(() => {});
+    } else {
+      // No resolvable images (or a bare test fake) — post the full text (postWithImages still handles any
+      // image markdown itself), footer appended, exactly as before.
+      const body = footer ? `${full}\n\n${footer}` : full;
+      await postWithImages(this.a, this.channelId, body, this.replyToId).catch(() => {});
     }
-    await postWithImages(this.a, this.channelId, full, this.replyToId).catch(() => {});
   }
 }
 

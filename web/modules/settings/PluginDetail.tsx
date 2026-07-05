@@ -220,7 +220,7 @@ function McpServersEditor({ value, onChange }: { value: McpServerSpec[]; onChang
   const patch = (i: number, p: Partial<McpServerSpec>) => onChange(value.map((s, j) => (j === i ? { ...s, ...p } : s)));
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
   const toggleRow = (i: number) => setExpanded((prev) => { const n = new Set(prev); if (n.has(i)) n.delete(i); else n.add(i); return n; });
-  const addServer = () => { setExpanded((prev) => new Set(prev).add(value.length)); onChange([...value, { name: '', command: '', args: [], env: {}, enabled: true }]); };
+  const addServer = () => { setExpanded((prev) => new Set(prev).add(value.length)); onChange([...value, { name: '', command: '', args: [], env: {}, enabled: true, transport: 'stdio' }]); };
   const removeServer = (i: number) => {
     onChange(value.filter((_, j) => j !== i));
     setExpanded((prev) => { const n = new Set<number>(); for (const idx of prev) { if (idx < i) n.add(idx); else if (idx > i) n.add(idx - 1); } return n; });
@@ -266,25 +266,42 @@ function McpServersEditor({ value, onChange }: { value: McpServerSpec[]; onChang
                     <Field label={t.pluginCfg.mcpName}>
                       <Input value={s.name} onChange={(e) => patch(i, { name: e.target.value })} placeholder="chrome-devtools" />
                     </Field>
-                    <Field label={t.pluginCfg.mcpCommand}>
-                      <Input value={s.command} onChange={(e) => patch(i, { command: e.target.value })} placeholder="npx" className="font-mono" />
+                    <Field label={t.pluginCfg.mcpTransport}>
+                      <Segmented
+                        aria-label={t.pluginCfg.mcpTransport}
+                        size="sm"
+                        options={[{ value: 'stdio', label: 'stdio' }, { value: 'http', label: 'HTTP' }, { value: 'sse', label: 'SSE' }]}
+                        value={s.transport ?? 'stdio'}
+                        onChange={(v) => patch(i, { transport: v as McpServerSpec['transport'] })}
+                      />
                     </Field>
                   </div>
                 </div>
-                <Field label={t.pluginCfg.mcpArgs} hint={t.pluginCfg.mcpArgsHint}>
-                  <textarea
-                    value={s.args.join('\n')}
-                    onChange={(e) => patch(i, { args: e.target.value.split('\n').map((a) => a.trim()).filter(Boolean) })}
-                    rows={3} className={textareaClass} placeholder={'-y\nchrome-devtools-mcp@latest\n--browserUrl\nhttp://127.0.0.1:9222'}
-                  />
-                </Field>
-                <Field label={t.pluginCfg.mcpEnv} hint={t.pluginCfg.mcpEnvHint}>
-                  <textarea
-                    value={envToText(s.env)}
-                    onChange={(e) => patch(i, { env: textToEnv(e.target.value) })}
-                    rows={2} className={textareaClass} placeholder={'KEY=value'}
-                  />
-                </Field>
+                {(s.transport ?? 'stdio') === 'stdio' ? (
+                  <>
+                    <Field label={t.pluginCfg.mcpCommand}>
+                      <Input value={s.command} onChange={(e) => patch(i, { command: e.target.value })} placeholder="npx" className="font-mono" />
+                    </Field>
+                    <Field label={t.pluginCfg.mcpArgs} hint={t.pluginCfg.mcpArgsHint}>
+                      <textarea
+                        value={s.args.join('\n')}
+                        onChange={(e) => patch(i, { args: e.target.value.split('\n').map((a) => a.trim()).filter(Boolean) })}
+                        rows={3} className={textareaClass} placeholder={'-y\nchrome-devtools-mcp@latest\n--browserUrl\nhttp://127.0.0.1:9222'}
+                      />
+                    </Field>
+                    <Field label={t.pluginCfg.mcpEnv} hint={t.pluginCfg.mcpEnvHint}>
+                      <textarea
+                        value={envToText(s.env)}
+                        onChange={(e) => patch(i, { env: textToEnv(e.target.value) })}
+                        rows={2} className={textareaClass} placeholder={'KEY=value'}
+                      />
+                    </Field>
+                  </>
+                ) : (
+                  <Field label={t.pluginCfg.mcpUrl} hint={t.pluginCfg.mcpUrlHint}>
+                    <Input value={s.url ?? ''} onChange={(e) => patch(i, { url: e.target.value })} placeholder="https://mcp.example.com/mcp" className="font-mono" />
+                  </Field>
+                )}
               </div>
             ) : null}
           </div>

@@ -117,8 +117,8 @@ export function AccountView() {
   // Autosave the Discord link (cli-settings PATCH merges, so the model picks stay untouched).
   useAutoSave([discordUserId], () => saveCli.mutate({ discordUserId }), { ready: orcaSeeded });
 
-  // Picking an Orca AI model writes ONLY model+modelProvider (the cli-settings PATCH merges, so the
-  // CLI tab's other fields are untouched) and the daemon restarts a running brain on the new model.
+  // Picking an Orca AI model writes ONLY model+modelProvider (the cli-settings PATCH merges, so
+  // CliSection's other fields are untouched) and the daemon restarts a running brain on the new model.
   const pickOrca = (provider: string, model: string) => {
     const key = `${provider}::${model}`;
     const prev = orcaSel;
@@ -229,51 +229,15 @@ export function AccountView() {
         value={section}
         onChange={(v) => setSection(v as typeof section)}
       >
-      {section === 'cli' ? <CliSection /> : section === 'memory' ? <AccountMemorySection /> : section === 'prompts' ? <PromptsSection /> : section === 'personality' ? <PersonalitySection /> : null}
+      {section === 'memory' ? <AccountMemorySection /> : section === 'prompts' ? <PromptsSection /> : section === 'personality' ? <PersonalitySection /> : null}
 
-      {section === 'profile' ? (
+      {/* Orca AI — every per-user AI knob in one place: the default models (right rail) plus the
+          runtime settings (thinking level, vision fallback, auto-compact) from CliSection. */}
+      {section === 'cli' ? (
       <div className="@container">
       <div className="flex flex-col gap-6 @3xl:flex-row @3xl:items-start">
       <div className="flex min-w-0 flex-1 flex-col gap-6">
-        {/* Identity hero — avatar, display name, admin badge, avatar upload. */}
-        <div className="flex items-center gap-4 rounded-xl border border-border bg-surface p-5" style={{ boxShadow: 'var(--shadow-card)' }}>
-          <Avatar user={u} size={72} />
-          <div className="flex min-w-0 flex-1 flex-col gap-1">
-            <span className="flex items-center gap-2">
-              <span className="truncate text-lg font-semibold text-text">{u.name || u.username}</span>
-              {u.is_admin ? <Badge tone="accent"><ShieldCheck size={11} className="mr-1" aria-hidden />{t.users.admin}</Badge> : null}
-            </span>
-            <span className="truncate font-mono text-xs text-text-muted">@{u.username}</span>
-          </div>
-          <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/webp,image/gif" className="hidden" onChange={onFile} />
-          <Button variant="ghost" icon={Upload} onClick={() => fileRef.current?.click()} disabled={uploadAvatar.isPending}>{t.account.uploadAvatar}</Button>
-        </div>
-
-        <div className="@container">
-        <div className="grid grid-cols-1 gap-4 @sm:grid-cols-2">
-          <SettingCard title={t.account.name} icon={UserIcon}>
-            <Input value={name} onChange={(e) => setName(e.target.value)} />
-          </SettingCard>
-          <SettingCard title={t.account.email} icon={Mail}>
-            <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
-          </SettingCard>
-        </div>
-        </div>
-
-        {/* Whole-app zoom — a per-device display preference, applied live via the UiScaleProvider. */}
-        <SettingCard title={t.account.uiScale} icon={ZoomIn} description={t.help.accountUiScale}>
-          <div className="flex items-center gap-4">
-            <Slider value={scalePct} min={MIN_SCALE * 100} max={MAX_SCALE * 100} step={5} onChange={(v) => setScale(v / 100)} aria-label={t.account.uiScale} />
-            <span className="w-12 shrink-0 text-right font-mono text-sm tabular-nums text-text">{scalePct}%</span>
-            <Button variant="ghost" onClick={() => setScale(DEFAULT_SCALE)} disabled={scalePct === DEFAULT_SCALE * 100}>{t.account.uiScaleReset}</Button>
-          </div>
-        </SettingCard>
-
-        {/* Discord account link — maps your Discord user to this Orca account (owner persona on Discord). */}
-        <SettingCard title={t.account.discordId} icon={AtSign} description={t.help.accountDiscordId}>
-          <Input value={discordUserId} onChange={(e) => setDiscordUserId(e.target.value)} placeholder="123456789012345678" className="max-w-xs font-mono" aria-label={t.account.discordId} />
-        </SettingCard>
-
+        <CliSection />
       </div>
 
       {/* Right rail: the models you may run — the default worker and the default Orca AI chat model,
@@ -334,6 +298,49 @@ export function AccountView() {
         ) : null}
       </div>
       </div>
+      </div>
+      ) : null}
+
+      {section === 'profile' ? (
+      <div className="flex min-w-0 flex-col gap-6">
+        {/* Identity hero — avatar, display name, admin badge, avatar upload. */}
+        <div className="flex items-center gap-4 rounded-xl border border-border bg-surface p-5" style={{ boxShadow: 'var(--shadow-card)' }}>
+          <Avatar user={u} size={72} />
+          <div className="flex min-w-0 flex-1 flex-col gap-1">
+            <span className="flex items-center gap-2">
+              <span className="truncate text-lg font-semibold text-text">{u.name || u.username}</span>
+              {u.is_admin ? <Badge tone="accent"><ShieldCheck size={11} className="mr-1" aria-hidden />{t.users.admin}</Badge> : null}
+            </span>
+            <span className="truncate font-mono text-xs text-text-muted">@{u.username}</span>
+          </div>
+          <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/webp,image/gif" className="hidden" onChange={onFile} />
+          <Button variant="ghost" icon={Upload} onClick={() => fileRef.current?.click()} disabled={uploadAvatar.isPending}>{t.account.uploadAvatar}</Button>
+        </div>
+
+        <div className="@container">
+        <div className="grid grid-cols-1 gap-4 @sm:grid-cols-2">
+          <SettingCard title={t.account.name} icon={UserIcon}>
+            <Input value={name} onChange={(e) => setName(e.target.value)} />
+          </SettingCard>
+          <SettingCard title={t.account.email} icon={Mail}>
+            <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
+          </SettingCard>
+        </div>
+        </div>
+
+        {/* Whole-app zoom — a per-device display preference, applied live via the UiScaleProvider. */}
+        <SettingCard title={t.account.uiScale} icon={ZoomIn} description={t.help.accountUiScale}>
+          <div className="flex items-center gap-4">
+            <Slider value={scalePct} min={MIN_SCALE * 100} max={MAX_SCALE * 100} step={5} onChange={(v) => setScale(v / 100)} aria-label={t.account.uiScale} />
+            <span className="w-12 shrink-0 text-right font-mono text-sm tabular-nums text-text">{scalePct}%</span>
+            <Button variant="ghost" onClick={() => setScale(DEFAULT_SCALE)} disabled={scalePct === DEFAULT_SCALE * 100}>{t.account.uiScaleReset}</Button>
+          </div>
+        </SettingCard>
+
+        {/* Discord account link — maps your Discord user to this Orca account (owner persona on Discord). */}
+        <SettingCard title={t.account.discordId} icon={AtSign} description={t.help.accountDiscordId}>
+          <Input value={discordUserId} onChange={(e) => setDiscordUserId(e.target.value)} placeholder="123456789012345678" className="max-w-xs font-mono" aria-label={t.account.discordId} />
+        </SettingCard>
       </div>
       ) : null}
 

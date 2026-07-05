@@ -54,7 +54,7 @@ describe('opencodeUsage', () => {
   it('reads the aggregated tokens + cost for the session opened in the dir after the spawn time', () => {
     writeOcDb([{ id: 'ses_a', created: SINCE + 1000, model: OC_MODEL, in: 150, out: 30, reasoning: 5, cacheRead: 40, cacheWrite: 10, cost: 0.03 }]);
     const u = opencodeUsage(home, DIR, SINCE, OC_MODEL);
-    expect(u).toEqual({ input: 150, output: 35, cacheRead: 40, cacheWrite: 10, total: 235, costUsd: 0.03 });
+    expect(u).toEqual({ input: 150, output: 35, cacheRead: 40, cacheWrite: 10, total: 235, reasoning: 5, costUsd: 0.03, currency: 'USD', costSource: 'provider_reported' });
   });
 
   it('ignores sessions in other dirs or before the spawn window', () => {
@@ -97,7 +97,7 @@ describe('claudeUsage', () => {
     ].join('\n');
     write(`.claude/projects/${enc}/sess.jsonl`, lines);
     const u = claudeUsage(home, DIR, SINCE);
-    expect(u).toEqual({ input: 300, output: 40, cacheRead: 60, cacheWrite: 15, total: 415, costUsd: null });
+    expect(u).toEqual({ input: 300, output: 40, cacheRead: 60, cacheWrite: 15, total: 415, reasoning: 0, costUsd: null, currency: null, costSource: 'unavailable' });
   });
 
   it('encodes underscores in the project path (claude maps _ → -)', () => {
@@ -126,7 +126,7 @@ describe('claudeUsage', () => {
     const next = JSON.stringify({ type: 'assistant', timestamp: '2026-06-19T10:00:06Z', message: { usage: { input_tokens: 100, output_tokens: 20, cache_read_input_tokens: 5 } } });
     write(`.claude/projects/${enc}/real.jsonl`, [userEvent, assistant, next].join('\n'));
     const u = claudeUsage(home, DIR, SINCE);
-    expect(u).toEqual({ input: 7207, output: 177, cacheRead: 15840, cacheWrite: 4121, total: 27345, costUsd: null });
+    expect(u).toEqual({ input: 7207, output: 177, cacheRead: 15840, cacheWrite: 4121, total: 27345, reasoning: 0, costUsd: null, currency: null, costSource: 'unavailable' });
   });
 
   it('returns null when the project transcript dir does not exist (CLI never ran here)', () => {
@@ -155,7 +155,7 @@ describe('codexUsage', () => {
     const usage = JSON.stringify({ type: 'event', info: { total_token_usage: { input_tokens: 1000, cached_input_tokens: 400, output_tokens: 120, reasoning_output_tokens: 30, total_tokens: 1150 } } });
     write('.codex/sessions/2026/06/19/rollout-2026-06-19T10-00-03-abc.jsonl', `${head}\n${usage}\n`);
     const u = codexUsage(home, DIR, SINCE);
-    expect(u).toEqual({ input: 600, output: 150, cacheRead: 400, cacheWrite: 0, total: 1150, costUsd: null });
+    expect(u).toEqual({ input: 600, output: 150, cacheRead: 400, cacheWrite: 0, total: 1150, reasoning: 30, costUsd: null, currency: null, costSource: 'unavailable' });
   });
 
   it('finds total_token_usage nested in a real payload event and trusts codex own total', () => {
@@ -165,7 +165,7 @@ describe('codexUsage', () => {
     const ev = JSON.stringify({ timestamp: '2026-06-19T10:00:30Z', type: 'event_msg', payload: { type: 'token_count', info: { total_token_usage: { input_tokens: 19154, cached_input_tokens: 2432, output_tokens: 662, reasoning_output_tokens: 357, total_tokens: 19816 } } } });
     write('.codex/sessions/2026/06/19/rollout-2026-06-19T10-00-03-real.jsonl', `${head}\n${ev}\n`);
     const u = codexUsage(home, DIR, SINCE);
-    expect(u).toEqual({ input: 16722, output: 1019, cacheRead: 2432, cacheWrite: 0, total: 19816, costUsd: null });
+    expect(u).toEqual({ input: 16722, output: 1019, cacheRead: 2432, cacheWrite: 0, total: 19816, reasoning: 357, costUsd: null, currency: null, costSource: 'unavailable' });
   });
 
   it('returns null when the codex sessions root does not exist', () => {

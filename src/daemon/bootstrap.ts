@@ -453,6 +453,7 @@ export function buildApp(opts: BuildOpts) {
         userSettings: (userId) => userSettings.cliSettings(userId),
         activePersonality: (userId, platform) => personalityService.activeAppend(userId, platform),
         agentName: () => config.get().brain.agentName,
+        maxSteps: () => config.get().brain.maxSteps,
         resolvePlatformUser: (platform, platformUserId) => {
           if (platform !== 'discord' || !platformUserId) return null;
           const id = userSettings.userIdBySetting('discordUserId', platformUserId);

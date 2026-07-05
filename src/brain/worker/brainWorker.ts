@@ -7,6 +7,7 @@ import type { TaskUsageStore } from '../../store/taskUsageStore.js';
 import type { EventBus } from '../../api/sse.js';
 import type { BrainRuntimeConfig } from '../providers.js';
 import { buildBrainRegistry, resolveBrainModel } from '../providers.js';
+import { newCostMeter, runWithMeter, type CostMeter } from '../openrouterMeter.js';
 import { projectUserTurn } from '../persistence.js';
 import { taskSessionId } from '../sessionId.js';
 import { BrainSessionFactory } from '../session/factory.js';
@@ -70,6 +71,8 @@ interface LiveWorker {
   lastEventAt: number;
   nudged: boolean;
   closed: boolean;
+  /** Accumulates the provider-reported cost of this worker's OpenRouter completions (see openrouterMeter). */
+  meter: CostMeter;
 }
 
 /** Parse the exec's model part: `provider/model` when the provider id is configured, else treat the
@@ -83,14 +86,17 @@ function selectionFor(cfg: BrainRuntimeConfig, spec: string): { provider?: strin
   return { model: spec };
 }
 
-/** Sum a live PI session's per-message usage into the normalized task-usage shape. */
+/** Sum a live PI session's per-message usage into the normalized task-usage shape. Cost here is only
+ *  pi-ai's price-sheet figure (0 for OpenRouter, whose real cost the meter recovers separately); the
+ *  caller reconciles source in `recordUsage`. */
 function sessionUsage(session: AgentSession): TokenUsage {
-  const u: TokenUsage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0, costUsd: null };
-  for (const m of session.messages as { usage?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number; totalTokens?: number; cost?: { total?: number } } }[]) {
+  const u: TokenUsage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0, reasoning: 0, costUsd: null, currency: null, costSource: 'unavailable' };
+  for (const m of session.messages as { usage?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number; reasoning?: number; totalTokens?: number; cost?: { total?: number } } }[]) {
     u.input += m.usage?.input ?? 0;
     u.output += m.usage?.output ?? 0;
     u.cacheRead += m.usage?.cacheRead ?? 0;
     u.cacheWrite += m.usage?.cacheWrite ?? 0;
+    u.reasoning += m.usage?.reasoning ?? 0;
     u.total += m.usage?.totalTokens ?? 0;
     const cost = m.usage?.cost?.total ?? 0;
     if (cost > 0) u.costUsd = (u.costUsd ?? 0) + cost;
@@ -179,7 +185,7 @@ export class BrainWorkerService {
 
     const worker: LiveWorker = {
       session, sessionName, sessionId, taskId: input.taskId, projectId: input.projectId,
-      model: model.id, lastEventAt: this.now(), nudged: false, closed: false,
+      model: model.id, lastEventAt: this.now(), nudged: false, closed: false, meter: newCostMeter(),
     };
     this.live.set(sessionName, worker);
     session.subscribe(() => { worker.lastEventAt = this.now(); }); // liveness for the idle watchdog
@@ -191,7 +197,8 @@ export class BrainWorkerService {
       : 'Start working on the task now.';
     projectUserTurn(this.d.store, sessionId, kickoff);
     // Fire-and-forget: launch() returns like a tmux spawn; the run settles through the close tool.
-    void runWithPolicy(policy, () => session.prompt(kickoff))
+    // runWithMeter wraps the whole run so every OpenRouter completion's reported cost folds into worker.meter.
+    void runWithMeter(worker.meter, () => runWithPolicy(policy, () => session.prompt(kickoff)))
       .then(() => this.onAgentEnd(worker, policy))
       .catch((e: unknown) => {
         log.error(`brain worker ${sessionName} failed: ${String(e)}`);
@@ -213,7 +220,7 @@ export class BrainWorkerService {
       const nudge = 'You ended your turn without closing the task. If the work is complete, call orca_close_task now with a summary; otherwise finish the remaining work first, then close.';
       projectUserTurn(this.d.store, worker.sessionId, nudge);
       try {
-        await runWithPolicy(policy, () => worker.session.prompt(nudge));
+        await runWithMeter(worker.meter, () => runWithPolicy(policy, () => worker.session.prompt(nudge)));
         return this.onAgentEnd(worker, policy);
       } catch (e) {
         log.error(`brain worker ${worker.sessionName} nudge failed: ${String(e)}`);
@@ -281,6 +288,20 @@ export class BrainWorkerService {
     if (!this.d.taskUsage) return;
     try {
       const usage = sessionUsage(worker.session);
+      const meter = worker.meter;
+      if (meter.reported) {
+        // The provider (OpenRouter) told us the real billed cost — that's the truth, not the price sheet.
+        usage.costUsd = meter.costUsd;
+        usage.currency = meter.currency ?? 'USD';
+        usage.costSource = 'provider_reported';
+        usage.rawUsageMetadata = meter.raw ?? null;
+      } else if (usage.costUsd != null && usage.costUsd > 0) {
+        // No provider figure, but pi-ai's price sheet gave a non-zero estimate — label it as such.
+        usage.costSource = 'calculated';
+        usage.currency = usage.currency ?? 'USD';
+      } else {
+        usage.costSource = 'unavailable';
+      }
       if (usage.total > 0) this.d.taskUsage.record(worker.taskId, worker.projectId, `orca:${worker.model}`, usage);
     } catch { /* usage is best-effort */ }
   }

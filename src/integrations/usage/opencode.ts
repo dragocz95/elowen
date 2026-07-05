@@ -60,13 +60,19 @@ export function opencodeUsage(home: string, dir: string, sinceMs: number, model?
   const r = selectOpencodeRow(home, dir, sinceMs, model, nth);
   if (!r) return null;
 
+  // opencode records the provider's actual cost per session, so it's a real reported figure (not a
+  // price-sheet estimate) — even when it's 0 (a free model). Only "unavailable" if the column is null.
+  const reported = r.cost != null;
   const u: TokenUsage = {
     input: r.tokens_input ?? 0,
     output: (r.tokens_output ?? 0) + (r.tokens_reasoning ?? 0),
     cacheRead: r.tokens_cache_read ?? 0,
     cacheWrite: r.tokens_cache_write ?? 0,
     total: 0,
-    costUsd: r.cost ?? 0,
+    reasoning: r.tokens_reasoning ?? 0,
+    costUsd: reported ? r.cost : null,
+    currency: reported ? 'USD' : null,
+    costSource: reported ? 'provider_reported' : 'unavailable',
   };
   u.total = u.input + u.output + u.cacheRead + u.cacheWrite;
   return u;

@@ -78,10 +78,12 @@ export class BrainClient {
     await this.post('/brain/answer', { id, answers });
   }
 
-  /** Manually compact the active conversation; resolves with the post-compaction usage. */
-  async compact(): Promise<BrainUsageView | null> {
+  /** Manually compact the active conversation; resolves with the post-compaction usage plus whether
+   *  anything was compacted (`compacted:false` = benign no-op, nothing to compact yet). */
+  async compact(): Promise<{ usage: BrainUsageView | null; compacted: boolean; message?: string }> {
     const res = await this.post('/brain/compact', {});
-    return ((await res.json()) as { usage?: BrainUsageView }).usage ?? null;
+    const body = (await res.json()) as { usage?: BrainUsageView; compacted?: boolean; message?: string };
+    return { usage: body.usage ?? null, compacted: !!body.compacted, message: body.message };
   }
 
   /** Stop the streaming turn (Esc). */

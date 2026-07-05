@@ -12,6 +12,7 @@ import { LoadingState } from '../../components/ui/states';
 import { useToast } from '../../components/ui/Toast';
 import { useTranslation } from '../../lib/i18n';
 import { useConfig, useBrainOauthStatus } from '../../lib/queries';
+import { HelpTip } from '../../components/ui/HelpTip';
 import { useUpdateConfig } from '../../lib/mutations';
 import { useAutoSave } from '../../lib/useAutoSave';
 import { useSaveBrainProviders, useBrainOauthDisconnect } from '../../lib/mutations';
@@ -214,6 +215,17 @@ export function BrainSection() {
     if (agentName.trim()) updateConfig.mutate({ brain: { agentName: agentName.trim() } }, { onError: () => toast(t.brain.saveError, 'error') });
   }, { ready: nameSeeded });
 
+  // Max agent steps per run (the turn is aborted past this) — a validated 1..200 integer.
+  const [maxSteps, setMaxSteps] = useState('');
+  const [stepsSeeded, setStepsSeeded] = useState(false);
+  useEffect(() => {
+    if (config && !stepsSeeded) { setMaxSteps(String(config.brain?.maxSteps ?? 20)); setStepsSeeded(true); }
+  }, [config, stepsSeeded]);
+  useAutoSave([maxSteps], () => {
+    const n = Number(maxSteps);
+    if (Number.isFinite(n) && n >= 1) updateConfig.mutate({ brain: { maxSteps: Math.min(200, Math.max(1, Math.floor(n))) } }, { onError: () => toast(t.brain.saveError, 'error') });
+  }, { ready: stepsSeeded });
+
   if (!config) return <LoadingState />;
   const providers = config.brain?.providers ?? [];
   // OAuth entries exist in config only as carriers of the account's model selection — the account
@@ -251,11 +263,17 @@ export function BrainSection() {
 
   return (
     <div className="flex flex-col gap-6">
-      {/* Identity: what the assistant calls itself, everywhere it speaks (chat, Discord, CLI). */}
-      <div className="flex max-w-md flex-col gap-2">
-        <span className="text-sm font-medium text-text">{t.brain.agentName}</span>
-        <Input value={agentName} onChange={(e) => setAgentName(e.target.value)} placeholder="Orca" aria-label={t.brain.agentName} />
-        <span className="text-tiny text-text-muted">{t.brain.agentNameHint}</span>
+      {/* Identity + step ceiling on one row: the assistant's name (everywhere it speaks) and the max
+          agent steps per run (Discord shows "Step N / MAX"). */}
+      <div className="flex max-w-md flex-wrap items-end gap-3">
+        <div className="flex min-w-[12rem] max-w-xs flex-1 flex-col gap-2">
+          <span className="text-sm font-medium text-text">{t.brain.agentName}</span>
+          <Input value={agentName} onChange={(e) => setAgentName(e.target.value)} placeholder="Orca" aria-label={t.brain.agentName} />
+        </div>
+        <div className="flex w-32 flex-col gap-2">
+          <span className="flex items-center gap-1 whitespace-nowrap text-sm font-medium text-text">{t.brain.maxSteps}<HelpTip>{t.brain.maxStepsHint}</HelpTip></span>
+          <Input type="number" min={1} max={200} value={maxSteps} onChange={(e) => setMaxSteps(e.target.value)} aria-label={t.brain.maxSteps} />
+        </div>
       </div>
 
       {/* OAuth accounts: one row per supported account type, connect/disconnect. */}
@@ -291,9 +309,17 @@ export function BrainSection() {
 
       {/* Provider entries the picker exposes. */}
       <div className="flex flex-col gap-2">
-        <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex flex-wrap items-center gap-1.5">
           <span className="text-sm font-medium text-text">{t.brain.providers}</span>
-          <Button variant="accent" icon={Plus} onClick={() => setModal(emptyDraft())}>{t.brain.addProvider}</Button>
+          <button
+            type="button"
+            onClick={() => setModal(emptyDraft())}
+            aria-label={t.brain.addProvider}
+            title={t.brain.addProvider}
+            className="flex h-6 w-6 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-elevated hover:text-accent"
+          >
+            <Plus size={15} aria-hidden />
+          </button>
         </div>
         {apiProviders.length === 0 ? (
           <p className="text-xs italic text-text-muted">{t.brain.noProviders}</p>

@@ -93,10 +93,15 @@ export function registerBrainRoutes(app: OrcaApp, ctx: RouteContext): void {
     catch { return c.json({ error: 'unknown session' }, 404); }
   });
 
+  // Active conversation's history by default, or ANY of the caller's sessions when `?session=<id>` is
+  // given (read-only view of a channel/task session — ownership checked in messagesOf).
   app.get('/brain/messages', async c => {
     if (!d.brain) return c.json([]);
     if (forbidden(c)) return c.json({ error: 'forbidden' }, 403);
-    return c.json(d.brain.history(c.get('user').id));
+    const session = c.req.query('session');
+    try {
+      return c.json(session ? d.brain.messagesOf(c.get('user').id, session) : d.brain.history(c.get('user').id));
+    } catch { return c.json({ error: 'unknown session' }, 404); }
   });
 
   // The pickable models across every configured brain provider — dedicated entries, connected OAuth
@@ -158,11 +163,13 @@ export function registerBrainRoutes(app: OrcaApp, ctx: RouteContext): void {
     catch (e) { return c.json({ error: (e as Error).message }, 409); }
   });
 
-  // Manual context compaction (the /compact command in chat clients). Returns the fresh usage numbers.
+  // Manual context compaction (the /compact command in chat clients). Returns the fresh usage numbers
+  // plus whether anything was compacted — a too-small/already-compacted session is a benign no-op
+  // (200 with compacted:false), NOT an opaque 409, so clients show a friendly notice instead of a failure.
   app.post('/brain/compact', async c => {
     if (!d.brain) return c.json({ error: 'brain unavailable' }, 503);
     if (forbidden(c)) return c.json({ error: 'forbidden' }, 403);
-    try { return c.json({ usage: await d.brain.compact(c.get('user').id) }); }
+    try { return c.json(await d.brain.compact(c.get('user').id)); }
     catch (e) { return c.json({ error: (e as Error).message }, 409); }
   });
 
@@ -190,7 +197,7 @@ export function registerBrainRoutes(app: OrcaApp, ctx: RouteContext): void {
       switch (cmd.name) {
         case 'stop': await d.brain.abort(user.id); return c.json({ ok: true, message: 'Agent stopped.' });
         case 'new': return c.json({ ok: true, message: 'Started a fresh conversation.', data: await d.brain.start(user.id, { fresh: true }) });
-        case 'compact': return c.json({ ok: true, message: 'Conversation compacted.', data: { usage: await d.brain.compact(user.id) } });
+        case 'compact': { const r = await d.brain.compact(user.id); return c.json({ ok: true, message: r.compacted ? 'Conversation compacted.' : (r.message ?? 'Nothing to compact yet.'), data: { usage: r.usage } }); }
         case 'restart':
           if (!d.restartDaemon) return c.json({ error: 'restart is not available on this deployment' }, 501);
           await d.restartDaemon(user.id);

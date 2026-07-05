@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { IdentityResolver } from '../../src/brain/identity.js';
 import { composeSessionTools } from '../../src/brain/session/capabilities.js';
+import { runWithPolicy, type ToolPolicy } from '../../src/plugins/policyContext.js';
 import type { ToolDefinition } from '@earendil-works/pi-coding-agent';
 
 const users = { get: (id: number) => ({ username: `user${id}` }) };
@@ -82,10 +83,35 @@ describe('composeSessionTools — the channel/tool security invariant', () => {
     expect(tools.map((t) => t.name)).toContain('orca_create_task');
   });
 
-  it('the per-role toolFilter narrows plugin tools; "*" means everything', () => {
-    const narrowed = composeSessionTools({ kind: 'foreign-channel', pluginTools, toolFilter: ['memory_search'] });
-    expect(narrowed.map((t) => t.name)).toEqual(['memory_search']);
-    const all = composeSessionTools({ kind: 'foreign-channel', pluginTools, toolFilter: ['*'] });
-    expect(all.map((t) => t.name)).toEqual(['memory_search', 'discord_api']);
+  it('memory tools compose into every interactive session (incl. foreign-channel), but not task-workers', () => {
+    const memoryTools = () => [tool('memory_add'), tool('memory_search')];
+    for (const kind of ['owner-chat', 'trusted-channel', 'foreign-channel'] as const) {
+      const tools = composeSessionTools({ kind, memoryTools, pluginTools: [] });
+      expect(tools.map((t) => t.name)).toContain('memory_add'); // per-user; the execute-time orcaUserId gate is the guard
+    }
+    const worker = composeSessionTools({ kind: 'task-worker', memoryTools, pluginTools: [] });
+    expect(worker.map((t) => t.name)).not.toContain('memory_add');
+  });
+
+  it('plugin tools are always composed, but gated at EXECUTE time by the turn ToolPolicy', async () => {
+    const POLICY = { allowedProjectIds: 'all' as const, allowedPaths: () => [] };
+    const execTool = (name: string): ToolDefinition => ({
+      name, label: name, description: '', parameters: {} as never,
+      execute: async () => ({ content: [{ type: 'text' as const, text: `ran:${name}` }], details: {} }),
+    }) as ToolDefinition;
+    const tools = composeSessionTools({ kind: 'foreign-channel', pluginTools: [execTool('memory_search'), execTool('discord_api')] });
+    // Both are ADVERTISED (a shared channel session composes one set) — access is decided per turn.
+    expect(tools.map((t) => t.name).sort()).toEqual(['discord_api', 'memory_search']);
+    const call = (name: string, toolPolicy: ToolPolicy | undefined) =>
+      runWithPolicy(POLICY, () => tools.find((t) => t.name === name)!.execute('id', {}, undefined, undefined, {} as never), { toolPolicy })
+        .then((r) => (r.content[0] as { text: string }).text);
+    // allow-list (unlinked sender's role): only listed tools run; the rest are locked.
+    expect(await call('memory_search', { allow: new Set(['memory_search']) })).toBe('ran:memory_search');
+    expect(await call('discord_api', { allow: new Set(['memory_search']) })).toContain('not available');
+    // deny-list (a user's own disabled_tools): the denied tool is locked, the rest run.
+    expect(await call('discord_api', { deny: new Set(['discord_api']) })).toContain('not available');
+    expect(await call('memory_search', { deny: new Set(['discord_api']) })).toBe('ran:memory_search');
+    // no policy → everything runs.
+    expect(await call('discord_api', undefined)).toBe('ran:discord_api');
   });
 });

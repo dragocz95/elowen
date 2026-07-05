@@ -14,6 +14,10 @@ export interface LiveBrain {
   autoCompactAt: number;
   listeners: Set<(e: BrainEvent) => void>;
   turnContext: () => string;
+  /** Names of the plugin tools composed into this session — the subset a per-turn ToolPolicy allow-list
+   *  may hide (the built-in orca_ and memory_ tools stay visible). Used by applyToolVisibility to slice
+   *  the model's advertised tools to what the current sender may use. */
+  pluginToolNames: Set<string>;
   /** True while the session runs on the user's vision-fallback model (an image turn hopped onto it). */
   visionFallback?: boolean;
   /** Platform id (e.g. Discord author) of the sender whose turn is currently in flight — set at the
@@ -40,8 +44,6 @@ export interface SpawnOpts {
    *  (all-project Policy + full plugin toolset) instead of `foreign-channel`, but STILL without orca_*
    *  tools or the owner API token. Only meaningful when `channel` is true. */
   trustedChannel?: boolean;
-  /** Per-role tool allowlist (tool names; '*' = everything). Undefined = no restriction. */
-  toolFilter?: string[];
   /** Reasoning effort for extended-thinking models (empty/undefined = the model default). */
   thinkingLevel?: string;
   /** Which personality platform this session is: 'web'|'cli' for per-user owner chat, 'discord' for

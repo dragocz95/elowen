@@ -1,6 +1,7 @@
 'use client';
-import { useRef, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { usePathname } from 'next/navigation';
+import { BRAIN_OPEN_EVENT } from '../../lib/brainDock';
 import { Menu } from 'lucide-react';
 import { Providers } from '../../app/providers';
 import { LanguageProvider, useTranslation } from '../../lib/i18n';
@@ -10,6 +11,7 @@ import { Sidebar, type SidebarMode } from './Sidebar';
 import { CommandPalette } from './CommandPalette';
 import { AdvisorPanel } from '../../modules/advisor/AdvisorPanel';
 import { AdvisorLauncher } from '../../modules/advisor/AdvisorLauncher';
+import { ImpersonationBanner } from './ImpersonationBanner';
 import { useDockState } from '../../lib/useDockState';
 import { useElementWidth } from '../../lib/useElementWidth';
 import { UiScaleProvider } from '../../lib/useUiScale';
@@ -27,6 +29,13 @@ function ShellLayout({ children }: { children: ReactNode }) {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const dock = useDockState();
   const docked = dock.state.open;
+  // Open (and reveal the advisor pane of) the dock when another view asks to continue a conversation in
+  // web chat (Sessions → open in chat). BrainChat mounts on open and switches to the requested session.
+  useEffect(() => {
+    const onOpen = () => { dock.addAdvisorPane(); dock.setOpen(true); };
+    window.addEventListener(BRAIN_OPEN_EVENT, onOpen);
+    return () => window.removeEventListener(BRAIN_OPEN_EVENT, onOpen);
+  }, [dock]);
   // When the dock takes the left edge, the sidebar moves to the right edge (mirrored) so the two
   // never stack on the same side. Top/bottom docks span the full width above/below the row.
   const dockLeft = docked && dock.state.side === 'left';
@@ -67,6 +76,7 @@ function ShellLayout({ children }: { children: ReactNode }) {
   return (
     <>
       <div className="flex flex-col overflow-hidden" style={{ height: 'calc(100dvh / var(--ui-scale, 1))' }}>
+        <ImpersonationBanner />
         {dockTop ? <AdvisorPanel dock={dock} /> : null}
         <div className="flex min-h-0 flex-1 overflow-hidden">
           {dockLeft ? <AdvisorPanel dock={dock} /> : null}

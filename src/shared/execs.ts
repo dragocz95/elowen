@@ -70,7 +70,11 @@ export function isExecAllowedForUser(
   exec: string,
 ): boolean {
   if (!user || user.is_admin) return true;
-  if (!globalExecs.includes(exec)) return false;
+  // `orca:<provider>/<model>` brain execs are bounded by the configured brain PROVIDERS (the model list
+  // is built only from them), NOT by `KNOWN_EXECS`/allowedExecs, which cover CLI-agent specs only. So a
+  // brain exec skips the global bound — else non-admins get an empty brain-model picker. Only the
+  // per-user allow-list still narrows it. CLI execs keep the global bound.
+  if (!exec.startsWith('orca:') && !globalExecs.includes(exec)) return false;
   return user.allowed_execs.length === 0 || user.allowed_execs.includes(exec);
 }
 
@@ -85,7 +89,8 @@ export function isModelVisibleForUser(
   globalExecs: readonly string[],
   exec: string,
 ): boolean {
-  if (!globalExecs.includes(exec)) return false;
+  // Brain execs (orca:…) are bounded by configured providers, not KNOWN_EXECS — see isExecAllowedForUser.
+  if (!exec.startsWith('orca:') && !globalExecs.includes(exec)) return false;
   if (!user) return true;
   return user.allowed_execs.length === 0 || user.allowed_execs.includes(exec);
 }

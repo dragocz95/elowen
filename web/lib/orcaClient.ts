@@ -1,4 +1,4 @@
-import type { Task, Mission, CreateTaskInput, UpdateTaskInput, PlanInput, PlanSubmitResult, PlanJob, InsertPhasesInput, InsertPhasesResult, EngageInput, OrcaConfig, ConfigPatch, MissionDetail, User, UserPatch, ProfilePatch, UserPrompt, PersonalityProfile, PersonalityCreate, PersonalityPatch, CliSettings, PluginInfo, PluginDetail, PluginContributions, PluginLogs, PluginHookExecutions, Marketplace, CronJob, DiscordChannelOption, PluginSkill, BrainModelOption, BrainSessionInfo, ManagedSession, BrainSearchHit, BrainMessage, BrainStatus, SlashCommandDef, AskAnswer, OAuthFlowState, AuthResult, ActivityEvent, PendingAsk, Project, ProjectGit, CommitLogEntry, CommitFileChange, Note, CliDetectionResult, GithubAuthStatus, TokenUsage, ModelUsage, DayUsage, ResetUsageResult, FileNode, DirListing, SessionInfo, SystemInfo, SkillsInfo, SkillInstallResult, Memory, MemoryEvent, MemoryCreate, MemoryPatch, MemoryFilters, EmbeddingSettings, EmbeddingSettingsPatch, RetrievalResult, MemoryCategory, MemoryCategoryCreate, MemoryCategoryPatch, CategorizationSettings, CategorizationSettingsPatch } from './types';
+import type { Task, Mission, CreateTaskInput, UpdateTaskInput, PlanInput, PlanSubmitResult, PlanJob, InsertPhasesInput, InsertPhasesResult, EngageInput, OrcaConfig, ConfigPatch, MissionDetail, User, UserPatch, ProfilePatch, UserPrompt, PersonalityProfile, PersonalityCreate, PersonalityPatch, CliSettings, PluginInfo, PluginDetail, PluginContributions, PluginLogs, PluginHookExecutions, Marketplace, CronJob, DiscordChannelOption, PluginSkill, BrainModelOption, BrainSessionInfo, ManagedSession, BrainSearchHit, BrainMessage, BrainStatus, SlashCommandDef, AskAnswer, OAuthFlowState, AuthResult, ActivityEvent, PendingAsk, Project, ProjectGit, CommitLogEntry, CommitFileChange, Note, CliDetectionResult, GithubAuthStatus, TokenUsage, ModelUsage, DayUsage, ResetUsageResult, FileNode, DirListing, SessionInfo, SystemInfo, SkillsInfo, SkillInstallResult, Memory, MemoryEvent, MemoryCreate, MemoryPatch, MemoryFilters, EmbeddingSettings, EmbeddingSettingsPatch, RetrievalResult, UserToolPill, UserStats, MemoryCategory, MemoryCategoryCreate, MemoryCategoryPatch, CategorizationSettings, CategorizationSettingsPatch } from './types';
 import { clearToken } from './token';
 
 // Same-origin BFF base: the browser talks only to this web origin's /api proxy, which injects the
@@ -204,7 +204,7 @@ export const orcaClient = {
   brainManagedSessions: () => req<ManagedSession[]>('/brain/managed-sessions'),
   brainDeleteManagedSession: (id: string) => req<{ deleted: number }>(`/brain/managed-sessions/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   brainDeleteAllManagedSessions: () => req<{ deleted: number }>('/brain/managed-sessions', { method: 'DELETE' }),
-  brainMessages: () => req<BrainMessage[]>('/brain/messages'),
+  brainMessages: (session?: string) => req<BrainMessage[]>(`/brain/messages${session ? `?session=${encodeURIComponent(session)}` : ''}`),
   brainOauthStatus: () => req<Record<string, boolean>>('/brain/oauth/status'),
   brainOauthCatalog: (type: string) => req<{ models: string[] }>(`/brain/oauth/${encodeURIComponent(type)}/catalog`),
   brainProviderProbe: (body: { baseUrl: string; apiKey?: string; id?: string }) => req<{ models: string[] }>('/brain/providers/probe', { method: 'POST', body: JSON.stringify(body) }),
@@ -256,6 +256,8 @@ export const orcaClient = {
   taskCommits: (id: string) => req<{ commits: CommitLogEntry[] }>(`/tasks/${encodeURIComponent(id)}/commits`),
   taskCommitFileDiff: (id: string, hash: string, path: string) => req<{ diff: string }>(`/tasks/${encodeURIComponent(id)}/commit/${encodeURIComponent(hash)}/diff?path=${encodeURIComponent(path)}`),
   missionNotes: (target: string) => req<Note[]>(`/notes?scope=mission&target=${encodeURIComponent(target)}`),
+  userTools: (userId: number) => req<UserToolPill[]>(`/users/${userId}/tools`),
+  userStats: (userId: number) => req<UserStats>(`/users/${userId}/stats`),
   userProjects: (userId: number) => req<number[]>(`/users/${userId}/projects`),
   assignProject: (userId: number, projectId: number) => req<{ ok: boolean }>(`/users/${userId}/projects`, json({ projectId })),
   unassignProject: (userId: number, projectId: number) => req<{ ok: boolean }>(`/users/${userId}/projects/${projectId}`, { method: 'DELETE' }),

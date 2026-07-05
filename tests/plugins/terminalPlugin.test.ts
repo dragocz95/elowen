@@ -35,23 +35,23 @@ describe('terminal plugin', () => {
   });
 
   it('runs a command in an allowed repo (default cwd = first root)', async () => {
-    const res = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'run_command', { command: 'echo terminaltest' }), owner);
+    const res = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'run_command', { command: 'echo terminaltest' }), { identity: owner });
     expect(res.content[0].text).toContain('terminaltest');
     expect(res.content[0].text).toContain('[exit 0]');
   });
 
   it('refuses a cwd outside the allowed roots', async () => {
-    const res = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'run_command', { command: 'echo x', cwd: '/etc' }), owner);
+    const res = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'run_command', { command: 'echo x', cwd: '/etc' }), { identity: owner });
     expect(res.content[0].text).toMatch(/not allowed/);
   });
 
   it('admin all-access runs with no roots (defaults to process cwd)', async () => {
-    const res = await runWithPolicy(adminPolicy, () => runTool(reg, 'run_command', { command: 'echo adminok' }), owner);
+    const res = await runWithPolicy(adminPolicy, () => runTool(reg, 'run_command', { command: 'echo adminok' }), { identity: owner });
     expect(res.content[0].text).toContain('adminok');
   });
 
   it('a user with no repos cannot run anything', async () => {
-    const res = await runWithPolicy(userPolicy([]), () => runTool(reg, 'run_command', { command: 'echo nope' }), owner);
+    const res = await runWithPolicy(userPolicy([]), () => runTool(reg, 'run_command', { command: 'echo nope' }), { identity: owner });
     expect(res.content[0].text).toMatch(/not allowed/);
   });
 
@@ -62,7 +62,7 @@ describe('terminal plugin', () => {
       ['read_process_output', { id: 'x' }],
       ['kill_process', { id: 'x' }],
     ] as const) {
-      const res = await runWithPolicy(adminPolicy, () => runTool(reg, name, params), scoped);
+      const res = await runWithPolicy(adminPolicy, () => runTool(reg, name, params), { identity: scoped });
       expect(res.content[0].text).toMatch(/only available to the operator/);
     }
   });

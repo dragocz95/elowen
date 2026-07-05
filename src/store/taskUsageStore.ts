@@ -1,10 +1,32 @@
 import type { Db } from './db.js';
 import type { TokenUsage } from '../integrations/usage/types.js';
 
+import type { CostSource } from '../integrations/usage/types.js';
+
 interface AggRow {
   exec: string;
   input: number; output: number; cache_read: number; cache_write: number; total: number;
+  reasoning: number;
   cost_usd: number | null;
+  currency: string | null;
+  cost_source: CostSource | null;
+}
+
+interface UsageRow extends AggRow { raw_usage_metadata: string | null }
+
+/** Parse a persisted usage row into a TokenUsage. `cost_source` is NULL on legacy rows → treat a present
+ *  cost as 'calculated' (we can't prove it was provider-reported) and an absent one as 'unavailable'. */
+function toUsage(r: AggRow & { raw_usage_metadata?: string | null }): TokenUsage {
+  const costSource: CostSource = r.cost_source ?? (r.cost_usd != null ? 'calculated' : 'unavailable');
+  const usage: TokenUsage = {
+    input: r.input, output: r.output, cacheRead: r.cache_read, cacheWrite: r.cache_write,
+    total: r.total, reasoning: r.reasoning ?? 0, costUsd: r.cost_usd, currency: r.currency ?? null,
+    costSource,
+  };
+  // Only attach the debug blob when a row actually carries one (aggregates never do) — keeps the shape
+  // clean so callers/tests don't see a null key on every result.
+  if (r.raw_usage_metadata) { try { usage.rawUsageMetadata = JSON.parse(r.raw_usage_metadata) as Record<string, unknown>; } catch { /* ignore corrupt blob */ } }
+  return usage;
 }
 
 /** Persisted per-task usage snapshots. A task's numbers are captured once when it settles, so the
@@ -16,17 +38,35 @@ export class TaskUsageStore {
   /** Snapshot a settled task's usage (insert or replace its row). */
   record(taskId: string, projectId: number, exec: string, usage: TokenUsage): void {
     this.db.prepare(
-      `INSERT INTO task_usage (task_id, project_id, exec, input, output, cache_read, cache_write, total, cost_usd)
-       VALUES (@task_id, @project_id, @exec, @input, @output, @cache_read, @cache_write, @total, @cost_usd)
+      `INSERT INTO task_usage (task_id, project_id, exec, input, output, cache_read, cache_write, total,
+                               reasoning, cost_usd, currency, cost_source, raw_usage_metadata)
+       VALUES (@task_id, @project_id, @exec, @input, @output, @cache_read, @cache_write, @total,
+               @reasoning, @cost_usd, @currency, @cost_source, @raw_usage_metadata)
        ON CONFLICT(task_id) DO UPDATE SET
          project_id=excluded.project_id, exec=excluded.exec, input=excluded.input, output=excluded.output,
          cache_read=excluded.cache_read, cache_write=excluded.cache_write, total=excluded.total,
-         cost_usd=excluded.cost_usd, captured_at=datetime('now')`
+         reasoning=excluded.reasoning, cost_usd=excluded.cost_usd, currency=excluded.currency,
+         cost_source=excluded.cost_source, raw_usage_metadata=excluded.raw_usage_metadata,
+         captured_at=datetime('now')`
     ).run({
       task_id: taskId, project_id: projectId, exec,
       input: usage.input, output: usage.output, cache_read: usage.cacheRead,
-      cache_write: usage.cacheWrite, total: usage.total, cost_usd: usage.costUsd,
+      // Coalesce the newer fields so a legacy/incomplete usage object can't trip the NOT NULL columns.
+      cache_write: usage.cacheWrite, total: usage.total, reasoning: usage.reasoning ?? 0,
+      cost_usd: usage.costUsd ?? null, currency: usage.currency ?? null, cost_source: usage.costSource ?? 'unavailable',
+      raw_usage_metadata: usage.rawUsageMetadata ? JSON.stringify(usage.rawUsageMetadata) : null,
     });
+  }
+
+  /** One task's persisted usage snapshot, or null. Lets the per-task usage route surface embedded-brain
+   *  runs (which have no on-disk CLI transcript to read live). */
+  get(taskId: string): TokenUsage | null {
+    const r = this.db.prepare(
+      `SELECT exec, input, output, cache_read, cache_write, total, reasoning, cost_usd, currency,
+              cost_source, raw_usage_metadata
+         FROM task_usage WHERE task_id = ?`
+    ).get(taskId) as UsageRow | undefined;
+    return r ? toUsage(r) : null;
   }
 
   /** Total usage per exec spec. When `projectIds` is given, scope to those projects (an empty array
@@ -46,18 +86,20 @@ export class TaskUsageStore {
     const rows = this.db.prepare(
       `SELECT exec,
          SUM(input) AS input, SUM(output) AS output, SUM(cache_read) AS cache_read,
-         SUM(cache_write) AS cache_write, SUM(total) AS total,
-         CASE WHEN COUNT(cost_usd) = 0 THEN NULL ELSE SUM(cost_usd) END AS cost_usd
+         SUM(cache_write) AS cache_write, SUM(total) AS total, SUM(reasoning) AS reasoning,
+         CASE WHEN COUNT(cost_usd) = 0 THEN NULL ELSE SUM(cost_usd) END AS cost_usd,
+         MAX(currency) AS currency,
+         -- Rolled-up provenance: unavailable when no bucket has a cost; provider_reported only when EVERY
+         -- costed bucket was provider-reported; otherwise calculated (any estimate taints the sum).
+         CASE
+           WHEN COUNT(cost_usd) = 0 THEN 'unavailable'
+           WHEN SUM(CASE WHEN cost_usd IS NOT NULL AND (cost_source IS NULL OR cost_source != 'provider_reported') THEN 1 ELSE 0 END) = 0 THEN 'provider_reported'
+           ELSE 'calculated'
+         END AS cost_source
        FROM task_usage ${where}
        GROUP BY exec`
     ).all(...params) as AggRow[];
-    return rows.map((r) => ({
-      exec: r.exec,
-      usage: {
-        input: r.input, output: r.output, cacheRead: r.cache_read,
-        cacheWrite: r.cache_write, total: r.total, costUsd: r.cost_usd,
-      },
-    }));
+    return rows.map((r) => ({ exec: r.exec, usage: toUsage(r) }));
   }
 
   /** Daily spend/token totals over the last `days` days (UTC, by `captured_at` date), for the

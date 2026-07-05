@@ -79,7 +79,11 @@ function finalUsage(path: string): TokenUsage | null {
     // Unlike the other parsers (which sum the buckets), codex reports its own cumulative
     // total_tokens — trust it directly; it may differ slightly from input+output+cacheRead.
     total: last.total_tokens ?? 0,
+    reasoning: last.reasoning_output_tokens ?? 0,
+    // codex transcripts don't record a cost figure — leave it unavailable rather than fabricate one.
     costUsd: null,
+    currency: null,
+    costSource: 'unavailable',
   };
 }
 

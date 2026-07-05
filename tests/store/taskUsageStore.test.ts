@@ -4,7 +4,8 @@ import { TaskUsageStore } from '../../src/store/taskUsageStore.js';
 import type { TokenUsage } from '../../src/integrations/usage/types.js';
 
 const u = (input: number, output: number, cacheRead: number, cacheWrite: number, costUsd: number | null): TokenUsage =>
-  ({ input, output, cacheRead, cacheWrite, total: input + output + cacheRead + cacheWrite, costUsd });
+  ({ input, output, cacheRead, cacheWrite, total: input + output + cacheRead + cacheWrite, reasoning: 0, costUsd,
+     currency: costUsd != null ? 'USD' : null, costSource: costUsd != null ? 'provider_reported' : 'unavailable' });
 
 let store: TaskUsageStore;
 let db: Db;

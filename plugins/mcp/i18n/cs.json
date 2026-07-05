@@ -1,0 +1,9 @@
+{
+  "description": "Napojí externí MCP servery (stdio, HTTP, SSE) a zpřístupní jejich nástroje agentovi. U každého serveru zvolíte transport: stdio spustí lokální proces (např. npx …), HTTP nebo SSE se připojí na vzdálenou URL. stdio servery běží ve vlastní procesní skupině a při reloadu se ukončí jako celek, takže po npx nezůstávají osiřelé procesy.",
+  "fields": {
+    "servers": {
+      "label": "MCP servery",
+      "help": "Externí MCP servery, které se připojí a jejichž nástroje se zpřístupní. U každého serveru zvolte transport: stdio spustí lokální proces (např. npx …), HTTP nebo SSE se připojí na vzdálenou URL. stdio servery běží ve vlastní procesní skupině a při reloadu se ukončí jako celek, takže po npx nezůstávají osiřelé procesy."
+    }
+  }
+}

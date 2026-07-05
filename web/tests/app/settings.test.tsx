@@ -43,8 +43,9 @@ describe('SettingsPage', () => {
     await waitFor(() => expect(screen.getByLabelText('Claude Sonnet 4.5')).toBeChecked());
     // Cards are grouped by provider (claude-code first), so the first card is Sonnet.
     fireEvent.click(screen.getAllByRole('button', { name: 'Add description' })[0]);
+    // The note modal auto-saves on edit — no manual Save button; the change PUTs shortly after.
+    expect(screen.queryByRole('button', { name: 'Save' })).toBeNull();
     fireEvent.change(screen.getByLabelText('Model description'), { target: { value: 'Strong at refactoring' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
     await waitFor(() => expect((putBody as { modelNotes: Record<string, string> }).modelNotes).toMatchObject({ sonnet: 'Strong at refactoring' }));
   });
 

@@ -27,7 +27,7 @@ import type { InferenceClient } from '../inference/types.js';
 import { personalityText } from './personality.js';
 import { projectUserTurn } from './persistence.js';
 import { BrainSessionFactory } from './session/factory.js';
-import { composeSessionTools } from './session/capabilities.js';
+import { composeSessionTools, applyToolVisibility } from './session/capabilities.js';
 import { IdentityResolver } from './identity.js';
 import { decideVisionHop } from './visionFallback.js';
 import { LiveSessionRegistry } from './session/liveRegistry.js';
@@ -38,8 +38,8 @@ import type { ChannelSendOpts } from './channels.js';
 import { PlatformOrchestrator } from './platforms.js';
 import { shapeBrainMessages } from './messageView.js';
 import type { BrainMessageView } from './messageView.js';
-import { toBrainEvent, usageOf } from './events.js';
-import type { AskAnswer, AskQuestion, BrainCard, BrainEvent, BrainUsage } from './events.js';
+import { toBrainEvent, usageOf, runCompaction } from './events.js';
+import type { AskAnswer, AskQuestion, BrainCard, BrainEvent, BrainUsage, CompactResult } from './events.js';
 import { defaultUserSessionId, freshUserSessionId, isNonUserSession } from './sessionId.js';
 
 
@@ -47,7 +47,7 @@ export interface BrainDeps {
   store: BrainStore;
   users: {
     ensureAdvisorToken(userId: number): string;
-    get(userId: number): { name?: string; username?: string } | null | undefined;
+    get(userId: number): { name?: string; username?: string; disabled_tools?: string[] } | null | undefined;
   };
   /** The provider set, or a live resolver so provider/OAuth changes apply without a daemon restart.
    *  A resolver returning null means "nothing configured yet" — `start` fails with a clear error. */
@@ -79,6 +79,9 @@ export interface BrainDeps {
   activePersonality?: (userId: number, platform: string) => string | undefined;
   /** The assistant's configured display identity (Settings → Orca AI). Absent → 'Orca'. */
   agentName?: () => string;
+  /** Max agent steps (model round-trips) per run before the turn is aborted (Settings → Orca AI). Read
+   *  fresh each turn so a config change applies without a session restart. Absent or ≤0 → unlimited. */
+  maxSteps?: () => number;
   /** Resolve a platform sender (e.g. a Discord id) to the Orca user who claimed it in their account
    *  settings. Lets channel turns carry a verified identity line for registered users. */
   resolvePlatformUser?: (platform: string, platformUserId: string) => { id: number; name: string; username?: string; admin: boolean } | null;
@@ -165,6 +168,10 @@ export class BrainService {
       plugins: () => this.resolvePlugins(),
       platformOwner: d.platformOwner,
       policyForProjects: d.policyForProjects,
+      // A linked platform sender runs fully through their Orca account: reuse the SAME per-user policy
+      // resolver the owner web chat uses, plus their own tool deny-list.
+      policyForUser: d.policy,
+      disabledToolsFor: (userId) => d.users.get(userId)?.disabled_tools ?? [],
       identity: this.identity,
       channels: this.channelService,
       restart: () => this.restartHandler,
@@ -205,12 +212,17 @@ export class BrainService {
   }
 
   /** Manually compact the active conversation (the /compact command): summarize the history so the
-   *  context shrinks while the session stays usable. Throws when nothing is running. */
-  async compact(userId: number): Promise<BrainUsage> {
-    const b = this.activeLive(userId);
-    if (!b) throw new Error('brain not started');
-    await b.session.compact();
-    return usageOf(b.session);
+   *  context shrinks while the session stays usable. Serialized on the session lock (mirrors the channel
+   *  variant) so it can't race an in-flight prompt(). A too-small/already-compacted session is a benign
+   *  no-op (compacted:false), not an error. Throws only when nothing is running. */
+  async compact(userId: number): Promise<CompactResult> {
+    const sessionId = this.activeSessionId(userId);
+    if (!this.sessions.get(sessionId)) throw new Error('brain not started');
+    return this.serial(sessionId, async () => {
+      const live = this.sessions.get(sessionId);
+      if (!live) throw new Error('brain not started');
+      return runCompaction(live.session);
+    });
   }
 
   /** Stop the streaming turn (the Esc key in chat clients). The agent settles into agent_end → the
@@ -387,20 +399,22 @@ export class BrainService {
     // orca_* control-plane tools or owner API token) lives in composeSessionTools; the token is minted
     // lazily so it never exists for them. An admin-role Discord sender lands on 'trusted-channel', NOT
     // 'owner-chat', so the channel-keyed session can't leak the owner toolset to a later non-admin
-    // sender in the same channel. Memory tools ride only owner-chat; the per-tool owner check is
-    // defense-in-depth. Built lazily; only wired when the memory deps exist.
+    // sender in the same channel. Memory tools ride every interactive session but key per-user on the
+    // acting orcaUserId (each caller reaches only their own memory). Built lazily; wired when deps exist.
     const memStore = this.d.memoryStore;
     const memService = this.d.memoryService;
     const memCats = this.d.memoryCategoryStore;
     const memCategorizer = this.d.memoryCategorizer;
+    const pluginTools = plugins?.tools ?? [];
     const allTools = composeSessionTools({
       kind: opts.channel ? (opts.trustedChannel ? 'trusted-channel' : 'foreign-channel') : 'owner-chat',
       orcaTools: () => buildOrcaTools({ url: this.d.url, token: this.d.users.ensureAdvisorToken(ownerUserId) }),
       memoryTools: memStore && memService && memCats && memCategorizer
         ? () => buildMemoryTools({ store: memStore, service: memService, categories: memCats, categorizer: memCategorizer })
         : undefined,
-      pluginTools: plugins?.tools ?? [],
-      toolFilter: opts.toolFilter,
+      pluginTools,
+      // Plugin tools are gated at EXECUTE time from the turn's ToolPolicy (set in runWithPolicy), not
+      // filtered at compose — one shared mechanism for owner chat and shared channels alike.
     });
     const skills = plugins?.skills ?? [];
     const skillsBlock = skills.length ? formatSkillsForPrompt(skills) : '';
@@ -438,7 +452,20 @@ export class BrainService {
     for (const [k, v] of plugins?.toolIcons ?? []) iconMap.set(k, v);
     const iconOf = makeToolIconResolver(iconMap);
     const listeners = new Set<(e: BrainEvent) => void>();
+    let steps = 0; // model round-trips in the current run — reset on agent_start, one per turn_start
     session.subscribe((e: AgentSessionEvent) => {
+      const raw = (e as { type?: string }).type;
+      // Step accounting + ceiling. Each run resets on agent_start; every turn_start is one step. The
+      // limit is read fresh per turn (a config change applies without a session restart). Past the
+      // ceiling the run is aborted so a wedged agent can't loop forever — it settles into agent_end/idle
+      // like a normal stop. `maxSteps ≤ 0` means unlimited (no counter emitted, no enforcement).
+      if (raw === 'agent_start') steps = 0;
+      else if (raw === 'turn_start') {
+        steps += 1;
+        const maxSteps = this.d.maxSteps?.() ?? 0;
+        if (maxSteps > 0 && steps > maxSteps) void session.abort().catch(() => { /* already settling */ });
+        else if (maxSteps > 0) for (const l of listeners) l({ type: 'step', step: steps, maxSteps });
+      }
       const be = toBrainEvent(e);
       if (!be) return;
       if (be.type === 'idle') { be.usage = usageOf(session); be.model = model.id; } // statusline data rides the idle event
@@ -453,7 +480,7 @@ export class BrainService {
       const parts = providers.map((f) => { try { return f(); } catch { return ''; } }).filter((x) => x && x.trim());
       return parts.length ? `<context>\n${parts.join('\n')}\n</context>\n\n` : '';
     };
-    return { session, sessionId, model: model.id, thinkingLevel: opts.thinkingLevel, policy: opts.policy, autoCompact: opts.autoCompact, autoCompactAt: opts.autoCompactAt, listeners, turnContext };
+    return { session, sessionId, model: model.id, thinkingLevel: opts.thinkingLevel, policy: opts.policy, autoCompact: opts.autoCompact, autoCompactAt: opts.autoCompactAt, listeners, turnContext, pluginToolNames: new Set(pluginTools.map((t) => t.name)) };
   }
 
   /** Start (or resume) a conversation. `session` resumes that stored conversation (ownership checked);
@@ -603,7 +630,6 @@ export class BrainService {
           }
         }
       } catch { /* hook enrichment is best-effort; a failure must never break the turn */ }
-      const prompted = memoryBlock + hookBlock + live.turnContext() + text;
       // The turn's identity: the Orca account itself (memory and other per-user plugin state key on it).
       const identity = this.identity.forOwnerChat(userId, live.policy);
       // Turn-bound elicitor for ctx.askUser: emit the `ask` event to this conversation's clients and park
@@ -612,7 +638,20 @@ export class BrainService {
       const elicit = (qs: AskQuestion[]) => this.elicitation.ask(live.sessionId, qs, (e) => { for (const l of live.listeners) l(e); });
       // ctx.emitCard: update the conversation's card registry and broadcast a `card` event to its clients.
       const emitCard = (raw: unknown) => { const card = this.cards.set(live.sessionId, raw); if (card) for (const l of live.listeners) l({ type: 'card', card }); };
-      await runWithPolicy(live.policy, () => (options ? live.session.prompt(prompted, options) : live.session.prompt(prompted)), identity, elicit, emitCard);
+      // Assemble the live prompt INSIDE the identity/policy scope: turnContext providers run here, so a
+      // plugin can scope its injection to the current user via currentIdentity() (e.g. per-user todos
+      // instead of one global list leaking across users). memoryBlock/hookBlock are already resolved.
+      // Owner chat: the effective tool access is the user's OWN deny-list (their disabled_tools). Empty
+      // → undefined (no restriction). The execute-time gate reads this per plugin-tool call.
+      const denied = this.d.users.get(userId)?.disabled_tools ?? [];
+      const toolPolicy = denied.length ? { deny: new Set(denied) } : undefined;
+      // Hide the user's disabled tools from the model this turn (not just block the call) — applies on the
+      // next prompt, so set it right before. The execute-time gate stays as defense-in-depth.
+      applyToolVisibility(live.session, live.pluginToolNames, toolPolicy);
+      await runWithPolicy(live.policy, () => {
+        const prompted = memoryBlock + hookBlock + live.turnContext() + text;
+        return options ? live.session.prompt(prompted, options) : live.session.prompt(prompted);
+      }, { identity, elicit, emitCard, toolPolicy });
       // Post-turn curator: extract durable facts from this exchange in the background. Fire-and-forget
       // (mirrors brainWorker) — never awaited, never touches live.session, swallows its own errors.
       if (this.curator && memSettings?.autoSave !== false) {
@@ -712,6 +751,15 @@ export class BrainService {
    *  sole store; no live session required, so it works before/independently of `start`. */
   history(userId: number): BrainMessageView[] {
     return shapeBrainMessages(this.d.store.getMessages(this.activeSessionId(userId)));
+  }
+
+  /** ANY of the owner's stored sessions, shaped for display — including the channel (Discord) and
+   *  task-worker sessions that `start()` refuses to resume. Ownership-checked; used by the read-only
+   *  history view (Sessions → open in web chat). Throws for an unknown or foreign session. */
+  messagesOf(userId: number, sessionId: string): BrainMessageView[] {
+    const row = this.d.store.getSession(sessionId);
+    if (!row || row.user_id !== userId) throw new Error('unknown session');
+    return shapeBrainMessages(this.d.store.getMessages(sessionId));
   }
 }
 

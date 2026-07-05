@@ -5,7 +5,7 @@ import { EventBus } from '../../../src/api/sse.js';
 import { UsageRecorder } from '../../../src/integrations/usage/recorder.js';
 import type { TokenUsage } from '../../../src/integrations/usage/types.js';
 
-const fakeUsage: TokenUsage = { input: 10, output: 5, cacheRead: 2, cacheWrite: 1, total: 18, costUsd: 0.3 };
+const fakeUsage: TokenUsage = { input: 10, output: 5, cacheRead: 2, cacheWrite: 1, total: 18, reasoning: 0, costUsd: 0.3, currency: 'USD', costSource: 'provider_reported' };
 const task = (over: Partial<{ id: string; project_id: number; labels: string[]; parent_id: string | null }> = {}) =>
   ({ id: 't1', project_id: 1, parent_id: null, created_at: '', labels: ['exec:sonnet'], ...over });
 

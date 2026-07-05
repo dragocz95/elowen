@@ -263,9 +263,10 @@ export const usePluginHookExecutions = (name: string | null) =>
 export const useMarketplace = () =>
   useQuery({ queryKey: ['marketplace'], queryFn: () => orcaClient.marketplace() });
 
-/** The cronjob plugin's scheduled jobs (admin, the cronjob plugin detail). */
-export const useCronJobs = () =>
-  useQuery({ queryKey: ['cron-jobs'], queryFn: orcaClient.cronJobs });
+/** The cronjob plugin's scheduled jobs (admin-only endpoint). `enabled` lets non-admin surfaces (the
+ *  dashboard cron tile) skip the fetch entirely so it doesn't 403 in the console. */
+export const useCronJobs = (enabled = true) =>
+  useQuery({ queryKey: ['cron-jobs'], queryFn: orcaClient.cronJobs, enabled });
 
 /** The skills plugin's markdown skills — bundled + user (admin, the skills plugin detail). */
 export const usePluginSkills = () =>
@@ -290,6 +291,14 @@ export const useBrainOauthStatus = () =>
 
 export const useUserProjects = (userId: number | null, enabled = true) =>
   useQuery({ queryKey: ['user-projects', userId], queryFn: () => orcaClient.userProjects(userId as number), enabled: !!userId && enabled });
+
+/** Admin: the effective tool access + per-user overview stats for the users-panel detail. Keyed by
+ *  user id and only fetched when a user is selected (and the viewer is an admin). */
+export const useUserTools = (userId: number | null, enabled = true) =>
+  useQuery({ queryKey: ['user-tools', userId], queryFn: () => orcaClient.userTools(userId as number), enabled: !!userId && enabled });
+
+export const useUserStats = (userId: number | null, enabled = true) =>
+  useQuery({ queryKey: ['user-stats', userId], queryFn: () => orcaClient.userStats(userId as number), enabled: !!userId && enabled });
 
 /** The caller's own memories, filtered by status/kind/search. Private per-user — identity is server-side.
  *  Mutations invalidate the ['memories'] prefix, so every filter view refreshes together. */

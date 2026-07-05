@@ -36,6 +36,7 @@ function setup(extra: { engine?: unknown; missionGit?: unknown } = {}) {
 const auth = (t: string) => ({ headers: { authorization: `Bearer ${t}` } });
 const patch = (t: string, body: unknown) => ({ method: 'PATCH', headers: { authorization: `Bearer ${t}`, 'content-type': 'application/json' }, body: JSON.stringify(body) });
 const post = (t: string, body: unknown) => ({ method: 'POST', headers: { authorization: `Bearer ${t}`, 'content-type': 'application/json' }, body: JSON.stringify(body) });
+const del = (t: string) => ({ method: 'DELETE', headers: { authorization: `Bearer ${t}` } });
 
 describe('PATCH /users/:id — admin manages permissions', () => {
   it('admin grants the admin role to another user', async () => {
@@ -66,6 +67,81 @@ describe('PATCH /users/:id — admin manages permissions', () => {
   it('404 for an unknown user', async () => {
     const { app, adminTok } = setup();
     expect((await app.request('/users/999', patch(adminTok, { is_admin: true }))).status).toBe(404);
+  });
+});
+
+describe('RBAC tightening — /users directory & deletion are admin-only', () => {
+  it('GET /users is admin-only (non-admin → 403, admin → roster)', async () => {
+    const { app, adminTok, bobTok } = setup();
+    expect((await app.request('/users', auth(bobTok))).status).toBe(403);
+    const ok = await app.request('/users', auth(adminTok));
+    expect(ok.status).toBe(200);
+    expect((await ok.json()).length).toBe(2);
+  });
+
+  it('DELETE /users/:id is admin-only — a non-admin cannot delete another user', async () => {
+    const { app, adminTok, bobTok, users } = setup();
+    const carol = users.create('carol', 'pw'); // third, non-admin
+    // Before the guard bob could wipe carol; now it's 403 and carol survives.
+    expect((await app.request(`/users/${carol.id}`, del(bobTok))).status).toBe(403);
+    expect(users.get(carol.id)).not.toBeNull();
+    // Admin can still delete.
+    expect((await app.request(`/users/${carol.id}`, del(adminTok))).status).toBe(200);
+    expect(users.get(carol.id)).toBeNull();
+  });
+});
+
+describe('admin impersonation (sign in as)', () => {
+  it('admin gets a token that authenticates as the target; non-admin/self/unknown are rejected', async () => {
+    const { app, adminTok, bobTok, admin, bob } = setup();
+    expect((await app.request(`/users/${admin.id}/impersonate`, post(bobTok, {}))).status).toBe(403); // non-admin blocked
+    expect((await app.request(`/users/${admin.id}/impersonate`, post(adminTok, {}))).status).toBe(400); // self rejected
+    expect((await app.request('/users/999/impersonate', post(adminTok, {}))).status).toBe(404); // unknown target
+    const res = await app.request(`/users/${bob.id}/impersonate`, post(adminTok, {}));
+    expect(res.status).toBe(200);
+    const { token, user } = await res.json();
+    expect(user.id).toBe(bob.id);
+    // the issued token really acts as bob
+    expect((await (await app.request('/auth/me', auth(token))).json()).user.id).toBe(bob.id);
+  });
+});
+
+describe('RBAC tightening — task deps respect project access', () => {
+  it('GET /tasks/:id/deps 403s for a task in a project the caller cannot access, 404s for unknown', async () => {
+    const { app, bobTok, userProjects, tasks, db, bob } = setup();
+    db.prepare("INSERT INTO projects (id,slug,path) VALUES (2,'other','/x')").run();
+    userProjects.assign(bob.id, 1); // clears the home-project middleware gate, but NOT project 2
+    tasks.create({ id: 'orca-p2', project_id: 2, title: 'Foreign' });
+    expect((await app.request('/tasks/orca-p2/deps', auth(bobTok))).status).toBe(403);
+    expect((await app.request('/tasks/nope/deps', auth(bobTok))).status).toBe(404);
+  });
+
+  it('a non-admin assigned only to a NON-home project passes the coarse gate and sees just that project', async () => {
+    const { app, bobTok, userProjects, tasks, db, bob } = setup();
+    db.prepare("INSERT INTO projects (id,slug,path) VALUES (2,'sarah','/s')").run();
+    userProjects.assign(bob.id, 2); // assigned to project 2 only — NOT the daemon's home project (1)
+    tasks.create({ id: 'orca-home', project_id: 1, title: 'Home' });
+    tasks.create({ id: 'orca-sarah', project_id: 2, title: 'Sarah' });
+    const res = await app.request('/tasks', auth(bobTok));
+    expect(res.status).toBe(200); // the gate no longer keys on the home project
+    expect((await res.json()).map((t: { id: string }) => t.id)).toEqual(['orca-sarah']); // scoped to project 2
+  });
+
+  it('GET /tasks/deps only returns edges for accessible projects (admin sees all)', async () => {
+    const { app, adminTok, bobTok, userProjects, tasks, db, bob } = setup();
+    db.prepare("INSERT INTO projects (id,slug,path) VALUES (2,'other','/x')").run();
+    userProjects.assign(bob.id, 1);
+    tasks.create({ id: 'orca-a', project_id: 1, title: 'A' });
+    tasks.create({ id: 'orca-b', project_id: 1, title: 'B' });
+    tasks.setDeps('orca-b', ['orca-a']); // edge inside project 1
+    tasks.create({ id: 'orca-x', project_id: 2, title: 'X' });
+    tasks.create({ id: 'orca-y', project_id: 2, title: 'Y' });
+    tasks.setDeps('orca-y', ['orca-x']); // edge inside project 2
+
+    const bobDeps = await (await app.request('/tasks/deps', auth(bobTok))).json();
+    expect(bobDeps).toEqual([{ task_id: 'orca-b', depends_on_id: 'orca-a' }]); // only project 1
+    const adminDeps = await (await app.request('/tasks/deps', auth(adminTok))).json();
+    expect(adminDeps).toHaveLength(2); // both edges
   });
 });
 

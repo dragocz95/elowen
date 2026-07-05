@@ -7,7 +7,7 @@ const DEFAULT_TOKEN_TTL_DAYS = 30;
 const ttlDays = (days?: number): number =>
   typeof days === 'number' && Number.isFinite(days) && days >= 1 ? Math.floor(days) : DEFAULT_TOKEN_TTL_DAYS;
 
-export interface User { id: number; username: string; created_at: string; is_admin: boolean; allowed_execs: string[]; name: string; email: string; avatar: string; default_exec: string; advisor_exec: string; advisor_autostart: boolean }
+export interface User { id: number; username: string; created_at: string; is_admin: boolean; allowed_execs: string[]; disabled_tools: string[]; name: string; email: string; avatar: string; default_exec: string; advisor_exec: string; advisor_autostart: boolean }
 /** What a token may do. 'full' = an interactive user session (the user's own rights). 'agent' = a
  *  spawned worker/overseer/pilot, restricted to its task-close / plan-submit / overseer verbs.
  *  'advisor' is stored in the DB for the per-user advisor session; it grants full access (mapped to
@@ -16,8 +16,8 @@ export type TokenScope = 'full' | 'agent';
 export type StoredScope = TokenScope | 'advisor';
 /** A resolved token: the owning user plus the token's scope, so route guards can narrow an agent. */
 export interface Principal { user: User; scope: TokenScope }
-type Row = { id: number; username: string; created_at: string; is_admin: number; password_hash: string; allowed_execs: string; name: string; email: string; avatar: string; default_exec: string; advisor_exec: string; advisor_autostart: number };
-const mask = (r: Row): User => ({ id: r.id, username: r.username, created_at: r.created_at, is_admin: !!r.is_admin, allowed_execs: r.allowed_execs ? r.allowed_execs.split(',').filter(Boolean) : [], name: r.name ?? '', email: r.email ?? '', avatar: r.avatar ?? '', default_exec: r.default_exec ?? '', advisor_exec: r.advisor_exec ?? '', advisor_autostart: r.advisor_autostart === undefined ? true : !!r.advisor_autostart });
+type Row = { id: number; username: string; created_at: string; is_admin: number; password_hash: string; allowed_execs: string; disabled_tools: string; name: string; email: string; avatar: string; default_exec: string; advisor_exec: string; advisor_autostart: number };
+const mask = (r: Row): User => ({ id: r.id, username: r.username, created_at: r.created_at, is_admin: !!r.is_admin, allowed_execs: r.allowed_execs ? r.allowed_execs.split(',').filter(Boolean) : [], disabled_tools: r.disabled_tools ? r.disabled_tools.split(',').filter(Boolean) : [], name: r.name ?? '', email: r.email ?? '', avatar: r.avatar ?? '', default_exec: r.default_exec ?? '', advisor_exec: r.advisor_exec ?? '', advisor_autostart: r.advisor_autostart === undefined ? true : !!r.advisor_autostart });
 
 function hashPassword(password: string): string {
   const salt = randomBytes(16);
@@ -60,6 +60,12 @@ export class UserStore {
   /** Set the per-user model allow-list (exec specs). Empty → no per-user restriction. */
   setAllowedExecs(id: number, execs: string[]): User | null {
     this.db.prepare('UPDATE users SET allowed_execs = ? WHERE id = ?').run(execs.join(','), id);
+    return this.get(id);
+  }
+  /** Set the per-user tool DENY-list (plugin tool names disabled for this user's own brain sessions).
+   *  Empty → the user gets every enabled plugin tool. Tool names are comma-free, so a CSV is safe. */
+  setDisabledTools(id: number, tools: string[]): User | null {
+    this.db.prepare('UPDATE users SET disabled_tools = ? WHERE id = ?').run([...new Set(tools)].join(','), id);
     return this.get(id);
   }
   /** Self-service profile fields (name / email / preferred default executor). Only provided keys

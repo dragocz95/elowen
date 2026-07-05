@@ -35,7 +35,7 @@ function toolset() {
 }
 
 const txt = (r: unknown) => (r as { content: { text: string }[] }).content[0]!.text;
-const run = (identity: TurnIdentity | undefined, fn: () => Promise<unknown>) => runWithPolicy(POLICY, fn, identity);
+const run = (identity: TurnIdentity | undefined, fn: () => Promise<unknown>) => runWithPolicy(POLICY, fn, { identity });
 
 describe('buildMemoryTools', () => {
   it('exposes the expected tool names', () => {
@@ -102,6 +102,18 @@ describe('buildMemoryTools', () => {
     expect(store.list(1)).toHaveLength(1);
     const search = await run(LINKED_OWNER, () => byName('memory_search').execute('c2', { query: 'Discord' }));
     expect(txt(search)).toContain('Discord');
+  });
+
+  it('a regular non-owner user with an Orca account uses their OWN memory (keyed by orcaUserId)', async () => {
+    // Patricie: authenticated, not the operator (owner=false), not admin — but a resolved Orca account.
+    const MEMBER: TurnIdentity = { platform: 'orca', userId: '2', orcaUserId: 2, admin: false, owner: false };
+    const { store, byName } = toolset();
+    const add = await run(MEMBER, () => byName('memory_add').execute('c1', { body: 'Patricie preferuje krátké odpovědi.' }));
+    expect(txt(add)).toMatch(/Stored memory #\d+/);
+    expect(store.list(2)).toHaveLength(1); // written under HER account (2)…
+    expect(store.list(1)).toHaveLength(0); // …never the operator's (1)
+    const search = await run(MEMBER, () => byName('memory_search').execute('c2', { query: 'odpovědi' }));
+    expect(txt(search)).toContain('Patricie');
   });
 
   it('channel / non-owner identity: refused, nothing written', async () => {

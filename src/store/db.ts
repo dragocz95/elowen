@@ -47,6 +47,8 @@ export function openDb(path: string): Db {
   addColumn(db, 'tasks', 'resume_note', 'TEXT');
   addColumn(db, 'users', 'is_admin', 'INTEGER NOT NULL DEFAULT 0');
   addColumn(db, 'users', 'allowed_execs', "TEXT NOT NULL DEFAULT ''");
+  // Per-user tool deny-list (CSV of plugin tool names disabled for this user's own brain sessions).
+  addColumn(db, 'users', 'disabled_tools', "TEXT NOT NULL DEFAULT ''");
   addColumn(db, 'users', 'name', "TEXT NOT NULL DEFAULT ''");
   addColumn(db, 'users', 'email', "TEXT NOT NULL DEFAULT ''");
   addColumn(db, 'users', 'avatar', "TEXT NOT NULL DEFAULT ''");
@@ -93,6 +95,12 @@ export function openDb(path: string): Db {
   addColumn(db, 'memory_categories', 'icon', "TEXT NOT NULL DEFAULT ''");
   // Which model performed a memory mutation (curator/categorizer). Nullable — human/API events have none.
   addColumn(db, 'memory_events', 'model', 'TEXT');
+  // Extended usage/cost accounting (see task_usage in schema.sql). All nullable/zero-default so existing
+  // rows read as legacy (reasoning 0, no currency, cost_source NULL treated as unknown).
+  addColumn(db, 'task_usage', 'reasoning', 'INTEGER NOT NULL DEFAULT 0');
+  addColumn(db, 'task_usage', 'cost_source', 'TEXT');
+  addColumn(db, 'task_usage', 'currency', 'TEXT');
+  addColumn(db, 'task_usage', 'raw_usage_metadata', 'TEXT');
   // A linked Discord snowflake is an identity key — enforce one-owner-per-id with a partial UNIQUE index
   // so a squatter can't claim another user's id (see schema.sql). Created here too for pre-existing DBs.
   db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_user_settings_discord_id ON user_settings(value) WHERE key = 'discordUserId'");

@@ -75,7 +75,8 @@ export function SessionsView() {
               : <EmptyState title={t.sessions.empty} description={t.sessions.emptyDescription} icon={TerminalSquare} action={<Button variant="accent" icon={ArrowRight} onClick={() => router.push('/tasks')}>{t.sessions.emptyAction}</Button>} />}
         </div>
 
-        {/* Right rail: every brain conversation (chat, CLI, Discord channels) — model icon, title, tokens. */}
+        {/* Right rail: brain conversations — admins see all users' (oversight), a regular user sees
+            their own. Clickable → open/continue in the web chat. */}
         <aside className="flex shrink-0 flex-col gap-4 @3xl:w-72">
           <BrainSessionsPanel />
         </aside>

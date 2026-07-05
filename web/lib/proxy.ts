@@ -30,6 +30,27 @@ export function clearCookie(secure: boolean): string {
   return `${COOKIE_NAME}=; ${ATTRS}${secure ? '; Secure' : ''}; Max-Age=0`;
 }
 
+// Impersonation ("sign in as") cookies, set only while an admin views the app as another user:
+//  - RETURN_COOKIE: httpOnly stash of the admin's OWN token, so "stop impersonating" can restore it.
+//  - IMPERSONATING_COOKIE: a JS-readable display hint (the target's name) so the UI can show a banner.
+//    It carries no authority — the session token in COOKIE_NAME is what actually authenticates.
+export const RETURN_COOKIE = 'orca_return';
+export const IMPERSONATING_COOKIE = 'orca_as';
+
+/** Build a Set-Cookie string for an arbitrary cookie name. `httpOnly=false` makes it readable by page
+ *  JS (used for the non-sensitive impersonation display hint); values are URL-encoded. */
+export function namedCookie(name: string, value: string, secure: boolean, maxAgeSeconds: number, httpOnly = true): string {
+  const attrs = `${httpOnly ? 'HttpOnly; ' : ''}SameSite=Lax; Path=/`;
+  return `${name}=${encodeURIComponent(value)}; ${attrs}${secure ? '; Secure' : ''}; Max-Age=${Math.floor(maxAgeSeconds)}`;
+}
+
+/** Read (and URL-decode) an arbitrary cookie by name from the request, or null when absent. Anchored
+ *  so one cookie name can't match as a substring of another. */
+export function readCookie(req: Request, name: string): string | null {
+  const m = (req.headers.get('cookie') ?? '').match(new RegExp(`(?:^|; )${name}=([^;]+)`));
+  return m ? decodeURIComponent(m[1]) : null;
+}
+
 /** Same-origin guard for mutating requests (CSRF defense-in-depth on top of SameSite=Lax).
  *  A missing Origin header (same-origin GET navigations, some same-origin fetches) is allowed;
  *  a present Origin must match our host. We compare host, not the full origin, because a

@@ -11,6 +11,7 @@ import { orcaClient, BASE } from '../../lib/orcaClient';
 import { formatTaskTime } from '../../lib/format';
 import type { AskQuestion, BrainCard, BrainSearchHit, BrainModelOption, BrainUsage, SlashCommandDef, StatuslineConfig } from '../../lib/types';
 import { fromHistory, pushUser, reduce, upsertCard, type ChatTurn, type ToolItem, type TranscriptEvent } from '../../lib/transcript';
+import { BRAIN_OPEN_EVENT, consumePendingBrainSession, type BrainOpenRequest } from '../../lib/brainDock';
 import { AskQuestionCard } from './AskQuestionCard';
 
 /** Compact token count: 999 → '999', 34 567 → '35k', 1 234 567 → '1.2M'. */
@@ -180,6 +181,9 @@ export function BrainChat() {
   const [ask, setAsk] = useState<{ id: string; questions: AskQuestion[] } | null>(null);
   /** Live display cards (ctx.emitCard) — seeded from status, kept current from the `card` event. */
   const [cards, setCards] = useState<BrainCard[]>([]);
+  /** When set, we're VIEWING a non-continuable session (a Discord channel or a task worker) read-only:
+   *  its history is shown, but there's no live stream and the composer is replaced by an exit banner. */
+  const [readOnly, setReadOnly] = useState<string | null>(null);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const fileRef = useRef<HTMLInputElement>(null);
   // Slash-command menu (single source of truth: GET /brain/commands). Level 0 = the command list; a
@@ -284,9 +288,30 @@ export function BrainChat() {
     setReady(true);
   };
 
+  // Route a "open this session" request: a continuable one (own web/CLI conversation) is resumed live;
+  // a non-continuable one (shared Discord channel / task worker) opens read-only.
+  const openRequest = (req: BrainOpenRequest) =>
+    req.continuable ? switchSession({ session: req.sessionId }) : openReadOnly(req.sessionId);
+
   useEffect(() => {
-    void connect().catch(() => setReady(true)); // surface the input even if the brain is unwired
+    // If another view asked to open a specific session (Sessions → open in chat), open THAT one instead
+    // of the default active conversation; otherwise boot the active conversation as usual.
+    const pending = consumePendingBrainSession();
+    const boot = pending ? openRequest(pending) : connect();
+    void boot.catch(() => setReady(true)); // surface the input even if the brain is unwired
     return () => esRef.current?.close();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // While the dock is already open, a fresh "open this session" request opens it live.
+  useEffect(() => {
+    const onOpen = (e: Event) => {
+      consumePendingBrainSession(); // this instance handles it live → clear the pending bridge
+      const req = (e as CustomEvent<BrainOpenRequest>).detail;
+      if (req?.sessionId) void openRequest(req).catch(() => toast(t.brainChat.searchOpenError, 'error'));
+    };
+    window.addEventListener(BRAIN_OPEN_EVENT, onOpen);
+    return () => window.removeEventListener(BRAIN_OPEN_EVENT, onOpen);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -326,12 +351,28 @@ export function BrainChat() {
   };
 
   const switchSession = async (opts: { session?: string; fresh?: boolean }) => {
+    setReadOnly(null); // leaving any read-only preview
     setPickerOpen(false);
     setSearch('');
     await orcaClient.brainStart(opts);
     await qc.invalidateQueries({ queryKey: ['brain-sessions'] });
     await connect();
   };
+
+  // View a non-continuable session (a shared Discord channel or a task worker) read-only: load its
+  // stored history, show it, and swap the composer for an exit banner. No live stream is opened — the
+  // owner can't post into someone else's channel or a worker's run.
+  const openReadOnly = async (sessionId: string) => {
+    esRef.current?.close();
+    setPickerOpen(false); setSearch(''); setAsk(null); setCards([]); setBusy(false); setNotice('');
+    setReadOnly(sessionId);
+    const msgs = await orcaClient.brainMessages(sessionId);
+    setTurns(fromHistory(msgs).turns);
+    setReady(true);
+  };
+
+  // Leave the read-only preview and return to the live active conversation.
+  const exitReadOnly = () => { setReadOnly(null); void connect(); };
 
   const deleteSession = async (id: string, wasActive: boolean) => {
     await orcaClient.brainDeleteSession(id).catch(() => undefined);
@@ -505,7 +546,13 @@ export function BrainChat() {
         </div>
       ) : null}
 
-      {/* Composer. */}
+      {/* Composer — replaced by a read-only banner when viewing a channel/task session's history. */}
+      {readOnly ? (
+        <div className="flex items-center justify-between gap-2 border-t border-border bg-elevated/40 p-3 text-sm text-text-muted">
+          <span className="flex min-w-0 items-center gap-2"><FileText size={14} className="shrink-0" aria-hidden /><span className="truncate">{t.brainChat.readOnly}</span></span>
+          <button type="button" onClick={exitReadOnly} className="shrink-0 rounded-md border border-border px-2.5 py-1 text-xs text-text transition-colors hover:bg-elevated">{t.brainChat.readOnlyExit}</button>
+        </div>
+      ) : (
       <form
         className="relative flex items-end gap-2 border-t border-border p-2"
         onSubmit={(e) => { e.preventDefault(); void submit(); }}
@@ -574,6 +621,7 @@ export function BrainChat() {
           <Send size={16} aria-hidden />
         </button>
       </form>
+      )}
     </div>
   );
 }

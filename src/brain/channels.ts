@@ -1,14 +1,15 @@
 import type { BrainStore } from '../store/brainStore.js';
 import type { Policy } from '../plugins/policy.js';
-import type { TurnIdentity } from '../plugins/policyContext.js';
+import type { TurnIdentity, ToolPolicy } from '../plugins/policyContext.js';
 import { runWithPolicy } from '../plugins/policyContext.js';
-import type { AskQuestion, BrainEvent, BrainUsage } from './events.js';
-import { usageOf } from './events.js';
+import type { AskQuestion, BrainEvent, BrainUsage, CompactResult } from './events.js';
+import { usageOf, runCompaction } from './events.js';
 import type { ElicitationRegistry } from './elicitation.js';
 import { normalizeCard } from './cards.js';
 import { projectUserTurn } from './persistence.js';
 import { extractText, frameUntrusted } from './messageView.js';
 import { channelSessionId } from './sessionId.js';
+import { applyToolVisibility } from './session/capabilities.js';
 import type { MemoryService } from './memoryService.js';
 import type { MemoryCurator } from './memoryCurator.js';
 import type { ConversationTitler } from './conversationTitler.js';
@@ -27,7 +28,10 @@ export interface ChannelSendOpts {
   trusted?: boolean;
   model?: { provider?: string; model?: string };
   thinkingLevel?: string;
-  tools?: string[];
+  /** The sender's effective tool access for THIS turn (see ToolPolicy). Sourced by the orchestrator
+   *  from the linked Orca account (deny-list) or the platform role (allow-list). Enforced at
+   *  execute time by the plugin-tool gate. Undefined → no restriction. */
+  toolPolicy?: ToolPolicy;
   images?: { data: string; mimeType: string }[];
   identity?: TurnIdentity;
   /** The Orca account the sender is verified as (linked platform id). When set, that user's memory is
@@ -120,7 +124,6 @@ export class ChannelSessionService {
           extraAppend: opts.promptAppend,
           channel: true, // a shared platform channel is NEVER owner-chat — no orca_* tools, no owner token
           trustedChannel: opts.trusted, // admin-role sender → trusted-channel (all projects + full plugin toolset), still no orca_*
-          toolFilter: opts.tools,
           thinkingLevel: opts.thinkingLevel,
           // Channels are the shared, owner-anchored Discord surface — the personality chunk always resolves
           // the OWNER's 'discord' active profile (never the per-sender id: that persona would leak to the
@@ -157,7 +160,6 @@ export class ChannelSessionService {
           }
         } catch { /* recall is best-effort; a failure must never break the turn */ }
       }
-      const prompted = memoryBlock + ch.turnContext() + text;
       const options = opts.images?.length
         ? { images: opts.images.map((i) => ({ type: 'image' as const, data: i.data, mimeType: i.mimeType })) }
         : undefined;
@@ -174,7 +176,16 @@ export class ChannelSessionService {
       // per-message), and status() never serves a channel session — so there's nothing to persist here.
       const emitCard = (raw: unknown) => { const card = normalizeCard(raw); if (card) for (const l of ch.listeners) l({ type: 'card', card }); };
       try {
-        await runWithPolicy(opts.policy, () => (options ? ch.session.prompt(prompted, options) : ch.session.prompt(prompted)), opts.identity, elicit, emitCard);
+        // Advertise the model only the tools THIS sender may use (a shared channel session is composed
+        // once with every tool). Linked sender → their disabled_tools hidden; role sender → the role's
+        // allow-list narrows plugin tools. Applies on the next prompt; the execute gate stays as backup.
+        applyToolVisibility(ch.session, ch.pluginToolNames, opts.toolPolicy);
+        // Build the prompt INSIDE the identity/policy scope so turnContext providers can scope to the
+        // channel sender via currentIdentity() (e.g. per-user todos, not one global list across senders).
+        await runWithPolicy(opts.policy, () => {
+          const prompted = memoryBlock + ch.turnContext() + text;
+          return options ? ch.session.prompt(prompted, options) : ch.session.prompt(prompted);
+        }, { identity: opts.identity, elicit, emitCard, toolPolicy: opts.toolPolicy });
         // Hand the caller a settled idle (model + context fill) deterministically, AFTER the turn ends.
         // Proactive footers (every cron push builds `model · N %` from this) must not depend on the
         // stream's own idle winning the race against prompt() resolution — otherwise the footer is
@@ -214,14 +225,14 @@ export class ChannelSessionService {
   }
 
   /** Compact a channel session's context (a platform `/compact` slash), serialized against its turns so
-   *  it can't race an in-flight prompt. Returns the post-compaction usage, or null if there's no session. */
-  async compact(channelId: string): Promise<BrainUsage | null> {
+   *  it can't race an in-flight prompt. Returns the compaction result (usage + whether anything was
+   *  compacted), or null if there's no session. A too-small session is a benign no-op, not an error. */
+  async compact(channelId: string): Promise<CompactResult | null> {
     const sessionId = channelSessionId(channelId);
     return this.d.registry.withLock(sessionId, async () => {
       const ch = this.d.registry.channelGet(channelId);
       if (!ch) return null;
-      await ch.session.compact();
-      return usageOf(ch.session);
+      return runCompaction(ch.session);
     });
   }
 

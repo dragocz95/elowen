@@ -67,11 +67,10 @@ export function register(ctx) {
 
   ctx.registerTool(defineTool({
     name: 'list_skills', label: 'List skills',
-    description: 'List available skills (bundled + user-created). Admin only.',
+    description: 'List available skills (bundled + user-created).',
     parameters: Type.Object({}),
     execute: async () => {
       try {
-        adminOnly();
         const rows = [];
         for (const { dir, tag } of [{ dir: join(here, 'skills'), tag: 'bundled' }, { dir: userDir, tag: 'user' }]) {
           if (!existsSync(dir)) continue;

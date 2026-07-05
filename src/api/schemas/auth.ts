@@ -26,6 +26,8 @@ export const passwordChangeSchema = z.object({
 export const userPermissionsSchema = z.object({
   is_admin: z.boolean().optional(),
   allowed_execs: z.array(z.string()).optional(),
+  /** Per-user tool deny-list: plugin tool names disabled for this user's own brain sessions. */
+  disabled_tools: z.array(z.string()).optional(),
 });
 
 /** Assign a project to a user. */

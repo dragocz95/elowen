@@ -15,7 +15,7 @@ import { ProjectStore } from '../../src/store/projectStore.js';
 import { UserProjectStore } from '../../src/store/userProjectStore.js';
 import { TaskUsageStore } from '../../src/store/taskUsageStore.js';
 
-const usage = { input: 100, output: 50, cacheRead: 10, cacheWrite: 5, total: 165, costUsd: 0.5 };
+const usage = { input: 100, output: 50, cacheRead: 10, cacheWrite: 5, total: 165, reasoning: 0, costUsd: 0.5, currency: 'USD', costSource: 'provider_reported' as const };
 
 function setup() {
   const db = openDb(':memory:');

@@ -23,16 +23,17 @@ function text(t: string) {
   return { content: [{ type: 'text' as const, text: t }], details: {} };
 }
 
-/** The genuine owner's Orca ACCOUNT id behind THIS turn, or null when memory must stay locked. Read at
- *  EXECUTE time — never closed over at build time. The invariant: memory is per-user + private, reachable
- *  only by the OPERATOR — from their own Orca chat OR their linked platform account (e.g. their Discord
- *  id claimed in Account settings), so it's the same memory across surfaces. The real guard is `owner`
- *  (an admin-role stranger in a trusted channel is admin, NEVER owner) + a resolved `orcaUserId` (a
- *  task-worker has currentIdentity()===null; an unlinked sender has no orcaUserId). Keys on orcaUserId,
- *  never the raw `userId` (which for a platform turn is the platform id, not the Orca account). */
-function ownerUserId(): number | null {
+/** The acting user's Orca ACCOUNT id behind THIS turn, or null when memory must stay locked. Read at
+ *  EXECUTE time — never closed over at build time. The invariant: memory is per-user + private — EACH
+ *  user reaches only their OWN memory, from their own Orca chat OR their linked platform account (same
+ *  memory across surfaces). The guard is a resolved `orcaUserId`: it keys memory on the verified account,
+ *  so a user only ever touches their own — NOT another user's, NOT the operator's. A task-worker has
+ *  currentIdentity()===null and an unlinked/anonymous platform sender has no orcaUserId → both locked.
+ *  (Gating on `owner` here would have wrongly restricted memory to the single instance operator, locking
+ *  every other user out of their own memory.) Never keys on the raw `userId` (the platform id). */
+function actingUserId(): number | null {
   const id = currentIdentity();
-  if (!id || id.owner !== true || id.orcaUserId == null) return null;
+  if (!id || id.orcaUserId == null) return null;
   return Number.isFinite(id.orcaUserId) ? id.orcaUserId : null;
 }
 
@@ -52,7 +53,7 @@ function memorySearch(d: MemoryToolDeps) {
       limit: Type.Optional(Type.Number({ description: 'Max memories to return (default 6)' })),
     }),
     execute: async (_id, p: { query: string; limit?: number }) => {
-      const userId = ownerUserId();
+      const userId = actingUserId();
       if (userId === null) return text(LOCKED);
       const { memories } = await d.service.retrieve(userId, p.query, { maxCount: p.limit });
       if (memories.length === 0) return text('No matching memories.');
@@ -74,7 +75,7 @@ function memoryAdd(d: MemoryToolDeps) {
       importance: Type.Optional(Type.Number({ description: '1..5 (default 3)' })),
     }),
     execute: async (_id, p: { body: string; kind?: string; importance?: number }) => {
-      const userId = ownerUserId();
+      const userId = actingUserId();
       if (userId === null) return text(LOCKED);
       const body = p.body.trim();
       if (body === '') return text('Cannot add an empty memory.');
@@ -107,7 +108,7 @@ function memoryUpdate(d: MemoryToolDeps) {
       importance: Type.Optional(Type.Number({ description: '1..5' })),
     }),
     execute: async (_id, p: { id: number; body?: string; kind?: string; importance?: number }) => {
-      const userId = ownerUserId();
+      const userId = actingUserId();
       if (userId === null) return text(LOCKED);
       const patch: MemoryPatch = {};
       if (p.body !== undefined) patch.body = p.body;
@@ -130,7 +131,7 @@ function memoryMerge(d: MemoryToolDeps) {
       body: Type.String({ description: 'The consolidated fact' }),
     }),
     execute: async (_id, p: { ids: number[]; body: string }) => {
-      const userId = ownerUserId();
+      const userId = actingUserId();
       if (userId === null) return text(LOCKED);
       const body = p.body.trim();
       if (body === '') return text('Cannot merge into an empty memory.');
@@ -148,7 +149,7 @@ function memoryDelete(d: MemoryToolDeps) {
       + 'Personal chat only.',
     parameters: Type.Object({ id: Type.Number({ description: 'The memory id to delete' }) }),
     execute: async (_id, p: { id: number }) => {
-      const userId = ownerUserId();
+      const userId = actingUserId();
       if (userId === null) return text(LOCKED);
       const ok = d.store.softDelete(userId, p.id, `user:${userId}`, 'deleted via memory_delete tool');
       return text(ok ? `Deleted memory #${p.id}.` : `No memory #${p.id} found.`);
@@ -162,7 +163,7 @@ function memoryListRecent(d: MemoryToolDeps) {
     description: 'List the most recently stored memories about the user. Personal chat only.',
     parameters: Type.Object({ limit: Type.Optional(Type.Number({ description: 'Max to list (default 10)' })) }),
     execute: async (_id, p: { limit?: number }) => {
-      const userId = ownerUserId();
+      const userId = actingUserId();
       if (userId === null) return text(LOCKED);
       const rows = d.store.listRecent(userId, p.limit ?? 10);
       if (rows.length === 0) return text('No memories stored yet.');
@@ -178,7 +179,7 @@ function memoryCategories(d: MemoryToolDeps) {
       + 'memories against. Use this before creating (avoid duplicates) or deleting one. Personal chat only.',
     parameters: Type.Object({}),
     execute: async () => {
-      const userId = ownerUserId();
+      const userId = actingUserId();
       if (userId === null) return text(LOCKED);
       const cats = d.categories.list(userId);
       if (cats.length === 0) return text('No memory categories yet. Create one with memory_category_create.');
@@ -200,7 +201,7 @@ function memoryCategoryCreate(d: MemoryToolDeps) {
       icon: Type.Optional(Type.String({ description: 'Optional lucide icon name from the allowed set' })),
     }),
     execute: async (_id, p: { name: string; description?: string; icon?: string }) => {
-      const userId = ownerUserId();
+      const userId = actingUserId();
       if (userId === null) return text(LOCKED);
       const name = p.name.trim();
       if (name === '') return text('A category needs a name.');
@@ -223,7 +224,7 @@ function memoryCategoryDelete(d: MemoryToolDeps) {
       + 'uncategorized. Personal chat only.',
     parameters: Type.Object({ id: Type.Number({ description: 'Category id (from memory_categories)' }) }),
     execute: async (_id, p: { id: number }) => {
-      const userId = ownerUserId();
+      const userId = actingUserId();
       if (userId === null) return text(LOCKED);
       const ok = d.categories.delete(userId, p.id);
       return text(ok ? `Deleted category #${p.id}. Its memories are now uncategorized.` : `No category #${p.id}.`);
@@ -241,7 +242,7 @@ function memoryRecategorize(d: MemoryToolDeps) {
       all: Type.Optional(Type.Boolean({ description: 'Re-sort every memory, not just uncategorized ones' })),
     }),
     execute: async (_id, p: { all?: boolean }) => {
-      const userId = ownerUserId();
+      const userId = actingUserId();
       if (userId === null) return text(LOCKED);
       if (!d.categorizer.configured()) return text('No categorization model is configured (Settings → memory model), so memories can\'t be auto-sorted.');
       if (d.categories.list(userId).length === 0) return text('No categories to sort into. Create one with memory_category_create first.');
@@ -251,10 +252,11 @@ function memoryRecategorize(d: MemoryToolDeps) {
   });
 }
 
-/** The owner's private long-term memory toolset. EVERY tool re-derives the acting user from
- *  currentIdentity() at execute time and refuses any non-owner / non-orca / task-worker turn — the
- *  build-time caller must NEVER close over an owner id (that would leak in a trusted channel). Composed
- *  only into 'owner-chat' sessions (see composeSessionTools), but the per-tool check is the real guard. */
+/** The per-user private long-term memory toolset. EVERY tool re-derives the acting user from
+ *  currentIdentity() at execute time and refuses any turn without a resolved orcaUserId (an unlinked/
+ *  anonymous sender or a task-worker) — the build-time caller must NEVER close over a user id (that would
+ *  leak into another sender's turn in a shared channel). Composed into every interactive session (see
+ *  composeSessionTools); the per-tool orcaUserId check is the real guard, keying each user to their own. */
 export function buildMemoryTools(d: MemoryToolDeps) {
   return [
     memorySearch(d), memoryAdd(d), memoryUpdate(d), memoryMerge(d), memoryDelete(d), memoryListRecent(d),

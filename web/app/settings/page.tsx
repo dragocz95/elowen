@@ -9,11 +9,13 @@ import { ProviderPicker } from '../../components/ui/ProviderPicker';
 import { ModelPillsPicker } from '../../components/ui/ModelPillsPicker';
 import { ModelModal } from '../../modules/settings/ModelModal';
 import { ModelNoteModal } from '../../modules/settings/ModelNoteModal';
+import { ContextWindowModal } from '../../modules/settings/ContextWindowModal';
 import { GithubStatusBanner } from '../../modules/settings/GithubStatusBanner';
 import { PluginsSection } from '../../modules/settings/PluginsSection';
 import { BrainSection } from '../../modules/settings/BrainSection';
 import { MemorySection } from '../../modules/settings/MemorySection';
 import { execProvider, execModel, type ProviderId } from '../../lib/modelProvider';
+import { formatTokens } from '../../lib/format';
 import { useBrainModels, useConfig, useMe, useSystem, useSystemSkills } from '../../lib/queries';
 import { useAutoSave } from '../../lib/useAutoSave';
 import { useUpdateConfig, useCleanupAll, useSystemUpdate, useSystemRestart, useInstallSkills } from '../../lib/mutations';
@@ -92,8 +94,13 @@ export default function SettingsPage() {
   const [allowed, setAllowed] = useState<string[]>([]);
   const [customModels, setCustomModels] = useState<{ label: string; exec: string }[]>([]);
   const [modelNotes, setModelNotes] = useState<Record<string, string>>({});
+  // Per-model max context window overrides (Orca AI models only), keyed `providerId/model`. Lives here
+  // in the Models section next to where models are enabled — one home for all Orca AI model config.
+  const [modelWindows, setModelWindows] = useState<Record<string, number>>({});
   // The model whose autopilot description is being edited (null = editor closed).
   const [noteFor, setNoteFor] = useState<{ label: string; exec: string } | null>(null);
+  // The Orca AI model whose context-window override is being edited (null = editor closed).
+  const [ctxFor, setCtxFor] = useState<{ model: string; key: string; effective: number } | null>(null);
   const [model, setModel] = useState('');
   const [overseerModel, setOverseerModel] = useState('');
   const [pilotExec, setPilotExec] = useState('');
@@ -146,6 +153,7 @@ export default function SettingsPage() {
       setAllowed(config.data.allowedExecs);
       setCustomModels(config.data.customModels ?? []);
       setModelNotes(config.data.modelNotes ?? {});
+      setModelWindows(config.data.brain?.modelContextWindows ?? {});
       setHiddenPresets(config.data.hiddenPresets ?? []);
       setModel(config.data.autopilot.model);
       setOverseerModel(config.data.autopilot.overseerModel ?? '');
@@ -192,9 +200,10 @@ export default function SettingsPage() {
   const saveProviders = () =>
     update.mutate({ providers }, { onError: (e) => toast(String(e), 'error') });
 
+  // autoUpdate is NOT bundled here — the System toggle is its single writer (it persists inline).
   const saveDefaults = () =>
     update.mutate(
-      { defaults: { exec: defExec, autonomy: defAutonomy, maxSessions: defMaxSessions }, security: { tokenTtlDays: defTokenTtl }, autoUpdate },
+      { defaults: { exec: defExec, autonomy: defAutonomy, maxSessions: defMaxSessions }, security: { tokenTtlDays: defTokenTtl } },
       { onError: (e) => toast(String(e), 'error') },
     );
 
@@ -204,7 +213,17 @@ export default function SettingsPage() {
   useAutoSave([reasoningMode, pilotExec, overseerExec, reviewOnDone, notes, model, overseerModel, apiUrl, apiKey, apProviderId], saveAutopilot, { ready });
   useAutoSave([prEnabled, prBaseBranch, prAutoOpen, prVerifyCommand, ghToken], saveGithub, { ready });
   useAutoSave([providers], saveProviders, { ready });
-  useAutoSave([defExec, defAutonomy, defMaxSessions, defTokenTtl, autoUpdate], saveDefaults, { ready });
+  useAutoSave([defExec, defAutonomy, defMaxSessions, defTokenTtl], saveDefaults, { ready });
+  // Per-model context windows auto-persist like every other model setting (no Save button).
+  useAutoSave([modelWindows], () => update.mutate({ brain: { modelContextWindows: modelWindows } }, { onError: (e) => toast(String(e), 'error') }), { ready });
+  // Set (or clear, with null) one model's context-window override; the autosave above persists it.
+  const setWindow = (key: string, value: number | null) =>
+    setModelWindows((cur) => {
+      const next = { ...cur };
+      if (value != null && value >= 1) next[key] = Math.floor(value);
+      else delete next[key];
+      return next;
+    });
 
   if (config.isLoading) return <ModuleShell moduleId="settings"><ModuleHeader title={t.page.settings} icon={SlidersHorizontal} /><LoadingState /></ModuleShell>;
   if (config.isError) return <ModuleShell moduleId="settings"><ModuleHeader title={t.page.settings} icon={SlidersHorizontal} /><ErrorState message={t.common.daemonUnreachable} onRetry={() => config.refetch()} /></ModuleShell>;
@@ -237,12 +256,12 @@ export default function SettingsPage() {
     );
   };
 
-  // Save a single model's autopilot description (empty string clears the entry).
+  // Persist a single model's autopilot description (empty string clears the entry). Persist-only — the
+  // modal auto-saves and owns its own close, so this must NOT dismiss it.
   const saveNote = (exec: string, note: string) => {
     const next = { ...modelNotes };
     if (note) next[exec] = note; else delete next[exec];
     persistModels({ modelNotes: next });
-    setNoteFor(null);
   };
 
   const toggle = (exec: string) =>
@@ -316,6 +335,14 @@ export default function SettingsPage() {
       >
         {category === 'models' && (
           <>
+            {/* The catalog half of the models story: WHICH models exist and are enabled. Where they
+             *  come from (accounts, keys, endpoints) is the Orca AI section — cross-linked here. */}
+            <p className="-mb-2 text-xs text-text-muted">
+              {t.settings.modelsIntro}{' '}
+              <button type="button" onClick={() => setCategory('brain')} className="font-medium text-accent hover:underline">
+                {t.settings.embeddedProviderLink}
+              </button>
+            </p>
             {/* One catalog, grouped by the engine that runs the model — the same grouping the
              *  executor picker uses, so what admins configure here matches what users pick. */}
             {PROVIDERS.map((prov) => {
@@ -386,7 +413,14 @@ export default function SettingsPage() {
                         </div>
                       );
                     })}
-                    {orcaItems.map((m) => (
+                    {orcaItems.map((m) => {
+                      const winKey = `${m.provider}/${m.model}`;
+                      // Local state is the live truth for overrides (seeded from the same config
+                      // `m.contextWindowSet` derives from, then autosaved), so a just-set or
+                      // just-cleared override renders immediately without waiting for a refetch.
+                      const override = modelWindows[winKey];
+                      const overridden = override != null;
+                      return (
                       <div key={m.exec} className="card-interactive flex flex-col gap-3.5 rounded-xl border border-border bg-surface p-5">
                         <div className="flex items-start gap-3">
                           <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-border bg-elevated">
@@ -397,12 +431,28 @@ export default function SettingsPage() {
                             <span className="truncate font-mono text-xs text-text-muted">{m.exec}</span>
                           </div>
                         </div>
-                        <div className="mt-auto flex items-center justify-between gap-2">
+                        {/* Footer: enable toggle + a compact context-window pill (Gauge icon, edited in a
+                         *  focused modal) sitting next to the provider badge. Accent-tinted when an
+                         *  override is set, quiet otherwise. Wraps on narrow/phone widths. */}
+                        <div className="mt-auto flex flex-wrap items-center justify-between gap-2">
                           <Toggle checked={allowed.includes(m.exec)} onChange={() => toggle(m.exec)} label={m.model} />
-                          <Badge>{m.providerLabel}</Badge>
+                          <div className="flex min-w-0 items-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => setCtxFor({ model: m.model, key: winKey, effective: m.contextWindow })}
+                              title={`${t.brain.contextWindowEdit} · ${formatTokens(override ?? m.contextWindow)}`}
+                              aria-label={`${t.brain.contextWindowEdit}: ${m.model}`}
+                              className={`inline-flex shrink-0 items-center gap-1 rounded-full border px-2 py-0.5 font-mono text-xs transition-colors ${overridden ? 'border-accent/40 bg-accent/10 text-accent hover:bg-accent/20' : 'border-border bg-elevated text-text-muted hover:border-border-strong hover:text-text'}`}
+                            >
+                              <Gauge size={12} aria-hidden />
+                              {formatTokens(override ?? m.contextWindow)}
+                            </button>
+                            <Badge>{m.providerLabel}</Badge>
+                          </div>
                         </div>
                       </div>
-                    ))}
+                      );
+                    })}
                   </div>
                   </div>
                 </div>
@@ -434,6 +484,16 @@ export default function SettingsPage() {
             initial={modelNotes[noteFor.exec] ?? ''}
             onClose={() => setNoteFor(null)}
             onSave={(note) => saveNote(noteFor.exec, note)}
+          />
+        )}
+
+        {ctxFor && (
+          <ContextWindowModal
+            model={ctxFor.model}
+            initial={modelWindows[ctxFor.key] ?? null}
+            effective={ctxFor.effective}
+            onClose={() => setCtxFor(null)}
+            onSave={(v) => setWindow(ctxFor.key, v)}
           />
         )}
 
@@ -617,9 +677,6 @@ export default function SettingsPage() {
               <SettingCard title={t.settings.maxSessions} description={t.help.maxSessions} icon={Layers}>
                 <input type="number" min={1} value={defMaxSessions} onChange={(e) => setDefMaxSessions(Number(e.target.value))} className={inputClass} />
               </SettingCard>
-              <SettingCard title={t.settings.tokenTtl} description={t.help.tokenTtl} icon={KeyRound}>
-                <input type="number" min={1} value={defTokenTtl} onChange={(e) => setDefTokenTtl(Number(e.target.value))} className={inputClass} />
-              </SettingCard>
             </div>
             </div>
         )}
@@ -758,10 +815,30 @@ export default function SettingsPage() {
                   })}
                 </div>
               </div>
+
+              {/* Session token TTL — a server-wide security setting, so it lives with the other
+                  server controls rather than among the per-task defaults. Same autosave as defaults. */}
+              <div className="w-full max-w-lg">
+                <SettingCard title={t.settings.tokenTtl} description={t.help.tokenTtl} icon={KeyRound}>
+                  <input type="number" min={1} value={defTokenTtl} onChange={(e) => setDefTokenTtl(Number(e.target.value))} className={inputClass} />
+                </SettingCard>
+              </div>
             </div>
         )}
 
-        {category === 'brain' && <BrainSection />}
+        {category === 'brain' && (
+          <>
+            {/* The connections half of the models story: accounts, providers and keys (+ agent
+             *  identity). The catalog itself — enable/context-window per model — is Models. */}
+            <p className="-mb-2 text-xs text-text-muted">
+              {t.settings.brainIntro}{' '}
+              <button type="button" onClick={() => setCategory('models')} className="font-medium text-accent hover:underline">
+                {t.settings.brainModelsLink}
+              </button>
+            </p>
+            <BrainSection />
+          </>
+        )}
 
         {category === 'memory' && <MemorySection />}
 

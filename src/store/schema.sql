@@ -25,7 +25,13 @@ CREATE TABLE IF NOT EXISTS task_usage (
   cache_read INTEGER NOT NULL DEFAULT 0,
   cache_write INTEGER NOT NULL DEFAULT 0,
   total INTEGER NOT NULL DEFAULT 0,
+  reasoning INTEGER NOT NULL DEFAULT 0,
   cost_usd REAL,
+  currency TEXT,
+  -- 'provider_reported' | 'calculated' | 'unavailable'; NULL on legacy rows (read as unknown).
+  cost_source TEXT,
+  -- Small non-sensitive provider usage blob (tokens + cost only) for debugging a reported figure.
+  raw_usage_metadata TEXT,
   captured_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_task_usage_project ON task_usage(project_id);
@@ -51,6 +57,7 @@ CREATE TABLE IF NOT EXISTS users (
   password_hash TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT (datetime('now')),
   is_admin INTEGER NOT NULL DEFAULT 0,
   allowed_execs TEXT NOT NULL DEFAULT '',
+  disabled_tools TEXT NOT NULL DEFAULT '',
   name TEXT NOT NULL DEFAULT '',
   email TEXT NOT NULL DEFAULT '',
   avatar TEXT NOT NULL DEFAULT '',
