@@ -1,0 +1,65 @@
+{
+  "description": "WhatsApp bot (Baileys): napište mu a odpoví z Orca AI. Textové příkazy (/model, /new, /help), výběr modelu pro každý chat (číslované textové menu, odpovíte číslem), živé streamované odpovědi (úprava zprávy za běhu se stopou nástrojů), stavové reakce a proaktivní cron/tick oznámení. Skupinové nástroje (admin session): výpis a info o skupinách, vytvoření skupiny, přidání/odebrání členů a poslání zprávy do libovolného chatu (provozovatel). Každý odesílatel (telefonní číslo, JID nebo celá skupina) se mapuje na povolené projekty Orcy a prompt role. Párování naskenováním QR kódu nebo pomocí párovacího kódu.",
+  "fields": {
+    "sec_connection": {
+      "label": "Připojení",
+      "hint": "Jak se bot napojí na WhatsApp a kam posílá proaktivní zprávy. Spárujte naskenováním QR kódu z logů pluginu, nebo párovacím kódem."
+    },
+    "phoneNumber": {
+      "label": "Telefonní číslo pro párování",
+      "hint": "Volitelné: číslo bota v mezinárodním formátu BEZ +, mezer a pomlček (např. 420777123456). Když vyplníte, plugin místo QR vypíše do logů 8znakový párovací kód — zadejte ho ve WhatsApp → Propojená zařízení → Propojit přes číslo. Prázdné = párování QR kódem."
+    },
+    "groupIds": {
+      "label": "Povolené skupiny",
+      "hint": "JID skupin oddělené čárkou (…@g.us). Prázdné = odpovídat v každé skupině, kde píše namapovaný odesílatel. Když vyplníte, bot odpovídá jen v těchto skupinách. Přímé chaty jsou pro namapované odesílatele vždy povolené."
+    },
+    "notifyChat": {
+      "label": "Oznamovací chat",
+      "hint": "Kam se posílají proaktivní zprávy (výsledky cronů/ticků, eskalace, oznámení o restartu) — telefonní číslo nebo JID (…@s.whatsapp.net / …@g.us). Prázdné = žádné proaktivní zprávy."
+    },
+    "sec_replies": {
+      "label": "Odpovědi a chování",
+      "hint": "Kdy a jak bot odpovídá."
+    },
+    "respondWithoutMention": {
+      "label": "Odpovídat bez zmínky",
+      "hint": "Zapnuto: ve skupinách bot odpovídá na každou zprávu namapovaného odesílatele. Vypnuto: ve skupinách odpovídá jen při @zmínce nebo když někdo odpoví na jeho zprávu. Přímé chaty dostanou odpověď vždy."
+    },
+    "streaming": {
+      "label": "Živé streamované odpovědi",
+      "hint": "Upravovat odpověď průběžně, jak přichází (volání nástrojů + text). Vypnuto = jedna zpráva na konci."
+    },
+    "reactions": {
+      "label": "Stavové reakce",
+      "hint": "Reaguje 👀 při přemýšlení, ✅/❌ po dokončení."
+    },
+    "runtimeFooter": {
+      "label": "Stavový řádek",
+      "hint": "Připojit pod finální odpověď malý řádek „model · % kontextu“."
+    },
+    "showReasoning": {
+      "label": "Zobrazit uvažování",
+      "hint": "Streamovat uvažování modelu do průběžné zprávy (modely s extended thinking). Výchozí = vypnuto — většinou je to šum."
+    },
+    "language": {
+      "label": "Jazyk služebních zpráv",
+      "hint": "Jazyk vlastních zpráv bota (/new, /model, zástupné texty): en (výchozí) nebo cs."
+    },
+    "sec_conversation": {
+      "label": "Konverzace",
+      "hint": "Směrování obrázků."
+    },
+    "visionModel": {
+      "label": "Vision model",
+      "hint": "Model pro zprávy s obrázkovými přílohami (musí umět vision). Prázdné = běžný model chatu."
+    },
+    "sec_senders": {
+      "label": "Pravidla odesílatelů",
+      "hint": "Mapování WhatsApp odesílatelů na povolené projekty, prompt role a nástroje, které smí bot použít."
+    },
+    "senderPolicies": {
+      "label": "Pravidla odesílatelů",
+      "hint": "Vyhrává první odpovídající odesílatel; odesílatelé bez pravidla jsou ignorováni. ID je telefonní číslo (420777123456), JID (…@s.whatsapp.net) nebo celá skupina (…@g.us) — ID skupiny dá přístup všem v ní. Pravidlo označené admin smí přepínat model a používat skupinové nástroje. Každé pravidlo může navíc omezit, které nástroje pro něj smí bot používat."
+    }
+  }
+}

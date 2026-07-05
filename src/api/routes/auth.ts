@@ -9,7 +9,7 @@ import { BUILTIN_TOOL_ICONS, builtinToolMetas } from '../../brain/tools/index.js
 import { makeToolIconResolver } from '../../brain/toolIcons.js';
 import { ADVISOR_STYLES, DEFAULT_ADVISOR_STYLE } from '../../brain/personality.js';
 import { rawTemplate } from '../../prompts/index.js';
-import { DiscordIdConflictError } from '../../store/userSettingStore.js';
+import { DiscordIdConflictError, WhatsAppNumberConflictError } from '../../store/userSettingStore.js';
 import type { User } from '../../store/userStore.js';
 import type { OrcaApp, RouteContext } from '../context.js';
 import { logger } from '../../shared/logger.js';
@@ -124,8 +124,8 @@ export function registerAuthRoutes(app: OrcaApp, ctx: RouteContext): void {
   app.patch('/auth/me/cli-settings', async (c) => {
     if (!d.userSettings) return c.json({ error: 'settings unavailable' }, 400);
     const u = c.get('user');
-    const b = (await c.req.json().catch(() => ({}))) as { model?: unknown; modelProvider?: unknown; visionModel?: unknown; visionModelProvider?: unknown; thinkingLevel?: unknown; autoCompact?: unknown; autoCompactAt?: unknown; advisorStyle?: unknown; discordUserId?: unknown; autoRecall?: unknown; autoSave?: unknown };
-    const patch: { model?: string; modelProvider?: string; visionModel?: string; visionModelProvider?: string; thinkingLevel?: string; autoCompact?: boolean; autoCompactAt?: number; advisorStyle?: string; discordUserId?: string; autoRecall?: boolean; autoSave?: boolean } = {};
+    const b = (await c.req.json().catch(() => ({}))) as { model?: unknown; modelProvider?: unknown; visionModel?: unknown; visionModelProvider?: unknown; thinkingLevel?: unknown; autoCompact?: unknown; autoCompactAt?: unknown; advisorStyle?: unknown; discordUserId?: unknown; whatsappNumber?: unknown; autoRecall?: unknown; autoSave?: unknown };
+    const patch: { model?: string; modelProvider?: string; visionModel?: string; visionModelProvider?: string; thinkingLevel?: string; autoCompact?: boolean; autoCompactAt?: number; advisorStyle?: string; discordUserId?: string; whatsappNumber?: string; autoRecall?: boolean; autoSave?: boolean } = {};
     if (typeof b.model === 'string') patch.model = b.model.trim();
     if (typeof b.modelProvider === 'string') patch.modelProvider = b.modelProvider.trim();
     if (typeof b.visionModel === 'string') patch.visionModel = b.visionModel.trim();
@@ -137,6 +137,7 @@ export function registerAuthRoutes(app: OrcaApp, ctx: RouteContext): void {
     if (typeof b.autoRecall === 'boolean') patch.autoRecall = b.autoRecall;
     if (typeof b.autoSave === 'boolean') patch.autoSave = b.autoSave;
     if (typeof b.discordUserId === 'string') patch.discordUserId = b.discordUserId.trim(); // store validates the snowflake shape
+    if (typeof b.whatsappNumber === 'string') patch.whatsappNumber = b.whatsappNumber.trim(); // store normalizes to digits
     // Communication style: only accept a known style; anything else is silently ignored.
     if (typeof b.advisorStyle === 'string' && ADVISOR_STYLES.includes(b.advisorStyle as never)) patch.advisorStyle = b.advisorStyle;
     // A complete provider+model pick must be on the caller's allow-list (clearing is always fine).
@@ -156,6 +157,10 @@ export function registerAuthRoutes(app: OrcaApp, ctx: RouteContext): void {
       if (e instanceof DiscordIdConflictError) {
         console.warn(`cli-settings: user ${u.id} tried to link Discord id already claimed by another user`);
         return c.json({ error: 'Toto Discord ID už má propojené jiný uživatel.' }, 409);
+      }
+      if (e instanceof WhatsAppNumberConflictError) {
+        console.warn(`cli-settings: user ${u.id} tried to link WhatsApp number already claimed by another user`);
+        return c.json({ error: 'Toto WhatsApp číslo už má propojené jiný uživatel.' }, 409);
       }
       throw e;
     }

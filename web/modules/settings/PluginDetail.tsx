@@ -6,6 +6,7 @@ import { useTheme } from '../../lib/useTheme';
 import { pluginIcon } from './pluginMeta';
 import { CronJobsEditor } from './CronJobsEditor';
 import { SkillsEditor } from './SkillsEditor';
+import { WhatsAppPairSection } from './WhatsAppPairSection';
 import { MonacoEditor } from '../projects/editor/monacoLoader';
 import { defineEditorThemes } from '../projects/editor/oledTheme';
 import { Badge } from '../../components/ui/Badge';
@@ -746,6 +747,8 @@ export function PluginDetail({ name, onBack }: { name: string; onBack: () => voi
       ) : hasExplicitSections ? (
         configGroups.map((g, i) => (
           <Collapsible key={g.key} icon={SlidersHorizontal} title={g.title} description={g.hint} defaultOpen={i === 0 || groupHasUnsetSecret(g)}>
+            {/* WhatsApp: the "Pair device" button (QR/code modal) lives at the top of the Connection section. */}
+            {detail.name === 'whatsapp' && g.key === 'sec_connection' ? <WhatsAppPairSection /> : null}
             {fieldList(g.fields)}
           </Collapsible>
         ))
@@ -772,6 +775,7 @@ export function PluginDetail({ name, onBack }: { name: string; onBack: () => voi
           <SkillsEditor />
         </Collapsible>
       ) : null}
+
 
       {/* 3 — Tools: the plugin's live tools / skills / platforms. */}
       <Collapsible icon={Wrench} title={t.pluginDetail.tools}>

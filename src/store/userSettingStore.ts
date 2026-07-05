@@ -4,9 +4,9 @@ import { DEFAULT_ADVISOR_STYLE, isAdvisorStyle } from '../brain/personality.js';
 /** Typed per-user CLI/brain settings. `model`/`modelProvider` empty → use the configured brain default.
  *  `autoCompactAt` is the context-window fill percentage at which the conversation is auto-summarized.
  *  `advisorStyle` picks the advisor's communication style (the `{{personality}}` prompt paragraph). */
-export interface CliSettings { model: string; modelProvider: string; visionModel: string; visionModelProvider: string; thinkingLevel: string; autoCompact: boolean; autoCompactAt: number; advisorStyle: string; discordUserId: string; autoRecall: boolean; autoSave: boolean }
+export interface CliSettings { model: string; modelProvider: string; visionModel: string; visionModelProvider: string; thinkingLevel: string; autoCompact: boolean; autoCompactAt: number; advisorStyle: string; discordUserId: string; whatsappNumber: string; autoRecall: boolean; autoSave: boolean }
 // autoRecall/autoSave default to true so upgrading users keep the prior always-on memory behaviour.
-const CLI_DEFAULTS: CliSettings = { model: '', modelProvider: '', visionModel: '', visionModelProvider: '', thinkingLevel: '', autoCompact: false, autoCompactAt: 80, advisorStyle: DEFAULT_ADVISOR_STYLE, discordUserId: '', autoRecall: true, autoSave: true };
+const CLI_DEFAULTS: CliSettings = { model: '', modelProvider: '', visionModel: '', visionModelProvider: '', thinkingLevel: '', autoCompact: false, autoCompactAt: 80, advisorStyle: DEFAULT_ADVISOR_STYLE, discordUserId: '', whatsappNumber: '', autoRecall: true, autoSave: true };
 
 /** Reasoning-effort levels PI accepts (extended-thinking models). Empty = leave the model default. */
 const THINKING_LEVELS = ['minimal', 'low', 'medium', 'high', 'xhigh'] as const;
@@ -18,6 +18,15 @@ export class DiscordIdConflictError extends Error {
   constructor(public readonly discordUserId: string) {
     super(`discord id ${discordUserId} is already linked to another user`);
     this.name = 'DiscordIdConflictError';
+  }
+}
+
+/** Raised when a user tries to link a WhatsApp number another user has already claimed. Mirrors
+ *  {@link DiscordIdConflictError}; the route maps it to a 409 with a Czech user message. */
+export class WhatsAppNumberConflictError extends Error {
+  constructor(public readonly whatsappNumber: string) {
+    super(`whatsapp number ${whatsappNumber} is already linked to another user`);
+    this.name = 'WhatsAppNumberConflictError';
   }
 }
 
@@ -81,6 +90,7 @@ export class UserSettingStore {
       autoCompactAt: all.autoCompactAt !== undefined ? clampPercent(Number(all.autoCompactAt)) : CLI_DEFAULTS.autoCompactAt,
       advisorStyle: isAdvisorStyle(all.advisorStyle) ? all.advisorStyle : CLI_DEFAULTS.advisorStyle,
       discordUserId: all.discordUserId ?? CLI_DEFAULTS.discordUserId,
+      whatsappNumber: all.whatsappNumber ?? CLI_DEFAULTS.whatsappNumber,
       autoRecall: all.autoRecall !== undefined ? all.autoRecall === 'true' : CLI_DEFAULTS.autoRecall,
       autoSave: all.autoSave !== undefined ? all.autoSave === 'true' : CLI_DEFAULTS.autoSave,
     };
@@ -118,6 +128,19 @@ export class UserSettingStore {
           try { this.set(userId, 'discordUserId', v); }
           catch (e) {
             if (isUniqueViolation(e)) throw new DiscordIdConflictError(v);
+            throw e;
+          }
+        }
+      }
+      // A WhatsApp number links a phone (digits only, international form without +) to this account, same
+      // squatter protection as Discord via a partial UNIQUE index on (value WHERE key='whatsappNumber').
+      if (patch.whatsappNumber !== undefined) {
+        const v = String(patch.whatsappNumber).replace(/[^\d]/g, '');
+        if (!/^\d{6,15}$/.test(v)) this.remove(userId, 'whatsappNumber');
+        else {
+          try { this.set(userId, 'whatsappNumber', v); }
+          catch (e) {
+            if (isUniqueViolation(e)) throw new WhatsAppNumberConflictError(v);
             throw e;
           }
         }

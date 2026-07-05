@@ -455,8 +455,16 @@ export function buildApp(opts: BuildOpts) {
         agentName: () => config.get().brain.agentName,
         maxSteps: () => config.get().brain.maxSteps,
         resolvePlatformUser: (platform, platformUserId) => {
-          if (platform !== 'discord' || !platformUserId) return null;
-          const id = userSettings.userIdBySetting('discordUserId', platformUserId);
+          if (!platformUserId) return null;
+          // Discord ids are bare snowflakes; WhatsApp userIds are JIDs (e.g. "420778433908@s.whatsapp.net"
+          // or a "<id>@lid") — strip to digits so it matches the stored phone number.
+          let key: 'discordUserId' | 'whatsappNumber';
+          let value: string;
+          if (platform === 'discord') { key = 'discordUserId'; value = platformUserId; }
+          else if (platform === 'whatsapp') { key = 'whatsappNumber'; value = platformUserId.replace(/[@:].*$/, '').replace(/[^\d]/g, ''); }
+          else return null;
+          if (!value) return null;
+          const id = userSettings.userIdBySetting(key, value);
           const u = id != null ? users.get(id) : undefined;
           return u ? { id: u.id, name: u.name || u.username, username: u.username, admin: !!u.is_admin } : null;
         },

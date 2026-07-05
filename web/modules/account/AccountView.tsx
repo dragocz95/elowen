@@ -1,6 +1,6 @@
 'use client';
 import { useState, useEffect, useRef } from 'react';
-import { UserCog, Mail, Cpu, Upload, ShieldCheck, Check, User as UserIcon, KeyRound, ZoomIn, Bell, MessagesSquare, Sparkles, AtSign, Brain } from 'lucide-react';
+import { UserCog, Mail, Cpu, Upload, ShieldCheck, Check, User as UserIcon, KeyRound, ZoomIn, Bell, MessagesSquare, Sparkles, AtSign, Brain, MessageCircle } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { OrcaApiError } from '../../lib/orcaClient';
 import { useMe, useConfig, useMyCliSettings, useBrainModels } from '../../lib/queries';
@@ -79,8 +79,9 @@ export function AccountView() {
   // cliSettings (not on the User) — seeded once, then this local state drives the picker highlight.
   const [orcaSel, setOrcaSel] = useState('');
   const [orcaSeeded, setOrcaSeeded] = useState(false);
-  // Discord account link lives in cliSettings; seeded alongside the Orca-AI default, autosaved on change.
+  // Discord / WhatsApp account links live in cliSettings; seeded alongside the Orca-AI default, autosaved.
   const [discordUserId, setDiscordUserId] = useState('');
+  const [whatsappNumber, setWhatsappNumber] = useState('');
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -111,11 +112,13 @@ export function AccountView() {
     if (cli.data && !orcaSeeded) {
       setOrcaSel(cli.data.model ? `${cli.data.modelProvider ?? ''}::${cli.data.model}` : '');
       setDiscordUserId(cli.data.discordUserId ?? '');
+      setWhatsappNumber(cli.data.whatsappNumber ?? '');
       setOrcaSeeded(true);
     }
   }, [cli.data, orcaSeeded]);
-  // Autosave the Discord link (cli-settings PATCH merges, so the model picks stay untouched).
+  // Autosave the Discord / WhatsApp links (cli-settings PATCH merges, so the model picks stay untouched).
   useAutoSave([discordUserId], () => saveCli.mutate({ discordUserId }), { ready: orcaSeeded });
+  useAutoSave([whatsappNumber], () => saveCli.mutate({ whatsappNumber }), { ready: orcaSeeded });
 
   // Picking an Orca AI model writes ONLY model+modelProvider (the cli-settings PATCH merges, so
   // CliSection's other fields are untouched) and the daemon restarts a running brain on the new model.
@@ -340,6 +343,11 @@ export function AccountView() {
         {/* Discord account link — maps your Discord user to this Orca account (owner persona on Discord). */}
         <SettingCard title={t.account.discordId} icon={AtSign} description={t.help.accountDiscordId}>
           <Input value={discordUserId} onChange={(e) => setDiscordUserId(e.target.value)} placeholder="123456789012345678" className="max-w-xs font-mono" aria-label={t.account.discordId} />
+        </SettingCard>
+
+        {/* WhatsApp account link — maps your WhatsApp number to this Orca account (owner persona on WhatsApp). */}
+        <SettingCard title={t.account.whatsappNumber} icon={MessageCircle} description={t.help.accountWhatsappNumber}>
+          <Input value={whatsappNumber} onChange={(e) => setWhatsappNumber(e.target.value)} placeholder="420778433908" className="max-w-xs font-mono" aria-label={t.account.whatsappNumber} />
         </SettingCard>
       </div>
       ) : null}

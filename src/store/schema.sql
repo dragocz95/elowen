@@ -105,6 +105,8 @@ CREATE TABLE IF NOT EXISTS user_settings (
 -- own account. This partial UNIQUE index enforces one-owner-per-id atomically — only the discordUserId
 -- rows are constrained, so every other generic key/value pair stays unconstrained.
 CREATE UNIQUE INDEX IF NOT EXISTS idx_user_settings_discord_id ON user_settings(value) WHERE key = 'discordUserId';
+-- Same one-owner-per-id rule for a linked WhatsApp number (digits only).
+CREATE UNIQUE INDEX IF NOT EXISTS idx_user_settings_whatsapp_number ON user_settings(value) WHERE key = 'whatsappNumber';
 CREATE TABLE IF NOT EXISTS events (
   id INTEGER PRIMARY KEY,
   ts TEXT NOT NULL DEFAULT (datetime('now')),

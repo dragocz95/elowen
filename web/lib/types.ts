@@ -172,7 +172,7 @@ export type PersonalityPatch = Partial<Omit<PersonalityCreate, 'platform'>> & { 
 
 /** Per-user CLI/brain settings surfaced in Account → CLI. `model` empty → the configured brain default
  *  (`serverDefault`, response-only). */
-export interface CliSettings { model: string; modelProvider: string; visionModel: string; visionModelProvider: string; thinkingLevel: string; autoCompact: boolean; autoCompactAt: number; advisorStyle: string; discordUserId: string; autoRecall: boolean; autoSave: boolean; serverDefault?: string }
+export interface CliSettings { model: string; modelProvider: string; visionModel: string; visionModelProvider: string; thinkingLevel: string; autoCompact: boolean; autoCompactAt: number; advisorStyle: string; discordUserId: string; whatsappNumber: string; autoRecall: boolean; autoSave: boolean; serverDefault?: string }
 
 /** One installed daemon plugin as listed by GET /plugins (admin). */
 export interface PluginInfo {
@@ -348,6 +348,9 @@ export interface CronJob {
 
 /** One text-capable Discord destination (GET /plugins/discord/channels) for the cron channel picker. */
 export interface DiscordChannelOption { id: string; name: string; type: 'channel' | 'thread'; parentName?: string }
+/** Live WhatsApp pairing state for the plugin "Pair" modal: a QR rendered as a PNG data URL, the phone
+ *  pairing code (phoneNumber flow), and whether the device is already linked. */
+export interface WhatsAppPairing { qrImage: string | null; code: string | null; connected: boolean }
 
 /** One markdown skill of the skills plugin (GET /plugins/skills/list). Bundled skills ship with the
  *  install and are read-only; user skills are created at runtime and can be deleted. */

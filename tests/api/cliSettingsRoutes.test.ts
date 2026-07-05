@@ -38,13 +38,13 @@ describe('cli-settings routes', () => {
     const { app, amyTok } = setup();
     const res = await app.request('/auth/me/cli-settings', auth(amyTok));
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ model: '', modelProvider: '', visionModel: '', visionModelProvider: '', thinkingLevel: '', autoCompact: false, autoCompactAt: 80, advisorStyle: 'professional', discordUserId: '', autoRecall: true, autoSave: true, serverDefault: 'claude-opus-4-8' });
+    expect(await res.json()).toEqual({ model: '', modelProvider: '', visionModel: '', visionModelProvider: '', thinkingLevel: '', autoCompact: false, autoCompactAt: 80, advisorStyle: 'professional', discordUserId: '', whatsappNumber: '', autoRecall: true, autoSave: true, serverDefault: 'claude-opus-4-8' });
   });
 
   it('PATCH saves the override and restarts a running brain', async () => {
     const { app, restart, amyTok } = setup();
     const res = await app.request('/auth/me/cli-settings', patch(amyTok, { model: 'ollama/kimi-k2.7-code', modelProvider: 'relay', autoCompact: true, autoCompactAt: 70 }));
-    expect(await res.json()).toEqual({ model: 'ollama/kimi-k2.7-code', modelProvider: 'relay', visionModel: '', visionModelProvider: '', thinkingLevel: '', autoCompact: true, autoCompactAt: 70, advisorStyle: 'professional', discordUserId: '', autoRecall: true, autoSave: true, serverDefault: 'claude-opus-4-8' });
+    expect(await res.json()).toEqual({ model: 'ollama/kimi-k2.7-code', modelProvider: 'relay', visionModel: '', visionModelProvider: '', thinkingLevel: '', autoCompact: true, autoCompactAt: 70, advisorStyle: 'professional', discordUserId: '', whatsappNumber: '', autoRecall: true, autoSave: true, serverDefault: 'claude-opus-4-8' });
     expect(restart).toHaveBeenCalledTimes(1);
   });
 

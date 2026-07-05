@@ -1,0 +1,116 @@
+{
+  "name": "whatsapp",
+  "version": "0.1.0",
+  "apiVersion": "1",
+  "description": "WhatsApp bot (Baileys): write to it and it answers from Orca AI. Text commands (/model, /new, /help), a per-chat model picker (numbered text menu you reply to with a number), live streaming replies (edit-in-place with the agent's tool trace), status reactions and proactive cron/tick pushes. Group tools (admin sessions): list & inspect groups, create groups, add/remove members, and send a message to any chat (operator). Each sender (phone number, JID or whole group) maps to allowed Orca projects + a role prompt. Pair by scanning a QR code or with a pairing code.",
+  "entry": "index.mjs",
+  "provides": {
+    "platforms": [
+      "whatsapp"
+    ],
+    "tools": [
+      "whatsapp_send",
+      "whatsapp_group_list",
+      "whatsapp_group_info",
+      "whatsapp_group_create",
+      "whatsapp_group_add",
+      "whatsapp_group_remove"
+    ]
+  },
+  "icons": { "whatsapp_*": "🟢" },
+  "requires": {
+    "config": []
+  },
+  "configSchema": [
+    {
+      "key": "sec_connection",
+      "label": "Connection",
+      "type": "section",
+      "hint": "How the bot links to WhatsApp and where it pushes proactively. Pair by scanning the QR code from the plugin logs, or with a pairing code."
+    },
+    {
+      "key": "phoneNumber",
+      "label": "Pairing phone number",
+      "type": "string",
+      "hint": "Optional: the bot's WhatsApp number in international format WITHOUT +, spaces or dashes (e.g. 420777123456). When set, the plugin prints an 8-character pairing code to the logs instead of a QR — enter it in WhatsApp → Linked devices → Link with phone number. Leave empty to pair by QR."
+    },
+    {
+      "key": "groupIds",
+      "label": "Allowed groups",
+      "type": "string",
+      "hint": "Comma-separated group JIDs (…@g.us). Empty = respond in every group where a mapped sender writes. When set, the bot only responds in these groups. Direct chats are always allowed for mapped senders."
+    },
+    {
+      "key": "notifyChat",
+      "label": "Notification chat",
+      "type": "string",
+      "hint": "Where proactive messages (cron/tick results, escalations, restart notices) are posted — a phone number or a JID (…@s.whatsapp.net / …@g.us). Empty = no proactive pushes."
+    },
+    {
+      "key": "sec_replies",
+      "label": "Replies & behavior",
+      "type": "section",
+      "hint": "When and how the bot answers."
+    },
+    {
+      "key": "respondWithoutMention",
+      "label": "Respond without mention",
+      "type": "boolean",
+      "hint": "On: in groups the bot answers every message from a mapped sender. Off: in groups it only answers when @mentioned or when its message is replied to. Direct chats always get an answer."
+    },
+    {
+      "key": "streaming",
+      "label": "Live streaming replies",
+      "type": "boolean",
+      "hint": "Edit the reply in place as it streams (tool calls + text). Off = one message at the end."
+    },
+    {
+      "key": "reactions",
+      "label": "Status reactions",
+      "type": "boolean",
+      "hint": "React 👀 while thinking, ✅/❌ when done."
+    },
+    {
+      "key": "runtimeFooter",
+      "label": "Runtime footer",
+      "type": "boolean",
+      "hint": "Append a small \"model · context %\" line under the final reply."
+    },
+    {
+      "key": "showReasoning",
+      "label": "Show reasoning",
+      "type": "boolean",
+      "hint": "Stream the model's reasoning into the progress message (extended-thinking models). Off by default — it's usually noise."
+    },
+    {
+      "key": "language",
+      "label": "Service language",
+      "type": "string",
+      "hint": "Language of the bot's own service messages (/new, /model, placeholders): en (default) or cs."
+    },
+    {
+      "key": "sec_conversation",
+      "label": "Conversation",
+      "type": "section",
+      "hint": "Image routing."
+    },
+    {
+      "key": "visionModel",
+      "label": "Vision model",
+      "type": "model",
+      "hint": "Model used for turns that carry image attachments (must support vision). Empty = the chat's normal model."
+    },
+    {
+      "key": "sec_senders",
+      "label": "Sender policies",
+      "type": "section",
+      "hint": "Map WhatsApp senders to allowed projects, a role prompt and the tools the bot may use."
+    },
+    {
+      "key": "senderPolicies",
+      "label": "Sender policies",
+      "type": "rolePolicies",
+      "hint": "First matching sender wins; senders with no mapped policy are ignored. The ID is a phone number (420777123456), a JID (…@s.whatsapp.net) or a whole group JID (…@g.us) — a group ID grants access to everyone in it. Mark a policy admin to let it switch the model and use the group tools. Each policy may also restrict which tools the bot can use for it."
+    }
+  ]
+}

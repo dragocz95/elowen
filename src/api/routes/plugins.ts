@@ -441,6 +441,37 @@ export function registerPluginRoutes(app: OrcaApp, ctx: RouteContext): void {
     } catch { return c.json([]); } // network failure → empty picker, never a leaked error detail
   });
 
+  // ── WhatsApp pairing (whatsapp plugin): surface the live pairing QR/code so the settings "Pair"
+  // modal can render it, and let the button force a fresh pairing attempt. Reaches the SAME live adapter
+  // instance the orchestrator connected, through the plugin registry (d.plugins). The QR never leaves as
+  // anything but a rendered image; the raw socket credentials stay inside the plugin. ──
+  type WhatsAppPairing = { qrImage: string | null; code: string | null; connected: boolean };
+  const whatsappAdapter = async (): Promise<{ getPairing?(): WhatsAppPairing; startPairing?(): Promise<{ connected: boolean }>; unpair?(): Promise<{ connected: boolean }> } | undefined> => {
+    const registry = await d.plugins?.get();
+    return registry?.platforms.find((p) => p.name === 'whatsapp') as never;
+  };
+
+  app.get('/plugins/whatsapp/pairing', async (c) => {
+    if (notAdmin(c)) return c.json({ error: 'forbidden' }, 403);
+    const adapter = await whatsappAdapter();
+    if (!adapter?.getPairing) return c.json({ error: 'whatsapp plugin not enabled' }, 503);
+    return c.json(adapter.getPairing());
+  });
+
+  app.post('/plugins/whatsapp/pair', async (c) => {
+    if (notAdmin(c)) return c.json({ error: 'forbidden' }, 403);
+    const adapter = await whatsappAdapter();
+    if (!adapter?.startPairing) return c.json({ error: 'whatsapp plugin not enabled' }, 503);
+    return c.json(await adapter.startPairing());
+  });
+
+  app.post('/plugins/whatsapp/unpair', async (c) => {
+    if (notAdmin(c)) return c.json({ error: 'forbidden' }, 403);
+    const adapter = await whatsappAdapter();
+    if (!adapter?.unpair) return c.json({ error: 'whatsapp plugin not enabled' }, 503);
+    return c.json(await adapter.unpair());
+  });
+
   // ── Brain provider OAuth (admin): connect an Anthropic / GitHub Copilot / OpenAI account. ──
   // The UI starts a flow, shows authUrl (+ userCode for device flows), polls status, and posts the
   // pasted code when the flow asks for input. Tokens persist in the brain's AuthStorage.
