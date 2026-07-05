@@ -440,6 +440,7 @@ export const cs = {
   },
   sessionsPanel: {
     tab: 'Konverzace',
+    hint: 'Všechny brain konverzace — web chat, CLI i Discord kanály.',
     untitled: 'Bez názvu',
     running: 'Běží',
     tok: 'tok',

@@ -54,14 +54,15 @@ export function SessionsView() {
         ) : null}
       </ModuleHeader>
 
-      <div className="@container flex flex-col gap-6 @4xl:flex-row @4xl:items-start">
+      <div className="@container">
+      <div className="flex flex-col gap-6 @3xl:flex-row @3xl:items-start">
         {/* Main: the live agent (tmux) sessions. */}
         <div className="min-w-0 flex-1">
           {sessions.isLoading ? <LoadingState variant="cards" />
             : sessions.isError ? <ErrorState message={t.common.daemonUnreachable} onRetry={() => sessions.refetch()} />
             : names.length > 0 ? (
               <div className="@container">
-              <div className="grid grid-cols-1 gap-4 @sm:grid-cols-2 @4xl:grid-cols-2">
+              <div className="grid grid-cols-1 gap-4 @2xl:grid-cols-2">
                 {names.map((s) => {
                   const info = byName.get(s);
                   if (!info) return null;
@@ -75,9 +76,10 @@ export function SessionsView() {
         </div>
 
         {/* Right rail: every brain conversation (chat, CLI, Discord channels) — model icon, title, tokens. */}
-        <aside className="shrink-0 @4xl:w-80">
+        <aside className="flex shrink-0 flex-col gap-4 @3xl:w-72">
           <BrainSessionsPanel />
         </aside>
+      </div>
       </div>
 
       {openTerm && <TerminalModal session={openTerm} onClose={() => setOpenTerm(null)} />}

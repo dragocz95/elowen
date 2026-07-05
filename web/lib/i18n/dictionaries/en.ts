@@ -440,6 +440,7 @@ export const en = {
   },
   sessionsPanel: {
     tab: 'Conversations',
+    hint: 'Every brain conversation — web chat, CLI and Discord channels.',
     untitled: 'Untitled',
     running: 'Running',
     tok: 'tok',
