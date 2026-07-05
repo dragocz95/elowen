@@ -231,7 +231,7 @@ export interface PluginConfigField {
   label: string;
   type:
     | 'string' | 'secret' | 'boolean' | 'number' | 'textarea' | 'rolePolicies' | 'model' | 'provider'
-    | 'section' | 'enum' | 'multiSelect' | 'code' | 'prompt' | 'json' | 'embeddingModel';
+    | 'section' | 'enum' | 'multiSelect' | 'code' | 'prompt' | 'json' | 'embeddingModel' | 'mcpServers';
   hint?: string;
   required?: boolean;
   /** For `provider` fields: restrict the picker to configured providers of this type (e.g. `openai`). */
@@ -250,6 +250,10 @@ export interface PluginConfigField {
 
 /** One role → access mapping row in a plugin's `rolePolicies` config (the Discord pattern). */
 export interface RolePolicy { roleId: string; name: string; projectIds: number[]; prompt: string; tools?: string[]; admin?: boolean }
+
+/** One external MCP server row in a plugin's `mcpServers` config (the MCP-bridge pattern). `command` +
+ *  `args` launch a stdio MCP server; `env` are extra environment vars; `enabled` gates connection. */
+export interface McpServerSpec { name: string; command: string; args: string[]; env: Record<string, string>; enabled: boolean }
 
 /** A plugin's declared manifest capabilities — the deny-by-default permission surface. A missing entry
  *  means the plugin CANNOT perform that action: `mutates` lists the runtime mutation targets it is allowed

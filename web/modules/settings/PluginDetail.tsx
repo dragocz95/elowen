@@ -25,7 +25,7 @@ import { useToast } from '../../components/ui/Toast';
 import { useTranslation } from '../../lib/i18n';
 import { usePluginDetail, usePluginContributions, usePluginLogs, usePluginHookExecutions, usePlugins, useProjects, useConfig } from '../../lib/queries';
 import { useSavePluginConfig, useTogglePlugin, useClearPluginData } from '../../lib/mutations';
-import type { PluginConfigField, PluginContributions, PluginHookExecution, RolePolicy } from '../../lib/types';
+import type { PluginConfigField, PluginContributions, PluginHookExecution, RolePolicy, McpServerSpec } from '../../lib/types';
 
 const textareaClass = 'w-full rounded-md border border-border bg-bg px-3 py-2 font-mono text-sm text-text placeholder:text-text-muted focus:border-accent';
 
@@ -207,6 +207,91 @@ function RolePoliciesEditor({ value, onChange }: { value: RolePolicy[]; onChange
       })}
       <Button variant="ghost" icon={Plus} className="self-start" onClick={addRole}>
         {t.pluginCfg.addRole}
+      </Button>
+    </div>
+  );
+}
+
+/** Editor for an `mcpServers`-type field: a list of external MCP server specs to launch and bridge into
+ *  the agent's toolset. Mirrors RolePoliciesEditor's collapsible-rows shape. `args` is edited one per line;
+ *  `env` as `KEY=value` lines. */
+function McpServersEditor({ value, onChange }: { value: McpServerSpec[]; onChange: (v: McpServerSpec[]) => void }) {
+  const { t } = useTranslation();
+  const patch = (i: number, p: Partial<McpServerSpec>) => onChange(value.map((s, j) => (j === i ? { ...s, ...p } : s)));
+  const [expanded, setExpanded] = useState<Set<number>>(new Set());
+  const toggleRow = (i: number) => setExpanded((prev) => { const n = new Set(prev); if (n.has(i)) n.delete(i); else n.add(i); return n; });
+  const addServer = () => { setExpanded((prev) => new Set(prev).add(value.length)); onChange([...value, { name: '', command: '', args: [], env: {}, enabled: true }]); };
+  const removeServer = (i: number) => {
+    onChange(value.filter((_, j) => j !== i));
+    setExpanded((prev) => { const n = new Set<number>(); for (const idx of prev) { if (idx < i) n.add(idx); else if (idx > i) n.add(idx - 1); } return n; });
+  };
+  // env ⇄ text: one KEY=value per line. A line without '=' is ignored; keys are trimmed.
+  const envToText = (env: Record<string, string>) => Object.entries(env).map(([k, v]) => `${k}=${v}`).join('\n');
+  const textToEnv = (text: string): Record<string, string> => {
+    const out: Record<string, string> = {};
+    for (const line of text.split('\n')) {
+      const eq = line.indexOf('=');
+      if (eq <= 0) continue;
+      const k = line.slice(0, eq).trim();
+      if (k) out[k] = line.slice(eq + 1).trim();
+    }
+    return out;
+  };
+  return (
+    <div className="flex flex-col gap-3">
+      {value.length === 0 ? <p className="text-xs italic text-text-muted">{t.pluginCfg.mcpNoServers}</p> : null}
+      {value.map((s, i) => {
+        const open = expanded.has(i);
+        return (
+          <div key={i} className="rounded-lg border border-border bg-elevated/40">
+            <div className="flex items-center gap-2 p-3">
+              <button type="button" onClick={() => toggleRow(i)} aria-expanded={open} className="flex min-w-0 flex-1 items-center gap-2 text-left">
+                {open ? <ChevronDown size={15} className="shrink-0 text-text-muted" aria-hidden /> : <ChevronRight size={15} className="shrink-0 text-text-muted" aria-hidden />}
+                <span className="truncate text-sm font-medium text-text">{s.name || t.pluginCfg.mcpServerNew}</span>
+                {s.command ? <span className="truncate font-mono text-[11px] text-text-muted">{s.command}</span> : null}
+                <span className="ml-auto shrink-0">
+                  <Badge tone={s.enabled ? 'accent' : undefined}>{s.enabled ? t.pluginCfg.mcpEnabledBadge : t.pluginCfg.mcpDisabledBadge}</Badge>
+                </span>
+              </button>
+              <Button variant="ghost" icon={Trash2} aria-label={t.pluginCfg.mcpRemoveServer} onClick={() => removeServer(i)} />
+            </div>
+            {open ? (
+              <div className="flex flex-col gap-3 border-t border-border p-3">
+                <label className="flex cursor-pointer items-center gap-2.5">
+                  <Toggle checked={s.enabled} onChange={(v) => patch(i, { enabled: v })} label={t.pluginCfg.mcpEnabled} />
+                  <span className="text-sm text-text">{t.pluginCfg.mcpEnabled}</span>
+                </label>
+                <div className="@container">
+                  <div className="grid grid-cols-1 gap-3 @sm:grid-cols-2">
+                    <Field label={t.pluginCfg.mcpName}>
+                      <Input value={s.name} onChange={(e) => patch(i, { name: e.target.value })} placeholder="chrome-devtools" />
+                    </Field>
+                    <Field label={t.pluginCfg.mcpCommand}>
+                      <Input value={s.command} onChange={(e) => patch(i, { command: e.target.value })} placeholder="npx" className="font-mono" />
+                    </Field>
+                  </div>
+                </div>
+                <Field label={t.pluginCfg.mcpArgs} hint={t.pluginCfg.mcpArgsHint}>
+                  <textarea
+                    value={s.args.join('\n')}
+                    onChange={(e) => patch(i, { args: e.target.value.split('\n').map((a) => a.trim()).filter(Boolean) })}
+                    rows={3} className={textareaClass} placeholder={'-y\nchrome-devtools-mcp@latest\n--browserUrl\nhttp://127.0.0.1:9222'}
+                  />
+                </Field>
+                <Field label={t.pluginCfg.mcpEnv} hint={t.pluginCfg.mcpEnvHint}>
+                  <textarea
+                    value={envToText(s.env)}
+                    onChange={(e) => patch(i, { env: textToEnv(e.target.value) })}
+                    rows={2} className={textareaClass} placeholder={'KEY=value'}
+                  />
+                </Field>
+              </div>
+            ) : null}
+          </div>
+        );
+      })}
+      <Button variant="ghost" icon={Plus} className="self-start" onClick={addServer}>
+        {t.pluginCfg.mcpAddServer}
       </Button>
     </div>
   );
@@ -416,6 +501,8 @@ export function PluginDetail({ name, onBack }: { name: string; onBack: () => voi
         return <PluginProviderField value={String(values[f.key] ?? '')} onChange={(v) => set(f.key, v)} providerType={f.providerType} />;
       case 'rolePolicies':
         return <RolePoliciesEditor value={Array.isArray(values[f.key]) ? (values[f.key] as RolePolicy[]) : []} onChange={(v) => set(f.key, v)} />;
+      case 'mcpServers':
+        return <McpServersEditor value={Array.isArray(values[f.key]) ? (values[f.key] as McpServerSpec[]) : []} onChange={(v) => set(f.key, v)} />;
       case 'enum':
         return <Segmented size="sm" options={(f.options ?? []).map((o) => ({ value: o.value, label: o.label }))} value={String(values[f.key] ?? '')} onChange={(v) => set(f.key, v)} />;
       case 'multiSelect': {
@@ -518,7 +605,7 @@ export function PluginDetail({ name, onBack }: { name: string; onBack: () => voi
           );
         }
         // Complex editors carry their own row headers, so they render bare (no outer label/hint).
-        if (f.type === 'rolePolicies') return <div key={f.key}>{renderField(f)}</div>;
+        if (f.type === 'rolePolicies' || f.type === 'mcpServers') return <div key={f.key}>{renderField(f)}</div>;
         return (
           <LabeledField key={f.key} label={fieldLabel(f)} hint={fieldHint(f)} help={f.help} risk={f.risk} riskLabel={f.risk ? riskText(f.risk) : undefined}>
             {renderField(f)}
@@ -533,7 +620,7 @@ export function PluginDetail({ name, onBack }: { name: string; onBack: () => voi
   // so a flat schema with many fields still reads cleanly.
   const schema = detail.configSchema;
   const hasExplicitSections = schema.some((f) => f.type === 'section');
-  const isComplex = (f: PluginConfigField) => f.type === 'rolePolicies';
+  const isComplex = (f: PluginConfigField) => f.type === 'rolePolicies' || f.type === 'mcpServers';
   const isConnection = (f: PluginConfigField) => f.type === 'secret' || CONNECTION_KEYS.has(f.key);
   const connectionFields = schema.filter((f) => isConnection(f) && !isComplex(f));
   const behaviorFields = schema.filter((f) => !isConnection(f) && !isComplex(f));

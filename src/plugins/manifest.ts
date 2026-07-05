@@ -32,7 +32,7 @@ interface PluginConfigField {
   label: string;
   type:
     | 'string' | 'secret' | 'boolean' | 'number' | 'textarea' | 'rolePolicies' | 'model' | 'provider'
-    | 'section' | 'enum' | 'multiSelect' | 'code' | 'prompt' | 'json' | 'embeddingModel';
+    | 'section' | 'enum' | 'multiSelect' | 'code' | 'prompt' | 'json' | 'embeddingModel' | 'mcpServers';
   hint?: string;
   required?: boolean;
   /** For `provider` fields: restrict the picker to providers of this type (e.g. `openai`). */
@@ -97,7 +97,7 @@ const ManifestSchema = Type.Object({
       Type.Literal('model'), Type.Literal('provider'),
       Type.Literal('section'), Type.Literal('enum'), Type.Literal('multiSelect'),
       Type.Literal('code'), Type.Literal('prompt'), Type.Literal('json'),
-      Type.Literal('embeddingModel'),
+      Type.Literal('embeddingModel'), Type.Literal('mcpServers'),
     ]),
     hint: Type.Optional(Type.String()),
     required: Type.Optional(Type.Boolean()),
