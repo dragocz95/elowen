@@ -549,6 +549,27 @@ export function PluginDetail({ name, onBack }: { name: string; onBack: () => voi
     </div>
   );
 
+  // When the author used explicit `section` headers, each section becomes its OWN top-level collapsible
+  // (a peer of Tools/Hooks/Permissions) instead of being crammed into one Config panel. Partition the flat
+  // schema into { title, hint, fields } groups on section boundaries; fields before the first header (if
+  // any) fall into a generic Config group.
+  type ConfigGroup = { key: string; title: string; hint?: string; fields: PluginConfigField[] };
+  const configGroups: ConfigGroup[] = [];
+  if (hasExplicitSections) {
+    let current: ConfigGroup | null = null;
+    for (const f of schema) {
+      if (f.type === 'section') {
+        current = { key: f.key, title: fieldLabel(f), hint: fieldHint(f), fields: [] };
+        configGroups.push(current);
+      } else {
+        if (!current) { current = { key: '__config', title: t.pluginDetail.config, fields: [] }; configGroups.push(current); }
+        current.fields.push(f);
+      }
+    }
+  }
+  const groupHasUnsetSecret = (g: ConfigGroup) =>
+    g.fields.some((f) => f.type === 'secret' && f.required && !detail.secretsSet.includes(f.key));
+
   // Permissions derived from what EXISTS in the manifest — required secret fields read as credential
   // requirements, the rest as plain config; a coarse risk level from secrets/network/tool-count.
   const requiredSecrets = schema.filter((f) => f.required && f.type === 'secret');
@@ -612,20 +633,27 @@ export function PluginDetail({ name, onBack }: { name: string; onBack: () => voi
         </div>
       </Collapsible>
 
-      {/* 2 — Config: the generated form. */}
-      <Collapsible icon={SlidersHorizontal} title={t.pluginDetail.config} defaultOpen={hasUnsetRequiredSecret}>
-        {schema.length === 0 ? (
+      {/* 2 — Config: when the author declared `section` headers, each section is its own collapsible (a
+          peer of Tools/Hooks below); otherwise a single generated Config panel. */}
+      {schema.length === 0 ? (
+        <Collapsible icon={SlidersHorizontal} title={t.pluginDetail.config}>
           <p className="text-sm text-text-muted">{t.pluginDetail.configEmpty}</p>
-        ) : hasExplicitSections ? (
-          fieldList(schema)
-        ) : (
+        </Collapsible>
+      ) : hasExplicitSections ? (
+        configGroups.map((g, i) => (
+          <Collapsible key={g.key} icon={SlidersHorizontal} title={g.title} description={g.hint} defaultOpen={i === 0 || groupHasUnsetSecret(g)}>
+            {fieldList(g.fields)}
+          </Collapsible>
+        ))
+      ) : (
+        <Collapsible icon={SlidersHorizontal} title={t.pluginDetail.config} defaultOpen={hasUnsetRequiredSecret}>
           <div className="flex flex-col gap-6">
             {connectionFields.length ? group('connection', Link2, t.pluginCfg.sectionConnection, t.pluginCfg.sectionConnectionHint, connectionFields) : null}
             {behaviorFields.length ? group('behavior', SlidersHorizontal, t.pluginCfg.sectionBehavior, undefined, behaviorFields) : null}
             {complexFields.map((cf) => group(cf.key, Users, fieldLabel(cf), fieldHint(cf), [cf]))}
           </div>
-        )}
-      </Collapsible>
+        </Collapsible>
+      )}
 
       {/* The cronjob plugin's jobs are data, not config schema — a dedicated editor section. */}
       {detail.name === 'cronjob' ? (
