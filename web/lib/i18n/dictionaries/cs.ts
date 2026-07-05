@@ -440,7 +440,6 @@ export const cs = {
   },
   sessionsPanel: {
     tab: 'Konverzace',
-    hint: 'Všechny brain konverzace — web chat, CLI i Discord kanály.',
     untitled: 'Bez názvu',
     running: 'Běží',
     tok: 'tok',
@@ -1493,6 +1492,7 @@ export const cs = {
     embeddingDimensions: "Ponechte prázdné pro výchozí velikost vektoru daného modelu.",
     embeddingModelCustom: "Pro embedding model, který není v seznamu výše, zadejte jeho id sem.",
     embeddingProvider: "API klíč se přebírá od zvoleného brain poskytovatele (Nastavení → Brain).",
+    sessionsPanel: "Každá konverzace s Orca brainem, ať proběhla kdekoli — web chat, `orca chat` v CLI a každý Discord kanál, kde bot mluví. Zobrazují se tu i task-worker relace. Je to jeden brain: web a CLI sdílí stejnou konverzaci, každý Discord kanál je vlastní.",
     embeddingIntro: "Převádí vzpomínky na vektory pro sémantické vybavování. Platí pro celý workspace.",
     categorizationIntro: "Model Orca AI pro paměť. Po každé odpovědi automaticky vydestiluje a uloží trvalé poznatky do paměti (auto-ukládání) a zároveň zařazuje vzpomínky do kategorií. API klíč se přebírá z vybraného poskytovatele Orca AI.",
     addPhaseGoal: "Co zbývá dodělat; planner to rozloží na fáze.",

@@ -440,7 +440,6 @@ export const en = {
   },
   sessionsPanel: {
     tab: 'Conversations',
-    hint: 'Every brain conversation — web chat, CLI and Discord channels.',
     untitled: 'Untitled',
     running: 'Running',
     tok: 'tok',
@@ -1493,6 +1492,7 @@ export const en = {
     embeddingDimensions: "Leave empty to use the model's default vector size.",
     embeddingModelCustom: "For an embedding model that isn't in the list above, type its id here.",
     embeddingProvider: "The API key is inherited from the selected brain provider (Settings → Brain).",
+    sessionsPanel: "Every conversation with the Orca brain, wherever it happened — the web chat, the `orca chat` CLI, and each Discord channel the bot talks in. Task-worker sessions appear here too. It's one brain: the web and CLI share the same conversation, while each Discord channel is its own.",
     embeddingIntro: "Turns memories into vectors for semantic recall. Workspace-wide.",
     categorizationIntro: "The Orca AI model for memory. After each reply it automatically distills and saves durable facts to memory (auto-save), and sorts memories into categories. The API key is inherited from the selected Orca AI provider.",
     addPhaseGoal: "What remains to be done; the planner splits it into phases.",

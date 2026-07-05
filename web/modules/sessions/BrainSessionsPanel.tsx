@@ -8,6 +8,7 @@ import { useTranslation } from '../../lib/i18n';
 import { useToast } from '../../components/ui/Toast';
 import { ModelIcon } from '../../components/ui/ModelIcon';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
+import { HelpTip } from '../../components/ui/HelpTip';
 
 /** Compact token count: 1 234 → "1.2k", 980 → "980". */
 function fmtTokens(n: number): string {
@@ -43,20 +44,18 @@ export function BrainSessionsPanel() {
 
   return (
     <div className="flex flex-col gap-4">
-      {/* Heading — mirrors the Account rail's "default model" header. */}
-      <div className="flex flex-col gap-1.5">
-        <div className="flex items-center justify-between gap-2">
-          <span className="flex items-center gap-2 text-sm font-medium text-text">
-            <MessageSquare size={16} className="text-text-muted" aria-hidden />{t.sessionsPanel.tab}
-            {sessions.length > 0 ? <span className="text-xs font-normal text-text-muted">{sessions.length}</span> : null}
-          </span>
-          {sessions.length > 0 ? (
-            <button type="button" onClick={() => setConfirmAll(true)} className="text-tiny text-text-muted transition-colors hover:text-danger">
-              {t.sessionsPanel.deleteAll}
-            </button>
-          ) : null}
-        </div>
-        <p className="text-xs text-text-muted">{t.sessionsPanel.hint}</p>
+      {/* Heading — mirrors the Account rail's "default model" header. The "?" explains the session types. */}
+      <div className="flex items-center justify-between gap-2">
+        <span className="flex items-center gap-2 text-sm font-medium text-text">
+          <MessageSquare size={16} className="text-text-muted" aria-hidden />{t.sessionsPanel.tab}
+          {sessions.length > 0 ? <span className="text-xs font-normal text-text-muted">{sessions.length}</span> : null}
+          <HelpTip align="right">{t.help.sessionsPanel}</HelpTip>
+        </span>
+        {sessions.length > 0 ? (
+          <button type="button" onClick={() => setConfirmAll(true)} className="text-tiny text-text-muted transition-colors hover:text-danger">
+            {t.sessionsPanel.deleteAll}
+          </button>
+        ) : null}
       </div>
 
       {q.isLoading ? <p className="text-xs italic text-text-muted">{t.common.loading}</p>

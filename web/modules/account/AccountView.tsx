@@ -16,6 +16,7 @@ import { Input } from '../../components/ui/Input';
 import { SettingCard } from '../../components/ui/SettingCard';
 import { Slider } from '../../components/ui/Slider';
 import { ModuleHeader } from '../../components/ui/ModuleHeader';
+import { HelpTip } from '../../components/ui/HelpTip';
 import { LoadingState } from '../../components/ui/states';
 import { useToast } from '../../components/ui/Toast';
 import { useTranslation } from '../../lib/i18n';
@@ -278,12 +279,10 @@ export function AccountView() {
       {/* Right rail: the models you may run — the default worker and the default Orca AI chat model,
           each grouped by provider. Tapping a card makes it that default (they are separate settings). */}
       <div className="flex shrink-0 flex-col gap-4 @3xl:w-72">
-        <div className="flex flex-col gap-1.5">
-          <span className="flex items-center gap-2 text-sm font-medium text-text">
-            <Cpu size={16} className="text-text-muted" aria-hidden />{t.account.defaultModel}
-          </span>
-          <p className="text-xs text-text-muted">{restricted ? t.account.restrictedHint : t.account.defaultModelHint}</p>
-        </div>
+        <span className="flex items-center gap-2 text-sm font-medium text-text">
+          <Cpu size={16} className="text-text-muted" aria-hidden />{t.account.defaultModel}
+          <HelpTip align="right">{restricted ? t.account.restrictedHint : t.account.defaultModelHint}</HelpTip>
+        </span>
 
         {workerGroups.length === 0 && orcaGroups.length === 0 ? (
           <p className="text-xs italic text-text-muted">{t.account.noModelLimit}</p>
@@ -292,10 +291,9 @@ export function AccountView() {
         {/* Default worker (default_exec) */}
         {workerGroups.length > 0 ? (
           <div className="flex flex-col gap-2.5">
-            <div className="flex flex-col gap-0.5">
-              <span className="text-tiny font-semibold uppercase tracking-wide text-text-muted">{t.account.defaultWorker}</span>
-              <span className="text-tiny text-text-muted">{t.account.defaultWorkerHint}</span>
-            </div>
+            <span className="flex items-center gap-1.5 text-tiny font-semibold uppercase tracking-wide text-text-muted">
+              {t.account.defaultWorker}<HelpTip align="right">{t.account.defaultWorkerHint}</HelpTip>
+            </span>
             {workerGroups.map((g) => (
               <div key={g.meta.id} className="flex flex-col gap-1.5">
                 <span className="flex items-center gap-1.5 text-xs text-text-muted"><ProviderLogo meta={g.meta} size={18} />{g.meta.label}</span>
@@ -316,10 +314,9 @@ export function AccountView() {
             CLI (cliSettings.model), not just chat. */}
         {orcaGroups.length > 0 ? (
           <div className="flex flex-col gap-2.5">
-            <div className="flex flex-col gap-0.5">
-              <span className="text-tiny font-semibold uppercase tracking-wide text-text-muted">{t.account.defaultOrcaAi}</span>
-              <span className="text-tiny text-text-muted">{t.account.defaultOrcaAiHint}</span>
-            </div>
+            <span className="flex items-center gap-1.5 text-tiny font-semibold uppercase tracking-wide text-text-muted">
+              {t.account.defaultOrcaAi}<HelpTip align="right">{t.account.defaultOrcaAiHint}</HelpTip>
+            </span>
             {orcaGroups.map((g) => (
               <div key={g.provider} className="flex flex-col gap-1.5">
                 <span className="text-xs text-text-muted">{g.label}</span>

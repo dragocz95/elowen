@@ -26,7 +26,7 @@ export function HelpTip({ children, align = 'right' }: { children: ReactNode; al
       {open && (
         <span
           role="tooltip"
-          className={`absolute top-6 z-50 w-64 rounded-md border border-border bg-surface p-3 text-xs leading-relaxed text-text-muted ${align === 'right' ? 'right-0' : 'left-0'}`}
+          className={`absolute top-6 z-50 w-64 rounded-md border border-border bg-surface p-3 text-xs font-normal normal-case leading-relaxed tracking-normal text-text-muted ${align === 'right' ? 'right-0' : 'left-0'}`}
           style={{ boxShadow: 'var(--shadow-raised)' }}
         >
           {children}
