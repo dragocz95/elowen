@@ -1,8 +1,8 @@
 {
   "name": "discord",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "apiVersion": "1",
-  "description": "Discord bot: mention it and it answers from Orca AI. Slash commands (/model, /new, /help), a per-channel model picker, live streaming replies (with the agent's live todo checklist), status reactions and proactive cron/tick pushes. Server tools: list channels/threads, read a thread for context, list roles/members, assign/remove roles. Each Discord role maps to allowed Orca projects + a role prompt.",
+  "description": "Discord bot: mention it and it answers from Orca AI. Slash commands (/model, /new, /help), a per-channel model picker, live streaming replies (with the agent's live todo checklist), status reactions and proactive cron/tick pushes. Server tools (admin sessions): server/channel/member info, list & search members, roles, pins, threads (create/archive/lock/members), channels (create/rename/delete, categories) and message management (delete/purge). Each Discord role maps to allowed Orca projects + a role prompt.",
   "entry": "index.mjs",
   "provides": {
     "platforms": [
@@ -15,7 +15,25 @@
       "discord_list_roles",
       "discord_list_members",
       "discord_assign_role",
-      "discord_remove_role"
+      "discord_remove_role",
+      "discord_server_info",
+      "discord_channel_info",
+      "discord_member_info",
+      "discord_search_members",
+      "discord_list_pins",
+      "discord_create_thread",
+      "discord_pin_message",
+      "discord_unpin_message",
+      "discord_delete_message",
+      "discord_purge_messages",
+      "discord_create_channel",
+      "discord_create_category",
+      "discord_rename_channel",
+      "discord_delete_channel",
+      "discord_archive_thread",
+      "discord_lock_thread",
+      "discord_add_thread_member",
+      "discord_remove_thread_member"
     ]
   },
   "icons": { "discord_*": "💬" },
