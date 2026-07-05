@@ -346,11 +346,19 @@ class DiscordAdapter {
       { name: 'restart', description: 'Restart the Orca daemon (admin only)', type: 1 },
       { name: 'help', description: 'What can Orca do here?', type: 1 },
     ];
-    const path = this.cfg.guildId
-      ? `/applications/${this.appId}/guilds/${this.cfg.guildId}/commands`
-      : `/applications/${this.appId}/commands`;
+    const globalPath = `/applications/${this.appId}/commands`;
+    const path = this.cfg.guildId ? `/applications/${this.appId}/guilds/${this.cfg.guildId}/commands` : globalPath;
+    const meta = this.state.get('__meta');
+    // A guild-scoped bot must NOT also carry a stale GLOBAL command set — Discord merges global + guild
+    // commands in a guild, so an earlier global registration (e.g. before a guildId was configured) shows
+    // every command TWICE. Clear the global set once, tracked per app id, independent of the payload
+    // fingerprint. (In global mode there's no per-guild set we could enumerate to clear, so we don't try.)
+    if (this.cfg.guildId && meta.globalCleared !== this.appId) {
+      await this.rest('PUT', globalPath, []).catch(() => { /* best-effort — nothing to clear is fine */ });
+      this.state.patch('__meta', { globalCleared: this.appId });
+    }
     const fingerprint = `${this.appId}:${this.cfg.guildId ?? 'global'}:${JSON.stringify(commands)}`;
-    if (this.state.get('__meta').commandFingerprint === fingerprint) return; // unchanged → skip
+    if (meta.commandFingerprint === fingerprint) return; // unchanged → skip
     await this.rest('PUT', path, commands);
     this.state.patch('__meta', { commandFingerprint: fingerprint });
   }
