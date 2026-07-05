@@ -156,6 +156,7 @@ export class BrainService {
       // Verified channel senders get memory too, keyed on their linked account and their own toggles.
       memoryService: d.memoryService, curator: this.curator, userSettings: d.userSettings,
       elicitation: this.elicitation, // one registry so Discord interactions resolve channel questions
+      titler: this.titler, // name a brand-new channel conversation, same as owner chat
     });
     this.platforms = new PlatformOrchestrator({
       plugins: () => this.resolvePlugins(),

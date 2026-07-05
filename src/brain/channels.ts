@@ -11,6 +11,7 @@ import { extractText, frameUntrusted } from './messageView.js';
 import { channelSessionId } from './sessionId.js';
 import type { MemoryService } from './memoryService.js';
 import type { MemoryCurator } from './memoryCurator.js';
+import type { ConversationTitler } from './conversationTitler.js';
 import type { LiveSessionRegistry } from './session/liveRegistry.js';
 import type { LiveBrain, SpawnOpts } from './session/liveBrain.js';
 import { DEFAULT_AUTO_COMPACT_AT } from './session/liveBrain.js';
@@ -52,6 +53,8 @@ export interface ChannelServiceDeps {
    *  BrainService so channel + owner-chat memory run through one implementation. */
   memoryService?: MemoryService;
   curator?: MemoryCurator;
+  /** Names a brand-new channel conversation from its first message (shared with owner chat). */
+  titler?: ConversationTitler;
   /** Per-user memory toggles (autoRecall/autoSave), read fresh per turn for the verified writer. */
   userSettings?: (userId: number) => { autoRecall?: boolean; autoSave?: boolean };
   /** Parked ask_user_question registry (shared with BrainService) — lets a channel turn's `ctx.askUser`
@@ -132,6 +135,14 @@ export class ChannelSessionService {
       ch.turnSender = opts.identity?.userId; // whose turn this is → mid-run injection only steers same-sender messages in
       // Same image handling as send(): history keeps a marker, the pixels ride only the live prompt.
       projectUserTurn(this.d.store, sessionId, opts.images?.length ? `${text}\n[📎 ${opts.images.length}× image]` : text);
+      // Name a brand-new channel conversation, same as owner chat: a provisional slice fills the session
+      // list immediately, then a background inference replaces it with a proper title. Uses senderMessage
+      // (the sender's own words, pre-backfill) so injected channel history never leaks into the title.
+      const titleRow = this.d.store.getSession(sessionId);
+      if (titleRow && !titleRow.title && senderMessage.trim()) {
+        this.d.store.setTitle(sessionId, senderMessage.slice(0, 60));
+        if (this.d.titler) void this.d.titler.run(sessionId, senderMessage);
+      }
       // Verified-sender memory recall: prepend THIS writer's most relevant durable memories, framed as
       // untrusted context, riding ONLY the live prompt (ephemeral, never persisted — same as owner chat).
       // Keyed on their linked Orca account and gated by their autoRecall toggle; an unlinked sender has
