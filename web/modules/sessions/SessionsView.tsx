@@ -1,7 +1,7 @@
 'use client';
 import { useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { TerminalSquare, ArrowRight, List, Bell, Maximize2, Minimize2, MessageSquare } from 'lucide-react';
+import { TerminalSquare, ArrowRight, List, Bell, Maximize2, Minimize2 } from 'lucide-react';
 import { useSessionInfos, useSessionSignals } from '../../lib/queries';
 import { needsInputSessions } from '../../lib/agentUtils';
 import { usePersistentState } from '../../lib/usePersistentState';
@@ -22,7 +22,6 @@ export function SessionsView() {
   const { t } = useTranslation();
   const [openTerm, setOpenTerm] = useState<string | null>(null);
   const [density, setDensity] = usePersistentState<'comfortable' | 'compact'>('orca.sessions.density', 'comfortable', ['comfortable', 'compact']);
-  const [view, setView] = usePersistentState<'agents' | 'conversations'>('orca.sessions.view', 'agents', ['agents', 'conversations']);
 
   const compact = density === 'compact';
 
@@ -46,9 +45,8 @@ export function SessionsView() {
 
   return (
     <>
-      <ModuleHeader title={t.page.sessions} count={view === 'agents' ? names.length : undefined} icon={TerminalSquare}>
-        <Segmented value={view} onChange={(v) => setView(v as 'agents' | 'conversations')} options={[{ value: 'agents', label: t.sessionsPanel.tabAgents, icon: TerminalSquare }, { value: 'conversations', label: t.sessionsPanel.tab, icon: MessageSquare }]} />
-        {view === 'agents' && allNames.length > 0 ? (
+      <ModuleHeader title={t.page.sessions} count={names.length} icon={TerminalSquare}>
+        {allNames.length > 0 ? (
           <>
             <Segmented value={filter} onChange={setFilter} options={[{ value: 'all', label: t.sessions.filterAll, icon: List }, { value: 'needs_input', label: t.sessions.filterNeedsInput, icon: Bell }]} />
             <Segmented value={density} onChange={(v) => setDensity(v as 'comfortable' | 'compact')} options={[{ value: 'comfortable', label: t.sessions.comfortable, icon: Maximize2 }, { value: 'compact', label: t.sessions.compact, icon: Minimize2 }]} />
@@ -56,22 +54,31 @@ export function SessionsView() {
         ) : null}
       </ModuleHeader>
 
-      {view === 'conversations' ? <BrainSessionsPanel />
-        : sessions.isLoading ? <LoadingState variant="cards" />
-        : sessions.isError ? <ErrorState message={t.common.daemonUnreachable} onRetry={() => sessions.refetch()} />
-        : names.length > 0 ? (
-          <div className="@container">
-          <div className="grid grid-cols-1 gap-4 @sm:grid-cols-2 @5xl:grid-cols-3">
-            {names.map((s) => {
-              const info = byName.get(s);
-              if (!info) return null;
-              return <SessionCard key={s} info={info} compact={compact} onOpenTerminal={() => setOpenTerm(s)} />;
-            })}
-          </div>
-          </div>
-        ) : filter === 'needs_input' && allNames.length > 0
-          ? <EmptyState title={t.sessions.filterNeedsInput} description={t.sessions.noNeedsInput} icon={TerminalSquare} />
-          : <EmptyState title={t.sessions.empty} description={t.sessions.emptyDescription} icon={TerminalSquare} action={<Button variant="accent" icon={ArrowRight} onClick={() => router.push('/tasks')}>{t.sessions.emptyAction}</Button>} />}
+      <div className="@container flex flex-col gap-6 @4xl:flex-row @4xl:items-start">
+        {/* Main: the live agent (tmux) sessions. */}
+        <div className="min-w-0 flex-1">
+          {sessions.isLoading ? <LoadingState variant="cards" />
+            : sessions.isError ? <ErrorState message={t.common.daemonUnreachable} onRetry={() => sessions.refetch()} />
+            : names.length > 0 ? (
+              <div className="@container">
+              <div className="grid grid-cols-1 gap-4 @sm:grid-cols-2 @4xl:grid-cols-2">
+                {names.map((s) => {
+                  const info = byName.get(s);
+                  if (!info) return null;
+                  return <SessionCard key={s} info={info} compact={compact} onOpenTerminal={() => setOpenTerm(s)} />;
+                })}
+              </div>
+              </div>
+            ) : filter === 'needs_input' && allNames.length > 0
+              ? <EmptyState title={t.sessions.filterNeedsInput} description={t.sessions.noNeedsInput} icon={TerminalSquare} />
+              : <EmptyState title={t.sessions.empty} description={t.sessions.emptyDescription} icon={TerminalSquare} action={<Button variant="accent" icon={ArrowRight} onClick={() => router.push('/tasks')}>{t.sessions.emptyAction}</Button>} />}
+        </div>
+
+        {/* Right rail: every brain conversation (chat, CLI, Discord channels) — model icon, title, tokens. */}
+        <aside className="shrink-0 @4xl:w-80">
+          <BrainSessionsPanel />
+        </aside>
+      </div>
 
       {openTerm && <TerminalModal session={openTerm} onClose={() => setOpenTerm(null)} />}
     </>

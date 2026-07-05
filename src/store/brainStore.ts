@@ -36,6 +36,20 @@ export class BrainStore {
       .all(userId) as BrainSessionRow[];
   }
 
+  /** Cumulative token total per session (summed from each stored assistant message's usage) for the
+   *  session-management panel. One grouped query — no N+1. Sessions with no usage-bearing messages
+   *  come back 0. Persisted messages only, so a mid-turn session reads slightly stale (acceptable). */
+  tokenTotals(userId: number): Record<string, number> {
+    const rows = this.db.prepare(
+      `SELECT s.id AS id, COALESCE(SUM(json_extract(m.content, '$.usage.totalTokens')), 0) AS tokens
+         FROM brain_sessions s LEFT JOIN brain_messages m ON m.session_id = s.id
+        WHERE s.user_id = ? GROUP BY s.id`
+    ).all(userId) as { id: string; tokens: number }[];
+    const out: Record<string, number> = {};
+    for (const r of rows) out[r.id] = r.tokens ?? 0;
+    return out;
+  }
+
   appendMessage(input: { id: string; sessionId: string; parentId: string | null; role: string; content: unknown }): BrainMessageRow {
     this.db.prepare(
       `INSERT INTO brain_messages (id, session_id, parent_id, role, content)
