@@ -1,7 +1,8 @@
-import { SelectList, Text, Container, Editor, matchesKey } from '@earendil-works/pi-tui';
+import { SelectList, Container, Editor, matchesKey } from '@earendil-works/pi-tui';
 import type { SelectItem, TUI } from '@earendil-works/pi-tui';
 import { getSelectListTheme } from '@earendil-works/pi-coding-agent';
 import { color } from './theme.js';
+import { padAnsi } from './components.js';
 
 /** The Editor with an Esc hook: Esc aborts the streaming turn (unless the autocomplete popup is open —
  *  then Esc closes it, handled by the base class). */
@@ -43,7 +44,7 @@ export function parseModelValue(value: string): { provider: string; model: strin
 
 export interface PickerOpts {
   tui: TUI;
-  /** The layout slot normally holding the editor; the picker temporarily replaces it. */
+  /** Kept for compatibility with the previous inline picker; modals no longer mutate this slot. */
   slot: Container;
   editor: Editor;
   items: SelectItem[];
@@ -51,22 +52,65 @@ export interface PickerOpts {
   onPick: (value: string) => void;
 }
 
-/** Show an arrow-key picker in place of the editor (the pi modal pattern: swap the slot's child and
- *  move focus). Enter picks, Esc restores the editor untouched. */
+class PickerModal {
+  private list: SelectList;
+
+  constructor(
+    private readonly title: string,
+    items: SelectItem[],
+    private readonly onPick: (value: string) => void,
+    private readonly onCancel: () => void,
+  ) {
+    this.list = new SelectList(items, 12, getSelectListTheme(), {
+      minPrimaryColumnWidth: 30,
+      maxPrimaryColumnWidth: 34,
+    });
+    this.list.onSelect = (item) => this.onPick(item.value);
+    this.list.onCancel = this.onCancel;
+  }
+
+  invalidate(): void { this.list.invalidate(); }
+  handleInput(data: string): void { this.list.handleInput(data); }
+
+  render(width: number): string[] {
+    const bodyWidth = Math.max(1, width - 4);
+    return [
+      color.modalBg(padAnsi(`  ${color.bold(color.text(this.title))}${color.faint(' '.repeat(Math.max(1, bodyWidth - visibleTitle(this.title))) + 'esc')}`, width)),
+      color.modalBg(padAnsi('', width)),
+      ...this.list.render(bodyWidth).map((line) => color.modalBg(`  ${padAnsi(line, bodyWidth)}  `)),
+      color.modalBg(padAnsi('', width)),
+      color.modalBg(padAnsi(`  ${color.text('enter select')} ${color.faint('·')} ${color.text('esc close')}`, width)),
+    ];
+  }
+}
+
+function visibleTitle(title: string): number {
+  return Math.min(24, title.length + 6);
+}
+
+/** Show an arrow-key picker as a centered modal. Enter picks, Esc restores editor focus untouched. */
 export function openPicker(o: PickerOpts): void {
   const restore = (): void => {
-    o.slot.clear();
-    o.slot.addChild(o.editor);
     o.tui.setFocus(o.editor);
     o.tui.requestRender();
   };
   if (o.items.length === 0) { restore(); return; }
-  const list = new SelectList(o.items, 10, getSelectListTheme());
-  list.onSelect = (item) => { restore(); o.onPick(item.value); };
-  list.onCancel = restore;
-  o.slot.clear();
-  o.slot.addChild(new Text(`  ${color.bold(o.title)}  ${color.faint('↑↓ select · ⏎ confirm · esc cancel')}`, 1, 0));
-  o.slot.addChild(list);
-  o.tui.setFocus(list);
+  let handle: ReturnType<TUI['showOverlay']> | null = null;
+  const close = (): void => {
+    handle?.hide();
+    handle = null;
+    restore();
+  };
+  const modal = new PickerModal(o.title, o.items, (value) => {
+    close();
+    o.onPick(value);
+  }, close);
+  handle = o.tui.showOverlay(modal, {
+    anchor: 'center',
+    width: 60,
+    maxHeight: 22,
+    margin: 2,
+  });
+  handle.focus();
   o.tui.requestRender();
 }

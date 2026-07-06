@@ -62,6 +62,8 @@ describe('parseCommand', () => {
     expect(parseCommand('/model')).toEqual({ cmd: 'model' });
     expect(parseCommand('/think')).toEqual({ cmd: 'think', arg: undefined });
     expect(parseCommand('/think high')).toEqual({ cmd: 'think', arg: 'high' });
+    expect(parseCommand('/theme')).toEqual({ cmd: 'theme', arg: undefined });
+    expect(parseCommand('/theme mono')).toEqual({ cmd: 'theme', arg: 'mono' });
     expect(parseCommand('/compact')).toEqual({ cmd: 'compact' });
     expect(parseCommand('/quit')).toEqual({ cmd: 'quit' });
     expect(parseCommand('/exit')).toEqual({ cmd: 'quit' });

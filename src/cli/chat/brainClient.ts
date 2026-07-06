@@ -10,7 +10,7 @@ export interface BrainClientOpts { base: string; token: string; fetchImpl?: type
 
 /** Statusline display toggles (the statusline plugin's config; null when the plugin is disabled). */
 interface StatuslineConfig { showModel?: boolean; showContext?: boolean; showTokens?: boolean; showCost?: boolean }
-interface BrainUsageView { tokens: number | null; contextWindow: number; percent: number | null; totalTokens: number; cost: number }
+export interface BrainUsageView { tokens: number | null; contextWindow: number; percent: number | null; totalTokens: number; cost: number }
 export interface BrainStatus { running: boolean; sessionId: string | null; model: string; usage: BrainUsageView | null; statusline: StatuslineConfig | null; thinkingLevel?: string; thinkingLevels?: string[]; pendingAsk?: { id: string; questions: AskQuestion[] } | null; cards?: BrainCard[] }
 
 /** Parse accumulated SSE text into complete frames, returning the events and the unconsumed tail.

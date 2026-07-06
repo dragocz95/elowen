@@ -1,29 +1,25 @@
-import { visibleWidth, wrapTextWithAnsi } from '@earendil-works/pi-tui';
+import { truncateToWidth, visibleWidth, wrapTextWithAnsi } from '@earendil-works/pi-tui';
 import type { Component } from '@earendil-works/pi-tui';
 import { renderDiff } from '@earendil-works/pi-coding-agent';
 import type { BrainCard } from '../../brain/events.js';
+import { color } from './theme.js';
 
 /** opencode-style visual building blocks, hand-rolled on pi-tui's Component contract (render(width)
  *  → lines). Kept separate from app.ts so the layout logic stays readable and these are unit-testable. */
 
-// Exact opencode default theme (dark), truecolor.
-const BLUE = '38;2;92;156;245';            // secondary #5c9cf5 — user rail
-const TEXT = '38;2;238;238;238';           // step12 #eeeeee — bright text (logo)
-const MUTED = '38;2;128;128;128';          // step11 #808080 — tool lines, stats
-const FAINT = '38;2;96;96;96';             // step8 #606060 — subtle hints
-const BAR = `\x1b[${BLUE}m▌\x1b[0m`;        // blue left rail (half-block, reads as a clean edge)
-const BG = '48;2;20;20;20';                // backgroundPanel #141414 (title bar)
-const BG_USER = '48;2;30;30;30';           // backgroundElement #1e1e1e (user block)
-const BG_CLOSE = '\x1b[0m';
 /** Bold that resets ONLY bold (\x1b[22m), so it never clears the surrounding background. */
 const bold = (s: string): string => `\x1b[1m${s}\x1b[22m`;
 
-const GREEN = '38;2;127;216;143';          // additions green — completed todos
-const ACCENT = (t: string): string => `\x1b[${BLUE}m${t}\x1b[0m`;
-const WHITE = (t: string): string => `\x1b[${TEXT}m${t}\x1b[0m`;
-const DIM = (t: string): string => `\x1b[${MUTED}m${t}\x1b[0m`;
-const FAINTC = (t: string): string => `\x1b[${FAINT}m${t}\x1b[0m`;
-const GREENC = (t: string): string => `\x1b[${GREEN}m${t}\x1b[0m`;
+const ACCENT = color.accent;
+const WHITE = color.text;
+const DIM = color.dim;
+const FAINTC = color.faint;
+const GREENC = color.success;
+
+export function padAnsi(text: string, width: number): string {
+  const w = visibleWidth(text);
+  return w >= width ? truncateToWidth(text, width) : text + ' '.repeat(width - w);
+}
 
 /** A full-width bar with a subtle background and left/right justified content (the top title bar).
  *  Both sides carry their own ANSI; the whole row is painted with the background color. */
@@ -36,7 +32,7 @@ export class TitleBar implements Component {
     const inner = width - 2; // one space of padding each side
     const gap = Math.max(1, inner - visibleWidth(this.left) - visibleWidth(this.right));
     const body = ` ${this.left}${' '.repeat(gap)}${this.right} `;
-    return [`\x1b[${BG}m${body}${BG_CLOSE}`];
+    return [color.inputBg(body)];
   }
 }
 
@@ -48,7 +44,7 @@ export class UserBlock implements Component {
   render(width: number): string[] {
     const railed = (body: string): string => {
       const pad = Math.max(0, width - 1 - visibleWidth(body));
-      return `${BAR}\x1b[${BG_USER}m${body}${' '.repeat(pad)}${BG_CLOSE}`;
+      return `${color.accent('▌')}${color.inputBg(`${body}${' '.repeat(pad)}`)}`;
     };
     const wrapped = wrapTextWithAnsi(this.text, Math.max(1, width - 3));
     const rows = wrapped.map((l) => railed(` ${l}`));

@@ -32,6 +32,7 @@ export const SLASH_COMMANDS: readonly SlashCommandDef[] = [
   // CLI-only: the reasoning-effort picker is wired in the TUI. Discord tunes reasoning through its own
   // native command surface; the web dock has no picker for it yet (would show a dead menu entry).
   { name: 'think', description: 'Set the reasoning effort', kind: 'picker', surfaces: ['cli'] },
+  { name: 'theme', description: 'Switch the terminal colour theme', kind: 'picker', surfaces: ['cli'] },
   { name: 'restart', description: 'Restart the Orca daemon', kind: 'action', adminOnly: true },
   { name: 'help', description: 'Show the available commands', kind: 'info' },
   // CLI-only conversation management (the other surfaces manage conversations through their own UI).

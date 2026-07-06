@@ -1,14 +1,135 @@
-import { SelectList, Text } from '@earendil-works/pi-tui';
-import type { SelectItem, TUI, Container, Editor } from '@earendil-works/pi-tui';
+import { matchesKey, truncateToWidth } from '@earendil-works/pi-tui';
+import type { Component, Focusable, TUI, Container, Editor } from '@earendil-works/pi-tui';
 import { getSelectListTheme } from '@earendil-works/pi-coding-agent';
 import type { AskAnswer, AskQuestion } from '../../brain/events.js';
 import { ChatEditor } from './picker.js';
-import { color } from './theme.js';
+import { ansi, chatTheme, color } from './theme.js';
+import { padAnsi } from './components.js';
 
-// Sentinel item values that can't collide with a real option label. Written as an escaped NUL so the
-// source stays a text file (git diff/blame keep working) while the runtime value is a control char.
 const OTHER = '\u0000other';
-const DONE = '\u0000done';
+
+const fillInputBg = (text: string, width: number): string => `\x1b[${chatTheme().inputBg}m${padAnsi(text, width)}\x1b[0m`;
+const open = (code: string, text: string): string => ansi.open(code, text);
+const selectedGlyph = (active: boolean): string => active ? '☑' : '☐';
+
+export interface AskChoiceDockOpts {
+  tui: TUI;
+  question: AskQuestion;
+  index: number;
+  total: number;
+  selected?: string[];
+  onSubmit: (selected: string[]) => void;
+  onOther: (selected: string[]) => void;
+  onCancel: () => void;
+}
+
+/** Bottom ask_user_question dock, modelled after Claude Code's checklist prompt. It replaces the chat
+ *  editor while active: arrows move, Space toggles checkboxes, Enter submits, and the selected answers
+ *  are echoed in the action row so the user never has to type unless they choose Other. */
+export class AskChoiceDock implements Component, Focusable {
+  private selectedIndex = 0;
+  private selected: Set<string>;
+  private _focused = false;
+
+  constructor(private opts: AskChoiceDockOpts) {
+    this.selected = new Set(opts.selected ?? []);
+  }
+
+  get focused(): boolean { return this._focused; }
+  set focused(value: boolean) { this._focused = value; }
+
+  invalidate(): void { /* stateless render from current selection */ }
+
+  private rows(): { value: string; label: string; description?: string; other?: boolean }[] {
+    return [
+      ...this.opts.question.options.map((op) => ({ value: op.label, label: op.label, description: op.description })),
+      { value: OTHER, label: 'Other...', description: 'type your own answer', other: true },
+    ];
+  }
+
+  private move(delta: number): void {
+    const rows = this.rows();
+    this.selectedIndex = rows.length ? (this.selectedIndex + delta + rows.length) % rows.length : 0;
+    this.opts.tui.requestRender();
+  }
+
+  private toggleCurrent(): void {
+    const row = this.rows()[this.selectedIndex];
+    if (!row) return;
+    if (row.other) {
+      this.opts.onOther([...this.selected]);
+      return;
+    }
+    if (this.opts.question.multiSelect) {
+      if (this.selected.has(row.value)) this.selected.delete(row.value);
+      else this.selected.add(row.value);
+    } else {
+      this.selected.clear();
+      this.selected.add(row.value);
+    }
+    this.opts.tui.requestRender();
+  }
+
+  private submit(): void {
+    const row = this.rows()[this.selectedIndex];
+    if (row?.other) {
+      this.opts.onOther([...this.selected]);
+      return;
+    }
+    if (!this.opts.question.multiSelect && this.selected.size === 0 && row) {
+      this.opts.onSubmit([row.value]);
+      return;
+    }
+    this.opts.onSubmit([...this.selected]);
+  }
+
+  handleInput(data: string): void {
+    if (matchesKey(data, 'escape')) { this.opts.onCancel(); return; }
+    if (data === '\x1b[A' || matchesKey(data, 'up')) { this.move(-1); return; }
+    if (data === '\x1b[B' || matchesKey(data, 'down')) { this.move(1); return; }
+    if (data === ' ') { this.toggleCurrent(); return; }
+    if (data === '\r' || matchesKey(data, 'enter')) { this.submit(); }
+  }
+
+  render(width: number): string[] {
+    const w = Math.max(2, width);
+    const innerWidth = Math.max(1, w - 2);
+    const theme = chatTheme();
+    const border = color.accent;
+    const top = `${border('╭')}${color.faint('─'.repeat(innerWidth))}${border('╮')}`;
+    const bottom = `${border('╰')}${color.faint('─'.repeat(innerWidth))}${border('╯')}`;
+    const row = (content: string): string => `${border('│')}${fillInputBg(content, innerWidth)}${border('│')}`;
+    const plainSelected = [...this.selected];
+    const selectedText = plainSelected.length
+      ? plainSelected.map((item) => `✓ ${item}`).join('  ')
+      : 'No answers selected';
+    const choiceRows = this.rows().map((item, i) => {
+      const picked = this.selected.has(item.value);
+      const marker = item.other ? '✎' : selectedGlyph(picked);
+      const labelWidth = Math.min(30, Math.max(18, Math.floor(innerWidth * 0.36)));
+      const label = padAnsi(`${marker} ${item.label}`, labelWidth);
+      const desc = truncateToWidth(item.description ?? '', Math.max(1, innerWidth - labelWidth - 5), '');
+      const content = `  ${label} ${desc}`;
+      if (i === this.selectedIndex) {
+        return `${border('│')}${color.selected(padAnsi(content, innerWidth))}${border('│')}`;
+      }
+      const labelColor = picked ? theme.accentSoft : theme.text;
+      return row(`  ${open(labelColor, label)} ${open(theme.muted, desc)}`);
+    });
+    const progress = `${this.opts.index + 1}/${this.opts.total}`;
+    return [
+      top,
+      row(`  ${open(theme.text, 'Orca needs a decision')}  ${open(theme.faint, this.opts.question.header || 'ask_user_question')}  ${open(theme.faint, progress)}`),
+      row(`  ${open(theme.text, truncateToWidth(this.opts.question.question, Math.max(1, innerWidth - 4), ''))}`),
+      row(''),
+      ...choiceRows,
+      row(''),
+      row(open(theme.accent, truncateToWidth(`  ${selectedText}`, innerWidth, ''))),
+      row(`  ${open(theme.text, 'space')} ${open(theme.muted, 'toggle')}  ${open(theme.text, 'enter')} ${open(theme.muted, 'send')}  ${open(theme.text, 'esc')} ${open(theme.muted, 'cancel')}`),
+      bottom,
+    ];
+  }
+}
 
 export interface AskFlowOpts {
   tui: TUI;
@@ -22,18 +143,24 @@ export interface AskFlowOpts {
   onCancel: () => void;
 }
 
-/** Drive an `ask_user_question` turn in the TUI: walk the questions one at a time, each as an arrow-key
- *  picker (single-select), a toggle list (multiSelect), or a free-text prompt ("✏️ Other"). Restores the
- *  chat editor when done. Mirrors the modal-swap pattern of `openPicker`, but stays open across the
- *  multi-step flow instead of restoring after a single pick. */
+/** Drive an `ask_user_question` turn in the TUI. The active question replaces the chat input with a
+ *  checklist dock: Space toggles choices, Enter confirms, and selected answers are visible at the bottom.
+ *  Free-text Other remains available, but only after the user explicitly chooses it. */
 export function runAskFlow(o: AskFlowOpts): void {
   const answers: AskAnswer[] = [];
+
+  const setSlot = (component: Component, focus: Component): void => {
+    o.slot.clear();
+    o.slot.addChild(component);
+    o.tui.setFocus(focus);
+    o.tui.requestRender(true);
+  };
 
   const restore = (): void => {
     o.slot.clear();
     o.slot.addChild(o.editor);
     o.tui.setFocus(o.editor);
-    o.tui.requestRender();
+    o.tui.requestRender(true);
   };
 
   const cancel = (): void => { restore(); o.onCancel(); };
@@ -41,77 +168,44 @@ export function runAskFlow(o: AskFlowOpts): void {
   const next = (): void => {
     const q = o.questions[answers.length];
     if (!q) { restore(); o.onComplete(answers); return; }
-    if (q.multiSelect) askMulti(q); else askSingle(q);
+    askChoice(q, []);
   };
 
-  const header = (q: AskQuestion, hint: string): void => {
-    o.slot.clear();
-    o.slot.addChild(new Text(`  ${color.bold(q.question)}`, 1, 0));
-    o.slot.addChild(new Text(`  ${color.faint(hint)}`, 1, 0));
-  };
-
-  /** Swap in a fresh Editor to capture a free-text "Other" answer, then hand it back and continue. */
-  const askOther = (q: AskQuestion, extra: string[]): void => {
-    o.slot.clear();
-    o.slot.addChild(new Text(`  ${color.bold(q.question)}`, 1, 0));
-    o.slot.addChild(new Text(`  ${color.faint('type your own answer · ⏎ confirm · esc back')}`, 1, 0));
+  const askOther = (q: AskQuestion, selected: string[]): void => {
     const input = new ChatEditor(o.tui, { borderColor: color.faint, selectList: getSelectListTheme() }, {});
-    // Esc from the Other prompt = keep the picks already toggled (if any), skip the free text, move on.
-    input.onEscape = () => { answers.push({ header: q.header, selected: extra }); next(); };
+    const back = (): void => { askChoice(q, selected); };
+    input.onEscape = back;
     input.onSubmit = (text: string) => {
       const other = text.trim();
-      answers.push({ header: q.header, selected: extra, other: other || undefined });
+      answers.push({ header: q.header, selected, other: other || undefined });
       next();
     };
-    o.slot.addChild(input);
-    o.tui.setFocus(input);
-    o.tui.requestRender();
+    setSlot({
+      invalidate: () => { input.invalidate?.(); },
+      handleInput: (data: string) => { input.handleInput?.(data); },
+      render: (width: number) => [
+        color.inputBg(padAnsi(`  ${color.bold('Other answer')} ${color.faint(q.header)}`, width)),
+        color.inputBg(padAnsi(`  ${color.faint('type your own answer · enter send · esc back')}`, width)),
+        ...input.render(width),
+      ],
+    }, input);
   };
 
-  const askSingle = (q: AskQuestion): void => {
-    header(q, '↑↓ select · ⏎ confirm · esc cancel');
-    const items: SelectItem[] = [
-      ...q.options.map((op) => ({ value: op.label, label: op.label, description: op.description })),
-      { value: OTHER, label: '✏️ Other…', description: 'type your own answer' },
-    ];
-    const list = new SelectList(items, 10, getSelectListTheme());
-    list.onCancel = cancel;
-    list.onSelect = (item) => {
-      if (item.value === OTHER) { askOther(q, []); return; }
-      answers.push({ header: q.header, selected: [item.value] });
-      next();
-    };
-    o.slot.addChild(list);
-    o.tui.setFocus(list);
-    o.tui.requestRender();
-  };
-
-  const askMulti = (q: AskQuestion): void => {
-    const picked = new Set<string>();
-    const show = (): void => {
-      header(q, 'multiple choice · ⏎ toggle · "Done" confirms · esc cancel');
-      const items: SelectItem[] = [
-        { value: DONE, label: `✓ Done (${picked.size})`, description: 'confirm selection' },
-        ...q.options.map((op) => ({
-          value: op.label,
-          label: `${picked.has(op.label) ? '☑' : '☐'} ${op.label}`,
-          description: op.description,
-        })),
-        { value: OTHER, label: '✏️ Other…', description: 'add your own answer' },
-      ];
-      const list = new SelectList(items, 12, getSelectListTheme());
-      list.onCancel = cancel;
-      list.onSelect = (item) => {
-        if (item.value === DONE) { answers.push({ header: q.header, selected: [...picked] }); next(); return; }
-        if (item.value === OTHER) { askOther(q, [...picked]); return; }
-        if (picked.has(item.value)) picked.delete(item.value); else picked.add(item.value);
-        show(); // re-render the toggle list with the updated checkboxes
-      };
-      o.slot.addChild(list);
-      o.tui.setFocus(list);
-      o.tui.requestRender();
-    };
-    show();
+  const askChoice = (q: AskQuestion, selected: string[]): void => {
+    const dock = new AskChoiceDock({
+      tui: o.tui,
+      question: q,
+      index: answers.length,
+      total: o.questions.length,
+      selected,
+      onCancel: cancel,
+      onOther: (picked) => askOther(q, picked),
+      onSubmit: (picked) => {
+        answers.push({ header: q.header, selected: picked });
+        next();
+      },
+    });
+    setSlot(dock, dock);
   };
 
   next();
