@@ -3,6 +3,20 @@
 All notable changes to Orcasynth are documented here. The format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); the daemon version is the root `package.json` version.
 
+## [1.8.5] - 2026-07-06
+
+### Fixed
+- **OpenAI (Codex) sign-in now completes over SSH / on a remote box.** The setup wizard used OpenAI's
+  browser OAuth, which redirects to a `localhost:1455` loopback the remote box can't receive — the page
+  just kept "loading" and the sign-in never finished. It now uses OpenAI's **device-code** flow: it shows
+  a short code and `auth.openai.com/codex/device`, you enter the code, and it polls to completion — no
+  loopback, no copy-pasting a redirect URL. Anthropic keeps its paste-back flow, and the waiting spinner
+  is always stopped before any prompt so it never obscures it.
+
+### Changed
+- `POST /brain/oauth/:type/start` accepts a `method` (e.g. `device_code`) so a caller can pick a provider's
+  login sub-flow instead of always taking the first.
+
 ## [1.8.4] - 2026-07-06
 
 ### Fixed
