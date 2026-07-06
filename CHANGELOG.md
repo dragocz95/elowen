@@ -3,6 +3,24 @@
 All notable changes to Orcasynth are documented here. The format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); the daemon version is the root `package.json` version.
 
+## [1.8.7] - 2026-07-06
+
+### Added
+- **Setup now gets you to a working agent out of the box.** `orca setup` verifies the agent actually
+  answers (a real one-shot **chat smoke-test**), points tasks at Orca's **built-in engine**
+  (`orca:<provider>/<model>`) so they run on *any* provider without a separate agent CLI, seeds a default
+  tool set (files, terminal, askuser, runtime-context, skills, subagent) on a fresh install, and ends with
+  a **readiness matrix** plus the web URL and login.
+- **`orca doctor`** — an on-demand readiness report (chat, tasks, missions, memory, platforms, plugins),
+  each check with a fix hint; exits non-zero when something needs attention.
+- **Non-interactive setup** — `orca setup --non-interactive` runs the whole onboarding from flags/env (no
+  prompts) for agents and CI, with correct exit codes. See Install → Non-interactive setup.
+- **CLI chat redesign** — the `orca chat` terminal UI gets a refreshed layout and switchable colour themes
+  (Orca / blue / mono).
+
+### Changed
+- New daemon endpoints back the above: `POST /brain/test` (one-shot completion) and `GET /system/readiness`.
+
 ## [1.8.6] - 2026-07-06
 
 ### Added
