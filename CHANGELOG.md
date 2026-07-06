@@ -3,6 +3,19 @@
 All notable changes to Orcasynth are documented here. The format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); the daemon version is the root `package.json` version.
 
+## [1.8.4] - 2026-07-06
+
+### Fixed
+- Complete the 1.8.3 install/setup unification in the source tree — the `v1.8.3` tag was missing the file
+  moves (the published npm package was already complete); `v1.8.4` has the full, buildable tree.
+- `orca setup` in a non-interactive shell now words its guidance for an interactive terminal and honors
+  `--reset`; the launcher's "open web UI" prints the URL over SSH instead of claiming a browser opened.
+
+### Changed
+- Post-review cleanup: removed dead code (an unused step-result field), de-duplicated the cross-platform
+  browser opener between the launcher and the wizard, and simplified slug/id derivation. No wizard
+  behavior change.
+
 ## [1.8.3] - 2026-07-06
 
 ### Changed
