@@ -1,16 +1,17 @@
 <div align="center">
 
-# Orcasynth
+# 🐋 Orca
 
-**Your personal AI agent.**
+**A personal AI agent you talk to — self-hosted, and yours.**
 
-`Chat · Plan · Delegate · Automate`
+`Chat · Act · Automate · Extend`
 
-Orca is a self-hosted personal AI agent that orchestrates autonomous coding
-agents, runs a built-in brain for chat and automation, supports plugins
-(Discord, cron, skills, memory, and more), and gives you a web UI and CLI
-to control everything. No SaaS, no lock-in — your machine, your agents, your
-code.
+Orca is a self-hosted personal AI agent. You chat with it and it acts: it reasons,
+calls tools, edits files, runs shell commands, manages your work, and reaches you
+wherever you are — a web dock, the `orca` CLI, Discord and WhatsApp. It sits in the
+same category as agents like Claude or OpenClaw, but it runs on **your** machine,
+uses **your** models, and every capability is a plugin you add or remove. No SaaS,
+no lock-in.
 
 [![CI](https://github.com/dragocz1995/orca/actions/workflows/ci.yml/badge.svg)](https://github.com/dragocz1995/orca/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
@@ -20,52 +21,77 @@ code.
 
 ---
 
+## Talk to it, and it acts
+
+<div align="center">
+
+![Talking to your Orca agent in the web chat dock](docs/site/images/getting-started-chat.png)
+
+</div>
+
+The agent is the product. The dashboards, boards and terminals below are simply how
+you **observe and steer** what it's doing — they are not the point; the agent is.
+
+## What makes it Orca
+
+- **Clarity** — a clean, uncluttered UI where you always see what the agent is doing.
+- **Simplicity** — easy to run, easy to control, sensible defaults, low friction.
+- **Fully extensible** — every capability (chat platforms, tools, memory, automation,
+  security) is an add/remove-able plugin. Orca is modular to the core.
+- **Lightweight, professional-grade** — one SQLite-backed daemon plus a Next.js web
+  UI. Small footprint, clean, tested codebase.
+
 ## What it does
 
-- **Autopilot planning.** Give the Pilot a goal and an LLM decomposes it into
-  ordered phases with dependencies. Each phase spawns an agent in its own tmux
-  session. Independent phases can run in parallel up to your session limit.
-- **Autonomy levels (L0–L3).** Choose how much rope each mission gets — from
-  L0 (plan only) to L3 (full autonomy). The overseer's decision engine
-  auto-clears safe actions and escalates anything destructive.
-- **Brain & Chat.** A built-in AI assistant accessible via web dock, CLI
-  (`orca chat`), or Discord. Multi-provider model catalog with OAuth account
-  connect (Anthropic, Copilot, OpenAI). Memory, personality, and plugin support.
-- **Plugin system.** Extend the brain with tools, platforms, and skills.
-  12 bundled plugins: Discord bot, cron jobs, file tools, terminal, web
-  search, image generation/editing, skills, security scanning, subagent
-  delegation, statusline, runtime context.
-- **PR-native workflow.** Missions work in isolated git worktrees, commit
-  each approved phase, and open a GitHub pull request. Review feedback flows
-  back as fix phases — bounded to 2 rounds, then escalates.
-- **Agent-agnostic spawning.** Runs Claude Code, OpenCode, or Codex in
-  isolated tmux sessions, configurable per task.
-- **Real-time web UI.** Dashboard, tasks, kanban board, timeline, live session
-  previews with real PTY streaming, built-in Monaco editor, stats.
-- **Phone push notifications.** Web Push with inline action buttons (Allow,
-  Reject, Approve, Rerun) when a mission needs you.
-- **Self-healing.** Stuck detector revives dead agents, janitor cleans up
-  finished sessions. Token and cost usage shown per run.
-- **Multi-user RBAC.** Admin and member roles, per-project assignments,
-  per-user model allow-lists.
-- **Self-hosted & lightweight.** Single SQLite-backed daemon + Next.js front
-  end. No external services beyond your own LLM provider.
+- **Chat that acts.** Talk to Orca's embedded brain from the web dock, `orca chat`,
+  Discord or WhatsApp. It plans, calls tools, edits code and follows up — with a
+  multi-provider model catalog and OAuth account connect.
+- **Built-in memory.** Orca remembers. A per-user memory engine with embeddings and
+  semantic retrieval stores durable facts, recalls the relevant ones at the start of each
+  turn, and self-curates to avoid duplicates — with `add`/`search` memory tools and a
+  Memory module to browse, merge and purge what it knows.
+- **Full RBAC, per-user tools.** Admin and member roles — and crucially, **each user
+  can have a different set of tools and permissions**: per-user tool access, model
+  allow-lists, visibility and per-project scoping.
+- **Plugins for everything.** Bundled: Discord, WhatsApp, files, terminal, web search,
+  image generation/editing, cron jobs, skills, MCP bridge, security scanning, subagent
+  delegation, statusline and runtime context. Install, update and remove from a
+  built-in marketplace.
+- **Surfaces to watch & steer.** Dashboard, tasks, kanban board, timeline, live tmux
+  session previews with real-PTY streaming, a built-in Monaco editor and per-run
+  token/cost stats.
+- **Personality, vision & attachments.** Per-user personality profiles shape how the
+  assistant communicates (per surface); drop images and text files straight into chat.
+- **Human-in-the-loop.** An escalations inbox where the agent asks structured questions
+  and waits for your approve / reject / answer; long conversations auto-compact and a
+  statusline shows context %, tokens and cost.
+- **Autopilot & missions.** Give a goal and an LLM decomposes it into ordered phases
+  with dependencies, each spawning an agent in its own tmux session. Autonomy levels
+  **L0–L3** decide how much runs without asking you.
+- **Agent-agnostic.** Drives Claude Code, OpenCode, Codex, Kilo Code, or the embedded
+  Orca AI brain — configurable per task.
+- **PR-native.** Missions work in isolated git worktrees, commit each approved phase
+  and open a GitHub pull request; review feedback flows back as bounded fix phases.
+- **Push notifications.** Web Push with inline action buttons (Approve, Reject, Rerun)
+  when a mission needs a decision.
+- **Self-healing & self-hosted.** A stuck detector revives dead agents and a janitor
+  cleans up finished sessions. No external services beyond your own LLM provider.
 
 ## Install
 
 ```bash
-npm install -g orcasynth
-orca                    # interactive menu
-orca install            # guided provisioning wizard
-orca up                 # start daemon (:4400) + web UI (:4500)
+npm install -g orcasynth   # the CLI command it installs is `orca`
+orca install               # guided provisioning wizard (systemd units + first admin)
+orca                       # launcher menu → "Talk to Orca"
 ```
 
-Requires **Node ≥ 22** and **tmux**. Open `http://localhost:4500` and log in.
+Requires **Node ≥ 22** and **tmux**. Open `http://localhost:4500` and log in, or drive
+it from the terminal:
 
 ```bash
-orca chat               # talk to your AI assistant
-orca status             # check what's running
-orca update             # update to latest version
+orca chat                  # talk to Orca in your terminal
+orca up | down | status    # manage the daemon (:4400) + web UI (:4500)
+orca update                # update to the latest release
 ```
 
 ## Screenshots
@@ -74,15 +100,15 @@ orca update             # update to latest version
 
 **Dashboard** — live agents, active missions, autopilot spotlight.
 
-![Dashboard](docs/screenshots/dashboard.png)
+![Dashboard](docs/site/images/web-ui-dashboard.png)
 
 </div>
 
 | | |
 |---|---|
-| **Tasks** — list + detail with live output. ![Tasks](docs/screenshots/tasks.png) | **Kanban** — board and calendar view. ![Kanban](docs/screenshots/kanban.png) |
-| **Sessions** — real-time tmux previews. ![Sessions](docs/screenshots/sessions.png) | **Terminal** — interactive PTY streaming. ![Terminal](docs/screenshots/terminal.png) |
-| **Projects** — built-in Monaco editor. ![Editor](docs/screenshots/projects-editor.png) | **Settings** — models, providers, plugins. ![Settings](docs/screenshots/settings.png) |
+| **Plugins** — add/remove capabilities from the marketplace. ![Plugins](docs/site/images/plugins-overview.png) | **Users & RBAC** — per-user tools, models and projects. ![Users](docs/site/images/users-rbac.png) |
+| **Kanban** — missions across open / in-progress / blocked / done. ![Kanban](docs/site/images/web-ui-kanban.png) | **Sessions** — real-time tmux previews with PTY streaming. ![Sessions](docs/site/images/web-ui-sessions.png) |
+| **Editor** — built-in Monaco with a git-aware file tree. ![Editor](docs/site/images/projects-editor.png) | **Settings** — models, providers, brain, plugins and more. ![Settings](docs/site/images/settings-overview.png) |
 
 ## Architecture
 
@@ -95,7 +121,7 @@ orca update             # update to latest version
   orca chat ─────▶┌──────────────────┐ ┌──────────┐
   orca ls  ──────▶│  Daemon (:4400)  │ │ SQLite   │
   Discord  ──────▶│  REST + SSE + WS │ │ orca.db  │
-                  └────────┬─────────┘ └──────────┘
+  WhatsApp ──────▶└────────┬─────────┘ └──────────┘
                            │
                     ┌──────┴──────┐
                     │  tmux       │
@@ -103,20 +129,28 @@ orca update             # update to latest version
                     └─────────────┘
 ```
 
-See [`docs/`](./docs) for the [documentation hub](./docs/index.md),
-[Getting Started](./docs/site/01-getting-started.md),
-[Brain & Chat](./docs/site/07-brain-chat.md), and [Plugins](./docs/site/08-plugins.md).
+One self-hosted daemon (REST + SSE + WebSocket) backed by SQLite, a Next.js web UI
+that talks to it over a same-origin BFF proxy, and agents that run in isolated tmux
+sessions.
+
+## Documentation
+
+Full user manual at **[orca.dragocz.dev](https://orca.dragocz.dev)** and in
+[`docs/`](./docs): [Getting Started](./docs/site/01-getting-started.md),
+[Agents & Autonomy](./docs/site/04-agents-autonomy.md),
+[Brain & Chat](./docs/site/07-brain-chat.md), [Plugins](./docs/site/08-plugins.md),
+and [Account & Security](./docs/site/11-account-security.md).
 
 ## Development
 
 ```bash
-npm test            # daemon tests (~471 cases)
-npm run build       # typecheck + build
-cd web && npm test  # web tests (~313 cases)
+npm test               # daemon test suite
+npm run build          # typecheck + build
+cd web && npm test     # web test suite
 cd web && npm run dev  # web dev server
 ```
 
-See [`docs/DEVELOPMENT.md`](./docs/DEVELOPMENT.md).
+See [`docs/DEVELOPMENT.md`](./docs/DEVELOPMENT.md) for the full contributor guide.
 
 ## License
 
