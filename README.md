@@ -84,13 +84,29 @@ you **observe and steer** what it's doing — they are not the point; the agent 
 ## Install
 
 ```bash
-npm install -g orcasynth   # the CLI command it installs is `orca`
-orca install               # guided provisioning wizard (systemd units + first admin)
-orca                       # launcher menu → "Talk to Orca"
+npm install -g orcasynth   # installs the `orca` command
+orca                       # first run launches the setup wizard (see below)
 ```
 
-Requires **Node ≥ 22** and **tmux**. Open `http://localhost:4500` and log in, or drive
-it from the terminal:
+Requires **Node ≥ 22** and **tmux**.
+
+### First run — the setup wizard
+
+The first time you run `orca` in a terminal — or any time via `orca setup` — a guided wizard gets you to
+a working setup in a couple of minutes. Five steps, each skippable and reversible:
+
+1. **Account** — create your admin login.
+2. **Project** — point Orca at a folder to work in (the current one, another path, or an existing project).
+3. **AI provider** — **sign in with Claude, GitHub Copilot or Codex / OpenAI**, paste an **API key**, or
+   use a **custom OpenAI-compatible endpoint**. Already-connected accounts are offered for reuse.
+4. **Memory** — turn on embeddings (reuse your provider's key, or OpenRouter) — optional.
+5. **Review** — confirm, then finish.
+
+It never blocks scripts: in a non-interactive shell (CI, Docker, a pipe) it just prints `Run: orca setup`
+and exits. Re-run it any time with `orca setup` (`--reset` to start over). For a full **server** deployment
+with systemd units and a reverse proxy, run `orca install` as root instead.
+
+Then open `http://localhost:4500` and log in, or drive it from the terminal:
 
 ```bash
 orca chat                  # talk to Orca in your terminal
