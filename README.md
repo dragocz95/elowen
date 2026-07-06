@@ -74,6 +74,10 @@ you **observe and steer** what it's doing — they are not the point; the agent 
   and open a GitHub pull request; review feedback flows back as bounded fix phases.
 - **Push notifications.** Web Push with inline action buttons (Approve, Reject, Rerun)
   when a mission needs a decision.
+- **Safe self-updates.** Opt-in automatic updates install new releases and restart the
+  daemon only when no mission is running, so live work is never interrupted. Your database,
+  settings and installed plugins live outside the package — updates leave them untouched, and
+  schema changes are applied as additive migrations.
 - **Self-healing & self-hosted.** A stuck detector revives dead agents and a janitor
   cleans up finished sessions. No external services beyond your own LLM provider.
 
