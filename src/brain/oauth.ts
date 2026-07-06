@@ -30,7 +30,11 @@ export class BrainOAuthManager {
     return !!this.auth.get(provider);
   }
 
-  start(provider: string): OAuthFlowState {
+  /** `method` picks a login sub-flow when the provider offers a choice — openai-codex exposes
+   *  `browser` (loopback callback, needs a reachable localhost) and `device_code` (headless: show a
+   *  code, poll for completion). CLI/remote callers pass `device_code` since the loopback is unreachable
+   *  over SSH. Ignored by providers without a method select. */
+  start(provider: string, opts: { method?: string } = {}): OAuthFlowState {
     const flow: Flow = { id: randomUUID(), provider, status: 'pending', needsInput: false };
     // Prune settled flows so the map stays bounded (admin-only, but no reason to leak entries).
     for (const [id, f] of this.flows) {
@@ -49,7 +53,7 @@ export class BrainOAuthManager {
       // required (the pasted authorization code) waits for the UI.
       onPrompt: (prompt) => (prompt.allowEmpty ? Promise.resolve('') : waitForInput()),
       onManualCodeInput: () => waitForInput(),
-      onSelect: async (prompt) => prompt.options[0]?.id, // no branching flows in our providers today
+      onSelect: async (prompt) => (opts.method ? prompt.options.find((o) => o.id === opts.method)?.id : undefined) ?? prompt.options[0]?.id,
     }).then(
       () => { flow.status = 'success'; },
       (e: unknown) => { flow.status = 'error'; flow.error = e instanceof Error ? e.message : String(e); },

@@ -13,6 +13,7 @@ interface ProviderEntry { id: string; label: string; type: BrainProviderType; ba
 
 const OAUTH_POLL_MS = 1500;
 const OAUTH_TIMEOUT_MS = 300_000;
+const OAUTH_COMPLETE_MS = 15 * 60_000; // auth window while the user finishes in the browser (matches the provider's own timeout)
 const stripSignIn = (label: string) => label.replace('Sign in with ', '');
 
 /** Step 3 — connect an AI provider. Offers reuse of an already-configured/connected provider, an OAuth
@@ -141,46 +142,59 @@ async function oauthFlow(ctx: WizardCtx, type: BrainProviderType, providers: Pub
   }
 }
 
-/** Drive one OAuth sign-in exactly like the web dialog: show the authorization URL (opening the browser
- *  best-effort), let the user authorize, then paste the redirect URL / code back. Crucially, NO spinner
- *  runs while the URL and the paste prompt are on screen — a running spinner previously obscured them and
- *  the flow looked stuck. A spinner appears only for the final "finishing" wait. */
+/** Drive one OAuth sign-in. For OpenAI-Codex we force the **device-code** method — show a short code +
+ *  `auth.openai.com/codex/device` and poll — because the browser method redirects to a `localhost:1455`
+ *  loopback that is unreachable over SSH / on a remote box (the sign-in there just hangs "loading").
+ *  Anthropic uses paste-back (the flow asks for a code), Copilot its own device code. A spinner runs only
+ *  while waiting and is STOPPED before any paste prompt, so it never obscures it. */
 async function connectOAuth(ctx: WizardCtx, type: BrainProviderType): Promise<'success' | 'failed' | 'cancel'> {
   const ch = OAUTH_CHOICES.find((c) => c.type === type)!;
-  const start = await apiJson<{ id?: string }>(ctx, 'POST', `/brain/oauth/${type}/start`);
+  const q = type === 'oauth-openai-codex' ? '?method=device_code' : '';
+  const start = await apiJson<{ id?: string }>(ctx, 'POST', `/brain/oauth/${type}/start${q}`);
   if (!start.ok || !start.data?.id) { p.log.error(`Couldn't start the sign-in (${start.status}).`); return 'failed'; }
   const flowId = start.data.id;
 
   try {
-    // 1. Wait for the provider to hand us an authorization URL (or a terminal state).
+    // Wait for the provider to hand us a URL / device code (or a terminal state).
     const ready = await waitForFlow(ctx, flowId, (f) => !!f.authUrl || !!f.userCode || f.needsInput || isSettled(f));
     if (!ready) { p.log.error('Timed out starting the sign-in.'); return 'failed'; }
     if (ready.status === 'error') { p.log.error(`Sign-in failed: ${ready.error ?? 'unknown error'}`); return 'failed'; }
 
-    // 2. Show the URL / device code (no spinner over it) and open the browser best-effort.
-    if (ready.authUrl) {
+    // Present the instructions. A device code (userCode present) → "open the URL and type this code";
+    // otherwise → "open the URL and authorize" (paste-back providers).
+    if (ready.userCode) {
+      p.log.step(`Sign in to ${stripSignIn(ch.label)}:`);
+      if (ready.authUrl) p.log.message(`Open ${ready.authUrl}`);
+      p.note(ready.userCode, 'and enter this code');
+    } else if (ready.authUrl) {
       p.log.step(`Sign in to ${stripSignIn(ch.label)} — open this URL and authorize:`);
       p.log.message(ready.authUrl);
-      if (openBrowser(ready.authUrl)) p.log.info('(also opened it in your browser)');
-      if (ready.instructions) p.log.message(ready.instructions);
     }
-    if (ready.userCode) p.note(ready.userCode, 'Enter this code in your browser');
+    if (ready.authUrl && openBrowser(ready.authUrl)) p.log.info('(also opened it in your browser)');
 
-    // 3. Paste-back: when the flow wants the redirect URL / code, ask for it (waiting until it's ready).
-    let cur = ready;
-    if (!cur.needsInput && !isSettled(cur)) cur = (await waitForFlow(ctx, flowId, (f) => f.needsInput || isSettled(f))) ?? cur;
-    if (cur.needsInput) {
-      const pasted = (guard(await p.text({ message: 'Paste the redirect URL (or code) from your browser here' })) as string).trim();
-      const sub = await apiJson(ctx, 'POST', `/brain/oauth/flow/${flowId}/input`, { value: pasted });
-      if (!sub.ok) p.log.warn('Submitting the code failed — the sign-in may still complete on its own.');
+    // Drive to completion. Poll with a spinner; if the provider asks for a pasted code (Anthropic-style),
+    // stop the spinner FIRST, collect it, then resume — the spinner must never share the screen with the
+    // prompt. Device-code flows never set needsInput, so the spinner just runs until the poll succeeds.
+    const s = p.spinner();
+    s.start('Waiting for you to finish in the browser…');
+    let asked = false;
+    const deadline = Date.now() + OAUTH_COMPLETE_MS;
+    for (;;) {
+      const f = (await apiJson<OAuthFlowState>(ctx, 'GET', `/brain/oauth/flow/${flowId}`)).data;
+      if (!f) { s.stop('The sign-in flow was lost.'); return 'failed'; }
+      if (f.status === 'success') { s.stop('Signed in ✓'); return 'success'; }
+      if (f.status === 'error') { s.stop(`Sign-in failed: ${f.error ?? 'unknown error'}`); return 'failed'; }
+      if (f.needsInput && !asked) {
+        asked = true;
+        s.stop('');
+        const pasted = (guard(await p.text({ message: 'Paste the authorization code / redirect URL here' })) as string).trim();
+        const sub = await apiJson(ctx, 'POST', `/brain/oauth/flow/${flowId}/input`, { value: pasted });
+        if (!sub.ok) p.log.warn('Submitting the code failed — the sign-in may still complete on its own.');
+        s.start('Verifying…');
+      }
+      if (Date.now() > deadline) { s.stop('Sign-in timed out.'); return 'failed'; }
+      await sleep(OAUTH_POLL_MS);
     }
-
-    // 4. Wait for completion (a spinner is fine here — nothing else needs the screen).
-    const s = p.spinner(); s.start('Finishing sign-in…');
-    const done = await waitForFlow(ctx, flowId, isSettled, 120_000);
-    if (done?.status === 'success') { s.stop('Signed in ✓'); return 'success'; }
-    s.stop(`Sign-in failed: ${done?.error ?? 'timed out'}`);
-    return 'failed';
   } catch (e) {
     if (e instanceof WizardCancelled) return 'cancel'; // ctrl+c at the paste prompt → go back a step
     throw e;

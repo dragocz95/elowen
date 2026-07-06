@@ -58,6 +58,19 @@ describe('BrainOAuthManager', () => {
     expect(mgr.get(started.id)?.status).toBe('success');
   });
 
+  it('onSelect picks the requested login method, else falls back to the first option', async () => {
+    const picks: (string | undefined)[] = [];
+    const auth = fakeAuth(async (_p, cb) => {
+      picks.push(await cb.onSelect({ options: [{ id: 'browser', label: 'Browser' }, { id: 'device_code', label: 'Device' }] }));
+    });
+    const mgr = new BrainOAuthManager(auth);
+    mgr.start('openai-codex', { method: 'device_code' }); // exact match → device_code
+    mgr.start('openai-codex');                            // no method → first option
+    mgr.start('openai-codex', { method: 'nope' });        // unknown method → first option
+    await tick();
+    expect(picks).toEqual(['device_code', 'browser', 'browser']);
+  });
+
   it('auto-answers empty-allowed prompts and surfaces login errors', async () => {
     const auth = fakeAuth(async (_p, cb) => {
       const domain = await cb.onPrompt({ message: 'GitHub domain', allowEmpty: true });

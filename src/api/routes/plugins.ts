@@ -560,7 +560,7 @@ export function registerPluginRoutes(app: OrcaApp, ctx: RouteContext): void {
     if (!d.brainOauth) return c.json({ error: 'oauth unavailable' }, 503);
     const builtin = oauthProviderOf(c.req.param('type'));
     if (!builtin) return c.json({ error: 'unknown oauth provider' }, 404);
-    return c.json(d.brainOauth.start(builtin), 201);
+    return c.json(d.brainOauth.start(builtin, { method: c.req.query('method') }), 201);
   });
 
   app.get('/brain/oauth/flow/:id', (c) => {
