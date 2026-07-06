@@ -121,12 +121,10 @@ async function pickFromList(models: string[]): Promise<string> {
   return pick === '__manual__' ? (guard(await p.text({ message: 'Model id' })) as string).trim() : pick;
 }
 
-// ── OAuth ────────────────────────────────────────────────────────────────────────────────────────
+// ── OAuth (same paste-back flow the web uses) ─────────────────────────────────────────────────────
 async function oauthFlow(ctx: WizardCtx, type: BrainProviderType, providers: PublicProvider[]): Promise<StepResult> {
   for (;;) {
-    const start = await apiJson<{ id?: string }>(ctx, 'POST', `/brain/oauth/${type}/start`);
-    let outcome: 'success' | 'failed' | 'cancel' = 'failed';
-    if (start.ok && start.data?.id) outcome = await pollOAuth(ctx, start.data.id, type);
+    const outcome = await connectOAuth(ctx, type);
     if (outcome === 'success') return persistOauthEntry(ctx, type, providers);
     if (outcome === 'cancel') return { status: 'back' };
     const again = guard(await p.select({
@@ -143,39 +141,64 @@ async function oauthFlow(ctx: WizardCtx, type: BrainProviderType, providers: Pub
   }
 }
 
-/** Poll a running OAuth flow to completion, opening the browser (with a printed-URL fallback), showing a
- *  device code, and prompting for a pasted code when the flow asks. Returns success / failed / cancel. */
-async function pollOAuth(ctx: WizardCtx, flowId: string, type: BrainProviderType): Promise<'success' | 'failed' | 'cancel'> {
+/** Drive one OAuth sign-in exactly like the web dialog: show the authorization URL (opening the browser
+ *  best-effort), let the user authorize, then paste the redirect URL / code back. Crucially, NO spinner
+ *  runs while the URL and the paste prompt are on screen — a running spinner previously obscured them and
+ *  the flow looked stuck. A spinner appears only for the final "finishing" wait. */
+async function connectOAuth(ctx: WizardCtx, type: BrainProviderType): Promise<'success' | 'failed' | 'cancel'> {
   const ch = OAUTH_CHOICES.find((c) => c.type === type)!;
-  const s = p.spinner(); s.start(`Connecting ${stripSignIn(ch.label)}…`);
-  let opened = false, shownCode = false;
-  const deadline = Date.now() + OAUTH_TIMEOUT_MS;
+  const start = await apiJson<{ id?: string }>(ctx, 'POST', `/brain/oauth/${type}/start`);
+  if (!start.ok || !start.data?.id) { p.log.error(`Couldn't start the sign-in (${start.status}).`); return 'failed'; }
+  const flowId = start.data.id;
+
   try {
-    for (;;) {
-      if (Date.now() > deadline) { s.stop('Sign-in timed out.'); return 'failed'; }
-      const flow = (await apiJson<OAuthFlowState>(ctx, 'GET', `/brain/oauth/flow/${flowId}`)).data;
-      if (!flow) { s.stop('The sign-in flow was lost.'); return 'failed'; }
-      if (flow.authUrl && !opened) {
-        opened = true; s.stop('Open this URL in your browser to sign in:');
-        openBrowser(flow.authUrl);
-        p.log.info(flow.authUrl);
-        if (flow.instructions) p.log.info(flow.instructions);
-        s.start('Waiting for you to finish in the browser…');
-      }
-      if (flow.userCode && !shownCode) { shownCode = true; s.stop(''); p.note(flow.userCode, 'Enter this code in your browser'); s.start('Waiting…'); }
-      if (flow.needsInput) {
-        s.stop('');
-        const code = (guard(await p.text({ message: 'Paste the authorization code' })) as string).trim();
-        await apiJson(ctx, 'POST', `/brain/oauth/flow/${flowId}/input`, { value: code });
-        s.start('Verifying…');
-      }
-      if (flow.status === 'success') { s.stop('Signed in ✓'); return 'success'; }
-      if (flow.status === 'error') { s.stop(`Sign-in failed: ${flow.error ?? 'unknown error'}`); return 'failed'; }
-      await sleep(OAUTH_POLL_MS);
+    // 1. Wait for the provider to hand us an authorization URL (or a terminal state).
+    const ready = await waitForFlow(ctx, flowId, (f) => !!f.authUrl || !!f.userCode || f.needsInput || isSettled(f));
+    if (!ready) { p.log.error('Timed out starting the sign-in.'); return 'failed'; }
+    if (ready.status === 'error') { p.log.error(`Sign-in failed: ${ready.error ?? 'unknown error'}`); return 'failed'; }
+
+    // 2. Show the URL / device code (no spinner over it) and open the browser best-effort.
+    if (ready.authUrl) {
+      p.log.step(`Sign in to ${stripSignIn(ch.label)} — open this URL and authorize:`);
+      p.log.message(ready.authUrl);
+      if (openBrowser(ready.authUrl)) p.log.info('(also opened it in your browser)');
+      if (ready.instructions) p.log.message(ready.instructions);
     }
+    if (ready.userCode) p.note(ready.userCode, 'Enter this code in your browser');
+
+    // 3. Paste-back: when the flow wants the redirect URL / code, ask for it (waiting until it's ready).
+    let cur = ready;
+    if (!cur.needsInput && !isSettled(cur)) cur = (await waitForFlow(ctx, flowId, (f) => f.needsInput || isSettled(f))) ?? cur;
+    if (cur.needsInput) {
+      const pasted = (guard(await p.text({ message: 'Paste the redirect URL (or code) from your browser here' })) as string).trim();
+      const sub = await apiJson(ctx, 'POST', `/brain/oauth/flow/${flowId}/input`, { value: pasted });
+      if (!sub.ok) p.log.warn('Submitting the code failed — the sign-in may still complete on its own.');
+    }
+
+    // 4. Wait for completion (a spinner is fine here — nothing else needs the screen).
+    const s = p.spinner(); s.start('Finishing sign-in…');
+    const done = await waitForFlow(ctx, flowId, isSettled, 120_000);
+    if (done?.status === 'success') { s.stop('Signed in ✓'); return 'success'; }
+    s.stop(`Sign-in failed: ${done?.error ?? 'timed out'}`);
+    return 'failed';
   } catch (e) {
-    if (e instanceof WizardCancelled) { s.stop('Cancelled.'); return 'cancel'; } // ctrl+c at the code prompt → go back
+    if (e instanceof WizardCancelled) return 'cancel'; // ctrl+c at the paste prompt → go back a step
     throw e;
+  }
+}
+
+const isSettled = (f: OAuthFlowState): boolean => f.status === 'success' || f.status === 'error';
+
+/** Poll a flow until `until` holds or the timeout elapses; returns the flow snapshot, or null on timeout /
+ *  a lost flow. */
+async function waitForFlow(ctx: WizardCtx, flowId: string, until: (f: OAuthFlowState) => boolean, timeoutMs = OAUTH_TIMEOUT_MS): Promise<OAuthFlowState | null> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const f = (await apiJson<OAuthFlowState>(ctx, 'GET', `/brain/oauth/flow/${flowId}`)).data;
+    if (!f) return null;
+    if (until(f)) return f;
+    if (Date.now() > deadline) return null;
+    await sleep(OAUTH_POLL_MS);
   }
 }
 
