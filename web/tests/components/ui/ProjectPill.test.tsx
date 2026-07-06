@@ -8,7 +8,7 @@ import type { Project } from '../../../lib/types';
 
 const TWO: Project[] = [
   { id: 1, slug: 'orca', path: '/var/www/orca', notes: '', icon: '', pr_enabled: null },
-  { id: 2, slug: 'hermes', path: '/var/www/hermes', notes: '', icon: '', pr_enabled: null },
+  { id: 2, slug: 'api', path: '/srv/api', notes: '', icon: '', pr_enabled: null },
 ];
 
 function projectsHandler(projects: Project[]) {
@@ -24,7 +24,7 @@ describe('ProjectPill', () => {
   it('renders the matching project slug when there are 2+ projects', async () => {
     const { wrapper: W } = createWrapper();
     const { container } = render(<W><ProjectPill projectId={2} /></W>);
-    await waitFor(() => expect(container.textContent).toContain('hermes'));
+    await waitFor(() => expect(container.textContent).toContain('api'));
   });
 
   it('renders nothing when the project id cannot be resolved', async () => {

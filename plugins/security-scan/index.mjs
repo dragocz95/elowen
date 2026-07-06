@@ -1,5 +1,5 @@
-// Security-scan plugin: a static pattern scanner for risky code, ported from the Hermes
-// security-guidance idea. Zero dependencies — pure regex heuristics. It classifies findings as
+// Security-scan plugin: a static pattern scanner for risky code. Zero dependencies — pure regex
+// heuristics. It classifies findings as
 // "danger" (likely exploitable / RCE) or "warn" (worth a look), so the model can review its own or
 // fetched code before trusting it. Advisory only: it reads, it never runs anything.
 import { defineTool } from '@earendil-works/pi-coding-agent';

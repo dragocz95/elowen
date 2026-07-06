@@ -45,6 +45,9 @@ export default tseslint.config(
         varsIgnorePattern: '^_',
         args: 'after-used',
         argsIgnorePattern: '^_',
+        // A name destructured alongside a `...rest` is the standard "omit this property" idiom
+        // (e.g. `const { apiKey, ...safe } = row`) — it exists only to be excluded, so don't flag it.
+        ignoreRestSiblings: true,
       }],
     },
   },

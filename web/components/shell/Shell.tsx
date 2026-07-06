@@ -58,7 +58,7 @@ function ShellLayout({ children }: { children: ReactNode }) {
           `position: fixed` descendants and re-anchor any non-portaled overlay (full-screen modals,
           context menus) to it. Content views scope their own `@container` around just the grid/list
           instead, keeping overlays outside it. */}
-      <main className="flex-1 overflow-y-auto overflow-x-hidden overscroll-contain">
+      <main className="flex-1 overflow-y-auto overflow-x-hidden overscroll-contain [scrollbar-gutter:stable]">
         {/* Global top bar: breadcrumb + account/bell/theme/language. In drawer mode it also carries the
             hamburger that opens the off-canvas sidebar. */}
         <TopBar onMenuClick={mode === 'drawer' ? () => setDrawerOpen(true) : undefined} />

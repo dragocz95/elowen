@@ -25,10 +25,10 @@ describe('appIdentity', () => {
   });
 
   it('lets a deployment override the public URL + title via env (prod vs dev)', async () => {
-    const m = await loadFresh({ ORCA_APP_URL: 'https://build.coresynth.io/', ORCA_APP_TITLE: 'Orcasynth' });
+    const m = await loadFresh({ ORCA_APP_URL: 'https://my-orca.example.com/', ORCA_APP_TITLE: 'Orcasynth' });
     // Trailing slash trimmed so `${APP_URL}/favicon.ico` stays clean.
-    expect(m.APP_URL).toBe('https://build.coresynth.io');
-    expect(m.APP_IDENTITY_HEADERS['http-referer']).toBe('https://build.coresynth.io');
+    expect(m.APP_URL).toBe('https://my-orca.example.com');
+    expect(m.APP_IDENTITY_HEADERS['http-referer']).toBe('https://my-orca.example.com');
     expect(m.APP_IDENTITY_HEADERS['x-openrouter-title']).toBe('Orcasynth');
     expect(m.APP_IDENTITY_HEADERS['x-title']).toBe('Orcasynth');
   });

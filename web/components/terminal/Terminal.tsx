@@ -18,10 +18,15 @@ export function Terminal({ name, interactive = false }: { name: string; interact
   const resizeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pane = useSessionStream(name);
   const { resolvedTheme } = useTheme();
+  // Latest theme, read once when the terminal is created. Held in a ref so the mount effect isn't
+  // theme-reactive (re-running it would drop scrollback + reset PTY size); the repaint effect below
+  // applies live theme toggles in place.
+  const themeRef = useRef(resolvedTheme);
+  themeRef.current = resolvedTheme;
 
   useEffect(() => {
     if (!ref.current) return;
-    const term = new XTerm({ convertEol: true, cursorBlink: interactive, fontSize: 12, theme: xtermTheme(resolvedTheme) });
+    const term = new XTerm({ convertEol: true, cursorBlink: interactive, fontSize: 12, theme: xtermTheme(themeRef.current) });
     const fit = new FitAddon();
     term.loadAddon(fit);
     term.open(ref.current);

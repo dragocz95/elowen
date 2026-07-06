@@ -1,4 +1,8 @@
-import type { BrainMessageRow } from '../store/brainStore.js';
+/** The minimal stored-row shape `shapeBrainMessages` folds — just the fields it reads (the role and the
+ *  raw content JSON). Kept as a local structural contract rather than importing `BrainMessageRow` from
+ *  the store: the store imports `extractText` from here, so a type import back into the store would form
+ *  a module cycle. `BrainMessageRow` satisfies this structurally, so callers pass their rows unchanged. */
+type StoredTurnRow = { role: string; content: string };
 
 /** One display piece of an assistant turn, in the order it happened: a text block, or a tool call
  *  (with a short argument summary and, for edits, the display diff). */
@@ -62,7 +66,7 @@ export function extractText(msg: unknown): string {
  *  task-conversation endpoint. Only user + assistant turns surface; toolResult/summary rows are
  *  persisted for rehydration but never shown (edit diffs are lifted off toolResult rows onto their
  *  matching assistant toolCall segment). */
-export function shapeBrainMessages(rows: BrainMessageRow[]): BrainMessageView[] {
+export function shapeBrainMessages(rows: StoredTurnRow[]): BrainMessageView[] {
   // Edit diffs live on the toolResult rows (never shown raw) — index them so the matching
   // assistant toolCall segment can carry its diff.
   const diffs = new Map<string, string>();

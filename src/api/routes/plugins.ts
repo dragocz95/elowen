@@ -59,6 +59,8 @@ export function registerPluginRoutes(app: OrcaApp, ctx: RouteContext): void {
       i18n: p.i18n,
       // Whether the plugin ships a brand icon on disk — lets the UI render `<img>` vs. a fallback glyph.
       hasIcon: existsSync(resolve(p.dir, p.manifest.icon ?? 'icon.svg')),
+      // Whether the plugin ships a hero illustration (illustration.png) shown big on its detail page.
+      hasIllustration: existsSync(resolve(p.dir, 'illustration.png')),
     }));
   };
   const manifestOf = (name: string) => discoverPlugins(d.pluginDirs ?? []).find((p) => p.manifest.name === name)?.manifest;
@@ -176,6 +178,19 @@ export function registerPluginRoutes(app: OrcaApp, ctx: RouteContext): void {
     if (iconPath !== base && !iconPath.startsWith(base + sep)) return c.json({ error: 'bad icon path' }, 400);
     if (!existsSync(iconPath)) return c.json({ error: 'no icon' }, 404);
     return c.body(readFileSync(iconPath, 'utf8'), 200, { 'Content-Type': 'image/svg+xml; charset=utf-8', 'Cache-Control': 'public, max-age=300' });
+  });
+
+  // The plugin's hero illustration (transparent PNG), shown big on its detail page. Same trust/confinement
+  // as the icon route: not admin-gated (no secrets), path-confined to the plugin's own dir.
+  app.get('/plugins/:name/illustration', (c) => {
+    const name = c.req.param('name');
+    const p = discoverPlugins(d.pluginDirs ?? []).find((x) => x.manifest.name === name);
+    if (!p) return c.json({ error: 'unknown plugin' }, 404);
+    const base = resolve(p.dir);
+    const imgPath = resolve(base, 'illustration.png');
+    if (imgPath !== base && !imgPath.startsWith(base + sep)) return c.json({ error: 'bad path' }, 400);
+    if (!existsSync(imgPath)) return c.json({ error: 'no illustration' }, 404);
+    return c.body(readFileSync(imgPath), 200, { 'Content-Type': 'image/png', 'Cache-Control': 'public, max-age=300' });
   });
 
   // The plugin's OWN runtime contributions (tools + hooks + the rest), filtered from the merged

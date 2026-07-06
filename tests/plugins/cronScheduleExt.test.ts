@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { join, resolve, dirname } from 'node:path';
+import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const pluginPath = resolve(dirname(fileURLToPath(import.meta.url)), '../../plugins/cronjob/index.mjs');
@@ -45,7 +45,7 @@ describe('cronjob schedule extensions', () => {
     expect(mod.isDue({ schedule: 'every 5m', enabled: false }, MON_10)).toBe(false);
   });
 
-  it('quiet replies (Hermes [SILENT] + NOTHING_TO_REPORT, wrapped or not) are recognized', () => {
+  it('quiet replies ([SILENT] + NOTHING_TO_REPORT, wrapped or not) are recognized', () => {
     expect(mod.isQuietReply('NOTHING_TO_REPORT')).toBe(true);
     expect(mod.isQuietReply('[SILENT]')).toBe(true);
     expect(mod.isQuietReply('`[SILENT]`')).toBe(true);       // models love wrapping markers in backticks

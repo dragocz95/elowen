@@ -62,7 +62,7 @@ export class MemoryCurator {
       // Show the model the memories it ALREADY holds that are relevant to this exchange, so it can
       // UPDATE/MERGE/skip instead of adding yet another paraphrase of a fact it already knows. The
       // findSimilar guard in applyOne only catches near-identical (≥0.85 cosine); this catches the
-      // "same point, different wording" redundancy (e.g. "Filip" vs "Filip Džudža, operátor").
+      // "same point, different wording" redundancy (e.g. "Alex" vs "Alex Kim, the operator").
       let existing: { id: number; body: string }[] = [];
       try {
         // searchSemantic (NOT retrieve): the curator is BROWSING what's already stored to avoid

@@ -7,6 +7,7 @@ import { runSetupWizard } from './setupWizard.js';
 import { readInstallInfo, type InstallInfo } from './installInfo.js';
 import { update } from './update.js';
 import { SERVICES, runCmd, systemctl, servicesActive } from './systemd.js';
+import { launchChat } from './chat/launch.js';
 
 const BASE = process.env.ORCA_URL ?? 'http://localhost:4400';
 
@@ -20,13 +21,14 @@ function openUrl(url: string): void {
 /** Launcher menu for a systemd-provisioned box (`orca install`): drives the units via systemctl and
  *  shows the real public URL the operator chose — never spawns a second, port-conflicting daemon. */
 async function systemdMenu(info: InstallInfo, version: string): Promise<void> {
-  p.intro(`🐋 orcasynth v${version}  ·  systemd`);
+  p.intro(`🐋 orca v${version}  ·  systemd`);
   for (;;) {
     const active = await servicesActive();
     const state = active ? `● orca is running  ·  ${info.publicUrl}` : '○ orca is stopped';
     const action = await p.select({
       message: state,
       options: [
+        { value: 'chat', label: 'Talk to Orca', hint: 'chat in the terminal' },
         active ? { value: 'restart', label: 'Restart', hint: 'daemon + web' } : { value: 'start', label: 'Start', hint: 'daemon + web' },
         ...(active ? [{ value: 'stop', label: 'Stop' }] : []),
         { value: 'status', label: 'Status', hint: 'systemctl status' },
@@ -38,6 +40,18 @@ async function systemdMenu(info: InstallInfo, version: string): Promise<void> {
     });
     if (p.isCancel(action) || action === 'exit') break;
 
+    if (action === 'chat') {
+      // Chat talks to the daemon's brain — bring the services up first, then hand the terminal to the
+      // pi-tui client. When it exits (ctrl+c / /quit) control falls back to this launcher loop.
+      if (!active) {
+        const s = p.spinner(); s.start('Starting orca…');
+        const r = await systemctl('start', ...SERVICES);
+        s.stop(r.code === 0 ? 'started ✓' : `start failed (code ${r.code})`);
+        if (r.code !== 0) continue;
+      }
+      await launchChat(BASE, process.env);
+      continue;
+    }
     if (action === 'open') { openUrl(info.publicUrl); p.log.success(`Opening ${info.publicUrl}`); continue; }
     if (action === 'status') { const r = await systemctl('status', '--no-pager', '-n', '0', ...SERVICES); p.note(r.stdout.trim() || '(no output)', 'Status'); continue; }
     if (action === 'logs') { const r = await runCmd('journalctl', ['-u', 'orca-daemon', '-n', '20', '--no-pager']); p.note(r.stdout.trim() || '(no logs — try: journalctl -u orca-daemon)', 'orca-daemon'); continue; }
@@ -67,7 +81,7 @@ export async function menu(env: NodeJS.ProcessEnv, version: string): Promise<voi
   if (info) { await systemdMenu(info, version); return; }
 
   const deps = defaultLifecycleDeps(version);
-  p.intro(`🐋 orcasynth v${version}`);
+  p.intro(`🐋 orca v${version}`);
 
   for (;;) {
     const st = await status(env);
@@ -80,6 +94,7 @@ export async function menu(env: NodeJS.ProcessEnv, version: string): Promise<voi
     const action = await p.select({
       message: state,
       options: [
+        { value: 'chat', label: 'Talk to Orca', hint: 'chat in the terminal' },
         running
           ? { value: 'down', label: 'Stop orca', hint: 'daemon + web' }
           : { value: 'up', label: 'Start orca', hint: 'daemon + web' },
@@ -91,6 +106,16 @@ export async function menu(env: NodeJS.ProcessEnv, version: string): Promise<voi
     });
     if (p.isCancel(action) || action === 'exit') break;
 
+    if (action === 'chat') {
+      // Bring the daemon up if needed (chat needs the brain), then hand off to the pi-tui client;
+      // control returns here when it exits.
+      if (!running) {
+        try { await runLifecycle('up', env, deps); }
+        catch (e) { p.log.error((e as Error).message); continue; }
+      }
+      await launchChat(BASE, env);
+      continue;
+    }
     if (action === 'status') { p.note(formatStatus(st, version), 'Status'); continue; }
     if (action === 'open') {
       // start() throws if the daemon never comes up — show it rather than opening a dead URL.

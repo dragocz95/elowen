@@ -214,7 +214,7 @@ export function PluginsSection() {
   const [pending, setPending] = useState<string | null>(null);
   const [menu, setMenu] = useState<ContextMenuState | null>(null);
 
-  const plugins = data ?? [];
+  const plugins = useMemo(() => data ?? [], [data]);
   // Soft-removed bundled plugins are hidden from the Installed list and offered for restore at the top
   // of the Available view; everything else is a normal installed plugin.
   const installed = useMemo(() => plugins.filter((p) => !p.removed), [plugins]);

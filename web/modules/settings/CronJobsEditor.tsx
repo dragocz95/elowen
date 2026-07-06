@@ -11,12 +11,13 @@ import { Toggle } from '../../components/ui/Toggle';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { LoadingState } from '../../components/ui/states';
 import { useToast } from '../../components/ui/Toast';
+import { MorePill } from '../../components/ui/MorePill';
 import { useTranslation } from '../../lib/i18n';
 import { useCronJobs, useDiscordChannels, useBrainModels } from '../../lib/queries';
 import { useSaveCronJobs } from '../../lib/mutations';
 import type { CronJob, DiscordChannelOption, BrainModelOption } from '../../lib/types';
 
-const MODEL_PREVIEW = 8; // pills shown before the "+N more" expander — keeps the row compact
+const PILL_PREVIEW = 4; // pills shown before the "+N more" expander — keeps channel/model rows compact
 
 const textareaClass = 'w-full rounded-md border border-border bg-bg px-3 py-2 font-mono text-sm text-text placeholder:text-text-muted focus:border-accent';
 
@@ -41,8 +42,13 @@ const isSavable = (j: CronJob): boolean =>
 function ChannelPills({ value, onChange, channels }: { value: string; onChange: (v: string) => void; channels: DiscordChannelOption[] }) {
   const { t } = useTranslation();
   const [query, setQuery] = useState('');
+  const [expanded, setExpanded] = useState(false);
   const q = query.trim().toLowerCase();
   const filtered = q ? channels.filter((ch) => ch.name.toLowerCase().includes(q) || ch.parentName?.toLowerCase().includes(q)) : channels;
+  // Active (selected) channel first so it always stays visible; the rest fold behind "+N more".
+  const ordered = value ? [...filtered.filter((ch) => ch.id === value), ...filtered.filter((ch) => ch.id !== value)] : filtered;
+  const open = expanded || q.length > 0; // searching reveals the full match list
+  const shown = open ? ordered : ordered.slice(0, PILL_PREVIEW);
   const known = channels.some((ch) => ch.id === value);
   const pill = (active: boolean) =>
     `inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[11px] transition-colors ${active ? 'border-accent bg-accent/15 text-accent' : 'border-border text-text-muted hover:bg-elevated'}`;
@@ -51,14 +57,14 @@ function ChannelPills({ value, onChange, channels }: { value: string; onChange: 
       {channels.length > 10 ? (
         <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={t.cron.channelSearch} className="max-w-xs" />
       ) : null}
-      <div className="flex flex-wrap gap-1.5">
+      <div className="flex flex-wrap items-center gap-1.5">
         <button type="button" onClick={() => onChange('')} className={pill(value === '')}>{t.cron.pillDefault}</button>
         {value && !known ? (
           <span className={`${pill(true)} font-mono`} title={t.cron.channel}>
             <Hash size={11} aria-hidden />{value}
           </span>
         ) : null}
-        {filtered.map((ch) => (
+        {shown.map((ch) => (
           <button
             key={ch.id}
             type="button"
@@ -70,14 +76,17 @@ function ChannelPills({ value, onChange, channels }: { value: string; onChange: 
             {ch.name}
           </button>
         ))}
+        {q.length === 0 && ordered.length > PILL_PREVIEW ? (
+          <MorePill expanded={expanded} hidden={ordered.length - PILL_PREVIEW} onToggle={() => setExpanded((v) => !v)} />
+        ) : null}
       </div>
     </div>
   );
 }
 
-/** Model picker for a job: clickable pills, "Default" first, then each available brain model. Only the
- *  first MODEL_PREVIEW pills show up front (+ the current pick if it falls past the cut); a "+N more"
- *  toggle reveals the rest, so a long catalog doesn't dominate the row. `value` is "provider/model". */
+/** Model picker for a job: clickable pills, "Default" first, then the active model, then the rest. Only
+ *  the first PILL_PREVIEW pills show up front (the active one is pulled to the front so it always stays
+ *  visible); a "+N more" toggle reveals the rest, so a long catalog doesn't dominate the row. */
 function ModelPills({ value, onChange, models }: { value: string; onChange: (v: string) => void; models: BrainModelOption[] }) {
   const { t } = useTranslation();
   const [expanded, setExpanded] = useState(false);
@@ -85,9 +94,9 @@ function ModelPills({ value, onChange, models }: { value: string; onChange: (v: 
     `inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[11px] transition-colors ${active ? 'border-accent bg-accent/15 text-accent' : 'border-border text-text-muted hover:bg-elevated'}`;
   const keyOf = (m: BrainModelOption) => `${m.provider}/${m.model}`;
   const selectedIdx = models.findIndex((m) => keyOf(m) === value);
-  // Collapsed view: the first N — but always include the current pick so a saved choice stays visible.
-  const shown = expanded ? models : models.filter((_m, i) => i < MODEL_PREVIEW || i === selectedIdx);
-  const hiddenCount = models.length - shown.length;
+  // Active (selected) model first so it always stays visible; then the rest fold behind "+N more".
+  const ordered = selectedIdx >= 0 ? [models[selectedIdx], ...models.filter((_m, i) => i !== selectedIdx)] : models;
+  const shown = expanded ? ordered : ordered.slice(0, PILL_PREVIEW);
   return (
     <div className="flex flex-wrap items-center gap-1.5">
       <button type="button" onClick={() => onChange('')} className={pill(value === '')}>{t.cron.modelDefault}</button>
@@ -96,13 +105,8 @@ function ModelPills({ value, onChange, models }: { value: string; onChange: (v: 
           <Cpu size={11} aria-hidden />{m.model}
         </button>
       ))}
-      {hiddenCount > 0 ? (
-        <button type="button" onClick={() => setExpanded(true)} className="text-[11px] text-accent hover:underline">
-          {t.cron.moreModels.replace('{n}', String(hiddenCount))}
-        </button>
-      ) : null}
-      {expanded && models.length > MODEL_PREVIEW ? (
-        <button type="button" onClick={() => setExpanded(false)} className="text-[11px] text-text-muted hover:underline">{t.cron.lessModels}</button>
+      {models.length > PILL_PREVIEW ? (
+        <MorePill expanded={expanded} hidden={ordered.length - PILL_PREVIEW} onToggle={() => setExpanded((v) => !v)} />
       ) : null}
     </div>
   );

@@ -26,3 +26,6 @@ web-dist/
 # npm pack artifacts
 *.tgz
 .opencode/
+
+# image-gen plugin scratch (chroma-key sources / temp renders)
+.imagegen-tmp/

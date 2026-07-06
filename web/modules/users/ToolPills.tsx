@@ -1,10 +1,11 @@
 'use client';
 import { useState } from 'react';
-import { Wrench, ChevronDown, Search } from 'lucide-react';
+import { Wrench, Search } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useUserTools } from '../../lib/queries';
 import { useUpdateUser } from '../../lib/mutations';
 import { useToast } from '../../components/ui/Toast';
+import { MorePill } from '../../components/ui/MorePill';
 import { useTranslation } from '../../lib/i18n';
 import type { UserToolPill, UserToolState } from '../../lib/types';
 
@@ -62,7 +63,6 @@ export function ToolPills({ userId }: { userId: number }) {
   };
 
   const shown = (expanded || q) ? data : data.slice(0, VISIBLE);
-  const hidden = data.length - shown.length;
   const pillClass = (tool: UserToolPill) =>
     `inline-flex max-w-full items-center gap-1.5 rounded-md border px-2 py-1 font-mono text-[11px] ${stateClass[tool.state]}`;
 
@@ -103,15 +103,7 @@ export function ToolPills({ userId }: { userId: number }) {
         ))}
       </ul>}
       {!q && data.length > VISIBLE && (
-        <button
-          type="button"
-          onClick={() => setExpanded((v) => !v)}
-          aria-expanded={expanded}
-          className="inline-flex w-fit items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] text-text-muted transition-colors hover:text-text focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
-        >
-          <ChevronDown size={12} className={`transition-transform ${expanded ? 'rotate-180' : ''}`} aria-hidden />
-          {expanded ? t.users.fewerTools : t.users.moreTools.replace('{count}', String(hidden))}
-        </button>
+        <MorePill expanded={expanded} hidden={data.length - VISIBLE} onToggle={() => setExpanded((v) => !v)} />
       )}
     </div>
   );

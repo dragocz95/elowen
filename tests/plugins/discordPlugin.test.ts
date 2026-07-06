@@ -41,7 +41,7 @@ describe('discord splitContent (code-block-aware chunking)', () => {
   });
 });
 
-describe('discord LiveMessage (Hermes-style tool progress)', () => {
+describe('discord LiveMessage (tool progress)', () => {
   const load = async () => (await import(join(repoRoot, 'plugins/discord/index.mjs'))) as {
     LiveMessage: new (adapter: { rest: (m: string, p: string, b: { content: string }) => Promise<{ id: string }> }, channelId: string) => {
       onEvent: (e: { type: string; name?: string; detail?: string; delta?: string }) => void;
@@ -272,7 +272,7 @@ describe('discord extractImageRefs (generated-image markdown → uploads)', () =
   });
 });
 
-describe('discord context helpers (Hermes-parity)', () => {
+describe('discord context helpers', () => {
   const load = async () => (await import(join(repoRoot, 'plugins/discord/index.mjs'))) as unknown as {
     displayNameOf: (m: unknown) => string;
     resolveMentions: (text: string, mentions: unknown[], rolePolicies: unknown[], channelNames: Map<string, string>) => string;

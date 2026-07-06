@@ -21,6 +21,11 @@ export function StreamTerminal({ name }: { name: string }) {
   const syncSizeRef = useRef<() => void>(() => {});
   const [fallback, setFallback] = useState(false);
   const { resolvedTheme } = useTheme();
+  // Latest theme, read once when the terminal is first created. Held in a ref so the mount effect below
+  // isn't theme-reactive: re-running it would tear down and rebuild the terminal (dropping scrollback);
+  // live theme toggles are handled by the dedicated repaint effect instead.
+  const themeRef = useRef(resolvedTheme);
+  themeRef.current = resolvedTheme;
 
   // Push every inbound PTY byte straight into xterm. `termRef` is stable, so the callback identity
   // doesn't matter — the hook holds it in a ref and never reconnects on its account.
@@ -32,7 +37,7 @@ export function StreamTerminal({ name }: { name: string }) {
 
   useEffect(() => {
     if (!ref.current || fallback) return;
-    const term = new XTerm({ convertEol: false, cursorBlink: true, fontSize: 12, theme: xtermTheme(resolvedTheme) });
+    const term = new XTerm({ convertEol: false, cursorBlink: true, fontSize: 12, theme: xtermTheme(themeRef.current) });
     const fit = new FitAddon();
     term.loadAddon(fit);
     term.open(ref.current);

@@ -19,8 +19,7 @@ import { useToast } from '../../components/ui/Toast';
 import { useTranslation } from '../../lib/i18n';
 import { Pill, PillGroup } from './pills';
 
-const PLATFORMS = ['web', 'discord'] as const;
-type Platform = (typeof PLATFORMS)[number];
+type Platform = 'web' | 'discord';
 
 /** Per-user personality: how the assistant communicates (style, applied everywhere) plus named
  *  persona profiles per surface (web / discord). One profile can be pinned active. Runtime knobs

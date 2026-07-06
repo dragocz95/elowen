@@ -16,7 +16,7 @@ const log = logger('marketplace');
  *  by the project. Installs are allowed ONLY for names listed in its registry.json, so the trust surface
  *  is exactly "do you trust this repo", the same posture as the npm package. Overridable via
  *  ORCA_PLUGIN_REGISTRY (used by tests to point at a local bare repo). */
-const DEFAULT_REGISTRY_URL = 'https://github.com/dragocz1995/orcasynth-plugins.git';
+const DEFAULT_REGISTRY_URL = 'https://github.com/dragocz1995/orca-plugins.git';
 const DEFAULT_REGISTRY_BRANCH = 'main';
 
 /** Canonical plugin-name shape, reused verbatim as a single path segment. Mirrors the skills plugin's

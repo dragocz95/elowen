@@ -2,7 +2,8 @@
   "$schema": "https://unpkg.com/knip@6/schema.json",
   "workspaces": {
     ".": {
-      "project": ["src/**/*.ts", "tests/**/*.ts"]
+      "entry": ["plugins/**/index.mjs"],
+      "project": ["src/**/*.ts", "tests/**/*.ts", "plugins/**/*.mjs"]
     },
     "web": {
       "entry": ["app/providers.tsx"]
@@ -15,6 +16,8 @@
     "web/lib/i18n/types.ts": ["types"],
     "web/lib/i18n/dictionaries/index.ts": ["types"],
     "src/integrations/cliDetection.ts": ["types"],
-    "src/plugins/api.ts": ["types"]
+    "src/plugins/api.ts": ["types"],
+    "src/brain/transcript.ts": ["types"],
+    "web/lib/transcript.ts": ["types", "exports"]
   }
 }

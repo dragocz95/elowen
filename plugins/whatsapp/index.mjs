@@ -32,6 +32,9 @@ const fail = (e) => ok(`Error: ${e instanceof Error ? e.message : String(e)}`);
 // Reasoning-effort levels PI accepts for extended-thinking models (mirrors THINKING_LEVELS daemon-side).
 const THINKING_LEVELS = ['minimal', 'low', 'medium', 'high', 'xhigh'];
 const EDIT_THROTTLE_MS = 1500; // WhatsApp is stricter than Discord on edits — stay well under any limit
+/** How long a turn may go with no VISIBLE progress (a new tool call / card) before the `Step N / MAX`
+ *  counter surfaces as a "still working" reassurance; any fresh tool/card resets the clock and drops it. */
+const STALL_HINT_MS = 60_000;
 const CHUNK = 4000;            // split long replies into readable pieces
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024; // larger inbound images are noted, not downloaded
 const MAX_IMAGES = 4;                    // vision cap per message
@@ -253,7 +256,7 @@ function pinoShim(log) {
   return shim;
 }
 
-/** Runtime footer, Hermes-style: `model · 42 %`. Empty when the idle event carried no usable data. */
+/** Runtime footer: `model · 42 %`. Empty when the idle event carried no usable data. */
 export function footerLine(idle) {
   const parts = [];
   const model = typeof idle?.model === 'string' ? idle.model.split('/').pop() : '';
@@ -328,10 +331,17 @@ export class LiveMessage {
     this.cards = new Map();
     this.step = 0;
     this.maxSteps = 0;
+    this.lastActivityAt = Date.now(); // last VISIBLE progress (tool/card) — the step counter only shows after a stall
+    this.stallTimer = null;           // fires once STALL_HINT_MS after the last activity to surface the counter
   }
   renderProgress() {
     const toolLines = [];
-    if (this.maxSteps > 0) toolLines.push(`⚙️ Step ${Math.min(this.step, this.maxSteps)} / ${this.maxSteps}`);
+    // The step counter is a STALL hint, not always-on: it surfaces only once the turn has gone
+    // STALL_HINT_MS with no new tool/card, so a long step doesn't read as a frozen agent. Fresh
+    // progress resets `lastActivityAt` and drops it again.
+    if (this.maxSteps > 0 && Date.now() - this.lastActivityAt >= STALL_HINT_MS) {
+      toolLines.push(`⚙️ Step ${Math.min(this.step, this.maxSteps)} / ${this.maxSteps}`);
+    }
     toolLines.push(...this.toolCalls.map(toolLine));
     if (this.a.cfg?.showReasoning && this.reasoning.trim()) {
       const tail = this.reasoning.trim().slice(-280).replace(/\s+/g, ' ');
@@ -345,6 +355,13 @@ export class LiveMessage {
     this.progress ??= new EditableMessage(this.a, this.jid);
     this.progress.update(sections.join('\n┈┈┈┈┈┈┈┈┈┈\n'));
   }
+  /** (Re)arm the stall hint: after STALL_HINT_MS of no visible tool progress, re-render so the step
+   *  counter surfaces even during pure silence (one long-running tool emits no interim events). */
+  armStallHint() {
+    clearTimeout(this.stallTimer);
+    this.stallTimer = setTimeout(() => this.renderProgress(), STALL_HINT_MS);
+    if (typeof this.stallTimer.unref === 'function') this.stallTimer.unref();
+  }
   onEvent(e) {
     if (e.type === 'tool' && e.name) {
       const last = this.toolCalls[this.toolCalls.length - 1];
@@ -354,6 +371,8 @@ export class LiveMessage {
       } else {
         this.toolCalls.push({ name: e.name, detail: e.detail, icon: e.icon, count: 1 });
       }
+      this.lastActivityAt = Date.now(); // visible progress → reset the stall clock, hide the step counter
+      this.armStallHint();
       this.renderProgress();
     } else if (e.type === 'reasoning' && e.delta) {
       this.reasoning += e.delta;
@@ -365,6 +384,8 @@ export class LiveMessage {
     } else if (e.type === 'card' && e.card?.id) {
       const empty = (!e.card.items || e.card.items.length === 0) && !e.card.body;
       if (empty) this.cards.delete(e.card.id); else this.cards.set(e.card.id, e.card);
+      this.lastActivityAt = Date.now(); // a card update is visible progress → reset the stall clock
+      this.armStallHint();
       this.renderProgress();
     } else if (e.type === 'step' && e.maxSteps) {
       this.step = e.step; this.maxSteps = e.maxSteps;
@@ -376,7 +397,10 @@ export class LiveMessage {
     }
   }
   async finalize(reply) {
+    clearTimeout(this.stallTimer);
     if (this.progress) {
+      this.lastActivityAt = Date.now(); // drop the stall step-counter from the settled tool trace
+      this.renderProgress();
       this.progress.lastEdit = 0; // bypass the throttle for the final settle
       await this.progress.flush();
       this.progress.closed = true;
@@ -768,7 +792,7 @@ class WhatsAppAdapter {
     if (id.startsWith('model:')) {
       const ids = this.senderIds(senderJid, chatJid);
       if (!senderIsAdmin(ids, this.cfg.senderPolicies)) { await this.sendText(chatJid, this.msg.modelForbidden, m); return true; }
-      const [, provider, model] = id.split(':');
+      const [, provider] = id.split(':');
       const [prov, mod] = [provider, id.slice(`model:${provider}:`.length)];
       if (prov && mod) { this.state.patch(chatJid, { model: { provider: prov, model: mod } }); await this.sendText(chatJid, this.msg.modelSet(mod), m); }
       this.pendingMenus.delete(chatJid);

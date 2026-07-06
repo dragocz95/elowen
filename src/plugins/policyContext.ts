@@ -51,7 +51,7 @@ interface TurnScope { policy: Policy; identity?: TurnIdentity; elicit?: Elicitor
 
 /** pi tools have no per-call session context, so a plugin tool can't be told which user's policy applies
  *  through its arguments. We carry the resolved Policy (+ the sender's identity + their effective tool
- *  access) on an AsyncLocalStorage (the Node equivalent of Hermes' security contextvar): BrainService
+ *  access) on an AsyncLocalStorage (the Node equivalent of a per-request security contextvar): BrainService
  *  runs each prompt inside `runWithPolicy`, and a plugin tool reads `currentPolicy()`/`currentIdentity()`/
  *  `currentToolPolicy()` at execution time. */
 const store = new AsyncLocalStorage<TurnScope>();

@@ -7,7 +7,7 @@ export const PLUGIN_API_VERSION = '1';
 
 /** One declared config field of a plugin — the settings UI renders a form from these. `secret` values
  *  are write-only (the API returns only whether they are set); `rolePolicies` renders the structured
- *  role → projects + prompt mapping editor (the Discord pattern borrowed from Hermes); `model` renders
+ *  role → projects + prompt mapping editor (the Discord role-policy pattern); `model` renders
  *  the grouped provider→model picker sourced from the user's configured model catalog; `provider`
  *  renders a picker of configured brain providers (its value is the provider id) so the plugin reuses
  *  that provider's central key — `providerType` narrows it to one type (e.g. `openai` for audio).

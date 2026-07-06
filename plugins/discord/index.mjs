@@ -1,7 +1,7 @@
 // Discord platform plugin: a dependency-free gateway client (Node's global WebSocket + fetch).
 // The bot answers when mentioned in a server; the sender's Discord roles resolve — via this plugin's
-// own rolePolicies config — to the Orca projects they may touch plus an extra role prompt (the Hermes
-// role-instructions pattern). Unmapped senders (and DMs, which carry no roles) are ignored.
+// own rolePolicies config — to the Orca projects they may touch plus an extra role prompt (a per-role
+// instructions pattern). Unmapped senders (and DMs, which carry no roles) are ignored.
 //
 // On top of plain chat it provides: slash commands (/model, /new, /help), a per-channel model picker
 // (select menu, choice persisted), live streaming replies (edit-in-place with a tool-call trace), a
@@ -735,7 +735,7 @@ class DiscordAdapter {
     await this.rest('PATCH', `/webhooks/${this.appId}/${i.token}/messages/@original`, data);
   }
 
-  /** Render a parked ask_user_question (from the brain's `ask` event) as a Hermes-style orange embed
+  /** Render a parked ask_user_question (from the brain's `ask` event) as an orange embed
    *  plus one string-select per question and a Submit button (+ an "Other" free-text button for the
    *  single-question case). Registers a pending entry the interaction/text handlers resolve. */
   async postAsk(channelId, replyToId, askerId, id, questions) {
@@ -986,7 +986,7 @@ function cardLines(card, max = 15) {
   return lines;
 }
 
-/** Runtime footer, Hermes-style: `model · 42 %` as Discord subtext under the final answer. Empty
+/** Runtime footer: `model · 42 %` as Discord subtext under the final answer. Empty
  *  when the idle event carried no usable data (defensive: never render a `?%` footer). */
 export function footerLine(idle) {
   const parts = [];
@@ -997,7 +997,12 @@ export function footerLine(idle) {
   return parts.length ? `-# ${parts.join(' · ')}` : '';
 }
 
-/** Streaming turn, Hermes-style: tools go into ONE edited progress bubble — one emoji-tagged line per
+/** How long a turn may go with no VISIBLE progress (a new tool call / card) before the `Step N / MAX`
+ *  counter surfaces as a "still working" reassurance. Below this it stays hidden; any fresh tool/card
+ *  resets the clock and drops it again. Tuned short enough that a slow step never reads as a stuck agent. */
+const STALL_HINT_MS = 60_000;
+
+/** Streaming turn: tools go into ONE edited progress bubble — one emoji-tagged line per
  *  tool, joined by single newlines so they stack tightly; CONSECUTIVE repeats of the same tool collapse
  *  into a ×N counter on their line (latest detail shown) — and the final answer is posted as its own
  *  clean message AFTER the run settles. Text deltas are working narration between tool calls; they are
@@ -1018,13 +1023,20 @@ export class LiveMessage {
     this.cards = new Map(); // latest display cards (ctx.emitCard) by id — the todo checklist is the canonical one
     this.step = 0;        // current agent step (model round-trip) in this run
     this.maxSteps = 0;    // configured ceiling (0 = unlimited / not surfaced)
+    this.lastActivityAt = Date.now(); // last VISIBLE progress (tool/card) — the step counter only shows after a stall
+    this.stallTimer = null;           // fires once STALL_HINT_MS after the last activity to surface the counter
   }
   /** Re-render the progress bubble in ONE edited message: an optional `Step N / MAX` counter, the tool
    *  trace, an opt-in reasoning tail, then each live display card (todo checklist) as its OWN block set
    *  apart by a thin subtext divider — so the plan never reads as just another tool line. */
   renderProgress() {
     const toolLines = [];
-    if (this.maxSteps > 0) toolLines.push(`-# ⚙️ Step ${Math.min(this.step, this.maxSteps)} / ${this.maxSteps}`);
+    // The step counter is a STALL hint, not always-on: it surfaces only once the turn has gone
+    // STALL_HINT_MS with no new tool/card, so a long step doesn't read as a frozen agent. Fresh
+    // progress resets `lastActivityAt` and drops it again.
+    if (this.maxSteps > 0 && Date.now() - this.lastActivityAt >= STALL_HINT_MS) {
+      toolLines.push(`-# ⚙️ Step ${Math.min(this.step, this.maxSteps)} / ${this.maxSteps}`);
+    }
     toolLines.push(...this.toolCalls.map(toolLine));
     if (this.a.cfg?.showReasoning && this.reasoning.trim()) {
       const tail = this.reasoning.trim().slice(-280).replace(/\s+/g, ' ');
@@ -1039,6 +1051,13 @@ export class LiveMessage {
     this.progress ??= new EditableMessage(this.a, this.channelId);
     this.progress.update(sections.join('\n-# ┈┈┈┈┈┈┈┈┈┈\n'));
   }
+  /** (Re)arm the stall hint: after STALL_HINT_MS of no visible tool progress, re-render so the step
+   *  counter surfaces even during pure silence (one long-running tool emits no interim events). */
+  armStallHint() {
+    clearTimeout(this.stallTimer);
+    this.stallTimer = setTimeout(() => this.renderProgress(), STALL_HINT_MS);
+    if (typeof this.stallTimer.unref === 'function') this.stallTimer.unref();
+  }
   onEvent(e) {
     if (e.type === 'tool' && e.name) {
       const last = this.toolCalls[this.toolCalls.length - 1];
@@ -1048,6 +1067,8 @@ export class LiveMessage {
       } else {
         this.toolCalls.push({ name: e.name, detail: e.detail, icon: e.icon, count: 1 });
       }
+      this.lastActivityAt = Date.now(); // visible progress → reset the stall clock, hide the step counter
+      this.armStallHint();
       this.renderProgress();
     } else if (e.type === 'reasoning' && e.delta) {
       // Off by default — reasoning is noise on Discord. When cfg.showReasoning is on it rides the
@@ -1062,6 +1083,8 @@ export class LiveMessage {
       // Upsert the card by id; an empty card (no items/body) removes it. Then re-render the bubble.
       const empty = (!e.card.items || e.card.items.length === 0) && !e.card.body;
       if (empty) this.cards.delete(e.card.id); else this.cards.set(e.card.id, e.card);
+      this.lastActivityAt = Date.now(); // a card update is visible progress → reset the stall clock
+      this.armStallHint();
       this.renderProgress();
     } else if (e.type === 'step' && e.maxSteps) {
       // A new agent step — update the live counter in the SAME progress bubble (no new message).
@@ -1078,7 +1101,10 @@ export class LiveMessage {
   async finalize(reply) {
     // Settle the progress bubble to its complete tool list (a throttled edit may still be pending),
     // then freeze it so the straggler timer can't fire afterwards.
+    clearTimeout(this.stallTimer);
     if (this.progress) {
+      this.lastActivityAt = Date.now(); // drop the stall step-counter from the settled tool trace
+      this.renderProgress();
       this.progress.lastEdit = 0; // bypass the throttle for this one final settle
       await this.progress.flush();
       this.progress.closed = true;
@@ -1101,7 +1127,7 @@ export class LiveMessage {
       const data = this.a.resolveImageFiles([...names]);
       if (data.length) { await this.a.uploadImages(this.channelId, '', data, 0, {}).catch(() => {}); posted = true; }
     }
-    // Hermes-style runtime footer (model · context %) rides the text message only, opt-out via config.
+    // Runtime footer (model · context %) rides the text message only, opt-out via config.
     const footer = this.a.cfg?.runtimeFooter !== false ? footerLine(this.idle) : '';
     if (posted) {
       // The images are their own message now — the text reply carries no image markdown. Skip an empty

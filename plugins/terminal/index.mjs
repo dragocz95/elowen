@@ -1,6 +1,6 @@
 // Terminal plugin: shell commands with the working directory confined to the caller's accessible
 // repos (cwd guarded via ctx.assertPathAllowed). Long-running work goes to the background: a process
-// registry (the Hermes process_registry idea) keeps spawned children + their rolling output, and the
+// registry keeps spawned children + their rolling output, and the
 // list/read/kill tools manage them. NOTE: cwd guarding does NOT contain a shell that reads absolute
 // paths outside the repo (e.g. the prod config DB), so ALL terminal tools are OWNER-ONLY: only the
 // verified operator may run them; role-scoped platform members (Discord) are refused (see denyNonOwner).

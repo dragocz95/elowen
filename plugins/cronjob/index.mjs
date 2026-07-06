@@ -1,4 +1,4 @@
-// Cronjob plugin: recurring prompts for the brain, the Hermes cronjob-tools idea sized for Orca.
+// Cronjob plugin: recurring prompts for the brain, sized for Orca.
 // Jobs persist in the plugin's data dir; a lightweight scheduler (platform adapter) ticks every 30 s
 // and feeds due prompts back into the brain via the host's channel handler — with `admin: true`,
 // because only an admin session can create jobs in the first place.
@@ -84,7 +84,7 @@ export function parseSchedule(spec) {
   return null;
 }
 
-/** Whether a job reply means "nothing to say". Hermes-era prompts answer `[SILENT]`, ours say
+/** Whether a job reply means "nothing to say". Older prompts answer `[SILENT]`, ours say
  *  `NOTHING_TO_REPORT` — and models love wrapping either in backticks/bold, so match leniently. */
 export function isQuietReply(reply) {
   return /^[`*_\s]*(NOTHING_TO_REPORT|\[SILENT\])[`*_\s]*$/i.test(String(reply ?? '').trim());

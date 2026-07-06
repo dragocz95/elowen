@@ -195,6 +195,8 @@ export interface PluginInfo {
   /** True when the plugin ships a brand icon (`icon.svg`) on disk — the UI renders `<img>` from the
    *  icon route; otherwise it falls back to a lucide glyph. */
   hasIcon?: boolean;
+  /** True when the plugin ships a hero illustration (`illustration.png`) — shown big on the detail page. */
+  hasIllustration?: boolean;
 }
 
 /** Localized overrides for a plugin's manifest strings, keyed by config-field key. */

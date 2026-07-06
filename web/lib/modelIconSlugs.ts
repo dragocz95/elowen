@@ -369,8 +369,6 @@ export const MODEL_ICON_SLUGS: ReadonlySet<string> = new Set([
   'haiper',
   'hedra-text',
   'hedra',
-  'hermesagent-text',
-  'hermesagent',
   'higress-color',
   'higress-text',
   'higress',

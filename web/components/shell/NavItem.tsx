@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { ChevronRight, type LucideIcon } from 'lucide-react';
 
-export interface NavSubEntry { id: string; href: string; label: string }
+interface NavSubEntry { id: string; href: string; label: string }
 export interface NavEntry { href: string; label: string; icon: LucideIcon; badge?: number; subItems?: NavSubEntry[] }
 
 /** A same-page section sub-item (e.g. /settings?cat=x) is a query-only change on the current pathname.

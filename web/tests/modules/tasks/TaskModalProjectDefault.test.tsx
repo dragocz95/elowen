@@ -11,7 +11,7 @@ interface CreateBody { title?: string; project_id?: number }
 let createBody: CreateBody | null = null;
 const projects = [
   { id: 1, slug: 'orca', path: '/var/www/orca', notes: '', icon: '', pr_enabled: null },
-  { id: 2, slug: 'wemx', path: '/var/www/wemx', notes: '', icon: '', pr_enabled: null },
+  { id: 2, slug: 'shop', path: '/srv/shop', notes: '', icon: '', pr_enabled: null },
 ];
 const server = setupServer(
   http.get('*/api/config', () => HttpResponse.json({ allowedExecs: ['sonnet'], customModels: [], hiddenPresets: [], modelNotes: {}, autopilot: { model: 'm', overseerModel: '', apiUrl: 'u', apiKeySet: true, notes: '', prompt: '', pilotExec: '', overseerExec: '', reviewOnDone: false }, providers: {}, defaults: { exec: 'sonnet', autonomy: 'L3', maxSessions: 1 }, security: { tokenTtlDays: 30 } })),
@@ -26,7 +26,7 @@ describe('TaskModal — defaultProjectId (active project filter carries into New
     createBody = null;
     const { wrapper: Wrapper } = createWrapper();
     render(<Wrapper><ToastProvider><TaskModal onClose={() => {}} defaultProjectId={2} /></ToastProvider></Wrapper>);
-    await waitFor(() => expect(screen.getByText('wemx').closest('button')!.className).toMatch(/border-accent/));
+    await waitFor(() => expect(screen.getByText('shop').closest('button')!.className).toMatch(/border-accent/));
     fireEvent.change(screen.getByPlaceholderText('What needs doing?'), { target: { value: 'Fix bug' } });
     fireEvent.click(screen.getByRole('button', { name: 'Create' }));
     await waitFor(() => expect(createBody).not.toBeNull());

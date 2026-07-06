@@ -54,7 +54,7 @@ export function formatStatus(s: { daemon: SvcStatus; web: SvcStatus }, version?:
     return `  ${name.padEnd(7)} ${dot}  running  :${svc.port}  ${health}${svc.healthy && url ? `  ${url}` : ''}`.trimEnd();
   };
   const body = [line('daemon', s.daemon, ''), line('web', s.web, `http://localhost:${s.web.port || 4500}`)];
-  return (version ? [`  orcasynth v${version}`, '', ...body] : body).join('\n');
+  return (version ? [`  orca v${version}`, '', ...body] : body).join('\n');
 }
 
 /** Dispatch the install-lifecycle commands. Returns true when handled, false for anything else (the

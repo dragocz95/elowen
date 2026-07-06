@@ -8,6 +8,7 @@ import { OrcaClient } from './client.js';
 import { defaultLifecycleDeps, runLifecycle, runApiCommand } from './commands.js';
 import { callOrcaApi } from '../shared/apiClient.js';
 import { menu } from './menu.js';
+import { interactiveLogin, launchChat } from './chat/launch.js';
 
 const BASE = process.env.ORCA_URL ?? 'http://localhost:4400';
 
@@ -63,7 +64,7 @@ OPTIONS
   -h, --help                      show this help
   -v, --version                   print the version
 
-Docs & issues: https://github.com/dragocz1995/orcasynth`;
+Docs & issues: https://github.com/dragocz1995/orca`;
 }
 
 /** Commands that talk to the daemon API — only these justify auto-starting it. Everything else
@@ -102,27 +103,6 @@ function flag(args: string[], name: string): string | undefined {
 }
 function has(args: string[], name: string): boolean { return args.includes(name); }
 
-/** Prompt for a line on the TTY. `mute` hides typed characters (for passwords) by swallowing the
- *  readline echo — the standard Node trick, since readline has no built-in masked input. */
-async function promptLine(question: string, mute = false): Promise<string> {
-  const { createInterface } = await import('node:readline');
-  const rl = createInterface({ input: process.stdin, output: process.stdout, terminal: true });
-  if (mute) {
-    const anyRl = rl as unknown as { _writeToOutput: (s: string) => void };
-    anyRl._writeToOutput = (s: string) => { if (s.includes('\n')) process.stdout.write('\n'); };
-  }
-  return new Promise((resolve) => rl.question(question, (a) => { rl.close(); resolve(a); }));
-}
-
-/** Interactive login → cache a full-scope token, returning it. Used by `orca login` and as the
- *  fallback when `orca chat` finds no token in the env or cache. */
-async function interactiveLogin(env: NodeJS.ProcessEnv): Promise<string> {
-  const { login } = await import('./chat/token.js');
-  const username = await promptLine('Username: ');
-  const password = await promptLine('Password: ', true);
-  return login(BASE, { username, password }, env);
-}
-
 export async function run(argv: string[], c: OrcaClient, env: NodeJS.ProcessEnv): Promise<void> {
   const [cmd, arg, ...rest] = argv;
   switch (cmd) {
@@ -130,15 +110,9 @@ export async function run(argv: string[], c: OrcaClient, env: NodeJS.ProcessEnv)
     case 'ready': console.log(JSON.stringify(await c.ready(), null, 2)); break;
     case 'sessions': console.log(JSON.stringify(await c.sessions(), null, 2)); break;
     case 'chat': {
-      // Interactive Orca chat: a thin pi-tui client over the server-side brain. Resolve a token
-      // (env → cache → interactive login), then launch the TUI.
-      const { runChat } = await import('./chat/app.js');
-      const { resolveToken, NeedsLogin } = await import('./chat/token.js');
-      let token: string;
-      try { token = resolveToken(env); }
-      catch (e) { if (e instanceof NeedsLogin) token = await interactiveLogin(env); else throw e; }
-      await runChat({
-        base: BASE, token,
+      // Interactive Orca chat: a thin pi-tui client over the server-side brain. The shared launcher
+      // resolves a token (env → cache → interactive login) and opens the TUI — same path as the menu.
+      await launchChat(BASE, env, {
         model: flag(argv.slice(1), '--model'),
         session: flag(argv.slice(1), '--session'),
         fresh: argv.includes('--new'),
@@ -146,7 +120,7 @@ export async function run(argv: string[], c: OrcaClient, env: NodeJS.ProcessEnv)
       break;
     }
     case 'login': {
-      await interactiveLogin(env);
+      await interactiveLogin(BASE, env);
       console.log('Signed in — token saved.');
       break;
     }

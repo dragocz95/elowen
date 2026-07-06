@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { openDb } from '../../src/store/db.js';
 import { TaskStore } from '../../src/store/taskStore.js';
 import { Readiness } from '../../src/store/readiness.js';

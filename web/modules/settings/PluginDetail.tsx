@@ -18,6 +18,7 @@ import { RailCard } from '../../components/ui/RailCard';
 import { Input } from '../../components/ui/Input';
 import { Field } from '../../components/ui/Field';
 import { HelpTip } from '../../components/ui/HelpTip';
+import { MorePill } from '../../components/ui/MorePill';
 import { Toggle } from '../../components/ui/Toggle';
 import { Checkbox } from '../../components/ui/Checkbox';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
@@ -94,8 +95,8 @@ function ToolPills({ allTools, selected, onChange }: { allTools: string[]; selec
 }
 
 /** Structured editor for a `rolePolicies` field: each row maps a platform role (e.g. a Discord role id)
- *  to a name, the Orca projects it may touch, and an extra prompt injected for that role — the Hermes
- *  role-instructions pattern, kept in the plugin's own config. Rows collapse to a compact header so a
+ *  to a name, the Orca projects it may touch, and an extra prompt injected for that role — a per-role
+ *  instructions pattern, kept in the plugin's own config. Rows collapse to a compact header so a
  *  long list stays scannable; a freshly added row starts expanded. */
 function RolePoliciesEditor({ value, onChange }: { value: RolePolicy[]; onChange: (v: RolePolicy[]) => void }) {
   const { t } = useTranslation();
@@ -350,6 +351,26 @@ function LabeledField({ label, hint, help, risk, riskLabel, children }: {
 
 // A read-only pill for a contribution / hook name.
 const namePill = 'rounded-full border border-border px-2.5 py-1 font-mono text-[11px] text-text-muted';
+const PILL_PREVIEW = 4;
+
+/** A wrapping pill row that keeps the UI tidy: shows the first `PILL_PREVIEW` pills and folds the rest
+ *  behind a "+N more" toggle. `minVisible` (e.g. the count of active/selected pills, which callers sort
+ *  to the front) is never folded, so the active ones always stay on screen. `expandAll` forces the full
+ *  list open (e.g. while a search filter is active). */
+function PillRow({ pills, minVisible = 0, expandAll = false }: { pills: ReactNode[]; minVisible?: number; expandAll?: boolean }) {
+  const [showAll, setShowAll] = useState(false);
+  const open = showAll || expandAll;
+  const floor = Math.max(PILL_PREVIEW, minVisible);
+  const visible = open ? pills : pills.slice(0, floor);
+  return (
+    <div className="flex flex-wrap items-center gap-1.5">
+      {visible}
+      {!expandAll && pills.length > floor ? (
+        <MorePill expanded={showAll} hidden={pills.length - floor} onToggle={() => setShowAll((v) => !v)} />
+      ) : null}
+    </div>
+  );
+}
 
 /** Tools section body: the plugin's live tools / skills / platforms, grouped and searchable by name. */
 function ContributionsList({ contributions }: { contributions?: PluginContributions }) {
@@ -376,9 +397,7 @@ function ContributionsList({ contributions }: { contributions?: PluginContributi
       {filtered.map((g) => (
         <div key={g.key} className="flex flex-col gap-1.5">
           <span className="text-xs font-semibold uppercase tracking-wide text-text-muted">{g.label}</span>
-          <div className="flex flex-wrap gap-1.5">
-            {g.items.map((i) => <span key={i.name} className={namePill}>{i.name}</span>)}
-          </div>
+          <PillRow expandAll={q.length > 0} pills={g.items.map((i) => <span key={i.name} className={namePill}>{i.name}</span>)} />
         </div>
       ))}
     </div>
@@ -496,23 +515,23 @@ export function PluginDetail({ name, onBack }: { name: string; onBack: () => voi
         return <Segmented size="sm" options={(f.options ?? []).map((o) => ({ value: o.value, label: o.label }))} value={String(values[f.key] ?? '')} onChange={(v) => set(f.key, v)} />;
       case 'multiSelect': {
         const sel = Array.isArray(values[f.key]) ? (values[f.key] as string[]) : [];
-        return (
-          <div className="flex flex-wrap gap-1.5">
-            {(f.options ?? []).map((o) => {
-              const on = sel.includes(o.value);
-              return (
-                <button
-                  key={o.value}
-                  type="button"
-                  onClick={() => set(f.key, on ? sel.filter((x) => x !== o.value) : [...sel, o.value])}
-                  className={`rounded-full border px-2.5 py-1 text-[11px] transition-colors ${on ? 'border-accent bg-accent/15 text-accent' : 'border-border text-text-muted hover:bg-elevated'}`}
-                >
-                  {o.label}
-                </button>
-              );
-            })}
-          </div>
-        );
+        const opts = f.options ?? [];
+        // Active (selected) options first so they always stay visible; the rest fold behind "+N more".
+        const ordered = [...opts.filter((o) => sel.includes(o.value)), ...opts.filter((o) => !sel.includes(o.value))];
+        const pills = ordered.map((o) => {
+          const on = sel.includes(o.value);
+          return (
+            <button
+              key={o.value}
+              type="button"
+              onClick={() => set(f.key, on ? sel.filter((x) => x !== o.value) : [...sel, o.value])}
+              className={`rounded-full border px-2.5 py-1 text-[11px] transition-colors ${on ? 'border-accent bg-accent/15 text-accent' : 'border-border text-text-muted hover:bg-elevated'}`}
+            >
+              {o.label}
+            </button>
+          );
+        });
+        return <PillRow pills={pills} minVisible={sel.length} />;
       }
       case 'code':
         return (
@@ -678,7 +697,10 @@ export function PluginDetail({ name, onBack }: { name: string; onBack: () => voi
 
       {/* Hero: the plugin's identity card — icon, name, description, live enable toggle, and key facts. */}
       <HeroCard
-        icon={<PluginIcon name={detail.name} hasIcon={detail.hasIcon} size={48} />}
+        icon={detail.hasIllustration
+          ? // eslint-disable-next-line @next/next/no-img-element -- served from the daemon route via BFF
+            <img src={`/api/plugins/${encodeURIComponent(detail.name)}/illustration`} alt="" className="h-full w-full object-contain" />
+          : <PluginIcon name={detail.name} hasIcon={detail.hasIcon} size={64} />}
         title={detail.name}
         subtitle={pluginDescription}
         badge={<Badge tone={detail.enabled ? 'success' : 'muted'}>{detail.enabled ? t.pluginDetail.statusEnabled : t.pluginDetail.statusDisabled}</Badge>}

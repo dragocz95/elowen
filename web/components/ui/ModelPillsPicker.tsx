@@ -1,6 +1,6 @@
 'use client';
 import { useState } from 'react';
-import { ChevronDown } from 'lucide-react';
+import { MorePill } from './MorePill';
 import { Input } from './Input';
 import { ModelIcon } from './ModelIcon';
 import { useTranslation } from '../../lib/i18n';
@@ -44,7 +44,6 @@ export function ModelPillsPicker(props: ModelPillsPickerProps) {
   const matches = searching ? catalog.filter((m) => m.toLowerCase().includes(q)) : catalog;
   const hasMore = !searching && matches.length > previewCount;
   const shown = searching || expanded ? matches : matches.slice(0, previewCount);
-  const hiddenCount = matches.length - previewCount;
 
   return (
     <div className={`flex flex-col gap-2${className ? ` ${className}` : ''}`}>
@@ -62,19 +61,8 @@ export function ModelPillsPicker(props: ModelPillsPickerProps) {
             </button>
           );
         })}
-        {hasMore && !expanded ? (
-          <button type="button" onClick={() => setExpanded(true)} aria-expanded={false}
-            className="inline-flex items-center gap-1 rounded-md border border-dashed border-border bg-elevated px-2.5 py-1.5 text-xs text-text-muted transition-colors hover:border-border-strong hover:text-text"
-            style={{ transitionDuration: 'var(--motion-fast)' }}>
-            {t.modelPicker.showMore.replace('{n}', String(hiddenCount))}
-          </button>
-        ) : null}
-        {hasMore && expanded ? (
-          <button type="button" onClick={() => setExpanded(false)} aria-expanded
-            className="inline-flex items-center gap-1 rounded-md border border-dashed border-border bg-elevated px-2.5 py-1.5 text-xs text-text-muted transition-colors hover:border-border-strong hover:text-text"
-            style={{ transitionDuration: 'var(--motion-fast)' }}>
-            <ChevronDown size={12} className="rotate-180" aria-hidden />{t.modelPicker.showLess}
-          </button>
+        {hasMore ? (
+          <MorePill expanded={expanded} hidden={matches.length - previewCount} onToggle={() => setExpanded((v) => !v)} />
         ) : null}
         {shown.length === 0 ? <span className="text-xs italic text-text-muted">{t.modelPicker.noMatch}</span> : null}
       </div>

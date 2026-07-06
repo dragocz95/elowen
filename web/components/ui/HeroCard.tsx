@@ -14,8 +14,8 @@ export function HeroCard({ icon, title, subtitle, badge, meta, actions }: {
   return (
     <div className="rounded-xl border border-border bg-surface p-5">
       <div className="flex flex-col gap-4">
-        <div className="flex items-start gap-4">
-          {icon ? <span className="flex h-12 w-12 shrink-0 items-center justify-center">{icon}</span> : null}
+        <div className="flex items-center gap-4">
+          {icon ? <span className="flex h-20 w-20 shrink-0 items-center justify-center">{icon}</span> : null}
           <div className="flex min-w-0 flex-1 flex-col gap-1.5">
             <div className="flex flex-wrap items-center gap-2">
               <h2 className="text-xl font-semibold text-text">{title}</h2>
