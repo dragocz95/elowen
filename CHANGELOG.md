@@ -3,6 +3,14 @@
 All notable changes to Orcasynth are documented here. The format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); the daemon version is the root `package.json` version.
 
+## [1.8.3] - 2026-07-06
+
+### Changed
+- **`orca install` now runs the same onboarding wizard as `orca setup`.** The interactive install used to
+  have its own first-run wizard (admin + autopilot + GitHub) that overlapped the setup wizard; there is now
+  a single onboarding path — account, project, AI provider, memory. The autopilot CLI-engine choice and the
+  GitHub PR-workflow prompt live in the web Settings; unattended (flag-driven) installs are unchanged.
+
 ## [1.8.2] - 2026-07-06
 
 ### Fixed
