@@ -152,6 +152,29 @@ cd web && npm run dev  # web dev server
 
 See [`docs/DEVELOPMENT.md`](./docs/DEVELOPMENT.md) for the full contributor guide.
 
+## Built with
+
+Orca stands on a small, deliberately chosen open-source stack:
+
+- **Agent core** — the embedded brain and `orca chat` are built on the **PI toolkit**
+  ([`@earendil-works/pi-ai`](https://github.com/earendil-works/pi), `pi-coding-agent`,
+  `pi-tui`) — a lean multi-provider LLM / agent / terminal-UI SDK. External clients plug in
+  through the **Model Context Protocol** (`@modelcontextprotocol/sdk`).
+- **Daemon** — [Hono](https://hono.dev) (REST + SSE + WebSocket) over
+  [better-sqlite3](https://github.com/WiseLibs/better-sqlite3), with **TypeBox** + **Zod**
+  for schema validation, **@clack/prompts** for the CLI wizard, and **web-push** for
+  phone notifications. Agents run in isolated **tmux** sessions.
+- **Chat platforms** — **Baileys** + **qrcode** power the WhatsApp plugin; the Discord
+  plugin is a dependency-free gateway on Node's built-in WebSocket + fetch.
+- **Web UI** — [Next.js](https://nextjs.org) + **React**, **@tanstack/react-query**, the
+  **Monaco** editor, **xterm.js** for live terminals, **lucide** icons, **marked** +
+  **DOMPurify** for safe Markdown, and the **Geist** typeface.
+- **Quality gates** — **Vitest** (2,400+ tests), strict **TypeScript**, **ESLint**,
+  **Knip** (dead-code) and **dependency-cruiser** (architecture boundaries).
+
+See [`package.json`](./package.json) and [`web/package.json`](./web/package.json) for the
+complete dependency list.
+
 ## License
 
 [MIT](./LICENSE)
