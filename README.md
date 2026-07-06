@@ -12,7 +12,7 @@ agents, runs a built-in brain for chat and automation, supports plugins
 to control everything. No SaaS, no lock-in — your machine, your agents, your
 code.
 
-[![CI](https://github.com/dragocz1995/orcasynth/actions/workflows/ci.yml/badge.svg)](https://github.com/dragocz1995/orcasynth/actions/workflows/ci.yml)
+[![CI](https://github.com/dragocz1995/orca/actions/workflows/ci.yml/badge.svg)](https://github.com/dragocz1995/orca/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
 [![Node](https://img.shields.io/badge/node-%3E%3D22-43853d.svg)](https://nodejs.org)
 

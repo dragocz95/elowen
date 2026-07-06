@@ -11,8 +11,8 @@
 ## Setup
 
 ```bash
-git clone https://github.com/dragocz1995/orcasynth.git
-cd orcasynth
+git clone https://github.com/dragocz1995/orca.git
+cd orca
 npm install
 npm run build
 ```
@@ -126,7 +126,7 @@ src/
 ├── advisor/          Brain assistant lifecycle
 ├── mcp/              Built-in MCP server
 ├── terminal/         Real-PTY WebSocket streaming
-├── integrations/     Hermes, project files, CLI detection
+├── integrations/     project files, CLI detection
 ├── git/              Git reader (status, branches, commits)
 ├── overseer/         Mission engine, routing, planner, scheduler,
 │                     stuck detector, janitor, checkout, snapshots

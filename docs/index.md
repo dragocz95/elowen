@@ -41,6 +41,6 @@ For contributors and advanced users:
 
 ## Quick links
 
-- **GitHub:** [github.com/dragocz1995/orcasynth](https://github.com/dragocz1995/orcasynth)
+- **GitHub:** [github.com/dragocz1995/orca](https://github.com/dragocz1995/orca)
 - **npm:** [www.npmjs.com/package/orcasynth](https://www.npmjs.com/package/orcasynth)
-- **Issues:** [github.com/dragocz1995/orcasynth/issues](https://github.com/dragocz1995/orcasynth/issues)
+- **Issues:** [github.com/dragocz1995/orca/issues](https://github.com/dragocz1995/orca/issues)

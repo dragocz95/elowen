@@ -73,7 +73,7 @@ GET /setup  → 200 { "freshInstall": { "noConfigPersisted": true, … } }
 ```http
 POST /auth/login
 Content-Type: application/json
-{ "username": "admin", "password": "test99" }
+{ "username": "admin", "password": "your-password" }
 → 200 { "token": "abc123…", "user": { "id": 1, "username": "admin", … } }
 
 POST /auth/me/password

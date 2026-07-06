@@ -7,162 +7,214 @@ eyebrow: Core concepts
 
 # Agents & Autonomy
 
-Agents are AI coding assistants that carry out tasks. Orca supports multiple
-agent providers and controls them through a graduated autonomy system.
+Orca is a personal AI agent you talk to — it reasons, calls tools, edits files
+and runs commands on your behalf. When a job is big enough to warrant its own
+coding agent, Orca spawns one for you: a real CLI coding assistant working
+inside a live session. This page explains how Orca drives those agents and how
+it governs them with graduated autonomy, so you always stay in control and can
+see exactly what the agent is doing.
+
+Autonomy is where two of Orca's pillars meet: **clarity** — every decision an
+agent makes is visible and steerable — and **simplicity** — sensible defaults
+mean the agent handles the routine and only interrupts you when it genuinely
+needs a human.
 
 ## Providers
 
-Orca spawns agents through three supported CLI providers:
+Orca can drive four external coding-agent CLIs, plus the embedded **Orca AI**
+brain that runs in-process (the agent you chat with directly). You pick a
+provider per task; the model picker in chat and task creation offers whatever
+you are allowed to run.
 
-| Provider | Exec prefix | Default model |
-|----------|-------------|---------------|
-| Claude Code | `claude:` | `sonnet` |
-| OpenCode | `opencode:` | — |
-| Codex | `codex:` | — |
+| Provider | Exec prefix | Program | Notes |
+|----------|-------------|---------|-------|
+| Claude Code | `claude:` | `claude-code` | Default; bare specs like `sonnet` route here |
+| OpenCode | `opencode:` | `opencode` | Also the target for bare `provider/model` specs |
+| Codex | `codex:` | `codex` | OpenAI's agentic coder |
+| Kilo Code | `kilo:` | `kilo` | Auto-approval lives in Kilo's own config (see below) |
+| Orca AI (brain) | `orca:` | `orca` | Embedded — runs in-process, no external CLI spawned |
 
-### Executor resolution
+The brain uses `orca:<provider>/<model>` specs (for example
+`orca:relay/ollama/kimi-k2.7-code`) and is bounded by your configured brain
+providers rather than the CLI allow-list. See [Brain & Chat](brain-chat) for
+the embedded agent, and [Configuration](configuration) for provider setup.
 
-Tasks specify their executor via `exec:<spec>` labels. Resolution:
+## Executor resolution
 
-- `exec:sonnet` → claude-code with model `sonnet`
+Every task carries an `exec:<spec>` label that tells Orca which agent to spawn.
+The daemon resolves the spec to a program like this:
+
+- `exec:sonnet` → Claude Code with model `sonnet`
+- `exec:opus` → Claude Code with model `opus`
 - `exec:opencode:deepseek-v4-flash` → OpenCode with model `deepseek-v4-flash`
-- `exec:codex:gpt-5.4` → Codex with model `gpt-5.4`
-- `exec:ollama/deepseek-v4-flash` → OpenCode (contains `/`)
-- No label → configured fallback (default: claude-code / sonnet)
+- `exec:codex:gpt-5.5` → Codex with model `gpt-5.5`
+- `exec:kilo:<model>` → Kilo Code with that model
+- `exec:ollama/deepseek-v4-flash` → a bare spec containing `/` routes to OpenCode
+- **No label** → the configured fallback (default: Claude Code / `sonnet`)
 
-Every exec must be in the daemon's `allowedExecs` list, otherwise the API
-rejects it. Non-admin users may be further restricted to a subset.
+A bare plain string (no prefix, no `/`) is only valid when it is explicitly
+allow-listed — otherwise Orca would silently treat it as a Claude Code model
+name, so it is rejected.
 
-### Provider configuration
+Every exec must be in the daemon's `allowedExecs` list or the API rejects the
+task. On top of that, non-admin users can be scoped to a **personal subset** of
+execs — this is part of Orca's per-user tools and permissions model, where each
+user can have a different set of capabilities. An admin can let one user run
+Opus and Codex while another is limited to a cheap OpenCode model. See
+[Account & Security](account-security) for per-user `allowed_execs`.
 
-Configure in **Settings → Providers**:
+## Provider configuration
 
-- **Binary path** — override the CLI binary location
-- **Extra args** — additional CLI flags
-- **Skip permissions** — bypass approval prompts (e.g. `--dangerously-skip-permissions`)
-- **Resume sessions** — when enabled, respawned agents continue their prior
-  CLI session instead of cold-starting
+Configure each provider in **Settings → Providers**:
+
+- **Binary path** — override where the CLI binary lives
+- **Extra args** — additional flags passed on every spawn
+- **Skip permissions** — bypass the CLI's own approval prompts (for example
+  `--dangerously-skip-permissions` for Claude Code)
+- **Resume sessions** — when enabled, a respawned agent reattaches to its prior
+  CLI conversation instead of cold-starting (see [Session resume](#session-resume))
+
+> **Kilo Code gotcha:** Kilo's skip-permissions toggle in Providers is a no-op.
+> Kilo's auto-approval is controlled inside Kilo's own configuration, not by an
+> Orca flag — set it there.
 
 ## Autonomy levels
 
-Every mission runs at one of four autonomy levels:
+Every mission runs at one of four autonomy levels (L0–L3). The level decides how
+much the agent may do without asking you, and how confident the overseer must be
+before it auto-approves an action.
 
 | Level | Name | Prompt handling | Escalation |
-|-------|------|----------------|------------|
-| L0 | Recommend | All prompts → human | Never auto-approves |
-| L1 | Assist | Overseer at 0.85 confidence | Uncertain/sensitive actions |
-| L2 | Pilot | Overseer at 0.6 confidence | Ambiguous situations |
-| L3 | Auto | Overseer at 0.6 confidence | Only when stuck |
+|-------|------|-----------------|------------|
+| L0 | Recommend | All prompts → human | Never auto-approves anything |
+| L1 | Assist | Overseer approves at ≥ 0.85 confidence | Uncertain or sensitive actions |
+| L2 | Pilot | Overseer approves at ≥ 0.6 confidence | Ambiguous situations |
+| L3 | Auto | Overseer approves at ≥ 0.6 confidence | Only when the agent is stuck |
 
-L1–L3 spawn agents automatically. L0 plans and proposes but never executes
-without your explicit approval.
+L1–L3 spawn agents automatically and let them run. **L0 plans and proposes but
+never executes without your explicit approval** — the safest setting when you
+want to review everything first. You set the level per mission and can change it
+at any time from the Dashboard.
 
 ## Overseer (decision gate)
 
-The overseer vets every action before it executes — task dispatch, permission
-prompts, and post-done reviews.
+The overseer is the gate that vets every agent action before it takes effect —
+task dispatch, CLI permission prompts, and post-completion reviews. It runs one
+of two ways depending on whether you point it at an executor.
 
 ### Relay path (default)
 
-When `overseerExec` is empty, decisions go through the configured LLM relay
-using `autopilot.overseerModel`. The LLM judges each prompt and returns a
-confidence score. The gate applies a threshold check:
+When `overseerExec` is empty, decisions go through an **LLM relay** using the
+`autopilot.overseerModel`. The model scores each request for confidence, and the
+gate applies a simple threshold:
 
-- **Approved** — confidence ≥ threshold → agent proceeds
-- **Rejected** — confidence < threshold → agent waits for human input
-- **Destructive** — always escalated, overseer can't override
+- **Approved** — confidence ≥ the level's threshold → the agent proceeds
+- **Rejected** — confidence < threshold → the request waits for a human
+- **Destructive** — always escalated; the overseer can never auto-approve it
+
+This is the low-friction default: no extra agent to run, decisions resolve in
+line.
 
 ### Agent path (parked overseer)
 
-When `overseerExec` is set (e.g. `sonnet`), a parked overseer agent is spawned
-for each active mission. It runs a long-poll loop:
+When `overseerExec` is set (for example `sonnet`), Orca spawns a dedicated,
+parked **overseer agent** per active mission. It runs a fully async long-poll
+loop:
 
-1. `orca overseer poll` — absorbs heartbeats, surfaces decisions
-2. Judges the request using the prompt from `prompts/overseer.md`
-3. `orca overseer decide --id <id> --approve --confidence 0.85` — submits verdict
+1. `orca overseer poll` — absorbs heartbeats and surfaces pending decisions
+2. Judges the request using the prompt in `prompts/overseer.md`
+3. `orca overseer decide --id <id> --approve --confidence 0.85` — submits its verdict
 
-The agent path is fully async. If the parked overseer doesn't respond within
-120 seconds, the decision defaults to escalate (conservative timeout).
+Because it is async, the mission keeps moving while the overseer thinks. If the
+parked overseer does not respond within 120 seconds, the decision **defaults to
+escalate** — a conservative timeout so nothing slips through unreviewed.
 
 ## Deriver (prompt detection)
 
-The deriver polls every live agent's tmux pane every 5 seconds, detecting
-state changes from terminal output.
+The deriver is how Orca knows what a live agent is doing. It polls every active
+agent's tmux pane **every 5 seconds** and detects state changes from the
+terminal output — including the CLI's own permission prompts.
 
-### Detected prompts
-
-| Program | Detects | Trigger text |
-|---------|---------|-------------|
+| Program | Detects | Trigger |
+|---------|---------|---------|
 | OpenCode | Permission | `Permission required` + Allow/Reject |
 | Claude Code | Workspace trust | `Yes, I trust this folder` |
 | Claude Code | Permission | `Do you want to proceed?` |
 | Codex | Command approval | `Allow command?` / `Approve this command?` |
 
-Auto-accept prompts (like workspace trust) are cleared directly by the
-deriver without an overseer round-trip.
+Auto-accept prompts like **workspace trust** are cleared directly by the deriver
+without an overseer round-trip — there is nothing for a human to decide there.
+Everything else becomes a decision on the bus.
 
-### Signal bus
-
-The deriver emits signals to the SSE event bus:
+The deriver emits signals to the SSE event bus that drive the live views across
+the [Web UI](web-ui):
 
 | Signal | Meaning |
 |--------|---------|
 | `working` | Agent is active, no prompt detected |
-| `needs_input` | Agent is paused, needs human intervention |
+| `needs_input` | Agent is paused, waiting on a human |
 | `complete` | Task is closed — final signal |
 
 ## Decision taxonomy
 
-The overseer handles five decision kinds:
+The overseer handles five kinds of decision, each enqueued by a different part
+of the system:
 
 | Kind | Enqueued by | Context |
 |------|-------------|---------|
-| `prompt` | Deriver | Permission prompt question from the agent |
-| `review` | Close handler | Post-done review: task title, outcome, summary |
-| `question` | Deriver | Multiple-choice question from the agent |
+| `prompt` | Deriver | A CLI permission prompt from the agent |
+| `review` | Close handler | Post-completion review: task title, outcome, summary |
+| `question` | Deriver | A multiple-choice question from the agent |
 | `message` | Agent (`orca ask`) | Free-text Q&A with the autopilot |
 | `check` | Liveness sweep | Routine progress check on a working agent |
 
-The confidence threshold is 0.85 for L1 and 0.6 for L2/L3.
+The confidence threshold that separates approve from wait is **0.85 at L1** and
+**0.6 at L2 and L3**.
 
 ## Liveness & progress checks
 
-Orca uses a **pane activity tracker** (`PaneActivityTracker`) that hashes
-pane content every 5 seconds. An agent whose pane stops changing is
-considered idle. The liveness sweep then fires:
+To make sure a wedged agent never sits silently, Orca runs a
+`PaneActivityTracker` that hashes each pane's content every 5 seconds. An agent
+whose pane stops changing is treated as idle, and the liveness sweep fires:
 
 | Check | After | Action |
 |-------|-------|--------|
-| Worker wedge | 5 min idle | Notify overseer for escalation |
-| Routine progress | 15 min working | Ask overseer "is this still on track?" |
-| Overseer wedge | 10 min idle | Escalate to human |
-| Dead overseer | 90 s gone | Replace with fresh overseer |
-| Absolute backstop | 30 min any state | Escalate |
+| Worker wedge | 5 min idle | Notify the overseer to escalate |
+| Routine progress | 15 min working | Ask the overseer "is this still on track?" |
+| Overseer wedge | 10 min idle | Escalate to a human |
+| Dead overseer | 90 s gone | Replace with a fresh overseer |
+| Absolute backstop | 30 min in any state | Escalate |
 
 ## Agent Q&A (`orca ask`)
 
-Agents can ask free-text questions to the autopilot (or a human) during a
-mission:
+A working agent can ask a free-text question mid-mission — to the autopilot or to
+you:
 
-1. Agent calls `orca ask "Is this approach correct?"`
-2. The autopilot answers directly, or escalates to a human
-3. The human sees the question in the **Escalations** inbox
-4. Human replies → agent receives the answer
+1. The agent calls `orca ask "Is this approach correct?"`
+2. The autopilot answers directly, or escalates the question to a human
+3. Unanswered questions surface in the **Escalations** inbox
+4. You reply, and the agent receives your answer and continues
 
-The Q&A history is available via `orca ask --history`.
+![The Escalations inbox: human-in-the-loop questions awaiting a decision](images/web-ui-escalations.png)
+
+Escalations is your human-in-the-loop gate — approve, reject, or answer, all
+from one place. See [Web UI](web-ui) for the full inbox, and [CLI](cli) for the
+`orca ask` command and its `--history` flag.
 
 ## Stuck detector
 
-The stuck detector sweeps every 60 seconds for `in_progress` tasks whose agent
-session is no longer alive. It reverts dead agent tasks to `open` (up to 2
-retries), then escalates to `blocked` to prevent infinite crash loops. When a
-dead agent is reverted, a **resume note** is set explaining why the task was
-relaunched.
+The stuck detector sweeps every **60 seconds** for `in_progress` tasks whose
+agent session is no longer alive. It reverts a dead-agent task to `open` (up to
+**2 retries**), then moves it to `blocked` to prevent an infinite crash loop.
+When it reverts a task, it writes a **resume note** explaining why the task was
+relaunched, so you (or the next agent) have the context. See
+[Tasks & Missions](tasks-missions) for task states.
 
 ## Session resume
 
-When resume is enabled per provider, the daemon captures the agent's CLI
-session ID at close and splices a resume flag into the next spawn. The agent
-reattaches to its prior conversation instead of cold-starting.
+When **Resume sessions** is enabled for a provider, the daemon captures the
+agent's CLI session id when the session closes and splices a resume flag into
+the next spawn. The agent reattaches to its prior conversation instead of
+cold-starting — it keeps its context, its plan, and its place in the work.
 
 [Next: Web UI](web-ui)

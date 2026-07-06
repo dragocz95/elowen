@@ -108,7 +108,7 @@ brain model, reasoning effort, communication style, auto-compact.
 
 ### Onboarding `/onboarding`
 
-First-run wizard: system deps, providers, autopilot, users, Hermes.
+First-run wizard: system deps, providers, autopilot, users.
 
 ## Data layer
 

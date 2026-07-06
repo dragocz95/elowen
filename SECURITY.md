@@ -5,7 +5,7 @@
 If you discover a security vulnerability in Orcasynth, please report it privately.
 **Do not open a public issue for security problems.**
 
-Use GitHub's [private vulnerability reporting](https://github.com/dragocz1995/orcasynth/security/advisories/new)
+Use GitHub's [private vulnerability reporting](https://github.com/dragocz1995/orca/security/advisories/new)
 to disclose the issue. Please include:
 
 - a description of the vulnerability and its impact,
