@@ -30,7 +30,7 @@ export const BASH_PERMISSION_TOOLS: ReadonlySet<string> = new Set(['run_command'
 /** Built-in defaults, conservative but usable: everything not otherwise named is allowed (read-only
  *  tools stay frictionless), file edits ask, and shell commands ask except for a small read-only
  *  allow-list. User rules are appended AFTER these, so any of them can be overridden per user. */
-export const DEFAULT_PERMISSION_RULES: readonly PermissionRule[] = [
+const DEFAULT_PERMISSION_RULES: readonly PermissionRule[] = [
   { scope: 'tools', pattern: '*', action: 'allow' },
   { scope: 'tools', pattern: 'write_file', action: 'ask' },
   { scope: 'tools', pattern: 'edit_file', action: 'ask' },

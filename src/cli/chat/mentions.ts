@@ -9,11 +9,11 @@ import { dataDir } from '../paths.js';
  *  helpers throughout; the only I/O is the file index, the frecency store and the clipboard readers. */
 
 /** Hard cap on the session file index — beyond this the suggester is noise anyway. */
-export const MAX_INDEX_FILES = 5000;
+const MAX_INDEX_FILES = 5000;
 /** Largest text file attached inline; bigger ones get a one-line note instead. */
 export const MAX_TEXT_ATTACHMENT_BYTES = 256 * 1024;
 /** Mirrors `imageSchema` in src/api/schemas/brain.ts: ≤7M base64 chars (≈5 MB binary) per image. */
-export const MAX_IMAGE_BASE64_CHARS = 7_000_000;
+const MAX_IMAGE_BASE64_CHARS = 7_000_000;
 /** Mirrors `brainSendSchema.images.max(4)`. */
 export const MAX_IMAGES_PER_MESSAGE = 4;
 /** The pseudo-mention that attaches the system clipboard image (`@clipboard`, also `/paste`). */
@@ -114,7 +114,7 @@ export function walkFiles(cwd: string, cap = MAX_INDEX_FILES): string[] {
 
 /** The mentionable project files under `cwd`: `git ls-files --cached --others --exclude-standard`
  *  (respects .gitignore) when in a repo, the bounded walk otherwise. Capped at {@link MAX_INDEX_FILES}. */
-export function listProjectFiles(cwd: string): string[] {
+function listProjectFiles(cwd: string): string[] {
   try {
     const stdout = execFileSync('git', ['ls-files', '--cached', '--others', '--exclude-standard'], {
       cwd, encoding: 'utf8', maxBuffer: 32 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'],
@@ -156,7 +156,7 @@ export class FileIndex {
 // Frecency (persisted per project, mirroring promptHistory.ts)
 // ---------------------------------------------------------------------------
 
-export interface FrecencyEntry { uses: number; lastUsed: number }
+interface FrecencyEntry { uses: number; lastUsed: number }
 export type FrecencyMap = Record<string, FrecencyEntry>;
 
 function mentionsFile(env: NodeJS.ProcessEnv): string {
