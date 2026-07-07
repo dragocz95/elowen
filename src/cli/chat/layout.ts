@@ -385,6 +385,10 @@ export class ChatViewport implements Component {
         return rows;
       }
       let hasText = false;
+      // The newest tool item of a streaming turn may still be awaiting approval / running — its
+      // silent-command row must not claim "· done" until the turn moves past it.
+      const toolItems = turn.segments.flatMap((s) => (s.kind === 'tools' ? s.items : []));
+      const lastToolItem = toolItems[toolItems.length - 1];
       for (const [segIndex, seg] of turn.segments.entries()) {
         if (seg.kind === 'tools') {
           for (const item of seg.items) {
@@ -408,7 +412,7 @@ export class ChatViewport implements Component {
               // A shell/console tool that finished silently still shows its command on its own line.
               // Tool traffic renders DIM across the board (glyph faint, text muted) — it is secondary
               // to the assistant's answer, opencode-style, instead of glowing green next to it.
-              if (item.command) add(`  ${color.faint('$')} ${color.dim(truncateToWidth(item.command, Math.max(12, width - 10), '…'))} ${color.faint('· done')}`);
+              if (item.command) add(`  ${color.faint('$')} ${color.dim(truncateToWidth(item.command, Math.max(12, width - 10), '…'))} ${color.faint(turn.streaming && item === lastToolItem ? '· running…' : '· done')}`);
               else {
                 const spec = toolRowSpec(item.name, item.detail);
                 add(`  ${color.faint(spec.glyph)} ${color.dim(truncateToWidth(spec.title, Math.max(12, width - 8), '…'))}`);

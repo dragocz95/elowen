@@ -4,6 +4,9 @@ import { TUI, ProcessTerminal, Container, matchesKey, CombinedAutocompleteProvid
 import { initTheme, getMarkdownTheme, getSelectListTheme } from '@earendil-works/pi-coding-agent';
 import { chatThemeItems, color, glyph, isChatThemeName, setChatTheme, setCustomChatTheme } from './theme.js';
 import { loadPrefs, savePrefs } from './prefs.js';
+import { appendPromptHistory, loadPromptHistory, PromptStash } from './promptHistory.js';
+import { LocalShellBuffer, localShellTurn, parseBangCommand, runLocalShell } from './localShell.js';
+import { editTextExternally } from './externalEditor.js';
 import { StatusBar, CardPanel, SubagentPanel, spinnerFrame, runApprovalFlow } from './components.js';
 import type { SubagentPanelEntry } from './components.js';
 import { ChatEditor, sessionItems, modelItems, parseModelValue, openPicker, openTextInput, openInfoModal } from './picker.js';
@@ -64,7 +67,7 @@ export function viewToPlainText(view: ChatView): string[] {
 
 /** Local slash-command routing: returns the recognized command (with its argument) or null for a
  *  regular chat message. Pure, so the command surface is unit-testable without a TTY. */
-export function parseCommand(text: string): { cmd: 'quit' | 'new' | 'stop' | 'status' | 'restart' | 'sessions' | 'resume' | 'delete' | 'model' | 'reasoning' | 'theme' | 'lsp' | 'mcp' | 'skills' | 'tools' | 'goal' | 'subgoal' | 'compact' | 'plan' | 'build' | 'yolo' | 'help'; arg?: string } | null {
+export function parseCommand(text: string): { cmd: 'quit' | 'new' | 'stop' | 'status' | 'restart' | 'sessions' | 'resume' | 'delete' | 'model' | 'reasoning' | 'theme' | 'editor' | 'lsp' | 'mcp' | 'skills' | 'tools' | 'goal' | 'subgoal' | 'compact' | 'plan' | 'build' | 'yolo' | 'help'; arg?: string } | null {
   const m = /^\/(\w+)(?:\s+(.+))?$/.exec(text.trim());
   if (!m) return null;
   switch (m[1]) {
@@ -79,6 +82,7 @@ export function parseCommand(text: string): { cmd: 'quit' | 'new' | 'stop' | 'st
     case 'model': return { cmd: 'model', arg: m[2] };
     case 'reasoning': return { cmd: 'reasoning', arg: m[2] };
     case 'theme': return { cmd: 'theme', arg: m[2] };
+    case 'editor': return { cmd: 'editor' };
     case 'lsp': return { cmd: 'lsp' };
     case 'mcp': return { cmd: 'mcp' };
     case 'skills': return { cmd: 'skills' };
@@ -246,6 +250,15 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
   const cwdLabel = prettyCwd();
   const branchLabel = gitBranch();
   const editor = new ChatEditor(tui, { borderColor: color.faint, selectList: getSelectListTheme() }, {});
+  // ↑-recall persists per project: seed the editor's history navigation (oldest → newest) from disk;
+  // onSubmit appends both in-session and to the file. The walk itself (back/forward, draft restore,
+  // edit-exits-recall) is the editor's built-in history mode — recall only triggers on an empty input
+  // or at the very start of the draft, so ↑/↓ inside a multiline draft keep moving the cursor.
+  for (const entry of loadPromptHistory(process.cwd())) editor.addToHistory(entry);
+  /** ctrl+s draft stash — session-local LIFO (see PromptStash). */
+  const promptStash = new PromptStash();
+  /** `!cmd` results waiting to ride along with the next prompt sent to the brain. */
+  const shellContext = new LocalShellBuffer();
   /** Ask-user-question still borrows this slot for its multi-step flow. Other pickers use modals. */
   const editorSlot = new Container();
   editorSlot.addChild(editor);
@@ -303,7 +316,7 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
     () => Math.max(12, term.rows - TOP_RULE_ROWS),
     () => ({
       modelLine: modelMetaLine(workMode, modelName, thinkingLevel, undefined, yoloOn),
-      hints: color.faint('⏎ send · / commands · shift+tab mode'),
+      hints: color.faint('⏎ send · / commands · ! shell · ↑ history · ctrl+s stash · shift+tab mode'),
       tip: `${color.warning('●')} ${color.bold(color.text('Tip'))} ${color.dim('ask anything — try')} ${color.text('"What is the tech stack of this project?"')}`,
       notice,
       statusLeft: `${color.dim(cwdLabel)}${branchLabel ? color.faint(` · ${branchLabel}`) : ''}`,
@@ -350,7 +363,8 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
       ? color.faint('  ⏎ message the sub-agent   ·   esc back   ·   ctrl+o next session')
       : view.thinking
         ? color.faint(`  esc interrupt   ·   /help commands   ·   ctrl+r reasoning${subagentSessions().length ? '   ·   ctrl+o subagents' : ''}`)
-        : color.faint('  ⏎ send   ·   / slash   ·   shift+tab mode   ·   ctrl+r reasoning   ·   ctrl+p telemetry'));
+        : color.faint('  ⏎ send   ·   / slash   ·   ! shell   ·   ctrl+s stash   ·   shift+tab mode   ·   ctrl+r reasoning   ·   ctrl+p telemetry')
+          + (shellContext.pending ? `   ${color.warning('· ! output → next message')}` : ''));
     const projectLine = `${color.dim(cwdLabel)}${branchLabel ? color.faint(` · ${branchLabel}`) : ''}`;
     const line = statusline(lineCfg ? { ...lineCfg, showModel: false } : null, usage, modelName);
     promptMeta.setLeft(modelMetaLine(workMode, modelName, thinkingLevel, view.thinking ? generatingChip(currentRunSeconds) : undefined, yoloOn));
@@ -1102,9 +1116,24 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
   editor.onSubmit = (text: string): void => {
     const trimmed = text.trim();
     if (!trimmed) return;
-    editor.addToHistory(trimmed); // Up-arrow recall of sent inputs (session-local, capped by the editor)
+    editor.addToHistory(trimmed); // Up-arrow recall of sent inputs (seeded from disk at startup)
+    appendPromptHistory(process.cwd(), trimmed); // per-project persistence for the next session
     editor.setText('');
     notice = '';
+    // `!cmd` runs LOCALLY (node child_process in the CLI's cwd) — never sent to the brain. The output
+    // renders as a console block and is buffered as context for the NEXT prompt (see LocalShellBuffer).
+    const localCmd = parseBangCommand(trimmed);
+    if (localCmd) {
+      notice = color.dim(`$ ${localCmd} · running locally…`);
+      render();
+      void runLocalShell(localCmd, process.cwd()).then((result) => {
+        shellContext.add(result);
+        view = { ...view, turns: [...view.turns, localShellTurn(result)] };
+        if (notice.includes('running locally')) notice = '';
+        render();
+      });
+      return;
+    }
     const command = parseCommand(trimmed);
     // Inside a sub-agent view, plain text goes to the CHILD (steered into its running turn, or a fresh
     // child turn when idle) — the reply streams into the open view. Slash commands always act on the
@@ -1171,6 +1200,23 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
             return;
           }
           openThemePicker();
+          return;
+        }
+        case 'editor': {
+          // $VISUAL/$EDITOR (fallback vi) over the current draft: suspend the TUI so the editor owns
+          // the terminal, then re-init and load the saved content into the input. Non-zero exit (:cq,
+          // crash) keeps the original draft untouched.
+          const initial = editor.getExpandedText();
+          term.write(DISABLE_MOUSE);
+          tui.stop();
+          void editTextExternally({ text: initial }).then((edited) => {
+            tui.start();
+            term.write(ENABLE_MOUSE);
+            editor.setText(edited ?? initial);
+            if (edited == null) notice = color.dim('editor exited without saving — draft kept');
+            tui.requestRender(true);
+            render();
+          });
           return;
         }
         case 'delete': {
@@ -1294,12 +1340,13 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
       const expanded = expandPromptCommand(promptCmd.prompt ?? '', pm[2] ?? '');
       view = beginAssistant(pushUser(view, trimmed));
       render();
-      void client.send(expanded, workMode).catch((e: Error) => { view = reduce(view, { type: 'error', message: e.message }); render(); });
+      void client.send(shellContext.take(expanded), workMode).catch((e: Error) => { view = reduce(view, { type: 'error', message: e.message }); render(); });
       return;
     }
     view = beginAssistant(pushUser(view, trimmed));
     render();
-    void client.send(trimmed, workMode).catch((e: Error) => { view = reduce(view, { type: 'error', message: e.message }); render(); });
+    // Any buffered `!` results ride along (prepended as a fenced context block), then the buffer clears.
+    void client.send(shellContext.take(trimmed), workMode).catch((e: Error) => { view = reduce(view, { type: 'error', message: e.message }); render(); });
   };
 
   // The slash overlay is a live suggestion popup driven by the input text: it filters while the text can
@@ -1490,6 +1537,21 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
     }
     if (editing && matchesKey(data, 'ctrl+r')) {
       cycleThinkingLevel();
+      return { consume: true };
+    }
+    // ctrl+s: stash the current draft (LIFO, session-local); on an empty input, pop the latest one back.
+    if (editing && matchesKey(data, 'ctrl+s')) {
+      const draft = editor.getText();
+      if (draft.trim()) {
+        promptStash.push(draft);
+        editor.setText('');
+        notice = color.dim(`Draft stashed — ctrl+s to restore${promptStash.size > 1 ? ` (${promptStash.size} stashed)` : ''}`);
+      } else {
+        const restored = promptStash.pop();
+        if (restored != null) { editor.setText(restored); notice = color.dim('Stashed draft restored'); }
+        else notice = color.dim('no stashed draft — ctrl+s with text stashes it');
+      }
+      render();
       return { consume: true };
     }
     // ctrl+o cycles main conversation → each sub-agent session → back to main (opencode-style).

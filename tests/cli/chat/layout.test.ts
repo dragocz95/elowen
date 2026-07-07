@@ -90,6 +90,26 @@ describe('chat layout components', () => {
     expect(rendered).not.toContain('run_command');
   });
 
+  it('marks the last silent command row · running… while streaming and · done once settled', () => {
+    let view = beginAssistant(pushUser(emptyView(), 'go'));
+    view = reduce(view, { type: 'tool', name: 'run_command', command: 'echo one' });
+    view = reduce(view, { type: 'tool', name: 'run_command', command: 'sleep 5' });
+    const render = (v: typeof view): string => new ChatViewport(
+      { view: v, notice: '', modelName: 'kimi', thinkingSeconds: 0 },
+      getMarkdownTheme(),
+      () => 14,
+      () => 1,
+      () => 72,
+    ).render(72).map((line) => line.replace(/\x1b\[[0-9;]*m/g, '')).join('\n');
+    const streaming = render(view);
+    expect(streaming).toContain('$ echo one · done'); // an earlier tool has settled
+    expect(streaming).toContain('$ sleep 5 · running…'); // the newest one is still awaiting approval/output
+    expect(streaming).not.toContain('$ sleep 5 · done');
+    const settled = render(reduce(view, { type: 'idle' }));
+    expect(settled).toContain('$ sleep 5 · done');
+    expect(settled).not.toContain('running…');
+  });
+
   it('renders expandable tool output previews without a tool-name chip', () => {
     let view = beginAssistant(emptyView());
     view = reduce(view, { type: 'tool', id: 'cmd-1', name: 'run_command', detail: 'npm test' });

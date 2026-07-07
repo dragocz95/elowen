@@ -64,6 +64,7 @@ describe('parseCommand', () => {
     expect(parseCommand('/reasoning high')).toEqual({ cmd: 'reasoning', arg: 'high' });
     expect(parseCommand('/theme')).toEqual({ cmd: 'theme', arg: undefined });
     expect(parseCommand('/theme mono')).toEqual({ cmd: 'theme', arg: 'mono' });
+    expect(parseCommand('/editor')).toEqual({ cmd: 'editor' });
     expect(parseCommand('/mcp')).toEqual({ cmd: 'mcp' });
     expect(parseCommand('/skills')).toEqual({ cmd: 'skills' });
     expect(parseCommand('/tools')).toEqual({ cmd: 'tools' });

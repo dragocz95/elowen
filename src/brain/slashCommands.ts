@@ -50,6 +50,8 @@ export const SLASH_COMMANDS: readonly SlashCommandDef[] = [
   // native command surface; the web dock has no picker for it yet (would show a dead menu entry).
   { name: 'reasoning', description: 'Set the reasoning effort · "show" toggles Thought rows', kind: 'picker', surfaces: ['cli'] },
   { name: 'theme', description: 'Switch the terminal colour theme', kind: 'picker', surfaces: ['cli'] },
+  // CLI-local like /theme: the TUI suspends itself and round-trips the draft through $VISUAL/$EDITOR.
+  { name: 'editor', description: 'Compose the prompt in your $EDITOR', kind: 'picker', surfaces: ['cli'] },
   // adminOnly: the toggle flips a daemon-wide LspManager singleton (spawns/kills servers for everyone),
   // so it must be gated to operators — a non-admin must not disable diagnostics for other users.
   { name: 'lsp', description: 'Language diagnostics (LSP) — status, servers and on/off', kind: 'action', surfaces: ['cli'], adminOnly: true },
