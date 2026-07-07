@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 
 const pluginPath = resolve(dirname(fileURLToPath(import.meta.url)), '../../plugins/cronjob/index.mjs');
 const mod = await import(pluginPath) as {
+  parseOneShot(spec: string, now: number): number | null;
   parseSchedule(spec: string): { kind: string; day?: number; hour?: number; minute?: number; ms?: number } | null;
   inHours(hours: string | undefined, now: number): boolean;
   isDue(job: Record<string, unknown>, now: number): boolean;
@@ -18,6 +19,32 @@ const MON_10 = new Date(2026, 6, 6, 10, 0, 0).getTime();
 const SUN_2030 = new Date(2026, 6, 5, 20, 30, 0).getTime();
 
 describe('cronjob schedule extensions', () => {
+  it('parseOneShot: "at HH:MM" up to 5 min in the past fires ASAP instead of rolling +24h', () => {
+    // "at 20:31" asked at 20:31:02 — the model echoed the current minute that just slipped past.
+    const now = new Date(2026, 6, 6, 20, 31, 2).getTime();
+    expect(mod.parseOneShot('at 20:31', now)).toBe(now + 1_000);
+    // 4 min 59 s past → still ASAP; exactly at the boundary too.
+    expect(mod.parseOneShot('at 20:27', new Date(2026, 6, 6, 20, 31, 59).getTime()))
+      .toBe(new Date(2026, 6, 6, 20, 31, 59).getTime() + 1_000);
+    // Further in the past → tomorrow, as before.
+    const rolled = mod.parseOneShot('at 20:00', now)!;
+    expect(new Date(rolled).getDate()).toBe(7);
+    expect(new Date(rolled).getHours()).toBe(20);
+    // A future time today stays a plain "later today".
+    expect(mod.parseOneShot('at 20:35', now)).toBe(new Date(2026, 6, 6, 20, 35, 0).getTime());
+  });
+
+  it('parseOneShot: seconds are supported from 5 s; minutes/hours keep the 1 min floor', () => {
+    const now = 1_000_000;
+    expect(mod.parseOneShot('in 30s', now)).toBe(now + 30_000);
+    expect(mod.parseOneShot('in 5s', now)).toBe(now + 5_000);
+    expect(mod.parseOneShot('in 4s', now)).toBeNull();
+    expect(mod.parseOneShot('in 20m', now)).toBe(now + 20 * 60_000); // unchanged
+    expect(mod.parseOneShot('in 0m', now)).toBeNull();               // unchanged
+    expect(mod.parseOneShot('in 2h', now)).toBe(now + 2 * 3_600_000); // unchanged
+    expect(mod.parseOneShot('every 5m', now)).toBeNull();             // not a one-shot
+  });
+
   it('parses weekly specs', () => {
     expect(mod.parseSchedule('weekly sun 20:00')).toEqual({ kind: 'weekly', day: 0, hour: 20, minute: 0 });
     expect(mod.parseSchedule('weekly fri 07:30')).toEqual({ kind: 'weekly', day: 5, hour: 7, minute: 30 });

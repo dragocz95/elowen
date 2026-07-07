@@ -44,7 +44,8 @@ describe('cronjob plugin', () => {
     const now = new Date('2026-07-02T10:00:00Z').getTime();
     expect(parseOneShot('in 20m', now)).toBe(now + 20 * 60_000);
     expect(parseOneShot('in 2h', now)).toBe(now + 2 * 3_600_000);
-    expect(parseOneShot('in 10s', now)).toBeNull();
+    expect(parseOneShot('in 10s', now)).toBe(now + 10_000);
+    expect(parseOneShot('in 4s', now)).toBeNull(); // below the 5 s floor
     expect(parseOneShot('every 5m', now)).toBeNull();
     const at = parseOneShot('at 18:30', now)!;
     expect(new Date(at).getHours()).toBe(18);

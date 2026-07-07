@@ -59,6 +59,44 @@ describe('PlatformOrchestrator — unified per-turn access', () => {
     expect(sent.toolPolicy).toBeUndefined(); // admin role → full plugin toolset
   });
 
+  it('an origin-carrying message routes through the BOUND send (no channel session touched)', async () => {
+    let sent: ChannelSendOpts | undefined;
+    let handler: ((src: never, text: string, onEvent?: unknown) => Promise<unknown>) | undefined;
+    const adapter = { name: 'cron', listen: (fn: never) => { handler = fn as never; }, connect: async () => {} };
+    const originCalls: [number, string, string][] = [];
+    const orch = new PlatformOrchestrator({
+      plugins: async () => ({ platforms: [adapter] }) as never,
+      platformOwner: () => 1,
+      identity: linkedResolver(false),
+      channels: { send: async (o: ChannelSendOpts) => { sent = o; return 'channel reply'; }, fragmentFor: () => '' } as never,
+      originSend: async (userId, sessionId, text) => { originCalls.push([userId, sessionId, text]); return 'bound reply'; },
+    });
+    await orch.startAll();
+    const reply = await handler!({ platform: 'cron', userId: 'cron', channelId: 'job-1', roleIds: [],
+      origin: { sessionId: 'brain-1-abc', userId: 1 }, access: { admin: true, projectIds: [] } } as never, 'wake up');
+    expect(reply).toBe('bound reply');
+    expect(originCalls).toEqual([[1, 'brain-1-abc', 'wake up']]);
+    expect(sent).toBeUndefined(); // the channel path never ran
+  });
+
+  it('falls back to the channel path when the bound send refuses (origin session gone / foreign)', async () => {
+    let sent: ChannelSendOpts | undefined;
+    let handler: ((src: never, text: string) => Promise<unknown>) | undefined;
+    const adapter = { name: 'cron', listen: (fn: never) => { handler = fn as never; }, connect: async () => {} };
+    const orch = new PlatformOrchestrator({
+      plugins: async () => ({ platforms: [adapter] }) as never,
+      platformOwner: () => 1,
+      identity: linkedResolver(false),
+      channels: { send: async (o: ChannelSendOpts) => { sent = o; return 'channel reply'; }, fragmentFor: () => '' } as never,
+      originSend: async () => null, // ownership check failed host-side
+    });
+    await orch.startAll();
+    const reply = await handler!({ platform: 'cron', userId: 'cron', channelId: 'job-1', roleIds: [],
+      origin: { sessionId: 'brain-1-gone', userId: 1 }, access: { admin: true, projectIds: [] } } as never, 'wake up');
+    expect(reply).toBe('channel reply');
+    expect(sent?.channelId).toBe('cron-job-1'); // today's channel-keyed session
+  });
+
   it('a LINKED sender with no disabled tools gets an undefined tool policy (no restriction)', async () => {
     let sent: ChannelSendOpts | undefined;
     let handler: ((src: never, text: string) => Promise<unknown>) | undefined;

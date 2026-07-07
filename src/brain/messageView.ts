@@ -222,6 +222,23 @@ export function extractText(msg: unknown): string {
   return '';
 }
 
+/** The ONE automatic recovery prompt for a thinking-only turn (see `isThinkingOnlyReply`). Sent straight
+ *  to session.prompt — never persisted as a user message (only its assistant reply lands in history). */
+export const NO_REPLY_NUDGE = 'Your last turn produced no visible reply or tool call. Answer the user now, in plain text.';
+
+/** Whether a SETTLED assistant message is thinking-only: the turn ended normally (stopReason 'stop') but
+ *  its content carries no visible text and no tool call — only reasoning. Some reasoning models (kimi /
+ *  deepseek via relays) end turns like this ("…I'll tell the user" stays in the thinking channel), so the
+ *  user sees NOTHING. Errored/aborted turns are excluded — they have their own surfacing paths. Covers
+ *  inline `<think>` leakage too: extractText strips it, so a reply that is ONLY inline reasoning counts. */
+export function isThinkingOnlyReply(msg: unknown): boolean {
+  const m = msg as { role?: string; stopReason?: string; content?: unknown };
+  if (m.role !== 'assistant' || m.stopReason !== 'stop') return false;
+  const blocks = Array.isArray(m.content) ? (m.content as { type?: string }[]) : [];
+  if (blocks.some((b) => b && typeof b === 'object' && b.type === 'toolCall')) return false;
+  return extractText(m).trim() === '';
+}
+
 /** Shape stored brain rows for display — shared by the advisor chat history and the orca worker's
  *  task-conversation endpoint. Only user + assistant turns surface; toolResult/summary rows are
  *  persisted for rehydration but never shown (edit diffs are lifted off toolResult rows onto their

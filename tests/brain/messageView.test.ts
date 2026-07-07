@@ -1,5 +1,29 @@
 import { describe, it, expect } from 'vitest';
-import { stripInlineReasoning, extractText, toolOutputView } from '../../src/brain/messageView.js';
+import { stripInlineReasoning, extractText, toolOutputView, isThinkingOnlyReply } from '../../src/brain/messageView.js';
+
+describe('isThinkingOnlyReply', () => {
+  const asst = (m: Record<string, unknown>) => ({ role: 'assistant', ...m });
+
+  it('detects a stop turn whose content is ONLY thinking (no text, no tool call)', () => {
+    expect(isThinkingOnlyReply(asst({ stopReason: 'stop', content: [{ type: 'thinking', thinking: '…I will tell the user' }] }))).toBe(true);
+  });
+
+  it('a turn with visible text or a tool call is NOT thinking-only', () => {
+    expect(isThinkingOnlyReply(asst({ stopReason: 'stop', content: [{ type: 'thinking', thinking: 'x' }, { type: 'text', text: 'hi' }] }))).toBe(false);
+    expect(isThinkingOnlyReply(asst({ stopReason: 'stop', content: [{ type: 'toolCall', id: '1', name: 'read_file', arguments: {} }] }))).toBe(false);
+    expect(isThinkingOnlyReply(asst({ stopReason: 'stop', content: 'plain string reply' }))).toBe(false);
+  });
+
+  it('errored/aborted turns and non-assistant messages are excluded — they have their own paths', () => {
+    expect(isThinkingOnlyReply(asst({ stopReason: 'error', content: [] }))).toBe(false);
+    expect(isThinkingOnlyReply(asst({ stopReason: 'aborted', content: [{ type: 'thinking', thinking: 'x' }] }))).toBe(false);
+    expect(isThinkingOnlyReply({ role: 'user', stopReason: 'stop', content: [] })).toBe(false);
+  });
+
+  it('counts inline <think>-only text as thinking-only (extractText strips it to nothing)', () => {
+    expect(isThinkingOnlyReply(asst({ stopReason: 'stop', content: [{ type: 'text', text: '<think>only reasoning</think>' }] }))).toBe(true);
+  });
+});
 
 describe('stripInlineReasoning', () => {
   it('leaves text without reasoning tags untouched', () => {

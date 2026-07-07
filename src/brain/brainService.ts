@@ -22,7 +22,7 @@ import { MemoryCurator } from './memoryCurator.js';
 import { ConversationTitler } from './conversationTitler.js';
 import type { MemoryCategorizer } from './memoryCategorizer.js';
 import type { MemoryCategoryStore } from '../store/memoryCategoryStore.js';
-import { extractText, frameUntrusted } from './messageView.js';
+import { extractText, frameUntrusted, isThinkingOnlyReply, NO_REPLY_NUDGE } from './messageView.js';
 import { logger } from '../shared/logger.js';
 import type { MemoryStore } from '../store/memoryStore.js';
 import type { MemoryService } from './memoryService.js';
@@ -209,6 +209,19 @@ export class BrainService {
       identity: this.identity,
       channels: this.channelService,
       restart: () => this.restartHandler,
+      // Origin-bound platform work (a cron wake-up scheduled from a user conversation): run the prompt
+      // as a BOUND send into that conversation — the reply lands, streams and persists exactly where
+      // the schedule was created. Ownership-verified here (the ONE place with the store): a vanished or
+      // foreign session returns null and the orchestrator falls back to the channel path. The `session`
+      // event is emitted only AFTER the send succeeded, so the caller (cron) can tell origin delivery
+      // apart from a failed attempt and still deliver errors through its notify fallback.
+      originSend: async (userId, sessionId, text, onEvent) => {
+        const row = this.d.store.getSession(sessionId);
+        if (!row || row.user_id !== userId || isNonUserSession(sessionId)) return null;
+        await this.send(userId, text, undefined, 'build', undefined, undefined, sessionId);
+        onEvent?.({ type: 'session', sessionId });
+        return lastAssistantText(this.d.store, sessionId);
+      },
     });
   }
 
@@ -1284,10 +1297,18 @@ export class BrainService {
       // approval prompts; it also stays fresh across mid-session "Always allow" grants and /yolo flips.
       const permissions = this.turnPermissions(userId, live, true);
       const permissionsBlock = permissions ? `${summarizePermissions(permissions)}\n\n` : '';
-      await runWithPolicy(live.policy, () => {
+      await runWithPolicy(live.policy, async () => {
         const prompted = memoryBlock + hookBlock + permissionsBlock + live.turnContext() + modeInstruction + text;
-        return options ? live.session.prompt(prompted, options) : live.session.prompt(prompted);
-      }, { identity, elicit, emitCard, emitSubagent, toolPolicy, permissions, workDir, model: { provider: live.providerId, model: live.model } });
+        await (options ? live.session.prompt(prompted, options) : live.session.prompt(prompted));
+        // Thinking-only guard (#115): reasoning models sometimes end a 'stop' turn with ONLY a thinking
+        // block — no text, no tool call — so the user sees nothing. ONE automatic nudge re-prompts the
+        // same session; the nudge itself is never persisted as a user message (agent_end persists only
+        // assistant/tool messages, and projectUserTurn is not called for it), while its assistant reply
+        // persists and streams to attached clients as a normal continuation. Straight-line by design:
+        // a nudge that again produces nothing simply ends — no loop.
+        const settled = [...(live.session.messages as { role?: string }[])].reverse().find((m) => m.role === 'assistant');
+        if (settled && isThinkingOnlyReply(settled)) await live.session.prompt(NO_REPLY_NUDGE);
+      }, { identity, elicit, emitCard, emitSubagent, toolPolicy, permissions, workDir, sessionId: live.sessionId, model: { provider: live.providerId, model: live.model } });
       // Post-turn curator: extract durable facts from this exchange in the background. Fire-and-forget
       // (mirrors brainWorker) — never awaited, never touches live.session, swallows its own errors.
       if (this.curator && memSettings?.autoSave !== false) {

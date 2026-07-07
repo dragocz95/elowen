@@ -76,6 +76,12 @@ export interface SessionSource {
   channelTopic?: string;
   /** Image attachments (base64), ready for a vision-capable model. Adapter-capped in count and size. */
   images?: { data: string; mimeType: string }[];
+  /** Set when this message replays work scheduled FROM a user conversation (a cron wake-up's origin):
+   *  the host then routes the turn as a BOUND send into that conversation — the reply lands (and
+   *  streams) exactly where the schedule was created — instead of the platform's own channel session.
+   *  The host verifies the session still exists and belongs to `userId`; on a mismatch it falls back
+   *  to the normal channel path. */
+  origin?: { sessionId: string; userId: number };
   /** Lazy platform-history provider: called ONLY when this message opens a brand-new conversation,
    *  so the brain can see what was said in the channel before it joined. Returns a ready context
    *  block (or '' when nothing is available). */
@@ -88,7 +94,7 @@ export interface PlatformAdapter {
   name: string;
   connect(): Promise<void>;
   disconnect?(): void;
-  listen(onMessage: (src: SessionSource, text: string, onEvent?: (e: { type: string; delta?: string; name?: string }) => void) => Promise<string | undefined>): void;
+  listen(onMessage: (src: SessionSource, text: string, onEvent?: (e: { type: string; delta?: string; name?: string; sessionId?: string }) => void) => Promise<string | undefined>): void;
   send(channelId: string, text: string): Promise<void>;
   /** Deliver a proactive (host-initiated) message — to `channelId` when given, else to this
    *  platform's configured notification channel. Optional — an adapter without a notify channel
@@ -190,6 +196,10 @@ export interface PluginContext {
   /** Who is driving the current turn (platform sender, resolved Orca account, admin flag) — plugins
    *  that persist per-user state (long-term memory) key it on this. Null outside a prompt turn. */
   currentIdentity(): TurnIdentity | null;
+  /** The persisted brain-session id the current turn runs in (`brain-…`), or undefined outside a
+   *  prompt turn. Lets a plugin bind scheduled work back to the exact conversation it was created
+   *  from (a cron wake-up records it as the job's origin and the reply lands there). */
+  currentSessionId(): string | undefined;
   /** The current turn's resolved working directory (the project the CLI was launched in, a channel's
    *  policy root, the daemon's primary project as fallback) — plugins that persist per-PROJECT state
    *  (e.g. a todo checklist) key on this alongside the identity. Undefined outside a prompt turn. */

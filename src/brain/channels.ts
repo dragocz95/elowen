@@ -7,7 +7,7 @@ import { usageOf, runCompaction } from './events.js';
 import type { ElicitationRegistry } from './elicitation.js';
 import { normalizeCard } from './cards.js';
 import { projectUserTurn } from './persistence.js';
-import { extractText, frameUntrusted } from './messageView.js';
+import { extractText, frameUntrusted, isThinkingOnlyReply, NO_REPLY_NUDGE } from './messageView.js';
 import { channelSessionId } from './sessionId.js';
 import { applyToolVisibility } from './session/capabilities.js';
 import { buildPermissionRuleset } from './toolPermissions.js';
@@ -207,10 +207,15 @@ export class ChannelSessionService {
           : undefined;
         // Build the prompt INSIDE the identity/policy scope so turnContext providers can scope to the
         // channel sender via currentIdentity() (e.g. per-user todos, not one global list across senders).
-        await runWithPolicy(opts.policy, () => {
+        await runWithPolicy(opts.policy, async () => {
           const prompted = memoryBlock + ch.turnContext() + text;
-          return options ? ch.session.prompt(prompted, options) : ch.session.prompt(prompted);
-        }, { identity: opts.identity, elicit, emitCard, toolPolicy: opts.toolPolicy, permissions, model: { provider: ch.providerId, model: ch.model } });
+          await (options ? ch.session.prompt(prompted, options) : ch.session.prompt(prompted));
+          // Thinking-only guard (#115), same as owner chat: a reasoning model that ends a 'stop' turn
+          // with ONLY a thinking block would settle this send with an empty reply (Discord shows
+          // nothing). ONE automatic nudge, never persisted as a user message, no loop.
+          const settled = [...(ch.session.messages as { role?: string }[])].reverse().find((m) => m.role === 'assistant');
+          if (settled && isThinkingOnlyReply(settled)) await ch.session.prompt(NO_REPLY_NUDGE);
+        }, { identity: opts.identity, elicit, emitCard, toolPolicy: opts.toolPolicy, permissions, sessionId, model: { provider: ch.providerId, model: ch.model } });
         // Hand the caller a settled idle (model + context fill) deterministically, AFTER the turn ends.
         // Proactive footers (every cron push builds `model · N %` from this) must not depend on the
         // stream's own idle winning the race against prompt() resolution — otherwise the footer is

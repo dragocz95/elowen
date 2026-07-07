@@ -6,7 +6,7 @@ import type { PluginCapabilities, PluginCommand, PluginContext, PluginControl, P
 import { isBuiltinCommand } from '../brain/slashCommands.js';
 import type { PluginManifest } from './manifest.js';
 import { assertPathAllowed, allowedRoots, defaultCwd, isAllAccess, currentAccess } from './pathGuard.js';
-import { currentIdentity, currentElicitor, currentCardEmitter, currentSubagentEmitter, currentTurnModel, currentWorkDir } from './policyContext.js';
+import { currentIdentity, currentElicitor, currentCardEmitter, currentSubagentEmitter, currentTurnModel, currentWorkDir, currentSessionId } from './policyContext.js';
 import type { AskAnswer } from '../brain/events.js';
 
 /** Recursively collect every string value in a plugin's config slice — the set of provider ids the
@@ -163,6 +163,7 @@ export class PluginRegistry {
       isAdminSession: isAllAccess,
       currentAccess,
       currentIdentity,
+      currentSessionId,
       currentWorkDir,
       // Reads the turn-bound elicitor off the same AsyncLocalStorage as currentIdentity — no dependency
       // to thread through contextFor. Throws outside an interactive turn (worker/cron sessions wire none).

@@ -49,19 +49,24 @@ export function cronFooter(idle) {
   return parts.length ? `-# ${parts.join(' · ')}` : '';
 }
 
-/** Resolve a one-shot spec — "in 20m", "in 2h", "at 18:30" (today, or tomorrow when past) — to an
- *  absolute run time in ms, relative to `now`. Returns null when the spec isn't a one-shot. */
+/** Resolve a one-shot spec — "in 20s", "in 20m", "in 2h", "at 18:30" (today, or tomorrow when past) —
+ *  to an absolute run time in ms, relative to `now`. Returns null when the spec isn't a one-shot. */
 export function parseOneShot(spec, now) {
-  let m = /^in\s+(\d+)\s*(m|h)$/i.exec(spec.trim());
+  let m = /^in\s+(\d+)\s*(s|m|h)$/i.exec(spec.trim());
   if (m) {
-    const ms = Number(m[1]) * (m[2].toLowerCase() === 'h' ? 3_600_000 : 60_000);
-    return ms >= 60_000 ? now + ms : null;
+    const unit = m[2].toLowerCase();
+    const ms = Number(m[1]) * (unit === 'h' ? 3_600_000 : unit === 'm' ? 60_000 : 1_000);
+    // Seconds are allowed from 5 s (the 30 s tick quantizes anyway); minutes/hours keep the 1 min floor.
+    return ms >= (unit === 's' ? 5_000 : 60_000) ? now + ms : null;
   }
   m = /^at\s+([01]?\d|2[0-3]):([0-5]\d)$/i.exec(spec.trim());
   if (m) {
     const at = new Date(now);
     at.setHours(Number(m[1]), Number(m[2]), 0, 0);
-    if (at.getTime() <= now) at.setDate(at.getDate() + 1); // past today → tomorrow
+    // "at 20:31" asked at 20:31:02 means NOW, not tomorrow — a time up to 5 min in the past fires ASAP
+    // (the model often echoes the current wall-clock minute, which has just slipped past).
+    if (at.getTime() <= now && now - at.getTime() <= 300_000) return now + 1_000;
+    if (at.getTime() <= now) at.setDate(at.getDate() + 1); // further past today → tomorrow
     return at.getTime();
   }
   return null;
@@ -152,22 +157,38 @@ class CronAdapter {
       // Capture the turn's idle event (model + context usage) so the proactive push can carry the same
       // runtime footer a streamed reply gets — the handler forwards this onEvent into the brain session.
       let idle = null;
+      // Where the host actually ran the turn (its `session` event). When it matches the job's recorded
+      // origin, the reply already landed in the originating conversation — no Discord echo needed.
+      let deliveredTo = null;
       // Hand the brain the guard's fresh output (if any) so it acts on it directly instead of re-running
       // the collector via a tool — the whole point of the gate is one cheap check, not a check + a re-fetch.
-      const userText = checkOutput
+      let userText = checkOutput
         ? `${job.prompt}\n\n--- Check output (fresh data to act on) ---\n${checkOutput.slice(0, 8000)}`
         : job.prompt;
+      // An origin-bound wake-up replays INTO the user conversation it was scheduled from: frame the
+      // prompt so the model knows this is its own earlier schedule firing, not the user speaking now.
+      // (The channel fallback keeps its wake-up context via access.prompt; this framing reads fine there too.)
+      if (job.originSessionId) userText = `[Scheduled wake-up "${job.name}" fires now — you set it earlier. Do the task and reply now.]\n${userText}`;
       const reply = await this.handler({
         platform: 'cron', userId: 'cron', roleIds: [], channelId: `job-${job.id}`,
+        // A wake-up scheduled from a user conversation carries its origin: the host routes it as a
+        // bound send into that conversation (ownership-verified host-side, channel path as fallback).
+        origin: job.originSessionId && job.originUserId != null ? { sessionId: job.originSessionId, userId: job.originUserId } : undefined,
         access: {
           projectIds: [], admin: true,
           prompt: `This is a scheduled ${job.runAt ? 'wake-up' : 'job'} ("${job.name}"). Do the task and summarize the outcome briefly.`,
           // Optional per-job model — the channel session respawns on it (else the server default runs).
           model: job.model?.provider && job.model?.model ? { provider: job.model.provider, model: job.model.model } : undefined,
         },
-      }, userText, (e) => { if (e?.type === 'idle') idle = e; }).catch((e) => `Error: ${e?.message ?? e}`);
+      }, userText, (e) => {
+        if (e?.type === 'idle') idle = e;
+        if (e?.type === 'session') deliveredTo = e.sessionId;
+      }).catch((e) => `Error: ${e?.message ?? e}`);
       if (job.runAt) this.store.save(this.store.all().filter((j) => j.id !== job.id)); // one-shot: done → gone
       else this.store.patch(job.id, { lastResult: String(reply ?? '').slice(0, 500) });
+      // Origin-bound delivery: the reply already landed (and streamed) in the originating conversation —
+      // the conversation IS the delivery, so skip the proactive Discord echo entirely.
+      if (job.originSessionId && deliveredTo === job.originSessionId) continue;
       // Echo the outcome to the notification channel (Discord) so it reaches the user proactively.
       // A job with nothing to say answers with a quiet marker (isQuietReply) and stays silent.
       const trimmed = String(reply ?? '').trim();
@@ -231,22 +252,30 @@ export function register(ctx) {
 
   ctx.registerTool(defineTool({
     name: 'schedule_wakeup', label: 'Schedule wake-up',
-    description: 'Wake yourself up ONCE after a delay ("in 20m", "in 2h") or at a time ("at 18:30") to run a prompt. The job removes itself after running. Admin only.',
+    description: 'Wake yourself up ONCE after a delay ("in 30s", "in 20m", "in 2h") or at a time ("at 18:30") to run a prompt. The job removes itself after running. Scheduled from a user conversation, the wake-up replies in that same conversation. Admin only.',
     parameters: Type.Object({
       name: Type.String({ description: 'Short human name, e.g. check-deploy' }),
-      when: Type.String({ description: '"in <N>m", "in <N>h" or "at HH:MM"' }),
+      when: Type.String({ description: '"in <N>s", "in <N>m", "in <N>h" or "at HH:MM"' }),
       prompt: Type.String({ description: 'What to do when you wake up' }),
     }),
     execute: async (_id, p) => {
       try {
         adminOnly();
         const runAt = parseOneShot(p.when, Date.now());
-        if (!runAt) return ok('Error: invalid time — use "in 20m", "in 2h" or "at 18:30".');
+        if (!runAt) return ok('Error: invalid time — use "in 30s", "in 20m", "in 2h" or "at 18:30".');
         const jobs = store.all();
         const id = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
-        jobs.push({ id, name: p.name, schedule: p.when, prompt: p.prompt, runAt: new Date(runAt).toISOString(), createdAt: new Date().toISOString() });
+        // A wake-up scheduled from a USER conversation records its origin: at fire time the host runs
+        // the prompt as a bound send into that conversation, so the reply lands where it was asked for.
+        // Channel/cron-originated schedules (session id `brain-ch-…`/`brain-task-…`, or no session at
+        // all) keep no origin and deliver through the notification channel as before.
+        const sid = ctx.currentSessionId();
+        const uid = ctx.currentIdentity()?.orcaUserId;
+        const origin = sid && uid != null && !sid.startsWith('brain-ch-') && !sid.startsWith('brain-task-')
+          ? { originSessionId: sid, originUserId: uid } : undefined;
+        jobs.push({ id, name: p.name, schedule: p.when, prompt: p.prompt, runAt: new Date(runAt).toISOString(), createdAt: new Date().toISOString(), ...origin });
         store.save(jobs);
-        return ok(`Wake-up "${p.name}" set for ${new Date(runAt).toISOString()} — id ${id}.`);
+        return ok(`Wake-up "${p.name}" set for ${new Date(runAt).toISOString()} — id ${id}.${origin ? ' It will reply in this conversation.' : ''}`);
       } catch (e) { return fail(e); }
     },
   }));

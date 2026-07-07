@@ -22,6 +22,12 @@ export interface PlatformOrchestratorDeps {
   /** Admin daemon restart for a platform `/restart` slash. Lazily resolved: the handler is built after
    *  the brain (it needs systemd + the marker path), so this returns undefined until it's wired. */
   restart?: () => ((byUserId: number) => Promise<void>) | undefined;
+  /** BOUND send into a user's OWN stored conversation — origin-carrying messages (a cron wake-up
+   *  scheduled from a user conversation) route here so the reply lands where the schedule was created.
+   *  Resolves with the reply text, or null when the session no longer exists / isn't owned by that
+   *  user — the orchestrator then falls back to the normal channel path. Emits a `session` event
+   *  carrying the origin session id on success, so the caller can tell origin delivery happened. */
+  originSend?: (userId: number, sessionId: string, text: string, onEvent?: (e: { type: string; sessionId?: string }) => void) => Promise<string | null>;
 }
 
 /** THE single expression mapping an inbound conversation to its registry channel key — used by both the
@@ -46,6 +52,14 @@ export class PlatformOrchestrator {
         adapter.listen(async (src, text, onEvent) => {
           const owner = this.d.platformOwner?.();
           if (owner === undefined || !src.access) return undefined; // unmapped sender → stay silent
+          // Origin-bound work (#116): a message replaying a job scheduled FROM a user conversation runs
+          // as a bound send into that conversation — the reply lands + streams + persists where the
+          // schedule was created, not in the job's own channel session. Falls through to the normal
+          // channel path when the origin session vanished or changed hands (originSend returns null).
+          if (src.origin && this.d.originSend) {
+            const reply = await this.d.originSend(src.origin.userId, src.origin.sessionId, text, onEvent);
+            if (reply !== null) return reply;
+          }
           const promptAppend = [
             ...(src.access.prompt ? [src.access.prompt] : []),
             ...(src.channelName ? [this.d.channels.fragmentFor(src, owner)] : []),

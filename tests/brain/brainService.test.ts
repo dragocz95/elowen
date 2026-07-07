@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { BrainService } from '../../src/brain/brainService.js';
 import { currentSubagentEmitter, currentTurnModel, currentWorkDir } from '../../src/plugins/policyContext.js';
 import { personalityText } from '../../src/brain/personality.js';
+import { NO_REPLY_NUDGE } from '../../src/brain/messageView.js';
 import { openDb } from '../../src/store/db.js';
 import { BrainStore } from '../../src/store/brainStore.js';
 import { PluginRegistry } from '../../src/plugins/registry.js';
@@ -203,6 +204,54 @@ describe('BrainService', () => {
     seen.length = 0;
     d.emit({ type: 'agent_end', willRetry: true, messages: [{ role: 'assistant', content: [], stopReason: 'error', errorMessage: '429: overloaded' }] });
     expect(seen.some((e) => e.type === 'error')).toBe(false);
+  });
+
+  it('a thinking-only turn (stop, no text, no tool call) triggers ONE automatic nudge whose reply persists', async () => {
+    const d = fakeDeps();
+    const svc = new BrainService(d as never);
+    await svc.start(1);
+    // First prompt settles with ONLY a thinking block — the user would see nothing (#115).
+    d.session.prompt.mockImplementationOnce(async (t: string) => {
+      const msg = { role: 'assistant', stopReason: 'stop', content: [{ type: 'thinking', thinking: '…I will tell the user' }] };
+      d.session.messages.push({ role: 'user', content: t }, msg as never);
+      d.emit({ type: 'agent_end', willRetry: false, messages: [msg] });
+    });
+    await svc.send(1, 'mluv');
+    expect(d.session.prompt).toHaveBeenCalledTimes(2); // original turn + exactly one nudge
+    expect(d.session.prompt.mock.calls[1]![0]).toBe(NO_REPLY_NUDGE);
+    // The nudge is INVISIBLE in history: no user row carries it; its assistant reply persists normally.
+    const stored = d.store.getMessages('brain-1').map((m) => ({ role: m.role, text: JSON.parse(m.content).content }));
+    expect(stored.filter((m) => m.role === 'user').map((m) => m.text)).toEqual(['mluv']);
+    expect(JSON.stringify(stored)).toContain(`echo:${NO_REPLY_NUDGE}`);
+    // A normal turn never nudges.
+    await svc.send(1, 'normální zpráva');
+    expect(d.session.prompt).toHaveBeenCalledTimes(3);
+  });
+
+  it('a nudge that AGAIN produces nothing just ends — never a second nudge (no loop)', async () => {
+    const d = fakeDeps();
+    const svc = new BrainService(d as never);
+    await svc.start(1);
+    d.session.prompt.mockImplementation(async (t: string) => {
+      const msg = { role: 'assistant', stopReason: 'stop', content: [{ type: 'thinking', thinking: 'hmm' }] };
+      d.session.messages.push({ role: 'user', content: t }, msg as never);
+      d.emit({ type: 'agent_end', willRetry: false, messages: [msg] });
+    });
+    await svc.send(1, 'mluv');
+    expect(d.session.prompt).toHaveBeenCalledTimes(2); // original + ONE nudge, never a third
+  });
+
+  it('an errored/aborted turn is never nudged (those have their own surfacing paths)', async () => {
+    const d = fakeDeps();
+    const svc = new BrainService(d as never);
+    await svc.start(1);
+    d.session.prompt.mockImplementationOnce(async (t: string) => {
+      const msg = { role: 'assistant', stopReason: 'aborted', content: [{ type: 'thinking', thinking: 'hmm' }] };
+      d.session.messages.push({ role: 'user', content: t }, msg as never);
+      d.emit({ type: 'agent_end', willRetry: false, messages: [msg] });
+    });
+    await svc.send(1, 'mluv');
+    expect(d.session.prompt).toHaveBeenCalledTimes(1);
   });
 
   it('send forwards to the PI session, persists the turn, and emits events', async () => {
@@ -715,6 +764,58 @@ describe('BrainService', () => {
       d.session.messages.push({ role: 'user', content: t }, { role: 'assistant', content: [], stopReason: 'error', errorMessage: '400: level "minimal" not supported' } as never);
     });
     await expect(svc.channelSend({ channelId: 'disc-err', ownerUserId: 1, policy }, 'ahoj')).rejects.toThrow(/minimal/);
+  });
+
+  it('channelSend nudges a thinking-only turn once and returns the recovered reply', async () => {
+    const d = fakeDeps();
+    const svc = new BrainService(d as never);
+    const policy = { allowedProjectIds: new Set([1]), allowedPaths: () => [] };
+    d.session.prompt.mockImplementationOnce(async (t: string) => {
+      const msg = { role: 'assistant', stopReason: 'stop', content: [{ type: 'thinking', thinking: 'hmm' }] };
+      d.session.messages.push({ role: 'user', content: t }, msg as never);
+      d.emit({ type: 'agent_end', willRetry: false, messages: [msg] });
+    });
+    const reply = await svc.channelSend({ channelId: 'c-think', ownerUserId: 1, policy }, 'ahoj');
+    expect(d.session.prompt).toHaveBeenCalledTimes(2);
+    expect(d.session.prompt.mock.calls[1]![0]).toBe(NO_REPLY_NUDGE);
+    expect(reply).toBe(`echo:${NO_REPLY_NUDGE}`); // the settled send returns the RECOVERED reply, not ''
+  });
+
+  it('an origin-carrying platform message runs as a bound send into the origin conversation (ownership-checked, channel fallback)', async () => {
+    const d = fakeDeps();
+    const reg = new PluginRegistry();
+    const ctx = reg.contextFor('cron', {}, { info() {}, warn() {}, error() {} });
+    let handler: ((src: unknown, text: string, onEvent?: (e: { type: string; sessionId?: string }) => void) => Promise<string | undefined>) | null = null;
+    ctx.registerPlatform({ name: 'cron', connect: async () => {}, listen: (h) => { handler = h; }, send: async () => {} });
+    (d as unknown as { plugins: unknown }).plugins = new PluginRegistryProvider(async () => reg);
+    (d as unknown as { platformOwner: () => number }).platformOwner = () => 1;
+    const svc = new BrainService(d as never);
+    await svc.start(1); // the origin conversation: brain-1
+    await svc.startPlatforms();
+
+    // 1) Valid origin → the turn lands in brain-1 (persisted there), the reply comes back, the caller
+    //    is told via the `session` event, and NO channel session is spawned.
+    const seen: { type: string; sessionId?: string }[] = [];
+    const reply = await handler!({ platform: 'cron', userId: 'cron', roleIds: [], channelId: 'job-1',
+      origin: { sessionId: 'brain-1', userId: 1 }, access: { admin: true, projectIds: [] } }, 'wake: check deploy', (e) => seen.push(e));
+    expect(reply).toBe('echo:wake: check deploy');
+    expect(seen.some((e) => e.type === 'session' && e.sessionId === 'brain-1')).toBe(true);
+    const stored = d.store.getMessages('brain-1').map((m) => JSON.parse(m.content).content);
+    expect(stored).toContain('wake: check deploy');
+    expect(d.store.getSession('brain-ch-cron-job-1')).toBeUndefined();
+
+    // 2) Ownership mismatch (the recorded user does not own the session) → channel fallback runs.
+    const fb = await handler!({ platform: 'cron', userId: 'cron', roleIds: [], channelId: 'job-1',
+      origin: { sessionId: 'brain-1', userId: 2 }, access: { admin: true, projectIds: [] } }, 'wake again');
+    expect(fb).toBe('echo:wake again');
+    expect(d.store.getSession('brain-ch-cron-job-1')).toBeDefined();
+    expect(d.store.getMessages('brain-1').map((m) => JSON.parse(m.content).content)).not.toContain('wake again');
+
+    // 3) Vanished origin session → channel fallback too.
+    const gone = await handler!({ platform: 'cron', userId: 'cron', roleIds: [], channelId: 'job-1',
+      origin: { sessionId: 'brain-1-vanished', userId: 1 }, access: { admin: true, projectIds: [] } }, 'wake three');
+    expect(gone).toBe('echo:wake three');
+    expect(d.store.getMessages('brain-ch-cron-job-1').map((m) => JSON.parse(m.content).content)).toContain('wake three');
   });
 
   it('channelSend hands onEvent a settled idle (model + usage) so a proactive cron footer always has data', async () => {
