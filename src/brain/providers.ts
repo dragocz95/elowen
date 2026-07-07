@@ -53,6 +53,12 @@ export const DEFAULT_CONTEXT_WINDOW = 200_000;
 function modelEntry(id: string, contextWindow?: number) {
   return {
     id, name: id, reasoning: true, input: ['text', 'image'] as ('text' | 'image')[],
+    // PI's session default thinking level is "minimal", but many OpenAI-compatible backends (e.g.
+    // ollama) only accept low/medium/high — an unmapped "minimal" goes out as
+    // `reasoning_effort: "minimal"`, the endpoint 400s, and the whole turn fails with an EMPTY reply
+    // (the default-settings silent-Discord bug). Map the two levels such endpoints don't know onto
+    // their nearest supported neighbour; off/low/medium/high pass through unchanged.
+    thinkingLevelMap: { minimal: 'low', xhigh: 'high' },
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     contextWindow: contextWindow && contextWindow > 0 ? contextWindow : DEFAULT_CONTEXT_WINDOW, maxTokens: 8_192,
   };

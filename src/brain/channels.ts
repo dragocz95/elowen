@@ -197,9 +197,16 @@ export class ChannelSessionService {
         try { await ch.session.compact(); } catch { /* best-effort */ }
       }
       // The reply = the last assistant message of the settled turn.
-      const msgs = ch.session.messages as { role?: string }[];
+      const msgs = ch.session.messages as { role?: string; stopReason?: string; errorMessage?: string }[];
       const last = [...msgs].reverse().find((m) => m.role === 'assistant');
       const assistantText = last ? extractText(last) : '';
+      // A failed turn must FAIL, not settle silently: PI resolves prompt() even when the provider call
+      // errored (stopReason 'error', empty content) — returning '' here made Discord react ✅ with no
+      // reply and gave the sender nothing (the "minimal reasoning level" 400s hid this for days).
+      // Surface the provider's own message so the platform's error UX (❌ + ⚠️ text) shows the cause.
+      if (last?.stopReason === 'error' && !assistantText.trim()) {
+        throw new Error(last.errorMessage?.trim() || 'the model returned no reply (provider error)');
+      }
       // Post-turn curator for the verified sender: persist durable facts to THEIR account, gated by
       // their autoSave toggle. Fire-and-forget (mirrors owner chat) — never awaited, swallows errors.
       if (opts.writerUserId && this.d.curator && this.d.userSettings?.(opts.writerUserId)?.autoSave !== false) {

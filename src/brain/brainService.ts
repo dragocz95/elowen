@@ -683,6 +683,20 @@ export class BrainService {
         if (maxSteps > 0 && steps > maxSteps) void session.abort().catch(() => { /* already settling */ });
         else for (const l of listeners) l({ type: 'step', step: steps, maxSteps, usage: usageOf(session) });
       }
+      // A turn that settled on a provider error (stopReason 'error', no text) would otherwise wind down
+      // as a bare idle — the web/CLI client shows NOTHING and the failure is invisible (the silent-reply
+      // bug). Surface the provider's message as an error event ahead of the terminal idle.
+      if (raw === 'agent_end') {
+        const msgs = (e as { messages?: { role?: string; stopReason?: string; errorMessage?: string; content?: unknown }[] }).messages ?? [];
+        const last = [...msgs].reverse().find((m) => m.role === 'assistant');
+        const text = Array.isArray(last?.content)
+          ? (last.content as { type?: string; text?: string }[]).filter((b) => b.type === 'text').map((b) => b.text ?? '').join('')
+          : '';
+        if (last?.stopReason === 'error' && !text.trim()) {
+          const message = last.errorMessage?.trim() || 'the model returned no reply (provider error)';
+          for (const l of listeners) l({ type: 'error', message });
+        }
+      }
       const be = toBrainEvent(e);
       if (!be) return;
       if (be.type === 'idle') { be.usage = usageOf(session); be.model = model.id; } // statusline data rides the idle event

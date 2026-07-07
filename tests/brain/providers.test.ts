@@ -23,6 +23,14 @@ describe('brain providers', () => {
     expect(resolveBrainModel(reg, cfg, { provider: 'relay', model: 'kimi' }).id).toBe('kimi');
   });
 
+  it('maps the thinking levels ollama-style backends reject (minimal→low, xhigh→high)', () => {
+    // PI's session default is "minimal"; unmapped it goes out as reasoning_effort:"minimal" and e.g.
+    // ollama 400s ("valid levels: low, medium, high") → the whole turn fails with an empty reply.
+    const reg = buildBrainRegistry(cfg);
+    const m = resolveBrainModel(reg, cfg, { provider: 'relay', model: 'kimi' }) as { thinkingLevelMap?: Record<string, string> };
+    expect(m.thinkingLevelMap).toEqual({ minimal: 'low', xhigh: 'high' });
+  });
+
   it('registers a hand-typed model id on the fly for a custom endpoint', () => {
     const reg = buildBrainRegistry(cfg);
     const m = resolveBrainModel(reg, cfg, { provider: 'relay', model: 'brand/new-model' });

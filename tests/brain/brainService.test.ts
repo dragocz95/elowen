@@ -177,6 +177,22 @@ describe('BrainService', () => {
     expect(seen.some((e) => e.type === 'notice' && e.kind === 'compaction' && e.done)).toBe(true);
   });
 
+  it('surfaces a provider-errored turn (stopReason error, empty content) as an error event before idle', async () => {
+    const d = fakeDeps();
+    const svc = new BrainService(d as never);
+    await svc.start(1);
+    const seen: { type: string; message?: string }[] = [];
+    svc.subscribe(1, (e) => seen.push(e as { type: string }));
+    d.emit({ type: 'agent_end', willRetry: false, messages: [{ role: 'assistant', content: [], stopReason: 'error', errorMessage: '400: level "minimal" not supported' }] });
+    const err = seen.find((e) => e.type === 'error');
+    expect(err?.message).toContain('minimal');
+    expect(seen.some((e) => e.type === 'idle')).toBe(true); // terminal idle still arrives
+    // a NORMAL settled turn must not produce an error event
+    seen.length = 0;
+    d.emit({ type: 'agent_end', willRetry: false, messages: [{ role: 'assistant', content: [{ type: 'text', text: 'fine' }], stopReason: 'stop' }] });
+    expect(seen.some((e) => e.type === 'error')).toBe(false);
+  });
+
   it('send forwards to the PI session, persists the turn, and emits events', async () => {
     const d = fakeDeps();
     const svc = new BrainService(d as never);
@@ -644,6 +660,19 @@ describe('BrainService', () => {
     const roles = d.store.getMessages('brain-ch-disc-42').map((m) => m.role);
     expect(roles).toContain('user');
     expect(roles).toContain('assistant');
+  });
+
+  it('channelSend throws on a provider-errored turn instead of returning an empty reply', async () => {
+    // PI resolves prompt() even when the provider call failed (stopReason 'error', no content). An empty
+    // return here made Discord react ✅ with no message — the failure must surface as an exception so the
+    // platform's error UX (❌ + ⚠️) runs.
+    const d = fakeDeps();
+    const svc = new BrainService(d as never);
+    const policy = { allowedProjectIds: new Set([1]), allowedPaths: () => ['/repo/a'] };
+    d.session.prompt.mockImplementationOnce(async (t: string) => {
+      d.session.messages.push({ role: 'user', content: t }, { role: 'assistant', content: [], stopReason: 'error', errorMessage: '400: level "minimal" not supported' } as never);
+    });
+    await expect(svc.channelSend({ channelId: 'disc-err', ownerUserId: 1, policy }, 'ahoj')).rejects.toThrow(/minimal/);
   });
 
   it('channelSend hands onEvent a settled idle (model + usage) so a proactive cron footer always has data', async () => {
