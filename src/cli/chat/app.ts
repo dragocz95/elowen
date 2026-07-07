@@ -4,11 +4,11 @@ import { TUI, ProcessTerminal, Container, matchesKey, CombinedAutocompleteProvid
 import { initTheme, getMarkdownTheme, getSelectListTheme } from '@earendil-works/pi-coding-agent';
 import { chatThemeItems, color, glyph, isChatThemeName, setChatTheme } from './theme.js';
 import { StatusBar, CardPanel } from './components.js';
-import { ChatEditor, sessionItems, modelItems, parseModelValue, openPicker, openTextInput } from './picker.js';
+import { ChatEditor, sessionItems, modelItems, parseModelValue, openPicker, openTextInput, openInfoModal } from './picker.js';
 import { runAskFlow } from './askFlow.js';
 import { BrainClient, type BrainWorkMode } from './brainClient.js';
 import { fromHistory, pushUser, beginAssistant, reduce, upsertCard, type ChatView } from '../../brain/transcript.js';
-import { commandsFor, type SlashCommandDef } from '../../brain/slashCommands.js';
+import { commandsFor, expandPromptCommand } from '../../brain/slashCommands.js';
 import type { AskQuestion, BrainCard } from '../../brain/events.js';
 import { formatK } from '../ui/text.js';
 import {
@@ -57,7 +57,7 @@ export function viewToPlainText(view: ChatView): string[] {
 
 /** Local slash-command routing: returns the recognized command (with its argument) or null for a
  *  regular chat message. Pure, so the command surface is unit-testable without a TTY. */
-export function parseCommand(text: string): { cmd: 'quit' | 'new' | 'stop' | 'status' | 'restart' | 'sessions' | 'resume' | 'delete' | 'model' | 'think' | 'theme' | 'mcp' | 'skills' | 'tools' | 'goal' | 'subgoal' | 'compact' | 'plan' | 'build' | 'help'; arg?: string } | null {
+export function parseCommand(text: string): { cmd: 'quit' | 'new' | 'stop' | 'status' | 'restart' | 'sessions' | 'resume' | 'delete' | 'model' | 'think' | 'theme' | 'lsp' | 'mcp' | 'skills' | 'tools' | 'goal' | 'subgoal' | 'compact' | 'plan' | 'build' | 'help'; arg?: string } | null {
   const m = /^\/(\w+)(?:\s+(.+))?$/.exec(text.trim());
   if (!m) return null;
   switch (m[1]) {
@@ -72,6 +72,7 @@ export function parseCommand(text: string): { cmd: 'quit' | 'new' | 'stop' | 'st
     case 'model': return { cmd: 'model' };
     case 'think': return { cmd: 'think', arg: m[2] };
     case 'theme': return { cmd: 'theme', arg: m[2] };
+    case 'lsp': return { cmd: 'lsp' };
     case 'mcp': return { cmd: 'mcp' };
     case 'skills': return { cmd: 'skills' };
     case 'tools': return { cmd: 'tools' };
@@ -151,10 +152,6 @@ export interface RunChatOpts {
   client?: BrainClient;
 }
 
-function helpText(commands: SlashCommandDef[]): string {
-  return commands.map((c) => `/${c.name} — ${c.description}`).join('\n');
-}
-
 /** Launch the interactive Orca chat TUI — an opencode-style layout (user blocks with a teal rail,
  *  markdown replies with a metadata line, a bottom status bar) rendered on pi-tui + pi's markdown theme.
  *  Conversations are server-side: /new opens one, /sessions + /resume switch between them. */
@@ -170,6 +167,7 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
   await client.start({ provider: opts.model, session: opts.session, fresh: opts.fresh });
   const boot = await client.status().catch(() => null);
   let modelName = boot?.model || opts.model || '';
+  let conversationTitle = boot?.title ?? '';
   let lineCfg = boot?.statusline ?? null;
   let usage = boot?.usage ?? null;
   let thinkingLevel = boot?.thinkingLevel ?? '';
@@ -187,12 +185,11 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
 
   const refreshMeta = async (): Promise<void> => {
     const st = await client.status().catch(() => null);
-    if (st) { modelName = st.model || modelName; lineCfg = st.statusline; usage = st.usage; thinkingLevel = st.thinkingLevel ?? ''; thinkingLevels = st.thinkingLevels ?? []; cards = st.cards ?? []; }
+    if (st) { modelName = st.model || modelName; conversationTitle = st.title ?? conversationTitle; lineCfg = st.statusline; usage = st.usage; thinkingLevel = st.thinkingLevel ?? ''; thinkingLevels = st.thinkingLevels ?? []; cards = st.cards ?? []; }
   };
   await refreshMeta();
   let commandDefs = await client.commands().catch(() => commandsFor('cli', true));
   if (commandDefs.length === 0) commandDefs = commandsFor('cli', true);
-  const help = helpText(commandDefs);
 
   const term = new ProcessTerminal();
   const tui = new TUI(term);
@@ -302,7 +299,7 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
       }).catch((e: Error) => { notice = color.error(`error: ${e.message}`); render(); });
     };
     openPicker({
-      tui, slot: editorSlot, editor, title: 'Reasoning effort',
+      tui, editor, title: 'Reasoning effort',
       items: thinkingLevels.map((lv) => ({ value: lv, label: lv, description: lv === thinkingLevel ? 'current' : undefined })),
       onPick: (value) => apply(value),
     });
@@ -320,10 +317,49 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
 
   const openThemePicker = (): void => {
     openPicker({
-      tui, slot: editorSlot, editor, title: 'Terminal theme',
+      tui, editor, title: 'Terminal theme',
       items: chatThemeItems(),
       onPick: (value) => { applyTheme(value); },
     });
+  };
+
+  // /help as an interactive modal in the CLI pattern: an arrow-key list of every command; Enter runs the
+  // highlighted one (routed back through the normal submit path), type to filter, esc closes.
+  const openHelpModal = (): void => {
+    openPicker({
+      tui, editor, title: 'Commands',
+      items: commandDefs.map((c) => ({ value: c.name, label: `/${c.name}`, description: c.description })),
+      footer: 'enter run · type to filter · esc close',
+      onPick: (name) => { editor.onSubmit?.(`/${name}`); },
+    });
+  };
+
+  // /status as a read-only modal: model, reasoning, context/usage, project and any active goal at a glance.
+  const openStatusModal = (): void => {
+    void Promise.all([client.status().catch(() => null), client.goal().catch(() => null)]).then(([s, g]) => {
+      const lines: string[] = [];
+      const kv = (k: string, v: string): void => { lines.push(`${color.faint(k.padEnd(12))} ${color.text(v)}`); };
+      if (s?.title) kv('conversation', s.title);
+      kv('model', s?.model || '—');
+      if (s?.thinkingLevel) kv('reasoning', s.thinkingLevel);
+      kv('mode', workMode === 'plan' ? 'Plan' : 'Build');
+      const u = s?.usage;
+      if (u) {
+        if (u.percent != null) kv('context', `${Math.round(u.percent)}%  (${formatK(u.tokens ?? 0)} / ${formatK(u.contextWindow)})`);
+        kv('tokens', `${formatK(u.totalTokens)} total`);
+        kv('cost', `$${u.cost.toFixed(2)}`);
+      }
+      kv('cwd', cwdLabel);
+      if (branchLabel) kv('branch', branchLabel);
+      if (g) {
+        lines.push('');
+        lines.push(color.accent('Goal'));
+        kv('  status', g.status);
+        kv('  turns', `${g.turns_used}/${g.turn_budget}`);
+        if (g.paused_reason) kv('  paused', g.paused_reason);
+      }
+      openInfoModal({ tui, editor, title: 'Session status', lines });
+    }).catch((e: Error) => { notice = color.error(`error: ${e.message}`); render(); });
   };
 
   const openSessionsModal = (): void => {
@@ -333,7 +369,7 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
       const refresh = () => openSessionsModal();
       const confirmDelete = (id: string, title: string, active: boolean): void => {
         openPicker({
-          tui, slot: editorSlot, editor, title: `Delete "${title || '(untitled)'}"?`,
+          tui, editor, title: `Delete "${title || '(untitled)'}"?`,
           items: [
             { value: 'no', label: 'Cancel', description: 'keep the conversation' },
             { value: 'yes', label: 'Delete', description: 'also removes goal state for this session' },
@@ -351,7 +387,7 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
         });
       };
       openPicker({
-        tui, slot: editorSlot, editor, title: 'Conversations', items: sessionItems(list),
+        tui, editor, title: 'Conversations', items: sessionItems(list),
         footer: 'enter resume · ctrl+r rename · ctrl+d delete · esc close',
         onPick: (id) => void switchTo({ session: id }).catch((e: Error) => { notice = color.error(`error: ${e.message}`); render(); }),
         onInput: (data, item, close) => {
@@ -402,14 +438,14 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
             description: `${tool.description ?? ''}${tool.schema ? ' · schema available' : ''}`.trim(),
           })),
         ];
-        openPicker({ tui, slot: editorSlot, editor, title: `MCP ${server.name}`, items: rows, onPick: (v) => {
+        openPicker({ tui, editor, title: `MCP ${server.name}`, items: rows, onPick: (v) => {
           if (v === '__back') refresh();
           else if (v === '__reconnect') reconnect(server.name);
           else { notice = color.dim(`tool: ${v}`); render(); }
         } });
       };
       openPicker({
-        tui, slot: editorSlot, editor, title: 'MCP servers', items,
+        tui, editor, title: 'MCP servers', items,
         footer: 'enter detail · r reconnect · R reconnect failed · esc close',
         onPick: detail,
         onInput: (data, item) => {
@@ -430,9 +466,18 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
     void client.skills().then((skills) => {
       if (skills.length === 0) { notice = color.dim('no skills found'); render(); return; }
       const refresh = () => openSkillsModal();
+      // Push a skill into the CURRENT conversation: instruct the agent to load its full instructions via
+      // the `read_skill` tool (progressive disclosure — only name+description live in the system prompt).
+      // Nothing to load if the skills plugin is off (the skill isn't registered at all then).
+      const loadSkill = (name: string, active: boolean): void => {
+        if (!active) { notice = color.dim('the skills plugin is disabled — enable it in Settings → Plugins first'); render(); return; }
+        notice = color.dim(`loading skill "${name}" into this conversation…`);
+        render();
+        editor.onSubmit?.(`Load the "${name}" skill with the read_skill tool and follow it for the rest of this conversation.`);
+      };
       const confirmDelete = (name: string): void => {
         openPicker({
-          tui, slot: editorSlot, editor, title: `Delete skill "${name}"?`,
+          tui, editor, title: `Delete skill "${name}"?`,
           items: [
             { value: 'no', label: 'Cancel', description: 'keep the skill' },
             { value: 'yes', label: 'Delete', description: 'user skill only' },
@@ -445,29 +490,40 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
         });
       };
       openPicker({
-        tui, slot: editorSlot, editor, title: 'Skills',
+        tui, editor, title: 'Skills',
         items: skills.map((s) => ({ value: s.name, label: s.name, description: `${s.scope ?? s.source}${s.description ? ` · ${s.description}` : ''}` })),
-        footer: 'type filter · enter detail · ctrl+d delete user skill · esc close',
+        footer: 'type filter · enter detail · ctrl+l load · ctrl+d delete · esc close',
         onPick: (name) => {
           const s = skills.find((skill) => skill.name === name);
           if (!s) return;
           openPicker({
-            tui, slot: editorSlot, editor, title: `Skill ${s.name}`,
+            tui, editor, title: `Skill ${s.name}`,
             items: [
               { value: '__back', label: 'Back', description: 'return to skills' },
+              { value: '__load', label: 'Load into conversation', description: s.active ? 'agent reads it now and follows it' : 'enable the skills plugin first' },
               { value: '__delete', label: s.canDelete ? 'Delete' : 'Protected', description: s.canDelete ? 'delete this user-defined skill' : 'bundled/system skill cannot be deleted' },
               { value: '__location', label: 'Location', description: s.location ?? '' },
               { value: '__active', label: 'State', description: s.active ? 'active/loaded' : 'skills plugin disabled' },
             ],
-            onPick: (v) => { if (v === '__back') refresh(); else if (v === '__delete' && s.canDelete) confirmDelete(s.name); },
+            onPick: (v) => {
+              if (v === '__back') refresh();
+              else if (v === '__load') loadSkill(s.name, s.active === true);
+              else if (v === '__delete' && s.canDelete) confirmDelete(s.name);
+            },
           });
         },
-        onInput: (data, item) => {
-          if (!matchesKey(data, 'ctrl+d') || !item) return false;
+        onInput: (data, item, close) => {
+          if (!item) return false;
           const s = skills.find((skill) => skill.name === item.value);
-          if (!s?.canDelete) { notice = color.dim('bundled/system skills are protected'); render(); return true; }
-          confirmDelete(s.name);
-          return true;
+          if (!s) return false;
+          if (matchesKey(data, 'ctrl+l')) { close(); loadSkill(s.name, s.active === true); return true; }
+          if (matchesKey(data, 'ctrl+d')) {
+            if (!s.canDelete) { notice = color.dim('bundled/system skills are protected'); render(); return true; }
+            close();
+            confirmDelete(s.name);
+            return true;
+          }
+          return false;
         },
       });
     }).catch((e: Error) => { notice = color.error(`error: ${e.message}`); render(); });
@@ -478,13 +534,13 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
       if (tools.length === 0) { notice = color.dim('no active plugin tools'); render(); return; }
       const refresh = () => openToolsModal();
       openPicker({
-        tui, slot: editorSlot, editor, title: 'Tools',
+        tui, editor, title: 'Tools',
         items: tools.map((t) => ({ value: t.name, label: t.name, description: `${t.plugin}${t.schema ? ` · ${t.schema}` : ''}` })),
         onPick: (name) => {
           const t = tools.find((tool) => tool.name === name);
           if (!t) { notice = color.dim(name); render(); return; }
           openPicker({
-            tui, slot: editorSlot, editor, title: `Tool ${t.name}`,
+            tui, editor, title: `Tool ${t.name}`,
             items: [
               { value: '__back', label: 'Back', description: 'return to tools' },
               { value: '__plugin', label: 'Plugin', description: t.plugin },
@@ -567,7 +623,12 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
       // ask_user_question parked the turn: drive the picker flow and skip the ChatView reducer (the
       // questions aren't a conversation segment).
       if (e.type === 'ask') { launchAsk(e.id, e.questions); return; }
-      if (e.type === 'idle' && e.usage) usage = e.usage;
+      if (e.type === 'idle') {
+        if (e.usage) usage = e.usage;
+        // A finished turn may have just auto-titled a fresh conversation — pull the new title (and usage)
+        // so the header stops showing "new conversation". Best-effort; a dropped daemon just leaves it.
+        if (!conversationTitle) void refreshMeta().then(render);
+      }
       if (e.type === 'step' && e.usage) usage = e.usage;
       if (e.type === 'card') cards = upsertCard(cards, e.card); // update the persistent panel (not part of the ChatView)
       view = reduce(view, e);
@@ -596,7 +657,7 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
     if (command) {
       switch (command.cmd) {
         case 'quit': quit(); return;
-        case 'help': notice = color.dim(help).split('\n').join('\n'); render(); return;
+        case 'help': openHelpModal(); return;
         case 'new':
           void switchTo({ fresh: true }).catch((e: Error) => { notice = color.error(`error: ${e.message}`); render(); });
           return;
@@ -616,7 +677,7 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
           void client.models().then((models) => {
             if (models.length === 0) { notice = color.dim('no models configured'); render(); return; }
             openPicker({
-              tui, slot: editorSlot, editor, title: 'Switch model', items: modelItems(models, modelName),
+              tui, editor, title: 'Switch model', items: modelItems(models, modelName),
               onPick: (value) => {
                 notice = color.dim('switching model…');
                 render();
@@ -672,7 +733,7 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
           // Deleting is destructive → always a two-step picker: choose the conversation, then confirm.
           const confirmDelete = (id: string, title: string): void => {
             openPicker({
-              tui, slot: editorSlot, editor, title: `Delete "${title || '(untitled)'}"?`,
+              tui, editor, title: `Delete "${title || '(untitled)'}"?`,
               items: [
                 { value: 'no', label: 'Cancel', description: 'keep the conversation' },
                 { value: 'yes', label: 'Delete', description: 'cannot be undone' },
@@ -685,7 +746,7 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
               listed = list.map((s) => ({ id: s.id, title: s.title }));
               if (list.length === 0) { notice = color.dim('no conversations'); render(); return; }
               openPicker({
-                tui, slot: editorSlot, editor, title: 'Delete conversation', items: sessionItems(list),
+                tui, editor, title: 'Delete conversation', items: sessionItems(list),
                 onPick: (id) => confirmDelete(id, list.find((s) => s.id === id)?.title ?? ''),
               });
             }).catch((e: Error) => { notice = color.error(`error: ${e.message}`); render(); });
@@ -697,6 +758,11 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
           confirmDelete(target, listed.find((s) => s.id === target)?.title ?? '');
           return;
         }
+        case 'lsp':
+          void client.command('lsp')
+            .then((r) => { notice = color.dim(r?.message ?? 'toggled LSP'); render(); })
+            .catch((e: Error) => { notice = color.error(`error: ${e.message}`); render(); });
+          return;
         case 'mcp':
           openMcpModal();
           return;
@@ -739,22 +805,9 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
             .catch((e: Error) => { notice = color.error(`error: ${e.message}`); render(); });
           return;
         }
-        case 'status': {
-          void client.status().then((s) => {
-            const parts: string[] = [];
-            if (s?.model) parts.push(`model: ${s.model}`);
-            const u = s?.usage;
-            if (u) {
-              if (u.percent != null) parts.push(`context ${Math.round(u.percent)}% (${formatK(u.tokens ?? 0)}/${formatK(u.contextWindow)})`);
-              parts.push(`Σ ${formatK(u.totalTokens)} tok`);
-              parts.push(`$${u.cost.toFixed(2)}`);
-            }
-            if (s?.thinkingLevel) parts.push(`reasoning: ${s.thinkingLevel}`);
-            notice = color.dim(parts.length ? parts.join('  ·  ') : 'no active session');
-            render();
-          }).catch((e: Error) => { notice = color.error(`error: ${e.message}`); render(); });
+        case 'status':
+          openStatusModal();
           return;
-        }
         case 'restart': {
           notice = color.dim('restarting daemon…');
           render();
@@ -765,18 +818,32 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
         }
       }
     }
+    // A plugin-contributed prompt command (`kind:'prompt'`) that isn't a built-in: expand its template
+    // with the typed arguments and send THAT to the agent, while the transcript shows what the user typed.
+    const pm = /^\/(\S+)(?:\s+([\s\S]+))?$/.exec(trimmed);
+    const promptCmd = pm ? commandDefs.find((c) => c.name === pm[1] && c.kind === 'prompt' && c.prompt) : undefined;
+    if (pm && promptCmd) {
+      const expanded = expandPromptCommand(promptCmd.prompt ?? '', pm[2] ?? '');
+      view = beginAssistant(pushUser(view, trimmed));
+      render();
+      void client.send(expanded, workMode).catch((e: Error) => { view = reduce(view, { type: 'error', message: e.message }); render(); });
+      return;
+    }
     view = beginAssistant(pushUser(view, trimmed));
     render();
     void client.send(trimmed, workMode).catch((e: Error) => { view = reduce(view, { type: 'error', message: e.message }); render(); });
   };
 
-  // Esc while a turn streams aborts it server-side (agent_end → idle winds the spinner down).
-  editor.onEscape = (): void => {
-    if (view.thinking) void client.abort().catch(() => { /* already idle */ });
+  // Esc while a turn streams aborts it server-side (agent_end → idle winds the spinner down). When idle
+  // it returns false so Esc falls through to the base editor instead of being swallowed.
+  editor.onEscape = (): boolean => {
+    if (!view.thinking) return false;
+    void client.abort().catch(() => { /* already idle */ });
+    return true;
   };
 
   const root = new Container();
-  root.addChild(new TopRule());
+  root.addChild(new TopRule(() => conversationTitle));
   root.addChild(new MainColumn(panelReserve, [
     viewport,
     cardPanel,
@@ -848,6 +915,17 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
       tui.requestRender();
       return { consume: true };
     }
+    // Click the Todos header to collapse/expand the checklist. The card panel sits directly below the
+    // viewport in the fixed stack, so its first row is TOP_RULE_ROWS + viewport-height + 1 (1-based).
+    if (click) {
+      const cardTop = TOP_RULE_ROWS + Math.max(8, term.rows - fixedRows()) + 1;
+      const rel = click.y - cardTop;
+      if (rel >= 0 && cardPanel.isHeaderRow(rel)) {
+        cardPanel.toggleCollapsed();
+        tui.requestRender();
+        return { consume: true };
+      }
+    }
     const wheel = mouseWheel(data);
     if (wheel) {
       viewport.scroll(wheel);
@@ -855,18 +933,22 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
       return { consume: true };
     }
     if (matchesKey(data, 'ctrl+c')) { quit(); return { consume: true }; }
-    if (matchesKey(data, 'ctrl+p')) {
+    // Global chat shortcuts only fire while the MAIN editor is focused. Input listeners run before the
+    // focused component, so without this guard ctrl+r/ctrl+p/'/'/shift+tab would hijack an open modal
+    // (a picker, the rename input, the ask-question dock) instead of reaching it.
+    const editing = editor.focused;
+    if (editing && matchesKey(data, 'ctrl+p')) {
       const hidden = !panelHandle?.isHidden();
       panelHandle?.setHidden(hidden);
       resizingPanel = false;
       render();
       return { consume: true };
     }
-    if (matchesKey(data, 'ctrl+r')) {
+    if (editing && matchesKey(data, 'ctrl+r')) {
       openThinkingPicker();
       return { consume: true };
     }
-    if (isModeToggleKey(data)) {
+    if (editing && isModeToggleKey(data)) {
       workMode = workMode === 'plan' ? 'build' : 'plan';
       notice = color.dim(workMode === 'plan'
         ? 'plan mode: Orca will reason through approach, risks and tests before editing'
@@ -874,7 +956,7 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
       render();
       return { consume: true };
     }
-    if (!slashHandle && editor.getText() === '' && data === '/') {
+    if (editing && !slashHandle && editor.getText() === '' && data === '/') {
       openSlash();
       return { consume: true };
     }

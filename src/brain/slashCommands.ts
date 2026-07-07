@@ -9,8 +9,10 @@ export type SlashSurface = 'cli' | 'discord' | 'web';
  *  - `action`: a server-side effect with no chooser (new, stop, compact, restart) — POST /brain/command.
  *  - `info`:   fetch + render data (status, help) — no state change.
  *  - `picker`: opens a surface-local chooser (model, think, and the CLI conversation pickers).
- *  - `mode`:   switches the chat work mode on the local surface; not server-dispatched. */
-type SlashKind = 'action' | 'info' | 'picker' | 'mode';
+ *  - `mode`:   switches the chat work mode on the local surface; not server-dispatched.
+ *  - `prompt`: a plugin-contributed prompt macro — its `prompt` (with `$ARGS`/`$1..$9` substituted) is
+ *              sent to the agent as a user turn. */
+type SlashKind = 'action' | 'info' | 'picker' | 'mode' | 'prompt';
 
 export interface SlashCommandDef {
   name: string;
@@ -21,6 +23,10 @@ export interface SlashCommandDef {
   adminOnly?: boolean;
   /** Which surfaces expose it. Omitted → all three. The CLI conversation pickers are CLI-only. */
   surfaces?: SlashSurface[];
+  /** For `kind:'prompt'` (plugin) commands: the prompt template sent to the agent. */
+  prompt?: string;
+  /** For plugin commands: the owning plugin's name (menu attribution + provenance). */
+  plugin?: string;
 }
 
 /** The canonical command set. Order is the display order in menus. */
@@ -41,6 +47,7 @@ export const SLASH_COMMANDS: readonly SlashCommandDef[] = [
   // native command surface; the web dock has no picker for it yet (would show a dead menu entry).
   { name: 'think', description: 'Set the reasoning effort', kind: 'picker', surfaces: ['cli'] },
   { name: 'theme', description: 'Switch the terminal colour theme', kind: 'picker', surfaces: ['cli'] },
+  { name: 'lsp', description: 'Toggle live language diagnostics (LSP) after edits', kind: 'action', surfaces: ['cli'] },
   { name: 'restart', description: 'Restart the Orca daemon', kind: 'action', adminOnly: true },
   { name: 'help', description: 'Show the available commands', kind: 'info' },
   // CLI-only conversation management (the other surfaces manage conversations through their own UI).
@@ -61,4 +68,39 @@ export function commandsFor(surface: SlashSurface, isAdmin: boolean): SlashComma
 /** Look up one command by name (any surface). */
 export function findCommand(name: string): SlashCommandDef | undefined {
   return SLASH_COMMANDS.find((c) => c.name === name);
+}
+
+/** True when `name` is a built-in command — used to refuse a plugin command that would shadow one. */
+export function isBuiltinCommand(name: string): boolean {
+  return SLASH_COMMANDS.some((c) => c.name === name);
+}
+
+/** A plugin-contributed prompt command as a SlashCommandDef, for merging into a surface's menu. */
+export interface PluginSlashCommand { name: string; description: string; prompt: string; surfaces?: SlashSurface[]; plugin?: string }
+function pluginCommandDef(cmd: PluginSlashCommand): SlashCommandDef {
+  return { name: cmd.name, description: cmd.description, kind: 'prompt', prompt: cmd.prompt, surfaces: cmd.surfaces, plugin: cmd.plugin };
+}
+
+/** The full menu for a surface/user: built-ins first, then plugin prompt commands (surface-scoped,
+ *  built-in names never shadowed). Single source both `/brain/commands` and any test builds from. */
+export function commandsWithPlugins(surface: SlashSurface, isAdmin: boolean, pluginCommands: PluginSlashCommand[]): SlashCommandDef[] {
+  const base = commandsFor(surface, isAdmin);
+  const extra = pluginCommands
+    .filter((c) => (!c.surfaces || c.surfaces.includes(surface)) && !isBuiltinCommand(c.name))
+    .map(pluginCommandDef);
+  return [...base, ...extra];
+}
+
+/** Substitute a prompt command's placeholders with the user's arguments: `$ARGS` → the whole argument
+ *  string, `$1`..`$9` → whitespace-split positionals (missing → ''). If the template references none of
+ *  them and arguments were given, they are appended on a new line so a bare `/cmd some text` still works. */
+export function expandPromptCommand(prompt: string, args: string): string {
+  const trimmed = args.trim();
+  const positionals = trimmed ? trimmed.split(/\s+/) : [];
+  const usesPlaceholders = /\$ARGS\b|\$[1-9]\b/.test(prompt);
+  let out = prompt
+    .replace(/\$ARGS\b/g, trimmed)
+    .replace(/\$([1-9])\b/g, (_, d: string) => positionals[Number(d) - 1] ?? '');
+  if (!usesPlaceholders && trimmed) out = `${out}\n\n${trimmed}`;
+  return out.trim();
 }

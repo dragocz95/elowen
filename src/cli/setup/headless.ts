@@ -1,12 +1,11 @@
 import { createAdmin, isFirstRun, login } from '../setup.js';
 import { PREFERRED_DEFAULT } from '../../brain/providers.js';
-import { orcaExec } from '../../shared/execs.js';
 import { apiJson } from './http.js';
 import { API_KEY_PROVIDERS, OPENROUTER_BASE, RECOMMENDED_EMBEDDING_MODEL } from './constants.js';
 import { deriveSlug, uniqueSlug } from './slug.js';
 import { writeMarker } from './marker.js';
 import { webBaseUrl } from '../installInfo.js';
-import { getBrainProviders, keepProvider } from './steps/shared.js';
+import { getBrainProviders, keepProvider, putEmbeddedExec } from './steps/shared.js';
 import type { BrainProviderType } from '../../store/configStore.js';
 import type { WizardCtx } from './types.js';
 
@@ -15,6 +14,12 @@ import type { WizardCtx } from './types.js';
  *  is E2E-tested, since the modal TUI needs a real TTY). Prints a readiness matrix and exits non-zero on a
  *  hard failure (bad/missing required input), so a caller can branch on it. */
 export async function runHeadlessSetup(base: string, env: NodeJS.ProcessEnv, args: string[]): Promise<void> {
+  // Reject an unknown --memory value loudly (matching how --provider dies), instead of silently coercing
+  // it to 'skip' and leaving memory unconfigured while the run reports success.
+  const rawMemory = flagValue(args, '--memory');
+  if (rawMemory !== undefined && !(MEMORY_MODES as readonly string[]).includes(rawMemory)) {
+    return die(`Unknown --memory "${rawMemory}". Use one of: ${MEMORY_MODES.join(', ')}.`);
+  }
   const o = parseFlags(args, env);
   const ctx: WizardCtx = { base, isTTY: false, debug: o.debug, fetchFn: fetch, answers: {} };
 
@@ -61,7 +66,12 @@ export async function runHeadlessSetup(base: string, env: NodeJS.ProcessEnv, arg
     if (model === null) return die('Could not determine a model — pass --model <id> (or --api-key so /models can be probed).');
 
     const providers = await getBrainProviders(ctx);
-    const id = uniqueId(label, new Set(providers.map((x) => x.id)));
+    // Idempotent: a provider for the same endpoint (type + baseUrl) is UPDATED IN PLACE, not duplicated.
+    // Re-running `orca setup -y --provider …` used to mint openai-2, openai-3… each time (the old
+    // uniqueId + `filter(id !== freshId)` could never match). Reusing its id lets the filter actually
+    // replace it; omitting apiKey on re-save keeps the stored key (config store preserves it).
+    const existing = providers.find((x) => x.type === type && x.baseUrl === baseUrl);
+    const id = existing?.id ?? uniqueSlug(deriveSlug(label), new Set(providers.map((x) => x.id)));
     const entry = { id, label, type, baseUrl, models: model ? [model] : [], ...(o.apiKey ? { apiKey: o.apiKey } : {}) };
     const kept = providers.filter((e) => e.id !== id).map(keepProvider);
     const saved = await apiJson(ctx, 'PUT', '/config', { brain: { providers: [...kept, entry] } });
@@ -71,8 +81,7 @@ export async function runHeadlessSetup(base: string, env: NodeJS.ProcessEnv, arg
     ok('ai', `${label}${model ? ` (${model})` : ''}`);
 
     if (model) {
-      const cur = (await apiJson<{ defaults?: Record<string, unknown> }>(ctx, 'GET', '/config')).data?.defaults ?? {};
-      await apiJson(ctx, 'PUT', '/config', { defaults: { ...cur, exec: orcaExec(id, model) } });
+      await putEmbeddedExec(ctx, id, model);
       ok('tasks', `built-in engine → orca:${id}/${model}`);
     }
     if (aiIsOpenAiKey) await apiJson(ctx, 'PUT', '/config', { autopilot: { providerId: id, ...(model ? { model } : {}) } });
@@ -86,13 +95,25 @@ export async function runHeadlessSetup(base: string, env: NodeJS.ProcessEnv, arg
       r.ok ? ok('memory', `reuse ${aiProviderId} (${o.embeddingModel})`) : warn('memory', `couldn't save embedding config (${r.status})`);
     }
   } else if (o.memory === 'openrouter') {
-    if (!o.memoryKey) warn('memory', 'openrouter needs --memory-key — skipped.');
-    else {
-      const providers = await getBrainProviders(ctx);
-      const kept = providers.filter((e) => e.id !== 'openrouter').map(keepProvider);
-      const saved = await apiJson(ctx, 'PUT', '/config', { brain: { providers: [...kept, { id: 'openrouter', label: 'OpenRouter', type: 'openai', baseUrl: OPENROUTER_BASE, models: [], apiKey: o.memoryKey }] } });
-      const emb = saved.ok ? await apiJson(ctx, 'PUT', '/memory/embedding', { providerId: 'openrouter', model: o.embeddingModel, baseUrl: '' }) : saved;
-      emb.ok ? ok('memory', `openrouter (${o.embeddingModel})`) : warn('memory', `couldn't configure OpenRouter embeddings (${emb.status})`);
+    const providers = await getBrainProviders(ctx);
+    // Reuse a keyed OpenRouter provider if one already exists (e.g. the AI step just configured it) rather
+    // than clobbering it with an empty model list + a possibly-different key. Only create one when there's
+    // none — and never steal an id another provider already holds (uniqueSlug bumps it).
+    const existing = providers.find((x) => x.type === 'openai' && x.baseUrl === OPENROUTER_BASE && x.apiKeySet);
+    let providerId = existing?.id ?? '';
+    if (!providerId) {
+      if (!o.memoryKey) { warn('memory', 'openrouter needs --memory-key (no keyed OpenRouter provider found) — skipped.'); providerId = ''; }
+      else {
+        const id = uniqueSlug('openrouter', new Set(providers.map((x) => x.id)));
+        const kept = providers.map(keepProvider);
+        const saved = await apiJson(ctx, 'PUT', '/config', { brain: { providers: [...kept, { id, label: 'OpenRouter', type: 'openai', baseUrl: OPENROUTER_BASE, models: [], apiKey: o.memoryKey }] } });
+        if (saved.ok) providerId = id;
+        else warn('memory', `couldn't save the OpenRouter provider (${saved.status})`);
+      }
+    }
+    if (providerId) {
+      const emb = await apiJson(ctx, 'PUT', '/memory/embedding', { providerId, model: o.embeddingModel, baseUrl: '' });
+      emb.ok ? ok('memory', `openrouter:${providerId} (${o.embeddingModel})`) : warn('memory', `couldn't configure OpenRouter embeddings (${emb.status})`);
     }
   }
 
@@ -137,21 +158,36 @@ export interface HeadlessOpts {
   skipTest: boolean;
 }
 
+/** The value following `--name`, or undefined. A following token that itself starts with `--` is treated
+ *  as a MISSING value (not the value) — so a forgotten argument (`--admin-password --provider openai`)
+ *  never silently becomes the literal `--provider`, it just reads as absent. */
+export function flagValue(args: string[], name: string): string | undefined {
+  const i = args.indexOf(name);
+  if (i < 0 || i + 1 >= args.length) return undefined;
+  const v = args[i + 1]!;
+  return v.startsWith('--') ? undefined : v;
+}
+
+const MEMORY_MODES = ['reuse', 'openrouter', 'skip'] as const;
+
 export function parseFlags(args: string[], env: NodeJS.ProcessEnv): HeadlessOpts {
-  const val = (name: string): string | undefined => { const i = args.indexOf(name); return i >= 0 && i + 1 < args.length ? args[i + 1] : undefined; };
+  const val = (name: string): string | undefined => flagValue(args, name);
   const has = (name: string): boolean => args.includes(name);
   const memory = (val('--memory') ?? 'skip') as HeadlessOpts['memory'];
   return {
     debug: has('--debug'),
     adminUser: val('--admin-user') ?? env.ORCA_ADMIN_USER ?? 'admin',
     adminPassword: val('--admin-password') ?? env.ORCA_ADMIN_PASSWORD,
-    project: has('--no-project') ? undefined : (val('--project') ?? process.cwd()),
+    // Project registration is opt-in: only when `--project <path>` is passed. It used to default to
+    // process.cwd(), which registered a random directory (or hard-failed a bare `orca setup -y` on an
+    // already-set-up box) that nobody asked for.
+    project: has('--no-project') ? undefined : val('--project'),
     projectSlug: val('--project-slug'),
     provider: val('--provider'),
     apiKey: val('--api-key') ?? env.ORCA_API_KEY,
     baseUrl: val('--base-url'),
     model: val('--model'),
-    memory: (['reuse', 'openrouter', 'skip'] as const).includes(memory) ? memory : 'skip',
+    memory: (MEMORY_MODES as readonly string[]).includes(memory) ? memory : 'skip',
     memoryKey: val('--memory-key') ?? env.ORCA_OPENROUTER_KEY,
     embeddingModel: val('--embedding-model') ?? RECOMMENDED_EMBEDDING_MODEL,
     skipTest: has('--skip-test'),
@@ -168,7 +204,9 @@ export async function resolveModel(ctx: WizardCtx, type: BrainProviderType, base
     const probe = await apiJson<{ models?: string[] }>(ctx, 'POST', '/brain/providers/probe', { baseUrl, apiKey });
     return pickChatModel(probe.data?.models ?? []); // null when the endpoint returned nothing usable
   }
-  return null; // openai without a key and without --model
+  // openai without a key and without --model: save the endpoint KEYLESS (empty model list), matching the
+  // interactive wizard's "connect later" behaviour, rather than hard-failing.
+  return '';
 }
 
 /** Model families that are NOT chat/completions — never auto-pick these for the default chat model. */
@@ -180,10 +218,6 @@ const NON_CHAT_MODEL = /embed|whisper|tts|audio|speech|transcri|dall-?e|image|vi
 function pickChatModel(models: string[]): string | null {
   if (!models.length) return null;
   return models.find((m) => !NON_CHAT_MODEL.test(m)) ?? models[0] ?? null;
-}
-
-function uniqueId(label: string, taken: Set<string>): string {
-  return uniqueSlug(deriveSlug(label), taken);
 }
 
 function ok(step: string, detail: string): void { console.log(`  [ok] ${step}: ${detail}`); }

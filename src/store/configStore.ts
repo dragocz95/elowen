@@ -203,6 +203,13 @@ interface Stored {
   categorization: CategorizationBlock;
 }
 
+/** The plugins block for a settings row that predates the plugin system (or whose plugins block is
+ *  malformed): NO plugins enabled. This is a DELIBERATE asymmetry with `defaultStored()`, which enables
+ *  `DEFAULT_CONFIG.plugins.enabled` for FRESH installs — an existing install must never have new default
+ *  plugins silently turned on by an upgrade. Do NOT "reconcile" this to DEFAULT_CONFIG.plugins.enabled.
+ *  A fresh object each call so a caller can never mutate a shared default. */
+const legacyEmptyPlugins = (): Stored['plugins'] => ({ enabled: [], removed: [], config: {} });
+
 const defaultStored = (): Stored => ({
   allowedExecs: [...KNOWN_EXECS],
   customModels: [],
@@ -272,6 +279,8 @@ export class ConfigStore {
         webPush: (p.webPush && typeof p.webPush.publicKey === 'string' && p.webPush.publicKey.length > 0
           && typeof p.webPush.privateKey === 'string' && p.webPush.privateKey.length > 0)
           ? { publicKey: p.webPush.publicKey, privateKey: p.webPush.privateKey } : null,
+        // Existing row: honour its explicit enabled/removed lists (empty when malformed — the legacy
+        // "no plugins" decision, never the fresh-install defaults). Absent block → legacyEmptyPlugins().
         plugins: (p.plugins && typeof p.plugins === 'object' && !Array.isArray(p.plugins))
           ? {
               enabled: Array.isArray(p.plugins.enabled) ? p.plugins.enabled : [],
@@ -279,7 +288,7 @@ export class ConfigStore {
               config: (p.plugins.config && typeof p.plugins.config === 'object' && !Array.isArray(p.plugins.config))
                 ? (p.plugins.config as Record<string, Record<string, unknown>>) : {},
             }
-          : { enabled: [], removed: [], config: {} },
+          : legacyEmptyPlugins(),
         brain: {
           providers: sanitizeBrainProviders(p.brain?.providers),
           agentName: typeof p.brain?.agentName === 'string' && p.brain.agentName.trim() ? p.brain.agentName.trim().slice(0, 40) : 'Orca',

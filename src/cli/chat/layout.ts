@@ -1,10 +1,11 @@
 import { Markdown, matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi } from '@earendil-works/pi-tui';
 import type { Component, MarkdownTheme, TUI } from '@earendil-works/pi-tui';
 import { framedDiffBlock, toolOutputBlock, UserBlock } from './components.js';
-import { ansi, chatTheme, color } from './theme.js';
+import { ansi, chatTheme, color, glyph } from './theme.js';
 import type { BrainUsageView } from './brainClient.js';
 import type { ChatView } from '../../brain/transcript.js';
 import { formatK, padAnsi } from '../ui/text.js';
+import { printableInput } from '../ui/prompts.js';
 
 export const TOP_RULE_ROWS = 1;
 export const PANEL_GUTTER_COLUMNS = 3;
@@ -62,9 +63,15 @@ interface TranscriptRow {
 }
 
 export class TopRule implements Component {
+  /** `getTitle` supplies the active conversation's name; falls back to the brand when it's still empty
+   *  (a brand-new, not-yet-titled chat). Kept as a getter so the rule re-renders when the title lands. */
+  constructor(private readonly getTitle: () => string = () => '') {}
   invalidate(): void { /* stateless */ }
   render(width: number): string[] {
-    const label = ` ${color.accent('Orca Chat')} ${color.faint('dev session')} `;
+    const title = this.getTitle().trim();
+    const label = title
+      ? ` ${color.accent(glyph.whale)} ${color.text(truncateToWidth(title, Math.max(8, width - 12), '…'))} `
+      : ` ${color.accent('Orca Chat')} ${color.faint('new conversation')} `;
     return [`${label}${color.accent('─'.repeat(Math.max(0, width - visibleWidth(label))))}`];
   }
 }
@@ -218,7 +225,9 @@ export class ChatViewport implements Component {
                 for (let i = before + 1; i <= rows.length; i++) rows[i - 1] = { ...rows[i - 1]!, kind: 'expandable', key: keyBase };
               }
             } else if (!item.diff) {
-              add(`  ${color.success('●')} ${color.dim(toolTitle(item.name, item.detail))}`);
+              // A shell/console tool that finished silently still shows its command on its own line.
+              if (item.command) add(`  ${color.faint('$')} ${color.text(truncateToWidth(item.command, Math.max(12, width - 10), '…'))} ${color.faint('· done')}`);
+              else add(`  ${color.success('●')} ${color.dim(toolTitle(item.name, item.detail))}`);
             }
           }
         } else if (seg.kind === 'reasoning') {
@@ -426,8 +435,10 @@ export class SlashOverlay implements Component {
       this.tui.requestRender();
       return;
     }
-    if (data.length === 1 && data >= ' ') {
-      this.filter += data === '/' ? '' : data;
+    const printable = printableInput(data);
+    if (printable) {
+      // Command names never contain '/', so a leading (or pasted) slash is dropped rather than filtering.
+      this.filter += printable.replace(/\//g, '');
       this.selectedIndex = 0;
       this.tui.requestRender();
     }

@@ -7,7 +7,7 @@ import { brainConfigFromOrca } from '../../brain/config.js';
 import { listBrainModels, fetchOpenAiModels } from '../../brain/models.js';
 import { orcaExec, isExecAllowedForUser } from '../../shared/execs.js';
 import type { BrainEvent } from '../../brain/events.js';
-import { commandsFor, findCommand, type SlashSurface } from '../../brain/slashCommands.js';
+import { commandsWithPlugins, findCommand, type SlashSurface } from '../../brain/slashCommands.js';
 import type { OrcaApp, RouteContext } from '../context.js';
 
 /** Per-user embedded brain (the new advisor engine): status / start / send / live event stream.
@@ -200,11 +200,17 @@ export function registerBrainRoutes(app: OrcaApp, ctx: RouteContext): void {
   // The published slash-command catalog for one surface + user — the SINGLE source of truth
   // (src/brain/slashCommands.ts). Every chat client renders its menu / registers its commands from this,
   // so a new command is added in one place and appears in CLI, Discord and the web dock at once.
-  app.get('/brain/commands', c => {
+  app.get('/brain/commands', async c => {
     if (forbidden(c)) return c.json({ error: 'forbidden' }, 403);
     const q = c.req.query('surface');
     const surface: SlashSurface = q === 'cli' || q === 'discord' ? q : 'web';
-    return c.json({ commands: commandsFor(surface, !!c.get('user').is_admin) });
+    // Built-ins + any plugin-contributed prompt commands from the live registry (surface-scoped; a plugin
+    // can never shadow a built-in — enforced both at registration and in commandsWithPlugins).
+    const registry = await d.plugins?.get().catch(() => null);
+    const pluginCommands = registry
+      ? [...registry.commands.values()].map((cmd) => ({ ...cmd, plugin: registry.commandOwner.get(cmd.name) }))
+      : [];
+    return c.json({ commands: commandsWithPlugins(surface, !!c.get('user').is_admin, pluginCommands) });
   });
 
   // Execute a server-side (`action`) slash command through ONE dispatch path for every surface. Pickers
@@ -226,6 +232,7 @@ export function registerBrainRoutes(app: OrcaApp, ctx: RouteContext): void {
           if (!d.restartDaemon) return c.json({ error: 'restart is not available on this deployment' }, 501);
           await d.restartDaemon(user.id);
           return c.json({ ok: true, message: 'Restarting the Orca daemon…' });
+        case 'lsp': { const { toggleLsp } = await import('../../brain/tools/lspTools.js'); return c.json({ ok: true, message: toggleLsp().message }); }
         default: return c.json({ error: 'command is not server-dispatchable' }, 400);
       }
     } catch (e) { return c.json({ error: (e as Error).message }, 409); }

@@ -48,4 +48,23 @@ describe('toolOutputView', () => {
     expect(out?.text).toContain('line 12');
     expect(out?.text).not.toContain('line 1\n');
   });
+
+  it('always surfaces a shell command on the first line, even when it exited silently', () => {
+    const out = toolOutputView('run_command', { command: 'mkdir -p build' }, { content: [{ type: 'text', text: '' }], details: { exitCode: 0 } });
+    expect(out).toBeDefined();
+    expect(out?.command).toBe('mkdir -p build');
+    expect(out?.kind).toBe('console');
+    expect(out?.status).toBe('exit 0');
+  });
+
+  it('marks a silent successful shell command as done when no exit code is reported', () => {
+    const out = toolOutputView('bash', { command: 'cd /tmp' }, { content: [{ type: 'text', text: '' }] });
+    expect(out?.command).toBe('cd /tmp');
+    expect(out?.status).toBe('done');
+  });
+
+  it('still hides a non-console tool that produced no useful output', () => {
+    const out = toolOutputView('read_file', { path: 'a.ts' }, { content: [{ type: 'text', text: '' }] });
+    expect(out).toBeUndefined();
+  });
 });

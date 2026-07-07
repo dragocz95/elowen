@@ -2,7 +2,8 @@ import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { ToolDefinition } from '@earendil-works/pi-coding-agent';
-import type { PluginCapabilities, PluginContext, PluginControl, PluginHook, PluginLogger, PluginSkill, PlatformAdapter, ProviderCredentials } from './api.js';
+import type { PluginCapabilities, PluginCommand, PluginContext, PluginControl, PluginHook, PluginLogger, PluginSkill, PlatformAdapter, ProviderCredentials } from './api.js';
+import { isBuiltinCommand } from '../brain/slashCommands.js';
 import type { PluginManifest } from './manifest.js';
 import { assertPathAllowed, allowedRoots, isAllAccess, currentAccess } from './pathGuard.js';
 import { currentIdentity, currentElicitor, currentCardEmitter } from './policyContext.js';
@@ -30,6 +31,9 @@ export class PluginRegistry {
   readonly turnContexts: (() => string)[] = [];
   readonly platforms: PlatformAdapter[] = [];
   readonly controls = new Map<string, PluginControl>();
+  /** Plugin-contributed chat slash commands (prompt macros), keyed by command name (unique). */
+  readonly commands = new Map<string, PluginCommand>();
+  readonly commandOwner = new Map<string, string>();
   // Per-contribution ownership for the flat lists above — index-aligned with their sibling array, so
   // `skills[i]` was registered by `skillOwners[i]`. Tools use the `toolOwner` Map instead (tool names
   // are unique and drive per-role filtering); these lists allow duplicates (two plugins can register the
@@ -58,6 +62,8 @@ export class PluginRegistry {
     this.turnContexts.push(...other.turnContexts);
     this.platforms.push(...other.platforms);
     for (const [k, v] of other.controls) this.controls.set(k, v);
+    for (const [k, v] of other.commands) this.commands.set(k, v);
+    for (const [k, v] of other.commandOwner) this.commandOwner.set(k, v);
     this.skillOwners.push(...other.skillOwners);
     this.promptFragmentOwners.push(...other.promptFragmentOwners);
     this.hookOwners.push(...other.hookOwners);
@@ -113,8 +119,22 @@ export class PluginRegistry {
       registerControl: (key, control) => {
         const clean = key.trim();
         if (!clean) { scoped.warn('registerControl refused: empty name'); return; }
+        // Last-writer-wins would let a second plugin silently hijack a control name the admin routes drive
+        // (e.g. 'mcp') — warn so the collision is visible instead of a mysterious behavior swap.
+        const prior = this.controlOwner.get(clean);
+        if (prior && prior !== name) scoped.warn(`registerControl: "${clean}" already registered by "${prior}" — overriding`);
         this.controls.set(clean, control);
         this.controlOwner.set(clean, name);
+      },
+      registerCommand: (command) => {
+        const clean = command.name?.trim() ?? '';
+        if (!/^[a-z0-9][a-z0-9-]{1,31}$/.test(clean)) { scoped.warn(`registerCommand refused: "${command.name}" is not kebab-case (a-z, 0-9, dashes)`); return; }
+        if (isBuiltinCommand(clean)) { scoped.warn(`registerCommand refused: "${clean}" shadows a built-in command`); return; }
+        const prior = this.commandOwner.get(clean);
+        if (prior && prior !== name) { scoped.warn(`registerCommand refused: "${clean}" already registered by "${prior}"`); return; }
+        if (typeof command.prompt !== 'string' || !command.prompt.trim()) { scoped.warn(`registerCommand refused: "${clean}" has an empty prompt`); return; }
+        this.commands.set(clean, { name: clean, description: command.description ?? '', prompt: command.prompt, surfaces: command.surfaces });
+        this.commandOwner.set(clean, name);
       },
       registerSystemPromptFragment: (f) => { this.promptFragments.push(f); this.promptFragmentOwners.push(name); },
       registerHook: (h) => { this.hooks.push(h); this.hookOwners.push(name); },

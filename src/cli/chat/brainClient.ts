@@ -13,7 +13,7 @@ export interface BrainClientOpts { base: string; token: string; fetchImpl?: type
 interface StatuslineConfig { showModel?: boolean; showContext?: boolean; showTokens?: boolean; showCost?: boolean }
 export interface BrainUsageView { tokens: number | null; contextWindow: number; percent: number | null; totalTokens: number; cost: number }
 export type BrainWorkMode = 'build' | 'plan';
-export interface BrainStatus { running: boolean; sessionId: string | null; model: string; usage: BrainUsageView | null; statusline: StatuslineConfig | null; thinkingLevel?: string; thinkingLevels?: string[]; pendingAsk?: { id: string; questions: AskQuestion[] } | null; cards?: BrainCard[] }
+export interface BrainStatus { running: boolean; sessionId: string | null; title?: string; model: string; usage: BrainUsageView | null; statusline: StatuslineConfig | null; thinkingLevel?: string; thinkingLevels?: string[]; pendingAsk?: { id: string; questions: AskQuestion[] } | null; cards?: BrainCard[] }
 export interface McpServerView { name: string; transport: string; status: 'connected' | 'connecting' | 'disconnected' | 'error' | 'disabled'; toolCount: number; tools: { name: string; title?: string; description?: string; schema?: unknown }[]; lastError: string | null; reconnecting?: boolean }
 export interface SkillView { name: string; description: string; source: 'bundled' | 'user'; scope?: string; location?: string; active?: boolean; canDelete?: boolean; missingRequirement?: string }
 export interface GoalView { session_id: string; user_id: number; status: 'active' | 'draft' | 'paused' | 'done'; goal: string; draft: string; subgoals: string; turns_used: number; turn_budget: number; last_verdict: string; last_evidence: string; paused_reason: string }
@@ -100,8 +100,8 @@ export class BrainClient {
   /** Run a server-side (`action`) slash command through the shared dispatcher (`/stop`, `/new`,
    *  `/compact`, `/restart`). Returns the human-readable result message when the server sends one. */
   async command(name: string): Promise<{ message?: string } | null> {
+    // `post()` already throws (with the server's message) on any non-OK status.
     const res = await this.post('/brain/command', { name });
-    if (!res.ok) throw new Error(((await res.json().catch(() => ({}))) as { error?: string }).error ?? `command failed (${res.status})`);
     return (await res.json().catch(() => null)) as { message?: string } | null;
   }
 
@@ -137,6 +137,8 @@ export class BrainClient {
   async status(): Promise<BrainStatus> {
     const res = await this.f(`${this.o.base}/brain/status`, { headers: this.headers() });
     if (res.status === 401) throw new Unauthorized();
+    // Match every sibling method: a daemon error must throw, not get parsed as a garbage BrainStatus.
+    if (!res.ok) throw new Error(`orca brain ${res.status} on /brain/status`);
     return (await res.json()) as BrainStatus;
   }
 

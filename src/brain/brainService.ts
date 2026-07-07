@@ -195,6 +195,20 @@ export class BrainService {
     this.goalTimers.delete(sessionId);
   }
 
+  /** Reconcile a goal whose row says `active` but has NO live continuation timer — a zombie. The timer is
+   *  in-memory only, so it's gone after a daemon restart (leaving the row falsely "active") or after the
+   *  user switched away (which cancels it). Rather than let the DB claim an autonomous goal is running
+   *  while nothing is, pause it with a reason so it's honest and the user can `/goal resume`. Autonomous
+   *  work never silently resumes on its own (matches the "escalation = wait, nothing self-starts" rule);
+   *  a healthy goal (timer present, or mid-continuation kickoff) is left untouched. */
+  private reconcileGoal(sessionId: string, reason: string): void {
+    if (this.goalTimers.has(sessionId)) return;
+    const row = this.d.store.getGoal(sessionId);
+    if (row?.status === 'active') {
+      this.d.store.updateGoal(sessionId, { status: 'paused', last_verdict: 'interrupted', paused_reason: reason });
+    }
+  }
+
   private scheduleGoalContinuation(userId: number, sessionId: string, mode: 'build' | 'plan', delay: number): void {
     this.cancelGoalContinuation(sessionId);
     const timer = setTimeout(() => {
@@ -395,12 +409,16 @@ export class BrainService {
     return { thinkingLevel: (sess.thinkingLevel as string) ?? level };
   }
 
-  status(userId: number): { running: boolean; sessionId: string | null; model: string; usage: BrainUsage | null; thinkingLevel: string; thinkingLevels: string[]; pendingAsk: { id: string; questions: AskQuestion[] } | null; cards: BrainCard[] } {
+  status(userId: number): { running: boolean; sessionId: string | null; title: string; model: string; usage: BrainUsage | null; thinkingLevel: string; thinkingLevels: string[]; pendingAsk: { id: string; questions: AskQuestion[] } | null; cards: BrainCard[] } {
     const b = this.activeLive(userId);
     const sess = b?.session as { thinkingLevel?: string; supportsThinking?: () => boolean; getAvailableThinkingLevels?: () => string[] } | undefined;
     const supports = sess?.supportsThinking?.() ?? false;
+    // The active conversation's title (from the store, so it's present even before a live session exists)
+    // — drives the CLI header and any client that wants to name the current chat.
+    const activeId = b?.sessionId ?? this.activeSessionId(userId);
+    const title = (activeId && this.d.store.getSession(activeId)?.title) || '';
     return {
-      running: !!b, sessionId: b?.sessionId ?? null, model: b?.model ?? '', usage: b ? usageOf(b.session) : null,
+      running: !!b, sessionId: b?.sessionId ?? null, title, model: b?.model ?? '', usage: b ? usageOf(b.session) : null,
       thinkingLevel: (sess?.thinkingLevel as string) ?? b?.thinkingLevel ?? '',
       thinkingLevels: supports ? (sess?.getAvailableThinkingLevels?.() ?? []) : [],
       // A question parked for the active conversation, so a client reconnecting mid-question (refresh, SSE
@@ -445,6 +463,9 @@ export class BrainService {
     if (!goal) throw new Error('goal cannot be empty');
     await this.start(userId);
     const sessionId = this.activeSessionId(userId);
+    // Drop any continuation still scheduled for a PREVIOUS goal on this session — its status==='active'
+    // guard would otherwise let it fire against the new goal and queue a duplicate continuation turn.
+    this.cancelGoalContinuation(sessionId);
     const draft = opts?.draft ? goalDraft(goal) : '';
     const row = this.d.store.upsertGoal({
       sessionId, userId, goal, draft,
@@ -472,7 +493,15 @@ export class BrainService {
     if (!row || row.user_id !== userId) return null;
     if (action === 'clear') { this.cancelGoalContinuation(sessionId); this.d.store.clearGoal(sessionId); return null; }
     if (action === 'pause') { this.cancelGoalContinuation(sessionId); return this.d.store.updateGoal(sessionId, { status: 'paused', paused_reason: 'paused by user' }) ?? null; }
-    return this.d.store.updateGoal(sessionId, { status: 'active', paused_reason: '' }) ?? null;
+    // Resume: flipping status alone did nothing — no continuation was ever rescheduled, and a
+    // budget-paused goal (turns_used === turn_budget) would re-pause on the very next judge. Give it a
+    // fresh budget window when it hit the ceiling, then actually kick the autonomous loop back off.
+    const exhausted = row.last_verdict === 'budget_reached' || row.turns_used >= row.turn_budget;
+    const resumed = this.d.store.updateGoal(sessionId, {
+      status: 'active', paused_reason: '', ...(exhausted ? { turns_used: 0 } : {}),
+    }) ?? null;
+    if (resumed) this.scheduleGoalContinuation(userId, sessionId, 'build', 100);
+    return resumed;
   }
 
   subgoal(userId: number, action: 'add' | 'remove' | 'clear', value?: string | number): BrainGoalRow {
@@ -667,8 +696,14 @@ export class BrainService {
     if (prevActive && prevActive !== sessionId) {
       this.elicitation.cancelForSession(prevActive, 'switched conversation');
       this.cancelGoalContinuation(prevActive);
+      // Switching away stops the goal's only driver (the in-memory timer) — so don't leave the row saying
+      // "active" while nothing runs. Pause it; the user resumes with /goal resume when they switch back.
+      this.reconcileGoal(prevActive, 'interrupted (switched conversation)');
     }
     this.sessions.setActive(userId, sessionId);
+    // A goal row marked active with no live timer on the TARGET is a daemon-restart zombie (timers don't
+    // survive a restart). Pause it so it stops claiming to run; the user resumes deliberately.
+    this.reconcileGoal(sessionId, 'interrupted (daemon restart)');
     // Serialized per conversation: two concurrent starts would both spawn and leak one PI session.
     return this.serial(sessionId, async () => {
       if (this.sessions.has(sessionId)) return { sessionId }; // idempotent resume of a live conversation
@@ -731,7 +766,10 @@ export class BrainService {
     // an image into a text-only model would error the running turn). Persist like a normal user turn —
     // agent_end skips re-persisting user messages, so there's no dup.
     if (active.session.isStreaming && !images?.length && !internal?.goalKickoff && !internal?.goalContinue) {
-      this.applyOwnerToolPolicy(userId, active, mode);
+      // NOTE: tool visibility (setActiveToolsByName) only takes effect on the NEXT prompt, so applying the
+      // owner/plan-mode policy here — mid-turn — would either no-op or rebuild the schema under a running
+      // turn. The steered text still carries the plan-mode instruction, and the next full turn applies the
+      // policy the normal way (line ~852). So we deliberately do NOT touch tool visibility on the steer path.
       projectUserTurn(this.d.store, active.sessionId, text);
       await active.session.steer(modeInstruction + text);
       return;
@@ -862,7 +900,6 @@ export class BrainService {
   private afterTurnGoalJudge(userId: number, sessionId: string, mode: 'build' | 'plan', internal?: { goalKickoff?: boolean; goalContinue?: boolean }): void {
     const row = this.d.store.getGoal(sessionId);
     if (!row || row.user_id !== userId || row.status !== 'active') return;
-    const pendingAsk = this.elicitation.pendingForSession(sessionId);
     const turns = row.turns_used + 1;
     const assistantText = lastAssistantText(this.d.store, sessionId);
     const verdict = judgeGoalCompletion(assistantText);
@@ -876,15 +913,9 @@ export class BrainService {
       });
       return;
     }
-    if (pendingAsk) {
-      this.d.store.updateGoal(sessionId, {
-        status: 'paused',
-        turns_used: turns,
-        last_verdict: 'waiting_for_user',
-        paused_reason: 'waiting for user answer',
-      });
-      return;
-    }
+    // (There is no `waiting_for_user` pause here: an ask_user_question parks INSIDE session.prompt(), so
+    // by the time this post-turn judge runs the question is always resolved/timed-out — pendingForSession
+    // would be null. A timed-out question feeds "[no answer]" back and the loop continues on budget.)
     if (turns >= row.turn_budget) {
       this.d.store.updateGoal(sessionId, {
         status: 'paused',
@@ -994,28 +1025,20 @@ export class BrainService {
 }
 
 function isPlanModeUnsafeTool(name: string): boolean {
+  // Deny-by-default: anything not proven read-only is treated as unsafe in plan mode. Only an explicit
+  // allow-list and a read-only name prefix open a tool up.
   const safeExact = new Set([
     'ask_user_question',
     'todo_write', 'todo_update',
-    'read_file', 'list_dir',
+    'read_file', 'list_dir', 'file_info', 'git_status', 'lsp_diagnostics',
     'list_processes', 'read_process_output',
     'orca_list_tasks', 'orca_list_missions', 'orca_list_sessions',
     'memory_search', 'memory_list_recent', 'memory_categories',
   ]);
   if (safeExact.has(name)) return false;
 
-  const unsafeExact = new Set([
-    'orca_plan', 'orca_create_task',
-    'run_command', 'write_file', 'edit_file',
-    'kill_process', 'send_message', 'sql_query', 'str_replace', 'set_config',
-  ]);
-  if (unsafeExact.has(name)) return true;
-
   const safeReadPrefix = /^(read|list|find|grep|search|fetch|get|show|inspect|describe)_/i;
   if (safeReadPrefix.test(name)) return false;
-
-  const unsafeWord = /(^|_)(create|write|edit|delete|remove|update|patch|apply|run|exec|execute|shell|bash|command|close|kill|restart|move|copy|mkdir|upload|deploy|merge|commit|push|send|set|replace|query)(_|$)/i;
-  if (unsafeWord.test(name)) return true;
 
   return true;
 }

@@ -1,4 +1,5 @@
 import type { BrainProviderType } from '../../../store/configStore.js';
+import { orcaExec } from '../../../shared/execs.js';
 import { apiJson } from '../http.js';
 import type { WizardCtx } from '../types.js';
 
@@ -15,6 +16,15 @@ export async function getBrainProviders(ctx: WizardCtx): Promise<PublicProvider[
  *  keeps its stored key (never echoing or dropping a secret). */
 export function keepProvider(e: PublicProvider): { id: string; label: string; type: BrainProviderType; baseUrl: string; models: string[] } {
   return { id: e.id, label: e.label, type: e.type, baseUrl: e.baseUrl, models: e.models };
+}
+
+/** Point the default task executor at the embedded (in-process) engine on a provider. PUTs ONLY the
+ *  `exec` field — the config store merges `defaults` per-field, so re-reading and re-sending the whole
+ *  block (as this used to) was both wasted work and a check-then-act race that could revert a concurrent
+ *  edit of autonomy/maxSessions. Single source for the wizard AND headless setup. Returns whether it saved. */
+export async function putEmbeddedExec(ctx: WizardCtx, providerId: string, model: string): Promise<boolean> {
+  const r = await apiJson(ctx, 'PUT', '/config', { defaults: { exec: orcaExec(providerId, model) } });
+  return r.ok;
 }
 
 /** A stack-free, human message for a failed API call or thrown error. Maps common statuses; otherwise

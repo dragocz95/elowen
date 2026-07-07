@@ -82,10 +82,12 @@ describe('cli/setup.runAiStep — reuse-provider wiring', () => {
     expect(result).toEqual({ status: 'done' });
     expect(ctx.answers.ai).toEqual({ status: 'done', summary: 'Relay (m1)', providerId: 'relay', providerType: 'openai', model: 'm1', hasKey: true });
 
-    // autopilot relay wiring (openai + key) + the embedded task exec both PUT /config
+    // autopilot relay wiring (openai + key) + the embedded task exec both PUT /config. The exec PUT sends
+    // ONLY { defaults: { exec } } — the config store merges defaults per-field, so autonomy/maxSessions are
+    // preserved without a read-then-write race.
     const puts = calls.filter((c) => c.method === 'PUT' && c.path === '/config');
     expect(puts).toContainEqual({ method: 'PUT', path: '/config', body: { autopilot: { providerId: 'relay', model: 'm1' } } });
-    expect(puts).toContainEqual({ method: 'PUT', path: '/config', body: { defaults: { exec: 'orca:relay/m1', autonomy: 'L3', maxSessions: 1 } } });
+    expect(puts).toContainEqual({ method: 'PUT', path: '/config', body: { defaults: { exec: 'orca:relay/m1' } } });
 
     // the smoke test ran against the just-embedded provider/model
     const smoke = calls.find((c) => c.method === 'POST' && c.path === '/brain/test');
@@ -109,7 +111,7 @@ describe('cli/setup.runAiStep — reuse-provider wiring', () => {
 
     expect(result).toEqual({ status: 'done' }); // "keep anyway" still completes the step
     const defaultsPut = calls.find((c) => c.method === 'PUT' && c.path === '/config' && (c.body as { defaults?: unknown }).defaults);
-    expect(defaultsPut?.body).toEqual({ defaults: { exec: 'orca:relay/m1', autonomy: 'L3', maxSessions: 1 } });
+    expect(defaultsPut?.body).toEqual({ defaults: { exec: 'orca:relay/m1' } });
     expect(calls.filter((c) => c.method === 'POST' && c.path === '/brain/test')).toHaveLength(1); // no retry loop taken
   });
 });

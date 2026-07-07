@@ -1,0 +1,25 @@
+{
+  "name": "dev-commands",
+  "version": "0.1.0",
+  "apiVersion": "1",
+  "description": "Curated developer slash-commands for the chat surfaces — /commit, /review, /test, /explain, /pr, /docs, /refactor. Each is a reusable prompt macro (opencode-style custom command): type it (optionally with an argument) and the agent runs the workflow. Opt-in; pick which to enable below.",
+  "entry": "index.mjs",
+  "provides": {},
+  "configSchema": [
+    {
+      "key": "enabled",
+      "label": "Enabled commands",
+      "type": "multiSelect",
+      "hint": "Which developer commands to expose. Leave empty to enable them all.",
+      "options": [
+        { "value": "commit", "label": "/commit — stage + write a Conventional Commits message" },
+        { "value": "review", "label": "/review — review the diff for bugs/security/style" },
+        { "value": "test", "label": "/test — run the test suite and fix failures" },
+        { "value": "explain", "label": "/explain — explain how something works here" },
+        { "value": "pr", "label": "/pr — write a pull-request description for this branch" },
+        { "value": "docs", "label": "/docs — write/update documentation" },
+        { "value": "refactor", "label": "/refactor — refactor for clarity, behavior-preserving" }
+      ]
+    }
+  ]
+}

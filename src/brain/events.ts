@@ -1,5 +1,5 @@
 import type { AgentSession, AgentSessionEvent } from '@earendil-works/pi-coding-agent';
-import { toolDetail, toolOutputView } from './messageView.js';
+import { toolCommand, toolDetail, toolOutputView } from './messageView.js';
 import type { ToolOutputView } from './messageView.js';
 
 /** What a channel (web/terminal/Discord) receives from the brain. Stable regardless of the underlying
@@ -13,7 +13,7 @@ export type BrainEvent =
   | { type: 'reasoning'; delta: string }
   /** A tool call starting. `icon` is resolved daemon-side from the core map + plugin manifest `icons`
    *  (single source; clients render it, falling back to a generic glyph when absent). */
-  | { type: 'tool'; name: string; detail?: string; icon?: string; id?: string }
+  | { type: 'tool'; name: string; detail?: string; icon?: string; id?: string; command?: string }
   | { type: 'diff'; diff: string; id?: string }
   | { type: 'tool_output'; output: ToolOutputView; id?: string }
   /** A structured display card a plugin pushed via `ctx.emitCard` — a live panel (CLI above the status
@@ -102,7 +102,7 @@ export interface BrainUsage {
 export function toBrainEvent(e: AgentSessionEvent): BrainEvent | null {
   if (e.type === 'agent_end') return { type: 'idle' };
   const anyE = e as {
-    type: string; toolName?: string; args?: unknown; result?: { details?: { diff?: unknown } };
+    type: string; toolName?: string; args?: unknown; result?: { details?: { diff?: unknown } }; isError?: boolean;
     toolCallId?: string;
     assistantMessageEvent?: { type?: string; delta?: string };
     attempt?: number; maxAttempts?: number; errorMessage?: string; success?: boolean;
@@ -124,7 +124,9 @@ export function toBrainEvent(e: AgentSessionEvent): BrainEvent | null {
   if (anyE.type === 'compaction_end') return { type: 'notice', kind: 'compaction', message: 'context compacted', done: true };
   // Emit the tool name ONCE, when it starts — never the raw streamed output (_update noise).
   if (anyE.type === 'tool_execution_start' && typeof anyE.toolName === 'string') {
-    return { type: 'tool', name: anyE.toolName, detail: toolDetail(anyE.args), id: anyE.toolCallId };
+    // The start event carries the arguments (the end event does not), so the verbatim shell command is
+    // captured HERE and threaded to the output on the matching end event by the transcript reducer.
+    return { type: 'tool', name: anyE.toolName, detail: toolDetail(anyE.args), command: toolCommand(anyE.args), id: anyE.toolCallId };
   }
   // Edits carry a display diff in their result details — that's the one tool output worth showing.
   if (anyE.type === 'tool_execution_end') {
@@ -138,7 +140,9 @@ export function toBrainEvent(e: AgentSessionEvent): BrainEvent | null {
       if (m) return { type: 'image', ref: `/api/brain/images/${m[2]}` };
     }
     if (typeof anyE.toolName === 'string') {
-      const output = toolOutputView(anyE.toolName, anyE.args, anyE.result);
+      // `anyE.args` is absent on the end event; the command is threaded via the reducer instead. The
+      // event-level `isError` flag IS authoritative here, so pass it through for a correct live tone.
+      const output = toolOutputView(anyE.toolName, anyE.args, anyE.result, anyE.isError === true);
       if (output) return { type: 'tool_output', output, id: anyE.toolCallId };
     }
   }

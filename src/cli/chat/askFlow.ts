@@ -173,8 +173,8 @@ export function runAskFlow(o: AskFlowOpts): void {
 
   const askOther = (q: AskQuestion, selected: string[]): void => {
     const input = new ChatEditor(o.tui, { borderColor: color.faint, selectList: getSelectListTheme() }, {});
-    const back = (): void => { askChoice(q, selected); };
-    input.onEscape = back;
+    // Esc in the free-text "Other" input goes back to the choice list (and reports it consumed the key).
+    input.onEscape = (): boolean => { askChoice(q, selected); return true; };
     input.onSubmit = (text: string) => {
       const other = text.trim();
       answers.push({ header: q.header, selected, other: other || undefined });

@@ -1,6 +1,7 @@
 import type { OrcaToolCtx } from './orcaTools.js';
 import { orcaListTasks, orcaCreateTask, orcaPlan, orcaListMissions, orcaListSessions } from './orcaTools.js';
 import { buildMemoryTools } from './memoryTools.js';
+import { buildLspTools } from './lspTools.js';
 
 export type { OrcaToolCtx } from './orcaTools.js';
 export { buildMemoryTools } from './memoryTools.js';
@@ -11,12 +12,14 @@ export { buildMemoryTools } from './memoryTools.js';
 export const BUILTIN_TOOL_ICONS: Record<string, string> = {
   'orca_*': '🐋',
   'memory_*': '🧠',
+  'lsp_*': '🔎',
 };
 
 /** The brain's Orca capability toolset. Every tool wraps callOrcaApi (single source of truth), so a
- *  new REST endpoint needs no changes here beyond adding one more thin wrapper. */
+ *  new REST endpoint needs no changes here beyond adding one more thin wrapper. Bundles the LSP
+ *  diagnostics tool (owner-chat only, like the orca_* control plane). */
 export function buildOrcaTools(ctx: OrcaToolCtx) {
-  return [orcaListTasks(ctx), orcaCreateTask(ctx), orcaPlan(ctx), orcaListMissions(ctx), orcaListSessions(ctx)];
+  return [orcaListTasks(ctx), orcaCreateTask(ctx), orcaPlan(ctx), orcaListMissions(ctx), orcaListSessions(ctx), ...buildLspTools()];
 }
 
 /** Name/label/group for every BUILT-IN (native, non-plugin) brain tool, derived from the real tool

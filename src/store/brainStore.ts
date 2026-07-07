@@ -136,17 +136,23 @@ export class BrainStore {
     }
   }
 
-  /** Delete one conversation and its messages. */
+  /** Delete one conversation and its goal + messages atomically — a crash between the three DELETEs would
+   *  otherwise orphan goal/message rows against a gone session (no FK CASCADE on these tables). */
   deleteSession(id: string): void {
-    this.db.prepare('DELETE FROM brain_goals WHERE session_id = ?').run(id);
-    this.db.prepare('DELETE FROM brain_messages WHERE session_id = ?').run(id);
-    this.db.prepare('DELETE FROM brain_sessions WHERE id = ?').run(id);
+    this.db.transaction(() => {
+      this.db.prepare('DELETE FROM brain_goals WHERE session_id = ?').run(id);
+      this.db.prepare('DELETE FROM brain_messages WHERE session_id = ?').run(id);
+      this.db.prepare('DELETE FROM brain_sessions WHERE id = ?').run(id);
+    })();
   }
 
+  /** Delete every conversation (+ goals + messages) for a user atomically — same orphan-window concern. */
   removeForUser(userId: number): void {
-    this.db.prepare('DELETE FROM brain_goals WHERE user_id = ?').run(userId);
-    this.db.prepare('DELETE FROM brain_messages WHERE session_id IN (SELECT id FROM brain_sessions WHERE user_id = ?)').run(userId);
-    this.db.prepare('DELETE FROM brain_sessions WHERE user_id = ?').run(userId);
+    this.db.transaction(() => {
+      this.db.prepare('DELETE FROM brain_goals WHERE user_id = ?').run(userId);
+      this.db.prepare('DELETE FROM brain_messages WHERE session_id IN (SELECT id FROM brain_sessions WHERE user_id = ?)').run(userId);
+      this.db.prepare('DELETE FROM brain_sessions WHERE user_id = ?').run(userId);
+    })();
   }
 
   upsertGoal(input: { sessionId: string; userId: number; goal: string; status?: BrainGoalRow['status']; draft?: string; turnBudget?: number }): BrainGoalRow {
@@ -180,7 +186,10 @@ export class BrainStore {
   }
 
   updateGoal(sessionId: string, patch: Partial<Pick<BrainGoalRow, 'status' | 'subgoals' | 'turns_used' | 'last_verdict' | 'last_evidence' | 'paused_reason'>>): BrainGoalRow | undefined {
-    const entries = Object.entries(patch).filter(([, v]) => v !== undefined);
+    // Runtime column whitelist — the keys are interpolated into SQL, so never trust the object's shape
+    // (a route could forward a parsed body here); only these columns may be written.
+    const ALLOWED = new Set(['status', 'subgoals', 'turns_used', 'last_verdict', 'last_evidence', 'paused_reason']);
+    const entries = Object.entries(patch).filter(([k, v]) => v !== undefined && ALLOWED.has(k));
     if (entries.length === 0) return this.getGoal(sessionId);
     const sets = entries.map(([k]) => `${k} = @${k}`).join(', ');
     this.db.prepare(`UPDATE brain_goals SET ${sets}, updated_at = datetime('now') WHERE session_id = @session_id`)

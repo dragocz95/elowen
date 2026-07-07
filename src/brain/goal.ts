@@ -33,7 +33,8 @@ export function goalPrompt(row: BrainGoalRow): string {
     row.draft ? `\nDraft contract:\n${row.draft}` : '',
     subgoals.length ? `\nSubgoals:\n${subgoals.map((s, i) => `${i + 1}. ${s.text}`).join('\n')}` : '',
     '',
-    'Work autonomously toward the goal. After each turn, provide concrete evidence for progress. Do not declare completion unless you can point to test output, command output, a diff, an artifact, or another verifiable result.',
+    'Work autonomously toward the goal. After each turn, provide concrete evidence for progress.',
+    'When — and ONLY when — the goal is fully achieved and you can cite concrete evidence, end your message with a line of its own: `GOAL_DONE: <evidence>` (e.g. `GOAL_DONE: all tests pass, build is green`). Never write that line to describe remaining or planned work — it terminates the goal.',
   ].filter(Boolean).join('\n');
 }
 
@@ -44,7 +45,7 @@ export function goalContinuePrompt(row: BrainGoalRow): string {
     `Goal: ${row.goal}`,
     `Budget: turn ${row.turns_used + 1}/${row.turn_budget}`,
     subgoals.length ? `Subgoals:\n${subgoals.map((s, i) => `${i + 1}. ${s.done ? '[x]' : '[ ]'} ${s.text}`).join('\n')}` : '',
-    'If the goal is complete, say so only with concrete evidence. If blocked or unsafe, explain the blocker clearly instead of looping.',
+    'If the goal is fully achieved, end your message with a line of its own: `GOAL_DONE: <evidence>` — only with concrete evidence, and never to describe remaining work. If blocked or unsafe, explain the blocker clearly instead of looping (do not write GOAL_DONE).',
   ].filter(Boolean).join('\n');
 }
 
@@ -55,15 +56,16 @@ export function lastAssistantText(store: BrainStore, sessionId: string): string 
   catch { return ''; }
 }
 
+/** Decide whether a goal turn declared completion. Matches ONLY an explicit, start-of-line `GOAL_DONE:`
+ *  sentinel carrying evidence — never inferred from prose. The old keyword heuristic (done-word +
+ *  evidence-word anywhere) fired on negations and quoted plans ("The goal is not yet complete. I edited
+ *  the config…" → done), silently terminating the autonomous loop mid-work. The prompts instruct the
+ *  model to emit the sentinel only on genuine completion, so requiring it removes the false positives. */
 export function judgeGoalCompletion(text: string): { done: boolean; evidence: string } {
-  const compact = text.replace(/\s+/g, ' ').trim();
-  const doneWords = /\b(done|complete|completed|fixed|resolved|hotovo|dokončeno|vyřešeno)\b/i.test(compact);
-  const evidenceMatch = /(test[s]? (passed|pass|green)|build (passed|succeeded|success)|typecheck (passed|success)|lint (passed|success)|command output|diff|patch|wrote|edited|created|artifact|verified|ověřeno|prošlo)/i.exec(compact);
-  const evidence = evidenceMatch ? truncateEvidence(compact, evidenceMatch.index) : '';
-  return { done: doneWords && !!evidenceMatch, evidence };
-}
-
-function truncateEvidence(text: string, at: number): string {
-  const start = Math.max(0, at - 80);
-  return text.slice(start, Math.min(text.length, at + 180));
+  const m = /^[^\S\r\n]*GOAL_DONE:[^\S\r\n]*(.+)$/im.exec(text);
+  if (!m) return { done: false, evidence: '' };
+  const evidence = (m[1] ?? '').replace(/\s+/g, ' ').trim();
+  // Guard against a model echoing the literal instruction placeholder rather than real evidence.
+  if (!evidence || evidence === '<evidence>') return { done: false, evidence: '' };
+  return { done: true, evidence: evidence.slice(0, 240) };
 }

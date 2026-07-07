@@ -18,7 +18,7 @@ export interface ToolOutputView {
  *  (with a short argument summary and, for edits, the display diff). */
 type BrainSegment =
   | { kind: 'text'; text: string }
-  | { kind: 'tool'; name: string; detail?: string; diff?: string; output?: ToolOutputView };
+  | { kind: 'tool'; name: string; detail?: string; diff?: string; output?: ToolOutputView; command?: string };
 
 /** A stored turn shaped for display (the `GET /brain/messages` payload consumed by channels).
  *  `text` is the flat reply (title derivation, plain clients); `segments` preserve the true order. */
@@ -94,30 +94,50 @@ function expandedOutput(text: string): string {
 
 /** Return a compact, user-useful tool output preview. Most raw tool results stay hidden; command/test
  *  output, browser/search observations, and warnings/errors are useful enough to show in the chat. */
-export function toolOutputView(toolName: string, args: unknown, result: unknown): ToolOutputView | undefined {
+export function toolOutputView(toolName: string, args: unknown, result: unknown, isError?: boolean): ToolOutputView | undefined {
   const r = (result && typeof result === 'object') ? result as { content?: unknown; details?: Record<string, unknown>; status?: unknown; error?: unknown; isError?: unknown } : {};
   if (typeof r.details?.diff === 'string' && r.details.diff.trim()) return undefined;
   const raw = textParts(r.content);
   const errorText = typeof r.error === 'string' ? r.error : '';
   const joined = [raw, errorText].filter(Boolean).join('\n');
   const text = compactOutput(joined);
-  if (!text) return undefined;
-  const exitCode = r.isError === true ? true : (r.details?.exitCode ?? r.details?.code ?? r.status);
-  const tone = outputTone(text, exitCode);
-  if (!shouldShowToolOutput(toolName, text, tone)) return undefined;
   const kind = outputKind(toolName);
-  const command = typeof (args as { command?: unknown } | null)?.command === 'string'
-    ? String((args as { command: string }).command).replace(/\s+/g, ' ').trim()
-    : undefined;
+  const command = toolCommand(args);
+  // A shell/console tool ALWAYS surfaces its command on the first line — even when it exited silently
+  // (mkdir, cd, a passing test with no stdout). Only the command line + a status chip render then; the
+  // (possibly empty) output body follows, with the rest expandable on click. Non-console tools keep the
+  // old gating (most raw results stay hidden unless useful). Live and history both reach this: the live
+  // path passes the command from `tool_execution_start` (the end event carries no args), history passes
+  // the matching assistant tool-call's arguments.
+  const consoleCommand = kind === 'console' && !!command;
+  // `isError` off the PI event is authoritative when present (the persisted result may not repeat it);
+  // fall back to the result object's own flag for the history path.
+  const exitCode = (isError ?? r.isError) === true ? true : (r.details?.exitCode ?? r.details?.code ?? r.status);
+  const tone = outputTone(text, exitCode);
+  if (!consoleCommand) {
+    if (!text) return undefined;
+    if (!shouldShowToolOutput(toolName, text, tone)) return undefined;
+  }
   const status = typeof exitCode === 'number'
     ? `exit ${exitCode}`
     : tone === 'success'
       ? 'ok'
       : tone === 'warning'
         ? 'needs attention'
-        : undefined;
+        : consoleCommand
+          ? 'done'
+          : undefined;
   const fullText = expandedOutput(joined);
-  return { title: outputTitle(toolName, kind), kind, text, ...(fullText !== text ? { fullText } : {}), command, status, tone };
+  return { title: outputTitle(toolName, kind), kind, text, ...(fullText && fullText !== text ? { fullText } : {}), command, status, tone };
+}
+
+/** The verbatim shell command a console tool ran (for the always-on first line), collapsed to one line
+ *  and capped so a pathological one-liner can't blow up the row. Undefined for non-command tools. */
+export function toolCommand(args: unknown): string | undefined {
+  const raw = (args && typeof args === 'object') ? (args as { command?: unknown }).command : undefined;
+  if (typeof raw !== 'string' || !raw.trim()) return undefined;
+  const s = raw.replace(/\s+/g, ' ').trim();
+  return s.length > 400 ? `${s.slice(0, 399)}…` : s;
 }
 
 /** Wrap untrusted content (retrieved memories, plugin-hook context) in a named frame, neutralizing any
@@ -162,18 +182,19 @@ export function extractText(msg: unknown): string {
  *  persisted for rehydration but never shown (edit diffs are lifted off toolResult rows onto their
  *  matching assistant toolCall segment). */
 export function shapeBrainMessages(rows: StoredTurnRow[]): BrainMessageView[] {
-  // Edit diffs live on the toolResult rows (never shown raw) — index them so the matching
-  // assistant toolCall segment can carry its diff.
+  // Edit diffs and raw tool results live on the toolResult rows (never shown raw) — index them by
+  // toolCallId so the matching assistant toolCall segment can lift its diff and build its output view.
+  // The result view is built LATER, from the assistant toolCall's `arguments` (the toolResult row has no
+  // arguments), so a console tool's verbatim command survives into the preview.
   const diffs = new Map<string, string>();
-  const outputs = new Map<string, ToolOutputView>();
+  const results = new Map<string, { toolName?: string; result: unknown; isError?: boolean }>();
   for (const row of rows) {
     if (row.role !== 'toolResult') continue;
     try {
-      const m = JSON.parse(row.content) as { toolCallId?: string; toolName?: string; arguments?: unknown; details?: { diff?: unknown } };
+      const m = JSON.parse(row.content) as { toolCallId?: string; toolName?: string; details?: { diff?: unknown }; isError?: boolean };
       if (!m.toolCallId) continue;
       if (typeof m.details?.diff === 'string' && m.details.diff.trim()) diffs.set(m.toolCallId, m.details.diff);
-      const output = m.toolName ? toolOutputView(m.toolName, m.arguments, m) : undefined;
-      if (output) outputs.set(m.toolCallId, output);
+      results.set(m.toolCallId, { toolName: m.toolName, result: m, isError: m.isError });
     } catch { /* malformed row → no diff */ }
   }
   const views: BrainMessageView[] = [];
@@ -197,7 +218,11 @@ export function shapeBrainMessages(rows: StoredTurnRow[]): BrainMessageView[] {
         const clean = stripInlineReasoning(p.text);
         if (clean.trim()) { text += clean; segments.push({ kind: 'text', text: clean }); }
       } else if (p.type === 'toolCall' && typeof p.name === 'string') {
-        segments.push({ kind: 'tool', name: p.name, detail: toolDetail(p.arguments), diff: p.id ? diffs.get(p.id) : undefined, output: p.id ? outputs.get(p.id) : undefined });
+        // Build the output preview here (not in the toolResult loop) so the toolCall's `arguments` — the
+        // only place the verbatim shell command survives — reaches the console renderer.
+        const res = p.id ? results.get(p.id) : undefined;
+        const output = res ? toolOutputView(p.name, p.arguments, res.result, res.isError) : undefined;
+        segments.push({ kind: 'tool', name: p.name, detail: toolDetail(p.arguments), diff: p.id ? diffs.get(p.id) : undefined, output, command: toolCommand(p.arguments) });
       }
     }
     if (typeof msg.content === 'string') {

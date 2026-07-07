@@ -37,13 +37,25 @@ export class UserBlock implements Component {
  *  multi-line Component; collapses to nothing when there are no pinned cards worth showing. */
 export class CardPanel implements Component {
   private cards: BrainCard[] = [];
+  private collapsed = false;
+  /** Row indices (0-based, within this panel's own output) that are clickable card headers — so the app
+   *  can hit-test a mouse click against them and toggle the checklist open/closed. */
+  private headerRows = new Set<number>();
   invalidate(): void { /* re-rendered on the next frame */ }
   set(cards: BrainCard[]): void { this.cards = cards; }
+  toggleCollapsed(): void { this.collapsed = !this.collapsed; }
+  isHeaderRow(index: number): boolean { return this.headerRows.has(index); }
   render(_width?: number): string[] {
     // Pinned cards only; a checklist whose items are ALL completed collapses (the work is done).
     const visible = this.cards.filter((c) => c.pinned
       && !(c.items && c.items.length > 0 && c.items.every((i) => i.status === 'completed')));
-    return visible.flatMap((c) => cardBlock(c));
+    this.headerRows = new Set();
+    const lines: string[] = [];
+    for (const c of visible) {
+      this.headerRows.add(lines.length); // a card's first row is its clickable header
+      lines.push(...cardBlock(c, 12, this.collapsed));
+    }
+    return lines;
   }
 }
 
@@ -68,9 +80,13 @@ export class StatusBar implements Component {
 /** Render one display card (title + checklist items + freeform body) as fixed-panel rows — the item
  *  glyphs use a compact terminal checklist style. `maxRows` bounds the WHOLE card
  *  (items + body) so a big card can't overrun the fixed bottom stack and wreck the TUI. */
-export function cardBlock(card: BrainCard, maxRows = 12): string[] {
+export function cardBlock(card: BrainCard, maxRows = 12, collapsed = false): string[] {
   const items = card.items ?? [];
-  const lines = [`  ${FAINTC('▾')} ${bold(WHITE(card.title ?? 'Todo'))}`];
+  const done = items.filter((i) => i.status === 'completed').length;
+  const counter = items.length ? FAINTC(`  ${done}/${items.length}`) : '';
+  const header = `  ${FAINTC(collapsed ? '▸' : '▾')} ${bold(WHITE(card.title ?? 'Todos'))}${counter} ${FAINTC('click')}`;
+  if (collapsed) return [header];
+  const lines = [header];
   const bodyLines = card.body ? card.body.split('\n') : [];
   const shownItems = Math.min(items.length, Math.max(0, maxRows - bodyLines.length));
   for (const it of items.slice(0, shownItems)) {
@@ -151,7 +167,7 @@ export function toolOutputBlock(output: ToolOutputView, width: number, expanded 
     if (!raw) { lines.push(''); continue; }
     const toneColor = /\b(error|failed|warning|needs attention|exit\s+[1-9])\b/i.test(raw)
       ? theme.warning
-      : /^✓|passed|success|ok/i.test(raw)
+      : /^(✓|passed|success|ok)\b/i.test(raw)
         ? theme.success
         : theme.muted;
     lines.push(` ${ansi.open(toneColor, raw)}`);

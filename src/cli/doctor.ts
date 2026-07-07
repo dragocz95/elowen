@@ -73,7 +73,11 @@ async function showDoctorModal(body: string, allOk: boolean): Promise<void> {
 /** `orca doctor` — a layperson-readable readiness report: what works, and how to fix what doesn't. Never
  *  hangs a non-interactive caller: without a TTY and no `ORCA_TOKEN`, it prints guidance and exits 0. */
 export async function runDoctor(args: string[], env: NodeJS.ProcessEnv, base: string, version: string): Promise<void> {
-  void args; void version; // no flags/version-gated behavior yet — kept for dispatch-signature parity with runSetup
+  void version; // no version-gated behavior yet — kept for dispatch-signature parity with runSetup
+  if (args.includes('--help') || args.includes('-h')) {
+    console.log('orca doctor — check Orca\'s health (daemon, providers, memory, tasks).\n  In a TTY it prompts for admin credentials; non-interactively set ORCA_TOKEN.');
+    return;
+  }
 
   const isTTY = !!process.stdout.isTTY;
   if (!isTTY && !env.ORCA_TOKEN) {
@@ -81,7 +85,8 @@ export async function runDoctor(args: string[], env: NodeJS.ProcessEnv, base: st
     return;
   }
 
-  try { await fetch(`${base}/health`); }
+  // A daemon that's up but sick (500/502, or a proxy answering for it) must not pass as healthy.
+  try { const r = await fetch(`${base}/health`); if (!r.ok) throw new Error(`health ${r.status}`); }
   catch {
     const message = 'Start Orca first: `orca up`';
     if (isTTY) p.note(message, 'Orca doctor');

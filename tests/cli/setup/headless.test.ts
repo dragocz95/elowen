@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseFlags, resolveModel } from '../../../src/cli/setup/headless.js';
+import { parseFlags, resolveModel, flagValue } from '../../../src/cli/setup/headless.js';
 import { PREFERRED_DEFAULT } from '../../../src/brain/providers.js';
 import { RECOMMENDED_EMBEDDING_MODEL } from '../../../src/cli/setup/constants.js';
 import type { WizardCtx } from '../../../src/cli/setup/types.js';
@@ -12,8 +12,20 @@ describe('cli/setup/headless.parseFlags', () => {
     expect(o.adminUser).toBe('admin');
     expect(o.memory).toBe('skip');
     expect(o.embeddingModel).toBe(RECOMMENDED_EMBEDDING_MODEL);
-    expect(o.project).toBe(process.cwd());
+    expect(o.project).toBeUndefined(); // project registration is opt-in (--project), never a cwd default
     expect(o.skipTest).toBe(false);
+  });
+
+  it('project is opt-in via --project (no cwd default)', () => {
+    expect(parseFlags([], {}).project).toBeUndefined();
+    expect(parseFlags(['--project', '/repo/x'], {}).project).toBe('/repo/x');
+  });
+
+  it('a flag whose value is another flag reads as absent (never eats the next flag)', () => {
+    expect(flagValue(['--admin-password', '--provider', 'openai'], '--admin-password')).toBeUndefined();
+    expect(flagValue(['--admin-password', 'secret'], '--admin-password')).toBe('secret');
+    // …so a forgotten password value doesn't silently become "--provider"
+    expect(parseFlags(['--admin-password', '--provider', 'openai'], {}).adminPassword).toBeUndefined();
   });
 
   it('prefers a flag over the env var, falls back to env otherwise', () => {
@@ -59,7 +71,8 @@ describe('cli/setup/headless.resolveModel', () => {
     expect(await resolveModel(ctxWith(fetchFn), 'openai', 'http://x/v1', 'k', undefined)).toBeNull();
   });
 
-  it('returns null for an openai provider with no key and no explicit model', async () => {
-    expect(await resolveModel(ctxWith(noFetch), 'openai', 'http://x/v1', undefined, undefined)).toBeNull();
+  it('returns "" (keyless save) for an openai provider with no key and no explicit model', async () => {
+    // Matches the interactive wizard's "connect later": save the endpoint keyless rather than hard-failing.
+    expect(await resolveModel(ctxWith(noFetch), 'openai', 'http://x/v1', undefined, undefined)).toBe('');
   });
 });

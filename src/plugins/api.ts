@@ -126,6 +126,22 @@ export interface ProviderCredentials { id: string; label: string; type: string; 
  *  shape stays plugin-specific so core does not need to import plugin modules or duplicate their state. */
 export type PluginControl = Record<string, unknown>;
 
+/** A plugin-contributed chat slash command (a reusable prompt macro, opencode-style). Invoking it sends
+ *  `prompt` to the agent as a normal user turn, with `$ARGS` (everything typed after the command) and
+ *  `$1`..`$9` (whitespace-split positionals) substituted; if `prompt` references none of those and the
+ *  user passed arguments, they are appended. Surfaces render it in their command menu alongside the
+ *  built-ins. This is how a plugin adds a new `/command` to the CLI without touching core. */
+export interface PluginCommand {
+  /** kebab-case, unique across plugins and not shadowing a built-in command. */
+  name: string;
+  /** One-line help shown in the command menu. */
+  description: string;
+  /** The prompt sent to the agent; supports `$ARGS` and `$1`..`$9` substitution. */
+  prompt: string;
+  /** Which surfaces expose it (default: all). */
+  surfaces?: ('cli' | 'discord' | 'web')[];
+}
+
 /** What a plugin's `register(ctx)` receives. Every `register*` call feeds the shared PluginRegistry. */
 export interface PluginContext {
   registerTool(tool: ToolDefinition): void;
@@ -133,6 +149,10 @@ export interface PluginContext {
   /** Register an admin/runtime control surface for this plugin. Unlike tools, controls are called by
    *  daemon routes and operate on the LIVE loaded plugin instance. */
   registerControl(name: string, control: PluginControl): void;
+  /** Contribute a chat slash command (a prompt macro) that shows up in every surface's command menu.
+   *  Refused (and warned) if the name is not kebab-case, shadows a built-in, or collides with another
+   *  plugin's command. */
+  registerCommand(command: PluginCommand): void;
   /** Append a chunk of instructions to the brain's system prompt, after the Orca persona. */
   registerSystemPromptFragment(fragment: string): void;
   registerHook(hook: PluginHook): void;

@@ -210,6 +210,30 @@ describe('BrainService', () => {
     expect(svc.goalStatus(1)).toBeNull();
   });
 
+  it('switching away from an active goal pauses it (no zombie "active" row while nothing runs)', async () => {
+    const d = fakeDeps();
+    const svc = new BrainService(d as never);
+    const goal = await svc.setGoal(1, 'Do the thing', { turnBudget: 8 });
+    expect(goal.status).toBe('active');
+    await svc.start(1, { fresh: true }); // switch to a brand-new conversation
+    const after = d.store.getGoal(goal.session_id);
+    expect(after?.status).toBe('paused');
+    expect(after?.paused_reason).toContain('switched');
+  });
+
+  it('reconciles a restart-zombie active goal (active row, no live timer) to paused on start', async () => {
+    const d = fakeDeps();
+    const svc = new BrainService(d as never);
+    await svc.start(1);
+    const sid = d.store.listSessions(1)[0]!.id;
+    // Simulate a daemon restart: an active goal row with NO in-memory continuation timer.
+    d.store.upsertGoal({ sessionId: sid, userId: 1, goal: 'thing', draft: '', status: 'active' });
+    await svc.start(1, { session: sid });
+    const after = d.store.getGoal(sid);
+    expect(after?.status).toBe('paused');
+    expect(after?.paused_reason).toContain('daemon restart');
+  });
+
   it('persistent goal pauses with an error when the kickoff turn fails', async () => {
     const d = fakeDeps();
     d.session.prompt.mockRejectedValueOnce(new Error('provider down'));
@@ -296,7 +320,7 @@ describe('BrainService', () => {
     expect(activeTools).not.toContain('set_config');
   });
 
-  it('mid-run plan steer applies plan tool visibility before enqueueing the message', async () => {
+  it('mid-run plan steer delivers the plan instruction but does NOT change tool visibility mid-stream', async () => {
     const d = fakeDeps();
     d.prompts.render.mockImplementation((name: string, vars: Record<string, string>) =>
       name === 'cli/plan-mode' ? 'PLAN MODE PROMPT' : `PERSONA:${name}:${vars.userName}`,
@@ -308,11 +332,11 @@ describe('BrainService', () => {
 
     await svc.send(1, 'switch to planning', undefined, 'plan');
 
+    // The plan-mode instruction rides the steered text into the live turn…
     expect(d.session.steer).toHaveBeenCalledWith('PLAN MODE PROMPT\n\nswitch to planning');
-    const activeTools = d.session.setActiveToolsByName.mock.calls.at(-1)?.[0] ?? d.session.__active;
-    expect(activeTools).toContain('orca_list_tasks');
-    expect(activeTools).not.toContain('orca_create_task');
-    expect(activeTools).not.toContain('orca_plan');
+    // …but tool visibility is NOT touched mid-turn: setActiveToolsByName only takes effect on the next
+    // prompt, so applying it here would be an undefined no-op. The next full turn applies plan policy.
+    expect(d.session.setActiveToolsByName).not.toHaveBeenCalled();
   });
 
   it('history builds ordered segments: text + tool calls (with edit diffs), never raw tool output', () => {

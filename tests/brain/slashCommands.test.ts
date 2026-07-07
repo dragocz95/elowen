@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { SLASH_COMMANDS, commandsFor, findCommand } from '../../src/brain/slashCommands.js';
+import { SLASH_COMMANDS, commandsFor, commandsWithPlugins, expandPromptCommand, isBuiltinCommand, findCommand } from '../../src/brain/slashCommands.js';
 
 describe('slash command registry', () => {
   it('exposes the core commands', () => {
@@ -47,5 +47,47 @@ describe('slash command registry', () => {
 
   it('every command has a non-empty English description', () => {
     for (const c of SLASH_COMMANDS) expect(c.description.trim().length, c.name).toBeGreaterThan(0);
+  });
+
+  describe('plugin-contributed prompt commands', () => {
+    const plugin = [{ name: 'deploy', description: 'Ship it', prompt: 'Deploy to $1 with notes: $ARGS', plugin: 'ops' }];
+
+    it('merges plugin commands after the built-ins for the surface', () => {
+      const cli = commandsWithPlugins('cli', true, plugin);
+      const deploy = cli.find((c) => c.name === 'deploy');
+      expect(deploy).toMatchObject({ kind: 'prompt', prompt: 'Deploy to $1 with notes: $ARGS', plugin: 'ops' });
+      // built-ins still present and come first
+      expect(cli.findIndex((c) => c.name === 'help')).toBeLessThan(cli.findIndex((c) => c.name === 'deploy'));
+    });
+
+    it('never lets a plugin command shadow a built-in', () => {
+      const merged = commandsWithPlugins('cli', true, [{ name: 'help', description: 'x', prompt: 'y' }]);
+      expect(merged.filter((c) => c.name === 'help')).toHaveLength(1);
+      expect(merged.find((c) => c.name === 'help')?.kind).toBe('info');
+      expect(isBuiltinCommand('help')).toBe(true);
+      expect(isBuiltinCommand('deploy')).toBe(false);
+    });
+
+    it('respects a plugin command surface restriction', () => {
+      const cliOnly = [{ name: 'lint', description: 'x', prompt: 'lint it', surfaces: ['cli' as const] }];
+      expect(commandsWithPlugins('cli', true, cliOnly).some((c) => c.name === 'lint')).toBe(true);
+      expect(commandsWithPlugins('web', true, cliOnly).some((c) => c.name === 'lint')).toBe(false);
+    });
+  });
+
+  describe('expandPromptCommand', () => {
+    it('substitutes $ARGS with the whole argument string', () => {
+      expect(expandPromptCommand('Fix: $ARGS', 'the login bug')).toBe('Fix: the login bug');
+    });
+    it('substitutes positional $1..$9', () => {
+      expect(expandPromptCommand('$1 then $2', 'alpha beta')).toBe('alpha then beta');
+      expect(expandPromptCommand('$1 / $2', 'solo')).toBe('solo /');
+    });
+    it('appends arguments when the template uses no placeholders', () => {
+      expect(expandPromptCommand('Run the review checklist.', 'src/app.ts')).toBe('Run the review checklist.\n\nsrc/app.ts');
+    });
+    it('leaves a placeholder-free template untouched with no arguments', () => {
+      expect(expandPromptCommand('Summarize the diff.', '')).toBe('Summarize the diff.');
+    });
   });
 });

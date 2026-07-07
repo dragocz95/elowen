@@ -26,7 +26,9 @@ export function serializeInstallInfo(info: InstallInfo): string {
 }
 
 /** The web UI URL to point a user at: the real public URL on a systemd-provisioned box, otherwise the
- *  local standalone web port. One source of truth for the setup outro, `orca doctor`, and headless setup. */
-export function webBaseUrl(): string {
-  return readInstallInfo()?.publicUrl ?? 'http://localhost:4500';
+ *  local standalone web port (honouring ORCA_WEB_PORT, same as the launcher). One source of truth for the
+ *  setup outro, `orca doctor`, and headless setup. */
+export function webBaseUrl(env: NodeJS.ProcessEnv = process.env): string {
+  const port = Number(env.ORCA_WEB_PORT) || 4500;
+  return readInstallInfo()?.publicUrl ?? `http://localhost:${port}`;
 }

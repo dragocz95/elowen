@@ -6,9 +6,8 @@ import { apiJson } from '../http.js';
 import { openBrowser } from '../browser.js';
 import { API_KEY_PROVIDERS, OAUTH_CHOICES } from '../constants.js';
 import { deriveSlug, uniqueSlug } from '../slug.js';
-import { orcaExec } from '../../../shared/execs.js';
 import { guard, WizardCancelled, type StepResult, type WizardCtx } from '../types.js';
-import { getBrainProviders, keepProvider, type PublicProvider } from './shared.js';
+import { getBrainProviders, keepProvider, putEmbeddedExec, type PublicProvider } from './shared.js';
 
 interface ProviderEntry { id: string; label: string; type: BrainProviderType; baseUrl: string; models: string[]; apiKey?: string }
 
@@ -270,13 +269,9 @@ async function done(ctx: WizardCtx, label: string, model: string, providerId: st
 }
 
 /** Point the default task executor at the embedded (in-process) engine on the just-connected provider, so
- *  tasks run on ANY provider without an external agent CLI. Reads the current defaults first to preserve
- *  autonomy/maxSessions — only `exec` changes. */
+ *  tasks run on ANY provider without an external agent CLI. Delegates to the shared per-field PUT. */
 async function setEmbeddedExec(ctx: WizardCtx, providerId: string, model: string): Promise<void> {
-  const cur = (await apiJson<{ defaults?: { exec: string; autonomy: string; maxSessions: number } }>(ctx, 'GET', '/config')).data?.defaults;
-  const defaults = { ...(cur ?? {}), exec: orcaExec(providerId, model) };
-  const r = await apiJson(ctx, 'PUT', '/config', { defaults });
-  if (r.ok) p.log.info('Tasks will run in-process on this provider (built-in engine).');
+  if (await putEmbeddedExec(ctx, providerId, model)) p.log.info('Tasks will run in-process on this provider (built-in engine).');
 }
 
 /** Run one chat smoke test against the configured brain, looping on retry. Mirrors the memory step's

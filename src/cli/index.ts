@@ -29,6 +29,8 @@ SETUP
                                       --admin-user --admin-password --project[-slug]|--no-project
                                       --provider <key|custom> --api-key --base-url --model
                                       --memory <reuse|openrouter|skip> --memory-key --embedding-model --skip-test
+                                      secrets can come from env instead of argv (avoids ps/history leaks):
+                                      ORCA_ADMIN_PASSWORD, ORCA_API_KEY, ORCA_OPENROUTER_KEY
   doctor                          readiness check: what works, and how to fix what doesn't
   install                         provision orca as a service: systemd units, a reverse proxy
                                   and the first admin (run as root). See \`orca install --help\`.

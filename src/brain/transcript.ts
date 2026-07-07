@@ -11,7 +11,7 @@ import type { ToolOutputView } from './messageView.js';
  *  happened. Consecutive tool calls (no new text between them) collapse into ONE tools segment — the
  *  Claude-Code "grouped" look. Tool outputs are attached only when the daemon marks a compact preview
  *  as useful enough to show (tests, shell errors, browser/search observations). */
-export interface ToolItem { name: string; detail?: string; diff?: string; icon?: string; output?: ToolOutputView; id?: string }
+export interface ToolItem { name: string; detail?: string; diff?: string; icon?: string; output?: ToolOutputView; id?: string; command?: string }
 export type Segment =
   | { kind: 'text'; text: string }
   /** The model's reasoning/thinking stream — rendered dim + separate from the answer. */
@@ -30,7 +30,7 @@ export interface ChatView { turns: ChatTurn[]; thinking: boolean; notice?: strin
 export interface HistoryMessage {
   role: string;
   text: string;
-  segments?: ({ kind: 'text'; text: string } | { kind: 'tool'; name: string; detail?: string; diff?: string; output?: ToolOutputView })[];
+  segments?: ({ kind: 'text'; text: string } | { kind: 'tool'; name: string; detail?: string; diff?: string; output?: ToolOutputView; command?: string })[];
 }
 
 export const emptyView = (): ChatView => ({ turns: [], thinking: false });
@@ -49,7 +49,7 @@ export function fromHistory(msgs: HistoryMessage[]): ChatView {
       if (seg.kind === 'text') {
         segments.push({ kind: 'text', text: seg.text });
       } else {
-        const item: ToolItem = { name: seg.name, detail: seg.detail, diff: seg.diff, output: seg.output };
+        const item: ToolItem = { name: seg.name, detail: seg.detail, diff: seg.diff, output: seg.output, command: seg.command };
         const tail = segments[segments.length - 1];
         if (tail?.kind === 'tools') tail.items.push(item);
         else segments.push({ kind: 'tools', items: [item] });
@@ -112,7 +112,7 @@ export function reduce(view: ChatView, e: BrainEvent): ChatView {
     }
     case 'tool': {
       const t = ensureOrca();
-      const item: ToolItem = { name: e.name, detail: e.detail, icon: e.icon, ...(e.id ? { id: e.id } : {}) };
+      const item: ToolItem = { name: e.name, detail: e.detail, icon: e.icon, ...(e.id ? { id: e.id } : {}), ...(e.command ? { command: e.command } : {}) };
       const tail = t.segments[t.segments.length - 1];
       if (tail?.kind === 'tools') t.segments[t.segments.length - 1] = { kind: 'tools', items: [...tail.items, item] };
       else t.segments.push({ kind: 'tools', items: [item] });
@@ -127,7 +127,12 @@ export function reduce(view: ChatView, e: BrainEvent): ChatView {
     }
     case 'tool_output': {
       const t = ensureOrca();
-      attachToTool(t, e.id, (item) => ({ ...item, output: e.output }));
+      // The end event's output has no command (its PI event carries no args) — thread the verbatim
+      // command captured on the matching `tool` (start) event so the console block's first line is filled.
+      attachToTool(t, e.id, (item) => ({
+        ...item,
+        output: item.command && !e.output.command ? { ...e.output, command: item.command } : e.output,
+      }));
       return { turns, thinking: true, notice: view.notice };
     }
     case 'idle': {

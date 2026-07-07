@@ -61,6 +61,26 @@ describe('chat render reducer', () => {
     ]);
   });
 
+  it('threads the verbatim command from the start event into the output (end event carries no args)', () => {
+    let v = beginAssistant(emptyView());
+    v = reduce(v, { type: 'tool', name: 'run_command', detail: 'mkdir -p build', command: 'mkdir -p build', id: 'x' });
+    // The end event's output has no command — the reducer fills it from the matching start event.
+    v = reduce(v, { type: 'tool_output', id: 'x', output: { title: 'console output', kind: 'console', text: '', status: 'done' } });
+    const turn = v.turns.at(-1)!;
+    const item = turn.role === 'orca' && turn.segments[0]?.kind === 'tools' ? turn.segments[0].items[0] : null;
+    expect(item?.command).toBe('mkdir -p build');
+    expect(item?.output?.command).toBe('mkdir -p build');
+  });
+
+  it('does not overwrite a command the output already carries', () => {
+    let v = beginAssistant(emptyView());
+    v = reduce(v, { type: 'tool', name: 'run_command', command: 'a', id: 'y' });
+    v = reduce(v, { type: 'tool_output', id: 'y', output: { title: 'console output', kind: 'console', text: 'x', command: 'b' } });
+    const turn = v.turns.at(-1)!;
+    const item = turn.role === 'orca' && turn.segments[0]?.kind === 'tools' ? turn.segments[0].items[0] : null;
+    expect(item?.output?.command).toBe('b');
+  });
+
   it('tool_output and diff events attach by tool call id when tools finish out of order', () => {
     let v = beginAssistant(emptyView());
     v = reduce(v, { type: 'tool', name: 'first', id: 'a' });

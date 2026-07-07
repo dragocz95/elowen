@@ -23,4 +23,20 @@ describe('chat theme', () => {
     expect(chatThemeItems().some((item) => item.value === 'mono' && item.description === 'current')).toBe(true);
     setChatTheme(before);
   });
+
+  it('ships a wide palette and every listed theme is a valid, switchable name', () => {
+    const items = chatThemeItems();
+    expect(items.length).toBeGreaterThanOrEqual(13);
+    const before = chatTheme().name;
+    for (const item of items) {
+      expect(isChatThemeName(item.value)).toBe(true);
+      const theme = setChatTheme(item.value);
+      // every palette slot must be populated so no component renders an undefined ANSI code
+      for (const slot of ['accent', 'text', 'muted', 'faint', 'success', 'warning', 'error', 'panelBg', 'inputBg', 'modalBg', 'selectedBg'] as const) {
+        expect(typeof theme[slot]).toBe('string');
+        expect(theme[slot].length).toBeGreaterThan(0);
+      }
+    }
+    setChatTheme(before);
+  });
 });

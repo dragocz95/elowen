@@ -1,16 +1,18 @@
-import { SelectList, Container, Editor, matchesKey } from '@earendil-works/pi-tui';
+import { SelectList, Editor, matchesKey } from '@earendil-works/pi-tui';
 import type { SelectItem, TUI } from '@earendil-works/pi-tui';
 import { getSelectListTheme } from '@earendil-works/pi-coding-agent';
 import { color } from './theme.js';
 import { padAnsi } from '../ui/text.js';
+import { printableInput } from '../ui/prompts.js';
 
 /** The Editor with an Esc hook: Esc aborts the streaming turn (unless the autocomplete popup is open —
  *  then Esc closes it, handled by the base class). */
 export class ChatEditor extends Editor {
-  onEscape?: () => void;
+  /** Esc handler that returns whether it actually consumed the key. Returning false (e.g. nothing is
+   *  streaming to interrupt) lets Esc fall through to the base Editor instead of being silently swallowed. */
+  onEscape?: () => boolean;
   override handleInput(data: string): void {
-    if (matchesKey(data, 'escape') && !this.isShowingAutocomplete() && this.onEscape) {
-      this.onEscape();
+    if (matchesKey(data, 'escape') && !this.isShowingAutocomplete() && this.onEscape?.()) {
       return;
     }
     super.handleInput(data);
@@ -44,8 +46,6 @@ export function parseModelValue(value: string): { provider: string; model: strin
 
 export interface PickerOpts {
   tui: TUI;
-  /** Kept for compatibility with the previous inline picker; modals no longer mutate this slot. */
-  slot: Container;
   editor: Editor;
   items: SelectItem[];
   title: string;
@@ -56,6 +56,7 @@ export interface PickerOpts {
 
 class PickerModal {
   private list: SelectList;
+  private filter = '';
 
   constructor(
     private readonly title: string,
@@ -75,14 +76,31 @@ class PickerModal {
 
   invalidate(): void { this.list.invalidate(); }
   handleInput(data: string): void {
+    // A caller hook (ctrl+d delete, ctrl+r rename, …) wins first.
     if (this.onInput?.(data, this.list.getSelectedItem(), this.onCancel)) return;
+    // Type-to-filter — the footer advertises it, so it must actually work. Printable characters (incl.
+    // pastes / kitty-protocol keys, via the shared decoder) narrow the list; backspace widens it.
+    if (matchesKey(data, 'backspace')) {
+      this.filter = this.filter.slice(0, -1);
+      this.list.setFilter(this.filter);
+      return;
+    }
+    const printable = printableInput(data);
+    if (printable) {
+      this.filter += printable;
+      this.list.setFilter(this.filter);
+      return;
+    }
     this.list.handleInput(data);
   }
 
   render(width: number): string[] {
     const bodyWidth = Math.max(1, width - 4);
+    const titleBar = this.filter
+      ? `  ${color.bold(color.text(this.title))}  ${color.faint('filter')} ${color.accent(this.filter)}`
+      : `  ${color.bold(color.text(this.title))}${color.faint(' '.repeat(Math.max(1, bodyWidth - visibleTitle(this.title))) + 'esc')}`;
     return [
-      color.modalBg(padAnsi(`  ${color.bold(color.text(this.title))}${color.faint(' '.repeat(Math.max(1, bodyWidth - visibleTitle(this.title))) + 'esc')}`, width)),
+      color.modalBg(padAnsi(titleBar, width)),
       color.modalBg(padAnsi('', width)),
       ...this.list.render(bodyWidth).map((line) => color.modalBg(`  ${padAnsi(line, bodyWidth)}  `)),
       color.modalBg(padAnsi('', width)),
@@ -135,7 +153,9 @@ class TextInputModal {
     if (matchesKey(data, 'escape')) { this.onCancel(); return; }
     if (matchesKey(data, 'enter')) { this.onSubmit(this.value); return; }
     if (matchesKey(data, 'backspace') || data === '\x7f') { this.value = this.value.slice(0, -1); return; }
-    if (data >= ' ' && data !== '\x7f' && !data.startsWith('\x1b')) this.value += data;
+    // Shared printable decoder → pasted titles and kitty-protocol keys land instead of being dropped for
+    // starting with ESC (bracketed paste is one `\x1b[200~…` chunk).
+    this.value += printableInput(data);
   }
   render(width: number): string[] {
     const bodyWidth = Math.max(1, width - 4);
@@ -156,6 +176,48 @@ export function openTextInput(o: { tui: TUI; editor: Editor; title: string; init
   const close = (): void => { handle?.hide(); handle = null; restore(); };
   const modal = new TextInputModal(o.title, o.initial ?? '', (value) => { close(); o.onSubmit(value); }, close);
   handle = o.tui.showOverlay(modal, { anchor: 'center', width: 64, maxHeight: 8, margin: 2 });
+  handle.focus();
+  o.tui.requestRender();
+}
+
+/** A read-only, scrollable info modal (esc/enter/q closes) in the same chrome as the pickers. Each row
+ *  is a pre-rendered, possibly-ANSI-coloured line. Used for /status and any "show me this data" panel. */
+class InfoModal {
+  private scroll = 0;
+  constructor(
+    private readonly title: string,
+    private readonly lines: string[],
+    private readonly onClose: () => void,
+    private readonly footer = 'esc close',
+    private readonly viewport = 16,
+  ) {}
+  invalidate(): void { /* state driven */ }
+  handleInput(data: string): void {
+    if (matchesKey(data, 'escape') || matchesKey(data, 'enter') || data === 'q') { this.onClose(); return; }
+    const maxScroll = Math.max(0, this.lines.length - this.viewport);
+    if (data === '\x1b[B' || matchesKey(data, 'down')) this.scroll = Math.min(maxScroll, this.scroll + 1);
+    else if (data === '\x1b[A' || matchesKey(data, 'up')) this.scroll = Math.max(0, this.scroll - 1);
+  }
+  render(width: number): string[] {
+    const bodyWidth = Math.max(1, width - 4);
+    const shown = this.lines.slice(this.scroll, this.scroll + this.viewport);
+    const more = this.lines.length > this.viewport ? ` ${this.scroll + shown.length}/${this.lines.length}` : '';
+    return [
+      color.modalBg(padAnsi(`  ${color.bold(color.text(this.title))}${color.faint(' '.repeat(Math.max(1, bodyWidth - visibleTitle(this.title))) + 'esc')}`, width)),
+      color.modalBg(padAnsi('', width)),
+      ...shown.map((line) => color.modalBg(`  ${padAnsi(line, bodyWidth)}  `)),
+      color.modalBg(padAnsi('', width)),
+      color.modalBg(padAnsi(`  ${color.text(this.footer)}${color.faint(more)}`, width)),
+    ];
+  }
+}
+
+export function openInfoModal(o: { tui: TUI; editor: Editor; title: string; lines: string[]; footer?: string }): void {
+  const restore = (): void => { o.tui.setFocus(o.editor); o.tui.requestRender(); };
+  let handle: ReturnType<TUI['showOverlay']> | null = null;
+  const close = (): void => { handle?.hide(); handle = null; restore(); };
+  const modal = new InfoModal(o.title, o.lines.length ? o.lines : [color.faint('nothing to show')], close, o.footer);
+  handle = o.tui.showOverlay(modal, { anchor: 'center', width: 66, maxHeight: 24, margin: 2 });
   handle.focus();
   o.tui.requestRender();
 }

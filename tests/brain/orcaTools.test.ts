@@ -6,10 +6,10 @@ function fakeFetch(status: number, body: unknown): typeof fetch {
 }
 
 describe('buildOrcaTools', () => {
-  it('exposes the expected tool names', () => {
+  it('exposes the expected tool names (orca control plane + the owner-chat LSP probe)', () => {
     const names = buildOrcaTools({ url: 'http://x', token: 't' }).map((t) => t.name).sort();
     expect(names).toEqual([
-      'orca_create_task', 'orca_list_missions', 'orca_list_sessions', 'orca_list_tasks', 'orca_plan',
+      'lsp_diagnostics', 'orca_create_task', 'orca_list_missions', 'orca_list_sessions', 'orca_list_tasks', 'orca_plan',
     ]);
   });
 
