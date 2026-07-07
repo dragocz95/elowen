@@ -1,4 +1,4 @@
-import { matchesKey, truncateToWidth } from '@earendil-works/pi-tui';
+import { matchesKey, truncateToWidth, wrapTextWithAnsi } from '@earendil-works/pi-tui';
 import type { Component, Focusable, TUI, Container, Editor } from '@earendil-works/pi-tui';
 import { getSelectListTheme } from '@earendil-works/pi-coding-agent';
 import type { AskAnswer, AskQuestion } from '../../brain/events.js';
@@ -120,7 +120,8 @@ export class AskChoiceDock implements Component, Focusable {
     return [
       top,
       row(`  ${open(theme.text, 'Orca needs a decision')}  ${open(theme.faint, this.opts.question.header || 'ask_user_question')}  ${open(theme.faint, progress)}`),
-      row(`  ${open(theme.text, truncateToWidth(this.opts.question.question, Math.max(1, innerWidth - 4), ''))}`),
+      // The question wraps across as many rows as it needs — truncating it made long questions unanswerable.
+      ...wrapTextWithAnsi(this.opts.question.question, Math.max(1, innerWidth - 4)).map((line) => row(`  ${open(theme.text, line)}`)),
       row(''),
       ...choiceRows,
       row(''),

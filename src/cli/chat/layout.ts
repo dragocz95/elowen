@@ -237,6 +237,8 @@ export class ChatViewport implements Component {
           const label = liveTail ? `Thought: ${this.state.thinkingSeconds}s` : 'Thought';
           const key = `${turnIndex}:${segIndex}`;
           const expanded = this.expandedThoughts.has(key);
+          // A blank line above each Thought keeps it from gluing onto the previous tool/output block.
+          if (rows[rows.length - 1]?.line !== '') addBlank();
           add(`  ${color.warning(expanded ? '▾' : '▸')} ${color.warning(label)} ${color.faint('click')} ${color.dim(truncateToWidth(first, Math.max(12, width - 32), '…'))}`, 'thought', key);
           if (expanded) {
             for (const line of wrapTextWithAnsi(seg.text, Math.max(1, width - 6))) add(`    ${color.faint(line)}`);

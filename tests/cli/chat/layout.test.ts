@@ -53,6 +53,25 @@ describe('chat layout components', () => {
     expect(rendered).not.toContain('▪');
   });
 
+  it('separates a Thought row from the preceding tool block with a blank line', () => {
+    let view = beginAssistant(pushUser(emptyView(), 'go'));
+    view = reduce(view, { type: 'tool', name: 'run_command', detail: 'npm test' });
+    view = reduce(view, { type: 'tool_output', output: { title: 'console output', kind: 'console', text: 'Tests 4 passed', command: 'npm test', status: 'exit 0', tone: 'success' } });
+    view = reduce(view, { type: 'reasoning', delta: 'now decide the next step' });
+    view = reduce(view, { type: 'idle' });
+    const viewport = new ChatViewport(
+      { view, notice: '', modelName: 'kimi', thinkingSeconds: 0 },
+      getMarkdownTheme(),
+      () => 30,
+      () => 1,
+      () => 72,
+    );
+    const lines = viewport.render(72).map((line) => line.replace(/\x1b\[[0-9;]*m/g, ''));
+    const thought = lines.findIndex((line) => line.includes('Thought'));
+    expect(thought).toBeGreaterThan(0);
+    expect(lines[thought - 1]!.replace(/[│\s]/g, '')).toBe(''); // blank spacer row above
+  });
+
   it('renders framed tool output blocks', () => {
     let view = beginAssistant(emptyView());
     view = reduce(view, { type: 'tool', name: 'run_command', detail: 'npm test' });

@@ -39,6 +39,21 @@ describe('AskChoiceDock', () => {
     expect(stripAnsi(lines.join('\n'))).toContain('✓ Run focused tests');
   });
 
+  it('wraps a long question across rows instead of truncating it', () => {
+    const long = 'Should Orca deploy the new build to production now, or wait for the remaining review agents to finish and merge their branches first?';
+    const dock = new AskChoiceDock({
+      tui: fakeTui(),
+      question: { ...question(), question: long },
+      index: 0,
+      total: 1,
+      onSubmit: vi.fn(),
+      onOther: vi.fn(),
+      onCancel: vi.fn(),
+    });
+    const text = stripAnsi(dock.render(60).join('\n')).replace(/│/g, '').replace(/\s+/g, ' ');
+    expect(text).toContain('merge their branches first?'); // the tail survives wrapping
+  });
+
   it('uses space to toggle multiple answers and enter to submit them', () => {
     const onSubmit = vi.fn();
     const dock = new AskChoiceDock({
