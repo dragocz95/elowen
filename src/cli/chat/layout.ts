@@ -4,7 +4,7 @@ import { framedDiffBlock, spinnerFrame, toolOutputBlock, UserBlock } from './com
 import { ansi, chatTheme, color, glyph } from './theme.js';
 import type { BrainUsageView, McpServerView } from './brainClient.js';
 import type { ChatView, ToolItem } from '../../brain/transcript.js';
-import { formatK, padAnsi } from '../ui/text.js';
+import { formatDuration, formatK, padAnsi } from '../ui/text.js';
 
 export const TOP_RULE_ROWS = 1;
 export const PANEL_GUTTER_COLUMNS = 3;
@@ -389,7 +389,7 @@ export class ChatViewport implements Component {
           if (this.state.showThoughts === false) continue; // `/reasoning show` hid Thought rows
           const liveTail = turn.streaming && seg === turn.segments[turn.segments.length - 1];
           const first = seg.text.replace(/\s+/g, ' ').trim() || 'thinking';
-          const label = liveTail ? `Thought: ${this.state.thinkingSeconds}s` : 'Thought';
+          const label = liveTail ? `Thought: ${formatDuration(this.state.thinkingSeconds)}` : 'Thought';
           const key = `${turnIndex}:${segIndex}`;
           const expanded = this.expandedThoughts.has(key);
           // A blank line above each Thought keeps it from gluing onto the previous tool/output block.
@@ -429,8 +429,8 @@ export class ChatViewport implements Component {
     });
     const tok = sub.tokens ? `${formatK(sub.tokens)} tok` : '';
     const parts = sub.status === 'running'
-      ? [sub.detail ?? 'starting…', `${sub.seconds}s`, tok]
-      : [`${sub.tools} tool${sub.tools === 1 ? '' : 's'}`, `${sub.seconds}s`, tok];
+      ? [sub.detail ?? 'starting…', formatDuration(sub.seconds), tok]
+      : [`${sub.tools} tool${sub.tools === 1 ? '' : 's'}`, formatDuration(sub.seconds), tok];
     out.push({
       line: `    ${color.faint(truncateToWidth(`↳ ${parts.filter(Boolean).join(' · ')}`, Math.max(12, width - 6), '…'))}`,
       kind: 'subagent', key: sub.sessionId,
@@ -535,7 +535,7 @@ export class TelemetryPanel implements Component {
       `  ${color.faint('branch')} ${color.accent(st.branch || 'unknown')}`,
       '',
       `  ${color.bold(color.text('Run'))}`,
-      `  ${st.running ? color.success('●') : color.faint('○')} ${color.text(st.workMode === 'plan' ? 'Plan' : 'Build')} ${color.faint(st.running ? `${st.runSeconds}s` : 'idle')}`,
+      `  ${st.running ? color.success('●') : color.faint('○')} ${color.text(st.workMode === 'plan' ? 'Plan' : 'Build')} ${color.faint(st.running ? formatDuration(st.runSeconds) : 'idle')}`,
       ...this.mcpRows(st.mcp, width),
       ...this.lspRows(st.lspEnabled),
     ];

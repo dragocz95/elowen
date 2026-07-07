@@ -139,8 +139,10 @@ export class MemoryCurator {
   }
 }
 
-/** The extraction prompt: durable facts only, Czech-friendly, strict JSON, capped op count. Kept tight
- *  so the cheap model returns a small batch (or an empty array when nothing is worth remembering). */
+/** The extraction prompt, modeled on mem0's fact-retrieval + update prompts: user-anchored facts only,
+ *  strict source rules (the assistant's reply is NOT a knowledge source), few-shot calibration with
+ *  empty-output examples, date grounding — the cheap model otherwise "helps" by saving trivia from the
+ *  assistant's explanations. Output contract unchanged (JSON array of ops, parseOps). */
 function buildPrompt(userText: string, assistantText: string, existing: { id: number; body: string }[] = []): string {
   const u = userText.slice(0, MAX_TEXT_CHARS);
   const a = assistantText.slice(0, MAX_TEXT_CHARS);
@@ -152,15 +154,60 @@ function buildPrompt(userText: string, assistantText: string, existing: { id: nu
         'ANTI-DUPLICATION RULE: if a new point is already covered by one of these, do NOT add a paraphrase.',
         'Instead "update" the closest one (more precise/complete wording), or "merge" several into one. Only',
         '"add" facts that are NOT already among the stored ones. Never keep two memories with the same meaning.',
+        'If a new fact CONTRADICTS a stored memory, "update" it (or "delete" it if it is simply no longer true).',
       ]
     : [];
   return [
-    'You are the long-term memory curator for the assistant Orca. From the SINGLE exchange below, extract',
-    'ONLY durable, reusable facts about the user: stable preferences and working style, decisions, project',
-    'architecture, infrastructure (paths, endpoints, ports), and non-trivial gotchas.',
-    'Do NOT store: greetings, chit-chat, transient state, one-off debug steps, or anything obvious.',
-    'If nothing durable came up, return an empty array [].',
-    'Write each memory `body` in the USER\'S OWN language (match the language of the exchange).',
+    'You are the long-term memory curator for the assistant Orca. Below is ONE exchange (one user message',
+    'and the assistant\'s reply). Extract durable, reusable facts ABOUT THE USER worth remembering in',
+    `future sessions, and emit memory operations. Today's date is ${new Date().toISOString().slice(0, 10)}.`,
+    '',
+    'WHAT TO EXTRACT (each fact must be anchored to the user or their projects):',
+    '- Stable preferences and working style (tools, stack, formatting, how they like answers)',
+    '- Decisions the user made or approved ("User decided to use pnpm for project X")',
+    '- Personal/professional details the user shared (name, role, people, recurring commitments)',
+    '- Plans, goals and intentions the user stated',
+    '- The user\'s project architecture and infrastructure AS THE USER HAS IT (exact paths, endpoints,',
+    '  ports, hostnames, commands — verbatim)',
+    '- Non-obvious gotchas discovered in the user\'s environment that will bite again',
+    '',
+    'SOURCE RULES:',
+    '- The USER\'s message is the primary source of facts.',
+    '- From the ASSISTANT\'s reply, extract ONLY: (a) durable outcomes of work done for the user this turn',
+    '  that they will rely on later, and (b) specific recommendations or decisions the user accepted.',
+    '  Frame them from the user\'s side ("User\'s daemon listens on :4400").',
+    '- NEVER extract general knowledge, explanations, definitions, tutorials or trivia from the',
+    '  assistant\'s reply. If the assistant explained how something works, that is NOT a memory.',
+    '- Never store the same fact twice because the assistant echoed the user\'s own words back.',
+    '',
+    'DO NOT STORE:',
+    '- Greetings, chit-chat, thanks, small talk',
+    '- Transient state ("X is running", "not committed yet", "still debugging")',
+    '- One-off debug steps, error messages, or the mechanics of this conversation',
+    '- Meta-descriptions ("User asked about X", "Assistant explained Y", "Assistant fixed a bug") —',
+    '  store the resulting durable fact or decision itself, or nothing',
+    '- General world/technical knowledge that is not specific to this user',
+    '',
+    'EACH `body` MUST BE:',
+    '- Self-contained and understandable alone: name the subject ("User …", "Project <name> …"),',
+    '  no bare pronouns',
+    '- In the USER\'S OWN language (match the language of the exchange)',
+    '- Concrete: keep names, paths, ports, versions and commands exactly as written; resolve relative',
+    '  dates ("tomorrow") to absolute dates using today\'s date',
+    '',
+    'Examples (calibration only — never copy their content):',
+    'User: "Hi, how are you?" / Assistant: "Great, thanks!"',
+    '-> []',
+    'User: "How do JWT refresh tokens work?" / Assistant: <explanation of JWT>',
+    '-> []   (general knowledge, nothing about the user)',
+    'User: "Fix that failing test." / Assistant: "Done, the mock was stale."',
+    '-> []   (one-off debug, nothing durable)',
+    'User: "My name is Filip, I prefer short answers." / Assistant: "Noted, Filip!"',
+    '-> [{"action":"add","body":"User\'s name is Filip; prefers short answers.","kind":"preference","importance":4}]',
+    'User: "Switch the project to pnpm, npm eats too much disk." / Assistant: "Done — project now uses pnpm."',
+    '-> [{"action":"add","body":"Project uses pnpm instead of npm (user\'s decision, disk usage).","kind":"decision","importance":3}]',
+    '',
+    'An empty array [] is the EXPECTED output for most exchanges. When in doubt, return [].',
     '',
     `Return ONLY a JSON array, at most ${MAX_OPS_PER_TURN} operations, with no other text. Format per operation:`,
     '{"action":"add","body":"<self-contained fact, in the user\'s language>","kind":"fact|preference|decision","importance":1-5}',

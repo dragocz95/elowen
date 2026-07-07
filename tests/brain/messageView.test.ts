@@ -68,3 +68,33 @@ describe('toolOutputView', () => {
     expect(out).toBeUndefined();
   });
 });
+
+describe('tool output tone (needs attention)', () => {
+  it('a clean exit 0 is success even when the output mentions errors/warnings', () => {
+    const v = toolOutputView('run_command', { command: 'grep -rn error src' }, {
+      content: [{ type: 'text', text: 'src/a.ts: handleError()\nnpm warn deprecated foo@1' }],
+      details: { exitCode: 0 },
+    });
+    expect(v?.tone).toBe('success');
+    expect(v?.status).toBe('exit 0');
+  });
+
+  it('a non-zero exit stays a warning', () => {
+    const v = toolOutputView('run_command', { command: 'false' }, { content: [], details: { exitCode: 2 } });
+    expect(v?.tone).toBe('warning');
+  });
+
+  it('without an exit code, prose merely mentioning "error" does not flag the row', () => {
+    const v = toolOutputView('run_command', { command: 'cat notes.txt' }, {
+      content: [{ type: 'text', text: 'the error handling chapter explains retries' }],
+    });
+    expect(v?.tone).not.toBe('warning');
+  });
+
+  it('without an exit code, a line starting with Error still warns', () => {
+    const v = toolOutputView('run_command', { command: 'node x' }, {
+      content: [{ type: 'text', text: 'Error: connect ECONNREFUSED' }],
+    });
+    expect(v?.tone).toBe('warning');
+  });
+});

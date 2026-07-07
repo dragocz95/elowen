@@ -71,9 +71,8 @@ describe('UsersView', () => {
     render(<Wrapper><ToastProvider><UsersView /></ToastProvider></Wrapper>);
 
     await screen.findByText('Admin');
-    // Open bob's action menu and click its Delete item.
+    // The trash button is a DIRECT delete action (impersonate/promote moved to the row's context menu).
     fireEvent.click(screen.getByRole('button', { name: 'Delete bob' }));
-    fireEvent.click(await screen.findByText('Delete'));
     // A confirmation dialog appears; nothing is deleted yet.
     expect(await screen.findByText('Delete bob?')).toBeTruthy();
     expect(deleteHit).toBe(false);

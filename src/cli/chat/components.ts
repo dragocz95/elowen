@@ -3,7 +3,7 @@ import type { Component } from '@earendil-works/pi-tui';
 import type { BrainCard } from '../../brain/events.js';
 import { ansi, chatTheme, color } from './theme.js';
 import type { ToolOutputView } from '../../brain/messageView.js';
-import { formatK, padAnsi } from '../ui/text.js';
+import { formatDuration, formatK, padAnsi } from '../ui/text.js';
 
 /** opencode-style visual building blocks, hand-rolled on pi-tui's Component contract (render(width)
  *  → lines). Kept separate from app.ts so the layout logic stays readable and these are unit-testable. */
@@ -100,7 +100,7 @@ export class SubagentPanel implements Component {
     const lines: string[] = [`  ${FAINTC(this.collapsed ? '▸' : '▾')} ${bold(WHITE('Sub-agents'))}${FAINTC(`  ${this.entries.length} running`)} ${FAINTC('click')}`];
     if (this.collapsed) return lines;
     for (const e of this.entries) {
-      const meta = [e.detail, `${e.seconds}s`, e.tokens ? `${formatK(e.tokens)} tok` : ''].filter(Boolean).join(' · ');
+      const meta = [e.detail, formatDuration(e.seconds), e.tokens ? `${formatK(e.tokens)} tok` : ''].filter(Boolean).join(' · ');
       const metaText = FAINTC(truncateToWidth(meta, Math.max(10, Math.floor(width * 0.5)), '…'));
       const task = DIM(truncateToWidth(e.task.replace(/\s+/g, ' ').trim(), Math.max(10, width - visibleWidth(metaText) - 12), '…'));
       const row = `    ${color.accent(spinnerFrame())} ${task} ${FAINTC('click')}`;

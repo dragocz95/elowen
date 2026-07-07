@@ -45,10 +45,15 @@ function textParts(content: unknown): string {
 }
 
 function outputTone(text: string, exitCode?: unknown): ToolOutputView['tone'] {
+  // Authoritative signals first: the tool's own error flag, then a numeric exit code. A clean exit 0
+  // is SUCCESS no matter what words the output contains — grep hits for "error", npm's deprecation
+  // spam and docs mentioning "failed" kept flagging perfectly fine runs as "needs attention", which
+  // just trained users to ignore the status.
   if (exitCode === true) return 'warning';
-  if (typeof exitCode === 'number' && exitCode !== 0) return 'warning';
-  if (/\b(error|failed|failure|exception|traceback|exit\s+[1-9]|non-zero)\b/i.test(text)) return 'warning';
-  if (/\b(warn|warning|deprecated)\b/i.test(text)) return 'warning';
+  if (typeof exitCode === 'number') return exitCode !== 0 ? 'warning' : 'success';
+  // No authoritative signal → conservative text heuristic: only unambiguous failure markers count
+  // (a line STARTING with an error word, or an explicit "<something> failed" phrase).
+  if (/(^|\n)\s*(error|fatal|exception|traceback)\b|\b(command|build|tests?|compilation|request) failed\b/i.test(text)) return 'warning';
   if (/\b(pass|passed|success|ok|done|green)\b/i.test(text)) return 'success';
   return 'normal';
 }

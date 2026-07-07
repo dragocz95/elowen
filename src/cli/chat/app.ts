@@ -13,7 +13,7 @@ import { API_KEY_PROVIDERS } from '../setup/constants.js';
 import { fromHistory, pushUser, beginAssistant, reduce, upsertCard, type ChatView } from '../../brain/transcript.js';
 import { commandsFor, expandPromptCommand } from '../../brain/slashCommands.js';
 import type { AskQuestion, BrainCard } from '../../brain/events.js';
-import { formatK } from '../ui/text.js';
+import { formatDuration, formatK } from '../ui/text.js';
 import { ORCA_CLI_VERSION } from '../version.js';
 import {
   ChatViewport,
@@ -104,7 +104,7 @@ export function isSlashCommandDraft(text: string): boolean {
  *  seconds next to the reasoning level, replacing the old `thinking… Ns` transcript line (which kept
  *  pushing the conversation around). Time-based frame so every render advances it. */
 function generatingChip(seconds: number): string {
-  return `${color.accent(spinnerFrame())} ${color.faint(`${seconds}s`)}`;
+  return `${color.accent(spinnerFrame())} ${color.faint(formatDuration(seconds))}`;
 }
 
 function modelMetaLine(mode: BrainWorkMode, modelName: string, thinkingLevel: string, generating?: string): string {
@@ -194,10 +194,13 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
   const client = opts.client ?? new BrainClient({ base: opts.base, token: opts.token });
   await client.start({ provider: opts.model, session: opts.session, fresh: opts.fresh });
   const boot = await client.status().catch(() => null);
-  // Cross-device colors: a CUSTOM web Account → Terminal palette drives the CLI chat theme too.
-  // 'auto' keeps the locally saved /theme pick (restored above from cli-prefs).
+  // Cross-device colors: a CUSTOM web Account → Terminal palette drives the CLI chat theme — but only
+  // when THIS machine has no explicit /theme pick saved. A local pick must win, otherwise the web
+  // setting silently clobbered it on every launch ("/theme doesn't stick"). Picking "Custom (web)"
+  // in /theme stores theme:'custom', which is not a preset name, so the palette applies again here.
   const termSettings = await client.terminalSettings().catch(() => null);
-  if (termSettings?.theme === 'custom' && termSettings.palette) setCustomChatTheme(termSettings.palette);
+  const localPick = !!(prefs0.theme && isChatThemeName(prefs0.theme));
+  if (!localPick && termSettings?.theme === 'custom' && termSettings.palette) setCustomChatTheme(termSettings.palette);
   let modelName = boot?.model || opts.model || '';
   let conversationTitle = boot?.title ?? '';
   let lineCfg = boot?.statusline ?? null;
@@ -527,6 +530,17 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
   };
 
   const applyTheme = (name: string): boolean => {
+    // "custom" = the web Account → Terminal palette (offered only when one is configured): re-apply it
+    // and persist the choice so startup keeps preferring it on this machine.
+    if (name === 'custom' && termSettings?.theme === 'custom' && termSettings.palette) {
+      setCustomChatTheme(termSettings.palette);
+      savePrefs({ theme: 'custom' });
+      editor.borderColor = color.faint;
+      notice = color.dim('theme: Custom (web palette)');
+      showPanel(panelHandle?.isHidden() ?? false);
+      render();
+      return true;
+    }
     if (!isChatThemeName(name)) return false;
     const theme = setChatTheme(name);
     savePrefs({ theme: name });
@@ -538,9 +552,12 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
   };
 
   const openThemePicker = (): void => {
+    const webCustom = termSettings?.theme === 'custom' && termSettings.palette
+      ? [{ value: 'custom', label: 'Custom', description: 'your web Account → Terminal palette' }]
+      : [];
     openPicker({
       tui, editor, title: 'Terminal theme',
-      items: chatThemeItems(),
+      items: [...webCustom, ...chatThemeItems()],
       onPick: (value) => { applyTheme(value); },
     });
   };

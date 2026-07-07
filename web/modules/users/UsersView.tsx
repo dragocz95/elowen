@@ -12,7 +12,6 @@ import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
 import { Field } from '../../components/ui/Field';
 import { Modal, ModalBody, ModalFooter } from '../../components/ui/Modal';
-import { ActionMenu } from '../../components/ui/ActionMenu';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { ContextMenu, ContextMenuState, DIVIDER } from '../../components/ui/ContextMenu';
 import { ModuleHeader } from '../../components/ui/ModuleHeader';
@@ -101,7 +100,7 @@ export function UsersView() {
           onClick: () => handleImpersonate(user),
         }] : []),
         ...(isAdmin ? [{
-          label: t.users.ctxToggleAdmin,
+          label: user.is_admin ? t.users.removeAdmin : t.users.makeAdmin,
           icon: user.is_admin ? Shield : ShieldCheck,
           onClick: () => { if (!updateUser.isPending) handleRole(user); },
         }] : []),
@@ -162,28 +161,20 @@ export function UsersView() {
                           </span>
                           <span className="truncate font-mono text-[11px] text-text-muted">@{user.username} · {localDateTime(user.created_at, locale, false)}</span>
                         </div>
+                        {/* Trash = delete only (confirm dialog guards it). Impersonate/promote live in
+                            the row's right-click context menu — a hover dropdown kept tripping people
+                            into the wrong action. */}
                         <div className="shrink-0 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
-                          <ActionMenu
-                            label={t.users.deleteLabel.replace('{username}', user.username)}
-                            items={[
-                              ...(isAdmin && user.id !== me.data?.user?.id ? [{
-                                label: t.users.ctxImpersonate,
-                                icon: LogIn,
-                                onSelect: () => handleImpersonate(user),
-                              }] : []),
-                              ...(isAdmin ? [{
-                                label: user.is_admin ? t.users.removeAdmin : t.users.makeAdmin,
-                                icon: user.is_admin ? Shield : ShieldCheck,
-                                onSelect: () => { if (!updateUser.isPending) handleRole(user); },
-                              }] : []),
-                              {
-                                label: data.length <= 1 ? t.users.lastUserHint : t.users.delete,
-                                icon: Trash2,
-                                tone: 'danger' as const,
-                                onSelect: () => { if (data.length > 1) setConfirmDelete(user); },
-                              },
-                            ]}
-                          />
+                          <button
+                            type="button"
+                            aria-label={t.users.deleteLabel.replace('{username}', user.username)}
+                            title={data.length <= 1 ? t.users.lastUserHint : t.users.delete}
+                            disabled={data.length <= 1}
+                            onClick={(e) => { e.stopPropagation(); setConfirmDelete(user); }}
+                            className="inline-flex h-8 w-8 items-center justify-center rounded-md bg-danger text-white transition-colors hover:bg-danger/85 disabled:opacity-40"
+                          >
+                            <Trash2 size={15} aria-hidden />
+                          </button>
                         </div>
                       </div>
                     </li>
