@@ -2,7 +2,7 @@ import { streamSSE } from 'hono/streaming';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { parseBody } from '../validation.js';
-import { brainStartSchema, brainSendSchema, brainModelSchema, brainAnswerSchema } from '../schemas/brain.js';
+import { brainStartSchema, brainSendSchema, brainModelSchema, brainAnswerSchema, lspInstallSchema } from '../schemas/brain.js';
 import { brainConfigFromOrca } from '../../brain/config.js';
 import { listBrainModels, fetchOpenAiModels } from '../../brain/models.js';
 import { orcaExec, isExecAllowedForUser } from '../../shared/execs.js';
@@ -253,6 +253,24 @@ export function registerBrainRoutes(app: OrcaApp, ctx: RouteContext): void {
     if (forbidden(c)) return c.json({ error: 'forbidden' }, 403);
     const { lspManager } = await import('../../brain/tools/lspTools.js');
     return c.json(lspManager().status());
+  });
+
+  // Install a registry language server daemon-side (the /lsp modal's ctrl+i). Admin-only — it installs
+  // software on the host. Only npm-canonical servers are self-installable; the rest 400 with their
+  // toolchain's install hint so the CLI shows the exact command to run instead.
+  app.post('/brain/lsp/install', async c => {
+    if (forbidden(c) || !c.get('user').is_admin) return c.json({ error: 'forbidden' }, 403);
+    const { command } = await parseBody(c, lspInstallSchema);
+    const { listServers, commandExists } = await import('../../lsp/servers.js');
+    const spec = listServers().find((s) => s.command === command);
+    if (!spec) return c.json({ error: 'unknown language server' }, 404);
+    if (commandExists(spec.command)) return c.json({ ok: true, message: `${spec.label} is already installed.` });
+    if (!spec.npmPackages?.length) return c.json({ error: `${spec.label} ships with its toolchain — install it with: ${spec.installHint}` }, 400);
+    const { npmInstallGlobal } = await import('../../lsp/install.js');
+    const r = await npmInstallGlobal(spec.npmPackages);
+    if (r.ok && commandExists(spec.command)) return c.json({ ok: true, message: `${spec.label} installed.` });
+    // npm may "succeed" into a global bin dir that isn't on PATH — report honestly either way.
+    return c.json({ error: r.ok ? `Installed, but ${spec.command} is not on PATH — check the npm global bin directory.` : `Install failed: ${r.detail}` }, 502);
   });
 
   app.post('/brain/send', async c => {

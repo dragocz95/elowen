@@ -578,14 +578,30 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
         ...s.servers.map((srv) => ({
           value: srv.command,
           label: `${srv.running ? color.success('●') : srv.installed ? color.faint('○') : color.error('✗')} ${srv.label}`,
-          description: srv.running ? 'running' : srv.installed ? 'installed · starts on the first check' : `not installed (${srv.command})`,
+          description: srv.running ? 'running' : srv.installed ? 'installed · starts on the first check'
+            : srv.installable ? `not installed · ctrl+i installs (${srv.installHint})` : `not installed · ${srv.installHint}`,
         })),
       ];
+      // ctrl+i installs the highlighted server daemon-side. In a terminal ctrl+i IS Tab (\t) — same byte.
+      const installKey = (data: string, selected: { value: string } | null, close: () => void): boolean => {
+        if (data !== '\t' && !matchesKey(data, 'tab')) return false;
+        const srv = s.servers.find((x) => x.command === selected?.value);
+        if (!srv || srv.installed) return true; // toggle row / already installed — consume, nothing to do
+        if (!srv.installable) { notice = color.dim(`${srv.label} ships with its toolchain — install it with: ${srv.installHint}`); render(); return true; }
+        close();
+        notice = color.dim(`installing ${srv.label} (npm, this can take a minute)…`);
+        render();
+        void client.lspInstall(srv.command)
+          .then((message) => { notice = color.dim(message); refresh(); render(); })
+          .catch((e: Error) => { notice = color.error(`error: ${e.message}`); refresh(); render(); });
+        return true;
+      };
       openPicker({
         tui, editor,
         title: `LSP · ${s.enabled ? (s.running ? 'on · running' : 'on · idle') : 'off'}`,
         items,
-        footer: 'enter toggle · esc close',
+        footer: 'enter toggle · ctrl+i install · esc close',
+        onInput: installKey,
         onPick: (v) => {
           if (v !== '__toggle') { refresh(); return; }
           void client.command('lsp')

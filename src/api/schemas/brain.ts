@@ -32,6 +32,11 @@ export const brainSendSchema = z.object({
   cwd: z.string().max(4096).optional(),
 });
 
+/** Install one registry language server by its binary name (POST /brain/lsp/install, admin-only). */
+export const lspInstallSchema = z.object({
+  command: z.string().min(1).max(100),
+});
+
 /** The user's answer to a parked ask_user_question (POST /brain/answer). `id` is the question id carried
  *  on the `ask` event; `answers` holds one entry per question with the picked label(s) + optional free
  *  text. Bounds mirror the tool schema (≤4 questions, each with a handful of picks). */

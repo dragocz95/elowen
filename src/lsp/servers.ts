@@ -15,6 +15,11 @@ export interface LanguageServerSpec {
   args: string[];
   /** Human label for menus/logs. */
   label: string;
+  /** Global npm package(s) that provide the binary — set only where npm IS the canonical install
+   *  (Orca can then install it itself: setup wizard, /lsp modal ctrl+i, POST /brain/lsp/install). */
+  npmPackages?: string[];
+  /** Human install command for servers Orca can't install itself (they ship with their toolchains). */
+  installHint: string;
 }
 
 /** File extension → LSP language id. Kept broad; an unmapped extension yields null (LSP skipped). */
@@ -40,17 +45,17 @@ const EXTENSION_LANGUAGE: Record<string, string> = {
 /** language id → the server that handles it. One server can cover several language ids (tsserver handles
  *  js/ts/jsx/tsx). The command is resolved on PATH at spawn time; missing → that language is skipped. */
 const SERVERS: LanguageServerSpec[] = [
-  { language: 'typescript', command: 'typescript-language-server', args: ['--stdio'], label: 'TypeScript' },
-  { language: 'python', command: 'pyright-langserver', args: ['--stdio'], label: 'Pyright' },
-  { language: 'go', command: 'gopls', args: [], label: 'gopls' },
-  { language: 'rust', command: 'rust-analyzer', args: [], label: 'rust-analyzer' },
-  { language: 'ruby', command: 'solargraph', args: ['stdio'], label: 'Solargraph' },
-  { language: 'php', command: 'intelephense', args: ['--stdio'], label: 'Intelephense' },
-  { language: 'c', command: 'clangd', args: [], label: 'clangd' },
-  { language: 'cpp', command: 'clangd', args: [], label: 'clangd' },
-  { language: 'lua', command: 'lua-language-server', args: [], label: 'lua-language-server' },
-  { language: 'yaml', command: 'yaml-language-server', args: ['--stdio'], label: 'yaml-language-server' },
-  { language: 'bash', command: 'bash-language-server', args: ['start'], label: 'bash-language-server' },
+  { language: 'typescript', command: 'typescript-language-server', args: ['--stdio'], label: 'TypeScript', npmPackages: ['typescript-language-server', 'typescript'], installHint: 'npm install -g typescript-language-server typescript' },
+  { language: 'python', command: 'pyright-langserver', args: ['--stdio'], label: 'Pyright', npmPackages: ['pyright'], installHint: 'npm install -g pyright' },
+  { language: 'go', command: 'gopls', args: [], label: 'gopls', installHint: 'go install golang.org/x/tools/gopls@latest' },
+  { language: 'rust', command: 'rust-analyzer', args: [], label: 'rust-analyzer', installHint: 'rustup component add rust-analyzer' },
+  { language: 'ruby', command: 'solargraph', args: ['stdio'], label: 'Solargraph', installHint: 'gem install solargraph' },
+  { language: 'php', command: 'intelephense', args: ['--stdio'], label: 'Intelephense', npmPackages: ['intelephense'], installHint: 'npm install -g intelephense' },
+  { language: 'c', command: 'clangd', args: [], label: 'clangd', installHint: 'apt install clangd (or brew install llvm)' },
+  { language: 'cpp', command: 'clangd', args: [], label: 'clangd', installHint: 'apt install clangd (or brew install llvm)' },
+  { language: 'lua', command: 'lua-language-server', args: [], label: 'lua-language-server', installHint: 'brew install lua-language-server (or your package manager)' },
+  { language: 'yaml', command: 'yaml-language-server', args: ['--stdio'], label: 'yaml-language-server', npmPackages: ['yaml-language-server'], installHint: 'npm install -g yaml-language-server' },
+  { language: 'bash', command: 'bash-language-server', args: ['start'], label: 'bash-language-server', npmPackages: ['bash-language-server'], installHint: 'npm install -g bash-language-server' },
 ];
 
 /** Aliases that share a server with a primary language id (so tsx/jsx reuse the TS server, etc.). */

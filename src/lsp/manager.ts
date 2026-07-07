@@ -19,9 +19,10 @@ export interface CheckResult {
   skipped?: 'not-a-known-language' | 'unsupported-language' | 'no-server-installed' | 'server-error' | 'no-response' | 'unreadable' | 'disabled';
 }
 
-/** One registry server as the status surfaces see it: whether its binary is on PATH and whether a live
- *  client for it is currently running. */
-interface LspServerStatus { language: string; label: string; command: string; installed: boolean; running: boolean }
+/** One registry server as the status surfaces see it: whether its binary is on PATH, whether a live
+ *  client for it is currently running, whether Orca can install it itself (npm), and the human install
+ *  command to show otherwise. */
+interface LspServerStatus { language: string; label: string; command: string; installed: boolean; running: boolean; installable: boolean; installHint: string }
 
 /** The manager's health at a glance — reused by every UI (CLI /lsp modal, panels, REST). */
 export interface LspStatus { enabled: boolean; running: boolean; servers: LspServerStatus[] }
@@ -90,6 +91,8 @@ export class LspManager {
         command: spec.command,
         installed: this.exists(spec.command),
         running: !!client && !client.isDisposed(),
+        installable: !!spec.npmPackages?.length,
+        installHint: spec.installHint,
       };
     });
     return { enabled: this.enabled, running: this.isRunning(), servers };

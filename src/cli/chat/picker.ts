@@ -74,7 +74,7 @@ class PickerModal {
   private buildList(items: SelectItem[]): SelectList {
     const list = new SelectList(items, 12, getSelectListTheme(), {
       minPrimaryColumnWidth: 30,
-      maxPrimaryColumnWidth: 34,
+      maxPrimaryColumnWidth: 44,
     });
     list.onSelect = (item) => this.onPick(item.value);
     list.onCancel = this.onCancel;
@@ -148,10 +148,13 @@ export function openPicker(o: PickerOpts): void {
     close();
     o.onPick(value);
   }, close, o.footer, o.onInput);
+  // 75% of the terminal (min 60 cols): descriptions like "not installed (typescript-language-server)"
+  // were cut off at the old fixed 60 columns.
   handle = o.tui.showOverlay(modal, {
     anchor: 'center',
-    width: 60,
-    maxHeight: 22,
+    width: '75%',
+    minWidth: 60,
+    maxHeight: 24,
     margin: 2,
   });
   handle.focus();
@@ -193,7 +196,7 @@ export function openTextInput(o: { tui: TUI; editor: Editor; title: string; init
   let handle: ReturnType<TUI['showOverlay']> | null = null;
   const close = (): void => { handle?.hide(); handle = null; restore(); };
   const modal = new TextInputModal(o.title, o.initial ?? '', (value) => { close(); o.onSubmit(value); }, close);
-  handle = o.tui.showOverlay(modal, { anchor: 'center', width: 64, maxHeight: 8, margin: 2 });
+  handle = o.tui.showOverlay(modal, { anchor: 'center', width: '60%', minWidth: 64, maxHeight: 8, margin: 2 });
   handle.focus();
   o.tui.requestRender();
 }
@@ -235,7 +238,7 @@ export function openInfoModal(o: { tui: TUI; editor: Editor; title: string; line
   let handle: ReturnType<TUI['showOverlay']> | null = null;
   const close = (): void => { handle?.hide(); handle = null; restore(); };
   const modal = new InfoModal(o.title, o.lines.length ? o.lines : [color.faint('nothing to show')], close, o.footer);
-  handle = o.tui.showOverlay(modal, { anchor: 'center', width: 66, maxHeight: 24, margin: 2 });
+  handle = o.tui.showOverlay(modal, { anchor: 'center', width: '75%', minWidth: 66, maxHeight: 26, margin: 2 });
   handle.focus();
   o.tui.requestRender();
 }

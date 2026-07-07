@@ -173,6 +173,19 @@ describe('LSP status + toggle routes', () => {
     expect(s.servers.find((x) => x.command === 'typescript-language-server')).toMatchObject({ label: 'TypeScript' });
   });
 
+  it('per-server rows carry the install metadata for the ctrl+i flow', async () => {
+    const { app, amyTok } = setupLsp();
+    const s = await (await app.request('/brain/lsp', auth(amyTok))).json() as { servers: { command: string; installable: boolean; installHint: string }[] };
+    expect(s.servers.find((x) => x.command === 'typescript-language-server')).toMatchObject({ installable: true, installHint: 'npm install -g typescript-language-server typescript' });
+    expect(s.servers.find((x) => x.command === 'gopls')).toMatchObject({ installable: false, installHint: 'go install golang.org/x/tools/gopls@latest' });
+  });
+
+  it('POST /brain/lsp/install is admin-only and 404s an unknown server', async () => {
+    const { app, adminTok, amyTok } = setupLsp();
+    expect((await app.request('/brain/lsp/install', post(amyTok, { command: 'gopls' }))).status).toBe(403);
+    expect((await app.request('/brain/lsp/install', post(adminTok, { command: 'not-a-server' }))).status).toBe(404);
+  });
+
   it('POST /brain/command lsp is admin-only, flips the live manager AND persists the flag', async () => {
     const { app, config, adminTok, amyTok } = setupLsp();
     expect((await app.request('/brain/command', post(amyTok, { name: 'lsp' }))).status).toBe(403);

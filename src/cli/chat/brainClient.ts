@@ -192,6 +192,14 @@ export class BrainClient {
     return (await res.json()) as LspStatus;
   }
 
+  /** Install a registry language server daemon-side (admin-only; the /lsp modal's ctrl+i). Non-2xx
+   *  throws with the server's message (toolchain hint, npm failure detail). */
+  async lspInstall(command: string): Promise<string> {
+    const res = await this.post('/brain/lsp/install', { command });
+    const body = (await res.json()) as { message?: string };
+    return body.message ?? 'installed';
+  }
+
   async tools(): Promise<RuntimeToolView[]> {
     const res = await this.f(`${this.o.base}/plugins/runtime`, { headers: this.headers() });
     if (res.status === 401) throw new Unauthorized();
