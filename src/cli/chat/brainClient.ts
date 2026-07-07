@@ -64,7 +64,9 @@ export class BrainClient {
   }
 
   async start(opts: { provider?: string; session?: string; fresh?: boolean } = {}): Promise<{ sessionId: string }> {
-    const res = await this.post('/brain/start', opts);
+    // The launch directory rides along so the SESSION cwd (which pi tells the model about) is the
+    // user's project too, not just the per-message tool default.
+    const res = await this.post('/brain/start', { ...opts, cwd: process.cwd() });
     return (await res.json()) as { sessionId: string };
   }
 
@@ -192,12 +194,28 @@ export class BrainClient {
     return (await res.json()) as LspStatus;
   }
 
+  /** The caller's web Account → Terminal appearance settings — the CLI derives its chat theme from a
+   *  CUSTOM palette so colors configured on the web carry across devices. */
+  async terminalSettings(): Promise<{ theme: string; palette?: Record<string, string> }> {
+    const res = await this.f(`${this.o.base}/auth/me/terminal-settings`, { headers: this.headers() });
+    if (res.status === 401) throw new Unauthorized();
+    if (!res.ok) throw new Error(`orca ${res.status} on /auth/me/terminal-settings`);
+    return (await res.json()) as { theme: string; palette?: Record<string, string> };
+  }
+
   /** Install a registry language server daemon-side (admin-only; the /lsp modal's ctrl+i). Non-2xx
    *  throws with the server's message (toolchain hint, npm failure detail). */
   async lspInstall(command: string): Promise<string> {
     const res = await this.post('/brain/lsp/install', { command });
     const body = (await res.json()) as { message?: string };
     return body.message ?? 'installed';
+  }
+
+  /** Uninstall a server from Orca's LSP prefix (admin-only; the /lsp modal's ctrl+u). */
+  async lspUninstall(command: string): Promise<string> {
+    const res = await this.post('/brain/lsp/uninstall', { command });
+    const body = (await res.json()) as { message?: string };
+    return body.message ?? 'uninstalled';
   }
 
   async tools(): Promise<RuntimeToolView[]> {

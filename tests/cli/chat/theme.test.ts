@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { chatTheme, chatThemeItems, color, glyph, isChatThemeName, setChatTheme } from '../../../src/cli/chat/theme.js';
+import { chatTheme, chatThemeItems, color, glyph, isChatThemeName, setChatTheme, setCustomChatTheme } from '../../../src/cli/chat/theme.js';
 
 describe('chat theme', () => {
   it('colour helpers wrap text in an ANSI sequence and reset', () => {
@@ -22,6 +22,17 @@ describe('chat theme', () => {
     expect(chatTheme().name).toBe('mono');
     expect(chatThemeItems().some((item) => item.value === 'mono' && item.description === 'current')).toBe(true);
     setChatTheme(before);
+  });
+
+  it('builds a custom theme from a web terminal palette; bad hex keeps the default slot', () => {
+    const before = chatTheme().name;
+    const theme = setCustomChatTheme({ foreground: '#101112', cyan: '#22ccbb', red: 'oops', background: '#000000' });
+    expect(theme.name).toBe('custom');
+    expect(theme.text).toBe('38;2;16;17;18');
+    expect(theme.accent).toBe('38;2;34;204;187');
+    expect(theme.error).toBe(setChatTheme('orca').error); // invalid hex → Orca default for that slot
+    expect(theme.inputBg).toBe('48;2;14;14;14');          // background lifted so layers stay readable
+    if (isChatThemeName(before)) setChatTheme(before);
   });
 
   it('ships a wide palette and every listed theme is a valid, switchable name', () => {

@@ -57,6 +57,10 @@ export interface SpawnOpts {
   platform?: string;
   autoCompact: boolean;
   autoCompactAt: number;
+  /** The client-reported working directory (the CLI sends where it was launched). Validated against
+   *  the policy before use — see BrainService.turnWorkDir — and preferred as the session cwd, which pi
+   *  advertises to the model ("Current working directory: …"). */
+  clientCwd?: string;
 }
 
 /** Fallback auto-compact threshold (fraction of the context window) when the user set none. */

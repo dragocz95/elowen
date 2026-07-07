@@ -17,16 +17,26 @@ export function lspPrefixDir(): string {
  *  (never a shell string, so nothing gets re-parsed); npm on Windows is a `.cmd` shim, which does need
  *  the shell. Resolves — never rejects — with ok + a short failure detail (last stderr lines). */
 export function npmInstallGlobal(packages: string[], prefix = lspPrefixDir()): Promise<{ ok: boolean; detail: string }> {
+  try { mkdirSync(prefix, { recursive: true }); }
+  catch (e) { return Promise.resolve({ ok: false, detail: (e as Error).message }); }
+  return runNpm(['install', '-g', '--prefix', prefix, ...packages], 'installed');
+}
+
+/** Remove packages from Orca's LSP prefix (the /lsp modal's ctrl+u). Only touches Orca's own prefix —
+ *  a system-installed copy of the same server is never uninstalled from here. */
+export function npmUninstallGlobal(packages: string[], prefix = lspPrefixDir()): Promise<{ ok: boolean; detail: string }> {
+  return runNpm(['uninstall', '-g', '--prefix', prefix, ...packages], 'uninstalled');
+}
+
+function runNpm(args: string[], okDetail: string): Promise<{ ok: boolean; detail: string }> {
   return new Promise((resolve) => {
-    try { mkdirSync(prefix, { recursive: true }); }
-    catch (e) { resolve({ ok: false, detail: (e as Error).message }); return; }
     const win = process.platform === 'win32';
-    const child = spawn(win ? 'npm.cmd' : 'npm', ['install', '-g', '--prefix', prefix, ...packages], { stdio: ['ignore', 'ignore', 'pipe'], shell: win });
+    const child = spawn(win ? 'npm.cmd' : 'npm', args, { stdio: ['ignore', 'ignore', 'pipe'], shell: win });
     let stderr = '';
     child.stderr?.on('data', (b: Buffer) => { stderr += b.toString('utf8'); });
     child.on('error', (e) => resolve({ ok: false, detail: e.message }));
     child.on('exit', (code) => {
-      if (code === 0) { resolve({ ok: true, detail: 'installed' }); return; }
+      if (code === 0) { resolve({ ok: true, detail: okDetail }); return; }
       resolve({ ok: false, detail: stderr.trim().split('\n').slice(-3).join(' ').slice(0, 300) || `npm exited with code ${code}` });
     });
   });

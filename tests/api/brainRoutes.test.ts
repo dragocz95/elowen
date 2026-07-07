@@ -186,6 +186,15 @@ describe('LSP status + toggle routes', () => {
     expect((await app.request('/brain/lsp/install', post(adminTok, { command: 'not-a-server' }))).status).toBe(404);
   });
 
+  it('POST /brain/lsp/uninstall mirrors the guards and refuses toolchain-shipped servers', async () => {
+    const { app, adminTok, amyTok } = setupLsp();
+    expect((await app.request('/brain/lsp/uninstall', post(amyTok, { command: 'gopls' }))).status).toBe(403);
+    expect((await app.request('/brain/lsp/uninstall', post(adminTok, { command: 'not-a-server' }))).status).toBe(404);
+    const toolchain = await app.request('/brain/lsp/uninstall', post(adminTok, { command: 'gopls' }));
+    expect(toolchain.status).toBe(400);
+    expect(((await toolchain.json()) as { error: string }).error).toContain('go install');
+  });
+
   it('POST /brain/command lsp is admin-only, flips the live manager AND persists the flag', async () => {
     const { app, config, adminTok, amyTok } = setupLsp();
     expect((await app.request('/brain/command', post(amyTok, { name: 'lsp' }))).status).toBe(403);

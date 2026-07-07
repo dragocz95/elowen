@@ -2,7 +2,8 @@ import { execFileSync } from 'node:child_process';
 import { homedir } from 'node:os';
 import { TUI, ProcessTerminal, Container, matchesKey, CombinedAutocompleteProvider } from '@earendil-works/pi-tui';
 import { initTheme, getMarkdownTheme, getSelectListTheme } from '@earendil-works/pi-coding-agent';
-import { chatThemeItems, color, glyph, isChatThemeName, setChatTheme } from './theme.js';
+import { chatThemeItems, color, glyph, isChatThemeName, setChatTheme, setCustomChatTheme } from './theme.js';
+import { loadPrefs, savePrefs } from './prefs.js';
 import { StatusBar, CardPanel } from './components.js';
 import { ChatEditor, sessionItems, modelItems, parseModelValue, openPicker, openTextInput, openInfoModal } from './picker.js';
 import { runAskFlow } from './askFlow.js';
@@ -170,11 +171,19 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
     return;
   }
   initTheme();
+  // Restore the last-used chat theme before any component reads chatTheme() — otherwise every launch
+  // silently reverted to the default.
+  const savedTheme = loadPrefs().theme;
+  if (savedTheme && isChatThemeName(savedTheme)) setChatTheme(savedTheme);
   const mdTheme = getMarkdownTheme();
 
   const client = opts.client ?? new BrainClient({ base: opts.base, token: opts.token });
   await client.start({ provider: opts.model, session: opts.session, fresh: opts.fresh });
   const boot = await client.status().catch(() => null);
+  // Cross-device colors: a CUSTOM web Account → Terminal palette drives the CLI chat theme too.
+  // 'auto' keeps the locally saved /theme pick (restored above from cli-prefs).
+  const termSettings = await client.terminalSettings().catch(() => null);
+  if (termSettings?.theme === 'custom' && termSettings.palette) setCustomChatTheme(termSettings.palette);
   let modelName = boot?.model || opts.model || '';
   let conversationTitle = boot?.title ?? '';
   let lineCfg = boot?.statusline ?? null;
@@ -323,25 +332,34 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
     });
   };
 
+  const applyThinkingLevel = (level: string): void => {
+    void client.setThinkingLevel(level).then((r) => {
+      thinkingLevel = r.thinkingLevel;
+      notice = color.dim(`reasoning effort: ${r.thinkingLevel}`);
+      render();
+    }).catch((e: Error) => { notice = color.error(`error: ${e.message}`); render(); });
+  };
+
   const openThinkingPicker = (): void => {
     if (thinkingLevels.length === 0) { notice = color.dim('this model has no reasoning-effort levels'); render(); return; }
-    const apply = (level: string): void => {
-      void client.setThinkingLevel(level).then((r) => {
-        thinkingLevel = r.thinkingLevel;
-        notice = color.dim(`reasoning effort: ${r.thinkingLevel}`);
-        render();
-      }).catch((e: Error) => { notice = color.error(`error: ${e.message}`); render(); });
-    };
     openPicker({
       tui, editor, title: 'Reasoning effort',
       items: thinkingLevels.map((lv) => ({ value: lv, label: lv, description: lv === thinkingLevel ? 'current' : undefined })),
-      onPick: (value) => apply(value),
+      onPick: (value) => applyThinkingLevel(value),
     });
+  };
+
+  // ctrl+r: cycle the reasoning effort in place — popping a modal for a one-key toggle just interrupts
+  // the user's typing. The /think command still opens the explicit picker.
+  const cycleThinkingLevel = (): void => {
+    if (thinkingLevels.length === 0) { notice = color.dim('this model has no reasoning-effort levels'); render(); return; }
+    applyThinkingLevel(thinkingLevels[(thinkingLevels.indexOf(thinkingLevel) + 1) % thinkingLevels.length]!);
   };
 
   const applyTheme = (name: string): boolean => {
     if (!isChatThemeName(name)) return false;
     const theme = setChatTheme(name);
+    savePrefs({ theme: name });
     editor.borderColor = color.faint;
     notice = color.dim(`theme: ${theme.label}`);
     showPanel(panelHandle?.isHidden() ?? false);
@@ -578,20 +596,27 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
         ...s.servers.map((srv) => ({
           value: srv.command,
           label: `${srv.running ? color.success('●') : srv.installed ? color.faint('○') : color.error('✗')} ${srv.label}`,
-          description: srv.running ? 'running' : srv.installed ? 'installed · starts on the first check'
+          description: srv.running ? 'running · ctrl+u uninstalls' : srv.installed ? (srv.installable ? 'installed · ctrl+u uninstalls' : 'installed · starts on the first check')
             : srv.installable ? `not installed · ctrl+i installs (${srv.installHint})` : `not installed · ${srv.installHint}`,
         })),
       ];
-      // ctrl+i installs the highlighted server daemon-side. In a terminal ctrl+i IS Tab (\t) — same byte.
-      const installKey = (data: string, selected: { value: string } | null, close: () => void): boolean => {
-        if (data !== '\t' && !matchesKey(data, 'tab')) return false;
+      // ctrl+i installs / ctrl+u uninstalls the highlighted server daemon-side. In a terminal ctrl+i IS
+      // Tab (\t) — same byte — so Tab doubles as the install key here.
+      const manageKey = (data: string, selected: { value: string } | null, close: () => void): boolean => {
+        const install = data === '\t' || matchesKey(data, 'tab');
+        const uninstall = !install && matchesKey(data, 'ctrl+u');
+        if (!install && !uninstall) return false;
         const srv = s.servers.find((x) => x.command === selected?.value);
-        if (!srv || srv.installed) return true; // toggle row / already installed — consume, nothing to do
-        if (!srv.installable) { notice = color.dim(`${srv.label} ships with its toolchain — install it with: ${srv.installHint}`); render(); return true; }
+        if (!srv || (install && srv.installed) || (uninstall && !srv.installed)) return true; // nothing to do
+        if (!srv.installable) {
+          notice = color.dim(`${srv.label} ships with its toolchain — ${install ? 'install' : 'remove'} it with your package manager (${srv.installHint})`);
+          render();
+          return true;
+        }
         close();
-        notice = color.dim(`installing ${srv.label} (npm, this can take a minute)…`);
+        notice = color.dim(install ? `installing ${srv.label} (npm, this can take a minute)…` : `uninstalling ${srv.label}…`);
         render();
-        void client.lspInstall(srv.command)
+        void (install ? client.lspInstall(srv.command) : client.lspUninstall(srv.command))
           .then((message) => { notice = color.dim(message); refresh(); render(); })
           .catch((e: Error) => { notice = color.error(`error: ${e.message}`); refresh(); render(); });
         return true;
@@ -600,8 +625,8 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
         tui, editor,
         title: `LSP · ${s.enabled ? (s.running ? 'on · running' : 'on · idle') : 'off'}`,
         items,
-        footer: 'enter toggle · ctrl+i install · esc close',
-        onInput: installKey,
+        footer: 'enter toggle · ctrl+i install · ctrl+u uninstall · esc close',
+        onInput: manageKey,
         onPick: (v) => {
           if (v !== '__toggle') { refresh(); return; }
           void client.command('lsp')
@@ -1072,7 +1097,7 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
       return { consume: true };
     }
     if (editing && matchesKey(data, 'ctrl+r')) {
-      openThinkingPicker();
+      cycleThinkingLevel();
       return { consume: true };
     }
     if (editing && isModeToggleKey(data)) {

@@ -617,7 +617,10 @@ export class BrainService {
     const cfg = this.runtimeConfig();
     const registry = buildBrainRegistry(cfg, this.d.authStorage);
     const model = resolveBrainModel(registry, cfg, opts.selection);
-    const cwd = this.d.cwd ?? process.cwd();
+    // The session cwd is what pi advertises to the model ("Current working directory: …") and what
+    // relative paths resolve against — it must be the USER'S project, never the brain's data dir
+    // (the model would otherwise claim/act on that path). Same resolution as the per-turn workDir.
+    const cwd = this.turnWorkDir(opts.policy, opts.clientCwd) ?? this.d.cwd ?? process.cwd();
     // Enabled plugins contribute tools, skills, and system-prompt fragments. Their tools read the active
     // Policy at call time via AsyncLocalStorage (set around each prompt), no per-session construction.
     const plugins = await this.resolvePlugins();
@@ -728,7 +731,7 @@ export class BrainService {
   /** Start (or resume) a conversation. `session` resumes that stored conversation (ownership checked);
    *  `fresh` opens a brand-new one. Either way it becomes the user's active conversation. Idempotent
    *  when the target is already live. */
-  async start(userId: number, opts?: { provider?: string; model?: string; session?: string; fresh?: boolean }): Promise<{ sessionId: string }> {
+  async start(userId: number, opts?: { provider?: string; model?: string; session?: string; fresh?: boolean; cwd?: string }): Promise<{ sessionId: string }> {
     let sessionId: string;
     if (opts?.fresh) {
       sessionId = freshUserSessionId(userId);
@@ -779,6 +782,7 @@ export class BrainService {
         thinkingLevel: userCfg?.thinkingLevel,
         autoCompact: !!userCfg?.autoCompact,
         autoCompactAt: userCfg?.autoCompactAt ? userCfg.autoCompactAt / 100 : DEFAULT_AUTO_COMPACT_AT,
+        clientCwd: opts?.cwd,
       });
       if (opts?.session) live.interactedAt = Date.now();
       this.sessions.set(sessionId, live);
@@ -879,7 +883,7 @@ export class BrainService {
     if (!b.session.isStreaming && rolloverDue({ lastMessageAt: this.d.store.lastMessageAt(b.sessionId), interactedAt: b.interactedAt, now: Date.now() })) {
       const carried = b.listeners;
       this.stop(userId);
-      await this.start(userId, { fresh: true });
+      await this.start(userId, { fresh: true, cwd: clientCwd });
       b = this.activeLive(userId);
       if (!b) throw new Error('brain not started for user');
       for (const l of carried) b.listeners.add(l);

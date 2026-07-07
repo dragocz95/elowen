@@ -1,12 +1,15 @@
 import { z } from 'zod';
 
-/** Start the caller's embedded brain, optionally choosing which configured provider drives it. */
+/** Start the caller's embedded brain, optionally choosing which configured provider drives it. `cwd`
+ *  mirrors brainSendSchema: the CLI's launch directory, validated server-side and used as the session's
+ *  working directory (the model is told about it, so it must be the user's project). */
 export const brainStartSchema = z.object({
   provider: z.string().optional(),
   /** Resume this stored conversation (must belong to the caller). */
   session: z.string().optional(),
   /** Open a brand-new conversation instead of resuming. */
   fresh: z.boolean().optional(),
+  cwd: z.string().max(4096).optional(),
 });
 
 /** Switch the active conversation to another configured provider/model (the /model picker). */

@@ -12,7 +12,8 @@ export type ChatThemeName =
   | 'sunset' | 'nord' | 'dracula' | 'gruvbox' | 'matrix' | 'sand';
 
 export interface ChatTheme {
-  name: ChatThemeName;
+  /** A preset name, or 'custom' when built from the user's web terminal palette. */
+  name: ChatThemeName | 'custom';
   label: string;
   accent: string;
   accentDim: string;
@@ -300,6 +301,43 @@ export function setChatTheme(name: ChatThemeName): ChatTheme {
 
 export function isChatThemeName(value: string): value is ChatThemeName {
   return Object.prototype.hasOwnProperty.call(CHAT_THEMES, value);
+}
+
+/** Apply a chat theme derived from the user's web Account → Terminal CUSTOM palette (#rrggbb fields),
+ *  so the colors configured on the web carry into the CLI chat. Each slot maps to its nearest ANSI
+ *  role; an invalid/missing hex keeps the Orca default for that slot. Backgrounds are derived from the
+ *  palette background (panels darker-as-is, input/modal slightly lifted so the layers stay readable). */
+export function setCustomChatTheme(palette: Partial<Record<string, string>>): ChatTheme {
+  const base = CHAT_THEMES.orca;
+  const rgb = (hex?: string): [number, number, number] | null => {
+    const m = /^#([0-9a-f]{6})$/i.exec(hex ?? '');
+    if (!m) return null;
+    const n = parseInt(m[1]!, 16);
+    return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+  };
+  const f = (hex: string | undefined, fallback: string): string => { const c = rgb(hex); return c ? fg(...c) : fallback; };
+  const lift = (hex: string | undefined, amount: number, fallback: string): string => {
+    const c = rgb(hex);
+    return c ? bg(Math.min(255, c[0] + amount), Math.min(255, c[1] + amount), Math.min(255, c[2] + amount)) : fallback;
+  };
+  activeTheme = {
+    name: 'custom',
+    label: 'Custom (web)',
+    accent: f(palette.cyan, base.accent),
+    accentDim: f(palette.blue, base.accentDim),
+    accentSoft: f(palette.brightCyan, base.accentSoft),
+    text: f(palette.foreground, base.text),
+    muted: f(palette.white, base.muted),
+    faint: f(palette.brightBlack, base.faint),
+    success: f(palette.green, base.success),
+    warning: f(palette.yellow, base.warning),
+    error: f(palette.red, base.error),
+    panelBg: lift(palette.background, 0, base.panelBg),
+    inputBg: lift(palette.background, 14, base.inputBg),
+    modalBg: lift(palette.background, 5, base.modalBg),
+    selectedBg: (() => { const c = rgb(palette.selectionBackground) ?? rgb(palette.cyan); return c ? bg(...c) : base.selectedBg; })(),
+  };
+  return activeTheme;
 }
 
 export function chatThemeItems(): { value: ChatThemeName; label: string; description?: string }[] {
