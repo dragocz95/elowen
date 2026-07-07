@@ -1,6 +1,6 @@
-import { truncateToWidth, visibleWidth, wrapTextWithAnsi } from '@earendil-works/pi-tui';
-import type { Component } from '@earendil-works/pi-tui';
-import type { BrainCard } from '../../brain/events.js';
+import { matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi } from '@earendil-works/pi-tui';
+import type { Component, Container, Editor, Focusable, TUI } from '@earendil-works/pi-tui';
+import type { AskQuestion, BrainCard } from '../../brain/events.js';
 import { ansi, chatTheme, color } from './theme.js';
 import type { ToolOutputView } from '../../brain/messageView.js';
 import { formatDuration, formatK, padAnsi } from '../ui/text.js';
@@ -110,6 +110,113 @@ export class SubagentPanel implements Component {
     }
     return lines;
   }
+}
+
+export interface ApprovalDockOpts {
+  tui: TUI;
+  /** The approval question (kind 'approval' on the `ask` event): three fixed options — see
+   *  brain/toolPermissions.ts. */
+  question: AskQuestion;
+  /** The user decided — deliver the picked option's LABEL ('Allow once' / 'Always allow' / 'Deny'). */
+  onPick: (label: string) => void;
+}
+
+/** Blocking tool-approval prompt (permission `ask` rules), replacing the chat editor while parked —
+ *  the approval sibling of AskChoiceDock, warning-toned so it reads as a security decision, not a
+ *  content question. Keys: 1..9 pick instantly, arrows + Enter confirm, Esc = Deny. */
+export class ApprovalDock implements Component, Focusable {
+  private selectedIndex = 0;
+  private _focused = false;
+
+  constructor(private opts: ApprovalDockOpts) {}
+
+  get focused(): boolean { return this._focused; }
+  set focused(value: boolean) { this._focused = value; }
+
+  invalidate(): void { /* stateless render from the current selection */ }
+
+  private options(): { label: string; description?: string }[] {
+    return this.opts.question.options;
+  }
+
+  /** Esc resolves to the explicit Deny option (by label), so a bail can never approve anything. */
+  private denyLabel(): string {
+    const ops = this.options();
+    return ops.find((o) => o.label === 'Deny')?.label ?? ops[ops.length - 1]?.label ?? 'Deny';
+  }
+
+  handleInput(data: string): void {
+    const ops = this.options();
+    if (matchesKey(data, 'escape')) { this.opts.onPick(this.denyLabel()); return; }
+    if (data === '\x1b[A' || matchesKey(data, 'up')) { this.selectedIndex = (this.selectedIndex + ops.length - 1) % ops.length; this.opts.tui.requestRender(); return; }
+    if (data === '\x1b[B' || matchesKey(data, 'down')) { this.selectedIndex = (this.selectedIndex + 1) % ops.length; this.opts.tui.requestRender(); return; }
+    if (/^[1-9]$/.test(data)) {
+      const picked = ops[Number(data) - 1];
+      if (picked) this.opts.onPick(picked.label);
+      return;
+    }
+    if (data === '\r' || matchesKey(data, 'enter')) {
+      const picked = ops[this.selectedIndex];
+      if (picked) this.opts.onPick(picked.label);
+    }
+  }
+
+  render(width: number): string[] {
+    const w = Math.max(2, width);
+    const innerWidth = Math.max(1, w - 2);
+    const theme = chatTheme();
+    const border = color.warning;
+    const fill = (text: string): string => `\x1b[${theme.inputBg}m${padAnsi(text, innerWidth)}\x1b[0m`;
+    const row = (content: string): string => `${border('│')}${fill(content)}${border('│')}`;
+    const rows = this.options().map((op, i) => {
+      const key = `${i + 1}.`;
+      const label = padAnsi(`${key} ${op.label}`, 20);
+      const desc = truncateToWidth(op.description ?? '', Math.max(1, innerWidth - 20 - 5), '');
+      if (i === this.selectedIndex) return `${border('│')}${color.selected(padAnsi(`  ${key} ${op.label}  ${desc}`, innerWidth))}${border('│')}`;
+      return row(`  ${ansi.open(theme.text, label)} ${ansi.open(theme.muted, desc)}`);
+    });
+    return [
+      `${border('╭')}${color.faint('─'.repeat(innerWidth))}${border('╮')}`,
+      row(`  ${color.warning('⚠')} ${ansi.open(theme.text, 'Approval needed')}  ${ansi.open(theme.faint, this.opts.question.header || 'permission')}`),
+      // The question carries the tool name / verbatim command — wrap, never truncate, so it stays auditable.
+      ...wrapTextWithAnsi(this.opts.question.question, Math.max(1, innerWidth - 4)).map((line) => row(`  ${ansi.open(theme.text, line)}`)),
+      row(''),
+      ...rows,
+      row(''),
+      row(`  ${ansi.open(theme.text, '1-3')} ${ansi.open(theme.muted, 'pick')}  ${ansi.open(theme.text, 'enter')} ${ansi.open(theme.muted, 'confirm')}  ${ansi.open(theme.text, 'esc')} ${ansi.open(theme.muted, 'deny')}`),
+      `${border('╰')}${color.faint('─'.repeat(innerWidth))}${border('╯')}`,
+    ];
+  }
+}
+
+export interface ApprovalFlowOpts {
+  tui: TUI;
+  /** The layout slot normally holding the editor; the flow borrows it, then restores the editor. */
+  slot: Container;
+  editor: Editor;
+  question: AskQuestion;
+  /** The user decided — deliver the picked option label (POSTed as the answer to /brain/answer). */
+  onDecision: (label: string) => void;
+}
+
+/** Drive one blocking approval prompt in the TUI (the approval sibling of runAskFlow): swap the chat
+ *  editor for an ApprovalDock, restore it on any decision, then deliver the pick. */
+export function runApprovalFlow(o: ApprovalFlowOpts): void {
+  const dock = new ApprovalDock({
+    tui: o.tui,
+    question: o.question,
+    onPick: (label) => {
+      o.slot.clear();
+      o.slot.addChild(o.editor);
+      o.tui.setFocus(o.editor);
+      o.tui.requestRender(true);
+      o.onDecision(label);
+    },
+  });
+  o.slot.clear();
+  o.slot.addChild(dock);
+  o.tui.setFocus(dock);
+  o.tui.requestRender(true);
 }
 
 /** A bottom status bar: left text and right text justified to the two edges. */

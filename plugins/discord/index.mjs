@@ -199,6 +199,56 @@ export function splitContent(text) {
 /** User-facing gateway messages, per configured language (config `language`: 'en' | 'cs'). These are
  *  the bot's own service texts (slash-command replies, placeholders) — the brain's answers are in
  *  whatever language the user writes. */
+/** True when a question renders as a button row: single-select with few options — a click IS the pick.
+ *  MultiSelect or >5 options need a string select (Discord caps 5 buttons per action row). */
+export function askUsesButtons(q) {
+  const n = q.options?.length ?? 0;
+  return q.multiSelect !== true && n >= 1 && n <= 5;
+}
+
+/** Build the component rows for a parked ask_user_question message. Pure — exported for tests.
+ *  Per question: a row of ≤5 buttons (single-select, `ask:<id>:<qi>:<oi>`; picked = green) or one
+ *  string select (`ask:<id>:<qi>`, multi-capable, ≤25 options). Footer row: Submit — skipped for a
+ *  single button-question where a click answers instantly — plus a free-text "Other" button on
+ *  single-question asks unless the question sets `custom: false` (absent = allowed). */
+export function buildAskComponents(id, questions, { cs = false, selected = {} } = {}) {
+  const qs = questions.slice(0, 4);
+  const rows = qs.map((q, qi) => {
+    if (askUsesButtons(q)) {
+      return {
+        type: 1,
+        components: q.options.slice(0, 5).map((op, oi) => ({
+          type: 2,
+          style: (selected[qi] ?? []).includes(op.label) ? 3 : 2, // green when picked, grey otherwise
+          custom_id: `ask:${id}:${qi}:${oi}`,
+          label: String(op.label).slice(0, 80),
+        })),
+      };
+    }
+    return {
+      type: 1,
+      components: [{
+        type: 3,
+        custom_id: `ask:${id}:${qi}`,
+        placeholder: (q.multiSelect ? (cs ? `${q.header} — vyber jednu či víc` : `${q.header} — pick one or more`) : q.header).slice(0, 150),
+        min_values: q.multiSelect ? 0 : 1,
+        max_values: q.multiSelect ? Math.min(q.options.length, 25) : 1,
+        options: q.options.slice(0, 25).map((op, oi) => ({
+          label: String(op.label).slice(0, 100),
+          value: String(oi),
+          description: op.description ? String(op.description).slice(0, 100) : undefined,
+        })),
+      }],
+    };
+  });
+  const instant = qs.length === 1 && askUsesButtons(qs[0]); // a button click answers by itself
+  const footer = [];
+  if (!instant) footer.push({ type: 2, style: 3, custom_id: `ask:${id}:submit`, label: cs ? 'Odeslat' : 'Submit' });
+  if (qs.length === 1 && qs[0].custom !== false) footer.push({ type: 2, style: 2, custom_id: `ask:${id}:other`, label: cs ? '✏️ Jiné' : '✏️ Other' });
+  if (footer.length) rows.push({ type: 1, components: footer });
+  return rows;
+}
+
 const MESSAGES = {
   en: {
     newConversation: '🆕 Fresh conversation started in this channel.',
@@ -737,43 +787,38 @@ class DiscordAdapter {
     await this.rest('PATCH', `/webhooks/${this.appId}/${i.token}/messages/@original`, data);
   }
 
-  /** Render a parked ask_user_question (from the brain's `ask` event) as an orange embed
-   *  plus one string-select per question and a Submit button (+ an "Other" free-text button for the
-   *  single-question case). Registers a pending entry the interaction/text handlers resolve. */
+  /** Render a parked ask_user_question (from the brain's `ask` event) as an orange embed plus native
+   *  components — option buttons for small single-select questions, string selects otherwise (see
+   *  buildAskComponents). Registers a pending entry the interaction/text handlers resolve. */
   async postAsk(channelId, replyToId, askerId, id, questions) {
     const cs = this.cfg.language === 'cs';
     const title = `❓ ${this.cfg.agentName || 'Orca'} ${cs ? 'potřebuje tvůj vstup' : 'needs your input'}`;
     const desc = questions.map((q) => `**${q.header}** — ${q.question}`).join('\n\n');
-    const rows = questions.slice(0, 4).map((q, qi) => ({
-      type: 1,
-      components: [{
-        type: 3,
-        custom_id: `ask:${id}:${qi}`,
-        placeholder: (q.multiSelect ? (cs ? `${q.header} — vyber jednu či víc` : `${q.header} — pick one or more`) : q.header).slice(0, 150),
-        min_values: q.multiSelect ? 0 : 1,
-        max_values: q.multiSelect ? Math.min(q.options.length, 25) : 1,
-        options: q.options.slice(0, 25).map((op, oi) => ({
-          label: String(op.label).slice(0, 100),
-          value: String(oi),
-          description: op.description ? String(op.description).slice(0, 100) : undefined,
-        })),
-      }],
-    }));
-    const buttons = [{ type: 2, style: 3, custom_id: `ask:${id}:submit`, label: cs ? 'Odeslat' : 'Submit' }];
-    if (questions.length === 1) buttons.push({ type: 2, style: 2, custom_id: `ask:${id}:other`, label: cs ? '✏️ Jiné' : '✏️ Other' });
     const res = await this.rest('POST', `/channels/${channelId}/messages`, {
       ...(replyToId ? { message_reference: { message_id: replyToId, fail_if_not_exists: false } } : {}),
       embeds: [{ title, description: desc, color: 0xE67E22 }],
-      components: [...rows, { type: 1, components: buttons }],
+      components: buildAskComponents(id, questions, { cs }),
     }).catch((e) => { this.log.error(`postAsk failed: ${e?.message ?? e}`); return null; });
     this.pendingAsks.set(id, { channelId, messageId: res?.id ?? null, questions, askerId, selected: {}, awaitingText: false, title, desc, createdAt: Date.now() });
   }
 
-  /** Resolve an `ask:*` component interaction: a select stores that question's picks; Submit delivers all
-   *  answers to the parked turn; Other flips to free-text capture (the next channel message answers). */
+  /** Deliver every collected pick of a pending ask to the parked turn and close out the message. */
+  async settleAsk(i, id, pend, cs) {
+    const answers = pend.questions.map((q, qi) => ({ header: q.header, selected: pend.selected[qi] ?? [] }));
+    const settled = this.answerQuestion(id, answers);
+    this.pendingAsks.delete(id);
+    if (!settled) return this.respond(i, 7, { embeds: [{ title: cs ? '⏱ Otázka vypršela' : '⏱ Question expired', color: 0x95A5A6 }], components: [] });
+    const summary = answers.map((a) => `**${a.header}:** ${a.selected.join(', ') || '—'}`).join('\n');
+    return this.respond(i, 7, { embeds: [{ title: cs ? '✅ Odpovězeno' : '✅ Answered', description: summary, color: 0x2ECC71 }], components: [] });
+  }
+
+  /** Resolve an `ask:*` component interaction: an option button (`ask:<id>:<qi>:<oi>`) records that
+   *  question's pick — and answers instantly on a single-question ask; a select stores its picks;
+   *  Submit delivers all answers to the parked turn; Other flips to free-text capture (the next
+   *  channel message answers). */
   async onAskInteraction(i) {
     const cs = this.cfg.language === 'cs';
-    const [, id, part] = String(i.data.custom_id).split(':');
+    const [, id, part, sub] = String(i.data.custom_id).split(':');
     const pend = this.pendingAsks.get(id);
     if (!pend) return this.respond(i, 7, { components: [] }); // expired → just strip the stale components
     // Only the person the question was posed to (or the operator) may answer it.
@@ -781,23 +826,25 @@ class DiscordAdapter {
     if (clickerId && clickerId !== pend.askerId && !this.isAdminMember(i.member)) {
       return this.respond(i, 4, { content: cs ? 'Na tuhle otázku odpovídá někdo jiný.' : 'This question is for someone else.', flags: 64 });
     }
-    if (part === 'submit') {
-      const answers = pend.questions.map((q, qi) => ({ header: q.header, selected: pend.selected[qi] ?? [] }));
-      const settled = this.answerQuestion(id, answers);
-      this.pendingAsks.delete(id);
-      if (!settled) return this.respond(i, 7, { embeds: [{ title: cs ? '⏱ Otázka vypršela' : '⏱ Question expired', color: 0x95A5A6 }], components: [] });
-      const summary = answers.map((a) => `**${a.header}:** ${a.selected.join(', ') || '—'}`).join('\n');
-      return this.respond(i, 7, { embeds: [{ title: cs ? '✅ Odpovězeno' : '✅ Answered', description: summary, color: 0x2ECC71 }], components: [] });
-    }
+    if (part === 'submit') return this.settleAsk(i, id, pend, cs);
     if (part === 'other') {
       pend.awaitingText = true;
       const note = cs ? '✏️ Napiš odpověď do tohohle kanálu.' : '✏️ Type your answer in this channel.';
       return this.respond(i, 7, { embeds: [{ title: pend.title, description: `${pend.desc}\n\n${note}`, color: 0x3498DB }], components: [] });
     }
-    // Otherwise `part` is a question index → record that question's selected labels (client shows them).
     const qi = Number(part);
     const q = pend.questions[qi];
-    if (q) pend.selected[qi] = (i.data.values ?? []).map((v) => q.options[Number(v)]?.label).filter(Boolean);
+    if (!q) return this.respond(i, 6, {});
+    // Option button → record the pick; a single-question ask answers right away, a multi-question one
+    // re-renders so the green button shows the pick and Submit delivers later.
+    if (sub !== undefined) {
+      const label = q.options[Number(sub)]?.label;
+      if (label) pend.selected[qi] = [label];
+      if (pend.questions.length === 1) return this.settleAsk(i, id, pend, cs);
+      return this.respond(i, 7, { components: buildAskComponents(id, pend.questions, { cs, selected: pend.selected }) });
+    }
+    // Otherwise a string select → record that question's selected labels (the client shows them).
+    pend.selected[qi] = (i.data.values ?? []).map((v) => q.options[Number(v)]?.label).filter(Boolean);
     return this.respond(i, 6, {}); // DEFERRED_UPDATE: ack without changing the message
   }
 

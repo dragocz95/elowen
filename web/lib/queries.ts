@@ -234,6 +234,11 @@ export const useMyCliSettings = () =>
 export const useMyTerminalSettings = () =>
   useQuery({ queryKey: ['my-terminal-settings'], queryFn: orcaClient.myTerminalSettings, staleTime: 5 * 60 * 1000 });
 
+/** The current user's granular tool permissions (rules + persisted YOLO default). Edited in Account →
+ *  Orca AI (the YOLO toggle) and grown by the approval prompt's "Always allow" flow. */
+export const useMyPermissions = () =>
+  useQuery({ queryKey: ['my-permissions'], queryFn: orcaClient.myPermissions });
+
 /** The caller's personality profiles for one platform. Edited in Account → Personality; mutations
  *  invalidate the ['personalities'] prefix (all platforms). */
 export const usePersonalities = (platform: string) =>

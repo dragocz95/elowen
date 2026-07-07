@@ -1371,6 +1371,7 @@ export const en = {
     modelSwitched: 'Switched to',
     noSession: 'no active conversation',
     askWaiting: 'The assistant is waiting for your choice',
+    approvalWaiting: 'Approval needed — the agent wants to run a tool',
     askOther: 'Other…',
     askOtherPlaceholder: 'Type your own answer',
     askSubmit: 'Send answer',
@@ -1503,6 +1504,9 @@ export const en = {
     autoCompact: 'Auto-compact context',
     autoCompactToggle: 'Automatically compact long conversations',
     autoCompactAt: 'Compact at context fill',
+    yoloTitle: 'YOLO mode',
+    yoloToggle: 'Auto-approve tool asks (YOLO)',
+    yoloWarning: 'When enabled, tool and command approval prompts are answered automatically with "allow" in all your new sessions. Explicit deny rules still apply. Use with caution.',
     saveError: 'Saving the settings failed',
   },
   push: {

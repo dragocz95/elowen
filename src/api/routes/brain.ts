@@ -189,6 +189,17 @@ export function registerBrainRoutes(app: OrcaApp, ctx: RouteContext): void {
     catch (e) { return c.json({ error: (e as Error).message }, 409); }
   });
 
+  // SESSION-scoped YOLO override (the CLI /yolo command): flips "ask" permission rules to auto-approve
+  // for the caller's ACTIVE live conversation only (deny rules still deny). `on` absent → toggle the
+  // current effective state. The persisted per-user default lives at /auth/me/permissions.
+  app.post('/brain/yolo', async c => {
+    if (!d.brain) return c.json({ error: 'brain unavailable' }, 503);
+    if (forbidden(c)) return c.json({ error: 'forbidden' }, 403);
+    const b = (await c.req.json().catch(() => ({}))) as { on?: unknown };
+    try { return c.json(d.brain.setYolo(c.get('user').id, typeof b.on === 'boolean' ? b.on : undefined)); }
+    catch (e) { return c.json({ error: (e as Error).message }, 409); }
+  });
+
   // Manual context compaction (the /compact command in chat clients). Returns the fresh usage numbers
   // plus whether anything was compacted — a too-small/already-compacted session is a benign no-op
   // (200 with compacted:false), NOT an opaque 409, so clients show a friendly notice instead of a failure.

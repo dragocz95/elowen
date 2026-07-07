@@ -126,4 +126,26 @@ describe('UserSettingStore', () => {
     expect(s.cliSettings(2).whatsappNumber).toBe('');
     expect(s.userIdBySetting('whatsappNumber', '420778433908')).toBe(1);
   });
+
+  it('permission settings: empty defaults, sanitized round-trip, corrupt blob degrades cleanly', () => {
+    const s = new UserSettingStore(openDb(':memory:'));
+    expect(s.permissionSettings(1)).toEqual({ tools: {}, bash: {}, yolo: false });
+    s.setPermissionSettings(1, { tools: { write_file: 'allow', junk: 'nuke' }, bash: { 'rm *': 'deny' }, yolo: true });
+    expect(s.permissionSettings(1)).toEqual({ tools: { write_file: 'allow' }, bash: { 'rm *': 'deny' }, yolo: true });
+    // A patch replaces a present rule map wholesale but keeps absent fields (yolo stays true).
+    s.setPermissionSettings(1, { bash: { 'git *': 'allow' } });
+    expect(s.permissionSettings(1)).toEqual({ tools: { write_file: 'allow' }, bash: { 'git *': 'allow' }, yolo: true });
+    // Corrupt stored JSON → full defaults, never a throw.
+    s.set(1, 'permissions', '{not json');
+    expect(s.permissionSettings(1)).toEqual({ tools: {}, bash: {}, yolo: false });
+  });
+
+  it('addPermissionAllowRule appends (or moves) the pattern to the END so it wins last-match resolution', () => {
+    const s = new UserSettingStore(openDb(':memory:'));
+    s.setPermissionSettings(1, { bash: { 'npm *': 'deny', 'git *': 'ask' } });
+    s.addPermissionAllowRule(1, 'bash', 'npm *'); // an "Always allow" pick overrides the earlier deny
+    expect(Object.entries(s.permissionSettings(1).bash)).toEqual([['git *', 'ask'], ['npm *', 'allow']]);
+    s.addPermissionAllowRule(1, 'tools', 'write_file');
+    expect(s.permissionSettings(1).tools).toEqual({ write_file: 'allow' });
+  });
 });

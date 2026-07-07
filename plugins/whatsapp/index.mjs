@@ -143,6 +143,27 @@ export function splitContent(text) {
 
 /** User-facing service messages, per configured language (config `language`: 'en' | 'cs'). These are
  *  the bot's own texts (command replies, placeholders) — the brain's answers are in the user's language. */
+/** Parse a text reply to a single parked ask question. Pure — exported for tests. Returns
+ *  `{ kind: 'picks', labels }` for a valid number (or comma list on a multiSelect question),
+ *  `{ kind: 'other', text }` for free text when the question allows it (`custom !== false`,
+ *  absent = allowed), or null when the reply is not a usable answer (→ re-prompt). */
+export function parseAskReply(text, question) {
+  const t = String(text ?? '').trim();
+  if (!t) return null;
+  const opts = question.options ?? [];
+  const parts = t.split(',').map((s) => s.trim());
+  if (parts.every((s) => /^\d+$/.test(s))) {
+    const nums = parts.map(Number);
+    const inRange = nums.every((n) => n >= 1 && n <= opts.length);
+    // A comma list only counts as picks on a multiSelect question; a single number always does.
+    if (inRange && (question.multiSelect === true || nums.length === 1)) {
+      return { kind: 'picks', labels: [...new Set(nums.map((n) => opts[n - 1].label))] };
+    }
+  }
+  if (question.custom !== false) return { kind: 'other', text: t };
+  return null;
+}
+
 const MESSAGES = {
   en: {
     newConversation: '🆕 Fresh conversation started in this chat.',
@@ -164,6 +185,7 @@ const MESSAGES = {
     restartForbidden: '🔒 Only an admin can restart the daemon.',
     restartUnavailable: '⚠️ Restart isn’t available on this deployment.',
     replyWithNumber: (n) => n > 1 ? `Reply with a number (1-${n}).` : 'Reply with the number.',
+    replyWithNumbers: (n) => `Reply with a number (1-${n}), or several separated by commas (e.g. 1,3).`,
     submitHint: 'Reply *submit* when done, or send your own answer as text.',
     expired: '⏱ This prompt expired.',
     otherHint: 'Or just type your own answer.',
@@ -201,6 +223,7 @@ const MESSAGES = {
     restartForbidden: '🔒 Restartovat daemon může jen admin.',
     restartUnavailable: '⚠️ Restart není na tomto nasazení dostupný.',
     replyWithNumber: (n) => n > 1 ? `Odpověz číslem (1-${n}).` : 'Odpověz tím číslem.',
+    replyWithNumbers: (n) => `Odpověz číslem (1-${n}), nebo více čísly oddělenými čárkou (např. 1,3).`,
     submitHint: 'Až budeš hotov, napiš *submit*, nebo pošli vlastní odpověď textem.',
     expired: '⏱ Tento dotaz vypršel.',
     otherHint: 'Nebo napiš vlastní odpověď.',
@@ -828,18 +851,29 @@ class WhatsAppAdapter {
       if (Date.now() - pend.createdAt > ASK_TTL_MS) { this.pendingAsks.delete(id); continue; }
       if (pend.jid !== chatJid || !sameId(pend.askerJid, senderJid)) continue;
       if (/^submit$/i.test(t)) { await this.submitAsk(id, m); return true; }
-      // A bare number on a single-question ask picks that option and submits immediately.
+      // A single-question ask answers from one reply: a number (or a comma list on multiSelect) picks
+      // and submits; anything else is a free-text answer when the question allows it. An unusable
+      // reply (options-only question, no valid number) re-prompts instead of being swallowed.
       if (pend.questions.length === 1) {
-        const opts = pend.questions[0].options ?? [];
-        const n = Number(t);
-        if (Number.isInteger(n) && n >= 1 && n <= opts.length) {
-          pend.selected[0] = [opts[n - 1].label];
+        const q0 = pend.questions[0];
+        const parsed = parseAskReply(t, q0);
+        if (parsed?.kind === 'picks') {
+          pend.selected[0] = parsed.labels;
           await this.submitAsk(id, m);
           return true;
         }
+        if (parsed?.kind === 'other') {
+          const settled = this.answerQuestion(id, [{ header: q0.header, selected: pend.selected[0] ?? [], other: parsed.text }]);
+          this.pendingAsks.delete(id);
+          if (settled) return true; // answer delivered — the model's reply is the acknowledgement, no ack line
+          continue; // already timed out server-side → fall through and treat the message as a normal turn
+        }
+        const hint = q0.multiSelect ? this.msg.replyWithNumbers((q0.options ?? []).length) : this.msg.replyWithNumber((q0.options ?? []).length);
+        await this.sendText(pend.jid, hint, m);
+        return true;
       }
-      // Otherwise treat the text as a free-form ("other") answer to the first question.
-      if (t) {
+      // Multi-question asks collect a free-text answer for the first question that allows it, or `submit`.
+      if (t && pend.questions[0]?.custom !== false) {
         const q0 = pend.questions[0];
         const settled = this.answerQuestion(id, [{ header: q0.header, selected: pend.selected[0] ?? [], other: t }]);
         this.pendingAsks.delete(id);
@@ -871,17 +905,24 @@ class WhatsAppAdapter {
 
   // ── ask_user_question ──
 
-  /** Render a parked ask_user_question (brain `ask` event) as a numbered text prompt. On a single-question
-   *  ask the user replies with a number (or free text); multi-question asks collect a free-text answer or
-   *  `submit`. Answers are delivered from handleTextReply. */
+  /** Render a parked ask_user_question (brain `ask` event) as a numbered text prompt
+   *  ("1. label — description"). On a single-question ask the user replies with a number (a comma list
+   *  on multiSelect), or free text unless the question sets `custom: false`; multi-question asks collect
+   *  a free-text answer or `submit`. Answers are delivered from handleTextReply. */
   async postAsk(chatJid, quoted, askerJid, id, questions) {
     const qs = questions.slice(0, 4);
     const blocks = qs.map((q) => {
-      const opts = (q.options ?? []).slice(0, 20).map((op, oi) => `  ${oi + 1}. ${op.label}${op.description ? ` — ${op.description}` : ''}`);
+      const opts = (q.options ?? []).slice(0, 25).map((op, oi) => `  ${oi + 1}. ${op.label}${op.description ? ` — ${op.description}` : ''}`);
       return `*${q.header}* — ${q.question}\n${opts.join('\n')}`;
     });
     const single = qs.length === 1;
-    const hint = single ? this.msg.replyWithNumber((qs[0].options ?? []).length) : this.msg.submitHint;
+    let hint = this.msg.submitHint;
+    if (single) {
+      const q0 = qs[0];
+      const n = (q0.options ?? []).length;
+      hint = q0.multiSelect ? this.msg.replyWithNumbers(n) : this.msg.replyWithNumber(n);
+      if (q0.custom !== false) hint += ` ${this.msg.otherHint}`;
+    }
     const body = `❓ ${blocks.join('\n\n')}\n\n_${hint}_`;
     this.pendingAsks.set(id, { jid: chatJid, askerJid, questions: qs, selected: {}, createdAt: Date.now() });
     const key = await this.sendText(chatJid, body, quoted);

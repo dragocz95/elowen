@@ -23,6 +23,10 @@ export interface LiveBrain {
   pluginToolNames: Set<string>;
   /** True while the session runs on the user's vision-fallback model (an image turn hopped onto it). */
   visionFallback?: boolean;
+  /** SESSION-scoped YOLO override (the CLI `/yolo` command): true/false wins over the user's persisted
+   *  default for this live session only. Deliberately NOT carried across respawns (model switch,
+   *  restart, vision hop) — a fresh session starts back at the persisted default. */
+  yoloOverride?: boolean;
   /** Epoch ms of the user's last EXPLICIT interaction with this conversation (resume via the session
    *  picker / `/resume`, a model switch, a manual compact, a reasoning-effort change). Consulted by the
    *  idle-rollover check (send()) so a deliberately reopened old conversation continues instead of being

@@ -38,7 +38,7 @@ describe('slash command registry', () => {
   });
 
   it('scopes local work modes to the CLI surface', () => {
-    for (const n of ['plan', 'build']) {
+    for (const n of ['plan', 'build', 'yolo']) {
       expect(commandsFor('cli', true).some((c) => c.name === n), `cli ${n}`).toBe(true);
       expect(commandsFor('web', true).some((c) => c.name === n), `web ${n}`).toBe(false);
       expect(commandsFor('discord', true).some((c) => c.name === n), `discord ${n}`).toBe(false);

@@ -1,15 +1,34 @@
 'use client';
 import { useState } from 'react';
-import { Check, Pencil } from 'lucide-react';
+import { Pencil } from 'lucide-react';
 import type { AskAnswer, AskQuestion } from '../../lib/types';
 import { Button } from '../../components/ui/Button';
+import { Checkbox } from '../../components/ui/Checkbox';
 import { Input } from '../../components/ui/Input';
 import { useTranslation } from '../../lib/i18n';
 
-/** Renders a parked ask_user_question inline in the transcript: one block per question with clickable
- *  options (single- or multi-select) plus a free-text "Other". A single submit posts all answers at once
- *  to /brain/answer, resuming the paused turn. Mirrors Claude Code's AskUserQuestion UX. */
-export function AskQuestionCard({ questions, onSubmit }: { questions: AskQuestion[]; onSubmit: (answers: AskAnswer[]) => void }) {
+/** Presentational radio dot for single-select questions — the row button owns the click,
+ *  mirroring the Checkbox primitive's pattern. */
+function Radio({ checked }: { checked: boolean }) {
+  return (
+    <span
+      className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-full border transition-colors ${
+        checked ? 'border-accent' : 'border-border-strong bg-surface'
+      }`}
+      aria-hidden
+    >
+      <span className={`h-2 w-2 rounded-full bg-accent transition-transform duration-150 ${checked ? 'scale-100' : 'scale-0'}`} />
+    </span>
+  );
+}
+
+/** Renders a parked ask_user_question inline in the transcript as a form: one block per question with a
+ *  radio list (single-select) or checkbox list (multiSelect), plus a free-text "Other" unless the
+ *  question sets `custom: false` (absent = allowed — older events predate the flag). A single submit
+ *  posts all answers at once to /brain/answer, resuming the paused turn. `kind: 'approval'` (a blocked
+ *  tool-permission ask) reuses the same pipeline but reads as a security decision: warning tone +
+ *  distinct title; the three fixed options (Allow once / Always allow / Deny) come with the question. */
+export function AskQuestionCard({ questions, kind, onSubmit }: { questions: AskQuestion[]; kind?: 'approval'; onSubmit: (answers: AskAnswer[]) => void }) {
   const { t } = useTranslation();
   // Per-question selection (option labels) and free-text Other, keyed by question index.
   const [picked, setPicked] = useState<Record<number, string[]>>({});
@@ -39,43 +58,52 @@ export function AskQuestionCard({ questions, onSubmit }: { questions: AskQuestio
     })));
   };
 
+  const approval = kind === 'approval';
   return (
-    <div className="flex flex-col gap-3 rounded-lg border border-accent/40 bg-accent/5 p-3">
-      <p className="text-tiny font-medium uppercase tracking-wide text-accent">{t.brainChat.askWaiting}</p>
+    <div className={`flex flex-col gap-3 rounded-lg border p-3 ${approval ? 'border-warning/50 bg-warning/5' : 'border-accent/40 bg-accent/5'}`}>
+      <p className={`text-tiny font-medium uppercase tracking-wide ${approval ? 'text-warning' : 'text-accent'}`}>
+        {approval ? t.brainChat.approvalWaiting : t.brainChat.askWaiting}
+      </p>
       {questions.map((q, qi) => (
         <div key={qi} className="flex flex-col gap-1.5">
           <div className="flex items-baseline gap-2">
             <span className="shrink-0 rounded bg-elevated px-1.5 py-0.5 text-tiny font-medium text-text-muted">{q.header}</span>
             <span className="text-sm text-text">{q.question}</span>
           </div>
-          <div className="flex flex-wrap gap-1.5">
+          <div className="flex flex-col gap-0.5" role={q.multiSelect ? 'group' : 'radiogroup'}>
             {q.options.map((op, oi) => {
               const on = (picked[qi] ?? []).includes(op.label);
               return (
-                <Button
+                <button
                   key={oi}
                   type="button"
-                  variant={on ? 'accent' : 'default'}
-                  icon={on ? Check : undefined}
+                  role={q.multiSelect ? 'checkbox' : 'radio'}
+                  aria-checked={on}
                   disabled={sent}
                   onClick={() => toggle(qi, op.label, q.multiSelect)}
-                  title={op.description}
+                  className={`flex items-start gap-2 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-accent/10 disabled:opacity-60 ${on ? 'bg-accent/10' : ''}`}
                 >
-                  {op.label}
-                </Button>
+                  {q.multiSelect ? <Checkbox checked={on} className="mt-0.5" /> : <Radio checked={on} />}
+                  <span className="flex min-w-0 flex-col">
+                    <span className="text-sm text-text">{op.label}</span>
+                    {op.description ? <span className="text-tiny text-text-muted">{op.description}</span> : null}
+                  </span>
+                </button>
               );
             })}
-            <Button
-              type="button"
-              variant={otherOpen[qi] ? 'accent' : 'ghost'}
-              icon={Pencil}
-              disabled={sent}
-              onClick={() => setOtherOpen((cur) => ({ ...cur, [qi]: !cur[qi] }))}
-            >
-              {t.brainChat.askOther}
-            </Button>
+            {q.custom !== false ? (
+              <button
+                type="button"
+                disabled={sent}
+                onClick={() => setOtherOpen((cur) => ({ ...cur, [qi]: !cur[qi] }))}
+                className={`flex items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-accent/10 disabled:opacity-60 ${otherOpen[qi] ? 'bg-accent/10' : ''}`}
+              >
+                <Pencil size={14} className="shrink-0 text-text-muted" />
+                <span className="text-sm text-text">{t.brainChat.askOther}</span>
+              </button>
+            ) : null}
           </div>
-          {otherOpen[qi] ? (
+          {q.custom !== false && otherOpen[qi] ? (
             <Input
               value={other[qi] ?? ''}
               onChange={(e) => setOther((cur) => ({ ...cur, [qi]: e.target.value }))}

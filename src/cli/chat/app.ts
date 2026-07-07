@@ -4,7 +4,7 @@ import { TUI, ProcessTerminal, Container, matchesKey, CombinedAutocompleteProvid
 import { initTheme, getMarkdownTheme, getSelectListTheme } from '@earendil-works/pi-coding-agent';
 import { chatThemeItems, color, glyph, isChatThemeName, setChatTheme, setCustomChatTheme } from './theme.js';
 import { loadPrefs, savePrefs } from './prefs.js';
-import { StatusBar, CardPanel, SubagentPanel, spinnerFrame } from './components.js';
+import { StatusBar, CardPanel, SubagentPanel, spinnerFrame, runApprovalFlow } from './components.js';
 import type { SubagentPanelEntry } from './components.js';
 import { ChatEditor, sessionItems, modelItems, parseModelValue, openPicker, openTextInput, openInfoModal } from './picker.js';
 import { runAskFlow } from './askFlow.js';
@@ -64,7 +64,7 @@ export function viewToPlainText(view: ChatView): string[] {
 
 /** Local slash-command routing: returns the recognized command (with its argument) or null for a
  *  regular chat message. Pure, so the command surface is unit-testable without a TTY. */
-export function parseCommand(text: string): { cmd: 'quit' | 'new' | 'stop' | 'status' | 'restart' | 'sessions' | 'resume' | 'delete' | 'model' | 'reasoning' | 'theme' | 'lsp' | 'mcp' | 'skills' | 'tools' | 'goal' | 'subgoal' | 'compact' | 'plan' | 'build' | 'help'; arg?: string } | null {
+export function parseCommand(text: string): { cmd: 'quit' | 'new' | 'stop' | 'status' | 'restart' | 'sessions' | 'resume' | 'delete' | 'model' | 'reasoning' | 'theme' | 'lsp' | 'mcp' | 'skills' | 'tools' | 'goal' | 'subgoal' | 'compact' | 'plan' | 'build' | 'yolo' | 'help'; arg?: string } | null {
   const m = /^\/(\w+)(?:\s+(.+))?$/.exec(text.trim());
   if (!m) return null;
   switch (m[1]) {
@@ -88,6 +88,7 @@ export function parseCommand(text: string): { cmd: 'quit' | 'new' | 'stop' | 'st
     case 'compact': return { cmd: 'compact' };
     case 'plan': return { cmd: 'plan', arg: m[2] };
     case 'build': return { cmd: 'build', arg: m[2] };
+    case 'yolo': return { cmd: 'yolo', arg: m[2] };
     case 'help': return { cmd: 'help' };
     default: return null;
   }
@@ -107,7 +108,7 @@ function generatingChip(seconds: number): string {
   return `${color.accent(spinnerFrame())} ${color.faint(formatDuration(seconds))}`;
 }
 
-function modelMetaLine(mode: BrainWorkMode, modelName: string, thinkingLevel: string, generating?: string): string {
+function modelMetaLine(mode: BrainWorkMode, modelName: string, thinkingLevel: string, generating?: string, yolo?: boolean): string {
   const raw = modelName || '—';
   const slash = raw.indexOf('/');
   const provider = slash > 0 ? raw.slice(0, slash) : '';
@@ -118,6 +119,8 @@ function modelMetaLine(mode: BrainWorkMode, modelName: string, thinkingLevel: st
     color.text(model),
     provider ? color.dim(provider) : '',
     thinkingLevel ? color.warning(thinkingLevel) : '',
+    // Warning-toned so auto-approved tool asks are never invisible (session /yolo or the persisted default).
+    yolo ? color.warning('YOLO') : '',
     generating ?? '',
   ].filter(Boolean).join(' ');
 }
@@ -210,6 +213,9 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
   let thinkingLevel = boot?.thinkingLevel ?? '';
   let thinkingLevels = boot?.thinkingLevels ?? [];
   let lspEnabled: boolean | null = boot?.lspEnabled ?? null;
+  /** Effective YOLO (session /yolo override, else the persisted Account default) — server-authoritative,
+   *  refreshed with every status fetch; drives the warning chip in the prompt meta line. */
+  let yoloOn = boot?.yolo ?? false;
   /** MCP servers for the telemetry panel; null (fetch failed / non-admin) hides the section. */
   let mcpList: McpServerView[] | null = null;
   let workMode: BrainWorkMode = 'build';
@@ -228,7 +234,7 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
       client.status().catch(() => null),
       client.mcpServers().catch(() => null),
     ]);
-    if (st) { modelName = st.model || modelName; conversationTitle = st.title ?? conversationTitle; lineCfg = st.statusline; usage = st.usage; thinkingLevel = st.thinkingLevel ?? ''; thinkingLevels = st.thinkingLevels ?? []; cards = st.cards ?? []; lspEnabled = st.lspEnabled ?? null; }
+    if (st) { modelName = st.model || modelName; conversationTitle = st.title ?? conversationTitle; lineCfg = st.statusline; usage = st.usage; thinkingLevel = st.thinkingLevel ?? ''; thinkingLevels = st.thinkingLevels ?? []; cards = st.cards ?? []; lspEnabled = st.lspEnabled ?? null; yoloOn = st.yolo ?? yoloOn; }
     mcpList = mcp;
   };
   await refreshMeta();
@@ -296,7 +302,7 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
     editorSlot,
     () => Math.max(12, term.rows - TOP_RULE_ROWS),
     () => ({
-      modelLine: modelMetaLine(workMode, modelName, thinkingLevel),
+      modelLine: modelMetaLine(workMode, modelName, thinkingLevel, undefined, yoloOn),
       hints: color.faint('⏎ send · / commands · shift+tab mode'),
       tip: `${color.warning('●')} ${color.bold(color.text('Tip'))} ${color.dim('ask anything — try')} ${color.text('"What is the tech stack of this project?"')}`,
       notice,
@@ -347,7 +353,7 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
         : color.faint('  ⏎ send   ·   / slash   ·   shift+tab mode   ·   ctrl+r reasoning   ·   ctrl+p telemetry'));
     const projectLine = `${color.dim(cwdLabel)}${branchLabel ? color.faint(` · ${branchLabel}`) : ''}`;
     const line = statusline(lineCfg ? { ...lineCfg, showModel: false } : null, usage, modelName);
-    promptMeta.setLeft(modelMetaLine(workMode, modelName, thinkingLevel, view.thinking ? generatingChip(currentRunSeconds) : undefined));
+    promptMeta.setLeft(modelMetaLine(workMode, modelName, thinkingLevel, view.thinking ? generatingChip(currentRunSeconds) : undefined, yoloOn));
     promptMeta.setRight(panelVisible() || !line ? projectLine : `${color.faint(line)} ${color.faint('·')} ${projectLine}`);
     cardPanel.set(cards);
     subPanel.set(subagentStates());
@@ -355,8 +361,19 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
   };
 
   // Drive the interactive picker flow for a parked ask_user_question, POST the answer (Esc aborts the
-  // turn). Shared by the live `ask` event and the reconnect restore (boot.pendingAsk).
-  const launchAsk = (id: string, questions: AskQuestion[]): void => {
+  // turn). Shared by the live `ask` event and the reconnect restore (boot.pendingAsk). An `approval`
+  // kind (a blocked tool-permission ask) takes the dedicated warning-toned modal instead: 1/2/3 or
+  // arrows+Enter pick, and Esc answers Deny — it never aborts the turn (the tool just reports the
+  // denial to the model and the run continues).
+  const launchAsk = (id: string, questions: AskQuestion[], kind?: 'approval'): void => {
+    const q = questions[0];
+    if (kind === 'approval' && q) {
+      runApprovalFlow({
+        tui, slot: editorSlot, editor, question: q,
+        onDecision: (label) => { void client.answer(id, [{ header: q.header, selected: [label] }]).catch(() => { /* turn may have gone */ }); },
+      });
+      return;
+    }
     runAskFlow({
       tui, slot: editorSlot, editor, questions,
       onComplete: (answers) => { void client.answer(id, answers).catch(() => { /* turn may have gone */ }); },
@@ -982,7 +999,7 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
     void client.stream((e) => {
       if (ac.signal.aborted || childView?.sessionId !== sessionId) return;
       // A child's parked ask_user_question is answerable from here — the registry is id-keyed globally.
-      if (e.type === 'ask') { launchAsk(e.id, e.questions); return; }
+      if (e.type === 'ask') { launchAsk(e.id, e.questions, e.kind); return; }
       childView.view = reduce(childView.view, e);
       render();
     }, ac.signal, 1000, undefined, sessionId).catch(() => { /* aborted/gone */ });
@@ -1034,7 +1051,7 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
     void client.stream((e) => {
       // ask_user_question parked the turn: drive the picker flow and skip the ChatView reducer (the
       // questions aren't a conversation segment).
-      if (e.type === 'ask') { launchAsk(e.id, e.questions); return; }
+      if (e.type === 'ask') { launchAsk(e.id, e.questions, e.kind); return; }
       if (e.type === 'idle') {
         if (e.usage) usage = e.usage;
         // A finished turn may have just auto-titled a fresh conversation — pull the new title (and usage)
@@ -1231,6 +1248,22 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
           notice = '';
           render();
           return;
+        case 'yolo': {
+          // Session-scoped: "/yolo on|off" forces, bare "/yolo" toggles. The persisted default lives in
+          // web Account → Orca AI; this override never outlives the live session.
+          const arg = command.arg?.trim().toLowerCase();
+          if (arg && arg !== 'on' && arg !== 'off') { notice = color.dim('usage: /yolo · /yolo on · /yolo off'); render(); return; }
+          void client.setYolo(arg === 'on' ? true : arg === 'off' ? false : undefined)
+            .then((r) => {
+              yoloOn = r.yolo;
+              notice = r.yolo
+                ? color.warning('YOLO on — tool asks auto-approve for this session (deny rules still apply)')
+                : color.dim('YOLO off — tool asks prompt for approval again');
+              render();
+            })
+            .catch((e: Error) => { notice = color.error(`error: ${e.message}`); render(); });
+          return;
+        }
         case 'stop': {
           if (!view.thinking) { notice = color.dim('nothing is running'); render(); return; }
           notice = color.dim('stopping…');
@@ -1502,7 +1535,7 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
   openStream(streamAc);
   // Reconnect restore: if a question was already parked when this client attached (daemon restart, second
   // client), re-render its picker instead of leaving the turn silently hanging until the timeout.
-  if (boot?.pendingAsk) launchAsk(boot.pendingAsk.id, boot.pendingAsk.questions);
+  if (boot?.pendingAsk) launchAsk(boot.pendingAsk.id, boot.pendingAsk.questions, boot.pendingAsk.kind);
 
   await finished;
 }

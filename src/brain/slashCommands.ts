@@ -42,6 +42,9 @@ export const SLASH_COMMANDS: readonly SlashCommandDef[] = [
   { name: 'compact', description: 'Summarize the conversation to free up context', kind: 'action' },
   { name: 'plan', description: 'Plan mode — think through the approach before editing', kind: 'mode', surfaces: ['cli'] },
   { name: 'build', description: 'Build mode — implement changes with tools', kind: 'mode', surfaces: ['cli'] },
+  // CLI-local like /goal: the TUI calls POST /brain/yolo itself. Session-scoped — the persisted
+  // default is edited in web Account → Orca AI (or PATCH /auth/me/permissions).
+  { name: 'yolo', description: 'YOLO — auto-approve tool asks for this session ("on"/"off" or toggle)', kind: 'action', surfaces: ['cli'] },
   { name: 'model', description: 'Switch the AI model', kind: 'picker' },
   // CLI-only: the reasoning-effort picker is wired in the TUI. Discord tunes reasoning through its own
   // native command surface; the web dock has no picker for it yet (would show a dead menu entry).

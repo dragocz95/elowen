@@ -195,8 +195,9 @@ export function BrainChat() {
   const [lineCfg, setLineCfg] = useState<StatuslineConfig | null>(null);
   /** Transient runtime line (rate-limit retry, context compaction) so a stalled turn explains itself. */
   const [notice, setNotice] = useState('');
-  /** A parked ask_user_question: the turn is paused until the user picks and we POST /brain/answer. */
-  const [ask, setAsk] = useState<{ id: string; questions: AskQuestion[] } | null>(null);
+  /** A parked ask_user_question: the turn is paused until the user picks and we POST /brain/answer.
+   *  `kind: 'approval'` = a blocked tool-permission ask — same pipeline, styled as a security prompt. */
+  const [ask, setAsk] = useState<{ id: string; questions: AskQuestion[]; kind?: 'approval' } | null>(null);
   /** Live display cards (ctx.emitCard) — seeded from status, kept current from the `card` event. */
   const [cards, setCards] = useState<BrainCard[]>([]);
   /** When set, we're VIEWING a non-continuable session (a Discord channel or a task worker) read-only:
@@ -304,8 +305,8 @@ export function BrainChat() {
     });
     // ask_user_question parked the turn — render the inline choice card until the user answers.
     es.addEventListener('ask', (e) => {
-      const { id, questions } = JSON.parse((e as MessageEvent).data) as { id: string; questions: AskQuestion[] };
-      setAsk({ id, questions });
+      const { id, questions, kind } = JSON.parse((e as MessageEvent).data) as { id: string; questions: AskQuestion[]; kind?: 'approval' };
+      setAsk({ id, questions, kind });
     });
     es.addEventListener('idle', (e) => {
       setBusy(false);
@@ -545,6 +546,7 @@ export function BrainChat() {
           <AskQuestionCard
             key={ask.id}
             questions={ask.questions}
+            kind={ask.kind}
             onSubmit={(answers) => { void orcaClient.brainAnswer(ask.id, answers).catch(() => undefined); setAsk(null); }}
           />
         ) : null}

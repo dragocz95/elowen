@@ -72,6 +72,8 @@ describe('parseCommand', () => {
     expect(parseCommand('/compact')).toEqual({ cmd: 'compact' });
     expect(parseCommand('/plan')).toEqual({ cmd: 'plan' });
     expect(parseCommand('/build')).toEqual({ cmd: 'build' });
+    expect(parseCommand('/yolo')).toEqual({ cmd: 'yolo', arg: undefined });
+    expect(parseCommand('/yolo off')).toEqual({ cmd: 'yolo', arg: 'off' });
     expect(parseCommand('/quit')).toEqual({ cmd: 'quit' });
     expect(parseCommand('/exit')).toEqual({ cmd: 'quit' });
     expect(parseCommand('/help')).toEqual({ cmd: 'help' });

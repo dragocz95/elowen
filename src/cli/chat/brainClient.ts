@@ -14,7 +14,7 @@ export interface BrainClientOpts { base: string; token: string; fetchImpl?: type
 interface StatuslineConfig { showModel?: boolean; showContext?: boolean; showTokens?: boolean; showCost?: boolean }
 export interface BrainUsageView { tokens: number | null; contextWindow: number; percent: number | null; totalTokens: number; cost: number }
 export type BrainWorkMode = 'build' | 'plan';
-export interface BrainStatus { running: boolean; sessionId: string | null; title?: string; model: string; usage: BrainUsageView | null; statusline: StatuslineConfig | null; thinkingLevel?: string; thinkingLevels?: string[]; pendingAsk?: { id: string; questions: AskQuestion[] } | null; cards?: BrainCard[]; lspEnabled?: boolean }
+export interface BrainStatus { running: boolean; sessionId: string | null; title?: string; model: string; usage: BrainUsageView | null; statusline: StatuslineConfig | null; thinkingLevel?: string; thinkingLevels?: string[]; pendingAsk?: { id: string; questions: AskQuestion[]; kind?: 'approval' } | null; cards?: BrainCard[]; lspEnabled?: boolean; yolo?: boolean }
 export interface McpServerView { name: string; transport: string; status: 'connected' | 'connecting' | 'disconnected' | 'error' | 'disabled'; toolCount: number; tools: { name: string; title?: string; description?: string; schema?: unknown }[]; lastError: string | null; reconnecting?: boolean }
 export interface SkillView { name: string; description: string; source: 'bundled' | 'user'; scope?: string; location?: string; active?: boolean; canDelete?: boolean; missingRequirement?: string }
 export interface GoalView { session_id: string; user_id: number; status: 'active' | 'draft' | 'paused' | 'done'; goal: string; draft: string; subgoals: string; turns_used: number; turn_budget: number; last_verdict: string; last_evidence: string; paused_reason: string }
@@ -123,6 +123,13 @@ export class BrainClient {
   async setThinkingLevel(level: string): Promise<{ thinkingLevel: string }> {
     const res = await this.post('/brain/think', { level });
     return (await res.json()) as { thinkingLevel: string };
+  }
+
+  /** Flip the SESSION-scoped YOLO override (the /yolo command): `on` forces a state, omitted toggles.
+   *  Resolves with the new effective state (the persisted default lives in Account → Orca AI). */
+  async setYolo(on?: boolean): Promise<{ yolo: boolean }> {
+    const res = await this.post('/brain/yolo', on === undefined ? {} : { on });
+    return (await res.json()) as { yolo: boolean };
   }
 
   /** The pickable models across every configured brain provider (drives the /model picker). `free`

@@ -1,0 +1,35 @@
+{
+  "name": "formatters",
+  "version": "0.1.0",
+  "apiVersion": "1",
+  "description": "Automatically format files the assistant writes, using the formatter the project itself is set up for (prettier, biome, pint, ruff, gofmt, rustfmt, ...). A formatter only runs when its binary or config is present in the project.",
+  "entry": "index.mjs",
+  "provides": { "hooks": ["tools.call.after"] },
+  "capabilities": { "hooks": ["tools.call.after"] },
+  "configSchema": [
+    {
+      "key": "enabled",
+      "label": "Automatic formatting",
+      "type": "boolean",
+      "hint": "Run the project's formatter right after write_file/edit_file succeeds. Formatting is on by default; switch this off to disable it entirely."
+    },
+    {
+      "key": "disabled",
+      "label": "Disabled formatters",
+      "type": "multiSelect",
+      "options": [
+        { "value": "biome", "label": "Biome" },
+        { "value": "prettier", "label": "Prettier" },
+        { "value": "pint", "label": "Laravel Pint" },
+        { "value": "ruff", "label": "Ruff" },
+        { "value": "gofmt", "label": "gofmt" },
+        { "value": "rustfmt", "label": "rustfmt" },
+        { "value": "clang-format", "label": "clang-format" },
+        { "value": "mix", "label": "mix format" },
+        { "value": "terraform", "label": "terraform fmt" },
+        { "value": "shfmt", "label": "shfmt" }
+      ],
+      "hint": "Formatters that must never run, even when the project is set up for them."
+    }
+  ]
+}

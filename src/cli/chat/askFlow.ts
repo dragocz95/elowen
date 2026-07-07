@@ -41,10 +41,12 @@ export class AskChoiceDock implements Component, Focusable {
   invalidate(): void { /* stateless render from current selection */ }
 
   private rows(): { value: string; label: string; description?: string; other?: boolean }[] {
-    return [
-      ...this.opts.question.options.map((op) => ({ value: op.label, label: op.label, description: op.description })),
-      { value: OTHER, label: 'Other...', description: 'type your own answer', other: true },
-    ];
+    const rows: { value: string; label: string; description?: string; other?: boolean }[] =
+      this.opts.question.options.map((op) => ({ value: op.label, label: op.label, description: op.description }));
+    // Free-text "Other" is offered unless the question explicitly forbids it (`custom: false`);
+    // an absent flag means true — older events predate it.
+    if (this.opts.question.custom !== false) rows.push({ value: OTHER, label: 'Other...', description: 'type your own answer', other: true });
+    return rows;
   }
 
   private move(delta: number): void {
@@ -146,7 +148,8 @@ export interface AskFlowOpts {
 
 /** Drive an `ask_user_question` turn in the TUI. The active question replaces the chat input with a
  *  checklist dock: Space toggles choices, Enter confirms, and selected answers are visible at the bottom.
- *  Free-text Other remains available, but only after the user explicitly chooses it. */
+ *  Free-text Other remains available (unless the question sets `custom: false`), but only after the user
+ *  explicitly chooses it. */
 export function runAskFlow(o: AskFlowOpts): void {
   const answers: AskAnswer[] = [];
 

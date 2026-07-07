@@ -85,7 +85,7 @@ export interface BrainMessage { role: string; text: string; segments?: BrainSegm
 /** ask_user_question wire shapes (mirror src/brain/events.ts). The `ask` SSE event carries `id` +
  *  `questions`; the client POSTs `answers` back to /brain/answer. */
 interface AskOption { label: string; description?: string }
-export interface AskQuestion { question: string; header: string; multiSelect: boolean; options: AskOption[] }
+export interface AskQuestion { question: string; header: string; multiSelect: boolean; custom?: boolean; options: AskOption[] }
 export interface AskAnswer { header: string; selected: string[]; other?: string }
 
 /** ctx.emitCard display card (mirror src/brain/events.ts) — a live panel keyed by `id`. */
@@ -95,7 +95,7 @@ export interface BrainCard { id: string; title?: string; items?: BrainCardItem[]
 export interface BrainUsage { tokens: number | null; contextWindow: number; percent: number | null; totalTokens: number; cost: number }
 /** The statusline plugin's display toggles (null = plugin disabled). */
 export interface StatuslineConfig { showModel?: boolean; showContext?: boolean; showTokens?: boolean; showCost?: boolean }
-export interface BrainStatus { running: boolean; sessionId: string | null; model: string; usage: BrainUsage | null; statusline: StatuslineConfig | null; pendingAsk?: { id: string; questions: AskQuestion[] } | null; cards?: BrainCard[] }
+export interface BrainStatus { running: boolean; sessionId: string | null; model: string; usage: BrainUsage | null; statusline: StatuslineConfig | null; pendingAsk?: { id: string; questions: AskQuestion[]; kind?: 'approval' } | null; cards?: BrainCard[]; yolo?: boolean }
 /** A running OAuth connect flow, as polled by the settings UI. */
 export interface OAuthFlowState {
   id: string;
@@ -171,6 +171,12 @@ export type PersonalityPatch = Partial<Omit<PersonalityCreate, 'platform'>> & { 
 /** Per-user CLI/brain settings surfaced in Account → CLI. `model` empty → the configured brain default
  *  (`serverDefault`, response-only). */
 export interface CliSettings { model: string; modelProvider: string; visionModel: string; visionModelProvider: string; thinkingLevel: string; autoCompact: boolean; autoCompactAt: number; advisorStyle: string; discordUserId: string; whatsappNumber: string; autoRecall: boolean; autoSave: boolean; serverDefault?: string }
+
+/** Per-user granular tool permissions (mirror src/brain/toolPermissions.ts): allow/ask/deny rule maps
+ *  (`tools` keyed by tool-name pattern, `bash` by command pattern — insertion order decides precedence,
+ *  last match wins) plus the persisted YOLO default that auto-approves "ask" rules. */
+export type PermissionAction = 'allow' | 'ask' | 'deny';
+export interface PermissionSettings { tools: Record<string, PermissionAction>; bash: Record<string, PermissionAction>; yolo: boolean }
 
 /** Full xterm ANSI palette exposed for per-user customization (mirrors `@xterm/xterm`'s ITheme colour
  *  fields). Each value is an `#rrggbb` string; applied only when the terminal theme is `custom`. */

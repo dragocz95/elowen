@@ -456,6 +456,10 @@ export function buildApp(opts: BuildOpts) {
         hookAudit,
         policy: (userId) => resolvePolicy({ userProjects, projects }, userId),
         userSettings: (userId) => userSettings.cliSettings(userId),
+        // Granular tool permissions (allow/ask/deny rules + the persisted YOLO default) and the
+        // "Always allow" persistence behind the owner-chat approval prompt.
+        permissions: (userId) => userSettings.permissionSettings(userId),
+        saveAlwaysAllow: (userId, scope, pattern) => { userSettings.addPermissionAllowRule(userId, scope, pattern); },
         activePersonality: (userId, platform) => personalityService.activeAppend(userId, platform),
         agentName: () => config.get().brain.agentName,
         maxSteps: () => config.get().brain.maxSteps,

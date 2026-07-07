@@ -11,6 +11,10 @@ const NO_ANSWER: AskAnswer['selected'] = ['[no answer within the time limit]'];
 interface Pending {
   sessionId: string;
   questions: AskQuestion[];
+  /** Distinct flavour of the parked question: 'approval' = a blocking tool-permission prompt (three
+   *  fixed options), absent = a regular ask_user_question. Rides the emitted `ask` event so every
+   *  frontend can style approvals differently while reusing the whole answer pipeline. */
+  kind?: 'approval';
   resolve: (answers: AskAnswer[]) => void;
   reject: (err: Error) => void;
   timer: ReturnType<typeof setTimeout>;
@@ -28,7 +32,7 @@ export class ElicitationRegistry {
 
   /** Emit the question(s) to the conversation's clients and park until answered, timed out, or cancelled.
    *  `emit` fans the event into that conversation's listener set (SSE clients + Discord's in-process handler). */
-  ask(sessionId: string, questions: AskQuestion[], emit: (e: BrainEvent) => void): Promise<AskAnswer[]> {
+  ask(sessionId: string, questions: AskQuestion[], emit: (e: BrainEvent) => void, kind?: 'approval'): Promise<AskAnswer[]> {
     // Enforce one pending question per conversation: if the model somehow fired two ask_user_question
     // calls in one turn, drop the earlier one (clients only show the latest anyway) so it can't linger.
     this.cancelForSession(sessionId, 'superseded by a newer question');
@@ -40,8 +44,8 @@ export class ElicitationRegistry {
       }, this.timeoutMs);
       // Node keeps the event loop alive for pending timers; a parked question must not block process exit.
       if (typeof timer.unref === 'function') timer.unref();
-      this.pending.set(id, { sessionId, questions, resolve, reject, timer });
-      emit({ type: 'ask', id, questions });
+      this.pending.set(id, { sessionId, questions, kind, resolve, reject, timer });
+      emit({ type: 'ask', id, questions, ...(kind ? { kind } : {}) });
     });
   }
 
@@ -64,8 +68,8 @@ export class ElicitationRegistry {
 
   /** The question currently parked for a conversation (there is at most one), or null — lets a client
    *  that reconnects mid-question (page refresh, SSE drop) re-render it instead of hanging silently. */
-  pendingForSession(sessionId: string): { id: string; questions: AskQuestion[] } | null {
-    for (const [id, p] of this.pending) if (p.sessionId === sessionId) return { id, questions: p.questions };
+  pendingForSession(sessionId: string): { id: string; questions: AskQuestion[]; kind?: 'approval' } | null {
+    for (const [id, p] of this.pending) if (p.sessionId === sessionId) return { id, questions: p.questions, ...(p.kind ? { kind: p.kind } : {}) };
     return null;
   }
 

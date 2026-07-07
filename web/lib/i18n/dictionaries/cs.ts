@@ -1371,6 +1371,7 @@ export const cs = {
     modelSwitched: 'Přepnuto na',
     noSession: 'žádná aktivní konverzace',
     askWaiting: 'Asistent čeká na váš výběr',
+    approvalWaiting: 'Vyžaduje schválení — agent chce spustit nástroj',
     askOther: 'Jiné…',
     askOtherPlaceholder: 'Napište vlastní odpověď',
     askSubmit: 'Odeslat odpověď',
@@ -1503,6 +1504,9 @@ export const cs = {
     autoCompact: 'Automatické zhuštění kontextu',
     autoCompactToggle: 'Automaticky zhušťovat dlouhé konverzace',
     autoCompactAt: 'Zhustit při naplnění kontextu',
+    yoloTitle: 'Režim YOLO',
+    yoloToggle: 'Automaticky schvalovat nástroje (YOLO)',
+    yoloWarning: 'Po zapnutí se dotazy na spuštění nástrojů a příkazů ve všech vašich nových konverzacích automaticky schválí. Explicitní pravidla „deny“ zůstávají v platnosti. Používejte obezřetně.',
     saveError: 'Uložení nastavení selhalo',
   },
   push: {

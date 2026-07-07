@@ -11,6 +11,7 @@ import { ADVISOR_STYLES, DEFAULT_ADVISOR_STYLE } from '../../brain/personality.j
 import { rawTemplate } from '../../prompts/index.js';
 import { DiscordIdConflictError, WhatsAppNumberConflictError } from '../../store/userSettingStore.js';
 import { sanitizeTerminalSettings, type TerminalSettings } from '../../store/terminalSettings.js';
+import { sanitizePermissionSettings } from '../../brain/toolPermissions.js';
 import type { User } from '../../store/userStore.js';
 import type { OrcaApp, RouteContext } from '../context.js';
 import { logger } from '../../shared/logger.js';
@@ -182,6 +183,21 @@ export function registerAuthRoutes(app: OrcaApp, ctx: RouteContext): void {
     const u = c.get('user');
     const body = (await c.req.json().catch(() => ({}))) as Partial<TerminalSettings>;
     return c.json(d.userSettings.setTerminalSettings(u.id, body));
+  });
+  // Per-user granular tool permissions (allow/ask/deny rules + the persisted YOLO default) —
+  // self-service, each caller edits only their own. The store sanitizes the untrusted body (unknown
+  // actions/keys dropped, rule-map insertion order preserved — it decides precedence); a present
+  // `tools`/`bash` map replaces the stored one wholesale. Read fresh by every brain turn, so a change
+  // applies immediately without a session restart.
+  app.get('/auth/me/permissions', (c) => {
+    const u = c.get('user');
+    return c.json(d.userSettings ? d.userSettings.permissionSettings(u.id) : sanitizePermissionSettings({}));
+  });
+  app.patch('/auth/me/permissions', async (c) => {
+    if (!d.userSettings) return c.json({ error: 'settings unavailable' }, 400);
+    const u = c.get('user');
+    const body = (await c.req.json().catch(() => ({}))) as unknown;
+    return c.json(d.userSettings.setPermissionSettings(u.id, body));
   });
   // Avatar upload (multipart). Validated by type + size; stored as <userId>.<ext> under avatarsDir.
   const AVATAR_EXT: Record<string, string> = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp', 'image/gif': 'gif' };

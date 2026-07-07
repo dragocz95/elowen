@@ -43,6 +43,8 @@ import { shapeBrainMessages } from './messageView.js';
 import type { BrainMessageView } from './messageView.js';
 import { toBrainEvent, usageOf, runCompaction } from './events.js';
 import type { AskAnswer, AskQuestion, BrainCard, BrainEvent, BrainUsage, CompactResult, SubagentUpdate } from './events.js';
+import { buildPermissionRuleset, approvalQuestion, approvalDecision } from './toolPermissions.js';
+import type { PermissionScope, PermissionSettings, TurnPermissions } from './toolPermissions.js';
 import { defaultUserSessionId, freshUserSessionId, isNonUserSession } from './sessionId.js';
 import { allSubgoalsDone, applySubgoalDone, goalContinuePrompt, goalDraft, goalPrompt, judgeGoalBlocked, judgeGoalCompletion, lastAssistantText, parseProgress, parseSubgoalDone, parseSubgoals } from './goal.js';
 import { rolloverDue } from './session/idleRollover.js';
@@ -93,6 +95,12 @@ export interface BrainDeps {
   /** Resolve a platform sender (e.g. a Discord id) to the Orca user who claimed it in their account
    *  settings. Lets channel turns carry a verified identity line for registered users. */
   resolvePlatformUser?: (platform: string, platformUserId: string) => { id: number; name: string; username?: string; admin: boolean } | null;
+  /** Per-user granular tool permissions (allow/ask/deny rules + the persisted YOLO default), read
+   *  fresh each turn so an "Always allow" or a settings edit applies immediately. Absent → the
+   *  execute-time permission gate stays inert (tests / minimal wiring). */
+  permissions?: (userId: number) => PermissionSettings;
+  /** Persist an "Always allow" pick from an approval prompt into the user's stored rules. */
+  saveAlwaysAllow?: (userId: number, scope: PermissionScope, pattern: string) => void;
   /** Per-user brain-model permission, keyed by exec spec `orca:<provider>/<model>`. Absent → no
    *  restriction (open mode / tests). Enforced on explicit picks; a saved-but-revoked default
    *  silently falls back to the server default instead of erroring. */
@@ -172,6 +180,7 @@ export class BrainService {
       memoryService: d.memoryService, curator: this.curator, userSettings: d.userSettings,
       elicitation: this.elicitation, // one registry so Discord interactions resolve channel questions
       titler: this.titler, // name a brand-new channel conversation, same as owner chat
+      permissions: d.permissions, // deny rules apply to channel turns too (ask resolves to allow there)
     });
     this.platforms = new PlatformOrchestrator({
       plugins: () => this.resolvePlugins(),
@@ -451,7 +460,7 @@ export class BrainService {
     return { thinkingLevel: (sess.thinkingLevel as string) ?? level };
   }
 
-  status(userId: number): { running: boolean; sessionId: string | null; title: string; model: string; usage: BrainUsage | null; thinkingLevel: string; thinkingLevels: string[]; pendingAsk: { id: string; questions: AskQuestion[] } | null; cards: BrainCard[] } {
+  status(userId: number): { running: boolean; sessionId: string | null; title: string; model: string; usage: BrainUsage | null; thinkingLevel: string; thinkingLevels: string[]; pendingAsk: { id: string; questions: AskQuestion[]; kind?: 'approval' } | null; cards: BrainCard[]; yolo: boolean } {
     const b = this.activeLive(userId);
     const sess = b?.session as { thinkingLevel?: string; supportsThinking?: () => boolean; getAvailableThinkingLevels?: () => string[] } | undefined;
     const supports = sess?.supportsThinking?.() ?? false;
@@ -468,7 +477,27 @@ export class BrainService {
       pendingAsk: b ? this.elicitation.pendingForSession(b.sessionId) : null,
       // The active conversation's live display cards (ctx.emitCard) so a reconnecting client restores them.
       cards: b ? this.cards.forSession(b.sessionId) : [],
+      // Effective YOLO for the active conversation (session override, else the persisted default) —
+      // drives the CLI's warning-toned indicator.
+      yolo: this.effectiveYolo(userId, b),
     };
+  }
+
+  /** Effective YOLO for a conversation: the live session's `/yolo` override when set, else the user's
+   *  persisted default (Account → Orca AI). No permission wiring at all → always false. */
+  private effectiveYolo(userId: number, live: LiveBrain | undefined): boolean {
+    return live?.yoloOverride ?? this.d.permissions?.(userId).yolo ?? false;
+  }
+
+  /** Flip the SESSION-scoped YOLO override (the CLI `/yolo` command): `on` forces a state, undefined
+   *  toggles the current effective one. Never touches the persisted default (Account → Orca AI) and
+   *  never survives a session respawn (model switch / restart) — by design a per-session override.
+   *  Returns the new effective state. Throws when no conversation is live. */
+  setYolo(userId: number, on?: boolean): { yolo: boolean } {
+    const b = this.activeLive(userId);
+    if (!b) throw new Error('brain not started');
+    b.yoloOverride = on ?? !this.effectiveYolo(userId, b);
+    return { yolo: b.yoloOverride };
   }
 
   /** Delete one of the user's stored conversations (never a channel session, never someone else's).
@@ -647,6 +676,12 @@ export class BrainService {
     const memCats = this.d.memoryCategoryStore;
     const memCategorizer = this.d.memoryCategorizer;
     const pluginTools = plugins?.tools ?? [];
+    // Observational plugin hook point: after a permitted plugin tool's execute resolves, fan the call
+    // out to `tools.call.after` subscribers (e.g. the formatters plugin). Fire-and-forget — the bus is
+    // fail-open and the emit is never awaited, so a slow/broken hook can't delay or fail the tool result.
+    const toolHookBus = plugins && plugins.hooks.length > 0
+      ? new PluginHookBus({ hooks: plugins.hooks, hookOwners: plugins.hookOwners, capabilities: plugins.pluginCapabilities, logger: logger('plugin-hooks') })
+      : undefined;
     const allTools = composeSessionTools({
       kind: opts.channel ? (opts.trustedChannel ? 'trusted-channel' : 'foreign-channel') : 'owner-chat',
       orcaTools: () => buildOrcaTools({ url: this.d.url, token: this.d.users.ensureAdvisorToken(ownerUserId) }),
@@ -656,6 +691,7 @@ export class BrainService {
       pluginTools,
       // Plugin tools are gated at EXECUTE time from the turn's ToolPolicy (set in runWithPolicy), not
       // filtered at compose — one shared mechanism for owner chat and shared channels alike.
+      onToolResult: toolHookBus ? (e) => { void toolHookBus.emit('tools.call.after', e); } : undefined,
     });
     const skills = plugins?.skills ?? [];
     const skillsBlock = skills.length ? formatSkillsForPrompt(skills) : '';
@@ -884,6 +920,34 @@ export class BrainService {
     return toolPolicy;
   }
 
+  /** The granular tool-permission context for one turn (read by the execute-time gate in
+   *  session/capabilities.ts). Rules are read fresh per turn so an "Always allow" / settings edit
+   *  applies immediately; the effective YOLO layers the session `/yolo` override over the persisted
+   *  default. `interactive` (owner chat — web/CLI, a human is attached) additionally wires the blocking
+   *  approval channel: an `ask` rule parks the tool call as an `ask` BrainEvent of kind 'approval' on
+   *  the SAME elicitation pipeline as ask_user_question (answered via /brain/answer), and an "Always
+   *  allow" pick persists a rule via saveAlwaysAllow. Non-interactive turns get no approval channel, so
+   *  the gate resolves their `ask` rules to allow (deny still denies). Undefined when permissions
+   *  aren't wired at all — the gate is then inert. */
+  private turnPermissions(userId: number, live: LiveBrain, interactive: boolean): TurnPermissions | undefined {
+    const settings = this.d.permissions?.(userId);
+    if (!settings) return undefined;
+    const base: TurnPermissions = { ruleset: buildPermissionRuleset(settings), yolo: this.effectiveYolo(userId, live) };
+    if (!interactive) return base;
+    return {
+      ...base,
+      requestApproval: async (req) => {
+        const answers = await this.elicitation.ask(
+          live.sessionId, [approvalQuestion(req)],
+          (e) => { for (const l of live.listeners) l(e); },
+          'approval',
+        );
+        return approvalDecision(answers);
+      },
+      persistAllow: (scope, pattern) => this.d.saveAlwaysAllow?.(userId, scope, pattern),
+    };
+  }
+
   /** The default tool cwd for one owner-chat turn: the client-reported directory when it is a real
    *  directory the caller may access (all-access: anywhere; scoped: inside an allowed repo root), else
    *  their first allowed root, else the daemon's primary project. Never the daemon process cwd —
@@ -1062,10 +1126,13 @@ export class BrainService {
       // Sends without a client cwd (goal kickoff/continuation) reuse the SESSION's resolved workDir so
       // autonomous turns run where the model believes it runs, not in the daemon's primary project.
       const workDir = this.turnWorkDir(live.policy, clientCwd ?? live.workDir);
+      // Granular tool permissions for this turn. Owner chat is where a human is attached (web dock /
+      // CLI), so `ask` rules block on a real approval prompt riding the elicitation pipeline.
+      const permissions = this.turnPermissions(userId, live, true);
       await runWithPolicy(live.policy, () => {
         const prompted = memoryBlock + hookBlock + live.turnContext() + modeInstruction + text;
         return options ? live.session.prompt(prompted, options) : live.session.prompt(prompted);
-      }, { identity, elicit, emitCard, emitSubagent, toolPolicy, workDir, model: { provider: live.providerId, model: live.model } });
+      }, { identity, elicit, emitCard, emitSubagent, toolPolicy, permissions, workDir, model: { provider: live.providerId, model: live.model } });
       // Post-turn curator: extract durable facts from this exchange in the background. Fire-and-forget
       // (mirrors brainWorker) — never awaited, never touches live.session, swallows its own errors.
       if (this.curator && memSettings?.autoSave !== false) {

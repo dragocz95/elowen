@@ -1,6 +1,7 @@
 import type { Db } from './db.js';
 import { DEFAULT_ADVISOR_STYLE, isAdvisorStyle } from '../brain/personality.js';
 import { sanitizeTerminalSettings, mergeTerminalSettings, type TerminalSettings } from './terminalSettings.js';
+import { sanitizePermissionSettings, mergePermissionSettings, type PermissionAction, type PermissionScope, type PermissionSettings } from '../brain/toolPermissions.js';
 
 /** Typed per-user CLI/brain settings. `model`/`modelProvider` empty → use the configured brain default.
  *  `autoCompactAt` is the context-window fill percentage at which the conversation is auto-summarized.
@@ -166,6 +167,44 @@ export class UserSettingStore {
     return this.db.transaction(() => {
       const next = mergeTerminalSettings(this.terminalSettings(userId), patch);
       this.set(userId, 'terminal', JSON.stringify(next));
+      return next;
+    })();
+  }
+
+  /** The user's granular tool-permission settings (rules + persisted YOLO default), defaults filled in.
+   *  The stored value is an untrusted JSON blob (key `permissions`), so a corrupt/partial/absent row
+   *  degrades cleanly to empty rules + YOLO off (the built-in default ruleset applies regardless —
+   *  see brain/toolPermissions.ts). */
+  permissionSettings(userId: number): PermissionSettings {
+    const raw = this.get(userId, 'permissions');
+    if (!raw) return sanitizePermissionSettings({});
+    let parsed: unknown;
+    try { parsed = JSON.parse(raw); }
+    catch { return sanitizePermissionSettings({}); }
+    return sanitizePermissionSettings(parsed);
+  }
+
+  /** Apply a partial permissions patch (each present field replaces wholesale — rule-map key order is
+   *  meaningful), re-validate, persist the whole blob. Transactional read-modify-write. */
+  setPermissionSettings(userId: number, patch: unknown): PermissionSettings {
+    return this.db.transaction(() => {
+      const next = mergePermissionSettings(this.permissionSettings(userId), patch);
+      this.set(userId, 'permissions', JSON.stringify(next));
+      return next;
+    })();
+  }
+
+  /** Persist one "Always allow" pick from an approval prompt: upsert `pattern → allow` into the given
+   *  scope's rule map, moved to the END (delete-then-set) so last-match-wins resolution honours the
+   *  user's newest decision even over an earlier conflicting rule. */
+  addPermissionAllowRule(userId: number, scope: PermissionScope, pattern: string): PermissionSettings {
+    return this.db.transaction(() => {
+      const cur = this.permissionSettings(userId);
+      const map: Record<string, PermissionAction> = { ...cur[scope] };
+      delete map[pattern];
+      map[pattern] = 'allow';
+      const next: PermissionSettings = { ...cur, [scope]: map };
+      this.set(userId, 'permissions', JSON.stringify(next));
       return next;
     })();
   }

@@ -1,5 +1,6 @@
 import type { ToolDefinition } from '@earendil-works/pi-coding-agent';
-import { currentToolPolicy, toolPermitted, type ToolPolicy } from '../../plugins/policyContext.js';
+import { currentToolPolicy, currentTurnPermissions, toolPermitted, type ToolPolicy } from '../../plugins/policyContext.js';
+import { BASH_PERMISSION_TOOLS, bashAlwaysPattern, resolveToolPermission, type ApprovalDecision } from '../toolPermissions.js';
 
 /** What kind of session the tools are composed for — the explicit form of the security invariant that
  *  used to hide behind a `channel: !trusted` double negation. Every kind here is actually produced:
@@ -24,6 +25,11 @@ type SessionKind =
    *  caller; plugin tools ride along, but never the owner's orca_* API tools. */
   | 'task-worker';
 
+/** What a plugin tool call produced — the payload the `tools.call.after` hook receives. `params` is the
+ *  tool's input object (second `execute` argument) and `result` its resolved return value; both stay
+ *  `unknown` so observers parse defensively (the v1 hook contract keeps payloads untyped). */
+export interface PluginToolResultEvent { tool: string; params: unknown; result: unknown }
+
 export interface CapabilitySpec {
   kind: SessionKind;
   /** Built lazily so the owner's API token is never even minted for sessions that must not have it. */
@@ -34,6 +40,11 @@ export interface CapabilitySpec {
    *  anonymous sender (no orcaUserId) or a task-worker (no identity) gets a locked no-op. */
   memoryTools?: () => ToolDefinition[];
   pluginTools: ToolDefinition[];
+  /** Observer fired after a PERMITTED plugin tool's execute resolves (never for a policy-denied call or
+   *  a throwing execute). The caller typically forwards it to the plugin hook bus as `tools.call.after`.
+   *  Purely observational and fail-soft: it runs inside the tool's ALS turn scope (so hooks can read
+   *  currentWorkDir etc.), must not block, and a throwing observer never fails the tool result. */
+  onToolResult?: (e: PluginToolResultEvent) => void;
 }
 
 /** Wrap a plugin tool so its access is decided at EXECUTE time from the current turn's ToolPolicy.
@@ -43,12 +54,62 @@ export interface CapabilitySpec {
  *  clear locked no-op instead of running, so the model always gets something to reason over. Because a
  *  channel session is shared across senders, the tool SET is fixed at spawn; this per-turn gate is what
  *  makes access correct for whoever is actually speaking. */
-function gateToolAccess(tool: ToolDefinition): ToolDefinition {
+function gateToolAccess(tool: ToolDefinition, onToolResult?: (e: PluginToolResultEvent) => void): ToolDefinition {
   if (typeof tool.execute !== 'function') return tool; // defensive (test stubs) — nothing to gate
   const run = tool.execute.bind(tool);
-  const execute = ((...args: Parameters<ToolDefinition['execute']>) => {
+  const execute = (async (...args: Parameters<ToolDefinition['execute']>) => {
     if (!toolPermitted(tool.name, currentToolPolicy())) {
-      return Promise.resolve({ content: [{ type: 'text' as const, text: `The tool "${tool.name}" is not available to you in this conversation.` }], details: {} });
+      return { content: [{ type: 'text' as const, text: `The tool "${tool.name}" is not available to you in this conversation.` }], details: {} };
+    }
+    const result = await run(...args);
+    // Observe AFTER a permitted execute resolved, still inside the turn's ALS scope. Fail-soft: an
+    // observer is never allowed to fail (or delay — callers pass a fire-and-forget) the tool result.
+    try { onToolResult?.({ tool: tool.name, params: args[1], result }); } catch { /* observer only */ }
+    return result;
+  }) as ToolDefinition['execute'];
+  return { ...tool, execute };
+}
+
+/** A model-readable refusal result (the tool "ran" but reports why it did not act). */
+const refused = (text: string) => ({ content: [{ type: 'text' as const, text }], details: {} });
+
+/** Wrap ANY session tool with the granular permission gate — THE single choke point every tool call
+ *  passes (built-in orca_* and memory_* tools and plugin tools alike; composeSessionTools applies it
+ *  to the whole composed set). The turn's rules resolve to allow/ask/deny (resolveToolPermission — last matching
+ *  rule wins): `deny` returns an error result naming the rule; `ask` blocks on the turn's approval
+ *  channel where a human is attached (owner CLI/web chat) and resolves to allow everywhere else
+ *  (channel/cron/subagent turns — nobody can answer a blocking prompt there) or while YOLO is on for
+ *  the session (deny still denies under YOLO). An "Always allow" pick persists a rule through the
+ *  turn's `persistAllow` before running. Shell tools (BASH_PERMISSION_TOOLS) resolve in the `bash`
+ *  pattern space against their command string; everything else in `tools` against the tool name. No
+ *  TurnPermissions scope on the turn (task workers, tests) → the gate is inert. */
+function gatePermissions(tool: ToolDefinition): ToolDefinition {
+  if (typeof tool.execute !== 'function') return tool; // defensive (test stubs) — nothing to gate
+  const run = tool.execute.bind(tool);
+  const execute = (async (...args: Parameters<ToolDefinition['execute']>) => {
+    const perms = currentTurnPermissions();
+    if (!perms) return run(...args);
+    const bash = BASH_PERMISSION_TOOLS.has(tool.name);
+    const rawCommand = bash ? (args[1] as { command?: unknown } | null | undefined)?.command : undefined;
+    const command = typeof rawCommand === 'string' ? rawCommand : undefined;
+    const rule = resolveToolPermission(perms.ruleset, tool.name, bash ? (command ?? '') : undefined);
+    if (rule.action === 'deny') {
+      return refused(`Denied by permission rule "${rule.pattern}" — the user's settings forbid this call.`);
+    }
+    if (rule.action === 'ask' && !perms.yolo && perms.requestApproval) {
+      const alwaysPattern = bash ? bashAlwaysPattern(command ?? '') : tool.name;
+      let decision: ApprovalDecision;
+      try {
+        decision = await perms.requestApproval({ tool: tool.name, scope: rule.scope, command, alwaysPattern });
+      } catch {
+        decision = 'deny'; // the prompt was cancelled (turn aborted / session switched) — fail closed
+      }
+      if (decision === 'deny') {
+        return refused(`The user denied running "${tool.name}"${command ? ` (${command})` : ''}. Do not retry it without asking them first.`);
+      }
+      if (decision === 'always') {
+        try { perms.persistAllow?.(rule.scope, alwaysPattern); } catch { /* persistence is best-effort */ }
+      }
     }
     return run(...args);
   }) as ToolDefinition['execute'];
@@ -60,7 +121,9 @@ function gateToolAccess(tool: ToolDefinition): ToolDefinition {
  *  ONLY `owner-chat` does. A shared channel sender (even one holding the admin role) reaching the
  *  owner's full-scope API token would be a privilege escalation. Plugin tools are always composed but
  *  wrapped with the per-turn access gate (see gateToolAccess) — the effective allow/deny is decided at
- *  execute time from the acting identity's ToolPolicy, one shared mechanism for every session kind. */
+ *  execute time from the acting identity's ToolPolicy, one shared mechanism for every session kind.
+ *  The WHOLE composed set (built-ins included) then passes through the granular permission gate
+ *  (gatePermissions) — the single choke point the per-user allow/ask/deny rules act on. */
 export function composeSessionTools(spec: CapabilitySpec): ToolDefinition[] {
   const ownerChat = spec.kind === 'owner-chat';
   const orcaTools = ownerChat ? (spec.orcaTools?.() ?? []) : [];
@@ -70,8 +133,8 @@ export function composeSessionTools(spec: CapabilitySpec): ToolDefinition[] {
   // sender gets a locked no-op and no one can reach another user's memory. Task-workers (no identity)
   // never compose them.
   const memoryTools = spec.kind !== 'task-worker' ? (spec.memoryTools?.() ?? []) : [];
-  const pluginTools = spec.pluginTools.map(gateToolAccess);
-  return [...orcaTools, ...memoryTools, ...pluginTools];
+  const pluginTools = spec.pluginTools.map((t) => gateToolAccess(t, spec.onToolResult));
+  return [...orcaTools, ...memoryTools, ...pluginTools].map(gatePermissions);
 }
 
 /** The names a turn's ToolPolicy is allowed to HIDE from the model, given the full tool set and which of

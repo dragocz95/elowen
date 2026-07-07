@@ -1,0 +1,13 @@
+{
+  "description": "Automaticky zformátuje soubory zapsané asistentem formátovačem, který projekt sám používá (prettier, biome, pint, ruff, gofmt, rustfmt…). Formátovač se spustí jen tehdy, když je v projektu přítomen jeho binární soubor nebo konfigurace.",
+  "fields": {
+    "enabled": {
+      "label": "Automatické formátování",
+      "hint": "Spustit formátovač projektu ihned po úspěšném write_file/edit_file. Formátování je ve výchozím stavu zapnuté; vypnete jej zde."
+    },
+    "disabled": {
+      "label": "Vypnuté formátovače",
+      "hint": "Formátovače, které se nesmí spouštět, ani když je pro ně projekt nastaven."
+    }
+  }
+}

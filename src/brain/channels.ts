@@ -10,6 +10,8 @@ import { projectUserTurn } from './persistence.js';
 import { extractText, frameUntrusted } from './messageView.js';
 import { channelSessionId } from './sessionId.js';
 import { applyToolVisibility } from './session/capabilities.js';
+import { buildPermissionRuleset } from './toolPermissions.js';
+import type { PermissionSettings, TurnPermissions } from './toolPermissions.js';
 import type { MemoryService } from './memoryService.js';
 import type { MemoryCurator } from './memoryCurator.js';
 import type { ConversationTitler } from './conversationTitler.js';
@@ -70,6 +72,10 @@ export interface ChannelServiceDeps {
   /** Parked ask_user_question registry (shared with BrainService) — lets a channel turn's `ctx.askUser`
    *  emit an `ask` event to the channel's clients and await the answer (settled by a Discord interaction). */
   elicitation?: ElicitationRegistry;
+  /** Per-user granular tool-permission settings (shared with BrainService). Channel turns resolve them
+   *  for the VERIFIED sender (writerUserId), falling back to the channel owner for unlinked senders —
+   *  but never wire an approval channel, so only `deny` rules bite here (ask → allow, see send()). */
+  permissions?: (userId: number) => PermissionSettings;
 }
 
 /** Platform channel conversations (Discord threads, …): one session per channel — keyed by the
@@ -190,12 +196,20 @@ export class ChannelSessionService {
         // once with every tool). Linked sender → their disabled_tools hidden; role sender → the role's
         // allow-list narrows plugin tools. Applies on the next prompt; the execute gate stays as backup.
         applyToolVisibility(ch.session, ch.pluginToolNames, opts.toolPolicy);
+        // Granular tool permissions WITHOUT an approval channel: a channel/cron/subagent turn has no
+        // human parked on a blocking prompt, so the gate resolves `ask` rules to allow — only explicit
+        // `deny` rules bite. Rules come from the verified sender's account (their web-chat rules follow
+        // them here), else the channel owner's; YOLO is irrelevant when nothing ever asks.
+        const permSettings = this.d.permissions?.(opts.writerUserId ?? opts.ownerUserId);
+        const permissions: TurnPermissions | undefined = permSettings
+          ? { ruleset: buildPermissionRuleset(permSettings), yolo: false }
+          : undefined;
         // Build the prompt INSIDE the identity/policy scope so turnContext providers can scope to the
         // channel sender via currentIdentity() (e.g. per-user todos, not one global list across senders).
         await runWithPolicy(opts.policy, () => {
           const prompted = memoryBlock + ch.turnContext() + text;
           return options ? ch.session.prompt(prompted, options) : ch.session.prompt(prompted);
-        }, { identity: opts.identity, elicit, emitCard, toolPolicy: opts.toolPolicy, model: { provider: ch.providerId, model: ch.model } });
+        }, { identity: opts.identity, elicit, emitCard, toolPolicy: opts.toolPolicy, permissions, model: { provider: ch.providerId, model: ch.model } });
         // Hand the caller a settled idle (model + context fill) deterministically, AFTER the turn ends.
         // Proactive footers (every cron push builds `model · N %` from this) must not depend on the
         // stream's own idle winning the race against prompt() resolution — otherwise the footer is

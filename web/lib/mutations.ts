@@ -2,7 +2,7 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { orcaClient } from './orcaClient';
 import { QUERY_KEYS } from './queries';
-import type { CreateTaskInput, UpdateTaskInput, PlanInput, EngageInput, ConfigPatch, InsertPhasesInput, UserPatch, ProfilePatch, CliSettings, TerminalSettings, CronJob, PersonalityCreate, PersonalityPatch, MemoryCreate, MemoryPatch, EmbeddingSettingsPatch, MemoryCategoryCreate, MemoryCategoryPatch, CategorizationSettingsPatch, PluginInfo, PluginDetail } from './types';
+import type { CreateTaskInput, UpdateTaskInput, PlanInput, EngageInput, ConfigPatch, InsertPhasesInput, UserPatch, ProfilePatch, CliSettings, TerminalSettings, PermissionSettings, CronJob, PersonalityCreate, PersonalityPatch, MemoryCreate, MemoryPatch, EmbeddingSettingsPatch, MemoryCategoryCreate, MemoryCategoryPatch, CategorizationSettingsPatch, PluginInfo, PluginDetail } from './types';
 
 export function useSpawn() {
   const qc = useQueryClient();
@@ -191,6 +191,10 @@ export function useSaveMyCliSettings() {
 export function useSaveMyTerminalSettings() {
   const qc = useQueryClient();
   return useMutation({ mutationFn: (patch: Partial<TerminalSettings>) => orcaClient.saveMyTerminalSettings(patch), onSuccess: () => qc.invalidateQueries({ queryKey: ['my-terminal-settings'] }) });
+}
+export function useSaveMyPermissions() {
+  const qc = useQueryClient();
+  return useMutation({ mutationFn: (patch: Partial<PermissionSettings>) => orcaClient.saveMyPermissions(patch), onSuccess: () => qc.invalidateQueries({ queryKey: ['my-permissions'] }) });
 }
 /** Create a personality profile. Invalidates the profiles list (all platforms). */
 export function useCreatePersonality() {

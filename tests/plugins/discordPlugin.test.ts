@@ -367,3 +367,60 @@ describe('discord onMessage context pipeline', () => {
     expect(fired).toBe(false);
   });
 });
+
+describe('discord buildAskComponents (ask_user_question rendering)', () => {
+  interface Component { type: number; custom_id?: string; label?: string; style?: number; options?: { label: string; value: string }[]; min_values?: number; max_values?: number }
+  interface Row { type: number; components: Component[] }
+  const load = async () => (await import(join(repoRoot, 'plugins/discord/index.mjs'))) as {
+    buildAskComponents: (id: string, questions: unknown[], opts?: { cs?: boolean; selected?: Record<number, string[]> }) => Row[];
+  };
+  const q = (over: Record<string, unknown> = {}) => ({
+    question: 'Which colour?', header: 'Colour', multiSelect: false,
+    options: [{ label: 'Blue' }, { label: 'Green' }], ...over,
+  });
+
+  it('renders a small single-select question as one button row (≤5 buttons) with no Submit — a click answers', async () => {
+    const { buildAskComponents } = await load();
+    const rows = buildAskComponents('ID', [q()]);
+    expect(rows).toHaveLength(2); // options row + footer (Other only)
+    expect(rows[0].components.map((c) => c.type)).toEqual([2, 2]); // buttons
+    expect(rows[0].components.map((c) => c.custom_id)).toEqual(['ask:ID:0:0', 'ask:ID:0:1']);
+    const footer = rows[1].components.map((c) => c.custom_id);
+    expect(footer).not.toContain('ask:ID:submit');
+    expect(footer).toContain('ask:ID:other');
+  });
+
+  it('uses a select menu when multiple=true or when a question has more than 5 options', async () => {
+    const { buildAskComponents } = await load();
+    const multi = buildAskComponents('ID', [q({ multiSelect: true })]);
+    expect(multi[0].components[0].type).toBe(3); // string select
+    expect(multi[0].components[0].max_values).toBe(2);
+    const many = buildAskComponents('ID', [q({ options: Array.from({ length: 7 }, (_, i) => ({ label: `o${i}` })) })]);
+    expect(many[0].components[0].type).toBe(3);
+    expect(many[0].components[0].options).toHaveLength(7);
+    // Both need the explicit Submit button.
+    expect(multi.at(-1)!.components.map((c) => c.custom_id)).toContain('ask:ID:submit');
+  });
+
+  it('omits the free-text "Other" button when custom is false, keeps it when absent (older events)', async () => {
+    const { buildAskComponents } = await load();
+    const strict = buildAskComponents('ID', [q({ custom: false })]);
+    const ids = strict.flatMap((r) => r.components.map((c) => c.custom_id));
+    expect(ids).not.toContain('ask:ID:other');
+    const legacy = buildAskComponents('ID', [q()]);
+    expect(legacy.flatMap((r) => r.components.map((c) => c.custom_id))).toContain('ask:ID:other');
+  });
+
+  it('marks the picked option button green and keeps Submit on multi-question asks', async () => {
+    const { buildAskComponents } = await load();
+    const rows = buildAskComponents('ID', [q(), q({ question: 'Pick tools', header: 'Tools' })], { selected: { 0: ['Green'] } });
+    expect(rows[0].components.map((c) => c.style)).toEqual([2, 3]); // Green picked
+    expect(rows.at(-1)!.components.map((c) => c.custom_id)).toContain('ask:ID:submit');
+  });
+
+  it('caps at 4 question rows + 1 footer row (Discord allows 5 action rows)', async () => {
+    const { buildAskComponents } = await load();
+    const rows = buildAskComponents('ID', Array.from({ length: 6 }, (_, i) => q({ question: `Q${i}` })));
+    expect(rows.length).toBeLessThanOrEqual(5);
+  });
+});

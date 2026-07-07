@@ -30,8 +30,10 @@ export type BrainEvent =
   /** The agent is asking the user to pick from predefined options and has PARKED the turn until they
    *  answer (see `ask_user_question` plugin + ElicitationRegistry). Synthetic — not derived from a PI
    *  event; the elicitor emits it straight into `listeners`. A client renders the questions as
-   *  interactive choices and POSTs the answer to `/brain/answer` (Discord resolves it in-process). */
-  | { type: 'ask'; id: string; questions: AskQuestion[] }
+   *  interactive choices and POSTs the answer to `/brain/answer` (Discord resolves it in-process).
+   *  `kind: 'approval'` marks a blocking tool-permission prompt (three fixed options — see
+   *  brain/toolPermissions.ts) so frontends can style it differently; absent = a regular question. */
+  | { type: 'ask'; id: string; questions: AskQuestion[]; kind?: 'approval' }
   /** A new agent step (one model round-trip / turn) started within the current run. `step` is 1-based;
    *  `maxSteps` is the configured ceiling (0 = unlimited). `usage` snapshots context at step boundaries
    *  so clients don't wait until the final idle event to refresh context fill. Synthetic — counted
@@ -84,9 +86,10 @@ export async function runCompaction(session: AgentSession): Promise<CompactResul
 /** One selectable option in an `ask` question. `description` is an optional one-line hint under the label. */
 interface AskOption { label: string; description?: string }
 /** A single multiple-choice question the agent poses via `ask_user_question`. `header` is a short chip
- *  label (≤12 chars); `multiSelect` allows more than one pick. Every question also implicitly offers a
- *  free-text "Other" escape, surfaced by each client. */
-export interface AskQuestion { question: string; header: string; multiSelect: boolean; options: AskOption[] }
+ *  label (≤30 chars); `multiSelect` allows more than one pick. `custom` says whether a free-text "Other"
+ *  escape is offered — absent means true (older events predate the flag), so clients must treat only an
+ *  explicit `false` as "options only". */
+export interface AskQuestion { question: string; header: string; multiSelect: boolean; custom?: boolean; options: AskOption[] }
 /** The user's answer to one question: the picked option label(s) plus an optional free-text "Other". */
 export interface AskAnswer { header: string; selected: string[]; other?: string }
 

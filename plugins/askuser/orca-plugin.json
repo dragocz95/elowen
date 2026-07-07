@@ -2,7 +2,7 @@
   "name": "askuser",
   "version": "0.2.0",
   "apiVersion": "1",
-  "description": "Ask the user a multiple-choice question and wait for their answer before continuing. The agent poses one or more questions with predefined options; the user picks in the chat (CLI/web) or via Discord buttons, and the turn resumes with their choice.",
+  "description": "Ask the user structured multiple-choice questions and wait for their answer before continuing. The agent poses one or more questions with predefined options (single- or multi-select, optional free-text answer); the user picks in the chat (CLI/web), via Discord buttons/selects, or a WhatsApp numbered reply, and the turn resumes with their choice.",
   "entry": "index.mjs",
   "provides": {
     "tools": [

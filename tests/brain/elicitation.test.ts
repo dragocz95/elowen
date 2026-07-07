@@ -17,6 +17,23 @@ describe('ElicitationRegistry — parked ask_user_question lifecycle', () => {
     await expect(p).resolves.toEqual(answers);
   });
 
+  it("an approval ask carries kind:'approval' on the event and the reconnect snapshot", async () => {
+    const reg = new ElicitationRegistry();
+    let emitted: BrainEvent | null = null;
+    const p = reg.ask('sess-1', Q, (e) => { emitted = e; }, 'approval');
+    expect(emitted).toMatchObject({ type: 'ask', kind: 'approval' });
+    expect(reg.pendingForSession('sess-1')).toMatchObject({ kind: 'approval' });
+    reg.answer((emitted as unknown as { id: string }).id, [{ header: 'Choice', selected: ['A'] }]);
+    await p;
+    // A regular question stays kind-less (older clients never see an unexpected field).
+    let plain: BrainEvent | null = null;
+    const p2 = reg.ask('sess-1', Q, (e) => { plain = e; });
+    expect(Object.keys(plain as unknown as object)).not.toContain('kind');
+    expect(reg.pendingForSession('sess-1')).not.toHaveProperty('kind');
+    reg.answer((plain as unknown as { id: string }).id, [{ header: 'Choice', selected: ['A'] }]);
+    await p2;
+  });
+
   it('answer() on an unknown/expired id is a tolerated no-op', () => {
     const reg = new ElicitationRegistry();
     expect(reg.answer('nope', [])).toBe(false);

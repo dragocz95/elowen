@@ -1,7 +1,7 @@
 'use client';
 import { useState, useEffect } from 'react';
 import { useAutoSave } from '../../lib/useAutoSave';
-import { Eye, Gauge, SlidersHorizontal } from 'lucide-react';
+import { Eye, Gauge, SlidersHorizontal, Zap } from 'lucide-react';
 import { ExecutorPicker } from '../../components/ui/ExecutorPicker';
 import { SettingCard } from '../../components/ui/SettingCard';
 import { Toggle } from '../../components/ui/Toggle';
@@ -9,8 +9,8 @@ import { Slider } from '../../components/ui/Slider';
 import { LoadingState } from '../../components/ui/states';
 import { useToast } from '../../components/ui/Toast';
 import { useTranslation } from '../../lib/i18n';
-import { useMyCliSettings, useBrainModels } from '../../lib/queries';
-import { useSaveMyCliSettings } from '../../lib/mutations';
+import { useMyCliSettings, useMyPermissions, useBrainModels } from '../../lib/queries';
+import { useSaveMyCliSettings, useSaveMyPermissions } from '../../lib/mutations';
 import { Pill } from './pills';
 
 const THINKING_LEVELS = ['', 'minimal', 'low', 'medium', 'high', 'xhigh'];
@@ -41,6 +41,22 @@ export function CliSection() {
       setSeeded(true);
     }
   }, [data]);
+
+  // YOLO default lives in the separate permissions blob (GET/PATCH /auth/me/permissions) — its own
+  // query + seed + autosave so flipping it never touches (or restarts through) cli-settings.
+  const permissions = useMyPermissions();
+  const savePermissions = useSaveMyPermissions();
+  const [yolo, setYolo] = useState(false);
+  const [yoloSeeded, setYoloSeeded] = useState(false);
+  useEffect(() => {
+    if (permissions.data) {
+      setYolo(permissions.data.yolo);
+      setYoloSeeded(true);
+    }
+  }, [permissions.data]);
+  useAutoSave([yolo], () => {
+    savePermissions.mutate({ yolo }, { onError: () => toast(t.cli.saveError, 'error') });
+  }, { ready: yoloSeeded });
 
   // Auto-persist shortly after any change. Sends only the fields this section owns — the PATCH merges,
   // so the Personality/default-model picks stay untouched.
@@ -100,6 +116,19 @@ export function CliSection() {
               <span className="w-12 shrink-0 text-right font-mono text-sm tabular-nums text-text">{autoCompactAt}%</span>
             </div>
           ) : null}
+        </div>
+      </SettingCard>
+
+      <SettingCard title={t.cli.yoloTitle} icon={Zap}>
+        <div className="flex flex-col gap-3">
+          <label className="flex items-center gap-3 text-sm text-text">
+            <Toggle checked={yolo} onChange={setYolo} label={t.cli.yoloToggle} />
+            <span>{t.cli.yoloToggle}</span>
+          </label>
+          {/* Always-visible warning (not a HelpTip): auto-approving tool runs is a security trade-off. */}
+          <p className="rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-xs text-warning">
+            {t.cli.yoloWarning}
+          </p>
         </div>
       </SettingCard>
     </div>
