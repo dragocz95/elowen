@@ -311,11 +311,17 @@ async function main() {
   // then hand off to the headless runner, which resolves a token from env/cache (never prompting).
   if (argv[0] === 'run' || argv[0] === '-p' || argv[0] === '--print' || argv[0] === '--prompt') {
     // A streamed run is often piped (`orca run … | head`); when the consumer closes the pipe, writing to
-    // stdout raises EPIPE — treat that as "consumer done" and exit cleanly instead of crashing on it.
-    process.stdout.on('error', (e: NodeJS.ErrnoException) => { if (e.code === 'EPIPE') process.exit(0); });
+    // std{out,err} raises EPIPE — treat that as "consumer done" and exit cleanly instead of crashing on it.
+    const onEpipe = (e: NodeJS.ErrnoException): void => { if (e.code === 'EPIPE') process.exit(0); };
+    process.stdout.on('error', onEpipe);
+    process.stderr.on('error', onEpipe);
     await ensureDaemon();
     const { runHeadless } = await import('./chat/headless.js');
-    process.exit(await runHeadless(BASE, process.env, argv[0] === 'run' ? argv.slice(1) : argv));
+    const code = await runHeadless(BASE, process.env, argv[0] === 'run' ? argv.slice(1) : argv);
+    // Flush stdout before exiting — process.exit() does NOT drain a piped socket, so the last frames of a
+    // large `--json` stream could be lost to a slow consumer otherwise.
+    if (!process.stdout.write('')) await new Promise<void>((r) => process.stdout.once('drain', () => r()));
+    process.exit(code);
   }
   // `orca update --auto` is the hourly systemd timer's entrypoint: gated on the opt-in flag + live
   // missions (read straight from the DB), it never auto-spawns a daemon and stays silent-success when

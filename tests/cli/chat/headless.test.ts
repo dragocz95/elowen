@@ -30,9 +30,12 @@ describe('cli/chat/headless.parseHeadlessArgs', () => {
     expect(parseHeadlessArgs(['--bogus']).error).toMatch(/unknown flag/);
     expect(parseHeadlessArgs(['--mode', 'sideways']).error).toMatch(/--mode/);
   });
-  it('does not let a value flag eat the next flag', () => {
-    expect(parseHeadlessArgs(['--model', '--json']).model).toBeUndefined();
-    expect(parseHeadlessArgs(['--model', '--json']).json).toBe(true);
+  it('errors (not silently drops) when a value flag is missing its value', () => {
+    const o = parseHeadlessArgs(['--model', '--json']);
+    expect(o.error).toMatch(/--model needs a value/);
+    expect(o.json).toBe(true); // the next flag is still parsed
+    // the classic footgun: --goal with no value would otherwise silently run a plain turn
+    expect(parseHeadlessArgs(['--goal', '--json', 'fix it']).error).toMatch(/--goal needs a value/);
   });
 });
 

@@ -69,7 +69,7 @@ export function parseCommand(text: string): { cmd: 'quit' | 'new' | 'stop' | 'st
     case 'sessions': return { cmd: 'sessions' };
     case 'resume': return { cmd: 'resume', arg: m[2] };
     case 'delete': return { cmd: 'delete', arg: m[2] };
-    case 'model': return { cmd: 'model' };
+    case 'model': return { cmd: 'model', arg: m[2] };
     case 'think': return { cmd: 'think', arg: m[2] };
     case 'theme': return { cmd: 'theme', arg: m[2] };
     case 'lsp': return { cmd: 'lsp' };
@@ -79,8 +79,8 @@ export function parseCommand(text: string): { cmd: 'quit' | 'new' | 'stop' | 'st
     case 'goal': return { cmd: 'goal', arg: m[2] };
     case 'subgoal': return { cmd: 'subgoal', arg: m[2] };
     case 'compact': return { cmd: 'compact' };
-    case 'plan': return { cmd: 'plan' };
-    case 'build': return { cmd: 'build' };
+    case 'plan': return { cmd: 'plan', arg: m[2] };
+    case 'build': return { cmd: 'build', arg: m[2] };
     case 'help': return { cmd: 'help' };
     default: return null;
   }

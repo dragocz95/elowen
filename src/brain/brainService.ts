@@ -233,7 +233,14 @@ export class BrainService {
       // restart) may have no live brain, and send() would throw "brain not started" and error-pause the
       // goal it just resumed. start() is idempotent when the session is already live.
       void this.start(userId, { session: sessionId })
-        .then(() => this.send(userId, goalContinuePrompt(current), undefined, mode, { goalContinue: true }))
+        .then(() => {
+          // Re-verify AFTER the async start(): the user may have switched conversations in that gap, and
+          // send() targets the currently-ACTIVE session — without this re-check the continuation could fire
+          // its prompt into an unrelated conversation. Read the goal row fresh so the prompt is up to date.
+          const now = this.d.store.getGoal(sessionId);
+          if (!now || now.status !== 'active' || this.activeSessionId(userId) !== sessionId) return;
+          return this.send(userId, goalContinuePrompt(now), undefined, mode, { goalContinue: true });
+        })
         .catch((e) => {
           this.d.store.updateGoal(sessionId, {
             status: 'paused',
@@ -951,7 +958,10 @@ export class BrainService {
       return;
     }
 
-    this.d.store.updateGoal(sessionId, { turns_used: turns, subgoals: subgoalsJson, last_verdict: 'continue', last_evidence: progress });
+    // If GOAL_DONE was emitted but subgoals are still open, tell the model next turn (via this verdict,
+    // rendered into goalContinuePrompt) instead of silently looping to budget.
+    const doneRejected = verdict.done; // reached here only when NOT allSubgoalsDone
+    this.d.store.updateGoal(sessionId, { turns_used: turns, subgoals: subgoalsJson, last_verdict: doneRejected ? 'done_pending_subgoals' : 'continue', last_evidence: progress });
     if (this.activeSessionId(userId) !== sessionId) return;
     this.scheduleGoalContinuation(userId, sessionId, mode, internal?.goalContinue ? 250 : 100);
   }

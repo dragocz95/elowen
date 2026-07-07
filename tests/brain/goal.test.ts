@@ -53,6 +53,18 @@ describe('judgeGoalBlocked — explicit GOAL_BLOCKED sentinel', () => {
     expect(judgeGoalBlocked('GOAL_BLOCKED: <reason>').blocked).toBe(false);
     expect(judgeGoalBlocked('I am not blocked, continuing.').blocked).toBe(false);
   });
+  it('rejects a line-start echo of the instruction (placeholder + trailing prose)', () => {
+    // A model recapping the protocol on its own line must NOT pause a healthy goal.
+    expect(judgeGoalBlocked('`GOAL_BLOCKED: <reason>` — I will use this if I get stuck.').blocked).toBe(false);
+    expect(judgeGoalCompletion('GOAL_DONE: <evidence> when finished, per the rules.').done).toBe(false);
+  });
+});
+
+describe('sentinels ignore fenced code blocks', () => {
+  it('a GOAL_DONE inside ``` … ``` does not complete the goal', () => {
+    expect(judgeGoalCompletion('Here is the protocol:\n```\nGOAL_DONE: all tests pass\n```\nStill working on it.').done).toBe(false);
+    expect(parseSubgoalDone('```\nSUBGOAL_DONE: 1\n```').length).toBe(0);
+  });
 });
 
 describe('subgoal check-off protocol', () => {
@@ -74,8 +86,11 @@ describe('subgoal check-off protocol', () => {
 describe('parseProgress — durable per-turn progress line', () => {
   it('extracts the PROGRESS summary and rejects the placeholder', () => {
     expect(parseProgress('did stuff\nPROGRESS: wired the API and added a test')).toBe('wired the API and added a test');
-    expect(parseProgress('PROGRESS: <summary>')).toBe('');
+    expect(parseProgress('PROGRESS: <what you accomplished this turn>')).toBe(''); // the actual prompt placeholder
     expect(parseProgress('no progress line')).toBe('');
+  });
+  it('takes the LAST PROGRESS line when a turn writes more than one', () => {
+    expect(parseProgress('PROGRESS: started the refactor\nmore work\nPROGRESS: finished and tests pass')).toBe('finished and tests pass');
   });
 });
 
@@ -91,5 +106,9 @@ describe('goal prompts advertise the sentinels', () => {
   it('the continuation prompt injects durable progress so it survives compaction/resume', () => {
     expect(goalContinuePrompt(row({ last_evidence: 'migrated 3 of 5 tables' }))).toContain('Progress so far: migrated 3 of 5 tables');
     expect(goalContinuePrompt(row({ last_evidence: '' }))).not.toContain('Progress so far');
+  });
+  it('tells the model when its GOAL_DONE was rejected for open subgoals (done_pending_subgoals)', () => {
+    expect(goalContinuePrompt(row({ last_verdict: 'done_pending_subgoals' }))).toMatch(/GOAL_DONE was NOT accepted/);
+    expect(goalContinuePrompt(row({ last_verdict: 'continue' }))).not.toMatch(/was NOT accepted/);
   });
 });

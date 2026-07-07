@@ -232,15 +232,17 @@ export class BrainClient {
         const res = await this.f(`${this.o.base}/brain/stream`, { headers: this.headers(), signal });
         if (res.status === 401) throw new Unauthorized();
         if (!res.ok || !res.body) throw new Error(`orca brain ${res.status} on /brain/stream`);
-        // Headers are flushed only after the server subscribed us to the live event bus, so this is the
-        // safe point to trigger the first turn without racing a missed event (headless mode uses this).
-        onOpen?.();
         const reader = res.body.getReader();
         const dec = new TextDecoder();
         let buf = '';
+        let opened = false;
         for (;;) {
           const { done, value } = await reader.read();
           if (done) break;
+          // Fire onOpen on the FIRST body byte (the server's `: connected` comment), not on the response
+          // headers: the subscribe happens inside the stream body, so a proxy that flushes headers early
+          // could otherwise let the caller's first turn race ahead of the subscription and miss events.
+          if (!opened) { opened = true; onOpen?.(); }
           buf += dec.decode(value, { stream: true });
           const { frames, rest } = parseSse(buf);
           buf = rest;

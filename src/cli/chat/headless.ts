@@ -45,13 +45,16 @@ export function parseHeadlessArgs(args: string[]): HeadlessOpts {
     const a = args[i];
     if (a === undefined) continue;
     const val = (): string | undefined => { const v = takeValue(args, i); if (v !== undefined) i++; return v; };
+    // A required value that's missing (end of args, or the next token is another flag) is a mistake, not a
+    // silent no-op — otherwise `--goal --json "x"` would quietly run a plain turn instead of a goal.
+    const need = (name: string): string | undefined => { const v = val(); if (v === undefined) o.error = `${name} needs a value`; return v; };
     switch (a) {
-      case '-p': case '--print': case '--prompt': o.prompt = val(); break;
-      case '--goal': o.goal = val(); break;
-      case '--model': o.model = val(); break;
-      case '--provider': o.provider = val(); break;
-      case '--session': case '--resume': o.session = val(); break; // resume a specific conversation by id
-      case '-c': case '--continue': o.fresh = false; break; // resume the active conversation (the default, made explicit / overrides --new)
+      case '-p': case '--print': case '--prompt': o.prompt = need(a); break;
+      case '--goal': o.goal = need(a); break;
+      case '--model': o.model = need(a); break;
+      case '--provider': o.provider = need(a); break;
+      case '--session': case '--resume': o.session = need(a); break; // resume a specific conversation by id
+      case '-c': case '--continue': o.fresh = false; break; // resume the active conversation (the default; last of -c/--new wins)
       case '--new': o.fresh = true; break;
       case '--mode': { const m = val(); if (m === 'plan' || m === 'build') o.mode = m; else o.error = `--mode must be plan or build (got "${m ?? ''}")`; break; }
       case '--plan': o.mode = 'plan'; break;
@@ -146,7 +149,9 @@ export async function runHeadless(
       case 'notice': if (o.verbose && !o.json) io.stderr(dim(`[${e.kind}] ${e.message}\n`)); break;
       case 'ask':
         if (!o.json) io.stderr(`\n[needs input] ${e.questions.map((q) => q.question).join(' | ')}\n`);
-        if (!isGoalRun) finish(5); // a plain turn can't proceed without an answer
+        // A plain turn can't proceed without an answer — abort it server-side (releases the session lock /
+        // cancels the parked elicitation) instead of leaving it hanging until the elicitation timeout.
+        if (!isGoalRun) { void c.abort().catch(() => { /* best-effort */ }); finish(5); }
         break;
       case 'error': if (!o.json) io.stderr(`\n[error] ${e.message}\n`); finish(1); break;
       case 'idle':
@@ -158,18 +163,28 @@ export async function runHeadless(
   };
 
   const printGoal = (g: GoalView | null): void => {
+    if (o.json) { io.stdout(`${JSON.stringify(g)}\n`); return; }
     if (!g) { io.stdout('no active goal\n'); return; }
-    if (o.json) emit({ type: 'idle' } as BrainEvent); // keep JSONL well-formed; the goal itself follows
-    io.stdout(`goal ${g.status} · ${g.turns_used}/${g.turn_budget} turns${g.paused_reason ? ` · ${g.paused_reason}` : ''}${g.last_evidence ? ` · ${g.last_evidence}` : ''}\n`);
+    let subs = '';
+    try { const s = JSON.parse(g.subgoals) as { done?: boolean }[]; if (Array.isArray(s) && s.length) subs = ` · subgoals ${s.filter((x) => x?.done).length}/${s.length}`; }
+    catch { /* malformed subgoals JSON → omit the count */ }
+    io.stdout(`goal ${g.status} · ${g.turns_used}/${g.turn_budget} turns${subs}${g.paused_reason ? ` · ${g.paused_reason}` : ''}${g.last_evidence ? ` · ${g.last_evidence}` : ''}\n`);
   };
 
   async function pollGoal(): Promise<void> {
+    let seen = false, errors = 0;
     while (!settled) {
-      const g = await c.goal().catch(() => null);
+      let g: GoalView | null = null;
+      try { g = await c.goal(); errors = 0; }
+      catch (e) { if (++errors >= 3) { io.stderr(`\ncan't read goal status: ${errMsg(e)}\n`); finish(1); return; } await sleep(1500); continue; }
+      if (g) seen = true;
+      // The goal vanished after we'd seen it — cleared, or the user switched conversations (goal status
+      // reads the ACTIVE session). Stop rather than spin to the timeout.
+      if (!g && seen) { if (!o.json) io.stdout('\n[goal gone — cleared or conversation switched]\n'); finish(1); return; }
       if (g && g.status !== 'active' && g.status !== 'draft') {
         const code = g.status === 'done' ? 0 : g.last_verdict === 'blocked' ? 4 : 3;
-        if (!o.json) io.stdout(`\n[goal ${g.status}${g.paused_reason ? `: ${g.paused_reason}` : ''}${g.last_evidence ? ` — ${g.last_evidence}` : ''}]\n`);
-        else emit({ type: 'idle' } as BrainEvent);
+        if (o.json) io.stdout(`${JSON.stringify({ type: 'goal', goal: g })}\n`);
+        else io.stdout(`\n[goal ${g.status}${g.paused_reason ? `: ${g.paused_reason}` : ''}${g.last_evidence ? ` — ${g.last_evidence}` : ''}]\n`);
         finish(code);
         return;
       }
@@ -177,11 +192,27 @@ export async function runHeadless(
     }
   }
 
+  // Print an action's result: a structured JSON object in --json mode, a human line otherwise.
+  const outResult = (human: string, obj: Record<string, unknown>): void =>
+    io.stdout(o.json ? `${JSON.stringify({ type: 'result', ...obj })}\n` : `${human}\n`);
+
+  // Fire a turn WITHOUT blocking on its POST. `POST /brain/send` awaits the whole turn server-side, so on a
+  // long turn its response would trip undici's 300s headers timeout and reject — but the turn is fine and
+  // the stream keeps delivering events. So completion is driven by the `idle` event (ordered after all
+  // text); the POST resolving is only a fallback, and its rejection is a real error ONLY if nothing has
+  // streamed (e.g. "brain not started"), never the 300s timeout on a working turn.
+  const fireTurn = (text: string, mode: 'build' | 'plan'): void => {
+    void c.send(text, mode).then(
+      () => { if (!settled) setTimeout(() => { if (!settled) { if (!o.json) io.stdout('\n'); finish(0); } }, 300); },
+      (e) => { if (!settled && !activity) { io.stderr(`\n${errMsg(e)}\n`); finish(1); } },
+    );
+  };
+
   async function dispatchSlash(p: NonNullable<ReturnType<typeof parseCommand>>): Promise<void> {
     const arg = (p.arg ?? '').trim();
     switch (p.cmd) {
-      case 'plan': case 'build':
-        if (arg) await c.send(arg, p.cmd === 'plan' ? 'plan' : 'build');
+      case 'plan': case 'build': // a mode-tagged turn; streams like a normal turn and settles on idle
+        if (arg) fireTurn(arg, p.cmd === 'plan' ? 'plan' : 'build');
         else { io.stderr(`/${p.cmd} needs a prompt in headless mode, e.g. -p "/${p.cmd} <text>".\n`); finish(2); }
         break;
       case 'goal': { // pause / resume / clear / status (a `/goal <text>` was already routed to a goal run)
@@ -195,42 +226,63 @@ export async function runHeadless(
         else if (arg) await c.subgoal('add', arg);
         printGoal(await c.goal()); finish(0); break;
       }
-      case 'compact': { const r = await c.compact(); io.stdout(`${r.message ?? 'compacted'}\n`); finish(0); break; }
-      case 'status': { io.stdout(`${JSON.stringify(await c.status(), null, 2)}\n`); finish(0); break; }
-      case 'skills': { io.stdout(`${JSON.stringify(await c.skills(), null, 2)}\n`); finish(0); break; }
+      case 'compact': { const r = await c.compact(); outResult(r.message ?? 'compacted', { compacted: r.compacted, message: r.message }); finish(0); break; }
+      case 'status': { const s = await c.status(); io.stdout(o.json ? `${JSON.stringify({ type: 'result', status: s })}\n` : `${JSON.stringify(s, null, 2)}\n`); finish(0); break; }
+      case 'skills': { const sk = await c.skills(); io.stdout(o.json ? `${JSON.stringify({ type: 'result', skills: sk })}\n` : `${JSON.stringify(sk, null, 2)}\n`); finish(0); break; }
+      case 'sessions': { // headless equivalent of the TUI picker: list conversations
+        const rows = await c.sessions();
+        if (o.json) io.stdout(`${JSON.stringify({ type: 'result', sessions: rows })}\n`);
+        else for (const r of rows) io.stdout(`${r.active ? '* ' : '  '}${r.id}\t${r.title || '(untitled)'}\t${r.model}\n`);
+        finish(0); break;
+      }
       case 'model': {
         const parts = arg.split(/\s+/).filter(Boolean);
+        // No arg would send `{}` and SILENTLY reset the model to the default — refuse instead.
+        if (!parts.length) { io.stderr('/model needs a model id, e.g. -p "/model <provider> <model>".\n'); finish(2); break; }
         const r = await c.setModel(parts.length >= 2 ? { provider: parts[0], model: parts.slice(1).join(' ') } : { model: parts[0] });
-        io.stdout(`model: ${r.model}\n`); finish(0); break;
+        outResult(`model: ${r.model}`, { model: r.model }); finish(0); break;
       }
-      case 'think': { if (arg) { const r = await c.setThinkingLevel(arg); io.stdout(`thinking: ${r.thinkingLevel}\n`); } finish(0); break; }
+      case 'think': {
+        if (!arg) { io.stderr('/think needs a level (minimal|low|medium|high|xhigh).\n'); finish(2); break; }
+        const r = await c.setThinkingLevel(arg); outResult(`thinking: ${r.thinkingLevel}`, { thinkingLevel: r.thinkingLevel }); finish(0); break;
+      }
+      case 'help': io.stdout(`${USAGE}\n`); finish(0); break;
+      case 'resume': io.stderr('use --resume <id> (or --list to see ids) in headless mode.\n'); finish(2); break;
       default: { // any other action command → the generic dispatch
-        const r = await c.command(p.cmd); if (r?.message) io.stdout(`${r.message}\n`); finish(0); break;
+        try { const r = await c.command(p.cmd); outResult(r?.message ?? `/${p.cmd} ok`, { command: p.cmd, message: r?.message }); finish(0); }
+        catch (e) { io.stderr(`/${p.cmd}: ${errMsg(e)}\n`); finish(2); }
+        break;
       }
     }
   }
 
+  // If the stream never opens (persistent 403/503, or it keeps reconnecting), onOpen never fires and the
+  // run would otherwise hang until --timeout. Fail fast with a clear message instead.
   let dispatched = false;
+  const connectTimer = setTimeout(() => { if (!dispatched && !settled) { io.stderr("couldn't open the event stream (is the daemon reachable and the brain configured?)\n"); finish(1); } }, 20_000);
+  connectTimer.unref?.();
+
   const dispatch = async (): Promise<void> => {
     if (dispatched) return; dispatched = true; // onOpen fires again on a stream reconnect — dispatch once
+    clearTimeout(connectTimer); // the stream is open; drop the connect deadline
     try {
       if (isGoalRun) { await c.setGoal(goalText, false, o.maxTurns); void pollGoal(); }
       else if (parsed) await dispatchSlash(parsed);
-      else {
-        await c.send(o.prompt!, o.mode);
-        // Belt-and-suspenders: if no idle event arrives shortly after the (blocking) send resolves, settle
-        // anyway so the run can't hang on a missing terminal event. idle normally wins this race.
-        setTimeout(() => { if (!settled) { if (!o.json) io.stdout('\n'); finish(0); } }, 500);
-      }
+      else fireTurn(o.prompt!, o.mode);
     } catch (e) { io.stderr(`\n${errMsg(e)}\n`); finish(1); }
   };
 
   const streamP = c.stream(onEvent, ctrl.signal, 1000, () => void dispatch())
     .catch((e) => { if (!settled) { io.stderr(`stream error: ${errMsg(e)}\n`); finish(1); } });
 
-  const timer = setTimeout(() => { if (!o.json) io.stderr(`\n[timeout after ${Math.round(o.timeoutMs / 1000)}s]\n`); finish(124); }, o.timeoutMs);
+  const timer = setTimeout(() => {
+    if (o.json) io.stdout(`${JSON.stringify({ type: 'timeout', seconds: Math.round(o.timeoutMs / 1000) })}\n`);
+    else io.stderr(`\n[timeout after ${Math.round(o.timeoutMs / 1000)}s]\n`);
+    finish(124);
+  }, o.timeoutMs);
   await doneP;
   clearTimeout(timer);
+  clearTimeout(connectTimer);
   await streamP;
   return exit;
 }

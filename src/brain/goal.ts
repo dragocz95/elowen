@@ -58,6 +58,11 @@ export function goalContinuePrompt(row: BrainGoalRow): string {
     // goal keeps its bearings even after earlier raw messages are gone.
     row.last_evidence ? `Progress so far: ${row.last_evidence}` : '',
     subgoals.length ? `Subgoals:\n${subgoals.map((s, i) => `${i + 1}. ${s.done ? '[x]' : '[ ]'} ${s.text}`).join('\n')}` : '',
+    // Explicit feedback when a prior GOAL_DONE was ignored because subgoals were still open — otherwise a
+    // model that thinks a subgoal is done/N/A just repeats GOAL_DONE and burns the budget with no clue why.
+    row.last_verdict === 'done_pending_subgoals'
+      ? 'NOTE: your last GOAL_DONE was NOT accepted — subgoals above are still unchecked. Mark each finished one with `SUBGOAL_DONE: <number>` (or declare `GOAL_BLOCKED: <reason>`); do not repeat GOAL_DONE until every subgoal is checked.'
+      : '',
     SENTINEL_RULES,
   ].filter(Boolean).join('\n');
 }
@@ -74,14 +79,22 @@ export function lastAssistantText(store: BrainStore, sessionId: string): string 
  *  evidence-word anywhere) fired on negations and quoted plans ("The goal is not yet complete. I edited
  *  the config…" → done), silently terminating the autonomous loop mid-work. The prompts instruct the
  *  model to emit the sentinel only on genuine completion, so requiring it removes the false positives. */
+/** A captured sentinel value that's just the instruction's `<placeholder>` (with or without trailing prose)
+ *  is NOT a real declaration — a model echoing the protocol at line-start must not trip the sentinel. */
+const isPlaceholderEcho = (s: string): boolean => /^<[^>]*>/.test(s.trim());
+/** Strip fenced code blocks before matching so a self-referential goal ("document the GOAL_DONE protocol")
+ *  can't trip a sentinel with an example line inside ```…```. */
+const stripFences = (text: string): string => text.replace(/```[\s\S]*?```/g, '');
+const cleanCapture = (s: string): string => s.replace(/[`*_~]+\s*$/, '').replace(/\s+/g, ' ').trim();
+
 export function judgeGoalCompletion(text: string): { done: boolean; evidence: string } {
   // Tolerate common markdown wrapping — the prompt shows the sentinel in backticks, so a model may echo
   // `GOAL_DONE: …` or **GOAL_DONE: …**. Allow leading/trailing `*_~ around the sentinel and strip them.
-  const m = /^[^\S\r\n]*[`*_~]*\s*GOAL_DONE:[^\S\r\n]*(.+)$/im.exec(text);
+  const m = /^[^\S\r\n]*[`*_~]*\s*GOAL_DONE:[^\S\r\n]*(.+)$/im.exec(stripFences(text));
   if (!m) return { done: false, evidence: '' };
-  const evidence = (m[1] ?? '').replace(/[`*_~]+\s*$/, '').replace(/\s+/g, ' ').trim();
+  const evidence = cleanCapture(m[1] ?? '');
   // Guard against a model echoing the literal instruction placeholder rather than real evidence.
-  if (!evidence || evidence === '<evidence>') return { done: false, evidence: '' };
+  if (!evidence || isPlaceholderEcho(evidence)) return { done: false, evidence: '' };
   return { done: true, evidence: evidence.slice(0, 240) };
 }
 
@@ -89,27 +102,32 @@ export function judgeGoalCompletion(text: string): { done: boolean; evidence: st
  *  sentinel (symmetric to GOAL_DONE). Lets the model stop an unresolvable goal for the operator instead
  *  of looping until the turn budget runs out. Same markdown tolerance + placeholder guard. */
 export function judgeGoalBlocked(text: string): { blocked: boolean; reason: string } {
-  const m = /^[^\S\r\n]*[`*_~]*\s*GOAL_BLOCKED:[^\S\r\n]*(.+)$/im.exec(text);
+  const m = /^[^\S\r\n]*[`*_~]*\s*GOAL_BLOCKED:[^\S\r\n]*(.+)$/im.exec(stripFences(text));
   if (!m) return { blocked: false, reason: '' };
-  const reason = (m[1] ?? '').replace(/[`*_~]+\s*$/, '').replace(/\s+/g, ' ').trim();
-  if (!reason || reason === '<reason>') return { blocked: false, reason: '' };
+  const reason = cleanCapture(m[1] ?? '');
+  if (!reason || isPlaceholderEcho(reason)) return { blocked: false, reason: '' };
   return { blocked: true, reason: reason.slice(0, 240) };
 }
 
 /** The turn's `PROGRESS: <summary>` line, if any — a durable one-line record of what the turn achieved,
- *  kept on the goal row so it survives context compaction and pause/resume. Markdown-tolerant. */
+ *  kept on the goal row so it survives context compaction and pause/resume. Markdown-tolerant; the LAST
+ *  PROGRESS line wins (a turn may note interim then final progress). */
 export function parseProgress(text: string): string {
-  const m = /^[^\S\r\n]*[`*_~]*\s*PROGRESS:[^\S\r\n]*(.+)$/im.exec(text);
-  const summary = (m?.[1] ?? '').replace(/[`*_~]+\s*$/, '').replace(/\s+/g, ' ').trim();
-  return summary === '<summary>' ? '' : summary.slice(0, 240);
+  const src = stripFences(text);
+  const re = /^[^\S\r\n]*[`*_~]*\s*PROGRESS:[^\S\r\n]*(.+)$/gim;
+  let last = '';
+  for (let m = re.exec(src); m; m = re.exec(src)) last = m[1] ?? ''; // last PROGRESS line wins
+  const summary = cleanCapture(last);
+  return isPlaceholderEcho(summary) ? '' : summary.slice(0, 240);
 }
 
 /** 1-based subgoal indices the turn checked off via `SUBGOAL_DONE: <n>` lines (one per finished subgoal).
  *  Deduplicated; non-positive/garbage indices are dropped (the caller bounds them against the list). */
 export function parseSubgoalDone(text: string): number[] {
   const out = new Set<number>();
+  const src = stripFences(text);
   const re = /^[^\S\r\n]*[`*_~]*\s*SUBGOAL_DONE:[^\S\r\n]*(\d+)/gim;
-  for (let m = re.exec(text); m; m = re.exec(text)) {
+  for (let m = re.exec(src); m; m = re.exec(src)) {
     const n = Number(m[1]);
     if (Number.isInteger(n) && n >= 1) out.add(n);
   }
