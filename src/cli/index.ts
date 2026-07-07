@@ -19,7 +19,7 @@ function helpText(version: string): string {
   return `orca ${version} - control plane for autonomous coding agents
 
 USAGE
-  orca                            open the interactive launcher menu (in a terminal)
+  orca                            open the interactive Orca chat (in a terminal)
   orca <command> [options]
 
 SETUP
@@ -37,6 +37,7 @@ SETUP
                                   and the first admin (run as root). See \`orca install --help\`.
 
 SERVICE
+  menu                            interactive launcher: start/stop/status/update in one place
   up                              start the daemon (:4400) and web UI (:4500) in the background
   down                            stop the daemon and web UI
   status                          show which services are running and healthy
@@ -276,9 +277,13 @@ export async function run(argv: string[], c: OrcaClient, env: NodeJS.ProcessEnv)
 async function main() {
   const argv = process.argv.slice(2);
   const version = ORCA_CLI_VERSION;
-  // Bare `orca` in a terminal opens the interactive launcher menu. Piped/non-TTY falls through to the
-  // usage error from `run`, so scripts still get deterministic behavior.
-  if (argv.length === 0 && process.stdin.isTTY) { await menu(process.env, version); return; }
+  // Bare `orca` in a terminal opens the chat TUI — the agent is the product, so talking to it is the
+  // zero-friction default (like `claude`/`opencode`). The ops launcher moved to `orca menu`; piped/
+  // non-TTY still falls through to the usage text below, so scripts keep deterministic behavior.
+  if (argv.length === 0 && process.stdin.isTTY) argv.push('chat');
+  // `orca menu` — the interactive launcher (start/stop/status/update). It manages the daemon itself,
+  // so it runs BEFORE ensureDaemon like install/setup.
+  if (argv[0] === 'menu') { await menu(process.env, version); return; }
   // Help / bare non-TTY invocation: print usage and stop. Must NOT fall through to ensureDaemon.
   if (argv.length === 0 || argv[0] === '--help' || argv[0] === '-h' || argv[0] === 'help') {
     // A running agent invokes `orca help` with ORCA_TASK set to get its task control guide (not the CLI
