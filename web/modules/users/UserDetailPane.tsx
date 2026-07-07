@@ -11,107 +11,161 @@ import { useToast } from '../../components/ui/Toast';
 import { Avatar } from '../../components/ui/Avatar';
 import { Badge } from '../../components/ui/Badge';
 import { ModelIcon } from '../../components/ui/ModelIcon';
+import { ProjectIcon } from '../../components/ui/ProjectIcon';
 import { HelpTip } from '../../components/ui/HelpTip';
+import { ManageSelectionModal, type ManageSelectionItem } from '../../components/ui/ManageSelectionModal';
+import { SelectionSummary } from '../../components/ui/SelectionSummary';
 import { useTranslation } from '../../lib/i18n';
 import { localDateTime } from '../../lib/format';
 import { ToolPills } from './ToolPills';
 import { UserStatsInline } from './UserStatsInline';
 
-/** Admin-only: toggle chips assigning a user to projects (the access boundary for non-admins). */
-function ProjectChips({ userId, projects }: { userId: number; projects: Project[] }) {
-  const assigned = useUserProjects(userId);
-  const assign = useAssignProject();
-  const set = new Set(assigned.data ?? []);
-  if (projects.length === 0) return <p className="text-xs italic text-text-muted">—</p>;
+/** Small provider logo for the modal's group headers/filter chips. */
+function ProviderGroupIcon({ provider }: { provider: ProviderId }) {
+  const meta = providerMeta(provider);
+  if (!meta) return null;
   return (
-    <div className="flex flex-wrap items-center gap-1.5">
-      {projects.map((p) => {
-        const on = set.has(p.id);
-        return (
-          <button
-            key={p.id}
-            type="button"
-            onClick={() => assign.mutate({ userId, projectId: p.id, currentlyAssigned: on })}
-            disabled={assign.isPending}
-            className={`rounded-full border px-2.5 py-1 text-xs transition-colors ${on ? 'border-accent bg-accent/15 text-accent' : 'border-border text-text-muted hover:bg-elevated'}`}
-          >
-            {p.slug}
-          </button>
-        );
-      })}
-    </div>
+    // eslint-disable-next-line @next/next/no-img-element
+    <img src={meta.icon} alt="" width={13} height={13} style={{ objectFit: 'contain' }} className={meta.embedded ? 'logo-adaptive' : undefined} aria-hidden />
   );
 }
 
-/** Admin-only: restrict which models a user may run on tasks. Empty selection → no restriction. Choices
- *  are the global allow-list, grouped like the executor picker: pick the engine, then toggle its models. */
+/** Admin-only: assign a user to projects (the access boundary for non-admins). A compact summary
+ *  card on the page; the full pick list lives in the manage modal. */
+function ProjectChips({ userId, projects }: { userId: number; projects: Project[] }) {
+  const { t } = useTranslation();
+  const { toast } = useToast();
+  const assigned = useUserProjects(userId);
+  const assign = useAssignProject();
+  const [open, setOpen] = useState(false);
+  if (projects.length === 0) return <p className="text-xs italic text-text-muted">—</p>;
+
+  const assignedIds = new Set(assigned.data ?? []);
+  const assignedProjects = projects.filter((p) => assignedIds.has(p.id));
+  const items: ManageSelectionItem[] = projects.map((p) => ({
+    id: String(p.id),
+    label: p.slug,
+    group: 'projects',
+    groupLabel: t.users.projects,
+    icon: <ProjectIcon project={p} size={14} />,
+  }));
+
+  // The assignment API toggles one project at a time — diff the sets and fire the individual calls.
+  const handleSave = async (next: Set<string>) => {
+    const ops = projects
+      .filter((p) => next.has(String(p.id)) !== assignedIds.has(p.id))
+      .map((p) => assign.mutateAsync({ userId, projectId: p.id, currentlyAssigned: assignedIds.has(p.id) }));
+    if (ops.length === 0) return;
+    try {
+      await Promise.all(ops);
+    } catch (e) {
+      toast(String(e) || t.users.updateError, 'error');
+      throw e;
+    }
+  };
+
+  return (
+    <>
+      <SelectionSummary
+        countText={t.managePicker.projectsCount
+          .replace('{n}', String(assignedProjects.length))
+          .replace('{total}', String(projects.length))}
+        samples={assignedProjects.slice(0, 3).map((p) => ({ label: p.slug, icon: <ProjectIcon project={p} size={13} /> }))}
+        moreCount={Math.max(0, assignedProjects.length - 3)}
+        onManage={() => setOpen(true)}
+        manageLabel={t.managePicker.manage}
+      />
+      <ManageSelectionModal
+        title={t.users.projects}
+        subtitle={t.managePicker.projectsSubtitle}
+        open={open}
+        onClose={() => setOpen(false)}
+        items={items}
+        selected={new Set(assignedProjects.map((p) => String(p.id)))}
+        onSave={handleSave}
+        saving={assign.isPending}
+        countLabel={(n) => t.managePicker.projectsSelected.replace('{n}', String(n))}
+      />
+    </>
+  );
+}
+
+/** Admin-only: restrict which models a user may run on tasks. Empty selection → no restriction.
+ *  Summary shows the effective allowance; the manage modal groups the global allow-list by provider. */
 function ModelChips({ user, globalExecs, custom }: { user: OrcaUser; globalExecs: string[]; custom: { label: string; exec: string }[] }) {
   const { t } = useTranslation();
   const update = useUpdateUser();
   const { toast } = useToast();
+  const [open, setOpen] = useState(false);
+  if (globalExecs.length === 0) return <p className="text-xs italic text-text-muted">—</p>;
+
   const labelOf = (exec: string) => allModels(custom).find((m) => m.exec === exec)?.label
     ?? (exec.startsWith('orca:') ? exec.slice(exec.indexOf('/') + 1) : exec);
   const iconNameOf = (exec: string) => (exec.startsWith('orca:') ? exec.slice(exec.indexOf('/') + 1) : exec);
-  const set = new Set(user.allowed_execs);
-  const byProvider = new Map<ProviderId, string[]>();
-  for (const exec of globalExecs) {
-    const prov = execProvider(exec);
-    byProvider.set(prov, [...(byProvider.get(prov) ?? []), exec]);
-  }
-  const groups = PROVIDERS.filter((prov) => (byProvider.get(prov.id as ProviderId) ?? []).length > 0);
-  const [openProvider, setOpenProvider] = useState<ProviderId | null>(null);
-  const active = openProvider ?? (groups[0]?.id as ProviderId | undefined) ?? null;
-  if (globalExecs.length === 0) return <p className="text-xs italic text-text-muted">—</p>;
-  const toggle = (exec: string) => {
-    const next = new Set(set);
-    if (next.has(exec)) next.delete(exec); else next.add(exec);
-    update.mutate({ id: user.id, patch: { allowed_execs: [...next] } }, {
-      onSuccess: () => toast(t.users.modelsUpdated),
-      onError: (e) => toast(String(e) || t.users.updateError, 'error'),
-    });
+
+  // Order execs by the settings' provider order so the modal groups follow the executor picker.
+  const providerOrder = (id: ProviderId) => {
+    const i = PROVIDERS.findIndex((p) => p.id === id);
+    return i === -1 ? PROVIDERS.length : i;
   };
+  const sortedExecs = [...globalExecs].sort((a, b) => providerOrder(execProvider(a)) - providerOrder(execProvider(b)));
+  const items: ManageSelectionItem[] = sortedExecs.map((exec) => {
+    const prov = execProvider(exec);
+    return {
+      id: exec,
+      label: labelOf(exec),
+      group: prov,
+      groupLabel: providerMeta(prov)?.label ?? prov,
+      icon: <ModelIcon name={iconNameOf(exec)} size={14} />,
+    };
+  });
+  const groupIcons = Object.fromEntries(
+    [...new Set(sortedExecs.map(execProvider))].map((prov) => [prov, <ProviderGroupIcon key={prov} provider={prov} />]),
+  );
+
+  const selected = new Set(user.allowed_execs);
+  const allowedInGlobal = sortedExecs.filter((e) => selected.has(e));
+  const restricted = allowedInGlobal.length > 0;
+  const summarySource = restricted ? allowedInGlobal : sortedExecs;
+  const countText = restricted
+    ? t.managePicker.modelsCount
+        .replace('{n}', String(allowedInGlobal.length))
+        .replace('{p}', String(new Set(allowedInGlobal.map(execProvider)).size))
+    : t.managePicker.allModelsCount.replace('{n}', String(globalExecs.length));
+
+  const handleSave = async (next: Set<string>) => {
+    try {
+      await update.mutateAsync({ id: user.id, patch: { allowed_execs: [...next] } });
+      toast(t.users.modelsUpdated);
+    } catch (e) {
+      toast(String(e) || t.users.updateError, 'error');
+      throw e;
+    }
+  };
+
   return (
-    <div className="flex flex-col gap-1.5">
-      <div className="flex flex-wrap gap-1.5" role="tablist" aria-label={t.tasks.pickProvider}>
-        {groups.map((prov) => {
-          const meta = providerMeta(prov.id)!;
-          const execs = byProvider.get(prov.id as ProviderId) ?? [];
-          const picked = execs.filter((e) => set.has(e)).length;
-          return (
-            <button
-              key={prov.id}
-              type="button"
-              role="tab"
-              aria-selected={active === prov.id}
-              onClick={() => setOpenProvider(prov.id as ProviderId)}
-              className={`inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-medium transition-colors ${active === prov.id ? 'border-border-strong bg-elevated text-text' : 'border-border text-text-muted hover:bg-elevated hover:text-text'}`}
-            >
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={meta.icon} alt="" width={13} height={13} style={{ objectFit: 'contain' }} className={meta.embedded ? 'logo-adaptive' : undefined} aria-hidden />
-              {meta.label}
-              {picked > 0 ? <span className="rounded bg-accent/15 px-1 font-mono text-[10px] text-accent">{picked}</span> : null}
-            </button>
-          );
-        })}
-      </div>
-      <div className="flex flex-wrap items-center gap-1.5 border-l-2 border-border pl-2.5">
-        {(byProvider.get(active as ProviderId) ?? []).map((exec) => {
-          const on = set.has(exec);
-          return (
-            <button
-              key={exec}
-              type="button"
-              onClick={() => toggle(exec)}
-              disabled={update.isPending}
-              className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs transition-colors ${on ? 'border-accent bg-accent/15 text-accent' : 'border-border text-text-muted hover:bg-elevated'}`}
-            >
-              <ModelIcon name={iconNameOf(exec)} size={14} />{labelOf(exec)}
-            </button>
-          );
-        })}
-        {set.size === 0 ? <span className="text-[11px] italic text-text-muted">{t.users.allModelsHint}</span> : null}
-      </div>
-    </div>
+    <>
+      <SelectionSummary
+        countText={countText}
+        samples={summarySource.slice(0, 3).map((exec) => ({ label: labelOf(exec), icon: <ModelIcon name={iconNameOf(exec)} size={13} /> }))}
+        moreCount={Math.max(0, summarySource.length - 3)}
+        onManage={() => setOpen(true)}
+        manageLabel={t.managePicker.manage}
+      />
+      <ManageSelectionModal
+        title={t.users.allowedModels}
+        subtitle={t.users.allModelsHint}
+        open={open}
+        onClose={() => setOpen(false)}
+        items={items}
+        selected={selected}
+        onSave={handleSave}
+        saving={update.isPending}
+        emptySelectionHint={t.users.allModelsHint}
+        countLabel={(n) => t.managePicker.modelsSelected.replace('{n}', String(n))}
+        groupIcons={groupIcons}
+      />
+    </>
   );
 }
 

@@ -21,59 +21,77 @@ function mountWith(tools: UserToolPill[]) {
 }
 
 describe('ToolPills', () => {
-  it('renders a plugin tool with its manifest emoji icon', async () => {
+  it('summarizes enabled vs total tools and the plugin count', async () => {
+    mountWith([
+      tool({ name: 'discord_send', plugin: 'discord', state: 'allowed' }),
+      tool({ name: 'discord_read', plugin: 'discord', state: 'disabled' }),
+      tool({ name: 'memory_search', group: 'memory', state: 'inherited', toggleable: false }),
+    ]);
+    expect(await screen.findByText('2 of 3 tools enabled · 1 plugins')).toBeTruthy();
+    // Sample chips show enabled tools only.
+    expect(screen.getByText('discord_send')).toBeTruthy();
+    expect(screen.getByText('memory_search')).toBeTruthy();
+    expect(screen.queryByText('discord_read')).toBeNull();
+  });
+
+  it('renders a sample chip with the manifest emoji icon', async () => {
     mountWith([tool({ name: 'discord_send', label: 'Send', icon: '💬', plugin: 'discord' })]);
     expect(await screen.findByText('discord_send')).toBeTruthy();
     expect(screen.getByText('💬')).toBeTruthy();
   });
 
-  it('falls back to a glyph when a tool has no icon', async () => {
-    mountWith([tool({ name: 'no_icon', icon: null })]);
-    const item = await screen.findByText('no_icon');
-    // No emoji rendered — the fallback lucide icon is an <svg> inside the pill.
-    expect(item.closest('li')!.querySelector('svg')).toBeTruthy();
+  it('shows an empty state when the user has no tools', async () => {
+    mountWith([]);
+    expect(await screen.findByText('No tools available')).toBeTruthy();
   });
 
-  it('renders in the order the server returns (allowed first)', async () => {
+  it('the manage modal groups tools by plugin and marks built-ins as disabled rows', async () => {
     mountWith([
-      tool({ name: 'a_allowed', state: 'allowed' }),
-      tool({ name: 'b_inherited', group: 'memory', state: 'inherited' }),
-      tool({ name: 'c_unavailable', group: 'orca', state: 'unavailable' }),
+      tool({ name: 'discord_send', plugin: 'discord' }),
+      tool({ name: 'wa_send', plugin: 'whatsapp' }),
+      tool({ name: 'memory_search', group: 'memory', state: 'inherited', toggleable: false }),
     ]);
-    await screen.findByText('a_allowed');
-    const names = Array.from(document.querySelectorAll('li')).map((li) => li.textContent);
-    expect(names[0]).toContain('a_allowed');
-    expect(names[names.length - 1]).toContain('c_unavailable');
+    fireEvent.click(await screen.findByRole('button', { name: 'Manage' }));
+    expect(await screen.findByRole('heading', { name: 'discord' })).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'whatsapp' })).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'Memory' })).toBeTruthy();
+    const builtIn = screen.getByRole('button', { name: /memory_search/ });
+    expect(builtIn).toBeDisabled();
+    expect(screen.getByText('built-in')).toBeTruthy();
   });
 
-  it('collapses past the visible limit and expands/collapses on the toggle', async () => {
-    mountWith(Array.from({ length: 16 }, (_, i) => tool({ name: `tool_${String(i).padStart(2, '0')}` })));
-    await screen.findByText('tool_00');
-    // 12 shown initially, so tool_12 is hidden until expanded.
-    expect(screen.queryByText('tool_12')).toBeNull();
-    const toggle = document.querySelector('[aria-expanded]') as HTMLElement; // the "+ N more" control
-    expect(toggle.getAttribute('aria-expanded')).toBe('false');
-    fireEvent.click(toggle);
-    await waitFor(() => expect(screen.getByText('tool_12')).toBeTruthy());
-    expect(toggle.getAttribute('aria-expanded')).toBe('true');
-    fireEvent.click(toggle);
-    await waitFor(() => expect(screen.queryByText('tool_12')).toBeNull());
-  });
-
-  it('clicking a plugin pill toggles it in the user\'s disabled_tools', async () => {
+  it('unchecking a plugin tool and saving PATCHes it into disabled_tools', async () => {
     let patched: { disabled_tools?: string[] } | null = null;
     server.use(
-      http.get('*/api/users/1/tools', () => HttpResponse.json([tool({ name: 'discord_send', plugin: 'discord', state: 'allowed', toggleable: true })])),
+      http.get('*/api/users/1/tools', () => HttpResponse.json([
+        tool({ name: 'discord_send', plugin: 'discord', state: 'allowed' }),
+        tool({ name: 'discord_gone', plugin: 'discord', state: 'unavailable' }),
+      ])),
       http.patch('*/api/users/1', async ({ request }) => { patched = await request.json() as { disabled_tools?: string[] }; return HttpResponse.json({ id: 1 }); }),
     );
     const { wrapper: Wrapper } = createWrapper();
     render(<Wrapper><ToastProvider><ToolPills userId={1} /></ToastProvider></Wrapper>);
+    fireEvent.click(await screen.findByRole('button', { name: 'Manage' }));
     fireEvent.click(await screen.findByRole('button', { name: /discord_send/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    // Only the changed toggle lands in the deny-list — the untouched `unavailable` tool stays out.
     await waitFor(() => expect(patched?.disabled_tools).toEqual(['discord_send']));
   });
 
-  it('shows an empty state when the user has no tools', async () => {
-    mountWith([]);
-    expect(await screen.findByText('No tools available')).toBeTruthy();
+  it('re-checking a disabled tool removes it from disabled_tools', async () => {
+    let patched: { disabled_tools?: string[] } | null = null;
+    server.use(
+      http.get('*/api/users/1/tools', () => HttpResponse.json([
+        tool({ name: 'discord_send', plugin: 'discord', state: 'disabled' }),
+        tool({ name: 'discord_read', plugin: 'discord', state: 'disabled' }),
+      ])),
+      http.patch('*/api/users/1', async ({ request }) => { patched = await request.json() as { disabled_tools?: string[] }; return HttpResponse.json({ id: 1 }); }),
+    );
+    const { wrapper: Wrapper } = createWrapper();
+    render(<Wrapper><ToastProvider><ToolPills userId={1} /></ToastProvider></Wrapper>);
+    fireEvent.click(await screen.findByRole('button', { name: 'Manage' }));
+    fireEvent.click(await screen.findByRole('button', { name: /discord_send/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    await waitFor(() => expect(patched?.disabled_tools).toEqual(['discord_read']));
   });
 });

@@ -1,110 +1,96 @@
 'use client';
 import { useState } from 'react';
-import { Wrench, Search } from 'lucide-react';
+import { Wrench } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useUserTools } from '../../lib/queries';
 import { useUpdateUser } from '../../lib/mutations';
 import { useToast } from '../../components/ui/Toast';
-import { MorePill } from '../../components/ui/MorePill';
+import { ManageSelectionModal, type ManageSelectionItem } from '../../components/ui/ManageSelectionModal';
+import { SelectionSummary } from '../../components/ui/SelectionSummary';
 import { useTranslation } from '../../lib/i18n';
-import type { UserToolPill, UserToolState } from '../../lib/types';
-
-const VISIBLE = 12; // pills shown before the "+ N more" control
-
-/** Tone per access state — allowed reads normal, inherited is muted, disabled/unavailable are faded. */
-const stateClass: Record<UserToolState, string> = {
-  allowed: 'border-border bg-elevated text-text',
-  inherited: 'border-border bg-surface text-text-muted',
-  disabled: 'border-border/60 bg-surface text-text-muted/60 line-through',
-  unavailable: 'border-border/60 bg-surface text-text-muted/60 line-through',
-};
+import type { UserToolPill } from '../../lib/types';
 
 function Icon({ tool }: { tool: UserToolPill }) {
   return <span aria-hidden className="shrink-0 text-[13px] leading-none">{tool.icon ?? <Wrench size={12} className="inline" />}</span>;
 }
 
-/** The user's effective tool access as compact pills: allowed first (server-sorted), each with its
- *  plugin/built-in icon (fallback glyph otherwise). Plugin tools are clickable to enable/disable them
- *  for THIS user's own brain sessions (built-ins are fixed). Collapses past VISIBLE with a keyboard-
- *  operable "+ N more" toggle. */
+/** The user's effective tool access: a compact summary (enabled vs total + plugin count) with a
+ *  manage modal grouped by plugin. Plugin tools toggle on/off for THIS user's own brain sessions;
+ *  built-ins (memory, control-plane) are fixed and render as disabled rows. */
 export function ToolPills({ userId }: { userId: number }) {
   const { t } = useTranslation();
   const { toast } = useToast();
   const qc = useQueryClient();
   const tools = useUserTools(userId);
   const update = useUpdateUser();
-  const [expanded, setExpanded] = useState(false);
-  const [query, setQuery] = useState('');
+  const [open, setOpen] = useState(false);
 
   const all = tools.data ?? [];
   if (tools.isLoading) return <p className="text-xs text-text-muted">…</p>;
   if (all.length === 0) return <p className="text-xs italic text-text-muted">{t.users.toolsEmpty}</p>;
 
-  // Filter by name/label/plugin; a search collapses the "+ N more" limit so matches aren't hidden.
-  const q = query.trim().toLowerCase();
-  const data = q ? all.filter((x) => x.name.toLowerCase().includes(q) || x.label.toLowerCase().includes(q) || (x.plugin ?? '').toLowerCase().includes(q)) : all;
+  const enabled = all.filter((x) => x.state === 'allowed' || x.state === 'inherited');
+  const pluginCount = new Set(all.map((x) => x.plugin).filter(Boolean)).size;
 
-  const stateLabel = (s: UserToolState) =>
-    s === 'allowed' ? t.users.stateAllowed
-    : s === 'inherited' ? t.users.stateInherited
-    : s === 'disabled' ? t.users.stateDisabled : t.users.stateUnavailable;
+  const groupLabelOf = (x: UserToolPill) =>
+    x.plugin ?? (x.group === 'memory' ? t.managePicker.toolGroupMemory : t.managePicker.toolGroupOrca);
+  const items: ManageSelectionItem[] = all.map((x) => ({
+    id: x.name,
+    label: x.name,
+    group: x.plugin ?? x.group,
+    groupLabel: groupLabelOf(x),
+    icon: <Icon tool={x} />,
+    badges: x.toggleable ? undefined : [{ text: t.managePicker.builtIn, tone: 'muted' as const }],
+    disabled: !x.toggleable,
+    disabledHint: x.toggleable ? undefined : t.managePicker.builtInHint,
+  }));
 
-  // Toggle a plugin tool in the user's deny-list. The current deny-set is exactly the toggleable tools
-  // reported `disabled`; send the whole next set (the PATCH replaces it), then refetch so pills restyle.
-  const toggle = (tool: UserToolPill) => {
-    // Compute the deny-set from the FULL list (not the search-filtered view) so a search can't drop names.
-    const current = new Set(all.filter((x) => x.toggleable && x.state === 'disabled').map((x) => x.name));
-    if (current.has(tool.name)) current.delete(tool.name); else current.add(tool.name);
-    update.mutate({ id: userId, patch: { disabled_tools: [...current] } }, {
-      // Silent on success (the pill restyles) — only surface a toast when it fails.
-      onSuccess: () => qc.invalidateQueries({ queryKey: ['user-tools', userId] }),
-      onError: (e) => toast(String(e) || t.users.updateError, 'error'),
-    });
+  // The PATCH replaces the deny-list wholesale. Start from the current deny-set (exactly the
+  // toggleable tools reported `disabled`) and apply only the CHANGED toggles, so tools the admin
+  // didn't touch (e.g. `unavailable` ones) keep their current membership.
+  const handleSave = async (next: Set<string>) => {
+    const deny = new Set(all.filter((x) => x.toggleable && x.state === 'disabled').map((x) => x.name));
+    for (const x of all) {
+      if (!x.toggleable) continue;
+      const wasOn = x.state !== 'disabled';
+      const isOn = next.has(x.name);
+      if (isOn === wasOn) continue;
+      if (isOn) deny.delete(x.name); else deny.add(x.name);
+    }
+    try {
+      await update.mutateAsync({ id: userId, patch: { disabled_tools: [...deny] } });
+      qc.invalidateQueries({ queryKey: ['user-tools', userId] });
+    } catch (e) {
+      toast(String(e) || t.users.updateError, 'error');
+      throw e;
+    }
   };
 
-  const shown = (expanded || q) ? data : data.slice(0, VISIBLE);
-  const pillClass = (tool: UserToolPill) =>
-    `inline-flex max-w-full items-center gap-1.5 rounded-md border px-2 py-1 font-mono text-[11px] ${stateClass[tool.state]}`;
-
   return (
-    <div className="flex flex-col gap-2">
-      <div className="relative max-w-xs">
-        <Search size={13} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-text-muted" aria-hidden />
-        <input
-          type="search"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder={t.users.searchTools}
-          aria-label={t.users.searchTools}
-          className="w-full rounded-md border border-border bg-surface py-1.5 pl-8 pr-2.5 text-xs text-text outline-none transition-colors focus:border-accent"
-        />
-      </div>
-      {data.length === 0
-        ? <p className="text-xs italic text-text-muted">{t.users.toolsNoMatch}</p>
-        : <ul className="flex flex-wrap gap-1.5">
-        {shown.map((tool) => tool.toggleable ? (
-          <li key={tool.name}>
-            <button
-              type="button"
-              onClick={() => toggle(tool)}
-              disabled={update.isPending}
-              aria-pressed={tool.state !== 'disabled'}
-              title={`${tool.label}${tool.plugin ? ` · ${tool.plugin}` : ''} · ${stateLabel(tool.state)}`}
-              className={`${pillClass(tool)} cursor-pointer transition-colors hover:border-accent focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent disabled:opacity-60`}
-            >
-              <Icon tool={tool} /><span className="truncate">{tool.name}</span>
-            </button>
-          </li>
-        ) : (
-          <li key={tool.name} className={pillClass(tool)} title={`${tool.label} · ${stateLabel(tool.state)}`}>
-            <Icon tool={tool} /><span className="truncate">{tool.name}</span>
-            <span className="sr-only">{`, ${stateLabel(tool.state)}`}</span>
-          </li>
-        ))}
-      </ul>}
-      {!q && data.length > VISIBLE && (
-        <MorePill expanded={expanded} hidden={data.length - VISIBLE} onToggle={() => setExpanded((v) => !v)} />
-      )}
-    </div>
+    <>
+      <SelectionSummary
+        countText={t.managePicker.toolsCount
+          .replace('{n}', String(enabled.length))
+          .replace('{total}', String(all.length))
+          .replace('{p}', String(pluginCount))}
+        samples={enabled.slice(0, 3).map((x) => ({ label: x.name, icon: <Icon tool={x} /> }))}
+        moreCount={Math.max(0, enabled.length - 3)}
+        onManage={() => setOpen(true)}
+        manageLabel={t.managePicker.manage}
+      />
+      <ManageSelectionModal
+        title={t.users.tools}
+        subtitle={t.managePicker.toolsSubtitle}
+        open={open}
+        onClose={() => setOpen(false)}
+        items={items}
+        // Checked = "not in the deny-list" (state !== disabled), mirroring what a save computes —
+        // so an untouched `unavailable` tool round-trips without silently entering the deny-list.
+        selected={new Set(all.filter((x) => x.state !== 'disabled').map((x) => x.name))}
+        onSave={handleSave}
+        saving={update.isPending}
+        countLabel={(n) => t.managePicker.toolsSelected.replace('{n}', String(n))}
+      />
+    </>
   );
 }

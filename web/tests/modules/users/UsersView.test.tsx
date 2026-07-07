@@ -41,14 +41,17 @@ describe('UsersView', () => {
     const { wrapper: Wrapper } = createWrapper();
     render(<Wrapper><ToastProvider><UsersView /></ToastProvider></Wrapper>);
 
-    // Admin (alice) carries an Admin badge in the list. Select bob → his allowed-models picker shows
-    // in the detail pane on the right.
+    // Admin (alice) carries an Admin badge in the list. Select bob → his allowed-models summary shows
+    // in the detail pane; Manage opens the selection modal.
     expect(await screen.findByText('Admin')).toBeTruthy();
     fireEvent.click(await screen.findByText('bob'));
-    const sonnetChip = await screen.findByRole('button', { name: /Claude Sonnet/ });
-    fireEvent.click(sonnetChip);
+    expect(await screen.findByText('All models allowed · 2 available')).toBeTruthy();
+    // Projects list is empty ("—") and bob has no tools, so the models summary owns the only Manage button.
+    fireEvent.click(screen.getByRole('button', { name: 'Manage' }));
+    fireEvent.click(await screen.findByRole('button', { name: /Claude Sonnet/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
 
-    // Toggling the chip PATCHes that user's allowed_execs.
+    // Saving the modal PATCHes that user's allowed_execs.
     await waitFor(() => expect(patched.id).toBe('2'));
     expect((patched.body as { allowed_execs: string[] }).allowed_execs).toEqual(['sonnet']);
   });
