@@ -133,20 +133,6 @@ export interface User { id: number; username: string; created_at: string; is_adm
 export interface UserPatch { is_admin?: boolean; allowed_execs?: string[]; disabled_tools?: string[] }
 export interface ProfilePatch { name?: string; email?: string; default_exec?: string }
 
-/** A user-editable agent prompt: the shipped default plus this user's override (null = using default).
- *  `vars` lists the `{{placeholders}}` the template substitutes; `jsonContract` flags prompts whose
- *  model output is parsed as JSON (shown with a warning in the editor). */
-export interface UserPrompt {
-  name: string;
-  group: 'workers' | 'pilot' | 'overseer' | 'advisor' | 'cli';
-  vars: string[];
-  jsonContract: boolean;
-  /** System-managed template: the user's text appends to it instead of replacing it (default hidden). */
-  appendOnly?: boolean;
-  default: string;
-  override: string | null;
-}
-
 /** A named personality profile: a prompt body a user pins active per platform ('web'/'discord'/'cli').
  *  Scoped per (user, platform); `enabled` gates whether the pinned profile actually applies. The active
  *  pointer lives server-side — the UI derives which profile is active from the preview's append layer. */

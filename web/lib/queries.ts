@@ -225,11 +225,6 @@ export const useProjectsCommits = (projectIds: number[], hours: number) =>
 export const useMe = () =>
   useQuery({ queryKey: ['me'], queryFn: orcaClient.me, staleTime: 5 * 60 * 1000 });
 
-/** The current user's editable agent prompts (defaults + their overrides). Edited via the account
- *  section; mutations invalidate ['my-prompts']. */
-export const useMyPrompts = () =>
-  useQuery({ queryKey: ['my-prompts'], queryFn: orcaClient.myPrompts });
-
 /** The current user's CLI/brain settings (model override + auto-compact). Edited in Account → CLI. */
 export const useMyCliSettings = () =>
   useQuery({ queryKey: ['my-cli-settings'], queryFn: orcaClient.myCliSettings });

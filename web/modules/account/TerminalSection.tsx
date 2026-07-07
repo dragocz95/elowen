@@ -54,6 +54,7 @@ export function TerminalSection() {
   const cursorOpts: { value: TerminalCursorStyle; label: string }[] = [
     { value: 'block', label: t.terminal.cursorBlock }, { value: 'bar', label: t.terminal.cursorBar }, { value: 'underline', label: t.terminal.cursorUnderline },
   ];
+  const label = 'text-tiny font-semibold uppercase tracking-wide text-text-muted';
 
   return (
     <div className="flex flex-col gap-4">
@@ -63,63 +64,76 @@ export function TerminalSection() {
 
       <SettingCard title={t.terminal.fontTitle} icon={Type}>
         <div className="flex flex-col gap-4">
-          <div className="flex items-center gap-4">
-            <span className="shrink-0 text-xs text-text-muted">{t.terminal.fontSize}</span>
-            <Slider value={fontSize} min={10} max={20} step={1} onChange={setFontSize} aria-label={t.terminal.fontSize} />
-            <span className="w-12 shrink-0 text-right font-mono text-sm tabular-nums text-text">{fontSize}px</span>
+          <div className="flex flex-col gap-1.5">
+            <span className={label}>{t.terminal.fontSize}</span>
+            <div className="flex items-center gap-4">
+              <Slider value={fontSize} min={10} max={20} step={1} onChange={setFontSize} aria-label={t.terminal.fontSize} />
+              <span className="w-12 shrink-0 text-right font-mono text-sm tabular-nums text-text">{fontSize}px</span>
+            </div>
           </div>
-          <Segmented options={fontOpts} value={fontFamily} onChange={(v) => setFontFamily(v as TerminalFontFamily)} aria-label={t.terminal.fontFamily} />
+          <div className="flex flex-col gap-1.5">
+            <span className={label}>{t.terminal.fontFamily}</span>
+            <Segmented options={fontOpts} value={fontFamily} onChange={(v) => setFontFamily(v as TerminalFontFamily)} aria-label={t.terminal.fontFamily} />
+          </div>
         </div>
       </SettingCard>
 
       <SettingCard title={t.terminal.cursorTitle} icon={TextCursorInput}>
         <div className="flex flex-col gap-4">
-          <Segmented options={cursorOpts} value={cursorStyle} onChange={(v) => setCursorStyle(v as TerminalCursorStyle)} aria-label={t.terminal.cursorStyle} />
-          <label className="flex items-center gap-3 text-sm text-text">
+          <div className="flex flex-col gap-1.5">
+            <span className={label}>{t.terminal.cursorStyle}</span>
+            <Segmented options={cursorOpts} value={cursorStyle} onChange={(v) => setCursorStyle(v as TerminalCursorStyle)} aria-label={t.terminal.cursorStyle} />
+          </div>
+          <div className="flex items-center justify-between gap-3 rounded-md border border-border bg-bg px-3 py-2">
+            <span className="text-sm text-text">{t.terminal.cursorBlink}</span>
             <Toggle checked={cursorBlink} onChange={setCursorBlink} label={t.terminal.cursorBlink} />
-            <span>{t.terminal.cursorBlink}</span>
-          </label>
+          </div>
         </div>
       </SettingCard>
 
       <SettingCard title={t.terminal.historyTitle} icon={ScrollText} description={t.terminal.scrollbackHelp}>
-        <div className="flex items-center gap-4">
-          <span className="shrink-0 text-xs text-text-muted">{t.terminal.scrollback}</span>
-          <Slider value={scrollback} min={500} max={50000} step={500} onChange={setScrollback} aria-label={t.terminal.scrollback} />
-          <span className="w-16 shrink-0 text-right font-mono text-sm tabular-nums text-text">{scrollback.toLocaleString()}</span>
+        <div className="flex flex-col gap-1.5">
+          <span className={label}>{t.terminal.scrollback}</span>
+          <div className="flex items-center gap-4">
+            <Slider value={scrollback} min={500} max={50000} step={500} onChange={setScrollback} aria-label={t.terminal.scrollback} />
+            <span className="w-16 shrink-0 text-right font-mono text-sm tabular-nums text-text">{scrollback.toLocaleString()}</span>
+          </div>
         </div>
       </SettingCard>
 
       <SettingCard title={t.terminal.colorsTitle} icon={Palette} description={t.terminal.colorsHelp}>
         <div className="flex flex-col gap-4">
-          <Segmented
-            options={[{ value: 'auto', label: t.terminal.themeAuto }, { value: 'custom', label: t.terminal.themeCustom }]}
-            value={theme} onChange={(v) => setTheme(v as TerminalThemeMode)} aria-label={t.terminal.themeMode}
-          />
+          <div className="flex flex-wrap items-end justify-between gap-3">
+            <div className="flex flex-col gap-1.5">
+              <span className={label}>{t.terminal.themeMode}</span>
+              <Segmented
+                options={[{ value: 'auto', label: t.terminal.themeAuto }, { value: 'custom', label: t.terminal.themeCustom }]}
+                value={theme} onChange={(v) => setTheme(v as TerminalThemeMode)} aria-label={t.terminal.themeMode}
+              />
+            </div>
+            {theme === 'custom' ? (
+              <select
+                aria-label={t.terminal.loadPreset}
+                className="h-9 rounded-md border border-border bg-surface px-3 text-sm text-text focus:border-accent focus:outline-none"
+                value="" onChange={(e) => { const p = PALETTE_PRESETS.find((x) => x.id === e.target.value); if (p) setPalette({ ...p.palette }); }}
+              >
+                <option value="">{t.terminal.presetPlaceholder}</option>
+                {PALETTE_PRESETS.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
+              </select>
+            ) : null}
+          </div>
           {theme === 'custom' ? (
-            <div className="flex flex-col gap-3">
-              <label className="flex items-center gap-2 text-sm text-text">
-                <span className="shrink-0 text-xs text-text-muted">{t.terminal.loadPreset}</span>
-                <select
-                  className="rounded-md border border-border bg-bg-elevated px-2 py-1 text-sm text-text"
-                  value="" onChange={(e) => { const p = PALETTE_PRESETS.find((x) => x.id === e.target.value); if (p) setPalette({ ...p.palette }); }}
-                >
-                  <option value="">{t.terminal.presetPlaceholder}</option>
-                  {PALETTE_PRESETS.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
-                </select>
-              </label>
-              <div className="grid grid-cols-2 gap-x-4 gap-y-2 sm:grid-cols-3">
-                {PALETTE_KEYS.map((key) => (
-                  <label key={key} className="flex items-center gap-2 text-xs text-text">
-                    <input
-                      type="color" aria-label={t.terminal.palette[key]} value={palette[key]}
-                      onChange={(e) => setPalette((prev) => ({ ...prev, [key]: e.target.value }))}
-                      className="h-6 w-8 shrink-0 cursor-pointer rounded border border-border bg-transparent p-0"
-                    />
-                    <span className="truncate">{t.terminal.palette[key]}</span>
-                  </label>
-                ))}
-              </div>
+            <div className="grid grid-cols-3 gap-3 sm:grid-cols-5 lg:grid-cols-7">
+              {PALETTE_KEYS.map((key) => (
+                <label key={key} className="flex flex-col gap-1" title={t.terminal.palette[key]}>
+                  <input
+                    type="color" aria-label={t.terminal.palette[key]} value={palette[key]}
+                    onChange={(e) => setPalette((prev) => ({ ...prev, [key]: e.target.value }))}
+                    className="h-8 w-full cursor-pointer rounded-md border border-border bg-transparent p-0.5"
+                  />
+                  <span className={`truncate ${label}`}>{t.terminal.palette[key]}</span>
+                </label>
+              ))}
             </div>
           ) : null}
         </div>

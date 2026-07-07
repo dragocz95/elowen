@@ -34,21 +34,17 @@ describe('AccountView', () => {
     await waitFor(() => expect(patched?.default_exec).toBe('sonnet'));
   });
 
-  it('switches to the Prompts pill and renders the prompt editor', async () => {
-    localStorage.clear(); // start on the default (profile) section
+  it('falls back to the profile section when a removed section id is persisted', async () => {
+    localStorage.setItem('orca.account.section', 'prompts'); // the Prompts tab no longer exists
     server.use(
       http.get('*/api/auth/me', () => HttpResponse.json({ user: meUser() })),
       http.get('*/api/config', () => HttpResponse.json({ allowedExecs: ['sonnet'], customModels: [], hiddenPresets: [], autopilot: {}, providers: {}, defaults: {} })),
-      http.get('*/api/auth/me/prompts', () => HttpResponse.json([
-        { name: 'worker', group: 'workers', vars: ['taskId'], jsonContract: false, default: 'DEFAULT worker', override: null },
-      ])),
     );
     const { wrapper: Wrapper } = createWrapper();
     render(<Wrapper><UiScaleProvider><ToastProvider><AccountView /></ToastProvider></UiScaleProvider></Wrapper>);
 
-    fireEvent.click(await screen.findByRole('radio', { name: 'Prompts' }));
-    // The redesigned section lists compact rows; the editor itself opens in a modal.
-    expect(await screen.findByText('worker')).toBeTruthy();
-    expect(screen.getByText('DEFAULT worker')).toBeTruthy();
+    // The stale value fails the allowed-list guard, so the default (profile) section renders.
+    expect(await screen.findByText('@bob')).toBeTruthy();
+    expect(screen.queryByRole('radio', { name: 'Prompts' })).toBeNull();
   });
 });

@@ -184,10 +184,6 @@ export function useUploadAvatar() {
 export function useChangePassword() {
   return useMutation({ mutationFn: (v: { currentPassword: string; newPassword: string }) => orcaClient.changePassword(v.currentPassword, v.newPassword) });
 }
-export function useSaveMyPrompt() {
-  const qc = useQueryClient();
-  return useMutation({ mutationFn: (v: { name: string; content: string }) => orcaClient.saveMyPrompt(v.name, v.content), onSuccess: () => qc.invalidateQueries({ queryKey: ['my-prompts'] }) });
-}
 export function useSaveMyCliSettings() {
   const qc = useQueryClient();
   return useMutation({ mutationFn: (patch: Partial<CliSettings>) => orcaClient.saveMyCliSettings(patch), onSuccess: () => qc.invalidateQueries({ queryKey: ['my-cli-settings'] }) });
@@ -326,10 +322,6 @@ export function useSaveBrainProviders() {
 export function useBrainOauthDisconnect() {
   const qc = useQueryClient();
   return useMutation({ mutationFn: (type: string) => orcaClient.brainOauthDisconnect(type), onSuccess: () => qc.invalidateQueries({ queryKey: ['brain-oauth'] }) });
-}
-export function useResetMyPrompt() {
-  const qc = useQueryClient();
-  return useMutation({ mutationFn: (name: string) => orcaClient.resetMyPrompt(name), onSuccess: () => qc.invalidateQueries({ queryKey: ['my-prompts'] }) });
 }
 export function useCreateProject() {
   const qc = useQueryClient();
