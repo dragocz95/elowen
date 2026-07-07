@@ -3,7 +3,7 @@ import type { ReactNode } from 'react';
 import { Settings2 } from 'lucide-react';
 
 interface SelectionSummaryProps {
-  /** Count line, e.g. "14 models · 5 providers". */
+  /** Count line, e.g. "14 models · 5 providers". Empty hides the line (chip-only summaries). */
   countText: string;
   /** A few representative chips (the caller slices, typically first 3). */
   samples: { label: string; icon?: ReactNode }[];
@@ -22,7 +22,7 @@ export function SelectionSummary({ countText, samples, moreCount, onManage, mana
       style={{ boxShadow: 'var(--shadow-card)' }}
     >
       <div className="flex min-w-0 flex-1 flex-col gap-1.5">
-        <span className="text-xs font-medium text-text">{countText}</span>
+        {countText ? <span className="text-xs font-medium text-text">{countText}</span> : null}
         {(samples.length > 0 || moreCount > 0) && (
           <div className="flex flex-wrap items-center gap-1.5">
             {samples.map((s) => (

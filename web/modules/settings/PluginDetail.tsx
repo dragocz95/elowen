@@ -18,6 +18,8 @@ import { RailCard } from '../../components/ui/RailCard';
 import { Input } from '../../components/ui/Input';
 import { Field } from '../../components/ui/Field';
 import { HelpTip } from '../../components/ui/HelpTip';
+import { ManageSelectionModal, type ManageSelectionItem } from '../../components/ui/ManageSelectionModal';
+import { SelectionSummary } from '../../components/ui/SelectionSummary';
 import { MorePill } from '../../components/ui/MorePill';
 import { Toggle } from '../../components/ui/Toggle';
 import { Checkbox } from '../../components/ui/Checkbox';
@@ -55,42 +57,70 @@ const OUTCOME_TONE: Record<PluginHookExecution['outcome'], Tone> = { ok: 'succes
  *  prompt/turnContext ride only the ephemeral live prompt (warning). */
 const MUTATE_TONE: Record<'prompt' | 'turnContext' | 'tools' | 'memory', Tone> = { prompt: 'warning', turnContext: 'warning', tools: 'danger', memory: 'danger' };
 
-/** Per-role tool allowlist pills. Selected tools always show; the unselected vocabulary is previewed
- *  (first N) with a "+xx more" expander so a big tool set doesn't wall the form. Empty = everything. */
-const TOOL_PREVIEW = 10;
-function ToolPills({ allTools, selected, onChange }: { allTools: string[]; selected: string[]; onChange: (v: string[]) => void }) {
+/** Per-role tool allowlist: a compact summary (n selected / all) + a manage modal grouped by the
+ *  owning plugin. Empty selection keeps the "no restriction — all tools allowed" semantics. A saved
+ *  tool no longer contributed by any enabled plugin stays visible as a pinned row. */
+function RoleToolsField({ tools, selected, onChange }: { tools: { name: string; plugin: string }[]; selected: string[]; onChange: (v: string[]) => void }) {
   const { t } = useTranslation();
-  const [showAll, setShowAll] = useState(false);
-  const unselected = allTools.filter((x) => !selected.includes(x));
-  const visible = [...selected, ...(showAll ? unselected : unselected.slice(0, Math.max(0, TOOL_PREVIEW - selected.length)))];
-  const hidden = allTools.length - visible.length;
-  const pill = (tool: string, on: boolean) => (
-    <button
-      key={tool}
-      type="button"
-      onClick={() => onChange(on ? selected.filter((x) => x !== tool) : [...selected, tool])}
-      className={`rounded-full border px-2.5 py-1 font-mono text-[11px] transition-colors ${on ? 'border-accent bg-accent/15 text-accent' : 'border-border text-text-muted hover:bg-elevated'}`}
-    >
-      {tool}
-    </button>
-  );
+  const [open, setOpen] = useState(false);
+  const known = new Set(tools.map((x) => x.name));
+  const items: ManageSelectionItem[] = [
+    ...selected.filter((x) => !known.has(x)).map((x) => ({ id: x, label: x, group: '' })),
+    ...tools.map((x) => ({ id: x.name, label: x.name, group: x.plugin })),
+  ];
+  const countLabel = (n: number) => t.managePicker.toolsSelected.replace('{n}', String(n));
   return (
-    <div className="flex flex-col gap-2">
-      <div className="flex flex-wrap gap-1.5">
-        {visible.map((tool) => pill(tool, selected.includes(tool)))}
-        {hidden > 0 ? (
-          <button type="button" onClick={() => setShowAll(true)} className="rounded-full border border-dashed border-border px-2.5 py-1 text-[11px] text-text-muted transition-colors hover:bg-elevated">
-            {t.pluginCfg.roleToolsMore.replace('{n}', String(hidden))}
-          </button>
-        ) : null}
-        {showAll && unselected.length > 0 ? (
-          <button type="button" onClick={() => setShowAll(false)} className="rounded-full border border-dashed border-border px-2.5 py-1 text-[11px] text-text-muted transition-colors hover:bg-elevated">
-            {t.pluginCfg.roleToolsLess}
-          </button>
-        ) : null}
-      </div>
-      {selected.length === 0 ? <span className="text-[11px] italic text-text-muted">{t.pluginCfg.roleToolsAll}</span> : null}
-    </div>
+    <>
+      <SelectionSummary
+        countText={selected.length === 0 ? t.pluginCfg.roleToolsAll : countLabel(selected.length)}
+        samples={selected.slice(0, 3).map((x) => ({ label: x }))}
+        moreCount={Math.max(0, selected.length - 3)}
+        onManage={() => setOpen(true)}
+        manageLabel={t.managePicker.manage}
+      />
+      <ManageSelectionModal
+        title={t.pluginCfg.roleTools}
+        open={open}
+        onClose={() => setOpen(false)}
+        items={items}
+        selected={new Set(selected)}
+        onSave={(next) => onChange([...next])}
+        emptySelectionHint={t.pluginCfg.roleToolsAll}
+        countLabel={countLabel}
+      />
+    </>
+  );
+}
+
+/** Generic `multiSelect` config field: a compact summary + a multi-select modal over the manifest's
+ *  options (one ungrouped list, so no group-filter row). Saved values the manifest no longer offers
+ *  stay visible as rows so a save never silently drops them. */
+function MultiSelectField({ label, options, value, onChange }: { label: string; options: { value: string; label: string }[]; value: string[]; onChange: (v: string[]) => void }) {
+  const { t } = useTranslation();
+  const [open, setOpen] = useState(false);
+  const byValue = new Map(options.map((o) => [o.value, o.label]));
+  const items: ManageSelectionItem[] = [
+    ...value.filter((v) => !byValue.has(v)).map((v) => ({ id: v, label: v, group: '' })),
+    ...options.map((o) => ({ id: o.value, label: o.label, group: '' })),
+  ];
+  return (
+    <>
+      <SelectionSummary
+        countText={t.managePicker.selectedCount.replace('{n}', String(value.length))}
+        samples={value.slice(0, 3).map((v) => ({ label: byValue.get(v) ?? v }))}
+        moreCount={Math.max(0, value.length - 3)}
+        onManage={() => setOpen(true)}
+        manageLabel={t.managePicker.manage}
+      />
+      <ManageSelectionModal
+        title={label}
+        open={open}
+        onClose={() => setOpen(false)}
+        items={items}
+        selected={new Set(value)}
+        onSave={(next) => onChange([...next])}
+      />
+    </>
   );
 }
 
@@ -102,8 +132,14 @@ function RolePoliciesEditor({ value, onChange }: { value: RolePolicy[]; onChange
   const { t } = useTranslation();
   const { data: projects } = useProjects();
   const { data: plugins } = usePlugins();
-  // Every tool an enabled plugin contributes — the vocabulary for per-role tool allowlists.
-  const allTools = [...new Set((plugins ?? []).filter((p) => p.enabled).flatMap((p) => p.provides.tools ?? []))].sort();
+  // Every tool an enabled plugin contributes, tagged with its owner — the vocabulary (and the
+  // modal grouping) for per-role tool allowlists. First owner wins on a name clash.
+  const owners = new Map<string, string>();
+  for (const p of plugins ?? []) {
+    if (!p.enabled) continue;
+    for (const tool of p.provides.tools ?? []) if (!owners.has(tool)) owners.set(tool, p.name);
+  }
+  const allTools = [...owners.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([name, plugin]) => ({ name, plugin }));
   const patch = (i: number, p: Partial<RolePolicy>) => onChange(value.map((r, j) => (j === i ? { ...r, ...p } : r)));
   // Which rows are expanded (by index). Removing a row shifts the indices above it down by one.
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
@@ -167,9 +203,11 @@ function RolePoliciesEditor({ value, onChange }: { value: RolePolicy[]; onChange
                     })}
                   </div>
                 </Field>
-                <Field label={t.pluginCfg.roleTools}>
-                  <ToolPills allTools={allTools} selected={r.tools ?? []} onChange={(tools) => patch(i, { tools })} />
-                </Field>
+                {/* A div-based label wrapper: `Field` renders a <label>, which would implicitly
+                    re-label the summary's Manage button with the whole field text. */}
+                <LabeledField label={t.pluginCfg.roleTools}>
+                  <RoleToolsField tools={allTools} selected={r.tools ?? []} onChange={(tools) => patch(i, { tools })} />
+                </LabeledField>
                 <Field label={t.pluginCfg.rolePrompt} hint={t.help.rolePrompt}>
                   <textarea value={r.prompt} onChange={(e) => patch(i, { prompt: e.target.value })} rows={3} className={textareaClass} />
                 </Field>
@@ -354,19 +392,15 @@ const namePill = 'rounded-full border border-border px-2.5 py-1 font-mono text-[
 const PILL_PREVIEW = 4;
 
 /** A wrapping pill row that keeps the UI tidy: shows the first `PILL_PREVIEW` pills and folds the rest
- *  behind a "+N more" toggle. `minVisible` (e.g. the count of active/selected pills, which callers sort
- *  to the front) is never folded, so the active ones always stay on screen. `expandAll` forces the full
- *  list open (e.g. while a search filter is active). */
-function PillRow({ pills, minVisible = 0, expandAll = false }: { pills: ReactNode[]; minVisible?: number; expandAll?: boolean }) {
+ *  behind a "+N more" toggle. `expandAll` forces the full list open (e.g. while a search filter is active). */
+function PillRow({ pills, expandAll = false }: { pills: ReactNode[]; expandAll?: boolean }) {
   const [showAll, setShowAll] = useState(false);
-  const open = showAll || expandAll;
-  const floor = Math.max(PILL_PREVIEW, minVisible);
-  const visible = open ? pills : pills.slice(0, floor);
+  const visible = showAll || expandAll ? pills : pills.slice(0, PILL_PREVIEW);
   return (
     <div className="flex flex-wrap items-center gap-1.5">
       {visible}
-      {!expandAll && pills.length > floor ? (
-        <MorePill expanded={showAll} hidden={pills.length - floor} onToggle={() => setShowAll((v) => !v)} />
+      {!expandAll && pills.length > PILL_PREVIEW ? (
+        <MorePill expanded={showAll} hidden={pills.length - PILL_PREVIEW} onToggle={() => setShowAll((v) => !v)} />
       ) : null}
     </div>
   );
@@ -480,6 +514,12 @@ export function PluginDetail({ name, onBack }: { name: string; onBack: () => voi
 
   const set = (key: string, v: unknown) => setValues((cur) => ({ ...cur, [key]: v }));
 
+  // Manifest strings are English; a plugin's own `i18n/<locale>.json` overrides description + per-field
+  // label/hint. Fall back to the manifest English whenever a translation is absent.
+  const tr = detail.i18n?.[locale];
+  const fieldLabel = (f: PluginConfigField) => tr?.fields?.[f.key]?.label ?? f.label;
+  const fieldHint = (f: PluginConfigField) => tr?.fields?.[f.key]?.hint ?? f.hint;
+
   const renderField = (f: PluginConfigField) => {
     switch (f.type) {
       case 'boolean':
@@ -515,23 +555,7 @@ export function PluginDetail({ name, onBack }: { name: string; onBack: () => voi
         return <Segmented size="sm" options={(f.options ?? []).map((o) => ({ value: o.value, label: o.label }))} value={String(values[f.key] ?? '')} onChange={(v) => set(f.key, v)} />;
       case 'multiSelect': {
         const sel = Array.isArray(values[f.key]) ? (values[f.key] as string[]) : [];
-        const opts = f.options ?? [];
-        // Active (selected) options first so they always stay visible; the rest fold behind "+N more".
-        const ordered = [...opts.filter((o) => sel.includes(o.value)), ...opts.filter((o) => !sel.includes(o.value))];
-        const pills = ordered.map((o) => {
-          const on = sel.includes(o.value);
-          return (
-            <button
-              key={o.value}
-              type="button"
-              onClick={() => set(f.key, on ? sel.filter((x) => x !== o.value) : [...sel, o.value])}
-              className={`rounded-full border px-2.5 py-1 text-[11px] transition-colors ${on ? 'border-accent bg-accent/15 text-accent' : 'border-border text-text-muted hover:bg-elevated'}`}
-            >
-              {o.label}
-            </button>
-          );
-        });
-        return <PillRow pills={pills} minVisible={sel.length} />;
+        return <MultiSelectField label={fieldLabel(f)} options={f.options ?? []} value={sel} onChange={(v) => set(f.key, v)} />;
       }
       case 'code':
         return (
@@ -584,11 +608,6 @@ export function PluginDetail({ name, onBack }: { name: string; onBack: () => voi
     }
   };
 
-  // Manifest strings are English; a plugin's own `i18n/<locale>.json` overrides description + per-field
-  // label/hint. Fall back to the manifest English whenever a translation is absent.
-  const tr = detail.i18n?.[locale];
-  const fieldLabel = (f: PluginConfigField) => tr?.fields?.[f.key]?.label ?? f.label;
-  const fieldHint = (f: PluginConfigField) => tr?.fields?.[f.key]?.hint ?? f.hint;
   const pluginDescription = tr?.description ?? detail.description;
   const riskText = (r: 'low' | 'medium' | 'high') => (r === 'high' ? t.pluginDetail.riskHigh : r === 'medium' ? t.pluginDetail.riskMedium : t.pluginDetail.riskLow);
   const outcomeText = (o: PluginHookExecution['outcome']) =>

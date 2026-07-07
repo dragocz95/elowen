@@ -120,4 +120,63 @@ describe('ManageSelectionModal', () => {
     expect(screen.getByText('empty = everything allowed')).toBeInTheDocument();
     expect(screen.queryByText('0 picked')).toBeNull();
   });
+
+  it('falls back to the generic "{n} selected" footer when countLabel is omitted', () => {
+    mount({ countLabel: undefined });
+    // Header chip + footer both read the generic count.
+    expect(screen.getAllByText('1 selected')).toHaveLength(2);
+  });
+});
+
+// Pinned rows (group '') + single-select mode — the cron channel/model picker pattern.
+const PICK_ITEMS: ManageSelectionItem[] = [
+  { id: '', label: 'Default', group: '' },
+  { id: 'a', label: 'general', group: 'channel', groupLabel: 'Channels' },
+  { id: 'b', label: 'help', group: 'thread', groupLabel: 'Threads' },
+];
+
+describe('ManageSelectionModal pinned rows', () => {
+  it('renders group-less items without a header or filter chip, surviving a group filter', () => {
+    mount({ items: PICK_ITEMS, selected: new Set(['a']) });
+    // Filter chips: All + the two real groups only — nothing for the pinned row.
+    expect(screen.getAllByRole('tab')).toHaveLength(3);
+    fireEvent.click(screen.getByRole('tab', { name: 'Channels' }));
+    expect(screen.getByRole('button', { name: 'Default' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'help' })).toBeNull();
+  });
+});
+
+describe('ManageSelectionModal single mode', () => {
+  it('a row click REPLACES the selection and save hands over the one picked id', async () => {
+    const { onSave } = mount({ single: true, items: PICK_ITEMS, selected: new Set(['a']) });
+    fireEvent.click(screen.getByRole('button', { name: 'help' }));
+    expect(screen.getByRole('button', { name: 'help' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByRole('button', { name: 'general' })).toHaveAttribute('aria-pressed', 'false');
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    await waitFor(() => expect(onSave).toHaveBeenCalledOnce());
+    expect([...(onSave.mock.calls[0][0] as Set<string>)]).toEqual(['b']);
+  });
+
+  it('clicking the already selected row keeps it selected (radio semantics)', () => {
+    mount({ single: true, items: PICK_ITEMS, selected: new Set(['a']) });
+    fireEvent.click(screen.getByRole('button', { name: 'general' }));
+    expect(screen.getByRole('button', { name: 'general' })).toHaveAttribute('aria-pressed', 'true');
+  });
+
+  it('header chip and footer show the chosen label instead of a count', () => {
+    mount({ single: true, items: PICK_ITEMS, selected: new Set(['']) });
+    // Row + header chip + footer all read the pinned Default label.
+    expect(screen.getAllByText('Default')).toHaveLength(3);
+    fireEvent.click(screen.getByRole('button', { name: 'help' }));
+    expect(screen.getAllByText('help')).toHaveLength(3);
+  });
+
+  it('an unknown saved id passed as a pinned item stays visible and selected', () => {
+    mount({
+      single: true,
+      items: [...PICK_ITEMS, { id: 'zzz', label: 'zzz', group: '' }],
+      selected: new Set(['zzz']),
+    });
+    expect(screen.getByRole('button', { name: 'zzz' })).toHaveAttribute('aria-pressed', 'true');
+  });
 });
