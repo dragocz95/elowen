@@ -40,6 +40,14 @@ export const lspInstallSchema = z.object({
   command: z.string().min(1).max(100),
 });
 
+/** The owner talking into a delegated sub-agent's session (POST /brain/subagent/send): steered into the
+ *  child's running turn, or run as a fresh turn when it is idle. Ownership + the `brain-ch-subagent-`
+ *  kind are enforced in BrainService.sendToSubagent. */
+export const subagentSendSchema = z.object({
+  session: z.string().min(1).max(200),
+  text: z.string().min(1).max(32_000),
+});
+
 /** The user's answer to a parked ask_user_question (POST /brain/answer). `id` is the question id carried
  *  on the `ask` event; `answers` holds one entry per question with the picked label(s) + optional free
  *  text. Bounds mirror the tool schema (≤4 questions, each with a handful of picks). */

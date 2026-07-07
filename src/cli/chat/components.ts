@@ -3,7 +3,7 @@ import type { Component } from '@earendil-works/pi-tui';
 import type { BrainCard } from '../../brain/events.js';
 import { ansi, chatTheme, color } from './theme.js';
 import type { ToolOutputView } from '../../brain/messageView.js';
-import { padAnsi } from '../ui/text.js';
+import { formatK, padAnsi } from '../ui/text.js';
 
 /** opencode-style visual building blocks, hand-rolled on pi-tui's Component contract (render(width)
  *  → lines). Kept separate from app.ts so the layout logic stays readable and these are unit-testable. */
@@ -63,6 +63,45 @@ export class CardPanel implements Component {
     for (const c of visible) {
       this.headerRows.add(lines.length); // a card's first row is its clickable header
       lines.push(...cardBlock(c, 12, this.collapsed));
+    }
+    return lines;
+  }
+}
+
+/** One row of the live sub-agents panel (see {@link SubagentPanel}). */
+export interface SubagentPanelEntry {
+  sessionId: string;
+  task: string;
+  status: 'running' | 'done' | 'error';
+  detail?: string;
+  tools: number;
+  tokens?: number;
+  seconds: number;
+}
+
+/** A slim fixed panel under the Todos card listing the conversation's delegated sub-agents — a
+ *  spinner + task per row with the child's current tool and counters, each row clickable to open that
+ *  child's session. Running agents only (settled ones live on as their transcript row); renders
+ *  nothing when no sub-agent runs, so the bottom stack pays zero rows for the feature at rest. */
+export class SubagentPanel implements Component {
+  private entries: SubagentPanelEntry[] = [];
+  /** Row index (0-based within this panel's output) → the sub-agent session that row opens. */
+  private rowTargets = new Map<number, string>();
+  invalidate(): void { /* re-rendered on the next frame */ }
+  set(entries: SubagentPanelEntry[]): void { this.entries = entries.filter((e) => e.status === 'running'); }
+  targetAt(index: number): string | null { return this.rowTargets.get(index) ?? null; }
+  render(width = 80): string[] {
+    this.rowTargets = new Map();
+    if (this.entries.length === 0) return [];
+    const lines: string[] = [`  ${FAINTC('▸')} ${bold(WHITE('Sub-agents'))}${FAINTC(`  ${this.entries.length} running`)}`];
+    for (const e of this.entries) {
+      const meta = [e.detail, `${e.seconds}s`, e.tokens ? `${formatK(e.tokens)} tok` : ''].filter(Boolean).join(' · ');
+      const metaText = FAINTC(truncateToWidth(meta, Math.max(10, Math.floor(width * 0.5)), '…'));
+      const task = DIM(truncateToWidth(e.task.replace(/\s+/g, ' ').trim(), Math.max(10, width - visibleWidth(metaText) - 12), '…'));
+      const row = `    ${color.accent(spinnerFrame())} ${task} ${FAINTC('click')}`;
+      const gap = Math.max(1, width - visibleWidth(row) - visibleWidth(metaText) - 2);
+      this.rowTargets.set(lines.length, e.sessionId);
+      lines.push(`${row}${' '.repeat(gap)}${metaText}`);
     }
     return lines;
   }

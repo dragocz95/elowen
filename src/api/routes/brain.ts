@@ -2,7 +2,7 @@ import { streamSSE } from 'hono/streaming';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { parseBody } from '../validation.js';
-import { brainStartSchema, brainSendSchema, brainModelSchema, brainAnswerSchema, lspInstallSchema } from '../schemas/brain.js';
+import { brainStartSchema, brainSendSchema, brainModelSchema, brainAnswerSchema, lspInstallSchema, subagentSendSchema } from '../schemas/brain.js';
 import { brainConfigFromOrca } from '../../brain/config.js';
 import { listBrainModels, fetchOpenAiModels } from '../../brain/models.js';
 import { orcaExec, isExecAllowedForUser } from '../../shared/execs.js';
@@ -346,15 +346,32 @@ export function registerBrainRoutes(app: OrcaApp, ctx: RouteContext): void {
     } catch (e) { return c.json({ error: (e as Error).message }, 409); }
   });
 
+  // The owner talking into a delegated sub-agent's session: steered into its running turn, or run as
+  // a fresh turn when the child is idle. Fire-and-forget — the reply rides the tapped session stream
+  // (an idle child's turn can take minutes; blocking the HTTP call on it would just time out).
+  app.post('/brain/subagent/send', async c => {
+    if (!d.brain) return c.json({ error: 'brain unavailable' }, 503);
+    if (forbidden(c)) return c.json({ error: 'forbidden' }, 403);
+    const brain = d.brain;
+    const body = await parseBody(c, subagentSendSchema);
+    try { brain.messagesOf(c.get('user').id, body.session); } catch { return c.json({ error: 'unknown session' }, 404); }
+    void brain.sendToSubagent(c.get('user').id, body.session, body.text).catch(() => { /* surfaced on the child's stream */ });
+    return c.json({ ok: true });
+  });
+
+  // Live events of the ACTIVE conversation by default, or of one explicitly owned session when
+  // `?session=<id>` is given (the sub-agent drill-in stream — survives that session's respawns).
   app.get('/brain/stream', c => {
     if (!d.brain) return c.json({ error: 'brain unavailable' }, 503);
     if (forbidden(c)) return c.json({ error: 'forbidden' }, 403);
     const brain = d.brain;
     const userId = c.get('user').id;
+    const session = c.req.query('session');
     return streamSSE(c, async stream => {
       let off: (() => void) | null = null;
-      try { off = brain.subscribe(userId, (e: BrainEvent) => void stream.writeSSE({ data: JSON.stringify(e), event: e.type })); }
-      catch { await stream.writeSSE({ data: JSON.stringify({ type: 'error', message: 'brain not started' }), event: 'error' }); return; }
+      const deliver = (e: BrainEvent): void => void stream.writeSSE({ data: JSON.stringify(e), event: e.type });
+      try { off = session ? brain.tapSession(userId, session, deliver) : brain.subscribe(userId, deliver); }
+      catch { await stream.writeSSE({ data: JSON.stringify({ type: 'error', message: session ? 'unknown session' : 'brain not started' }), event: 'error' }); return; }
       c.req.raw.signal.addEventListener('abort', off);
       // Comment flush so the channel connects through the BFF proxy on a quiet system (see /events).
       await stream.write(': connected\n\n');

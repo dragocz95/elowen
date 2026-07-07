@@ -287,13 +287,26 @@ export class BrainClient {
     return (await res.json()) as BrainMessageView[];
   }
 
-  /** Open the SSE stream and deliver each BrainEvent to `onEvent` until `signal` aborts. Reconnects
-   *  with a fixed backoff on a dropped connection (the server re-streams live events). A 401
-   *  propagates so the caller can re-login. */
-  async stream(onEvent: (e: BrainEvent) => void, signal: AbortSignal, backoffMs = 1000, onOpen?: () => void): Promise<void> {
+  /** The owner talking into a delegated sub-agent's session (steered into its running turn, or a fresh
+   *  turn when idle). Fire-and-forget server-side — the reply rides the tapped session stream. */
+  async subagentSend(session: string, text: string): Promise<void> {
+    const res = await this.f(`${this.o.base}/brain/subagent/send`, {
+      method: 'POST', headers: { ...this.headers(), 'content-type': 'application/json' },
+      body: JSON.stringify({ session, text }),
+    });
+    if (res.status === 401) throw new Unauthorized();
+    if (!res.ok) throw new Error(`orca brain ${res.status} on /brain/subagent/send`);
+  }
+
+  /** Open the SSE stream and deliver each BrainEvent to `onEvent` until `signal` aborts. Follows the
+   *  active conversation by default, or one explicit owned session when `session` is given (the
+   *  sub-agent drill-in stream). Reconnects with a fixed backoff on a dropped connection (the server
+   *  re-streams live events). A 401 propagates so the caller can re-login. */
+  async stream(onEvent: (e: BrainEvent) => void, signal: AbortSignal, backoffMs = 1000, onOpen?: () => void, session?: string): Promise<void> {
+    const qs = session ? `?session=${encodeURIComponent(session)}` : '';
     while (!signal.aborted) {
       try {
-        const res = await this.f(`${this.o.base}/brain/stream`, { headers: this.headers(), signal });
+        const res = await this.f(`${this.o.base}/brain/stream${qs}`, { headers: this.headers(), signal });
         if (res.status === 401) throw new Unauthorized();
         if (!res.ok || !res.body) throw new Error(`orca brain ${res.status} on /brain/stream`);
         const reader = res.body.getReader();

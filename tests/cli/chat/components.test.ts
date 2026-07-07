@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import { visibleWidth } from '@earendil-works/pi-tui';
 import { initTheme } from '@earendil-works/pi-coding-agent';
-import { UserBlock, StatusBar, CardPanel, diffBlock, cardBlock } from '../../../src/cli/chat/components.js';
+import { UserBlock, StatusBar, CardPanel, SubagentPanel, diffBlock, cardBlock } from '../../../src/cli/chat/components.js';
 
 describe('chat components', () => {
   beforeAll(() => { initTheme(); }); // renderDiff needs the pi theme
@@ -74,5 +74,28 @@ describe('chat components', () => {
     expect(body).toContain('[ ]'); // pending
     expect(body).toContain('Alpha');
     expect(body).toContain('note line');
+  });
+});
+
+describe('SubagentPanel', () => {
+  const running = { sessionId: 'brain-ch-subagent-a', task: 'research the config layer', status: 'running' as const, detail: 'read_file src/a.ts', tools: 2, tokens: 12000, seconds: 8 };
+
+  it('renders nothing when no sub-agent runs (settled entries are dropped)', () => {
+    const p = new SubagentPanel();
+    p.set([{ ...running, status: 'done' }]);
+    expect(p.render(80)).toEqual([]);
+  });
+
+  it('lists running agents with task + live counters, and maps rows to their session', () => {
+    const p = new SubagentPanel();
+    p.set([running]);
+    const lines = p.render(80).map((l) => l.replace(/\x1b\[[0-9;]*m/g, ''));
+    expect(lines[0]).toContain('Sub-agents');
+    expect(lines[0]).toContain('1 running');
+    expect(lines[1]).toContain('research the config layer');
+    expect(lines[1]).toContain('8s');
+    expect(lines[1]).toContain('12k tok');
+    expect(p.targetAt(1)).toBe('brain-ch-subagent-a');
+    expect(p.targetAt(0)).toBeNull();
   });
 });

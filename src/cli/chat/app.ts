@@ -4,7 +4,8 @@ import { TUI, ProcessTerminal, Container, matchesKey, CombinedAutocompleteProvid
 import { initTheme, getMarkdownTheme, getSelectListTheme } from '@earendil-works/pi-coding-agent';
 import { chatThemeItems, color, glyph, isChatThemeName, setChatTheme, setCustomChatTheme } from './theme.js';
 import { loadPrefs, savePrefs } from './prefs.js';
-import { StatusBar, CardPanel, spinnerFrame } from './components.js';
+import { StatusBar, CardPanel, SubagentPanel, spinnerFrame } from './components.js';
+import type { SubagentPanelEntry } from './components.js';
 import { ChatEditor, sessionItems, modelItems, parseModelValue, openPicker, openTextInput, openInfoModal } from './picker.js';
 import { runAskFlow } from './askFlow.js';
 import { BrainClient, type BrainProviderView, type BrainWorkMode, type McpServerView } from './brainClient.js';
@@ -238,6 +239,7 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
   /** Persistent card panel (ctx.emitCard — the todo checklist is the canonical one), pinned above the
    *  status line — lives in the fixed tree, NOT the rebuilt messages container, so it stays put across turns. */
   const cardPanel = new CardPanel();
+  const subPanel = new SubagentPanel();
   const promptMeta = new StatusBar('', '');
   const bottomBar = new StatusBar(color.faint('  ⏎ send   ·   /help commands   ·   ctrl+r reasoning   ·   shift+tab mode'), color.faint('ctrl+c quit  '));
 
@@ -263,8 +265,9 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
   const panelLeftEdge = (): number => term.columns - panelWidth;
   const fixedRows = (): number => {
     const cardRows = cardPanel.render(Math.max(24, chatWidth())).length;
+    const subRows = subPanel.render(Math.max(24, chatWidth())).length;
     const inputRows = editorSlot.render(Math.max(24, chatWidth())).length;
-    return TOP_RULE_ROWS + cardRows + inputRows + 2;
+    return TOP_RULE_ROWS + cardRows + subRows + inputRows + 2;
   };
 
   const viewport = new ChatViewport(
@@ -312,9 +315,10 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
     panelHandle.setHidden(hidden);
   };
 
-  // Read-only drill-in to a delegated sub-agent's transcript (opened by clicking its live row or
-  // ctrl+o). Purely local: the server session stays targeted at the PARENT conversation — Esc returns.
-  let childView: { sessionId: string; view: ChatView; refreshQueued?: boolean } | null = null;
+  // Drill-in to a delegated sub-agent's session (opened by clicking its row/panel entry or ctrl+o).
+  // Fully interactive: its own live tap stream feeds the view and the input steers the child. The
+  // server's ACTIVE conversation stays the parent — Esc returns without any server round-trip.
+  let childView: { sessionId: string; view: ChatView } | null = null;
 
   let thinkStart = 0;
   const render = (): void => {
@@ -326,21 +330,22 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
     currentRunSeconds = thinkStart ? Math.max(0, Math.round((Date.now() - thinkStart) / 1000)) : 0;
     viewport.setState({
       view: childView?.view ?? view,
-      notice: childView ? color.dim('· sub-agent session (read-only)') : notice,
+      notice: childView ? color.dim('· sub-agent session — your messages go to this agent') : notice,
       modelName,
       thinkingSeconds: currentRunSeconds,
     });
-    // Contextual footer: while streaming, Esc interrupts; inside a sub-agent view, Esc returns.
+    // Contextual footer: while streaming, Esc interrupts; inside a sub-agent view, input steers the child.
     bottomBar.setLeft(childView
-      ? color.faint('  esc back to conversation   ·   sub-agent transcript is read-only')
+      ? color.faint('  ⏎ message the sub-agent   ·   esc back   ·   ctrl+o next session')
       : view.thinking
-        ? color.faint(`  esc interrupt   ·   /help commands   ·   ctrl+r reasoning${latestSubagent() ? '   ·   ctrl+o subagent' : ''}`)
+        ? color.faint(`  esc interrupt   ·   /help commands   ·   ctrl+r reasoning${subagentSessions().length ? '   ·   ctrl+o subagents' : ''}`)
         : color.faint('  ⏎ send   ·   / slash   ·   shift+tab mode   ·   ctrl+r reasoning   ·   ctrl+p telemetry'));
     const projectLine = `${color.dim(cwdLabel)}${branchLabel ? color.faint(` · ${branchLabel}`) : ''}`;
     const line = statusline(lineCfg ? { ...lineCfg, showModel: false } : null, usage, modelName);
     promptMeta.setLeft(modelMetaLine(workMode, modelName, thinkingLevel, view.thinking ? generatingChip(currentRunSeconds) : undefined));
     promptMeta.setRight(panelVisible() || !line ? projectLine : `${color.faint(line)} ${color.faint('·')} ${projectLine}`);
     cardPanel.set(cards);
+    subPanel.set(subagentStates());
     tui.requestRender();
   };
 
@@ -924,40 +929,61 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
     tui.requestRender();
   };
 
-  /** The most recent delegated sub-agent in the parent transcript (running preferred, else last seen) —
-   *  the ctrl+o target. */
-  const latestSubagent = (): string | null => {
-    let last: string | null = null;
+  /** Latest known state of every delegated sub-agent in the parent transcript, in first-seen order —
+   *  feeds the live Sub-agents panel and the ctrl+o cycle ring. */
+  const subagentStates = (): SubagentPanelEntry[] => {
+    const seen = new Map<string, SubagentPanelEntry>();
     for (const turn of view.turns) {
       if (turn.role !== 'orca') continue;
       for (const seg of turn.segments) {
         if (seg.kind !== 'tools') continue;
-        for (const item of seg.items) if (item.sub) last = item.sub.status === 'running' ? item.sub.sessionId : (last ?? item.sub.sessionId);
+        for (const item of seg.items) {
+          if (!item.sub) continue;
+          const s = item.sub;
+          seen.set(s.sessionId, { sessionId: s.sessionId, task: s.task, status: s.status, detail: s.detail, tools: s.tools, tokens: s.tokens, seconds: s.seconds });
+        }
       }
     }
-    return last;
+    return [...seen.values()];
   };
+  const subagentSessions = (): { sessionId: string; running: boolean }[] =>
+    subagentStates().map((s) => ({ sessionId: s.sessionId, running: s.status === 'running' }));
 
-  /** Open (or refresh) the read-only view of a sub-agent's transcript. */
+  /** Open a sub-agent's session: history first, then its LIVE tap stream — text/tool/reasoning events
+   *  fold into the child view exactly like the main conversation, so steering feels first-class. */
+  let childAc: AbortController | null = null;
   const openSubagent = async (sessionId: string): Promise<void> => {
     const msgs = await client.history(sessionId).catch(() => null);
     if (!msgs) { notice = color.error('could not load the sub-agent transcript'); render(); return; }
+    childAc?.abort();
+    const ac = new AbortController();
+    childAc = ac;
     childView = { sessionId, view: fromHistory(msgs) };
+    render();
+    void client.stream((e) => {
+      if (ac.signal.aborted || childView?.sessionId !== sessionId) return;
+      // A child's parked ask_user_question is answerable from here — the registry is id-keyed globally.
+      if (e.type === 'ask') { launchAsk(e.id, e.questions); return; }
+      childView.view = reduce(childView.view, e);
+      render();
+    }, ac.signal, 1000, undefined, sessionId).catch(() => { /* aborted/gone */ });
+  };
+
+  const closeSubagent = (): void => {
+    childAc?.abort();
+    childAc = null;
+    childView = null;
     render();
   };
 
-  /** Live follow: a `subagent` progress event for the OPEN child refreshes its transcript, throttled to
-   *  one in-flight fetch (updates ride tool starts/steps, so this stays a light poll-on-signal). */
-  const refreshOpenSubagent = (sessionId: string): void => {
-    if (!childView || childView.sessionId !== sessionId || childView.refreshQueued) return;
-    childView.refreshQueued = true;
-    setTimeout(() => {
-      void client.history(sessionId).then((msgs) => {
-        if (childView?.sessionId !== sessionId) return;
-        childView = { sessionId, view: fromHistory(msgs) };
-        render();
-      }).catch(() => { if (childView?.sessionId === sessionId) childView.refreshQueued = false; });
-    }, 700);
+  /** ctrl+o: cycle main conversation → sub-agent 1 → sub-agent 2 → … → back to main. */
+  const cycleSubagent = (): void => {
+    const ring = subagentSessions();
+    if (ring.length === 0) { notice = color.dim('no sub-agent in this conversation yet'); render(); return; }
+    const at = childView ? ring.findIndex((r) => r.sessionId === childView!.sessionId) : -1;
+    const next = ring[at + 1];
+    if (next) void openSubagent(next.sessionId);
+    else closeSubagent();
   };
 
   let streamAc = new AbortController();
@@ -978,9 +1004,8 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
       }
       if (e.type === 'step' && e.usage) usage = e.usage;
       if (e.type === 'card') cards = upsertCard(cards, e.card); // update the persistent panel (not part of the ChatView)
-      // Sub-agent progress: the shared fold attaches it to the delegate tool row; if the user is
-      // currently INSIDE that child's transcript, also refresh what they're looking at.
-      if (e.type === 'subagent') refreshOpenSubagent(e.sessionId);
+      // Sub-agent progress folds into the delegate tool row below; the open child view has its own
+      // live tap stream, so nothing extra to do here.
       // Idle rollover: the server continued this message in a FRESH conversation. The SENDING client's
       // last turn is the just-typed message, so the shared fold trims correctly; a passively connected
       // client (second CLI/web on the same account) has no fresh local user turn — folding would carry
@@ -1014,11 +1039,21 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
   editor.onSubmit = (text: string): void => {
     const trimmed = text.trim();
     if (!trimmed) return;
-    if (childView) childView = null; // sending always talks to the PARENT — snap back so the user sees it
     editor.addToHistory(trimmed); // Up-arrow recall of sent inputs (session-local, capped by the editor)
     editor.setText('');
     notice = '';
     const command = parseCommand(trimmed);
+    // Inside a sub-agent view, plain text goes to the CHILD (steered into its running turn, or a fresh
+    // child turn when idle) — the reply streams into the open view. Slash commands always act on the
+    // parent conversation, so they snap back first (running /new while "inside" a child would be chaos).
+    if (childView && !command) {
+      const target = childView.sessionId;
+      childView.view = pushUser(childView.view, trimmed); // local echo; the store copy lands server-side
+      render();
+      void client.subagentSend(target, trimmed).catch((e: Error) => { notice = color.error(`error: ${e.message}`); render(); });
+      return;
+    }
+    if (childView && command) closeSubagent();
     if (command) {
       switch (command.cmd) {
         case 'quit': quit(); return;
@@ -1194,7 +1229,7 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
   // Esc closes an open sub-agent view first; while a turn streams it aborts server-side (agent_end →
   // idle winds the spinner down). When idle it returns false so Esc falls through to the base editor.
   editor.onEscape = (): boolean => {
-    if (childView) { childView = null; render(); return true; }
+    if (childView) { closeSubagent(); return true; }
     if (!view.thinking) return false;
     void client.abort().catch(() => { /* already idle */ });
     return true;
@@ -1202,7 +1237,7 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
 
   const root = new Container();
   root.addChild(new TopRule(() => conversationTitle));
-  const chatStack = [viewport, cardPanel, editorSlot, promptMeta, bottomBar];
+  const chatStack = [viewport, cardPanel, subPanel, editorSlot, promptMeta, bottomBar];
   root.addChild(new MainColumn(panelReserve, () => hasMessages() ? chatStack : [startScreen]));
   tui.addChild(root);
   tui.setFocus(editor);
@@ -1282,6 +1317,7 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
     }
     // Click the Todos header to collapse/expand the checklist. The card panel sits directly below the
     // viewport in the fixed stack, so its first row is TOP_RULE_ROWS + viewport-height + 1 (1-based).
+    // The Sub-agents panel renders right below it — a click on one of its rows opens that child.
     if (click && noModal) {
       const cardTop = TOP_RULE_ROWS + Math.max(8, term.rows - fixedRows()) + 1;
       const rel = click.y - cardTop;
@@ -1290,6 +1326,9 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
         tui.requestRender();
         return { consume: true };
       }
+      const subRel = rel - cardPanel.render(Math.max(24, chatWidth())).length;
+      const target = subRel >= 0 ? subPanel.targetAt(subRel) : null;
+      if (target) { void openSubagent(target); return { consume: true }; }
     }
     const wheel = mouseWheel(data);
     if (wheel && noModal) {
@@ -1329,12 +1368,9 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
       cycleThinkingLevel();
       return { consume: true };
     }
-    // ctrl+o toggles into/out of the most recent sub-agent's transcript (mirrors clicking its row).
+    // ctrl+o cycles main conversation → each sub-agent session → back to main (opencode-style).
     if (editing && matchesKey(data, 'ctrl+o')) {
-      if (childView) { childView = null; render(); return { consume: true }; }
-      const subId = latestSubagent();
-      if (subId) void openSubagent(subId);
-      else { notice = color.dim('no sub-agent in this conversation yet'); render(); }
+      cycleSubagent();
       return { consume: true };
     }
     if (editing && isModeToggleKey(data)) {

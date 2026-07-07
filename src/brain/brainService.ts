@@ -683,6 +683,10 @@ export class BrainService {
     for (const [k, v] of plugins?.toolIcons ?? []) iconMap.set(k, v);
     const iconOf = makeToolIconResolver(iconMap);
     const listeners = new Set<(e: BrainEvent) => void>();
+    // Re-attach long-lived session taps (open sub-agent drill-in streams): a respawn (model switch,
+    // LRU eviction + revival) builds a fresh listener set, and without this the tapped stream would
+    // silently go dark while the client believes it is still following the session.
+    for (const tap of this.sessionTaps.get(opts.sessionId) ?? []) listeners.add(tap);
     let steps = 0; // model round-trips in the current run — reset on agent_start, one per turn_start
     session.subscribe((e: AgentSessionEvent) => {
       const raw = (e as { type?: string }).type;
@@ -803,6 +807,55 @@ export class BrainService {
       // (a listener left on a non-active live would keep receiving events for a dead stream forever).
       for (const [, live] of this.sessions.liveEntries()) live.listeners.delete(listener);
     };
+  }
+
+  /** Long-lived listeners keyed by SESSION id — re-attached by spawnLive whenever that session
+   *  (re)spawns, so an open drill-in stream survives respawns (unlike a raw `listeners.add`). */
+  private sessionTaps = new Map<string, Set<(e: BrainEvent) => void>>();
+
+  /** Follow one of the CALLER'S OWN sessions live, by explicit id — the sub-agent drill-in stream.
+   *  Unlike subscribe() (which follows the active conversation), a tap targets a fixed session and
+   *  keeps delivering across respawns. Throws on an unknown/foreign session. */
+  tapSession(userId: number, sessionId: string, listener: (e: BrainEvent) => void): () => void {
+    const row = this.d.store.getSession(sessionId);
+    if (!row || row.user_id !== userId) throw new Error('unknown session');
+    let taps = this.sessionTaps.get(sessionId);
+    if (!taps) { taps = new Set(); this.sessionTaps.set(sessionId, taps); }
+    taps.add(listener);
+    this.liveFor(sessionId)?.listeners.add(listener); // the session may already be running — attach now
+    return () => {
+      taps.delete(listener);
+      if (taps.size === 0) this.sessionTaps.delete(sessionId);
+      this.liveFor(sessionId)?.listeners.delete(listener);
+    };
+  }
+
+  /** The live record behind a session id, whichever registry bucket it lives in (user sessions are
+   *  keyed by session id, channel sessions by channel id). */
+  private liveFor(sessionId: string): LiveBrain | undefined {
+    return this.sessions.get(sessionId)
+      ?? (sessionId.startsWith('brain-ch-') ? this.sessions.channelGet(sessionId.slice('brain-ch-'.length)) : undefined);
+  }
+
+  /** The owner talking INTO a delegated sub-agent's session: steers the message into the child's
+   *  RUNNING turn (mid-run course correction), or runs it as a fresh turn when the child is idle
+   *  (continue the conversation after it finished). Restricted to the caller's OWN
+   *  `brain-ch-subagent-*` sessions — the child executes with access inherited from the caller's own
+   *  delegation, so this can never escalate; shared platform channels are deliberately NOT reachable
+   *  here (steering another member's turn would mix privileges). */
+  async sendToSubagent(userId: number, sessionId: string, text: string): Promise<void> {
+    const row = this.d.store.getSession(sessionId);
+    if (!row || row.user_id !== userId) throw new Error('unknown session');
+    if (!sessionId.startsWith('brain-ch-subagent-')) throw new Error('not a sub-agent session');
+    const policy = this.d.policy?.(userId) ?? { allowedProjectIds: 'all' as const, allowedPaths: () => [] };
+    await this.channelService.send({
+      channelId: sessionId.slice('brain-ch-'.length),
+      ownerUserId: row.user_id,
+      policy,
+      identity: this.identity.forOwnerChat(userId, policy),
+      writerUserId: userId,
+      ownerSteer: true,
+    }, text);
   }
 
   private ownerToolPolicy(userId: number, live: LiveBrain, mode: 'build' | 'plan'): ToolPolicy | undefined {

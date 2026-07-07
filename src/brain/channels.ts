@@ -40,6 +40,12 @@ export interface ChannelSendOpts {
   writerUserId?: number;
   history?: () => Promise<string>;
   onEvent?: (e: BrainEvent) => void;
+  /** Steer this message into the channel's RUNNING turn even though the sender differs from the turn's
+   *  originator. Set ONLY by BrainService.sendToSubagent after verifying the caller OWNS the session row
+   *  and it is a delegated sub-agent session: the child's turn executes with access inherited from the
+   *  owner's own delegation, so the owner steering it can never escalate. Platform adapters (Discord)
+   *  must NEVER set this — a shared channel keeps each sender's turn isolated (see the comment below). */
+  ownerSteer?: boolean;
 }
 
 export interface ChannelServiceDeps {
@@ -92,7 +98,7 @@ export class ChannelSessionService {
     // stream, so there's nothing new to return.
     const streaming = this.d.registry.channelGet(opts.channelId);
     if (streaming?.session.isStreaming && !opts.images?.length
-        && streaming.turnSender != null && streaming.turnSender === opts.identity?.userId) {
+        && ((streaming.turnSender != null && streaming.turnSender === opts.identity?.userId) || opts.ownerSteer)) {
       projectUserTurn(this.d.store, sessionId, text);
       await streaming.session.steer(text);
       return '';

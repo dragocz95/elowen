@@ -1146,3 +1146,50 @@ describe('idle rollover (send)', () => {
     expect(svc.status(1).sessionId).toMatch(/^brain-1-/);
   });
 });
+
+describe('sub-agent session tap + owner steering', () => {
+  it('tapSession rejects a foreign or unknown session', async () => {
+    const d = fakeDeps();
+    const svc = new BrainService(d as never);
+    await svc.start(1);
+    expect(() => svc.tapSession(2, 'brain-1', () => {})).toThrow('unknown session');
+    expect(() => svc.tapSession(1, 'brain-nope', () => {})).toThrow('unknown session');
+  });
+
+  it('a tap follows its session across a respawn (restart)', async () => {
+    const d = fakeDeps();
+    const svc = new BrainService(d as never);
+    await svc.start(1);
+    const got: string[] = [];
+    svc.tapSession(1, 'brain-1', (e) => got.push(e.type));
+    await svc.send(1, 'hi');
+    expect(got).toContain('idle');
+    got.length = 0;
+    await svc.restart(1); // disposes the live session and spawns a fresh one
+    await svc.send(1, 'again');
+    expect(got).toContain('idle'); // the tap re-attached to the NEW live entry
+  });
+
+  it('sendToSubagent refuses foreign sessions and non-subagent kinds', async () => {
+    const d = fakeDeps();
+    const svc = new BrainService(d as never);
+    d.store.createSession({ id: 'brain-ch-subagent-sub1', userId: 1, model: 'm' });
+    d.store.createSession({ id: 'brain-ch-discord-general', userId: 1, model: 'm' });
+    await expect(svc.sendToSubagent(2, 'brain-ch-subagent-sub1', 'x')).rejects.toThrow('unknown session');
+    await expect(svc.sendToSubagent(1, 'brain-ch-discord-general', 'x')).rejects.toThrow('not a sub-agent session');
+    await expect(svc.sendToSubagent(1, 'brain-1-missing', 'x')).rejects.toThrow('unknown session');
+  });
+
+  it('runs a fresh child turn when idle and STEERS into a running child turn', async () => {
+    const d = fakeDeps();
+    const svc = new BrainService(d as never);
+    (d as unknown as { policy: () => unknown }).policy = () => ({ allowedProjectIds: 'all', allowedPaths: () => [] });
+    d.store.createSession({ id: 'brain-ch-subagent-sub1', userId: 1, model: 'm' });
+    await svc.sendToSubagent(1, 'brain-ch-subagent-sub1', 'do the thing');
+    expect(d.session.prompt).toHaveBeenCalledTimes(1); // idle child → normal turn
+    d.session.isStreaming = true; // the child is mid-turn now
+    await svc.sendToSubagent(1, 'brain-ch-subagent-sub1', 'also check X');
+    expect(d.session.steer).toHaveBeenCalledWith('also check X'); // owner steering crosses the sender gate
+    expect(d.session.prompt).toHaveBeenCalledTimes(1); // no second unlocked turn
+  });
+});
