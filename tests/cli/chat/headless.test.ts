@@ -19,6 +19,13 @@ describe('cli/chat/headless.parseHeadlessArgs', () => {
     expect(parseHeadlessArgs(['-p', 'x', '--new']).fresh).toBe(true);
     expect(parseHeadlessArgs(['-p', 'x', '-c']).fresh).toBe(false);
   });
+  it('--resume <id> (alias of --session) targets a specific conversation', () => {
+    expect(parseHeadlessArgs(['--resume', 'sess-9', 'hi']).session).toBe('sess-9');
+    expect(parseHeadlessArgs(['--session', 'sess-9']).session).toBe('sess-9');
+  });
+  it('--list sets the list flag', () => {
+    expect(parseHeadlessArgs(['--list']).list).toBe(true);
+  });
   it('rejects an unknown flag and a bad --mode', () => {
     expect(parseHeadlessArgs(['--bogus']).error).toMatch(/unknown flag/);
     expect(parseHeadlessArgs(['--mode', 'sideways']).error).toMatch(/--mode/);
@@ -51,6 +58,7 @@ function fakeClient(goalRow: GoalView | null = null): { client: never; calls: st
     async compact() { calls.push('compact'); return { message: 'compacted 3 turns', usage: null, compacted: true }; },
     async status() { calls.push('status'); return { model: 'm', title: 't' } as never; },
     async skills() { calls.push('skills'); return []; },
+    async sessions() { calls.push('sessions'); return [{ id: 'brain-1', title: 'First chat', model: 'm', updated_at: '2026-07-07', active: true }]; },
     async goal() { return goalRow; },
     async setGoal(text: string, _d: boolean, budget?: number) { calls.push(`setGoal:${text}:${budget ?? ''}`); return {} as GoalView; },
     async goalAction(a: string) { calls.push(`goalAction:${a}`); return { status: 'paused' } as GoalView; },
@@ -124,6 +132,16 @@ describe('cli/chat/headless.runHeadless', () => {
     const { client } = fakeClient({ status: 'paused', last_verdict: 'blocked', paused_reason: 'no key', turns_used: 2, turn_budget: 8, last_evidence: '' } as GoalView);
     const { io: sink } = io();
     expect(await runHeadless('http://x', {}, ['--goal', 'x'], { client, io: sink })).toBe(4);
+  });
+
+  it('--list prints the conversations and exits 0 (no prompt needed)', async () => {
+    const { client, calls } = fakeClient();
+    const { io: sink, out } = io();
+    const code = await runHeadless('http://x', {}, ['--list'], { client, io: sink });
+    expect(code).toBe(0);
+    expect(calls).toContain('sessions');
+    expect(out.join('')).toContain('brain-1');
+    expect(out.join('')).toContain('First chat');
   });
 
   it('exits 2 with usage when neither a prompt nor a goal is given', async () => {

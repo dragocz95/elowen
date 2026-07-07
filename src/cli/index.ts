@@ -47,7 +47,8 @@ CHAT
   run "<prompt>"                  non-interactive Orca: run one turn/slash/goal, stream it, exit
   -p, --print "<prompt>"          alias for \`run\` (claude-style)
                                     --model/--provider <id>   pick the model for this run
-                                    -c | --session <id> | --new   continue active (default) / specific / fresh
+                                    -c | --resume <id> | --new    continue active (default) / specific / fresh
+                                    --list                        list conversations (ids for --resume)
                                     --mode plan|build | --plan    plan mode hides mutating tools
                                     --goal "<text>" [--max-turns N]  run an autonomous goal until it settles
                                     --json | --verbose | --timeout <s>

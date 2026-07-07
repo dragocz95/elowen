@@ -13,6 +13,7 @@ export interface HeadlessOpts {
   mode: 'build' | 'plan';
   maxTurns?: number;               // --max-turns: the goal's turn budget
   json: boolean; verbose: boolean;
+  list: boolean;                   // --list: print the conversations and exit
   timeoutMs: number;
   error?: string;                  // a parse error → usage exit
 }
@@ -20,11 +21,12 @@ export interface HeadlessOpts {
 const USAGE = [
   'usage: orca run "<prompt>"   |   orca -p "<prompt>"',
   '  --model <id> --provider <id>   pick the model for this run',
-  '  -c | --session <id> | --new    continue the active conversation (DEFAULT), a specific one, or start fresh',
+  '  -c | --resume <id> | --new     continue the active conversation (DEFAULT), a specific one, or start fresh',
   '  --mode plan|build | --plan     plan mode hides mutating tools for the turn',
   '  --goal "<text>" [--max-turns N]  run an autonomous persistent goal until it settles',
   '  --json                         emit every event as JSONL (default: plain text)',
   '  --verbose                      print steps/tools/usage to stderr',
+  '  --list                         list your conversations (id, title, model) and exit',
   '  --timeout <seconds>            give up after N seconds (default 600)',
   '  a `/slash` prompt runs that command, e.g. -p "/status", -p "/goal pause", -p "/plan <text>"',
 ].join('\n');
@@ -38,7 +40,7 @@ function takeValue(args: string[], i: number): string | undefined {
 }
 
 export function parseHeadlessArgs(args: string[]): HeadlessOpts {
-  const o: HeadlessOpts = { fresh: false, mode: 'build', json: false, verbose: false, timeoutMs: 600_000 };
+  const o: HeadlessOpts = { fresh: false, mode: 'build', json: false, verbose: false, list: false, timeoutMs: 600_000 };
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
     if (a === undefined) continue;
@@ -48,7 +50,7 @@ export function parseHeadlessArgs(args: string[]): HeadlessOpts {
       case '--goal': o.goal = val(); break;
       case '--model': o.model = val(); break;
       case '--provider': o.provider = val(); break;
-      case '--session': o.session = val(); break;
+      case '--session': case '--resume': o.session = val(); break; // resume a specific conversation by id
       case '-c': case '--continue': o.fresh = false; break; // resume the active conversation (the default, made explicit / overrides --new)
       case '--new': o.fresh = true; break;
       case '--mode': { const m = val(); if (m === 'plan' || m === 'build') o.mode = m; else o.error = `--mode must be plan or build (got "${m ?? ''}")`; break; }
@@ -56,6 +58,7 @@ export function parseHeadlessArgs(args: string[]): HeadlessOpts {
       case '--max-turns': { const n = Number(val()); if (Number.isInteger(n) && n >= 1) o.maxTurns = n; else o.error = '--max-turns needs a positive integer'; break; }
       case '--json': o.json = true; break;
       case '-v': case '--verbose': o.verbose = true; break;
+      case '--list': case '--sessions': o.list = true; break;
       case '--timeout': { const n = Number(val()); if (Number.isFinite(n) && n > 0) o.timeoutMs = n * 1000; else o.error = '--timeout needs a positive number of seconds'; break; }
       default:
         if (a.startsWith('-')) o.error = `unknown flag "${a}"`;
@@ -83,7 +86,7 @@ export async function runHeadless(
   const io = deps.io ?? { stdout: (s) => process.stdout.write(s), stderr: (s) => process.stderr.write(s) };
   const o = parseHeadlessArgs(args);
   if (o.error) { io.stderr(`${o.error}\n\n${USAGE}\n`); return 2; }
-  if (!o.prompt && !o.goal) { io.stderr(`${USAGE}\n`); return 2; }
+  if (!o.list && !o.prompt && !o.goal) { io.stderr(`${USAGE}\n`); return 2; }
 
   let client = deps.client;
   if (!client) {
@@ -93,6 +96,17 @@ export async function runHeadless(
     client = new BrainClient({ base, token });
   }
   const c = client;
+
+  // `--list`: just print the conversations (id · title · model · updated) and exit — the ids feed
+  // `--session <id>`. Needs no started session.
+  if (o.list) {
+    try {
+      const rows = await c.sessions();
+      if (!rows.length) io.stdout('(no conversations yet)\n');
+      for (const r of rows) io.stdout(`${r.active ? '* ' : '  '}${r.id}\t${r.title || '(untitled)'}\t${r.model}\t${r.updated_at}\n`);
+      return 0;
+    } catch (e) { io.stderr(`list failed: ${errMsg(e)}\n`); return 1; }
+  }
 
   // Continuation model (matches the TUI): by default we resume the ACTIVE conversation, so consecutive
   // `orca run` calls keep talking to the same brain — and slash/goal actions target the right one. `--new`
