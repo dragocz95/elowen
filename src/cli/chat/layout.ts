@@ -46,13 +46,24 @@ const ORCA_ART = [
   '█████ █   █ █████ █   █',
 ];
 
+/** opencode-style per-tool row spec: a fixed glyph + Title-case verb, keyed on the tool NAME so live
+ *  and resumed-history rows render identically (`item.icon` exists only on live events). The glyph set
+ *  mirrors opencode: `→` reads, `←` writes/edits, `✱` searches, `%` fetches, `⚙` everything else. */
+function toolRowSpec(name: string, detail?: string): { glyph: string; title: string } {
+  const t = (label: string): string => (detail ? `${label} ${detail}` : label);
+  if (/(search|grep|glob)/i.test(name)) return { glyph: '✱', title: detail ? `Search "${detail}"` : 'Search' };
+  if (/(edit|patch|update|modify|replace)/i.test(name)) return { glyph: '←', title: t('Edit') };
+  if (/(write|create)/i.test(name)) return { glyph: '←', title: t('Write') };
+  if (/(read|open|cat)/i.test(name)) return { glyph: '→', title: t('Read') };
+  if (/list_dir/i.test(name)) return { glyph: '→', title: t('List') };
+  if (/diff/i.test(name)) return { glyph: '←', title: t('Diff') };
+  if (/(lsp|diagnostic)/i.test(name)) return { glyph: '✱', title: t('Diagnostics') };
+  if (/(fetch|web|http|url)/i.test(name)) return { glyph: '%', title: t('Fetch') };
+  return { glyph: '⚙', title: t(name.replace(/[_-]+/g, ' ')) };
+}
+
 function toolTitle(name: string, detail?: string): string {
-  const target = detail ? ` ${detail}` : '';
-  if (/(edit|patch|update|modify|replace)/i.test(name)) return `Edit${target}`;
-  if (/(write|create)/i.test(name)) return `Wrote${target}`;
-  if (/(read|open|cat)/i.test(name)) return `Read${target}`;
-  if (/(diff)/i.test(name)) return `Diff${target}`;
-  return detail ? detail : name.replace(/[_-]+/g, ' ');
+  return toolRowSpec(name, detail).title;
 }
 
 interface TranscriptRow {
@@ -307,8 +318,13 @@ export class ChatViewport implements Component {
               }
             } else if (!item.diff && !item.sub) {
               // A shell/console tool that finished silently still shows its command on its own line.
-              if (item.command) add(`  ${color.faint('$')} ${color.text(truncateToWidth(item.command, Math.max(12, width - 10), '…'))} ${color.faint('· done')}`);
-              else add(`  ${color.success('●')} ${color.dim(toolTitle(item.name, item.detail))}`);
+              // Tool traffic renders DIM across the board (glyph faint, text muted) — it is secondary
+              // to the assistant's answer, opencode-style, instead of glowing green next to it.
+              if (item.command) add(`  ${color.faint('$')} ${color.dim(truncateToWidth(item.command, Math.max(12, width - 10), '…'))} ${color.faint('· done')}`);
+              else {
+                const spec = toolRowSpec(item.name, item.detail);
+                add(`  ${color.faint(spec.glyph)} ${color.dim(truncateToWidth(spec.title, Math.max(12, width - 8), '…'))}`);
+              }
             }
           }
         } else if (seg.kind === 'reasoning') {

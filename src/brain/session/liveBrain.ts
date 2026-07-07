@@ -8,6 +8,9 @@ export interface LiveBrain {
   session: AgentSession;
   sessionId: string;
   model: string;
+  /** The CONFIG provider entry id the model resolved from (selection.provider, else the default first
+   *  entry) — lets delegation inherit "same provider + model" without re-deriving config defaults. */
+  providerId?: string;
   thinkingLevel?: string;
   policy: Policy;
   autoCompact: boolean;
@@ -30,6 +33,10 @@ export interface LiveBrain {
    *  from this SAME sender, so one member can never inject instructions into another's (or the admin's)
    *  turn and inherit its policy/toolset. */
   turnSender?: string;
+  /** Session ids of delegated sub-agents currently RUNNING under this conversation's turn — maintained
+   *  by the `subagent` progress emitter (added on 'running', dropped on 'done'/'error'). abort() cancels
+   *  these children along with the parent turn, so an interrupted delegation can't keep burning tokens. */
+  activeChildren?: Set<string>;
   /** The session's resolved working directory (validated client cwd → policy root → primary project).
    *  Reused as the per-turn workDir fallback for sends that carry no client cwd (goal kickoff/continue)
    *  and re-passed on respawns (model switch, vision hop, restart) so the session cwd never silently

@@ -85,15 +85,20 @@ export interface SubagentPanelEntry {
  *  nothing when no sub-agent runs, so the bottom stack pays zero rows for the feature at rest. */
 export class SubagentPanel implements Component {
   private entries: SubagentPanelEntry[] = [];
+  private collapsed = false;
   /** Row index (0-based within this panel's output) → the sub-agent session that row opens. */
   private rowTargets = new Map<number, string>();
   invalidate(): void { /* re-rendered on the next frame */ }
   set(entries: SubagentPanelEntry[]): void { this.entries = entries.filter((e) => e.status === 'running'); }
   targetAt(index: number): string | null { return this.rowTargets.get(index) ?? null; }
+  /** The header (row 0) toggles the agent list open/closed, mirroring the Todos card. */
+  isHeaderRow(index: number): boolean { return index === 0 && this.entries.length > 0; }
+  toggleCollapsed(): void { this.collapsed = !this.collapsed; }
   render(width = 80): string[] {
     this.rowTargets = new Map();
     if (this.entries.length === 0) return [];
-    const lines: string[] = [`  ${FAINTC('▸')} ${bold(WHITE('Sub-agents'))}${FAINTC(`  ${this.entries.length} running`)}`];
+    const lines: string[] = [`  ${FAINTC(this.collapsed ? '▸' : '▾')} ${bold(WHITE('Sub-agents'))}${FAINTC(`  ${this.entries.length} running`)} ${FAINTC('click')}`];
+    if (this.collapsed) return lines;
     for (const e of this.entries) {
       const meta = [e.detail, `${e.seconds}s`, e.tokens ? `${formatK(e.tokens)} tok` : ''].filter(Boolean).join(' · ');
       const metaText = FAINTC(truncateToWidth(meta, Math.max(10, Math.floor(width * 0.5)), '…'));
@@ -203,7 +208,8 @@ export function framedDiffBlock(diff: string, width: number, title = 'diff'): st
 export function toolOutputBlock(output: ToolOutputView, width: number, expanded = false): string[] {
   const theme = chatTheme();
   const lines: string[] = [];
-  if (output.command) lines.push(` ${ansi.open(theme.faint, '$')} ${ansi.open(theme.text, output.command)}`);
+  // Muted, not full-bright: the command echo is context, not content (matches the dim tool rows).
+  if (output.command) lines.push(` ${ansi.open(theme.faint, '$')} ${ansi.open(theme.muted, output.command)}`);
   if (output.status) {
     const statusColor = output.tone === 'warning' || output.tone === 'danger' ? theme.warning : theme.success;
     lines.push(` ${ansi.open(statusColor, output.status)}`);

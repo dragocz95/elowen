@@ -1,5 +1,5 @@
 import type { Skill, ToolDefinition } from '@earendil-works/pi-coding-agent';
-import type { SubagentEmitter, TurnIdentity } from './policyContext.js';
+import type { SubagentEmitter, TurnIdentity, TurnModel } from './policyContext.js';
 import type { AskAnswer, AskQuestion, BrainCard } from '../brain/events.js';
 
 /** A skill contributed by a plugin. Reuses pi's file-backed `Skill` (name/description/filePath…), so it
@@ -212,6 +212,9 @@ export interface PluginContext {
    *  where the accessor no longer resolves to the delegating conversation. Each update fans out to the
    *  parent's clients as a `subagent` BrainEvent (live row in the CLI transcript). */
   subagentEmitter(): SubagentEmitter | null;
+  /** The provider entry id + model the CURRENT turn's session runs on, or null outside a prompt turn —
+   *  a delegating plugin uses it to default the child to "the same model as me". */
+  currentModel(): TurnModel | null;
   /** Pickable brain models across every configured provider (feeds the Discord /model dropdown).
    *  Empty when nothing is wired. */
   listModels(): Promise<{ provider: string; providerLabel: string; model: string }[]>;

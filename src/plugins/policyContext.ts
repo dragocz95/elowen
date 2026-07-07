@@ -14,6 +14,9 @@ export type CardEmitter = (card: unknown) => void;
  *  Bound per-turn by BrainService (see `ctx.subagentEmitter`). */
 export type SubagentEmitter = (update: SubagentUpdate) => void;
 
+/** The provider entry + model the current turn's session runs on (see `ctx.currentModel`). */
+export interface TurnModel { provider?: string; model: string }
+
 /** Who is driving the current prompt turn. Plugins that persist per-user state (long-term memory)
  *  key it on this: a linked platform sender resolves to their Orca username, an unknown sender to
  *  `<platform>:<platformUserId>`, the owner to whatever identity the plugin's config anchors. */
@@ -51,7 +54,7 @@ export function toolPermitted(name: string, tp: ToolPolicy | undefined): boolean
   return true;
 }
 
-interface TurnScope { policy: Policy; workDir?: string; identity?: TurnIdentity; elicit?: Elicitor; emitCard?: CardEmitter; emitSubagent?: SubagentEmitter; toolPolicy?: ToolPolicy }
+interface TurnScope { policy: Policy; workDir?: string; identity?: TurnIdentity; elicit?: Elicitor; emitCard?: CardEmitter; emitSubagent?: SubagentEmitter; toolPolicy?: ToolPolicy; model?: TurnModel }
 
 /** pi tools have no per-call session context, so a plugin tool can't be told which user's policy applies
  *  through its arguments. We carry the resolved Policy (+ the sender's identity + their effective tool
@@ -63,8 +66,8 @@ const store = new AsyncLocalStorage<TurnScope>();
 /** Run `fn` (a brain prompt turn) with `policy` established for any plugin tool it invokes. `opts`
  *  carries the sender's identity, a turn-bound elicitor/card-emitter, and the effective tool policy —
  *  all read at tool-execute time via the `current*()` accessors. */
-export function runWithPolicy<T>(policy: Policy, fn: () => T, opts?: { workDir?: string; identity?: TurnIdentity; elicit?: Elicitor; emitCard?: CardEmitter; emitSubagent?: SubagentEmitter; toolPolicy?: ToolPolicy }): T {
-  return store.run({ policy, workDir: opts?.workDir, identity: opts?.identity, elicit: opts?.elicit, emitCard: opts?.emitCard, emitSubagent: opts?.emitSubagent, toolPolicy: opts?.toolPolicy }, fn);
+export function runWithPolicy<T>(policy: Policy, fn: () => T, opts?: { workDir?: string; identity?: TurnIdentity; elicit?: Elicitor; emitCard?: CardEmitter; emitSubagent?: SubagentEmitter; toolPolicy?: ToolPolicy; model?: TurnModel }): T {
+  return store.run({ policy, workDir: opts?.workDir, identity: opts?.identity, elicit: opts?.elicit, emitCard: opts?.emitCard, emitSubagent: opts?.emitSubagent, toolPolicy: opts?.toolPolicy, model: opts?.model }, fn);
 }
 
 /** The Policy in effect for the current prompt turn, or undefined outside a `runWithPolicy` scope. */
@@ -102,6 +105,12 @@ export function currentElicitor(): Elicitor | null {
  *  nothing useful. */
 export function currentSubagentEmitter(): SubagentEmitter | null {
   return store.getStore()?.emitSubagent ?? null;
+}
+
+/** The provider+model the current turn's session runs on, or null outside a prompt turn — lets a
+ *  delegating plugin default its child to "the same model as me". */
+export function currentTurnModel(): TurnModel | null {
+  return store.getStore()?.model ?? null;
 }
 
 /** The turn-bound card emitter for `ctx.emitCard`, or null outside a prompt turn (or a transport that

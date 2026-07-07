@@ -19,16 +19,46 @@ export function register(ctx) {
   });
 
   ctx.registerTool(defineTool({
+    name: 'delegate_models', label: 'List sub-agent models',
+    description: 'List the models a sub-agent can run on (values for the delegate tool\'s "model" argument). '
+      + 'Only consult this when the user explicitly asked to run a sub-agent on a different model.',
+    parameters: Type.Object({}),
+    execute: async () => {
+      const list = await ctx.listModels().catch(() => []);
+      return ok(list.length
+        ? list.map((m) => `${m.provider}/${m.model}${m.providerLabel ? ` (${m.providerLabel})` : ''}`).join('\n')
+        : 'No models configured.');
+    },
+  }));
+
+  ctx.registerTool(defineTool({
     name: 'delegate', label: 'Delegate to sub-agent',
     description: 'Hand a self-contained task to a fresh sub-agent with its own clean context, and get back '
       + 'its result. Use for focused side-quests (research a file, draft a section, run a check) so your '
       + 'main conversation stays uncluttered. The sub-agent has the same tools and access as you.',
     parameters: Type.Object({
       task: Type.String({ description: 'The complete, self-contained instruction for the sub-agent — it does not see this conversation.' }),
+      model: Type.Optional(Type.String({
+        description: 'Run the sub-agent on a DIFFERENT model — pass this ONLY when the user explicitly asked for it. '
+          + 'Value from delegate_models ("provider/model" or a bare model id). Omit it to inherit your own model.',
+      })),
     }),
     execute: async (id, p) => {
       if (!run) return ok('Error: delegation is not wired up on this server.');
-      const access = { ...ctx.currentAccess(), prompt: 'You are a focused sub-agent. Complete the task and report the result concisely — no preamble.' };
+      // Default: the child runs on the SAME model as the delegating conversation. An explicit `model`
+      // must match a configured one — on a miss the error lists what IS available so the agent can
+      // self-correct (or relay the list to the user).
+      let model = ctx.currentModel() ?? undefined;
+      if (p.model) {
+        const list = await ctx.listModels().catch(() => []);
+        const want = p.model.trim();
+        const hit = list.find((m) => `${m.provider}/${m.model}` === want || m.model === want);
+        if (!hit) {
+          return ok(`Error: model "${want}" is not available. Available models:\n${list.map((m) => `- ${m.provider}/${m.model}`).join('\n') || '(none configured)'}`);
+        }
+        model = { provider: hit.provider, model: hit.model };
+      }
+      const access = { ...ctx.currentAccess(), model, prompt: 'You are a focused sub-agent. Complete the task and report the result concisely — no preamble.' };
       const channelId = `sub-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
       // Capture the PARENT turn's progress emitter NOW: the child's event callbacks below run inside the
       // CHILD session's turn scope, where ctx accessors no longer resolve to the delegating conversation.

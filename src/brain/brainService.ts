@@ -371,6 +371,12 @@ export class BrainService {
     // A parked ask_user_question must fail cleanly when the turn is aborted, else the tool Promise
     // (and the awaited prompt()) would hang forever. Reject before aborting the PI session.
     if (b.sessionId) this.elicitation.cancelForSession(b.sessionId, 'aborted');
+    // Cascade into running delegations: without this the child keeps working (and burning tokens)
+    // after the parent turn died — and the user's interrupt looks like it didn't take.
+    for (const child of b.activeChildren ?? []) {
+      if (child.startsWith('brain-ch-')) this.channelService.abort(child.slice('brain-ch-'.length));
+    }
+    b.activeChildren?.clear();
     await b.session.abort();
   }
 
@@ -619,6 +625,10 @@ export class BrainService {
     const cfg = this.runtimeConfig();
     const registry = buildBrainRegistry(cfg, this.d.authStorage);
     const model = resolveBrainModel(registry, cfg, opts.selection);
+    // The CONFIG entry id this session runs on (mirror of resolveBrainModel's entry pick) — stored so a
+    // turn can tell delegation "run the child on my provider+model" without re-deriving the default.
+    const providerId = (opts.selection.provider && cfg.providers.some((p) => p.id === opts.selection.provider))
+      ? opts.selection.provider : cfg.providers[0]?.id;
     // The session cwd is what pi advertises to the model ("Current working directory: …") and what
     // relative paths resolve against — it must be the USER'S project, never the brain's data dir
     // (the model would otherwise claim/act on that path). Same resolution as the per-turn workDir.
@@ -731,7 +741,7 @@ export class BrainService {
       const parts = providers.map((f) => { try { return f(); } catch { return ''; } }).filter((x) => x && x.trim());
       return parts.length ? `<context>\n${parts.join('\n')}\n</context>\n\n` : '';
     };
-    return { session, sessionId, model: model.id, thinkingLevel: opts.thinkingLevel, policy: opts.policy, autoCompact: opts.autoCompact, autoCompactAt: opts.autoCompactAt, listeners, turnContext, pluginToolNames: new Set(pluginTools.map((t) => t.name)), workDir: cwd };
+    return { session, sessionId, model: model.id, providerId, thinkingLevel: opts.thinkingLevel, policy: opts.policy, autoCompact: opts.autoCompact, autoCompactAt: opts.autoCompactAt, listeners, turnContext, pluginToolNames: new Set(pluginTools.map((t) => t.name)), workDir: cwd };
   }
 
   /** Start (or resume) a conversation. `session` resumes that stored conversation (ownership checked);
@@ -1032,7 +1042,12 @@ export class BrainService {
       const emitCard = (raw: unknown) => { const card = this.cards.set(live.sessionId, raw); if (card) for (const l of live.listeners) l({ type: 'card', card }); };
       // Live sub-agent progress: the delegate plugin captures this before spawning its child and pushes
       // updates as the child works — each fans out to THIS conversation's clients as a `subagent` event.
-      const emitSubagent = (u: SubagentUpdate) => { for (const l of live.listeners) l({ type: 'subagent', ...u }); };
+      // The running set doubles as the abort cascade's target list (see abort()).
+      const emitSubagent = (u: SubagentUpdate) => {
+        if (u.status === 'running') (live.activeChildren ??= new Set()).add(u.sessionId);
+        else live.activeChildren?.delete(u.sessionId);
+        for (const l of live.listeners) l({ type: 'subagent', ...u });
+      };
       // Assemble the live prompt INSIDE the identity/policy scope: turnContext providers run here, so a
       // plugin can scope its injection to the current user via currentIdentity() (e.g. per-user todos
       // instead of one global list leaking across users). memoryBlock/hookBlock are already resolved.
@@ -1050,7 +1065,7 @@ export class BrainService {
       await runWithPolicy(live.policy, () => {
         const prompted = memoryBlock + hookBlock + live.turnContext() + modeInstruction + text;
         return options ? live.session.prompt(prompted, options) : live.session.prompt(prompted);
-      }, { identity, elicit, emitCard, emitSubagent, toolPolicy, workDir });
+      }, { identity, elicit, emitCard, emitSubagent, toolPolicy, workDir, model: { provider: live.providerId, model: live.model } });
       // Post-turn curator: extract durable facts from this exchange in the background. Fire-and-forget
       // (mirrors brainWorker) — never awaited, never touches live.session, swallows its own errors.
       if (this.curator && memSettings?.autoSave !== false) {

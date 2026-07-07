@@ -1327,6 +1327,11 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
         return { consume: true };
       }
       const subRel = rel - cardPanel.render(Math.max(24, chatWidth())).length;
+      if (subRel >= 0 && subPanel.isHeaderRow(subRel)) {
+        subPanel.toggleCollapsed();
+        tui.requestRender();
+        return { consume: true };
+      }
       const target = subRel >= 0 ? subPanel.targetAt(subRel) : null;
       if (target) { void openSubagent(target); return { consume: true }; }
     }

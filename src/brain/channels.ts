@@ -195,7 +195,7 @@ export class ChannelSessionService {
         await runWithPolicy(opts.policy, () => {
           const prompted = memoryBlock + ch.turnContext() + text;
           return options ? ch.session.prompt(prompted, options) : ch.session.prompt(prompted);
-        }, { identity: opts.identity, elicit, emitCard, toolPolicy: opts.toolPolicy });
+        }, { identity: opts.identity, elicit, emitCard, toolPolicy: opts.toolPolicy, model: { provider: ch.providerId, model: ch.model } });
         // Hand the caller a settled idle (model + context fill) deterministically, AFTER the turn ends.
         // Proactive footers (every cron push builds `model · N %` from this) must not depend on the
         // stream's own idle winning the race against prompt() resolution — otherwise the footer is

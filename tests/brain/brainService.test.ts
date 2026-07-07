@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { realpathSync } from 'node:fs';
 import { BrainService } from '../../src/brain/brainService.js';
-import { currentWorkDir } from '../../src/plugins/policyContext.js';
+import { currentSubagentEmitter, currentTurnModel, currentWorkDir } from '../../src/plugins/policyContext.js';
 import { personalityText } from '../../src/brain/personality.js';
 import { openDb } from '../../src/store/db.js';
 import { BrainStore } from '../../src/store/brainStore.js';
@@ -1191,5 +1191,49 @@ describe('sub-agent session tap + owner steering', () => {
     await svc.sendToSubagent(1, 'brain-ch-subagent-sub1', 'also check X');
     expect(d.session.steer).toHaveBeenCalledWith('also check X'); // owner steering crosses the sender gate
     expect(d.session.prompt).toHaveBeenCalledTimes(1); // no second unlocked turn
+  });
+});
+
+describe('abort cascade + turn model exposure', () => {
+  it('abort cancels running delegated children along with the parent turn', async () => {
+    const d = fakeDeps();
+    const svc = new BrainService(d as never);
+    await svc.start(1);
+    // A delegate tool would register its child via the turn-bound emitter — simulate from inside prompt().
+    d.session.prompt.mockImplementationOnce(async () => {
+      currentSubagentEmitter()?.({ id: 't1', sessionId: 'brain-ch-subagent-subX', status: 'running', task: 'x', tools: 0, seconds: 0 });
+    });
+    await svc.send(1, 'delegate something');
+    const abortSpy = vi.fn();
+    (svc as unknown as { channelService: { abort: (id: string) => void } }).channelService.abort = abortSpy;
+    await svc.abort(1);
+    expect(abortSpy).toHaveBeenCalledWith('subagent-subX'); // brain-ch- prefix stripped → channel id
+    expect(d.session.abort).toHaveBeenCalled();
+  });
+
+  it('a settled child (done) is no longer in the abort cascade', async () => {
+    const d = fakeDeps();
+    const svc = new BrainService(d as never);
+    await svc.start(1);
+    d.session.prompt.mockImplementationOnce(async () => {
+      const emit = currentSubagentEmitter();
+      emit?.({ id: 't1', sessionId: 'brain-ch-subagent-subX', status: 'running', task: 'x', tools: 0, seconds: 0 });
+      emit?.({ id: 't1', sessionId: 'brain-ch-subagent-subX', status: 'done', task: 'x', tools: 1, seconds: 2 });
+    });
+    await svc.send(1, 'delegate something');
+    const abortSpy = vi.fn();
+    (svc as unknown as { channelService: { abort: (id: string) => void } }).channelService.abort = abortSpy;
+    await svc.abort(1);
+    expect(abortSpy).not.toHaveBeenCalled();
+  });
+
+  it('the turn scope exposes the session model for delegation inheritance', async () => {
+    const d = fakeDeps();
+    const svc = new BrainService(d as never);
+    await svc.start(1);
+    let seen: { provider?: string; model: string } | null = null;
+    d.session.prompt.mockImplementationOnce(async () => { seen = currentTurnModel(); });
+    await svc.send(1, 'hi');
+    expect(seen).toEqual({ provider: 'relay', model: 'm' });
   });
 });
