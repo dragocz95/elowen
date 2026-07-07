@@ -30,9 +30,9 @@ describe('cli/setup.marker', () => {
   });
 
   it('an interrupted-only marker is not onboarded but keeps resume state', () => {
-    writeMarker(env, { completed: false, skipped: false, updatedAt: 'x', resume: { stepIndex: 2, answers: { account: { username: 'admin', created: true, signedIn: false } } } });
+    writeMarker(env, { completed: false, skipped: false, updatedAt: 'x', resume: { answers: { account: { username: 'admin', created: true, signedIn: false } } } });
     expect(isOnboarded(env)).toBe(false);
-    expect(readMarker(env)?.resume?.stepIndex).toBe(2);
+    expect(readMarker(env)?.resume?.answers.account?.username).toBe('admin');
   });
 
   it('clears the marker (and is a no-op when already absent)', () => {

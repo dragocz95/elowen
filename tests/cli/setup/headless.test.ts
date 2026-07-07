@@ -5,7 +5,7 @@ import { PREFERRED_DEFAULT } from '../../../src/brain/providers.js';
 import { RECOMMENDED_EMBEDDING_MODEL, OPENROUTER_BASE, OPENAI_BASE } from '../../../src/cli/setup/constants.js';
 import type { WizardCtx } from '../../../src/cli/setup/types.js';
 
-const ctxWith = (fetchFn: typeof fetch): WizardCtx => ({ base: 'http://x', isTTY: false, debug: false, fetchFn, answers: {} });
+const ctxWith = (fetchFn: typeof fetch): WizardCtx => ({ base: 'http://x', fetchFn, answers: {} });
 
 interface RecCall { method: string; path: string; body: Record<string, unknown> | undefined }
 /** A stateful daemon stub: GET /config returns the current provider list; PUT /config that carries

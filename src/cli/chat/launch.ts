@@ -2,13 +2,17 @@ import { resolveToken, NeedsLogin, login } from './token.js';
 import { runChat } from './app.js';
 
 /** Prompt for a line on the TTY. `mute` hides typed characters (for passwords) by swallowing the
- *  readline echo — the standard Node trick, since readline has no built-in masked input. */
+ *  readline echo — the standard Node trick, since readline has no built-in masked input. The question
+ *  itself is printed directly: readline renders it through the same `_writeToOutput` the mute swallows,
+ *  so `rl.question(question)` under mute would show a blank line and the user would type blind. */
 async function promptLine(question: string, mute = false): Promise<string> {
   const { createInterface } = await import('node:readline');
   const rl = createInterface({ input: process.stdin, output: process.stdout, terminal: true });
   if (mute) {
     const anyRl = rl as unknown as { _writeToOutput: (s: string) => void };
     anyRl._writeToOutput = (s: string) => { if (s.includes('\n')) process.stdout.write('\n'); };
+    process.stdout.write(question);
+    return new Promise((resolve) => rl.question('', (a) => { rl.close(); resolve(a); }));
   }
   return new Promise((resolve) => rl.question(question, (a) => { rl.close(); resolve(a); }));
 }

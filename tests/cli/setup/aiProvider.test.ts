@@ -75,7 +75,7 @@ describe('cli/setup.runAiStep — reuse-provider wiring', () => {
       'PUT /config': { ok: true },
       'POST /brain/test': { ok: true, model: 'm1', reply: 'OK' },
     });
-    const ctx: WizardCtx = { base: 'http://x', isTTY: true, debug: false, fetchFn, token: 'admin-tok', answers: {} };
+    const ctx: WizardCtx = { base: 'http://x', fetchFn, token: 'admin-tok', answers: {} };
 
     const result = await runAiStep(ctx);
 
@@ -105,7 +105,7 @@ describe('cli/setup.runAiStep — reuse-provider wiring', () => {
       'PUT /config': { ok: true },
       'POST /brain/test': { ok: false, error: 'connection refused' },
     });
-    const ctx: WizardCtx = { base: 'http://x', isTTY: true, debug: false, fetchFn, token: 'admin-tok', answers: {} };
+    const ctx: WizardCtx = { base: 'http://x', fetchFn, token: 'admin-tok', answers: {} };
 
     const result = await runAiStep(ctx);
 

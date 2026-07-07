@@ -600,6 +600,7 @@ class DiscordAdapter {
       if (reactions) { await this.unreact(m.channel_id, m.id, '👀').catch(() => {}); void this.react(m.channel_id, m.id, '✅').catch(() => {}); }
     } catch (e) {
       clearInterval(typing);
+      stream?.abandon(); // the stall-hint timer must not edit the dead progress bubble after the error reply
       if (reactions) { await this.unreact(m.channel_id, m.id, '👀').catch(() => {}); void this.react(m.channel_id, m.id, '❌').catch(() => {}); }
       await this.reply(m.channel_id, `⚠️ ${e?.message ?? e}`).catch(() => {});
     }
@@ -1098,6 +1099,12 @@ export class LiveMessage {
     } else if (e.type === 'idle') {
       this.idle = e;
     }
+  }
+  /** Freeze the live bubble on a FAILED turn: clear the stall-hint timer and close the progress message
+   *  so a straggler "⚙️ Step N" edit can't land after the ❌ + ⚠️ error reply already went out. */
+  abandon() {
+    clearTimeout(this.stallTimer);
+    if (this.progress) this.progress.closed = true;
   }
   async finalize(reply) {
     // Settle the progress bubble to its complete tool list (a throttled edit may still be pending),

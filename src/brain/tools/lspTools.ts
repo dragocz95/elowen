@@ -1,6 +1,7 @@
 import { defineTool } from '@earendil-works/pi-coding-agent';
 import { Type } from 'typebox';
 import { LspManager, formatCheckResult } from '../../lsp/manager.js';
+import { assertPathAllowed } from '../../plugins/pathGuard.js';
 
 /** One daemon-wide LSP manager (owns the live language-server clients). Shared by the `lsp_diagnostics`
  *  tool and the `/lsp` toggle so enabling/disabling and diagnostics hit the same servers. Lazily built so
@@ -29,7 +30,13 @@ export function buildLspTools() {
       description: 'Type-check a file with its language server (LSP) and return errors/warnings with exact line:column. Call this right after editing a code file to immediately confirm it still compiles. Returns "no problems" for a clean file, and a clear note when LSP is off (/lsp) or no server is installed for the language.',
       parameters: Type.Object({ path: Type.String({ description: 'Absolute path to the file to check' }) }),
       execute: async (_id: string, p: { path: string }) => {
-        const result = await lspManager().checkFile(p.path);
+        // Same per-user path policy as every other file tool — without it a user scoped to one project
+        // could feed ANY file on disk to a language server and read its content back through quoted
+        // diagnostics. Reject with a plain error text (tools report, they don't throw).
+        let path: string;
+        try { path = assertPathAllowed(p.path); }
+        catch (e) { return { content: [{ type: 'text' as const, text: `LSP: ${(e as Error).message}` }], details: {} }; }
+        const result = await lspManager().checkFile(path);
         const text = formatCheckResult(result) || `LSP: nothing to check for ${p.path}.`;
         return { content: [{ type: 'text' as const, text }], details: {} };
       },

@@ -18,8 +18,6 @@ export interface WizardAnswers {
  *  `fetchFn` is injected so the API-facing logic stays unit-testable (mirrors setup.ts). */
 export interface WizardCtx {
   base: string;
-  isTTY: boolean;
-  debug: boolean;
   fetchFn: typeof fetch;
   token?: string;
   answers: WizardAnswers;

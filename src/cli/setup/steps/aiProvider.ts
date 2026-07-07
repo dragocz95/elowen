@@ -224,7 +224,10 @@ async function persistOauthEntry(ctx: WizardCtx, type: BrainProviderType, provid
   const preferred = PREFERRED_DEFAULT[ch.builtin];
   const model = preferred && cat.includes(preferred) ? preferred : cat[0] ?? '';
   const id = `oauth-${ch.builtin}`;
-  await saveProvider(ctx, { id, label: stripSignIn(ch.label), type, baseUrl: '', models: model ? [model] : [] }, providers);
+  // The OAuth credential connected, but the run isn't usable until the config entry lands too — a failed
+  // save must NOT claim "Connected" (the later smoke test would then fail on a provider that isn't there).
+  const ok = await saveProvider(ctx, { id, label: stripSignIn(ch.label), type, baseUrl: '', models: model ? [model] : [] }, providers);
+  if (!ok) { p.log.error('Saving the provider failed.'); return skip(ctx); }
   p.log.success(`Connected ${stripSignIn(ch.label)}.`);
   return done(ctx, stripSignIn(ch.label), model, id, type, false);
 }

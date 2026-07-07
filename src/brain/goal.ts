@@ -83,14 +83,19 @@ export function lastAssistantText(store: BrainStore, sessionId: string): string 
  *  is NOT a real declaration — a model echoing the protocol at line-start must not trip the sentinel. */
 const isPlaceholderEcho = (s: string): boolean => /^<[^>]*>/.test(s.trim());
 /** Strip fenced code blocks before matching so a self-referential goal ("document the GOAL_DONE protocol")
- *  can't trip a sentinel with an example line inside ```…```. */
-const stripFences = (text: string): string => text.replace(/```[\s\S]*?```/g, '');
+ *  can't trip a sentinel with an example line inside ```…```. An UNCLOSED opening fence (a truncated turn)
+ *  swallows the rest of the text — a sentinel inside it is still example code, not a declaration. */
+const stripFences = (text: string): string => text.replace(/```[\s\S]*?```/g, '').replace(/```[\s\S]*$/, '');
 const cleanCapture = (s: string): string => s.replace(/[`*_~]+\s*$/, '').replace(/\s+/g, ' ').trim();
+/** Markdown wrapping allowed before a sentinel: backtick/bold/italic glyphs DIRECTLY attached to it
+ *  (`` `GOAL_DONE:` ``, `**GOAL_DONE:**`). A glyph followed by whitespace is a BULLET (`* GOAL_DONE: …`),
+ *  i.e. the model recapping the protocol in a list — that must not trip the sentinel. */
+const MD = '(?:[`*_~]+(?=\\S))?';
 
 export function judgeGoalCompletion(text: string): { done: boolean; evidence: string } {
   // Tolerate common markdown wrapping — the prompt shows the sentinel in backticks, so a model may echo
   // `GOAL_DONE: …` or **GOAL_DONE: …**. Allow leading/trailing `*_~ around the sentinel and strip them.
-  const m = /^[^\S\r\n]*[`*_~]*\s*GOAL_DONE:[^\S\r\n]*(.+)$/im.exec(stripFences(text));
+  const m = new RegExp(`^[^\\S\\r\\n]*${MD}GOAL_DONE:[^\\S\\r\\n]*(.+)$`, 'im').exec(stripFences(text));
   if (!m) return { done: false, evidence: '' };
   const evidence = cleanCapture(m[1] ?? '');
   // Guard against a model echoing the literal instruction placeholder rather than real evidence.
@@ -102,7 +107,7 @@ export function judgeGoalCompletion(text: string): { done: boolean; evidence: st
  *  sentinel (symmetric to GOAL_DONE). Lets the model stop an unresolvable goal for the operator instead
  *  of looping until the turn budget runs out. Same markdown tolerance + placeholder guard. */
 export function judgeGoalBlocked(text: string): { blocked: boolean; reason: string } {
-  const m = /^[^\S\r\n]*[`*_~]*\s*GOAL_BLOCKED:[^\S\r\n]*(.+)$/im.exec(stripFences(text));
+  const m = new RegExp(`^[^\\S\\r\\n]*${MD}GOAL_BLOCKED:[^\\S\\r\\n]*(.+)$`, 'im').exec(stripFences(text));
   if (!m) return { blocked: false, reason: '' };
   const reason = cleanCapture(m[1] ?? '');
   if (!reason || isPlaceholderEcho(reason)) return { blocked: false, reason: '' };
@@ -114,7 +119,7 @@ export function judgeGoalBlocked(text: string): { blocked: boolean; reason: stri
  *  PROGRESS line wins (a turn may note interim then final progress). */
 export function parseProgress(text: string): string {
   const src = stripFences(text);
-  const re = /^[^\S\r\n]*[`*_~]*\s*PROGRESS:[^\S\r\n]*(.+)$/gim;
+  const re = new RegExp(`^[^\\S\\r\\n]*${MD}PROGRESS:[^\\S\\r\\n]*(.+)$`, 'gim');
   let last = '';
   for (let m = re.exec(src); m; m = re.exec(src)) last = m[1] ?? ''; // last PROGRESS line wins
   const summary = cleanCapture(last);
@@ -126,7 +131,7 @@ export function parseProgress(text: string): string {
 export function parseSubgoalDone(text: string): number[] {
   const out = new Set<number>();
   const src = stripFences(text);
-  const re = /^[^\S\r\n]*[`*_~]*\s*SUBGOAL_DONE:[^\S\r\n]*(\d+)/gim;
+  const re = new RegExp(`^[^\\S\\r\\n]*${MD}SUBGOAL_DONE:[^\\S\\r\\n]*(\\d+)`, 'gim');
   for (let m = re.exec(src); m; m = re.exec(src)) {
     const n = Number(m[1]);
     if (Number.isInteger(n) && n >= 1) out.add(n);

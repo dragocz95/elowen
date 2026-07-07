@@ -685,8 +685,10 @@ export class BrainService {
       }
       // A turn that settled on a provider error (stopReason 'error', no text) would otherwise wind down
       // as a bare idle — the web/CLI client shows NOTHING and the failure is invisible (the silent-reply
-      // bug). Surface the provider's message as an error event ahead of the terminal idle.
-      if (raw === 'agent_end') {
+      // bug). Surface the provider's message as an error event ahead of the terminal idle. NOT when PI is
+      // about to auto-retry (`willRetry`): a transient 429/5xx emits an errored agent_end per attempt, and
+      // a premature error event would fail a headless run (exit 1) that the retry was about to rescue.
+      if (raw === 'agent_end' && !(e as { willRetry?: boolean }).willRetry) {
         const msgs = (e as { messages?: { role?: string; stopReason?: string; errorMessage?: string; content?: unknown }[] }).messages ?? [];
         const last = [...msgs].reverse().find((m) => m.role === 'assistant');
         const text = Array.isArray(last?.content)

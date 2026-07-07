@@ -11,7 +11,9 @@ export function openBrowser(url: string): boolean {
   const plat = process.platform;
   const cmd =
     plat === 'darwin' ? { bin: 'open', args: [url] }
-    : plat === 'win32' ? { bin: 'cmd', args: ['/c', 'start', '', url] }
+    // NOT `cmd /c start`: cmd.exe re-parses its argv, so the `&`/`%` every OAuth URL carries would split
+    // the URL and execute the tail as a command. rundll32 opens the default browser with no shell parse.
+    : plat === 'win32' ? { bin: 'rundll32', args: ['url.dll,FileProtocolHandler', url] }
     : (process.env.DISPLAY || process.env.WAYLAND_DISPLAY) ? { bin: 'xdg-open', args: [url] }
     : null; // Linux without a display server → headless
   if (!cmd) return false;

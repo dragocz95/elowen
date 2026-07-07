@@ -191,6 +191,11 @@ describe('BrainService', () => {
     seen.length = 0;
     d.emit({ type: 'agent_end', willRetry: false, messages: [{ role: 'assistant', content: [{ type: 'text', text: 'fine' }], stopReason: 'stop' }] });
     expect(seen.some((e) => e.type === 'error')).toBe(false);
+    // an errored attempt PI is about to auto-retry must stay silent — a premature error event would
+    // fail a headless run (exit 1) that the retry was about to rescue
+    seen.length = 0;
+    d.emit({ type: 'agent_end', willRetry: true, messages: [{ role: 'assistant', content: [], stopReason: 'error', errorMessage: '429: overloaded' }] });
+    expect(seen.some((e) => e.type === 'error')).toBe(false);
   });
 
   it('send forwards to the PI session, persists the turn, and emits events', async () => {

@@ -1,3 +1,4 @@
+import { runWithPolicy } from '../../src/plugins/policyContext.js';
 import { describe, it, expect } from 'vitest';
 import { encodeMessage, MessageDecoder } from '../../src/lsp/protocol.js';
 import { detectLanguage, serverForLanguage, commandExists } from '../../src/lsp/servers.js';
@@ -263,12 +264,25 @@ describe('LspManager', () => {
 });
 
 describe('lsp tool + /lsp toggle', () => {
-  it('exposes an lsp_diagnostics tool that returns readable text', async () => {
+  it('exposes an lsp_diagnostics tool that returns readable text (inside an allowed root)', async () => {
     const tool = buildLspTools().find((t) => t.name === 'lsp_diagnostics')!;
     expect(tool).toBeDefined();
-    // A non-code path is a graceful no-op (no server spawned) regardless of install state.
-    const res = await tool.execute('c1', { path: '/tmp/readme.md' });
+    // A non-code path is a graceful no-op (no server spawned) regardless of install state. The tool
+    // enforces the same per-user path policy as every file tool, so run under one covering the path.
+    const res = await runWithPolicy(
+      { allowedProjectIds: new Set([1]), allowedPaths: () => ['/tmp'] },
+      () => tool.execute('c1', { path: '/tmp/readme.md' }),
+    );
     expect(res.content[0]!.text).toContain('nothing to check');
+  });
+
+  it('lsp_diagnostics refuses a path outside the session policy (no file read, no server)', async () => {
+    const tool = buildLspTools().find((t) => t.name === 'lsp_diagnostics')!;
+    const res = await runWithPolicy(
+      { allowedProjectIds: new Set([1]), allowedPaths: () => ['/tmp/only-here'] },
+      () => tool.execute('c1', { path: '/etc/passwd' }),
+    );
+    expect(res.content[0]!.text).toMatch(/not allowed/);
   });
 
   it('toggle flips the shared manager state and back', () => {

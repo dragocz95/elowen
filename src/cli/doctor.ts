@@ -4,8 +4,9 @@ import { webBaseUrl } from './installInfo.js';
 import { color } from './chat/theme.js';
 import { openBrowser } from './setup/browser.js';
 
-/** One readiness check as returned by `GET /system/readiness`. */
-interface ReadinessCheck { id: string; label: string; ok: boolean; detail: string; hint?: string }
+/** One readiness check as returned by `GET /system/readiness` — the single shared shape (the setup
+ *  wizard's finish screen and headless setup read the same endpoint). */
+export interface ReadinessCheck { id: string; label: string; ok: boolean; detail: string; hint?: string }
 interface ReadinessResponse { checks: ReadinessCheck[] }
 
 /** Unwrap a prompt result — Ctrl+C/Esc during the login prompt just aborts the command (exit 1)

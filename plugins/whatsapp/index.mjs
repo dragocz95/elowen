@@ -396,6 +396,12 @@ export class LiveMessage {
       this.idle = e;
     }
   }
+  /** Freeze the live bubble on a FAILED turn: clear the stall-hint timer and close the progress message
+   *  so a straggler "⚙️ Step N" edit can't land after the ❌ + ⚠️ error reply already went out. */
+  abandon() {
+    clearTimeout(this.stallTimer);
+    if (this.progress) this.progress.closed = true;
+  }
   async finalize(reply) {
     clearTimeout(this.stallTimer);
     if (this.progress) {
@@ -717,6 +723,7 @@ class WhatsAppAdapter {
       if (reactions) void this.react(m.key, '✅').catch(() => {});
     } catch (e) {
       clearInterval(typing);
+      stream?.abandon(); // the stall-hint timer must not edit the dead progress bubble after the error reply
       void this.sock.sendPresenceUpdate('paused', chatJid).catch(() => {});
       if (reactions) void this.react(m.key, '❌').catch(() => {});
       await this.sendText(chatJid, `⚠️ ${e?.message ?? e}`, m).catch(() => {});

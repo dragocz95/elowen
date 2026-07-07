@@ -43,7 +43,7 @@ export async function runSetup(args: string[], env: NodeJS.ProcessEnv, base: str
   catch (e) { console.error(`Couldn't start the Orca daemon: ${(e as Error).message}`); process.exit(1); }
 
   try {
-    await runOnboarding(base, env, { reset, debug });
+    await runOnboarding(base, env, { reset });
   } catch (e) {
     // Never dump a stack unless the operator asked for it — a human message is the default.
     console.error(debug ? ((e as Error).stack ?? String(e)) : (e as Error).message);
@@ -60,7 +60,10 @@ export async function maybeOfferSetup(base: string, env: NodeJS.ProcessEnv, vers
   if (p.isCancel(go) || !go) return;
   try { await bringUp(base, env, version); }
   catch (e) { p.log.error(`Couldn't start the Orca daemon: ${(e as Error).message}`); return; }
-  await runOnboarding(base, env, {});
+  // The wizard is a guest inside the launcher menu here — a mid-step failure (daemon died, fetch failed)
+  // must return to the menu like every other menu action, not crash the whole `orca` process.
+  try { await runOnboarding(base, env, {}); }
+  catch (e) { p.log.error((e as Error).message); }
 }
 
 /** Bring the daemon up the right way for this box: nothing if it's already healthy, else systemctl on an

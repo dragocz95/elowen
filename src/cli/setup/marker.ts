@@ -12,8 +12,10 @@ export interface SetupMarker {
   /** Finished via "Skip remaining" — completed, but with steps left unconfigured. */
   skipped: boolean;
   updatedAt: string;
-  /** Present only for an interrupted run: where to pick back up, with the answers gathered so far. */
-  resume?: { stepIndex: number; answers: WizardAnswers };
+  /** Present only for an interrupted run: the answers gathered so far. Deliberately NO step index — the
+   *  bearer token is never persisted (it's a secret), so a resumed run MUST re-enter at the Account step
+   *  to sign in again; jumping mid-wizard would 401 on every daemon call with misleading errors. */
+  resume?: { answers: WizardAnswers };
 }
 
 export function markerPath(env: NodeJS.ProcessEnv): string {

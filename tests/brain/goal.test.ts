@@ -65,6 +65,15 @@ describe('sentinels ignore fenced code blocks', () => {
     expect(judgeGoalCompletion('Here is the protocol:\n```\nGOAL_DONE: all tests pass\n```\nStill working on it.').done).toBe(false);
     expect(parseSubgoalDone('```\nSUBGOAL_DONE: 1\n```').length).toBe(0);
   });
+  it('an UNCLOSED opening fence swallows the rest (truncated turn is still example code)', () => {
+    expect(judgeGoalCompletion('Protocol example:\n```\nGOAL_DONE: all tests pass').done).toBe(false);
+  });
+  it('a bullet-list recap of the protocol does not trip the sentinel', () => {
+    expect(judgeGoalCompletion('* GOAL_DONE: emitted only when everything is finished').done).toBe(false);
+    expect(judgeGoalBlocked('* GOAL_BLOCKED: used when stuck').blocked).toBe(false);
+    // directly-attached markdown still tolerated
+    expect(judgeGoalCompletion('**GOAL_DONE: build green**').done).toBe(true);
+  });
 });
 
 describe('subgoal check-off protocol', () => {

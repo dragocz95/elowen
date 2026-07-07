@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { navigate, type ReviewDecision } from '../../../src/cli/setup/wizard.js';
 import { WizardCancelled, type StepResult, type WizardCtx, type WizardStep } from '../../../src/cli/setup/types.js';
 
-const ctx = (): WizardCtx => ({ base: 'http://x', isTTY: true, debug: false, fetchFn: (async () => new Response('{}')) as unknown as typeof fetch, answers: {} });
+const ctx = (): WizardCtx => ({ base: 'http://x', fetchFn: (async () => new Response('{}')) as unknown as typeof fetch, answers: {} });
 const step = (id: string, run: () => Promise<StepResult>): WizardStep => ({ id: id as WizardStep['id'], title: id, run });
 const finish = async (): Promise<ReviewDecision> => 'finish';
 

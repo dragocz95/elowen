@@ -70,8 +70,21 @@ function shouldShowToolOutput(toolName: string, text: string, tone: ToolOutputVi
     && text.trim().length > 0;
 }
 
+/** Neutralize terminal control bytes from untrusted tool output before it reaches a renderer. ESC-led
+ *  sequences (CSI colors, but also OSC-52 clipboard writes, title changes, DCS/PM/APC) and C0 controls
+ *  other than \n/\t are stripped: the CLI measures width with ANSI stripped but WRITES lines verbatim, so
+ *  a `cat`/`grep` over a file that embeds sequences would pass the width check and then EXECUTE them in
+ *  the user's terminal. Colors are dropped too — output blocks are re-styled by the view anyway. */
+function stripControl(s: string): string {
+  return s
+    // ESC-led sequence: CSI (\u001b[…cmd), OSC (\u001b]…BEL|ST), DCS/SOS/PM/APC (\u001bP/X/^/_…ST), else eat one char.
+    .replace(/\u001b(?:\[[0-?]*[ -\/]*[@-~]|\][^\u0007\u001b]*(?:\u0007|\u001b\\)?|[PX^_][^\u001b]*(?:\u001b\\)?|.)?/g, '')
+    // Remaining C0 controls (incl. lone \r and BEL) except \n and \t, plus DEL.
+    .replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, '');
+}
+
 function compactOutput(text: string): string {
-  const lines = text.replace(/\r\n/g, '\n').split('\n').map((line) => line.replace(/\s+$/g, ''));
+  const lines = stripControl(text.replace(/\r\n/g, '\n')).split('\n').map((line) => line.replace(/\s+$/g, ''));
   const meaningful = lines.filter((line, index) => line.trim() || (lines[index - 1]?.trim() && lines[index + 1]?.trim()));
   const maxLines = 6;
   const omitted = Math.max(0, meaningful.length - maxLines);
@@ -82,7 +95,7 @@ function compactOutput(text: string): string {
 }
 
 function expandedOutput(text: string): string {
-  const lines = text.replace(/\r\n/g, '\n').split('\n').map((line) => line.replace(/\s+$/g, ''));
+  const lines = stripControl(text.replace(/\r\n/g, '\n')).split('\n').map((line) => line.replace(/\s+$/g, ''));
   const meaningful = lines.filter((line, index) => line.trim() || (lines[index - 1]?.trim() && lines[index + 1]?.trim()));
   const maxLines = 80;
   const omitted = Math.max(0, meaningful.length - maxLines);

@@ -8,6 +8,7 @@ import { webBaseUrl } from '../installInfo.js';
 import { getBrainProviders, keepProvider, putEmbeddedExec } from './steps/shared.js';
 import type { BrainProviderType } from '../../store/configStore.js';
 import type { WizardCtx } from './types.js';
+import type { ReadinessCheck } from '../doctor.js';
 
 /** Non-interactive `orca setup` — the same daemon-API onboarding as the wizard, driven entirely by flags /
  *  env instead of prompts. Lets agents and CI reach a working setup headlessly (and is how the whole flow
@@ -21,7 +22,7 @@ export async function runHeadlessSetup(base: string, env: NodeJS.ProcessEnv, arg
     return die(`Unknown --memory "${rawMemory}". Use one of: ${MEMORY_MODES.join(', ')}.`);
   }
   const o = parseFlags(args, env);
-  const ctx: WizardCtx = { base, isTTY: false, debug: o.debug, fetchFn: fetch, answers: {} };
+  const ctx: WizardCtx = { base, fetchFn: fetch, answers: {} };
 
   // ── Account ──────────────────────────────────────────────────────────────────────────────────
   const first = await isFirstRun(fetch, base);
@@ -141,7 +142,7 @@ export async function runHeadlessSetup(base: string, env: NodeJS.ProcessEnv, arg
   writeMarker(env, { completed: true, skipped: !o.provider, updatedAt: new Date().toISOString() });
 
   // ── Readiness matrix ───────────────────────────────────────────────────────────────────────────
-  const checks = (await apiJson<{ checks?: { label: string; ok: boolean; detail: string; hint?: string }[] }>(ctx, 'GET', '/system/readiness')).data?.checks;
+  const checks = (await apiJson<{ checks?: ReadinessCheck[] }>(ctx, 'GET', '/system/readiness')).data?.checks;
   if (checks?.length) {
     console.log('\nReadiness:');
     for (const c of checks) {
@@ -155,7 +156,6 @@ export async function runHeadlessSetup(base: string, env: NodeJS.ProcessEnv, arg
 
 // ── flags ────────────────────────────────────────────────────────────────────────────────────────
 export interface HeadlessOpts {
-  debug: boolean;
   adminUser: string;
   adminPassword?: string;
   project?: string;
@@ -187,7 +187,6 @@ export function parseFlags(args: string[], env: NodeJS.ProcessEnv): HeadlessOpts
   const has = (name: string): boolean => args.includes(name);
   const memory = (val('--memory') ?? 'skip') as HeadlessOpts['memory'];
   return {
-    debug: has('--debug'),
     adminUser: val('--admin-user') ?? env.ORCA_ADMIN_USER ?? 'admin',
     adminPassword: val('--admin-password') ?? env.ORCA_ADMIN_PASSWORD,
     // Project registration is opt-in: only when `--project <path>` is passed. It used to default to

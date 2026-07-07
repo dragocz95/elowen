@@ -7,9 +7,7 @@ import { readMarker, writeMarker } from './marker.js';
 import { webBaseUrl } from '../installInfo.js';
 import { apiJson } from './http.js';
 import { guard, WizardCancelled, type WizardAnswers, type WizardCtx, type WizardStep } from './types.js';
-
-/** One readiness check as returned by GET /system/readiness. */
-interface ReadinessCheck { id: string; label: string; ok: boolean; detail: string; hint?: string }
+import type { ReadinessCheck } from '../doctor.js';
 
 const STEPS: WizardStep[] = [
   { id: 'account', title: 'Account', run: runAccountStep },
@@ -48,7 +46,6 @@ export async function navigate(steps: WizardStep[], ctx: WizardCtx, hooks: NavHo
 
 export interface OnboardingOpts {
   reset?: boolean;
-  debug?: boolean;
   /** Embedded inside another flow (e.g. `orca install`): skip the wizard's own intro/outro so the host
    *  provides the framing. Steps and progress still render. */
   embedded?: boolean;
@@ -60,26 +57,27 @@ export interface OnboardingOpts {
 export async function runOnboarding(base: string, env: NodeJS.ProcessEnv, opts: OnboardingOpts = {}): Promise<string | null> {
   const prior = opts.reset ? null : readMarker(env);
   const answers: WizardAnswers = prior?.resume?.answers ?? {};
-  const ctx: WizardCtx = { base, isTTY: !!process.stdout.isTTY, debug: !!opts.debug, fetchFn: fetch, answers };
-  const startIndex = prior?.resume?.stepIndex ?? 0;
+  const ctx: WizardCtx = { base, fetchFn: fetch, answers };
 
   if (!opts.embedded) {
     p.intro('Welcome to Orca');
     p.log.message("Let's get your workspace ready — 5 quick steps. You can skip anything and finish later.");
   }
 
-  let index = startIndex;
   try {
+    // A resumed run ALWAYS re-enters at the Account step: the bearer token isn't persisted (secret), and
+    // every later step talks to the daemon — jumping past sign-in would 401 everywhere with misleading
+    // errors ("the key may be wrong", "Saving the provider failed") while the summary claims success.
     const result = await navigate(STEPS, ctx, {
-      onStep: (i, step) => { index = i; p.log.step(`[${i + 1}/${TOTAL}] ${step.title}`); },
+      onStep: (i, step) => p.log.step(`[${i + 1}/${TOTAL}] ${step.title}`),
       review: () => review(ctx),
-    }, startIndex);
+    });
     await finish(env, ctx, result.skipped, !!opts.embedded);
     return answers.account?.username || null;
   } catch (e) {
     if (e instanceof WizardCancelled) {
       const save = await confirmSave();
-      if (save) writeMarker(env, { completed: false, skipped: false, updatedAt: new Date().toISOString(), resume: { stepIndex: index, answers } });
+      if (save) writeMarker(env, { completed: false, skipped: false, updatedAt: new Date().toISOString(), resume: { answers } });
       p.cancel(save ? 'Setup paused — resume anytime with `orca setup`.' : 'Setup cancelled.');
       return null;
     }
