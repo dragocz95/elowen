@@ -55,7 +55,7 @@ describe('reduce — reasoning + notice', () => {
 
 describe('parseCommand', () => {
   it('routes slash commands and passes the resume argument through', async () => {
-    const { parseCommand } = await import('../../../src/cli/chat/app.js');
+    const { parseCommand } = await import('../../../src/cli/chat/commands.js');
     expect(parseCommand('/new')).toEqual({ cmd: 'new' });
     expect(parseCommand('/sessions')).toEqual({ cmd: 'sessions' });
     expect(parseCommand('/resume 2')).toEqual({ cmd: 'resume', arg: '2' });
@@ -85,7 +85,7 @@ describe('parseCommand', () => {
 
 describe('isSlashCommandDraft', () => {
   it('is true while the input can still be a command name and false for ordinary text', async () => {
-    const { isSlashCommandDraft } = await import('../../../src/cli/chat/app.js');
+    const { isSlashCommandDraft } = await import('../../../src/cli/chat/commands.js');
     expect(isSlashCommandDraft('/')).toBe(true);
     expect(isSlashCommandDraft('/mo')).toBe(true);
     expect(isSlashCommandDraft('/model')).toBe(true);
@@ -98,7 +98,7 @@ describe('isSlashCommandDraft', () => {
 
 describe('mode toggle key', () => {
   it('recognizes Shift+Tab and the Ctrl+Tab sequence some terminals emit', async () => {
-    const { isModeToggleKey } = await import('../../../src/cli/chat/app.js');
+    const { isModeToggleKey } = await import('../../../src/cli/chat/keys.js');
     expect(isModeToggleKey('\x1b[Z')).toBe(true);
     expect(isModeToggleKey('\x1b[9;5u')).toBe(true);
     expect(isModeToggleKey('\t')).toBe(false);
@@ -107,7 +107,7 @@ describe('mode toggle key', () => {
 
 describe('statusline', () => {
   it('renders only the toggled parts and hides entirely when the plugin is off', async () => {
-    const { statusline } = await import('../../../src/cli/chat/app.js');
+    const { statusline } = await import('../../../src/cli/chat/shell.js');
     const usage = { tokens: 34_500, contextWindow: 200_000, percent: 17.25, totalTokens: 1_234_567, cost: 0.4218 };
     expect(statusline(null, usage, 'opus')).toBe('');
     expect(statusline({}, usage, 'opus')).toBe('');

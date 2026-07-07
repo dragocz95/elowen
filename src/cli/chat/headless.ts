@@ -1,7 +1,7 @@
 import type { BrainEvent } from '../../brain/events.js';
 import { BrainClient } from './brainClient.js';
 import type { GoalView } from './brainClient.js';
-import { parseCommand } from './app.js';
+import { parseCommand } from './commands.js';
 import { expandPromptCommand } from '../../brain/slashCommands.js';
 import { resolveToken } from './token.js';
 

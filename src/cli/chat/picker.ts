@@ -1,4 +1,5 @@
-import { SelectList, Editor, matchesKey, visibleWidth } from '@earendil-works/pi-tui';
+import { SelectList, Editor, visibleWidth } from '@earendil-works/pi-tui';
+import { isBackspaceKey, isDownKey, isEnterKey, isEscapeKey, isUpKey } from './keys.js';
 import type { SelectItem, TUI } from '@earendil-works/pi-tui';
 import { getSelectListTheme } from '@earendil-works/pi-coding-agent';
 import { color } from './theme.js';
@@ -12,7 +13,7 @@ export class ChatEditor extends Editor {
    *  streaming to interrupt) lets Esc fall through to the base Editor instead of being silently swallowed. */
   onEscape?: () => boolean;
   override handleInput(data: string): void {
-    if (matchesKey(data, 'escape') && !this.isShowingAutocomplete() && this.onEscape?.()) {
+    if (isEscapeKey(data) && !this.isShowingAutocomplete() && this.onEscape?.()) {
       return;
     }
     super.handleInput(data);
@@ -105,7 +106,7 @@ class PickerModal {
     if (this.onInput?.(data, this.list.getSelectedItem(), this.onCancel)) return;
     // Type-to-filter — the footer advertises it, so it must actually work. Printable characters (incl.
     // pastes / kitty-protocol keys, via the shared decoder) narrow the list; backspace widens it.
-    if (matchesKey(data, 'backspace')) {
+    if (isBackspaceKey(data)) {
       this.filter = this.filter.slice(0, -1);
       this.applyFilter();
       return;
@@ -190,9 +191,9 @@ class TextInputModal {
   ) { this.value = initial; }
   invalidate(): void { /* state driven */ }
   handleInput(data: string): void {
-    if (matchesKey(data, 'escape')) { this.onCancel(); return; }
-    if (matchesKey(data, 'enter')) { this.onSubmit(this.value); return; }
-    if (matchesKey(data, 'backspace') || data === '\x7f') { this.value = this.value.slice(0, -1); return; }
+    if (isEscapeKey(data)) { this.onCancel(); return; }
+    if (isEnterKey(data)) { this.onSubmit(this.value); return; }
+    if (isBackspaceKey(data)) { this.value = this.value.slice(0, -1); return; }
     // Shared printable decoder → pasted titles and kitty-protocol keys land instead of being dropped for
     // starting with ESC (bracketed paste is one `\x1b[200~…` chunk).
     this.value += printableInput(data);
@@ -233,10 +234,10 @@ class InfoModal {
   ) {}
   invalidate(): void { /* state driven */ }
   handleInput(data: string): void {
-    if (matchesKey(data, 'escape') || matchesKey(data, 'enter') || data === 'q') { this.onClose(); return; }
+    if (isEscapeKey(data) || isEnterKey(data) || data === 'q') { this.onClose(); return; }
     const maxScroll = Math.max(0, this.lines.length - this.viewport);
-    if (data === '\x1b[B' || matchesKey(data, 'down')) this.scroll = Math.min(maxScroll, this.scroll + 1);
-    else if (data === '\x1b[A' || matchesKey(data, 'up')) this.scroll = Math.max(0, this.scroll - 1);
+    if (isDownKey(data)) this.scroll = Math.min(maxScroll, this.scroll + 1);
+    else if (isUpKey(data)) this.scroll = Math.max(0, this.scroll - 1);
   }
   render(width: number): string[] {
     const bodyWidth = Math.max(1, width - 4);

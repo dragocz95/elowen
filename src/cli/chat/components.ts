@@ -1,4 +1,5 @@
-import { matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi } from '@earendil-works/pi-tui';
+import { truncateToWidth, visibleWidth, wrapTextWithAnsi } from '@earendil-works/pi-tui';
+import { isDownKey, isEnterKey, isEscapeKey, isUpKey } from './keys.js';
 import type { Component, Container, Editor, Focusable, TUI } from '@earendil-works/pi-tui';
 import type { AskQuestion, BrainCard } from '../../brain/events.js';
 import { ansi, chatTheme, color } from './theme.js';
@@ -147,15 +148,15 @@ export class ApprovalDock implements Component, Focusable {
 
   handleInput(data: string): void {
     const ops = this.options();
-    if (matchesKey(data, 'escape')) { this.opts.onPick(this.denyLabel()); return; }
-    if (data === '\x1b[A' || matchesKey(data, 'up')) { this.selectedIndex = (this.selectedIndex + ops.length - 1) % ops.length; this.opts.tui.requestRender(); return; }
-    if (data === '\x1b[B' || matchesKey(data, 'down')) { this.selectedIndex = (this.selectedIndex + 1) % ops.length; this.opts.tui.requestRender(); return; }
+    if (isEscapeKey(data)) { this.opts.onPick(this.denyLabel()); return; }
+    if (isUpKey(data)) { this.selectedIndex = (this.selectedIndex + ops.length - 1) % ops.length; this.opts.tui.requestRender(); return; }
+    if (isDownKey(data)) { this.selectedIndex = (this.selectedIndex + 1) % ops.length; this.opts.tui.requestRender(); return; }
     if (/^[1-9]$/.test(data)) {
       const picked = ops[Number(data) - 1];
       if (picked) this.opts.onPick(picked.label);
       return;
     }
-    if (data === '\r' || matchesKey(data, 'enter')) {
+    if (isEnterKey(data)) {
       const picked = ops[this.selectedIndex];
       if (picked) this.opts.onPick(picked.label);
     }
