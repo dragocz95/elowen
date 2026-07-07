@@ -54,6 +54,19 @@ describe('GET/PATCH /auth/me/permissions', () => {
     expect(await res2.json()).toEqual({ tools: { write_file: 'allow' }, bash: { '*': 'ask', 'git *': 'allow' }, yolo: false });
   });
 
+  it('round-trips rule-map KEY ORDER — it is the precedence (last match wins) the web editor sends', async () => {
+    const { app, amyTok } = setup();
+    const bash = { 'rm *': 'deny', 'git status*': 'allow', 'npm run build*': 'allow' };
+    await app.request('/auth/me/permissions', patch(amyTok, { bash }));
+    const stored = await app.request('/auth/me/permissions', auth(amyTok)).then((r) => r.json());
+    expect(Object.keys(stored.bash)).toEqual(Object.keys(bash));
+    // Replacing the map with a different order round-trips that order too (no server-side sorting).
+    const reordered = { 'git status*': 'allow', 'npm run build*': 'allow', 'rm *': 'deny' };
+    await app.request('/auth/me/permissions', patch(amyTok, { bash: reordered }));
+    const after = await app.request('/auth/me/permissions', auth(amyTok)).then((r) => r.json());
+    expect(Object.keys(after.bash)).toEqual(Object.keys(reordered));
+  });
+
   it('is per-user: one user PATCHing never leaks into another', async () => {
     const { app, users, amyTok } = setup();
     const bob = users.create('bob', 'pw');

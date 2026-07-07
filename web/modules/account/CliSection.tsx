@@ -11,6 +11,7 @@ import { useToast } from '../../components/ui/Toast';
 import { useTranslation } from '../../lib/i18n';
 import { useMyCliSettings, useMyPermissions, useBrainModels } from '../../lib/queries';
 import { useSaveMyCliSettings, useSaveMyPermissions } from '../../lib/mutations';
+import { PermissionRulesCard } from './PermissionRulesCard';
 import { Pill } from './pills';
 
 const THINKING_LEVELS = ['', 'minimal', 'low', 'medium', 'high', 'xhigh'];
@@ -131,6 +132,8 @@ export function CliSection() {
           </p>
         </div>
       </SettingCard>
+
+      <PermissionRulesCard />
     </div>
   );
 }
