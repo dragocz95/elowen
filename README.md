@@ -8,7 +8,7 @@
 
 Orca is a self-hosted personal AI agent. You chat with it and it acts: it reasons,
 calls tools, edits files, runs shell commands, manages your work, and reaches you
-wherever you are — a web dock, the `orca` CLI, Discord and WhatsApp. It sits in the
+wherever you are — the `orca` CLI, a web dock, Discord and WhatsApp. It sits in the
 same category as agents like Claude or OpenClaw, but it runs on **your** machine,
 uses **your** models, and every capability is a plugin you add or remove. No SaaS,
 no lock-in.
@@ -21,13 +21,26 @@ no lock-in.
 
 ---
 
-## Talk to it, and it acts
+## Talk to your agent in the terminal
+
+The `orca` CLI puts the same agent one keystroke away — tool calls, diffs, plan
+mode, permission prompts and all, without leaving your shell.
 
 <div align="center">
 
-![Talking to your Orca agent in the web chat dock](docs/site/images/getting-started-chat.png)
+![The Orca CLI — a reply with tool calls, a diff, and the telemetry panel](docs/screenshots/cli/05-diff.png)
 
 </div>
+
+```bash
+npm install -g orcasynth   # installs the `orca` command
+orca setup                 # guided wizard: account, project, AI provider, memory
+orca                       # bare `orca` opens the chat TUI
+```
+
+| | |
+|---|---|
+| **Plan mode** — the agent proposes a plan before touching anything; you pick Implement or keep refining. ![Plan mode](docs/screenshots/cli/08-plan-ready.png) | **Permissions & YOLO** — every mutating tool call stops for Allow once / Always allow / Deny; `/yolo` auto-approves for the session. ![Approval prompt](docs/screenshots/cli/06-approval-touch.png) |
 
 The agent is the product. The dashboards, boards and terminals below are simply how
 you **observe and steer** what it's doing — they are not the point; the agent is.
@@ -43,9 +56,13 @@ you **observe and steer** what it's doing — they are not the point; the agent 
 
 ## What it does
 
-- **Chat that acts.** Talk to Orca's embedded brain from the web dock, `orca chat`,
-  Discord or WhatsApp. It plans, calls tools, edits code and follows up — with a
-  multi-provider model catalog and OAuth account connect.
+- **Chat that acts.** Talk to Orca's embedded brain from the `orca` CLI, the web
+  dock, Discord or WhatsApp. It plans, calls tools, edits code and follows up — with
+  a multi-provider model catalog and OAuth account connect.
+- **Plan mode, sub-agents, permissions.** Switch into Plan mode to have the agent
+  think through an approach before it touches anything; delegate work to sub-agents
+  you can drill into live; every mutating tool call stops for your approval (Allow
+  once / Always allow / Deny), or drop into `/yolo` for a fully hands-off session.
 - **Built-in memory.** Orca remembers. A per-user memory engine with embeddings and
   semantic retrieval stores durable facts, recalls the relevant ones at the start of each
   turn, and self-curates to avoid duplicates — with `add`/`search` memory tools and a
@@ -85,15 +102,15 @@ you **observe and steer** what it's doing — they are not the point; the agent 
 
 ```bash
 npm install -g orcasynth   # installs the `orca` command
-orca                       # first run launches the setup wizard (see below)
+orca setup                 # guided wizard (see below)
 ```
 
 Requires **Node ≥ 22** and **tmux**.
 
-### First run — the setup wizard
+### The setup wizard
 
-The first time you run `orca` in a terminal — or any time via `orca setup` — a guided wizard gets you to
-a working setup in a couple of minutes. Five steps, each skippable and reversible:
+`orca setup` gets you to a working setup in a couple of minutes — run it first, before
+`orca`. Five steps, each skippable and reversible:
 
 1. **Account** — create your admin login.
 2. **Project** — point Orca at a folder to work in (the current one, another path, or an existing project).
@@ -106,15 +123,21 @@ It never blocks scripts: in a non-interactive shell (CI, Docker, a pipe) it just
 and exits. Re-run it any time with `orca setup` (`--reset` to start over). For a full **server** deployment
 with systemd units and a reverse proxy, run `orca install` as root instead.
 
-Then open `http://localhost:4500` and log in, or drive it from the terminal:
+Then just talk to it:
 
 ```bash
-orca chat                  # talk to Orca in your terminal
-orca up | down | status    # manage the daemon (:4400) + web UI (:4500)
-orca update                # update to the latest release
+orca                        # opens the chat TUI
+orca run "<prompt>"         # non-interactive: one turn, streamed, then exit
+orca up | down | status     # manage the daemon (:4400) + web UI (:4500)
+orca update                 # update to the latest release
 ```
 
-## Screenshots
+Or open `http://localhost:4500` and log in for the web UI. The full CLI reference —
+every command, slash command, keybinding and flag — lives in
+[`docs/site/06-cli.md`](./docs/site/06-cli.md) and at
+[orca.dragocz.dev/docs/cli](https://orca.dragocz.dev/docs/cli).
+
+## Web UI
 
 <div align="center">
 
@@ -157,7 +180,7 @@ sessions.
 
 Full user manual at **[orca.dragocz.dev](https://orca.dragocz.dev)** and in
 [`docs/`](./docs): [Getting Started](./docs/site/01-getting-started.md),
-[Agents & Autonomy](./docs/site/04-agents-autonomy.md),
+[CLI](./docs/site/06-cli.md), [Agents & Autonomy](./docs/site/04-agents-autonomy.md),
 [Brain & Chat](./docs/site/07-brain-chat.md), [Plugins](./docs/site/08-plugins.md),
 and [Account & Security](./docs/site/11-account-security.md).
 
