@@ -11,6 +11,7 @@ import { orcaClient, BASE } from '../../lib/orcaClient';
 import { formatTaskTime } from '../../lib/format';
 import type { AskQuestion, BrainCard, BrainSearchHit, BrainModelOption, BrainUsage, SlashCommandDef, StatuslineConfig } from '../../lib/types';
 import { fromHistory, pushUser, reduce, upsertCard, type ChatTurn, type ToolItem, type TranscriptEvent } from '../../lib/transcript';
+import { expandSlashMessage } from '../../lib/slash';
 import { BRAIN_OPEN_EVENT, consumePendingBrainSession, type BrainOpenRequest } from '../../lib/brainDock';
 import { AskQuestionCard } from './AskQuestionCard';
 
@@ -355,8 +356,11 @@ export function BrainChat() {
     // Text files inline as fenced blocks (works with any model); images ride the vision input.
     const textFiles = attachments.filter((a) => a.kind === 'text');
     const images = attachments.filter((a) => a.kind === 'image').map((a) => ({ data: a.data, mimeType: a.mimeType }));
+    // A plugin prompt command (`/review auth…`) sends its EXPANDED template while the transcript shows
+    // what the user typed — same contract as the CLI. Built-ins/plain text pass through unchanged.
+    const expanded = expandSlashMessage(typed, commands);
     const text = [
-      typed || t.brainChat.attachOnly,
+      (expanded ?? typed) || t.brainChat.attachOnly,
       ...textFiles.map((a) => `\n\`${a.name}\`:\n\`\`\`\n${a.data}\n\`\`\``),
     ].join('\n');
     const shown = [typed || t.brainChat.attachOnly, ...attachments.map((a) => `📎 ${a.name}`)].join('\n');
@@ -417,6 +421,9 @@ export function BrainChat() {
         toast(parts.join('  ·  ') || t.brainChat.noSession, 'ok'); return;
       }
       if (cmd.name === 'help') { toast(commands.map((c) => `/${c.name}`).join('  '), 'ok'); return; }
+      // A prompt macro usually wants arguments — picking it pre-fills the composer (`/review `) so the
+      // user types them and submits; the submit path expands the template (args or not).
+      if (cmd.kind === 'prompt') { setInput(`/${cmd.name} `); return; }
       if (cmd.kind === 'action') { const r = await orcaClient.brainCommand(cmd.name); toast(r.message ?? `/${cmd.name}`, 'ok'); return; }
       toast(`/${cmd.name}`, 'ok');
     } catch (e) { toast((e as Error).message ?? String(e), 'error'); }

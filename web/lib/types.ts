@@ -60,8 +60,9 @@ export interface BrainModelOption { provider: string; providerLabel: string; mod
 export interface BrainSessionInfo { id: string; title: string; model: string; updated_at: string; running: boolean; active: boolean }
 /** A row in the admin session-management panel (all brain sessions the operator anchors). */
 export interface ManagedSession { id: string; title: string; model: string; updated_at: string; running: boolean; active: boolean; kind: 'conversation' | 'channel' | 'task'; tokens: number }
-/** Mirror of the daemon's slash-command def (src/brain/slashCommands.ts) — published at GET /brain/commands. */
-export interface SlashCommandDef { name: string; description: string; kind: 'action' | 'info' | 'picker' | 'mode'; adminOnly?: boolean }
+/** Mirror of the daemon's slash-command def (src/brain/slashCommands.ts) — published at GET /brain/commands.
+ *  `kind:'prompt'` is a plugin prompt macro: `prompt` is the template ($ARGS/$1..$9) sent to the agent. */
+export interface SlashCommandDef { name: string; description: string; kind: 'action' | 'info' | 'picker' | 'mode' | 'prompt'; adminOnly?: boolean; prompt?: string }
 /** One fulltext-search match across the caller's brain conversations. */
 export interface BrainSearchHit { sessionId: string; sessionTitle: string; role: string; snippet: string; ts: string }
 /** A stored brain turn shaped for display. */
