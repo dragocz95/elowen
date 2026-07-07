@@ -78,6 +78,7 @@ export default function KanbanPage() {
   return (
     <ModuleShell moduleId="kanban">
       <ModuleHeader title={t.page.kanban} count={filteredTasks.length} icon={KanbanSquare}>
+        <ProjectFilterPills value={selectedProject} onChange={setProject} />
         <DateRangeFilter value={range} onChange={(r) => setRangeRaw(serializeRange(r))} />
         <Segmented
           value={view}
@@ -88,7 +89,6 @@ export default function KanbanPage() {
           ]}
         />
       </ModuleHeader>
-      <ProjectFilterPills value={selectedProject} onChange={setProject} />
 
       {tasks.isLoading ? <LoadingState variant={view === 'board' ? 'kanban' : 'cards'} /> : tasks.isError ? <ErrorState message={t.common.daemonUnreachable} onRetry={() => tasks.refetch()} />
         : view === 'board' ? (

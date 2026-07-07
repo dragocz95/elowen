@@ -6,6 +6,7 @@ import { StatCard } from '../../components/ui/StatCard';
 import { ModelIcon } from '../../components/ui/ModelIcon';
 import { Button } from '../../components/ui/Button';
 import { DateRangeFilter } from '../../components/ui/DateRangeFilter';
+import { ModuleHeader } from '../../components/ui/ModuleHeader';
 import { DEFAULT_RANGE, serializeRange, parseRange, isStoredRange, rangeBounds } from '../../lib/dateRange';
 import { usePersistentState } from '../../lib/usePersistentState';
 import { LoadingState, ErrorState, EmptyState } from '../../components/ui/states';
@@ -26,13 +27,14 @@ export function StatsView() {
   const summary = buildUsageSummary(usage.data);
 
   return (
-    <div className="mx-auto flex w-full max-w-4xl flex-col gap-8">
-      {/* ── Date filter — the loading/error states below still respect it, so the control stays
-          visible/operable regardless of fetch state ──────────── */}
-      <div className="flex items-center justify-end">
+    <>
+      {/* Date filter lives in the header row — the loading/error states below still respect it,
+          so the control stays visible/operable regardless of fetch state. */}
+      <ModuleHeader title={t.page.stats} icon={BarChart3}>
         <DateRangeFilter value={range} onChange={(r) => setRangeRaw(serializeRange(r))} />
-      </div>
+      </ModuleHeader>
 
+      <div className="mx-auto flex w-full max-w-4xl flex-col gap-8">
       {usage.isLoading ? (
         <LoadingState variant="cards" />
       ) : usage.isError ? (
@@ -82,6 +84,7 @@ export function StatsView() {
           {resetOpen ? <ResetUsageModal onClose={() => setResetOpen(false)} /> : null}
         </>
       )}
-    </div>
+      </div>
+    </>
   );
 }

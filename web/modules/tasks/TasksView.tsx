@@ -195,18 +195,15 @@ export function TasksView() {
   return (
     <>
       <ModuleHeader title={t.page.tasks} count={filtered.length} icon={ListChecks}>
+        <ProjectFilterPills value={selectedProject} onChange={setProject} />
+        <DateRangeFilter value={range} onChange={(r) => setRangeRaw(serializeRange(r))} />
+        <Segmented value={filter} onChange={(v) => setFilter(v as Filter)} options={FILTERS} />
         <div className="relative w-40 @sm:w-52">
           <Search size={14} aria-hidden className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" />
           <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={t.tasks.searchPlaceholder} className="pl-9" />
         </div>
-        <Segmented value={filter} onChange={(v) => setFilter(v as Filter)} options={FILTERS} />
-        <DateRangeFilter value={range} onChange={(r) => setRangeRaw(serializeRange(r))} />
         <Button variant="accent" icon={Plus} onClick={() => setCreating(true)}>{t.tasks.newTask}</Button>
       </ModuleHeader>
-
-      {/* Project picker pills — narrow the list to one project (server-side). Hidden when the
-          workspace has fewer than two projects: no choice to make. */}
-      <ProjectFilterPills value={selectedProject} onChange={setProject} />
 
       {tasks.isLoading ? <LoadingState variant="cards" />
         : tasks.isError ? <ErrorState message={t.common.daemonUnreachable} onRetry={() => tasks.refetch()} />
