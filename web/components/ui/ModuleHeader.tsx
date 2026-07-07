@@ -21,7 +21,9 @@ export function ModuleHeader({ title, count, icon: Icon, children, subtitle }: {
   return (
     <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
       {subtitle ? <p className="text-sm text-text-muted">{subtitle}</p> : <span className="hidden sm:block" aria-hidden />}
-      {children ? <div className="flex flex-wrap items-center gap-2 sm:shrink-0">{children}</div> : null}
+      {/* min-w-0 (NOT shrink-0): the row must be allowed to shrink to the viewport so its flex-wrap can
+          fold overflowing filters onto the next line — with shrink-0 they'd run off a narrow window. */}
+      {children ? <div className="flex min-w-0 flex-wrap items-center gap-2">{children}</div> : null}
     </div>
   );
 }
