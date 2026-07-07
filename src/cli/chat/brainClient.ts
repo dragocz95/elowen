@@ -19,6 +19,8 @@ export interface McpServerView { name: string; transport: string; status: 'conne
 export interface SkillView { name: string; description: string; source: 'bundled' | 'user'; scope?: string; location?: string; active?: boolean; canDelete?: boolean; missingRequirement?: string }
 export interface GoalView { session_id: string; user_id: number; status: 'active' | 'draft' | 'paused' | 'done'; goal: string; draft: string; subgoals: string; turns_used: number; turn_budget: number; last_verdict: string; last_evidence: string; paused_reason: string }
 export interface RuntimeToolView { name: string; plugin: string; description?: string; schema?: string }
+/** One configured brain provider from the public config (API key stripped to `apiKeySet`). */
+export interface BrainProviderView { id: string; label: string; type: string; baseUrl: string; models: string[]; api?: 'openai-completions' | 'openai-responses'; apiKeySet?: boolean; apiKey?: string }
 
 /** Parse accumulated SSE text into complete frames, returning the events and the unconsumed tail.
  *  Pure and buffer-safe (a frame split across chunks stays in `rest` until its blank-line terminator).
@@ -123,12 +125,33 @@ export class BrainClient {
     return (await res.json()) as { thinkingLevel: string };
   }
 
-  /** The pickable models across every configured brain provider (drives the /model picker). */
-  async models(): Promise<{ provider: string; providerLabel: string; model: string }[]> {
+  /** The pickable models across every configured brain provider (drives the /model picker). `free`
+   *  marks OpenRouter's zero-cost catalog variants, listed in the picker's FREE section. */
+  async models(): Promise<{ provider: string; providerLabel: string; model: string; free?: boolean }[]> {
     const res = await this.f(`${this.o.base}/brain/models`, { headers: this.headers() });
     if (res.status === 401) throw new Unauthorized();
     if (!res.ok) throw new Error(`orca brain ${res.status} on /brain/models`);
-    return (await res.json()) as { provider: string; providerLabel: string; model: string }[];
+    return (await res.json()) as { provider: string; providerLabel: string; model: string; free?: boolean }[];
+  }
+
+  /** Configured brain providers from the public daemon config — feeds the /model → ctrl+p manager. */
+  async brainProviders(): Promise<BrainProviderView[]> {
+    const res = await this.f(`${this.o.base}/config`, { headers: this.headers() });
+    if (res.status === 401) throw new Unauthorized();
+    if (!res.ok) throw new Error(`orca ${res.status} on /config`);
+    const body = (await res.json()) as { brain?: { providers?: BrainProviderView[] } };
+    return body.brain?.providers ?? [];
+  }
+
+  /** Replace the brain provider list (admin-only). Entries WITHOUT `apiKey` keep their stored key
+   *  server-side, so the keyless public list round-trips safely. */
+  async saveBrainProviders(providers: BrainProviderView[]): Promise<void> {
+    const res = await this.f(`${this.o.base}/config`, {
+      method: 'PUT', headers: this.headers(true), body: JSON.stringify({ brain: { providers } }),
+    });
+    if (res.status === 401) throw new Unauthorized();
+    if (res.status === 403) throw new Error('only an admin can manage providers');
+    if (!res.ok) throw new Error(`orca ${res.status} on /config`);
   }
 
   async commands(): Promise<SlashCommandDef[]> {

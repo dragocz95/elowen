@@ -7,7 +7,7 @@ import { buildBrainRegistry, registryProviderName, OAUTH_BUILTIN, DEFAULT_CONTEX
  *  `source` marks how the provider authenticates (OAuth account / API key / relay fallback).
  *  `contextWindow` is the effective max context (operator override for `providerId/model`, else the
  *  default placeholder); `contextWindowSet` tells the UI whether it's a pinned value or the fallback. */
-export interface BrainModelOption { provider: string; providerLabel: string; model: string; source: 'api-key' | 'oauth' | 'relay'; contextWindow: number; contextWindowSet: boolean }
+export interface BrainModelOption { provider: string; providerLabel: string; model: string; source: 'api-key' | 'oauth' | 'relay'; contextWindow: number; contextWindowSet: boolean; free?: boolean }
 
 const FETCH_TTL_MS = 60_000;
 /** One model advertised by an endpoint's /models — its id plus the context window when the provider
@@ -78,6 +78,7 @@ export async function listBrainModels(cfg: BrainRuntimeConfig, fetchImpl: typeof
     // manual list AND a manually-listed openai provider (so a hand-picked model still gets its reported
     // window). The manual list wins on which models appear; the fetch only enriches with context windows.
     let entries: FetchedModel[] = p.models.map((id) => ({ id }));
+    let freeEntries: FetchedModel[] = [];
     if (p.type === 'openai') {
       const fetched = await fetchOpenAiModelEntries(p, fetchImpl);
       if (entries.length === 0) entries = fetched;
@@ -85,16 +86,24 @@ export async function listBrainModels(cfg: BrainRuntimeConfig, fetchImpl: typeof
         const ctxById = new Map(fetched.map((f) => [f.id, f.contextWindow]));
         entries = entries.map((e) => ({ id: e.id, contextWindow: ctxById.get(e.id) }));
       }
+      // OpenRouter's catalog carries zero-cost variants (ids ending ':free') — surface them as a FREE
+      // section in the pickers even when the operator hand-picked the paid model list.
+      if ((p.baseUrl ?? '').includes('openrouter.ai')) {
+        const listed = new Set(entries.map((e) => e.id));
+        freeEntries = fetched.filter((f) => f.id.endsWith(':free') && !listed.has(f.id));
+      }
     } else if (entries.length === 0 && p.type in OAUTH_BUILTIN) {
       const builtin = registryProviderName(p);
       entries = registry.getAll().filter((m) => m.provider === builtin).map((m) => ({ id: m.id }));
     }
-    out.push(...entries.map((e) => {
+    const toOption = (e: FetchedModel, free?: boolean): BrainModelOption => {
       const pinned = cfg.contextWindows?.[`${p.id}/${e.id}`];
       // Effective context window precedence: operator override → provider-reported → default placeholder.
       const effective = pinned && pinned > 0 ? pinned : (e.contextWindow ?? DEFAULT_CONTEXT_WINDOW);
-      return { provider: p.id, providerLabel: p.label, model: e.id, source: p.origin ?? 'api-key' as const, contextWindow: effective, contextWindowSet: !!(pinned && pinned > 0) };
-    }));
+      return { provider: p.id, providerLabel: p.label, model: e.id, source: p.origin ?? 'api-key' as const, contextWindow: effective, contextWindowSet: !!(pinned && pinned > 0), ...(free ? { free } : {}) };
+    };
+    out.push(...entries.map((e) => toOption(e)));
+    out.push(...freeEntries.map((e) => toOption(e, true)));
   }
   return out;
 }

@@ -52,6 +52,8 @@ export interface BrainProvider {
   type: BrainProviderType;
   baseUrl: string;
   models: string[];
+  /** Wire API for `openai`-type entries. Absent = auto (api.openai.com → Responses, else Completions). */
+  api?: 'openai-completions' | 'openai-responses';
   apiKeySet: boolean;
 }
 /** One Orca AI (brain) model. `source` = how its provider authenticates (drives the OAuth badge). */

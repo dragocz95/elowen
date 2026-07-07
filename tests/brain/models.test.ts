@@ -38,6 +38,19 @@ describe('listBrainModels', () => {
     }));
   });
 
+  it('surfaces OpenRouter :free variants as a FREE section even with a manual paid list', async () => {
+    const f = vi.fn(async () => new Response(JSON.stringify({ data: [{ id: 'paid-model' }, { id: 'x/y:free', context_length: 64000 }, { id: 'a/b:free' }] }), { status: 200 })) as unknown as typeof fetch;
+    const cfg: BrainRuntimeConfig = { providers: [{ id: 'or', label: 'OpenRouter', type: 'openai', baseUrl: 'https://openrouter.ai/api/v1', models: ['paid-model'], apiKey: 'k' }] };
+    const models = await listBrainModels(cfg, f);
+    expect(models.map((m) => m.model)).toEqual(['paid-model', 'a/b:free', 'x/y:free']);
+    expect(models.filter((m) => m.free).map((m) => m.model)).toEqual(['a/b:free', 'x/y:free']);
+    expect(models.find((m) => m.model === 'x/y:free')!.contextWindow).toBe(64000);
+    // Non-OpenRouter endpoints never grow a FREE section, even if a model id happens to end in :free.
+    const f2 = vi.fn(async () => new Response(JSON.stringify({ data: [{ id: 'a/b:free' }] }), { status: 200 })) as unknown as typeof fetch;
+    const other = await listBrainModels({ providers: [openaiProvider(['m'])] }, f2);
+    expect(other.some((m) => m.free)).toBe(false);
+  });
+
   it('caches the fetch briefly', async () => {
     const f = vi.fn(async () => new Response(JSON.stringify({ data: [{ id: 'a' }] }), { status: 200 })) as unknown as typeof fetch;
     const cfg: BrainRuntimeConfig = { providers: [openaiProvider()] };

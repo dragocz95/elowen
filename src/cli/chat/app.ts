@@ -7,7 +7,8 @@ import { loadPrefs, savePrefs } from './prefs.js';
 import { StatusBar, CardPanel } from './components.js';
 import { ChatEditor, sessionItems, modelItems, parseModelValue, openPicker, openTextInput, openInfoModal } from './picker.js';
 import { runAskFlow } from './askFlow.js';
-import { BrainClient, type BrainWorkMode, type McpServerView } from './brainClient.js';
+import { BrainClient, type BrainProviderView, type BrainWorkMode, type McpServerView } from './brainClient.js';
+import { API_KEY_PROVIDERS } from '../setup/constants.js';
 import { fromHistory, pushUser, beginAssistant, reduce, upsertCard, type ChatView } from '../../brain/transcript.js';
 import { commandsFor, expandPromptCommand } from '../../brain/slashCommands.js';
 import type { AskQuestion, BrainCard } from '../../brain/events.js';
@@ -354,6 +355,134 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
   const cycleThinkingLevel = (): void => {
     if (thinkingLevels.length === 0) { notice = color.dim('this model has no reasoning-effort levels'); render(); return; }
     applyThinkingLevel(thinkingLevels[(thinkingLevels.indexOf(thinkingLevel) + 1) % thinkingLevels.length]!);
+  };
+
+  // /model → ctrl+p: manage brain providers right from the CLI. Presets come from the setup wizard's
+  // curated endpoint catalog; a custom OpenAI-compatible URL, the API key and (for openai-type entries)
+  // the wire API (Responses vs Chat Completions) are collected step by step through the same modals.
+  const openProviderModal = (): void => {
+    void client.brainProviders().then((providers) => {
+      const apiLabel = (p: BrainProviderView): string => p.type !== 'openai' ? '' : ` · ${p.api ?? 'auto'} API`;
+      const saveAll = (next: BrainProviderView[], done: string): void => {
+        void client.saveBrainProviders(next)
+          .then(() => { notice = color.dim(done); render(); })
+          .catch((e: Error) => { notice = color.error(`error: ${e.message}`); render(); });
+      };
+      // Per-entry API mode picker (openai-type only): auto / responses / completions.
+      const openApiPicker = (p: BrainProviderView, all: BrainProviderView[]): void => {
+        const officialOpenAi = /api\.openai\.com/.test(p.baseUrl || 'https://api.openai.com/v1');
+        openPicker({
+          tui, editor, title: `${p.label} · wire API`,
+          items: [
+            { value: 'auto', label: 'Auto (recommended)', description: officialOpenAi ? 'OpenAI endpoint → Responses API' : 'OpenAI-compatible endpoint → Chat Completions' },
+            { value: 'openai-responses', label: 'Responses API', description: 'prompt caching + reasoning summaries (needs endpoint support)' },
+            { value: 'openai-completions', label: 'Chat Completions', description: 'the ubiquitous OpenAI-compatible API' },
+          ],
+          onPick: (v) => {
+            const next = { ...p };
+            if (v === 'auto') delete next.api; else next.api = v as 'openai-responses' | 'openai-completions';
+            saveAll([...all.filter((x) => x.id !== p.id), next], `${p.label}: ${v === 'auto' ? 'auto' : v} · /model to pick a model`);
+          },
+        });
+      };
+      const addEntry = (label: string, type: 'openai' | 'anthropic', baseUrl: string): void => {
+        openTextInput({
+          tui, editor, title: `${label} · API key`,
+          onSubmit: (key) => {
+            const apiKey = key.trim();
+            if (!apiKey) { notice = color.dim('cancelled — no API key entered'); render(); return; }
+            const idBase = label.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'provider';
+            let id = idBase;
+            for (let i = 2; providers.some((x) => x.id === id); i++) id = `${idBase}-${i}`;
+            const entry: BrainProviderView = { id, label, type, baseUrl, models: [], apiKey };
+            if (type === 'openai') openApiPicker(entry, providers);
+            else saveAll([...providers, entry], `${label} connected · /model to pick a model`);
+          },
+        });
+      };
+      openPicker({
+        tui, editor, title: 'Brain providers',
+        items: [
+          { value: '__add', label: '+ Add provider', description: 'curated endpoints or a custom URL' },
+          ...providers.map((p) => ({
+            value: p.id,
+            label: p.label,
+            description: `${p.type.startsWith('oauth-') ? 'OAuth account' : (p.baseUrl || 'https://api.openai.com/v1')}${apiLabel(p)}`,
+          })),
+        ],
+        footer: 'enter open · type to search · esc close',
+        onPick: (v) => {
+          if (v === '__add') {
+            openPicker({
+              tui, editor, title: 'Add provider',
+              items: [
+                ...API_KEY_PROVIDERS.map((p) => ({ value: p.key, label: p.label, description: p.base })),
+                { value: '__custom', label: 'Custom OpenAI-compatible endpoint', description: 'any /v1 base URL' },
+              ],
+              footer: 'enter pick · type to search · esc close',
+              onPick: (key) => {
+                if (key === '__custom') {
+                  openTextInput({
+                    tui, editor, title: 'Custom endpoint · base URL (…/v1)',
+                    onSubmit: (url) => {
+                      const baseUrl = url.trim().replace(/\/$/, '');
+                      if (!/^https?:\/\//.test(baseUrl)) { notice = color.error('a base URL must start with http(s)://'); render(); return; }
+                      addEntry(new URL(baseUrl).hostname, 'openai', baseUrl);
+                    },
+                  });
+                  return;
+                }
+                const preset = API_KEY_PROVIDERS.find((p) => p.key === key);
+                if (preset && (preset.type === 'openai' || preset.type === 'anthropic')) addEntry(preset.label, preset.type, preset.base);
+              },
+            });
+            return;
+          }
+          const p = providers.find((x) => x.id === v);
+          if (!p) return;
+          if (p.type !== 'openai') { notice = color.dim(`${p.label}: nothing to configure here (manage models via the web settings)`); render(); return; }
+          openApiPicker(p, providers);
+        },
+      });
+    }).catch((e: Error) => { notice = color.error(`error: ${e.message}`); render(); });
+  };
+
+  const openModelPicker = (): void => {
+    void client.models().then((models) => {
+      if (models.length === 0) { notice = color.dim('no models configured — ctrl+p in /model adds a provider'); render(); return; }
+      const paid = models.filter((m) => !m.free);
+      const free = models.filter((m) => m.free);
+      const items = [
+        ...modelItems(paid, modelName),
+        // OpenRouter's zero-cost catalog folds in at the bottom under a FREE header row.
+        ...(free.length ? [{ value: '__free', label: color.faint('─ FREE · OpenRouter ─'), description: `${free.length} zero-cost models` }] : []),
+        ...free.map((m) => ({ value: `${m.provider} ${m.model}`, label: `☆ ${m.model.replace(/:free$/, '')}`, description: `${m.providerLabel} · free` })),
+      ];
+      openPicker({
+        tui, editor, title: 'Switch model', items,
+        footer: 'enter switch · type to search · ctrl+p providers · esc close',
+        onInput: (data, _selected, close) => {
+          if (matchesKey(data, 'ctrl+p')) { close(); openProviderModal(); return true; }
+          return false;
+        },
+        onPick: (value) => {
+          if (value === '__free') { openModelPicker(); return; }
+          notice = color.dim('switching model…');
+          render();
+          void client.setModel(parseModelValue(value)).then(async (r) => {
+            modelName = r.model;
+            // The server rebuilt the session — the old event stream is dead, reopen it.
+            streamAc.abort();
+            const ac = new AbortController();
+            streamAc = ac;
+            openStream(ac);
+            await refreshMeta();
+            notice = '';
+            render();
+          }).catch((e: Error) => { notice = color.error(`error: ${e.message}`); render(); });
+        },
+      });
+    }).catch((e: Error) => { notice = color.error(`error: ${e.message}`); render(); });
   };
 
   const applyTheme = (name: string): boolean => {
@@ -798,27 +927,7 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
           return;
         }
         case 'model': {
-          void client.models().then((models) => {
-            if (models.length === 0) { notice = color.dim('no models configured'); render(); return; }
-            openPicker({
-              tui, editor, title: 'Switch model', items: modelItems(models, modelName),
-              onPick: (value) => {
-                notice = color.dim('switching model…');
-                render();
-                void client.setModel(parseModelValue(value)).then(async (r) => {
-                  modelName = r.model;
-                  // The server rebuilt the session — the old event stream is dead, reopen it.
-                  streamAc.abort();
-                  const ac = new AbortController();
-                  streamAc = ac;
-                  openStream(ac);
-                  await refreshMeta();
-                  notice = '';
-                  render();
-                }).catch((e: Error) => { notice = color.error(`error: ${e.message}`); render(); });
-              },
-            });
-          }).catch((e: Error) => { notice = color.error(`error: ${e.message}`); render(); });
+          openModelPicker();
           return;
         }
         case 'think': {

@@ -77,6 +77,11 @@ export interface OrcaConfig {
  *  tokens live in the brain's AuthStorage file). */
 export type BrainProviderType = 'openai' | 'anthropic' | 'oauth-anthropic' | 'oauth-github-copilot' | 'oauth-openai-codex';
 
+/** Which wire API an `openai`-type entry speaks. Absent → auto: the official OpenAI endpoint gets the
+ *  Responses API (richer: server-side prompt caching, reasoning summaries), everything else the
+ *  ubiquitous Chat Completions. */
+export type BrainProviderApi = 'openai-completions' | 'openai-responses';
+
 interface BrainProviderPublic {
   id: string;
   label: string;
@@ -84,11 +89,13 @@ interface BrainProviderPublic {
   baseUrl: string;
   /** Models offered in the picker. For `openai` providers an empty list means "auto-fetch /models". */
   models: string[];
+  api?: BrainProviderApi;
   apiKeySet: boolean;
 }
 
 interface BrainProviderStored {
   id: string; label: string; type: BrainProviderType; baseUrl: string; models: string[];
+  api?: BrainProviderApi;
   apiKey: string | null;
 }
 
@@ -111,6 +118,8 @@ function sanitizeBrainProviders(input: unknown): BrainProviderStored[] {
       type: p.type as BrainProviderType,
       baseUrl: typeof p.baseUrl === 'string' ? p.baseUrl : '',
       models: Array.isArray(p.models) ? p.models.filter((m): m is string => typeof m === 'string' && !!m) : [],
+      // Wire-API override is only meaningful for openai-type entries; anything else drops to auto.
+      ...(p.type === 'openai' && (p.api === 'openai-responses' || p.api === 'openai-completions') ? { api: p.api } : {}),
       apiKey: typeof p.apiKey === 'string' && p.apiKey ? p.apiKey : null,
     });
   }
@@ -462,7 +471,7 @@ export class ConfigStore {
   categorizationConfig(): CategorizationBlock { return this.read().categorization; }
 
   /** Daemon-side brain provider list including plaintext API keys. Never routed to any client. */
-  brainProviders(): { id: string; label: string; type: BrainProviderType; baseUrl: string; models: string[]; apiKey: string | null }[] {
+  brainProviders(): { id: string; label: string; type: BrainProviderType; baseUrl: string; models: string[]; api?: BrainProviderApi; apiKey: string | null }[] {
     return this.read().brain.providers;
   }
 

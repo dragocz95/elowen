@@ -26,8 +26,8 @@ const OAUTH_TYPES: { type: BrainProviderType; icon: string }[] = [
 ];
 const API_TYPES: BrainProviderType[] = ['openai', 'anthropic'];
 
-type Draft = { id: string; label: string; type: BrainProviderType; baseUrl: string; models: string; apiKey: string };
-const emptyDraft = (): Draft => ({ id: '', label: '', type: 'openai', baseUrl: '', models: '', apiKey: '' });
+type Draft = { id: string; label: string; type: BrainProviderType; baseUrl: string; models: string; apiKey: string; api: '' | 'openai-completions' | 'openai-responses' };
+const emptyDraft = (): Draft => ({ id: '', label: '', type: 'openai', baseUrl: '', models: '', apiKey: '', api: '' });
 const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 32);
 
 /** Connect dialog: shows the provider's auth URL (+ device code), collects the pasted code when the
@@ -168,6 +168,21 @@ function ProviderModal({ draft: initial, existingIds, onSave, onClose }: {
         <Field label={t.brain.apiKey} hint={isNew ? undefined : t.brain.apiKeyKeepHint}>
           <Input type="password" value={d.apiKey} onChange={(e) => setD({ ...d, apiKey: e.target.value })} placeholder={isNew ? 'sk-…' : '••••••'} autoComplete="off" />
         </Field>
+        {d.type === 'openai' ? (
+          <Field label={t.brain.wireApi} hint={t.brain.wireApiHint}>
+            <Segmented
+              aria-label={t.brain.wireApi}
+              size="sm"
+              options={[
+                { value: '', label: t.brain.wireApiAuto },
+                { value: 'openai-responses', label: t.brain.wireApiResponses },
+                { value: 'openai-completions', label: t.brain.wireApiCompletions },
+              ]}
+              value={d.api}
+              onChange={(v) => setD({ ...d, api: v as Draft['api'] })}
+            />
+          </Field>
+        ) : null}
         <Field label={t.brain.models} hint={Array.isArray(probed) ? t.brain.modelsHintPicker : d.type === 'openai' ? t.brain.modelsHintAuto : t.brain.modelsHint}>
           {probed === 'loading' ? (
             <LoadingState />
@@ -247,6 +262,7 @@ export function BrainSection() {
     const entry = {
       id: d.id, label: d.label.trim(), type: d.type, baseUrl: d.baseUrl.trim(),
       models: d.models.split('\n').map((m) => m.trim()).filter(Boolean),
+      ...(d.type === 'openai' && d.api ? { api: d.api } : {}),
       ...(d.apiKey.trim() ? { apiKey: d.apiKey.trim() } : {}),
     };
     const keyless = providers.map(({ apiKeySet, ...p }) => p);
@@ -334,7 +350,7 @@ export function BrainSection() {
                   <Badge>{t.brain.types[p.type]}</Badge>
                   {p.apiKeySet ? <Badge tone="accent"><KeyRound size={10} className="mr-1" aria-hidden />{t.brain.keySet}</Badge> : null}
                   <span className="ml-auto flex shrink-0 gap-1">
-                    <Button variant="ghost" icon={Pencil} aria-label={`${t.brain.editProvider}: ${p.label}`} onClick={() => setModal({ id: p.id, label: p.label, type: p.type, baseUrl: p.baseUrl, models: p.models.join('\n'), apiKey: '' })} />
+                    <Button variant="ghost" icon={Pencil} aria-label={`${t.brain.editProvider}: ${p.label}`} onClick={() => setModal({ id: p.id, label: p.label, type: p.type, baseUrl: p.baseUrl, models: p.models.join('\n'), apiKey: '', api: p.api ?? '' })} />
                     <Button variant="ghost" icon={Trash2} aria-label={`${t.brain.removeProvider}: ${p.label}`} onClick={() => remove(p.id)} />
                   </span>
                 </div>

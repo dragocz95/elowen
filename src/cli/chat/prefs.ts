@@ -7,7 +7,7 @@ import { dataDir } from '../paths.js';
  *  the per-user server settings. Corrupt or missing file degrades to defaults, never crashes the TUI. */
 export interface CliPrefs { theme?: string }
 
-export function prefsFile(env: NodeJS.ProcessEnv = process.env): string {
+function prefsFile(env: NodeJS.ProcessEnv = process.env): string {
   return join(dataDir(env), 'cli-prefs.json');
 }
 

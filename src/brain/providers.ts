@@ -2,7 +2,7 @@ import { AuthStorage, ModelRegistry } from '@earendil-works/pi-coding-agent';
 import type { Model, Api } from '@earendil-works/pi-ai';
 import { APP_IDENTITY_HEADERS } from '../inference/appIdentity.js';
 import { installOpenRouterMeter } from './openrouterMeter.js';
-import type { BrainProviderType } from '../store/configStore.js';
+import type { BrainProviderType, BrainProviderApi } from '../store/configStore.js';
 
 /** One brain model provider, daemon-side (API key included). `openai`/`anthropic` register a custom
  *  endpoint; `oauth-*` rely on pi-ai's built-in providers + an OAuth credential in the AuthStorage. */
@@ -13,6 +13,9 @@ export interface BrainProviderEntry {
   baseUrl: string;
   models: string[];
   apiKey: string | null;
+  /** Wire-API override for `openai`-type entries (Responses vs Chat Completions). Absent → auto,
+   *  see {@link openAiApiFor}. */
+  api?: BrainProviderApi;
   /** How this entry authenticates — drives the picker's provenance badge (OAuth account vs API key vs
    *  the autopilot relay fallback). Set by `brainConfigFromOrca`; absent reads as 'api-key'. */
   origin?: 'api-key' | 'oauth' | 'relay';
@@ -38,6 +41,15 @@ export const OAUTH_BUILTIN: Record<string, string> = {
  *  must already include the API version segment (e.g. `.../v1`). We only trim a trailing slash — we do
  *  NOT strip `/v1` (doing so 404s against proxies whose route is `/v1/chat/completions`). */
 const normOpenAiBase = (base: string) => base.replace(/\/$/, '');
+
+/** The wire API an `openai`-type entry registers with: an explicit per-provider choice wins, else the
+ *  OFFICIAL OpenAI endpoint defaults to the Responses API (server-side prompt caching, reasoning
+ *  summaries) while every other OpenAI-compatible endpoint keeps Chat Completions — the lowest common
+ *  denominator proxies/relays reliably implement. */
+export function openAiApiFor(p: Pick<BrainProviderEntry, 'api' | 'baseUrl'>): BrainProviderApi {
+  if (p.api) return p.api;
+  return /(^|\/\/)api\.openai\.com(\/|$)/.test(p.baseUrl || 'https://api.openai.com/v1') ? 'openai-responses' : 'openai-completions';
+}
 
 /** Reasonable descriptor defaults — the brain is a chat agent, exact cost/window are not load-bearing
  *  here (usage accounting lives elsewhere), so we ship safe placeholders the model list requires.
@@ -85,7 +97,7 @@ export function buildBrainRegistry(cfg: BrainRuntimeConfig, authStorage: AuthSto
     if (p.type === 'openai') {
       registry.registerProvider(registryProviderName(p), {
         name: p.label,
-        api: 'openai-completions',
+        api: openAiApiFor(p),
         baseUrl: normOpenAiBase(p.baseUrl || 'https://api.openai.com/v1'),
         apiKey: p.apiKey ?? undefined,
         headers: { ...APP_IDENTITY_HEADERS },
@@ -140,7 +152,7 @@ export function resolveBrainModel(
     // Not in the advertised list — register it ad hoc so a hand-typed model id still works.
     registry.registerProvider(providerName, {
       name: entry.label,
-      api: entry.type === 'openai' ? 'openai-completions' : 'anthropic-messages',
+      api: entry.type === 'openai' ? openAiApiFor(entry) : 'anthropic-messages',
       baseUrl: entry.type === 'openai' ? normOpenAiBase(entry.baseUrl || 'https://api.openai.com/v1') : (entry.baseUrl || 'https://api.anthropic.com'),
       apiKey: entry.apiKey ?? undefined,
       headers: { ...APP_IDENTITY_HEADERS },

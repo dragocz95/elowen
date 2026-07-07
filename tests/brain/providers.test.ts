@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildBrainRegistry, resolveBrainModel } from '../../src/brain/providers.js';
+import { buildBrainRegistry, resolveBrainModel, openAiApiFor } from '../../src/brain/providers.js';
 import type { BrainRuntimeConfig } from '../../src/brain/providers.js';
 
 const cfg: BrainRuntimeConfig = {
@@ -42,6 +42,18 @@ describe('brain providers', () => {
     const reg = buildBrainRegistry(cfg);
     const m = resolveBrainModel(reg, cfg);
     expect(m.baseUrl).toBe('https://relay.example.test/v1');
+  });
+
+  it('picks the wire API per endpoint: api.openai.com → Responses, compatibles → Completions, override wins', () => {
+    expect(openAiApiFor({ baseUrl: 'https://api.openai.com/v1' })).toBe('openai-responses');
+    expect(openAiApiFor({ baseUrl: '' })).toBe('openai-responses'); // empty base defaults to the official endpoint
+    expect(openAiApiFor({ baseUrl: 'https://openrouter.ai/api/v1' })).toBe('openai-completions');
+    expect(openAiApiFor({ baseUrl: 'https://ai.example/v1' })).toBe('openai-completions');
+    expect(openAiApiFor({ baseUrl: 'https://api.openai.com/v1', api: 'openai-completions' })).toBe('openai-completions');
+    expect(openAiApiFor({ baseUrl: 'https://ai.example/v1', api: 'openai-responses' })).toBe('openai-responses');
+    // …and the registry actually registers the model under that API.
+    const reg = buildBrainRegistry({ providers: [{ id: 'oa', label: 'OpenAI', type: 'openai', baseUrl: 'https://api.openai.com/v1', models: ['gpt-x'], apiKey: 'k' }] });
+    expect(reg.find('orca-oa', 'gpt-x')?.api).toBe('openai-responses');
   });
 
   it('throws a clear error with no providers configured', () => {
