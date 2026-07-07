@@ -1,5 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
+import { realpathSync } from 'node:fs';
 import { BrainService } from '../../src/brain/brainService.js';
+import { currentWorkDir } from '../../src/plugins/policyContext.js';
 import { personalityText } from '../../src/brain/personality.js';
 import { openDb } from '../../src/store/db.js';
 import { BrainStore } from '../../src/store/brainStore.js';
@@ -213,6 +215,36 @@ describe('BrainService', () => {
     const roles = d.store.getMessages('brain-1').map((m) => m.role);
     expect(roles).toContain('user');
     expect(roles).toContain('assistant');
+  });
+
+  it('binds the turn tool cwd to the client-reported directory, else the daemon primary project', async () => {
+    const d = fakeDeps();
+    const seen: (string | undefined)[] = [];
+    d.session.prompt.mockImplementation(async (t: string) => {
+      seen.push(currentWorkDir());
+      d.session.messages.push({ role: 'user', content: t }, { role: 'assistant', content: 'ok' });
+      d.emit({ type: 'agent_end', willRetry: false, messages: [{ role: 'assistant', content: 'ok' }] });
+    });
+    const svc = new BrainService({ ...d, projectPath: () => '/primary/project' } as never);
+    await svc.start(1);
+    // All-access chat + a real client directory → the turn runs there.
+    await svc.send(1, 'a', undefined, 'build', undefined, process.cwd());
+    // No client cwd (web dock) → never the daemon process cwd; the primary project wins.
+    await svc.send(1, 'b');
+    // A vanished directory is ignored, not an error.
+    await svc.send(1, 'c', undefined, 'build', undefined, '/nonexistent/nowhere');
+    expect(seen).toEqual([realpathSync(process.cwd()), '/primary/project', '/primary/project']);
+  });
+
+  it('a scoped user cannot bind the turn cwd outside their allowed roots', async () => {
+    const d = fakeDeps();
+    const seen: (string | undefined)[] = [];
+    d.session.prompt.mockImplementation(async () => { seen.push(currentWorkDir()); d.emit({ type: 'agent_end', willRetry: false, messages: [] }); });
+    const svc = new BrainService(d as never);
+    (d as unknown as { policy: () => unknown }).policy = () => ({ allowedProjectIds: new Set([1]), allowedPaths: () => ['/repo/a'] });
+    await svc.start(1);
+    await svc.send(1, 'x', undefined, 'build', undefined, process.cwd()); // real dir, but outside the roots
+    expect(seen).toEqual(['/repo/a']);
   });
 
   it('persistent goal starts a first turn, persists subgoals, and pauses on budget', async () => {

@@ -77,7 +77,9 @@ export class BrainClient {
   }
 
   async send(text: string, mode?: BrainWorkMode): Promise<void> {
-    await this.post('/brain/send', { text, ...(mode ? { mode } : {}) });
+    // Report where the user launched the CLI — the daemon binds the turn's tools to this project
+    // directory (validated server-side against the caller's repo access).
+    await this.post('/brain/send', { text, cwd: process.cwd(), ...(mode ? { mode } : {}) });
   }
 
   /** Answer a parked ask_user_question — settles the paused turn so it resumes with the user's picks. */

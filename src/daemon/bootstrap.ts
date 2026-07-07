@@ -451,6 +451,7 @@ export function buildApp(opts: BuildOpts) {
         store: brainStore, users, config: brainConfig, prompts, url: orcaCli.url,
         authStorage: brainAuth,
         cwd: brainDir,
+        projectPath: () => opts.project.path,
         plugins: pluginProvider,
         hookAudit,
         policy: (userId) => resolvePolicy({ userProjects, projects }, userId),

@@ -41,17 +41,25 @@ function realAbs(path: string): string {
   }
 }
 
-/** Resolve `path` to its real absolute path and assert it is inside one of the current session's
- *  allowed repo roots (or that the session is admin all-access). Throws a clear Error otherwise.
- *  This is the single enforcement point the file/terminal tools call before touching disk. */
-export function assertPathAllowed(path: string): string {
+/** `path` resolved to its real absolute form when it lies inside one of `roots`, else null. The
+ *  explicit-roots variant of {@link assertPathAllowed} for callers OUTSIDE a policy turn scope
+ *  (e.g. validating a client-reported cwd against a Policy before the scope is established). */
+export function realPathWithin(path: string, roots: string[]): string | null {
   const abs = realAbs(path);
-  if (isAllAccess()) return abs;
   const within = (root: string): boolean => {
     const real = realAbs(root); // the root itself may be reached via a symlink
     const base = real.endsWith(sep) ? real.slice(0, -1) : real;
     return abs === base || abs.startsWith(base + sep);
   };
-  if (allowedRoots().some(within)) return abs;
+  return roots.some(within) ? abs : null;
+}
+
+/** Resolve `path` to its real absolute path and assert it is inside one of the current session's
+ *  allowed repo roots (or that the session is admin all-access). Throws a clear Error otherwise.
+ *  This is the single enforcement point the file/terminal tools call before touching disk. */
+export function assertPathAllowed(path: string): string {
+  if (isAllAccess()) return realAbs(path);
+  const abs = realPathWithin(path, allowedRoots());
+  if (abs) return abs;
   throw new Error(`path not allowed: "${path}" is outside your accessible repositories`);
 }

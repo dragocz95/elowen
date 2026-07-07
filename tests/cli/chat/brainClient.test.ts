@@ -24,11 +24,11 @@ describe('BrainClient', () => {
     expect(f).toHaveBeenCalledWith('http://x/brain/start', expect.objectContaining({ method: 'POST' }));
   });
 
-  it('send posts the text', async () => {
+  it('send posts the text with the CLI working directory', async () => {
     const f = vi.fn(async () => j(200, { ok: true })) as unknown as typeof fetch;
     const c = new BrainClient({ base: 'http://x', token: 't', fetchImpl: f });
     await c.send('hi');
-    expect(f).toHaveBeenCalledWith('http://x/brain/send', expect.objectContaining({ method: 'POST', body: JSON.stringify({ text: 'hi' }) }));
+    expect(f).toHaveBeenCalledWith('http://x/brain/send', expect.objectContaining({ method: 'POST', body: JSON.stringify({ text: 'hi', cwd: process.cwd() }) }));
   });
 
   it('send can pass the work mode', async () => {
@@ -37,7 +37,7 @@ describe('BrainClient', () => {
     await c.send('outline this first', 'plan');
     expect(f).toHaveBeenCalledWith('http://x/brain/send', expect.objectContaining({
       method: 'POST',
-      body: JSON.stringify({ text: 'outline this first', mode: 'plan' }),
+      body: JSON.stringify({ text: 'outline this first', cwd: process.cwd(), mode: 'plan' }),
     }));
   });
 

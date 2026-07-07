@@ -4,7 +4,9 @@ import type { PluginRegistry } from '../plugins/registry.js';
 import type { PluginRegistryProvider } from '../plugins/pluginsProvider.js';
 import { PluginHookBus } from '../plugins/hookBus.js';
 import type { HookAuditBuffer } from '../shared/hookAudit.js';
+import { realpathSync, statSync } from 'node:fs';
 import type { Policy } from '../plugins/policy.js';
+import { realPathWithin } from '../plugins/pathGuard.js';
 import { runWithPolicy } from '../plugins/policyContext.js';
 import type { ToolPolicy } from '../plugins/policyContext.js';
 import { ElicitationRegistry } from './elicitation.js';
@@ -63,6 +65,9 @@ export interface BrainDeps {
   url: string;
   /** Working dir for the in-memory session (not a repo checkout). Default: process.cwd(). */
   cwd?: string;
+  /** The daemon's primary project checkout — the final turn-workDir fallback for an all-access chat
+   *  with no client-reported cwd (the daemon process itself runs at `/` under systemd). */
+  projectPath?: () => string | undefined;
   /** The daemon-wide shared plugin registry (lazy-loaded, memoized, invalidated on plugin toggles).
    *  Shared with the brain workers and platform adapters so ALL consumers reload together. Absent →
    *  brain runs exactly as before plugins existed. */
@@ -810,7 +815,26 @@ export class BrainService {
     return toolPolicy;
   }
 
-  async send(userId: number, text: string, images?: { data: string; mimeType: string }[], mode: 'build' | 'plan' = 'build', internal?: { goalKickoff?: boolean; goalContinue?: boolean }): Promise<void> {
+  /** The default tool cwd for one owner-chat turn: the client-reported directory when it is a real
+   *  directory the caller may access (all-access: anywhere; scoped: inside an allowed repo root), else
+   *  their first allowed root, else the daemon's primary project. Never the daemon process cwd —
+   *  systemd runs that at `/`. Returns undefined only when no fallback exists (tools then keep their
+   *  own `defaultCwd()` chain). */
+  private turnWorkDir(policy: Policy, clientCwd?: string): string | undefined {
+    if (clientCwd) {
+      try {
+        const real = realpathSync(clientCwd);
+        if (statSync(real).isDirectory()) {
+          if (policy.allowedProjectIds === 'all') return real;
+          const within = realPathWithin(real, policy.allowedPaths());
+          if (within) return within;
+        }
+      } catch { /* vanished or unreadable directory — fall through to the fallbacks */ }
+    }
+    return policy.allowedPaths()[0] ?? this.d.projectPath?.();
+  }
+
+  async send(userId: number, text: string, images?: { data: string; mimeType: string }[], mode: 'build' | 'plan' = 'build', internal?: { goalKickoff?: boolean; goalContinue?: boolean }, clientCwd?: string): Promise<void> {
     const active = this.activeLive(userId);
     if (!active) throw new Error('brain not started for user');
     if (!internal?.goalKickoff && !internal?.goalContinue) this.cancelGoalContinuation(active.sessionId);
@@ -952,10 +976,14 @@ export class BrainService {
       // Hide the user's disabled tools from the model this turn (not just block the call) — applies on the
       // next prompt, so set it right before. The execute-time gate stays as defense-in-depth.
       const toolPolicy = this.applyOwnerToolPolicy(userId, live, mode);
+      // Bind the turn's default tool cwd to the user's project: the CLI reports where it was launched
+      // (validated below), else fall back to their first repo root / the daemon's primary project.
+      // Without this an all-access chat ran tools in the daemon's own cwd — `/` under systemd.
+      const workDir = this.turnWorkDir(live.policy, clientCwd);
       await runWithPolicy(live.policy, () => {
         const prompted = memoryBlock + hookBlock + live.turnContext() + modeInstruction + text;
         return options ? live.session.prompt(prompted, options) : live.session.prompt(prompted);
-      }, { identity, elicit, emitCard, toolPolicy });
+      }, { identity, elicit, emitCard, toolPolicy, workDir });
       // Post-turn curator: extract durable facts from this exchange in the background. Fire-and-forget
       // (mirrors brainWorker) — never awaited, never touches live.session, swallows its own errors.
       if (this.curator && memSettings?.autoSave !== false) {

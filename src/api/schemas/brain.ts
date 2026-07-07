@@ -22,11 +22,14 @@ const imageSchema = z.object({
   mimeType: z.string().regex(/^image\//),
 });
 
-/** A single user message sent into the brain conversation, optionally with image attachments. */
+/** A single user message sent into the brain conversation, optionally with image attachments. `cwd` is
+ *  the client's working directory (the CLI reports where the user launched it) — the daemon binds the
+ *  turn's tools there when it is a real directory within the caller's repo access. */
 export const brainSendSchema = z.object({
   text: z.string().min(1),
   mode: z.enum(['build', 'plan']).optional(),
   images: z.array(imageSchema).max(4).optional(),
+  cwd: z.string().max(4096).optional(),
 });
 
 /** The user's answer to a parked ask_user_question (POST /brain/answer). `id` is the question id carried
