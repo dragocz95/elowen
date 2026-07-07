@@ -44,6 +44,14 @@ SERVICE
 CHAT
   chat                            open the interactive Orca chat (talk to Orca's brain in the terminal)
                                     --model openai|anthropic  pick the configured provider
+  run "<prompt>"                  non-interactive Orca: run one turn/slash/goal, stream it, exit
+  -p, --print "<prompt>"          alias for \`run\` (claude-style)
+                                    --model/--provider <id>   pick the model for this run
+                                    -c | --session <id> | --new   continue active (default) / specific / fresh
+                                    --mode plan|build | --plan    plan mode hides mutating tools
+                                    --goal "<text>" [--max-turns N]  run an autonomous goal until it settles
+                                    --json | --verbose | --timeout <s>
+                                    a /slash prompt runs that command, e.g. -p "/status", -p "/goal pause"
   login                           sign in and cache a token for \`orca chat\` (no password prompt next time)
 
 TASKS
@@ -297,6 +305,17 @@ async function main() {
   // `orca doctor` is a read-only diagnostic — it authenticates and queries the daemon itself (never
   // spawning it), so like `setup` it runs BEFORE ensureDaemon/runLifecycle and is NOT an API command.
   if (argv[0] === 'doctor') { const { runDoctor } = await import('./doctor.js'); await runDoctor(argv.slice(1), process.env, BASE, version); return; }
+  // `orca run "<prompt>"` / `orca -p "<prompt>"` — non-interactive Orca (a single turn, slash command or
+  // autonomous goal, streamed to stdout, then exit). Needs the daemon like `chat`, so bring it up first;
+  // then hand off to the headless runner, which resolves a token from env/cache (never prompting).
+  if (argv[0] === 'run' || argv[0] === '-p' || argv[0] === '--print' || argv[0] === '--prompt') {
+    // A streamed run is often piped (`orca run … | head`); when the consumer closes the pipe, writing to
+    // stdout raises EPIPE — treat that as "consumer done" and exit cleanly instead of crashing on it.
+    process.stdout.on('error', (e: NodeJS.ErrnoException) => { if (e.code === 'EPIPE') process.exit(0); });
+    await ensureDaemon();
+    const { runHeadless } = await import('./chat/headless.js');
+    process.exit(await runHeadless(BASE, process.env, argv[0] === 'run' ? argv.slice(1) : argv));
+  }
   // `orca update --auto` is the hourly systemd timer's entrypoint: gated on the opt-in flag + live
   // missions (read straight from the DB), it never auto-spawns a daemon and stays silent-success when
   // it decides not to update — so handle it before both runLifecycle and ensureDaemon.

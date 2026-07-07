@@ -201,8 +201,8 @@ export class BrainClient {
     return (await res.json()) as GoalView | null;
   }
 
-  async setGoal(text: string, draft = false): Promise<GoalView> {
-    const res = await this.post('/brain/goal', { text, draft });
+  async setGoal(text: string, draft = false, turnBudget?: number): Promise<GoalView> {
+    const res = await this.post('/brain/goal', { text, draft, ...(turnBudget ? { turnBudget } : {}) });
     return (await res.json()) as GoalView;
   }
 
@@ -226,12 +226,15 @@ export class BrainClient {
   /** Open the SSE stream and deliver each BrainEvent to `onEvent` until `signal` aborts. Reconnects
    *  with a fixed backoff on a dropped connection (the server re-streams live events). A 401
    *  propagates so the caller can re-login. */
-  async stream(onEvent: (e: BrainEvent) => void, signal: AbortSignal, backoffMs = 1000): Promise<void> {
+  async stream(onEvent: (e: BrainEvent) => void, signal: AbortSignal, backoffMs = 1000, onOpen?: () => void): Promise<void> {
     while (!signal.aborted) {
       try {
         const res = await this.f(`${this.o.base}/brain/stream`, { headers: this.headers(), signal });
         if (res.status === 401) throw new Unauthorized();
         if (!res.ok || !res.body) throw new Error(`orca brain ${res.status} on /brain/stream`);
+        // Headers are flushed only after the server subscribed us to the live event bus, so this is the
+        // safe point to trigger the first turn without racing a missed event (headless mode uses this).
+        onOpen?.();
         const reader = res.body.getReader();
         const dec = new TextDecoder();
         let buf = '';
