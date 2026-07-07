@@ -195,17 +195,30 @@ export class BrainService {
     this.goalTimers.delete(sessionId);
   }
 
-  /** Reconcile a goal whose row says `active` but has NO live continuation timer — a zombie. The timer is
-   *  in-memory only, so it's gone after a daemon restart (leaving the row falsely "active") or after the
-   *  user switched away (which cancels it). Rather than let the DB claim an autonomous goal is running
-   *  while nothing is, pause it with a reason so it's honest and the user can `/goal resume`. Autonomous
-   *  work never silently resumes on its own (matches the "escalation = wait, nothing self-starts" rule);
-   *  a healthy goal (timer present, or mid-continuation kickoff) is left untouched. */
+  /** Pause an `active` goal that has no live driver, so the DB stops claiming an autonomous loop is running
+   *  while nothing drives it. Called when the user switches AWAY from a conversation (its continuation timer
+   *  was just cancelled and the active-session guard will block any reschedule) and, in bulk, at daemon boot
+   *  (`reconcileGoalsOnBoot`) for restart zombies. Autonomous work never self-resumes (matches the
+   *  "escalation = wait, nothing self-starts" rule); the user brings it back with `/goal resume`.
+   *
+   *  NB: this must ONLY be called when the goal genuinely has no driver. It is deliberately NOT called on
+   *  the normal start()/reconnect path — a goal turn that is mid-flight has already deleted its own timer
+   *  (see scheduleGoalContinuation), so "no timer" there does NOT mean "zombie", and pausing it would kill
+   *  a healthy running goal the moment the user opens the CLI or an image triggers a vision respawn. */
   private reconcileGoal(sessionId: string, reason: string): void {
     if (this.goalTimers.has(sessionId)) return;
     const row = this.d.store.getGoal(sessionId);
     if (row?.status === 'active') {
       this.d.store.updateGoal(sessionId, { status: 'paused', last_verdict: 'interrupted', paused_reason: reason });
+    }
+  }
+
+  /** One-shot boot sweep: every goal the DB still marks `active` is a restart zombie (in-memory timers
+   *  don't survive the process), so pause them all. Runs once at daemon startup — NOT lazily per start() —
+   *  which is why start()/reconnect no longer has to guess whether a timer-less goal is a zombie. */
+  reconcileGoalsOnBoot(): void {
+    for (const row of this.d.store.activeGoals()) {
+      this.d.store.updateGoal(row.session_id, { status: 'paused', last_verdict: 'interrupted', paused_reason: 'interrupted (daemon restart)' });
     }
   }
 
@@ -216,13 +229,18 @@ export class BrainService {
       this.goalTimers.delete(sessionId);
       const current = this.d.store.getGoal(sessionId);
       if (!current || current.status !== 'active' || this.activeSessionId(userId) !== sessionId) return;
-      void this.send(userId, goalContinuePrompt(current), undefined, mode, { goalContinue: true }).catch((e) => {
-        this.d.store.updateGoal(sessionId, {
-          status: 'paused',
-          last_verdict: 'error',
-          paused_reason: e instanceof Error ? e.message : String(e),
+      // Ensure a live session BEFORE sending. A `/goal resume` (or resume via a bare API client after a
+      // restart) may have no live brain, and send() would throw "brain not started" and error-pause the
+      // goal it just resumed. start() is idempotent when the session is already live.
+      void this.start(userId, { session: sessionId })
+        .then(() => this.send(userId, goalContinuePrompt(current), undefined, mode, { goalContinue: true }))
+        .catch((e) => {
+          this.d.store.updateGoal(sessionId, {
+            status: 'paused',
+            last_verdict: 'error',
+            paused_reason: e instanceof Error ? e.message : String(e),
+          });
         });
-      });
     }, delay);
     timer.unref?.();
     this.goalTimers.set(sessionId, timer);
@@ -701,9 +719,9 @@ export class BrainService {
       this.reconcileGoal(prevActive, 'interrupted (switched conversation)');
     }
     this.sessions.setActive(userId, sessionId);
-    // A goal row marked active with no live timer on the TARGET is a daemon-restart zombie (timers don't
-    // survive a restart). Pause it so it stops claiming to run; the user resumes deliberately.
-    this.reconcileGoal(sessionId, 'interrupted (daemon restart)');
+    // NOTE: no reconcile of the TARGET goal here. Restart zombies are handled once at boot
+    // (reconcileGoalsOnBoot); a timer-less goal on a start()/reconnect is usually a healthy mid-flight turn
+    // (its timer self-deleted when it fired), so pausing it here would kill a running goal.
     // Serialized per conversation: two concurrent starts would both spawn and leak one PI session.
     return this.serial(sessionId, async () => {
       if (this.sessions.has(sessionId)) return { sessionId }; // idempotent resume of a live conversation
@@ -766,10 +784,12 @@ export class BrainService {
     // an image into a text-only model would error the running turn). Persist like a normal user turn —
     // agent_end skips re-persisting user messages, so there's no dup.
     if (active.session.isStreaming && !images?.length && !internal?.goalKickoff && !internal?.goalContinue) {
-      // NOTE: tool visibility (setActiveToolsByName) only takes effect on the NEXT prompt, so applying the
-      // owner/plan-mode policy here — mid-turn — would either no-op or rebuild the schema under a running
-      // turn. The steered text still carries the plan-mode instruction, and the next full turn applies the
-      // policy the normal way (line ~852). So we deliberately do NOT touch tool visibility on the steer path.
+      // A `/plan` steer must actually RESTRICT the running turn. setActiveToolsByName takes effect on the
+      // next agent turn — and in PI a "turn" is one model round-trip (many per run, see the step counter),
+      // NOT the next full prompt — so applying the plan-mode policy here hides write_file/run_command for
+      // the rest of this run. TIGHTEN-ONLY: we apply only for plan mode, never on a build/plain steer, so a
+      // mid-turn message can never surprise-RE-ENABLE unsafe tools under a turn the user put in plan mode.
+      if (mode === 'plan') this.applyOwnerToolPolicy(userId, active, mode);
       projectUserTurn(this.d.store, active.sessionId, text);
       await active.session.steer(modeInstruction + text);
       return;

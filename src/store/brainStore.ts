@@ -185,6 +185,12 @@ export class BrainStore {
     return this.db.prepare('SELECT * FROM brain_goals WHERE session_id = ?').get(sessionId) as BrainGoalRow | undefined;
   }
 
+  /** All goals currently marked `active`. Used at daemon boot to reconcile restart zombies — their
+   *  in-memory continuation timers died with the process, so the rows falsely claim to be running. */
+  activeGoals(): BrainGoalRow[] {
+    return this.db.prepare("SELECT * FROM brain_goals WHERE status = 'active'").all() as BrainGoalRow[];
+  }
+
   updateGoal(sessionId: string, patch: Partial<Pick<BrainGoalRow, 'status' | 'subgoals' | 'turns_used' | 'last_verdict' | 'last_evidence' | 'paused_reason'>>): BrainGoalRow | undefined {
     // Runtime column whitelist — the keys are interpolated into SQL, so never trust the object's shape
     // (a route could forward a parsed body here); only these columns may be written.

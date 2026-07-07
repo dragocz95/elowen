@@ -167,7 +167,7 @@ export function toolOutputBlock(output: ToolOutputView, width: number, expanded 
     if (!raw) { lines.push(''); continue; }
     const toneColor = /\b(error|failed|warning|needs attention|exit\s+[1-9])\b/i.test(raw)
       ? theme.warning
-      : /^(✓|passed|success|ok)\b/i.test(raw)
+      : /^✓|^(passed|success|ok)\b/i.test(raw)
         ? theme.success
         : theme.muted;
     lines.push(` ${ansi.open(toneColor, raw)}`);

@@ -594,6 +594,9 @@ export function buildApp(opts: BuildOpts) {
     // One-shot startup sweeps. Log on failure (e.g. tmux missing) so a silent rejection can't leave
     // zombies un-reverted — that would stall every mission until the next restart.
     void reconcileZombies().catch((e) => log.error('reconcileZombies failed', e));
+    // Restart zombies on the brain side: goals still marked 'active' whose in-memory continuation timers
+    // died with the process. Pause them so nothing falsely claims to be running (the user /goal resumes).
+    try { brain?.reconcileGoalsOnBoot(); } catch (e) { log.error('reconcileGoalsOnBoot failed', e); }
     // Bring up plugin platform channels (Discord bot, …). Fail-open per adapter. If this boot follows an
     // operator `/restart`, announce "back online" once the platforms are connected, then clear the marker
     // (so ordinary restarts/deploys stay quiet — only a user-triggered restart is echoed).

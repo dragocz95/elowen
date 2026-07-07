@@ -29,3 +29,4 @@ web-dist/
 
 # image-gen plugin scratch (chroma-key sources / temp renders)
 .imagegen-tmp/
+/.config/

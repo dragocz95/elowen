@@ -221,17 +221,27 @@ describe('BrainService', () => {
     expect(after?.paused_reason).toContain('switched');
   });
 
-  it('reconciles a restart-zombie active goal (active row, no live timer) to paused on start', async () => {
+  it('reconciles restart-zombie active goals to paused at boot (reconcileGoalsOnBoot)', async () => {
     const d = fakeDeps();
     const svc = new BrainService(d as never);
     await svc.start(1);
     const sid = d.store.listSessions(1)[0]!.id;
     // Simulate a daemon restart: an active goal row with NO in-memory continuation timer.
     d.store.upsertGoal({ sessionId: sid, userId: 1, goal: 'thing', draft: '', status: 'active' });
-    await svc.start(1, { session: sid });
+    svc.reconcileGoalsOnBoot();
     const after = d.store.getGoal(sid);
     expect(after?.status).toBe('paused');
     expect(after?.paused_reason).toContain('daemon restart');
+  });
+
+  it('does NOT pause a healthy active goal on reconnect/start (a mid-flight turn has no live timer)', async () => {
+    const d = fakeDeps();
+    const svc = new BrainService(d as never);
+    await svc.start(1);
+    const sid = d.store.listSessions(1)[0]!.id;
+    d.store.upsertGoal({ sessionId: sid, userId: 1, goal: 'thing', draft: '', status: 'active' });
+    await svc.start(1, { session: sid }); // reconnecting to the same conversation must not kill the goal
+    expect(d.store.getGoal(sid)?.status).toBe('active');
   });
 
   it('persistent goal pauses with an error when the kickoff turn fails', async () => {
@@ -320,7 +330,7 @@ describe('BrainService', () => {
     expect(activeTools).not.toContain('set_config');
   });
 
-  it('mid-run plan steer delivers the plan instruction but does NOT change tool visibility mid-stream', async () => {
+  it('mid-run PLAN steer tightens tool visibility for the rest of the run (hides unsafe tools)', async () => {
     const d = fakeDeps();
     d.prompts.render.mockImplementation((name: string, vars: Record<string, string>) =>
       name === 'cli/plan-mode' ? 'PLAN MODE PROMPT' : `PERSONA:${name}:${vars.userName}`,
@@ -334,8 +344,23 @@ describe('BrainService', () => {
 
     // The plan-mode instruction rides the steered text into the live turn…
     expect(d.session.steer).toHaveBeenCalledWith('PLAN MODE PROMPT\n\nswitch to planning');
-    // …but tool visibility is NOT touched mid-turn: setActiveToolsByName only takes effect on the next
-    // prompt, so applying it here would be an undefined no-op. The next full turn applies plan policy.
+    // …and tool visibility IS tightened: setActiveToolsByName takes effect on the next round-trip within
+    // the running turn (PI "turn" = one model round-trip), so unsafe tools are hidden for the rest of it.
+    const activeTools = d.session.setActiveToolsByName.mock.calls.at(-1)?.[0];
+    expect(activeTools).toContain('orca_list_tasks');
+    expect(activeTools).not.toContain('orca_create_task');
+  });
+
+  it('mid-run BUILD/plain steer does NOT change tool visibility (never re-enables unsafe tools mid-turn)', async () => {
+    const d = fakeDeps();
+    const svc = new BrainService(d as never);
+    await svc.start(1);
+    d.session.setActiveToolsByName.mockClear();
+    d.session.isStreaming = true;
+
+    await svc.send(1, 'keep going', undefined, 'build');
+
+    expect(d.session.steer).toHaveBeenCalled();
     expect(d.session.setActiveToolsByName).not.toHaveBeenCalled();
   });
 

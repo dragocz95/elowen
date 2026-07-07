@@ -471,8 +471,8 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
       // Nothing to load if the skills plugin is off (the skill isn't registered at all then).
       const loadSkill = (name: string, active: boolean): void => {
         if (!active) { notice = color.dim('the skills plugin is disabled — enable it in Settings → Plugins first'); render(); return; }
-        notice = color.dim(`loading skill "${name}" into this conversation…`);
-        render();
+        // onSubmit clears any notice and shows the sent turn itself, so a "loading…" notice here would be
+        // wiped before it ever renders — just submit the read_skill instruction.
         editor.onSubmit?.(`Load the "${name}" skill with the read_skill tool and follow it for the rest of this conversation.`);
       };
       const confirmDelete = (name: string): void => {
@@ -909,15 +909,19 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
         }
       }
     }
+    // Background transcript/card interactions must not fire while a modal owns focus (a picker, the rename
+    // input, the ask dock — which unfocus the editor — or the inline slash overlay): otherwise a click or
+    // scroll inside the overlay would toggle the Todos checklist / scroll the transcript hidden underneath.
+    const noModal = editor.focused && !slashHandle;
     const click = mouseClick(data);
-    if (click && viewport.isThoughtRow(click.x, click.y)) {
+    if (click && noModal && viewport.isThoughtRow(click.x, click.y)) {
       viewport.toggleThought(click.y);
       tui.requestRender();
       return { consume: true };
     }
     // Click the Todos header to collapse/expand the checklist. The card panel sits directly below the
     // viewport in the fixed stack, so its first row is TOP_RULE_ROWS + viewport-height + 1 (1-based).
-    if (click) {
+    if (click && noModal) {
       const cardTop = TOP_RULE_ROWS + Math.max(8, term.rows - fixedRows()) + 1;
       const rel = click.y - cardTop;
       if (rel >= 0 && cardPanel.isHeaderRow(rel)) {
@@ -927,7 +931,7 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
       }
     }
     const wheel = mouseWheel(data);
-    if (wheel) {
+    if (wheel && noModal) {
       viewport.scroll(wheel);
       tui.requestRender();
       return { consume: true };
@@ -960,12 +964,12 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
       openSlash();
       return { consume: true };
     }
-    if (!slashHandle && data === '\x1b[5~') {
+    if (noModal && data === '\x1b[5~') {
       viewport.scroll(4);
       tui.requestRender();
       return { consume: true };
     }
-    if (!slashHandle && data === '\x1b[6~') {
+    if (noModal && data === '\x1b[6~') {
       viewport.scroll(-4);
       tui.requestRender();
       return { consume: true };

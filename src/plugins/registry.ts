@@ -52,8 +52,12 @@ export class PluginRegistry {
    *  with the core defaults by `makeToolIconResolver` when the daemon stamps a `tool` event's icon. */
   readonly toolIcons = new Map<string, string>();
 
-  /** Absorb another registry's contributions (the loader stages each plugin and merges on success). */
-  merge(other: PluginRegistry): void {
+  /** Absorb another registry's contributions (the loader stages each plugin and merges on success).
+   *  Controls + commands are name-keyed and drive admin routes / the slash menu, so a later plugin must
+   *  not silently hijack a name a prior plugin owns. This join is the ONLY place two plugins' registries
+   *  meet (each registers into its own staging registry), so cross-plugin collisions are enforced HERE —
+   *  first-writer-wins, with `warn` surfacing the drop. */
+  merge(other: PluginRegistry, warn?: (msg: string) => void): void {
     this.tools.push(...other.tools);
     for (const [k, v] of other.toolOwner) this.toolOwner.set(k, v);
     this.skills.push(...other.skills);
@@ -61,15 +65,23 @@ export class PluginRegistry {
     this.hooks.push(...other.hooks);
     this.turnContexts.push(...other.turnContexts);
     this.platforms.push(...other.platforms);
-    for (const [k, v] of other.controls) this.controls.set(k, v);
-    for (const [k, v] of other.commands) this.commands.set(k, v);
-    for (const [k, v] of other.commandOwner) this.commandOwner.set(k, v);
+    for (const [k, v] of other.controls) {
+      const prior = this.controlOwner.get(k);
+      const owner = other.controlOwner.get(k) ?? '?';
+      if (prior && prior !== owner) { warn?.(`control "${k}" from "${owner}" ignored — already registered by "${prior}"`); continue; }
+      this.controls.set(k, v); this.controlOwner.set(k, owner);
+    }
+    for (const [k, v] of other.commands) {
+      const prior = this.commandOwner.get(k);
+      const owner = other.commandOwner.get(k) ?? '?';
+      if (prior && prior !== owner) { warn?.(`command "/${k}" from "${owner}" ignored — already registered by "${prior}"`); continue; }
+      this.commands.set(k, v); this.commandOwner.set(k, owner);
+    }
     this.skillOwners.push(...other.skillOwners);
     this.promptFragmentOwners.push(...other.promptFragmentOwners);
     this.hookOwners.push(...other.hookOwners);
     this.turnContextOwners.push(...other.turnContextOwners);
     this.platformOwners.push(...other.platformOwners);
-    for (const [k, v] of other.controlOwner) this.controlOwner.set(k, v);
     for (const [k, v] of other.pluginCapabilities) this.pluginCapabilities.set(k, v);
   }
 
@@ -119,19 +131,17 @@ export class PluginRegistry {
       registerControl: (key, control) => {
         const clean = key.trim();
         if (!clean) { scoped.warn('registerControl refused: empty name'); return; }
-        // Last-writer-wins would let a second plugin silently hijack a control name the admin routes drive
-        // (e.g. 'mcp') — warn so the collision is visible instead of a mysterious behavior swap.
-        const prior = this.controlOwner.get(clean);
-        if (prior && prior !== name) scoped.warn(`registerControl: "${clean}" already registered by "${prior}" — overriding`);
+        // Cross-plugin collisions (a second plugin hijacking a control name like 'mcp') are caught at
+        // merge() time — this staging registry only ever holds THIS plugin, so within it last-writer-wins
+        // is just the plugin overriding its own control.
         this.controls.set(clean, control);
         this.controlOwner.set(clean, name);
       },
       registerCommand: (command) => {
         const clean = command.name?.trim() ?? '';
-        if (!/^[a-z0-9][a-z0-9-]{1,31}$/.test(clean)) { scoped.warn(`registerCommand refused: "${command.name}" is not kebab-case (a-z, 0-9, dashes)`); return; }
+        // 1–32 chars, kebab-case. (The collision with another plugin's command is enforced at merge().)
+        if (!/^[a-z0-9][a-z0-9-]{0,31}$/.test(clean)) { scoped.warn(`registerCommand refused: "${command.name}" is not kebab-case (a-z, 0-9, dashes)`); return; }
         if (isBuiltinCommand(clean)) { scoped.warn(`registerCommand refused: "${clean}" shadows a built-in command`); return; }
-        const prior = this.commandOwner.get(clean);
-        if (prior && prior !== name) { scoped.warn(`registerCommand refused: "${clean}" already registered by "${prior}"`); return; }
         if (typeof command.prompt !== 'string' || !command.prompt.trim()) { scoped.warn(`registerCommand refused: "${clean}" has an empty prompt`); return; }
         this.commands.set(clean, { name: clean, description: command.description ?? '', prompt: command.prompt, surfaces: command.surfaces });
         this.commandOwner.set(clean, name);

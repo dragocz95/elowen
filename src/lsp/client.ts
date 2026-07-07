@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import { encodeMessage, MessageDecoder, type JsonRpcMessage } from './protocol.js';
-import type { LanguageServerSpec } from './servers.js';
+import { commandExists, type LanguageServerSpec } from './servers.js';
 
 /** One diagnostic the agent cares about: where it is and what's wrong. Flattened from the LSP shape so
  *  the rest of Orca never touches raw protocol objects. Lines/columns are 1-based (editor convention)
@@ -54,9 +54,12 @@ export interface LspTransport {
   dispose(): void;
 }
 
-/** Spawn a language server as a child process and wrap its stdio in an LspTransport. Returns null if the
- *  server binary isn't on PATH (ENOENT) — the caller treats that language as unsupported on this box. */
+/** Spawn a language server as a child process and wrap its stdio in an LspTransport. Returns null when the
+ *  server binary isn't on PATH — checked SYNCHRONOUSLY up front, because `spawn` reports ENOENT only via
+ *  an async 'error' event, so relying on a try/catch would return a dead-pipe transport that stalls every
+ *  request. The child is detached-safe: on error/exit the transport notifies so the client can fail fast. */
 export function spawnStdioTransport(spec: LanguageServerSpec, cwd: string): LspTransport | null {
+  if (!commandExists(spec.command)) return null;
   let child;
   try { child = spawn(spec.command, spec.args, { cwd, stdio: ['pipe', 'pipe', 'ignore'] }); }
   catch { return null; }
@@ -64,45 +67,67 @@ export function spawnStdioTransport(spec: LanguageServerSpec, cwd: string): LspT
   let alive = true;
   const messageCbs: ((m: JsonRpcMessage) => void)[] = [];
   const exitCbs: (() => void)[] = [];
-  child.on('error', () => { alive = false; for (const cb of exitCbs) cb(); }); // ENOENT lands here, async
-  child.on('exit', () => { alive = false; for (const cb of exitCbs) cb(); });
+  const die = (): void => { if (!alive) return; alive = false; for (const cb of exitCbs) cb(); };
+  child.on('error', die); // a late ENOENT (race) or spawn failure still fails the client fast
+  child.on('exit', die);
   child.stdout.on('data', (chunk: Buffer) => { for (const m of decoder.push(chunk)) for (const cb of messageCbs) cb(m); });
+  child.stdin.on('error', () => { /* broken pipe — die() fires via exit */ });
   return {
-    send: (framed) => { if (alive) child.stdin.write(framed); },
+    send: (framed) => { if (alive) { try { child.stdin.write(framed); } catch { /* pipe closing */ } } },
     onMessage: (cb) => { messageCbs.push(cb); },
     onExit: (cb) => { exitCbs.push(cb); },
     dispose: () => { alive = false; try { child.kill(); } catch { /* already gone */ } },
   };
 }
 
-/** A minimal LSP client: initialize handshake, then open a document and collect the diagnostics the
- *  server publishes for it. Deliberately request/notify only what diagnostics need — this is a
+/** A minimal LSP client: initialize handshake, then open/update a document and collect the diagnostics
+ *  the server publishes for it. Deliberately request/notify only what diagnostics need — this is a
  *  "did I break it?" probe for the agent, not a full editor client. */
 export class LspClient {
   private nextId = 1;
-  private pending = new Map<number, (msg: JsonRpcMessage) => void>();
+  private pending = new Map<number, { resolve: (m: JsonRpcMessage) => void; reject: (e: Error) => void }>();
   private diagnosticsByUri = new Map<string, Diagnostic[]>();
-  private diagnosticWaiters = new Map<string, (d: Diagnostic[]) => void>();
-  private initialized = false;
+  // Multiple concurrent diagnose() calls can await the SAME uri — keep every waiter, not just the last,
+  // or an earlier caller's promise would never settle.
+  private diagnosticWaiters = new Map<string, ((d: Diagnostic[]) => void)[]>();
+  // Which documents have been opened (didOpen). A re-check must send didChange, not a second didOpen
+  // (which LSP forbids and servers ignore — they'd keep the stale first text). Tracks the doc version too.
+  private openVersions = new Map<string, number>();
+  private starting: Promise<void> | null = null;
   private disposed = false;
 
   constructor(private readonly transport: LspTransport, private readonly rootPath: string) {
     transport.onMessage((msg) => this.onMessage(msg));
-    transport.onExit(() => { this.disposed = true; });
+    transport.onExit(() => this.onExit());
+  }
+
+  isDisposed(): boolean { return this.disposed; }
+
+  private onExit(): void {
+    this.disposed = true;
+    // Fail every in-flight request so no caller hangs on a dead server.
+    for (const { reject } of this.pending.values()) reject(new Error('language server exited'));
+    this.pending.clear();
+    // Release diagnostics waiters with whatever is cached (usually []), so their promises settle.
+    for (const [uri, waiters] of this.diagnosticWaiters) {
+      const cached = this.diagnosticsByUri.get(uri) ?? [];
+      for (const w of waiters) w(cached);
+    }
+    this.diagnosticWaiters.clear();
   }
 
   private onMessage(msg: JsonRpcMessage): void {
     if (typeof msg.id === 'number' && this.pending.has(msg.id)) {
-      const resolve = this.pending.get(msg.id)!;
+      const p = this.pending.get(msg.id)!;
       this.pending.delete(msg.id);
-      resolve(msg);
+      p.resolve(msg);
       return;
     }
     if (msg.method === 'textDocument/publishDiagnostics') {
       const { uri, diagnostics } = parsePublishDiagnostics(msg.params);
       this.diagnosticsByUri.set(uri, diagnostics);
-      const waiter = this.diagnosticWaiters.get(uri);
-      if (waiter) { this.diagnosticWaiters.delete(uri); waiter(diagnostics); }
+      const waiters = this.diagnosticWaiters.get(uri);
+      if (waiters) { this.diagnosticWaiters.delete(uri); for (const w of waiters) w(diagnostics); }
     }
   }
 
@@ -115,47 +140,63 @@ export class LspClient {
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => { this.pending.delete(id); reject(new Error(`LSP ${method} timed out`)); }, timeoutMs);
       timer.unref?.();
-      this.pending.set(id, (msg) => { clearTimeout(timer); resolve(msg); });
+      this.pending.set(id, { resolve: (m) => { clearTimeout(timer); resolve(m); }, reject: (e) => { clearTimeout(timer); reject(e); } });
       this.transport.send(encodeMessage({ jsonrpc: '2.0', id, method, params }));
     });
   }
 
-  /** Run the initialize/initialized handshake (idempotent). */
-  async start(): Promise<void> {
-    if (this.initialized || this.disposed) return;
-    await this.request('initialize', {
-      processId: null,
-      rootUri: pathToFileURL(this.rootPath).href,
-      capabilities: { textDocument: { publishDiagnostics: { relatedInformation: false } } },
-      workspaceFolders: [{ uri: pathToFileURL(this.rootPath).href, name: 'root' }],
-    });
-    this.notify('initialized', {});
-    this.initialized = true;
+  /** Run the initialize/initialized handshake exactly once, even under concurrent diagnose() calls (a
+   *  second `initialize` is a protocol error). The in-flight promise is memoized. */
+  private start(): Promise<void> {
+    if (this.starting) return this.starting;
+    this.starting = (async () => {
+      await this.request('initialize', {
+        processId: process.pid, // let the server watchdog exit if the daemon dies
+        rootUri: pathToFileURL(this.rootPath).href,
+        capabilities: { textDocument: { publishDiagnostics: { relatedInformation: false }, synchronization: { didSave: false } } },
+        workspaceFolders: [{ uri: pathToFileURL(this.rootPath).href, name: 'root' }],
+      });
+      this.notify('initialized', {});
+    })();
+    return this.starting;
   }
 
-  /** Open (or re-open) a document and resolve with the diagnostics the server publishes for it. Waits up
-   *  to `timeoutMs` for the publish; resolves with whatever is cached (often []) if the server stays
-   *  silent, so a healthy file simply returns no diagnostics rather than hanging the agent. */
+  /** Open (or, on a re-check, update) a document and resolve with the diagnostics the server publishes for
+   *  it. Waits up to `timeoutMs`; resolves with whatever is cached (often []) if the server stays silent,
+   *  so a healthy file returns no diagnostics rather than hanging the agent. Throws only if the server is
+   *  gone (so the manager can evict + respawn). */
   async diagnose(path: string, text: string, language: string, timeoutMs = 4000): Promise<Diagnostic[]> {
-    if (this.disposed) return [];
+    if (this.disposed) throw new Error('language server disposed');
     await this.start();
     const uri = pathToFileURL(path).href;
     const wait = new Promise<Diagnostic[]>((resolve) => {
-      this.diagnosticWaiters.set(uri, resolve);
+      const list = this.diagnosticWaiters.get(uri) ?? [];
+      list.push(resolve);
+      this.diagnosticWaiters.set(uri, list);
       const timer = setTimeout(() => {
-        if (this.diagnosticWaiters.delete(uri)) resolve(this.diagnosticsByUri.get(uri) ?? []);
+        const remaining = (this.diagnosticWaiters.get(uri) ?? []).filter((w) => w !== resolve);
+        if (remaining.length) this.diagnosticWaiters.set(uri, remaining); else this.diagnosticWaiters.delete(uri);
+        resolve(this.diagnosticsByUri.get(uri) ?? []);
       }, timeoutMs);
       timer.unref?.();
     });
-    // A fresh version each open so servers that dedupe by version re-run.
-    this.notify('textDocument/didOpen', { textDocument: { uri, languageId: language, version: this.nextId++, text } });
+    // First sight of a doc → didOpen; thereafter → didChange with a monotone version (re-opening is a
+    // protocol violation and servers keep the stale first text otherwise).
+    const version = (this.openVersions.get(uri) ?? 0) + 1;
+    this.openVersions.set(uri, version);
+    if (version === 1) {
+      this.notify('textDocument/didOpen', { textDocument: { uri, languageId: language, version, text } });
+    } else {
+      this.notify('textDocument/didChange', { textDocument: { uri, version }, contentChanges: [{ text }] });
+    }
     return wait;
   }
 
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
-    try { this.notify('exit', {}); } catch { /* transport may be dead */ }
+    // Best-effort graceful shutdown (request then notify), then drop the transport.
+    try { this.notify('shutdown', null); this.notify('exit', null); } catch { /* transport may be dead */ }
     this.transport.dispose();
   }
 }

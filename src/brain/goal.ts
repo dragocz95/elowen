@@ -62,9 +62,11 @@ export function lastAssistantText(store: BrainStore, sessionId: string): string 
  *  the config…" → done), silently terminating the autonomous loop mid-work. The prompts instruct the
  *  model to emit the sentinel only on genuine completion, so requiring it removes the false positives. */
 export function judgeGoalCompletion(text: string): { done: boolean; evidence: string } {
-  const m = /^[^\S\r\n]*GOAL_DONE:[^\S\r\n]*(.+)$/im.exec(text);
+  // Tolerate common markdown wrapping — the prompt shows the sentinel in backticks, so a model may echo
+  // `GOAL_DONE: …` or **GOAL_DONE: …**. Allow leading/trailing `*_~ around the sentinel and strip them.
+  const m = /^[^\S\r\n]*[`*_~]*\s*GOAL_DONE:[^\S\r\n]*(.+)$/im.exec(text);
   if (!m) return { done: false, evidence: '' };
-  const evidence = (m[1] ?? '').replace(/\s+/g, ' ').trim();
+  const evidence = (m[1] ?? '').replace(/[`*_~]+\s*$/, '').replace(/\s+/g, ' ').trim();
   // Guard against a model echoing the literal instruction placeholder rather than real evidence.
   if (!evidence || evidence === '<evidence>') return { done: false, evidence: '' };
   return { done: true, evidence: evidence.slice(0, 240) };

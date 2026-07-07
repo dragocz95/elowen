@@ -1,10 +1,39 @@
-import { describe, it, expect } from 'vitest';
-import { parseFlags, resolveModel, flagValue } from '../../../src/cli/setup/headless.js';
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import { tmpdir } from 'node:os';
+import { parseFlags, resolveModel, flagValue, runHeadlessSetup } from '../../../src/cli/setup/headless.js';
 import { PREFERRED_DEFAULT } from '../../../src/brain/providers.js';
-import { RECOMMENDED_EMBEDDING_MODEL } from '../../../src/cli/setup/constants.js';
+import { RECOMMENDED_EMBEDDING_MODEL, OPENROUTER_BASE, OPENAI_BASE } from '../../../src/cli/setup/constants.js';
 import type { WizardCtx } from '../../../src/cli/setup/types.js';
 
 const ctxWith = (fetchFn: typeof fetch): WizardCtx => ({ base: 'http://x', isTTY: false, debug: false, fetchFn, answers: {} });
+
+interface RecCall { method: string; path: string; body: Record<string, unknown> | undefined }
+/** A stateful daemon stub: GET /config returns the current provider list; PUT /config that carries
+ *  brain.providers replaces it. Records every call so a test can assert exactly what the wizard did. */
+function fakeDaemon(initial: Record<string, unknown>[] = []): { calls: RecCall[]; providers: () => Record<string, unknown>[] } {
+  let providers = initial;
+  const calls: RecCall[] = [];
+  const json = (b: unknown, status = 200): Response => new Response(JSON.stringify(b), { status });
+  vi.stubGlobal('fetch', (async (url: string | URL, init?: RequestInit) => {
+    const u = new URL(String(url));
+    const path = u.pathname;
+    const method = init?.method ?? 'GET';
+    const body = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : undefined;
+    calls.push({ method, path, body });
+    if (path === '/setup') return json({ needsSetup: false });
+    if (path === '/auth/login') return json({ token: 't' });
+    if (path === '/config' && method === 'GET') return json({ brain: { providers } });
+    if (path === '/config' && method === 'PUT') {
+      const bp = (body?.brain as { providers?: Record<string, unknown>[] } | undefined)?.providers;
+      if (bp) providers = bp.map((p) => ({ ...p, apiKeySet: p.apiKeySet ?? ('apiKey' in p) }));
+      return json({ ok: true });
+    }
+    return json({ ok: true });
+  }) as unknown as typeof fetch);
+  return { calls, providers: () => providers };
+}
+
+afterEach(() => vi.unstubAllGlobals());
 
 describe('cli/setup/headless.parseFlags', () => {
   it('applies defaults', () => {
@@ -74,5 +103,26 @@ describe('cli/setup/headless.resolveModel', () => {
   it('returns "" (keyless save) for an openai provider with no key and no explicit model', async () => {
     // Matches the interactive wizard's "connect later": save the endpoint keyless rather than hard-failing.
     expect(await resolveModel(ctxWith(noFetch), 'openai', 'http://x/v1', undefined, undefined)).toBe('');
+  });
+});
+
+describe('cli/setup/headless.runHeadlessSetup — provider reuse (regression guards)', () => {
+  it('keyless re-run keeps the existing model list instead of wiping it', async () => {
+    const d = fakeDaemon([{ id: 'openai', label: 'OpenAI', type: 'openai', baseUrl: OPENAI_BASE, models: ['gpt-5.5'], apiKeySet: true }]);
+    await runHeadlessSetup('http://x', { HOME: tmpdir() } as NodeJS.ProcessEnv, ['--admin-password', 'pw', '--provider', 'openai', '--skip-test']);
+    const put = d.calls.find((c) => c.method === 'PUT' && c.path === '/config' && (c.body?.brain as { providers?: unknown })?.providers);
+    const saved = ((put?.body?.brain as { providers: Record<string, unknown>[] }).providers).find((p) => p.id === 'openai');
+    expect(saved?.models).toEqual(['gpt-5.5']); // NOT []
+  });
+
+  it('memory openrouter reuses the keyless entry the AI step wrote — no openrouter-2 duplicate', async () => {
+    const d = fakeDaemon([]);
+    await runHeadlessSetup('http://x', { HOME: tmpdir() } as NodeJS.ProcessEnv, [
+      '--admin-password', 'pw', '--provider', 'openrouter', '--memory', 'openrouter', '--memory-key', 'K', '--skip-test',
+    ]);
+    const ors = d.providers().filter((p) => p.baseUrl === OPENROUTER_BASE);
+    expect(ors).toHaveLength(1); // one, not a keyless one + an openrouter-2
+    const embed = d.calls.find((c) => c.method === 'PUT' && c.path === '/memory/embedding');
+    expect(embed?.body?.providerId).toBe('openrouter'); // embeddings point at the reused id
   });
 });

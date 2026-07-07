@@ -187,14 +187,14 @@ export function shapeBrainMessages(rows: StoredTurnRow[]): BrainMessageView[] {
   // The result view is built LATER, from the assistant toolCall's `arguments` (the toolResult row has no
   // arguments), so a console tool's verbatim command survives into the preview.
   const diffs = new Map<string, string>();
-  const results = new Map<string, { toolName?: string; result: unknown; isError?: boolean }>();
+  const results = new Map<string, { result: unknown; isError?: boolean }>();
   for (const row of rows) {
     if (row.role !== 'toolResult') continue;
     try {
-      const m = JSON.parse(row.content) as { toolCallId?: string; toolName?: string; details?: { diff?: unknown }; isError?: boolean };
+      const m = JSON.parse(row.content) as { toolCallId?: string; details?: { diff?: unknown }; isError?: boolean };
       if (!m.toolCallId) continue;
       if (typeof m.details?.diff === 'string' && m.details.diff.trim()) diffs.set(m.toolCallId, m.details.diff);
-      results.set(m.toolCallId, { toolName: m.toolName, result: m, isError: m.isError });
+      results.set(m.toolCallId, { result: m, isError: m.isError });
     } catch { /* malformed row → no diff */ }
   }
   const views: BrainMessageView[] = [];

@@ -89,5 +89,18 @@ describe('slash command registry', () => {
     it('leaves a placeholder-free template untouched with no arguments', () => {
       expect(expandPromptCommand('Summarize the diff.', '')).toBe('Summarize the diff.');
     });
+    it('inserts $-sequences in the arguments literally (no replacement-pattern interpretation)', () => {
+      // `$$`, `$&`, `$1` inside the user's args must NOT be interpreted, and the $ARGS output must not be
+      // re-scanned by the positional pass (single-pass function replacer).
+      expect(expandPromptCommand('Note: $ARGS', 'price is $$100 and $9 total')).toBe('Note: price is $$100 and $9 total');
+      expect(expandPromptCommand('$1', '$&')).toBe('$&');
+    });
+  });
+
+  it('gates /lsp behind adminOnly (daemon-wide toggle)', () => {
+    const lsp = findCommand('lsp')!;
+    expect(lsp.adminOnly).toBe(true);
+    expect(commandsFor('cli', false).some((c) => c.name === 'lsp')).toBe(false);
+    expect(commandsFor('cli', true).some((c) => c.name === 'lsp')).toBe(true);
   });
 });

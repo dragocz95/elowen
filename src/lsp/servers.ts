@@ -1,3 +1,5 @@
+import { existsSync } from 'node:fs';
+
 /** Language detection + the registry of language servers Orca knows how to drive. Each entry maps a
  *  language id to the command that starts its server over stdio. The command is only spawned if it's
  *  actually on PATH (checked at spawn time), so an entry for a server the box doesn't have is a graceful
@@ -55,8 +57,18 @@ const SERVERS: LanguageServerSpec[] = [
 const SERVER_ALIAS: Record<string, string> = {
   typescriptreact: 'typescript', javascript: 'typescript', javascriptreact: 'typescript',
   jsonc: 'json', scss: 'css', less: 'css',
-  shellscript: 'bash', yml: 'yaml',
+  shellscript: 'bash',
 };
+
+/** Whether `command` resolves to an executable on PATH (or exists as an absolute path). Used to decide
+ *  UP FRONT whether a language server is installed — `child_process.spawn` reports a missing binary only
+ *  via an async 'error' event, so without this check a missing server would spawn a dead pipe and stall
+ *  the whole request timeout on every check. Linux/macOS PATH semantics (prod is linux). */
+export function commandExists(command: string, env: NodeJS.ProcessEnv = process.env): boolean {
+  if (command.includes('/')) { try { return existsSync(command); } catch { return false; } }
+  const dirs = (env.PATH ?? '').split(':').filter(Boolean);
+  return dirs.some((d) => { try { return existsSync(`${d}/${command}`); } catch { return false; } });
+}
 
 /** The LSP language id for a file path, or null when the extension isn't code we type-check. */
 export function detectLanguage(path: string): string | null {

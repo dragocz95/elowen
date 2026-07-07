@@ -122,7 +122,7 @@ export async function loadPlugins(opts: LoadPluginsOptions): Promise<PluginRegis
         // platforms and a deny-all provider gate.
         const ctx = staging.contextFor(name, opts.config?.[name] ?? {}, opts.logger, opts.dataRoot, opts.notify, opts.listModels, opts.resolveProvider, manifest.capabilities ?? {}, manifest.provides, opts.answerQuestion);
         await mod.register(ctx);
-        registry.merge(staging);
+        registry.merge(staging, (m) => opts.logger.warn(`[plugin:${name}] ${m}`));
         // Capture the plugin's declared capabilities (deny-by-default `{}` when absent) — the manifest
         // is otherwise discarded here, but the hook bus needs these to gate this plugin's mutations.
         registry.setCapabilities(name, manifest.capabilities ?? {});

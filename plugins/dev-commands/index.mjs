@@ -44,8 +44,13 @@ const COMMANDS = [
 
 export function register(ctx) {
   const wanted = Array.isArray(ctx.config?.enabled) ? ctx.config.enabled.filter((v) => typeof v === 'string') : [];
-  // Empty selection = enable them all (a freshly enabled plugin with no config is immediately useful).
-  const chosen = wanted.length ? COMMANDS.filter((c) => wanted.includes(c.name)) : COMMANDS;
+  const known = new Set(COMMANDS.map((c) => c.name));
+  const unknown = wanted.filter((w) => !known.has(w));
+  if (unknown.length) ctx.logger.warn(`ignoring unknown command name(s): ${unknown.join(', ')}`);
+  // Empty (or all-unknown) selection = enable them all — a freshly enabled plugin with no valid config is
+  // still immediately useful rather than silently registering nothing.
+  const picked = wanted.filter((w) => known.has(w));
+  const chosen = picked.length ? COMMANDS.filter((c) => picked.includes(c.name)) : COMMANDS;
   for (const cmd of chosen) ctx.registerCommand(cmd);
   ctx.logger.info(`registered ${chosen.length} developer command(s)`);
 }

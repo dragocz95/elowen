@@ -57,6 +57,7 @@ export interface PickerOpts {
 class PickerModal {
   private list: SelectList;
   private filter = '';
+  private readonly allItems: SelectItem[];
 
   constructor(
     private readonly title: string,
@@ -66,12 +67,29 @@ class PickerModal {
     private readonly footer = 'enter select · esc close',
     private readonly onInput?: (data: string, selected: SelectItem | null, close: () => void) => boolean,
   ) {
-    this.list = new SelectList(items, 12, getSelectListTheme(), {
+    this.allItems = items;
+    this.list = this.buildList(items);
+  }
+
+  private buildList(items: SelectItem[]): SelectList {
+    const list = new SelectList(items, 12, getSelectListTheme(), {
       minPrimaryColumnWidth: 30,
       maxPrimaryColumnWidth: 34,
     });
-    this.list.onSelect = (item) => this.onPick(item.value);
-    this.list.onCancel = this.onCancel;
+    list.onSelect = (item) => this.onPick(item.value);
+    list.onCancel = this.onCancel;
+    return list;
+  }
+
+  // Filter on the visible LABEL (+ description), not `value` — SelectList.setFilter matches `value`, which
+  // for the conversations/model/theme pickers is a UUID / internal id, so typing would empty the list.
+  // We own the filtering and rebuild the list from the matches (small lists — cheap).
+  private applyFilter(): void {
+    const q = this.filter.trim().toLowerCase();
+    const items = q
+      ? this.allItems.filter((i) => `${i.label ?? ''} ${i.description ?? ''}`.toLowerCase().includes(q))
+      : this.allItems;
+    this.list = this.buildList(items);
   }
 
   invalidate(): void { this.list.invalidate(); }
@@ -82,13 +100,13 @@ class PickerModal {
     // pastes / kitty-protocol keys, via the shared decoder) narrow the list; backspace widens it.
     if (matchesKey(data, 'backspace')) {
       this.filter = this.filter.slice(0, -1);
-      this.list.setFilter(this.filter);
+      this.applyFilter();
       return;
     }
     const printable = printableInput(data);
     if (printable) {
       this.filter += printable;
-      this.list.setFilter(this.filter);
+      this.applyFilter();
       return;
     }
     this.list.handleInput(data);

@@ -54,6 +54,7 @@ export async function runHeadlessSetup(base: string, env: NodeJS.ProcessEnv, arg
   // ── AI provider ──────────────────────────────────────────────────────────────────────────────
   let aiProviderId = '';
   let aiIsOpenAiKey = false;
+  let aiHasModel = false;
   if (o.provider) {
     const preset = o.provider === 'custom' ? null : API_KEY_PROVIDERS.find((x) => x.key === o.provider);
     if (o.provider !== 'custom' && !preset) return die(`Unknown --provider "${o.provider}". Known: ${API_KEY_PROVIDERS.map((x) => x.key).join(', ')}, custom.`);
@@ -67,24 +68,29 @@ export async function runHeadlessSetup(base: string, env: NodeJS.ProcessEnv, arg
 
     const providers = await getBrainProviders(ctx);
     // Idempotent: a provider for the same endpoint (type + baseUrl) is UPDATED IN PLACE, not duplicated.
-    // Re-running `orca setup -y --provider …` used to mint openai-2, openai-3… each time (the old
-    // uniqueId + `filter(id !== freshId)` could never match). Reusing its id lets the filter actually
-    // replace it; omitting apiKey on re-save keeps the stored key (config store preserves it).
+    // Re-running `orca setup -y --provider …` used to mint openai-2, openai-3… each time. Reusing its id
+    // lets the filter actually replace it; omitting apiKey on re-save keeps the stored key (config store
+    // preserves it). A keyless re-run (model === '') must NOT wipe the existing model list — keep it.
     const existing = providers.find((x) => x.type === type && x.baseUrl === baseUrl);
     const id = existing?.id ?? uniqueSlug(deriveSlug(label), new Set(providers.map((x) => x.id)));
-    const entry = { id, label, type, baseUrl, models: model ? [model] : [], ...(o.apiKey ? { apiKey: o.apiKey } : {}) };
+    const models = model ? [model] : (existing?.models ?? []);
+    const entry = { id, label: existing?.label ?? label, type, baseUrl, models, ...(o.apiKey ? { apiKey: o.apiKey } : {}) };
     const kept = providers.filter((e) => e.id !== id).map(keepProvider);
     const saved = await apiJson(ctx, 'PUT', '/config', { brain: { providers: [...kept, entry] } });
     if (!saved.ok) return die(`Saving the provider failed (${saved.status}).`);
     aiProviderId = id;
-    aiIsOpenAiKey = type === 'openai' && !!o.apiKey;
-    ok('ai', `${label}${model ? ` (${model})` : ''}`);
+    // A usable OpenAI key exists if one was passed now OR is already stored on the reused provider —
+    // both let memory-reuse and the autopilot relay work on a re-run without re-passing the key.
+    aiIsOpenAiKey = type === 'openai' && (!!o.apiKey || !!existing?.apiKeySet);
+    aiHasModel = models.length > 0;
+    ok('ai', model ? `${label} (${model})` : `${label} — saved keyless (add --api-key/--model later to make it answer)`);
 
     if (model) {
-      await putEmbeddedExec(ctx, id, model);
-      ok('tasks', `built-in engine → orca:${id}/${model}`);
+      if (await putEmbeddedExec(ctx, id, model)) ok('tasks', `built-in engine → orca:${id}/${model}`);
+      else warn('tasks', 'couldn\'t wire the built-in task engine (config save failed).');
     }
-    if (aiIsOpenAiKey) await apiJson(ctx, 'PUT', '/config', { autopilot: { providerId: id, ...(model ? { model } : {}) } });
+    // Autopilot relay needs a real openai key + model; skip for keyless/model-less saves.
+    if (aiIsOpenAiKey && model) await apiJson(ctx, 'PUT', '/config', { autopilot: { providerId: id, model } });
   }
 
   // ── Memory ───────────────────────────────────────────────────────────────────────────────────
@@ -96,20 +102,24 @@ export async function runHeadlessSetup(base: string, env: NodeJS.ProcessEnv, arg
     }
   } else if (o.memory === 'openrouter') {
     const providers = await getBrainProviders(ctx);
-    // Reuse a keyed OpenRouter provider if one already exists (e.g. the AI step just configured it) rather
-    // than clobbering it with an empty model list + a possibly-different key. Only create one when there's
-    // none — and never steal an id another provider already holds (uniqueSlug bumps it).
-    const existing = providers.find((x) => x.type === 'openai' && x.baseUrl === OPENROUTER_BASE && x.apiKeySet);
-    let providerId = existing?.id ?? '';
-    if (!providerId) {
-      if (!o.memoryKey) { warn('memory', 'openrouter needs --memory-key (no keyed OpenRouter provider found) — skipped.'); providerId = ''; }
-      else {
-        const id = uniqueSlug('openrouter', new Set(providers.map((x) => x.id)));
-        const kept = providers.map(keepProvider);
-        const saved = await apiJson(ctx, 'PUT', '/config', { brain: { providers: [...kept, { id, label: 'OpenRouter', type: 'openai', baseUrl: OPENROUTER_BASE, models: [], apiKey: o.memoryKey }] } });
-        if (saved.ok) providerId = id;
-        else warn('memory', `couldn't save the OpenRouter provider (${saved.status})`);
-      }
+    // Reuse ANY existing OpenRouter provider on this endpoint — keyed, or the keyless one the AI step may
+    // have just written — instead of minting a duplicate. `--memory-key` updates it IN PLACE (key rotation,
+    // or filling in a keyless entry, preserving its id/label/models). Without a key we reuse it only when it
+    // already has one.
+    const existing = providers.find((x) => x.type === 'openai' && x.baseUrl === OPENROUTER_BASE);
+    let providerId = '';
+    if (o.memoryKey) {
+      const id = existing?.id ?? uniqueSlug('openrouter', new Set(providers.map((x) => x.id)));
+      const kept = providers.filter((e) => e.id !== id).map(keepProvider);
+      const saved = await apiJson(ctx, 'PUT', '/config', { brain: { providers: [...kept, { id, label: existing?.label ?? 'OpenRouter', type: 'openai', baseUrl: OPENROUTER_BASE, models: existing?.models ?? [], apiKey: o.memoryKey }] } });
+      if (saved.ok) providerId = id;
+      else warn('memory', `couldn't save the OpenRouter provider (${saved.status})`);
+    } else if (existing?.apiKeySet) {
+      providerId = existing.id; // reuse the already-keyed provider as-is
+    } else if (existing) {
+      warn('memory', 'the OpenRouter provider has no key — pass --memory-key.');
+    } else {
+      warn('memory', 'openrouter needs --memory-key (no OpenRouter provider found) — skipped.');
     }
     if (providerId) {
       const emb = await apiJson(ctx, 'PUT', '/memory/embedding', { providerId, model: o.embeddingModel, baseUrl: '' });
@@ -120,7 +130,9 @@ export async function runHeadlessSetup(base: string, env: NodeJS.ProcessEnv, arg
   // ── Smoke test — proves the agent actually answers. A failure is surfaced AND makes the run exit
   //    non-zero (so a script/agent can branch), even though the config is still saved. ─────────────
   let chatFailed = false;
-  if (o.provider && !o.skipTest) {
+  // Only smoke-test when there's actually a model to answer with — a keyless "connect later" save has none,
+  // and running the test against it would fail and exit 1 on a deliberate state (the wizard skips it too).
+  if (o.provider && !o.skipTest && aiHasModel) {
     const r = await apiJson<{ ok?: boolean; model?: string; error?: string }>(ctx, 'POST', '/brain/test', aiProviderId ? { providerId: aiProviderId } : {});
     if (r.data?.ok) ok('chat', `Orca answered (${r.data.model ?? '?'})`);
     else { chatFailed = true; warn('chat', `agent didn't answer: ${r.data?.error ?? `HTTP ${r.status}`}`); }

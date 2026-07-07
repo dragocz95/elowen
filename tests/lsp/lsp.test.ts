@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { encodeMessage, MessageDecoder } from '../../src/lsp/protocol.js';
-import { detectLanguage, serverForLanguage } from '../../src/lsp/servers.js';
+import { detectLanguage, serverForLanguage, commandExists } from '../../src/lsp/servers.js';
 import { parsePublishDiagnostics, LspClient, type LspTransport, type JsonRpcMessage } from '../../src/lsp/client.js';
 import { LspManager, formatCheckResult } from '../../src/lsp/manager.js';
 import { buildLspTools, toggleLsp, lspManager } from '../../src/brain/tools/lspTools.js';
@@ -60,6 +60,12 @@ describe('LSP server registry', () => {
     expect(serverForLanguage('javascript')?.command).toBe('typescript-language-server');
     expect(serverForLanguage('nonsense')).toBeNull();
   });
+
+  it('detects whether a command is on PATH (up-front, so a missing server never spawns a dead pipe)', () => {
+    expect(commandExists('node', { PATH: process.env.PATH } as NodeJS.ProcessEnv)).toBe(true);
+    expect(commandExists('definitely-not-a-real-binary-xyz', { PATH: process.env.PATH } as NodeJS.ProcessEnv)).toBe(false);
+    expect(commandExists('anything', { PATH: '' } as NodeJS.ProcessEnv)).toBe(false);
+  });
 });
 
 describe('parsePublishDiagnostics', () => {
@@ -95,19 +101,42 @@ function fakeServer(diagnosticsByFile: Record<string, unknown[]>): LspTransport 
     send: (framed) => {
       const body = framed.split('\r\n\r\n')[1]!;
       const msg = JSON.parse(body) as JsonRpcMessage;
+      const publish = (uri: string): void => {
+        const file = decodeURIComponent(uri.replace('file://', ''));
+        const diags = diagnosticsByFile[file] ?? [];
+        queueMicrotask(() => onMsg({ jsonrpc: '2.0', method: 'textDocument/publishDiagnostics', params: { uri, diagnostics: diags } }));
+      };
       if (msg.method === 'initialize' && typeof msg.id === 'number') {
         queueMicrotask(() => onMsg({ jsonrpc: '2.0', id: msg.id, result: { capabilities: {} } }));
-      } else if (msg.method === 'textDocument/didOpen') {
-        const doc = (msg.params as { textDocument: { uri: string } }).textDocument;
-        const file = decodeURIComponent(doc.uri.replace('file://', ''));
-        const diags = diagnosticsByFile[file] ?? [];
-        queueMicrotask(() => onMsg({ jsonrpc: '2.0', method: 'textDocument/publishDiagnostics', params: { uri: doc.uri, diagnostics: diags } }));
+      } else if (msg.method === 'textDocument/didOpen' || msg.method === 'textDocument/didChange') {
+        publish((msg.params as { textDocument: { uri: string } }).textDocument.uri);
       }
     },
     onMessage: (cb) => { onMsg = cb; },
     onExit: () => {},
     dispose: () => {},
   };
+}
+
+/** A server whose stdio we can crash, and which counts didOpen vs didChange — for the resilience tests. */
+function controllableServer(diagnosticsByFile: Record<string, unknown[]>): { transport: LspTransport; crash: () => void; opens: number; changes: number } {
+  let onMsg: (m: JsonRpcMessage) => void = () => {};
+  let exitCb: () => void = () => {};
+  const ctl = { opens: 0, changes: 0 } as { transport: LspTransport; crash: () => void; opens: number; changes: number };
+  ctl.transport = {
+    send: (framed) => {
+      const msg = JSON.parse(framed.split('\r\n\r\n')[1]!) as JsonRpcMessage;
+      const publish = (uri: string): void => queueMicrotask(() => onMsg({ jsonrpc: '2.0', method: 'textDocument/publishDiagnostics', params: { uri, diagnostics: diagnosticsByFile[decodeURIComponent(uri.replace('file://', ''))] ?? [] } }));
+      if (msg.method === 'initialize' && typeof msg.id === 'number') queueMicrotask(() => onMsg({ jsonrpc: '2.0', id: msg.id, result: { capabilities: {} } }));
+      else if (msg.method === 'textDocument/didOpen') { ctl.opens++; publish((msg.params as { textDocument: { uri: string } }).textDocument.uri); }
+      else if (msg.method === 'textDocument/didChange') { ctl.changes++; publish((msg.params as { textDocument: { uri: string } }).textDocument.uri); }
+    },
+    onMessage: (cb) => { onMsg = cb; },
+    onExit: (cb) => { exitCb = cb; },
+    dispose: () => {},
+  };
+  ctl.crash = () => exitCb();
+  return ctl;
 }
 
 describe('LspClient end-to-end (fake transport)', () => {
@@ -125,6 +154,43 @@ describe('LspClient end-to-end (fake transport)', () => {
     const client = new LspClient(transport, '/proj');
     const diags = await client.diagnose('/proj/ok.ts', 'const x = 1', 'typescript', 50);
     expect(diags).toEqual([]);
+  });
+
+  it('settles BOTH promises when two concurrent diagnose() calls await the same file', async () => {
+    const transport = fakeServer({ '/proj/a.ts': [{ severity: 2, message: 'w', range: { start: { line: 0, character: 0 } } }] });
+    const client = new LspClient(transport, '/proj');
+    const [a, b] = await Promise.all([
+      client.diagnose('/proj/a.ts', 'v1', 'typescript', 200),
+      client.diagnose('/proj/a.ts', 'v2', 'typescript', 200),
+    ]);
+    expect(a).toHaveLength(1);
+    expect(b).toHaveLength(1); // the earlier waiter is NOT dropped by the later one
+  });
+
+  it('sends didChange (not a second didOpen) on a re-check of the same document', async () => {
+    const ctl = controllableServer({ '/proj/a.ts': [] });
+    const client = new LspClient(ctl.transport, '/proj');
+    await client.diagnose('/proj/a.ts', 'v1', 'typescript', 30);
+    await client.diagnose('/proj/a.ts', 'v2', 'typescript', 30);
+    expect(ctl.opens).toBe(1);
+    expect(ctl.changes).toBe(1);
+  });
+
+  it('initializes exactly once under concurrent diagnose of different files', async () => {
+    let inits = 0;
+    const base = fakeServer({});
+    const transport: LspTransport = { ...base, send: (framed) => { if (framed.includes('"initialize"')) inits++; base.send(framed); } };
+    const client = new LspClient(transport, '/proj');
+    await Promise.all([client.diagnose('/proj/a.ts', '', 'typescript', 30), client.diagnose('/proj/b.ts', '', 'typescript', 30)]);
+    expect(inits).toBe(1);
+  });
+
+  it('rejects diagnose after the server exits (so the manager can evict + respawn)', async () => {
+    const ctl = controllableServer({});
+    const client = new LspClient(ctl.transport, '/proj');
+    ctl.crash();
+    expect(client.isDisposed()).toBe(true);
+    await expect(client.diagnose('/proj/a.ts', '', 'typescript', 30)).rejects.toThrow();
   });
 });
 
@@ -151,6 +217,24 @@ describe('LspManager', () => {
     const mgr = new LspManager({ root: '/proj', readFile: () => 'x', spawn: () => null });
     const r = await mgr.checkFile('/proj/a.ts');
     expect(r.skipped).toBe('no-server-installed');
+  });
+
+  it('reports unsupported-language for code Orca has no server for (never says "install")', async () => {
+    const mgr = new LspManager({ root: '/proj', readFile: () => 'class X {}', spawn: () => fakeServer({}) });
+    const r = await mgr.checkFile('/proj/Main.java');
+    expect(r.language).toBe('java');
+    expect(r.skipped).toBe('unsupported-language');
+  });
+
+  it('after the server crashes: reports server-error, then respawns a fresh client on the next check', async () => {
+    let spawns = 0;
+    const ctls: ReturnType<typeof controllableServer>[] = [];
+    const mgr = new LspManager({ root: '/proj', readFile: () => 'x', spawn: () => { spawns++; const c = controllableServer({}); ctls.push(c); return c.transport; } });
+    await mgr.checkFile('/proj/a.ts');       // spawn #1
+    ctls[0]!.crash();                        // the server dies
+    const r = await mgr.checkFile('/proj/a.ts', ); // disposed client evicted → respawn #2, but it works
+    expect(spawns).toBe(2);
+    expect(r.skipped).toBeUndefined();
   });
 
   it('is a cheap no-op when disabled', async () => {

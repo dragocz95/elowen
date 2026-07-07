@@ -32,6 +32,15 @@ describe('judgeGoalCompletion — explicit GOAL_DONE sentinel only', () => {
   it('is case-insensitive and tolerates leading whitespace', () => {
     expect(judgeGoalCompletion('  goal_done: deployed to prod, health 200').done).toBe(true);
   });
+
+  it('tolerates markdown wrapping the sentinel (backticks / bold) and strips it from the evidence', () => {
+    const backtick = judgeGoalCompletion('`GOAL_DONE: all tests pass`');
+    expect(backtick.done).toBe(true);
+    expect(backtick.evidence).toBe('all tests pass');
+    const bold = judgeGoalCompletion('**GOAL_DONE: build is green**');
+    expect(bold.done).toBe(true);
+    expect(bold.evidence).toBe('build is green');
+  });
 });
 
 describe('goal prompts advertise the sentinel', () => {

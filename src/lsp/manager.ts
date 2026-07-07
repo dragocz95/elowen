@@ -2,14 +2,19 @@ import { readFileSync } from 'node:fs';
 import { LspClient, spawnStdioTransport, type Diagnostic, type LspTransport } from './client.js';
 import { detectLanguage, serverForLanguage, type LanguageServerSpec } from './servers.js';
 
-/** The outcome of checking one file. `skipped` explains a non-check (not code, no server installed) so
- *  the agent gets an honest "LSP didn't cover this" instead of silence. */
+/** The outcome of checking one file. `skipped` explains a non-check so the agent gets honest, correctly
+ *  actionable guidance instead of silence or a wrong "install a server" hint:
+ *   - not-a-known-language: the extension isn't code Orca type-checks.
+ *   - unsupported-language: it IS code, but Orca has no server registered for it (installing won't help).
+ *   - no-server-installed: Orca knows the server, but it isn't on PATH (installing WILL help).
+ *   - server-error: the server is installed but crashed/timed out on this check.
+ *   - unreadable / disabled: file couldn't be read / LSP is toggled off. */
 export interface CheckResult {
   path: string;
   language?: string;
   server?: string;
   diagnostics: Diagnostic[];
-  skipped?: 'not-a-known-language' | 'no-server-installed' | 'unreadable' | 'disabled';
+  skipped?: 'not-a-known-language' | 'unsupported-language' | 'no-server-installed' | 'server-error' | 'unreadable' | 'disabled';
 }
 
 /** Injected so tests drive the manager with a fake transport instead of spawning real servers. */
@@ -48,7 +53,7 @@ export class LspManager {
     const language = detectLanguage(path);
     if (!language) return { path, diagnostics: [], skipped: 'not-a-known-language' };
     const spec = serverForLanguage(language);
-    if (!spec) return { path, language, diagnostics: [], skipped: 'no-server-installed' };
+    if (!spec) return { path, language, diagnostics: [], skipped: 'unsupported-language' };
     let text: string;
     try { text = this.readFile(path); }
     catch { return { path, language, diagnostics: [], skipped: 'unreadable' }; }
@@ -58,16 +63,18 @@ export class LspManager {
       const diagnostics = await client.diagnose(path, text, language);
       return { path, language, server: spec.label, diagnostics };
     } catch {
-      // A dead/hung server: drop it so the next check re-spawns, and report no diagnostics.
+      // The server crashed/timed out — drop the client so the next check re-spawns, and say so honestly
+      // (NOT "no server installed", which would send the agent chasing an install it already has).
       this.dispose(spec);
-      return { path, language, server: spec.label, diagnostics: [], skipped: 'no-server-installed' };
+      return { path, language, server: spec.label, diagnostics: [], skipped: 'server-error' };
     }
   }
 
   private clientFor(spec: LanguageServerSpec): LspClient | null {
     const key = `${spec.command}:${this.root}`;
     const existing = this.clients.get(key);
-    if (existing) return existing;
+    if (existing && !existing.isDisposed()) return existing;
+    if (existing) this.clients.delete(key); // a crashed/exited server client — evict and respawn below
     const transport = this.spawnFn(spec, this.root);
     if (!transport) return null;
     const client = new LspClient(transport, this.root);
@@ -90,8 +97,10 @@ export class LspManager {
 /** Render a CheckResult as a compact, agent-readable summary line block (used by the lsp tool + hook). */
 export function formatCheckResult(r: CheckResult): string {
   if (r.skipped === 'not-a-known-language') return '';
+  if (r.skipped === 'unsupported-language') return `LSP doesn't cover ${r.language} (no language server registered for it).`;
   if (r.skipped === 'disabled') return 'LSP is off (/lsp to enable).';
-  if (r.skipped === 'no-server-installed') return `No language server installed for ${r.language} — install one to get diagnostics.`;
+  if (r.skipped === 'no-server-installed') return `The ${r.server ?? r.language} language server isn't installed — install it to get ${r.language} diagnostics.`;
+  if (r.skipped === 'server-error') return `The ${r.server ?? r.language} language server errored or timed out — no diagnostics this time (it will be retried).`;
   if (r.skipped === 'unreadable') return `Could not read ${r.path}.`;
   if (r.diagnostics.length === 0) return `✓ ${r.path}: no problems (${r.server}).`;
   const lines = r.diagnostics.slice(0, 20).map((d) => `  ${d.severity} ${r.path}:${d.line}:${d.column} — ${d.message}${d.source ? ` (${d.source})` : ''}`);

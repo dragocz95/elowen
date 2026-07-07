@@ -47,7 +47,9 @@ export const SLASH_COMMANDS: readonly SlashCommandDef[] = [
   // native command surface; the web dock has no picker for it yet (would show a dead menu entry).
   { name: 'think', description: 'Set the reasoning effort', kind: 'picker', surfaces: ['cli'] },
   { name: 'theme', description: 'Switch the terminal colour theme', kind: 'picker', surfaces: ['cli'] },
-  { name: 'lsp', description: 'Toggle live language diagnostics (LSP) after edits', kind: 'action', surfaces: ['cli'] },
+  // adminOnly: the toggle flips a daemon-wide LspManager singleton (spawns/kills servers for everyone),
+  // so it must be gated to operators — a non-admin must not disable diagnostics for other users.
+  { name: 'lsp', description: 'Toggle live language diagnostics (LSP) after edits', kind: 'action', surfaces: ['cli'], adminOnly: true },
   { name: 'restart', description: 'Restart the Orca daemon', kind: 'action', adminOnly: true },
   { name: 'help', description: 'Show the available commands', kind: 'info' },
   // CLI-only conversation management (the other surfaces manage conversations through their own UI).
@@ -98,9 +100,10 @@ export function expandPromptCommand(prompt: string, args: string): string {
   const trimmed = args.trim();
   const positionals = trimmed ? trimmed.split(/\s+/) : [];
   const usesPlaceholders = /\$ARGS\b|\$[1-9]\b/.test(prompt);
-  let out = prompt
-    .replace(/\$ARGS\b/g, trimmed)
-    .replace(/\$([1-9])\b/g, (_, d: string) => positionals[Number(d) - 1] ?? '');
+  // Single pass with a FUNCTION replacer: it substitutes literally, so `$`-sequences in the user's args
+  // (`$$`, `$&`, `$1`) are inserted verbatim, and the output isn't re-scanned by a second `$1..$9` pass.
+  let out = prompt.replace(/\$ARGS\b|\$([1-9])\b/g, (_, d: string | undefined) =>
+    d ? (positionals[Number(d) - 1] ?? '') : trimmed);
   if (!usesPlaceholders && trimmed) out = `${out}\n\n${trimmed}`;
   return out.trim();
 }
