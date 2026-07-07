@@ -17,7 +17,7 @@ import type { LiveSessionRegistry } from '../session/liveRegistry.js';
 import type { LiveBrain } from '../session/liveBrain.js';
 import { summarizePermissions } from '../toolPermissions.js';
 import type { AskQuestion, SubagentUpdate } from '../events.js';
-import type { BrainDeps } from '../brainService.js';
+import type { BrainDeps } from '../brainDeps.js';
 import type { ConversationLifecycle } from './lifecycle.js';
 import type { GoalLoopService } from './goalLoop.js';
 import type { PermissionApprovalService } from './permissionApproval.js';

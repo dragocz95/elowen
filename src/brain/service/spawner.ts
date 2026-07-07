@@ -13,7 +13,7 @@ import type { BrainSessionFactory } from '../session/factory.js';
 import type { LiveBrain, SpawnOpts } from '../session/liveBrain.js';
 import { toBrainEvent, usageOf } from '../events.js';
 import type { BrainEvent } from '../events.js';
-import type { BrainDeps } from '../brainService.js';
+import type { BrainDeps } from '../brainDeps.js';
 import { turnWorkDir } from './workDir.js';
 
 interface SpawnerDeps {

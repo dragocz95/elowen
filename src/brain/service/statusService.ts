@@ -11,7 +11,7 @@ import type { LiveBrain } from '../session/liveBrain.js';
 import type { ElicitationRegistry } from '../elicitation.js';
 import type { CardRegistry } from '../cards.js';
 import { isNonUserSession } from '../sessionId.js';
-import type { BrainDeps } from '../brainService.js';
+import type { BrainDeps } from '../brainDeps.js';
 import type { ClientAttachments } from './attachments.js';
 import type { ConversationLifecycle } from './lifecycle.js';
 import type { PermissionApprovalService } from './permissionApproval.js';

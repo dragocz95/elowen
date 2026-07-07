@@ -9,7 +9,7 @@ import type { LiveBrain, SpawnOpts } from '../session/liveBrain.js';
 import { rolloverDue } from '../session/idleRollover.js';
 import { decideVisionHop } from '../visionFallback.js';
 import { defaultUserSessionId, freshUserSessionId, isNonUserSession } from '../sessionId.js';
-import type { BrainDeps } from '../brainService.js';
+import type { BrainDeps } from '../brainDeps.js';
 import type { ClientAttachments } from './attachments.js';
 import type { GoalLoopService } from './goalLoop.js';
 import { clientDir } from './workDir.js';
