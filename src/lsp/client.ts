@@ -80,6 +80,11 @@ export function spawnStdioTransport(spec: LanguageServerSpec, cwd: string): LspT
   };
 }
 
+/** What one diagnose() call resolved with. `published: false` means the server never published anything
+ *  for this document within the wait — the caller must NOT read that as "no problems" (the server may
+ *  still be indexing); `true` means the diagnostics are a real server verdict (possibly cached). */
+export interface DiagnoseResult { diagnostics: Diagnostic[]; published: boolean }
+
 /** A minimal LSP client: initialize handshake, then open/update a document and collect the diagnostics
  *  the server publishes for it. Deliberately request/notify only what diagnostics need — this is a
  *  "did I break it?" probe for the agent, not a full editor client. */
@@ -88,8 +93,9 @@ export class LspClient {
   private pending = new Map<number, { resolve: (m: JsonRpcMessage) => void; reject: (e: Error) => void }>();
   private diagnosticsByUri = new Map<string, Diagnostic[]>();
   // Multiple concurrent diagnose() calls can await the SAME uri — keep every waiter, not just the last,
-  // or an earlier caller's promise would never settle.
-  private diagnosticWaiters = new Map<string, ((d: Diagnostic[]) => void)[]>();
+  // or an earlier caller's promise would never settle. Waiters stay registered across publishes (they
+  // resolve on quiescence, not on the first publish) and remove themselves when they finish.
+  private diagnosticWaiters = new Map<string, Set<{ publish: (d: Diagnostic[]) => void; abort: () => void }>>();
   // Which documents have been opened (didOpen). A re-check must send didChange, not a second didOpen
   // (which LSP forbids and servers ignore — they'd keep the stale first text). Tracks the doc version too.
   private openVersions = new Map<string, number>();
@@ -108,26 +114,59 @@ export class LspClient {
     // Fail every in-flight request so no caller hangs on a dead server.
     for (const { reject } of this.pending.values()) reject(new Error('language server exited'));
     this.pending.clear();
-    // Release diagnostics waiters with whatever is cached (usually []), so their promises settle.
-    for (const [uri, waiters] of this.diagnosticWaiters) {
-      const cached = this.diagnosticsByUri.get(uri) ?? [];
-      for (const w of waiters) w(cached);
+    // Abort every diagnostics waiter so their promises settle immediately (each resolves with whatever
+    // it saw / has cached). Copy first — aborting removes the entry from its set.
+    for (const waiters of this.diagnosticWaiters.values()) {
+      for (const w of [...waiters]) w.abort();
     }
     this.diagnosticWaiters.clear();
   }
 
   private onMessage(msg: JsonRpcMessage): void {
-    if (typeof msg.id === 'number' && this.pending.has(msg.id)) {
+    // A response to one of our own requests (a response has an id but no method).
+    if (msg.method === undefined && typeof msg.id === 'number' && this.pending.has(msg.id)) {
       const p = this.pending.get(msg.id)!;
       this.pending.delete(msg.id);
       p.resolve(msg);
       return;
     }
+    // A server → client REQUEST (both method and id). It MUST be answered: tsserver and pyright block
+    // on `workspace/configuration` / `window/workDoneProgress/create` after initialize, and dropping
+    // the reply (the old behaviour) left them waiting — diagnostics never arrived and every check
+    // "timed out clean". This was the core reliability bug of the integration.
+    if (msg.method !== undefined && msg.id !== undefined) {
+      this.transport.send(encodeMessage(this.replyToServerRequest(msg)));
+      return;
+    }
     if (msg.method === 'textDocument/publishDiagnostics') {
       const { uri, diagnostics } = parsePublishDiagnostics(msg.params);
       this.diagnosticsByUri.set(uri, diagnostics);
-      const waiters = this.diagnosticWaiters.get(uri);
-      if (waiters) { this.diagnosticWaiters.delete(uri); for (const w of waiters) w(diagnostics); }
+      // Notify (don't resolve) every waiter — servers publish in passes and the waiter decides when
+      // the stream has gone quiet enough to trust.
+      for (const w of this.diagnosticWaiters.get(uri) ?? []) w.publish(diagnostics);
+    }
+  }
+
+  /** The response for a server → client request. We support none of the optional client features, so
+   *  every answer is the protocol's "nothing to report" shape for that method; unknown methods get a
+   *  proper MethodNotFound error instead of silence (silence stalls the server). */
+  private replyToServerRequest(msg: JsonRpcMessage): JsonRpcMessage {
+    const base = { jsonrpc: '2.0' as const, id: msg.id };
+    switch (msg.method) {
+      case 'workspace/configuration': {
+        // One `null` per requested item = "no overrides, use your defaults".
+        const items = (msg.params as { items?: unknown[] } | null | undefined)?.items;
+        return { ...base, result: Array.isArray(items) ? items.map(() => null) : [] };
+      }
+      case 'workspace/workspaceFolders':
+        return { ...base, result: [{ uri: pathToFileURL(this.rootPath).href, name: 'root' }] };
+      case 'client/registerCapability':
+      case 'client/unregisterCapability':
+      case 'window/workDoneProgress/create':
+      case 'window/showMessageRequest':
+        return { ...base, result: null };
+      default:
+        return { ...base, error: { code: -32601, message: `method not supported: ${msg.method}` } };
     }
   }
 
@@ -161,24 +200,41 @@ export class LspClient {
     return this.starting;
   }
 
-  /** Open (or, on a re-check, update) a document and resolve with the diagnostics the server publishes for
-   *  it. Waits up to `timeoutMs`; resolves with whatever is cached (often []) if the server stays silent,
-   *  so a healthy file returns no diagnostics rather than hanging the agent. Throws only if the server is
-   *  gone (so the manager can evict + respawn). */
-  async diagnose(path: string, text: string, language: string, timeoutMs = 4000): Promise<Diagnostic[]> {
+  /** Open (or, on a re-check, update) a document and resolve with the diagnostics the server publishes
+   *  for it. Servers publish in PASSES — tsserver sends a (usually empty) syntax pass and the semantic
+   *  verdict right after — so resolving on the first publish would return a false "no problems" for a
+   *  file whose errors are semantic. Instead, each publish (re)arms a `settleMs` quiescence timer and the
+   *  LAST published set wins; `timeoutMs` caps the whole wait. If the server publishes NOTHING in time,
+   *  resolves `published: false` — "no verdict yet", never a false all-clear. Throws only if the server
+   *  is gone (so the manager can evict + respawn). */
+  async diagnose(path: string, text: string, language: string, timeoutMs = 4000, settleMs = 1000): Promise<DiagnoseResult> {
     if (this.disposed) throw new Error('language server disposed');
     await this.start();
     const uri = pathToFileURL(path).href;
-    const wait = new Promise<Diagnostic[]>((resolve) => {
-      const list = this.diagnosticWaiters.get(uri) ?? [];
-      list.push(resolve);
-      this.diagnosticWaiters.set(uri, list);
-      const timer = setTimeout(() => {
-        const remaining = (this.diagnosticWaiters.get(uri) ?? []).filter((w) => w !== resolve);
-        if (remaining.length) this.diagnosticWaiters.set(uri, remaining); else this.diagnosticWaiters.delete(uri);
-        resolve(this.diagnosticsByUri.get(uri) ?? []);
-      }, timeoutMs);
-      timer.unref?.();
+    const wait = new Promise<DiagnoseResult>((resolve) => {
+      const waiters = this.diagnosticWaiters.get(uri) ?? new Set<{ publish: (d: Diagnostic[]) => void; abort: () => void }>();
+      this.diagnosticWaiters.set(uri, waiters);
+      let latest: DiagnoseResult | null = null;
+      let settle: NodeJS.Timeout | undefined;
+      const finish = (): void => {
+        if (settle) clearTimeout(settle);
+        clearTimeout(overall);
+        waiters.delete(entry);
+        if (waiters.size === 0) this.diagnosticWaiters.delete(uri);
+        resolve(latest ?? { diagnostics: this.diagnosticsByUri.get(uri) ?? [], published: this.diagnosticsByUri.has(uri) });
+      };
+      const entry = {
+        publish: (diagnostics: Diagnostic[]): void => {
+          latest = { diagnostics, published: true };
+          if (settle) clearTimeout(settle);
+          settle = setTimeout(finish, settleMs);
+          settle.unref?.();
+        },
+        abort: finish, // server exited — resolve now with whatever was seen
+      };
+      waiters.add(entry);
+      const overall = setTimeout(finish, timeoutMs);
+      overall.unref?.();
     });
     // First sight of a doc → didOpen; thereafter → didChange with a monotone version (re-opening is a
     // protocol violation and servers keep the stale first text otherwise).
@@ -195,8 +251,12 @@ export class LspClient {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
-    // Best-effort graceful shutdown (request then notify), then drop the transport.
-    try { this.notify('shutdown', null); this.notify('exit', null); } catch { /* transport may be dead */ }
+    // Best-effort graceful shutdown, then drop the transport. `shutdown` is a REQUEST in LSP (it needs
+    // an id or conformant servers reject it as malformed); we fire it without awaiting the response.
+    try {
+      this.transport.send(encodeMessage({ jsonrpc: '2.0', id: this.nextId++, method: 'shutdown', params: null }));
+      this.notify('exit', null);
+    } catch { /* transport may be dead */ }
     this.transport.dispose();
   }
 }

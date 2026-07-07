@@ -1,6 +1,7 @@
 import type { AskAnswer, AskQuestion, BrainCard, BrainEvent } from '../../brain/events.js';
 import type { BrainMessageView } from '../../brain/messageView.js';
 import type { SlashCommandDef } from '../../brain/slashCommands.js';
+import type { LspStatus } from '../../lsp/manager.js';
 
 /** Thrown on a 401 so the caller can drop the cached token and re-login. */
 export class Unauthorized extends Error {
@@ -178,6 +179,15 @@ export class BrainClient {
     if (res.status === 401) throw new Unauthorized();
     if (!res.ok) throw new Error(`orca plugins ${res.status} on /plugins/skills/list`);
     return (await res.json()) as SkillView[];
+  }
+
+  /** The daemon's LSP health (enabled/running + per-server rows) — drives the /lsp modal and can back
+   *  any other status indicator (e.g. an Active/Inactive line in the side panel). */
+  async lspStatus(): Promise<LspStatus> {
+    const res = await this.f(`${this.o.base}/brain/lsp`, { headers: this.headers() });
+    if (res.status === 401) throw new Unauthorized();
+    if (!res.ok) throw new Error(`orca brain ${res.status} on /brain/lsp`);
+    return (await res.json()) as LspStatus;
   }
 
   async tools(): Promise<RuntimeToolView[]> {

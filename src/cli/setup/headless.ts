@@ -6,6 +6,8 @@ import { deriveSlug, uniqueSlug } from './slug.js';
 import { writeMarker } from './marker.js';
 import { webBaseUrl } from '../installInfo.js';
 import { getBrainProviders, keepProvider, putEmbeddedExec } from './steps/shared.js';
+import { installTsServer, TS_SERVER_COMMAND, TS_SERVER_INSTALL_HINT } from './steps/lsp.js';
+import { commandExists } from '../../lsp/servers.js';
 import type { BrainProviderType } from '../../store/configStore.js';
 import type { WizardCtx } from './types.js';
 import type { ReadinessCheck } from '../doctor.js';
@@ -128,6 +130,17 @@ export async function runHeadlessSetup(base: string, env: NodeJS.ProcessEnv, arg
     }
   }
 
+  // ── LSP (opt-in via --lsp) — install the TypeScript language server so the agent can type-check its
+  //    own edits. Local npm work, no daemon call; a failure warns but never fails the run. ───────────
+  if (o.lsp) {
+    if (commandExists(TS_SERVER_COMMAND)) ok('lsp', `${TS_SERVER_COMMAND} already installed`);
+    else {
+      const r = await installTsServer();
+      if (r.ok && commandExists(TS_SERVER_COMMAND)) ok('lsp', `${TS_SERVER_COMMAND} installed`);
+      else warn('lsp', `install failed — ${r.ok ? `${TS_SERVER_COMMAND} not on PATH` : r.detail} (try: ${TS_SERVER_INSTALL_HINT})`);
+    }
+  }
+
   // ── Smoke test — proves the agent actually answers. A failure is surfaced AND makes the run exit
   //    non-zero (so a script/agent can branch), even though the config is still saved. ─────────────
   let chatFailed = false;
@@ -168,6 +181,8 @@ export interface HeadlessOpts {
   memoryKey?: string;
   embeddingModel: string;
   skipTest: boolean;
+  /** `--lsp`: install the TypeScript language server (skipped when already present). */
+  lsp: boolean;
 }
 
 /** The value following `--name`, or undefined. A following token that itself starts with `--` is treated
@@ -202,6 +217,7 @@ export function parseFlags(args: string[], env: NodeJS.ProcessEnv): HeadlessOpts
     memoryKey: val('--memory-key') ?? env.ORCA_OPENROUTER_KEY,
     embeddingModel: val('--embedding-model') ?? RECOMMENDED_EMBEDDING_MODEL,
     skipTest: has('--skip-test'),
+    lsp: has('--lsp'),
   };
 }
 

@@ -81,3 +81,14 @@ export function serverForLanguage(language: string): LanguageServerSpec | null {
   const canonical = SERVER_ALIAS[language] ?? language;
   return SERVERS.find((s) => s.language === canonical) ?? null;
 }
+
+/** Every registered server, one entry per BINARY (clangd covers c and cpp but is one server). Feeds the
+ *  status surfaces — which servers Orca can drive, whether each is installed/running. */
+export function listServers(): LanguageServerSpec[] {
+  const seen = new Set<string>();
+  return SERVERS.filter((s) => {
+    if (seen.has(s.command)) return false;
+    seen.add(s.command);
+    return true;
+  });
+}

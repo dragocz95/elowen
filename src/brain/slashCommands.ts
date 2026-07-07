@@ -49,7 +49,7 @@ export const SLASH_COMMANDS: readonly SlashCommandDef[] = [
   { name: 'theme', description: 'Switch the terminal colour theme', kind: 'picker', surfaces: ['cli'] },
   // adminOnly: the toggle flips a daemon-wide LspManager singleton (spawns/kills servers for everyone),
   // so it must be gated to operators — a non-admin must not disable diagnostics for other users.
-  { name: 'lsp', description: 'Toggle live language diagnostics (LSP) after edits', kind: 'action', surfaces: ['cli'], adminOnly: true },
+  { name: 'lsp', description: 'Language diagnostics (LSP) — status, servers and on/off', kind: 'action', surfaces: ['cli'], adminOnly: true },
   { name: 'restart', description: 'Restart the Orca daemon', kind: 'action', adminOnly: true },
   { name: 'help', description: 'Show the available commands', kind: 'info' },
   // CLI-only conversation management (the other surfaces manage conversations through their own UI).

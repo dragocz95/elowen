@@ -563,6 +563,40 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
     }).catch((e: Error) => { notice = color.error(`error: ${e.message}`); render(); });
   };
 
+  // /lsp as a status modal (mirrors /mcp): whether diagnostics are enabled and running, one row per
+  // language server (● running · ○ installed · ✗ missing), and the on/off toggle as the first row —
+  // replaces the old blind flip, so the operator SEES the state before (and after) changing it.
+  const openLspModal = (): void => {
+    void client.lspStatus().then((s) => {
+      const refresh = () => openLspModal();
+      const items = [
+        {
+          value: '__toggle',
+          label: s.enabled ? 'Disable LSP diagnostics' : 'Enable LSP diagnostics',
+          description: s.enabled ? 'stops every language server' : 'type-check edits live after each change',
+        },
+        ...s.servers.map((srv) => ({
+          value: srv.command,
+          label: `${srv.running ? color.success('●') : srv.installed ? color.faint('○') : color.error('✗')} ${srv.label}`,
+          description: srv.running ? 'running' : srv.installed ? 'installed · starts on the first check' : `not installed (${srv.command})`,
+        })),
+      ];
+      openPicker({
+        tui, editor,
+        title: `LSP · ${s.enabled ? (s.running ? 'on · running' : 'on · idle') : 'off'}`,
+        items,
+        footer: 'enter toggle · esc close',
+        onPick: (v) => {
+          if (v !== '__toggle') { refresh(); return; }
+          void client.command('lsp')
+            // refreshMeta keeps the right-panel LSP Active/Inactive line in step with the flip.
+            .then(async (r) => { notice = color.dim(r?.message ?? 'toggled LSP'); await refreshMeta(); refresh(); render(); })
+            .catch((e: Error) => { notice = color.error(`error: ${e.message}`); render(); });
+        },
+      });
+    }).catch((e: Error) => { notice = color.error(`error: ${e.message}`); render(); });
+  };
+
   const openToolsModal = (): void => {
     void client.tools().then((tools) => {
       if (tools.length === 0) { notice = color.dim('no active plugin tools'); render(); return; }
@@ -809,9 +843,7 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
           return;
         }
         case 'lsp':
-          void client.command('lsp')
-            .then(async (r) => { await refreshMeta(); notice = color.dim(r?.message ?? 'toggled LSP'); render(); })
-            .catch((e: Error) => { notice = color.error(`error: ${e.message}`); render(); });
+          openLspModal();
           return;
         case 'mcp':
           openMcpModal();

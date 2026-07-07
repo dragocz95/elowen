@@ -10,6 +10,7 @@ import { pushSubscribeSchema, pushUnsubscribeSchema, systemRestartSchema } from 
 import { resolveExecutor } from '../../overseer/routing.js';
 import { DEFAULT_BINS, BARE_PLAIN_PROGRAM, parseOrcaExec } from '../../shared/execs.js';
 import type { OrcaEvent } from '../sse.js';
+import type { ConfigPatch } from '../../store/configStore.js';
 import type { OrcaApp, RouteContext } from '../context.js';
 
 /** True when `bin` resolves to an executable on the daemon's PATH — the readiness check for a task exec
@@ -76,8 +77,15 @@ export function registerConfigRoutes(app: OrcaApp, ctx: RouteContext): void {
     // app can populate model pickers etc. During setup (no users yet) it's open so onboarding can
     // save providers/the API key before the first admin exists.
     if (d.users && d.users.count() > 0) { const u = c.get('user'); if (!u || !d.users.isAdmin(u.id)) return c.json({ error: 'forbidden' }, 403); }
-    const patch = await c.req.json();
-    return c.json(d.config.update(patch));
+    const patch = await c.req.json() as ConfigPatch;
+    const updated = d.config.update(patch);
+    // Apply a patched LSP toggle to the live manager too — it otherwise reads the flag only at boot,
+    // and a config-only write would leave the runtime out of sync until the next restart.
+    if (typeof patch.lspEnabled === 'boolean') {
+      const { lspManager } = await import('../../brain/tools/lspTools.js');
+      lspManager().setEnabled(patch.lspEnabled);
+    }
+    return c.json(updated);
   });
 
   // System panel: the running version, the latest published one, whether an update is available, and

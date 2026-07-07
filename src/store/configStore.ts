@@ -50,6 +50,9 @@ export interface OrcaConfig {
   /** When on, the hourly systemd timer (`orca update --auto`) upgrades to the latest npm release and
    *  restarts the services — but only while no mission is running. Off by default (opt-in). */
   autoUpdate: boolean;
+  /** Live language diagnostics (LSP) after edits. Persisted so the `/lsp` toggle survives a daemon
+   *  restart; the daemon seeds the runtime LspManager from this at boot. On by default. */
+  lspEnabled: boolean;
   /** Web Push VAPID public key (safe to expose) + whether a keypair has been generated. The private
    *  key NEVER leaves the daemon — read it only via `webPushKeys()`. */
   webPush: { publicKey: string; publicKeySet: boolean };
@@ -170,6 +173,7 @@ const DEFAULT_CONFIG: OrcaConfig = {
   defaults: { exec: 'sonnet', autonomy: 'L3', maxSessions: 1 },
   security: { tokenTtlDays: 30 },
   autoUpdate: false,
+  lspEnabled: true,
   webPush: { publicKey: '', publicKeySet: false },
   plugins: { enabled: ['files', 'terminal', 'askuser', 'runtime-context', 'skills', 'subagent'], removed: [] },
   brain: { providers: [], agentName: 'Orca', maxSteps: DEFAULT_MAX_STEPS, modelContextWindows: {} },
@@ -189,6 +193,7 @@ interface Stored {
   defaults: { exec: string; autonomy: string; maxSessions: number };
   security: { tokenTtlDays: number };
   autoUpdate: boolean;
+  lspEnabled: boolean;
   /** Persisted VAPID keypair; null until generated on first boot. Private key stays daemon-side. */
   webPush: { publicKey: string; privateKey: string } | null;
   /** Enabled plugin names, soft-removed (hidden) bundled plugin names, + each plugin's own config slice
@@ -222,6 +227,7 @@ const defaultStored = (): Stored => ({
   defaults: { ...DEFAULT_CONFIG.defaults },
   security: { ...DEFAULT_CONFIG.security },
   autoUpdate: false,
+  lspEnabled: true,
   webPush: null,
   plugins: { enabled: [...DEFAULT_CONFIG.plugins.enabled], removed: [], config: {} },
   brain: { providers: [], agentName: 'Orca', maxSteps: DEFAULT_MAX_STEPS, modelContextWindows: {} },
@@ -239,6 +245,7 @@ export interface ConfigPatch {
   defaults?: { exec?: string; autonomy?: string; maxSessions?: number };
   security?: { tokenTtlDays?: number };
   autoUpdate?: boolean;
+  lspEnabled?: boolean;
   plugins?: { enabled?: string[]; removed?: string[]; config?: Record<string, Record<string, unknown>> };
   /** Brain providers replace wholesale (the UI edits the full list). A patched entry with an empty/absent
    *  apiKey KEEPS the currently stored key for that id — the UI never sees (or resends) secrets. */
@@ -275,6 +282,7 @@ export class ConfigStore {
         defaults: { exec: p.defaults?.exec ?? d.defaults.exec, autonomy: p.defaults?.autonomy ?? d.defaults.autonomy, maxSessions: p.defaults?.maxSessions ?? d.defaults.maxSessions },
         security: { tokenTtlDays: p.security?.tokenTtlDays ?? d.security.tokenTtlDays },
         autoUpdate: typeof p.autoUpdate === 'boolean' ? p.autoUpdate : d.autoUpdate,
+        lspEnabled: typeof p.lspEnabled === 'boolean' ? p.lspEnabled : d.lspEnabled,
         // Both halves of the keypair must be non-empty strings, else treat as not-yet-generated.
         webPush: (p.webPush && typeof p.webPush.publicKey === 'string' && p.webPush.publicKey.length > 0
           && typeof p.webPush.privateKey === 'string' && p.webPush.privateKey.length > 0)
@@ -327,6 +335,7 @@ export class ConfigStore {
       defaults: s.defaults,
       security: s.security,
       autoUpdate: s.autoUpdate,
+      lspEnabled: s.lspEnabled,
       // Only the public key is exposed; `publicKeySet` reflects whether a full keypair exists.
       webPush: { publicKey: s.webPush?.publicKey ?? '', publicKeySet: !!s.webPush },
       // Only the enabled + removed lists surface; per-plugin config (possible secrets) stays daemon-side.
@@ -398,6 +407,7 @@ export class ConfigStore {
       // Clamp to a sane positive integer — the value is interpolated into a SQL date modifier.
       security: { tokenTtlDays: clampTtlDays(patch.security?.tokenTtlDays, cur.security.tokenTtlDays) },
       autoUpdate: patch.autoUpdate ?? cur.autoUpdate,
+      lspEnabled: typeof patch.lspEnabled === 'boolean' ? patch.lspEnabled : cur.lspEnabled,
       webPush: cur.webPush, // VAPID keys are managed via setWebPushKeys, never through the config patch
       plugins: {
         enabled: patch.plugins?.enabled ?? cur.plugins.enabled,

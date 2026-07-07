@@ -23,12 +23,13 @@ USAGE
   orca <command> [options]
 
 SETUP
-  setup                           run the onboarding wizard (account, project, AI provider, memory)
+  setup                           run the onboarding wizard (account, project, AI provider, memory, LSP)
                                     --reset                   start over from scratch
                                     --non-interactive         flag-driven setup (no prompts; for agents/CI)
                                       --admin-user --admin-password --project[-slug]|--no-project
                                       --provider <key|custom> --api-key --base-url --model
                                       --memory <reuse|openrouter|skip> --memory-key --embedding-model --skip-test
+                                      --lsp                     install the TypeScript language server
                                       secrets can come from env instead of argv (avoids ps/history leaks):
                                       ORCA_ADMIN_PASSWORD, ORCA_API_KEY, ORCA_OPENROUTER_KEY
   doctor                          readiness check: what works, and how to fix what doesn't

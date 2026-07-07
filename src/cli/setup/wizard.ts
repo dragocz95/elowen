@@ -3,6 +3,7 @@ import { runAccountStep } from './steps/account.js';
 import { runProjectStep } from './steps/project.js';
 import { runAiStep } from './steps/aiProvider.js';
 import { runMemoryStep } from './steps/memory.js';
+import { runLspStep } from './steps/lsp.js';
 import { readMarker, writeMarker } from './marker.js';
 import { webBaseUrl } from '../installInfo.js';
 import { apiJson } from './http.js';
@@ -14,6 +15,7 @@ const STEPS: WizardStep[] = [
   { id: 'project', title: 'Project', run: runProjectStep },
   { id: 'ai', title: 'AI Provider', run: runAiStep },
   { id: 'memory', title: 'Memory', run: runMemoryStep },
+  { id: 'lsp', title: 'Code intelligence', run: runLspStep },
 ];
 const TOTAL = STEPS.length + 1; // + Review
 
@@ -61,7 +63,7 @@ export async function runOnboarding(base: string, env: NodeJS.ProcessEnv, opts: 
 
   if (!opts.embedded) {
     p.intro('Welcome to Orca');
-    p.log.message("Let's get your workspace ready — 5 quick steps. You can skip anything and finish later.");
+    p.log.message(`Let's get your workspace ready — ${TOTAL} quick steps. You can skip anything and finish later.`);
   }
 
   try {
@@ -92,6 +94,7 @@ async function review(ctx: WizardCtx): Promise<ReviewDecision> {
     `Project   ${projectSummary(a)}`,
     `AI        ${a.ai?.summary ?? 'skipped'}`,
     `Memory    ${a.memory?.summary ?? 'skipped'}`,
+    `LSP       ${a.lsp?.summary ?? 'skipped'}`,
   ].join('\n'), 'Setup summary');
 
   const decision = guard(await p.select({
@@ -127,7 +130,8 @@ async function finish(env: NodeJS.ProcessEnv, ctx: WizardCtx, skipped: boolean, 
   const unfinished = skipped
     || answers.project?.connected !== true
     || answers.ai?.status !== 'done'
-    || answers.memory?.status !== 'done';
+    || answers.memory?.status !== 'done'
+    || answers.lsp?.status !== 'done';
   if (unfinished) lines.push('Finish setup:  orca setup');
   p.note(lines.join('\n'), "You're set");
   p.outro('See you');

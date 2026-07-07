@@ -22,6 +22,17 @@ describe('ConfigStore fresh-install defaults', () => {
     cfg.update({ autoUpdate: true }); // unrelated patch
     expect(cfg.get().plugins.enabled).toEqual(['files']);
   });
+
+  it('lspEnabled defaults to true, and a persisted "off" survives unrelated patches (restart-safe toggle)', () => {
+    const cfg = new ConfigStore(openDb(':memory:'));
+    expect(cfg.get().lspEnabled).toBe(true); // fresh install: diagnostics on
+    cfg.update({ lspEnabled: false }); // the /lsp toggle persists off
+    expect(cfg.get().lspEnabled).toBe(false);
+    cfg.update({ autoUpdate: true }); // unrelated patch must not flip it back
+    expect(cfg.get().lspEnabled).toBe(false);
+    cfg.update({ lspEnabled: true });
+    expect(cfg.get().lspEnabled).toBe(true);
+  });
 });
 
 describe('SAFE_DEFAULT_PLUGINS load with no required config field', () => {

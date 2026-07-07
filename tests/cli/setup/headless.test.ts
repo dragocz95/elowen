@@ -72,6 +72,11 @@ describe('cli/setup/headless.parseFlags', () => {
     expect(parseFlags(['--memory', 'bogus'], {}).memory).toBe('skip');
     expect(parseFlags(['--memory', 'openrouter'], {}).memory).toBe('openrouter');
   });
+
+  it('--lsp opts into the language-server install (off by default)', () => {
+    expect(parseFlags([], {}).lsp).toBe(false);
+    expect(parseFlags(['--lsp'], {}).lsp).toBe(true);
+  });
 });
 
 describe('cli/setup/headless.resolveModel', () => {

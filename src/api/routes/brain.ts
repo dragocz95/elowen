@@ -234,10 +234,25 @@ export function registerBrainRoutes(app: OrcaApp, ctx: RouteContext): void {
           if (!d.restartDaemon) return c.json({ error: 'restart is not available on this deployment' }, 501);
           await d.restartDaemon(user.id);
           return c.json({ ok: true, message: 'Restarting the Orca daemon…' });
-        case 'lsp': { const { toggleLsp } = await import('../../brain/tools/lspTools.js'); return c.json({ ok: true, message: toggleLsp().message }); }
+        case 'lsp': {
+          const { toggleLsp } = await import('../../brain/tools/lspTools.js');
+          const r = toggleLsp();
+          // Persist the flip so a daemon restart keeps the operator's choice (bootstrap re-seeds from it).
+          d.config.update({ lspEnabled: r.enabled });
+          return c.json({ ok: true, message: r.message, data: { enabled: r.enabled } });
+        }
         default: return c.json({ error: 'command is not server-dispatchable' }, 400);
       }
     } catch (e) { return c.json({ error: (e as Error).message }, 409); }
+  });
+
+  // LSP health at a glance: enabled?, any server running?, and a per-server installed/running row.
+  // Read-only for every chat user (the toggle above stays admin-only) — drives the CLI /lsp modal and
+  // any panel indicator. Dynamic import mirrors the command dispatch (the manager is a lazy singleton).
+  app.get('/brain/lsp', async c => {
+    if (forbidden(c)) return c.json({ error: 'forbidden' }, 403);
+    const { lspManager } = await import('../../brain/tools/lspTools.js');
+    return c.json(lspManager().status());
   });
 
   app.post('/brain/send', async c => {

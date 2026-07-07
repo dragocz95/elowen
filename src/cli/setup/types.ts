@@ -12,6 +12,7 @@ export interface WizardAnswers {
   project?: { slug: string; path: string; connected: boolean };
   ai?: { status: StepStatus; summary: string; providerId?: string; providerType?: BrainProviderType; model?: string; hasKey?: boolean };
   memory?: { status: StepStatus; summary: string };
+  lsp?: { status: StepStatus; summary: string };
 }
 
 /** Shared context handed to every step. `token` is the admin bearer set once the Account step succeeds;
@@ -24,8 +25,8 @@ export interface WizardCtx {
 }
 
 export interface WizardStep {
-  id: 'account' | 'project' | 'ai' | 'memory';
-  /** Shown in the "[n/5] <title>" progress header. */
+  id: 'account' | 'project' | 'ai' | 'memory' | 'lsp';
+  /** Shown in the "[n/TOTAL] <title>" progress header. */
   title: string;
   run(ctx: WizardCtx): Promise<StepResult>;
 }

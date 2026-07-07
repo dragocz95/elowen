@@ -58,6 +58,7 @@ import { HookAuditBuffer } from '../shared/hookAudit.js';
 import { AdvisorService } from '../advisor/service.js';
 import { writeMcpConfig } from '../advisor/mcpConfig.js';
 import { BrainService } from '../brain/brainService.js';
+import { lspManager } from '../brain/tools/lspTools.js';
 import { BrainOAuthManager } from '../brain/oauth.js';
 import { AuthStorage } from '@earendil-works/pi-coding-agent';
 import { BrainStore } from '../store/brainStore.js';
@@ -140,6 +141,9 @@ export function buildApp(opts: BuildOpts) {
   const missions = new MissionStore(db); const readiness = new Readiness(db);
   const config = new ConfigStore(db);
   ensureVapidKeys(config); // generate the web-push VAPID keypair on first boot (idempotent thereafter)
+  // Seed the daemon-wide LSP manager from the persisted toggle — before this, /lsp silently reset to
+  // "on" at every daemon restart. Runtime flips (the /lsp command, PUT /config) keep both in sync.
+  lspManager().setEnabled(config.get().lspEnabled);
   const users = new UserStore(db);
   if (opts.bootstrap != null) {
     if (users.count() === 0) {

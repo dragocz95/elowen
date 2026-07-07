@@ -1,7 +1,7 @@
 import { runWithPolicy } from '../../src/plugins/policyContext.js';
 import { describe, it, expect } from 'vitest';
 import { encodeMessage, MessageDecoder } from '../../src/lsp/protocol.js';
-import { detectLanguage, serverForLanguage, commandExists } from '../../src/lsp/servers.js';
+import { detectLanguage, serverForLanguage, commandExists, listServers } from '../../src/lsp/servers.js';
 import { parsePublishDiagnostics, LspClient, type LspTransport, type JsonRpcMessage } from '../../src/lsp/client.js';
 import { LspManager, formatCheckResult } from '../../src/lsp/manager.js';
 import { buildLspTools, toggleLsp, lspManager } from '../../src/brain/tools/lspTools.js';
@@ -62,6 +62,13 @@ describe('LSP server registry', () => {
     expect(serverForLanguage('nonsense')).toBeNull();
   });
 
+  it('lists every server once per binary (clangd covers c and cpp with one row)', () => {
+    const servers = listServers();
+    expect(servers.filter((s) => s.command === 'clangd')).toHaveLength(1);
+    expect(new Set(servers.map((s) => s.command)).size).toBe(servers.length);
+    expect(servers.some((s) => s.command === 'typescript-language-server')).toBe(true);
+  });
+
   it('detects whether a command is on PATH (up-front, so a missing server never spawns a dead pipe)', () => {
     expect(commandExists('node', { PATH: process.env.PATH } as NodeJS.ProcessEnv)).toBe(true);
     expect(commandExists('definitely-not-a-real-binary-xyz', { PATH: process.env.PATH } as NodeJS.ProcessEnv)).toBe(false);
@@ -119,6 +126,51 @@ function fakeServer(diagnosticsByFile: Record<string, unknown[]>): LspTransport 
   };
 }
 
+/** A server that completes the handshake but never publishes diagnostics — the "still indexing a big
+ *  project" case the published:false contract exists for. */
+function silentServer(): LspTransport {
+  let onMsg: (m: JsonRpcMessage) => void = () => {};
+  return {
+    send: (framed) => {
+      const msg = JSON.parse(framed.split('\r\n\r\n')[1]!) as JsonRpcMessage;
+      if (msg.method === 'initialize' && typeof msg.id === 'number') {
+        queueMicrotask(() => onMsg({ jsonrpc: '2.0', id: msg.id, result: { capabilities: {} } }));
+      }
+    },
+    onMessage: (cb) => { onMsg = cb; },
+    onExit: () => {},
+    dispose: () => {},
+  };
+}
+
+/** A tsserver/pyright-style server: after didOpen it first sends a `workspace/configuration` REQUEST and
+ *  publishes diagnostics only once the client answers it — exactly the flow that used to stall forever
+ *  because the client dropped server→client requests. Records every reply it receives. */
+function configRequestingServer(diags: unknown[]): { transport: LspTransport; replies: JsonRpcMessage[] } {
+  let onMsg: (m: JsonRpcMessage) => void = () => {};
+  const replies: JsonRpcMessage[] = [];
+  let pendingUri = '';
+  const transport: LspTransport = {
+    send: (framed) => {
+      const msg = JSON.parse(framed.split('\r\n\r\n')[1]!) as JsonRpcMessage;
+      if (msg.method === 'initialize' && typeof msg.id === 'number') {
+        queueMicrotask(() => onMsg({ jsonrpc: '2.0', id: msg.id, result: { capabilities: {} } }));
+      } else if (msg.method === 'textDocument/didOpen') {
+        pendingUri = (msg.params as { textDocument: { uri: string } }).textDocument.uri;
+        queueMicrotask(() => onMsg({ jsonrpc: '2.0', id: 'cfg-1', method: 'workspace/configuration', params: { items: [{ section: 'typescript' }, { section: 'javascript' }] } }));
+      } else if (msg.id === 'cfg-1' && msg.method === undefined) {
+        // The client answered our request → NOW diagnostics flow (like a real server unblocking).
+        replies.push(msg);
+        queueMicrotask(() => onMsg({ jsonrpc: '2.0', method: 'textDocument/publishDiagnostics', params: { uri: pendingUri, diagnostics: diags } }));
+      }
+    },
+    onMessage: (cb) => { onMsg = cb; },
+    onExit: () => {},
+    dispose: () => {},
+  };
+  return { transport, replies };
+}
+
 /** A server whose stdio we can crash, and which counts didOpen vs didChange — for the resilience tests. */
 function controllableServer(diagnosticsByFile: Record<string, unknown[]>): { transport: LspTransport; crash: () => void; opens: number; changes: number } {
   let onMsg: (m: JsonRpcMessage) => void = () => {};
@@ -146,26 +198,59 @@ describe('LspClient end-to-end (fake transport)', () => {
       '/proj/a.ts': [{ severity: 1, message: 'boom', range: { start: { line: 2, character: 1 } }, source: 'ts' }],
     });
     const client = new LspClient(transport, '/proj');
-    const diags = await client.diagnose('/proj/a.ts', 'const x: string = 1', 'typescript');
-    expect(diags).toEqual([{ severity: 'error', message: 'boom', line: 3, column: 2, source: 'ts' }]);
+    const r = await client.diagnose('/proj/a.ts', 'const x: string = 1', 'typescript', 200, 25);
+    expect(r.published).toBe(true);
+    expect(r.diagnostics).toEqual([{ severity: 'error', message: 'boom', line: 3, column: 2, source: 'ts' }]);
   });
 
-  it('resolves empty for a clean file (server stays silent past the wait)', async () => {
-    const transport = fakeServer({}); // no diagnostics published
+  it('waits for the publish stream to settle — the semantic pass overrides the earlier empty syntax pass', async () => {
+    let onMsg: (m: JsonRpcMessage) => void = () => {};
+    const transport: LspTransport = {
+      send: (framed) => {
+        const msg = JSON.parse(framed.split('\r\n\r\n')[1]!) as JsonRpcMessage;
+        if (msg.method === 'initialize' && typeof msg.id === 'number') {
+          queueMicrotask(() => onMsg({ jsonrpc: '2.0', id: msg.id, result: { capabilities: {} } }));
+        } else if (msg.method === 'textDocument/didOpen') {
+          const uri = (msg.params as { textDocument: { uri: string } }).textDocument.uri;
+          // Real tsserver behaviour: an empty syntax pass first, the semantic verdict shortly after.
+          // Resolving on the first publish returned a false "no problems" for semantic errors.
+          queueMicrotask(() => onMsg({ jsonrpc: '2.0', method: 'textDocument/publishDiagnostics', params: { uri, diagnostics: [] } }));
+          setTimeout(() => onMsg({ jsonrpc: '2.0', method: 'textDocument/publishDiagnostics', params: { uri, diagnostics: [{ severity: 1, message: 'semantic', range: { start: { line: 0, character: 0 } } }] } }), 20);
+        }
+      },
+      onMessage: (cb) => { onMsg = cb; },
+      onExit: () => {},
+      dispose: () => {},
+    };
     const client = new LspClient(transport, '/proj');
-    const diags = await client.diagnose('/proj/ok.ts', 'const x = 1', 'typescript', 50);
-    expect(diags).toEqual([]);
+    const r = await client.diagnose('/proj/a.ts', 'const n: number = "x"', 'typescript', 1000, 60);
+    expect(r.published).toBe(true);
+    expect(r.diagnostics.map((d) => d.message)).toEqual(['semantic']);
+  });
+
+  it('a published empty list is a real verdict (clean file → published:true, no diagnostics)', async () => {
+    const transport = fakeServer({}); // fake publishes [] for unseeded files
+    const client = new LspClient(transport, '/proj');
+    const r = await client.diagnose('/proj/ok.ts', 'const x = 1', 'typescript', 50);
+    expect(r).toEqual({ diagnostics: [], published: true });
+  });
+
+  it('a server that never publishes resolves with published:false — NOT a false "no problems"', async () => {
+    const transport = silentServer(); // answers initialize but never publishes diagnostics
+    const client = new LspClient(transport, '/proj');
+    const r = await client.diagnose('/proj/slow.ts', 'const x = 1', 'typescript', 30);
+    expect(r).toEqual({ diagnostics: [], published: false });
   });
 
   it('settles BOTH promises when two concurrent diagnose() calls await the same file', async () => {
     const transport = fakeServer({ '/proj/a.ts': [{ severity: 2, message: 'w', range: { start: { line: 0, character: 0 } } }] });
     const client = new LspClient(transport, '/proj');
     const [a, b] = await Promise.all([
-      client.diagnose('/proj/a.ts', 'v1', 'typescript', 200),
-      client.diagnose('/proj/a.ts', 'v2', 'typescript', 200),
+      client.diagnose('/proj/a.ts', 'v1', 'typescript', 200, 25),
+      client.diagnose('/proj/a.ts', 'v2', 'typescript', 200, 25),
     ]);
-    expect(a).toHaveLength(1);
-    expect(b).toHaveLength(1); // the earlier waiter is NOT dropped by the later one
+    expect(a.diagnostics).toHaveLength(1);
+    expect(b.diagnostics).toHaveLength(1); // the earlier waiter is NOT dropped by the later one
   });
 
   it('sends didChange (not a second didOpen) on a re-check of the same document', async () => {
@@ -193,13 +278,39 @@ describe('LspClient end-to-end (fake transport)', () => {
     expect(client.isDisposed()).toBe(true);
     await expect(client.diagnose('/proj/a.ts', '', 'typescript', 30)).rejects.toThrow();
   });
+
+  it('answers a server workspace/configuration request (one null per item) so diagnostics unblock', async () => {
+    const srv = configRequestingServer([{ severity: 1, message: 'bad', range: { start: { line: 0, character: 0 } } }]);
+    const client = new LspClient(srv.transport, '/proj');
+    // This resolves ONLY because the client replied to the request — a dropped reply would time out.
+    const r = await client.diagnose('/proj/a.ts', 'x', 'typescript', 500, 30);
+    expect(r.published).toBe(true);
+    expect(r.diagnostics).toHaveLength(1);
+    expect(srv.replies).toHaveLength(1);
+    expect(srv.replies[0]).toMatchObject({ id: 'cfg-1', result: [null, null] });
+  });
+
+  it('answers an unknown server request with a MethodNotFound error instead of silence', async () => {
+    const sent: JsonRpcMessage[] = [];
+    let onMsg: (m: JsonRpcMessage) => void = () => {};
+    const transport: LspTransport = {
+      send: (framed) => { sent.push(JSON.parse(framed.split('\r\n\r\n')[1]!) as JsonRpcMessage); },
+      onMessage: (cb) => { onMsg = cb; },
+      onExit: () => {},
+      dispose: () => {},
+    };
+    new LspClient(transport, '/proj');
+    onMsg({ jsonrpc: '2.0', id: 7, method: 'window/fancyFeature', params: {} });
+    const reply = sent.find((m) => m.id === 7 && m.method === undefined);
+    expect(reply?.error?.code).toBe(-32601);
+  });
 });
 
 describe('LspManager', () => {
   const seed = { '/proj/a.ts': [{ severity: 1, message: 'bad', range: { start: { line: 0, character: 0 } } }] };
 
   it('checks a known file through a spawned client', async () => {
-    const mgr = new LspManager({ root: '/proj', readFile: () => 'code', spawn: () => fakeServer(seed) });
+    const mgr = new LspManager({ root: '/proj', readFile: () => 'code', spawn: () => fakeServer(seed), settleMs: 10 });
     const r = await mgr.checkFile('/proj/a.ts');
     expect(r.language).toBe('typescript');
     expect(r.diagnostics).toHaveLength(1);
@@ -230,7 +341,7 @@ describe('LspManager', () => {
   it('after the server crashes: reports server-error, then respawns a fresh client on the next check', async () => {
     let spawns = 0;
     const ctls: ReturnType<typeof controllableServer>[] = [];
-    const mgr = new LspManager({ root: '/proj', readFile: () => 'x', spawn: () => { spawns++; const c = controllableServer({}); ctls.push(c); return c.transport; } });
+    const mgr = new LspManager({ root: '/proj', readFile: () => 'x', spawn: () => { spawns++; const c = controllableServer({}); ctls.push(c); return c.transport; }, settleMs: 10 });
     await mgr.checkFile('/proj/a.ts');       // spawn #1
     ctls[0]!.crash();                        // the server dies
     const r = await mgr.checkFile('/proj/a.ts', ); // disposed client evicted → respawn #2, but it works
@@ -249,10 +360,42 @@ describe('LspManager', () => {
 
   it('reuses one client across checks of the same server', async () => {
     let spawns = 0;
-    const mgr = new LspManager({ root: '/proj', readFile: () => 'x', spawn: () => { spawns++; return fakeServer(seed); } });
+    const mgr = new LspManager({ root: '/proj', readFile: () => 'x', spawn: () => { spawns++; return fakeServer(seed); }, settleMs: 10 });
     await mgr.checkFile('/proj/a.ts');
     await mgr.checkFile('/proj/b.ts');
     expect(spawns).toBe(1);
+  });
+
+  it('reports no-response (never "no problems") when the server publishes nothing in time', async () => {
+    const mgr = new LspManager({ root: '/proj', readFile: () => 'x', spawn: () => silentServer(), firstCheckTimeoutMs: 30, recheckTimeoutMs: 30 });
+    const r = await mgr.checkFile('/proj/a.ts');
+    expect(r.skipped).toBe('no-response');
+    expect(formatCheckResult(r)).toContain('no verdict');
+    expect(formatCheckResult(r)).not.toContain('no problems');
+  });
+
+  it('status() reports enabled/running plus per-server installed/running rows', async () => {
+    const mgr = new LspManager({ root: '/proj', readFile: () => 'x', spawn: () => fakeServer(seed), exists: (cmd) => cmd === 'typescript-language-server', settleMs: 10 });
+    expect(mgr.isRunning()).toBe(false);
+    let s = mgr.status();
+    expect(s.enabled).toBe(true);
+    expect(s.running).toBe(false);
+    const ts = s.servers.find((x) => x.command === 'typescript-language-server')!;
+    expect(ts).toMatchObject({ label: 'TypeScript', installed: true, running: false });
+    expect(s.servers.find((x) => x.command === 'gopls')).toMatchObject({ installed: false, running: false });
+    // clangd registers for c AND cpp but is ONE binary → one status row.
+    expect(s.servers.filter((x) => x.command === 'clangd')).toHaveLength(1);
+
+    await mgr.checkFile('/proj/a.ts'); // spawns the TS client
+    expect(mgr.isRunning()).toBe(true);
+    s = mgr.status();
+    expect(s.running).toBe(true);
+    expect(s.servers.find((x) => x.command === 'typescript-language-server')!.running).toBe(true);
+
+    mgr.setEnabled(false); // toggling off frees the servers → nothing runs
+    s = mgr.status();
+    expect(s).toMatchObject({ enabled: false, running: false });
+    expect(mgr.isRunning()).toBe(false);
   });
 
   it('formats a result block a human/agent can read', () => {
