@@ -15,7 +15,7 @@ import type { Pickers } from './pickers.js';
 
 /** Local slash-command routing: returns the recognized command (with its argument) or null for a
  *  regular chat message. Pure, so the command surface is unit-testable without a TTY. */
-export function parseCommand(text: string): { cmd: 'quit' | 'new' | 'stop' | 'status' | 'restart' | 'sessions' | 'resume' | 'delete' | 'model' | 'reasoning' | 'theme' | 'editor' | 'lsp' | 'mcp' | 'skills' | 'tools' | 'goal' | 'subgoal' | 'compact' | 'plan' | 'build' | 'yolo' | 'paste' | 'help'; arg?: string } | null {
+export function parseCommand(text: string): { cmd: 'quit' | 'new' | 'stop' | 'status' | 'restart' | 'sessions' | 'resume' | 'delete' | 'model' | 'reasoning' | 'theme' | 'editor' | 'keybinds' | 'lsp' | 'mcp' | 'skills' | 'tools' | 'goal' | 'subgoal' | 'compact' | 'plan' | 'build' | 'yolo' | 'paste' | 'help'; arg?: string } | null {
   const m = /^\/(\w+)(?:\s+(.+))?$/.exec(text.trim());
   if (!m) return null;
   switch (m[1]) {
@@ -31,6 +31,7 @@ export function parseCommand(text: string): { cmd: 'quit' | 'new' | 'stop' | 'st
     case 'reasoning': return { cmd: 'reasoning', arg: m[2] };
     case 'theme': return { cmd: 'theme', arg: m[2] };
     case 'editor': return { cmd: 'editor' };
+    case 'keybinds': return { cmd: 'keybinds' };
     case 'lsp': return { cmd: 'lsp' };
     case 'mcp': return { cmd: 'mcp' };
     case 'skills': return { cmd: 'skills' };
@@ -260,6 +261,9 @@ export function wireSubmit(rt: ChatRuntime, deps: { stream: StreamController; pi
           confirmDelete(target, rt.listed.find((s) => s.id === target)?.title ?? '');
           return;
         }
+        case 'keybinds':
+          pickers.openKeybindsModal();
+          return;
         case 'lsp':
           pickers.openLspModal();
           return;

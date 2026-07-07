@@ -98,10 +98,11 @@ describe('isSlashCommandDraft', () => {
 
 describe('mode toggle key', () => {
   it('recognizes Shift+Tab and the Ctrl+Tab sequence some terminals emit', async () => {
-    const { isModeToggleKey } = await import('../../../src/cli/chat/keys.js');
-    expect(isModeToggleKey('\x1b[Z')).toBe(true);
-    expect(isModeToggleKey('\x1b[9;5u')).toBe(true);
-    expect(isModeToggleKey('\t')).toBe(false);
+    const { createKeymap } = await import('../../../src/cli/chat/keys.js');
+    const keymap = createKeymap();
+    expect(keymap.matches('mode_toggle', '\x1b[Z')).toBe(true);
+    expect(keymap.matches('mode_toggle', '\x1b[9;5u')).toBe(true);
+    expect(keymap.matches('mode_toggle', '\t')).toBe(false);
   });
 });
 

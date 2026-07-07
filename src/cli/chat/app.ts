@@ -3,6 +3,7 @@ import { homedir } from 'node:os';
 import { TUI, ProcessTerminal, Container } from '@earendil-works/pi-tui';
 import { initTheme, getMarkdownTheme, getSelectListTheme } from '@earendil-works/pi-coding-agent';
 import { color, glyph, isChatThemeName, setChatTheme, setCustomChatTheme } from './theme.js';
+import { initKeymap } from './keys.js';
 import { loadPrefs } from './prefs.js';
 import { loadPromptHistory, PromptStash } from './promptHistory.js';
 import { LocalShellBuffer } from './localShell.js';
@@ -93,6 +94,9 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
   // silently reverted to the default.
   const prefs0 = loadPrefs();
   if (prefs0.theme && isChatThemeName(prefs0.theme)) setChatTheme(prefs0.theme);
+  // Keybinds resolve like the theme: local per-machine prefs over defaults, initialized before the
+  // shell reads chord labels for its hint lines. Invalid entries keep their defaults (warned below).
+  const keymap = initKeymap(prefs0.keybinds);
   // Thought-row visibility — the per-USER server setting wins (Account → Terminal / `/reasoning show`
   // on any device); the local pref is the offline fallback until termSettings load below.
   let showThoughts = prefs0.showThoughts !== false;
@@ -112,6 +116,11 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
   const history0 = await client.history().catch(() => []);
   let commandDefs = await client.commands().catch(() => commandsFor('cli', true));
   if (commandDefs.length === 0) commandDefs = commandsFor('cli', true);
+  // /keybinds is CLI-local (the keymap lives in this terminal's prefs, like /theme's palette), so the
+  // TUI surfaces it itself instead of the server's command list.
+  if (!commandDefs.some((c) => c.name === 'keybinds')) {
+    commandDefs = [...commandDefs, { name: 'keybinds', description: 'List keyboard shortcuts and where to customize them', kind: 'info', surfaces: ['cli'] }];
+  }
 
   const term = new ProcessTerminal();
   const tui = new TUI(term);
@@ -142,7 +151,8 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
     childView: null,
     childAc: null,
     streamAc: new AbortController(),
-    notice: '',
+    // Warn ONCE about broken keybind overrides — the binds themselves fell back to their defaults.
+    notice: keymap.warnings.length ? color.warning(`keybinds: ${keymap.warnings.join(' · ')} — defaults kept (see /keybinds)`) : '',
     modelName: boot?.model || opts.model || '',
     conversationTitle: boot?.title ?? '',
     lineCfg: boot?.statusline ?? null,
@@ -193,7 +203,13 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
     tui.stop();
     done();
   };
-  shell.attachInput({ cycleThinkingLevel: pickers.cycleThinkingLevel });
+  shell.attachInput({
+    cycleThinkingLevel: pickers.cycleThinkingLevel,
+    openHelpModal: pickers.openHelpModal,
+    openThemePicker: pickers.openThemePicker,
+    openModelPicker: pickers.openModelPicker,
+    openSessionsModal: pickers.openSessionsModal,
+  });
 
   tui.start();
   term.write(ENABLE_MOUSE);

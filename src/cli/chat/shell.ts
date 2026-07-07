@@ -5,9 +5,10 @@ import { StatusBar, CardPanel, SubagentPanel, spinnerFrame } from './components.
 import { activeMention, CLIPBOARD_MENTION, imageMimeFor, rankMentionFiles, bumpMentionFrecency, mentionInsertText } from './mentions.js';
 import { isSlashCommandDraft } from './commands.js';
 import {
-  isCtrlC, isCtrlO, isCtrlP, isCtrlR, isCtrlS, isDownKey, isEnterKey, isEscapeKey,
-  isModeToggleKey, isPageDownKey, isPageUpKey, isTabByte, isUpKey,
+  activeKeymap, createLeaderState, isDownKey, isEnterKey, isEscapeKey,
+  isPageDownKey, isPageUpKey, isTabByte, isUpKey,
 } from './keys.js';
+import type { Keymap, KeybindAction } from './keys.js';
 import { formatDuration, formatK } from '../ui/text.js';
 import { ORCA_CLI_VERSION } from '../version.js';
 import {
@@ -55,6 +56,33 @@ function generatingChip(seconds: number): string {
   return `${color.accent(spinnerFrame())} ${color.faint(formatDuration(seconds))}`;
 }
 
+/** The bottom-bar hint line for the given chat state, rendered from the ACTIVE keymap — hints must
+ *  stay truthful when the user rebinds a shortcut. Unbound actions drop their segment. Pure. */
+export function bottomHints(keymap: Keymap, state: 'child' | 'thinking' | 'idle', hasSubagents = false): string {
+  const k = (action: KeybindAction, label: string): string => {
+    const chord = keymap.chordLabel(action);
+    return chord ? `${chord} ${label}` : '';
+  };
+  const parts = state === 'child'
+    ? ['⏎ message the sub-agent', 'esc back', k('subagent_cycle', 'next session')]
+    : state === 'thinking'
+      ? ['esc interrupt', '/help commands', k('reasoning_cycle', 'reasoning'), hasSubagents ? k('subagent_cycle', 'subagents') : '']
+      : ['⏎ send', '/ slash', '@ files', '! shell', k('stash', 'stash'), k('mode_toggle', 'mode'), k('reasoning_cycle', 'reasoning'), k('telemetry_toggle', 'telemetry')];
+  return parts.filter(Boolean).join('   ·   ');
+}
+
+/** The start-screen hint line — same keymap-driven contract as bottomHints. Pure. */
+export function startScreenHints(keymap: Keymap): string {
+  const mode = keymap.chordLabel('mode_toggle');
+  return ['⏎ send', '/ commands', '@ files', '! shell', '↑ history', mode ? `${mode} mode` : ''].filter(Boolean).join(' · ');
+}
+
+/** The bottom-bar right side ("ctrl+c quit"), empty when quit is unbound. Pure. */
+export function quitHint(keymap: Keymap): string {
+  const chord = keymap.chordLabel('quit');
+  return chord ? `${chord} quit` : '';
+}
+
 function modelMetaLine(mode: BrainWorkMode, modelName: string, thinkingLevel: string, generating?: string, yolo?: boolean): string {
   const raw = modelName || '—';
   const slash = raw.indexOf('/');
@@ -72,13 +100,22 @@ function modelMetaLine(mode: BrainWorkMode, modelName: string, thinkingLevel: st
   ].filter(Boolean).join(' ');
 }
 
+/** What keybind actions need from the picker surface — wired in runChat, after the pickers exist. */
+interface ShellInputDeps {
+  cycleThinkingLevel(): void;
+  openHelpModal(): void;
+  openThemePicker(): void;
+  openModelPicker(): void;
+  openSessionsModal(): void;
+}
+
 export interface Shell {
   render(): void;
   showPanel(hidden?: boolean): void;
   /** Re-open the telemetry panel so it picks up freshly applied theme colors, keeping its hidden state. */
   reshowPanel(): void;
   /** Register the global key/mouse listener. Called once in runChat, after the pickers exist. */
-  attachInput(deps: { cycleThinkingLevel(): void }): void;
+  attachInput(deps: ShellInputDeps): void;
   /** Hide every owned overlay (telemetry panel + suggestion popups) — the quit path. */
   hideOverlays(): void;
 }
@@ -88,10 +125,19 @@ export interface Shell {
 export function createShell(rt: ChatRuntime, stream: StreamController, mdTheme: MarkdownTheme): Shell {
   const { client, tui, term, editor, inputStack, attachmentChips, cwdLabel, branchLabel } = rt;
 
+  const keymap = activeKeymap();
+  // The leader window: after the leader chord, the next keypress resolves leader-bound actions. The
+  // expiry re-render clears the "waiting" chip from the meta line.
+  const leader = createLeaderState(keymap, { onExpire: () => render() });
+  /** The subtle "leader pressed, waiting for the second key" chip appended to the meta line. */
+  const leaderChip = (): string =>
+    leader.pending() ? ` ${color.accent('⌘')} ${color.faint(`${keymap.chordLabel('leader') ?? 'leader'} —`)}` : '';
+
   const cardPanel = new CardPanel();
   const subPanel = new SubagentPanel();
   const promptMeta = new StatusBar('', '');
-  const bottomBar = new StatusBar(color.faint('  ⏎ send   ·   /help commands   ·   ctrl+r reasoning   ·   shift+tab mode'), color.faint('ctrl+c quit  '));
+  const quitLabel = quitHint(keymap);
+  const bottomBar = new StatusBar(color.faint(`  ${bottomHints(keymap, 'idle')}`), quitLabel ? color.faint(`${quitLabel}  `) : '');
 
   const slashItems = rt.commandDefs.map((cmd) => ({
     value: `/${cmd.name}`,
@@ -141,8 +187,8 @@ export function createShell(rt: ChatRuntime, stream: StreamController, mdTheme: 
     inputStack,
     () => Math.max(12, term.rows - TOP_RULE_ROWS),
     () => ({
-      modelLine: modelMetaLine(rt.workMode, rt.modelName, rt.thinkingLevel, undefined, rt.yoloOn),
-      hints: color.faint('⏎ send · / commands · @ files · ! shell · ↑ history · shift+tab mode'),
+      modelLine: modelMetaLine(rt.workMode, rt.modelName, rt.thinkingLevel, undefined, rt.yoloOn) + leaderChip(),
+      hints: color.faint(startScreenHints(keymap)),
       tip: `${color.warning('●')} ${color.bold(color.text('Tip'))} ${color.dim('ask anything — try')} ${color.text('"What is the tech stack of this project?"')}`,
       notice: rt.notice,
       statusLeft: `${color.dim(cwdLabel)}${branchLabel ? color.faint(` · ${branchLabel}`) : ''}`,
@@ -181,15 +227,12 @@ export function createShell(rt: ChatRuntime, stream: StreamController, mdTheme: 
       showThoughts: rt.showThoughts,
     });
     // Contextual footer: while streaming, Esc interrupts; inside a sub-agent view, input steers the child.
-    bottomBar.setLeft(rt.childView
-      ? color.faint('  ⏎ message the sub-agent   ·   esc back   ·   ctrl+o next session')
-      : rt.view.thinking
-        ? color.faint(`  esc interrupt   ·   /help commands   ·   ctrl+r reasoning${stream.subagentSessions().length ? '   ·   ctrl+o subagents' : ''}`)
-        : color.faint('  ⏎ send   ·   / slash   ·   @ files   ·   ! shell   ·   ctrl+s stash   ·   shift+tab mode   ·   ctrl+r reasoning   ·   ctrl+p telemetry')
-          + (rt.shellContext.pending ? `   ${color.warning('· ! output → next message')}` : ''));
+    const footerState = rt.childView ? 'child' : rt.view.thinking ? 'thinking' : 'idle';
+    bottomBar.setLeft(color.faint(`  ${bottomHints(keymap, footerState, stream.subagentSessions().length > 0)}`)
+      + (footerState === 'idle' && rt.shellContext.pending ? `   ${color.warning('· ! output → next message')}` : ''));
     const projectLine = `${color.dim(cwdLabel)}${branchLabel ? color.faint(` · ${branchLabel}`) : ''}`;
     const line = statusline(rt.lineCfg ? { ...rt.lineCfg, showModel: false } : null, rt.usage, rt.modelName);
-    promptMeta.setLeft(modelMetaLine(rt.workMode, rt.modelName, rt.thinkingLevel, rt.view.thinking ? generatingChip(currentRunSeconds) : undefined, rt.yoloOn));
+    promptMeta.setLeft(modelMetaLine(rt.workMode, rt.modelName, rt.thinkingLevel, rt.view.thinking ? generatingChip(currentRunSeconds) : undefined, rt.yoloOn) + leaderChip());
     promptMeta.setRight(panelVisible() || !line ? projectLine : `${color.faint(line)} ${color.faint('·')} ${projectLine}`);
     cardPanel.set(rt.cards);
     subPanel.set(stream.subagentStates());
@@ -350,7 +393,54 @@ export function createShell(rt: ChatRuntime, stream: StreamController, mdTheme: 
   tui.setFocus(editor);
   showPanel(false);
 
-  const attachInput = (deps: { cycleThinkingLevel(): void }): void => {
+  const attachInput = (deps: ShellInputDeps): void => {
+    /** Run one keybind action. Fired by its direct chord (while the main editor is focused) or as a
+     *  resolved leader sequence — one dispatcher so both paths share guards and behavior. */
+    const dispatchAction = (action: KeybindAction): void => {
+      switch (action) {
+        case 'leader': return; // the leader only prefixes — it is never an action of its own
+        case 'quit': rt.quit(); return;
+        // No telemetry panel on the start screen — a toggle there would silently pre-hide it for later.
+        case 'telemetry_toggle': {
+          if (!hasMessages()) return;
+          panelHandle?.setHidden(!panelHandle.isHidden());
+          resizingPanel = false;
+          render();
+          return;
+        }
+        case 'reasoning_cycle': deps.cycleThinkingLevel(); return;
+        // Stash the current draft (LIFO, session-local); on an empty input, pop the latest one back.
+        case 'stash': {
+          const draft = editor.getText();
+          const stashChord = keymap.chordLabel('stash') ?? '/keybinds';
+          if (draft.trim()) {
+            rt.promptStash.push(draft);
+            editor.setText('');
+            rt.notice = color.dim(`Draft stashed — ${stashChord} to restore${rt.promptStash.size > 1 ? ` (${rt.promptStash.size} stashed)` : ''}`);
+          } else {
+            const restored = rt.promptStash.pop();
+            if (restored != null) { editor.setText(restored); rt.notice = color.dim('Stashed draft restored'); }
+            else rt.notice = color.dim(`no stashed draft — ${stashChord} with text stashes it`);
+          }
+          render();
+          return;
+        }
+        // Cycle main conversation → each sub-agent session → back to main (opencode-style).
+        case 'subagent_cycle': stream.cycleSubagent(); return;
+        case 'mode_toggle': {
+          rt.workMode = rt.workMode === 'plan' ? 'build' : 'plan';
+          rt.notice = color.dim(rt.workMode === 'plan'
+            ? 'plan mode: Orca will reason through approach, risks and tests before editing'
+            : 'build mode: Orca can implement with tools');
+          render();
+          return;
+        }
+        case 'help': deps.openHelpModal(); return;
+        case 'theme_picker': deps.openThemePicker(); return;
+        case 'model_picker': deps.openModelPicker(); return;
+        case 'sessions_picker': deps.openSessionsModal(); return;
+      }
+    };
     tui.addInputListener((data) => {
       const ev = mouseEvent(data);
       if (ev) {
@@ -457,7 +547,16 @@ export function createShell(rt: ChatRuntime, stream: StreamController, mdTheme: 
           return { consume: true };
         }
       }
-      if (isCtrlC(data)) { rt.quit(); return { consume: true }; }
+      if (keymap.matches('quit', data)) { rt.quit(); return { consume: true }; }
+      // Leader window open: the NEXT keypress resolves leader-bound actions. Esc and unbound keys
+      // cancel quietly; either way the key is swallowed (it must not type into the editor). Mouse
+      // traffic is ignored so a stray wheel event can't eat the sequence.
+      if (leader.pending() && !ev) {
+        const action = leader.resolve(data);
+        render(); // clear the waiting chip
+        if (action) dispatchAction(action);
+        return { consume: true };
+      }
       // Mention suggestions: like the slash overlay, the editor keeps focus — only the navigation keys
       // are stolen (↑/↓ must steer the list, NOT the prompt-history recall, while it is open).
       if (editor.focused && mentionHandle && mentionOverlay) {
@@ -499,44 +598,17 @@ export function createShell(rt: ChatRuntime, stream: StreamController, mdTheme: 
       // shift+tab would hijack an open modal (a picker, the rename input, the ask-question dock) instead
       // of reaching it.
       const editing = editor.focused && !slashHandle && !mentionHandle;
-      // No telemetry panel on the start screen — a toggle there would silently pre-hide it for later.
-      if (editing && hasMessages() && isCtrlP(data)) {
-        const hidden = !panelHandle?.isHidden();
-        panelHandle?.setHidden(hidden);
-        resizingPanel = false;
+      // The leader chord opens the two-key window (chip in the meta line; see the pending block above).
+      if (editing && keymap.isLeader(data)) {
+        leader.arm();
         render();
         return { consume: true };
       }
-      if (editing && isCtrlR(data)) {
-        deps.cycleThinkingLevel();
-        return { consume: true };
-      }
-      // ctrl+s: stash the current draft (LIFO, session-local); on an empty input, pop the latest one back.
-      if (editing && isCtrlS(data)) {
-        const draft = editor.getText();
-        if (draft.trim()) {
-          rt.promptStash.push(draft);
-          editor.setText('');
-          rt.notice = color.dim(`Draft stashed — ctrl+s to restore${rt.promptStash.size > 1 ? ` (${rt.promptStash.size} stashed)` : ''}`);
-        } else {
-          const restored = rt.promptStash.pop();
-          if (restored != null) { editor.setText(restored); rt.notice = color.dim('Stashed draft restored'); }
-          else rt.notice = color.dim('no stashed draft — ctrl+s with text stashes it');
-        }
-        render();
-        return { consume: true };
-      }
-      // ctrl+o cycles main conversation → each sub-agent session → back to main (opencode-style).
-      if (editing && isCtrlO(data)) {
-        stream.cycleSubagent();
-        return { consume: true };
-      }
-      if (editing && isModeToggleKey(data)) {
-        rt.workMode = rt.workMode === 'plan' ? 'build' : 'plan';
-        rt.notice = color.dim(rt.workMode === 'plan'
-          ? 'plan mode: Orca will reason through approach, risks and tests before editing'
-          : 'build mode: Orca can implement with tools');
-        render();
+      // Every other bindable shortcut resolves through the keymap — one lookup instead of a predicate
+      // per action, so user overrides and defaults take the same path.
+      const action = editing ? keymap.directAction(data) : null;
+      if (action) {
+        dispatchAction(action);
         return { consume: true };
       }
       // '/' at an empty prompt opens the command suggestions but is NOT consumed — it falls through to the

@@ -1,7 +1,8 @@
+import { homedir } from 'node:os';
 import { chatThemeItems, color, isChatThemeName, setChatTheme, setCustomChatTheme } from './theme.js';
-import { savePrefs } from './prefs.js';
+import { prefsFilePath, savePrefs } from './prefs.js';
 import { sessionItems, modelItems, parseModelValue, openPicker, openTextInput, openInfoModal } from './picker.js';
-import { isCtrlD, isCtrlL, isCtrlP, isCtrlR, isCtrlU, isTabKey } from './keys.js';
+import { activeKeymap, isCtrlD, isCtrlL, isCtrlP, isCtrlR, isCtrlU, isTabKey, keybindRows } from './keys.js';
 import { API_KEY_PROVIDERS } from '../setup/constants.js';
 import { formatK } from '../ui/text.js';
 import type { BrainProviderView } from './brainClient.js';
@@ -21,6 +22,7 @@ export interface Pickers {
   openSkillsModal(): void;
   openLspModal(): void;
   openToolsModal(): void;
+  openKeybindsModal(): void;
 }
 
 /** Everything the picker/modal surface of the chat offers: model + provider management, reasoning
@@ -537,9 +539,30 @@ export function createPickers(
     }).catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); rt.render(); });
   };
 
+  // /keybinds as a read-only overlay: action → effective chord, marking custom binds and any invalid
+  // overrides. Editing happens by hand in cli-prefs.json — an interactive editor is deliberately out
+  // of scope, so the modal says exactly where to type instead.
+  const openKeybindsModal = (): void => {
+    const keymap = activeKeymap();
+    const rows = keybindRows(keymap);
+    const pad = Math.max(...rows.map((r) => r.action.length)) + 2;
+    const lines = rows.map((r) =>
+      `${color.text(r.action.padEnd(pad))}${r.chord ? color.accent(r.chord) : color.faint('unbound')}  ${r.custom ? color.warning('custom') : color.faint('default')}`);
+    if (keymap.warnings.length) {
+      lines.push('');
+      for (const w of keymap.warnings) lines.push(color.error(`! ${w} — default kept`));
+    }
+    lines.push(
+      '',
+      color.faint(`bind in ${prefsFilePath().replace(homedir(), '~')} → "keybinds": { "<action>": "<chord>" }`),
+      color.faint('chords: "ctrl+t" · "shift+tab" · "f2" · "leader t" · "none" — restart orca chat to apply'),
+    );
+    openInfoModal({ tui, editor, title: 'Keybinds', lines });
+  };
+
   return {
     openThinkingPicker, cycleThinkingLevel, openModelPicker, applyTheme, openThemePicker,
     openHelpModal, openStatusModal, openSessionsModal, openMcpModal, openSkillsModal,
-    openLspModal, openToolsModal,
+    openLspModal, openToolsModal, openKeybindsModal,
   };
 }

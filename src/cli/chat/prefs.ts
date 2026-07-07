@@ -9,15 +9,19 @@ export interface CliPrefs {
   theme?: string;
   /** Render the model's Thought rows in the transcript (default true) — toggled by `/reasoning show`. */
   showThoughts?: boolean;
+  /** Custom keybinds: action id → chord spec (see DEFAULT_KEYBINDS in keys.ts for the grammar).
+   *  Edited by hand; /keybinds lists the effective map and flags invalid entries. */
+  keybinds?: Record<string, string>;
 }
 
-function prefsFile(env: NodeJS.ProcessEnv = process.env): string {
+/** Where the prefs live — exported so /keybinds can tell the user which file to edit. */
+export function prefsFilePath(env: NodeJS.ProcessEnv = process.env): string {
   return join(dataDir(env), 'cli-prefs.json');
 }
 
 export function loadPrefs(env: NodeJS.ProcessEnv = process.env): CliPrefs {
   try {
-    const parsed = JSON.parse(readFileSync(prefsFile(env), 'utf-8')) as unknown;
+    const parsed = JSON.parse(readFileSync(prefsFilePath(env), 'utf-8')) as unknown;
     return parsed && typeof parsed === 'object' ? (parsed as CliPrefs) : {};
   } catch { return {}; }
 }
@@ -25,7 +29,7 @@ export function loadPrefs(env: NodeJS.ProcessEnv = process.env): CliPrefs {
 /** Merge `patch` into the stored prefs. Best-effort — a read-only config dir must not break the TUI. */
 export function savePrefs(patch: Partial<CliPrefs>, env: NodeJS.ProcessEnv = process.env): void {
   try {
-    mkdirSync(dirname(prefsFile(env)), { recursive: true });
-    writeFileSync(prefsFile(env), JSON.stringify({ ...loadPrefs(env), ...patch }));
+    mkdirSync(dirname(prefsFilePath(env)), { recursive: true });
+    writeFileSync(prefsFilePath(env), JSON.stringify({ ...loadPrefs(env), ...patch }));
   } catch { /* best-effort persistence */ }
 }
