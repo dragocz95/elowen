@@ -1,7 +1,17 @@
 import { beforeAll, describe, it, expect } from 'vitest';
 import type { TUI } from '@earendil-works/pi-tui';
 import { getSelectListTheme, initTheme } from '@earendil-works/pi-coding-agent';
-import { ChatEditor, sessionItems, modelItems, parseModelValue } from '../../../src/cli/chat/picker.js';
+import { ChatEditor, sessionItems, modelItems, parseModelValue, pickerContentWidth } from '../../../src/cli/chat/picker.js';
+
+describe('pickerContentWidth (adaptive modal sizing)', () => {
+  it('grows with long descriptions and stays compact for short lists', () => {
+    const short = pickerContentWidth([{ value: 'a', label: 'orca', description: 'x' }], 'Theme');
+    const hint = 'not installed · ctrl+i installs (npm install -g typescript-language-server typescript)';
+    const long = pickerContentWidth([{ value: 'b', label: 'TypeScript', description: hint }], 'LSP');
+    expect(short).toBeLessThan(60);
+    expect(long).toBeGreaterThan(hint.length); // the whole hint fits
+  });
+});
 
 describe('picker item builders', () => {
   it('sessionItems marks the active conversation and falls back to (untitled)', () => {

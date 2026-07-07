@@ -1,4 +1,4 @@
-import { SelectList, Editor, matchesKey } from '@earendil-works/pi-tui';
+import { SelectList, Editor, matchesKey, visibleWidth } from '@earendil-works/pi-tui';
 import type { SelectItem, TUI } from '@earendil-works/pi-tui';
 import { getSelectListTheme } from '@earendil-works/pi-coding-agent';
 import { color } from './theme.js';
@@ -131,6 +131,18 @@ function visibleTitle(title: string): number {
   return Math.min(24, title.length + 6);
 }
 
+/** The width one picker needs to show every row untruncated: the SelectList label column (its 30–44
+ *  clamp mirrored here) + the longest description + chrome, also bounded below by the title/footer
+ *  rows. Adaptive so a small picker stays compact while long rows (LSP install hints) get room. */
+export function pickerContentWidth(items: SelectItem[], title: string, footer?: string): number {
+  const labelW = Math.min(44, Math.max(30, ...items.map((i) => visibleWidth(i.label ?? String(i.value)))));
+  return Math.max(
+    ...items.map((i) => labelW + 2 + visibleWidth(i.description ?? '')),
+    visibleTitle(title) + 24,
+    visibleWidth(footer ?? 'enter select · esc close'),
+  ) + 10; // list gutter + modal side padding
+}
+
 /** Show an arrow-key picker as a centered modal. Enter picks, Esc restores editor focus untouched. */
 export function openPicker(o: PickerOpts): void {
   const restore = (): void => {
@@ -148,12 +160,12 @@ export function openPicker(o: PickerOpts): void {
     close();
     o.onPick(value);
   }, close, o.footer, o.onInput);
-  // 75% of the terminal (min 60 cols): descriptions like "not installed (typescript-language-server)"
-  // were cut off at the old fixed 60 columns.
+  // Adaptive width: exactly what the content needs, clamped to [44, 90% of the terminal] — a theme
+  // picker stays a slim column while the LSP modal's install hints fit without truncation.
+  const width = Math.max(44, Math.min(pickerContentWidth(o.items, o.title, o.footer), Math.floor(o.tui.terminal.columns * 0.9)));
   handle = o.tui.showOverlay(modal, {
     anchor: 'center',
-    width: '75%',
-    minWidth: 60,
+    width,
     maxHeight: 24,
     margin: 2,
   });
@@ -238,7 +250,12 @@ export function openInfoModal(o: { tui: TUI; editor: Editor; title: string; line
   let handle: ReturnType<TUI['showOverlay']> | null = null;
   const close = (): void => { handle?.hide(); handle = null; restore(); };
   const modal = new InfoModal(o.title, o.lines.length ? o.lines : [color.faint('nothing to show')], close, o.footer);
-  handle = o.tui.showOverlay(modal, { anchor: 'center', width: '75%', minWidth: 66, maxHeight: 26, margin: 2 });
+  // Adaptive like the picker: as wide as the longest line, clamped to [50, 90% of the terminal].
+  const width = Math.max(50, Math.min(
+    Math.max(...o.lines.map((l) => visibleWidth(l)), 0, visibleTitle(o.title) + 24) + 8,
+    Math.floor(o.tui.terminal.columns * 0.9),
+  ));
+  handle = o.tui.showOverlay(modal, { anchor: 'center', width, maxHeight: 26, margin: 2 });
   handle.focus();
   o.tui.requestRender();
 }
