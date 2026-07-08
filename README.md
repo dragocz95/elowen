@@ -5,8 +5,6 @@
   <img alt="Elowen" src="docs/brand/elowen-logo-black.png" width="380">
 </picture>
 
-# Elowen
-
 **A personal AI agent you talk to — self-hosted, and yours.**
 
 `Chat · Act · Automate · Extend`
