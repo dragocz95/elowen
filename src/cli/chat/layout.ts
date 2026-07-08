@@ -39,20 +39,9 @@ export function mouseClick(data: string): { x: number; y: number } | null {
 
 const bgFill = (text: string, width: number, bgCode = chatTheme().inputBg): string => `\x1b[${bgCode}m${padAnsi(text, width)}\x1b[0m`;
 
-const ELOWEN_ART = [
-  '█████ █     █████ █   █ █████ █   █',
-  '█     █     █   █ █   █ █     ██  █',
-  '████  █     █   █ █ █ █ ████  █ █ █',
-  '█     █     █   █ ██ ██ █     █  ██',
-  '█████ █████ █████ █   █ █████ █   █',
-];
-/** Column where the wordmark's two-tone split falls (faint left half → bright right half). Half of the
- *  art's fixed 35-column width, kept in one place so both render paths stay aligned to the new glyph run. */
-const ELOWEN_ART_SPLIT = 17;
-
-/** Full welcome banner height: the flame mascot, a blank spacer, then the ELOWEN wordmark. The start
- *  screen's vertical-centering math keys off this so the whole logo block stays centered. */
-const BANNER_ROWS = MASCOT_ART.length + 1 + ELOWEN_ART.length;
+/** Welcome/panel banner height: just the flame mascot (no wordmark — the logo speaks for itself). The
+ *  start screen's vertical-centering math keys off this so the logo block stays centered. */
+const BANNER_ROWS = MASCOT_ART.length;
 
 /** opencode-style per-tool row spec: a fixed glyph + Title-case verb, keyed on the tool NAME so live
  *  and resumed-history rows render identically (`item.icon` exists only on live events). The glyph set
@@ -163,8 +152,6 @@ export class StartScreen implements Component {
     const noticeLines = st.notice ? st.notice.split('\n') : [];
     const body = [
       ...MASCOT_ART.map((line) => center(line)),
-      '',
-      ...ELOWEN_ART.map((line) => center(`${color.faint(line.slice(0, ELOWEN_ART_SPLIT))}${color.text(line.slice(ELOWEN_ART_SPLIT))}`)),
       '',
       ...inputLines.map((line) => `${indent}${line}`),
       `${indent}${truncateToWidth(st.modelLine, boxWidth, '…')}`,
@@ -615,11 +602,11 @@ export class TelemetryPanel implements Component {
 }
 
 function panelLogo(width: number): string[] {
-  return ELOWEN_ART.map((line) => {
-    const compact = line.replaceAll(' ', '');
-    const text = visibleWidth(line) + 4 <= width ? line : compact;
-    const pad = Math.max(0, Math.floor((width - visibleWidth(text)) / 2));
-    return `${' '.repeat(pad)}${color.faint(text.slice(0, Math.floor(text.length / 2)))}${color.text(text.slice(Math.floor(text.length / 2)))}`;
+  // The flame mascot, centered in the panel. Its truecolor lines already carry their own colors, so
+  // the panel just pads them; wider than the panel (never, at the 36-col minimum) it clips gracefully.
+  return MASCOT_ART.map((line) => {
+    const pad = Math.max(0, Math.floor((width - visibleWidth(line)) / 2));
+    return `${' '.repeat(pad)}${line}`;
   });
 }
 

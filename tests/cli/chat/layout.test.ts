@@ -254,7 +254,7 @@ describe('chat layout components', () => {
   it('scales the context bar with the panel width, keeping equal edge margins', () => {
     const cells = (width: number): number => {
       const panel = new TelemetryPanel(() => telemetryState());
-      // The empty-cell glyphs identify the meter row (the panel logo also uses █).
+      // The empty-cell glyphs identify the meter row (the panel logo uses ▀▄ half-blocks, not these).
       const bar = panel.render(width).find((line) => /[▱░]/.test(line))!;
       return bar.match(/[▰▱█░]/g)!.length;
     };
@@ -315,7 +315,7 @@ describe('chat layout components', () => {
     const rows = screen.render(90);
     expect(rows).toHaveLength(24);
     const rendered = rows.join('\n');
-    expect(rendered).toContain('█████'); // the ELOWEN wordmark
+    expect(rendered).toContain('▀'); // the flame mascot logo (truecolor half-block art)
     expect(rendered).toContain('Build · kimi-k2 moonshot');
     expect(rendered).toContain('⏎ send · / commands');
     expect(rendered).toContain('Tip ask anything');
