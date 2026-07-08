@@ -570,6 +570,32 @@ export default function SettingsPage() {
               </SettingCard>
               </div>
               </div>
+
+              {/* Default mission run — what the pilot actually launches: the worker executor, the
+                  autonomy level and how many agents run in parallel. These apply in both reasoning
+                  modes, so they live below the relay/agents split. */}
+              <div className="mt-1 flex items-center gap-1.5">
+                <span className="text-sm font-medium text-text">{t.settings.runDefaults}</span>
+              </div>
+              <div className="@container">
+              <div className="grid grid-cols-1 gap-4 @sm:grid-cols-2">
+                <SettingCard title={t.settings.executor} description={t.help.executor} icon={Cpu}>
+                  {/* Same worker + Orca AI split the task picker uses, in the unified manage-selection
+                      modal, so the default executor can also be a brain model. A saved value missing
+                      from the catalog stays selectable as a pinned row. */}
+                  <BackendPicker value={defExec} onChange={setDefExec} models={models} relayLabel={t.settings.relayOption} allowRelay={false} />
+                </SettingCard>
+                <SettingCard title={t.settings.autonomy} description={t.help.autonomy} icon={Gauge}>
+                  <Segmented options={['L0', 'L1', 'L2', 'L3'].map((l) => ({ value: l, label: l }))} value={defAutonomy} onChange={setDefAutonomy} />
+                  <p className="mt-2 text-xs leading-relaxed text-text-muted">
+                    {({ L0: t.missions.autonomyL0Desc, L1: t.missions.autonomyL1Desc, L2: t.missions.autonomyL2Desc, L3: t.missions.autonomyL3Desc } as Record<string, string>)[defAutonomy]}
+                  </p>
+                </SettingCard>
+                <SettingCard title={t.settings.maxSessions} description={t.help.maxSessions} icon={Layers}>
+                  <input type="number" min={1} value={defMaxSessions} onChange={(e) => setDefMaxSessions(Number(e.target.value))} className={inputClass} />
+                </SettingCard>
+              </div>
+              </div>
             </div>
         )}
 
@@ -695,27 +721,6 @@ export default function SettingsPage() {
           </div>
         )}
 
-        {category === 'defaults' && (
-            <div className="@container">
-            <div className="grid grid-cols-1 gap-4 @sm:grid-cols-2">
-              <SettingCard title={t.settings.executor} description={t.help.executor} icon={Cpu}>
-                {/* Same worker + Orca AI split the task picker uses, in the unified manage-selection
-                    modal, so the default executor can also be a brain model. A saved value missing
-                    from the catalog stays selectable as a pinned row. */}
-                <BackendPicker value={defExec} onChange={setDefExec} models={models} relayLabel={t.settings.relayOption} allowRelay={false} />
-              </SettingCard>
-              <SettingCard title={t.settings.autonomy} description={t.help.autonomy} icon={Gauge}>
-                <Segmented options={['L0', 'L1', 'L2', 'L3'].map((l) => ({ value: l, label: l }))} value={defAutonomy} onChange={setDefAutonomy} />
-                <p className="mt-2 text-xs leading-relaxed text-text-muted">
-                  {({ L0: t.missions.autonomyL0Desc, L1: t.missions.autonomyL1Desc, L2: t.missions.autonomyL2Desc, L3: t.missions.autonomyL3Desc } as Record<string, string>)[defAutonomy]}
-                </p>
-              </SettingCard>
-              <SettingCard title={t.settings.maxSessions} description={t.help.maxSessions} icon={Layers}>
-                <input type="number" min={1} value={defMaxSessions} onChange={(e) => setDefMaxSessions(Number(e.target.value))} className={inputClass} />
-              </SettingCard>
-            </div>
-            </div>
-        )}
 
         {category === 'system' && (
             <PageLayout

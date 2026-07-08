@@ -588,6 +588,7 @@ export const cs = {
     github: 'GitHub',
     providers: 'CLI Agenti',
     defaults: 'Výchozí',
+    runDefaults: 'Výchozí běh mise',
     plugins: 'Pluginy',
     brain: 'Orca AI',
     memory: 'Paměť',

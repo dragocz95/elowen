@@ -89,7 +89,9 @@ describe('SettingsPage', () => {
     await waitFor(() => expect(screen.getByText('How autopilot reasons')).toBeTruthy());
     unmount();
 
-    localStorage.setItem('orca.settings.category', 'defaults');
+    // The default executor / autonomy / max-sessions cards moved under Autopilot (they are the
+    // pilot's run defaults), so the Executor card now renders in the autopilot section.
+    localStorage.setItem('orca.settings.category', 'autopilot');
     const { wrapper: Wrapper2 } = createWrapper();
     render(<Wrapper2><ToastProvider><SettingsPage /></ToastProvider></Wrapper2>);
     await waitFor(() => expect(screen.getByText('Executor')).toBeTruthy());
@@ -185,10 +187,10 @@ describe('Settings depth', () => {
     await waitFor(() => expect(screen.getByDisplayValue('mind the guardrails')).toBeTruthy()); // notes textarea
     ap.unmount();
 
-    // Defaults section — the autonomy/exec segmented controls.
-    localStorage.setItem('orca.settings.category', 'defaults');
+    // Autopilot section — the backend-mode + autonomy segmented controls (run defaults moved here).
+    localStorage.setItem('orca.settings.category', 'autopilot');
     const { wrapper: WrapperDef } = createWrapper();
     render(<WrapperDef><ToastProvider><SettingsPage /></ToastProvider></WrapperDef>);
-    await waitFor(() => expect(screen.getAllByRole('radiogroup').length).toBeGreaterThan(0)); // defaults segmented (autonomy/exec)
+    await waitFor(() => expect(screen.getAllByRole('radiogroup').length).toBeGreaterThan(0)); // autonomy/backend segmented
   });
 });

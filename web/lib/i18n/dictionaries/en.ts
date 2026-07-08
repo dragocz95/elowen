@@ -588,6 +588,7 @@ export const en = {
     github: 'GitHub',
     providers: 'CLI Agents',
     defaults: 'Defaults',
+    runDefaults: 'Mission run defaults',
     plugins: 'Plugins',
     brain: 'Orca AI',
     memory: 'Memory',
