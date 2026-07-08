@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { GET, POST } from '../../../app/api/[...path]/route';
 
 const fetchMock = vi.fn();
-beforeEach(() => { process.env.ORCA_DAEMON_URL = 'http://daemon.test'; vi.stubGlobal('fetch', fetchMock); fetchMock.mockReset(); });
+beforeEach(() => { process.env.ELOWEN_DAEMON_URL = 'http://daemon.test'; vi.stubGlobal('fetch', fetchMock); fetchMock.mockReset(); });
 afterEach(() => { vi.unstubAllGlobals(); });
 
 const ctx = (path: string[]) => ({ params: Promise.resolve({ path }) });

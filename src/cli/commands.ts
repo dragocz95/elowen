@@ -16,8 +16,8 @@ export async function runApiCommand(
   if (rawBody !== undefined) {
     try { body = JSON.parse(rawBody); } catch { deps.err('api: body must be valid JSON'); return 2; }
   }
-  const url = (env.ELOWEN_URL ?? env.ORCA_URL) ?? 'http://localhost:4400';
-  const token = (env.ELOWEN_TOKEN ?? env.ORCA_TOKEN) ?? '';
+  const url = (env.ELOWEN_URL) ?? 'http://localhost:4400';
+  const token = (env.ELOWEN_TOKEN) ?? '';
   const res = await deps.call(method, path, body, { url, token });
   deps.out(res.data !== undefined ? JSON.stringify(res.data, null, 2) : res.text);
   return res.ok ? 0 : 1;

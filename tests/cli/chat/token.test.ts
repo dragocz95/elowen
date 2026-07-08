@@ -17,8 +17,8 @@ function memIo(initial: Record<string, string> = {}): TokenIo & { store: Record<
 const env = { HOME: '/home/x' } as NodeJS.ProcessEnv;
 
 describe('chat token', () => {
-  it('prefers ORCA_TOKEN from the env', () => {
-    expect(resolveToken({ ...env, ORCA_TOKEN: 'env-tok' }, memIo())).toBe('env-tok');
+  it('prefers ELOWEN_TOKEN from the env', () => {
+    expect(resolveToken({ ...env, ELOWEN_TOKEN: 'env-tok' }, memIo())).toBe('env-tok');
   });
 
   it('falls back to the cached file', () => {

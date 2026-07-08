@@ -171,11 +171,11 @@ export function buildApp(opts: BuildOpts) {
   // How spawned agents invoke the elowen CLI. In a global install the `elowen` command is on PATH, so set
   // ELOWEN_CLI=elowen (the systemd unit does); a source checkout leaves it unset and falls back to running
   // this daemon's own CLI by absolute path via node. Single source — threaded to spawn/pilot/overseer.
-  const cli = (process.env.ELOWEN_CLI ?? process.env.ORCA_CLI) ?? `node ${cliPath}`;
+  const cli = (process.env.ELOWEN_CLI) ?? `node ${cliPath}`;
   // Reuse the existing agent token across restarts so a daemon restart doesn't 401 in-flight agents
   // mid-task (they hold the token they were spawned with); only mints fresh when none is valid.
   const serviceToken = users.count() > 0 ? users.ensureAgentToken(users.list()[0]!.id) : '';
-  const elowenCli = { cli, url: `http://localhost:${(process.env.ELOWEN_PORT ?? process.env.ORCA_PORT) ?? 4400}`, token: serviceToken };
+  const elowenCli = { cli, url: `http://localhost:${(process.env.ELOWEN_PORT) ?? 4400}`, token: serviceToken };
   const spawn = new SpawnService({ tmux, agents, elowen: elowenCli, providers: (program) => config.get().providers[program], prompts });
   const bus = new EventBus();
   const events = new EventStore(db);
@@ -533,7 +533,7 @@ export function buildApp(opts: BuildOpts) {
     } catch { return undefined; }
   })();
   const marketplace = new MarketplaceService({
-    registryUrl: (process.env.ELOWEN_PLUGIN_REGISTRY ?? process.env.ORCA_PLUGIN_REGISTRY) || undefined,
+    registryUrl: (process.env.ELOWEN_PLUGIN_REGISTRY) || undefined,
     cacheDir: join(dirname(opts.dbPath), 'marketplace'),
     userPluginsDir: userPluginDir,
     hostNodeModules,

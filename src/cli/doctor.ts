@@ -20,7 +20,7 @@ function guard<T>(value: T | symbol): T {
  *  the setup wizard uses, retrying on a bad password. `ELOWEN_TOKEN` skips the prompt entirely — the
  *  non-interactive override for scripts/CI that already hold a bearer. */
 async function authenticate(base: string, env: NodeJS.ProcessEnv): Promise<string> {
-  const envToken = (env.ELOWEN_TOKEN ?? env.ORCA_TOKEN);
+  const envToken = (env.ELOWEN_TOKEN);
   if (envToken) return envToken;
   p.intro('Elowen doctor');
   for (;;) {
@@ -81,7 +81,7 @@ export async function runDoctor(args: string[], env: NodeJS.ProcessEnv, base: st
   }
 
   const isTTY = !!process.stdout.isTTY;
-  if (!isTTY && !(env.ELOWEN_TOKEN ?? env.ORCA_TOKEN)) {
+  if (!isTTY && !(env.ELOWEN_TOKEN)) {
     console.log('Run `elowen doctor` in an interactive terminal to check Elowen\'s health, or set ELOWEN_TOKEN to run it non-interactively.');
     return;
   }

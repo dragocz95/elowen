@@ -8,7 +8,7 @@ describe('runApiCommand', () => {
   it('GET forwards env url+token and prints JSON', async () => {
     const lines: string[] = [];
     let seen: { method: string; path: string; url: string; token: string } | undefined;
-    const code = await runApiCommand(['GET', '/tasks'], { ORCA_URL: 'http://d:4400', ORCA_TOKEN: 'tk' } as NodeJS.ProcessEnv, {
+    const code = await runApiCommand(['GET', '/tasks'], { ELOWEN_URL: 'http://d:4400', ELOWEN_TOKEN: 'tk' } as NodeJS.ProcessEnv, {
       call: async (method, path, _body, opts) => { seen = { method, path, url: opts.url, token: opts.token }; return okData([{ id: 't1' }]); },
       out: (s) => lines.push(s), err: () => {},
     });
@@ -19,7 +19,7 @@ describe('runApiCommand', () => {
 
   it('POST parses the JSON body argument', async () => {
     let seen: unknown;
-    const code = await runApiCommand(['POST', '/tasks', '{"title":"x"}'], { ORCA_URL: 'http://d', ORCA_TOKEN: 't' } as NodeJS.ProcessEnv, {
+    const code = await runApiCommand(['POST', '/tasks', '{"title":"x"}'], { ELOWEN_URL: 'http://d', ELOWEN_TOKEN: 't' } as NodeJS.ProcessEnv, {
       call: async (_m, _p, body) => { seen = body; return { status: 201, ok: true, data: {}, text: '' }; },
       out: () => {}, err: () => {},
     });
@@ -27,7 +27,7 @@ describe('runApiCommand', () => {
     expect(seen).toEqual({ title: 'x' });
   });
 
-  it('defaults url to localhost:4400 when ORCA_URL is unset', async () => {
+  it('defaults url to localhost:4400 when ELOWEN_URL is unset', async () => {
     let seenUrl = '';
     await runApiCommand(['GET', '/health'], {} as NodeJS.ProcessEnv, {
       call: async (_m, _p, _b, opts) => { seenUrl = opts.url; return okData({}); },
@@ -37,7 +37,7 @@ describe('runApiCommand', () => {
   });
 
   it('non-ok status exits 1', async () => {
-    const code = await runApiCommand(['GET', '/x'], { ORCA_URL: 'http://d', ORCA_TOKEN: 't' } as NodeJS.ProcessEnv, {
+    const code = await runApiCommand(['GET', '/x'], { ELOWEN_URL: 'http://d', ELOWEN_TOKEN: 't' } as NodeJS.ProcessEnv, {
       call: async () => ({ status: 403, ok: false, data: { error: 'forbidden' }, text: 'forbidden' }),
       out: () => {}, err: () => {},
     });

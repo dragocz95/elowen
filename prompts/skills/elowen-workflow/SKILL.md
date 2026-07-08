@@ -21,7 +21,7 @@ When you ARE inside Elowen, these rules are non-negotiable:
   an open question run `elowen ask "<your question>"`; it blocks until a real answer comes back on
   stdout. For a choice between concrete options, use your interactive multiple-choice question tool
   instead. Make a reasonable, reversible assumption only when the choice is trivial.
-- **Finish by closing the task:** `elowen close "${ELOWEN_TASK:-$ORCA_TASK}" --summary "<what you did + result>"
+- **Finish by closing the task:** `elowen close "$ELOWEN_TASK" --summary "<what you did + result>"
   --outcome ok` (use `--outcome fail` if you could not complete it). Do not run `git commit` —
   Elowen manages version control.
 

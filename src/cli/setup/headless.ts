@@ -203,19 +203,19 @@ export function parseFlags(args: string[], env: NodeJS.ProcessEnv): HeadlessOpts
   const has = (name: string): boolean => args.includes(name);
   const memory = (val('--memory') ?? 'skip') as HeadlessOpts['memory'];
   return {
-    adminUser: val('--admin-user') ?? (env.ELOWEN_ADMIN_USER ?? env.ORCA_ADMIN_USER) ?? 'admin',
-    adminPassword: val('--admin-password') ?? (env.ELOWEN_ADMIN_PASSWORD ?? env.ORCA_ADMIN_PASSWORD),
+    adminUser: val('--admin-user') ?? (env.ELOWEN_ADMIN_USER) ?? 'admin',
+    adminPassword: val('--admin-password') ?? (env.ELOWEN_ADMIN_PASSWORD),
     // Project registration is opt-in: only when `--project <path>` is passed. It used to default to
     // process.cwd(), which registered a random directory (or hard-failed a bare `elowen setup -y` on an
     // already-set-up box) that nobody asked for.
     project: has('--no-project') ? undefined : val('--project'),
     projectSlug: val('--project-slug'),
     provider: val('--provider'),
-    apiKey: val('--api-key') ?? (env.ELOWEN_API_KEY ?? env.ORCA_API_KEY),
+    apiKey: val('--api-key') ?? (env.ELOWEN_API_KEY),
     baseUrl: val('--base-url'),
     model: val('--model'),
     memory: (MEMORY_MODES as readonly string[]).includes(memory) ? memory : 'skip',
-    memoryKey: val('--memory-key') ?? (env.ELOWEN_OPENROUTER_KEY ?? env.ORCA_OPENROUTER_KEY),
+    memoryKey: val('--memory-key') ?? (env.ELOWEN_OPENROUTER_KEY),
     embeddingModel: val('--embedding-model') ?? RECOMMENDED_EMBEDDING_MODEL,
     skipTest: has('--skip-test'),
     lsp: has('--lsp'),

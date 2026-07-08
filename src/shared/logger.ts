@@ -32,13 +32,13 @@ export function setLogSink(s: LogSink | undefined): void {
 }
 
 const MIN: LogLevel = ((): LogLevel => {
-  const v = ((process.env.ELOWEN_LOG_LEVEL ?? process.env.ORCA_LOG_LEVEL) ?? '').toLowerCase();
+  const v = ((process.env.ELOWEN_LOG_LEVEL) ?? '').toLowerCase();
   return v in ORDER ? (v as LogLevel) : 'info';
 })();
 
 // Default to `<cwd>/logs` (the daemon's WorkingDirectory is the repo root). Overridable so a second
 // process (e.g. the web server) can point at the same directory.
-const DIR = (process.env.ELOWEN_LOG_DIR ?? process.env.ORCA_LOG_DIR) || join(process.cwd(), 'logs');
+const DIR = (process.env.ELOWEN_LOG_DIR) || join(process.cwd(), 'logs');
 let dirReady = false;
 
 /** Local wall-clock `YYYY-MM-DD HH:MM:SS.mmm` — readable at a glance, sortable, no timezone noise. */

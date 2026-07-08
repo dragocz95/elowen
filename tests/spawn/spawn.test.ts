@@ -15,12 +15,12 @@ describe('SpawnService', () => {
     expect(agents.programFor('SwiftLake')).toBe('opencode');
   });
 
-  it('exports ORCA_TASK so a worker can run `elowen ask` without passing its own id', async () => {
+  it('exports ELOWEN_TASK so a worker can run `elowen ask` without passing its own id', async () => {
     const db = openDb(':memory:'); db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
     const agents = new AgentStore(db); const tmux = new FakeTmuxDriver();
     const svc = new SpawnService({ tmux, agents, elowen: { cli: 'elowen', url: 'http://localhost:4400', token: 'tok' } });
     await svc.launch({ projectId: 1, projectPath: '/o', taskId: 'elowen-7', agentName: 'Nova', spec: { program: 'opencode', model: 'm' } });
-    expect(tmux.commandFor('elowen-Nova')).toContain("export ORCA_TASK='elowen-7'");
+    expect(tmux.commandFor('elowen-Nova')).toContain("export ELOWEN_TASK='elowen-7'");
   });
 
   it('applies the provider resolver binary + args to the spawned command', async () => {

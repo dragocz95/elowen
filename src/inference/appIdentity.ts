@@ -13,9 +13,9 @@ const DEFAULT_APP_URL = 'https://elowen.dragocz.dev';
 const DEFAULT_APP_TITLE = 'Elowen';
 
 /** The configured public app URL (referer). Trailing slash trimmed so `${APP_URL}/favicon.ico` is clean. */
-export const APP_URL = ((process.env.ELOWEN_APP_URL ?? process.env.ORCA_APP_URL)?.trim() || DEFAULT_APP_URL).replace(/\/$/, '');
+export const APP_URL = ((process.env.ELOWEN_APP_URL)?.trim() || DEFAULT_APP_URL).replace(/\/$/, '');
 /** The configured app title shown on provider dashboards / ranking pages. */
-export const APP_TITLE = (process.env.ELOWEN_APP_TITLE ?? process.env.ORCA_APP_TITLE)?.trim() || DEFAULT_APP_TITLE;
+export const APP_TITLE = (process.env.ELOWEN_APP_TITLE)?.trim() || DEFAULT_APP_TITLE;
 
 /** Spread into any provider request's headers. Lower-case keys so they merge predictably with the
  *  `authorization`/`content-type` already set at each call site. */

@@ -8,7 +8,7 @@ import { dirname, join } from 'node:path';
  *  (the daemon runs as a service user whose npm prefix is /usr) — so Elowen keeps its own prefix and
  *  resolves server binaries from `<prefix>/bin` first (see resolveServerCommand). */
 export function lspPrefixDir(): string {
-  const dbPathEnv = process.env.ELOWEN_DB ?? process.env.ORCA_DB;
+  const dbPathEnv = process.env.ELOWEN_DB;
   const base = dbPathEnv ? dirname(dbPathEnv) : join(homedir(), '.config', 'elowen');
   return join(base, 'lsp');
 }

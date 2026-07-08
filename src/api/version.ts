@@ -12,7 +12,7 @@ export const ELOWEN_VERSION = readPkgVersion(import.meta.url);
 export const ELOWEN_INSTALLED_AT = readPkgInstalledAt(import.meta.url);
 
 /** Port the daemon listens on — the MCP route reaches back into this same daemon's REST API at it. */
-export const ELOWEN_PORT = Number((process.env.ELOWEN_PORT ?? process.env.ORCA_PORT) ?? 4400);
+export const ELOWEN_PORT = Number((process.env.ELOWEN_PORT) ?? 4400);
 
 // Latest published elowen version from the npm registry, cached for 30 min so the System panel's
 // polling never hammers npm. A failed fetch keeps any prior good value and returns null otherwise —

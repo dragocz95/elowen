@@ -80,15 +80,15 @@ describe('LSP server registry', () => {
 
   it("resolves servers from Elowen's own LSP prefix even when they are not on PATH", () => {
     const dir = mkdtempSync(join(tmpdir(), 'elowen-lsp-'));
-    const prev = process.env.ORCA_DB;
-    process.env.ORCA_DB = join(dir, 'elowen.db'); // lspPrefixDir → <dir>/lsp
+    const prev = process.env.ELOWEN_DB;
+    process.env.ELOWEN_DB = join(dir, 'elowen.db'); // lspPrefixDir → <dir>/lsp
     try {
       mkdirSync(join(dir, 'lsp', 'bin'), { recursive: true });
       writeFileSync(join(dir, 'lsp', 'bin', 'fake-server'), '#!/bin/sh\n');
       expect(resolveServerCommand('fake-server', { PATH: '' } as NodeJS.ProcessEnv)).toBe(join(dir, 'lsp', 'bin', 'fake-server'));
       expect(commandExists('fake-server', { PATH: '' } as NodeJS.ProcessEnv)).toBe(true);
     } finally {
-      if (prev === undefined) delete process.env.ORCA_DB; else process.env.ORCA_DB = prev;
+      if (prev === undefined) delete process.env.ELOWEN_DB; else process.env.ELOWEN_DB = prev;
       rmSync(dir, { recursive: true, force: true });
     }
   });

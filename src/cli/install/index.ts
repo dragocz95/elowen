@@ -13,8 +13,8 @@ import { selfPrefix, reinstallNpmArgs } from '../update.js';
 import { runOnboarding } from '../setup/wizard.js';
 import { INSTALL_INFO_PATH, serializeInstallInfo, type InstallInfo } from '../installInfo.js';
 
-const DAEMON_PORT = Number((process.env.ELOWEN_PORT ?? process.env.ORCA_PORT) ?? 4400);
-const WEB_PORT = Number((process.env.ELOWEN_WEB_PORT ?? process.env.ORCA_WEB_PORT) ?? 4500);
+const DAEMON_PORT = Number((process.env.ELOWEN_PORT) ?? 4400);
+const WEB_PORT = Number((process.env.ELOWEN_WEB_PORT) ?? 4500);
 
 /** How the web UI is reached. Drives the reverse proxy, the web's bind interface and the canonical URL.
  *   - domain:    nginx/apache vhost + (optional) Let's Encrypt; web bound to 127.0.0.1.

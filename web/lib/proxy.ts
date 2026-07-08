@@ -4,7 +4,7 @@
 export const COOKIE_NAME = 'elowen_session';
 
 export function daemonUrl(): string {
-  return process.env.ELOWEN_DAEMON_URL ?? process.env.ORCA_DAEMON_URL ?? 'http://localhost:4400';
+  return process.env.ELOWEN_DAEMON_URL ?? 'http://localhost:4400';
 }
 
 const ATTRS = 'HttpOnly; SameSite=Lax; Path=/';

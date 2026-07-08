@@ -3,7 +3,7 @@ import { POST as login } from '../../../app/api/auth/login/route';
 import { POST as logout } from '../../../app/api/auth/logout/route';
 
 const fetchMock = vi.fn();
-beforeEach(() => { process.env.ORCA_DAEMON_URL = 'http://daemon.test'; vi.stubGlobal('fetch', fetchMock); fetchMock.mockReset(); });
+beforeEach(() => { process.env.ELOWEN_DAEMON_URL = 'http://daemon.test'; vi.stubGlobal('fetch', fetchMock); fetchMock.mockReset(); });
 afterEach(() => { vi.unstubAllGlobals(); });
 
 function post(url: string, body: unknown) {

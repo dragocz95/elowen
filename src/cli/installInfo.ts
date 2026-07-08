@@ -29,6 +29,6 @@ export function serializeInstallInfo(info: InstallInfo): string {
  *  local standalone web port (honouring ELOWEN_WEB_PORT, same as the launcher). One source of truth for the
  *  setup outro, `elowen doctor`, and headless setup. */
 export function webBaseUrl(env: NodeJS.ProcessEnv = process.env): string {
-  const port = Number((env.ELOWEN_WEB_PORT ?? env.ORCA_WEB_PORT)) || 4500;
+  const port = Number((env.ELOWEN_WEB_PORT)) || 4500;
   return readInstallInfo()?.publicUrl ?? `http://localhost:${port}`;
 }

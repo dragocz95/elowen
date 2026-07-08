@@ -8,7 +8,7 @@ import { update } from './update.js';
 import { SERVICES, runCmd, systemctl, servicesActive } from './systemd.js';
 import { launchChat } from './chat/launch.js';
 
-const BASE = (process.env.ELOWEN_URL ?? process.env.ORCA_URL) ?? 'http://localhost:4400';
+const BASE = (process.env.ELOWEN_URL) ?? 'http://localhost:4400';
 
 /** Launcher menu for a systemd-provisioned box (`elowen install`): drives the units via systemctl and
  *  shows the real public URL the operator chose — never spawns a second, port-conflicting daemon. */

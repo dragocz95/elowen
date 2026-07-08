@@ -58,7 +58,7 @@ describe('cli/setup/headless.parseFlags', () => {
   });
 
   it('prefers a flag over the env var, falls back to env otherwise', () => {
-    const env = { ORCA_ADMIN_USER: 'envuser', ORCA_API_KEY: 'env-key' } as NodeJS.ProcessEnv;
+    const env = { ELOWEN_ADMIN_USER: 'envuser', ELOWEN_API_KEY: 'env-key' } as NodeJS.ProcessEnv;
     const o = parseFlags(['--admin-user', 'flaguser'], env);
     expect(o.adminUser).toBe('flaguser'); // flag wins
     expect(o.apiKey).toBe('env-key');     // env fallback

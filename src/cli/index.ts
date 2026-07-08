@@ -10,7 +10,7 @@ import { callElowenApi } from '../shared/apiClient.js';
 import { menu } from './menu.js';
 import { interactiveLogin, launchChat } from './chat/launch.js';
 
-const BASE = (process.env.ELOWEN_URL ?? process.env.ORCA_URL) ?? 'http://localhost:4400';
+const BASE = (process.env.ELOWEN_URL) ?? 'http://localhost:4400';
 
 const USAGE = "usage: elowen [command] [options]  —  run `elowen --help` for the full command list";
 
@@ -99,7 +99,7 @@ export function needsDaemon(cmd: string | undefined): boolean {
 }
 
 async function ensureDaemon() {
-  if ((process.env.ELOWEN_AUTOSTART ?? process.env.ORCA_AUTOSTART) === '0') return;
+  if ((process.env.ELOWEN_AUTOSTART) === '0') return;
   try { await fetch(`${BASE}/health`); return; } catch { /* down — start daemon */ }
   const entry = join(dirname(fileURLToPath(import.meta.url)), '..', 'daemon', 'index.js');
   spawn(process.execPath, [entry], { detached: true, stdio: 'ignore' }).unref();
@@ -174,7 +174,7 @@ export async function run(argv: string[], c: ElowenClient, env: NodeJS.ProcessEn
     case 'ask': {
       // A worker asks the autopilot a free-text question and blocks until it gets an answer. The task
       // is taken from ELOWEN_TASK (set at spawn), so the agent needs only the question text.
-      const taskId = (env.ELOWEN_TASK ?? env.ORCA_TASK);
+      const taskId = (env.ELOWEN_TASK);
       if (!taskId) { console.error('elowen ask: ELOWEN_TASK is not set'); process.exit(1); }
       // `elowen ask --history` prints this task's chat history so the agent (or a human in the terminal)
       // can review the whole conversation, e.g. after resuming.
@@ -207,7 +207,7 @@ export async function run(argv: string[], c: ElowenClient, env: NodeJS.ProcessEn
       // `elowen help` with ELOWEN_TASK set is the agent-facing path: print this task's context-aware control
       // guide (how to work / ask / close), rendered by the daemon. The human `elowen help` (no ELOWEN_TASK)
       // never reaches here — main() prints the CLI usage and returns before dispatch.
-      const taskId = (env.ELOWEN_TASK ?? env.ORCA_TASK);
+      const taskId = (env.ELOWEN_TASK);
       if (!taskId) { console.error(USAGE); process.exit(1); }
       const { text } = await c.guide(taskId) as { text?: string };
       if (typeof text === 'string') console.log(text);
@@ -230,7 +230,7 @@ export async function run(argv: string[], c: ElowenClient, env: NodeJS.ProcessEn
     }
     case 'plan': {
       if (arg !== 'submit') { console.error("usage: elowen plan submit --phases '<json>'"); process.exit(1); }
-      const jobId = (env.ELOWEN_PLAN_JOB ?? env.ORCA_PLAN_JOB);
+      const jobId = (env.ELOWEN_PLAN_JOB);
       if (!jobId) { console.error('elowen plan submit: ELOWEN_PLAN_JOB is not set'); process.exit(1); }
       const raw = flag(rest, '--phases') ?? '[]';
       let phases: unknown;
@@ -239,7 +239,7 @@ export async function run(argv: string[], c: ElowenClient, env: NodeJS.ProcessEn
       console.log(`submitted plan to ${jobId}`); break;
     }
     case 'overseer': {
-      const missionId = (env.ELOWEN_MISSION ?? env.ORCA_MISSION);
+      const missionId = (env.ELOWEN_MISSION);
       if (!missionId) { console.error('elowen overseer: ELOWEN_MISSION is not set'); process.exit(1); }
       if (arg === 'poll') {
         // Absorb heartbeats HERE, in the CLI process, so the (LLM-driven) overseer agent is woken
@@ -290,9 +290,9 @@ async function main() {
     // A running agent invokes `elowen help` with ELOWEN_TASK set to get its task control guide (not the CLI
     // usage). That path DOES need the daemon, so start it and dispatch through `run`. The `-h`/`--help`
     // flags and a human's bare `elowen help` (no ELOWEN_TASK) still just print usage.
-    if (argv[0] === 'help' && (process.env.ELOWEN_TASK ?? process.env.ORCA_TASK)) {
+    if (argv[0] === 'help' && (process.env.ELOWEN_TASK)) {
       await ensureDaemon();
-      await run(['help'], new ElowenClient(BASE, (process.env.ELOWEN_TOKEN ?? process.env.ORCA_TOKEN)), process.env);
+      await run(['help'], new ElowenClient(BASE, (process.env.ELOWEN_TOKEN)), process.env);
       return;
     }
     console.log(helpText(version)); return;
@@ -346,7 +346,7 @@ async function main() {
   // Only API commands may auto-start the daemon; an unknown verb errors out without spawning anything.
   if (!needsDaemon(argv[0])) { console.error(USAGE); process.exit(1); }
   await ensureDaemon();
-  const c = new ElowenClient(BASE, (process.env.ELOWEN_TOKEN ?? process.env.ORCA_TOKEN));
+  const c = new ElowenClient(BASE, (process.env.ELOWEN_TOKEN));
   await run(argv, c, process.env);
 }
 

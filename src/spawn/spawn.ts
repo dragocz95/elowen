@@ -45,9 +45,7 @@ export class SpawnService {
     // Merge any caller-supplied env (e.g. ELOWEN_PLAN_JOB / ELOWEN_MISSION for reasoning agents) on top
     // of the daemon-reach env. ELOWEN_TASK lets a worker run `elowen ask` without passing its own id;
     // reasoning agents ignore it. extraEnv alone still flows through when no elowen config is present.
-    // ORCA_TASK is emitted as a backward-compat alias so a still-legacy workflow skill guard
-    // (`[ -n "$ORCA_TASK" ]`) keeps working until it is rebranded to ELOWEN_TASK.
-    const env = elowen ? { ELOWEN_URL: elowen.url, ELOWEN_TOKEN: elowen.token, ELOWEN_TASK: input.taskId, ORCA_TASK: input.taskId, ...input.extraEnv } : input.extraEnv;
+    const env = elowen ? { ELOWEN_URL: elowen.url, ELOWEN_TOKEN: elowen.token, ELOWEN_TASK: input.taskId, ...input.extraEnv } : input.extraEnv;
     const provider = this.d.providers?.(input.spec.program);
     // Resume only when the recorded session is for THIS spawn's program (the operator may have
     // switched the task's exec since) and the provider hasn't disabled resume. Otherwise cold start.

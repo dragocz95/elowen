@@ -14,14 +14,13 @@ type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 const ORDER: Record<LogLevel, number> = { debug: 0, info: 1, warn: 2, error: 3 };
 
 const MIN: LogLevel = (() => {
-  const v = (process.env.ELOWEN_LOG_LEVEL ?? process.env.ORCA_LOG_LEVEL ?? '').toLowerCase();
+  const v = (process.env.ELOWEN_LOG_LEVEL ?? '').toLowerCase();
   return v in ORDER ? (v as LogLevel) : 'info';
 })();
 
 // Default to the shared repo-root `logs/` (web cwd is `<repo>/web`, so `../logs`). Overridable via
-// ELOWEN_LOG_DIR (or legacy ORCA_LOG_DIR) — set it in the web systemd unit so daemon and web write to
-// exactly the same folder.
-const DIR = process.env.ELOWEN_LOG_DIR || process.env.ORCA_LOG_DIR || join(process.cwd(), '..', 'logs');
+// ELOWEN_LOG_DIR — set it in the web systemd unit so daemon and web write to exactly the same folder.
+const DIR = process.env.ELOWEN_LOG_DIR || join(process.cwd(), '..', 'logs');
 let dirReady = false;
 
 function stamp(d: Date): string {

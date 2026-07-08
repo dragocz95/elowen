@@ -32,7 +32,7 @@ export function tokenFile(env: NodeJS.ProcessEnv): string {
 
 /** Resolve a full-scope token without a password prompt when possible: env → cached file → NeedsLogin. */
 export function resolveToken(env: NodeJS.ProcessEnv, io: TokenIo = defaultIo): string {
-  const fromEnv = (env.ELOWEN_TOKEN ?? env.ORCA_TOKEN)?.trim();
+  const fromEnv = (env.ELOWEN_TOKEN)?.trim();
   if (fromEnv) return fromEnv;
   const raw = io.read(tokenFile(env));
   if (raw) {

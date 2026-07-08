@@ -87,8 +87,8 @@ export async function start(env: NodeJS.ProcessEnv, deps: StartDeps): Promise<Ru
   const attempts = deps.attempts ?? 100;
   // Ports are overridable (ELOWEN_PORT / ELOWEN_WEB_PORT) so a second instance — or a smoke test — can run
   // alongside an existing one. Defaults are the conventional 4400/4500.
-  const daemonPort = Number((env.ELOWEN_PORT ?? env.ORCA_PORT) ?? DAEMON_PORT);
-  const webPort = Number((env.ELOWEN_WEB_PORT ?? env.ORCA_WEB_PORT) ?? WEB_PORT);
+  const daemonPort = Number((env.ELOWEN_PORT) ?? DAEMON_PORT);
+  const webPort = Number((env.ELOWEN_WEB_PORT) ?? WEB_PORT);
   const childEnv = { ...env, ELOWEN_DB: dbPath(env), ELOWEN_LOG_DIR: logDir(env), ELOWEN_AUTOSTART: '0' };
 
   const launch = (entry: string, extra: NodeJS.ProcessEnv) => {

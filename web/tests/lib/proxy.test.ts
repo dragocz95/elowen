@@ -2,11 +2,11 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { daemonUrl, sessionCookie, clearCookie, isSameOrigin, isHttps, forwardHeaders, tokenFromCookie, jsonError, requireSameOrigin, COOKIE_NAME } from '../../lib/proxy';
 
 describe('proxy helpers', () => {
-  beforeEach(() => { delete process.env.ORCA_DAEMON_URL; });
+  beforeEach(() => { delete process.env.ELOWEN_DAEMON_URL; });
 
   it('daemonUrl falls back to localhost:4400', () => {
     expect(daemonUrl()).toBe('http://localhost:4400');
-    process.env.ORCA_DAEMON_URL = 'http://localhost:9999';
+    process.env.ELOWEN_DAEMON_URL = 'http://localhost:9999';
     expect(daemonUrl()).toBe('http://localhost:9999');
   });
 
