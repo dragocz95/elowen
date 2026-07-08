@@ -57,7 +57,7 @@ interface PluginConfigField {
   visibleWhen?: { key: string; equals: string | number | boolean };
 }
 
-/** The parsed, validated shape of an `orca-plugin.json`. `provides` is declarative (display/validation
+/** The parsed, validated shape of an `elowen-plugin.json`. `provides` is declarative (display/validation
  *  hints); the authoritative contributions come from `register(ctx)` at load time. */
 export interface PluginManifest {
   name: string;
@@ -145,7 +145,7 @@ const ManifestSchema = Type.Object({
   })),
 });
 
-/** Validate a raw parsed `orca-plugin.json`. Throws a descriptive Error on any problem (bad shape or an
+/** Validate a raw parsed `elowen-plugin.json`. Throws a descriptive Error on any problem (bad shape or an
  *  apiVersion the daemon doesn't support), so the loader can skip the plugin and log why. */
 export function parseManifest(raw: unknown): PluginManifest {
   if (!Check(ManifestSchema, raw)) {

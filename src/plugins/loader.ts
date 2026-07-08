@@ -55,7 +55,7 @@ export function discoverPlugins(dirs: string[]): DiscoveredPlugin[] {
       const pluginDir = join(dir, name);
       try {
         if (!statSync(pluginDir).isDirectory()) continue;
-        const manifest = parseManifest(JSON.parse(readFileSync(join(pluginDir, 'orca-plugin.json'), 'utf-8')));
+        const manifest = parseManifest(JSON.parse(readFileSync(join(pluginDir, 'elowen-plugin.json'), 'utf-8')));
         if (manifest.name !== name) continue;
         seen.add(name);
         found.push({ manifest, dir: pluginDir, source: i === 0 ? 'bundled' : 'user', i18n: loadPluginI18n(pluginDir) });
@@ -100,7 +100,7 @@ export async function loadPlugins(opts: LoadPluginsOptions): Promise<PluginRegis
       const pluginDir = join(dir, name);
       try {
         if (!statSync(pluginDir).isDirectory()) continue;
-        const manifest = parseManifest(JSON.parse(readFileSync(join(pluginDir, 'orca-plugin.json'), 'utf-8')));
+        const manifest = parseManifest(JSON.parse(readFileSync(join(pluginDir, 'elowen-plugin.json'), 'utf-8')));
         if (manifest.name !== name) throw new Error(`manifest name "${manifest.name}" != folder "${name}"`);
         // Resolve the entry inside the plugin dir and refuse one that escapes it (e.g. `../../x.mjs`) —
         // resolve() would otherwise import an arbitrary file. Cheap belt-and-suspenders, and load-bearing

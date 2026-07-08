@@ -17,11 +17,11 @@ import { BrainOAuthManager } from '../../src/brain/oauth.js';
 import { AuthStorage } from '@earendil-works/pi-coding-agent';
 import { MarketplaceError } from '../../src/plugins/marketplace.js';
 
-/** Write a minimal valid plugin manifest into `<dir>/<name>/orca-plugin.json` so discoverPlugins finds it. */
+/** Write a minimal valid plugin manifest into `<dir>/<name>/elowen-plugin.json` so discoverPlugins finds it. */
 function writePlugin(dir: string, name: string): void {
   const pdir = join(dir, name);
   mkdirSync(pdir, { recursive: true });
-  writeFileSync(join(pdir, 'orca-plugin.json'), JSON.stringify({ name, version: '1.0.0', apiVersion: '1', description: 'x', entry: 'index.mjs' }));
+  writeFileSync(join(pdir, 'elowen-plugin.json'), JSON.stringify({ name, version: '1.0.0', apiVersion: '1', description: 'x', entry: 'index.mjs' }));
 }
 
 /** Lay out a bundled scan root (memory) + a user scan root (weather) so DELETE can branch on `source`. */

@@ -10,7 +10,7 @@ const silentLogger: PluginLogger = { info() {}, warn() {}, error() {} };
 function writePlugin(root: string, name: string, version: string, marker: string): void {
   const dir = join(root, name);
   mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, 'orca-plugin.json'), JSON.stringify({
+  writeFileSync(join(dir, 'elowen-plugin.json'), JSON.stringify({
     name, version, apiVersion: '1', description: 'x', entry: 'index.mjs',
   }));
   // Top-level side effect fires on every FRESH module evaluation; a cached import would not re-run it.
@@ -38,7 +38,7 @@ describe('loadPlugins import cache-busting', () => {
     const root = mkdtempSync(join(tmpdir(), 'elowen-escape-'));
     const dir = join(root, 'evil');
     mkdirSync(dir, { recursive: true });
-    writeFileSync(join(dir, 'orca-plugin.json'), JSON.stringify({
+    writeFileSync(join(dir, 'elowen-plugin.json'), JSON.stringify({
       name: 'evil', version: '1.0.0', apiVersion: '1', description: 'x', entry: '../../escape.mjs',
     }));
     const error = vi.fn();

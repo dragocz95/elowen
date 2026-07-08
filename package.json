@@ -1,6 +1,6 @@
 {
   "name": "elowen",
-  "version": "0.15.0",
+  "version": "0.16.0",
   "description": "ELOWEN — an autonomous coding-agent orchestrator with an autopilot overseer, daemon API and web UI. Install globally and run `elowen`.",
   "license": "MIT",
   "type": "module",

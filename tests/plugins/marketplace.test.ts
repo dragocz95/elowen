@@ -9,7 +9,7 @@ import { discoverPlugins } from '../../src/plugins/loader.js';
 function writePlugin(pluginsRoot: string, name: string, version: string): string {
   const dir = join(pluginsRoot, name);
   mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, 'orca-plugin.json'), JSON.stringify({
+  writeFileSync(join(dir, 'elowen-plugin.json'), JSON.stringify({
     name, version, apiVersion: '1', description: `${name} plugin`, entry: 'index.mjs',
     provides: { tools: [`${name}_tool`] },
   }));
@@ -230,7 +230,7 @@ describe('MarketplaceService.update', () => {
       installed: [{ name: 'notion', version: '1.0.0' }],
     });
     await svc.update('notion');
-    const manifest = JSON.parse(readFileSync(join(userDir, 'notion', 'orca-plugin.json'), 'utf-8')) as { version: string };
+    const manifest = JSON.parse(readFileSync(join(userDir, 'notion', 'elowen-plugin.json'), 'utf-8')) as { version: string };
     expect(manifest.version).toBe('2.0.0');
     expect(reload).toHaveBeenCalled();
   });

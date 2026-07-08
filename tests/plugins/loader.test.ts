@@ -9,7 +9,7 @@ const log = { info() {}, warn() {}, error() {} };
 function makePlugin(root: string, name: string, body: string, apiVersion = '1', extra: Record<string, unknown> = {}) {
   const dir = join(root, name);
   mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, 'orca-plugin.json'), JSON.stringify({
+  writeFileSync(join(dir, 'elowen-plugin.json'), JSON.stringify({
     name, version: '0.1.0', apiVersion, description: name, entry: 'index.mjs', ...extra,
   }));
   writeFileSync(join(dir, 'index.mjs'), body);

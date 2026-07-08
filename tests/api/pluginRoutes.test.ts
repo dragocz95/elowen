@@ -21,7 +21,7 @@ import { PluginRegistryProvider } from '../../src/plugins/pluginsProvider.js';
 function makePlugin(root: string, name: string, extra: Record<string, unknown> = {}) {
   const dir = join(root, name);
   mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, 'orca-plugin.json'), JSON.stringify({
+  writeFileSync(join(dir, 'elowen-plugin.json'), JSON.stringify({
     name, version: '1.0.0', apiVersion: '1', description: `${name} plugin`, entry: 'index.mjs',
     provides: { tools: [`${name}_tool`] }, ...extra,
   }));
@@ -174,7 +174,7 @@ describe('plugin routes', () => {
     const root = mkdtempSync(join(tmpdir(), 'elowen-mcproutes-'));
     const dir = join(root, 'mcp');
     mkdirSync(dir, { recursive: true });
-    writeFileSync(join(dir, 'orca-plugin.json'), JSON.stringify({
+    writeFileSync(join(dir, 'elowen-plugin.json'), JSON.stringify({
       name: 'mcp', version: '1.0.0', apiVersion: '1', description: 'mcp', entry: 'index.mjs',
     }));
     writeFileSync(join(dir, 'index.mjs'), `

@@ -38,7 +38,7 @@ describe('ConfigStore fresh-install defaults', () => {
 describe('SAFE_DEFAULT_PLUGINS load with no required config field', () => {
   for (const name of SAFE_DEFAULT_PLUGINS) {
     it(`${name}: no configSchema field is required`, () => {
-      const manifestPath = join(process.cwd(), 'plugins', name, 'orca-plugin.json');
+      const manifestPath = join(process.cwd(), 'plugins', name, 'elowen-plugin.json');
       const manifest = JSON.parse(readFileSync(manifestPath, 'utf-8')) as { configSchema?: { key: string; required?: boolean }[] };
       const required = (manifest.configSchema ?? []).filter((f) => f.required);
       expect(required).toEqual([]);

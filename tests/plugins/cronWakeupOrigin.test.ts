@@ -19,7 +19,7 @@ const asText = (r: { content: { text?: string }[] }) => (r.content[0] as { text:
 function freshDataRoot(): string { return mkdtempSync(join(tmpdir(), 'elowen-pdata-')); }
 
 /** The cron adapter's internals the tests drive directly (listen + a manual tick, no timers), plus the
- *  resolved scheduler limits (see plugins/cronjob/orca-plugin.json's "Scheduler" config section). */
+ *  resolved scheduler limits (see plugins/cronjob/elowen-plugin.json's "Scheduler" config section). */
 interface CronAdapterUnderTest {
   listen(fn: (src: SessionSource, text: string, onEvent?: (e: { type: string; sessionId?: string }) => void) => Promise<string | undefined>): void;
   tick(): Promise<void>;

@@ -353,7 +353,7 @@ export class MarketplaceService {
   }
 
   private cacheManifestVersion(name: string): string | null {
-    try { return parseManifest(JSON.parse(readFileSync(join(this.cacheDir, 'plugins', name, 'orca-plugin.json'), 'utf-8'))).version; }
+    try { return parseManifest(JSON.parse(readFileSync(join(this.cacheDir, 'plugins', name, 'elowen-plugin.json'), 'utf-8'))).version; }
     catch { return null; }
   }
 
@@ -362,7 +362,7 @@ export class MarketplaceService {
    *  destination) so the final `rename` can't hit EXDEV. */
   private copyFromCache(name: string): void {
     const src = join(this.cacheDir, 'plugins', name);
-    if (!existsSync(join(src, 'orca-plugin.json'))) throw new MarketplaceError(`payload for "${name}" is missing from the registry`, 502);
+    if (!existsSync(join(src, 'elowen-plugin.json'))) throw new MarketplaceError(`payload for "${name}" is missing from the registry`, 502);
 
     mkdirSync(this.opts.userPluginsDir, { recursive: true });
     const staging = join(this.opts.userPluginsDir, `.staging-${name}-${this.io.rand()}`);
@@ -425,7 +425,7 @@ export class MarketplaceService {
     walk(dir);
     if (files === 0) throw new Error('empty plugin folder');
 
-    const manifest = parseManifest(JSON.parse(readFileSync(join(dir, 'orca-plugin.json'), 'utf-8')));
+    const manifest = parseManifest(JSON.parse(readFileSync(join(dir, 'elowen-plugin.json'), 'utf-8')));
     if (manifest.name !== name) throw new Error(`manifest name "${manifest.name}" != "${name}"`);
     const entryPath = resolve(dir, manifest.entry);
     if (entryPath !== dir && !entryPath.startsWith(dir + sep)) throw new Error(`entry "${manifest.entry}" escapes plugin dir`);
