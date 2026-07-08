@@ -1,0 +1,9 @@
+{
+  "description": "Vybrané vývojářské lomítkové příkazy pro chatová rozhraní — /commit, /review, /test, /explain, /pr, /docs. Každý je znovupoužitelné promptové makro (vlastní příkaz ve stylu opencode): napíšete jej (volitelně s argumentem) a agent spustí daný pracovní postup. Volitelné; níže vyberte, které chcete povolit.",
+  "fields": {
+    "enabled": {
+      "label": "Povolené příkazy",
+      "hint": "Které vývojářské příkazy zpřístupnit. Ponechte prázdné pro povolení všech."
+    }
+  }
+}

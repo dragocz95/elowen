@@ -1,3 +1,17 @@
 {
-  "description": "Čtení, zápis a výpis souborů v repozitářích Orcy, ke kterým má uživatel přístup."
+  "description": "Čtení, zápis a výpis souborů v repozitářích Orcy, ke kterým má uživatel přístup.",
+  "fields": {
+    "sec_limits": {
+      "label": "Limity",
+      "hint": "Omezení velikosti výstupu pro čtení souborů a vyhledávání."
+    },
+    "readCap": {
+      "label": "Limit čtení",
+      "hint": "Maximální počet znaků načtených ze souboru a vrácených před oříznutím."
+    },
+    "searchMaxMatches": {
+      "label": "Maximální počet shod hledání",
+      "hint": "Maximální počet shod, které search_files vrátí před oříznutím."
+    }
+  }
 }

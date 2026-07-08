@@ -1,3 +1,3 @@
 {
-  "description": "Zeptá se tě na otázku s výběrem z připravených možností a počká na odpověď, než bude agent pokračovat. Umí položit i víc otázek naráz, výběr více možností a volnou odpověď „Jiné“ (lze vypnout). Výběr proběhne v chatu (CLI/web), přes tlačítka na Discordu nebo číslem na WhatsAppu."
+  "description": "Položí uživateli strukturované otázky s výběrem z předdefinovaných možností a před pokračováním počká na odpověď. Agent položí jednu či více otázek s předem danými možnostmi (výběr jedné nebo více možností, volitelně volná textová odpověď); uživatel zvolí v chatu (CLI/web), přes tlačítka či výběry na Discordu nebo číslovanou odpovědí na WhatsAppu a tah pokračuje podle jeho volby."
 }

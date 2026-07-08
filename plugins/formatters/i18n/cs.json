@@ -3,11 +3,23 @@
   "fields": {
     "enabled": {
       "label": "Automatické formátování",
-      "hint": "Spustit formátovač projektu ihned po úspěšném write_file/edit_file. Formátování je ve výchozím stavu zapnuté; vypnete jej zde."
+      "hint": "Spustí formátovač projektu ihned po úspěšném write_file/edit_file. Formátování je ve výchozím stavu zapnuté; jeho vypnutím jej zcela deaktivujete."
     },
     "disabled": {
       "label": "Vypnuté formátovače",
-      "hint": "Formátovače, které se nesmí spouštět, ani když je pro ně projekt nastaven."
+      "hint": "Formátovače, které se nikdy nesmí spouštět, ani když je pro ně projekt nastaven."
+    },
+    "sec_limits": {
+      "label": "Limity",
+      "hint": "Limity času a velikosti souboru pro podproces formátovače."
+    },
+    "timeoutMs": {
+      "label": "Časový limit formátovače (ms)",
+      "hint": "Jak dlouho smí podproces formátovače běžet, než je ukončen. Efektivní strop je ~12 s: formátovač běží v rámci rozpočtu hooku tools.call.after, takže časový limit na úrovni ~12 s nebo vyšší je tímto rozpočtem uříznut dříve, než se stihne uplatnit."
+    },
+    "maxFileBytes": {
+      "label": "Maximální velikost souboru k formátování (v bajtech)",
+      "hint": "Soubory větší než tato hodnota se nikdy neformátují (přeskočí se)."
     }
   }
 }

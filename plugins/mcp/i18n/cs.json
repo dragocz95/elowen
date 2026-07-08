@@ -1,9 +1,20 @@
 {
-  "description": "Napojí externí MCP servery (stdio, HTTP, SSE) a zpřístupní jejich nástroje agentovi. U každého serveru zvolíte transport: stdio spustí lokální proces (např. npx …), HTTP nebo SSE se připojí na vzdálenou URL. stdio servery běží ve vlastní procesní skupině a při reloadu se ukončí jako celek, takže po npx nezůstávají osiřelé procesy.",
+  "description": "Napojí externí MCP servery (stdio, HTTP, SSE) do sady nástrojů asistenta.",
   "fields": {
     "servers": {
-      "label": "MCP servery",
-      "help": "Externí MCP servery, které se připojí a jejichž nástroje se zpřístupní. U každého serveru zvolte transport: stdio spustí lokální proces (např. npx …), HTTP nebo SSE se připojí na vzdálenou URL. stdio servery běží ve vlastní procesní skupině a při reloadu se ukončí jako celek, takže po npx nezůstávají osiřelé procesy."
+      "label": "MCP servery"
+    },
+    "sec_timeouts": {
+      "label": "Časové limity",
+      "hint": "Globální časové limity pro připojení a volání, uplatněné na každý nakonfigurovaný server."
+    },
+    "connectTimeoutMs": {
+      "label": "Časový limit připojení (ms)",
+      "hint": "Jak dlouho čekat na připojení serveru a výpis jeho nástrojů, než se to vzdá."
+    },
+    "callTimeoutMs": {
+      "label": "Časový limit volání nástroje (ms)",
+      "hint": "Jak dlouho čekat na dokončení přemostěného volání nástroje, než se to vzdá."
     }
   }
 }

@@ -1,3 +1,17 @@
 {
-  "description": "Spouštění shellových příkazů (na popředí i na pozadí) s pracovním adresářem omezeným na repozitáře, ke kterým má uživatel přístup. Procesy na pozadí se spravují nástroji list/read/kill."
+  "description": "Spouštění shellových příkazů (na popředí i na pozadí) s pracovním adresářem omezeným na repozitáře, ke kterým má uživatel přístup. Procesy na pozadí se spravují nástroji list/read/kill.",
+  "fields": {
+    "sec_limits": {
+      "label": "Limity",
+      "hint": "Limity velikosti výstupu a časového limitu pro shellové příkazy."
+    },
+    "outputCap": {
+      "label": "Limit výstupu",
+      "hint": "Kolik znaků stdout/stderr se vrátí před oříznutím. Zároveň omezuje průběžnou vyrovnávací paměť výstupu udržovanou pro procesy na pozadí."
+    },
+    "commandTimeoutMs": {
+      "label": "Časový limit příkazu (ms)",
+      "hint": "Jak dlouho může příkaz na popředí běžet, než je ukončen."
+    }
+  }
 }

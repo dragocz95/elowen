@@ -1,5 +1,5 @@
 {
-  "description": "Discord bot: zmiňte ho a odpoví z Orca AI. Slash příkazy (/model, /new, /help), výběr modelu pro každý kanál, živé streamované odpovědi, stavové reakce a proaktivní cron/tick oznámení. Serverové nástroje (admin session): info o serveru/kanálu/členovi, výpis a hledání členů, role, piny, vlákna (vytvořit/archivovat/zamknout/členové), kanály (vytvořit/přejmenovat/smazat, kategorie) a správa zpráv (mazání/purge). Každá Discord role se mapuje na povolené projekty Orcy a prompt role.",
+  "description": "Discord bot: zmiňte ho a odpoví z Orca AI. Slash příkazy (/model, /new, /help), výběr modelu pro každý kanál, živé streamované odpovědi (s živým todo checklistem agenta), stavové reakce a proaktivní cron/tick oznámení. Serverové nástroje (admin session): info o serveru/kanálu/členovi, výpis a hledání členů, role, piny, vlákna (vytvořit/archivovat/zamknout/členové), kanály (vytvořit/přejmenovat/smazat, kategorie) a správa zpráv (mazání/purge). Každá Discord role se mapuje na povolené projekty Orcy a prompt role.",
   "fields": {
     "sec_connection": {
       "label": "Připojení",
