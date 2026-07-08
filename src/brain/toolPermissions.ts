@@ -113,6 +113,122 @@ export function matchPermissionPattern(value: string, pattern: string): boolean 
   return new RegExp(`^${rx}$`).test(value);
 }
 
+/** Leading program wrappers whose real target is their FIRST non-flag argument — so `env rm` / `sudo rm`
+ *  gate against `rm`, not the wrapper. Kept deliberately tight: unwrapping an arg-taking wrapper like
+ *  `xargs`/`timeout` would mis-identify the program, so they are left in place (their whole segment is
+ *  still matched verbatim). */
+const BASH_COMMAND_WRAPPERS: ReadonlySet<string> = new Set(['env', 'command', 'sudo', 'nice']);
+
+const basename = (token: string): string => { const s = token.lastIndexOf('/'); return s === -1 ? token : token.slice(s + 1); };
+
+/** The index of the `)` that closes the `(` at `openIdx`, honouring nesting and skipping quoted spans;
+ *  -1 if unbalanced (an unterminated `$(…)`). */
+function findMatchingParen(input: string, openIdx: number): number {
+  let depth = 0, inS = false, inD = false;
+  for (let i = openIdx; i < input.length; i++) {
+    const ch = input[i]!;
+    if (inS) { if (ch === "'") inS = false; continue; }
+    if (inD) { if (ch === '\\') { i++; continue; } if (ch === '"') inD = false; continue; }
+    if (ch === "'") { inS = true; continue; }
+    if (ch === '"') { inD = true; continue; }
+    if (ch === '(') depth++;
+    else if (ch === ')') { depth--; if (depth === 0) return i; }
+  }
+  return -1;
+}
+
+/** Consume a double-quoted span starting at the opening `"` (index `openIdx`). Its text stays literal for
+ *  operator splitting (a `;`/`&&` inside quotes is NOT a separator), but command substitutions inside it
+ *  still fire — their inner command is scanned as its own gated segment. Returns the reconstructed text
+ *  (substitutions blanked, since their output is unknowable) and the index just past the closing quote. */
+function scanDoubleQuoted(input: string, openIdx: number, segments: string[], state: { ambiguous: boolean }): { text: string; next: number } {
+  let text = '"';
+  let i = openIdx + 1;
+  while (i < input.length) {
+    const ch = input[i]!;
+    if (ch === '\\') { text += input.slice(i, i + 2); i += 2; continue; }
+    if (ch === '"') return { text: `${text}"`, next: i + 1 };
+    if (ch === '`') {
+      const end = input.indexOf('`', i + 1);
+      if (end === -1) { state.ambiguous = true; return { text, next: input.length }; }
+      scanBashLevel(input.slice(i + 1, end), segments, state); text += ' '; i = end + 1; continue;
+    }
+    if (ch === '$' && input[i + 1] === '(') {
+      const end = findMatchingParen(input, i + 1);
+      if (end === -1) { state.ambiguous = true; return { text, next: input.length }; }
+      scanBashLevel(input.slice(i + 2, end), segments, state); text += ' '; i = end + 1; continue;
+    }
+    text += ch; i++;
+  }
+  state.ambiguous = true; // ran off the end without a closing quote
+  return { text, next: input.length };
+}
+
+/** Split one command level into simple-command segments (pushed into `segments`), recursing into the
+ *  inner command of every substitution. See {@link splitBashSegments}. */
+function scanBashLevel(input: string, segments: string[], state: { ambiguous: boolean }): void {
+  let current = '';
+  const flush = (): void => { const s = current.replace(/\s+/g, ' ').trim(); if (s) segments.push(s); current = ''; };
+  let i = 0;
+  while (i < input.length) {
+    const ch = input[i]!;
+    if (ch === "'") { // single quotes: everything literal until the next single quote
+      const end = input.indexOf("'", i + 1);
+      if (end === -1) { state.ambiguous = true; current += input.slice(i); break; }
+      current += input.slice(i, end + 1); i = end + 1; continue;
+    }
+    if (ch === '"') { const r = scanDoubleQuoted(input, i, segments, state); current += r.text; i = r.next; continue; }
+    if (ch === '`') { // command substitution — gate its inner command on its own
+      const end = input.indexOf('`', i + 1);
+      if (end === -1) { state.ambiguous = true; break; }
+      scanBashLevel(input.slice(i + 1, end), segments, state); current += ' '; i = end + 1; continue;
+    }
+    if (ch === '$' && input[i + 1] === '(') {
+      const end = findMatchingParen(input, i + 1);
+      if (end === -1) { state.ambiguous = true; break; }
+      scanBashLevel(input.slice(i + 2, end), segments, state); current += ' '; i = end + 1; continue;
+    }
+    // Control operators (outside quotes): `;`, newline, `|`/`||`, `&`/`&&` — the two-char forms just
+    // produce an empty segment between the flushes, which flush() drops.
+    if (ch === ';' || ch === '\n' || ch === '|' || ch === '&') { flush(); i++; continue; }
+    current += ch; i++;
+  }
+  flush();
+}
+
+/** Split a shell command line into its constituent simple-commands so each is gated on its OWN — a
+ *  permission rule must never let a chained or substituted command ride an allow/prefix that matched
+ *  only the first program (e.g. `cat x && rm -rf ~`). Splits on the control operators `;`, `&&`, `||`,
+ *  `|`, `&` and newlines, and extracts the inner command of every command substitution (`` `…` `` and
+ *  `$(…)`). Single/double quotes are respected, so a separator inside a quoted string is NOT a split
+ *  point. Conservative on malformed input: an unbalanced quote or an unterminated substitution sets
+ *  `ambiguous`, telling the resolver to treat the whole line as one segment that can never be granted
+ *  by an allow/prefix rule. */
+export function splitBashSegments(command: string): { segments: string[]; ambiguous: boolean } {
+  const segments: string[] = [];
+  const state = { ambiguous: false };
+  scanBashLevel(command, segments, state);
+  return { segments, ambiguous: state.ambiguous };
+}
+
+/** The candidate strings a bash rule pattern is tested against for one simple-command segment: the
+ *  segment verbatim (whitespace-normalized) AND its canonical form — leading `VAR=val` assignments and
+ *  known wrappers (env/command/sudo/nice) stripped, and the program reduced to its basename — so a rule
+ *  like `rm*` catches `/bin/rm`, `FOO=1 rm` and `env rm`, while an args-bearing pattern like `git status*`
+ *  still matches the verbatim form. */
+function segmentMatchValues(segment: string): string[] {
+  const full = segment.replace(/\s+/g, ' ').trim();
+  let tokens = full.split(' ').filter(Boolean);
+  for (;;) { // strip leading assignments, then unwrap a wrapper — repeat (e.g. `env FOO=1 rm`)
+    while (tokens.length > 1 && /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[0]!)) tokens = tokens.slice(1);
+    if (tokens.length > 1 && BASH_COMMAND_WRAPPERS.has(basename(tokens[0]!))) { tokens = tokens.slice(1); continue; }
+    break;
+  }
+  if (tokens.length === 0) return [full];
+  const canonical = [basename(tokens[0]!), ...tokens.slice(1)].join(' ');
+  return canonical === full ? [full] : [full, canonical];
+}
+
 /** Resolve one tool call against the ruleset. THE documented semantic: the LAST matching rule in
  *  insertion order wins (defaults come first, user rules after — so a user rule always beats a default,
  *  and within the user's own rules a later entry beats an earlier one; put the catch-all `*` first).
@@ -121,13 +237,40 @@ export function matchPermissionPattern(value: string, pattern: string): boolean 
 export function resolveToolPermission(
   ruleset: readonly PermissionRule[], tool: string, command?: string,
 ): { action: PermissionAction; pattern: string; scope: PermissionScope } {
-  const scope: PermissionScope = command !== undefined ? 'bash' : 'tools';
-  const value = command !== undefined ? command.replace(/\s+/g, ' ').trim() : tool;
-  for (let i = ruleset.length - 1; i >= 0; i--) {
-    const rule = ruleset[i]!;
-    if (rule.scope === scope && matchPermissionPattern(value, rule.pattern)) return { ...rule };
+  if (command === undefined) {
+    for (let i = ruleset.length - 1; i >= 0; i--) {
+      const rule = ruleset[i]!;
+      if (rule.scope === 'tools' && matchPermissionPattern(tool, rule.pattern)) return { ...rule };
+    }
+    return { action: 'ask', pattern: '*', scope: 'tools' };
   }
-  return { action: 'ask', pattern: '*', scope };
+  return resolveBashPermission(ruleset, command);
+}
+
+/** Resolve a `bash`-scope command by splitting it into simple-command segments and taking the MOST
+ *  RESTRICTIVE decision across all of them: any segment `deny` → deny; else any `ask` → ask; only
+ *  `allow` when EVERY segment is allow. This is what closes the chaining bypass — an allow that matched
+ *  only the first program can no longer grant the whole line. An ambiguous parse is treated as one
+ *  segment that can never resolve to `allow` (the most permissive it gets is `ask`; a `deny` still bites). */
+function resolveBashPermission(
+  ruleset: readonly PermissionRule[], command: string,
+): { action: PermissionAction; pattern: string; scope: PermissionScope } {
+  const scope: PermissionScope = 'bash';
+  const resolveSegment = (segment: string): { action: PermissionAction; pattern: string; scope: PermissionScope } => {
+    const values = segmentMatchValues(segment);
+    for (let i = ruleset.length - 1; i >= 0; i--) {
+      const rule = ruleset[i]!;
+      if (rule.scope === 'bash' && values.some((v) => matchPermissionPattern(v, rule.pattern))) return { ...rule };
+    }
+    return { action: 'ask', pattern: '*', scope };
+  };
+  const { segments, ambiguous } = splitBashSegments(command);
+  if (ambiguous) {
+    const r = resolveSegment(command);
+    return r.action === 'deny' ? r : { action: 'ask', pattern: r.action === 'ask' ? r.pattern : '*', scope };
+  }
+  const resolved = (segments.length ? segments : [command]).map(resolveSegment);
+  return resolved.find((r) => r.action === 'deny') ?? resolved.find((r) => r.action === 'ask') ?? resolved[0]!;
 }
 
 /** How many leading tokens make the "human-understandable command" for a few common multi-word CLIs —
@@ -141,10 +284,11 @@ const BASH_PREFIX_ARITY: Record<string, number> = {
 
 /** The pattern an "Always allow" pick adds for a shell command: its command prefix plus a trailing `*`
  *  (opencode-style, e.g. `git status --porcelain` → "git status*"). Single-token fallback keeps the
- *  grant narrow: `rm -rf x` suggests "rm*", never "*". */
-export function bashAlwaysPattern(command: string): string {
+ *  grant narrow: `rm -rf x` suggests "rm*", never "*". An empty command has no safe prefix to persist —
+ *  a bare `*` would be allow-all — so it returns null and the approval prompt omits "Always allow". */
+export function bashAlwaysPattern(command: string): string | null {
   const tokens = command.replace(/\s+/g, ' ').trim().split(' ').filter(Boolean);
-  if (tokens.length === 0) return '*';
+  if (tokens.length === 0) return null;
   let take = 1;
   for (let len = Math.min(tokens.length, 3); len > 0; len--) {
     const arity = BASH_PREFIX_ARITY[tokens.slice(0, len).join(' ')];
@@ -154,8 +298,9 @@ export function bashAlwaysPattern(command: string): string {
 }
 
 /** One pending approval, as handed to the turn's `requestApproval` (wired only where a human is
- *  attached — owner CLI/web chat). `alwaysPattern` is what an "Always allow" pick persists. */
-export interface ApprovalRequest { tool: string; scope: PermissionScope; command?: string; alwaysPattern: string }
+ *  attached — owner CLI/web chat). `alwaysPattern` is what an "Always allow" pick persists — null when
+ *  there is no safe pattern to offer (empty command), in which case the prompt omits "Always allow". */
+export interface ApprovalRequest { tool: string; scope: PermissionScope; command?: string; alwaysPattern: string | null }
 export type ApprovalDecision = 'once' | 'always' | 'deny';
 
 /** Everything the execute-time permission gate needs for one turn, threaded through the TurnScope
@@ -181,6 +326,12 @@ export interface TurnPermissions {
  *  are pre-approved, it plans around the rules instead of tripping approval prompts it could avoid.
  *  Compact by construction — patterns capped per action, later same-pattern rules override earlier
  *  ones (mirroring last-match-wins), catch-alls rendered as the scope default. */
+/** Neutralize a user rule pattern rendered into the model-facing `<permissions>` block: strip newlines
+ *  and angle brackets so a crafted pattern cannot inject a fake line or a spoofed `</permissions>` close.
+ *  Normal patterns (tool names, `git status*`, `rm*`) contain none of these, so their rendering is
+ *  unchanged — sanitizeRuleMap only bounds length/action, not the pattern's characters. */
+const sanitizePatternForBlock = (pattern: string): string => pattern.replace(/[\r\n]+/g, ' ').replace(/[<>]/g, '');
+
 export function summarizePermissions(perms: Pick<TurnPermissions, 'ruleset' | 'yolo'>): string {
   const effective = (scope: PermissionScope): Map<string, PermissionAction> => {
     const m = new Map<string, PermissionAction>();
@@ -188,7 +339,7 @@ export function summarizePermissions(perms: Pick<TurnPermissions, 'ruleset' | 'y
     return m;
   };
   const list = (m: Map<string, PermissionAction>, action: PermissionAction): string => {
-    const patterns = [...m].filter(([p, a]) => a === action && p !== '*').map(([p]) => p);
+    const patterns = [...m].filter(([p, a]) => a === action && p !== '*').map(([p]) => sanitizePatternForBlock(p));
     if (patterns.length === 0) return '';
     const shown = patterns.slice(0, 12);
     if (patterns.length > shown.length) shown.push(`+${patterns.length - shown.length} more`);
@@ -223,16 +374,17 @@ export const APPROVAL_LABELS = { once: 'Allow once', always: 'Always allow', den
 export function approvalQuestion(req: ApprovalRequest): AskQuestion {
   const cmd = req.command ? req.command.replace(/\s+/g, ' ').trim() : '';
   const shownCmd = cmd.length > 200 ? `${cmd.slice(0, 199)}…` : cmd;
+  // "Always allow" is offered only when there IS a safe pattern to persist — never for an empty command
+  // (its pattern would be an allow-all `*`).
+  const options: AskQuestion['options'] = [{ label: APPROVAL_LABELS.once, description: 'run it this time only' }];
+  if (req.alwaysPattern) options.push({ label: APPROVAL_LABELS.always, description: `always allow "${req.alwaysPattern}"` });
+  options.push({ label: APPROVAL_LABELS.deny, description: 'skip this call' });
   return {
     header: 'Approval',
     question: shownCmd ? `Run this command?\n$ ${shownCmd}` : `Allow the "${req.tool}" tool to run?`,
     multiSelect: false,
     custom: false,
-    options: [
-      { label: APPROVAL_LABELS.once, description: 'run it this time only' },
-      { label: APPROVAL_LABELS.always, description: `always allow "${req.alwaysPattern}"` },
-      { label: APPROVAL_LABELS.deny, description: 'skip this call' },
-    ],
+    options,
   };
 }
 

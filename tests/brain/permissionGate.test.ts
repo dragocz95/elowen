@@ -153,4 +153,28 @@ describe('permission gate — the single tool-call choke point (composeSessionTo
     expect(ran()).toBe(1);
     expect(requestApproval).toHaveBeenCalledTimes(1);
   });
+
+  // FIX 1 — a chained command can no longer ride the allow (or lack of rule) that matched only its first
+  // segment: the deny on `rm*` reached via the second segment denies the whole call.
+  it('chaining bypass is closed: a deny on any segment denies the whole run_command call', async () => {
+    const { gated, ran } = composed('run_command');
+    const p = perms({ user: { bash: { 'rm*': 'deny' } } });
+    const res = await callTool(gated, { command: 'cat README && rm -rf ~' }, p);
+    expect(ran()).toBe(0);
+    expect(res.content[0]!.text).toContain('Denied by permission rule "rm*"');
+  });
+
+  // FIX 2 — an empty/missing command must never offer or persist an "Always allow" (its pattern would be
+  // an allow-all bash `*`). The approval is still shown (Allow once / Deny), but nothing is persisted.
+  it('empty command: "Always allow" is not offered and never persists a bash * rule', async () => {
+    const { gated, ran } = composed('run_command');
+    const persistAllow = vi.fn();
+    const requestApproval = vi.fn(async (req: ApprovalRequest): Promise<ApprovalDecision> => {
+      expect(req.alwaysPattern).toBeNull();
+      return 'always'; // even if the client somehow returns it, nothing must be persisted
+    });
+    await callTool(gated, { command: '' }, perms({ requestApproval, persistAllow }));
+    expect(ran()).toBe(1);
+    expect(persistAllow).not.toHaveBeenCalled();
+  });
 });

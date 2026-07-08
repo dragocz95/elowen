@@ -128,7 +128,7 @@ function gatePermissions(tool: ToolDefinition): ToolDefinition {
         if (decision === 'deny') {
           return refused(`The user denied running "${tool.name}"${command ? ` (${command})` : ''}. Do not retry it without asking them first.`);
         }
-        if (decision === 'always') {
+        if (decision === 'always' && alwaysPattern) {
           try { perms.persistAllow?.(rule.scope, alwaysPattern); } catch { /* persistence is best-effort */ }
         }
       }

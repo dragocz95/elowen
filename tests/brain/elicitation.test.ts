@@ -60,6 +60,25 @@ describe('ElicitationRegistry — parked ask_user_question lifecycle', () => {
     await expect(p2).resolves.toEqual([{ header: 'Choice', selected: ['B'] }]);
   });
 
+  it('serializes two back-to-back approvals in one session — neither cancels the other into a deny', async () => {
+    const reg = new ElicitationRegistry();
+    const events: { id: string }[] = [];
+    const emit = (e: BrainEvent) => { events.push(e as unknown as { id: string }); };
+    const p1 = reg.ask('sess-1', Q, emit, 'approval');
+    const p2 = reg.ask('sess-1', Q, emit, 'approval');
+    // Only the FIRST approval is parked/emitted; the second queues behind it (no supersede-cancel).
+    expect(events).toHaveLength(1);
+    expect(reg.pendingForSession('sess-1')?.id).toBe(events[0]!.id);
+    // Answering the first resolves it with the real pick (NOT a spurious deny from a sibling cancel).
+    expect(reg.answer(events[0]!.id, [{ header: 'Choice', selected: ['A'] }])).toBe(true);
+    await expect(p1).resolves.toEqual([{ header: 'Choice', selected: ['A'] }]);
+    // The queued approval now parks/emits and can be answered on its own.
+    for (let i = 0; i < 4; i++) await Promise.resolve();
+    expect(events).toHaveLength(2);
+    expect(reg.answer(events[1]!.id, [{ header: 'Choice', selected: ['B'] }])).toBe(true);
+    await expect(p2).resolves.toEqual([{ header: 'Choice', selected: ['B'] }]);
+  });
+
   it('times out to a per-question no-answer sentinel when nobody answers', async () => {
     vi.useFakeTimers();
     try {

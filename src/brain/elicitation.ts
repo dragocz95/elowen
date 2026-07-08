@@ -27,15 +27,40 @@ interface Pending {
  *  single-threaded and parks on one `askUser` call, there is at most one pending entry per conversation. */
 export class ElicitationRegistry {
   private readonly pending = new Map<string, Pending>();
+  /** Per-session tail of the serialized APPROVAL chain: a new approval parks only after the previous one
+   *  for the same conversation settles (see {@link ask}). Never rejects. */
+  private readonly approvalChain = new Map<string, Promise<void>>();
 
   constructor(private readonly timeoutMs: number = DEFAULT_TIMEOUT_MS) {}
 
   /** Emit the question(s) to the conversation's clients and park until answered, timed out, or cancelled.
-   *  `emit` fans the event into that conversation's listener set (SSE clients + Discord's in-process handler). */
+   *  `emit` fans the event into that conversation's listener set (SSE clients + Discord's in-process handler).
+   *
+   *  Two approval prompts can arise in ONE turn (parallel tool calls each needing sign-off). Those are
+   *  SERIALIZED — the second parks only after the first settles — instead of the second superseding
+   *  (cancelling) the first, which would reject the first's promise and be misread by the gate as a user
+   *  deny. Regular ask_user_question calls keep the "one pending question per conversation" UX: a newer
+   *  one drops the earlier. */
   ask(sessionId: string, questions: AskQuestion[], emit: (e: BrainEvent) => void, kind?: 'approval'): Promise<AskAnswer[]> {
+    if (kind === 'approval') {
+      const prev = this.approvalChain.get(sessionId);
+      // No prior approval in flight → park now (synchronous emit, unchanged behaviour). Otherwise queue
+      // behind it so both prompts get shown in turn rather than the newer one cancelling the older.
+      const result = prev ? prev.then(() => this.park(sessionId, questions, emit, kind)) : this.park(sessionId, questions, emit, kind);
+      const tail = result.then(() => {}, () => {}); // settles (either way) when this approval is done
+      this.approvalChain.set(sessionId, tail);
+      void tail.then(() => { if (this.approvalChain.get(sessionId) === tail) this.approvalChain.delete(sessionId); });
+      return result;
+    }
     // Enforce one pending question per conversation: if the model somehow fired two ask_user_question
     // calls in one turn, drop the earlier one (clients only show the latest anyway) so it can't linger.
     this.cancelForSession(sessionId, 'superseded by a newer question');
+    return this.park(sessionId, questions, emit, kind);
+  }
+
+  /** Emit the question(s) and park a fresh promise keyed by a new question id until it is answered,
+   *  timed out, or cancelled. */
+  private park(sessionId: string, questions: AskQuestion[], emit: (e: BrainEvent) => void, kind?: 'approval'): Promise<AskAnswer[]> {
     const id = randomUUID();
     return new Promise<AskAnswer[]>((resolve, reject) => {
       const timer = setTimeout(() => {
@@ -92,5 +117,6 @@ export class ElicitationRegistry {
       clearTimeout(p.timer);
       p.reject(new Error(reason));
     }
+    this.approvalChain.clear();
   }
 }
