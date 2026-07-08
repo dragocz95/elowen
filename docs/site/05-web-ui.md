@@ -11,7 +11,7 @@ Orca is a personal AI agent you chat with — it reasons, calls tools, edits fil
 
 Everything here is built around the clarity pillar: a clean, uncluttered surface where you can always see what the agent is doing, and step in the moment you want to. The modules split into two groups — **Operate** (watch and drive live work) and **Config** (set the agent up) — mirrored exactly in the left sidebar.
 
-![The Orca dashboard: live agents, missions, and autopilot at a glance](images/web-ui-dashboard.png)
+![The Orca dashboard: a single-agent bento — right now, decisions, spend, activity, today](images/web-ui-dashboard.png)
 
 ## Watch and steer the agent
 
@@ -19,17 +19,18 @@ Think of the web UI as a mission-control view over one agent doing many things a
 
 ## Dashboard
 
-`/dash` — your at-a-glance mission control.
+`/dash` — a single-agent home laid out as a bento grid, answering *what is my agent doing right now, what does it need from me, and what did it get done today.* The heavier mission control — the constellation and mission engage/pause — lives in [Tasks](tasks-missions) now, so the dashboard stays a calm at-a-glance surface.
 
-- **Now cards** — live metric tiles: open tasks, in progress, blocked, live sessions, active missions.
-- **Live agent lanes** — up to six active sessions, each with a status dot, model icon, live tail snippet, and activity badge, so you can see the agent thinking in real time.
-- **Quick actions** — New task and New mission, one click away.
-- **Recent tasks** — the last handful of non-epic tasks with status badges.
-- **Active missions** — each with a done/total count, live indicators, and remaining capacity.
-- **Autopilot spotlight** — the current phase per mission with a progress ribbon and inline **Pause / Resume / Disengage** controls, so you can steer an autonomous run without leaving the page.
-- **Recent outcomes** — the last closed tasks with their result summaries.
+- **Header** — a time-of-day greeting, a one-line status (`2 agents working` / all quiet), a live clock and date, and two quick-launch buttons: New task and New mission.
+- **Right now (hero tile)** — the 2×2 focal tile. It picks the primary live agent, the task it's on, and — when that task is a mission phase — a phase progress bar and file/line churn, over a live terminal line and a running pill with elapsed time. When nothing runs it drops to a calm "resting" state with a New task CTA.
+- **Decisions waiting** — pending agent questions plus overseer escalations as one count; turns warning-toned and links to Escalations the moment any decision is owed.
+- **This month's spend** — the month's cost with a 7-day token sparkline and today's cost (reads `—` when no settled task carried a price, e.g. Claude/Codex-only runs).
+- **Active agents** — how many agent sessions are live right now; links to Sessions.
+- **Next run** — the soonest upcoming cron job as a local HH:MM plus its name; links to the cron settings. Admin-only — other users just see an empty tile.
+- **Activity** — the daemon's chronological event log, newest first, each row an icon + verb + subject + relative time.
+- **Today** — everything in progress plus tasks closed or scheduled for today, running ones first with a "now" pill.
 
-The dashboard stays fresh through 5-second polling plus real-time SSE events — you see changes as they happen, not on refresh.
+A needs-input banner sits above the grid so a blocked agent surfaces no matter which tile you're reading. Tiles stay live through a mix of short polling and the real-time SSE event bus, and the layout reflows from the full four-column bento down to a single column on narrow screens.
 
 ## Tasks
 
@@ -60,11 +61,13 @@ Deep-links: `?new=1` opens the create modal, `?select=<id>` opens a task's detai
 
 ![Live agent sessions with the real-PTY terminal open](images/web-ui-sessions.png)
 
-- **Filter** — All / Needs input, so you can jump straight to sessions waiting on you.
+- **Filter** — All / Needs input, so you can jump straight to sessions waiting on you. Cards sort needs-input first, then working, then the rest.
 - **Density toggle** — Comfortable / Compact.
-- **Session cards** — live status dot, model icon, and an ANSI-colored live tail of the agent's output.
-- **Signal-aware controls** — **Allow / Reject** buttons appear on `needs_input` sessions so you can approve or block an action inline.
+- **Session cards** — live status dot, model icon, live token usage, and an ANSI-colored live tail of the agent's output. Overseer and pilot (autopilot) sessions render alongside task workers. A closed session collapses to its outcome badge and result summary.
+- **Signal-aware controls** — on a `needs_input` session, **Allow / Reject** buttons appear for a yes/no ask, or one button per choice when the agent asked a multiple-choice question — you answer inline without opening the terminal.
+- **Per-card actions** — Interrupt (send Ctrl-C) and Kill, plus a right-click context menu.
 - **Terminal modal** — a full real-PTY terminal for one-click intervention: type directly into the agent's session, then pop the terminal out into its own window when you want a bigger workspace.
+- **Brain conversations rail** — a side panel listing brain chat sessions, each clickable to open or continue in the web chat. A regular user sees only their own; an admin defaults to every user's (oversight) and can toggle to just theirs, with delete and delete-all.
 
 ## Timeline
 
@@ -79,9 +82,12 @@ Deep-links: `?new=1` opens the create modal, `?select=<id>` opens a task's detai
 
 ## Escalations
 
-`/escalations` — the human-in-the-loop gate. When the agent hits a decision it may not take on its own (overseer rejections and direct agent questions), it lands here.
+`/escalations` — the human-in-the-loop gate. When the agent hits a decision it may not take on its own it lands here, in two flavours:
 
-Approve to release the review gate, or re-run the rejected phase. The inbox self-clears once each item is resolved. This is the low-friction way to keep authority over an autonomous run without babysitting it. Related: [Agents & Autonomy](agents-autonomy).
+- **Agent questions** — an agent is actively blocked on a free-text question; type an answer and it unblocks. These come first, since a worker is waiting on each.
+- **Overseer escalations** — a rejected phase with the overseer's full rationale and the phases it blocks. **Approve** to release the review gate (letting the mission continue), or **Re-run** the rejected phase.
+
+The inbox self-clears once each item is resolved. This is the low-friction way to keep authority over an autonomous run without babysitting it. Related: [Agents & Autonomy](agents-autonomy).
 
 ## Projects & Editor
 

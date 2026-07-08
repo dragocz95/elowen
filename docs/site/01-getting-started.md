@@ -10,8 +10,8 @@ eyebrow: Start here
 **Orca is a personal AI agent you talk to.** You chat with it and it acts: it
 reasons, calls tools, edits files, runs shell commands, manages your tasks, and
 reaches you wherever you are — the web dock, the `orca` CLI, Discord, or
-WhatsApp. It sits in the same category as agents like Claude or OpenClaw, but
-it's self-hosted and it's yours.
+WhatsApp. It sits in the same category as coding agents like Claude Code or
+OpenCode, but it's self-hosted and it's yours.
 
 Because Orca can run real work for you, it also gives you rich surfaces to
 *watch and steer* what it's doing — a live dashboard, a kanban board, a timeline
@@ -55,25 +55,26 @@ a couple of minutes.
 ## Quick install
 
 ```bash
-npm install -g orca
-orca install
+npm install -g orcasynth
+orca setup
 ```
 
-`orca install` runs a guided wizard that:
+The package is `orcasynth`; it installs the `orca` command. `orca setup` brings
+the daemon and web UI up, then walks you through a ~2-minute onboarding wizard:
 
-1. Checks system dependencies (Node, tmux, git)
-2. Detects installed coding-agent CLIs — Claude Code, OpenCode, Codex, Kilo Code
-3. Configures provider binary paths
-4. Connects an AI provider and runs a live **chat smoke-test** — a real, tiny
-   completion — to confirm the model actually answers before you rely on it
-5. Points **tasks** at Orca's built-in engine by default, so they run out of
-   the box with no external agent CLI required
-6. Enables a safe default **tool set** — files, terminal, ask-user, runtime
-   context, skills, and subagents
-7. Sets up autopilot (planning/execution defaults) for missions
-8. Creates the first admin user
-9. Installs the `orca-daemon` and `orca-web` systemd units
-10. Enables the auto-update timer
+1. **Account** — create your first admin user
+2. **Project** — point Orca at a working directory (a git repo it can act in)
+3. **AI provider** — connect a model and run a live **chat smoke-test** (a real,
+   tiny completion) so you know it actually answers before you rely on it
+4. **Memory** — optionally enable long-term memory so the agent remembers things
+   across conversations
+5. **Code intelligence** — optionally install the TypeScript language server
+
+Standing Orca up as a shared service instead? `orca install` (run as root) does
+the full server provisioning — a dedicated system user, the `orca-daemon` and
+`orca-web` systemd units, a reverse proxy with optional Let's Encrypt HTTPS, and
+the auto-update timer — then runs the same onboarding wizard at the end. See
+[Install](install).
 
 Run `orca doctor` any time afterwards to see a checklist of what's working
 (chat, tasks, missions, memory, platforms, plugins) and a hint for fixing
@@ -81,13 +82,16 @@ anything that isn't.
 
 ## Start it up
 
+`orca setup` already brought Orca up. To control the services yourself:
+
 ```bash
-orca up
+orca up       # start the daemon (:4400) + web UI (:4500) in the background
+orca down     # stop them
+orca status   # check they're running and healthy
 ```
 
-This starts the daemon on `http://localhost:4400` and the web UI on
-`http://localhost:4500`. Open `http://localhost:4500` in your browser and log in
-with the admin account you just created.
+Open `http://localhost:4500` in your browser and log in with the admin account
+you just created.
 
 ## Talk to your agent
 
@@ -104,7 +108,9 @@ Start with a conversation — that's the whole point of Orca.
 
 Watch it reason, call tools, and stream a reply back. The brain — Orca's
 embedded agent core — is what you're talking to, and it has access to whatever
-tools and projects your account is allowed to use. Learn more in
+tools and projects your account is allowed to use. It carries **memory** across
+conversations (facts worth keeping resurface on their own) and a **personality**
+you can shape — tone and style — from your Account settings. Learn more in
 [Brain & Chat](brain-chat).
 
 ## Give it a task to run
@@ -122,14 +128,15 @@ From the web UI:
 Or from the CLI:
 
 ```bash
-orca api POST /tasks '{"title":"Hello Orca","labels":["exec:sonnet"]}'
+orca api POST /tasks '{"title":"Hello Orca"}'
 orca ls                 # see your task
 ```
 
-If you skip the executor, tasks run on Orca's **built-in engine** using
-whatever brain provider `orca setup` connected — no separate agent CLI needed.
-Pick an installed CLI (Claude Code, OpenCode, Codex, Kilo Code) instead when
-you want that agent's own tools and context handling.
+A task created this way runs on Orca's **built-in engine** using whatever brain
+provider `orca setup` connected — no separate agent CLI needed. To hand it to a
+specific coding-agent CLI (Claude Code, OpenCode, Codex, Kilo Code) for that
+agent's own tools and context handling, pick an executor in the web UI's **New
+task** dialog.
 
 Then watch it work live in the **Sessions** page — where you can pop open a real
 terminal and intervene with one click — or from the CLI:

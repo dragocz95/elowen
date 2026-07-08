@@ -19,23 +19,30 @@ snapshots, and the handoff notes agents leave for each other.
 
 ## Projects
 
-A project is a named handle on one git repository. You create projects in the
+A project is a named handle on one git repository. You register projects in the
 **Projects** page, and from there the agent can plan [tasks and
 missions](tasks-missions) against them, open the editor, and run tools scoped to
-that repo.
+that repo. Registering a project is admin-only; when you add one, a built-in
+directory picker (**Browse**) lets you walk the server's filesystem to select the
+repository path instead of typing it by hand.
 
 ![The Projects list](images/projects-list.png)
 
 | Setting | Description |
 |---------|-------------|
-| **Slug** | Unique identifier, immutable after creation — it appears in API routes (`/projects/:slug`) |
-| **Path** | Absolute path to the git repository on disk |
+| **Slug** | Unique identifier, immutable after creation — it appears in API routes (`/projects/:id`) |
+| **Path** | Absolute path to the git repository on disk — this is the working directory every agent and session runs in |
+| **Icon** | Optional project-relative image (picked from files inside the repo) shown on the card; clears back to a default glyph |
 | **Notes** | Free-form context handed to the planner and Pilot agents when they work this repo |
-| **PR workflow** | Enable, disable, or inherit the PR-native workflow for this project |
+| **PR workflow** | Force the PR-native workflow on or off for this project, or inherit the global default |
 
 The **Notes** field is a simple, high-leverage way to steer the agent: describe
 the stack, conventions, or "don't touch" areas once, and every task planned
 against this project inherits that context.
+
+Removing a project detaches it from Orca — its tasks, missions, agents and access
+grants are deleted — but **never touches the files on disk**. The daemon's own
+home project can't be removed.
 
 Access is per user. Under [RBAC](account-security), an admin assigns which users
 can see and act on each project (`user_projects`), so one person's agent might
@@ -49,9 +56,10 @@ Every project surfaces the live state of its repository, so you can steer the
 agent with full visibility instead of guessing:
 
 - Current branch
-- Clean or dirty working tree
+- Clean or dirty working tree — click the dirty badge to open the working diff in
+  the editor
 - Ahead/behind counts versus the remote
-- Recent commits (hash, subject, author, time)
+- Recent commits (hash, subject, author, time) — click one to view its patch
 - Branch list, with the current branch highlighted
 
 This is the clarity pillar in practice — before you engage the agent on a repo,
@@ -100,9 +108,11 @@ the same working tree.
 ![The project editor](images/projects-editor.png)
 
 Orca ships a self-hosted Monaco editor built directly into the web UI — no
-external service, in keeping with the lightweight, self-hosted design. Open it
-from the **Open editor** button on any project card. It's how you inspect and
-adjust what the agent produced, or make quick edits yourself.
+external service, in keeping with the lightweight, self-hosted design. Select a
+project card and click **Open editor** (or right-click a card → **Open in
+editor**). It's how you inspect and adjust what the agent produced, or make quick
+edits yourself. Because a project's path is the repo on disk, the editor operates
+directly on that working directory — the same one agents run in.
 
 | Component | Purpose |
 |-----------|---------|
@@ -122,11 +132,15 @@ full tour on the [Web UI](web-ui) page.
 Every task keeps a permanent record of what the agent changed, so nothing the
 agent does is opaque:
 
-1. **At spawn** — the current `HEAD` is stamped on the task as `base:<sha>`.
-2. **At close** — Orca computes and stores `git diff base..HEAD --name-only`,
-   freezing the exact list of files that phase touched.
-3. **Viewing** — fetch a single file's diff with
-   `GET /tasks/:id/changed/diff?path=<file>`.
+1. **At spawn** — the current `HEAD` is stamped on the task as a `base:<sha>`
+   label.
+2. **While it runs** — whenever the agent's checkout advances past the last
+   recorded head, Orca refreshes the task's frozen snapshot: the list of changed
+   files (with their change type) plus the `base` and `head` SHAs. The change feed
+   updates live, not only at close.
+3. **Viewing** — the task detail lists the commits the phase landed
+   (`base..head`) and a per-file diff for each, fetched on demand from the task's
+   checkout.
 
 The result is a per-phase change record visible in the task detail and the
 [Timeline](web-ui), so you can always answer "what did this phase actually do?"

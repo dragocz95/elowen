@@ -125,9 +125,10 @@ loop:
 2. Judges the request using the prompt in `prompts/overseer.md`
 3. `orca overseer decide --id <id> --approve --confidence 0.85` — submits its verdict
 
-Because it is async, the mission keeps moving while the overseer thinks. If the
-parked overseer does not respond within 120 seconds, the decision **defaults to
-escalate** — a conservative timeout so nothing slips through unreviewed.
+Because it is async, the mission keeps moving while the overseer thinks. There is
+no fixed per-decision timeout; instead the [liveness sweep](#liveness--progress-checks)
+watches the overseer's own pane. If the parked overseer dies or wedges, its
+pending decisions **escalate to a human** so nothing slips through unreviewed.
 
 ## Deriver (prompt detection)
 
@@ -173,16 +174,18 @@ The confidence threshold that separates approve from wait is **0.85 at L1** and
 
 ## Liveness & progress checks
 
-To make sure a wedged agent never sits silently, Orca runs a
-`PaneActivityTracker` that hashes each pane's content every 5 seconds. An agent
-whose pane stops changing is treated as idle, and the liveness sweep fires:
+To make sure a wedged agent never sits silently, a liveness sweep runs every
+**30 seconds** and uses one tool-agnostic signal — a `PaneActivityTracker` that
+hashes each pane's content and compares it to the last look. A working agent
+streams output so its pane keeps changing; a wedged or idle one goes static, and
+the sweep acts:
 
 | Check | After | Action |
 |-------|-------|--------|
-| Worker wedge | 5 min idle | Notify the overseer to escalate |
-| Routine progress | 15 min working | Ask the overseer "is this still on track?" |
-| Overseer wedge | 10 min idle | Escalate to a human |
-| Dead overseer | 90 s gone | Replace with a fresh overseer |
+| Worker wedge | 5 min idle | Wake the overseer — it nudges, restarts, or (after repeated nudges) escalates |
+| Routine progress | 15 min working | Ask the overseer "is this still on track?" — it may steer, never escalates a healthy agent |
+| Overseer wedge | 10 min idle | Escalate its pending decisions to a human |
+| Dead overseer | 90 s gone | Escalate its pending decisions (a 60 s watchdog tries to re-park it first) |
 | Absolute backstop | 30 min in any state | Escalate |
 
 ## Agent Q&A (`orca ask`)
@@ -216,5 +219,61 @@ When **Resume sessions** is enabled for a provider, the daemon captures the
 agent's CLI session id when the session closes and splices a resume flag into
 the next spawn. The agent reattaches to its prior conversation instead of
 cold-starting — it keeps its context, its plan, and its place in the work.
+
+## Persistent goals (`/goal`)
+
+The autonomy levels above govern spawned mission agents. The embedded **Orca AI**
+brain — the agent you chat with — has its own autonomous mode: a *persistent
+goal*. Set one with `/goal <what you want>` and the brain works toward it turn
+after turn on its own, checking its own progress, until the goal is done, it hits
+a blocker, or it exhausts its turn budget.
+
+Each goal turn follows a small sentinel protocol the brain is taught:
+
+- `PROGRESS: …` — a one-line note of what the turn accomplished. It's carried
+  forward across turns even after older messages are compacted away, so a long
+  goal keeps its bearings.
+- `GOAL_DONE: <evidence>` — the only way to finish. It must cite concrete
+  evidence (passing tests, command output, a reviewed diff), and it's rejected if
+  any subgoal is still open — so a goal can't declare itself done prematurely.
+- `GOAL_BLOCKED: <reason>` — stop on an unresolvable blocker (missing
+  credentials, a required decision, an unsafe step) instead of looping the budget
+  away. The goal pauses for you.
+- `SUBGOAL_DONE: <n>` — check off a subgoal as it lands.
+
+Break a goal into checklist items with `/subgoal <text>` (and `/subgoal remove
+<n>` / `/subgoal clear`). `/goal draft` writes a structured contract — outcome,
+verification, constraints, boundaries, stop-when — for review before you commit
+to running it. `/goal status`, `/goal pause`, `/goal resume` and `/goal clear`
+manage a live goal; a headless run takes `--max-turns <n>` for its budget.
+
+### Turn budget & the YOLO ceiling
+
+Every goal carries a **turn budget** — the number of autonomous turns it may run
+before it stops to check in with you. The default is **8** (configurable per
+instance under **Settings → Orca AI → Limits**, range 1–50). What happens when
+the budget is spent depends on whether the session runs in YOLO:
+
+- **Supervised (not YOLO)** — the goal **pauses** at budget with a
+  `budget_reached` verdict. You confirm continuation with `/goal resume`, which
+  grants a fresh budget window. This is the point where a human stays in the loop.
+- **YOLO** — the goal **keeps going** past a spent budget so it can finish
+  unattended, but never past an **absolute safety ceiling** (`goalMaxTurns`,
+  default **64**, range 8–500). Even in YOLO the loop pauses at the ceiling, so a
+  runaway goal can never burn tokens forever.
+
+"YOLO" here is the *effective* YOLO — a session `/yolo` override layered over your
+persisted permission default, resolved exactly the way tool approvals are. So
+`/yolo off` supervises the goal too, pausing it at budget for your confirmation.
+
+### Losing the driver
+
+A persistent goal only advances while its conversation has a live driver — it's
+your active conversation, or a bound CLI stream is attached to it. Switch away
+and the goal **pauses** rather than running unattended in the background. And
+because in-memory continuation timers don't survive a restart, a daemon reboot
+pauses every active goal. Autonomous work never self-resumes — matching Orca's
+"escalation waits, nothing self-starts" rule — you bring a paused goal back with
+`/goal resume`. See [Brain & Chat](brain-chat) for the embedded agent.
 
 [Next: Web UI](web-ui)

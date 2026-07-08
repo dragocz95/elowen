@@ -100,7 +100,7 @@ The model picker aggregates every model available to you from three sources:
 | **Auto-fetch** — pulled live from the provider API | `/v1/models` endpoint |
 | **OAuth-connected accounts** | Anthropic, GitHub Copilot, OpenAI |
 
-Configure it all in **Settings → Brain**. Each provider carries its own API key,
+Configure it all in **Settings → Orca AI**. Each provider carries its own API key,
 base URL, and model list, so you can mix and match freely.
 
 ## Supported providers
@@ -165,21 +165,38 @@ picker — pick their models per conversation just like any other.
 
 ## Memory
 
-The agent **remembers** across conversations using a self-hosted mem0 server (or
-any compatible backend), so context you shared last week is still there today.
+The agent **remembers** across conversations, so context you shared last week is
+still there today. Memory is **per-user and private**: each person reaches only
+their own memories — from their own Orca chat or a linked platform account
+(Discord/WhatsApp) — never another user's, never the operator's. Nothing bleeds
+between accounts.
 
 ![The Memory module — a glass-brain map of stored memories](images/brain-memory.png)
 
+Two things happen automatically around every exchange:
+
+| Stage | What happens |
+|-------|--------------|
+| **Recall** | Before the reply, the most relevant durable memories are retrieved and injected into the turn — framed as user-provided *context*, never instructions, so a stored note can't hijack the agent. Semantic when an embedding model is configured, keyword otherwise. |
+| **Curation (save)** | After the exchange settles, a cheap model distills any *durable, reusable* facts — stable preferences, decisions, project paths, gotchas — and applies a small, capped batch of edits (add / update / merge / delete). Greetings, transient state and one-off debug steps are deliberately ignored; most turns save nothing, and that's expected. |
+
+Both are per-user toggles in **Account → Memory** (`Auto-recall` / `Auto-save`),
+read fresh each turn so a flip applies immediately — no restart.
+
+The agent also carries **explicit memory tools** — search, add, update, merge,
+delete, list recent, and manage categories — to curate memory on demand. They're
+locked to the acting user: a task worker or an unlinked platform sender gets no
+access at all.
+
 | Feature | Description |
 |---------|-------------|
-| **Auto-recall** | Relevant memories are injected into context at the start of a turn |
-| **Auto-save** | Facts are extracted and stored after each turn |
-| **Categories** | Memories organized by topic, with LLM auto-classification |
-| **Glass-brain** | A visual memory map in the [Memory module](web-ui) — see how memories connect |
+| **Categories** | Memories are organized by topic, with best-effort LLM auto-classification of each new fact |
+| **Glass-brain** | A visual memory map in the [Memory module](web-ui) — see how memories cluster and connect |
 
-Configure the backend in **Settings → Memory** (and toggle the memory plugin in
-**Settings → Plugins**). Clarity all the way through: you can see, merge, and
-purge what the agent knows about you.
+Semantic recall needs an **embedding model**: pick the provider, model and
+dimensions in **Settings → Memory**, where you can also re-index the whole store.
+Everything persists in SQLite, so you can see, merge and purge what the agent
+knows about you — clarity all the way through.
 
 ## Communication style
 
@@ -201,8 +218,29 @@ Control how hard the model thinks before it answers:
 | `high` | Thorough |
 | `xhigh` | Maximum reasoning |
 
-Set it per conversation in chat, per channel on Discord/WhatsApp, or as a default
-in your [account settings](web-ui#account).
+Set it per conversation in chat (the `/think` command), per channel on
+Discord/WhatsApp, or as a default in your [account settings](web-ui#account).
+
+## Limits
+
+**Settings → Orca AI** carries a **Limits** card — operator-tunable ceilings that
+let you trade cost, verbosity and latency to taste. Every value is a whole number
+**clamped to a safe range**: the daemon re-clamps whatever you type, so a field
+can never be pushed somewhere dangerous. The defaults are sensible; leave them
+unless you have a reason.
+
+| Limit | What it controls | Default (range) |
+|-------|------------------|-----------------|
+| **Tool output — lines / chars** | How much of a tool's output the expanded view shows before it's clipped | 80 lines / 12000 chars (20–400 / 2000–50000) |
+| **Question timeout** | How long a parked `ask_user_question` waits for an answer before auto-resolving as "no answer", so a turn never hangs forever | 5 min (30 s–30 min) |
+| **Memory recall — count / chars** | How many memories, and how many characters of them, get injected per turn | 6 / 1500 chars (1–20 / 300–8000) |
+| **Goal turn budget** | Autonomous turns a `/goal` runs before it pauses for you to confirm | 8 (1–50) |
+| **Goal safety ceiling** | Absolute cap on goal turns — even in YOLO the loop stops here so a runaway goal can't burn tokens forever | 64 (8–500) |
+| **Live channel sessions** | How many live channel conversations stay resident before the least-recently-used is dropped (its history stays in the DB) | 32 (4–256) |
+
+Sitting beside them is **Max steps** — the ceiling on model round-trips per
+request (Discord shows "Step N / MAX"), 1–200, default 20 — the guard against a
+turn looping forever.
 
 ## Tools are per-user
 

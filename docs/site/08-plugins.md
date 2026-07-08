@@ -17,26 +17,37 @@ they are composed. You decide which platforms it answers on, which tools it may
 call, and which extras it loads — and you can change your mind without touching
 the codebase.
 
-![The Plugins section in Settings, showing installed plugins grouped by category](images/plugins-overview.png)
+![The Plugins section in Settings, showing installed plugins with category filters](images/plugins-overview.png)
 
 ## Everything is a plugin
 
 Plugins register their capabilities with the brain (the embedded agent core you
-talk to — see [Brain & Chat](brain-chat)) at runtime. In the web UI they are
-grouped by category so you can see, at a glance, what your agent is made of:
+talk to — see [Brain & Chat](brain-chat)) at runtime. Orca ships fourteen
+bundled plugins out of the box: the platforms **discord** and **whatsapp**; the
+tools **files**, **terminal**, **mcp**, **subagent** and **askuser**; automation
+via **cronjob**; the surface extras **statusline** and **runtime-context**;
+**security-scan**; and the authoring/workflow set **skills**, **formatters** and
+**dev-commands**.
 
-| Category | What it adds |
+In the marketplace you can filter by **category** — a lightweight display
+grouping derived from what each plugin declares (a chat platform → *platforms*)
+and its name, not a capability system:
+
+| Category | What it covers |
 |----------|--------------|
-| **platforms** | Chat surfaces the agent lives on (Discord, WhatsApp) |
-| **tools** | Actions the agent can take (files, terminal, mcp, subagent, askuser) |
+| **platforms** | Chat surfaces the agent lives on — Discord, WhatsApp |
+| **tools** | General actions — mcp, askuser, and the rest |
 | **memory** | Long-term recall of events and facts |
-| **automation** | Scheduled and recurring work (cronjob) |
-| **ui** | Chat surface extras (statusline, runtime-context) |
-| **security** | Advisory safety checks (security-scan) |
-| **development** | Authoring capabilities (skills) |
+| **automation** | Scheduled and recurring work — cronjob |
+| **ui** | Chat-surface extras — statusline |
+| **security** | Advisory safety checks — security-scan |
+| **development** | Authoring & code workflow — files, terminal, skills, formatters, dev-commands |
 
 Manage them all in **Settings → Plugins**. Every plugin has a toggle, its own
-config form, and — for the ones you installed yourself — an uninstall button.
+config form, a detail page (with a hero illustration, its live tools, hooks and a
+derived permissions summary), and a remove action — bundled plugins are hidden
+and stop loading but stay on disk (restorable from the Available tab), while ones
+you installed yourself are uninstalled outright.
 
 ## The marketplace
 
@@ -51,14 +62,17 @@ Plugins** to install, update, and uninstall extra plugins.
   live.
 - **Update** — when a newer version is published, the entry shows
   *update available*; updating swaps it in place.
-- **Uninstall** — removable plugins can be removed again from the same screen.
+- **Uninstall** — a plugin you installed is removed outright (its folder and data
+  are deleted). A bundled plugin can't be deleted from disk — removing it instead
+  *soft-removes* it: it disappears from the installed list and stops loading, but
+  its files stay, so you can restore it from the **Available** tab any time.
 
-Bundled plugins are marked as such and can't be uninstalled — the marketplace
-only offers install/update on plugins it owns, never on the built-ins. Installs
-are allowed only for names the registry publishes, so the trust surface is
-simply "do you trust this registry", the same posture as the Orca package
-itself. If the registry can't be reached (offline, for example), the UI tells
-you the marketplace is unavailable rather than pretending the catalog is empty.
+The marketplace only offers install/update on plugins it owns, never on the
+built-ins. Installs are allowed only for names the registry publishes, so the
+trust surface is simply "do you trust this registry", the same posture as the
+Orca package itself. If the registry can't be reached (offline, for example), the
+UI tells you the marketplace is unavailable rather than pretending the catalog is
+empty.
 
 ## Plugin anatomy
 
@@ -76,13 +90,66 @@ plugins/<name>/
 |-------|----------|-------------|
 | `name` | ✓ | Plugin identifier (kebab-case) |
 | `version` | ✓ | Semver, used for update detection |
-| `apiVersion` | ✓ | Plugin API version (`1`) |
+| `apiVersion` | ✓ | Plugin API version — must equal `1` or the loader skips the plugin |
+| `description` | ✓ | One-line summary shown in the UI |
 | `entry` | ✓ | Entrypoint relative path (e.g. `index.mjs`) |
-| `provides.tools` | | Tool names this plugin registers |
-| `provides.platforms` | | Platform names this plugin acts as |
-| `provides.skills` | | Skill identifiers |
+| `provides.tools` / `.platforms` / `.skills` / `.hooks` | | Declarative hints of what the plugin contributes |
+| `requires.config` / `.env` | | Config keys / env vars required before the plugin activates |
 | `configSchema` | | Field schema that renders the settings form |
-| `requires.config` | | Config fields required before the plugin activates |
+| `capabilities` | | What the plugin is allowed to do — deny-by-default (see below) |
+| `icon` | | Brand icon (SVG, defaults to `icon.svg`) shown on cards and the hero |
+| `icons` | | Per-tool emoji shown in the chat clients' tool-call lines |
+
+`provides` is declarative — display and validation hints. The authoritative
+contributions come from `register(ctx)` at load time, so the detail page's Tools
+and Hooks panels show what actually went live, not just what the manifest
+promised.
+
+### Config field types
+
+The `configSchema` array is the whole settings form — the UI renders one control
+per field, in declared order. When the schema declares `section` headers, each
+section becomes its own collapsible panel; otherwise fields are auto-bucketed
+into connection/behaviour groups.
+
+| Type | Renders as |
+|------|-----------|
+| `string` / `textarea` | Single-line / multi-line text |
+| `secret` | Write-only password field — the API only reports *whether* it's set |
+| `boolean` | Toggle |
+| `number` | Numeric input honouring `min`, `max` and `step` |
+| `enum` | Single choice from `options` (segmented control) |
+| `multiSelect` | Multiple choices from `options` |
+| `model` / `embeddingModel` | Grouped provider→model picker from your catalog |
+| `provider` | Picker of configured brain providers (reuses that provider's key); `providerType` narrows it to one type |
+| `code` / `prompt` | Monaco editor (`language` sets the syntax mode; `prompt` is markdown) |
+| `json` | JSON blob, validated as you type — a malformed value never saves |
+| `rolePolicies` | Structured role → projects + prompt + tool-allowlist editor (Discord/WhatsApp) |
+| `mcpServers` | List editor for external MCP server specs |
+| `section` | A labelled group header carrying no value |
+
+Presentation props any field can add: `hint` (one-line) and `help` (a richer
+tooltip), `required`, `risk` (`low`/`medium`/`high`, surfaced as a badge), and
+`visibleWhen` (show the field only when another field equals a given value).
+
+**Number bounds and defaults.** Numeric fields carry `min`/`max`/`step` so the
+input can't drift out of a sane range — e.g. the cronjob tick interval is clamped
+to `10000–120000` ms in `5000`-ms steps. A field's `default` is the value the
+form pre-fills on a fresh install, and it always mirrors the plugin's own runtime
+fallback, so the pre-filled number never silently changes behaviour. Examples:
+the files plugin defaults its read cap to `100000` characters, terminal's command
+timeout to `120000` ms, and MCP's tool-call timeout to `120000` ms.
+
+### Capabilities & permissions
+
+A plugin's `capabilities` block is a **deny-by-default** contract: a manifest with
+no capabilities can mutate nothing. It gates runtime hook patches — `mutates`
+lists what a hook may change (`prompt`, `turnContext`, `tools`, `memory`; only
+`turnContext` is patch-wired today), `network` is declared intent, and `reads`
+lists read scopes the plugin claims. The detail page's **Permissions** panel
+surfaces all of this alongside a derived risk level (from secrets, network reach
+and tool count) and the list of required credentials/config, so you can see a
+plugin's blast radius before you trust it.
 
 ## Registry API (`ctx`)
 
@@ -118,21 +185,25 @@ from Orca AI, streams its work, and pushes to you proactively.
 ![The Discord plugin: streamed replies with a live todo checklist and status reactions](images/plugins-discord.png)
 
 A full Discord bot (no external client library — it uses Node's native
-WebSocket and fetch against the v10 Gateway). Mention it in a configured channel
-and it responds.
+WebSocket and fetch against the v10 Gateway). By default it answers every message
+in channels it can see; flip **Respond without mention** off and it only replies
+when `@mentioned`.
 
-- Slash commands: `/model`, `/new`, `/help`
+- Slash commands: `/model`, `/voice`, `/new`, `/stop`, `/status`, `/compact`, `/help`
 - Per-channel model picker (operator-gated)
 - Streamed replies with a live todo checklist and tool-call trace
-- Status reactions (👀 → ✅ / ❌)
-- Image attachments → vision input; voice messages → transcription + TTS replies
-- Proactive cron/tick pushes into a channel
+- Status reactions (👀 → ✅ / ❌) and an optional runtime footer
+- Image attachments → vision input (with an optional dedicated vision model);
+  optional Whisper transcription of voice messages and TTS spoken replies
+  (reusing a configured OpenAI-compatible provider's key)
+- Proactive cron/tick pushes into a notification channel
 - A large **server toolset** for admin sessions — channels, roles, members,
   threads, pins, and messages
 
-Each Discord role maps to a set of allowed Orca projects and a role prompt, so
-who can reach which project is policy, not luck. Members with no mapped role are
-silently ignored. Configure in **Settings → Plugins → discord**.
+Each Discord role maps to a set of allowed Orca projects, a role prompt and the
+tools the bot may use for it, so who can reach which project is policy, not luck.
+The first matching role wins; members with no mapped role are silently ignored.
+Configure in **Settings → Plugins → discord**.
 
 ### WhatsApp
 
@@ -173,9 +244,13 @@ File-system access scoped to your Orca projects:
 | `write_file` | Write or overwrite a file |
 | `edit_file` | Targeted edit with a diff display |
 | `list_dir` | List directory contents |
+| `search_files` | Search for content across files |
+| `file_info` | Metadata about a file |
+| `git_status` | The repo's git status |
 
 Every path is guard-checked against the user's allowed project roots — the agent
-can't wander outside repos you gave it.
+can't wander outside repos you gave it. Read and search output is capped (default
+100k characters / 200 matches) so a huge file can't blow up a turn.
 
 ### terminal
 
@@ -205,6 +280,7 @@ ones.
 | Tool | Purpose |
 |------|---------|
 | `delegate` | Spawn a fresh, isolated sub-agent for a focused subtask |
+| `delegate_models` | List the models a delegated sub-agent can run on |
 
 The sub-agent inherits exactly the caller's access — never more — and returns
 its result to the parent. Good for keeping a long task's context clean.
@@ -213,11 +289,12 @@ its result to the parent. Good for keeping a long task's context clean.
 
 | Tool | Purpose |
 |------|---------|
-| `ask_user_question` | Pose a multiple-choice question and wait for the answer |
+| `ask_user_question` | Pose structured questions and wait for the answer |
 
-When the agent needs a decision from you, it asks — offering predefined options
-you pick in the chat (CLI/web) or via Discord buttons — and resumes the turn
-with your choice.
+When the agent needs a decision from you, it asks — one or more questions with
+predefined options (single- or multi-select, with an optional free-text answer).
+You pick in the chat (CLI/web), via Discord buttons/selects, or with a numbered
+WhatsApp reply, and the turn resumes with your choice.
 
 ## Automation: cronjob
 
@@ -257,10 +334,13 @@ It flags patterns like `eval`, `pickle.load`, `shell=True`, unpinned
 deserialization, and hardcoded secrets, classifying findings as `danger` or
 `warn`. It **reports** — it never executes anything.
 
-## Development: skills
+## Development: skills, formatters & dev-commands
+
+### skills
 
 Loads Markdown **skills** from disk and exposes them to the agent so it can pull
-in focused, reusable know-how on demand.
+in focused, reusable know-how on demand (`read_skill`, `create_skill`,
+`list_skills`, `delete_skill`).
 
 - **Bundled skills** ship with Orca and are read-only
 - **User skills** are created with the `create_skill` tool or the Settings editor
@@ -269,19 +349,38 @@ in focused, reusable know-how on demand.
 
 Configure in **Settings → Plugins → skills**.
 
+### formatters
+
+Runs the project's own formatter right after the agent writes or edits a file, so
+generated code lands already tidy. It hooks `tools.call.after` and picks the
+formatter the repo is actually set up for — prettier, biome, Laravel Pint, ruff,
+gofmt, rustfmt, clang-format, `mix format`, `terraform fmt`, shfmt — running one
+only when its binary or config is present. Auto-formatting is on by default; you
+can switch it off entirely, disable specific formatters, or tune the subprocess
+timeout and file-size cap in its config.
+
+### dev-commands
+
+A set of opt-in developer slash-commands for the chat surfaces — `/commit`,
+`/review`, `/test`, `/explain`, `/pr`, `/docs`. Each is a reusable prompt macro:
+type it (optionally with an argument) and the agent runs that workflow. Pick which
+to expose in the config (leave the list empty to enable them all).
+
 ## UI: statusline & runtime-context
 
 Small surface extras that keep the chat honest and grounded — the clarity
 pillar.
 
-**statusline** prints a footer under the chat with what you choose to show:
+**statusline** prints a footer under the chat — in the web dock and the `orca`
+chat CLI — with what you choose to show. Every metric is off by default; switch
+on the ones you want:
 
 | Metric | Description |
 |--------|-------------|
 | Model | Current model name |
 | Context | Context-window fill percentage |
 | Tokens | Total tokens used this session |
-| Cost | Running cost estimate |
+| Cost | Running cost estimate (subscriptions report $0) |
 
 **runtime-context** injects the current date, time, weekday, and timezone into
 every turn, so the agent never guesses about "now". It's cache-safe — it rides

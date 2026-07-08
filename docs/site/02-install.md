@@ -11,7 +11,7 @@ Orca is a personal AI agent you run on your own machine. Under the hood it is
 deliberately small: a single **daemon** (a REST API on `:4400`) plus a **Next.js
 web UI** (`:4500`). That is the whole footprint — no external services, no heavy
 runtime. This page covers every way to install it: the guided npm route, a
-manual start, Docker, and building from source.
+production systemd install, a manual start, Docker, and building from source.
 
 ## What you're installing
 
@@ -25,7 +25,8 @@ Two long-running pieces work together:
   steer** the agent: Dashboard, Tasks, Kanban, Timeline, Sessions, Settings, and
   Users. It talks to the daemon; it holds no state of its own.
 
-A single `orca` CLI binary drives both. The design goal is a lightweight,
+A single `orca` CLI binary drives both, and the agent is only a command away —
+bare `orca` in a terminal opens the chat. The design goal is a lightweight,
 self-hosted app with a clean, professional codebase — you should be able to run
 it, read it, and reason about it.
 
@@ -41,35 +42,83 @@ it, read it, and reason about it.
 
 ## npm global (recommended)
 
-The fastest path. Install the package globally, then run the guided installer:
+The fastest path. Install the package globally — it ships as **`orcasynth`**, and
+the binary it puts on your PATH is **`orca`** — then run the onboarding wizard:
 
 ```bash
-npm install -g orca
-orca install        # guided setup wizard
+npm install -g orcasynth
+orca setup          # guided onboarding wizard
 ```
 
-`orca install` runs a wizard that:
+`orca setup` brings the daemon up and walks you through five quick steps, each
+skippable and resumable:
 
-1. Checks system dependencies (Node, tmux, git)
-2. Detects installed coding-agent CLIs — Claude Code, OpenCode, Codex, Kilo Code
-3. Configures provider binary paths
-4. Connects an AI provider and runs a **chat smoke-test** — one small, real
-   completion — to confirm the model actually answers
-5. Points **tasks** at Orca's built-in engine by default, so basic tasks run
-   with no external agent CLI installed
-6. Enables a safe default **tool set** — files, terminal, ask-user, runtime
-   context, skills, and subagents
-7. Creates the first admin user
-8. Installs systemd units (`orca-daemon` + `orca-web`)
-9. Enables the hourly auto-update timer
+1. **Account** — create the first admin user (and sign in)
+2. **Project** — register a repository for agents to work in
+3. **AI provider** — connect a provider and pick a model, then run a **chat
+   smoke-test** (one small, real completion) to confirm the model actually
+   answers. The built-in task engine is wired to that model, so basic tasks run
+   with no external agent CLI installed.
+4. **Memory** — optional embeddings for recall (reuse the provider's key or an
+   OpenRouter key)
+5. **Code intelligence** — optionally install the TypeScript language server so
+   agents can type-check their own edits
 
-Once it finishes, open `http://localhost:4500`, log in, and you are talking to
-the agent. See [Getting Started](getting-started) for your first chat and first
+It finishes with a readiness report and your next steps. Run `orca doctor` any
+time for the same report on demand: it covers chat, tasks, missions, memory,
+platforms, and plugins, each with a plain-language hint for whatever isn't
+configured yet.
+
+## The CLI-first flow
+
+Orca is agent-first, so the agent is one command away. In a terminal, bare
+`orca` opens the interactive chat — you talk to Orca's brain right there, the
+same way `claude` or `opencode` do:
+
+```bash
+orca                # opens the chat TUI
+```
+
+Everything else hangs off a small set of verbs:
+
+- `orca menu` — the interactive launcher: start/stop, status, logs, update, or
+  jump straight into chat, all in one place
+- `orca run "<prompt>"` (alias `orca -p`) — non-interactive: run one turn, slash
+  command, or autonomous goal, stream it, and exit
+- the lifecycle verbs `orca up` / `orca down` / `orca status` (see [Manual
+  start](#manual-start-without-systemd) below)
+- `orca update` — pull the latest release and restart in place
+
+Prefer a browser? Open `http://localhost:4500`, sign in, and you land on the
+Dashboard. See [Getting Started](getting-started) for your first chat and first
 task.
 
-Run `orca doctor` any time to check readiness: it reports chat, tasks,
-missions, memory, platforms, and plugins, each with a plain-language hint for
-whatever isn't configured yet.
+## Production install (systemd + reverse proxy)
+
+For a shared or always-on box, `orca install` provisions the whole service. It's
+a separate, heavier wizard than `orca setup` — run it **as root**:
+
+```bash
+sudo orca install
+```
+
+It will:
+
+1. Install prerequisites (tmux) and, optionally, the coding-agent CLIs it
+   detects — Claude Code, OpenCode, Codex
+2. Create (or reuse) a dedicated **service user** to run the agents
+3. Ask how you'll reach the UI — a **domain** (nginx or Apache reverse proxy +
+   free Let's Encrypt HTTPS), the server's **IP on a port**, or **localhost
+   only**
+4. Write and enable the systemd units — `orca-daemon` (`:4400`) and `orca-web`
+   (`:4500`) — plus the auto-update timer
+5. Run the same onboarding as `orca setup` to create the admin, connect a
+   project, and wire the AI provider
+
+Add `--unattended` with flags (`--domain`, `--admin-user`, `--admin-pass`,
+`--agents`, …) for a hands-off provision; run `orca install --help` for the full
+list. Manage the box afterwards with `orca menu`, which drives the systemd units
+directly instead of spawning a second daemon.
 
 ## Manual start (without systemd)
 
@@ -80,7 +129,7 @@ orca up
 ```
 
 This launches the daemon on `:4400` and the web UI on `:4500`. Override the
-ports with `ORCA_PORT` and `ORCA_WEB_PORT`.
+ports with `ORCA_PORT` and `ORCA_WEB_PORT`. Stop them again with `orca down`.
 
 Or run the daemon directly — handy for a second instance, a container, or a
 smoke test:
@@ -220,22 +269,24 @@ orca setup --non-interactive \
 | Flag | Purpose | Env fallback |
 |------|---------|--------------|
 | `--admin-user` / `--admin-password` | first admin (or sign-in on re-run) | `ORCA_ADMIN_USER` / `ORCA_ADMIN_PASSWORD` |
-| `--project <path>` / `--no-project` | default project (defaults to the cwd) | — |
+| `--project <path>` / `--no-project` | register a project (opt-in — only when `--project` is passed) | — |
 | `--project-slug <slug>` | override the auto-derived project slug | — |
 | `--embedding-model <id>` | embedding model (defaults to a small recommended one) | — |
 | `--provider <key\|custom>` | a preset (see [Brain & Chat](brain-chat)) or `custom` | — |
 | `--api-key` / `--base-url` / `--model` | provider credentials & model (`--base-url` for `custom`; `--model` optional when the key lets `/models` be probed) | `ORCA_API_KEY` |
 | `--memory <reuse\|openrouter\|skip>` | embeddings — reuse the provider's key or OpenRouter | — |
 | `--memory-key` | OpenRouter key for `--memory openrouter` | `ORCA_OPENROUTER_KEY` |
+| `--lsp` | install the TypeScript language server | — |
 | `--skip-test` | skip the chat smoke-test | — |
 
 Run `orca doctor` afterwards for the same readiness report on demand.
 
 ## Auto-update
 
-`orca install` adds a systemd timer that checks for a new version hourly. Updates
-are mission-aware — the agent won't restart itself while a mission is running, so
-work in flight is never interrupted. Toggle auto-update any time in **Settings →
-System**.
+`orca install` adds a systemd timer that checks for a new version hourly. It's
+**off by default** — the timer fires but does nothing until you turn auto-update
+on in **Settings → System**. Once enabled, updates are mission-aware: the agent
+won't restart itself while a mission is running, so work in flight is never
+interrupted.
 
 [Next: Tasks & Missions](tasks-missions)

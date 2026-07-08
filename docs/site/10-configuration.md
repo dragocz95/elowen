@@ -22,7 +22,7 @@ Configuration comes in two layers:
 - **Environment variables** — read once at process start (ports, paths, bind
   address, bootstrap credentials). Set these before launching the daemon.
 - **Runtime config** — everything you can change live in the **Settings** page.
-  Grouped into ten categories that mirror the daemon exactly.
+  Grouped into nine categories that mirror the daemon exactly.
 
 Settings live in the **Config** group of the web UI and are admin-gated. If you
 manage a multi-user install, remember Orca has full RBAC: roles are `admin` and
@@ -67,77 +67,90 @@ code that you run yourself.
 
 Everything below is edited in the **Settings** page and persisted through
 `GET /config` / `PUT /config`. The sections appear in the same order as the real
-Settings categories: **models, providers, defaults, brain, memory, plugins,
-autopilot, github, system, data**. Most edits auto-save as you make them.
+Settings categories: **Models, CLI Agents, Orca AI, Memory, Plugins, Autopilot,
+GitHub, System, Data**. There is no separate "Defaults" category — the old
+per-task defaults now live where they belong: the mission run defaults under
+**Autopilot**, the login-token TTL under **System**. Almost every edit auto-saves
+the moment you make it — there are no Save buttons anywhere.
 
 ## Models
 
-The model catalog defines which models the agent and its workers can use.
+The model catalog defines which models the agent and its workers can use. Models
+are grouped by the **engine that runs them** — the same grouping the executor
+picker shows users — so what you enable here is exactly what they can pick.
 
 | Setting | Description |
 |---------|-------------|
-| Presets | Claude Sonnet, DeepSeek v4 Flash, Kimi k2.7, Minimax m2.7, Codex gpt-5.4 |
-| Custom models | Add any model by label, provider, and model ID |
-| Model notes | Descriptions used by autopilot's `autoModel` picker |
+| Presets | Built-in catalog: `sonnet`, `opus`, `codex:gpt-5.5`, `ollama-cloud/deepseek-v4-flash`, `ollama/kimi-k2.7-code`, `ollama-cloud/minimax-m2.7`, `ollama-cloud/glm-5.2`, `ollama-cloud/qwen3.5`, and more |
+| Custom models | Add any model by label, engine, and model ID |
+| Model notes | Free-text descriptions the autopilot planner reads when it picks a model |
+| Context window | Per-model max-context override (Orca AI models only) |
 | `allowedExecs` | Which executors may be spawned (global allow-list) |
 
 Toggle a preset on or off, add a custom model, or edit a label — every toggle,
-add, edit, and note change **auto-saves immediately**, so there is no separate
-"Save" step. Model notes are free-text descriptions that autopilot's `autoModel`
-picker reads when it chooses a model for a task, so a good note ("cheap, fast,
-good for boilerplate") directly improves autonomous model selection. The global
-`allowedExecs` allow-list is the workspace ceiling; per-user `allowed_execs`
-narrows it further for individual members (see [Account & Security](account-security)).
+add, edit, and note change **auto-saves immediately**. Model notes are the free
+text the autopilot planner reads when it chooses a model for a task, so a good
+note ("cheap, fast, good for boilerplate") directly improves autonomous model
+selection. For **Orca AI** models a small gauge pill lets you pin a max context
+window when the endpoint doesn't report a reliable one. The global `allowedExecs`
+allow-list is the workspace ceiling; per-user `allowed_execs` narrows it further
+for individual members (see [Account & Security](account-security)). The engines
+and keys these models run on are configured in **Orca AI** below.
 
-## Providers (CLI)
+## CLI Agents
 
-Orca can drive four external coding-agent CLIs — **Claude Code** (`claude:`),
-**OpenCode** (`opencode:`), **Codex** (`codex:`), and **Kilo Code** (`kilo:`) —
-alongside the embedded Orca AI brain. This section configures each CLI provider.
+Orca can drive four external coding-agent CLIs — **Claude Code** (`claude-code`),
+**OpenCode** (`opencode`), **Codex** (`codex`), and **Kilo Code** (`kilo`) —
+alongside the embedded **Orca AI** brain (which has no binary to configure and
+simply links here to its own section). This section configures each CLI.
 
 | Setting | Per provider |
 |---------|-------------|
-| Binary path | Override the default CLI binary location |
+| Binary | Override the default CLI binary location |
 | Extra args | Additional CLI flags passed on every spawn |
-| Skip permissions | Pass the provider's `--dangerously-skip-permissions` flag |
-| Resume sessions | Continue the prior CLI session on respawn |
+| Skip permission prompts | Bypass the CLI's per-action confirmation |
+| Resume prior sessions | Continue the prior CLI session on respawn |
 
-Point each provider at a non-standard binary, append extra flags, or enable
-session resume so a respawned agent picks up where it left off. Note: for **Kilo
-Code**, the Skip-permissions toggle is a **no-op** — Kilo's auto-approval lives
-in Kilo's own config, not in Orca. See [Agents & Autonomy](agents-autonomy) for
-how executors map to autonomy levels.
+Point each agent at a non-standard binary, append extra flags, or enable session
+resume so a respawned agent picks up where it left off. Note: for **Kilo Code**
+the Skip-permissions toggle is a **no-op** — Kilo's auto-approval lives in Kilo's
+own config, not in Orca.
 
-## Defaults
+At the top of this section sits the **Agent skills** card. It installs and
+verifies the `orca-workflow` skill into the very CLI agents configured below, so
+they know how to run inside an Orca orchestration. The daemon self-installs on
+startup; the card shows a per-agent status pill and a button to re-apply on
+demand. See [Agents & Autonomy](agents-autonomy) for how executors map to
+autonomy levels.
 
-The fallback settings applied to new work when you don't specify otherwise.
+## Orca AI
 
-| Setting | Default | Description |
-|---------|---------|-------------|
-| Executor | `sonnet` | Default agent model |
-| Autonomy | `L3` | Default autonomy level |
-| Max sessions | `1` | Default max parallel agents |
-| Token TTL | `30` | Auth token expiry in days |
+**Orca AI** is the embedded agent core you chat with in the web dock, the CLI,
+and the chat platforms. This section is its identity, its runtime limits, and the
+model providers behind it.
 
-These defaults keep first-run friction low: a fresh install can plan and execute
-immediately without touching a single knob. Autonomy levels L0–L3 control how
-much the agent may do without asking — see [Agents & Autonomy](agents-autonomy).
+| Setting | Description |
+|---------|-------------|
+| Agent name | The assistant's display identity (default **Orca**); feeds the persona everywhere it speaks |
+| Max steps | Per-run agent step ceiling (1–200, default 20); the turn aborts once it's hit |
+| Limits | Eight tunable ceilings that used to be hardcoded (see below) |
+| OAuth accounts | Connect Anthropic (Claude), OpenAI (Codex), or GitHub Copilot |
+| Providers | API-key providers: OpenAI-compatible or Anthropic endpoints |
 
-## Brain providers
+The **Limits** card exposes the constants that shape the brain's cost, verbosity,
+and latency: tool-output caps (max lines / max chars), the `ask_user_question`
+wait timeout, memory recall size (count and chars), the goal-loop turn budget and
+its safety ceiling, and the live-session cap. Each is clamped to a sane range —
+edit to taste, the daemon re-clamps anything out of bounds.
 
-The **Brain** is the embedded agent core you chat with in the web dock, the CLI,
-and the chat platforms. This section connects it to model providers.
-
-| Type | Description |
-|------|-------------|
-| **Manual** | Statically configured provider (base URL, API key, models) |
-| **Auto-fetch** | Fetches the model list from a `/v1/models` endpoint |
-| **OAuth** | Connected accounts (Anthropic, Copilot, OpenAI) |
-
-Each provider has its own API key, base URL, and model list. Keys are
-**write-only** — you set them here, but the daemon never returns them in any
-response. Auto-fetch providers keep their model list current by querying
-`/v1/models`; OAuth providers link a connected account instead of a raw key.
+Providers come in two flavours. **OAuth accounts** connect a Claude, Codex, or
+Copilot login (no key stored — tokens live in the brain's own auth store) and
+after connecting you pick which of the account's models to expose. **API-key
+providers** point at an OpenAI-compatible or Anthropic endpoint with a base URL,
+a key, and a model list — Orca live-probes the endpoint's `/models` so you click
+model pills instead of typing IDs, and for OpenAI-type entries you can pin the
+wire API (auto / Responses / Chat Completions). Keys are **write-only**: you set
+them here, the daemon never returns them in any response.
 
 ## Memory
 
@@ -147,48 +160,17 @@ section picks the two workspace-level models that power it.
 | Setting | Description |
 |---------|-------------|
 | Embedding provider + model | Converts memories into vectors for semantic recall |
-| Categorization model | Sorts memories into categories |
-| Dimensions | Embedding vector size |
+| Dimensions | Optional embedding vector width hint |
+| Categorization provider + model | Sorts memories into categories |
 
-Both models inherit their API key and endpoint from the referenced brain
-provider — there is no separate base URL to fill in. Changing the embedding
-model lets you re-index existing memories, and changing the categorization model
-lets you re-classify them. The stored memories themselves live in the **Memory**
-module of the Operate group.
-
-## Autopilot
-
-Autopilot is Orca's automated planning and execution. It runs in one of two
-modes, and you pick per workspace.
-
-| Setting | Relay mode | CLI Agents mode |
-|---------|------------|-----------------|
-| Backend | Uses the LLM relay API | Spawns a Pilot agent in the repo |
-| Planner model | `autopilot.model` | Uses the Pilot's own model |
-| Overseer model | `autopilot.overseerModel` | `overseerExec` (e.g. `sonnet`) |
-| API key | Required | Not needed |
-| Review on done | Optional | Optional |
-
-**Relay mode** calls a hosted LLM relay directly (needs an API key) and is the
-lightest way to get planning. **CLI Agents mode** spawns a real Pilot agent in
-the repository that plans and executes through the same executors your tasks use
-(no relay key required). Either mode can optionally run a review pass when a task
-reports done.
-
-## GitHub
-
-Connects the agent to your repositories so it can branch, commit, and open PRs.
-
-| Setting | Description |
-|---------|-------------|
-| Token | GitHub personal access token |
-| Base branch | Default PR target branch |
-| Auto-open | Open a PR on the first phase commit |
-| Verify command | Shell command run before closing a PR |
-
-The verify command is your quality gate — the agent runs it before a PR is
-closed, so a failing build or test suite blocks completion. See
-[Projects & Workflow](projects-workflow) for the full git flow.
+Both models inherit their API key and endpoint from the referenced **Orca AI**
+provider — there is no separate base URL to fill in, and OAuth accounts (which
+expose no embeddings endpoint) are excluded from the embedding picker. Leave a
+provider/model empty to disable that half; with no embedding model, recall
+degrades to plain keyword search. A **Test** button probes the embedding endpoint
+live, **Reindex** re-embeds memories still missing a vector, and **Reclassify**
+runs the categorization model over uncategorized memories. The stored memories
+themselves live in the **Memory** module of the Operate group.
 
 ## Plugins
 
@@ -196,24 +178,87 @@ Every capability in Orca is a plugin you add or remove — chat platforms, tools
 memory, automation, UI, security, and development. Each installed plugin renders its **own**
 config section here, generated from that plugin's schema, and each section is its
 own collapsible so the page stays clean and uncluttered. Install, update, and
-uninstall plugins through the marketplace. See [Plugins](plugins) for the full
-catalog and the marketplace flow.
+uninstall plugins through the marketplace; a bundled plugin you don't want is
+soft-removed (hidden, never deleted, restorable). See [Plugins](plugins) for the
+full catalog and the marketplace flow.
 
 Because tools are plugins, and brain tools can be **disabled per user**, this is
 also where the workspace-wide plugin set is defined that per-user grants then
 narrow — one member can have terminal + files, another only chat.
 
-## System & Data
+## Autopilot
 
-**System** shows the running version and health of the two services, with a
-one-click restart:
+Autopilot is Orca's automated planning and execution. First you pick **how it
+reasons** — one of two backends — then the mission run defaults apply to whatever
+it launches.
 
-- Current version and an **Update** button, plus an auto-update toggle.
-- Service health for the daemon (:4400) and web UI (:4500), with restart.
+| Setting | API Key | CLI Tools |
+|---------|---------|-----------|
+| Backend | Planner + overseer run as models via an API key — fast, cheap, repo-blind | Planner + overseer run as CLI tools inside the repo — they read the code, but must be installed |
+| Credentials | Reuse a saved Orca AI provider, or enter an endpoint + key | Not needed |
+| Planner / Overseer | A model name each | An executor each |
+| Review on completion | — | Optional review pass when a phase reports done |
+
+**API Key** mode is the lightest way to get planning: pick a **Credentials**
+provider (reusing an Orca AI provider's endpoint + key, so no key is typed twice)
+or enter a raw endpoint and key, then name the planner and overseer models. **CLI
+Tools** mode runs the planner and overseer as real agents in the repository that
+plan and execute through the same executors your tasks use. A free-text **Notes**
+field lets you hand the planner standing guidance.
+
+Below the backend split sit the **Mission run defaults** — what the pilot
+actually launches, in either mode:
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| Executor | `sonnet` | Default worker model (can be an Orca AI model) |
+| Autonomy | `L3` | Default autonomy level |
+| Max sessions | `1` | Default parallel agents |
+
+Autonomy levels L0–L3 control how much a worker may do without asking — see
+[Agents & Autonomy](agents-autonomy).
+
+## GitHub
+
+Connects the agent to your repositories so it can branch, commit, and open PRs. A
+status banner at the top tells you how Orca will push — as a signed-in `gh` CLI
+account, with a stored token, or not at all.
+
+| Setting | Description |
+|---------|-------------|
+| GitHub token | Access token, **write-only** (used when `gh` isn't signed in) |
+| PR workflow | Turn the PR flow on/off — this is the **default for new projects**, each project can override it |
+| Base branch | Default PR target branch (blank = auto-detect) |
+| Open PRs automatically | Open the PR without waiting for you |
+| Verify command | Shell command run as the quality gate before a PR closes |
+
+The verify command is your quality gate — the agent runs it before a PR is
+closed, so a failing build or test suite blocks completion. See
+[Projects & Workflow](projects-workflow) for the full git flow.
+
+## System
+
+**System** is the running instance's health and update controls, plus the one
+server-wide security knob.
+
+- A hero showing the current **Orca version**, whether an update is available on
+  npm, and an **Update now** button (blocked while a mission is running).
+- **Automatic updates** — an opt-in toggle (off by default). When on, a
+  background timer upgrades to the latest npm release and restarts the services,
+  but only while no mission is running.
+- **Service status** for the daemon (`:4400`) and web UI (`:4500`), each with a
+  one-click restart.
+- **Login token validity** — how many days an issued auth token stays valid
+  (default 30). It's a server-wide security setting, so it lives here rather than
+  among the per-task defaults.
+
+## Data
 
 **Data** is the danger zone. It is **admin-only** and holds destructive actions —
-notably delete-all — so it is gated behind the admin role and kept separate from
-everyday settings. Treat it with care; there is no undo.
+notably **Delete all data**, which removes every task, mission, and the timeline
+and stops all running sessions (projects, users, and settings are kept). It is
+gated behind the admin role and kept separate from everyday settings. Treat it
+with care; there is no undo.
 
 For the underlying process model, ports, and where state is stored, see
 [Architecture](architecture).

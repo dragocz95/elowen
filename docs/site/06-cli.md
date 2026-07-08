@@ -121,6 +121,8 @@ highlighted command into the input (with a trailing space, ready for arguments),
 | `/model` | Switch the AI model (type to search, `ctrl+p` for providers) |
 | `/reasoning` | Set the reasoning effort · `show` toggles Thought rows |
 | `/theme` | Switch the terminal colour theme |
+| `/paste` | Attach an image from the system clipboard |
+| `/editor` | Compose the prompt in your `$EDITOR` |
 | `/lsp` *(admin)* | Language diagnostics — status, install/uninstall servers, on/off |
 | `/restart` *(admin)* | Restart the Orca daemon |
 | `/help` | Show the available commands |
@@ -141,10 +143,12 @@ menu never drifts from what's actually wired up.
 | `Enter` | Send the message (or run the highlighted item in an open menu) |
 | `shift+tab` | Toggle **Plan ↔ Build** work mode |
 | `ctrl+r` | Cycle the reasoning effort in place |
+| `ctrl+s` | Stash the current draft; `ctrl+s` on an empty input pops the last one back |
 | `ctrl+o` | Cycle **main conversation → sub-agent 1 → sub-agent 2 → … → back to main** |
 | `ctrl+p` | Toggle the telemetry panel (context/project/branch/LSP) |
-| `esc` | While streaming: interrupt the turn · inside a sub-agent view: close it, no server round-trip · inside a modal: closes/denies it · otherwise: clears the input |
+| `ctrl+x` | **Leader** — then a letter opens a picker: `h` help · `t` theme · `m` model · `l` sessions |
 | `ctrl+c` | Quit |
+| `esc` | While streaming: interrupt the turn · inside a sub-agent view: close it, no server round-trip · inside a modal: closes/denies it · otherwise: clears the input |
 | `Tab` (in the slash overlay) | Complete the highlighted command into the input |
 | `↑` / `↓` | Move selection in a menu, or (in the editor) recall previous inputs |
 | `PageUp` / `PageDown` | Scroll the transcript |
@@ -154,6 +158,41 @@ menu never drifts from what's actually wired up.
 | Click the Todos/Sub-agents card header | Collapse/expand it |
 | Drag over transcript text | Select text; releasing copies it via OSC 52 (works over SSH too) |
 | Drag the panel's left edge | Resize the telemetry panel (36–68 columns) |
+
+The structural keys — `Enter`, `esc`, `Tab`, the arrows, the page keys and the mouse —
+are fixed, but every modifier chord above (`shift+tab`, the `ctrl+…` shortcuts and the
+leader) is **rebindable**. `/keybinds` opens an interactive editor: arrow to an
+action, `Enter` to capture the next chord you press (press the
+leader first to compose a leader sequence), `x` to unbind, `r` to reset to default.
+Each change persists to this machine's `~/.config/orca/cli-prefs.json` and applies
+live — no restart. The leader chord itself (`ctrl+x` by default) is just another
+rebindable action, and its sequences (`leader t`/`m`/`l`/`h`) are the second way into
+the theme, model, sessions and help pickers alongside their slash commands.
+
+## Attachments, mentions & the local shell
+
+The input line does more than send text. Three prefixes shape what actually goes to
+the brain:
+
+- **`@` file mentions.** Typing `@` opens a fuzzy file suggester over the project —
+  git-tracked files in a repo, a bounded walk otherwise — ranked by match quality and
+  frecency (a file you pick often floats up). The picked file rides along with your
+  message: text files (≤256 KB) are attached inline as fenced blocks, images become
+  real image attachments (up to 4 per message). Use `@"path with spaces"` for quoted
+  paths. `@clipboard` — or the `/paste` command — attaches an image straight off the
+  system clipboard (needs `xclip`/`wl-paste` on Linux or `pngpaste` on macOS). The
+  visible transcript keeps your original text; only the composed prompt carries the
+  file contents.
+- **`!cmd` local shell.** A message starting with `!` runs as a shell command on
+  **this** machine (the CLI's own cwd, not the daemon) — `!git status`, `!ls`. Its
+  output renders as a console block and is buffered as context for your *next* prompt,
+  so you can eyeball something without spending an agent tool call on it.
+- **`/editor`** suspends the TUI and opens `$VISUAL`/`$EDITOR` to compose a longer
+  prompt, dropping the text back into the input on save.
+
+`↑` / `↓` recall previously sent prompts (persisted per project), and `ctrl+s` stashes
+the current draft to a session-local pocket — handy for "let me ask one quick thing
+first"; `ctrl+s` on an empty input pops the last stash back.
 
 ## Plan mode
 
