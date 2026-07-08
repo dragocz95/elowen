@@ -4,7 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
 import { setupServer } from 'msw/node';
 import { http, HttpResponse } from 'msw';
-import { useSpawn, useAssignProject } from '../../lib/mutations';
+import { useSpawn, useAssignProject, useSavePluginConfig, useTogglePlugin } from '../../lib/mutations';
 
 let lastAssignCall: { method: string; userId: string; projectId?: string } | null = null;
 const server = setupServer(
@@ -18,6 +18,8 @@ const server = setupServer(
     lastAssignCall = { method: 'DELETE', userId: String(params.userId), projectId: String(params.projectId) };
     return HttpResponse.json({ ok: true });
   }),
+  http.patch('*/api/plugins/:name/config', () => HttpResponse.json({ ok: true })),
+  http.patch('*/api/plugins/:name', () => HttpResponse.json({ name: 'dev-commands', enabled: false })),
 );
 beforeAll(() => server.listen()); afterAll(() => server.close());
 
@@ -31,6 +33,33 @@ describe('useSpawn', () => {
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(spy).toHaveBeenCalledWith({ queryKey: ['sessions'] });
     expect(spy).toHaveBeenCalledWith({ queryKey: ['tasks'] });
+  });
+});
+
+describe('plugin mutations re-pull the slash menu', () => {
+  // A plugin's config (e.g. dev-commands' enabled set) or on/off state changes which slash commands the
+  // daemon publishes, so the menu's single source (GET /brain/commands) must be invalidated — otherwise the
+  // web dock keeps showing commands the operator just turned off.
+  const wrapper = (client: QueryClient) => ({ children }: { children: ReactNode }) => (
+    <QueryClientProvider client={client}>{children}</QueryClientProvider>
+  );
+
+  it('config save invalidates brain-commands', async () => {
+    const client = new QueryClient();
+    const spy = vi.spyOn(client, 'invalidateQueries');
+    const { result } = renderHook(() => useSavePluginConfig(), { wrapper: wrapper(client) });
+    result.current.mutate({ name: 'dev-commands', values: { enabled: ['commit'] } });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(spy).toHaveBeenCalledWith({ queryKey: ['brain-commands'] });
+  });
+
+  it('toggling a plugin invalidates brain-commands', async () => {
+    const client = new QueryClient();
+    const spy = vi.spyOn(client, 'invalidateQueries');
+    const { result } = renderHook(() => useTogglePlugin(), { wrapper: wrapper(client) });
+    result.current.mutate({ name: 'dev-commands', enabled: false });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(spy).toHaveBeenCalledWith({ queryKey: ['brain-commands'] });
   });
 });
 

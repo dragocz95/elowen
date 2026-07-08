@@ -2,7 +2,7 @@ import { useMemo } from 'react';
 import { useQuery, useQueries } from '@tanstack/react-query';
 import { orcaClient } from './orcaClient';
 import { pendingEscalations, type Escalation } from './escalations';
-import type { DerivedSignal, CliDetectionResult, GithubAuthStatus, PlanJob, MemoryFilters } from './types';
+import type { DerivedSignal, CliDetectionResult, GithubAuthStatus, PlanJob, MemoryFilters, SlashCommandDef } from './types';
 
 /** Poll an async plan job until it leaves the 'planning' state. The SSE `plan` handler also pushes
  *  updates into this cache (keyed by jobId) so the poll is a fallback. Disabled when jobId is null. */
@@ -31,7 +31,19 @@ export const QUERY_KEYS = {
   embeddingSettings: ['embedding-settings'] as const,
   memoryCategories: ['memory-categories'] as const,
   categorizationSettings: ['categorization-settings'] as const,
+  brainCommands: ['brain-commands'] as const,
 };
+
+/** The published slash-command menu for the web surface — the single source of truth is the daemon's
+ *  live plugin registry (GET /brain/commands). Held in the query cache (not a one-shot fetch) so a plugin
+ *  toggle / config change / install can invalidate it and the menu re-pulls, instead of showing a stale
+ *  snapshot captured when the chat first mounted. Empty when the brain is unwired. */
+export const useBrainCommands = () =>
+  useQuery<SlashCommandDef[]>({
+    queryKey: QUERY_KEYS.brainCommands,
+    queryFn: () => orcaClient.brainCommands().then((r) => r.commands),
+    staleTime: 60_000,
+  });
 
 /** The current user's advisor session state, polled so the dock reflects start/stop/crash. */
 export const useAdvisorStatus = () =>

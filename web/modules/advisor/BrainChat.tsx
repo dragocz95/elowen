@@ -6,7 +6,7 @@ import { Send, Plus, ChevronDown, Wrench, Trash2, Paperclip, X, FileText, Search
 import { useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from '../../lib/i18n';
 import { useToast } from '../../components/ui/Toast';
-import { useBrainSessions } from '../../lib/queries';
+import { useBrainSessions, useBrainCommands } from '../../lib/queries';
 import { orcaClient, BASE } from '../../lib/orcaClient';
 import { formatTaskTime } from '../../lib/format';
 import type { AskQuestion, BrainCard, BrainSearchHit, BrainModelOption, BrainUsage, SlashCommandDef, StatuslineConfig } from '../../lib/types';
@@ -207,10 +207,9 @@ export function BrainChat() {
   const fileRef = useRef<HTMLInputElement>(null);
   // Slash-command menu (single source of truth: GET /brain/commands). Level 0 = the command list; a
   // `picker` command (model) opens level 1 with its options. Arrow-navigable, mirrors the CLI palette.
-  const [commands, setCommands] = useState<SlashCommandDef[]>([]);
+  const { data: commands = [] } = useBrainCommands();
   const [slashIdx, setSlashIdx] = useState(0);
   const [modelOpts, setModelOpts] = useState<BrainModelOption[] | null>(null);
-  useEffect(() => { void orcaClient.brainCommands().then((r) => setCommands(r.commands)).catch(() => { /* brain may be unwired */ }); }, []);
 
   const addFiles = async (files: Iterable<File>) => {
     for (const f of files) {

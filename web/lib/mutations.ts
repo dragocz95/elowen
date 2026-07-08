@@ -252,6 +252,8 @@ export function useTogglePlugin() {
       void qc.invalidateQueries({ queryKey: ['plugins'] });
       void qc.invalidateQueries({ queryKey: ['plugin', v.name] });
       void qc.invalidateQueries({ queryKey: ['plugin-logs', v.name] });
+      // A toggled plugin adds/removes its slash commands — re-pull the menu's single source of truth.
+      void qc.invalidateQueries({ queryKey: QUERY_KEYS.brainCommands });
     },
   });
 }
@@ -259,6 +261,7 @@ export function useTogglePlugin() {
 function invalidatePluginViews(qc: ReturnType<typeof useQueryClient>) {
   void qc.invalidateQueries({ queryKey: ['marketplace'] });
   void qc.invalidateQueries({ queryKey: ['plugins'] });
+  void qc.invalidateQueries({ queryKey: QUERY_KEYS.brainCommands });
 }
 /** Install a registry plugin into the user plugin dir (enabled by default). Applies live via hot-reload. */
 export function useInstallPlugin() {
@@ -304,7 +307,7 @@ export function useSavePluginConfig() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (v: { name: string; values: Record<string, unknown> }) => orcaClient.savePluginConfig(v.name, v.values),
-    onSuccess: (_r, v) => { void qc.invalidateQueries({ queryKey: ['plugin', v.name] }); void qc.invalidateQueries({ queryKey: ['plugins'] }); },
+    onSuccess: (_r, v) => { void qc.invalidateQueries({ queryKey: ['plugin', v.name] }); void qc.invalidateQueries({ queryKey: ['plugins'] }); void qc.invalidateQueries({ queryKey: QUERY_KEYS.brainCommands }); },
   });
 }
 /** Destructive — wipe the contents of a plugin's data directory. Refreshes that plugin's detail (data summary). */
