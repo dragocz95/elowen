@@ -41,6 +41,6 @@ For contributors and advanced users:
 
 ## Quick links
 
-- **GitHub:** [github.com/dragocz1995/elowen](https://github.com/dragocz1995/elowen)
+- **GitHub:** [github.com/dragocz95/elowen](https://github.com/dragocz95/elowen)
 - **npm:** [www.npmjs.com/package/elowen](https://www.npmjs.com/package/elowen)
-- **Issues:** [github.com/dragocz1995/elowen/issues](https://github.com/dragocz1995/elowen/issues)
+- **Issues:** [github.com/dragocz95/elowen/issues](https://github.com/dragocz95/elowen/issues)

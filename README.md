@@ -13,7 +13,7 @@ Same agent, same tools, same memory on every surface. It runs on **your**
 machine, uses **your** models, and every capability is a plugin you add or
 remove. No SaaS, no lock-in.
 
-[![CI](https://github.com/dragocz1995/elowen/actions/workflows/ci.yml/badge.svg)](https://github.com/dragocz1995/elowen/actions/workflows/ci.yml)
+[![CI](https://github.com/dragocz95/elowen/actions/workflows/ci.yml/badge.svg)](https://github.com/dragocz95/elowen/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
 [![Node](https://img.shields.io/badge/node-%3E%3D22-43853d.svg)](https://nodejs.org)
 

@@ -1,16 +1,16 @@
 {
   "name": "elowen",
-  "version": "0.11.0",
+  "version": "0.12.0",
   "description": "ELOWEN — an autonomous coding-agent orchestrator with an autopilot overseer, daemon API and web UI. Install globally and run `elowen`.",
   "license": "MIT",
   "type": "module",
-  "homepage": "https://github.com/dragocz1995/elowen#readme",
+  "homepage": "https://github.com/dragocz95/elowen#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/dragocz1995/elowen.git"
+    "url": "git+https://github.com/dragocz95/elowen.git"
   },
   "bugs": {
-    "url": "https://github.com/dragocz1995/elowen/issues"
+    "url": "https://github.com/dragocz95/elowen/issues"
   },
   "keywords": [
     "ai",

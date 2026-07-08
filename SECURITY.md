@@ -5,7 +5,7 @@
 If you discover a security vulnerability in Elowen, please report it privately.
 **Do not open a public issue for security problems.**
 
-Use GitHub's [private vulnerability reporting](https://github.com/dragocz1995/elowen/security/advisories/new)
+Use GitHub's [private vulnerability reporting](https://github.com/dragocz95/elowen/security/advisories/new)
 to disclose the issue. Please include:
 
 - a description of the vulnerability and its impact,

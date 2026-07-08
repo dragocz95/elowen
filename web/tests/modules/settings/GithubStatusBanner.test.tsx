@@ -22,9 +22,9 @@ describe('GithubStatusBanner', () => {
   });
 
   it('shows the gh account when ready via the gh CLI', () => {
-    useGithubStatus.mockReturnValue({ data: status({ ghInstalled: true, ghAuthenticated: true, account: 'dragocz1995', ready: true, method: 'gh' }), isLoading: false });
+    useGithubStatus.mockReturnValue({ data: status({ ghInstalled: true, ghAuthenticated: true, account: 'dragocz95', ready: true, method: 'gh' }), isLoading: false });
     renderBanner();
-    expect(screen.getByText(/@dragocz1995/)).toBeInTheDocument();
+    expect(screen.getByText(/@dragocz95/)).toBeInTheDocument();
     expect(screen.queryByText(/gh auth login/)).not.toBeInTheDocument();
   });
 

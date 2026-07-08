@@ -85,7 +85,7 @@ OPTIONS
   -h, --help                      show this help
   -v, --version                   print the version
 
-Docs & issues: https://github.com/dragocz1995/elowen`;
+Docs & issues: https://github.com/dragocz95/elowen`;
 }
 
 /** Commands that talk to the daemon API — only these justify auto-starting it. Everything else

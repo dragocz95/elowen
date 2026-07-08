@@ -183,7 +183,7 @@ the web UI too, build and run it alongside the daemon (see below) and publish
 Clone the public repo and build:
 
 ```bash
-git clone https://github.com/dragocz1995/elowen.git
+git clone https://github.com/dragocz95/elowen.git
 cd elowen
 npm install
 npm run build

@@ -21,7 +21,10 @@
 
 /* Elowen wordmark is white line-art on transparent — invisible on the white light-mode surface.
    Inverting the pure-white strokes yields pure black (alpha is preserved), so no separate asset. */
-html[data-theme='light'] .logo-adaptive { filter: invert(1); }
+/* The colored flame logo can't use invert (it would tint the red mascot); swap the wordmark
+   variant per theme instead — white wordmark on dark, black wordmark on light. */
+.logo-adaptive { content: url('/elowen-logo.png'); }
+html[data-theme='light'] .logo-adaptive { content: url('/elowen-logo-light.png'); }
 
 /* Hide the scrollbar on horizontally scrollable pill rows (settings/account category nav). */
 .scrollbar-none { scrollbar-width: none; -ms-overflow-style: none; }

@@ -25,9 +25,9 @@ describe('detectGithubAuth', () => {
   });
 
   it('reads the gh-authenticated account and prefers the gh method when no token', () => {
-    stub({ ghOnPath: true, authStatus: 0, authOutput: '✓ Logged in to github.com account dragocz1995 (keyring)\n' });
+    stub({ ghOnPath: true, authStatus: 0, authOutput: '✓ Logged in to github.com account dragocz95 (keyring)\n' });
     const s = detectGithubAuth(false);
-    expect(s).toMatchObject({ ghInstalled: true, ghAuthenticated: true, account: 'dragocz1995', ready: true, method: 'gh' });
+    expect(s).toMatchObject({ ghInstalled: true, ghAuthenticated: true, account: 'dragocz95', ready: true, method: 'gh' });
   });
 
   it('also parses the older "Logged in … as <login>" wording', () => {
