@@ -13,6 +13,9 @@ const execFileAsync = promisify(execFile);
 const TICK_MS = 30_000;
 const CHECK_TIMEOUT_MS = 60_000; // a guard shell must finish fast; a hung check never blocks the tick loop
 const CHECK_MAX_BUFFER = 1024 * 1024; // 1 MB of stdout is plenty of "what's new" to hand the brain
+const CRON_TURN_ATTEMPTS = 2; // one retry on a request-time failure (a transient relay/gateway/network blip)
+const CRON_RETRY_BACKOFF_MS = 3_000; // brief pause before the retry so the transient condition can clear
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /** Run a job's optional cheap guard command and classify the outcome, so the scheduler can decide
  *  whether the (expensive) brain turn is even worth running. Admin-authored (jobs are admin-only), run
@@ -127,7 +130,7 @@ class CronAdapter {
   // messages to every platform adapter exposing a `notify` method — if this adapter carried one,
   // the broadcast would call back into itself (host → cron → host → …) until the stack blew,
   // multiplying every cron echo into dozens of Discord messages.
-  constructor(store, logger, deliver) { this.store = store; this.log = logger; this.deliver = deliver; this.handler = null; }
+  constructor(store, logger, deliver) { this.store = store; this.log = logger; this.deliver = deliver; this.handler = null; this.running = false; }
   listen(onMessage) { this.handler = onMessage; }
   async connect() {
     this.timer = setInterval(() => void this.tick().catch((e) => this.log.error(`tick failed: ${e?.message ?? e}`)), TICK_MS);
@@ -136,7 +139,12 @@ class CronAdapter {
   async send() { /* cron has no outbound channel; results land in the job's conversation */ }
 
   async tick() {
-    if (!this.handler) return;
+    // One tick at a time. Jobs run sequentially and each is a (slow) LLM turn, so a due-cluster — e.g. the
+    // morning batch of daily reports — can exceed the 30s interval; without this guard the next interval
+    // overlaps, double-fires a job and hammers the relay with concurrent turns (a source of transient 400s).
+    if (!this.handler || this.running) return;
+    this.running = true;
+    try {
     const now = Date.now();
     for (const job of this.store.all()) {
       if (!isDue(job, now)) continue;
@@ -167,6 +175,9 @@ class CronAdapter {
       // Where the host actually ran the turn (its `session` event). When it matches the job's recorded
       // origin, the reply already landed in the originating conversation — no Discord echo needed.
       let deliveredTo = null;
+      // Did the turn emit real output (a tool call, assistant text or a diff)? If it did before failing,
+      // the run had side effects and must NOT be retried; only a failure that produced nothing is safe.
+      let sawWork = false;
       // Hand the brain the guard's fresh output (if any) so it acts on it directly instead of re-running
       // the collector via a tool — the whole point of the gate is one cheap check, not a check + a re-fetch.
       let userText = checkOutput
@@ -176,7 +187,7 @@ class CronAdapter {
       // prompt so the model knows this is its own earlier schedule firing, not the user speaking now.
       // (The channel fallback keeps its wake-up context via access.prompt; this framing reads fine there too.)
       if (job.originSessionId) userText = `[Scheduled wake-up "${job.name}" fires now — you set it earlier. Do the task and reply now.]\n${userText}`;
-      const reply = await this.handler({
+      const src = {
         platform: 'cron', userId: 'cron', roleIds: [], channelId: `job-${job.id}`,
         // A wake-up scheduled from a user conversation carries its origin: the host routes it as a
         // bound send into that conversation (ownership-verified host-side, channel path as fallback).
@@ -187,10 +198,32 @@ class CronAdapter {
           // Optional per-job model — the channel session respawns on it (else the server default runs).
           model: job.model?.provider && job.model?.model ? { provider: job.model.provider, model: job.model.model } : undefined,
         },
-      }, userText, (e) => {
+      };
+      const onEvent = (e) => {
         if (e?.type === 'idle') idle = e;
         if (e?.type === 'session') deliveredTo = e.sessionId;
-      }).catch((e) => `Error: ${e?.message ?? e}`);
+        if (e?.type === 'tool' || e?.type === 'text' || e?.type === 'diff') sawWork = true;
+      };
+      // Bounded retry: a request-time failure — a transient relay/gateway/network blip that threw before
+      // the turn produced any tool or text output — is re-run once after a short backoff, so a momentary
+      // upstream hiccup doesn't cost the whole scheduled report. If the turn already did work, deliver the
+      // error instead of repeating side effects. Recurring jobs only: a one-shot wake-up is already
+      // consumed (deleted) before running, so re-running a spent schedule isn't meaningful. Reset the
+      // per-turn accumulators each attempt.
+      let reply;
+      for (let attempt = 1; ; attempt++) {
+        idle = null; deliveredTo = null; sawWork = false;
+        try { reply = await this.handler(src, userText, onEvent); break; }
+        catch (e) {
+          if (attempt < CRON_TURN_ATTEMPTS && !sawWork && !job.runAt) {
+            this.log.warn(`cron job ${job.id} attempt ${attempt} failed (${e?.message ?? e}) — retrying in ${CRON_RETRY_BACKOFF_MS}ms`);
+            await sleep(CRON_RETRY_BACKOFF_MS);
+            continue;
+          }
+          reply = `Error: ${e?.message ?? e}`;
+          break;
+        }
+      }
       // One-shots were already removed before running; recurring jobs record their last result.
       if (!job.runAt) this.store.patch(job.id, { lastResult: String(reply ?? '').slice(0, 500) });
       const trimmed = String(reply ?? '').trim();
@@ -211,6 +244,9 @@ class CronAdapter {
         const body = `${header}${String(reply).slice(0, 1800)}${footer ? `\n\n${footer}` : ''}`;
         await this.deliver(body, job.notifyChannelId).catch(() => {});
       }
+    }
+    } finally {
+      this.running = false;
     }
   }
 }

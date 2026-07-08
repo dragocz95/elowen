@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { mkdtempSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
@@ -184,5 +184,94 @@ describe('cron tick — one-shot lifecycle (consume before run)', () => {
     expect(jobs).toHaveLength(1);
     expect(jobs[0].lastRun).toBeTruthy();
     expect(jobs[0].lastResult).toBe('ran');
+  });
+});
+
+describe('cron tick — reliability (re-entrancy guard + bounded retry)', () => {
+  // A recurring job that is due right now (last run 10 min ago on a 5-min interval), no `check` guard,
+  // so the tick goes straight to the brain turn — the shape of the morning report jobs.
+  const dueJob = (extra: Record<string, unknown> = {}) => ({
+    id: 'r1', name: 'report', schedule: 'every 5m', prompt: 'do it',
+    lastRun: new Date(Date.now() - 10 * 60_000).toISOString(), createdAt: new Date().toISOString(), ...extra,
+  });
+  function writeJobs(dataRoot: string, jobs: Record<string, unknown>[]): void {
+    mkdirSync(join(dataRoot, 'cronjob'), { recursive: true });
+    writeFileSync(jobsFile(dataRoot), JSON.stringify(jobs));
+  }
+
+  it('runs one tick at a time — a second tick while the first is in flight is a no-op', async () => {
+    const dataRoot = freshDataRoot();
+    writeJobs(dataRoot, [dueJob()]);
+    const { adapter } = await loadCron(dataRoot, async () => {});
+    let calls = 0;
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    adapter.listen(async () => { calls++; await gate; return 'ok'; });
+    const first = adapter.tick(); // starts; the handler is invoked and parks on the gate
+    await Promise.resolve();
+    await adapter.tick(); // second tick overlaps — the guard makes it a no-op
+    expect(calls).toBe(1); // the job did NOT double-fire
+    release();
+    await first;
+    expect(calls).toBe(1);
+  });
+
+  it('retries a request-time failure that produced no output, then delivers the recovered reply', async () => {
+    const dataRoot = freshDataRoot();
+    const delivered: string[] = [];
+    writeJobs(dataRoot, [dueJob()]);
+    const { adapter } = await loadCron(dataRoot, async (t) => { delivered.push(t); });
+    let calls = 0;
+    adapter.listen(async () => {
+      calls++;
+      if (calls === 1) throw new Error('400 "Bad Request (ref: abc)"'); // transient relay blip, nothing ran
+      return 'recovered report';
+    });
+    vi.useFakeTimers();
+    try {
+      const p = adapter.tick();
+      await vi.advanceTimersByTimeAsync(3_000); // clear the retry backoff
+      await p;
+    } finally {
+      vi.useRealTimers();
+    }
+    expect(calls).toBe(2); // one retry
+    expect(delivered.some((d) => d.includes('recovered report'))).toBe(true);
+    expect(delivered.some((d) => d.includes('Bad Request'))).toBe(false); // the transient error never reached the user
+  });
+
+  it('does NOT retry once the turn has done work — delivers the error instead of repeating side effects', async () => {
+    const dataRoot = freshDataRoot();
+    const delivered: string[] = [];
+    writeJobs(dataRoot, [dueJob()]);
+    const { adapter } = await loadCron(dataRoot, async (t) => { delivered.push(t); });
+    let calls = 0;
+    adapter.listen(async (_src, _text, onEvent) => {
+      calls++;
+      onEvent?.({ type: 'tool' } as { type: string }); // the turn already ran a tool (a side effect)...
+      throw new Error('500 upstream blip'); // ...then failed — retrying would repeat the side effect
+    });
+    await adapter.tick();
+    expect(calls).toBe(1); // no retry
+    expect(delivered.some((d) => d.includes('Error: 500 upstream blip'))).toBe(true);
+  });
+
+  it('gives up after the retry budget and delivers the error', async () => {
+    const dataRoot = freshDataRoot();
+    const delivered: string[] = [];
+    writeJobs(dataRoot, [dueJob()]);
+    const { adapter } = await loadCron(dataRoot, async (t) => { delivered.push(t); });
+    let calls = 0;
+    adapter.listen(async () => { calls++; throw new Error('400 persistent'); });
+    vi.useFakeTimers();
+    try {
+      const p = adapter.tick();
+      await vi.advanceTimersByTimeAsync(3_000);
+      await p;
+    } finally {
+      vi.useRealTimers();
+    }
+    expect(calls).toBe(2); // initial + one retry, then give up
+    expect(delivered.some((d) => d.includes('Error: 400 persistent'))).toBe(true);
   });
 });
