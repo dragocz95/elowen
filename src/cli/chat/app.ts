@@ -19,7 +19,7 @@ import { wireSubmit } from './commands.js';
 import type { ChatRuntime } from './runtime.js';
 import { fromHistory, groupToolItems, type ChatView } from '../../brain/transcript.js';
 import { commandsFor } from '../../brain/slashCommands.js';
-import { DISABLE_MOUSE, ENABLE_MOUSE } from './layout.js';
+import { ALT_SCREEN_OFF, ALT_SCREEN_ON, DISABLE_MOUSE, ENABLE_MOUSE } from './layout.js';
 
 /** Plain-text rendering of the view — used for the non-TTY fallback and unit tests (no ANSI, so it's
  *  deterministic to assert on). The rich terminal path uses pi-tui components instead. */
@@ -233,10 +233,12 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
     term.write(DISABLE_MOUSE);
     shell.hideOverlays();
     tui.stop();
+    term.write(ALT_SCREEN_OFF); // restore the primary buffer (shell + scrollback) AFTER pi-tui's final paint
   };
   // Mouse-reporting hygiene: quit() disables it on the normal path, but an uncaught throw or a
-  // SIGTERM/SIGHUP would otherwise leave the user's shell spewing `[<35;…M` on every mouse move.
-  const disableMouse = (): void => { try { process.stdout.write(DISABLE_MOUSE); } catch { /* tty gone */ } };
+  // SIGTERM/SIGHUP would otherwise leave the user's shell spewing `[<35;…M` on every mouse move — and
+  // strand them on a blank alternate screen. Leave both here so the crash/signal path recovers cleanly.
+  const disableMouse = (): void => { try { process.stdout.write(DISABLE_MOUSE + ALT_SCREEN_OFF); } catch { /* tty gone */ } };
   // Registered per-run and detached in quit(): menu.ts relaunches runChat in a loop, so leaving these
   // on `process` would stack listeners (MaxListenersExceededWarning bleeding into the menu, plus each
   // dead handler pinning the previous session's closure) on every chat open/close.
@@ -254,6 +256,9 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
     openSessionsModal: pickers.openSessionsModal,
   });
 
+  // Enter the alternate screen BEFORE the first paint: pi-tui's first render assumes a clean buffer, and
+  // `?1049h` gives it exactly that (cleared, cursor home), fully isolated from the shell's scrollback.
+  term.write(ALT_SCREEN_ON);
   tui.start();
   term.write(ENABLE_MOUSE);
   rt.render();

@@ -17,6 +17,16 @@ export const TOOL_INDENT = '    ';
 export const PANEL_GUTTER_COLUMNS = 3;
 export const ENABLE_MOUSE = '\x1b[?1000h\x1b[?1002h\x1b[?1006h';
 export const DISABLE_MOUSE = '\x1b[?1000l\x1b[?1002l\x1b[?1006l';
+// Alternate screen buffer. pi-tui renders INLINE (into the primary buffer), so a terminal that scrolls
+// its native buffer on wheel/trackpad (instead of forwarding to us) mixes our live UI with the frames
+// left in scrollback — the input scrolls out of view and the layout "falls apart", worst when a tall
+// console-output block pushed extra frames into scrollback. The chat is a full-screen TUI with its OWN
+// in-app scroll (PageUp/wheel + History chip), so it belongs on the alternate screen: we own the whole
+// display, native scroll has nothing to reveal, and the shell + its scrollback are restored untouched on
+// exit. Pair every `ON` with an `OFF` on teardown AND the crash/signal path, or a throw strands the user
+// on a blank alt-screen.
+export const ALT_SCREEN_ON = '\x1b[?1049h';
+export const ALT_SCREEN_OFF = '\x1b[?1049l';
 
 export interface MouseEvent {
   code: number;

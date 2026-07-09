@@ -5,7 +5,7 @@ import { localShellTurn, parseBangCommand, runLocalShell } from './localShell.js
 import { editTextExternally } from './externalEditor.js';
 import { composeWithAttachments, expandMentions, MAX_IMAGES_PER_MESSAGE, readClipboardImage, type PendingImage } from './mentions.js';
 import { sessionItems, openPicker } from './picker.js';
-import { DISABLE_MOUSE, ENABLE_MOUSE } from './layout.js';
+import { ALT_SCREEN_OFF, ALT_SCREEN_ON, DISABLE_MOUSE, ENABLE_MOUSE } from './layout.js';
 import { pushUser, reduce } from '../../brain/transcript.js';
 import { expandPromptCommand } from '../../brain/slashCommands.js';
 import type { BrainClient } from './brainClient.js';
@@ -219,9 +219,12 @@ export function wireSubmit(rt: ChatRuntime, deps: { stream: StreamController; pi
           // the terminal, then re-init and load the saved content into the input. Non-zero exit (:cq,
           // crash) keeps the original draft untouched.
           const initial = editor.getExpandedText();
-          term.write(DISABLE_MOUSE);
+          // Hand the primary buffer to $EDITOR: leave our alternate screen too, or the editor opens
+          // nested inside it and its own screen handling fights ours. Re-enter it when we resume.
+          term.write(DISABLE_MOUSE + ALT_SCREEN_OFF);
           tui.stop();
           void editTextExternally({ text: initial }).then((edited) => {
+            term.write(ALT_SCREEN_ON);
             tui.start();
             term.write(ENABLE_MOUSE);
             editor.setText(edited ?? initial);
