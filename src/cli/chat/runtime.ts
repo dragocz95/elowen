@@ -7,6 +7,7 @@ import type { LocalShellBuffer } from './localShell.js';
 import type { FileIndex, FrecencyMap, PendingImage } from './mentions.js';
 import type { ChatView } from '../../brain/transcript.js';
 import type { BrainCard } from '../../brain/events.js';
+import type { ProcessInfo } from '../../brain/processRegistry.js';
 import type { SlashCommandDef } from '../../brain/slashCommands.js';
 
 /** The shared chat-session context: fixed wiring (client, TUI, editor…), the mutable per-session
@@ -69,6 +70,10 @@ export interface ChatRuntime {
    *  parked until it ends. Seeded from status, replaced on each `queue` event; rendered as dim QUEUED
    *  lines above the input. Tracked outside the ChatView (like `cards`). */
   queued: { id: string; text: string }[];
+  /** The owner's live background shell processes — a persistent panel above the input, tracked outside
+   *  the ChatView (like `cards`). Boot-seeded from GET /brain/processes, then replaced on each `process`
+   *  snapshot event (spawn/exit/kill). Only the running ones render, so it costs no rows at rest. */
+  processes: ProcessInfo[];
   /** The last /sessions listing, so /resume <n> can address by number. */
   listed: { id: string; title: string }[];
   showThoughts: boolean;

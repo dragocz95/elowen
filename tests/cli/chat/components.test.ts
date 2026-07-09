@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import { visibleWidth } from '@earendil-works/pi-tui';
 import { initTheme } from '@earendil-works/pi-coding-agent';
-import { UserBlock, StatusBar, CardPanel, SubagentPanel, QueuedMessages, diffBlock, cardBlock } from '../../../src/cli/chat/components.js';
+import { UserBlock, StatusBar, CardPanel, SubagentPanel, ProcessPanel, QueuedMessages, diffBlock, cardBlock } from '../../../src/cli/chat/components.js';
 
 describe('chat components', () => {
   beforeAll(() => { initTheme(); }); // renderDiff needs the pi theme
@@ -126,5 +126,45 @@ describe('SubagentPanel', () => {
     expect(lines[1]).toContain('12k tok');
     expect(p.targetAt(1)).toBe('brain-ch-subagent-a');
     expect(p.targetAt(0)).toBeNull();
+  });
+});
+
+describe('ProcessPanel', () => {
+  const now = 100_000;
+  const proc = (over: Partial<{ id: string; command: string; running: boolean; startedAt: string }> = {}) => ({
+    id: 'p1', command: 'npm run build', cwd: '/var/www/elowen', exitCode: null,
+    startedAt: new Date(now - 8_000).toISOString(), running: true, ...over,
+  });
+
+  it('renders nothing when no process is running (exited ones are dropped)', () => {
+    const p = new ProcessPanel();
+    p.set([proc({ running: false })]);
+    expect(p.render(80, now)).toEqual([]);
+  });
+
+  it('lists running processes with command + runtime and a clickable ✕, mapping the ✕ column to a kill', () => {
+    const p = new ProcessPanel();
+    p.set([proc()]);
+    const raw = p.render(80, now).map((l) => l.replace(/\x1b\[[0-9;]*m/g, ''));
+    expect(raw[0]).toContain('Processes');
+    expect(raw[0]).toContain('1 running');
+    expect(raw[1]).toContain('npm run build');
+    expect(raw[1]).toContain('8s');
+    expect(raw[1]).toContain('✕');
+    // The ✕ is the last visible glyph — a click on its column kills p1, a click elsewhere does not.
+    const killCol = visibleWidth(p.render(80, now)[1]!);
+    expect(p.killAt(1, killCol)).toBe('p1');
+    expect(p.killAt(1, 4)).toBeNull(); // the command area is not a kill target
+    expect(p.killAt(0, killCol)).toBeNull(); // the header row carries no ✕
+  });
+
+  it('collapses to just the header (no rows, no kill zones) when toggled', () => {
+    const p = new ProcessPanel();
+    p.set([proc()]);
+    p.toggleCollapsed();
+    const lines = p.render(80, now);
+    expect(lines).toHaveLength(1);
+    expect(p.isHeaderRow(0)).toBe(true);
+    expect(p.killAt(1, 79)).toBeNull();
   });
 });

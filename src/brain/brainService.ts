@@ -28,6 +28,7 @@ import { BrainStatusService } from './service/statusService.js';
 import { exportBrainSession } from './session/exportSession.js';
 import type { ExportFormat, SessionExport } from './session/exportSession.js';
 import type { BrainDeps } from './brainDeps.js';
+import type { ProcessInfo } from './processRegistry.js';
 import { DEFAULT_BRAIN_LIMITS } from '../store/configStore.js';
 
 export type { BrainDeps } from './brainDeps.js';
@@ -481,6 +482,17 @@ export class BrainService {
    *  notion the tools do, not merely `is_admin` (a second admin is admin-but-not-owner). */
   isOwner(userId: number | undefined): boolean {
     return this.identity.isOwner(userId);
+  }
+
+  /** Push a background-process snapshot to the OWNER's live client streams (the CLI/web process panel),
+   *  so it refreshes out of turn on every spawn/exit/kill. Wired to the process registry's change
+   *  listener in the daemon. Owner-only: a command line can carry a secret, so the event is delivered
+   *  ONLY to streams attached to the owner's own sessions, never a second admin's. */
+  broadcastProcesses(processes: ProcessInfo[]): void {
+    const event: BrainEvent = { type: 'process', processes };
+    for (const [listener, sessionId] of this.attachments.clientStreams) {
+      if (this.isOwner(this.d.store.getSession(sessionId)?.user_id)) listener(event);
+    }
   }
 
   async send(userId: number, text: string, images?: { data: string; mimeType: string }[], mode: 'build' | 'plan' = 'build', internal?: { goalKickoff?: boolean; goalContinue?: boolean; systemNudge?: boolean }, clientCwd?: string, session?: string, display?: string): Promise<void> {

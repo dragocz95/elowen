@@ -112,6 +112,9 @@ export function createStreamController(rt: ChatRuntime, flows: Flows): StreamCon
       // so it applies immediately even mid-rollover — the `user` delivery event (folded below) is what
       // renders the eventual 'you' turn.
       if (e.type === 'queue') { rt.queued = e.items; rt.render(); return; }
+      // Live background-process snapshot (spawn/exit/kill) — a full replace tracked outside the ChatView
+      // (like cards/queue), so it applies immediately even mid-rollover. The panel shows only running ones.
+      if (e.type === 'process') { rt.processes = e.processes; rt.render(); return; }
       if (buffer) { buffer.push(e); return; } // rollover refetch in flight — replay after it resolves
       // A compaction was persisted server-side (manual /compact or the auto-compact path): the stored
       // transcript is now the "context compacted" divider + the kept tail. Refetch so the on-screen

@@ -1,6 +1,7 @@
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { AskAnswer, AskQuestion, BrainCard, BrainEvent } from '../../brain/events.js';
+import type { ProcessInfo } from '../../brain/processRegistry.js';
 import type { BrainMessageView } from '../../brain/messageView.js';
 import type { SlashCommandDef } from '../../brain/slashCommands.js';
 import type { LspStatus } from '../../lsp/manager.js';
@@ -140,6 +141,24 @@ export class BrainClient {
     const res = await this.f(`${this.o.base}/brain/queue/${encodeURIComponent(id)}${this.boundQs()}`, { method: 'DELETE', headers: this.headers() });
     if (res.status === 401) throw new Unauthorized();
     if (!res.ok) throw new Error(`elowen brain ${res.status} on /brain/queue`);
+  }
+
+  /** The owner's background shell processes (terminal plugin's `run_command(background:true)` children)
+   *  — the snapshot the process panel boot-seeds from; live spawn/exit/kill updates ride the `process`
+   *  stream event. Owner-only server-side (403 for a non-owner). */
+  async processes(): Promise<ProcessInfo[]> {
+    const res = await this.f(`${this.o.base}/brain/processes`, { headers: this.headers() });
+    if (res.status === 401) throw new Unauthorized();
+    if (!res.ok) throw new Error(`elowen brain ${res.status} on /brain/processes`);
+    return (await res.json()) as ProcessInfo[];
+  }
+
+  /** Kill one background process by id. The daemon's `process` snapshot event then drops it from the
+   *  panel — the caller relies on that single source of truth, never a local delete. */
+  async killProcess(id: string): Promise<void> {
+    const res = await this.f(`${this.o.base}/brain/processes/${encodeURIComponent(id)}`, { method: 'DELETE', headers: this.headers() });
+    if (res.status === 401) throw new Unauthorized();
+    if (!res.ok) throw new Error(`elowen brain ${res.status} on /brain/processes`);
   }
 
   /** Run a server-side (`action`) slash command through the shared dispatcher (`/stop`, `/new`,

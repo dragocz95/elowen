@@ -128,6 +128,9 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
   const client = opts.client ?? new BrainClient({ base: opts.base, token: opts.token });
   await client.start({ provider: opts.model, session: opts.session, fresh: opts.fresh });
   const boot = await client.status().catch(() => null);
+  // Boot-seed the background-process panel (owner-only; a non-owner 403s → empty). Live spawn/exit/kill
+  // updates then ride the `process` stream event, so this is only the initial snapshot.
+  const bootProcesses = await client.processes().catch(() => []);
   // Cross-device colors: a CUSTOM web Account → Terminal palette drives the CLI chat theme — but only
   // when THIS machine has no explicit /theme pick saved. A local pick must win, otherwise the web
   // setting silently clobbered it on every launch ("/theme doesn't stick"). Picking "Custom (web)"
@@ -191,6 +194,7 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
     workMode: 'build',
     cards: boot?.cards ?? [],
     queued: boot?.queued ?? [],
+    processes: bootProcesses,
     listed: [],
     showThoughts,
     pendingImages: [],

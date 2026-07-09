@@ -132,6 +132,43 @@ describe('streamController — idle rollover', () => {
     expect(rt.view).toBe(before);
   });
 
+  it('a `process` event replaces rt.processes (full snapshot) without touching the transcript view', () => {
+    let onEvent!: (e: BrainEvent) => void;
+    const client = {
+      stream: (cb: (e: BrainEvent) => void) => { onEvent = cb; return Promise.resolve(); },
+      history: () => Promise.resolve([]),
+      rebind: () => {},
+    } as unknown as BrainClient;
+    const ac = new AbortController();
+    const rt = {
+      client,
+      view: fromHistory([{ role: 'assistant', text: 'hi' }]),
+      childView: null,
+      streamAc: ac,
+      notice: '',
+      conversationTitle: 'x',
+      workMode: 'build',
+      processes: [] as { id: string; command: string; cwd: string; startedAt: string; running: boolean; exitCode: number | null }[],
+      render: () => {},
+      refreshMeta: async () => {},
+    } as unknown as ChatRuntime;
+    const flows = { launchAsk: () => {}, openPlanDecision: () => {} } as unknown as Flows;
+
+    const stream = createStreamController(rt, flows);
+    stream.openStream(ac);
+    const before = rt.view;
+
+    const proc = { id: 'p1', command: 'npm run dev', cwd: '/x', startedAt: '2026-01-01T00:00:00.000Z', running: true, exitCode: null };
+    onEvent({ type: 'process', processes: [proc] });
+    expect(rt.processes).toEqual([proc]);
+    expect(rt.view).toBe(before); // the ChatView is untouched — the process list is separate client state
+
+    // A later snapshot (a kill/exit) replaces wholesale — the killed process just drops off.
+    onEvent({ type: 'process', processes: [] });
+    expect(rt.processes).toEqual([]);
+    expect(rt.view).toBe(before);
+  });
+
   it('a `user` delivery event folds a you-turn into the transcript (the drained queued message)', () => {
     let onEvent!: (e: BrainEvent) => void;
     const client = {

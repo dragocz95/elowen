@@ -1,7 +1,7 @@
 import { Container } from '@earendil-works/pi-tui';
 import type { Component, MarkdownTheme, TUI } from '@earendil-works/pi-tui';
 import { color } from './theme.js';
-import { StatusBar, CardPanel, SubagentPanel, spinnerFrame } from './components.js';
+import { StatusBar, CardPanel, SubagentPanel, ProcessPanel, spinnerFrame } from './components.js';
 import { MascotFloat } from './mascotFloat.js';
 import { activeMention, CLIPBOARD_MENTION, imageMimeFor, rankMentionFiles, bumpMentionFrecency, mentionInsertText } from './mentions.js';
 import { isSlashCommandDraft } from './commands.js';
@@ -142,6 +142,7 @@ export function createShell(rt: ChatRuntime, stream: StreamController, mdTheme: 
 
   const cardPanel = new CardPanel();
   const subPanel = new SubagentPanel();
+  const processPanel = new ProcessPanel();
   const promptMeta = new StatusBar('', '');
   const quitLabel = quitHint(keymap);
   const bottomBar = new StatusBar(color.faint(`  ${bottomHints(keymap, 'idle')}`), quitLabel ? color.faint(`${quitLabel}  `) : '');
@@ -198,8 +199,9 @@ export function createShell(rt: ChatRuntime, stream: StreamController, mdTheme: 
   const fixedRows = (): number => {
     const cardRows = cardPanel.render(Math.max(24, chatWidth())).length;
     const subRows = subPanel.render(Math.max(24, chatWidth())).length;
+    const procRows = processPanel.render(Math.max(24, chatWidth())).length;
     const inputRows = inputStack.render(Math.max(24, chatWidth())).length;
-    return TOP_RULE_ROWS + cardRows + subRows + inputRows + 2;
+    return TOP_RULE_ROWS + cardRows + subRows + procRows + inputRows + 2;
   };
 
   const viewport = new ChatViewport(
@@ -246,6 +248,12 @@ export function createShell(rt: ChatRuntime, stream: StreamController, mdTheme: 
   };
   const reshowPanel = (): void => { showPanel(panelHandle?.isHidden() ?? false); };
 
+  // Kill a background process from the panel's ✕. Fire-and-forget: no optimistic local removal — the
+  // daemon's `process` snapshot event is the single source of truth and drops it once the kill lands.
+  const killProcess = (id: string): void => {
+    void client.killProcess(id).catch((e: Error) => { rt.notice = color.error(`could not kill process: ${e.message}`); render(); });
+  };
+
   let thinkStart = 0;
   const render = (): void => {
     if (rt.view.thinking) {
@@ -271,6 +279,7 @@ export function createShell(rt: ChatRuntime, stream: StreamController, mdTheme: 
     promptMeta.setRight(panelVisible() || !line ? projectLine : `${color.faint(line)} ${color.faint('·')} ${projectLine}`);
     cardPanel.set(rt.cards);
     subPanel.set(stream.subagentStates());
+    processPanel.set(rt.processes);
     // Pending mid-turn queue strip above the composer (with the remove-last keybind hint when bound).
     const removeChord = keymap.chordLabel('queue_remove');
     rt.queuedMessages.set(rt.queued, rt.queued.length && removeChord ? `${removeChord} removes the last queued message` : null);
@@ -438,7 +447,7 @@ export function createShell(rt: ChatRuntime, stream: StreamController, mdTheme: 
 
   const root = new Container();
   root.addChild(new TopRule(() => rt.conversationTitle));
-  const chatStack = [viewport, cardPanel, subPanel, inputStack, promptMeta, bottomBar];
+  const chatStack = [viewport, cardPanel, subPanel, processPanel, inputStack, promptMeta, bottomBar];
   root.addChild(new MainColumn(panelReserve, () => hasMessages() ? chatStack : [startScreen]));
   tui.addChild(root);
   tui.setFocus(editor);
@@ -573,7 +582,8 @@ export function createShell(rt: ChatRuntime, stream: StreamController, mdTheme: 
           tui.requestRender();
           return { consume: true };
         }
-        const subRel = rel - cardPanel.render(Math.max(24, chatWidth())).length;
+        const chatW = Math.max(24, chatWidth());
+        const subRel = rel - cardPanel.render(chatW).length;
         if (subRel >= 0 && subPanel.isHeaderRow(subRel)) {
           subPanel.toggleCollapsed();
           tui.requestRender();
@@ -581,6 +591,18 @@ export function createShell(rt: ChatRuntime, stream: StreamController, mdTheme: 
         }
         const target = subRel >= 0 ? subPanel.targetAt(subRel) : null;
         if (target) { void stream.openSubagent(target); return { consume: true }; }
+        // The Processes panel sits right below the Sub-agents panel — its header toggles the list, and a
+        // click on a row's ✕ kills that background process (the daemon's `process` snapshot then drops it).
+        const procRel = subRel - subPanel.render(chatW).length;
+        if (procRel >= 0) {
+          if (processPanel.isHeaderRow(procRel)) {
+            processPanel.toggleCollapsed();
+            tui.requestRender();
+            return { consume: true };
+          }
+          const killId = processPanel.killAt(procRel, click.x);
+          if (killId) { killProcess(killId); return { consume: true }; }
+        }
       }
       const wheel = mouseWheel(data);
       if (wheel && noModal) {

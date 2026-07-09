@@ -2,6 +2,7 @@ import { truncateToWidth, visibleWidth, wrapTextWithAnsi } from '@earendil-works
 import { isDownKey, isEnterKey, isEscapeKey, isUpKey } from './keys.js';
 import type { Component, Container, Editor, Focusable, TUI } from '@earendil-works/pi-tui';
 import type { AskQuestion, BrainCard } from '../../brain/events.js';
+import type { ProcessInfo } from '../../brain/processRegistry.js';
 import { ansi, chatTheme, color } from './theme.js';
 import type { ToolOutputView } from '../../brain/messageView.js';
 import { formatDuration, formatK, padAnsi } from '../ui/text.js';
@@ -109,6 +110,51 @@ export class SubagentPanel implements Component {
       const gap = Math.max(1, width - visibleWidth(row) - visibleWidth(metaText) - 2);
       this.rowTargets.set(lines.length, e.sessionId);
       lines.push(`${row}${' '.repeat(gap)}${metaText}`);
+    }
+    return lines;
+  }
+}
+
+/** A slim fixed panel under the Sub-agents card listing the owner's live background shell processes
+ *  (the terminal plugin's `run_command(background:true)` children). One row per RUNNING process — a
+ *  status dot, the truncated command, its run time and a clickable ✕ that kills it. Exited/killed
+ *  processes drop off (the daemon's `process` snapshot is the single source of truth); renders nothing
+ *  when none run, so the bottom stack pays zero rows at rest. */
+export class ProcessPanel implements Component {
+  private entries: ProcessInfo[] = [];
+  private collapsed = false;
+  /** Row index (0-based within this panel's output) → the kill target on that row: the process id and
+   *  the 1-based screen-column span its ✕ occupies (the panel renders flush to the left edge, so a
+   *  visible-string column maps directly to a screen column for hit-testing). */
+  private killZones = new Map<number, { id: string; x0: number; x1: number }>();
+  invalidate(): void { /* re-rendered on the next frame */ }
+  set(processes: ProcessInfo[]): void { this.entries = processes.filter((p) => p.running); }
+  /** The header (row 0) toggles the process list open/closed, mirroring the Todos card. */
+  isHeaderRow(index: number): boolean { return index === 0 && this.entries.length > 0; }
+  toggleCollapsed(): void { this.collapsed = !this.collapsed; }
+  /** The process whose ✕ covers screen column `x` on panel row `index`, or null (no ✕ there). */
+  killAt(index: number, x: number): string | null {
+    const z = this.killZones.get(index);
+    return z && x >= z.x0 && x <= z.x1 ? z.id : null;
+  }
+  render(width = 80, now = Date.now()): string[] {
+    this.killZones = new Map();
+    if (this.entries.length === 0) return [];
+    const lines = [`  ${FAINTC(this.collapsed ? '▸' : '▾')} ${bold(WHITE('Processes'))}${FAINTC(`  ${this.entries.length} running`)} ${FAINTC('click ✕')}`];
+    if (this.collapsed) return lines;
+    for (const p of this.entries) {
+      const secs = Math.max(0, Math.round((now - new Date(p.startedAt).getTime()) / 1000));
+      const meta = FAINTC(formatDuration(secs));
+      const kill = color.error('✕');
+      const cmd = DIM(truncateToWidth(p.command.replace(/\s+/g, ' ').trim(), Math.max(10, width - visibleWidth(meta) - 12), '…'));
+      const row = `    ${GREENC('●')} ${cmd}`;
+      const gap = Math.max(1, width - visibleWidth(row) - visibleWidth(meta) - 3);
+      const full = `${row}${' '.repeat(gap)}${meta} ${kill}`;
+      // The ✕ is the last visible glyph — its 1-based column is the row's visible width. Give it a
+      // couple columns of slack so a near-miss click still lands the kill.
+      const killCol = visibleWidth(full);
+      this.killZones.set(lines.length, { id: p.id, x0: killCol - 1, x1: killCol + 1 });
+      lines.push(full);
     }
     return lines;
   }

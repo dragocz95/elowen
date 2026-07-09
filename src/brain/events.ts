@@ -1,6 +1,7 @@
 import type { AgentSession, AgentSessionEvent } from '@earendil-works/pi-coding-agent';
 import { toolCommand, toolDetail, toolOutputView } from './messageView.js';
 import type { ToolOutputView } from './messageView.js';
+import type { ProcessInfo } from './processRegistry.js';
 
 /** What a channel (web/terminal/Discord) receives from the brain. Stable regardless of the underlying
  *  PI event shape — the mapping lives in one place (`toBrainEvent`). This is the wire contract every
@@ -72,6 +73,13 @@ export type BrainEvent =
    *  @mention/prompt expansion), else the persisted model-facing text. Internal goal kickoff/continuation
    *  turns are NOT user messages and emit nothing. Safe to ignore (the streamed reply still arrives). */
   | { type: 'user'; text: string }
+  /** A FULL snapshot of the owner's background shell processes (the terminal plugin's
+   *  `run_command(background:true)` children), pushed to the owner's live client streams whenever one
+   *  spawns/exits/is killed — so the CLI/web process panel updates OUT of turn. Owner-only: a command
+   *  line can carry a secret, so the daemon emits it only to the owner's own streams (never a second
+   *  admin's). A client renders the running ones as a killable panel; empty snapshot clears it. Safe to
+   *  ignore (the panel just stays stale until the next status refresh). */
+  | { type: 'process'; processes: ProcessInfo[] }
   | { type: 'idle'; usage?: BrainUsage; model?: string }
   | { type: 'error'; message: string };
 
