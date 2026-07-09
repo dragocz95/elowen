@@ -18,22 +18,26 @@ export type ProviderResolver = (program: string) => { bin?: string; args?: strin
 
 /** The subset of SpawnService.launch input a brain worker needs (no tmux/CLI concerns). */
 export interface BrainWorkerLauncher {
-  launch(input: { projectId: number; projectPath: string; taskId: string; agentName: string; spec: AgentSpec; taskTitle?: string; taskDescription?: string; resumeNote?: string; rawPrompt?: string; ownerId?: number | null }): Promise<{ session: string }>;
+  launch(input: { projectId: number; projectPath: string; taskId: string; agentName: string; spec: AgentSpec; taskTitle?: string; taskDescription?: string; resumeNote?: string; rawPrompt?: string; ownerId?: number | null; tddMode?: boolean }): Promise<{ session: string }>;
 }
 
 export class SpawnService {
-  constructor(private d: { tmux: TmuxDriver; agents: AgentStore; elowen?: ElowenCliConfig; providers?: ProviderResolver; prompts?: PromptService; brainWorker?: BrainWorkerLauncher }) {}
+  constructor(private d: { tmux: TmuxDriver; agents: AgentStore; elowen?: ElowenCliConfig; providers?: ProviderResolver; prompts?: PromptService; brainWorker?: BrainWorkerLauncher; tddMode?: () => boolean }) {}
   /** Late wiring: the brain worker is constructed after SpawnService in bootstrap (it shares the
    *  brain's config/auth built further down), so it attaches here instead of via the constructor. */
   attachBrainWorker(w: BrainWorkerLauncher): void { this.d.brainWorker = w; }
-  async launch(input: { projectId: number; projectPath: string; taskId: string; agentName: string; spec: AgentSpec; taskTitle?: string; taskDescription?: string; resumeNote?: string; epicId?: string; extraEnv?: Record<string, string>; rawPrompt?: string; resume?: PendingResume; ownerId?: number | null; mcpUrl?: string }): Promise<{ session: string }> {
+  async launch(input: { projectId: number; projectPath: string; taskId: string; agentName: string; spec: AgentSpec; taskTitle?: string; taskDescription?: string; resumeNote?: string; epicId?: string; extraEnv?: Record<string, string>; rawPrompt?: string; resume?: PendingResume; ownerId?: number | null; mcpUrl?: string; tddMode?: boolean }): Promise<{ session: string }> {
+    // TDD mission mode resolves centrally HERE — one seam covers standalone, mission-phase AND embedded
+    // (elowen:) workers, so every caller honors the flag without threading it itself. An explicit
+    // per-call `input.tddMode` wins (future per-mission override); otherwise the global config resolver.
+    const tddMode = input.tddMode ?? this.d.tddMode?.() ?? false;
     // `elowen:<provider>/<model>` execs run on the embedded brain — no binary, no tmux pane. The one
     // seam for every caller (scheduler, mission engine, session routes); task states flow identically.
     if (input.spec.program === 'elowen') {
       if (!this.d.brainWorker) throw new Error('elowen exec engine not available (brain not configured)');
       if (input.rawPrompt) throw new Error('elowen exec engine does not support pilot/overseer raw prompts');
       this.d.agents.upsert({ project_id: input.projectId, name: input.agentName, program: 'elowen', model: input.spec.model });
-      return this.d.brainWorker.launch(input);
+      return this.d.brainWorker.launch({ ...input, tddMode });
     }
     this.d.agents.upsert({ project_id: input.projectId, name: input.agentName, program: input.spec.program, model: input.spec.model });
     const session = `elowen-${input.agentName}`;
@@ -61,7 +65,7 @@ export class SpawnService {
       projectPath: input.projectPath, taskId: input.taskId, agentName: input.agentName,
       taskTitle: input.taskTitle, taskDescription: input.taskDescription, resumeNote: input.resumeNote,
       closeCommand, epicId: input.epicId, cli, env, bin: provider?.bin, extraArgs: provider?.args,
-      skipPermissions: provider?.skipPermissions, rawPrompt: input.rawPrompt, resume, mcpUrl: input.mcpUrl,
+      skipPermissions: provider?.skipPermissions, rawPrompt: input.rawPrompt, resume, mcpUrl: input.mcpUrl, tddMode,
     }, renderPrompt);
     await this.d.tmux.spawn(session, { cwd: input.projectPath, command });
     // Explicit spawn record: captures pilot/overseer launches too (they have no task row, so the

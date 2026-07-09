@@ -1,4 +1,5 @@
 import { render, type PromptVars } from '../prompts/index.js';
+import { tddDirective } from '../prompts/tdd.js';
 import { resumeProviderFor, type PendingResume } from './resume/index.js';
 import { codexMcpArgs } from '../advisor/mcpConfig.js';
 
@@ -44,6 +45,10 @@ export interface SpawnCtx {
    *  the session's program still matches and the provider allows resume. When present, the prompt is a
    *  short continuation (worker-resume) rather than the full worker preamble. */
   resume?: PendingResume;
+  /** TDD mission mode: when on, a Test-Driven-Development directive (failing test first, then implement,
+   *  then verify) is appended to the rendered worker preamble (outside the template, so a saved override
+   *  can't drop it). Resolved centrally by the spawn layer from the global config flag; off by default. */
+  tddMode?: boolean;
   /** When set, the spawned CLI is wired to Elowen's MCP server at this URL. claude/opencode are wired by
    *  the config file `writeMcpConfig` drops into cwd; codex (which ignores project-local config) gets
    *  `-c mcp_servers.elowen.*` launch flags here. Set only for the advisor spawn; unset for workers. */
@@ -74,11 +79,16 @@ export function buildAgentCommand(spec: AgentSpec, ctx: SpawnCtx, renderPrompt: 
   // floor, then points the agent at `{{cli}} help` for the full control guide (how to work, ask the
   // autopilot, handoff notes, epic close). That guide is rendered on demand by the daemon from the
   // task's live state, so the tutorial lives in ONE place instead of being copied into every preamble.
-  const prompt = ctx.resume
+  const base = ctx.resume
     ? renderPrompt('worker-resume', { agentName: ctx.agentName, taskId: ctx.taskId, titlePart, detailsPart, resumePart, closeCommand, cli: ctx.cli ?? 'elowen' })
     : ctx.epicId
       ? renderPrompt('worker-phase', { agentName: ctx.agentName, taskId: ctx.taskId, titlePart, detailsPart, resumePart, epicId: ctx.epicId, closeCommand, cli: ctx.cli ?? 'elowen' })
       : renderPrompt('worker', { agentName: ctx.agentName, taskId: ctx.taskId, titlePart, detailsPart, resumePart, closeCommand, cli: ctx.cli ?? 'elowen' });
+  // Inject the TDD directive AFTER the template renders, not through a `{{tddDirective}}` placeholder:
+  // a user's saved wholesale override (edited before TDD mode existed) carries no such placeholder, so
+  // riding on it would silently drop the directive. Appending at this seam makes the placeholder
+  // unnecessary — TDD mode reaches the worker regardless of the override. Off state appends '' (no-op).
+  const prompt = base + tddDirective(ctx.tddMode ?? false);
   return buildLaunchCommand(spec, ctx, prompt);
 }
 

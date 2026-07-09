@@ -82,4 +82,33 @@ describe('SpawnService elowen seam', () => {
     await expect(withWorker.launch({ projectId: 1, projectPath: '/o', taskId: 't', agentName: 'a', spec: { program: 'elowen', model: 'm' }, rawPrompt: 'PILOT' }))
       .rejects.toThrow(/raw prompt/i);
   });
+
+  it('resolves the global tddMode() resolver into a CLI worker preamble', async () => {
+    const { agents, tmux } = mk();
+    const svc = new SpawnService({ tmux, agents, tddMode: () => true });
+    await svc.launch({ projectId: 1, projectPath: '/o', taskId: 'elowen-1', agentName: 'Nova', spec: { program: 'claude-code', model: 'sonnet' } });
+    expect(tmux.commandFor('elowen-Nova')).toContain('Test-Driven Development');
+  });
+
+  it('omits the TDD directive when the resolver returns false (default)', async () => {
+    const { agents, tmux } = mk();
+    const svc = new SpawnService({ tmux, agents, tddMode: () => false });
+    await svc.launch({ projectId: 1, projectPath: '/o', taskId: 'elowen-1', agentName: 'Nova', spec: { program: 'claude-code', model: 'sonnet' } });
+    expect(tmux.commandFor('elowen-Nova')).not.toContain('Test-Driven Development');
+  });
+
+  it('threads the resolved tddMode into the brain worker launch input for an elowen: spec', async () => {
+    const { agents, tmux } = mk();
+    const launched: { tddMode?: boolean }[] = [];
+    const svc = new SpawnService({ tmux, agents, tddMode: () => true, brainWorker: { launch: async (i) => { launched.push(i); return { session: `elowen-${i.agentName}` }; } } });
+    await svc.launch({ projectId: 1, projectPath: '/o', taskId: 'T-1', agentName: 'a9', spec: { program: 'elowen', model: 'relay/kimi' } });
+    expect(launched[0].tddMode).toBe(true);
+  });
+
+  it('lets an explicit per-call tddMode override the global resolver', async () => {
+    const { agents, tmux } = mk();
+    const svc = new SpawnService({ tmux, agents, tddMode: () => false });
+    await svc.launch({ projectId: 1, projectPath: '/o', taskId: 'elowen-1', agentName: 'Nova', spec: { program: 'claude-code', model: 'sonnet' }, tddMode: true });
+    expect(tmux.commandFor('elowen-Nova')).toContain('Test-Driven Development');
+  });
 });

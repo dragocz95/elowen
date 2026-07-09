@@ -135,6 +135,31 @@ describe('buildAgentCommand', () => {
     expect(cmd).not.toContain('1200000 ms'); // reasoning agents bypass the worker preamble
   });
 
+  describe('TDD mission mode', () => {
+    it('injects the TDD directive into the cold worker preamble when tddMode is on', () => {
+      const cmd = buildAgentCommand({ program: 'claude-code', model: 'sonnet' }, { projectPath: '/o', taskId: 'elowen-1', agentName: 'A', tddMode: true });
+      expect(cmd).toContain('Test-Driven Development');
+      expect(cmd).toContain('confirm it FAILS'); // the failing-test-first rule
+    });
+    it('omits the TDD directive when tddMode is off or unset', () => {
+      const off = buildAgentCommand({ program: 'claude-code', model: 'sonnet' }, { projectPath: '/o', taskId: 'elowen-1', agentName: 'A', tddMode: false });
+      const unset = buildAgentCommand({ program: 'claude-code', model: 'sonnet' }, { projectPath: '/o', taskId: 'elowen-1', agentName: 'A' });
+      expect(off).not.toContain('Test-Driven Development');
+      expect(unset).not.toContain('Test-Driven Development');
+      expect(unset).not.toContain('{{tddDirective}}'); // placeholder always substituted, never leaks raw
+    });
+    it('injects the TDD directive into the phase template too (epicId set)', () => {
+      const cmd = buildAgentCommand({ program: 'opencode', model: 'm' }, { projectPath: '/o', taskId: 'elowen-2', agentName: 'A', epicId: 'elowen-epic', tddMode: true });
+      expect(cmd).toContain('ONE phase of mission elowen-epic'); // confirms the worker-phase template
+      expect(cmd).toContain('Test-Driven Development');
+    });
+    it('injects the TDD directive into the resume template too (reattached session)', () => {
+      const cmd = buildAgentCommand({ program: 'claude-code', model: 'sonnet' }, { projectPath: '/o', taskId: 'elowen-1', agentName: 'A', resume: { program: 'claude-code', sessionId: 's1' }, tddMode: true });
+      expect(cmd).toContain('resuming your earlier session'); // confirms the worker-resume template
+      expect(cmd).toContain('Test-Driven Development');
+    });
+  });
+
   describe('new agent CLIs', () => {
     it('routes kilo to the interactive TUI with a --prompt flag and no command-line bypass (7.x)', () => {
       const cmd = buildAgentCommand({ program: 'kilo', model: 'anthropic/claude-sonnet-4-5' }, { projectPath: '/o', taskId: 'elowen-1', agentName: 'A' });

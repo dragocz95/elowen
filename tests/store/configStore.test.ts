@@ -23,6 +23,18 @@ describe('ConfigStore', () => {
     expect(JSON.stringify(c)).not.toContain('secret-key');
     expect(cfg.apiKey()).toBe('secret-key');
   });
+  it('tddMode round-trips, defaults off, and a partial patch preserves siblings', () => {
+    expect(cfg.get().autopilot.tddMode).toBe(false); // default off
+    cfg.update({ autopilot: { reviewOnDone: true } });
+    cfg.update({ autopilot: { tddMode: true } });
+    const c = cfg.get();
+    expect(c.autopilot.tddMode).toBe(true);
+    expect(c.autopilot.reviewOnDone).toBe(true); // the tddMode patch left the sibling alone
+    // Flipping it back off round-trips too, without disturbing reviewOnDone.
+    const c2 = cfg.update({ autopilot: { tddMode: false } });
+    expect(c2.autopilot.tddMode).toBe(false);
+    expect(c2.autopilot.reviewOnDone).toBe(true);
+  });
   it('update without apiKey keeps the existing key', () => {
     cfg.update({ autopilot: { apiKey: 'k1' } });
     cfg.update({ autopilot: { model: 'x' } });

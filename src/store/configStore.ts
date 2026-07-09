@@ -43,7 +43,7 @@ export interface ElowenConfig {
   customModels: { label: string; exec: string }[];
   hiddenPresets: string[];
   modelNotes: Record<string, string>;
-  autopilot: { model: string; overseerModel: string; apiUrl: string; providerId: string; apiKeySet: boolean; notes: string; prompt: string; pilotExec: string; overseerExec: string; reviewOnDone: boolean; prEnabled: boolean; prBaseBranch: string; prAutoOpen: boolean; prVerifyCommand: string; ghTokenSet: boolean };
+  autopilot: { model: string; overseerModel: string; apiUrl: string; providerId: string; apiKeySet: boolean; notes: string; prompt: string; pilotExec: string; overseerExec: string; reviewOnDone: boolean; tddMode: boolean; prEnabled: boolean; prBaseBranch: string; prAutoOpen: boolean; prVerifyCommand: string; ghTokenSet: boolean };
   providers: Providers;
   defaults: { exec: string; autonomy: string; maxSessions: number };
   security: { tokenTtlDays: number };
@@ -227,7 +227,7 @@ const DEFAULT_CONFIG: ElowenConfig = {
   customModels: [],
   hiddenPresets: [],
   modelNotes: { ...EXEC_NOTES },
-  autopilot: { model: 'gpt-4o-mini', overseerModel: '', apiUrl: 'https://api.openai.com/v1', providerId: '', apiKeySet: false, notes: '', prompt: defaultPromptTemplate(), pilotExec: '', overseerExec: '', reviewOnDone: false, prEnabled: false, prBaseBranch: '', prAutoOpen: false, prVerifyCommand: '', ghTokenSet: false },
+  autopilot: { model: 'gpt-4o-mini', overseerModel: '', apiUrl: 'https://api.openai.com/v1', providerId: '', apiKeySet: false, notes: '', prompt: defaultPromptTemplate(), pilotExec: '', overseerExec: '', reviewOnDone: false, tddMode: false, prEnabled: false, prBaseBranch: '', prAutoOpen: false, prVerifyCommand: '', ghTokenSet: false },
   providers: { ...DEFAULT_PROVIDERS },
   defaults: { exec: 'sonnet', autonomy: 'L3', maxSessions: 1 },
   security: { tokenTtlDays: 30 },
@@ -245,7 +245,7 @@ interface Stored {
   customModels: { label: string; exec: string }[];
   hiddenPresets: string[];
   modelNotes: Record<string, string>;
-  autopilot: { model: string; overseerModel: string; apiUrl: string; providerId: string; notes: string; prompt: string; pilotExec: string; overseerExec: string; reviewOnDone: boolean; prEnabled: boolean; prBaseBranch: string; prAutoOpen: boolean; prVerifyCommand: string };
+  autopilot: { model: string; overseerModel: string; apiUrl: string; providerId: string; notes: string; prompt: string; pilotExec: string; overseerExec: string; reviewOnDone: boolean; tddMode: boolean; prEnabled: boolean; prBaseBranch: string; prAutoOpen: boolean; prVerifyCommand: string };
   providers: Providers;
   apiKey: string | null;
   ghToken: string | null;
@@ -279,7 +279,7 @@ const defaultStored = (): Stored => ({
   customModels: [],
   hiddenPresets: [],
   modelNotes: { ...EXEC_NOTES },
-  autopilot: { model: DEFAULT_CONFIG.autopilot.model, overseerModel: '', apiUrl: DEFAULT_CONFIG.autopilot.apiUrl, providerId: '', notes: '', prompt: DEFAULT_CONFIG.autopilot.prompt, pilotExec: '', overseerExec: '', reviewOnDone: false, prEnabled: false, prBaseBranch: '', prAutoOpen: false, prVerifyCommand: '' },
+  autopilot: { model: DEFAULT_CONFIG.autopilot.model, overseerModel: '', apiUrl: DEFAULT_CONFIG.autopilot.apiUrl, providerId: '', notes: '', prompt: DEFAULT_CONFIG.autopilot.prompt, pilotExec: '', overseerExec: '', reviewOnDone: false, tddMode: false, prEnabled: false, prBaseBranch: '', prAutoOpen: false, prVerifyCommand: '' },
   providers: { ...DEFAULT_PROVIDERS },
   apiKey: null,
   ghToken: null,
@@ -299,7 +299,7 @@ export interface ConfigPatch {
   customModels?: { label: string; exec: string }[];
   hiddenPresets?: string[];
   modelNotes?: Record<string, string>;
-  autopilot?: { model?: string; overseerModel?: string; apiUrl?: string; providerId?: string; apiKey?: string; notes?: string; prompt?: string; pilotExec?: string; overseerExec?: string; reviewOnDone?: boolean; prEnabled?: boolean; prBaseBranch?: string; prAutoOpen?: boolean; prVerifyCommand?: string; ghToken?: string };
+  autopilot?: { model?: string; overseerModel?: string; apiUrl?: string; providerId?: string; apiKey?: string; notes?: string; prompt?: string; pilotExec?: string; overseerExec?: string; reviewOnDone?: boolean; tddMode?: boolean; prEnabled?: boolean; prBaseBranch?: string; prAutoOpen?: boolean; prVerifyCommand?: string; ghToken?: string };
   providers?: Providers;
   defaults?: { exec?: string; autonomy?: string; maxSessions?: number };
   security?: { tokenTtlDays?: number };
@@ -334,7 +334,7 @@ export class ConfigStore {
         // Seed built-in notes under any stored notes so known models always carry a description,
         // while user edits (including an explicit '' to clear one) take precedence.
         modelNotes: (p.modelNotes && typeof p.modelNotes === 'object' && !Array.isArray(p.modelNotes)) ? { ...d.modelNotes, ...(p.modelNotes as Record<string, string>) } : { ...d.modelNotes },
-        autopilot: { model: p.autopilot?.model ?? d.autopilot.model, overseerModel: p.autopilot?.overseerModel ?? d.autopilot.overseerModel, apiUrl: p.autopilot?.apiUrl ?? d.autopilot.apiUrl, providerId: p.autopilot?.providerId ?? d.autopilot.providerId, notes: p.autopilot?.notes ?? d.autopilot.notes, prompt: p.autopilot?.prompt ?? d.autopilot.prompt, pilotExec: p.autopilot?.pilotExec ?? d.autopilot.pilotExec, overseerExec: p.autopilot?.overseerExec ?? d.autopilot.overseerExec, reviewOnDone: p.autopilot?.reviewOnDone ?? d.autopilot.reviewOnDone, prEnabled: p.autopilot?.prEnabled ?? d.autopilot.prEnabled, prBaseBranch: p.autopilot?.prBaseBranch ?? d.autopilot.prBaseBranch, prAutoOpen: p.autopilot?.prAutoOpen ?? d.autopilot.prAutoOpen, prVerifyCommand: p.autopilot?.prVerifyCommand ?? d.autopilot.prVerifyCommand },
+        autopilot: { model: p.autopilot?.model ?? d.autopilot.model, overseerModel: p.autopilot?.overseerModel ?? d.autopilot.overseerModel, apiUrl: p.autopilot?.apiUrl ?? d.autopilot.apiUrl, providerId: p.autopilot?.providerId ?? d.autopilot.providerId, notes: p.autopilot?.notes ?? d.autopilot.notes, prompt: p.autopilot?.prompt ?? d.autopilot.prompt, pilotExec: p.autopilot?.pilotExec ?? d.autopilot.pilotExec, overseerExec: p.autopilot?.overseerExec ?? d.autopilot.overseerExec, reviewOnDone: p.autopilot?.reviewOnDone ?? d.autopilot.reviewOnDone, tddMode: p.autopilot?.tddMode ?? d.autopilot.tddMode, prEnabled: p.autopilot?.prEnabled ?? d.autopilot.prEnabled, prBaseBranch: p.autopilot?.prBaseBranch ?? d.autopilot.prBaseBranch, prAutoOpen: p.autopilot?.prAutoOpen ?? d.autopilot.prAutoOpen, prVerifyCommand: p.autopilot?.prVerifyCommand ?? d.autopilot.prVerifyCommand },
         providers: { ...d.providers, ...sanitizeProviders(p.providers) },
         apiKey: typeof p.apiKey === 'string' ? p.apiKey : null,
         ghToken: typeof p.ghToken === 'string' ? p.ghToken : null,
@@ -390,7 +390,7 @@ export class ConfigStore {
       customModels: s.customModels,
       hiddenPresets: s.hiddenPresets,
       modelNotes: s.modelNotes,
-      autopilot: { model: s.autopilot.model, overseerModel: s.autopilot.overseerModel, apiUrl: s.autopilot.apiUrl, providerId: s.autopilot.providerId, apiKeySet: !!s.apiKey, notes: s.autopilot.notes, prompt: s.autopilot.prompt, pilotExec: s.autopilot.pilotExec, overseerExec: s.autopilot.overseerExec, reviewOnDone: s.autopilot.reviewOnDone, prEnabled: s.autopilot.prEnabled, prBaseBranch: s.autopilot.prBaseBranch, prAutoOpen: s.autopilot.prAutoOpen, prVerifyCommand: s.autopilot.prVerifyCommand, ghTokenSet: !!s.ghToken },
+      autopilot: { model: s.autopilot.model, overseerModel: s.autopilot.overseerModel, apiUrl: s.autopilot.apiUrl, providerId: s.autopilot.providerId, apiKeySet: !!s.apiKey, notes: s.autopilot.notes, prompt: s.autopilot.prompt, pilotExec: s.autopilot.pilotExec, overseerExec: s.autopilot.overseerExec, reviewOnDone: s.autopilot.reviewOnDone, tddMode: s.autopilot.tddMode, prEnabled: s.autopilot.prEnabled, prBaseBranch: s.autopilot.prBaseBranch, prAutoOpen: s.autopilot.prAutoOpen, prVerifyCommand: s.autopilot.prVerifyCommand, ghTokenSet: !!s.ghToken },
       providers: s.providers,
       defaults: s.defaults,
       security: s.security,
@@ -459,7 +459,7 @@ export class ConfigStore {
       customModels: patch.customModels ?? cur.customModels,
       hiddenPresets: patch.hiddenPresets ?? cur.hiddenPresets,
       modelNotes: patch.modelNotes ?? cur.modelNotes,
-      autopilot: { model: patch.autopilot?.model ?? cur.autopilot.model, overseerModel: patch.autopilot?.overseerModel ?? cur.autopilot.overseerModel, apiUrl: patch.autopilot?.apiUrl ?? cur.autopilot.apiUrl, providerId: patch.autopilot?.providerId ?? cur.autopilot.providerId, notes: patch.autopilot?.notes ?? cur.autopilot.notes, prompt: patch.autopilot?.prompt ?? cur.autopilot.prompt, pilotExec, overseerExec, reviewOnDone: patch.autopilot?.reviewOnDone ?? cur.autopilot.reviewOnDone, prEnabled: patch.autopilot?.prEnabled ?? cur.autopilot.prEnabled, prBaseBranch: patch.autopilot?.prBaseBranch ?? cur.autopilot.prBaseBranch, prAutoOpen: patch.autopilot?.prAutoOpen ?? cur.autopilot.prAutoOpen, prVerifyCommand: patch.autopilot?.prVerifyCommand ?? cur.autopilot.prVerifyCommand },
+      autopilot: { model: patch.autopilot?.model ?? cur.autopilot.model, overseerModel: patch.autopilot?.overseerModel ?? cur.autopilot.overseerModel, apiUrl: patch.autopilot?.apiUrl ?? cur.autopilot.apiUrl, providerId: patch.autopilot?.providerId ?? cur.autopilot.providerId, notes: patch.autopilot?.notes ?? cur.autopilot.notes, prompt: patch.autopilot?.prompt ?? cur.autopilot.prompt, pilotExec, overseerExec, reviewOnDone: patch.autopilot?.reviewOnDone ?? cur.autopilot.reviewOnDone, tddMode: patch.autopilot?.tddMode ?? cur.autopilot.tddMode, prEnabled: patch.autopilot?.prEnabled ?? cur.autopilot.prEnabled, prBaseBranch: patch.autopilot?.prBaseBranch ?? cur.autopilot.prBaseBranch, prAutoOpen: patch.autopilot?.prAutoOpen ?? cur.autopilot.prAutoOpen, prVerifyCommand: patch.autopilot?.prVerifyCommand ?? cur.autopilot.prVerifyCommand },
       providers: patch.providers ? { ...cur.providers, ...sanitizeProviders(patch.providers) } : cur.providers,
       apiKey: (typeof newKey === 'string' && newKey.length > 0) ? newKey : cur.apiKey,
       ghToken: (typeof newGhToken === 'string' && newGhToken.length > 0) ? newGhToken : cur.ghToken,
