@@ -197,6 +197,18 @@ describe('BrainStore', () => {
       expect(rows[0]!.usage.total).toBe(100);
     });
 
+    it('INCLUDES platform channel sessions (brain-ch-*) — the operator anchors them', () => {
+      store.createSession({ id: 'brain-a', userId: 1, model: 'claude-opus-4-8' });
+      usageMsg('brain-a', 'm1', { totalTokens: 100, cost: 0.1 });
+      // A Discord channel session owned by the same operator (e.g. sarah-mimo-v2.5): its spend is the
+      // operator's own and MUST show up in the per-model breakdown.
+      store.createSession({ id: 'brain-ch-12345', userId: 1, model: 'sarah-mimo-v2.5' });
+      usageMsg('brain-ch-12345', 'c1', { totalTokens: 5000, cost: 0.2 }, Date.now(), 'sarah-mimo-v2.5');
+      const rows = store.usageByModel(1);
+      expect(rows.map((r) => r.exec).sort()).toEqual(['elowen:claude-opus-4-8', 'elowen:sarah-mimo-v2.5']);
+      expect(rows.find((r) => r.exec === 'elowen:sarah-mimo-v2.5')!.usage.total).toBe(5000);
+    });
+
     it('reads cost as unavailable / null when no message carried one', () => {
       store.createSession({ id: 'brain-a', userId: 1, model: 'relay/glm' });
       usageMsg('brain-a', 'm1', { totalTokens: 100 });
@@ -269,6 +281,15 @@ describe('BrainStore', () => {
       const days = store.usageByDay(1, 7);
       const tokens = days.reduce((s, d) => s + d.tokens, 0);
       expect(tokens).toBe(130); // 100 chat + 30 crashed-worker; the snapshotted 900 is NOT counted
+    });
+
+    it('includes platform channel (brain-ch-*) sessions in usageByDay', () => {
+      store.createSession({ id: 'brain-a', userId: 1, model: 'm' });
+      usageMsg('brain-a', 'm1', { totalTokens: 100, cost: 0.1 });
+      store.createSession({ id: 'brain-ch-777', userId: 1, model: 'sarah-mimo-v2.5' });
+      usageMsg('brain-ch-777', 'c1', { totalTokens: 5000, cost: 0.2 });
+      const tokens = store.usageByDay(1, 7).reduce((s, d) => s + d.tokens, 0);
+      expect(tokens).toBe(5100); // Discord channel spend IS counted (operator-anchored)
     });
 
     describe('survives compaction (rollup on the divider)', () => {

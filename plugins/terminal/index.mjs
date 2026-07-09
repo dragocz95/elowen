@@ -16,7 +16,7 @@ const fail = (e) => ok(`Error: ${e instanceof Error ? e.message : String(e)}`);
 
 /** One background child: rolling output buffer + exit state, addressable by a short id. */
 class BgProcess {
-  constructor(id, command, cwd, outputCap) {
+  constructor(id, command, cwd, outputCap, onClose) {
     this.id = id;
     this.command = command;
     this.cwd = cwd;
@@ -24,7 +24,11 @@ class BgProcess {
     this.readOffset = 0;
     this.exitCode = null;
     this.startedAt = new Date().toISOString();
-    this.child = spawn(command, { cwd, shell: true, env: process.env, detached: false });
+    // `detached: true` puts the child shell in its OWN process group (pgid == its pid) instead of the
+    // daemon's. Without it, `shell: true` runs `/bin/sh -c "<cmd>"` and kill() would only reap the shell —
+    // any grandchild (e.g. the `sleep`/dev-server the shell forked) is orphaned to init and keeps running.
+    // With its own group we can signal the whole tree via `process.kill(-pid)` in kill().
+    this.child = spawn(command, { cwd, shell: true, env: process.env, detached: true });
     const onData = (d) => {
       this.output += d.toString();
       if (this.output.length > outputCap) { // keep the tail; new-output reads follow the trim
@@ -35,11 +39,16 @@ class BgProcess {
     };
     this.child.stdout.on('data', onData);
     this.child.stderr.on('data', onData);
-    this.child.on('close', (code) => { this.exitCode = code ?? -1; });
-    this.child.on('error', (e) => { this.output += `\n[spawn error: ${e.message}]`; this.exitCode = -1; });
+    this.child.on('close', (code) => { this.exitCode = code ?? -1; onClose?.(); });
+    this.child.on('error', (e) => { this.output += `\n[spawn error: ${e.message}]`; this.exitCode = -1; onClose?.(); });
   }
   get running() { return this.exitCode === null; }
-  kill() { try { this.child.kill('SIGKILL'); } catch { /* already gone */ } }
+  // Kill the whole process group (negative pid) so the shell AND anything it forked die together; fall
+  // back to a plain child kill if the group signal fails (e.g. the child already exited).
+  kill() {
+    try { process.kill(-this.child.pid, 'SIGKILL'); }
+    catch { try { this.child.kill('SIGKILL'); } catch { /* already gone */ } }
+  }
 }
 
 function runForeground(command, cwd, outputCap, timeoutMs) {
@@ -61,7 +70,26 @@ function runForeground(command, cwd, outputCap, timeoutMs) {
 }
 
 export function register(ctx) {
-  const processes = new Map(); // id → BgProcess
+  const processes = new Map(); // id → BgProcess (local: powers the incremental read_process_output tool)
+
+  // Mirror each background child into the daemon-level registry so the CLI + web can list/read/kill them
+  // from a panel next to the todos (ctx.processes is the shared ProcessRegistry). The plugin still owns
+  // the BgProcess (spawn/output/kill); the registry gets a thin handle.
+  const handleFor = (id, bg, userId, sessionId) => ({
+    id, command: bg.command, cwd: bg.cwd, startedAt: bg.startedAt, userId, sessionId,
+    running: () => bg.running, exitCode: () => bg.exitCode,
+    readAll: () => bg.output, kill: () => bg.kill(),
+  });
+  // Re-emit the pinned "Background processes" card listing what's still running (empty card → removed).
+  // No-op outside an interactive turn (emitCard wires no emitter for worker/cron), which is fine — the
+  // web panel reads the live list from GET /brain/processes.
+  const emitProcCard = () => {
+    const running = ctx.processes.list().filter((p) => p.running);
+    ctx.emitCard(running.length
+      ? { id: 'bg-processes', title: `Background processes (${running.length})`, items: running.map((p) => ({ text: p.command, status: 'in_progress' })), pinned: true }
+      : { id: 'bg-processes' });
+  };
+  const dropProc = (id) => { processes.delete(id); ctx.processes.remove(id); };
 
   // Also caps the rolling buffer kept for background processes (BgProcess.output trim above).
   const outputCap = Math.min(Math.max(Number(ctx.config.outputCap) || DEFAULT_MAX, 10_000), 500_000);
@@ -96,10 +124,18 @@ export function register(ctx) {
         const cwd = guardCwd(p.cwd);
         if (!p.background) return ok(await runForeground(p.command, cwd, outputCap, commandTimeoutMs));
         // prune finished processes before the cap check so dead entries don't block new work
-        for (const [id, bg] of processes) { if (!bg.running) processes.delete(id); }
+        for (const [id, bg] of processes) { if (!bg.running) dropProc(id); }
         if (processes.size >= MAX_BG) return ok(`Error: too many background processes (${MAX_BG}); kill one first.`);
         const id = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`;
-        processes.set(id, new BgProcess(id, p.command, cwd, outputCap));
+        // The operator who started it (+ the session they started it in) → wake THAT conversation when it
+        // exits (markExited on close). Field is `elowenUserId` (was mis-typed as the pre-rebrand `orcaUserId`,
+        // which is undefined → the wake never fired).
+        const userId = ctx.currentIdentity?.()?.elowenUserId ?? null;
+        const sessionId = ctx.currentSessionId?.() ?? null;
+        const bg = new BgProcess(id, p.command, cwd, outputCap, () => { emitProcCard(); ctx.processes.markExited(id); });
+        processes.set(id, bg);
+        ctx.processes.register(handleFor(id, bg, userId, sessionId));
+        emitProcCard();
         return ok(`Started background process ${id}: ${p.command}\n(cwd: ${cwd})\nUse read_process_output("${id}") to check on it.`);
       } catch (e) { return fail(e); }
     },
@@ -134,7 +170,7 @@ export function register(ctx) {
       const text = p.all ? bg.output : bg.output.slice(bg.readOffset);
       bg.readOffset = bg.output.length;
       const state = bg.running ? '[still running]' : `[exited ${bg.exitCode}]`;
-      if (!bg.running) processes.delete(p.id); // final read collects the corpse
+      if (!bg.running) { dropProc(p.id); emitProcCard(); } // final read collects the corpse
       return ok(`${text || '(no new output)'}\n${state}`);
     },
   }));
@@ -149,7 +185,8 @@ export function register(ctx) {
       const bg = processes.get(p.id);
       if (!bg) return ok(`Error: no background process ${p.id}.`);
       bg.kill();
-      processes.delete(p.id);
+      dropProc(p.id);
+      emitProcCard();
       return ok(`Killed ${p.id} ($ ${bg.command}).`);
     },
   }));

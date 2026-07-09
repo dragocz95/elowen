@@ -57,6 +57,21 @@ describe('createMeteredFetch', () => {
     expect(meter.costUsd).toBeCloseTo(0.03);
   });
 
+  it('meters an OpenRouter-backed proxy (non-openrouter host) WITHOUT rewriting its body', async () => {
+    // cliproxyapi returns OpenRouter's cost natively in the same usage frame, so we sniff it — but must
+    // NOT inject the openrouter-only `usage:{include:true}` flag into a proxy/plain-OpenAI request.
+    let sentBody: unknown;
+    const base = (async (_url: never, init?: RequestInit) => { sentBody = init?.body; return openRouterStream(0.009); }) as unknown as typeof fetch;
+    const fetchImpl = createMeteredFetch(base);
+    const meter = newCostMeter();
+    await runWithMeter(meter, async () => {
+      await drain(await fetchImpl('https://ai.coresynth.io/v1/chat/completions', { method: 'POST', body: '{"model":"sarah-mimo-v2.5","stream":true}' }));
+    });
+    expect(meter.reported).toBe(true);
+    expect(meter.costUsd).toBeCloseTo(0.009);
+    expect(sentBody).toBe('{"model":"sarah-mimo-v2.5","stream":true}'); // body untouched — no accounting flag
+  });
+
   it('leaves non-OpenRouter requests untouched (no body rewrite, no metering)', async () => {
     let sentBody: unknown;
     const base = (async (_url: never, init?: RequestInit) => { sentBody = init?.body; return new Response('ok', { status: 200 }); }) as unknown as typeof fetch;

@@ -12,15 +12,24 @@ export interface CostMeter {
   currency: string | null;
   /** True once at least one completion returned a numeric `usage.cost`. */
   reported: boolean;
+  /** How much of `costUsd` has already been stamped onto a persisted message. Lets a multi-`agent_end`
+   *  scope (a turn plus its thinking-only nudge) stamp only the per-event DELTA, never double-count. */
+  stampedUsd: number;
   /** The last provider `usage` object seen (tokens + cost only — no prompt/response content). */
   raw?: Record<string, unknown>;
 }
 
 export function newCostMeter(): CostMeter {
-  return { costUsd: 0, currency: null, reported: false };
+  return { costUsd: 0, currency: null, reported: false, stampedUsd: 0 };
 }
 
 const meterStore = new AsyncLocalStorage<CostMeter>();
+
+/** The cost meter ambient to the current async context (a turn wrapped in `runWithMeter`), or undefined
+ *  outside one. Persistence reads it to stamp the real provider cost onto the turn's assistant row. */
+export function currentMeter(): CostMeter | undefined {
+  return meterStore.getStore();
+}
 
 /** Run `fn` with `meter` as the ambient cost accumulator. Any OpenRouter completion issued during the
  *  awaited work (pi-ai calls the global fetch, which propagates this async context) folds its reported
@@ -29,6 +38,17 @@ export function runWithMeter<T>(meter: CostMeter, fn: () => Promise<T>): Promise
   return meterStore.run(meter, fn);
 }
 
+/** Any OpenAI-style chat-completions POST, regardless of host. We meter (tee + sniff `usage.cost`) ALL of
+ *  them: an OpenRouter-backed proxy (e.g. cliproxyapi) returns OpenRouter's `usage.cost` in the same usage
+ *  frame pi-ai already reads for tokens, so the cost is right there — we just capture what pi-ai drops.
+ *  A plain OpenAI/ollama endpoint simply omits `cost`, so the sniff is a harmless no-op there. */
+function isChatCompletionsPost(url: string, method: string): boolean {
+  if (method.toUpperCase() !== 'POST') return false;
+  try { return new URL(url).pathname.includes('/chat/completions'); } catch { return false; }
+}
+
+/** Specifically openrouter.ai. Only this host needs the `usage:{include:true}` request flag to return the
+ *  cost; a proxy in front of OpenRouter returns it natively, and other hosts don't understand the flag. */
 function isOpenRouterCompletions(url: string, method: string): boolean {
   if (method.toUpperCase() !== 'POST') return false;
   try {
@@ -99,10 +119,14 @@ export function createMeteredFetch(base: typeof fetch): typeof fetch {
     try {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
       const method = init?.method ?? (input instanceof Request ? input.method : 'GET');
-      if (isOpenRouterCompletions(url, method)) {
-        meterIt = true;
-        // Only rewrite the plain (url, init) shape pi-ai's SDK uses; a Request-object body is left as-is.
-        if (init && typeof init.body === 'string') nextInit = { ...init, body: withUsageAccounting(init.body) as string };
+      if (isChatCompletionsPost(url, method)) {
+        meterIt = true; // tee + sniff cost for every completion; a host that omits cost is a no-op
+        // Only openrouter.ai needs the accounting flag to include cost. A proxy already returns it, and a
+        // plain OpenAI endpoint mustn't get the unknown field. Only rewrite the (url, init) string body
+        // shape pi-ai's SDK uses; a Request-object body is left as-is.
+        if (isOpenRouterCompletions(url, method) && init && typeof init.body === 'string') {
+          nextInit = { ...init, body: withUsageAccounting(init.body) as string };
+        }
       }
     } catch (e) {
       log.error('openrouter meter wrapper setup failed, falling back to plain fetch', e);

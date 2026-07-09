@@ -23,6 +23,8 @@ export interface SubagentState {
   tools: number;
   tokens?: number;
   seconds: number;
+  /** The model the sub-agent runs on (its own, or the delegating conversation's) — shown in the table. */
+  model?: string;
 }
 export type Segment =
   | { kind: 'text'; text: string }
@@ -189,7 +191,7 @@ export function reduce(view: ChatView, e: BrainEvent): ChatView {
       const t = ensureElowen();
       attachToTool(t, e.id, (item) => ({
         ...item,
-        sub: { sessionId: e.sessionId, status: e.status, task: e.task, detail: e.detail, tools: e.tools, tokens: e.tokens, seconds: e.seconds },
+        sub: { sessionId: e.sessionId, status: e.status, task: e.task, detail: e.detail, tools: e.tools, tokens: e.tokens, seconds: e.seconds, model: e.model },
       }));
       return { turns, thinking: true, notice: view.notice };
     }

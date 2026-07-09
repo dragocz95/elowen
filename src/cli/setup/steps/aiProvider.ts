@@ -4,7 +4,9 @@ import type { OAuthFlowState } from '../../../brain/oauth.js';
 import { PREFERRED_DEFAULT } from '../../../brain/providers.js';
 import { apiJson } from '../http.js';
 import { openBrowser } from '../browser.js';
-import { API_KEY_PROVIDERS, OAUTH_CHOICES } from '../constants.js';
+import { API_KEY_PROVIDERS, OAUTH_CHOICES, OLLAMA_LOCAL_BASE } from '../constants.js';
+import { realRunner } from '../../install/runner.js';
+import { provisionOllama, listLocalModels, SUGGESTED_OLLAMA_MODELS } from '../../provision/ollama.js';
 import { deriveSlug, uniqueSlug } from '../slug.js';
 import { guard, WizardCancelled, type StepResult, type WizardCtx } from '../types.js';
 import { getBrainProviders, keepProvider, putEmbeddedExec, type PublicProvider } from './shared.js';
@@ -40,6 +42,7 @@ export async function runAiStep(ctx: WizardCtx): Promise<StepResult> {
       ...OAUTH_CHOICES.map((c) => ({ value: c.type, label: c === recommendedOauth ? `${c.label} (Recommended)` : c.label })),
       { value: 'apikey', label: recommendedValue === 'apikey' ? 'Use an API key (Recommended)' : 'Use an API key' },
       { value: 'custom', label: 'Custom OpenAI-compatible endpoint' },
+      { value: 'ollama-local', label: 'Self-hosted (local Ollama)', hint: 'installs Ollama + downloads a model' },
       { value: 'skip', label: 'Connect later', hint: 'set up in the web UI' },
       { value: 'back', label: '← Go back' },
     ],
@@ -49,8 +52,49 @@ export async function runAiStep(ctx: WizardCtx): Promise<StepResult> {
   if (choice === 'skip') return skip(ctx);
   if (choice.startsWith('reuse-oauth:')) return reuseOauth(ctx, choice.slice('reuse-oauth:'.length) as BrainProviderType, providers);
   if (choice.startsWith('reuse:')) return reuseApiKey(ctx, choice.slice('reuse:'.length), providers);
+  if (choice === 'ollama-local') return ollamaFlow(ctx, providers);
   if (choice === 'apikey' || choice === 'custom') return apiKeyFlow(ctx, choice === 'custom', providers);
   return oauthFlow(ctx, choice as BrainProviderType, providers);
+}
+
+// ── embedded / self-hosted Ollama ──────────────────────────────────────────────────────────────────
+/** Install a local Ollama runtime, pull a model, and wire a keyless `openai`-type provider at
+ *  `localhost:11434/v1`. Provisioning runs locally via a real Runner (the setup CLI runs on the host);
+ *  the provider config + smoke test then go through the daemon like every other path. */
+async function ollamaFlow(ctx: WizardCtx, providers: PublicProvider[]): Promise<StepResult> {
+  const r = realRunner();
+  const local = await listLocalModels();
+
+  // Offer already-pulled models first, then the curated shortlist, then a free-text entry.
+  const suggestions = [...new Set([...local, ...SUGGESTED_OLLAMA_MODELS])];
+  const pick = guard(await p.select({
+    message: 'Which model should Ollama run?',
+    options: [
+      ...suggestions.map((m) => ({ value: m, label: local.includes(m) ? `${m} (already downloaded)` : m })),
+      { value: '__manual__', label: 'Enter another model tag…' },
+    ],
+  })) as string;
+  const model = pick === '__manual__'
+    ? (guard(await p.text({ message: 'Ollama model tag', placeholder: 'e.g. llama3.2:3b' })) as string).trim()
+    : pick;
+  if (!model) return skip(ctx);
+
+  try {
+    await provisionOllama(r, model);
+  } catch (e) {
+    p.log.error(`Ollama setup failed: ${e instanceof Error ? e.message : String(e)}`);
+    p.log.info('Install Ollama manually (https://ollama.com/download) and re-run setup, or pick another provider.');
+    return skip(ctx);
+  }
+
+  const id = 'ollama-local';
+  const entry: ProviderEntry = { id, label: 'Ollama (local)', type: 'openai', baseUrl: OLLAMA_LOCAL_BASE, models: [model] };
+  const s = p.spinner(); s.start('Saving provider…');
+  const ok = await saveProvider(ctx, entry, providers);
+  s.stop(ok ? 'Provider saved.' : 'Saving the provider failed.', ok ? 'success' : 'error');
+  if (!ok) return skip(ctx);
+
+  return done(ctx, 'Ollama (local)', model, id, 'openai', false);
 }
 
 // ── reuse ────────────────────────────────────────────────────────────────────────────────────────

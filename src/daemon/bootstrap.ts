@@ -58,6 +58,7 @@ import { HookAuditBuffer } from '../shared/hookAudit.js';
 import { AdvisorService } from '../advisor/service.js';
 import { writeMcpConfig } from '../advisor/mcpConfig.js';
 import { BrainService } from '../brain/brainService.js';
+import { processRegistry } from '../brain/processRegistry.js';
 import { lspManager } from '../brain/tools/lspTools.js';
 import { BrainOAuthManager } from '../brain/oauth.js';
 import { AuthStorage } from '@earendil-works/pi-coding-agent';
@@ -532,6 +533,21 @@ export function buildApp(opts: BuildOpts) {
         memoryCategorizer, memoryCategoryStore,
       })
     : undefined;
+  // Wake the operator's conversation when a background command they started finishes ON ITS OWN (a killed
+  // one is dropped before its close fires, so it never wakes). Delivered as an INTERNAL turn — no 'you'
+  // bubble, and it runs after any in-flight turn — so a completed build/command nudges the agent instead of
+  // the operator having to poke it manually. Best-effort: a wake failure is swallowed.
+  processRegistry.setExitListener((info, userId, sessionId) => {
+    if (!brain || userId == null) return;
+    const status = info.exitCode === 0 ? 'finished successfully' : `exited (code ${info.exitCode})`;
+    const text = `⚙️ Background command \`${info.command}\` ${status}. If it matters, read its output with `
+      + `read_process_output("${info.id}") and continue; otherwise just carry on.`;
+    // `systemNudge`: no 'you' bubble, dropped if the target session is already streaming, and it never
+    // drives the goal loop (so a wake can't spend a goal-budget turn or mis-judge an active goal). Bound to
+    // the session the command was started in — not whatever conversation is currently active.
+    void brain.send(userId, text, undefined, 'build', { systemNudge: true }, undefined, sessionId ?? undefined)
+      .catch(() => { /* best-effort wake */ });
+  });
   // The elowen exec engine: tasks with an `elowen:` exec run on an embedded PI session instead of a
   // spawned CLI. Shares the brain's providers/auth/plugins; closes tasks through the same REST route.
   const brainWorkers = new BrainWorkerService({

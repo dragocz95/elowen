@@ -104,6 +104,10 @@ export interface AskAnswer { header: string; selected: string[]; other?: string 
 /** ctx.emitCard display card (mirror src/brain/events.ts) — a live panel keyed by `id`. */
 interface BrainCardItem { text: string; status?: 'pending' | 'in_progress' | 'completed' }
 export interface BrainCard { id: string; title?: string; items?: BrainCardItem[]; body?: string; pinned?: boolean }
+
+/** One background shell process (terminal plugin's `run_command(background:true)`) — the process panel
+ *  next to the todos lists these, reads output for the modal, and kills on demand. */
+export interface ProcessInfo { id: string; command: string; cwd: string; startedAt: string; running: boolean; exitCode: number | null }
 /** Live statusline numbers for the active conversation. */
 export interface BrainUsage { tokens: number | null; contextWindow: number; percent: number | null; totalTokens: number; cost: number }
 /** The statusline plugin's display toggles (null = plugin disabled). */

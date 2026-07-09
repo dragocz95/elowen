@@ -6,6 +6,8 @@ import { deriveSlug, uniqueSlug } from './slug.js';
 import { writeMarker } from './marker.js';
 import { webBaseUrl } from '../installInfo.js';
 import { getBrainProviders, keepProvider, putEmbeddedExec } from './steps/shared.js';
+import { realRunner } from '../install/runner.js';
+import { provisionOllama } from '../provision/ollama.js';
 import { installTsServer, TS_SERVER_COMMAND, TS_SERVER_INSTALL_HINT } from './steps/lsp.js';
 import { commandExists } from '../../lsp/servers.js';
 import type { BrainProviderType } from '../../store/configStore.js';
@@ -65,6 +67,15 @@ export async function runHeadlessSetup(base: string, env: NodeJS.ProcessEnv, arg
     const baseUrl = preset ? preset.base : (o.baseUrl || '');
     const label = preset ? preset.label : 'Custom';
     if (!baseUrl) return die('A custom provider needs --base-url <https://…/v1>.');
+
+    // Self-hosted Ollama: install the runtime + pull the model before wiring the keyless local provider,
+    // so headless setup matches the interactive flow. Needs an explicit --model (the tag to download).
+    if (o.provider === 'ollama-local') {
+      const tag = (o.model || '').trim();
+      if (!tag) return die('--provider ollama-local needs --model <tag> (the model to download, e.g. llama3.2).');
+      try { await provisionOllama(realRunner(), tag); ok('ollama', `installed + pulled ${tag}`); }
+      catch (e) { return die(`Ollama provisioning failed: ${msg(e)}`); }
+    }
 
     const model = await resolveModel(ctx, type, baseUrl, o.apiKey, o.model);
     if (model === null) return die('Could not determine a model — pass --model <id> (or --api-key so /models can be probed).');

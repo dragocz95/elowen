@@ -488,8 +488,8 @@ export class ChatViewport implements Component {
     });
     const tok = sub.tokens ? `${formatK(sub.tokens)} tok` : '';
     const parts = sub.status === 'running'
-      ? [sub.detail ?? 'starting…', formatDuration(sub.seconds), tok]
-      : [`${sub.tools} tool${sub.tools === 1 ? '' : 's'}`, formatDuration(sub.seconds), tok];
+      ? [sub.detail ?? 'starting…', sub.model, formatDuration(sub.seconds), tok]
+      : [`${sub.tools} tool${sub.tools === 1 ? '' : 's'}`, sub.model, formatDuration(sub.seconds), tok];
     out.push({
       line: `    ${color.faint(truncateToWidth(`↳ ${parts.filter(Boolean).join(' · ')}`, Math.max(12, width - 6), '…'))}`,
       kind: 'subagent', key: sub.sessionId,

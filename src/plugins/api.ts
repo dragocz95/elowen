@@ -1,6 +1,7 @@
 import type { Skill, ToolDefinition } from '@earendil-works/pi-coding-agent';
 import type { SubagentEmitter, TurnIdentity, TurnModel } from './policyContext.js';
 import type { AskAnswer, AskQuestion, BrainCard } from '../brain/events.js';
+import type { ProcessRegistry } from '../brain/processRegistry.js';
 
 /** A skill contributed by a plugin. Reuses pi's file-backed `Skill` (name/description/filePath…), so it
  *  flows straight into `formatSkillsForPrompt` — skills are inherently markdown-file based. */
@@ -249,6 +250,11 @@ export interface PluginContext {
    *  above the status bar) — a non-pinned card won't surface there. No-op outside an interactive prompt
    *  turn (cron/worker sessions wire no emitter). */
   emitCard(card: BrainCard): void;
+  /** The daemon-level background-process registry (`run_command(background:true)` children). The terminal
+   *  plugin registers a handle here per spawn so the CLI + web can list/read/kill them from a panel next
+   *  to the todos, without going through an agent turn. Process-global (not turn-scoped) — see
+   *  processRegistry. */
+  processes: ProcessRegistry;
   /** The current turn's live sub-agent progress emitter, or null when the transport wired none
    *  (worker/cron sessions, platforms without a live stream). A delegating plugin MUST capture this
    *  BEFORE spawning its child: callbacks fired from the child's turn run inside the CHILD's scope,

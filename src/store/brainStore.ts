@@ -167,8 +167,9 @@ export class BrainStore {
    *  (live assistant `$.usage` + per-model compaction rollups), so a compacted session's history keeps
    *  counting and rolled-up spend keeps its ORIGINAL date (the bucket's `at`, not the compaction moment).
    *  `brain-task-%` sessions are excluded only when already snapshotted in task_usage — see
-   *  TASK_SNAPSHOT_EXCLUSION (a crashed-before-snapshot worker's spend is kept, not lost). Cost is null
-   *  when NO row that day carried one (distinguishes "free/unknown" from a real $0.00). */
+   *  TASK_SNAPSHOT_EXCLUSION (a crashed-before-snapshot worker's spend is kept, not lost). Platform
+   *  channel sessions (Discord) ARE included — the operator anchors them, so their spend is the operator's.
+   *  Cost is null when NO row that day carried one (distinguishes "free/unknown" from a real $0.00). */
   usageByDay(userId: number, days = 7): { day: string; tokens: number; cost: number | null }[] {
     return this.db.prepare(
       `WITH usage_rows AS (${USAGE_ROWS})
@@ -191,7 +192,8 @@ export class BrainStore {
    *  current model, so switching a conversation's model never retroactively re-attributes its history —
    *  and emits `elowen:<model>` so a model that ALSO ran as a task worker folds into the SAME bucket the
    *  task_usage aggregate uses. `brain-task-%` sessions are excluded only when already snapshotted in
-   *  task_usage (TASK_SNAPSHOT_EXCLUSION). Brain chat cost is OpenRouter provider-reported, so a costed
+   *  task_usage (TASK_SNAPSHOT_EXCLUSION); platform channel sessions (Discord) ARE included — the operator
+   *  anchors them, so their spend counts as the operator's. Brain chat cost is OpenRouter provider-reported, so a costed
    *  bucket is `provider_reported`; an uncosted one is `unavailable` (costUsd null), matching usageByDay's
    *  null-vs-real-$0 distinction. Optional `window` narrows by each row's own attribution timestamp (ms
    *  epoch), same basis as usageByDay; undated rows are excluded from BOTH the windowed and unwindowed

@@ -2,7 +2,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
-import { Send, Plus, ChevronDown, Wrench, Trash2, Paperclip, X, FileText, Search } from 'lucide-react';
+import { Send, Plus, ChevronDown, Wrench, Trash2, Paperclip, X, FileText, Search, Users, ChevronRight } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from '../../lib/i18n';
 import { useToast } from '../../components/ui/Toast';
@@ -10,10 +10,12 @@ import { useBrainSessions, useBrainCommands } from '../../lib/queries';
 import { elowenClient, BASE } from '../../lib/elowenClient';
 import { formatTaskTime } from '../../lib/format';
 import type { AskQuestion, BrainCard, BrainSearchHit, BrainModelOption, BrainUsage, SlashCommandDef, StatuslineConfig } from '../../lib/types';
-import { fromHistory, groupToolItems, reduce, upsertCard, type ChatTurn, type ToolItem, type TranscriptEvent } from '../../lib/transcript';
+import { fromHistory, groupToolItems, reduce, upsertCard, collectSubagents, type ChatTurn, type ToolItem, type TranscriptEvent } from '../../lib/transcript';
 import { expandSlashMessage } from '../../lib/slash';
 import { BRAIN_OPEN_EVENT, consumePendingBrainSession, type BrainOpenRequest } from '../../lib/brainDock';
 import { AskQuestionCard } from './AskQuestionCard';
+import { ProcessPanel } from './ProcessPanel';
+import { AgentsTable } from './AgentsTable';
 
 /** Compact token count: 999 → '999', 34 567 → '35k', 1 234 567 → '1.2M'. */
 const fmtK = (n: number): string => (n < 1000 ? String(n) : n < 1_000_000 ? `${Math.round(n / 1000)}k` : `${(n / 1_000_000).toFixed(1)}M`);
@@ -217,6 +219,8 @@ export function BrainChat() {
   const [ask, setAsk] = useState<{ id: string; questions: AskQuestion[]; kind?: 'approval' } | null>(null);
   /** Live display cards (ctx.emitCard) — seeded from status, kept current from the `card` event. */
   const [cards, setCards] = useState<BrainCard[]>([]);
+  /** Whether the delegated-agents table (workflow view) is open. */
+  const [agentsOpen, setAgentsOpen] = useState(false);
   /** Pending mid-turn messages (server-authoritative snapshot) — messages sent while a turn streams, parked
    *  until it ends. Seeded from status, replaced on each `queue` event; rendered as removable chips above
    *  the composer. Kept out of `turns` (like cards) — the `user` delivery event folds the eventual bubble. */
@@ -246,6 +250,8 @@ export function BrainChat() {
   const esRef = useRef<EventSource | null>(null);
 
   const active = sessions.data?.find((s) => s.active);
+  // Delegated sub-agents across the transcript — the source for the workflow table + its "N agents" link.
+  const subagents = useMemo(() => collectSubagents(turns), [turns]);
 
   const loadHistory = async () => {
     const msgs = await elowenClient.brainMessages();
@@ -314,8 +320,16 @@ export function BrainChat() {
       const { name, detail, icon } = JSON.parse((e as MessageEvent).data) as { name: string; detail?: string; icon?: string };
       setTurns((cur) => fold(cur, { type: 'tool', name, detail, icon }));
     });
+    // Live sub-agent progress (delegate): fold onto its tool item so the agents table + drill-in read it.
+    es.addEventListener('subagent', (e) => {
+      const s = JSON.parse((e as MessageEvent).data) as { id: string; sessionId: string; status: 'running' | 'done' | 'error'; task: string; detail?: string; tools: number; tokens?: number; seconds: number; model?: string };
+      setTurns((cur) => fold(cur, { type: 'subagent', ...s }));
+    });
     es.addEventListener('card', (e) => {
       const { card } = JSON.parse((e as MessageEvent).data) as { card: BrainCard };
+      // The terminal plugin's background-process card is rendered by ProcessPanel (API-driven, with kill +
+      // output modal), not as a plain CardBlock — use it only as a signal to refresh the process list.
+      if (card.id === 'bg-processes') { void qc.invalidateQueries({ queryKey: ['brain-processes'] }); return; }
       setCards((cur) => upsertCard(cur, card));
     });
     // Full-snapshot pending mid-turn queue (messages sent while a turn streams). Server-authoritative:
@@ -583,7 +597,27 @@ export function BrainChat() {
           <p className="m-auto max-w-[220px] text-center text-xs text-text-muted">{t.brainChat.empty}</p>
         ) : null}
         {turns.map((turn, i) => <Message key={i} turn={turn} />)}
-        {cards.map((card) => <CardBlock key={card.id} card={card} />)}
+        {cards.filter((c) => c.id !== 'bg-processes').map((card) => <CardBlock key={card.id} card={card} />)}
+        <ProcessPanel />
+        {/* Workflow view: a clickable link that opens the table of delegated agents (drill-in / back). */}
+        {subagents.length > 0 ? (
+          <button
+            type="button"
+            onClick={() => setAgentsOpen(true)}
+            className="flex items-center gap-1.5 self-start rounded-md border border-border bg-elevated px-2 py-1 text-tiny text-text-muted transition-colors hover:text-text"
+          >
+            <Users size={11} aria-hidden />
+            <span>{subagents.filter((s) => s.status === 'running').length || subagents.length} {t.agents.link}</span>
+            <ChevronRight size={12} aria-hidden />
+          </button>
+        ) : null}
+        {agentsOpen ? (
+          <AgentsTable
+            agents={subagents}
+            onClose={() => setAgentsOpen(false)}
+            onOpen={(sessionId) => { setAgentsOpen(false); void openReadOnly(sessionId).catch(() => toast(t.brainChat.searchOpenError, 'error')); }}
+          />
+        ) : null}
         {ask ? (
           <AskQuestionCard
             key={ask.id}

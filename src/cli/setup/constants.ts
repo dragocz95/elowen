@@ -6,6 +6,12 @@ const OPENAI_BASE = 'https://api.openai.com/v1';
 const ANTHROPIC_BASE = 'https://api.anthropic.com';
 /** OpenRouter's OpenAI-compatible base. */
 export const OPENROUTER_BASE = 'https://openrouter.ai/api/v1';
+/** Local Ollama's OpenAI-compatible endpoint — served by a self-hosted `ollama serve` on the same host
+ *  as the daemon. No API key. The dedicated "Self-hosted (local Ollama)" wizard choice installs Ollama
+ *  and pulls a model before pointing a keyless `openai`-type provider here. */
+// 127.0.0.1 (not `localhost`): Ollama binds the IPv4 loopback, and on hosts where `localhost` resolves to
+// ::1 first a `localhost` base would probe-pass in the wizard yet fail the saved provider at runtime.
+export const OLLAMA_LOCAL_BASE = 'http://127.0.0.1:11434/v1';
 
 /** Recommended embedding model — small, cheap, widely served on OpenAI-compatible endpoints. */
 export const RECOMMENDED_EMBEDDING_MODEL = 'text-embedding-3-small';
@@ -36,6 +42,7 @@ export const API_KEY_PROVIDERS: { key: string; label: string; type: BrainProvide
   { key: 'huggingface', label: 'Hugging Face', type: 'openai', base: 'https://router.huggingface.co/v1' },
   { key: 'baseten', label: 'Baseten', type: 'openai', base: 'https://inference.baseten.co/v1' },
   { key: 'ollama', label: 'Ollama Cloud', type: 'openai', base: 'https://ollama.com/v1' },
+  { key: 'ollama-local', label: 'Ollama (local)', type: 'openai', base: OLLAMA_LOCAL_BASE },
 ];
 
 /** OAuth sign-in choices → the brain provider config `type` + the pi-ai built-in name (for the catalog). */

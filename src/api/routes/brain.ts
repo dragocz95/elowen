@@ -8,6 +8,7 @@ import { listBrainModels, fetchOpenAiModels } from '../../brain/models.js';
 import { elowenExec, isExecAllowedForUser } from '../../shared/execs.js';
 import type { BrainEvent } from '../../brain/events.js';
 import { commandsWithPlugins, findCommand, type SlashSurface } from '../../brain/slashCommands.js';
+import { processRegistry } from '../../brain/processRegistry.js';
 import type { ElowenApp, RouteContext } from '../context.js';
 
 /** Per-user embedded brain (the new advisor engine): status / start / send / live event stream.
@@ -65,6 +66,26 @@ export function registerBrainRoutes(app: ElowenApp, ctx: RouteContext): void {
     if (!d.brain) return c.json({ error: 'brain unavailable' }, 503);
     if (forbidden(c) || !c.get('user').is_admin) return c.json({ error: 'forbidden' }, 403);
     return c.json({ deleted: d.brain.deleteManagedSession(c.get('user').id, c.req.param('id')) });
+  });
+
+  // Background processes (terminal plugin's `run_command(background:true)` children) — the panel next to
+  // the todos lists them, reads output for the modal, and kills on demand. OWNER-only (not merely admin):
+  // the underlying shell reads any absolute path — secrets, the config DB — exactly like the terminal tools
+  // that spawn these (owner-only there). A second admin is admin-but-not-owner and must not see the buffers.
+  const denyNonOwner = (c: { get: (k: 'tokenScope' | 'user') => unknown }): boolean =>
+    forbidden(c as { get: (k: 'tokenScope') => string }) || !d.brain?.isOwner((c.get('user') as { id: number }).id);
+  app.get('/brain/processes', c => {
+    if (denyNonOwner(c)) return c.json({ error: 'forbidden' }, 403);
+    return c.json(processRegistry.list());
+  });
+  app.get('/brain/processes/:id/output', c => {
+    if (denyNonOwner(c)) return c.json({ error: 'forbidden' }, 403);
+    const out = processRegistry.output(c.req.param('id'));
+    return out === null ? c.json({ error: 'unknown process' }, 404) : c.json({ output: out });
+  });
+  app.delete('/brain/processes/:id', c => {
+    if (denyNonOwner(c)) return c.json({ error: 'forbidden' }, 403);
+    return c.json({ killed: processRegistry.kill(c.req.param('id')) });
   });
 
   // Fulltext search across the caller's own conversations (newest first). Queries under 2 chars

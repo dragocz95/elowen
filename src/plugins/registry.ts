@@ -9,6 +9,7 @@ import { isBuiltinCommand } from '../brain/slashCommands.js';
 import type { PluginManifest } from './manifest.js';
 import { assertPathAllowed, allowedRoots, defaultCwd, isAllAccess, currentAccess } from './pathGuard.js';
 import { currentIdentity, currentElicitor, currentCardEmitter, currentSubagentEmitter, currentTurnModel, currentWorkDir, currentSessionId } from './policyContext.js';
+import { processRegistry } from '../brain/processRegistry.js';
 import type { AskAnswer } from '../brain/events.js';
 
 /** Recursively collect every string value in a plugin's config slice — the set of provider ids the
@@ -234,6 +235,7 @@ export class PluginRegistry {
       // Fire-and-forget display card into the current conversation (no-op outside an interactive turn —
       // e.g. cron/worker sessions wire no emitter). Reads the emitter off the same ALS as askUser.
       emitCard: (card) => { currentCardEmitter()?.(card); },
+      processes: processRegistry,
       subagentEmitter: currentSubagentEmitter,
       currentModel: currentTurnModel,
       notify: notify ?? (async () => { /* no notification sink wired */ }),

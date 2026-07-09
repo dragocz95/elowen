@@ -78,6 +78,7 @@ export interface SubagentPanelEntry {
   tools: number;
   tokens?: number;
   seconds: number;
+  model?: string;
 }
 
 /** A slim fixed panel under the Todos card listing the conversation's delegated sub-agents — a
@@ -101,7 +102,7 @@ export class SubagentPanel implements Component {
     const lines: string[] = [`  ${FAINTC(this.collapsed ? '▸' : '▾')} ${bold(WHITE('Sub-agents'))}${FAINTC(`  ${this.entries.length} running`)} ${FAINTC('click')}`];
     if (this.collapsed) return lines;
     for (const e of this.entries) {
-      const meta = [e.detail, formatDuration(e.seconds), e.tokens ? `${formatK(e.tokens)} tok` : ''].filter(Boolean).join(' · ');
+      const meta = [e.detail, e.model, formatDuration(e.seconds), e.tokens ? `${formatK(e.tokens)} tok` : ''].filter(Boolean).join(' · ');
       const metaText = FAINTC(truncateToWidth(meta, Math.max(10, Math.floor(width * 0.5)), '…'));
       const task = DIM(truncateToWidth(e.task.replace(/\s+/g, ' ').trim(), Math.max(10, width - visibleWidth(metaText) - 12), '…'));
       const row = `    ${color.accent(spinnerFrame())} ${task} ${FAINTC('click')}`;

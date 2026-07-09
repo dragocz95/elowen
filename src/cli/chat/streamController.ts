@@ -31,7 +31,7 @@ export function createStreamController(rt: ChatRuntime, flows: Flows): StreamCon
         for (const item of seg.items) {
           if (!item.sub) continue;
           const s = item.sub;
-          seen.set(s.sessionId, { sessionId: s.sessionId, task: s.task, status: s.status, detail: s.detail, tools: s.tools, tokens: s.tokens, seconds: s.seconds });
+          seen.set(s.sessionId, { sessionId: s.sessionId, task: s.task, status: s.status, detail: s.detail, tools: s.tools, tokens: s.tokens, seconds: s.seconds, model: s.model });
         }
       }
     }

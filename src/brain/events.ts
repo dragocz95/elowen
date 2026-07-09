@@ -58,7 +58,7 @@ export type BrainEvent =
    *  `detail` mirrors the child's current tool, `tools`/`tokens`/`seconds` accumulate, and `sessionId`
    *  lets a client drill into the child's transcript (`GET /brain/messages?session=…`). Synthetic —
    *  fanned out to the PARENT conversation's listeners; ignoring it is always safe. */
-  | { type: 'subagent'; id: string; sessionId: string; status: 'running' | 'done' | 'error'; task: string; detail?: string; tools: number; tokens?: number; seconds: number }
+  | { type: 'subagent'; id: string; sessionId: string; status: 'running' | 'done' | 'error'; task: string; detail?: string; tools: number; tokens?: number; seconds: number; model?: string }
   /** The pending message queue for this session — a FULL snapshot (an empty array clears it). Synthetic,
    *  like `card`/`ask`: a message a user sends while a turn is already streaming parks in the daemon's
    *  per-session SessionQueue instead of steering the running turn, and the parked batch is combined into

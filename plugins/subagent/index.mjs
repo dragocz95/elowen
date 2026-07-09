@@ -64,10 +64,11 @@ export function register(ctx) {
       // CHILD session's turn scope, where ctx accessors no longer resolve to the delegating conversation.
       const emit = ctx.subagentEmitter();
       const started = Date.now();
+      const modelId = model?.model; // the model the child runs on — shown in the agents table
       const st = { sessionId: '', tools: 0, detail: undefined, tokens: undefined };
       const push = (status) => {
         if (!emit || !st.sessionId) return;
-        emit({ id, sessionId: st.sessionId, status, task: p.task, detail: st.detail, tools: st.tools, tokens: st.tokens, seconds: Math.round((Date.now() - started) / 1000) });
+        emit({ id, sessionId: st.sessionId, status, task: p.task, detail: st.detail, tools: st.tools, tokens: st.tokens, seconds: Math.round((Date.now() - started) / 1000), model: modelId });
       };
       // Distil the child's live stream into progress updates: which tool it runs, how many so far, its
       // token spend. Low-frequency events only (tool starts + step boundaries) — text deltas are ignored.

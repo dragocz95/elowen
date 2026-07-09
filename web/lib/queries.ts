@@ -2,7 +2,7 @@ import { useMemo } from 'react';
 import { useQuery, useQueries } from '@tanstack/react-query';
 import { elowenClient } from './elowenClient';
 import { pendingEscalations, type Escalation } from './escalations';
-import type { DerivedSignal, CliDetectionResult, GithubAuthStatus, PlanJob, MemoryFilters, SlashCommandDef } from './types';
+import type { DerivedSignal, CliDetectionResult, GithubAuthStatus, PlanJob, MemoryFilters, SlashCommandDef, ProcessInfo } from './types';
 
 /** Poll an async plan job until it leaves the 'planning' state. The SSE `plan` handler also pushes
  *  updates into this cache (keyed by jobId) so the poll is a fallback. Disabled when jobId is null. */
@@ -44,6 +44,17 @@ export const useBrainCommands = () =>
     queryKey: QUERY_KEYS.brainCommands,
     queryFn: () => elowenClient.brainCommands().then((r) => r.commands),
     staleTime: 60_000,
+  });
+
+/** Background processes for the panel next to the todos. Polls quickly while any is running (to catch
+ *  exits), slowly otherwise (to catch a newly-spawned one) — the SSE `card` handler also invalidates this
+ *  key on spawn/kill for an instant update. */
+export const useBrainProcesses = () =>
+  useQuery<ProcessInfo[]>({
+    queryKey: ['brain-processes'],
+    queryFn: elowenClient.brainProcesses,
+    refetchInterval: (q) => (q.state.data?.some((p) => p.running) ? 2500 : 10000),
+    staleTime: 1000,
   });
 
 /** The current user's advisor session state, polled so the dock reflects start/stop/crash. */

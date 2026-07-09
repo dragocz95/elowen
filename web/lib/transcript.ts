@@ -17,6 +17,7 @@ export type TranscriptEvent =
   | { type: 'tool_output'; output: ToolOutputView; id?: string }
   | { type: 'notice'; kind: 'retry' | 'compaction'; message: string; done?: boolean }
   | { type: 'session'; sessionId: string }
+  | { type: 'subagent'; id: string; sessionId: string; status: 'running' | 'done' | 'error'; task: string; detail?: string; tools: number; tokens?: number; seconds: number; model?: string }
   /** A server-delivered user message (a drained queued message never optimistically echoed) — folded as a
    *  'you' turn. See the daemon SessionQueue; the `queue` snapshot event is handled outside this fold. */
   | { type: 'user'; text: string }
@@ -26,7 +27,20 @@ export type TranscriptEvent =
 /** An assistant turn is an ordered list of segments so text and tool calls render in the sequence they
  *  happened. Consecutive tool calls (no new text between them) collapse into ONE tools segment → the
  *  Claude-Code "grouped pills" look. Useful tool output previews attach to their matching item. */
-export interface ToolItem { name: string; detail?: string; diff?: string; icon?: string; output?: ToolOutputView; id?: string }
+export interface ToolItem { name: string; detail?: string; diff?: string; icon?: string; output?: ToolOutputView; id?: string; sub?: SubagentState }
+
+/** Live progress of a delegated sub-agent, attached to its `delegate` tool item by call id — powers the
+ *  agents table + the `↳` drill-in. Mirror of the daemon `SubagentState`. */
+export interface SubagentState {
+  sessionId: string;
+  status: 'running' | 'done' | 'error';
+  task: string;
+  detail?: string;
+  tools: number;
+  tokens?: number;
+  seconds: number;
+  model?: string;
+}
 type Segment =
   | { kind: 'text'; text: string }
   | { kind: 'reasoning'; text: string }
@@ -155,6 +169,16 @@ export function reduce(view: ChatView, e: TranscriptEvent): ChatView {
       attachToTool(t, e.id, (item) => ({ ...item, output: e.output }));
       return { turns, thinking: true, notice: view.notice };
     }
+    case 'subagent': {
+      // Live progress of a delegated child run — attach to its `delegate` tool item so the agents table +
+      // the `↳` drill-in can read model/tokens/tools/status. Mirror of the daemon fold.
+      const t = ensureElowen();
+      attachToTool(t, e.id, (item) => ({
+        ...item,
+        sub: { sessionId: e.sessionId, status: e.status, task: e.task, detail: e.detail, tools: e.tools, tokens: e.tokens, seconds: e.seconds, model: e.model },
+      }));
+      return { turns, thinking: true, notice: view.notice };
+    }
     case 'session': {
       // Idle rollover mid-send: the server moved this message into a FRESH conversation. Reset the
       // transcript — the daemon re-emits the triggering message as a `user` event and streams its reply,
@@ -193,6 +217,20 @@ function attachToTool(t: ElowenTurn, id: string | undefined, patch: (item: ToolI
     t.segments[i] = { kind: 'tools', items };
     return;
   }
+}
+
+/** Collect the delegated sub-agents across the whole transcript (one per child session, latest state
+ *  wins) — the source for the agents table + drill-in. Mirrors the CLI's `subagentStates()` scan. */
+export function collectSubagents(turns: ChatTurn[]): SubagentState[] {
+  const byId = new Map<string, SubagentState>();
+  for (const turn of turns) {
+    if (turn.role !== 'elowen') continue;
+    for (const seg of turn.segments) {
+      if (seg.kind !== 'tools') continue;
+      for (const item of seg.items) if (item.sub?.sessionId) byId.set(item.sub.sessionId, item.sub);
+    }
+  }
+  return [...byId.values()];
 }
 
 /** Fold a live `card` event into the card list: replace by id, append when new, drop when it came back
