@@ -13,8 +13,6 @@ export interface LiveBrain {
   providerId?: string;
   thinkingLevel?: string;
   policy: Policy;
-  autoCompact: boolean;
-  autoCompactAt: number;
   listeners: Set<(e: BrainEvent) => void>;
   turnContext: () => string;
   /** Names of the plugin tools composed into this session — the subset a per-turn ToolPolicy allow-list
@@ -71,13 +69,18 @@ export interface SpawnOpts {
    *  shared owner-anchored channels. Selects which active profile the personality chunk resolves from
    *  (owner's per-platform pin). Default 'web'. */
   platform?: string;
+  /** PI's built-in auto-compaction toggle for this session (the owner's per-user setting; always on for
+   *  long-lived channels). */
   autoCompact: boolean;
-  autoCompactAt: number;
+  /** Context-window fill percentage (30–95) at which PI auto-compacts — mapped to PI's reserveTokens in
+   *  the factory. Channels pass the default; owner chat passes the user's %. */
+  autoCompactAtPct: number;
   /** The client-reported working directory (the CLI sends where it was launched). Validated against
    *  the policy before use — see BrainService.turnWorkDir — and preferred as the session cwd, which pi
    *  advertises to the model ("Current working directory: …"). */
   clientCwd?: string;
 }
 
-/** Fallback auto-compact threshold (fraction of the context window) when the user set none. */
-export const DEFAULT_AUTO_COMPACT_AT = 0.8;
+/** Fallback auto-compact threshold (context-window fill %) when the user set none — also the fixed value
+ *  for long-lived channels. Translated to PI's absolute reserveTokens in the session factory. */
+export const DEFAULT_AUTO_COMPACT_PCT = 80;

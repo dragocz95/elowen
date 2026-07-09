@@ -41,6 +41,7 @@ function setup() {
 const auth = (t: string) => ({ headers: { authorization: `Bearer ${t}` } });
 const post = (t: string, body: unknown) => ({ method: 'POST', headers: { authorization: `Bearer ${t}`, 'content-type': 'application/json' }, body: JSON.stringify(body) });
 const del = (t: string) => ({ method: 'DELETE', headers: { authorization: `Bearer ${t}` } });
+const patch = (t: string, body: unknown) => ({ method: 'PATCH', headers: { authorization: `Bearer ${t}`, 'content-type': 'application/json' }, body: JSON.stringify(body) });
 
 const skill = (extra: Record<string, unknown> = {}) => ({ name: 'deploy-checklist', description: 'When deploying.', content: 'Check twice.', ...extra });
 
@@ -95,6 +96,37 @@ describe('skills routes', () => {
     expect((await app.request('/plugins/skills', post(adminTok, skill({ content: 'v2' })))).status).toBe(201);
   });
 
+  it('POST writes the disable-model-invocation flag and GET reports it', async () => {
+    const { app, userDir, adminTok } = setup();
+    await app.request('/plugins/skills', post(adminTok, skill({ disableModelInvocation: true })));
+    expect(readFileSync(join(userDir, 'deploy-checklist.md'), 'utf-8')).toContain('disable-model-invocation: true\n');
+    const list = (await (await app.request('/plugins/skills/list', auth(adminTok))).json()) as { name: string; disableModelInvocation: boolean; content?: string }[];
+    const row = list.find((s) => s.name === 'deploy-checklist');
+    expect(row?.disableModelInvocation).toBe(true);
+    expect(row?.content).toBe('Check twice.'); // user skills carry their body so the editor can prefill
+  });
+
+  it('PATCH edits a user skill in place; partial fields keep their current value', async () => {
+    const { app, userDir, adminTok } = setup();
+    await app.request('/plugins/skills', post(adminTok, skill()));
+    // Toggle the flag only — description/content are preserved.
+    expect((await app.request('/plugins/skills/deploy-checklist', patch(adminTok, { disableModelInvocation: true }))).status).toBe(200);
+    expect(readFileSync(join(userDir, 'deploy-checklist.md'), 'utf-8'))
+      .toBe('---\nname: deploy-checklist\ndescription: When deploying.\ndisable-model-invocation: true\n---\n\nCheck twice.\n');
+    // Edit body + description, and clear the flag.
+    expect((await app.request('/plugins/skills/deploy-checklist', patch(adminTok, { description: 'Updated.', content: 'New body.', disableModelInvocation: false }))).status).toBe(200);
+    expect(readFileSync(join(userDir, 'deploy-checklist.md'), 'utf-8'))
+      .toBe('---\nname: deploy-checklist\ndescription: Updated.\n---\n\nNew body.\n');
+  });
+
+  it('PATCH rejects a bundled skill (400), a missing skill (404) and empty content (400)', async () => {
+    const { app, adminTok } = setup();
+    await app.request('/plugins/skills', post(adminTok, skill()));
+    expect((await app.request('/plugins/skills/greeting', patch(adminTok, { content: 'x' }))).status).toBe(400);
+    expect((await app.request('/plugins/skills/nope', patch(adminTok, { content: 'x' }))).status).toBe(404);
+    expect((await app.request('/plugins/skills/deploy-checklist', patch(adminTok, { content: '  ' }))).status).toBe(400);
+  });
+
   it('DELETE removes a user skill; bundled → 400, missing → 404, bad name → 400', async () => {
     const { app, userDir, adminTok } = setup();
     await app.request('/plugins/skills', post(adminTok, skill()));
@@ -110,6 +142,7 @@ describe('skills routes', () => {
     const { app, amyTok } = setup();
     expect((await app.request('/plugins/skills/list', auth(amyTok))).status).toBe(403);
     expect((await app.request('/plugins/skills', post(amyTok, skill()))).status).toBe(403);
+    expect((await app.request('/plugins/skills/x', patch(amyTok, { content: 'y' }))).status).toBe(403);
     expect((await app.request('/plugins/skills/x', del(amyTok))).status).toBe(403);
   });
 });

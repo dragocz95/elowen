@@ -292,7 +292,15 @@ export function useSaveCronJobs() {
 export function useCreatePluginSkill() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (skill: { name: string; description: string; content: string }) => elowenClient.createPluginSkill(skill),
+    mutationFn: (skill: { name: string; description: string; content: string; disableModelInvocation?: boolean }) => elowenClient.createPluginSkill(skill),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['plugin-skills'] }),
+  });
+}
+/** Edit a user skill in place — description/content and the disable-model-invocation flag. */
+export function useUpdatePluginSkill() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { name: string; patch: { description?: string; content?: string; disableModelInvocation?: boolean } }) => elowenClient.updatePluginSkill(v.name, v.patch),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['plugin-skills'] }),
   });
 }

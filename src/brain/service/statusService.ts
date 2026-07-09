@@ -4,13 +4,12 @@ import type { BrainRuntimeConfig } from '../providers.js';
 import { buildBrainRegistry, resolveBrainModel } from '../providers.js';
 import { extractText, shapeBrainMessages } from '../messageView.js';
 import type { BrainMessageView } from '../messageView.js';
-import { usageOf } from '../events.js';
+import { usageOf, queueItems } from '../events.js';
 import type { AskQuestion, BrainCard, BrainUsage } from '../events.js';
 import type { LiveSessionRegistry } from '../session/liveRegistry.js';
 import type { LiveBrain } from '../session/liveBrain.js';
 import type { ElicitationRegistry } from '../elicitation.js';
 import type { CardRegistry } from '../cards.js';
-import type { SessionQueue } from '../session/sessionQueue.js';
 import { isNonUserSession } from '../sessionId.js';
 import type { BrainDeps } from '../brainDeps.js';
 import type { ClientAttachments } from './attachments.js';
@@ -24,8 +23,6 @@ interface StatusServiceDeps {
   attachments: ClientAttachments;
   elicitation: ElicitationRegistry;
   cards: CardRegistry;
-  /** Per-session mid-turn message queue — status seeds a booting/reconnecting client's queue from it. */
-  sessionQueue: SessionQueue;
   lifecycle: ConversationLifecycle;
   permissions: PermissionApprovalService;
   config: BrainDeps['config'];
@@ -124,8 +121,9 @@ export class BrainStatusService {
       pendingAsk: b ? this.d.elicitation.pendingForSession(b.sessionId) : null,
       // The active conversation's live display cards (ctx.emitCard) so a reconnecting client restores them.
       cards: b ? this.d.cards.forSession(b.sessionId) : [],
-      // The pending mid-turn message queue so a reconnecting/booting client restores its queued chips.
-      queued: b ? this.d.sessionQueue.list(b.sessionId) : [],
+      // PI's transient pending backlog (steered + follow-up) so a reconnecting/booting client restores its
+      // pending chips — kept in step with the live `queue` event mapped from PI's `queue_update`.
+      queued: b ? queueItems(b.session.getSteeringMessages(), b.session.getFollowUpMessages()) : [],
       // Effective YOLO for the active conversation (session override, else the persisted default) —
       // drives the CLI's warning-toned indicator.
       yolo: this.d.permissions.effectiveYolo(userId, b),

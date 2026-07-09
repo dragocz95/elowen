@@ -10,13 +10,11 @@ import { BrainSessionFactory } from './session/factory.js';
 import { IdentityResolver } from './identity.js';
 import { LiveSessionRegistry } from './session/liveRegistry.js';
 import type { LiveBrain } from './session/liveBrain.js';
-import { SessionQueue } from './session/sessionQueue.js';
 import { ChannelSessionService } from './channels.js';
 import type { ChannelSendOpts } from './channels.js';
 import { PlatformOrchestrator } from './platforms.js';
 import type { BrainMessageView } from './messageView.js';
-import { runCompaction } from './events.js';
-import { persistCompaction } from './persistence.js';
+import { runCompaction, queueItems } from './events.js';
 import type { AskAnswer, AskQuestion, BrainCard, BrainEvent, BrainUsage, CompactResult } from './events.js';
 import { isNonUserSession } from './sessionId.js';
 import { lastAssistantText } from './goal.js';
@@ -78,12 +76,6 @@ export class BrainService {
   /** Live display cards (ctx.emitCard) per conversation — seeded to clients via status, kept current via
    *  the `card` event. Shared by owner chat and channel sessions. */
   private cards = new CardRegistry();
-  /** Per-session mid-turn message queue (single source of truth for CLI/web/platforms). A message sent
-   *  while a turn streams parks here and is combined into the next turn on flush; every mutation fans a
-   *  full-snapshot `queue` event to that session's listeners. DURABLE (store-backed) so a queued message
-   *  survives a daemon restart. Assigned in the constructor (needs `d.store`), before the sub-services
-   *  that consume it are wired. */
-  private sessionQueue: SessionQueue;
   /** Live client streams + long-lived session taps → the session each is attached to. */
   private attachments = new ClientAttachments();
   /** Effective tool permissions per turn + the approval channel + the session YOLO override. */
@@ -99,13 +91,8 @@ export class BrainService {
   /** Read-only views: status, session lists, history, search, readiness. */
   private statusView: BrainStatusService;
   constructor(private d: BrainDeps) {
-    // The durable mid-turn queue mirrors into the brain store and fans a `queue` snapshot to the session's
-    // listeners on every mutation. Built first — turnRunner/statusView below take it as a dep.
-    this.sessionQueue = new SessionQueue(d.store, (sessionId, items) => {
-      const live = this.sessions.get(sessionId);
-      if (!live) return;
-      for (const l of live.listeners) l({ type: 'queue', items });
-    });
+    // Mid-turn messages are STEERED into the running turn via PI's native queue (session.steer); PI fans
+    // its transient backlog as `queue_update`, mapped to the `queue` snapshot event in the spawner.
     this.factory = new BrainSessionFactory({ store: d.store, createSession: d.createSession, resourceLoaderFactory: d.resourceLoaderFactory });
     this.identity = new IdentityResolver({ platformOwner: d.platformOwner, resolvePlatformUser: d.resolvePlatformUser, users: d.users });
     this.titler = new ConversationTitler({ store: d.store, inference: d.inference ?? (() => null), logger: logger('conversation-titler') });
@@ -171,7 +158,7 @@ export class BrainService {
     });
     this.turnRunner = new BrainTurnRunner({
       store: d.store, sessions: this.sessions,
-      lifecycle: this.lifecycle, goals: this.goals, sessionQueue: this.sessionQueue, permissions: this.permissionSvc,
+      lifecycle: this.lifecycle, goals: this.goals, permissions: this.permissionSvc,
       elicitation: this.elicitation, cards: this.cards, identity: this.identity,
       titler: this.titler, curator: this.curator,
       get prompts() { return d.prompts; },
@@ -184,7 +171,7 @@ export class BrainService {
     });
     this.statusView = new BrainStatusService({
       store: d.store, sessions: this.sessions, attachments: this.attachments,
-      elicitation: this.elicitation, cards: this.cards, sessionQueue: this.sessionQueue,
+      elicitation: this.elicitation, cards: this.cards,
       lifecycle: this.lifecycle, permissions: this.permissionSvc,
       get config() { return d.config; },
       get authStorage() { return d.authStorage; },
@@ -268,11 +255,10 @@ export class BrainService {
       const live = this.sessions.get(sessionId);
       if (!live) throw new Error('brain not started');
       live.interactedAt = Date.now(); // a manual compact is a deliberate touch — don't idle-roll it over
-      const result = await runCompaction(live.session);
-      // Only a real compaction touches the store + clients: mirror PI's shrunk context into SQLite and
-      // fire the `compacted` event so attached surfaces collapse their transcript. A no-op leaves both be.
-      if (result.compacted) persistCompaction(this.d.store, live);
-      return result;
+      // A real compaction fires PI's `compaction_end`, which the factory's session subscription mirrors
+      // into the store and the spawner fans `compacted` to attached clients — persistence + notify ride the
+      // event, not this call. A no-op (session too small) emits no result and leaves the store untouched.
+      return runCompaction(live.session);
     });
   }
 
@@ -283,9 +269,9 @@ export class BrainService {
     const b = session ? this.sessions.get(this.lifecycle.ownedUserSession(userId, session)) : this.lifecycle.activeLive(userId);
     if (!b) throw new Error('brain not started');
     this.goals.cancelGoalContinuation(b.sessionId);
-    // Esc/stop = the user bails: drop every mid-turn queued message (they were parked behind THIS turn).
-    // Also lets the send()'s flush loop terminate — its next drain returns empty once the prompt settles.
-    this.sessionQueue.clear(b.sessionId);
+    // Esc/stop = the user bails: drop every mid-turn steered message still pending in PI's queue so an
+    // interrupted turn doesn't deliver words the user meant for the turn they just killed.
+    b.session.clearQueue();
     // A parked ask_user_question must fail cleanly when the turn is aborted, else the tool Promise
     // (and the awaited prompt()) would hang forever. Reject before aborting the PI session.
     if (b.sessionId) this.elicitation.cancelForSession(b.sessionId, 'aborted');
@@ -343,18 +329,26 @@ export class BrainService {
     return this.statusView.status(userId, session);
   }
 
-  /** The caller's pending mid-turn message queue (full snapshot) — of the active conversation, or of the
-   *  caller's explicit `session` (a bound CLI). Empty when nothing is queued or no conversation is live. */
+  /** The caller's pending mid-turn message backlog (PI's transient steered + follow-up snapshot) — of the
+   *  active conversation, or of the caller's explicit `session` (a bound CLI). Empty when nothing is
+   *  pending or no conversation is live. */
   queueList(userId: number, session?: string): { id: string; text: string }[] {
     const sessionId = session ? this.lifecycle.ownedUserSession(userId, session) : this.sessions.activeIdFor(userId);
-    return sessionId ? this.sessionQueue.list(sessionId) : [];
+    const live = sessionId ? this.sessions.get(sessionId) : undefined;
+    return live ? queueItems(live.session.getSteeringMessages(), live.session.getFollowUpMessages()) : [];
   }
 
-  /** Remove one pending queued message by id (the CLI ctrl+x / the web × button). Returns whether it
-   *  matched — an unknown/already-delivered id is a tolerated no-op. */
-  queueRemove(userId: number, id: string, session?: string): boolean {
+  /** Drop the pending mid-turn backlog (the CLI ctrl+x / the web × button). PI steers a mid-turn message
+   *  into the running turn within a step or two, so its queue holds at most a brief transient — there is
+   *  no per-id removal to target, so this clears the whole pending backlog. `id` is accepted for wire
+   *  compatibility with the DELETE route and is ignored. Returns whether anything was pending. */
+  queueRemove(userId: number, _id: string, session?: string): boolean {
     const sessionId = session ? this.lifecycle.ownedUserSession(userId, session) : this.sessions.activeIdFor(userId);
-    return sessionId ? this.sessionQueue.remove(sessionId, id) : false;
+    const live = sessionId ? this.sessions.get(sessionId) : undefined;
+    if (!live) return false;
+    const had = live.session.pendingMessageCount > 0;
+    live.session.clearQueue();
+    return had;
   }
 
   /** Flip the SESSION-scoped YOLO override (the CLI `/yolo` command) — see PermissionApprovalService.
@@ -373,7 +367,6 @@ export class BrainService {
     if (!row || row.user_id !== userId || isNonUserSession(sessionId)) throw new Error('unknown session');
     this.elicitation.cancelForSession(sessionId, 'conversation deleted'); // release a parked turn before dropping its session
     this.goals.cancelGoalContinuation(sessionId);
-    this.sessionQueue.clear(sessionId); // drop any pending mid-turn queue with the conversation
     this.cards.clearSession(sessionId);
     this.sessions.dispose(sessionId);
     if (this.sessions.activeIdFor(userId) === sessionId) this.sessions.clearActive(userId);
@@ -481,7 +474,14 @@ export class BrainService {
   /** Run one user turn — see BrainTurnRunner.send. `display` is the client's clean rendering of the
    *  message (before @mention/prompt expansion) that the authoritative `user` echo shows; absent → the
    *  model-facing text is echoed. */
-  async send(userId: number, text: string, images?: { data: string; mimeType: string }[], mode: 'build' | 'plan' = 'build', internal?: { goalKickoff?: boolean; goalContinue?: boolean }, clientCwd?: string, session?: string, display?: string): Promise<void> {
+  /** Whether `userId` is the instance operator (the owner). Exposed so owner-only API surfaces — e.g. the
+   *  background-process routes, which read/kill children of the owner-only terminal tools — gate on the same
+   *  notion the tools do, not merely `is_admin` (a second admin is admin-but-not-owner). */
+  isOwner(userId: number | undefined): boolean {
+    return this.identity.isOwner(userId);
+  }
+
+  async send(userId: number, text: string, images?: { data: string; mimeType: string }[], mode: 'build' | 'plan' = 'build', internal?: { goalKickoff?: boolean; goalContinue?: boolean; systemNudge?: boolean }, clientCwd?: string, session?: string, display?: string): Promise<void> {
     return this.turnRunner.send(userId, text, images, mode, internal, clientCwd, session, display);
   }
 

@@ -341,9 +341,10 @@ export function registerBrainRoutes(app: ElowenApp, ctx: RouteContext): void {
     catch (e) { return c.json({ error: (e as Error).message }, 409); } // not started yet / unknown session
   });
 
-  // The caller's pending mid-turn message queue (messages sent while a turn streams, parked until it
-  // ends). `session` scopes it to a bound CLI's conversation; absent → the active one. Full snapshot
-  // (id + text) — the same shape the `queue` stream event carries, so clients seed and reconcile alike.
+  // The caller's pending mid-turn backlog (messages sent while a turn streams are STEERED into it and
+  // reported by PI until delivered). `session` scopes it to a bound CLI's conversation; absent → the
+  // active one. Full snapshot (id + text) — the same shape the `queue` stream event carries, so clients
+  // seed and reconcile alike.
   app.get('/brain/queue', c => {
     if (!d.brain) return c.json([]);
     if (forbidden(c)) return c.json({ error: 'forbidden' }, 403);
@@ -351,9 +352,11 @@ export function registerBrainRoutes(app: ElowenApp, ctx: RouteContext): void {
     catch { return c.json({ error: 'unknown session' }, 404); }
   });
 
-  // Remove ONE pending queued message by id (the CLI's queue-remove keybind / the web × button). Always
-  // 200 with { removed } — an unknown/already-delivered id is a tolerated no-op (removed:false), never an
-  // error. The reduced snapshot fans out to every attached client via the `queue` stream event.
+  // Drop the pending mid-turn backlog (the CLI's queue-remove keybind / the web × button). PI steers a
+  // mid-turn message into the running turn within a step or two, so there is no per-id removal to target —
+  // the `:id` is accepted for wire compatibility and ignored; this clears whatever is still pending.
+  // Always 200 with { removed } (false when nothing was pending). The cleared snapshot fans out via the
+  // `queue` stream event.
   app.delete('/brain/queue/:id', c => {
     if (!d.brain) return c.json({ error: 'brain unavailable' }, 503);
     if (forbidden(c)) return c.json({ error: 'forbidden' }, 403);

@@ -1,4 +1,4 @@
-import { defineTool, formatSkillsForPrompt } from '@earendil-works/pi-coding-agent';
+import { defineTool } from '@earendil-works/pi-coding-agent';
 import type { AgentSession, AuthStorage, ResourceLoader, createAgentSession } from '@earendil-works/pi-coding-agent';
 import { Type } from 'typebox';
 import type { BrainStore } from '../../store/brainStore.js';
@@ -11,6 +11,7 @@ import { newCostMeter, runWithMeter, type CostMeter } from '../openrouterMeter.j
 import { projectUserTurn } from '../persistence.js';
 import { taskSessionId } from '../sessionId.js';
 import { BrainSessionFactory } from '../session/factory.js';
+import { DEFAULT_AUTO_COMPACT_PCT } from '../session/liveBrain.js';
 import { composeSessionTools } from '../session/capabilities.js';
 import { PluginHookBus } from '../../plugins/hookBus.js';
 import { runWithPolicy } from '../../plugins/policyContext.js';
@@ -161,7 +162,7 @@ export class BrainWorkerService {
       onToolResult: toolHookBus ? (e) => toolHookBus.emit('tools.call.after', e) : undefined,
     });
     const skills = plugins?.skills ?? [];
-    const append = [skills.length ? formatSkillsForPrompt(skills) : '', ...(plugins?.promptFragments ?? [])].filter((s) => s.length > 0);
+    const append = [...(plugins?.promptFragments ?? [])].filter((s) => s.length > 0);
 
     // The one control-plane capability a worker gets: closing ITS OWN task (id baked in) through the
     // REST route, so ReviewService/mission advancement fire exactly as for a CLI worker's `elowen close`.
@@ -199,8 +200,11 @@ export class BrainWorkerService {
     // subscription) — identical to the chat brain's, so the two can never drift.
     const { session } = await this.factory.create({
       sessionId, ownerUserId: input.ownerId ?? 0, registry, model, cwd,
-      systemPrompt, appendSystemPrompt: append,
+      systemPrompt, appendSystemPrompt: append, skills,
       tools: [closeTool, ...pluginTools],
+      // Task workers run long and unattended — keep their context bounded with PI-native compaction (the
+      // factory persists each compaction into the store, so a rehydrated/resumed task keeps the savings).
+      autoCompact: true, autoCompactAtPct: DEFAULT_AUTO_COMPACT_PCT,
       title: `${input.taskId}${input.taskTitle ? `: ${input.taskTitle}` : ''}`,
     });
 

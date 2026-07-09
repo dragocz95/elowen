@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { register } from '../../plugins/dev-commands/index.mjs';
-import { expandPromptCommand } from '../../src/brain/slashCommands.js';
+import { buildPromptTemplates } from '../../src/brain/slashCommands.js';
 
 interface Cmd { name: string; description: string; prompt: string }
 function fakeCtx(config: Record<string, unknown> = {}) {
@@ -15,7 +15,7 @@ describe('dev-commands plugin', () => {
     expect(commands.map((c) => c.name).sort()).toEqual(['commit', 'docs', 'explain', 'pr', 'review', 'test']);
     for (const c of commands) {
       expect(c.description.trim().length).toBeGreaterThan(0);
-      expect(c.prompt).toContain('$ARGS'); // every macro takes an argument
+      expect(c.prompt).toContain('$ARGUMENTS'); // every macro takes an argument (PI's native placeholder)
     }
   });
 
@@ -31,11 +31,13 @@ describe('dev-commands plugin', () => {
     expect(commands.length).toBe(6);
   });
 
-  it('its prompts expand with the user argument', () => {
+  it('maps onto a PI PromptTemplate so PI expands the argument natively on send', () => {
     const { commands, ctx } = fakeCtx({ enabled: ['explain'] });
     register(ctx);
-    const expanded = expandPromptCommand(commands[0]!.prompt, 'the auth middleware');
-    expect(expanded).toContain('the auth middleware');
-    expect(expanded).not.toContain('$ARGS');
+    const [tpl] = buildPromptTemplates(commands);
+    // We copy the macro verbatim into PI's template content; PI substitutes $ARGUMENTS itself.
+    expect(tpl.name).toBe('explain');
+    expect(tpl.content).toBe(commands[0]!.prompt);
+    expect(tpl.content).toContain('$ARGUMENTS');
   });
 });

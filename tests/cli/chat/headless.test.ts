@@ -62,7 +62,7 @@ function fakeClient(goalRow: GoalView | null = null): { client: never; calls: st
     async status() { calls.push('status'); return { model: 'm', title: 't' } as never; },
     async skills() { calls.push('skills'); return []; },
     async sessions() { calls.push('sessions'); return [{ id: 'brain-1', title: 'First chat', model: 'm', updated_at: '2026-07-07', active: true }]; },
-    async commands() { calls.push('commands'); return [{ name: 'review', description: 'Review code', kind: 'prompt', prompt: 'Review the following: $ARGS' }]; },
+    async commands() { calls.push('commands'); return [{ name: 'review', description: 'Review code', kind: 'prompt', prompt: 'Review the following: $ARGUMENTS' }]; },
     async goal() { return goalRow; },
     async setGoal(text: string, _d: boolean, budget?: number) { calls.push(`setGoal:${text}:${budget ?? ''}`); return {} as GoalView; },
     async goalAction(a: string) { calls.push(`goalAction:${a}`); return { status: 'paused' } as GoalView; },
@@ -115,13 +115,13 @@ describe('cli/chat/headless.runHeadless', () => {
     expect(lines.some((e) => e.type === 'idle')).toBe(true);
   });
 
-  it('expands a plugin prompt command (/review …) instead of sending the literal slash', async () => {
+  it('sends a plugin prompt command (/review …) RAW — the daemon lets PI expand it natively', async () => {
     const { client, calls } = fakeClient();
     const { io: sink } = io();
     const code = await runHeadless('http://x', {}, ['-p', '/review auth module'], { client, io: sink });
     expect(code).toBe(0);
-    expect(calls).toContain('send:build:Review the following: auth module');
-    // an unknown slash still goes through literally (it may be meaningful text)
+    expect(calls).toContain('send:build:/review auth module');
+    // an unknown slash likewise goes through literally (it may be meaningful text)
     const b = fakeClient();
     await runHeadless('http://x', {}, ['-p', '/nonexistent hello'], { client: b.client, io: io().io });
     expect(b.calls).toContain('send:build:/nonexistent hello');

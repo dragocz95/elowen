@@ -381,14 +381,14 @@ export function createPickers(
     void client.skills().then((skills) => {
       if (skills.length === 0) { rt.notice = color.dim('no skills found'); rt.render(); return; }
       const refresh = () => openSkillsModal();
-      // Push a skill into the CURRENT conversation: instruct the agent to load its full instructions via
-      // the `read_skill` tool (progressive disclosure — only name+description live in the system prompt).
-      // Nothing to load if the skills plugin is off (the skill isn't registered at all then).
+      // Push a skill into the CURRENT conversation with PI's native `/skill:name` command — the daemon's
+      // prompt path expands it to the skill's full instructions (progressive disclosure keeps only
+      // name+description in the system prompt). Nothing to load if the skills plugin is off.
       const loadSkill = (name: string, active: boolean): void => {
         if (!active) { rt.notice = color.dim('the skills plugin is disabled — enable it in Settings → Plugins first'); rt.render(); return; }
         // onSubmit clears any notice and shows the sent turn itself, so a "loading…" notice here would be
-        // wiped before it ever renders — just submit the read_skill instruction.
-        editor.onSubmit?.(`Load the "${name}" skill with the read_skill tool and follow it for the rest of this conversation.`);
+        // wiped before it ever renders — just submit the /skill command.
+        editor.onSubmit?.(`/skill:${name}`);
       };
       const confirmDelete = (name: string): void => {
         openPicker({

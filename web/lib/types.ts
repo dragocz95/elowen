@@ -76,7 +76,8 @@ export interface BrainSessionInfo { id: string; title: string; model: string; up
 /** A row in the admin session-management panel (all brain sessions the operator anchors). */
 export interface ManagedSession { id: string; title: string; model: string; updated_at: string; running: boolean; active: boolean; kind: 'conversation' | 'channel' | 'task'; tokens: number }
 /** Mirror of the daemon's slash-command def (src/brain/slashCommands.ts) — published at GET /brain/commands.
- *  `kind:'prompt'` is a plugin prompt macro: `prompt` is the template ($ARGS/$1..$9) sent to the agent. */
+ *  `kind:'prompt'` is a plugin prompt macro: the surface sends the RAW `/name args` slash and PI expands
+ *  the template's arguments ($ARGUMENTS/$1..$9) on the daemon; `prompt` is kept for menu/identification. */
 export interface SlashCommandDef { name: string; description: string; kind: 'action' | 'info' | 'picker' | 'mode' | 'prompt'; adminOnly?: boolean; prompt?: string }
 /** One fulltext-search match across the caller's brain conversations. */
 export interface BrainSearchHit { sessionId: string; sessionTitle: string; role: string; snippet: string; ts: string }
@@ -416,8 +417,10 @@ export interface DiscordChannelOption { id: string; name: string; type: 'channel
 export interface WhatsAppPairing { qrImage: string | null; code: string | null; connected: boolean }
 
 /** One markdown skill of the skills plugin (GET /plugins/skills/list). Bundled skills ship with the
- *  install and are read-only; user skills are created at runtime and can be deleted. */
-export interface PluginSkill { name: string; description: string; source: 'bundled' | 'user' }
+ *  install and are read-only; user skills are created at runtime and can be edited or deleted.
+ *  `disableModelInvocation` mirrors PI's `disable-model-invocation` frontmatter flag — when set the
+ *  skill is hidden from progressive disclosure and reachable only via `/skill:name`. */
+export interface PluginSkill { name: string; description: string; source: 'bundled' | 'user'; disableModelInvocation: boolean; content?: string }
 // Login no longer surfaces a token to the browser — the proxy sets it as an httpOnly cookie and
 // returns only a success flag.
 export type AuthResult = { ok: true };

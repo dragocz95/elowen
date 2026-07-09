@@ -30,7 +30,15 @@ function fakeDeps() {
     }),
     subscribe: (l: (e: unknown) => void) => { listeners.push(l); return () => {}; },
     setModel: vi.fn(), dispose: vi.fn(), abort: vi.fn(async () => {}), messages, isStreaming: false,
-    steer: vi.fn(async () => {}),
+    // PI's native mid-turn queue: steer() parks a message in the pending backlog (in a real session PI
+    // delivers it between steps; the fake just records it so tests can assert it landed), and the
+    // getters/clearQueue mirror what status()/queueList/abort read.
+    __queue: [] as string[],
+    steer: vi.fn(async (t: string) => { session.__queue.push(t); }),
+    getSteeringMessages: () => session.__queue,
+    getFollowUpMessages: () => [] as string[],
+    get pendingMessageCount() { return session.__queue.length; },
+    clearQueue: vi.fn(() => { const s = session.__queue.slice(); session.__queue.length = 0; return { steering: s, followUp: [] }; }),
     __contextUsage: undefined as { tokens: number; contextWindow: number; percent: number } | undefined,
     getContextUsage(this: { __contextUsage?: { tokens: number; contextWindow: number; percent: number } }) { return this.__contextUsage; },
     compact: vi.fn(async () => {}),
@@ -103,7 +111,7 @@ describe('BrainService', () => {
     expect(seenAppend).toContain('Follow house style.');
   });
 
-  it('advertises registered plugin skills (name + description + file path) in the appended system prompt', async () => {
+  it('feeds registered plugin skills to the resource loader (PI renders progressive disclosure natively)', async () => {
     const d = fakeDeps();
     const reg = new PluginRegistry();
     const ctx = reg.contextFor('skills', {}, { info() {}, warn() {}, error() {} });
@@ -116,16 +124,32 @@ describe('BrainService', () => {
       disableModelInvocation: false,
     });
     (d as unknown as { plugins: unknown }).plugins = new PluginRegistryProvider(async () => reg);
-    let seenAppend: string[] | undefined;
-    d.resourceLoaderFactory = (o: { appendSystemPrompt?: string[] }) => { seenAppend = o.appendSystemPrompt; return undefined; };
+    let seenSkills: { name: string; filePath: string }[] | undefined;
+    d.resourceLoaderFactory = (o: { skills?: { name: string; filePath: string }[] }) => { seenSkills = o.skills; return undefined; };
 
     const svc = new BrainService(d as never);
     await svc.start(1);
-    const block = (seenAppend ?? []).join('\n');
-    expect(block).toContain('<available_skills>');
-    expect(block).toContain('<name>deploy-checklist</name>');
-    expect(block).toContain('<description>Use when deploying to production.</description>');
-    expect(block).toContain('<location>/plugins/skills/skills/deploy-checklist.md</location>');
+    // Skills are no longer flattened into the appended prompt — they reach PI through the resource
+    // loader's skillsOverride, which renders the <available_skills> block and /skill:name expansion.
+    expect(seenSkills?.map((s) => s.name)).toContain('deploy-checklist');
+    expect(seenSkills?.find((s) => s.name === 'deploy-checklist')?.filePath).toBe('/plugins/skills/skills/deploy-checklist.md');
+  });
+
+  it('feeds registered plugin prompt commands to the resource loader as PI prompt templates', async () => {
+    const d = fakeDeps();
+    const reg = new PluginRegistry();
+    const ctx = reg.contextFor('dev', {}, { info() {}, warn() {}, error() {} });
+    ctx.registerCommand({ name: 'review', description: 'Review the diff', prompt: 'Review this diff. Scope: $ARGUMENTS' });
+    (d as unknown as { plugins: unknown }).plugins = new PluginRegistryProvider(async () => reg);
+    let seenPrompts: { name: string; content: string; filePath: string }[] | undefined;
+    d.resourceLoaderFactory = (o: { prompts?: { name: string; content: string; filePath: string }[] }) => { seenPrompts = o.prompts; return undefined; };
+
+    const svc = new BrainService(d as never);
+    await svc.start(1);
+    // The macro reaches PI natively (promptsOverride): PI exposes /review and expands $ARGUMENTS itself.
+    const tpl = seenPrompts?.find((p) => p.name === 'review');
+    expect(tpl?.content).toBe('Review this diff. Scope: $ARGUMENTS');
+    expect(tpl?.filePath).toBe('db://prompts/review'); // synthetic, in-memory
   });
 
   it('applies a per-user model override', async () => {
@@ -137,36 +161,35 @@ describe('BrainService', () => {
     expect(svc.status(1).model).toBe('ollama/kimi-k2.7-code');
   });
 
-  it('mid-turn: a message sent while the turn streams is ENQUEUED (queue snapshot), not steered or run as a new turn', async () => {
+  it('mid-turn: a message sent while the turn streams is STEERED into the running turn (persisted + echoed)', async () => {
     const d = fakeDeps();
     const svc = new BrainService(d as never);
     const { sessionId } = await svc.start(1);
-    const seen: { type: string; items?: { id: string; text: string }[] }[] = [];
+    const seen: { type: string; text?: string }[] = [];
     svc.subscribe(1, (e) => seen.push(e as { type: string }));
     d.session.prompt.mockClear();
     d.session.isStreaming = true; // a turn is in flight
     await svc.send(1, 'also check the logs');
-    // Parked in the per-session queue — no steer (removed), no fresh unlocked prompt.
-    expect(d.session.steer).not.toHaveBeenCalled();
+    // Steered into the running turn (PI delivers it between steps) — NOT a fresh unlocked prompt.
+    expect(d.session.steer).toHaveBeenCalledWith('also check the logs', undefined);
     expect(d.session.prompt).not.toHaveBeenCalled();
-    // A full-snapshot `queue` event fanned to the conversation's clients …
-    const snap = seen.filter((e) => e.type === 'queue').at(-1);
-    expect(snap?.items?.map((i) => i.text)).toEqual(['also check the logs']);
-    // … reachable via the queue facade and the status boot seed …
+    // PI's transient steering backlog is reachable via the queue facade and the status boot seed …
     expect(svc.queueList(1).map((q) => q.text)).toEqual(['also check the logs']);
     expect(svc.status(1).queued.map((q) => q.text)).toEqual(['also check the logs']);
-    // … but NOT yet persisted: a queued message enters the conversation only when delivered on flush.
+    // … the daemon echoes the 'you' bubble live …
+    expect(seen.some((e) => e.type === 'user' && e.text === 'also check the logs')).toBe(true);
+    // … and persists it immediately (agent_end never re-persists user messages).
     const stored = d.store.getMessages(sessionId).map((m) => JSON.parse(m.content).content);
-    expect(stored).not.toContain('also check the logs');
+    expect(stored).toContain('also check the logs');
   });
 
-  it('a mid-turn message drains + combines into ONE follow-up turn (delivered via a `user` event) when the turn ends', async () => {
+  it('two mid-turn messages are each STEERED into the running turn (no follow-up turn)', async () => {
     const d = fakeDeps();
     const svc = new BrainService(d as never);
     await svc.start(1);
     const seen: { type: string; text?: string }[] = [];
     svc.subscribe(1, (e) => seen.push(e as { type: string }));
-    // Hold the first turn open (streaming) until we release it, so the two follow-ups queue behind it.
+    // Hold the first turn open (streaming) until we release it, so the two follow-ups steer into it.
     let release!: () => void;
     const gate = new Promise<void>((r) => { release = r; });
     d.session.prompt.mockImplementationOnce(async (t: string) => {
@@ -176,44 +199,37 @@ describe('BrainService', () => {
     });
     const p1 = svc.send(1, 'first');   // starts the turn (prompt hangs on the gate)
     d.session.isStreaming = true;       // a turn is in flight
-    await svc.send(1, 'second');        // queued
-    await svc.send(1, 'third');         // queued
-    expect(d.session.steer).not.toHaveBeenCalled();
-    expect(svc.queueList(1).map((q) => q.text)).toEqual(['second', 'third']);
-    d.session.prompt.mockClear();
-    release();                          // let the first turn settle → flush loop delivers the queue
+    await svc.send(1, 'second');        // steered into the running turn
+    await svc.send(1, 'third');         // steered into the running turn
+    expect(d.session.steer.mock.calls.map((c) => c[0])).toEqual(['second', 'third']);
+    release();
     await p1;
-    // Exactly ONE follow-up prompt, combining the two queued texts (blank-line delimited).
+    // No follow-up prompt — only the original 'first' turn ran; the steered words rode it.
     expect(d.session.prompt).toHaveBeenCalledTimes(1);
-    expect(d.session.prompt.mock.calls[0]![0]).toContain('second\n\nthird');
-    // Delivered as ONE user turn (persisted) and surfaced live via a `user` event, and the queue is empty.
+    // Both steered messages were persisted and surfaced live as their own 'you' echoes.
     const stored = d.store.getMessages('brain-1').filter((m) => m.role === 'user').map((m) => JSON.parse(m.content).content);
-    expect(stored).toContain('second\n\nthird');
-    expect(seen.some((e) => e.type === 'user' && (e.text ?? '').includes('second') && (e.text ?? '').includes('third'))).toBe(true);
-    expect(svc.queueList(1)).toEqual([]);
+    expect(stored).toContain('second');
+    expect(stored).toContain('third');
+    expect(seen.filter((e) => e.type === 'user' && (e.text === 'second' || e.text === 'third'))).toHaveLength(2);
   });
 
-  it('queueRemove drops one pending message and re-emits the reduced snapshot; abort clears the queue', async () => {
+  it('queueRemove / abort clear PI\'s pending steering backlog', async () => {
     const d = fakeDeps();
     const svc = new BrainService(d as never);
     await svc.start(1);
-    const seen: { type: string; items?: { id: string; text: string }[] }[] = [];
-    svc.subscribe(1, (e) => seen.push(e as { type: string }));
     d.session.isStreaming = true;
-    await svc.send(1, 'alpha');
-    await svc.send(1, 'beta');
-    const ids = svc.queueList(1);
-    expect(ids.map((q) => q.text)).toEqual(['alpha', 'beta']);
-    // Remove the first → snapshot reduces to just the second.
-    expect(svc.queueRemove(1, ids[0]!.id)).toBe(true);
-    expect(svc.queueList(1).map((q) => q.text)).toEqual(['beta']);
-    expect(seen.filter((e) => e.type === 'queue').at(-1)?.items?.map((i) => i.text)).toEqual(['beta']);
-    // An unknown id is a tolerated no-op.
+    await svc.send(1, 'alpha'); // steered
+    await svc.send(1, 'beta');  // steered
+    expect(svc.queueList(1).map((q) => q.text)).toEqual(['alpha', 'beta']);
+    // PI can't target one transient steered message, so queueRemove clears the whole pending backlog.
+    expect(svc.queueRemove(1, 'ignored')).toBe(true);
+    expect(svc.queueList(1)).toEqual([]);
+    // Nothing pending → a tolerated no-op.
     expect(svc.queueRemove(1, 'nope')).toBe(false);
-    // Esc/stop drops the whole pending queue (the user bailed) and emits the empty snapshot.
+    // Esc/stop also clears whatever is still pending.
+    await svc.send(1, 'gamma');
     await svc.abort(1);
     expect(svc.queueList(1)).toEqual([]);
-    expect(seen.filter((e) => e.type === 'queue').at(-1)?.items).toEqual([]);
   });
 
   it('echo authority: an immediate send streams ONE `user` event to every listener (no client-side echo)', async () => {
@@ -243,83 +259,6 @@ describe('BrainService', () => {
     svc.subscribe(1, (e) => seen.push(e as { type: string }));
     await svc.send(1, 'autonomous continuation', undefined, 'build', { goalKickoff: true });
     expect(seen.some((e) => e.type === 'user')).toBe(false);
-  });
-
-  it('mode safety: a plan-mode follow-up NEVER rides a build-mode batch — each mode group is its own turn', async () => {
-    const d = fakeDeps();
-    const svc = new BrainService(d as never);
-    await svc.start(1);
-    // Hold the first (build) turn open so the two follow-ups queue behind it.
-    let release!: () => void;
-    const gate = new Promise<void>((r) => { release = r; });
-    d.session.prompt.mockImplementationOnce(async (t: string) => {
-      await gate;
-      d.session.messages.push({ role: 'user', content: t }, { role: 'assistant', content: `echo:${t}` });
-      d.emit({ type: 'agent_end', willRetry: false, messages: [{ role: 'assistant', content: `echo:${t}` }] });
-    });
-    const p1 = svc.send(1, 'first', undefined, 'build');
-    await vi.waitFor(() => expect(d.session.prompt).toHaveBeenCalledTimes(1)); // the first turn is in-flight (on the gate)
-    d.session.isStreaming = true;
-    await svc.send(1, 'do the build thing', undefined, 'build'); // queued (build)
-    await svc.send(1, 'wait — only propose a plan', undefined, 'plan'); // queued (plan)
-    d.session.prompt.mockClear();
-    release();
-    await p1;
-    // TWO follow-up turns — the build group and the plan group run separately, NOT one combined turn.
-    expect(d.session.prompt).toHaveBeenCalledTimes(2);
-    const first = d.session.prompt.mock.calls[0]![0] as string;
-    const second = d.session.prompt.mock.calls[1]![0] as string;
-    expect(first).toContain('do the build thing');
-    expect(first).not.toContain('cli/plan-mode'); // build batch carries NO plan-mode instruction
-    // The plan message runs in plan mode (its instruction is prepended) — never with the build batch.
-    expect(second).toContain('wait — only propose a plan');
-    expect(second).toContain('cli/plan-mode');
-    expect(second).not.toContain('do the build thing');
-  });
-
-  it('error path: the flush loop ALWAYS runs — a queued message is delivered even when the turn throws', async () => {
-    const d = fakeDeps();
-    const svc = new BrainService(d as never);
-    await svc.start(1);
-    let release!: () => void;
-    const gate = new Promise<void>((r) => { release = r; });
-    // The first turn hangs on the gate, then rejects (a provider/tool error mid-turn).
-    d.session.prompt.mockImplementationOnce(async () => { await gate; throw new Error('provider exploded'); });
-    const p1 = svc.send(1, 'first');
-    await vi.waitFor(() => expect(d.session.prompt).toHaveBeenCalledTimes(1)); // the failing turn is in-flight (on the gate)
-    d.session.isStreaming = true;
-    await svc.send(1, 'queued follow-up'); // parked behind the failing turn
-    const seen: { type: string; text?: string }[] = [];
-    svc.subscribe(1, (e) => seen.push(e as { type: string }));
-    d.session.prompt.mockClear();
-    release();
-    await expect(p1).rejects.toThrow('provider exploded'); // the initial error still propagates to the caller
-    // …but the finally-guarded flush ran anyway and delivered the queued message (not stranded forever).
-    expect(d.session.prompt).toHaveBeenCalledTimes(1);
-    expect(d.session.prompt.mock.calls[0]![0]).toContain('queued follow-up');
-    expect(svc.queueList(1)).toEqual([]);
-    expect(seen.some((e) => e.type === 'user' && (e.text ?? '').includes('queued follow-up'))).toBe(true);
-  });
-
-  it('durability: a queued message survives a daemon restart and delivers on the next turn', async () => {
-    const d = fakeDeps();
-    const svc = new BrainService(d as never);
-    await svc.start(1);
-    d.session.isStreaming = true;
-    await svc.send(1, 'queued before restart'); // parked in the DURABLE store
-    expect(svc.queueList(1).map((q) => q.text)).toEqual(['queued before restart']);
-    // Simulate a daemon restart: a brand-new BrainService over the SAME store — the in-memory queue is
-    // gone, but the row persists. A fresh session isn't streaming.
-    const svc2 = new BrainService(d as never);
-    d.session.isStreaming = false;
-    await svc2.start(1); // resume brain-1 from the store
-    expect(svc2.queueList(1).map((q) => q.text)).toEqual(['queued before restart']); // re-seeded from the store
-    const seen: { type: string; text?: string }[] = [];
-    svc2.subscribe(1, (e) => seen.push(e as { type: string }));
-    d.session.prompt.mockClear();
-    await svc2.send(1, 'wake'); // an idle turn → the flush loop delivers the durable queued message
-    expect(svc2.queueList(1)).toEqual([]);
-    expect(seen.some((e) => e.type === 'user' && (e.text ?? '').includes('queued before restart'))).toBe(true);
   });
 
   it('setThinkingLevel applies live (no respawn) and status reports it', async () => {
@@ -365,6 +304,8 @@ describe('BrainService', () => {
     // PI's in-context compaction leaves session.messages = [compactionSummary, ...keptTail]. The kept
     // USER entry here carries the ephemeral live-prompt framing — persistCompaction must NOT persist it,
     // keeping the store's own clean 'q2' row instead (bugfix: framing/image bytes must never land in SQLite).
+    // PI's compact() shrinks the live context AND emits `compaction_end` — the factory subscription
+    // mirrors it into the store and the spawner fans `compacted` to clients off that event.
     d.session.compact.mockImplementationOnce(async () => {
       d.session.messages.length = 0;
       d.session.messages.push(
@@ -372,6 +313,7 @@ describe('BrainService', () => {
         { role: 'user', content: '<user_memories>leak</user_memories>\n\nq2' } as never,
         { role: 'assistant', content: 'echo:q2' } as never,
       );
+      d.emit({ type: 'compaction_end', reason: 'manual', result: { messagesRemoved: 2 }, aborted: false, willRetry: false });
     });
     const seen: { type: string }[] = [];
     svc.subscribe(1, (e) => seen.push(e as { type: string }));
@@ -402,39 +344,42 @@ describe('BrainService', () => {
     expect(seen.some((e) => e.type === 'compacted')).toBe(false); // no collapse
   });
 
-  it('auto-compact fires at the threshold: compacts, persists, and emits `compacted`', async () => {
+  it('a PI-native compaction (auto at the threshold / overflow) mirrors the shrunk context and emits `compacted`', async () => {
+    // Auto-compaction is now PI's own: it fires after a turn once the context passes the user's %, then
+    // emits `compaction_end`. The daemon reacts to that event alone — the factory persists the shrunk log,
+    // the spawner notifies clients — so no threshold logic runs in our turn loop.
     const d = fakeDeps();
-    (d as unknown as { userSettings: () => { autoCompact: boolean; autoCompactAt: number } }).userSettings =
-      () => ({ autoCompact: true, autoCompactAt: 50 }); // fire once context ≥ 50% full
     const svc = new BrainService(d as never);
     const { sessionId } = await svc.start(1);
-    // The turn ends with the window 60% full → over the 50% trigger.
-    d.session.__contextUsage = { tokens: 60, contextWindow: 100, percent: 60 };
-    d.session.compact.mockImplementationOnce(async () => {
-      d.session.messages.length = 0;
-      d.session.messages.push(
-        { role: 'compactionSummary', summary: 'older', tokensBefore: 60 } as never,
-        { role: 'assistant', content: 'echo:go' } as never,
-      );
-    });
+    await svc.send(1, 'go');
     const seen: { type: string }[] = [];
     svc.subscribe(1, (e) => seen.push(e as { type: string }));
-    await svc.send(1, 'go');
-    expect(d.session.compact).toHaveBeenCalledTimes(1); // auto-compact ran inside the turn
+    // PI shrank the context in place and emits the threshold compaction_end.
+    d.session.messages.length = 0;
+    d.session.messages.push(
+      { role: 'compactionSummary', summary: 'older', tokensBefore: 60 } as never,
+      { role: 'assistant', content: 'echo:go' } as never,
+    );
+    d.emit({ type: 'compaction_end', reason: 'threshold', result: { messagesRemoved: 1 }, aborted: false, willRetry: false });
     expect(seen.some((e) => e.type === 'compacted')).toBe(true);
-    // Same persistence path as the manual command: the store mirrors the shrunk context, not the full log.
+    // The store mirrors the shrunk context (divider + kept tail), not the full log.
     expect(d.store.getMessages(sessionId).map((m) => m.role)).toEqual(['compaction', 'assistant']);
   });
 
-  it('auto-compact stays put below the threshold', async () => {
+  it('a no-op / aborted compaction_end leaves the store and clients untouched', async () => {
+    // PI emits compaction_start then a RESULTLESS (or aborted) compaction_end for a session too small to
+    // compact or a cancelled run — the daemon must not persist a false collapse off that event.
     const d = fakeDeps();
-    (d as unknown as { userSettings: () => { autoCompact: boolean; autoCompactAt: number } }).userSettings =
-      () => ({ autoCompact: true, autoCompactAt: 80 });
     const svc = new BrainService(d as never);
-    await svc.start(1);
-    d.session.__contextUsage = { tokens: 40, contextWindow: 100, percent: 40 }; // well under 80%
+    const { sessionId } = await svc.start(1);
     await svc.send(1, 'go');
-    expect(d.session.compact).not.toHaveBeenCalled();
+    const before = d.store.getMessages(sessionId).length;
+    const seen: { type: string }[] = [];
+    svc.subscribe(1, (e) => seen.push(e as { type: string }));
+    d.emit({ type: 'compaction_end', reason: 'threshold', result: undefined, aborted: false, willRetry: false });
+    d.emit({ type: 'compaction_end', reason: 'manual', result: { messagesRemoved: 1 }, aborted: true, willRetry: false });
+    expect(d.store.getMessages(sessionId).length).toBe(before); // untouched
+    expect(seen.some((e) => e.type === 'compacted')).toBe(false); // no collapse
   });
 
   it('surfaces a provider-errored turn (stopReason error, empty content) as an error event before idle', async () => {
@@ -652,7 +597,7 @@ describe('BrainService', () => {
     expect(goal?.paused_reason).toContain('provider down');
   });
 
-  it('internal goal continuations bypass mid-turn queuing (run straight through even while streaming)', async () => {
+  it('internal goal continuations bypass mid-turn steering (run straight through even while streaming)', async () => {
     const d = fakeDeps();
     const svc = new BrainService(d as never);
     await svc.start(1);
@@ -661,7 +606,7 @@ describe('BrainService', () => {
     d.session.isStreaming = true;
     await svc.send(1, 'Continue the active persistent goal.', undefined, 'build', { goalContinue: true });
     expect(d.session.steer).not.toHaveBeenCalled();
-    expect(svc.queueList(1)).toEqual([]); // an internal continuation is NEVER queued — it drives the loop
+    expect(svc.queueList(1)).toEqual([]); // an internal continuation is NEVER steered — it drives the loop
     expect(d.session.prompt).toHaveBeenCalledWith('Continue the active persistent goal.');
   });
 
@@ -728,7 +673,7 @@ describe('BrainService', () => {
     expect(activeTools).not.toContain('set_config');
   });
 
-  it('a mid-turn PLAN message is QUEUED (not steered) — the running turn keeps its tool visibility', async () => {
+  it('a mid-turn message is STEERED into the running turn WITHOUT re-slicing its tool visibility', async () => {
     const d = fakeDeps();
     d.prompts.render.mockImplementation((name: string, vars: Record<string, string>) =>
       name === 'cli/plan-mode' ? 'PLAN MODE PROMPT' : `PERSONA:${name}:${vars.userName}`,
@@ -740,25 +685,11 @@ describe('BrainService', () => {
 
     await svc.send(1, 'switch to planning', undefined, 'plan');
 
-    // No steer, no live tool-visibility change: the plan message parks in the queue and runs its OWN turn
-    // (with plan-mode tool restrictions applied then) after the current turn ends.
-    expect(d.session.steer).not.toHaveBeenCalled();
+    // Steered into the running turn; the in-flight turn keeps its OWN tool visibility (no live re-slice —
+    // applyToolVisibility never runs on a steered message).
+    expect(d.session.steer).toHaveBeenCalledWith('switch to planning', undefined);
     expect(d.session.setActiveToolsByName).not.toHaveBeenCalled();
     expect(svc.queueList(1).map((q) => q.text)).toEqual(['switch to planning']);
-  });
-
-  it('a mid-turn BUILD message is QUEUED (not steered) and never touches tool visibility', async () => {
-    const d = fakeDeps();
-    const svc = new BrainService(d as never);
-    await svc.start(1);
-    d.session.setActiveToolsByName.mockClear();
-    d.session.isStreaming = true;
-
-    await svc.send(1, 'keep going', undefined, 'build');
-
-    expect(d.session.steer).not.toHaveBeenCalled();
-    expect(d.session.setActiveToolsByName).not.toHaveBeenCalled();
-    expect(svc.queueList(1).map((q) => q.text)).toEqual(['keep going']);
   });
 
   it('history builds ordered segments: text + tool calls (with edit diffs), never raw tool output', () => {
@@ -1465,7 +1396,7 @@ describe('idle rollover (send)', () => {
     expect(svc.listSessions(1)).toHaveLength(1);
   });
 
-  it('never cuts a running turn: a stale conversation mid-stream queues instead of rolling over', async () => {
+  it('never cuts a running turn: a stale conversation mid-stream steers instead of rolling over', async () => {
     const d = fakeDeps();
     const svc = new BrainService(d as never);
     await svc.start(1);
@@ -1473,9 +1404,9 @@ describe('idle rollover (send)', () => {
     backdate(d);
     d.session.isStreaming = true; // a turn is in flight
     await svc.send(1, 'still there?');
-    // Mid-turn: parked in the queue on the SAME conversation — never steered, never rolled to a fresh one
-    // (the idle-rollover check lives in the outer serial, which the enqueue path bypasses entirely).
-    expect(d.session.steer).not.toHaveBeenCalled();
+    // Mid-turn: steered into the SAME conversation — never rolled to a fresh one (the idle-rollover check
+    // lives in the outer serial, which the steer path returns before ever reaching).
+    expect(d.session.steer).toHaveBeenCalledWith('still there?', undefined);
     expect(svc.queueList(1).map((q) => q.text)).toEqual(['still there?']);
     expect(svc.status(1).sessionId).toBe('brain-1'); // same conversation — no rollover
     expect(svc.listSessions(1)).toHaveLength(1);

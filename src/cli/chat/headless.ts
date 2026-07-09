@@ -2,7 +2,6 @@ import type { BrainEvent } from '../../brain/events.js';
 import { BrainClient } from './brainClient.js';
 import type { GoalView } from './brainClient.js';
 import { parseCommand } from './commands.js';
-import { expandPromptCommand } from '../../brain/slashCommands.js';
 import { resolveToken } from './token.js';
 
 /** Parsed `elowen run` / `elowen -p` invocation. A pure result so the parser is unit-testable. */
@@ -265,24 +264,16 @@ export async function runHeadless(
   const connectTimer = setTimeout(() => { if (!dispatched && !settled) { io.stderr("couldn't open the event stream (is the daemon reachable and the brain configured?)\n"); finish(1); } }, 20_000);
   connectTimer.unref?.();
 
-  // A slash that isn't a built-in may be a plugin prompt macro (kind:'prompt') — the same fallback the
-  // TUI applies: expand its template with the typed args and send THAT. Anything else goes through
-  // literally, so `elowen run "/review auth"` runs the dev-commands review prompt, not the raw text.
-  const resolveSlashText = async (text: string): Promise<string> => {
-    const m = /^\/(\S+)(?:\s+([\s\S]+))?$/.exec(text);
-    if (!m) return text;
-    const defs = await c.commands().catch(() => []);
-    const def = defs.find((d) => d.name === m[1] && d.kind === 'prompt' && d.prompt);
-    return def ? expandPromptCommand(def.prompt ?? '', m[2] ?? '') : text;
-  };
-
   const dispatch = async (): Promise<void> => {
     if (dispatched) return; dispatched = true; // onOpen fires again on a stream reconnect — dispatch once
     clearTimeout(connectTimer); // the stream is open; drop the connect deadline
     try {
+      // A slash that isn't a built-in (`parsed` is null) is a plugin prompt macro (kind:'prompt') — it
+      // rides RAW, so the daemon hands `/review auth` to PI and PI expands the template natively. Plain
+      // text goes through as-is.
       if (isGoalRun) { await c.setGoal(goalText, false, o.maxTurns); void pollGoal(); }
       else if (parsed) await dispatchSlash(parsed);
-      else fireTurn(slash ? await resolveSlashText(slash) : o.prompt!, o.mode);
+      else fireTurn(slash ?? o.prompt!, o.mode);
     } catch (e) { io.stderr(`\n${errMsg(e)}\n`); finish(1); }
   };
 

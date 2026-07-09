@@ -59,12 +59,11 @@ export type BrainEvent =
    *  lets a client drill into the child's transcript (`GET /brain/messages?session=…`). Synthetic —
    *  fanned out to the PARENT conversation's listeners; ignoring it is always safe. */
   | { type: 'subagent'; id: string; sessionId: string; status: 'running' | 'done' | 'error'; task: string; detail?: string; tools: number; tokens?: number; seconds: number; model?: string }
-  /** The pending message queue for this session — a FULL snapshot (an empty array clears it). Synthetic,
-   *  like `card`/`ask`: a message a user sends while a turn is already streaming parks in the daemon's
-   *  per-session SessionQueue instead of steering the running turn, and the parked batch is combined into
-   *  ONE follow-up user message when the turn ends. Emitted straight into `listeners` on every queue
-   *  mutation; a client renders the items as removable pending chips and boot-seeds from status().queued.
-   *  Safe to ignore (the turn still streams). */
+  /** The pending message queue for this session — a FULL snapshot (an empty array clears it). Mapped
+   *  from PI's native `queue_update` event: a message a user sends while a turn is already streaming is
+   *  STEERED into the running turn (delivered between steps, before the next model call), and PI reports
+   *  its transient steering + follow-up backlog here. A client renders the items as pending chips and
+   *  boot-seeds from status().queued. Safe to ignore (the turn still streams). */
   | { type: 'queue'; items: { id: string; text: string }[] }
   /** A user message the DAEMON is rendering as the 'you' turn — the single authority for user echoes.
    *  Emitted right before EVERY real user turn runs: a normal (idle) send AND a drained queued delivery
@@ -168,7 +167,11 @@ export function toBrainEvent(e: AgentSessionEvent): BrainEvent | null {
     // compaction_end carries its outcome: `result` is the CompactionResult on success, undefined on a
     // no-op/failure; `aborted` marks a cancelled run. Both let the status line avoid a false success.
     aborted?: boolean;
+    // queue_update carries PI's transient pending backlog (steered + follow-up messages).
+    steering?: readonly string[]; followUp?: readonly string[];
   };
+  // PI's native pending-message backlog — a mid-turn steered message shows as a chip until it's delivered.
+  if (anyE.type === 'queue_update') return { type: 'queue', items: queueItems(anyE.steering ?? [], anyE.followUp ?? []) };
   if (anyE.type === 'message_update') {
     const ev = anyE.assistantMessageEvent;
     if (ev?.type === 'text_delta' && ev.delta) return { type: 'text', delta: ev.delta };
@@ -221,6 +224,14 @@ export function toBrainEvent(e: AgentSessionEvent): BrainEvent | null {
     }
   }
   return null;
+}
+
+/** Map PI's pending steering + follow-up backlog (both plain string arrays) to the queue snapshot the
+ *  clients render as removable chips. PI mints no ids for these transient, between-steps-delivered
+ *  messages, so the position is the stable-enough handle. Steering messages come first (they land ahead
+ *  of any follow-up). Shared by the `queue` event mapping and status().queued so both agree. */
+export function queueItems(steering: readonly string[], followUp: readonly string[]): { id: string; text: string }[] {
+  return [...steering, ...followUp].map((text, i) => ({ id: String(i), text }));
 }
 
 /** Snapshot a session's statusline numbers: context fill from PI plus per-message usage totals. */

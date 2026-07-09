@@ -235,10 +235,10 @@ export class AttachmentChips implements Component {
 }
 
 /** Pending mid-turn messages as dim QUEUED lines above the input — the opencode "queued prompt" look
- *  (a bright ' QUEUED ' pill + the message text). These are messages typed while a turn streams; they
- *  combine into one follow-up when the turn ends (the daemon SessionQueue is the source of truth).
- *  Renders nothing while empty, so it costs no rows at rest. `removeHint` is a faint one-line reminder of
- *  the remove-last keybind, shown only while the queue is non-empty. */
+ *  (a bright ' QUEUED ' pill + the message text). These are messages typed while a turn streams; they are
+ *  STEERED into the running turn (PI delivers them between steps) and reported as a transient backlog via
+ *  the daemon's `queue` snapshot. Renders nothing while empty, so it costs no rows at rest. `removeHint` is
+ *  a faint one-line reminder of the remove-last keybind, shown only while the queue is non-empty. */
 export class QueuedMessages implements Component {
   private items: { id: string; text: string }[] = [];
   private removeHint: string | null = null;

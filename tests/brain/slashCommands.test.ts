@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { SLASH_COMMANDS, commandsFor, commandsWithPlugins, expandPromptCommand, isBuiltinCommand, findCommand } from '../../src/brain/slashCommands.js';
+import { SLASH_COMMANDS, commandsFor, commandsWithPlugins, buildPromptTemplates, isPromptCommand, isBuiltinCommand, findCommand } from '../../src/brain/slashCommands.js';
 
 describe('slash command registry', () => {
   it('exposes the core commands', () => {
@@ -75,25 +75,26 @@ describe('slash command registry', () => {
     });
   });
 
-  describe('expandPromptCommand', () => {
-    it('substitutes $ARGS with the whole argument string', () => {
-      expect(expandPromptCommand('Fix: $ARGS', 'the login bug')).toBe('Fix: the login bug');
+  describe('buildPromptTemplates', () => {
+    it('maps plugin prompt commands onto PI PromptTemplate[] with synthetic in-memory sources', () => {
+      const [tpl] = buildPromptTemplates([{ name: 'deploy', description: 'Ship it', prompt: 'Deploy to $1: $ARGUMENTS' }]);
+      // content is copied verbatim — PI (not us) substitutes the placeholders on send.
+      expect(tpl).toMatchObject({ name: 'deploy', description: 'Ship it', content: 'Deploy to $1: $ARGUMENTS' });
+      expect(tpl.filePath).toBe('db://prompts/deploy'); // synthetic, never read from disk
+      expect(tpl.sourceInfo.path).toBe('db://prompts/deploy');
     });
-    it('substitutes positional $1..$9', () => {
-      expect(expandPromptCommand('$1 then $2', 'alpha beta')).toBe('alpha then beta');
-      expect(expandPromptCommand('$1 / $2', 'solo')).toBe('solo /');
+  });
+
+  describe('isPromptCommand', () => {
+    const session = { promptTemplates: [{ name: 'deploy' }, { name: 'review' }] };
+    it('recognizes a known template slash so the daemon lets PI expand it raw', () => {
+      expect(isPromptCommand('/deploy prod now', session)).toBe(true);
+      expect(isPromptCommand('/review', session)).toBe(true);
     });
-    it('appends arguments when the template uses no placeholders', () => {
-      expect(expandPromptCommand('Run the review checklist.', 'src/app.ts')).toBe('Run the review checklist.\n\nsrc/app.ts');
-    });
-    it('leaves a placeholder-free template untouched with no arguments', () => {
-      expect(expandPromptCommand('Summarize the diff.', '')).toBe('Summarize the diff.');
-    });
-    it('inserts $-sequences in the arguments literally (no replacement-pattern interpretation)', () => {
-      // `$$`, `$&`, `$1` inside the user's args must NOT be interpreted, and the $ARGS output must not be
-      // re-scanned by the positional pass (single-pass function replacer).
-      expect(expandPromptCommand('Note: $ARGS', 'price is $$100 and $9 total')).toBe('Note: price is $$100 and $9 total');
-      expect(expandPromptCommand('$1', '$&')).toBe('$&');
+    it('treats an unknown slash or plain text as a normal turn (keeps its context)', () => {
+      expect(isPromptCommand('/unknown x', session)).toBe(false);
+      expect(isPromptCommand('/etc/passwd is a file', session)).toBe(false);
+      expect(isPromptCommand('deploy without a slash', session)).toBe(false);
     });
   });
 

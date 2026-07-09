@@ -28,7 +28,6 @@ function fakeBrain() {
     thinkingLevel: undefined as string | undefined,
     providerId: 'moonshot',
     pluginToolNames: new Set<string>(),
-    autoCompactAt: 0.8,
     turnSender: undefined as number | undefined,
     interactedAt: undefined as number | undefined,
     listeners: new Set<(e: unknown) => void>(),
@@ -48,7 +47,7 @@ function setup() {
     store.createSession({ id: o.sessionId, userId: o.ownerUserId, model: 'kimi' });
     return fakeBrain();
   });
-  const svc = new ChannelSessionService({ registry, store, users: { get: () => ({ username: 'owner' }) }, spawn, titler } as never);
+  const svc = new ChannelSessionService({ registry, store, users: { get: () => ({ username: "owner" }) }, spawn, titler } as never);
   const channelId = 'discord-c1';
   const sessionId = channelSessionId(channelId);
   const baseOpts = {

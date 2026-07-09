@@ -7,7 +7,6 @@ import { composeWithAttachments, expandMentions, MAX_IMAGES_PER_MESSAGE, readCli
 import { sessionItems, openPicker } from './picker.js';
 import { ALT_SCREEN_OFF, ALT_SCREEN_ON, DISABLE_MOUSE, ENABLE_MOUSE } from './layout.js';
 import { pushUser, reduce } from '../../brain/transcript.js';
-import { expandPromptCommand } from '../../brain/slashCommands.js';
 import type { BrainClient } from './brainClient.js';
 import type { ChatRuntime } from './runtime.js';
 import type { StreamController } from './streamController.js';
@@ -395,17 +394,16 @@ export function wireSubmit(rt: ChatRuntime, deps: { stream: StreamController; pi
         }
       }
     }
-    // A plugin-contributed prompt command (`kind:'prompt'`) that isn't a built-in: expand its template
-    // with the typed arguments and send THAT to the agent, while the transcript shows what the user typed.
+    // A plugin-contributed prompt command (`kind:'prompt'`) that isn't a built-in: send the RAW `/name args`
+    // slash so the daemon hands it to PI, which expands the template's arguments natively. It rides alone
+    // (no buffered `!` shell context) so the message starts with the slash — PI only expands then. The
+    // DAEMON renders the user's turn authoritatively (the `user` stream event), so `/name args` is exactly
+    // what the transcript shows. Render now to flush the cleared input.
     const pm = /^\/(\S+)(?:\s+([\s\S]+))?$/.exec(trimmed);
     const promptCmd = pm ? rt.commandDefs.find((c) => c.name === pm[1] && c.kind === 'prompt' && c.prompt) : undefined;
     if (pm && promptCmd) {
-      const expanded = expandPromptCommand(promptCmd.prompt ?? '', pm[2] ?? '');
-      // The DAEMON renders the user's turn authoritatively (the `user` stream event) — no optimistic push,
-      // so a mid-turn send that queues server-side can't drop or double-render. `trimmed` rides as the
-      // clean display; the expanded template is what the model sees. Render now to flush the cleared input.
       rt.render();
-      void client.send(shellContext.take(expanded), rt.workMode, undefined, trimmed).catch((e: Error) => { rt.view = reduce(rt.view, { type: 'error', message: e.message }); rt.render(); });
+      void client.send(trimmed, rt.workMode).catch((e: Error) => { rt.view = reduce(rt.view, { type: 'error', message: e.message }); rt.render(); });
       return;
     }
     // `@path` mentions expand HERE, not in the visible transcript: text files ride inside the prompt

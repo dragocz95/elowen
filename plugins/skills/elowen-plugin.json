@@ -5,5 +5,5 @@
   "description": "Loads markdown skills from disk and exposes them to the Elowen brain.",
   "entry": "index.mjs",
   "provides": { "skills": ["*"] },
-  "icons": { "read_skill": "📖", "create_skill": "📖", "list_skills": "📖", "delete_skill": "📖" }
+  "icons": { "create_skill": "📖", "list_skills": "📖", "delete_skill": "📖" }
 }

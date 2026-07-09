@@ -11,6 +11,7 @@ function fakeDeps(persistedYolo: boolean) {
     messages: [], isStreaming: false, getContextUsage: () => undefined,
     getAllTools: () => [], getActiveToolNames: () => [], setActiveToolsByName: vi.fn(),
     supportsThinking: () => false,
+    getSteeringMessages: () => [] as string[], getFollowUpMessages: () => [] as string[],
   };
   return {
     store: new BrainStore(openDb(':memory:')),

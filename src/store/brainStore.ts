@@ -16,13 +16,6 @@ export interface BrainGoalRow {
   goal: string; draft: string; subgoals: string; turns_used: number; turn_budget: number;
   last_verdict: string; last_evidence: string; paused_reason: string; created_at: string; updated_at: string;
 }
-/** One persisted mid-turn queue row (see the brain_queue table). `images` is a JSON array of
- *  {data,mimeType} carried until delivery; `seq` orders rows within a session. */
-export interface BrainQueuedRow {
-  id: string; seq: number; session_id: string; user_id: number;
-  text: string; display: string; images: string; mode: string; at: number;
-}
-
 /** Radius of context kept around a search match in its snippet. */
 const SNIPPET_RADIUS = 60;
 
@@ -331,49 +324,12 @@ export class BrainStore {
     }
   }
 
-  // --- Durable mid-turn message queue (brain_queue) -------------------------------------------------
-  // The in-memory SessionQueue mirrors every mutation here so an accepted-but-undelivered message
-  // survives a daemon restart; on respawn the queue re-reads these rows and delivers them on the next
-  // turn. Rows are short-lived (deleted on delivery/abort/session-delete).
-
-  /** Append one queued message, minting the next per-session `seq` (stable insertion order). Synchronous
-   *  better-sqlite3 + a single writer (BrainService) → the MAX+1 read can't race an interleaving insert. */
-  enqueueQueued(input: { id: string; sessionId: string; userId: number; text: string; display: string; images: string; mode: string; at: number }): void {
-    const seq = (this.db.prepare('SELECT COALESCE(MAX(seq), 0) + 1 AS n FROM brain_queue WHERE session_id = ?').get(input.sessionId) as { n: number }).n;
-    this.db.prepare(
-      `INSERT INTO brain_queue (id, seq, session_id, user_id, text, display, images, mode, at)
-       VALUES (@id, @seq, @session_id, @user_id, @text, @display, @images, @mode, @at)`
-    ).run({ id: input.id, seq, session_id: input.sessionId, user_id: input.userId, text: input.text, display: input.display, images: input.images, mode: input.mode, at: input.at });
-  }
-
-  /** The session's queued rows in insertion order. */
-  listQueued(sessionId: string): BrainQueuedRow[] {
-    return this.db.prepare('SELECT * FROM brain_queue WHERE session_id = ? ORDER BY seq ASC').all(sessionId) as BrainQueuedRow[];
-  }
-
-  /** Remove one queued row by id; returns whether it matched. */
-  removeQueued(sessionId: string, id: string): boolean {
-    return this.db.prepare('DELETE FROM brain_queue WHERE session_id = ? AND id = ?').run(sessionId, id).changes > 0;
-  }
-
-  /** Remove a set of queued rows atomically (the turn-end batch drain). */
-  removeQueuedBatch(sessionId: string, ids: string[]): void {
-    const del = this.db.prepare('DELETE FROM brain_queue WHERE session_id = ? AND id = ?');
-    this.db.transaction((list: string[]) => { for (const id of list) del.run(sessionId, id); })(ids);
-  }
-
-  /** Drop the whole queue for a session (abort / delete). */
-  clearQueued(sessionId: string): void {
-    this.db.prepare('DELETE FROM brain_queue WHERE session_id = ?').run(sessionId);
-  }
-
-  /** Delete one conversation and its goal + messages + pending queue atomically — a crash between the
-   *  DELETEs would otherwise orphan goal/message/queue rows against a gone session (no FK CASCADE here). */
+  /** Delete one conversation and its goal + messages atomically — a crash between the DELETEs would
+   *  otherwise orphan goal/message rows against a gone session (no FK CASCADE here). */
   deleteSession(id: string): void {
     this.db.transaction(() => {
       this.db.prepare('DELETE FROM brain_goals WHERE session_id = ?').run(id);
       this.db.prepare('DELETE FROM brain_messages WHERE session_id = ?').run(id);
-      this.db.prepare('DELETE FROM brain_queue WHERE session_id = ?').run(id);
       this.db.prepare('DELETE FROM brain_sessions WHERE id = ?').run(id);
     })();
   }
@@ -438,12 +394,11 @@ export class BrainStore {
     })();
   }
 
-  /** Delete every conversation (+ goals + messages + queue) for a user atomically — same orphan concern. */
+  /** Delete every conversation (+ goals + messages) for a user atomically — same orphan concern. */
   removeForUser(userId: number): void {
     this.db.transaction(() => {
       this.db.prepare('DELETE FROM brain_goals WHERE user_id = ?').run(userId);
       this.db.prepare('DELETE FROM brain_messages WHERE session_id IN (SELECT id FROM brain_sessions WHERE user_id = ?)').run(userId);
-      this.db.prepare('DELETE FROM brain_queue WHERE session_id IN (SELECT id FROM brain_sessions WHERE user_id = ?)').run(userId);
       this.db.prepare('DELETE FROM brain_sessions WHERE user_id = ?').run(userId);
     })();
   }

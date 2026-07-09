@@ -4,7 +4,7 @@ import type { BrainStore } from '../../store/brainStore.js';
 import type { ElicitationRegistry } from '../elicitation.js';
 import type { BrainEvent } from '../events.js';
 import type { LiveSessionRegistry } from '../session/liveRegistry.js';
-import { DEFAULT_AUTO_COMPACT_AT } from '../session/liveBrain.js';
+import { DEFAULT_AUTO_COMPACT_PCT } from '../session/liveBrain.js';
 import type { LiveBrain, SpawnOpts } from '../session/liveBrain.js';
 import { rolloverDue } from '../session/idleRollover.js';
 import { decideVisionHop } from '../visionFallback.js';
@@ -145,7 +145,7 @@ export class ConversationLifecycle {
         policy,
         thinkingLevel: userCfg?.thinkingLevel,
         autoCompact: !!userCfg?.autoCompact,
-        autoCompactAt: userCfg?.autoCompactAt ? userCfg.autoCompactAt / 100 : DEFAULT_AUTO_COMPACT_AT,
+        autoCompactAtPct: userCfg?.autoCompactAt ?? DEFAULT_AUTO_COMPACT_PCT,
         clientCwd: o.clientCwd ?? o.spawnCwd,
       });
       if (o.explicitResume) live.interactedAt = Date.now();
@@ -185,7 +185,7 @@ export class ConversationLifecycle {
         selection: sel, // the explicit pick wins over the user's saved default
         policy: this.d.policy?.(userId) ?? { allowedProjectIds: 'all' as const, allowedPaths: () => [] },
         autoCompact: !!userCfg?.autoCompact,
-        autoCompactAt: userCfg?.autoCompactAt ? userCfg.autoCompactAt / 100 : DEFAULT_AUTO_COMPACT_AT,
+        autoCompactAtPct: userCfg?.autoCompactAt ?? DEFAULT_AUTO_COMPACT_PCT,
         clientCwd: prevWorkDir,
       });
       live.interactedAt = Date.now(); // a model switch is a deliberate touch — don't idle-roll it over

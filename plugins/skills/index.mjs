@@ -28,24 +28,9 @@ export function register(ctx) {
 
   const adminOnly = () => { if (!ctx.isAdminSession()) throw new Error('skills can only be managed from an admin session'); };
 
-  // Load a skill's full instructions on demand. NOT admin-gated: any session may load a skill it was
-  // told about in <available_skills> so it can actually follow it — reading is not a mutation.
-  ctx.registerTool(defineTool({
-    name: 'read_skill', label: 'Read skill',
-    description: 'Load a skill\'s full instructions by name (from the <available_skills> list) so you can follow it. Use this instead of reading the skill file directly.',
-    parameters: Type.Object({ name: Type.String({ description: 'The skill name from <available_skills>, e.g. deploy-checklist' }) }),
-    execute: async (_id, p) => {
-      try {
-        if (!NAME_RE.test(p.name)) return ok('Error: invalid skill name.');
-        for (const dir of [join(here, 'skills'), userDir]) {
-          const file = join(dir, `${p.name}.md`);
-          if (existsSync(file)) return ok(readFileSync(file, 'utf-8'));
-        }
-        return ok(`Error: no skill named "${p.name}". Call list_skills to see what's available.`);
-      } catch (e) { return fail(e); }
-    },
-  }));
-
+  // Skill INVOCATION is fully PI-native: the resource loader's skillsOverride feeds these registered
+  // skills to PI, which advertises them (progressive disclosure) in the system prompt and expands
+  // `/skill:name` on its own. This plugin only LOADS skills and offers the admin write tools below.
   ctx.registerTool(defineTool({
     name: 'create_skill', label: 'Create skill',
     description: 'Create (or overwrite) a reusable markdown skill. It becomes part of your system prompt for NEW conversations after a brain restart. Admin only.',
@@ -100,15 +85,6 @@ export function register(ctx) {
       } catch (e) { return fail(e); }
     },
   }));
-
-  // Nudge the brain to LOAD a skill through the tool (a clean "read_skill(name)" chip) rather than
-  // reading the raw file — the <available_skills> block only lists names + descriptions.
-  if (count > 0) {
-    ctx.registerSystemPromptFragment(
-      'To use a skill listed in <available_skills>, call `read_skill` with its name to load the full '
-      + 'instructions, then follow them. Do not open the skill file directly.',
-    );
-  }
 
   ctx.logger.info(`registered ${count} skill(s) + creator tools`);
 }

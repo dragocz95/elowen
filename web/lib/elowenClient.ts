@@ -184,7 +184,9 @@ export const elowenClient = {
   saveCronJobs: (jobs: CronJob[]) => req<{ ok: boolean }>('/plugins/cronjob/jobs', json(jobs, 'PUT')),
   /** The skills plugin's markdown skills (bundled + user); user skills are created/deleted per file. */
   pluginSkills: () => req<PluginSkill[]>('/plugins/skills/list'),
-  createPluginSkill: (skill: { name: string; description: string; content: string }) => req<{ ok: boolean }>('/plugins/skills', json(skill)),
+  createPluginSkill: (skill: { name: string; description: string; content: string; disableModelInvocation?: boolean }) => req<{ ok: boolean }>('/plugins/skills', json(skill)),
+  updatePluginSkill: (name: string, patch: { description?: string; content?: string; disableModelInvocation?: boolean }) =>
+    req<{ ok: boolean }>(`/plugins/skills/${encodeURIComponent(name)}`, json(patch, 'PATCH')),
   deletePluginSkill: (name: string) => req<{ ok: boolean }>(`/plugins/skills/${encodeURIComponent(name)}`, { method: 'DELETE' }),
   /** Text channels + active threads of the configured Discord guild (the cron destination picker). */
   discordChannels: () => req<DiscordChannelOption[]>('/plugins/discord/channels'),

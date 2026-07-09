@@ -4,7 +4,8 @@ import type { AskAnswer, AskQuestion, BrainCard } from '../brain/events.js';
 import type { ProcessRegistry } from '../brain/processRegistry.js';
 
 /** A skill contributed by a plugin. Reuses pi's file-backed `Skill` (name/description/filePath…), so it
- *  flows straight into `formatSkillsForPrompt` — skills are inherently markdown-file based. */
+ *  feeds PI's native path unchanged (the session factory's `skillsOverride` → progressive disclosure in
+ *  the system prompt + `/skill:name` expansion) — skills are inherently markdown-file based. */
 export type PluginSkill = Skill;
 
 /** The observable lifecycle points a plugin hook can subscribe to. The union constrains only the NAME;
@@ -166,17 +167,17 @@ export interface PluginEmbeddings {
  *  shape stays plugin-specific so core does not need to import plugin modules or duplicate their state. */
 export type PluginControl = Record<string, unknown>;
 
-/** A plugin-contributed chat slash command (a reusable prompt macro, opencode-style). Invoking it sends
- *  `prompt` to the agent as a normal user turn, with `$ARGS` (everything typed after the command) and
- *  `$1`..`$9` (whitespace-split positionals) substituted; if `prompt` references none of those and the
- *  user passed arguments, they are appended. Surfaces render it in their command menu alongside the
- *  built-ins. This is how a plugin adds a new `/command` to the CLI without touching core. */
+/** A plugin-contributed chat slash command (a reusable prompt macro, opencode-style). Invoking `/name args`
+ *  sends `prompt` to the agent as a normal user turn; PI's native prompt-template engine substitutes the
+ *  argument placeholders — `$ARGUMENTS`/`$@` (everything typed after the command), `$1`..`$9` (positionals),
+ *  `${N:-default}`, `${@:N}`. Surfaces render it in their command menu alongside the built-ins and send the
+ *  slash RAW. This is how a plugin adds a new `/command` to the CLI without touching core. */
 export interface PluginCommand {
   /** kebab-case, unique across plugins and not shadowing a built-in command. */
   name: string;
   /** One-line help shown in the command menu. */
   description: string;
-  /** The prompt sent to the agent; supports `$ARGS` and `$1`..`$9` substitution. */
+  /** The prompt sent to the agent; PI substitutes `$ARGUMENTS`/`$@`, `$1`..`$9`, `${N:-default}`. */
   prompt: string;
   /** Which surfaces expose it (default: all). */
   surfaces?: ('cli' | 'discord' | 'web')[];

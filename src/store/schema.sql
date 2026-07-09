@@ -157,24 +157,8 @@ CREATE TABLE IF NOT EXISTS brain_messages (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_brain_messages_session ON brain_messages(session_id);
--- Durable mid-turn message queue: a message a user sends WHILE a turn is streaming parks here (keyed by
--- session) instead of steering the running turn, and is combined into ONE follow-up user message when the
--- turn ends. Persisted so an accepted-but-undelivered message survives a daemon restart (the in-memory
--- SessionQueue re-reads it). Rows are short-lived (deleted on delivery/abort). `images` is a JSON array of
--- {data,mimeType} (base64) carried until delivery; `text` is the model-facing prompt, `display` what the
--- chip/echo shows. `seq` gives a stable insertion order independent of same-millisecond `at` ties.
-CREATE TABLE IF NOT EXISTS brain_queue (
-  id TEXT PRIMARY KEY,
-  seq INTEGER NOT NULL,
-  session_id TEXT NOT NULL,
-  user_id INTEGER NOT NULL,
-  text TEXT NOT NULL DEFAULT '',
-  display TEXT NOT NULL DEFAULT '',
-  images TEXT NOT NULL DEFAULT '[]',
-  mode TEXT NOT NULL DEFAULT 'build',
-  at INTEGER NOT NULL DEFAULT 0
-);
-CREATE INDEX IF NOT EXISTS idx_brain_queue_session ON brain_queue(session_id, seq);
+-- Mid-turn messages are STEERED into the running turn via PI's native session queue (no daemon-side
+-- persistence): a message sent while a turn streams lands between steps, so there is no durable queue table.
 CREATE TABLE IF NOT EXISTS brain_goals (
   session_id TEXT PRIMARY KEY,
   user_id INTEGER NOT NULL,

@@ -1,9 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { SessionManager } from '@earendil-works/pi-coding-agent';
-import type { AgentSessionEvent } from '@earendil-works/pi-coding-agent';
+import type { AgentSession, AgentSessionEvent } from '@earendil-works/pi-coding-agent';
 import type { BrainStore } from '../store/brainStore.js';
 import { extractText, NO_REPLY_NUDGE } from './messageView.js';
-import type { LiveBrain } from './session/liveBrain.js';
+import { currentMeter } from './openrouterMeter.js';
 
 /** Append the user's prompt. Called by BrainService before session.prompt(), because the terminal
  *  agent_end event carries only the assistant/tool messages produced during the turn. */
@@ -12,23 +12,45 @@ export function projectUserTurn(store: BrainStore, sessionId: string, text: stri
   store.touchSession(sessionId);
 }
 
-/** Mirror a finished turn into SQLite (the sole store). Only agent_end carries the settled messages. */
+/** Mirror a finished turn into SQLite (the sole store). Only agent_end carries the settled messages.
+ *  Stamps the turn's real provider cost (OpenRouter / an OpenRouter-backed proxy) onto its last assistant
+ *  row: pi-ai drops `usage.cost` for models it has no price sheet for (e.g. `sarah-mimo-v2.5`), so without
+ *  this their chat/channel spend persists as $0 and never reaches usageByModel/usageByDay. Only stamps
+ *  when a meter is ambient (the turn ran under runWithMeter) AND it saw a provider-reported cost; stamps
+ *  the per-`agent_end` DELTA so a thinking-only nudge (a second agent_end under one meter) can't double it. */
 export function projectEvent(store: BrainStore, sessionId: string, event: AgentSessionEvent): void {
   if (event.type !== 'agent_end') return;
-  for (const m of event.messages) {
+  const meter = currentMeter();
+  const costDelta = meter?.reported ? meter.costUsd - meter.stampedUsd : 0;
+  if (meter && costDelta > 0) meter.stampedUsd = meter.costUsd;
+  // The last assistant message of the turn carries the stamp; the model is uniform across the turn, so
+  // lumping the turn's cost on one row is exact for the per-model aggregates that read it.
+  let lastAssistant = -1;
+  event.messages.forEach((m, i) => { if (((m as { role?: string }).role ?? 'assistant') === 'assistant') lastAssistant = i; });
+  event.messages.forEach((m, i) => {
     const role = (m as { role?: string }).role ?? 'assistant';
-    if (role === 'user') continue; // the user turn is already persisted by projectUserTurn — avoid a dup
+    if (role === 'user') return; // the user turn is already persisted by projectUserTurn — avoid a dup
+    if (i === lastAssistant && costDelta > 0) stampCost(m, costDelta);
     store.appendMessage({ id: randomUUID(), sessionId, parentId: null, role, content: m });
-  }
+  });
   store.touchSession(sessionId);
 }
 
-/** Mirror a just-finished in-context compaction into the store AND notify attached clients. Called by
- *  the manual `/compact` path, the auto-compact path, and BOTH channel-session paths right after
- *  `session.compact()` succeeds, so every compaction behaves identically. PI's compaction is an
- *  in-memory-context operation that writes NOTHING to the store on its own, so without this the full
- *  pre-compaction log stays in SQLite: the transcript reads stale AND the token savings evaporate on the
- *  next rehydrate (respawn/restart/eviction).
+/** Set `usage.cost.total` on a message to the provider-reported cost pi-ai dropped. Overrides pi-ai's
+ *  estimate (0 for a model it can't price) while preserving the token fields under `usage`. */
+function stampCost(m: unknown, cost: number): void {
+  const msg = m as { usage?: { cost?: { total?: number } } };
+  msg.usage = { ...(msg.usage ?? {}) };
+  msg.usage.cost = { ...(msg.usage.cost ?? {}), total: cost };
+}
+
+/** Mirror a just-finished in-context compaction into the store. Called from the factory's session
+ *  subscription on every PI `compaction_end` (auto at the threshold, manual `/compact`, overflow
+ *  recovery), so every compaction behaves identically. PI's compaction is an in-memory-context operation
+ *  that writes NOTHING to the store on its own, so without this the full pre-compaction log stays in
+ *  SQLite: the transcript reads stale AND the token savings evaporate on the next rehydrate
+ *  (respawn/restart/eviction). Client notification (`compacted`) is a separate concern the chat-brain
+ *  spawner fans out from the same event, AFTER this store mutation, so a refetch sees the shrunk log.
  *
  *  CRUCIAL: we do NOT serialize `session.messages` — those live entries carry the ephemeral live-prompt
  *  framing (memory/permissions/turn-context blocks, mode instructions, NO_REPLY_NUDGE) and raw image
@@ -42,10 +64,9 @@ export function projectEvent(store: BrainStore, sessionId: string, event: AgentS
  *  — prompted straight to PI on a thinking-only turn, never `projectUserTurn`'d, so it has NO store row
  *  (see turnRunner/channels). So `keepLastN` = count of kept messages that are neither. Both sequences
  *  are chronological suffixes of the same conversation, so the last `keepLastN` store rows ARE the clean
- *  tail (handles split-turn cuts too — a partial turn just contributes fewer kept messages). Then one
- *  `compacted` event tells every attached client (CLI tap + web subscribe) to refetch + collapse. */
-export function persistCompaction(store: BrainStore, live: LiveBrain): void {
-  const messages = live.session.messages as { role?: string }[];
+ *  tail (handles split-turn cuts too — a partial turn just contributes fewer kept messages). */
+export function persistCompaction(store: BrainStore, session: AgentSession, sessionId: string): void {
+  const messages = session.messages as { role?: string }[];
   const summary = messages.find((m) => m.role === 'compactionSummary');
   if (!summary) return; // no compaction actually present in the live context — nothing to mirror (defensive)
   let keepLastN = 0;
@@ -54,8 +75,7 @@ export function persistCompaction(store: BrainStore, live: LiveBrain): void {
     if (m.role === 'user' && extractText(m).trim() === NO_REPLY_NUDGE) continue; // nudge has no store row
     keepLastN++;
   }
-  store.compactSessionMessages(live.sessionId, { id: randomUUID(), role: 'compaction', content: summary }, keepLastN);
-  for (const l of live.listeners) l({ type: 'compacted' });
+  store.compactSessionMessages(sessionId, { id: randomUUID(), role: 'compaction', content: summary }, keepLastN);
 }
 
 /** Rebuild an in-memory PI session manager pre-seeded with the stored history (D1). Spike-proven:

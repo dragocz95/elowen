@@ -1,4 +1,3 @@
-import { formatSkillsForPrompt } from '@earendil-works/pi-coding-agent';
 import type { AgentSessionEvent } from '@earendil-works/pi-coding-agent';
 import type { PluginRegistry } from '../../plugins/registry.js';
 import { PluginHookBus } from '../../plugins/hookBus.js';
@@ -8,6 +7,7 @@ import { buildBrainRegistry, resolveBrainModel } from '../providers.js';
 import { buildElowenTools, buildMemoryTools, BUILTIN_TOOL_ICONS } from '../tools/index.js';
 import { makeToolIconResolver } from '../toolIcons.js';
 import { composeSessionTools } from '../session/capabilities.js';
+import { buildPromptTemplates } from '../slashCommands.js';
 import { personalityText } from '../personality.js';
 import type { BrainSessionFactory } from '../session/factory.js';
 import type { LiveBrain, SpawnOpts } from '../session/liveBrain.js';
@@ -103,14 +103,17 @@ export class LiveSessionSpawner {
       onToolResult: toolHookBus ? (e) => toolHookBus.emit('tools.call.after', e) : undefined,
     });
     const skills = plugins?.skills ?? [];
-    const skillsBlock = skills.length ? formatSkillsForPrompt(skills) : '';
+    // Plugin prompt-command macros → PI PromptTemplate[]: PI exposes them as `/name` slash commands and
+    // expands their arguments natively in prompt()/steer()/followUp(). Every surface just sends the raw
+    // slash. All registered commands go in (surface filtering is only a menu concern, not expansion).
+    const promptTemplates = buildPromptTemplates(plugins?.commands.values() ?? []);
     const fragments = plugins?.promptFragments ?? [];
     // The user's active personality profile (owner's per-platform pin) layers AFTER the persona as a
     // separate appended chunk — never the per-turn context (personality is stable system-prompt material,
     // so putting it per-turn would waste the prompt cache). Undefined when no enabled profile is pinned →
     // NOTHING appended, so the systemPrompt prefix stays byte-identical for users without one.
     const persoAppend = this.d.activePersonality?.(ownerUserId, opts.platform ?? 'web');
-    const append = [skillsBlock, ...fragments, ...(opts.extraAppend ?? []), persoAppend ?? ''].filter((s) => s.length > 0);
+    const append = [...fragments, ...(opts.extraAppend ?? []), persoAppend ?? ''].filter((s) => s.length > 0);
 
     // Elowen identity: the editable `advisor` prompt (per-user override aware) becomes the system prompt,
     // so the brain knows it is Elowen — not the underlying model's default persona.
@@ -127,8 +130,12 @@ export class LiveSessionSpawner {
 
     const { session } = await this.d.factory.create({
       sessionId, ownerUserId, registry, model, cwd,
-      systemPrompt: persona, appendSystemPrompt: append,
+      systemPrompt: persona, appendSystemPrompt: append, skills, promptTemplates,
       tools: allTools, thinkingLevel: opts.thinkingLevel,
+      autoCompact: opts.autoCompact, autoCompactAtPct: opts.autoCompactAtPct,
+      // Project AGENTS.md/CLAUDE.md ride the system prompt for the owner's own chat only — a shared
+      // channel (trusted or foreign senders) must never inhale instruction files off the daemon host.
+      contextFiles: !opts.channel,
     });
 
     // Resolve tool→icon once per session and stamp it on each tool event, so every client renders the
@@ -172,6 +179,13 @@ export class LiveSessionSpawner {
           for (const l of listeners) l({ type: 'error', message });
         }
       }
+      // A PI compaction just settled (auto at the threshold, manual /compact, overflow recovery): the
+      // factory's own subscription has already mirrored the shrunk context into the store (it runs FIRST,
+      // subscribed during create()), so tell attached clients to refetch history and collapse. Only a REAL
+      // compaction (result present, not aborted) — a no-op/failed run leaves the transcript as-is.
+      if (raw === 'compaction_end' && (e as { result?: unknown }).result != null && (e as { aborted?: boolean }).aborted !== true) {
+        for (const l of listeners) l({ type: 'compacted' });
+      }
       const be = toBrainEvent(e);
       if (!be) return;
       if (be.type === 'idle') { be.usage = usageOf(session); be.model = model.id; } // statusline data rides the idle event
@@ -186,6 +200,6 @@ export class LiveSessionSpawner {
       const parts = providers.map((f) => { try { return f(); } catch { return ''; } }).filter((x) => x && x.trim());
       return parts.length ? `<context>\n${parts.join('\n')}\n</context>\n\n` : '';
     };
-    return { session, sessionId, model: model.id, providerId, thinkingLevel: opts.thinkingLevel, policy: opts.policy, autoCompact: opts.autoCompact, autoCompactAt: opts.autoCompactAt, listeners, turnContext, pluginToolNames: new Set(pluginTools.map((t) => t.name)), workDir: cwd };
+    return { session, sessionId, model: model.id, providerId, thinkingLevel: opts.thinkingLevel, policy: opts.policy, listeners, turnContext, pluginToolNames: new Set(pluginTools.map((t) => t.name)), workDir: cwd };
   }
 }

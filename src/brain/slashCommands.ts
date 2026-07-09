@@ -3,6 +3,8 @@
  *  the daemon publishes the (identity-filtered) list at `GET /brain/commands` and executes the
  *  server-side ones at `POST /brain/command`. Add a new command HERE only — never per surface. */
 
+import { createSyntheticSourceInfo, type PromptTemplate } from '@earendil-works/pi-coding-agent';
+
 export type SlashSurface = 'cli' | 'discord' | 'web';
 
 /** How a surface handles the command once the user picks it:
@@ -10,8 +12,8 @@ export type SlashSurface = 'cli' | 'discord' | 'web';
  *  - `info`:   fetch + render data (status, help) — no state change.
  *  - `picker`: opens a surface-local chooser (model, think, and the CLI conversation pickers).
  *  - `mode`:   switches the chat work mode on the local surface; not server-dispatched.
- *  - `prompt`: a plugin-contributed prompt macro — its `prompt` (with `$ARGS`/`$1..$9` substituted) is
- *              sent to the agent as a user turn. */
+ *  - `prompt`: a plugin-contributed prompt macro — the surface sends the RAW `/name args` slash and the
+ *              daemon feeds it to PI, which expands the template's arguments natively in prompt(). */
 type SlashKind = 'action' | 'info' | 'picker' | 'mode' | 'prompt';
 
 export interface SlashCommandDef {
@@ -23,7 +25,8 @@ export interface SlashCommandDef {
   adminOnly?: boolean;
   /** Which surfaces expose it. Omitted → all three. The CLI conversation pickers are CLI-only. */
   surfaces?: SlashSurface[];
-  /** For `kind:'prompt'` (plugin) commands: the prompt template sent to the agent. */
+  /** For `kind:'prompt'` (plugin) commands: the prompt template. PI expands its argument placeholders
+   *  ($1/$@/$ARGUMENTS/${N:-default}) when the raw slash reaches the session — the surface never expands. */
   prompt?: string;
   /** For plugin commands: the owning plugin's name (menu attribution + provenance). */
   plugin?: string;
@@ -35,7 +38,7 @@ export const SLASH_COMMANDS: readonly SlashCommandDef[] = [
   { name: 'stop', description: 'Stop the running agent', kind: 'action' },
   { name: 'status', description: 'Session info — model, context and usage', kind: 'info' },
   { name: 'mcp', description: 'Inspect MCP servers, tools and reconnect health', kind: 'picker', surfaces: ['cli'] },
-  { name: 'skills', description: 'Inspect and manage loaded skills', kind: 'picker', surfaces: ['cli'] },
+  { name: 'skills', description: 'Inspect and manage loaded skills', kind: 'picker', surfaces: ['cli', 'web'] },
   { name: 'goal', description: 'Create, inspect, pause, resume or clear a persistent goal', kind: 'action', surfaces: ['cli'] },
   { name: 'subgoal', description: 'Add or remove persistent-goal subgoals', kind: 'action', surfaces: ['cli'] },
   { name: 'tools', description: 'Inspect active plugin tools and ownership', kind: 'picker', surfaces: ['cli'] },
@@ -104,17 +107,32 @@ export function commandsWithPlugins(surface: SlashSurface, isAdmin: boolean, plu
   return [...base, ...extra];
 }
 
-/** Substitute a prompt command's placeholders with the user's arguments: `$ARGS` → the whole argument
- *  string, `$1`..`$9` → whitespace-split positionals (missing → ''). If the template references none of
- *  them and arguments were given, they are appended on a new line so a bare `/cmd some text` still works. */
-export function expandPromptCommand(prompt: string, args: string): string {
-  const trimmed = args.trim();
-  const positionals = trimmed ? trimmed.split(/\s+/) : [];
-  const usesPlaceholders = /\$ARGS\b|\$[1-9]\b/.test(prompt);
-  // Single pass with a FUNCTION replacer: it substitutes literally, so `$`-sequences in the user's args
-  // (`$$`, `$&`, `$1`) are inserted verbatim, and the output isn't re-scanned by a second `$1..$9` pass.
-  let out = prompt.replace(/\$ARGS\b|\$([1-9])\b/g, (_, d: string | undefined) =>
-    d ? (positionals[Number(d) - 1] ?? '') : trimmed);
-  if (!usesPlaceholders && trimmed) out = `${out}\n\n${trimmed}`;
-  return out.trim();
+/** Map plugin prompt-command macros onto PI's native `PromptTemplate[]`, fed to a session through the
+ *  resource loader's `promptsOverride`. PI then exposes them as `/name` slash commands and expands their
+ *  argument placeholders itself ($1/$@/$ARGUMENTS/${N:-default}) inside prompt()/steer()/followUp() — so
+ *  no surface (and no daemon path) ever substitutes arguments on its own. Fully in-memory: `filePath` and
+ *  `sourceInfo` are synthetic (`db://prompts/<name>`), never read from disk. */
+/** True when `text` is a slash invocation PI expands natively — a `/name …` prompt-command template the
+ *  session knows, or a `/skill:name …` skill invocation. The daemon then hands the slash to PI RAW (no
+ *  per-turn context prefix), because BOTH expansions only trigger when the message STARTS with the slash
+ *  (PI's _expandSkillCommand and expandPromptTemplate early-return otherwise). A `/` that matches no
+ *  template (or a message that merely mentions a path) is a normal turn and keeps its context. */
+export function isPromptCommand(text: string, session: { promptTemplates: ReadonlyArray<{ name: string }> }): boolean {
+  if (!text.startsWith('/')) return false;
+  if (text.startsWith('/skill:')) return true;
+  const name = text.slice(1).split(/\s+/)[0];
+  return !!name && session.promptTemplates.some((t) => t.name === name);
+}
+
+export function buildPromptTemplates(commands: Iterable<{ name: string; description: string; prompt: string }>): PromptTemplate[] {
+  return [...commands].map((c) => {
+    const path = `db://prompts/${c.name}`;
+    return {
+      name: c.name,
+      description: c.description,
+      content: c.prompt,
+      filePath: path,
+      sourceInfo: createSyntheticSourceInfo(path, { source: 'plugin', scope: 'user' }),
+    };
+  });
 }

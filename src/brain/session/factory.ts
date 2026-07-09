@@ -1,8 +1,8 @@
-import { createAgentSession, DefaultResourceLoader } from '@earendil-works/pi-coding-agent';
-import type { AgentSession, AgentSessionEvent, ExtensionAPI, ResourceLoader, ToolDefinition, ModelRegistry } from '@earendil-works/pi-coding-agent';
+import { createAgentSession, DefaultResourceLoader, SettingsManager } from '@earendil-works/pi-coding-agent';
+import type { AgentSession, AgentSessionEvent, ExtensionAPI, PromptTemplate, ResourceLoader, Skill, ToolDefinition, ModelRegistry } from '@earendil-works/pi-coding-agent';
 import type { Model, Api } from '@earendil-works/pi-ai';
 import type { BrainStore } from '../../store/brainStore.js';
-import { projectEvent, rehydrate } from '../persistence.js';
+import { persistCompaction, projectEvent, rehydrate } from '../persistence.js';
 
 /** Everything one PI brain session needs, composed by the caller: the chat brain renders the Elowen
  *  persona and gates elowen_* tools by session kind; the task worker bakes in its close tool and the
@@ -15,11 +15,31 @@ export interface SessionSpec {
   model: Model<Api>;
   cwd: string;
   systemPrompt: string;
-  /** Chunks appended after the system prompt (plugin skills block, fragments, role prompts). */
+  /** Chunks appended after the system prompt (plugin fragments, role prompts). */
   appendSystemPrompt: string[];
+  /** Plugin skills fed to PI's native path via the resource loader's `skillsOverride` — PI renders the
+   *  progressive-disclosure block in the system prompt AND expands `/skill:name` in prompt/steer/followUp
+   *  on its own, so we never format a skills block ourselves. */
+  skills: Skill[];
+  /** Plugin prompt-command macros fed to PI's native path via the resource loader's `promptsOverride`.
+   *  PI exposes each as a `/name` slash command and expands its arguments in prompt()/steer()/followUp()
+   *  on its own — the daemon never substitutes. Only the interactive chat spawner populates these; task
+   *  workers (no user typing slashes) leave it empty. */
+  promptTemplates?: PromptTemplate[];
   tools: ToolDefinition[];
   /** Reasoning effort for extended-thinking models (empty/undefined = the model default). */
   thinkingLevel?: string;
+  /** PI's built-in auto-compaction: on/off. When on, PI summarizes the context on its own once it fills
+   *  past `autoCompactAtPct` — no separate trigger in our turn loop. */
+  autoCompact: boolean;
+  /** Context-window fill percentage (30–95) at which PI auto-compacts. Translated to PI's absolute
+   *  `reserveTokens` = round(contextWindow · (1 − pct/100)) — `shouldCompact` fires when the context
+   *  exceeds `contextWindow − reserveTokens`, i.e. once the window is `pct`% full. */
+  autoCompactAtPct: number;
+  /** Load the project's AGENTS.md/CLAUDE.md into the system prompt (PI walks `cwd` and its ancestors).
+   *  OWNER-CHAT ONLY: shared channels and task workers must leave this off — the ancestor walk would
+   *  pull internal instruction files into a prompt foreign senders talk to. */
+  contextFiles?: boolean;
   /** Session title to set when the stored row has none yet (task sessions name themselves). */
   title?: string;
 }
@@ -30,7 +50,7 @@ export interface SessionFactoryDeps {
   createSession?: typeof createAgentSession;
   /** Injected for tests; builds the resource loader that carries the system prompt. A test passes
    *  `() => undefined` so no disk-touching loader is constructed. */
-  resourceLoaderFactory?: (o: { cwd: string; systemPrompt: string; appendSystemPrompt?: string[]; codexReasoningFix?: boolean }) => ResourceLoader | undefined;
+  resourceLoaderFactory?: (o: { cwd: string; systemPrompt: string; appendSystemPrompt?: string[]; skills?: Skill[]; prompts?: PromptTemplate[]; contextFiles?: boolean; codexReasoningFix?: boolean; settingsManager: SettingsManager }) => ResourceLoader | undefined;
 }
 
 /** The ChatGPT (Codex) backend returns reasoning-summary text ONLY for `reasoning.summary:"concise"`
@@ -47,12 +67,28 @@ function codexReasoningSummary(pi: ExtensionAPI): void {
 }
 
 /** Default resource loader: carries the composed system prompt, appends the extra chunks after it,
- *  and disables all disk discovery — the brain is a lean, in-process agent. `noExtensions` skips only
- *  DISCOVERED extensions; the inline factories below still load. */
-function defaultResourceLoaderFactory(o: { cwd: string; systemPrompt: string; appendSystemPrompt?: string[]; codexReasoningFix?: boolean }): ResourceLoader {
+ *  and disables most disk discovery — the brain is a lean, in-process agent. `noExtensions` skips only
+ *  DISCOVERED extensions; the inline factories below still load. Context files are OWNER-ONLY opt-in
+ *  (`contextFiles`): PI reads the project's AGENTS.md/CLAUDE.md from `cwd` AND ITS ANCESTORS and renders
+ *  them as `<project_instructions path="…">`. That ancestor walk makes it a leak vector on shared
+ *  surfaces — a channel session whose cwd falls back to the daemon's project path would inhale internal
+ *  instruction files into a prompt foreign senders talk to — so channels and task workers keep it off.
+ *  It sits in a separate prompt block from the Elowen persona/appends, so there is no duplication. */
+function defaultResourceLoaderFactory(o: { cwd: string; systemPrompt: string; appendSystemPrompt?: string[]; skills?: Skill[]; prompts?: PromptTemplate[]; contextFiles?: boolean; codexReasoningFix?: boolean; settingsManager: SettingsManager }): ResourceLoader {
+  const skills = o.skills ?? [];
+  const prompts = o.prompts ?? [];
   return new DefaultResourceLoader({
     cwd: o.cwd, agentDir: o.cwd, systemPrompt: o.systemPrompt, appendSystemPrompt: o.appendSystemPrompt,
-    noExtensions: true, noSkills: true, noPromptTemplates: true, noThemes: true, noContextFiles: true,
+    settingsManager: o.settingsManager,
+    noExtensions: true, noSkills: true, noPromptTemplates: true, noThemes: true, noContextFiles: !o.contextFiles,
+    // `noSkills` disables disk discovery; the override feeds PI our in-memory plugin skills instead. PI
+    // then renders the progressive-disclosure block into the system prompt and expands `/skill:name`
+    // itself — no manual skills block, no custom read tool.
+    skillsOverride: () => ({ skills, diagnostics: [] }),
+    // Same pattern for prompt-command macros: `noPromptTemplates` disables the disk scan; this override
+    // feeds PI our in-memory plugin templates, which it exposes as `/name` slash commands and expands
+    // ($1/$@/$ARGUMENTS/${N:-default}) itself in prompt()/steer()/followUp() — no daemon-side expansion.
+    promptsOverride: () => ({ prompts, diagnostics: [] }),
     ...(o.codexReasoningFix ? { extensionFactories: [codexReasoningSummary] } : {}),
   });
 }
@@ -75,9 +111,15 @@ export class BrainSessionFactory {
     }
 
     const sessionManager = rehydrate(this.d.store, spec.sessionId, spec.cwd);
+    // Each session owns its own SettingsManager so its compaction threshold is per-conversation (the
+    // owner's per-user %, the channel default) — shared by createAgentSession (which reads compaction at
+    // check time) and the resource loader. Reads the user's project settings but is NEVER flushed, so the
+    // applyOverrides below stays in-memory and never writes to their .pi/settings.json.
+    const settingsManager = SettingsManager.create(spec.cwd, spec.cwd);
     const resourceLoader = (this.d.resourceLoaderFactory ?? defaultResourceLoaderFactory)({
       cwd: spec.cwd, systemPrompt: spec.systemPrompt, appendSystemPrompt: spec.appendSystemPrompt,
-      codexReasoningFix: spec.model.provider === 'openai-codex',
+      skills: spec.skills, prompts: spec.promptTemplates, contextFiles: spec.contextFiles,
+      codexReasoningFix: spec.model.provider === 'openai-codex', settingsManager,
     });
     // A resource loader passed to createAgentSession is NOT auto-reloaded (only one it builds itself
     // is), so its system prompt stays empty unless we reload it here. Without this the brain falls
@@ -94,15 +136,31 @@ export class BrainSessionFactory {
       modelRegistry: spec.registry,
       model: spec.model,
       resourceLoader,
+      settingsManager,
       customTools: spec.tools,
       tools: spec.tools.map((t) => t.name),
       noTools: 'builtin',
       ...(thinkingLevel ? { thinkingLevel } : {}),
     });
+    // Compaction is PI-native: our per-user % maps to PI's absolute reserveTokens (shouldCompact fires
+    // once contextTokens > contextWindow − reserveTokens). Applied AFTER create — createAgentSession reads
+    // compaction lazily (getCompactionSettings at each check), so an in-memory override here takes effect;
+    // the loader's earlier reload() only rebuilds the system prompt and never touches settings.
+    settingsManager.applyOverrides({
+      compaction: { enabled: spec.autoCompact, reserveTokens: Math.round(spec.model.contextWindow * (1 - spec.autoCompactAtPct / 100)) },
+    });
 
-    // Persist settled turns (agent_end). Callers layer their own subscriptions on top (BrainEvent
-    // fanout in the chat brain, liveness timestamps in the worker).
-    session.subscribe((e: AgentSessionEvent) => projectEvent(this.d.store, spec.sessionId, e));
+    // Persist settled turns (agent_end) AND every PI compaction (auto at the threshold, manual /compact,
+    // overflow recovery) — PI shrinks the live context but writes NOTHING to the store, so without this
+    // the token savings evaporate on the next rehydrate. Only a REAL compaction (result present, not
+    // aborted) mirrors; a no-op/failed run leaves the store untouched. Callers layer their own
+    // subscriptions on top (the `compacted` client-notify in the chat brain, liveness in the worker).
+    session.subscribe((e: AgentSessionEvent) => {
+      projectEvent(this.d.store, spec.sessionId, e);
+      if (e.type === 'compaction_end' && e.result != null && e.aborted !== true) {
+        persistCompaction(this.d.store, session, spec.sessionId);
+      }
+    });
     return { session };
   }
 }

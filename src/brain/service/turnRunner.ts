@@ -11,12 +11,13 @@ import type { ElicitationRegistry } from '../elicitation.js';
 import type { CardRegistry } from '../cards.js';
 import type { IdentityResolver } from '../identity.js';
 import { extractText, frameUntrusted, isThinkingOnlyReply, NO_REPLY_NUDGE } from '../messageView.js';
-import { persistCompaction, projectUserTurn } from '../persistence.js';
+import { projectUserTurn } from '../persistence.js';
+import { newCostMeter, runWithMeter } from '../openrouterMeter.js';
 import { applyToolVisibility } from '../session/capabilities.js';
 import type { LiveSessionRegistry } from '../session/liveRegistry.js';
 import type { LiveBrain } from '../session/liveBrain.js';
-import { combineQueuedText, type SessionQueue } from '../session/sessionQueue.js';
 import { summarizePermissions } from '../toolPermissions.js';
+import { isPromptCommand } from '../slashCommands.js';
 import type { AskQuestion, SubagentUpdate } from '../events.js';
 import type { BrainDeps } from '../brainDeps.js';
 import type { ConversationLifecycle } from './lifecycle.js';
@@ -30,9 +31,6 @@ interface TurnRunnerDeps {
   sessions: LiveSessionRegistry<LiveBrain>;
   lifecycle: ConversationLifecycle;
   goals: GoalLoopService;
-  /** Per-session mid-turn message queue (single source of truth for CLI/web/platforms). A message sent
-   *  while a turn streams is enqueued here and drained + combined into the next turn on flush. */
-  sessionQueue: SessionQueue;
   permissions: PermissionApprovalService;
   elicitation: ElicitationRegistry;
   cards: CardRegistry;
@@ -83,7 +81,7 @@ export class BrainTurnRunner {
    *  behavior, unchanged); with `session` (a bound CLI) it targets exactly that conversation, wherever
    *  the active pointer points, and never moves the pointer. A bound target that is not live (daemon
    *  restart between turns) is respawned in place first. */
-  async send(userId: number, text: string, images?: { data: string; mimeType: string }[], mode: 'build' | 'plan' = 'build', internal?: { goalKickoff?: boolean; goalContinue?: boolean }, clientCwd?: string, session?: string, display?: string): Promise<void> {
+  async send(userId: number, text: string, images?: { data: string; mimeType: string }[], mode: 'build' | 'plan' = 'build', internal?: { goalKickoff?: boolean; goalContinue?: boolean; systemNudge?: boolean }, clientCwd?: string, session?: string, display?: string): Promise<void> {
     let targetId: string;
     if (session) {
       targetId = this.d.lifecycle.ownedUserSession(userId, session);
@@ -93,16 +91,24 @@ export class BrainTurnRunner {
     }
     const active = this.d.sessions.get(targetId);
     if (!active) throw new Error('brain not started for user');
-    if (!internal?.goalKickoff && !internal?.goalContinue) this.d.goals.cancelGoalContinuation(active.sessionId);
-    // Mid-turn: a message sent while a turn is already streaming is ENQUEUED behind it (the daemon's
-    // per-session SessionQueue), NOT steered into the running turn. It — and any others queued during
-    // this turn — drain and combine into ONE follow-up user message when the turn ends (the flush loop
-    // below). Keyed by sessionId so CLI/web/platform clients render the same live queue via the `queue`
-    // snapshot event and boot-seed it from status(). NOT persisted here: a queued message enters the
-    // conversation only when delivered on flush (which projectUserTurns it then). Internal goal
-    // kickoff/continuation is never queued — it drives the loop itself and must run straight through.
+    if (!internal?.goalKickoff && !internal?.goalContinue && !internal?.systemNudge) this.d.goals.cancelGoalContinuation(active.sessionId);
+    // A system nudge (a finished background command waking the operator's session) is best-effort: if the
+    // session is already streaming the agent is busy and needs no wake, so drop it rather than enqueue a
+    // stray user turn. When idle it runs straight through, and — crucially — never drives the goal loop
+    // (see the skipped afterTurnGoalJudge below), so it can't burn a goal-budget turn or mis-judge a goal.
+    if (internal?.systemNudge && active.session.isStreaming) return;
+    // Mid-turn: a message sent while a turn is already streaming is STEERED into the running turn — PI
+    // delivers it between steps (after the current tool calls, before the next model call), so the agent
+    // folds it in during the SAME turn instead of waiting for it to end. Persist it now (agent_end never
+    // re-persists user messages, so a steered message would otherwise never reach history) and emit the
+    // authoritative `user` echo so attached clients render the 'you' bubble. PI reports its transient
+    // backlog via the `queue_update` event, which the spawner maps to the `queue` snapshot. Internal goal
+    // kickoff/continuation is never steered — it drives the loop itself and must run its own turn.
     if (active.session.isStreaming && !internal?.goalKickoff && !internal?.goalContinue) {
-      this.d.sessionQueue.enqueue(active.sessionId, { userId, text, display: display ?? text, images, mode, at: Date.now() });
+      const persistText = images?.length ? `${text}\n[📎 ${images.length}× image]` : text;
+      projectUserTurn(this.d.store, active.sessionId, persistText);
+      for (const l of active.listeners) l({ type: 'user', text: display ?? persistText });
+      await active.session.steer(text, images?.map((i) => ({ type: 'image' as const, data: i.data, mimeType: i.mimeType })));
       return;
     }
     // Run ONE user turn on `live`. Refactored out of send() so the flush loop below can replay it for the
@@ -215,8 +221,16 @@ export class BrainTurnRunner {
       // approval prompts; it also stays fresh across mid-session "Always allow" grants and /yolo flips.
       const permissions = this.d.permissions.turnPermissions(userId, live, true);
       const permissionsBlock = permissions ? `${summarizePermissions(permissions)}\n\n` : '';
-      await runWithPolicy(live.policy, async () => {
-        const prompted = memoryBlock + hookBlock + permissionsBlock + live.turnContext() + modeInstruction + text;
+      // Meter the turn so the OpenRouter (or OpenRouter-backed proxy) cost pi-ai drops is captured and
+      // stamped onto the persisted assistant row by projectEvent (fired synchronously in this scope).
+      const meter = newCostMeter();
+      await runWithMeter(meter, () => runWithPolicy(live.policy, async () => {
+        // A plugin prompt-command (`/name args`) is sent RAW so PI expands its template natively in
+        // prompt(); that only fires when the message STARTS with the slash, so it is passed alone — the
+        // macro is a self-contained instruction that needs no per-turn context prefix. Everything else
+        // gets the ephemeral context blocks prepended as usual.
+        const prompted = isPromptCommand(text, live.session) ? text
+          : memoryBlock + hookBlock + permissionsBlock + live.turnContext() + modeInstruction + text;
         await (options ? live.session.prompt(prompted, options) : live.session.prompt(prompted));
         // Thinking-only guard (#115): reasoning models sometimes end a 'stop' turn with ONLY a thinking
         // block — no text, no tool call — so the user sees nothing. ONE automatic nudge re-prompts the
@@ -226,7 +240,7 @@ export class BrainTurnRunner {
         // a nudge that again produces nothing simply ends — no loop.
         const settled = [...(live.session.messages as { role?: string }[])].reverse().find((m) => m.role === 'assistant');
         if (settled && isThinkingOnlyReply(settled)) await live.session.prompt(NO_REPLY_NUDGE);
-      }, { identity, elicit, emitCard, emitSubagent, toolPolicy, permissions, workDir, sessionId: live.sessionId, model: { provider: live.providerId, model: live.model } });
+      }, { identity, elicit, emitCard, emitSubagent, toolPolicy, permissions, workDir, sessionId: live.sessionId, model: { provider: live.providerId, model: live.model } }));
       // Post-turn curator: extract durable facts from this exchange in the background. Fire-and-forget
       // (mirrors brainWorker) — never awaited, never touches live.session, swallows its own errors.
       if (this.d.curator && memSettings?.autoSave !== false) {
@@ -234,27 +248,19 @@ export class BrainTurnRunner {
         const assistantText = last ? extractText(last) : '';
         void this.d.curator.run(userId, text, assistantText).catch(() => { /* curator is best-effort */ });
       }
-      // Auto-compact: once the conversation fills most of the context window, summarize it so the next
-      // turn keeps room. Opt-in per user; failures are non-fatal (a full window still works, just tighter).
-      if (live.autoCompact) {
-        const usage = live.session.getContextUsage();
-        if (usage?.tokens && usage.contextWindow > 0 && usage.tokens / usage.contextWindow >= live.autoCompactAt) {
-          // Same persistence + client-notify path as the manual `/compact` (persistCompaction): once the
-          // in-context compaction succeeds, mirror the shrunk context into the store and fire `compacted`
-          // so surfaces collapse. Best-effort — a compact that throws (no-op/failure) skips both and the
-          // session stays usable, exactly as before.
-          try { await live.session.compact(); persistCompaction(this.d.store, live); } catch { /* keep the session usable */ }
-        }
-      }
+      // Auto-compaction is PI-native (configured per session via the SettingsManager in the factory):
+      // PI summarizes the context on its own once it fills past the user's %, right after this agent_end.
+      // The factory's subscription mirrors that compaction into the store and the spawner fans `compacted`
+      // to clients — so there is nothing to trigger or persist here.
       });
     };
-    // Serialized per CONVERSATION for the whole turn AND its queue flush (outer `send-<id>` key): the idle
-    // rollover and the vision-fallback respawn dispose and recreate the session, which MUST NOT race a
-    // concurrent send() into the same conversation. Holding this lock across the flush loop is what keeps
-    // the queue correct — any concurrent /brain/send either sees isStreaming (→ enqueue) or blocks here,
-    // so no turn ever runs outside the serial. The key is the TARGET conversation (not the user), so two
-    // bound clients working DIFFERENT conversations still run concurrently; `send-` prefixing keeps
-    // ensureLive() re-entrant from here. The inner (bare session id) lock in runTurn guards each prompt().
+    // Serialized per CONVERSATION for the whole turn (outer `send-<id>` key): the idle rollover and the
+    // vision-fallback respawn dispose and recreate the session, which MUST NOT race a concurrent send()
+    // into the same conversation. Holding this lock is what keeps steering correct — any concurrent
+    // /brain/send either sees isStreaming (→ steer) or blocks here, so no turn ever runs outside the
+    // serial. The key is the TARGET conversation (not the user), so two bound clients working DIFFERENT
+    // conversations still run concurrently; `send-` prefixing keeps ensureLive() re-entrant from here. The
+    // inner (bare session id) lock in runTurn guards each prompt().
     let completedSessionId = active.sessionId;
     await this.serial(`send-${targetId}`, async () => {
       // Re-resolve under the lock: an unbound send that queued behind a rollover/model switch must follow
@@ -272,42 +278,9 @@ export class BrainTurnRunner {
       // default-start resolution); fallback-resolved dirs are never stamped.
       if (clientCwd) this.d.lifecycle.stampWorkDir(b.sessionId, clientCwd, b.policy);
       completedSessionId = b.sessionId;
-      try {
-        await runTurn(b, text, images, mode, !internal, display);
-      } finally {
-        // Flush the queue in a `finally` so it ALWAYS runs — even when the turn above threw — instead of
-        // stranding a queued follow-up behind a failed turn. Messages sent DURING the turn drain here and
-        // combine into follow-up turns until the queue is empty (a message sent during a flush turn queues
-        // again and is picked up on the next pass). abort() clears the queue, so an interrupted turn drains
-        // to nothing and the loop ends cleanly.
-        //
-        // Each pass takes the NEXT deliverable batch (drainBatch): a consecutive same-mode run capped at
-        // the per-send image limit. Same-mode grouping is a SAFETY rule — a plan-mode follow-up must never
-        // ride a build-mode batch's write tools (never widen permissions by combining); the image cap keeps
-        // every image delivered instead of truncated. `!live` is checked BEFORE draining, so a conversation
-        // disposed mid-flush leaves the queue durable (re-seeded + delivered on respawn) rather than
-        // evaporating a drained batch. A flush turn that itself errors notifies the attached clients and
-        // stops draining — anything still queued stays durable for the next opportunity.
-        for (;;) {
-          const live = this.d.sessions.get(completedSessionId);
-          if (!live) break;
-          const batch = this.d.sessionQueue.drainBatch(completedSessionId);
-          if (batch.length === 0) break;
-          const combined = combineQueuedText(batch);
-          const combinedDisplay = combineQueuedText(batch.map((m) => ({ text: m.display })));
-          const images2 = batch.flatMap((m) => m.images ?? []);
-          try {
-            const hopped = await this.d.lifecycle.maybeVisionHop(userId, live, images2.length > 0, clientCwd);
-            completedSessionId = hopped.sessionId;
-            await runTurn(hopped, combined, images2.length ? images2 : undefined, batch[0]!.mode, true, combinedDisplay);
-          } catch (e) {
-            for (const l of live.listeners) l({ type: 'error', message: (e as Error).message });
-            break;
-          }
-        }
-      }
+      await runTurn(b, text, images, mode, !internal, display);
     });
-    this.d.goals.afterTurnGoalJudge(userId, completedSessionId, mode, internal);
+    if (!internal?.systemNudge) this.d.goals.afterTurnGoalJudge(userId, completedSessionId, mode, internal);
   }
 }
 
