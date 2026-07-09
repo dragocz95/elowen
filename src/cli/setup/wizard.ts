@@ -77,6 +77,11 @@ export interface OnboardingOpts {
  *  user bailed — progress is saved for resume). All configuration flows through the daemon HTTP API; only
  *  the local completion/resume marker is written here. */
 export async function runOnboarding(base: string, env: NodeJS.ProcessEnv, opts: OnboardingOpts = {}): Promise<string | null> {
+  // Arm the flame mascot header above every wizard modal. `elowen install` already arms it before its own
+  // pre-wizard prompts (idempotent here); `elowen setup` reaches the wizard directly, so without this its
+  // step modals rendered headerless — the mascot showed on the intro screen, then vanished at the first
+  // step. mascot() is a TTY-gated no-op, so piped/CI setup stays clean.
+  p.mascot();
   const prior = opts.reset ? null : readMarker(env);
   const answers: WizardAnswers = prior?.resume?.answers ?? {};
   const ctx: WizardCtx = { base, fetchFn: fetch, answers, embedded: !!opts.embedded };
