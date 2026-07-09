@@ -275,7 +275,7 @@ export async function run(argv: string[], c: ElowenClient, env: NodeJS.ProcessEn
   }
 }
 
-async function main() {
+export async function main() {
   const argv = process.argv.slice(2);
   const version = ELOWEN_CLI_VERSION;
   // Bare `elowen` in a terminal opens the chat TUI — the agent is the product, so talking to it is the

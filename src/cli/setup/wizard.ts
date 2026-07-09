@@ -4,20 +4,40 @@ import { runProjectStep } from './steps/project.js';
 import { runAiStep } from './steps/aiProvider.js';
 import { runMemoryStep } from './steps/memory.js';
 import { runLspStep } from './steps/lsp.js';
+import { runDeploymentStep } from './steps/deployment.js';
 import { readMarker, writeMarker } from './marker.js';
-import { webBaseUrl } from '../installInfo.js';
+import { readInstallInfo, webBaseUrl, type InstallInfo } from '../installInfo.js';
 import { apiJson } from './http.js';
 import { guard, WizardCancelled, type WizardAnswers, type WizardCtx, type WizardStep } from './types.js';
 import type { ReadinessCheck } from '../doctor.js';
 
-const STEPS: WizardStep[] = [
+const BASE_STEPS: WizardStep[] = [
   { id: 'account', title: 'Account', run: runAccountStep },
   { id: 'project', title: 'Project', run: runProjectStep },
   { id: 'ai', title: 'AI Provider', run: runAiStep },
   { id: 'memory', title: 'Memory', run: runMemoryStep },
   { id: 'lsp', title: 'Code intelligence', run: runLspStep },
 ];
-const TOTAL = STEPS.length + 1; // + Review
+
+/** Whether the optional Deployment step applies. It reconfigures nginx/TLS, so it's only shown on a
+ *  systemd-provisioned box (install.json present) AND when we can actually mutate the system (root) — off
+ *  either it would just fail. Never shown when embedded in `elowen install`, which already asked. */
+export function deploymentStepApplies(deps: { info: InstallInfo | null; isRoot: boolean; embedded: boolean }): boolean {
+  return !deps.embedded && deps.info !== null && deps.isRoot;
+}
+
+/** Assemble the ordered step list for this run: the base onboarding, plus the Deployment step (after
+ *  Account) when it applies. `elowen setup` on an installed box thus gains the reverse-proxy question set
+ *  that `elowen install` has, driven by the same shared module. */
+export function buildSteps(deps: { info: InstallInfo | null; isRoot: boolean; embedded: boolean }): WizardStep[] {
+  const steps = [...BASE_STEPS];
+  if (deploymentStepApplies(deps)) steps.splice(1, 0, { id: 'deployment', title: 'Deployment', run: runDeploymentStep });
+  return steps;
+}
+
+function isRootUser(): boolean {
+  return typeof process.getuid === 'function' && process.getuid() === 0;
+}
 
 /** What the Review screen decided: finish, skip the rest, or jump back to a step index to edit. */
 export type ReviewDecision = 'finish' | 'skip-remaining' | number;
@@ -59,20 +79,23 @@ export interface OnboardingOpts {
 export async function runOnboarding(base: string, env: NodeJS.ProcessEnv, opts: OnboardingOpts = {}): Promise<string | null> {
   const prior = opts.reset ? null : readMarker(env);
   const answers: WizardAnswers = prior?.resume?.answers ?? {};
-  const ctx: WizardCtx = { base, fetchFn: fetch, answers };
+  const ctx: WizardCtx = { base, fetchFn: fetch, answers, embedded: !!opts.embedded };
+
+  const steps = buildSteps({ info: readInstallInfo(), isRoot: isRootUser(), embedded: !!opts.embedded });
+  const total = steps.length + 1; // + Review
 
   if (!opts.embedded) {
     p.intro('Welcome to Elowen');
-    p.log.message(`Let's get your workspace ready — ${TOTAL} quick steps. You can skip anything and finish later.`);
+    p.log.message(`Let's get your workspace ready — ${total} quick steps. You can skip anything and finish later.`);
   }
 
   try {
     // A resumed run ALWAYS re-enters at the Account step: the bearer token isn't persisted (secret), and
     // every later step talks to the daemon — jumping past sign-in would 401 everywhere with misleading
     // errors ("the key may be wrong", "Saving the provider failed") while the summary claims success.
-    const result = await navigate(STEPS, ctx, {
-      onStep: (i, step) => p.log.step(`[${i + 1}/${TOTAL}] ${step.title}`),
-      review: () => review(ctx),
+    const result = await navigate(steps, ctx, {
+      onStep: (i, step) => p.log.step(`[${i + 1}/${total}] ${step.title}`),
+      review: () => review(ctx, steps),
     });
     await finish(env, ctx, result.skipped, !!opts.embedded);
     return answers.account?.username || null;
@@ -87,15 +110,17 @@ export async function runOnboarding(base: string, env: NodeJS.ProcessEnv, opts: 
   }
 }
 
-async function review(ctx: WizardCtx): Promise<ReviewDecision> {
+async function review(ctx: WizardCtx, steps: WizardStep[]): Promise<ReviewDecision> {
   const a = ctx.answers;
-  p.note([
-    `Account   ${accountSummary(a)}`,
+  const rows = [`Account   ${accountSummary(a)}`];
+  if (steps.some((s) => s.id === 'deployment')) rows.push(`Deploy    ${a.deployment?.url ?? 'unchanged'}`);
+  rows.push(
     `Project   ${projectSummary(a)}`,
     `AI        ${a.ai?.summary ?? 'skipped'}`,
     `Memory    ${a.memory?.summary ?? 'skipped'}`,
     `LSP       ${a.lsp?.summary ?? 'skipped'}`,
-  ].join('\n'), 'Setup summary');
+  );
+  p.note(rows.join('\n'), 'Setup summary');
 
   const decision = guard(await p.select({
     message: 'Ready to finish?',
@@ -107,7 +132,7 @@ async function review(ctx: WizardCtx): Promise<ReviewDecision> {
   })) as string;
   if (decision === 'finish') return 'finish';
   if (decision === 'skip') return 'skip-remaining';
-  const which = guard(await p.select({ message: 'Edit which step?', options: STEPS.map((s, idx) => ({ value: String(idx), label: s.title })) })) as string;
+  const which = guard(await p.select({ message: 'Edit which step?', options: steps.map((s, idx) => ({ value: String(idx), label: s.title })) })) as string;
   return Number(which);
 }
 
@@ -133,8 +158,9 @@ async function finish(env: NodeJS.ProcessEnv, ctx: WizardCtx, skipped: boolean, 
     || answers.memory?.status !== 'done'
     || answers.lsp?.status !== 'done';
   if (unfinished) lines.push('Finish setup:  elowen setup');
-  p.note(lines.join('\n'), "You're set");
-  p.outro('See you');
+  // Distinct terminal DONE screen, held until dismissed (enter/esc) — success is its own frame rather than
+  // trailing scrollback. Non-interactive just prints it.
+  await p.doneScreen("You're set", lines);
 }
 
 /** Print the readiness matrix: one '✓/✗ <label> — <detail>' line per check, with the hint on any ✗.

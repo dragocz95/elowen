@@ -13,6 +13,7 @@ const BASE = (process.env.ELOWEN_URL) ?? 'http://localhost:4400';
 /** Launcher menu for a systemd-provisioned box (`elowen install`): drives the units via systemctl and
  *  shows the real public URL the operator chose — never spawns a second, port-conflicting daemon. */
 async function systemdMenu(info: InstallInfo, version: string): Promise<void> {
+  p.mascot();
   p.intro(`elowen v${version}  ·  systemd`);
   // A systemd box was provisioned by `elowen install`, which already created the admin — don't nag. The
   // `elowen setup` command still runs the wizard here on demand.
@@ -92,6 +93,7 @@ export async function menu(env: NodeJS.ProcessEnv, version: string): Promise<voi
   if (info) { await systemdMenu(info, version); return; }
 
   const deps = { ...defaultLifecycleDeps(version), log: () => {} };
+  p.mascot();
   p.intro(`elowen v${version}`);
   // Offer onboarding once on a fresh install (marker-gated — no daemon call when already set up).
   await maybeOfferSetup(BASE, env, version);

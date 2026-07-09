@@ -9,6 +9,7 @@ export interface StepResult { status: StepStatus }
  *  wiring logic depend on (a reused key + an openai-type provider is what can back embeddings/relay). */
 export interface WizardAnswers {
   account?: { username: string; created: boolean; signedIn: boolean };
+  deployment?: { mode: string; url: string };
   project?: { slug: string; path: string; connected: boolean };
   ai?: { status: StepStatus; summary: string; providerId?: string; providerType?: BrainProviderType; model?: string; hasKey?: boolean };
   memory?: { status: StepStatus; summary: string };
@@ -22,10 +23,14 @@ export interface WizardCtx {
   fetchFn: typeof fetch;
   token?: string;
   answers: WizardAnswers;
+  /** True when the wizard runs embedded inside `elowen install` (which already provisioned the box and,
+   *  on a fresh install, will create the admin here). Steps use it to avoid re-asking install-owned
+   *  questions or forcing a sign-in on a box install just set up. */
+  embedded?: boolean;
 }
 
 export interface WizardStep {
-  id: 'account' | 'project' | 'ai' | 'memory' | 'lsp';
+  id: 'account' | 'deployment' | 'project' | 'ai' | 'memory' | 'lsp';
   /** Shown in the "[n/TOTAL] <title>" progress header. */
   title: string;
   run(ctx: WizardCtx): Promise<StepResult>;

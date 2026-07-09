@@ -6,35 +6,17 @@ import { preflight, preflightBlockers } from './preflight.js';
 import { ensureServiceUser, userHome, type ServiceUserChoice } from './serviceUser.js';
 import { AGENT_CLIS, detectAgentClis, installCommand } from './agentClis.js';
 import { daemonUnit, webUnit, updateService, updateTimer, elowenSudoers, type UnitParams } from './systemdUnits.js';
-import { detectProxy, nginxVhost, apacheVhost, certbotCommand, type ProxyKind } from './proxy.js';
 import { SERVICES } from '../systemd.js';
 import { applySetup, buildSetupPlan, defaultExecForCli, isFirstRun, type SetupAnswers } from '../setup.js';
 import { selfPrefix, reinstallNpmArgs } from '../update.js';
 import { runOnboarding } from '../setup/wizard.js';
 import { INSTALL_INFO_PATH, serializeInstallInfo, type InstallInfo } from '../installInfo.js';
+import { must, aptInstall, step } from '../provision/exec.js';
+import { type Deployment, isIpAddress, publicUrl, localhostDeploy, ipDeploy, chooseDeployment, provisionProxy } from '../provision/deployment.js';
+import { beginInstaller } from '../ui/installer.js';
 
 const DAEMON_PORT = Number((process.env.ELOWEN_PORT) ?? 4400);
 const WEB_PORT = Number((process.env.ELOWEN_WEB_PORT) ?? 4500);
-
-/** How the web UI is reached. Drives the reverse proxy, the web's bind interface and the canonical URL.
- *   - domain:    nginx/apache vhost + (optional) Let's Encrypt; web bound to 127.0.0.1.
- *   - ip:        no reverse proxy — the web binds 0.0.0.0 and the browser hits http://<host>:<webPort>.
- *   - localhost: no reverse proxy, web bound to 127.0.0.1, reachable only on the box. */
-type DeployMode = 'domain' | 'ip' | 'localhost';
-
-interface Deployment {
-  mode: DeployMode;
-  /** Host shown in the public URL: the domain, the server's public IP, or 'localhost'. */
-  host: string;
-  /** Domain to certify/proxy — set only in 'domain' mode. */
-  domain: string | null;
-  proxyPreference: ProxyKind;
-  /** Intended TLS (domain mode only); the effective result is returned by execute(). */
-  tls: boolean;
-  email: string | null;
-  /** Interface the web server binds: 0.0.0.0 for 'ip', 127.0.0.1 otherwise. */
-  webHost: string;
-}
 
 /** Everything `elowen install` needs to provision a box, resolved either interactively (modal prompts)
  *  or non-interactively (CLI flags). Collecting it up front keeps the two front-ends thin and lets the
@@ -47,16 +29,6 @@ interface InstallPlan {
   deploy: Deployment;
   admin: SetupAnswers | null;
 }
-
-/** Canonical public URL for a deployment, given whether TLS actually came up. */
-function publicUrl(d: Deployment, tlsOk: boolean): string {
-  if (d.mode === 'domain') return `${tlsOk ? 'https' : 'http'}://${d.host}`;
-  if (d.mode === 'ip') return `http://${d.host}:${WEB_PORT}`;
-  return `http://localhost:${WEB_PORT}`;
-}
-
-const localhostDeploy = (): Deployment => ({ mode: 'localhost', host: 'localhost', domain: null, proxyPreference: 'nginx', tls: false, email: null, webHost: '127.0.0.1' });
-const ipDeploy = (host: string): Deployment => ({ mode: 'ip', host, domain: null, proxyPreference: 'nginx', tls: false, email: null, webHost: '0.0.0.0' });
 
 // ── package + npm path resolution ────────────────────────────────────────────
 
@@ -81,31 +53,6 @@ function bail(v: unknown): asserts v is string {
   if (p.isCancel(v)) { p.cancel('Installation cancelled.'); process.exit(1); }
 }
 
-/** True for a bare IPv4/IPv6 host. Let's Encrypt only issues for registered domain names, so we never
- *  offer (or attempt) HTTPS for an IP — certbot would fail every time. */
-export function isIpAddress(host: string): boolean {
-  return /^\d{1,3}(\.\d{1,3}){3}$/.test(host) || host.includes(':');
-}
-
-async function step<T>(label: string, fn: () => Promise<T>): Promise<T> {
-  // Off a TTY (unattended / CI / piped logs) a spinner just spams frames — emit one line per step.
-  if (!process.stdout.isTTY) {
-    try { const out = await fn(); p.log.success(label); return out; }
-    catch (e) { p.log.error(`${label} — failed`); throw e; }
-  }
-  const s = p.spinner();
-  s.start(label);
-  try { const out = await fn(); s.stop(`${label} ok`); return out; }
-  catch (e) { s.stop(`${label} failed`, 'error'); throw e; }
-}
-
-/** Run a command and throw with its stderr when it fails — used for the system mutations where a
- *  non-zero exit must abort the wizard rather than silently continue. */
-async function must(r: Runner, cmd: string, args: string[], opts?: { user?: string }): Promise<void> {
-  const res = await r.exec(cmd, args, opts);
-  if (res.code !== 0) throw new Error(`${cmd} ${args.join(' ')} failed: ${(res.stderr || res.stdout).trim() || res.code}`);
-}
-
 /** Poll the daemon's /setup endpoint until it answers (services just came up) or we give up. */
 async function waitForDaemon(tries = 40): Promise<boolean> {
   for (let i = 0; i < tries; i++) {
@@ -127,11 +74,6 @@ async function loginSmokeTest(username: string, password: string): Promise<void>
 }
 
 // ── prompt-free executors (shared by interactive + unattended) ───────────────
-
-async function aptInstall(r: Runner, ...pkgs: string[]): Promise<void> {
-  await must(r, 'apt-get', ['update']);
-  await must(r, 'apt-get', ['install', '-y', ...pkgs]);
-}
 
 /** Best-effort: enable the real-PTY terminal stream. node-pty (an optional dependency) needs a C
  *  toolchain to compile its native addon when no prebuilt binary matches, so ensure python3/make/g++,
@@ -192,38 +134,6 @@ async function provisionSudoers(r: Runner, user: string): Promise<void> {
   await r.exec('rm', ['-f', tmp]);
 }
 
-/** Detect the installed reverse proxy, installing the preferred one when none is present. */
-async function resolveProxy(r: Runner, preference: ProxyKind): Promise<ProxyKind> {
-  const existing = await detectProxy(r);
-  if (existing) return existing;
-  await aptInstall(r, preference === 'nginx' ? 'nginx' : 'apache2');
-  return preference;
-}
-
-/** Render the vhost for the domain and make the proxy serve it. */
-async function configureVhost(r: Runner, kind: ProxyKind, domain: string): Promise<void> {
-  if (kind === 'nginx') {
-    await r.writeFile('/etc/nginx/sites-available/elowen.conf', nginxVhost(domain, WEB_PORT, DAEMON_PORT));
-    await must(r, 'ln', ['-sf', '/etc/nginx/sites-available/elowen.conf', '/etc/nginx/sites-enabled/elowen.conf']);
-    await must(r, 'nginx', ['-t']);
-    await must(r, 'systemctl', ['reload', 'nginx']);
-  } else {
-    await r.writeFile('/etc/apache2/sites-available/elowen.conf', apacheVhost(domain, WEB_PORT));
-    await must(r, 'a2enmod', ['proxy', 'proxy_http']);
-    await must(r, 'a2ensite', ['elowen']);
-    await must(r, 'systemctl', ['reload', 'apache2']);
-  }
-}
-
-/** Install certbot if needed and obtain + install a Let's Encrypt certificate. */
-async function obtainTls(r: Runner, kind: ProxyKind, domain: string, email: string | null): Promise<void> {
-  if (!(await r.which('certbot'))) {
-    await aptInstall(r, 'certbot', kind === 'nginx' ? 'python3-certbot-nginx' : 'python3-certbot-apache');
-  }
-  const { cmd, args } = certbotCommand(kind, domain, email ?? undefined);
-  await must(r, cmd, args);
-}
-
 /** Create the first admin from the plan (only when the daemon has no users yet) and prove login. */
 async function provisionAdmin(answers: SetupAnswers): Promise<void> {
   if (!(await isFirstRun(fetch, base))) { p.log.info('Admin already exists — skipping account creation.'); return; }
@@ -260,26 +170,12 @@ async function execute(r: Runner, plan: InstallPlan): Promise<{ tls: boolean }> 
   if (!ready) throw new Error('daemon did not become reachable — check: journalctl -u elowen-daemon');
 
   const d = plan.deploy;
-  let tlsOk = false;
-  if (d.mode === 'domain' && d.domain) {
-    const kind = await step('Configuring reverse proxy', async () => {
-      const k = await resolveProxy(r, d.proxyPreference);
-      await configureVhost(r, k, d.domain!);
-      return k;
-    });
-    // TLS is the last, optional, most failure-prone step (DNS not pointed yet, rate limits, IPs). A
-    // failure here must NOT abort the install — the site already serves over HTTP and the admin still
-    // needs creating — so we warn and carry on rather than throwing.
-    if (d.tls) {
-      try { await step('Requesting HTTPS certificate', () => obtainTls(r, kind, d.domain!, d.email)); tlsOk = true; }
-      catch (e) { p.log.warn(`HTTPS setup failed: ${(e as Error).message}\nThe site is up over HTTP — re-run certbot once the domain's DNS points here.`); }
-    }
-  }
+  const { tls: tlsOk } = await provisionProxy(r, d, { web: WEB_PORT, daemon: DAEMON_PORT });
 
   if (plan.admin) await step('Creating admin + verifying login', () => provisionAdmin(plan.admin!));
 
   // Record the deployment so the launcher menu shows the right URL and drives systemd (not a 2nd daemon).
-  const info: InstallInfo = { publicUrl: publicUrl(d, tlsOk), mode: d.mode, serviceUser: plan.user.username, daemonPort: DAEMON_PORT, webPort: WEB_PORT };
+  const info: InstallInfo = { publicUrl: publicUrl(d, tlsOk, WEB_PORT), mode: d.mode, serviceUser: plan.user.username, daemonPort: DAEMON_PORT, webPort: WEB_PORT };
   await must(r, 'mkdir', ['-p', '/etc/elowen']);
   await r.writeFile(INSTALL_INFO_PATH, serializeInstallInfo(info));
   return { tls: tlsOk };
@@ -385,61 +281,6 @@ async function chooseAgents(r: Runner, user: string): Promise<string[]> {
   return pick as string[];
 }
 
-/** Best-effort public IPv4 of this box, used as the default for the direct-port mode. Prefers the
- *  first global address from `hostname -I`; empty string when none can be determined. */
-async function detectPublicIp(r: Runner): Promise<string> {
-  const res = await r.exec('hostname', ['-I']);
-  const first = res.stdout.trim().split(/\s+/).find((ip) => /^\d{1,3}(\.\d{1,3}){3}$/.test(ip) && !ip.startsWith('127.'));
-  return first ?? '';
-}
-
-async function chooseDeployment(r: Runner): Promise<Deployment> {
-  const mode = await p.select({
-    message: 'How will you reach the ELOWEN web UI?',
-    options: [
-      { value: 'domain', label: 'A domain name', hint: 'nginx + free HTTPS (Let’s Encrypt)' },
-      { value: 'ip', label: 'This server’s IP, on a port', hint: `http://<ip>:${WEB_PORT} — no reverse proxy` },
-      { value: 'localhost', label: 'Localhost only', hint: `http://localhost:${WEB_PORT}` },
-    ],
-  });
-  bail(mode);
-
-  if (mode === 'localhost') return localhostDeploy();
-
-  if (mode === 'ip') {
-    const guess = await detectPublicIp(r);
-    const host = await p.text({ message: 'Public IP / hostname to advertise', initialValue: guess, validate: (v) => ((v ?? '').trim() ? undefined : 'Required') });
-    bail(host);
-    p.log.info(`The web UI will listen on 0.0.0.0:${WEB_PORT} — make sure port ${WEB_PORT} is open in any firewall.`);
-    return ipDeploy(host.trim());
-  }
-
-  // domain
-  const domain = await p.text({ message: 'Domain name', placeholder: 'elowen.example.com', validate: (v) => {
-    const t = (v ?? '').trim();
-    if (!t) return 'Required';
-    if (isIpAddress(t)) return 'That’s an IP — pick the IP option instead (Let’s Encrypt needs a domain name)';
-    return undefined;
-  } });
-  bail(domain);
-
-  let proxyPreference: ProxyKind = 'nginx';
-  if (!(await detectProxy(r))) {
-    const which = await p.select({
-      message: 'No reverse proxy found. Install one?',
-      options: [{ value: 'nginx', label: 'nginx', hint: 'recommended' }, { value: 'apache', label: 'apache2' }],
-    });
-    bail(which);
-    proxyPreference = which as ProxyKind;
-  }
-
-  const wantTls = await p.confirm({ message: `Obtain a free HTTPS certificate for ${domain.trim()} via Let's Encrypt?` });
-  if (p.isCancel(wantTls) || !wantTls) return { mode: 'domain', host: domain.trim(), domain: domain.trim(), proxyPreference, tls: false, email: null, webHost: '127.0.0.1' };
-  const email = await p.text({ message: 'Email for renewal notices (blank to register without email)', placeholder: 'you@example.com' });
-  bail(email);
-  return { mode: 'domain', host: domain.trim(), domain: domain.trim(), proxyPreference, tls: true, email: email.trim() || null, webHost: '127.0.0.1' };
-}
-
 // ── entry point ──────────────────────────────────────────────────────────────
 
 /** Human recap of what the wizard is about to do — shown for confirmation before anything is touched. */
@@ -496,6 +337,7 @@ export async function install(args: string[] = []): Promise<void> {
   if (args.includes('--help') || args.includes('-h')) { console.log(INSTALL_HELP); return; }
   const r = realRunner();
   const unattended = args.includes('--unattended');
+  p.mascot();
   p.intro(`elowen install${unattended ? ' (unattended)' : ''}`);
 
   const pf = await preflight(r);
@@ -515,7 +357,8 @@ export async function install(args: string[] = []): Promise<void> {
     }
     const user = await chooseServiceUser();
     const agents = await chooseAgents(r, user.username);
-    const deploy = await chooseDeployment(r);
+    const deploy = await chooseDeployment(r, WEB_PORT);
+    if (!deploy) { p.cancel('Installation cancelled.'); process.exit(1); }
     // Admin is created via the shared wizard AFTER the daemon is up, so collect it there instead.
     plan = { installTmux, user, agents, deploy, admin: null };
   }
@@ -527,7 +370,16 @@ export async function install(args: string[] = []): Promise<void> {
     if (p.isCancel(go) || !go) { p.cancel('Nothing was changed.'); process.exit(0); }
   }
 
-  const { tls } = await execute(r, plan);
+  // All execute() progress paints into one persistent framed panel (spinner/log routed there) instead of
+  // scrolling past as bare lines; on a non-TTY this is a no-op and steps stay plain log lines. Always tear
+  // the panel down — even on failure — so a thrown step leaves the terminal in a clean state.
+  const installer = beginInstaller('Installing Elowen');
+  let tls: boolean;
+  try {
+    ({ tls } = await execute(r, plan));
+  } finally {
+    installer.stop();
+  }
 
   // Interactive: now that the daemon is live, run the shared onboarding wizard (account, project, AI
   // provider, memory) — the SAME one as `elowen setup`, embedded so install frames the intro/outro. This
@@ -536,7 +388,7 @@ export async function install(args: string[] = []): Promise<void> {
   let adminUser = plan.admin?.username ?? null;
   if (!unattended) adminUser = (await runOnboarding(base, process.env, { embedded: true })) ?? adminUser;
 
-  const url = publicUrl(plan.deploy, tls);
+  const url = publicUrl(plan.deploy, tls, WEB_PORT);
   const summary = [
     `Open       ${url}`,
     adminUser ? `Sign in    ${adminUser}` : 'Sign in    create an admin in the web UI',
@@ -544,6 +396,10 @@ export async function install(args: string[] = []): Promise<void> {
     `Logs       journalctl -u elowen-daemon -f`,
     `Restart    systemctl restart elowen-daemon elowen-web`,
   ].join('\n');
-  p.note(summary, 'ELOWEN is ready');
-  p.outro(`Done - ELOWEN is live at ${url}`);
+  const doneBody = [...summary.split('\n'), '', `ELOWEN is live at ${url}`];
+  // Interactive install ends on a distinct terminal DONE screen, held until the operator dismisses it
+  // (enter/esc) — success is its own frame, not more scrollback. An unattended run must never block on a
+  // keypress, so it just prints the frame.
+  if (unattended) p.note(doneBody.join('\n'), 'ELOWEN is ready');
+  else await p.doneScreen('ELOWEN is ready', doneBody);
 }

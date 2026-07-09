@@ -1,6 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { navigate, type ReviewDecision } from '../../../src/cli/setup/wizard.js';
+import { navigate, buildSteps, deploymentStepApplies, type ReviewDecision } from '../../../src/cli/setup/wizard.js';
 import { WizardCancelled, type StepResult, type WizardCtx, type WizardStep } from '../../../src/cli/setup/types.js';
+import type { InstallInfo } from '../../../src/cli/installInfo.js';
+
+const installInfo = (): InstallInfo => ({ publicUrl: 'https://elo.example.com', mode: 'domain', serviceUser: 'elowen', daemonPort: 4400, webPort: 4500 });
 
 const ctx = (): WizardCtx => ({ base: 'http://x', fetchFn: (async () => new Response('{}')) as unknown as typeof fetch, answers: {} });
 const step = (id: string, run: () => Promise<StepResult>): WizardStep => ({ id: id as WizardStep['id'], title: id, run });
@@ -60,5 +63,25 @@ describe('cli/setup.navigate', () => {
   it('propagates a WizardCancelled thrown by a step', async () => {
     const steps = [step('a', async () => { throw new WizardCancelled(); })];
     await expect(navigate(steps, ctx(), { onStep: () => {}, review: finish })).rejects.toBeInstanceOf(WizardCancelled);
+  });
+});
+
+describe('cli/setup deployment-step gating (install/setup parity)', () => {
+  it('applies only on a systemd box (install.json) run as root, and never when embedded in install', () => {
+    expect(deploymentStepApplies({ info: installInfo(), isRoot: true, embedded: false })).toBe(true);
+    expect(deploymentStepApplies({ info: null, isRoot: true, embedded: false })).toBe(false); // plain npm install
+    expect(deploymentStepApplies({ info: installInfo(), isRoot: false, embedded: false })).toBe(false); // no privileges
+    expect(deploymentStepApplies({ info: installInfo(), isRoot: true, embedded: true })).toBe(false); // install already asked
+  });
+
+  it('buildSteps inserts the Deployment step after Account when it applies', () => {
+    const steps = buildSteps({ info: installInfo(), isRoot: true, embedded: false });
+    expect(steps.map((s) => s.id)).toEqual(['account', 'deployment', 'project', 'ai', 'memory', 'lsp']);
+  });
+
+  it('buildSteps omits the Deployment step off a systemd box', () => {
+    const steps = buildSteps({ info: null, isRoot: true, embedded: false });
+    expect(steps.map((s) => s.id)).toEqual(['account', 'project', 'ai', 'memory', 'lsp']);
+    expect(steps.some((s) => s.id === 'deployment')).toBe(false);
   });
 });

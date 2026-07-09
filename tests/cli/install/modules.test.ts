@@ -2,7 +2,8 @@ import { describe, it, expect } from 'vitest';
 import { AGENT_CLIS, detectAgentClis, installCommand } from '../../../src/cli/install/agentClis.js';
 import { preflight, preflightBlockers } from '../../../src/cli/install/preflight.js';
 import { userHome, ensureServiceUser } from '../../../src/cli/install/serviceUser.js';
-import { isIpAddress, ensureTerminalStreaming } from '../../../src/cli/install/index.js';
+import { ensureTerminalStreaming } from '../../../src/cli/install/index.js';
+import { isIpAddress } from '../../../src/cli/provision/deployment.js';
 import type { Runner, ExecResult } from '../../../src/cli/install/runner.js';
 
 function runner(over: Partial<Runner> = {}): Runner {
