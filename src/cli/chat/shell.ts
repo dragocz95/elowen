@@ -2,6 +2,7 @@ import { Container } from '@earendil-works/pi-tui';
 import type { Component, MarkdownTheme, TUI } from '@earendil-works/pi-tui';
 import { color } from './theme.js';
 import { StatusBar, CardPanel, SubagentPanel, spinnerFrame } from './components.js';
+import { MascotFloat } from './mascotFloat.js';
 import { activeMention, CLIPBOARD_MENTION, imageMimeFor, rankMentionFiles, bumpMentionFrecency, mentionInsertText } from './mentions.js';
 import { isSlashCommandDraft } from './commands.js';
 import {
@@ -161,6 +162,33 @@ export function createShell(rt: ChatRuntime, stream: StreamController, mdTheme: 
   let panelWidth = 46;
   let resizingPanel = false;
   let draggingHistoryScroll = false;
+  // Screen row of the last scrollbar-drag sample — its delta gives the drag direction for the mascot float.
+  let lastScrollDragRow = 0;
+
+  // The right-panel flame's eased drift-on-scroll. A pure spring-damper (mascotFloat) is nudged on each
+  // scroll and integrated by a self-canceling ~30fps ticker that stops the moment the motion settles, so
+  // an idle session pays zero CPU — mirroring app.ts's thinking-only render timer.
+  const FLOAT_TICK_MS = 33;
+  const mascotFloat = new MascotFloat();
+  let floatTimer: ReturnType<typeof setInterval> | null = null;
+  const armFloat = (): void => {
+    if (floatTimer) return;
+    floatTimer = setInterval(() => {
+      mascotFloat.tick(FLOAT_TICK_MS);
+      tui.requestRender();
+      if (mascotFloat.settled()) {
+        if (floatTimer) { clearInterval(floatTimer); floatTimer = null; }
+        tui.requestRender(); // one final paint at the rest position
+      }
+    }, FLOAT_TICK_MS);
+  };
+  // Nudge the flame in a scroll direction, but only when the panel is actually on screen (≥104 cols +
+  // a conversation) — on a narrow terminal there is no flame to float, so the spring stays at rest.
+  const nudgeFloat = (dir: number): void => {
+    if (!panelVisible()) return;
+    mascotFloat.impulse(dir);
+    armFloat();
+  };
   /** An empty conversation renders the centered start screen instead of the chat stack + panel. */
   const hasMessages = (): boolean => rt.view.turns.length > 0;
   const panelVisible = (): boolean => term.columns >= 104 && hasMessages() && !panelHandle?.isHidden();
@@ -188,6 +216,7 @@ export function createShell(rt: ChatRuntime, stream: StreamController, mdTheme: 
     branch: branchLabel,
     mcp: rt.mcpList,
     lspEnabled: rt.lspEnabled,
+    floatOffset: mascotFloat.value(),
   }));
   const startScreen = new StartScreen(
     inputStack,
@@ -242,6 +271,9 @@ export function createShell(rt: ChatRuntime, stream: StreamController, mdTheme: 
     promptMeta.setRight(panelVisible() || !line ? projectLine : `${color.faint(line)} ${color.faint('·')} ${projectLine}`);
     cardPanel.set(rt.cards);
     subPanel.set(stream.subagentStates());
+    // Pending mid-turn queue strip above the composer (with the remove-last keybind hint when bound).
+    const removeChord = keymap.chordLabel('queue_remove');
+    rt.queuedMessages.set(rt.queued, rt.queued.length && removeChord ? `${removeChord} removes the last queued message` : null);
     tui.requestRender();
   };
 
@@ -446,6 +478,16 @@ export function createShell(rt: ChatRuntime, stream: StreamController, mdTheme: 
         }
         // Cycle main conversation → each sub-agent session → back to main (opencode-style).
         case 'subagent_cycle': stream.cycleSubagent(); return;
+        // Drop the most recent pending mid-turn queued message. Optimistic local pop; the server's `queue`
+        // snapshot reconciles (and is authoritative if the item was already delivered in the meantime).
+        case 'queue_remove': {
+          const last = rt.queued.at(-1);
+          if (!last) { rt.notice = color.dim('no queued messages'); render(); return; }
+          rt.queued = rt.queued.slice(0, -1);
+          void client.queueRemove(last.id).catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); render(); });
+          render();
+          return;
+        }
         case 'mode_toggle': {
           rt.workMode = rt.workMode === 'plan' ? 'build' : 'plan';
           rt.notice = color.dim(rt.workMode === 'plan'
@@ -470,12 +512,15 @@ export function createShell(rt: ChatRuntime, stream: StreamController, mdTheme: 
           return { consume: true };
         }
         if (draggingHistoryScroll && isPrimaryDrag) {
+          nudgeFloat(lastScrollDragRow - ev.y); // drag up (y falls) scrolls into history → flame lifts
+          lastScrollDragRow = ev.y;
           viewport.setScrollFromRow(ev.y);
           tui.requestRender();
           return { consume: true };
         }
         if (isPrimaryDrag && hasMessages() && viewport.isScrollbarHit(ev.x, ev.y)) {
           draggingHistoryScroll = true;
+          lastScrollDragRow = ev.y;
           viewport.setScrollFromRow(ev.y);
           tui.requestRender();
           return { consume: true };
@@ -540,6 +585,7 @@ export function createShell(rt: ChatRuntime, stream: StreamController, mdTheme: 
       const wheel = mouseWheel(data);
       if (wheel && noModal) {
         viewport.scroll(wheel);
+        nudgeFloat(Math.sign(wheel)); // flame follows the content, then eases back
         tui.requestRender();
         return { consume: true };
       }
@@ -647,11 +693,13 @@ export function createShell(rt: ChatRuntime, stream: StreamController, mdTheme: 
       }
       if (noModal && isPageUpKey(data)) {
         viewport.scroll(4);
+        nudgeFloat(1);
         tui.requestRender();
         return { consume: true };
       }
       if (noModal && isPageDownKey(data)) {
         viewport.scroll(-4);
+        nudgeFloat(-1);
         tui.requestRender();
         return { consume: true };
       }
@@ -660,6 +708,7 @@ export function createShell(rt: ChatRuntime, stream: StreamController, mdTheme: 
   };
 
   const hideOverlays = (): void => {
+    if (floatTimer) { clearInterval(floatTimer); floatTimer = null; } // no dangling ticker on quit
     panelHandle?.hide();
     slashHandle?.hide();
     mentionHandle?.hide();

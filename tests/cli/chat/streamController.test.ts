@@ -12,21 +12,21 @@ function deferred<T>(): { promise: Promise<T>; resolve: (v: T) => void } {
   return { promise, resolve };
 }
 
-describe('streamController — passive idle rollover', () => {
-  it('buffers events after the session frame and replays them onto the refetched view', async () => {
+describe('streamController — idle rollover', () => {
+  it('resets to the fresh conversation on `session` and rebuilds from the daemon stream (no refetch)', () => {
     let onEvent!: (e: BrainEvent) => void;
-    const hist = deferred<{ role: string; text: string }[]>();
+    let historyCalls = 0;
     const client = {
       stream: (cb: (e: BrainEvent) => void) => { onEvent = cb; return Promise.resolve(); },
-      history: () => hist.promise,
+      history: () => { historyCalls++; return Promise.resolve([]); },
       rebind: () => {},
     } as unknown as BrainClient;
 
     const ac = new AbortController();
     const rt = {
       client,
-      // Last turn is an elowen reply → passive client (no fresh local `you` turn), the refetch path.
-      view: fromHistory([{ role: 'assistant', text: 'old answer' }]),
+      // Prior conversation on screen — no optimistic local 'you' (the daemon is the echo authority now).
+      view: fromHistory([{ role: 'user', text: 'yesterday' }, { role: 'assistant', text: 'old answer' }]),
       childView: null,
       streamAc: ac,
       notice: '',
@@ -40,22 +40,124 @@ describe('streamController — passive idle rollover', () => {
     const stream = createStreamController(rt, flows);
     stream.openStream(ac);
 
-    // Idle rollover: the server continued this message in a FRESH conversation, then a text delta
-    // arrives in the SAME batch — before the history refetch resolves.
+    // Idle rollover: the server continued this message in a FRESH conversation, then re-emits the
+    // triggering message as a `user` event and streams its reply — all in order, no history refetch.
     onEvent({ type: 'session', sessionId: 'fresh-1' });
+    expect(rt.view.turns).toEqual([]); // the prior conversation is cleared
+    onEvent({ type: 'user', text: 'today' });
     onEvent({ type: 'text', delta: 'streamed after rollover' });
 
-    // The buffered text must NOT have folded into the stale pre-rollover view (it would be discarded).
-    const hasStreamed = (): boolean => rt.view.turns.some(
-      (t) => t.role === 'elowen' && t.segments.some((s) => s.kind === 'text' && s.text.includes('streamed')));
-    expect(hasStreamed()).toBe(false);
+    expect(rt.view.turns[0]).toEqual({ role: 'you', text: 'today' });
+    expect(rt.view.turns.some((t) => t.role === 'elowen' && t.segments.some((s) => s.kind === 'text' && s.text.includes('streamed')))).toBe(true);
+    expect(historyCalls).toBe(0); // a rollover never refetches — the fresh session has nothing stored yet
+  });
 
-    // The refetched transcript lands (fresh conversation — only the just-sent prompt).
-    hist.resolve([{ role: 'user', text: 'q2' }]);
+  it('buffers events during the post-compaction history refetch and replays them onto the collapsed view', async () => {
+    let onEvent!: (e: BrainEvent) => void;
+    const hist = deferred<{ role: string; text: string }[]>();
+    const client = {
+      stream: (cb: (e: BrainEvent) => void) => { onEvent = cb; return Promise.resolve(); },
+      history: () => hist.promise,
+      rebind: () => {},
+    } as unknown as BrainClient;
+
+    const ac = new AbortController();
+    const rt = {
+      client,
+      view: fromHistory([{ role: 'user', text: 'q1' }, { role: 'assistant', text: 'long answer' }]),
+      childView: null,
+      streamAc: ac,
+      notice: '',
+      conversationTitle: 'seeded',
+      workMode: 'build',
+      render: () => {},
+      refreshMeta: async () => {},
+    } as unknown as ChatRuntime;
+    const flows = { launchAsk: () => {}, openPlanDecision: () => {} } as unknown as Flows;
+
+    const stream = createStreamController(rt, flows);
+    stream.openStream(ac);
+
+    // Auto-compact persisted server-side → `compacted`; the queued-flush turn immediately streams its
+    // reply BEFORE the history refetch resolves. That delta must land on the refetched (collapsed) view.
+    onEvent({ type: 'compacted' });
+    onEvent({ type: 'text', delta: 'flush-turn reply' });
+
+    const hasFlushReply = (): boolean => rt.view.turns.some(
+      (t) => t.role === 'elowen' && t.segments.some((s) => s.kind === 'text' && s.text.includes('flush-turn')));
+    // Not folded into the stale pre-compaction view (it would be discarded when history lands).
+    expect(hasFlushReply()).toBe(false);
+
+    // The collapsed transcript lands (divider + kept tail), then the buffered delta replays onto it.
+    hist.resolve([{ role: 'compaction', text: '' }, { role: 'user', text: 'q1' }]);
     await new Promise((r) => setTimeout(r, 0));
 
-    // Fresh view = the refetched user turn PLUS the replayed buffered text.
-    expect(rt.view.turns[0]).toEqual({ role: 'you', text: 'q2' });
-    expect(hasStreamed()).toBe(true);
+    expect(rt.view.turns.some((t) => t.role === 'divider')).toBe(true);
+    expect(hasFlushReply()).toBe(true);
+  });
+
+  it('a `queue` event replaces rt.queued (full snapshot) without touching the transcript view', () => {
+    let onEvent!: (e: BrainEvent) => void;
+    const client = {
+      stream: (cb: (e: BrainEvent) => void) => { onEvent = cb; return Promise.resolve(); },
+      history: () => Promise.resolve([]),
+      rebind: () => {},
+    } as unknown as BrainClient;
+    const ac = new AbortController();
+    const rt = {
+      client,
+      view: fromHistory([{ role: 'assistant', text: 'hi' }]),
+      childView: null,
+      streamAc: ac,
+      notice: '',
+      conversationTitle: 'x',
+      workMode: 'build',
+      queued: [] as { id: string; text: string }[],
+      render: () => {},
+      refreshMeta: async () => {},
+    } as unknown as ChatRuntime;
+    const flows = { launchAsk: () => {}, openPlanDecision: () => {} } as unknown as Flows;
+
+    const stream = createStreamController(rt, flows);
+    stream.openStream(ac);
+    const before = rt.view;
+
+    onEvent({ type: 'queue', items: [{ id: 'q1', text: 'one' }, { id: 'q2', text: 'two' }] });
+    expect(rt.queued).toEqual([{ id: 'q1', text: 'one' }, { id: 'q2', text: 'two' }]);
+    expect(rt.view).toBe(before); // the ChatView is untouched — the queue is separate client state
+
+    // A later snapshot (e.g. a removal or a drain) replaces wholesale — never a merge.
+    onEvent({ type: 'queue', items: [] });
+    expect(rt.queued).toEqual([]);
+    expect(rt.view).toBe(before);
+  });
+
+  it('a `user` delivery event folds a you-turn into the transcript (the drained queued message)', () => {
+    let onEvent!: (e: BrainEvent) => void;
+    const client = {
+      stream: (cb: (e: BrainEvent) => void) => { onEvent = cb; return Promise.resolve(); },
+      history: () => Promise.resolve([]),
+      rebind: () => {},
+    } as unknown as BrainClient;
+    const ac = new AbortController();
+    const rt = {
+      client,
+      view: fromHistory([{ role: 'assistant', text: 'previous reply' }]),
+      childView: null,
+      streamAc: ac,
+      notice: '',
+      conversationTitle: 'x',
+      workMode: 'build',
+      queued: [] as { id: string; text: string }[],
+      render: () => {},
+      refreshMeta: async () => {},
+    } as unknown as ChatRuntime;
+    const flows = { launchAsk: () => {}, openPlanDecision: () => {} } as unknown as Flows;
+
+    const stream = createStreamController(rt, flows);
+    stream.openStream(ac);
+
+    onEvent({ type: 'user', text: 'combined queued delivery' });
+    expect(rt.view.turns.at(-1)).toEqual({ role: 'you', text: 'combined queued delivery' });
   });
 });

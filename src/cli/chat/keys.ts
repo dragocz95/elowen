@@ -44,6 +44,7 @@ export type KeybindAction =
   | 'stash'
   | 'subagent_cycle'
   | 'telemetry_toggle'
+  | 'queue_remove'
   | 'help'
   | 'theme_picker'
   | 'model_picker'
@@ -52,7 +53,7 @@ export type KeybindAction =
 /** Display/listing order for /keybinds. */
 export const KEYBIND_ACTIONS: readonly KeybindAction[] = [
   'leader', 'quit', 'mode_toggle', 'reasoning_cycle', 'stash', 'subagent_cycle', 'telemetry_toggle',
-  'help', 'theme_picker', 'model_picker', 'sessions_picker',
+  'queue_remove', 'help', 'theme_picker', 'model_picker', 'sessions_picker',
 ];
 
 /** Default chord spec per action. Spec grammar (opencode-inspired):
@@ -68,6 +69,7 @@ const DEFAULT_KEYBINDS: Readonly<Record<KeybindAction, string>> = {
   stash: 'ctrl+s',
   subagent_cycle: 'ctrl+o',
   telemetry_toggle: 'ctrl+p',
+  queue_remove: 'leader x',
   help: 'leader h',
   theme_picker: 'leader t',
   model_picker: 'leader m',

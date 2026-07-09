@@ -2,7 +2,7 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import { getMarkdownTheme, initTheme } from '@earendil-works/pi-coding-agent';
 import { visibleWidth } from '@earendil-works/pi-tui';
 import { beginAssistant, emptyView, fromHistory, pushUser, reduce } from '../../../src/brain/transcript.js';
-import { ChatViewport, mouseWheel, SlashOverlay, StartScreen, TelemetryPanel, type TelemetryState } from '../../../src/cli/chat/layout.js';
+import { ChatViewport, mouseWheel, SlashOverlay, StartScreen, TelemetryPanel, TOOL_INDENT, type TelemetryState } from '../../../src/cli/chat/layout.js';
 
 describe('chat layout components', () => {
   beforeAll(() => { initTheme(); });
@@ -132,6 +132,47 @@ describe('chat layout components', () => {
     expect(rendered).not.toContain('run_command');
   });
 
+  it('collapses a run of the same bare tool into one indented row with a ×N counter', () => {
+    let view = beginAssistant(pushUser(emptyView(), 'read them'));
+    view = reduce(view, { type: 'tool', name: 'read_file', detail: 'a.ts' });
+    view = reduce(view, { type: 'tool', name: 'read_file', detail: 'a.ts' });
+    view = reduce(view, { type: 'tool', name: 'read_file', detail: 'b.ts' });
+    view = reduce(view, { type: 'idle' });
+    const viewport = new ChatViewport(
+      { view, notice: '', modelName: 'kimi', thinkingSeconds: 0 },
+      getMarkdownTheme(),
+      () => 12,
+      () => 1,
+      () => 72,
+    );
+    const lines = viewport.render(72).map((line) => line.replace(/\x1b\[[0-9;]*m/g, ''));
+    const toolRows = lines.filter((l) => l.includes('Read '));
+    expect(toolRows).toHaveLength(1); // three reads folded into ONE row
+    expect(toolRows[0]).toContain('Read b.ts'); // latest detail shown
+    expect(toolRows[0]).toContain('×3');
+    // Tool rows sit deeper than the 2-space assistant prose (TOOL_INDENT = 4 spaces).
+    expect(TOOL_INDENT).toBe('    ');
+    expect(toolRows[0]!.startsWith(TOOL_INDENT)).toBe(true);
+    expect(toolRows[0]![2]).toBe(' '); // still blank at column 2 where prose would start
+  });
+
+  it('does not collapse a tool that carries an output block (it renders its own block, not a ×N row)', () => {
+    let view = beginAssistant(emptyView());
+    view = reduce(view, { type: 'tool', id: 't1', name: 'read_file', detail: 'a.ts' });
+    view = reduce(view, { type: 'tool_output', id: 't1', output: { title: 'tool result', kind: 'result', text: 'file body', tone: 'normal' } });
+    view = reduce(view, { type: 'tool', name: 'read_file', detail: 'b.ts' });
+    view = reduce(view, { type: 'idle' });
+    const rendered = new ChatViewport(
+      { view, notice: '', modelName: 'kimi', thinkingSeconds: 0 },
+      getMarkdownTheme(),
+      () => 12,
+      () => 1,
+      () => 72,
+    ).render(72).map((line) => line.replace(/\x1b\[[0-9;]*m/g, '')).join('\n');
+    expect(rendered).not.toContain('×'); // the output-bearing read broke the run → nothing folded
+    expect(rendered).toContain('tool result');
+  });
+
   it('labels edit diffs by action and target instead of rendering the tool name', () => {
     let view = beginAssistant(emptyView());
     view = reduce(view, { type: 'tool', name: 'edit_file', detail: 'test.php' });
@@ -234,6 +275,7 @@ describe('chat layout components', () => {
     branch: 'main',
     mcp: null,
     lspEnabled: null,
+    floatOffset: 0,
     ...over,
   });
 
@@ -249,6 +291,30 @@ describe('chat layout components', () => {
     expect(rows.join('\n')).not.toContain('reasoning');
     expect(rows.join('\n')).not.toContain('theme');
     expect(rows.join('\n')).not.toContain('Dev');
+  });
+
+  it('floats the flame within a fixed band: constant panel height, whole-row drift, no reflow', () => {
+    const strip = (s: string): string => s.replace(/\x1b\[[0-9;]*m/g, '');
+    const render = (floatOffset: number): string[] =>
+      new TelemetryPanel(() => telemetryState({ floatOffset })).render(46).map(strip);
+    // The flame's own rows are the only ones carrying half-block glyphs; the band above/below is blank.
+    const firstFlameRow = (floatOffset: number): number => render(floatOffset).findIndex((l) => /[▀▄]/.test(l));
+    const height = (floatOffset: number): number => render(floatOffset).length;
+
+    const band = [-2, -1, 0, 1, 2];
+    // Panel height stays identical across the whole band → the Context section below never reflows.
+    expect(new Set(band.map(height)).size).toBe(1);
+    // A more-positive drift lifts the flame (fewer blank rows above it); each unit shifts exactly one row.
+    expect(firstFlameRow(0) - firstFlameRow(1)).toBe(1);
+    expect(firstFlameRow(-1) - firstFlameRow(0)).toBe(1);
+    expect(firstFlameRow(2)).toBeLessThan(firstFlameRow(-2));
+    // Fractional drift rounds to whole rows; drift beyond the band clamps at the edge.
+    expect(firstFlameRow(0.4)).toBe(firstFlameRow(0));
+    expect(firstFlameRow(0.6)).toBe(firstFlameRow(1));
+    expect(firstFlameRow(9)).toBe(firstFlameRow(2));
+    expect(firstFlameRow(-9)).toBe(firstFlameRow(-2));
+    // Every rendered row (blank band rows included) is still padded to the panel width.
+    expect(render(1).every((line) => visibleWidth(line) === 46)).toBe(true);
   });
 
   it('scales the context bar with the panel width, keeping equal edge margins', () => {

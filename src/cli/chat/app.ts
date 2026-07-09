@@ -7,7 +7,7 @@ import { initKeymap } from './keys.js';
 import { loadPrefs } from './prefs.js';
 import { loadPromptHistory, PromptStash } from './promptHistory.js';
 import { LocalShellBuffer } from './localShell.js';
-import { AttachmentChips } from './components.js';
+import { AttachmentChips, QueuedMessages } from './components.js';
 import { FileIndex, loadMentionFrecency } from './mentions.js';
 import { ChatEditor } from './picker.js';
 import { BrainClient } from './brainClient.js';
@@ -17,7 +17,7 @@ import { createShell } from './shell.js';
 import { createPickers } from './pickers.js';
 import { wireSubmit } from './commands.js';
 import type { ChatRuntime } from './runtime.js';
-import { fromHistory, type ChatView } from '../../brain/transcript.js';
+import { fromHistory, groupToolItems, type ChatView } from '../../brain/transcript.js';
 import { commandsFor } from '../../brain/slashCommands.js';
 import { DISABLE_MOUSE, ENABLE_MOUSE } from './layout.js';
 
@@ -29,12 +29,17 @@ export function viewToPlainText(view: ChatView): string[] {
     if (turn.role === 'you') {
       lines.push('you');
       lines.push(...turn.text.split('\n').map((l) => `  ${l}`));
+    } else if (turn.role === 'divider') {
+      lines.push('— context compacted —');
     } else {
       lines.push(`${glyph.whale} elowen`);
       for (const seg of turn.segments) {
         if (seg.kind === 'tools') {
-          for (const item of seg.items) {
-            lines.push(`  ${glyph.tool} ${item.name}${item.detail ? ` ${item.detail}` : ''}`);
+          // Same consecutive-same-tool collapse as the rich renderer, so the plain/test path matches.
+          for (const group of groupToolItems(seg.items)) {
+            const item = group.item;
+            const count = group.count > 1 ? ` ×${group.count}` : '';
+            lines.push(`  ${glyph.tool} ${item.name}${item.detail ? ` ${item.detail}` : ''}${count}`);
             if (item.diff) lines.push(...item.diff.replace(/\n+$/, '').split('\n').map((l) => `    ${l}`));
             if (item.output) lines.push(...item.output.text.split('\n').map((l) => `    ${l}`));
           }
@@ -151,16 +156,19 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
   // or at the very start of the draft, so ↑/↓ inside a multiline draft keep moving the cursor.
   for (const entry of loadPromptHistory(process.cwd())) editor.addToHistory(entry);
   const attachmentChips = new AttachmentChips();
+  const queuedMessages = new QueuedMessages();
   const editorSlot = new Container();
   editorSlot.addChild(editor);
   const inputStack = new Container();
+  // Pending mid-turn queue sits on top of the stack, then pending image chips, then the composer.
+  inputStack.addChild(queuedMessages);
   inputStack.addChild(attachmentChips);
   inputStack.addChild(editorSlot);
 
   /** The shared runtime: all mutable chat state + the render/refreshMeta/quit callbacks, threaded
    *  through every module factory below (see ChatRuntime). */
   const rt: ChatRuntime = {
-    client, tui, term, editor, editorSlot, inputStack, attachmentChips,
+    client, tui, term, editor, editorSlot, inputStack, attachmentChips, queuedMessages,
     promptStash: new PromptStash(),
     shellContext: new LocalShellBuffer(),
     mentionIndex: new FileIndex(process.cwd()),
@@ -182,6 +190,7 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
     mcpList: null,
     workMode: 'build',
     cards: boot?.cards ?? [],
+    queued: boot?.queued ?? [],
     listed: [],
     showThoughts,
     pendingImages: [],
@@ -193,7 +202,7 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
         client.status().catch(() => null),
         client.mcpServers().catch(() => null),
       ]);
-      if (st) { rt.modelName = st.model || rt.modelName; rt.conversationTitle = st.title ?? rt.conversationTitle; rt.lineCfg = st.statusline; rt.usage = st.usage; rt.thinkingLevel = st.thinkingLevel ?? ''; rt.thinkingLevels = st.thinkingLevels ?? []; rt.cards = st.cards ?? []; rt.lspEnabled = st.lspEnabled ?? null; rt.yoloOn = st.yolo ?? rt.yoloOn; }
+      if (st) { rt.modelName = st.model || rt.modelName; rt.conversationTitle = st.title ?? rt.conversationTitle; rt.lineCfg = st.statusline; rt.usage = st.usage; rt.thinkingLevel = st.thinkingLevel ?? ''; rt.thinkingLevels = st.thinkingLevels ?? []; rt.cards = st.cards ?? []; rt.queued = st.queued ?? []; rt.lspEnabled = st.lspEnabled ?? null; rt.yoloOn = st.yolo ?? rt.yoloOn; }
       rt.mcpList = mcp;
     },
   };

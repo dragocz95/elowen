@@ -62,6 +62,22 @@ describe('BrainClient', () => {
     }));
   });
 
+  it('queueRemove DELETEs /brain/queue/:id (no session suffix before start binds one)', async () => {
+    const f = vi.fn(async () => j(200, { removed: true })) as unknown as typeof fetch;
+    const c = new BrainClient({ base: 'http://x', token: 't', fetchImpl: f });
+    await c.queueRemove('q-42');
+    expect(f).toHaveBeenCalledWith('http://x/brain/queue/q-42', expect.objectContaining({ method: 'DELETE' }));
+  });
+
+  it('queueRemove appends the bound session id once start() resolved one', async () => {
+    const f = vi.fn(async () => j(201, { sessionId: 'brain-7' })) as unknown as typeof fetch;
+    const c = new BrainClient({ base: 'http://x', token: 't', fetchImpl: f });
+    await c.start();
+    f.mockImplementation(async () => j(200, { removed: false }) as Response);
+    await c.queueRemove('q-9');
+    expect(f).toHaveBeenCalledWith('http://x/brain/queue/q-9?session=brain-7', expect.objectContaining({ method: 'DELETE' }));
+  });
+
   it('maps a 401 to Unauthorized', async () => {
     const f = vi.fn(async () => new Response('no', { status: 401 })) as unknown as typeof fetch;
     const c = new BrainClient({ base: 'http://x', token: 't', fetchImpl: f });
@@ -81,5 +97,39 @@ describe('BrainClient', () => {
     const seen: unknown[] = [];
     await c.stream((e) => { seen.push(e); ac.abort(); }, ac.signal, 5);
     expect(seen).toEqual([{ type: 'text', delta: 'hi' }]);
+  });
+
+  it('getTddMode reads autopilot.tddMode from the public config', async () => {
+    const f = vi.fn(async () => j(200, { autopilot: { tddMode: true } })) as unknown as typeof fetch;
+    const c = new BrainClient({ base: 'http://x', token: 't', fetchImpl: f });
+    expect(await c.getTddMode()).toBe(true);
+    expect(f).toHaveBeenCalledWith('http://x/config', expect.objectContaining({ headers: expect.anything() }));
+  });
+
+  it('getTddMode defaults to false when the flag is absent', async () => {
+    const f = vi.fn(async () => j(200, { autopilot: {} })) as unknown as typeof fetch;
+    const c = new BrainClient({ base: 'http://x', token: 't', fetchImpl: f });
+    expect(await c.getTddMode()).toBe(false);
+  });
+
+  it('setTddMode PUTs the autopilot.tddMode patch', async () => {
+    const f = vi.fn(async () => j(200, { autopilot: { tddMode: true } })) as unknown as typeof fetch;
+    const c = new BrainClient({ base: 'http://x', token: 't', fetchImpl: f });
+    await c.setTddMode(true);
+    expect(f).toHaveBeenCalledWith('http://x/config', expect.objectContaining({
+      method: 'PUT', body: JSON.stringify({ autopilot: { tddMode: true } }),
+    }));
+  });
+
+  it('setTddMode surfaces a 403 as an admin-only error', async () => {
+    const f = vi.fn(async () => j(403, { error: 'forbidden' })) as unknown as typeof fetch;
+    const c = new BrainClient({ base: 'http://x', token: 't', fetchImpl: f });
+    await expect(c.setTddMode(true)).rejects.toThrow(/admin/i);
+  });
+
+  it('setTddMode surfaces a 401 as Unauthorized', async () => {
+    const f = vi.fn(async () => j(401, {})) as unknown as typeof fetch;
+    const c = new BrainClient({ base: 'http://x', token: 't', fetchImpl: f });
+    await expect(c.setTddMode(false)).rejects.toBeInstanceOf(Unauthorized);
   });
 });

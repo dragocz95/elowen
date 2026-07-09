@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import { visibleWidth } from '@earendil-works/pi-tui';
 import { initTheme } from '@earendil-works/pi-coding-agent';
-import { UserBlock, StatusBar, CardPanel, SubagentPanel, diffBlock, cardBlock } from '../../../src/cli/chat/components.js';
+import { UserBlock, StatusBar, CardPanel, SubagentPanel, QueuedMessages, diffBlock, cardBlock } from '../../../src/cli/chat/components.js';
 
 describe('chat components', () => {
   beforeAll(() => { initTheme(); }); // renderDiff needs the pi theme
@@ -11,6 +11,35 @@ describe('chat components', () => {
     expect(lines).toHaveLength(3);
     for (const l of lines) expect(visibleWidth(l)).toBe(20); // every row fills the width
     expect(lines[1]).toContain('ahoj');
+  });
+
+  it('QueuedMessages renders nothing while empty, then a QUEUED pill line per pending item + a hint', () => {
+    const q = new QueuedMessages();
+    expect(q.render(40)).toEqual([]); // empty → zero rows at rest
+    q.set([{ id: 'a', text: 'check the logs' }, { id: 'b', text: 'and the metrics' }], 'ctrl+x x removes the last queued message');
+    const lines = q.render(60);
+    expect(lines).toHaveLength(3); // two pending lines + the remove hint
+    expect(lines[0]).toContain('QUEUED');
+    expect(lines[0]).toContain('check the logs');
+    expect(lines[1]).toContain('and the metrics');
+    expect(lines[2]).toContain('removes the last');
+  });
+
+  it('QueuedMessages truncates a long pending message to the width and drops the hint when unset', () => {
+    const q = new QueuedMessages();
+    q.set([{ id: 'a', text: 'x'.repeat(400) }]); // no hint
+    const lines = q.render(30);
+    expect(lines).toHaveLength(1); // just the one line, no hint row
+    expect(visibleWidth(lines[0]!)).toBeLessThanOrEqual(30);
+    expect(lines[0]).toContain('…'); // truncated
+  });
+
+  it('QueuedMessages caps the visible list and rolls the rest into a "+N more" row', () => {
+    const q = new QueuedMessages();
+    q.set(Array.from({ length: 9 }, (_, i) => ({ id: String(i), text: `msg ${i}` })));
+    const lines = q.render(40);
+    expect(lines).toHaveLength(7); // 6 shown + the overflow row
+    expect(lines[6]).toContain('+3 more queued');
   });
 
   it('StatusBar justifies left and right to the edges', () => {

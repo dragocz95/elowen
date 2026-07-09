@@ -6,7 +6,7 @@ import { editTextExternally } from './externalEditor.js';
 import { composeWithAttachments, expandMentions, MAX_IMAGES_PER_MESSAGE, readClipboardImage, type PendingImage } from './mentions.js';
 import { sessionItems, openPicker } from './picker.js';
 import { DISABLE_MOUSE, ENABLE_MOUSE } from './layout.js';
-import { beginAssistant, pushUser, reduce } from '../../brain/transcript.js';
+import { pushUser, reduce } from '../../brain/transcript.js';
 import { expandPromptCommand } from '../../brain/slashCommands.js';
 import type { BrainClient } from './brainClient.js';
 import type { ChatRuntime } from './runtime.js';
@@ -15,7 +15,7 @@ import type { Pickers } from './pickers.js';
 
 /** Local slash-command routing: returns the recognized command (with its argument) or null for a
  *  regular chat message. Pure, so the command surface is unit-testable without a TTY. */
-export function parseCommand(text: string): { cmd: 'quit' | 'new' | 'stop' | 'status' | 'restart' | 'sessions' | 'resume' | 'delete' | 'model' | 'reasoning' | 'theme' | 'editor' | 'keybinds' | 'lsp' | 'mcp' | 'skills' | 'tools' | 'goal' | 'subgoal' | 'compact' | 'plan' | 'build' | 'yolo' | 'paste' | 'help'; arg?: string } | null {
+export function parseCommand(text: string): { cmd: 'quit' | 'new' | 'stop' | 'status' | 'restart' | 'sessions' | 'resume' | 'delete' | 'model' | 'reasoning' | 'theme' | 'editor' | 'keybinds' | 'lsp' | 'tdd' | 'mcp' | 'skills' | 'tools' | 'goal' | 'subgoal' | 'compact' | 'plan' | 'build' | 'yolo' | 'paste' | 'help'; arg?: string } | null {
   const m = /^\/(\w+)(?:\s+(.+))?$/.exec(text.trim());
   if (!m) return null;
   switch (m[1]) {
@@ -33,6 +33,7 @@ export function parseCommand(text: string): { cmd: 'quit' | 'new' | 'stop' | 'st
     case 'editor': return { cmd: 'editor' };
     case 'keybinds': return { cmd: 'keybinds' };
     case 'lsp': return { cmd: 'lsp' };
+    case 'tdd': return { cmd: 'tdd', arg: m[2] };
     case 'mcp': return { cmd: 'mcp' };
     case 'skills': return { cmd: 'skills' };
     case 'tools': return { cmd: 'tools' };
@@ -111,6 +112,15 @@ function attachImage(rt: ChatRuntime, img: PendingImage): void {
 
 /** Wire the editor's submit path: the slash-command dispatcher plus the regular send pipeline
  *  (`!` local shell, sub-agent steering, prompt commands, `@` mention expansion, image attachments). */
+/** The local notice for a `/compact` result. A REAL compaction (`compacted:true`) is announced entirely
+ *  by the daemon's BrainEvent stream (the `notice` + `compacted` events), so the command shows nothing of
+ *  its own. A benign no-op (`compacted:false` — nothing to compact yet) emits NO stream event, so its
+ *  message must be surfaced here or the command would look like it did nothing. Returns null when the
+ *  stream owns the feedback. */
+export function compactNotice(result: { compacted: boolean; message?: string }): string | null {
+  return result.compacted ? null : (result.message ?? 'Nothing to compact yet.');
+}
+
 export function wireSubmit(rt: ChatRuntime, deps: { stream: StreamController; pickers: Pickers }): void {
   const { client, tui, term, editor, attachmentChips, shellContext } = rt;
   const { stream, pickers } = deps;
@@ -267,6 +277,27 @@ export function wireSubmit(rt: ChatRuntime, deps: { stream: StreamController; pi
         case 'lsp':
           pickers.openLspModal();
           return;
+        case 'tdd': {
+          // Global (daemon-wide) TDD mission mode: bare "/tdd" reports the current state, "/tdd on|off"
+          // flips it. Admin-gated server-side — a non-admin's PUT /config 403s, surfaced clearly.
+          const arg = command.arg?.trim().toLowerCase();
+          if (arg && arg !== 'on' && arg !== 'off') { rt.notice = color.dim('usage: /tdd · /tdd on · /tdd off'); rt.render(); return; }
+          const report = (on: boolean): void => {
+            rt.notice = on
+              ? color.warning('TDD mission mode on — autopilot workers write a failing test first, then implement, then verify')
+              : color.dim('TDD mission mode off');
+            rt.render();
+          };
+          if (!arg) {
+            void client.getTddMode().then(report)
+              .catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); rt.render(); });
+            return;
+          }
+          const on = arg === 'on';
+          void client.setTddMode(on).then(() => report(on))
+            .catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); rt.render(); });
+          return;
+        }
         case 'mcp':
           pickers.openMcpModal();
           return;
@@ -283,10 +314,21 @@ export function wireSubmit(rt: ChatRuntime, deps: { stream: StreamController; pi
           handleSubgoalCommand(rt, command.arg);
           return;
         case 'compact': {
-          rt.notice = color.dim('compacting…');
-          rt.render();
+          // The daemon's BrainEvent stream is the SINGLE source of status for a REAL compaction: the
+          // compaction `notice` ('compacting context…' → cleared) drives the one status line and the
+          // `compacted` event rebuilds the transcript (both handled in streamController) — identical to
+          // auto-compact and to the web dock. So on a real compaction this handler only refreshes the
+          // local usage/meta and paints no line of its own (that used to double up with the stream's).
+          // A benign no-op (`compacted:false` — nothing to compact yet) emits NO stream event, so surface
+          // the server's message here; a hard failure has no stream event either, so keep the .catch.
           void client.compact()
-            .then(async (r) => { if (r.usage) rt.usage = r.usage; await rt.refreshMeta(); rt.notice = color.dim(r.compacted ? 'conversation compacted' : (r.message ?? 'nothing to compact yet')); rt.render(); })
+            .then(async (r) => {
+              if (r.usage) rt.usage = r.usage;
+              const notice = compactNotice(r);
+              if (notice) rt.notice = notice;
+              await rt.refreshMeta();
+              rt.render();
+            })
             .catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); rt.render(); });
           return;
         }
@@ -356,9 +398,11 @@ export function wireSubmit(rt: ChatRuntime, deps: { stream: StreamController; pi
     const promptCmd = pm ? rt.commandDefs.find((c) => c.name === pm[1] && c.kind === 'prompt' && c.prompt) : undefined;
     if (pm && promptCmd) {
       const expanded = expandPromptCommand(promptCmd.prompt ?? '', pm[2] ?? '');
-      rt.view = beginAssistant(pushUser(rt.view, trimmed));
+      // The DAEMON renders the user's turn authoritatively (the `user` stream event) — no optimistic push,
+      // so a mid-turn send that queues server-side can't drop or double-render. `trimmed` rides as the
+      // clean display; the expanded template is what the model sees. Render now to flush the cleared input.
       rt.render();
-      void client.send(shellContext.take(expanded), rt.workMode).catch((e: Error) => { rt.view = reduce(rt.view, { type: 'error', message: e.message }); rt.render(); });
+      void client.send(shellContext.take(expanded), rt.workMode, undefined, trimmed).catch((e: Error) => { rt.view = reduce(rt.view, { type: 'error', message: e.message }); rt.render(); });
       return;
     }
     // `@path` mentions expand HERE, not in the visible transcript: text files ride inside the prompt
@@ -372,7 +416,10 @@ export function wireSubmit(rt: ChatRuntime, deps: { stream: StreamController; pi
       rt.pendingImages = [];
       attachmentChips.set([]);
       const echo = images.length ? `${trimmed}\n${images.map((i) => `[📎 ${i.name}]`).join(' ')}` : trimmed;
-      rt.view = beginAssistant(pushUser(rt.view, echo));
+      // The DAEMON renders the user's turn authoritatively (the `user` stream event) — no optimistic push,
+      // so a mid-turn send that queues server-side can't drop or double-render it. `echo` rides as the
+      // clean display (the sent text carries the expanded @mention/attachment blocks). Render now to flush
+      // the cleared input line + attachment chips (the 'you' bubble follows from the daemon's `user` event).
       rt.render();
       // ONE composition path for everything that rides along: buffered `!` shell context first, then
       // the mention attachments, then the user's own words (see composeWithAttachments).
@@ -380,6 +427,7 @@ export function wireSubmit(rt: ChatRuntime, deps: { stream: StreamController; pi
         shellContext.take(composeWithAttachments(trimmed, mentions.block)),
         rt.workMode,
         images.map((i) => ({ data: i.data, mimeType: i.mimeType })),
+        echo,
       ).catch((e: Error) => { rt.view = reduce(rt.view, { type: 'error', message: e.message }); rt.render(); });
     };
     if (mentions.wantsClipboard) {

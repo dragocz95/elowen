@@ -1,13 +1,19 @@
 import { Markdown, truncateToWidth, visibleWidth, wrapTextWithAnsi } from '@earendil-works/pi-tui';
 import { MASCOT_ART } from './mascot.js';
+import { FLOAT_BAND } from './mascotFloat.js';
 import type { Component, MarkdownTheme } from '@earendil-works/pi-tui';
 import { framedDiffBlock, spinnerFrame, toolOutputBlock, UserBlock } from './components.js';
 import { ansi, chatTheme, color, glyph } from './theme.js';
 import type { BrainUsageView, McpServerView } from './brainClient.js';
 import type { ChatView, ToolItem } from '../../brain/transcript.js';
+import { groupToolItems } from '../../brain/transcript.js';
 import { formatDuration, formatK, padAnsi } from '../ui/text.js';
 
 export const TOP_RULE_ROWS = 1;
+/** Left indent for a tool row (glyph line, silent-command line). Deeper than the 2-space assistant prose
+ *  so tool traffic sits visually SET APART from the answer (opencode-style). The nested blocks a tool
+ *  spawns (diff/console output) indent one level deeper again — see components.ts. */
+export const TOOL_INDENT = '    ';
 export const PANEL_GUTTER_COLUMNS = 3;
 export const ENABLE_MOUSE = '\x1b[?1000h\x1b[?1002h\x1b[?1006h';
 export const DISABLE_MOUSE = '\x1b[?1000l\x1b[?1002l\x1b[?1006l';
@@ -359,7 +365,7 @@ export class ChatViewport implements Component {
       const cached = this.turnCache.get(turn);
       if (cached && cached.key === turnKey) { rows.push(...cached.rows); continue; }
       const turnRows = this.renderTurn(turn, turnIndex, width);
-      if (turn.role === 'you' || !turn.streaming) this.turnCache.set(turn, { key: turnKey, rows: turnRows });
+      if (turn.role !== 'elowen' || !turn.streaming) this.turnCache.set(turn, { key: turnKey, rows: turnRows });
       rows.push(...turnRows);
     }
     if (this.state.notice) for (const line of this.state.notice.split('\n')) rows.push({ line: `  ${line}` });
@@ -381,6 +387,12 @@ export class ChatViewport implements Component {
         addBlank();
         return rows;
       }
+      // A compaction boundary: a subtle centered divider standing in for the summarized-away history.
+      if (turn.role === 'divider') {
+        add(`  ${color.faint('· · ·  context compacted  · · ·')}`);
+        addBlank();
+        return rows;
+      }
       let hasText = false;
       // The newest tool item of a streaming turn may still be awaiting approval / running — its
       // silent-command row must not claim "· done" until the turn moves past it.
@@ -388,7 +400,11 @@ export class ChatViewport implements Component {
       const lastToolItem = toolItems[toolItems.length - 1];
       for (const [segIndex, seg] of turn.segments.entries()) {
         if (seg.kind === 'tools') {
-          for (const item of seg.items) {
+          // Collapse consecutive same-tool bare rows (repeated Read/List/Grep) into one `… ×N` line at
+          // the RENDERER — the fold keeps the items separate so diff/output/subagent attachment by id
+          // still works. Groups carrying a block (diff/output/sub) always have count 1.
+          for (const group of groupToolItems(seg.items)) {
+            const item = group.item;
             const keyBase = item.id ? `tool:${item.id}` : `tool:${turnIndex}:${segIndex}:${item.name}:${item.detail ?? ''}`;
             if (item.sub) {
               // A delegated sub-agent: header with its task + a live `↳` line mirroring what the child
@@ -409,10 +425,12 @@ export class ChatViewport implements Component {
               // A shell/console tool that finished silently still shows its command on its own line.
               // Tool traffic renders DIM across the board (glyph faint, text muted) — it is secondary
               // to the assistant's answer, opencode-style, instead of glowing green next to it.
-              if (item.command) add(`  ${color.faint('$')} ${color.dim(truncateToWidth(item.command, Math.max(12, width - 10), '…'))} ${color.faint(turn.streaming && item === lastToolItem ? '· running…' : '· done')}`);
+              if (item.command) add(`${TOOL_INDENT}${color.faint('$')} ${color.dim(truncateToWidth(item.command, Math.max(12, width - 12), '…'))} ${color.faint(turn.streaming && item === lastToolItem ? '· running…' : '· done')}`);
               else {
+                // Repeated bare rows collapse — the latest detail plus a faint ×N when the run is >1.
                 const spec = toolRowSpec(item.name, item.detail);
-                add(`  ${color.faint(spec.glyph)} ${color.dim(truncateToWidth(spec.title, Math.max(12, width - 8), '…'))}`);
+                const suffix = group.count > 1 ? ` ${color.faint(`×${group.count}`)}` : '';
+                add(`${TOOL_INDENT}${color.faint(spec.glyph)} ${color.dim(truncateToWidth(spec.title, Math.max(12, width - 10), '…'))}${suffix}`);
               }
             }
           }
@@ -536,6 +554,9 @@ export interface TelemetryState {
   mcp: Pick<McpServerView, 'name' | 'status'>[] | null;
   /** Live LSP diagnostics state; null when the daemon doesn't report it → line hidden. */
   lspEnabled: boolean | null;
+  /** Eased vertical drift of the flame (in panel rows) while the transcript is being scrolled; 0 at
+   *  rest. The flame floats within a reserved ±{@link FLOAT_BAND} band so the Context section never moves. */
+  floatOffset: number;
 }
 
 const PANEL_BAR_MARGIN = 2;
@@ -549,7 +570,7 @@ export class TelemetryPanel implements Component {
     const usage = st.usage;
     const pct = usage?.percent != null ? `${Math.round(usage.percent)}%` : '—';
     const tokens = usage ? `${formatK(usage.tokens ?? 0)} / ${formatK(usage.contextWindow)}` : '—';
-    const logo = panelLogo(width);
+    const logo = panelLogo(width, st.floatOffset);
     const rows = [
       '',
       ...logo,
@@ -601,13 +622,24 @@ export class TelemetryPanel implements Component {
   }
 }
 
-function panelLogo(width: number): string[] {
+function panelLogo(width: number, offset = 0): string[] {
   // The flame mascot, centered in the panel. Its truecolor lines already carry their own colors, so
   // the panel just pads them; wider than the panel (never, at the 36-col minimum) it clips gracefully.
-  return MASCOT_ART.map((line) => {
+  const art = MASCOT_ART.map((line) => {
     const pad = Math.max(0, Math.floor((width - visibleWidth(line)) / 2));
     return `${' '.repeat(pad)}${line}`;
   });
+  // Reserve a fixed band of blank rows above AND below the flame and slide it within that band by whole
+  // rows — a positive drift lifts the flame (fewer rows above). The band's total height is constant, so
+  // the Context section below never reflows however far the flame drifts.
+  const shift = Math.max(-FLOAT_BAND, Math.min(FLOAT_BAND, Math.round(offset)));
+  const above = FLOAT_BAND - shift;
+  const below = FLOAT_BAND + shift;
+  return [
+    ...Array.from({ length: above }, () => ''),
+    ...art,
+    ...Array.from({ length: below }, () => ''),
+  ];
 }
 
 export interface SlashOverlayItem {

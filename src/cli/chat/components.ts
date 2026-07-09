@@ -233,6 +233,30 @@ export class AttachmentChips implements Component {
   }
 }
 
+/** Pending mid-turn messages as dim QUEUED lines above the input — the opencode "queued prompt" look
+ *  (a bright ' QUEUED ' pill + the message text). These are messages typed while a turn streams; they
+ *  combine into one follow-up when the turn ends (the daemon SessionQueue is the source of truth).
+ *  Renders nothing while empty, so it costs no rows at rest. `removeHint` is a faint one-line reminder of
+ *  the remove-last keybind, shown only while the queue is non-empty. */
+export class QueuedMessages implements Component {
+  private items: { id: string; text: string }[] = [];
+  private removeHint: string | null = null;
+  /** How many queued lines to show before collapsing the rest into a "+N more" row. */
+  private static readonly MAX_ROWS = 6;
+  invalidate(): void { /* state driven */ }
+  set(items: { id: string; text: string }[], removeHint?: string | null): void { this.items = items; this.removeHint = removeHint ?? null; }
+  render(width: number): string[] {
+    if (this.items.length === 0) return [];
+    const pill = color.selected(' QUEUED ');
+    const room = Math.max(8, width - 2 - visibleWidth(pill) - 2);
+    const shown = this.items.slice(0, QueuedMessages.MAX_ROWS);
+    const lines = shown.map((it) => `  ${pill} ${DIM(truncateToWidth(it.text.replace(/\s+/g, ' ').trim(), room, '…'))}`);
+    if (this.items.length > shown.length) lines.push(`  ${FAINTC(`… +${this.items.length - shown.length} more queued`)}`);
+    if (this.removeHint) lines.push(`  ${FAINTC(this.removeHint)}`);
+    return lines;
+  }
+}
+
 /** A bottom status bar: left text and right text justified to the two edges. */
 export class StatusBar implements Component {
   constructor(private left: string, private right: string) {}
@@ -310,17 +334,23 @@ export function diffBlock(diff: string, maxLines = 60, rowWidth?: number): strin
   return shown;
 }
 
+// A tool's nested block (diff / console output) sits one level DEEPER than the 4-space tool row: its
+// `< title` header aligns with the tool row (4) and its body rows indent to 6, so the hierarchy reads
+// tool → its output. Widths below subtract the extra indent so long lines still fit without wrapping.
+const BLOCK_HEADER_INDENT = '    ';
+const BLOCK_BODY_INDENT = '      ';
+
 function simpleBlock(title: string, lines: string[], width: number, footer?: string): string[] {
-  const inner = Math.max(24, width - 6);
-  const out = [`  ${color.faint('<')} ${color.text(title)}`];
-  for (const line of lines) out.push(`    ${truncateToWidth(line, inner, '…')}`);
-  if (footer) out.push(`    ${color.faint(footer)}`);
+  const inner = Math.max(24, width - 8);
+  const out = [`${BLOCK_HEADER_INDENT}${color.faint('<')} ${color.text(title)}`];
+  for (const line of lines) out.push(`${BLOCK_BODY_INDENT}${truncateToWidth(line, inner, '…')}`);
+  if (footer) out.push(`${BLOCK_BODY_INDENT}${color.faint(footer)}`);
   return out;
 }
 
 /** File diff preview for the chat transcript: quiet left label + code rows, no decorative frame. */
 export function framedDiffBlock(diff: string, width: number, title = 'diff'): string[] {
-  const inner = Math.max(24, width - 10);
+  const inner = Math.max(24, width - 12);
   return simpleBlock(title, diffBlock(diff, 18, inner), width);
 }
 
@@ -359,5 +389,5 @@ export function toolOutputBlock(output: ToolOutputView, width: number, expanded 
     lines.push('');
     lines.push(` ${color.faint(expanded ? 'Click to collapse' : 'Click to expand')}`);
   }
-  return simpleBlock(output.title, lines.map((line) => CODE_ROW(padAnsi(line, Math.max(1, width - 10)))), width);
+  return simpleBlock(output.title, lines.map((line) => CODE_ROW(padAnsi(line, Math.max(1, width - 12)))), width);
 }

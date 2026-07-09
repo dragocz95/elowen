@@ -14,7 +14,7 @@ export interface BrainClientOpts { base: string; token: string; fetchImpl?: type
 interface StatuslineConfig { showModel?: boolean; showContext?: boolean; showTokens?: boolean; showCost?: boolean }
 export interface BrainUsageView { tokens: number | null; contextWindow: number; percent: number | null; totalTokens: number; cost: number }
 export type BrainWorkMode = 'build' | 'plan';
-export interface BrainStatus { running: boolean; sessionId: string | null; title?: string; model: string; usage: BrainUsageView | null; statusline: StatuslineConfig | null; thinkingLevel?: string; thinkingLevels?: string[]; pendingAsk?: { id: string; questions: AskQuestion[]; kind?: 'approval' } | null; cards?: BrainCard[]; lspEnabled?: boolean; yolo?: boolean }
+export interface BrainStatus { running: boolean; sessionId: string | null; title?: string; model: string; usage: BrainUsageView | null; statusline: StatuslineConfig | null; thinkingLevel?: string; thinkingLevels?: string[]; pendingAsk?: { id: string; questions: AskQuestion[]; kind?: 'approval' } | null; cards?: BrainCard[]; queued?: { id: string; text: string }[]; lspEnabled?: boolean; yolo?: boolean }
 export interface McpServerView { name: string; transport: string; status: 'connected' | 'connecting' | 'disconnected' | 'error' | 'disabled'; toolCount: number; tools: { name: string; title?: string; description?: string; schema?: unknown }[]; lastError: string | null; reconnecting?: boolean }
 export interface SkillView { name: string; description: string; source: 'bundled' | 'user'; scope?: string; location?: string; active?: boolean; canDelete?: boolean; missingRequirement?: string }
 export interface GoalView { session_id: string; user_id: number; status: 'active' | 'draft' | 'paused' | 'done'; goal: string; draft: string; subgoals: string; turns_used: number; turn_budget: number; last_verdict: string; last_evidence: string; paused_reason: string }
@@ -103,13 +103,15 @@ export class BrainClient {
     return (await res.json()) as { id: string; title: string; model: string; updated_at: string; active: boolean; attached: number }[];
   }
 
-  async send(text: string, mode?: BrainWorkMode, images?: { data: string; mimeType: string }[]): Promise<void> {
+  async send(text: string, mode?: BrainWorkMode, images?: { data: string; mimeType: string }[], display?: string): Promise<void> {
     // Report where the user launched the CLI — the daemon binds the turn's tools to this project
     // directory (validated server-side against the caller's repo access). `images` are base64 content
     // blocks (≤4, per brainSendSchema) — `@image.png` mentions, `@clipboard` and /paste feed them.
     // The bound session id rides along so the turn lands in THIS client's conversation regardless of
-    // where the server's active pointer moved meanwhile.
-    await this.post('/brain/send', { text, cwd: process.cwd(), ...(this.bound ? { session: this.bound } : {}), ...(mode ? { mode } : {}), ...(images?.length ? { images } : {}) });
+    // where the server's active pointer moved meanwhile. `display` is the user's CLEAN text (before
+    // @mention/prompt expansion); the daemon echoes it as the authoritative `user` turn — the CLI no
+    // longer pushes an optimistic bubble, so this is what renders in every following client.
+    await this.post('/brain/send', { text, cwd: process.cwd(), ...(this.bound ? { session: this.bound } : {}), ...(mode ? { mode } : {}), ...(images?.length ? { images } : {}), ...(display !== undefined && display !== text ? { display } : {}) });
   }
 
   /** Answer a parked ask_user_question — settles the paused turn so it resumes with the user's picks. */
@@ -128,6 +130,14 @@ export class BrainClient {
   /** Stop the streaming turn (Esc) — on the bound conversation. */
   async abort(): Promise<void> {
     await this.post('/brain/abort', this.bound ? { session: this.bound } : {});
+  }
+
+  /** Remove one pending mid-turn queued message from the bound conversation (the queue-remove keybind).
+   *  The reduced snapshot rides back on the `queue` stream event — the server is authoritative. */
+  async queueRemove(id: string): Promise<void> {
+    const res = await this.f(`${this.o.base}/brain/queue/${encodeURIComponent(id)}${this.boundQs()}`, { method: 'DELETE', headers: this.headers() });
+    if (res.status === 401) throw new Unauthorized();
+    if (!res.ok) throw new Error(`elowen brain ${res.status} on /brain/queue`);
   }
 
   /** Run a server-side (`action`) slash command through the shared dispatcher (`/stop`, `/new`,
@@ -184,6 +194,25 @@ export class BrainClient {
     });
     if (res.status === 401) throw new Unauthorized();
     if (res.status === 403) throw new Error('only an admin can manage providers');
+    if (!res.ok) throw new Error(`elowen ${res.status} on /config`);
+  }
+
+  /** Current global TDD mission mode flag from the public daemon config (the `/tdd` command). */
+  async getTddMode(): Promise<boolean> {
+    const res = await this.f(`${this.o.base}/config`, { headers: this.headers() });
+    if (res.status === 401) throw new Unauthorized();
+    if (!res.ok) throw new Error(`elowen ${res.status} on /config`);
+    const body = (await res.json()) as { autopilot?: { tddMode?: boolean } };
+    return body.autopilot?.tddMode ?? false;
+  }
+
+  /** Flip the global TDD mission mode flag (admin-only; the `/tdd on|off` command). */
+  async setTddMode(on: boolean): Promise<void> {
+    const res = await this.f(`${this.o.base}/config`, {
+      method: 'PUT', headers: this.headers(true), body: JSON.stringify({ autopilot: { tddMode: on } }),
+    });
+    if (res.status === 401) throw new Unauthorized();
+    if (res.status === 403) throw new Error('only an admin can change TDD mode');
     if (!res.ok) throw new Error(`elowen ${res.status} on /config`);
   }
 

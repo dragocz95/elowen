@@ -1,7 +1,7 @@
 import type { TUI, ProcessTerminal, Container } from '@earendil-works/pi-tui';
 import type { BrainClient, BrainStatus, BrainWorkMode, McpServerView } from './brainClient.js';
 import type { ChatEditor } from './picker.js';
-import type { AttachmentChips } from './components.js';
+import type { AttachmentChips, QueuedMessages } from './components.js';
 import type { PromptStash } from './promptHistory.js';
 import type { LocalShellBuffer } from './localShell.js';
 import type { FileIndex, FrecencyMap, PendingImage } from './mentions.js';
@@ -25,6 +25,9 @@ export interface ChatRuntime {
    *  and pending attachments must survive them. This wrapper is what the layout stacks render. */
   readonly inputStack: Container;
   readonly attachmentChips: AttachmentChips;
+  /** The pending mid-turn message queue strip, rendered above the composer inside `inputStack`. Driven
+   *  from `queued` in the render pass (mirrors how `attachmentChips` follows `pendingImages`). */
+  readonly queuedMessages: QueuedMessages;
   /** ctrl+s draft stash — session-local LIFO (see PromptStash). */
   readonly promptStash: PromptStash;
   /** `!cmd` results waiting to ride along with the next prompt sent to the brain. */
@@ -62,6 +65,10 @@ export interface ChatRuntime {
   /** Live display cards (ctx.emitCard) — a persistent panel above the status bar, tracked outside the
    *  ChatView like `usage`. Seeded from status (survives reconnect) and updated on each `card` event. */
   cards: BrainCard[];
+  /** Pending mid-turn messages (server-authoritative snapshot) — messages typed while a turn streams,
+   *  parked until it ends. Seeded from status, replaced on each `queue` event; rendered as dim QUEUED
+   *  lines above the input. Tracked outside the ChatView (like `cards`). */
+  queued: { id: string; text: string }[];
   /** The last /sessions listing, so /resume <n> can address by number. */
   listed: { id: string; title: string }[];
   showThoughts: boolean;

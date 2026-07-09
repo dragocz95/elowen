@@ -86,11 +86,40 @@ export function createStreamController(rt: ChatRuntime, flows: Flows): StreamCon
     // the stale pre-rollover view — they'd be silently discarded when fromHistory lands. Buffer them
     // and replay onto the refetched view once history resolves.
     let buffer: BrainEvent[] | null = null;
+    // Refetch the persisted transcript and swap it in, buffering any live events that arrive DURING the
+    // in-flight fetch so they replay onto the FRESH view instead of folding into (and being discarded
+    // with) the stale one. Single source for the two async-history-swap paths below: the passive idle
+    // rollover rebind AND the post-compaction collapse — both refetch history while the stream keeps
+    // delivering (an auto-compact is immediately followed by a queued-flush turn whose `user`/text events
+    // would otherwise race the fetch and be lost).
+    const refetchHistory = (): void => {
+      buffer = [];
+      void client.history()
+        .then((h) => { rt.view = fromHistory(h); })
+        .catch(() => { /* best-effort: keep the stale view */ })
+        .finally(() => {
+          const queued = buffer ?? [];
+          buffer = null;
+          rt.render();
+          for (const ev of queued) onEvent(ev); // replay onto the refetched view (buffer now null)
+        });
+    };
     const onEvent = (e: BrainEvent): void => {
       // ask_user_question parked the turn: drive the picker flow and skip the ChatView reducer (the
       // questions aren't a conversation segment). Handled even mid-rollover — it's view-independent.
       if (e.type === 'ask') { flows.launchAsk(e.id, e.questions, e.kind); return; }
+      // The pending mid-turn message queue is a full snapshot tracked outside the ChatView (like cards),
+      // so it applies immediately even mid-rollover — the `user` delivery event (folded below) is what
+      // renders the eventual 'you' turn.
+      if (e.type === 'queue') { rt.queued = e.items; rt.render(); return; }
       if (buffer) { buffer.push(e); return; } // rollover refetch in flight — replay after it resolves
+      // A compaction was persisted server-side (manual /compact or the auto-compact path): the stored
+      // transcript is now the "context compacted" divider + the kept tail. Refetch so the on-screen
+      // conversation collapses to exactly what the model still holds. Buffered like the rollover rebind —
+      // an auto-compact is immediately followed by the queued-flush turn, whose deltas must land on the
+      // refetched view, not be thrown away when it resolves. The one-line status is handled separately by
+      // the compaction `notice` — this event only rebuilds the transcript.
+      if (e.type === 'compacted') { refetchHistory(); return; }
       if (e.type === 'idle') {
         if (e.usage) rt.usage = e.usage;
         // A finished turn may have just auto-titled a fresh conversation — pull the new title (and usage)
@@ -110,28 +139,15 @@ export function createStreamController(rt: ChatRuntime, flows: Flows): StreamCon
       // live tap stream, so nothing extra to do here.
       // Idle rollover: the server continued this message in a FRESH conversation. Rebind to the id the
       // event carries so every later call targets the replacement — the OPEN stream needs no reopen (the
-      // server carries both the listener and the session tap onto the new session, so events keep
-      // flowing without a gap; a reconnect then taps the rebound id). The SENDING client's last turn is
-      // the just-typed message, so the shared fold trims correctly; a passively connected client (second
-      // CLI/web on the same account) has no fresh local user turn — folding would carry OLD history into
-      // the new conversation, so it refetches the transcript and buffers live events until it lands.
+      // server carries both the listener and the session tap onto the new session, so events keep flowing
+      // without a gap; a reconnect then taps the rebound id). The fold resets the transcript to the empty
+      // fresh conversation; the daemon re-emits the triggering message as a `user` event and streams its
+      // reply, so both the sending and any passively-connected client rebuild purely from the stream (no
+      // history refetch — the fresh session has nothing to refetch, and the `user` event would race it).
       if (e.type === 'session') {
         client.rebind(e.sessionId);
         rt.notice = color.dim('previous conversation was idle — continuing in a fresh one');
         void rt.refreshMeta().then(rt.render);
-        if (rt.view.turns[rt.view.turns.length - 1]?.role !== 'you') {
-          buffer = [];
-          void client.history()
-            .then((h) => { rt.view = fromHistory(h); })
-            .catch(() => { /* best-effort: keep the stale view */ })
-            .finally(() => {
-              const queued = buffer ?? [];
-              buffer = null;
-              rt.render();
-              for (const ev of queued) onEvent(ev); // replay onto the refetched view (buffer now null)
-            });
-          return;
-        }
       }
       rt.view = reduce(rt.view, e);
       rt.render();
