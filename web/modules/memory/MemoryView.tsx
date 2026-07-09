@@ -150,14 +150,14 @@ export function MemoryView() {
   return (
     <>
       <ModuleHeader title={t.page.memory} count={tab === 'list' ? filtered.length : undefined} icon={Brain}>
-        <Segmented value={tab} onChange={(v) => setTab(v as Tab)} options={TAB_OPTIONS} aria-label={t.page.memory} />
+        <Segmented value={tab} onChange={(v) => setTab(v as Tab)} options={TAB_OPTIONS} aria-label={t.page.memory} nowrap />
         {tab === 'list' ? (
           <>
             <div className="relative w-40 @sm:w-52">
               <Search size={14} aria-hidden className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" />
               <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={t.memory.searchPlaceholder} className="pl-9" />
             </div>
-            <Segmented value={status} onChange={(v) => setStatus(v as StatusFilter)} options={STATUS_OPTIONS} aria-label={t.memory.filterStatus} />
+            <Segmented value={status} onChange={(v) => setStatus(v as StatusFilter)} options={STATUS_OPTIONS} aria-label={t.memory.filterStatus} nowrap />
             {kinds.length > 0 ? (
               <select
                 value={kind}

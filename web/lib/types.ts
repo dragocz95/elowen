@@ -35,7 +35,7 @@ export interface ElowenConfig {
   customModels: { label: string; exec: string }[];
   hiddenPresets: string[];
   modelNotes: Record<string, string>;
-  autopilot: { model: string; overseerModel: string; apiUrl: string; providerId: string; apiKeySet: boolean; notes: string; prompt: string; pilotExec: string; overseerExec: string; reviewOnDone: boolean; prEnabled: boolean; prBaseBranch: string; prAutoOpen: boolean; prVerifyCommand: string; ghTokenSet: boolean };
+  autopilot: { model: string; overseerModel: string; apiUrl: string; providerId: string; apiKeySet: boolean; notes: string; prompt: string; pilotExec: string; overseerExec: string; reviewOnDone: boolean; tddMode: boolean; prEnabled: boolean; prBaseBranch: string; prAutoOpen: boolean; prVerifyCommand: string; ghTokenSet: boolean };
   providers: Record<string, { bin: string; args: string; skipPermissions: boolean; resume: boolean }>;
   defaults: { exec: string; autonomy: string; maxSessions: number };
   security: { tokenTtlDays: number };
@@ -108,7 +108,7 @@ export interface BrainCard { id: string; title?: string; items?: BrainCardItem[]
 export interface BrainUsage { tokens: number | null; contextWindow: number; percent: number | null; totalTokens: number; cost: number }
 /** The statusline plugin's display toggles (null = plugin disabled). */
 export interface StatuslineConfig { showModel?: boolean; showContext?: boolean; showTokens?: boolean; showCost?: boolean }
-export interface BrainStatus { running: boolean; sessionId: string | null; model: string; usage: BrainUsage | null; statusline: StatuslineConfig | null; pendingAsk?: { id: string; questions: AskQuestion[]; kind?: 'approval' } | null; cards?: BrainCard[]; yolo?: boolean }
+export interface BrainStatus { running: boolean; sessionId: string | null; model: string; usage: BrainUsage | null; statusline: StatuslineConfig | null; pendingAsk?: { id: string; questions: AskQuestion[]; kind?: 'approval' } | null; cards?: BrainCard[]; queued?: { id: string; text: string }[]; yolo?: boolean }
 /** A running OAuth connect flow, as polled by the settings UI. */
 export interface OAuthFlowState {
   id: string;
@@ -125,7 +125,7 @@ export interface ConfigPatch {
   customModels?: { label: string; exec: string }[];
   hiddenPresets?: string[];
   modelNotes?: Record<string, string>;
-  autopilot?: { model?: string; overseerModel?: string; apiUrl?: string; providerId?: string; apiKey?: string; notes?: string; prompt?: string; pilotExec?: string; overseerExec?: string; reviewOnDone?: boolean; prEnabled?: boolean; prBaseBranch?: string; prAutoOpen?: boolean; prVerifyCommand?: string; ghToken?: string };
+  autopilot?: { model?: string; overseerModel?: string; apiUrl?: string; providerId?: string; apiKey?: string; notes?: string; prompt?: string; pilotExec?: string; overseerExec?: string; reviewOnDone?: boolean; tddMode?: boolean; prEnabled?: boolean; prBaseBranch?: string; prAutoOpen?: boolean; prVerifyCommand?: string; ghToken?: string };
   providers?: Record<string, { bin: string; args: string }>;
   defaults?: { exec?: string; autonomy?: string; maxSessions?: number };
   security?: { tokenTtlDays?: number };

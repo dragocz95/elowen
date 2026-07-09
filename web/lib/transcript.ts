@@ -17,6 +17,9 @@ export type TranscriptEvent =
   | { type: 'tool_output'; output: ToolOutputView; id?: string }
   | { type: 'notice'; kind: 'retry' | 'compaction'; message: string; done?: boolean }
   | { type: 'session'; sessionId: string }
+  /** A server-delivered user message (a drained queued message never optimistically echoed) — folded as a
+   *  'you' turn. See the daemon SessionQueue; the `queue` snapshot event is handled outside this fold. */
+  | { type: 'user'; text: string }
   | { type: 'idle' }
   | { type: 'error'; message: string };
 
@@ -28,9 +31,38 @@ type Segment =
   | { kind: 'text'; text: string }
   | { kind: 'reasoning'; text: string }
   | { kind: 'tools'; items: ToolItem[] };
+/** A rendered tool group: consecutive items of the SAME tool with no diff and no output block fold into
+ *  ONE pill showing the LAST item's detail plus a `×count` when >1 (mirror of the CLI's
+ *  {@link groupToolItems}). Grouping lives in the RENDERER, not the fold, so the id-keyed diff/output
+ *  attachment still lands on the right item and resumed history collapses for free. An item WITH a diff
+ *  or an output block stays its own group (count 1) and renders its own block. */
+export interface ToolGroup { item: ToolItem; count: number }
+
+function isCollapsibleTool(item: ToolItem): boolean {
+  return !item.diff && !item.output;
+}
+
+/** Fold a tools segment's items into render groups (see {@link ToolGroup}). Pure — recomputed every
+ *  render so a streaming pill's count and latest detail stay live. */
+export function groupToolItems(items: ToolItem[]): ToolGroup[] {
+  const groups: ToolGroup[] = [];
+  for (const item of items) {
+    const last = groups[groups.length - 1];
+    if (last && isCollapsibleTool(item) && isCollapsibleTool(last.item) && last.item.name === item.name) {
+      groups[groups.length - 1] = { item, count: last.count + 1 };
+    } else {
+      groups.push({ item, count: 1 });
+    }
+  }
+  return groups;
+}
+
 type YouTurn = { role: 'you'; text: string };
 type ElowenTurn = { role: 'elowen'; segments: Segment[]; streaming: boolean };
-export type ChatTurn = YouTurn | ElowenTurn;
+/** A context-compaction boundary: everything before it was summarized away server-side, so the dock
+ *  renders a subtle "context compacted" divider in its place, followed by the kept tail. */
+type DividerTurn = { role: 'divider' };
+export type ChatTurn = YouTurn | ElowenTurn | DividerTurn;
 
 /** The whole view model the dock renders. `notice` is a transient runtime line (retry/compaction). */
 export interface ChatView { turns: ChatTurn[]; thinking: boolean; notice?: string }
@@ -42,6 +74,8 @@ export const emptyView = (): ChatView => ({ turns: [], thinking: false });
 export function fromHistory(msgs: BrainMessage[]): ChatView {
   const turns: ChatTurn[] = [];
   for (const m of msgs) {
+    // A compaction boundary → a divider turn (the pre-compaction history was summarized away).
+    if (m.role === 'compaction') { turns.push({ role: 'divider' }); continue; }
     if (m.role === 'user') {
       if (m.text.trim()) turns.push({ role: 'you', text: m.text });
       continue;
@@ -122,10 +156,15 @@ export function reduce(view: ChatView, e: TranscriptEvent): ChatView {
       return { turns, thinking: true, notice: view.notice };
     }
     case 'session': {
-      // Idle rollover mid-send: the server moved this message into a fresh session. The transcript
-      // restarts at the turn that triggered it — everything before belongs to the previous conversation.
-      const lastYou = turns.map((t) => t.role).lastIndexOf('you');
-      return { turns: lastYou >= 0 ? turns.slice(lastYou) : [], thinking: view.thinking, notice: view.notice };
+      // Idle rollover mid-send: the server moved this message into a FRESH conversation. Reset the
+      // transcript — the daemon re-emits the triggering message as a `user` event and streams its reply,
+      // so the fresh conversation rebuilds purely from the stream (no optimistic local 'you' to preserve).
+      return { turns: [], thinking: view.thinking, notice: view.notice };
+    }
+    case 'user': {
+      // The daemon's authoritative render of the user's turn (every real user send — normal or queued
+      // delivery). The client no longer echoes optimistically, so this is what shows the 'you' bubble.
+      return { turns: [...turns, { role: 'you', text: e.text }], thinking: true, notice: view.notice };
     }
     case 'idle': {
       const last = turns[turns.length - 1];

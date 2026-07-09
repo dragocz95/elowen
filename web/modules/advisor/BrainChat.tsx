@@ -10,7 +10,7 @@ import { useBrainSessions, useBrainCommands } from '../../lib/queries';
 import { elowenClient, BASE } from '../../lib/elowenClient';
 import { formatTaskTime } from '../../lib/format';
 import type { AskQuestion, BrainCard, BrainSearchHit, BrainModelOption, BrainUsage, SlashCommandDef, StatuslineConfig } from '../../lib/types';
-import { fromHistory, pushUser, reduce, upsertCard, type ChatTurn, type ToolItem, type TranscriptEvent } from '../../lib/transcript';
+import { fromHistory, groupToolItems, reduce, upsertCard, type ChatTurn, type ToolItem, type TranscriptEvent } from '../../lib/transcript';
 import { expandSlashMessage } from '../../lib/slash';
 import { BRAIN_OPEN_EVENT, consumePendingBrainSession, type BrainOpenRequest } from '../../lib/brainDock';
 import { AskQuestionCard } from './AskQuestionCard';
@@ -124,16 +124,20 @@ function CardBlock({ card }: { card: BrainCard }) {
   );
 }
 
-/** A grouped row of tool-call pills (one segment = tools that ran together). The argument summary
- *  (file path, query…) rides muted next to the name; an edit's diff renders under the row. */
+/** A grouped row of tool-call pills (one segment = tools that ran together). Consecutive same-tool
+ *  pills with no diff/output collapse into one `name detail ×N` pill (mirror of the CLI). The argument
+ *  summary (file path, query…) rides muted next to the name; an edit's diff renders under the row. The
+ *  row is indented (pl-4) so tools sit visually deeper than the assistant's prose. */
 function ToolPills({ tools }: { tools: ToolItem[] }) {
+  const groups = groupToolItems(tools);
   return (
-    <span className="flex flex-col gap-1">
+    <span className="flex flex-col gap-1 pl-4">
       <span className="flex flex-wrap gap-1">
-        {tools.map((tool, i) => (
+        {groups.map(({ item: tool, count }, i) => (
           <span key={i} title={tool.detail} className="inline-flex max-w-full items-center gap-1 rounded-full border border-border bg-elevated px-2 py-0.5 font-mono text-tiny text-text-muted">
             {tool.icon ? <span aria-hidden className="shrink-0">{tool.icon}</span> : <Wrench size={9} aria-hidden className="shrink-0" />}{tool.name}
             {tool.detail ? <span className="truncate opacity-60">{tool.detail}</span> : null}
+            {count > 1 ? <span className="shrink-0 opacity-60">×{count}</span> : null}
           </span>
         ))}
       </span>
@@ -143,9 +147,22 @@ function ToolPills({ tools }: { tools: ToolItem[] }) {
   );
 }
 
+/** A context-compaction boundary: a subtle labelled divider standing in for the summarized-away history. */
+function ContextDivider() {
+  const { t } = useTranslation();
+  return (
+    <div className="my-1 flex items-center gap-2 text-tiny text-text-muted" role="separator">
+      <span className="h-px flex-1 bg-border" aria-hidden />
+      <span className="shrink-0 uppercase tracking-wide">{t.brainChat.contextCompacted}</span>
+      <span className="h-px flex-1 bg-border" aria-hidden />
+    </div>
+  );
+}
+
 /** One message row. User turns keep an accent bubble; assistant turns are bubble-free — plain markdown
  *  and tool-pill rows in their true order. */
 function Message({ turn }: { turn: ChatTurn }) {
+  if (turn.role === 'divider') return <ContextDivider />;
   if (turn.role === 'you') {
     return (
       <div className="ml-8 self-end whitespace-pre-wrap rounded-lg rounded-br-sm border border-accent/30 bg-accent/10 px-3 py-2 text-sm text-text">
@@ -200,6 +217,10 @@ export function BrainChat() {
   const [ask, setAsk] = useState<{ id: string; questions: AskQuestion[]; kind?: 'approval' } | null>(null);
   /** Live display cards (ctx.emitCard) — seeded from status, kept current from the `card` event. */
   const [cards, setCards] = useState<BrainCard[]>([]);
+  /** Pending mid-turn messages (server-authoritative snapshot) — messages sent while a turn streams, parked
+   *  until it ends. Seeded from status, replaced on each `queue` event; rendered as removable chips above
+   *  the composer. Kept out of `turns` (like cards) — the `user` delivery event folds the eventual bubble. */
+  const [queued, setQueued] = useState<{ id: string; text: string }[]>([]);
   /** When set, we're VIEWING a non-continuable session (a Discord channel or a task worker) read-only:
    *  its history is shown, but there's no live stream and the composer is replaced by an exit banner. */
   const [readOnly, setReadOnly] = useState<string | null>(null);
@@ -238,10 +259,11 @@ export function BrainChat() {
     setNotice(''); // a fresh connection (mount / session switch) starts without a stale runtime line
     setAsk(null); // drop any parked question from the previous conversation
     setCards([]); // and any cards from the previous conversation
+    setQueued([]); // and any pending mid-turn queue from the previous conversation
     await elowenClient.brainStart({});
     await loadHistory();
     const st = await elowenClient.brainStatus().catch(() => null);
-    if (st) { setUsage(st.usage); setLineCfg(st.statusline); if (st.pendingAsk) setAsk(st.pendingAsk); setCards(st.cards ?? []); }
+    if (st) { setUsage(st.usage); setLineCfg(st.statusline); if (st.pendingAsk) setAsk(st.pendingAsk); setCards(st.cards ?? []); setQueued(st.queued ?? []); }
     const es = new EventSource(`${BASE}/brain/stream`);
     es.addEventListener('text', (e) => {
       const { delta } = JSON.parse((e as MessageEvent).data) as { delta: string };
@@ -270,19 +292,17 @@ export function BrainChat() {
       setNotice(message);
       setTimeout(() => void connect().then(() => setNotice('')).catch(() => setReady(true)), 2000);
     });
-    // Idle rollover: the server continued the just-sent message in a FRESH conversation (the previous
-    // one sat idle past the cutoff). The SENDING client folds (its last turn is the just-typed message);
-    // a passively connected client (second tab, CLI + web together) has no fresh local user turn — its
-    // last 'you' belongs to the OLD conversation, so folding would misattribute old history to the new
-    // one. That client refetches the transcript instead. Session list refreshes for both.
+    // Idle rollover: the server continued the just-sent message in a FRESH conversation (the previous one
+    // sat idle past the cutoff). Every client — sender and passive alike — resets to the empty fresh
+    // conversation and rebuilds from the stream, because the daemon re-emits the triggering message as a
+    // `user` event onto the (carried-over) listeners and streams its reply. Session list refreshes too.
     es.addEventListener('session', (e) => {
       const ev = JSON.parse((e as MessageEvent).data) as { sessionId: string };
       setCards([]); // display cards belonged to the previous conversation
-      setTurns((cur) => {
-        if (cur[cur.length - 1]?.role === 'you') return fold(cur, { type: 'session', sessionId: ev.sessionId });
-        void loadHistory().catch(() => { /* transcript refetch is best-effort */ });
-        return cur;
-      });
+      // Reset to the fresh (empty) conversation; the daemon re-emits the triggering message as a `user`
+      // event and streams its reply, so the transcript rebuilds purely from the stream. No history refetch
+      // — the fresh session has nothing stored yet, and a refetch would race the incoming `user` event.
+      setTurns((cur) => fold(cur, { type: 'session', sessionId: ev.sessionId }));
       setNotice(t.brainChat.freshConversation);
       void qc.invalidateQueries({ queryKey: ['brain-sessions'] });
     });
@@ -297,6 +317,26 @@ export function BrainChat() {
     es.addEventListener('card', (e) => {
       const { card } = JSON.parse((e as MessageEvent).data) as { card: BrainCard };
       setCards((cur) => upsertCard(cur, card));
+    });
+    // Full-snapshot pending mid-turn queue (messages sent while a turn streams). Server-authoritative:
+    // replace wholesale — the optimistic remove below must never fight an incoming snapshot.
+    es.addEventListener('queue', (e) => {
+      const { items } = JSON.parse((e as MessageEvent).data) as { items: { id: string; text: string }[] };
+      setQueued(items);
+    });
+    // The daemon's authoritative render of the user's turn (every real send — immediate or a queued
+    // delivery). The composer never echoes optimistically, so THIS folds the 'you' bubble; a reply is now
+    // streaming, so flip busy on for the thinking indicator.
+    es.addEventListener('user', (e) => {
+      const { text } = JSON.parse((e as MessageEvent).data) as { text: string };
+      setBusy(true);
+      setTurns((cur) => fold(cur, { type: 'user', text }));
+    });
+    // A context compaction was persisted server-side (manual /compact or the auto-compact path): the
+    // stored transcript is now a "context compacted" divider + the kept tail. Refetch so the dock
+    // collapses to exactly what the model still holds. The one-line status rides the `notice` event.
+    es.addEventListener('compacted', () => {
+      void loadHistory().catch(() => { /* transcript refetch is best-effort */ });
     });
     es.addEventListener('diff', (e) => {
       const { diff } = JSON.parse((e as MessageEvent).data) as { diff: string };
@@ -366,8 +406,10 @@ export function BrainChat() {
 
   const submit = async () => {
     const typed = input.trim();
-    // No busy guard: a message sent mid-turn is STEERED into the running turn server-side (delivered at
-    // its next step), so the composer stays live — same as the CLI and Discord.
+    // A message sent mid-turn is ENQUEUED server-side (the daemon SessionQueue) and combined into ONE
+    // follow-up when the turn ends — the composer stays live. Same behavior in the CLI. The DAEMON renders
+    // every user turn authoritatively (the `user` stream event), so there is NO optimistic local echo — a
+    // mid-turn send that queues can't drop or double-render.
     if (!typed && attachments.length === 0) return;
     // Text files inline as fenced blocks (works with any model); images ride the vision input.
     const textFiles = attachments.filter((a) => a.kind === 'text');
@@ -382,9 +424,10 @@ export function BrainChat() {
     const shown = [typed || t.brainChat.attachOnly, ...attachments.map((a) => `📎 ${a.name}`)].join('\n');
     setInput('');
     setAttachments([]);
-    setBusy(true);
-    setTurns((cur) => pushUser({ turns: cur, thinking: false }, shown).turns);
-    try { await elowenClient.brainSend(text, images); } catch { setBusy(false); }
+    // No optimistic bubble: the daemon streams a `user` event (which flips busy on + renders the 'you'
+    // turn) for both an immediate run and a queued delivery. `shown` rides as the clean display (the sent
+    // `text` carries the fenced text-file blocks). A network failure just leaves the stream to drive busy.
+    try { await elowenClient.brainSend(text, images, shown); } catch { /* network error — the stream drives state */ }
   };
 
   const switchSession = async (opts: { session?: string; fresh?: boolean }) => {
@@ -583,6 +626,28 @@ export function BrainChat() {
                 <X size={11} aria-hidden />
               </button>
             </span>
+          ))}
+        </div>
+      ) : null}
+
+      {/* Pending mid-turn queue: messages sent while a turn streams, parked until it ends. Removable
+          until delivered; hidden in the read-only session preview (no composer there). */}
+      {!readOnly && queued.length > 0 ? (
+        <div className="flex flex-col gap-1 border-t border-border px-3 py-2">
+          {queued.map((q) => (
+            <div key={q.id} className="flex items-center gap-2 rounded-md border border-accent/30 bg-accent/5 px-2 py-1 text-tiny">
+              <span className="shrink-0 rounded bg-accent/20 px-1.5 py-0.5 font-medium uppercase tracking-wide text-accent">{t.brainChat.queued}</span>
+              <span className="min-w-0 flex-1 truncate text-text-muted">{q.text}</span>
+              <button
+                type="button"
+                onClick={() => { setQueued((cur) => cur.filter((x) => x.id !== q.id)); void elowenClient.brainQueueRemove(q.id).catch(() => undefined); }}
+                aria-label={t.brainChat.removeFromQueue}
+                title={t.brainChat.removeFromQueue}
+                className="flex h-4 w-4 shrink-0 items-center justify-center rounded text-text-muted hover:text-text"
+              >
+                <X size={11} aria-hidden />
+              </button>
+            </div>
           ))}
         </div>
       ) : null}

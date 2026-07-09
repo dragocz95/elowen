@@ -1,7 +1,7 @@
 'use client';
 export const dynamic = 'force-dynamic';
 import { useEffect, useState, useRef, useMemo } from 'react';
-import { Bot, SlidersHorizontal, Plus, X, Pencil, Radio, Cpu, Gauge, Layers, Link2, KeyRound, FileText, Eye, Lock, Trash2, GitPullRequest, GitBranch, TerminalSquare, RefreshCw, RotateCcw, Sparkles } from 'lucide-react';
+import { Bot, SlidersHorizontal, Plus, X, Pencil, Radio, Cpu, Gauge, Layers, Link2, KeyRound, FileText, Eye, Lock, Trash2, GitPullRequest, GitBranch, TerminalSquare, RefreshCw, RotateCcw, Sparkles, FlaskConical } from 'lucide-react';
 import { PROVIDERS, ProviderLogo } from '../../modules/settings/providers';
 import { ModelIcon } from '../../components/ui/ModelIcon';
 import { BackendPicker } from '../../components/ui/BackendPicker';
@@ -126,6 +126,7 @@ export default function SettingsPage() {
   // that read the repo). Derived from whether an exec is set; the picker enforces the exclusivity.
   const [reasoningMode, setReasoningMode] = useState<'relay' | 'agents'>('relay');
   const [reviewOnDone, setReviewOnDone] = useState(false);
+  const [tddMode, setTddMode] = useState(false);
   const [prEnabled, setPrEnabled] = useState(false);
   const [prBaseBranch, setPrBaseBranch] = useState('');
   const [prAutoOpen, setPrAutoOpen] = useState(false);
@@ -177,6 +178,7 @@ export default function SettingsPage() {
       setPilotExec(config.data.autopilot.pilotExec ?? '');
       setOverseerExec(config.data.autopilot.overseerExec ?? '');
       setReviewOnDone(config.data.autopilot.reviewOnDone ?? false);
+      setTddMode(config.data.autopilot.tddMode ?? false);
       setPrEnabled(config.data.autopilot.prEnabled ?? false);
       setPrBaseBranch(config.data.autopilot.prBaseBranch ?? '');
       setPrAutoOpen(config.data.autopilot.prAutoOpen ?? false);
@@ -199,8 +201,8 @@ export default function SettingsPage() {
   const saveAutopilot = () => {
     update.mutate(
       { autopilot: reasoningMode === 'agents'
-        ? { pilotExec, overseerExec, reviewOnDone, notes }
-        : { model, overseerModel, apiUrl, providerId: apProviderId, pilotExec: '', overseerExec: '', notes, ...(apiKey ? { apiKey } : {}) } },
+        ? { pilotExec, overseerExec, reviewOnDone, tddMode, notes }
+        : { model, overseerModel, apiUrl, providerId: apProviderId, pilotExec: '', overseerExec: '', tddMode, notes, ...(apiKey ? { apiKey } : {}) } },
       { onSuccess: () => { if (apiKey) setApiKey(''); }, onError: (e) => toast(String(e), 'error') },
     );
   };
@@ -227,7 +229,7 @@ export default function SettingsPage() {
   // Auto-persist: every settings form saves itself shortly after a change (no Save buttons anywhere).
   // Secrets (apiKey/ghToken) ride along only when freshly typed, exactly as with the old buttons.
   const ready = seeded.current;
-  useAutoSave([reasoningMode, pilotExec, overseerExec, reviewOnDone, notes, model, overseerModel, apiUrl, apiKey, apProviderId], saveAutopilot, { ready });
+  useAutoSave([reasoningMode, pilotExec, overseerExec, reviewOnDone, tddMode, notes, model, overseerModel, apiUrl, apiKey, apProviderId], saveAutopilot, { ready });
   useAutoSave([prEnabled, prBaseBranch, prAutoOpen, prVerifyCommand, ghToken], saveGithub, { ready });
   useAutoSave([providers], saveProviders, { ready });
   useAutoSave([defExec, defAutonomy, defMaxSessions, defTokenTtl], saveDefaults, { ready });
@@ -593,6 +595,12 @@ export default function SettingsPage() {
                 </SettingCard>
                 <SettingCard title={t.settings.maxSessions} description={t.help.maxSessions} icon={Layers}>
                   <input type="number" min={1} value={defMaxSessions} onChange={(e) => setDefMaxSessions(Number(e.target.value))} className={inputClass} />
+                </SettingCard>
+                {/* TDD mission mode applies to every worker (standalone, mission phase, embedded) regardless
+                    of the relay/agents split, so it lives here with the run defaults — persisted via the
+                    autopilot patch (saveAutopilot). */}
+                <SettingCard title={t.settings.tddMode} description={t.help.tddMode} icon={FlaskConical}>
+                  <Toggle checked={tddMode} onChange={setTddMode} label={t.settings.tddMode} />
                 </SettingCard>
               </div>
               </div>

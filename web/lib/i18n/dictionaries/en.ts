@@ -627,6 +627,7 @@ export const en = {
     modeAgents: 'CLI Tools',
     modeAgentsDesc: 'The planner and overseer run as CLI tools inside the repository — they read the code, but must be installed.',
     reviewOnDone: 'Review on phase completion',
+    tddMode: 'TDD mission mode',
     prEnabled: 'PR workflow (default for new projects)',
     prBaseBranch: 'Base branch',
     prBaseBranchPlaceholder: 'auto-detect',
@@ -1179,6 +1180,7 @@ export const en = {
     maxStepsHint: "The maximum number of steps (model round-trips) the agent runs per request before it is stopped. Prevents runaway loops. On Discord the current step shows as \"Step N / MAX\". Range 1-200, default 20.",
     limits: {
       title: "Limits",
+      manage: "Edit limits",
       hint: "Tunable ceilings for the assistant. Every value is clamped to a sane range; leave the defaults unless you have a reason to change them.",
       toolOutputMaxLines: "Tool output — lines",
       toolOutputMaxLinesHint: "How many lines of a tool's output the expanded view shows before older lines are hidden. Range 20-400, default 80.",
@@ -1399,6 +1401,9 @@ export const en = {
     askOther: 'Other…',
     askOtherPlaceholder: 'Type your own answer',
     askSubmit: 'Send answer',
+    contextCompacted: 'Context compacted',
+    queued: 'Queued',
+    removeFromQueue: 'Remove from queue',
   },
   pluginCfg: {
     roleAdmin: "Administrator access",
@@ -1687,6 +1692,7 @@ export const en = {
     prEnabled: "Default for new projects: each mission runs in an isolated worktree on its own branch and, when it finishes, Elowen opens a real GitHub PR. Individual projects can override this.",
     prVerifyCommand: "Runs in the worktree before the PR opens. A non-zero exit stalls the mission and skips the PR. Empty = no gate.",
     reviewOnDone: "After a phase closes, the overseer judges the result; if it rejects, the next phase is blocked.",
+    tddMode: "When on, autopilot workers must write a failing test first, then implement, then verify (test-driven development).",
     tokenTtl: "How many days a login token stays valid before it expires (forces re-login)",
     ghToken: "Stored server-side, used to push and open PRs",
     ghTokenNotSet: "Needed to push and open PRs; stored server-side, never returned",

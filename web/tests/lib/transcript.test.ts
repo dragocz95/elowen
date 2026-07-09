@@ -1,5 +1,46 @@
 import { describe, expect, it } from 'vitest';
-import { emptyView, reduce } from '../../lib/transcript';
+import { emptyView, fromHistory, groupToolItems, reduce } from '../../lib/transcript';
+import type { ToolItem } from '../../lib/transcript';
+
+describe('web groupToolItems: collapse consecutive same-tool pills', () => {
+  it('folds a run of the same bare tool into one group with the latest detail and a count', () => {
+    const items: ToolItem[] = [
+      { name: 'read_file', detail: 'a.ts' },
+      { name: 'read_file', detail: 'a.ts' },
+      { name: 'read_file', detail: 'b.ts' },
+    ];
+    const groups = groupToolItems(items);
+    expect(groups).toHaveLength(1);
+    expect(groups[0]!.count).toBe(3);
+    expect(groups[0]!.item.detail).toBe('b.ts');
+  });
+
+  it('does not merge across a different tool, and an item with a diff/output stays its own group', () => {
+    const groups = groupToolItems([
+      { name: 'read_file', detail: 'a.ts' },
+      { name: 'list_dir', detail: 'src' },
+      { name: 'read_file', detail: 'b.ts', output: { title: 't', kind: 'result', text: 'x' } },
+      { name: 'read_file', detail: 'c.ts' },
+      { name: 'edit_file', detail: 'd.ts', diff: '+ 1 x' },
+    ]);
+    expect(groups.map((g) => [g.item.name, g.count])).toEqual([
+      ['read_file', 1], ['list_dir', 1], ['read_file', 1], ['read_file', 1], ['edit_file', 1],
+    ]);
+  });
+});
+
+describe('web transcript fromHistory: compaction divider', () => {
+  it('renders a compaction row as a divider turn, keeping the tail that follows', () => {
+    const view = fromHistory([
+      { role: 'compaction', text: '' },
+      { role: 'user', text: 'recent q' },
+      { role: 'assistant', text: 'recent a' },
+    ]);
+    expect(view.turns[0]).toEqual({ role: 'divider' });
+    expect(view.turns[1]).toEqual({ role: 'you', text: 'recent q' });
+    expect(view.turns[2]).toMatchObject({ role: 'elowen', streaming: false });
+  });
+});
 
 describe('web transcript reducer', () => {
   it('attaches diff and tool output by tool call id', () => {
@@ -16,5 +57,12 @@ describe('web transcript reducer', () => {
         { name: 'second', detail: undefined, icon: undefined, id: 'b', diff: '-old\n+new' },
       ] },
     ]);
+  });
+
+  it('folds a `user` delivery event into a you-turn (a drained queued message)', () => {
+    let view = reduce(emptyView(), { type: 'text', delta: 'reply to the first message' });
+    view = reduce(view, { type: 'idle' }); // the first turn settles
+    view = reduce(view, { type: 'user', text: 'queued follow-up' });
+    expect(view.turns.at(-1)).toEqual({ role: 'you', text: 'queued follow-up' });
   });
 });

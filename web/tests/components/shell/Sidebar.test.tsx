@@ -20,7 +20,7 @@ describe('Sidebar (registry-driven)', () => {
     expect(screen.getByAltText('Elowen')).toBeInTheDocument();
     expect(screen.getByText('Operate')).toBeInTheDocument();
     expect(screen.getByText('Administration')).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: /Dash/ }).className).toContain('border-accent');
+    expect(screen.getByRole('link', { name: /Dash/ }).className).toContain('border-accent'); // Elowen brand-red active line
   });
 
   it('renders without crashing in setup mode (me resolved but no user yet)', () => {

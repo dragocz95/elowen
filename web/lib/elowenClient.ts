@@ -195,9 +195,14 @@ export const elowenClient = {
   taskBrainConversation: (taskId: string) => req<BrainMessage[]>(`/tasks/${encodeURIComponent(taskId)}/conversation`),
   brainStatus: () => req<BrainStatus>('/brain/status'),
   brainStart: (opts: { session?: string; fresh?: boolean } = {}) => req<{ sessionId: string }>('/brain/start', json(opts)),
-  brainSend: (text: string, images?: { data: string; mimeType: string }[]) =>
-    req<{ ok: boolean }>('/brain/send', json(images?.length ? { text, images } : { text })),
+  brainSend: (text: string, images?: { data: string; mimeType: string }[], display?: string) =>
+    req<{ ok: boolean }>('/brain/send', json({ text, ...(images?.length ? { images } : {}), ...(display !== undefined && display !== text ? { display } : {}) })),
   brainAnswer: (id: string, answers: AskAnswer[]) => req<{ ok: boolean; matched: boolean }>('/brain/answer', json({ id, answers })),
+  /** The active conversation's pending mid-turn message queue (full snapshot). */
+  brainQueue: () => req<{ id: string; text: string }[]>('/brain/queue'),
+  /** Remove one pending queued message by id (the × button). The reduced snapshot rides back on the
+   *  `queue` stream event — the server is authoritative. */
+  brainQueueRemove: (id: string) => req<{ removed: boolean }>(`/brain/queue/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   /** The slash-command catalog published for the web surface (single source of truth, admin-filtered). */
   brainCommands: () => req<{ commands: SlashCommandDef[] }>('/brain/commands?surface=web'),
   /** Run a server-side (`action`) slash command through the shared dispatcher. */

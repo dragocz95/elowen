@@ -1,6 +1,6 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
-import { BrainCircuit, Plus, Pencil, Trash2, KeyRound, Link2, Unlink, ExternalLink, Check, ListChecks } from 'lucide-react';
+import { BrainCircuit, Plus, Pencil, Trash2, KeyRound, Link2, Unlink, ExternalLink, Check, ListChecks, SlidersHorizontal } from 'lucide-react';
 import { Badge } from '../../components/ui/Badge';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
@@ -10,6 +10,7 @@ import { ModelIcon } from '../../components/ui/ModelIcon';
 import { ManageSelectionModal, type ManageSelectionItem } from '../../components/ui/ManageSelectionModal';
 import { SelectionSummary } from '../../components/ui/SelectionSummary';
 import { Modal, ModalBody } from '../../components/ui/Modal';
+import { BrainLimitsModal, BRAIN_LIMIT_DEFAULTS } from './BrainLimitsModal';
 import { LoadingState } from '../../components/ui/states';
 import { useToast } from '../../components/ui/Toast';
 import { useTranslation } from '../../lib/i18n';
@@ -20,23 +21,6 @@ import { useAutoSave } from '../../lib/useAutoSave';
 import { useSaveBrainProviders, useBrainOauthDisconnect } from '../../lib/mutations';
 import { elowenClient } from '../../lib/elowenClient';
 import type { BrainProvider, BrainProviderType, OAuthFlowState, BrainLimits } from '../../lib/types';
-
-/** Fallback for seeding the Limits form before the daemon's config arrives (it always sends real values). */
-const BRAIN_LIMIT_DEFAULTS: BrainLimits = {
-  toolOutputMaxLines: 80, toolOutputMaxChars: 12000, elicitationTimeoutMs: 300000,
-  memoryRecallCount: 6, memoryRecallChars: 1500, goalTurnBudget: 8, goalMaxTurns: 64, channelSessionCap: 32,
-};
-/** The Limits inputs, in display order, each with its UI bounds (the daemon re-clamps to the same range). */
-const BRAIN_LIMIT_FIELDS: { key: keyof BrainLimits; min: number; max: number; step: number }[] = [
-  { key: 'toolOutputMaxLines', min: 20, max: 400, step: 10 },
-  { key: 'toolOutputMaxChars', min: 2000, max: 50000, step: 1000 },
-  { key: 'elicitationTimeoutMs', min: 30000, max: 1800000, step: 30000 },
-  { key: 'memoryRecallCount', min: 1, max: 20, step: 1 },
-  { key: 'memoryRecallChars', min: 300, max: 8000, step: 100 },
-  { key: 'goalTurnBudget', min: 1, max: 50, step: 1 },
-  { key: 'goalMaxTurns', min: 8, max: 500, step: 1 },
-  { key: 'channelSessionCap', min: 4, max: 256, step: 1 },
-];
 
 const OAUTH_TYPES: { type: BrainProviderType; icon: string }[] = [
   { type: 'oauth-anthropic', icon: 'claude' },
@@ -255,6 +239,7 @@ export function BrainSection() {
   const [modal, setModal] = useState<Draft | null>(null);
   const [flow, setFlow] = useState<OAuthFlowState | null>(null);
   const [modelsFor, setModelsFor] = useState<BrainProviderType | null>(null);
+  const [limitsOpen, setLimitsOpen] = useState(false);
 
   // The assistant's display identity ("Elowen" by default) — feeds the persona everywhere it speaks.
   const updateConfig = useUpdateConfig();
@@ -340,31 +325,24 @@ export function BrainSection() {
         </div>
       </div>
 
-      {/* Limits: the brain's tunable ceilings — output size, waits, recall, goal autonomy, channel cap. */}
+      {/* Limits: the brain's tunable ceilings — output size, waits, recall, goal autonomy, channel cap.
+          The 8-field grid lives in a modal so it doesn't crowd the section; edits still autosave live. */}
       {limits && (
         <div className="flex flex-col gap-3">
           <div className="flex flex-col gap-0.5">
             <span className="text-sm font-medium text-text">{t.brain.limits.title}</span>
             <span className="text-tiny text-text-muted">{t.brain.limits.hint}</span>
           </div>
-          <div className="@container">
-            <div className="grid grid-cols-1 gap-3 @lg:grid-cols-2 @2xl:grid-cols-4">
-              {BRAIN_LIMIT_FIELDS.map((f) => (
-                <div key={f.key} className="flex flex-col gap-2">
-                  <span className="flex items-center gap-1 text-sm font-medium text-text">{t.brain.limits[f.key]}<HelpTip>{t.brain.limits[`${f.key}Hint`]}</HelpTip></span>
-                  <Input
-                    type="number" min={f.min} max={f.max} step={f.step}
-                    value={String(limits[f.key])}
-                    // Clearing the field would autosave 0 → the daemon clamps to the min, but the local
-                    // input would keep showing 0 until a reload. Snap an empty field to the min so the UI
-                    // matches what gets stored.
-                    onChange={(e) => setLimits((cur) => (cur ? { ...cur, [f.key]: e.target.value === '' ? f.min : Number(e.target.value) } : cur))}
-                    aria-label={t.brain.limits[f.key]}
-                  />
-                </div>
-              ))}
-            </div>
+          <div>
+            <Button variant="default" icon={SlidersHorizontal} onClick={() => setLimitsOpen(true)}>{t.brain.limits.manage}</Button>
           </div>
+          {limitsOpen ? (
+            <BrainLimitsModal
+              limits={limits}
+              onChange={(fn) => setLimits((cur) => (cur ? fn(cur) : cur))}
+              onClose={() => setLimitsOpen(false)}
+            />
+          ) : null}
         </div>
       )}
 

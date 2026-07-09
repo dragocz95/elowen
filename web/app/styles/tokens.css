@@ -5,7 +5,10 @@
   --color-surface: #0a0a0a;
   --color-elevated: #141414;
   --color-border: oklch(0.235 0 0);       /* hairline — subtle on pure black */
-  --color-accent: oklch(0.62 0.19 256);
+  /* Elowen identity red (matches the CLI accent rgb(255,82,54)) — the ONE accent across the whole UI:
+     buttons, focus rings, selected states, toggles, tabs, nav active line and links all read it, so the
+     app reads as a single red brand. Legible on both black and white, so no light-theme override is needed. */
+  --color-accent: #ff5236;
   --color-danger: oklch(0.55 0.20 25);
   --color-text: oklch(0.97 0 0);
   --color-text-muted: oklch(0.60 0 0);

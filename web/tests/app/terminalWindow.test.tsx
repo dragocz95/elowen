@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import TerminalWindow from '../../app/terminal/[name]/page';
+import { createWrapper } from '../test-utils';
 
 vi.mock('next/navigation', () => ({ useParams: () => ({ name: 'elowen-advisor-1' }) }));
 vi.mock('../../components/terminal/StreamTerminal', () => ({
@@ -9,8 +10,11 @@ vi.mock('../../components/terminal/StreamTerminal', () => ({
 
 describe('TerminalWindow (pop-out route)', () => {
   it('renders a chromeless terminal for the routed session', async () => {
-    render(<TerminalWindow />);
+    // Chromeless, but still inside the app's providers (it reads the app name via i18n for the tab title).
+    const { wrapper: Wrapper } = createWrapper();
+    render(<Wrapper><TerminalWindow /></Wrapper>);
     expect((await screen.findByTestId('stream')).textContent).toBe('elowen-advisor-1'); // dynamic, ssr:false
     expect(screen.getByText('advisor-1')).toBeTruthy(); // header shows the friendly name
+    expect(document.title).toBe('Elowen — advisor-1'); // per-page tab title
   });
 });

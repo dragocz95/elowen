@@ -627,6 +627,7 @@ export const cs = {
     modeAgents: 'CLI Nástroje',
     modeAgentsDesc: 'Plánovač a dozorčí běží jako CLI nástroje přímo v repozitáři — čtou kód, ale musí být nainstalované.',
     reviewOnDone: 'Kontrola po dokončení fáze',
+    tddMode: 'TDD režim misí',
     prEnabled: 'PR workflow (výchozí pro nové projekty)',
     prBaseBranch: 'Cílová větev',
     prBaseBranchPlaceholder: 'auto-detekce',
@@ -1179,6 +1180,7 @@ export const cs = {
     maxStepsHint: "Maximální počet kroků (kol s modelem), které agent na jeden požadavek udělá, než se zastaví. Brání zacyklení. Na Discordu se aktuální krok zobrazuje jako „Step N / MAX“. Rozsah 1–200, výchozí 20.",
     limits: {
       title: "Limity",
+      manage: "Upravit limity",
       hint: "Nastavitelné stropy asistenta. Každá hodnota se ořízne do rozumného rozsahu; ponechte výchozí, pokud nemáte důvod je měnit.",
       toolOutputMaxLines: "Výstup nástroje — řádky",
       toolOutputMaxLinesHint: "Kolik řádků výstupu nástroje zobrazí rozbalený náhled, než se starší řádky skryjí. Rozsah 20–400, výchozí 80.",
@@ -1399,6 +1401,9 @@ export const cs = {
     askOther: 'Jiné…',
     askOtherPlaceholder: 'Napište vlastní odpověď',
     askSubmit: 'Odeslat odpověď',
+    contextCompacted: 'Kontext zhuštěn',
+    queued: 'Ve frontě',
+    removeFromQueue: 'Odebrat z fronty',
   },
   pluginCfg: {
     roleAdmin: "Administrátorský přístup",
@@ -1687,6 +1692,7 @@ export const cs = {
     prEnabled: "Výchozí stav pro nové projekty: každá mise běží v izolovaném pracovním stromu na vlastní větvi a po dokončení Elowen otevře skutečný GitHub PR. Jednotlivé projekty si to můžou přepnout u sebe.",
     prVerifyCommand: "Spustí se v pracovním stromu před otevřením PR. Nenulový výsledek misi zastaví a PR neotevře. Prázdné = bez kontroly.",
     reviewOnDone: "Po uzavření fáze nechá dozorčího posoudit výsledek; když ho zamítne, zastaví navazující fázi.",
+    tddMode: "Když je zapnuto, pracovníci autopilota musí nejdřív napsat padající test, pak implementovat a nakonec ověřit (vývoj řízený testy).",
     tokenTtl: "Po kolika dnech vyprší přihlašovací token (vynutí nové přihlášení)",
     ghToken: "Uloženo na serveru, použito pro push a otevření PR",
     ghTokenNotSet: "Potřeba pro push a otevření PR; uloženo na serveru, nikdy není vráceno",

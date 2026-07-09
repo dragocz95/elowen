@@ -48,8 +48,8 @@ export function SessionsView() {
       <ModuleHeader title={t.page.sessions} count={names.length} icon={TerminalSquare}>
         {allNames.length > 0 ? (
           <>
-            <Segmented value={filter} onChange={setFilter} options={[{ value: 'all', label: t.sessions.filterAll, icon: List }, { value: 'needs_input', label: t.sessions.filterNeedsInput, icon: Bell }]} />
-            <Segmented value={density} onChange={(v) => setDensity(v as 'comfortable' | 'compact')} options={[{ value: 'comfortable', label: t.sessions.comfortable, icon: Maximize2 }, { value: 'compact', label: t.sessions.compact, icon: Minimize2 }]} />
+            <Segmented value={filter} onChange={setFilter} options={[{ value: 'all', label: t.sessions.filterAll, icon: List }, { value: 'needs_input', label: t.sessions.filterNeedsInput, icon: Bell }]} nowrap />
+            <Segmented value={density} onChange={(v) => setDensity(v as 'comfortable' | 'compact')} options={[{ value: 'comfortable', label: t.sessions.comfortable, icon: Maximize2 }, { value: 'compact', label: t.sessions.compact, icon: Minimize2 }]} nowrap />
           </>
         ) : null}
       </ModuleHeader>

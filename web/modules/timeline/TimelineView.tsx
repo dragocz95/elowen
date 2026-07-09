@@ -346,14 +346,17 @@ export function TimelineView() {
   ];
 
   return (
-    <div className="@container flex flex-col gap-4">
+    <div className="@container">
       <ModuleHeader title={t.page.timeline} icon={Activity}>
         <ProjectFilterPills value={selectedProject} onChange={setProject} />
         <DateRangeFilter value={range} onChange={(r) => setRangeRaw(serializeRange(r))} />
-        <Segmented options={[{ label: t.timeline.axis, value: 'axis', icon: Activity }, { label: t.timeline.lanes, value: 'lanes', icon: Columns3 }]} value={view} onChange={setView} />
-        <Segmented options={FILTER_OPTIONS} value={filter} onChange={setFilter} />
+        <Segmented options={[{ label: t.timeline.axis, value: 'axis', icon: Activity }, { label: t.timeline.lanes, value: 'lanes', icon: Columns3 }]} value={view} onChange={setView} nowrap />
+        <Segmented options={FILTER_OPTIONS} value={filter} onChange={setFilter} nowrap />
       </ModuleHeader>
 
+      {/* Content stack owns its own vertical rhythm; ModuleHeader's mb-6 provides the gap below the
+          toolbar (matching every other view's fragment-then-content layout). */}
+      <div className="flex flex-col gap-4">
       {/* Summary strip: big-icon kind counts for the window */}
       {hasData ? (
         <div data-testid="timeline-summary" className="grid grid-cols-2 gap-2.5 @sm:grid-cols-3 @3xl:grid-cols-5">
@@ -398,6 +401,7 @@ export function TimelineView() {
       ) : null}
 
       {picked ? <EventDetail point={picked} display={resolve(picked)} onClose={() => setPicked(null)} /> : null}
+      </div>
     </div>
   );
 }

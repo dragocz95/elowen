@@ -71,6 +71,9 @@ export default function OnboardingPage() {
   const { toast } = useToast();
   const router = useRouter();
 
+  // This route has its own hero heading (not a ModuleHeader), so set the browser-tab title here.
+  useEffect(() => { document.title = `${t.common.appName} — ${t.onboarding.title}`; }, [t.common.appName, t.onboarding.title]);
+
   const cliStatus = useCliStatus();
   const config = useConfig();
   const users = useUsers();

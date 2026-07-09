@@ -87,6 +87,7 @@ export default function KanbanPage() {
             { value: 'board', label: t.kanban.board, icon: Columns3 },
             { value: 'calendar', label: t.kanban.calendar, icon: CalendarRange },
           ]}
+          nowrap
         />
       </ModuleHeader>
 

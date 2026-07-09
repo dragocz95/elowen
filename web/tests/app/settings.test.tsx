@@ -133,6 +133,24 @@ describe('SettingsPage', () => {
     });
   });
 
+  it('toggles TDD mission mode and persists autopilot.tddMode in both reasoning modes', async () => {
+    localStorage.setItem('elowen.settings.category', 'autopilot');
+    const { wrapper: Wrapper } = createWrapper();
+    render(<Wrapper><ToastProvider><SettingsPage /></ToastProvider></Wrapper>);
+    await waitFor(() => expect(screen.getByText('How autopilot reasons')).toBeTruthy());
+
+    // The toggle lives with the run defaults (visible in the default relay mode) and starts off.
+    const toggle = screen.getByLabelText('TDD mission mode');
+    expect(toggle).not.toBeChecked();
+
+    putBody = null;
+    fireEvent.click(toggle);
+    await waitFor(() => {
+      const ap = (putBody as { autopilot: { tddMode: boolean } }).autopilot;
+      expect(ap.tddMode).toBe(true);
+    });
+  });
+
   it('saves the GitHub PR-native fields from the GitHub section', async () => {
     localStorage.setItem('elowen.settings.category', 'github');
     const { wrapper: Wrapper } = createWrapper();

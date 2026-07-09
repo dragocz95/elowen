@@ -16,7 +16,7 @@ const PROJECT_PREVIEW = 5;
  *  the selected value (and persists it) and feeds it back via `onChange`. Set `includeAll={false}`
  *  for surfaces that need exactly one project (e.g. the editor), which drops the "All" pill.
  *  Past {@link PROJECT_PREVIEW} projects the tail folds behind the shared MorePill toggle; expanding
- *  wraps the rest onto the following line(s). A selected project inside the folded tail is shown as
+ *  reveals the rest inline (the header toolbar scrolls horizontally). A selected project inside the folded tail is shown as
  *  one extra pill (stable order — picking a project never reshuffles the row). */
 export function ProjectFilterPills({ value, onChange, includeAll = true }: { value: number | 'all'; onChange: (v: number | 'all') => void; includeAll?: boolean }) {
   const { data: projects } = useProjects();
@@ -30,7 +30,7 @@ export function ProjectFilterPills({ value, onChange, includeAll = true }: { val
   const pillClass = (on: boolean) =>
     `inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs font-medium transition-colors ${on ? 'border-accent/50 bg-accent/15 text-accent' : 'border-border bg-elevated text-text-muted hover:border-border-strong hover:text-text'}`;
   return (
-    <div role="group" aria-label={t.tasks.filterProjectsAria} className="flex flex-wrap items-center gap-1.5">
+    <div role="group" aria-label={t.tasks.filterProjectsAria} className="flex flex-nowrap shrink-0 items-center gap-1.5">
       {includeAll ? (
         <button type="button" aria-pressed={value === 'all'} onClick={() => onChange('all')} className={pillClass(value === 'all')} style={{ transitionDuration: 'var(--motion-fast)' }}>
           <FolderGit2 size={13} className="shrink-0" aria-hidden />{t.tasks.filterAllProjects}
