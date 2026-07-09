@@ -2,6 +2,8 @@ import { randomUUID } from 'node:crypto';
 import { SessionManager } from '@earendil-works/pi-coding-agent';
 import type { AgentSessionEvent } from '@earendil-works/pi-coding-agent';
 import type { BrainStore } from '../store/brainStore.js';
+import { extractText, NO_REPLY_NUDGE } from './messageView.js';
+import type { LiveBrain } from './session/liveBrain.js';
 
 /** Append the user's prompt. Called by BrainService before session.prompt(), because the terminal
  *  agent_end event carries only the assistant/tool messages produced during the turn. */
@@ -19,6 +21,41 @@ export function projectEvent(store: BrainStore, sessionId: string, event: AgentS
     store.appendMessage({ id: randomUUID(), sessionId, parentId: null, role, content: m });
   }
   store.touchSession(sessionId);
+}
+
+/** Mirror a just-finished in-context compaction into the store AND notify attached clients. Called by
+ *  the manual `/compact` path, the auto-compact path, and BOTH channel-session paths right after
+ *  `session.compact()` succeeds, so every compaction behaves identically. PI's compaction is an
+ *  in-memory-context operation that writes NOTHING to the store on its own, so without this the full
+ *  pre-compaction log stays in SQLite: the transcript reads stale AND the token savings evaporate on the
+ *  next rehydrate (respawn/restart/eviction).
+ *
+ *  CRUCIAL: we do NOT serialize `session.messages` — those live entries carry the ephemeral live-prompt
+ *  framing (memory/permissions/turn-context blocks, mode instructions, NO_REPLY_NUDGE) and raw image
+ *  bytes, none of which may ever land in brain_messages. The STORE's own rows are the single clean source
+ *  of history. After compaction `session.messages` is `[compactionSummary, ...keptTail]`; we keep exactly
+ *  the matching trailing STORE rows (original clean text + original timestamps) and drop the older ones,
+ *  inserting a `compaction` divider (carrying PI's summary for rehydrate) at the cut point.
+ *
+ *  Mapping PI's kept tail → store rows: every kept PI message has a 1:1 clean store row EXCEPT (a) the
+ *  leading compactionSummary (we insert our own divider instead) and (b) any NO_REPLY_NUDGE user message
+ *  — prompted straight to PI on a thinking-only turn, never `projectUserTurn`'d, so it has NO store row
+ *  (see turnRunner/channels). So `keepLastN` = count of kept messages that are neither. Both sequences
+ *  are chronological suffixes of the same conversation, so the last `keepLastN` store rows ARE the clean
+ *  tail (handles split-turn cuts too — a partial turn just contributes fewer kept messages). Then one
+ *  `compacted` event tells every attached client (CLI tap + web subscribe) to refetch + collapse. */
+export function persistCompaction(store: BrainStore, live: LiveBrain): void {
+  const messages = live.session.messages as { role?: string }[];
+  const summary = messages.find((m) => m.role === 'compactionSummary');
+  if (!summary) return; // no compaction actually present in the live context — nothing to mirror (defensive)
+  let keepLastN = 0;
+  for (const m of messages) {
+    if (m.role === 'compactionSummary') continue; // → our inserted divider, not a tail row
+    if (m.role === 'user' && extractText(m).trim() === NO_REPLY_NUDGE) continue; // nudge has no store row
+    keepLastN++;
+  }
+  store.compactSessionMessages(live.sessionId, { id: randomUUID(), role: 'compaction', content: summary }, keepLastN);
+  for (const l of live.listeners) l({ type: 'compacted' });
 }
 
 /** Rebuild an in-memory PI session manager pre-seeded with the stored history (D1). Spike-proven:

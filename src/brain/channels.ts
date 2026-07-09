@@ -6,9 +6,10 @@ import type { AskQuestion, BrainEvent, BrainUsage, CompactResult } from './event
 import { usageOf, runCompaction } from './events.js';
 import type { ElicitationRegistry } from './elicitation.js';
 import { normalizeCard } from './cards.js';
-import { projectUserTurn } from './persistence.js';
+import { persistCompaction, projectUserTurn } from './persistence.js';
 import { extractText, frameUntrusted, isThinkingOnlyReply, NO_REPLY_NUDGE } from './messageView.js';
-import { channelSessionId } from './sessionId.js';
+import { channelSessionId, archivedChannelSessionId } from './sessionId.js';
+import { rolloverDue, SESSION_IDLE_ROLLOVER_MS } from './session/idleRollover.js';
 import { applyToolVisibility } from './session/capabilities.js';
 import { buildPermissionRuleset } from './toolPermissions.js';
 import type { PermissionSettings, TurnPermissions } from './toolPermissions.js';
@@ -35,6 +36,13 @@ export interface ChannelSendOpts {
    *  execute time by the plugin-tool gate. Undefined → no restriction. */
   toolPolicy?: ToolPolicy;
   images?: { data: string; mimeType: string }[];
+  /** Idle cutoff for THIS surface: a channel that went quiet longer than this before the current
+   *  message has a long-expired prompt cache, so its session is rolled over (the stale transcript is
+   *  archived under a fresh id and a new empty session takes its place) rather than dragging the whole
+   *  stale context back in at full price. Unset → SESSION_IDLE_ROLLOVER_MS (Discord's 30 min). Cron
+   *  passes a shorter value so a frequent job past the cache window starts fresh — or `Infinity` to
+   *  disable rollover entirely for a job that must keep continuity across runs. */
+  idleRolloverMs?: number;
   identity?: TurnIdentity;
   /** The Elowen account the sender is verified as (linked platform id). When set, that user's memory is
    *  recalled under their message and post-turn facts are saved to it — each gated by their own
@@ -113,6 +121,23 @@ export class ChannelSessionService {
       return '';
     }
     return this.d.registry.withLock(sessionId, async () => {
+      // Idle rollover (cache-cost fix): a channel that sat quiet past the idle cutoff has a long-expired
+      // prompt cache, so continuing would re-send its whole stale transcript at full price for no benefit.
+      // Roll it over like owner chat (lifecycle.maybeRollover): drop the live PI session and ARCHIVE the
+      // old transcript+title under a fresh unique id — the deterministic channel id is freed, so the fall
+      // through below spawns a fresh, empty session under it (the registry and slash commands key on
+      // channelId, so the id stays stable). The old conversation stays browsable in the sessions view.
+      // MUST run before the getMessages() backfill check so a reset channel re-triggers its history
+      // backfill + titler. A streaming turn is never cut — the lock already serializes this channel's
+      // turns, so this only guards against a live record left mid-flight. `interactedAt` is the live
+      // session's own last deliberate touch (compact/model switch), mirroring the owner-chat call site:
+      // a recent interaction vetoes the rollover even when the last stored message is stale.
+      const live = this.d.registry.channelGet(opts.channelId);
+      if (!live?.session.isStreaming
+          && rolloverDue({ lastMessageAt: this.d.store.lastMessageAt(sessionId), interactedAt: live?.interactedAt, now: Date.now() }, opts.idleRolloverMs ?? SESSION_IDLE_ROLLOVER_MS)) {
+        this.d.registry.channelDispose(opts.channelId);
+        this.d.store.reassignSession(sessionId, archivedChannelSessionId(opts.channelId));
+      }
       // The post-turn curator must distill ONLY this sender's own words — capture the message BEFORE the
       // channel-history backfill (other members' chatter, injected as untrusted context) is prepended,
       // so background from other users never lands in THIS sender's private memory.
@@ -227,7 +252,11 @@ export class ChannelSessionService {
       } finally { detach?.(); }
       const usage = ch.session.getContextUsage();
       if (usage?.tokens && usage.contextWindow > 0 && usage.tokens / usage.contextWindow >= ch.autoCompactAt) {
-        try { await ch.session.compact(); } catch { /* best-effort */ }
+        // Persist + notify exactly like owner chat (persistCompaction): mirror PI's shrunk context into
+        // SQLite so a rehydrate (LRU eviction / daemon restart) rebuilds the COMPACTED log, not the full
+        // pre-compaction one — otherwise the channel re-compacts every turn and the savings never stick.
+        // Best-effort: a compact that throws (no-op/failure) skips both and the session stays usable.
+        try { await ch.session.compact(); persistCompaction(this.d.store, ch); } catch { /* keep the session usable */ }
       }
       // The reply = the last assistant message of the settled turn.
       const msgs = ch.session.messages as { role?: string; stopReason?: string; errorMessage?: string }[];
@@ -272,7 +301,11 @@ export class ChannelSessionService {
     return this.d.registry.withLock(sessionId, async () => {
       const ch = this.d.registry.channelGet(channelId);
       if (!ch) return null;
-      return runCompaction(ch.session);
+      const result = await runCompaction(ch.session);
+      // Same persistence + client-notify path as owner chat (persistCompaction): a real compaction mirrors
+      // PI's shrunk context into the store so it survives rehydrate; a no-op leaves the store untouched.
+      if (result.compacted) persistCompaction(this.d.store, ch);
+      return result;
     });
   }
 

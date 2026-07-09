@@ -155,3 +155,66 @@ describe('GET /usage/by-day — brain session merge', () => {
     expect(body[0].cost).toBeNull();
   });
 });
+
+describe('GET /usage/by-model — brain session merge', () => {
+  const seedBrainModel = (db: ReturnType<typeof openDb>, userId: number, sessionId: string, model: string, totalTokens: number, cost: number | null) => {
+    db.prepare("INSERT INTO brain_sessions (id, user_id, title, model) VALUES (?, ?, 't', ?)").run(sessionId, userId, model);
+    const u = { input: 10, output: 5, cacheRead: 0, cacheWrite: 0, reasoning: 0, totalTokens, ...(cost == null ? {} : { cost: { total: cost } }) };
+    const content = JSON.stringify({ role: 'assistant', content: [], usage: u, timestamp: Date.now() });
+    db.prepare("INSERT INTO brain_messages (id, session_id, role, content) VALUES (?, ?, 'assistant', ?)").run(`${sessionId}-m1`, sessionId, content);
+  };
+
+  it("merges the caller's own chat spend as an elowen:<model> row alongside task rows", async () => {
+    const { app, db, taskUsage, adminId, adminTok } = setup();
+    taskUsage.record('t1', 1, 'sonnet', usage);
+    seedBrainModel(db, adminId, 'brain-1', 'claude-opus-4-8', 300, 0.3);
+    const body = await (await app.request('/usage/by-model', auth(adminTok))).json();
+    const byExec = Object.fromEntries(body.map((r: { exec: string; usage: { total: number; costUsd: number | null } }) => [r.exec, r.usage]));
+    expect(byExec['sonnet'].total).toBe(165);
+    expect(byExec['elowen:claude-opus-4-8'].total).toBe(300);
+    expect(byExec['elowen:claude-opus-4-8'].costUsd).toBeCloseTo(0.3);
+  });
+
+  it('folds chat + a task worker on the SAME model into one bucket, cost added once (no double count)', async () => {
+    const { app, db, taskUsage, adminId, adminTok } = setup();
+    // A task worker on the embedded brain records exec `elowen:<model>`; a chat session on the same model
+    // must sum INTO that bucket, not create a parallel one.
+    taskUsage.record('t1', 1, 'elowen:claude-opus-4-8', { ...usage, total: 200, costUsd: 0.2 });
+    seedBrainModel(db, adminId, 'brain-1', 'claude-opus-4-8', 300, 0.3);
+    const body = await (await app.request('/usage/by-model', auth(adminTok))).json();
+    expect(body).toHaveLength(1);
+    expect(body[0].exec).toBe('elowen:claude-opus-4-8');
+    expect(body[0].usage.total).toBe(500); // 200 task + 300 chat
+    expect(body[0].usage.costUsd).toBeCloseTo(0.5); // 0.2 + 0.3, counted once
+    expect(body[0].usage.costSource).toBe('provider_reported');
+  });
+
+  it('keeps tasks-only semantics under a project_id filter (chat spend has no project)', async () => {
+    const { app, db, taskUsage, adminId, adminTok } = setup();
+    taskUsage.record('t1', 1, 'sonnet', usage);
+    seedBrainModel(db, adminId, 'brain-1', 'claude-opus-4-8', 300, 0.3);
+    const body = await (await app.request('/usage/by-model?project_id=1', auth(adminTok))).json();
+    expect(body).toHaveLength(1);
+    expect(body[0].exec).toBe('sonnet');
+  });
+
+  it('excludes a brain-task chat session that already snapshotted to task_usage (no double count)', async () => {
+    const { app, db, taskUsage, adminId, adminTok } = setup();
+    seedBrainModel(db, adminId, 'brain-task-9', 'claude-opus-4-8', 999, 9.9);
+    taskUsage.record('9', 1, 'elowen:claude-opus-4-8', { ...usage, total: 999, costUsd: 9.9 }); // healthy worker snapshot
+    const body = await (await app.request('/usage/by-model', auth(adminTok))).json();
+    // Only the task_usage snapshot survives; the chat rows are NOT re-counted on top of it.
+    expect(body).toHaveLength(1);
+    expect(body[0].exec).toBe('elowen:claude-opus-4-8');
+    expect(body[0].usage.total).toBe(999);
+  });
+
+  it('KEEPS a crashed brain-task chat session that never snapshotted (spend not lost)', async () => {
+    const { app, db, adminId, adminTok } = setup();
+    seedBrainModel(db, adminId, 'brain-task-9', 'claude-opus-4-8', 40, 0.04); // no task_usage row → crashed worker
+    const body = await (await app.request('/usage/by-model', auth(adminTok))).json();
+    expect(body).toHaveLength(1);
+    expect(body[0].exec).toBe('elowen:claude-opus-4-8');
+    expect(body[0].usage.total).toBe(40); // crashed-worker spend surfaces as brain usage instead of vanishing
+  });
+});

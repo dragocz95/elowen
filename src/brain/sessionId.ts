@@ -17,6 +17,16 @@ export function channelSessionId(channelId: string): string {
   return `brain-ch-${channelId}`;
 }
 
+/** A fresh, unique id to ARCHIVE a channel conversation under when it idle-rolls over: the old
+ *  transcript is re-keyed here so it stays browsable (it's still a `brain-ch-*` session → shows in the
+ *  admin sessions view, stays out of the personal chat list/search), while the deterministic
+ *  `channelSessionId` is freed for the fresh session. Suffixed with a timestamp + random tail so
+ *  repeated rollovers on the same channel never collide. Mirrors owner-chat's `freshUserSessionId`
+ *  suffix scheme, but here the NEW id is the archive and the deterministic one carries the fresh turn. */
+export function archivedChannelSessionId(channelId: string): string {
+  return `brain-ch-${channelId}-arch-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+}
+
 export function taskSessionId(taskId: string): string {
   return `brain-task-${taskId}`;
 }

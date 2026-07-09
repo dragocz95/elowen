@@ -1,10 +1,62 @@
 import { describe, it, expect } from 'vitest';
-import { reduce, pushUser, beginAssistant, emptyView } from '../../src/brain/transcript.js';
-import type { ChatView } from '../../src/brain/transcript.js';
+import { reduce, pushUser, beginAssistant, emptyView, fromHistory, groupToolItems } from '../../src/brain/transcript.js';
+import type { ChatView, ToolItem } from '../../src/brain/transcript.js';
+
+describe('groupToolItems: collapse consecutive same-tool rows', () => {
+  it('folds a run of the same bare tool into one group carrying the LATEST detail and a count', () => {
+    const items: ToolItem[] = [
+      { name: 'read_file', detail: 'a.ts' },
+      { name: 'read_file', detail: 'a.ts' },
+      { name: 'read_file', detail: 'b.ts' },
+    ];
+    const groups = groupToolItems(items);
+    expect(groups).toHaveLength(1);
+    expect(groups[0]!.count).toBe(3);
+    expect(groups[0]!.item.detail).toBe('b.ts'); // latest detail wins so the streaming row updates in place
+  });
+
+  it('does NOT merge across a different tool (grouping is strictly consecutive + same name)', () => {
+    const groups = groupToolItems([
+      { name: 'read_file', detail: 'a.ts' },
+      { name: 'list_dir', detail: 'src' },
+      { name: 'read_file', detail: 'b.ts' },
+    ]);
+    expect(groups.map((g) => [g.item.name, g.count])).toEqual([
+      ['read_file', 1], ['list_dir', 1], ['read_file', 1],
+    ]);
+  });
+
+  it('keeps an item carrying a diff / output / sub / command as its own group (count 1)', () => {
+    const groups = groupToolItems([
+      { name: 'read_file', detail: 'a.ts' },
+      { name: 'read_file', detail: 'b.ts', output: { title: 't', kind: 'result', text: 'x' } },
+      { name: 'read_file', detail: 'c.ts' },
+      { name: 'run_command', command: 'ls' }, // a shell command row is meaningful per call → never folded
+      { name: 'run_command', command: 'pwd' },
+      { name: 'edit_file', detail: 'd.ts', diff: '+ 1 x' },
+    ]);
+    expect(groups.map((g) => g.count)).toEqual([1, 1, 1, 1, 1, 1]);
+    // The read WITH output breaks the run, so the read before and after it don't merge either.
+    expect(groups.map((g) => g.item.name)).toEqual(['read_file', 'read_file', 'read_file', 'run_command', 'run_command', 'edit_file']);
+  });
+});
+
+describe('transcript fromHistory: compaction divider', () => {
+  it('renders a compaction row as a divider turn, keeping the tail that follows', () => {
+    const view = fromHistory([
+      { role: 'compaction', text: '' },
+      { role: 'user', text: 'recent q' },
+      { role: 'assistant', text: 'recent a' },
+    ]);
+    expect(view.turns[0]).toEqual({ role: 'divider' });
+    expect(view.turns[1]).toEqual({ role: 'you', text: 'recent q' });
+    expect(view.turns[2]).toMatchObject({ role: 'elowen', streaming: false });
+  });
+});
 
 describe('transcript fold: session (idle rollover)', () => {
-  it('restarts the transcript at the turn that triggered the rollover', () => {
-    // Old conversation on screen, then the user sends (optimistic push + streaming turn, the CLI shape).
+  it('resets the transcript to the fresh conversation, then rebuilds from the daemon stream', () => {
+    // The prior conversation is on screen (no optimistic local turn — the daemon is the echo authority).
     let view: ChatView = {
       turns: [
         { role: 'you', text: 'yesterday' },
@@ -12,25 +64,43 @@ describe('transcript fold: session (idle rollover)', () => {
       ],
       thinking: false,
     };
-    view = beginAssistant(pushUser(view, 'today'));
+    // The rollover `session` event clears the transcript — everything belonged to the PREVIOUS conversation.
     view = reduce(view, { type: 'session', sessionId: 'brain-1-x' });
+    expect(view.turns).toEqual([]);
+    // The daemon then re-emits the triggering message as a `user` event and streams its reply into the
+    // fresh conversation.
+    view = reduce(view, { type: 'user', text: 'today' });
+    view = reduce(view, { type: 'text', delta: 'fresh answer' });
     expect(view.turns).toEqual([
       { role: 'you', text: 'today' },
-      { role: 'elowen', segments: [], streaming: true },
+      { role: 'elowen', segments: [{ kind: 'text', text: 'fresh answer' }], streaming: true },
     ]);
-    expect(view.thinking).toBe(true); // the turn keeps streaming in the fresh session
-    // The reply then folds into the kept streaming turn as usual.
-    view = reduce(view, { type: 'text', delta: 'fresh answer' });
-    expect(view.turns).toHaveLength(2);
   });
 
-  it('clears everything when no user turn is present (defensive)', () => {
+  it('resets to empty regardless of the prior content', () => {
     const view = reduce({ turns: [{ role: 'elowen', segments: [{ kind: 'text', text: 'x' }], streaming: false }], thinking: false }, { type: 'session', sessionId: 's' });
     expect(view.turns).toEqual([]);
   });
 
   it('is a no-op on an empty view', () => {
     expect(reduce(emptyView(), { type: 'session', sessionId: 's' }).turns).toEqual([]);
+  });
+});
+
+describe('transcript fold: user (queued message delivery)', () => {
+  it('appends a you-turn after the previous (finalized) assistant reply', () => {
+    const before: ChatView = {
+      turns: [
+        { role: 'you', text: 'first' },
+        { role: 'elowen', segments: [{ kind: 'text', text: 'reply to first' }], streaming: false },
+      ],
+      thinking: false,
+    };
+    const after = reduce(before, { type: 'user', text: 'second\n\nthird' });
+    expect(after.turns.at(-1)).toEqual({ role: 'you', text: 'second\n\nthird' });
+    // A streamed reply that follows opens its own fresh assistant turn (the last turn is a 'you').
+    const withReply = reduce(after, { type: 'text', delta: 'combined answer' });
+    expect(withReply.turns.at(-1)).toEqual({ role: 'elowen', segments: [{ kind: 'text', text: 'combined answer' }], streaming: true });
   });
 });
 

@@ -27,6 +27,29 @@ describe('retry notices (reconnect line above the input)', () => {
   });
 });
 
+describe('compaction status notice (single source of truth, no false success)', () => {
+  it('compaction_start opens the one status line', () => {
+    expect(ev({ type: 'compaction_start', reason: 'manual' }))
+      .toEqual({ type: 'notice', kind: 'compaction', message: 'compacting context…' });
+  });
+
+  it('a REAL compaction (result present, not aborted) closes it with "context compacted"', () => {
+    expect(ev({ type: 'compaction_end', reason: 'manual', aborted: false, result: { summary: 's', estimatedTokensAfter: 10 } }))
+      .toEqual({ type: 'notice', kind: 'compaction', message: 'context compacted', done: true });
+  });
+
+  it('a no-op compaction (no result) clears the line WITHOUT a false "context compacted"', () => {
+    // PI emits compaction_start then a resultless compaction_end for a too-small/already-compacted session.
+    expect(ev({ type: 'compaction_end', reason: 'manual', aborted: false, result: undefined }))
+      .toEqual({ type: 'notice', kind: 'compaction', message: '', done: true });
+  });
+
+  it('an aborted/cancelled compaction also clears the line without claiming success', () => {
+    expect(ev({ type: 'compaction_end', reason: 'manual', aborted: true, result: { summary: 's' } }))
+      .toEqual({ type: 'notice', kind: 'compaction', message: '', done: true });
+  });
+});
+
 describe('tool_execution_end → diff event (hook-annotated edits)', () => {
   it('a plain diff result maps to a diff event without an output view', () => {
     expect(ev({ type: 'tool_execution_end', toolName: 'edit_file', toolCallId: 'c1', result: { content: [], details: { diff: '+    1 x' } } }))

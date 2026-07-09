@@ -58,6 +58,9 @@ export const SLASH_COMMANDS: readonly SlashCommandDef[] = [
   // adminOnly: the toggle flips a daemon-wide LspManager singleton (spawns/kills servers for everyone),
   // so it must be gated to operators — a non-admin must not disable diagnostics for other users.
   { name: 'lsp', description: 'Language diagnostics (LSP) — status, servers and on/off', kind: 'action', surfaces: ['cli'], adminOnly: true },
+  // adminOnly: the toggle flips the daemon-wide `autopilot.tddMode` config (affects every worker the
+  // autopilot spawns), so it must be gated to operators — exactly like `/lsp`.
+  { name: 'tdd', description: 'TDD mission mode — autopilot workers write a failing test first ("on"/"off" or toggle)', kind: 'action', surfaces: ['cli'], adminOnly: true },
   { name: 'restart', description: 'Restart the Elowen daemon', kind: 'action', adminOnly: true },
   { name: 'help', description: 'Show the available commands', kind: 'info' },
   // CLI-only conversation management (the other surfaces manage conversations through their own UI).

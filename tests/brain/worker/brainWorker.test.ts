@@ -5,6 +5,8 @@ import { BrainStore } from '../../../src/store/brainStore.js';
 import { TaskStore } from '../../../src/store/taskStore.js';
 import { EventBus } from '../../../src/api/sse.js';
 import { currentWorkDir } from '../../../src/plugins/policyContext.js';
+import { UserPromptStore } from '../../../src/store/userPromptStore.js';
+import { PromptService } from '../../../src/prompts/promptService.js';
 
 /** A controllable fake PI session: prompt() blocks until the test releases it, so we can order
  *  tool calls / agent settlement deterministically. Each prompt records the turn's bound workDir so
@@ -23,7 +25,7 @@ function fakeSession() {
   return { session, workDirs, release: () => releases.shift()?.() };
 }
 
-function setup(opts: { idleMs?: number } = {}) {
+function setup(opts: { idleMs?: number; prompts?: unknown } = {}) {
   const db = openDb(':memory:');
   db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/repo')").run();
   const tasks = new TaskStore(db);
@@ -35,6 +37,7 @@ function setup(opts: { idleMs?: number } = {}) {
   const { session, workDirs, release } = fakeSession();
   const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ ok: true }), { status: 200 }));
   const recorded: unknown[] = [];
+  const systemPrompts: string[] = [];
   let now = 1_000_000;
   const svc = new BrainWorkerService({
     store: new BrainStore(db),
@@ -46,10 +49,11 @@ function setup(opts: { idleMs?: number } = {}) {
     idleMs: opts.idleMs,
     createSession: vi.fn(async () => ({ session })) as never,
     fetchImpl: fetchImpl as never,
-    resourceLoaderFactory: () => undefined,
+    prompts: opts.prompts as never,
+    resourceLoaderFactory: (o) => { systemPrompts.push(o.systemPrompt); return undefined; },
   });
   const launchInput = { projectId: 1, projectPath: '/repo', taskId: 'T-1', agentName: 'a1', spec: { program: 'elowen', model: 'relay/kimi' } };
-  return { svc, tasks, session, workDirs, release, fetchImpl, recorded, published, launchInput, advance: (ms: number) => { now += ms; }, db };
+  return { svc, tasks, session, workDirs, release, fetchImpl, recorded, systemPrompts, published, launchInput, advance: (ms: number) => { now += ms; }, db };
 }
 
 const settle = () => new Promise((r) => setTimeout(r, 0));
@@ -146,6 +150,36 @@ describe('BrainWorkerService', () => {
     });
     await svc2.launch(first.launchInput);
     expect(String(s2.prompt.mock.calls[0][0])).toContain('interrupted and relaunched');
+  });
+
+  it('injects the TDD directive into the worker-brain system prompt when tddMode is on', async () => {
+    const { svc, launchInput, systemPrompts } = setup();
+    await svc.launch({ ...launchInput, tddMode: true });
+    expect(systemPrompts).toHaveLength(1);
+    expect(systemPrompts[0]).toContain('Test-Driven Development');
+  });
+
+  it('omits the TDD directive from the worker-brain system prompt when tddMode is off/unset', async () => {
+    const { svc, launchInput, systemPrompts } = setup();
+    await svc.launch(launchInput);
+    expect(systemPrompts).toHaveLength(1);
+    expect(systemPrompts[0]).not.toContain('Test-Driven Development');
+    expect(systemPrompts[0]).not.toContain('{{tddDirective}}'); // no placeholder in the shipped template
+  });
+
+  it('appends the TDD directive even when the owner saved a wholesale worker-brain override', async () => {
+    // Reproduces the reported bug at the embedded-worker seam: an override edited before TDD mode
+    // existed omits any {{tddDirective}} placeholder, yet TDD mode must still reach the worker.
+    const overrideDb = openDb(':memory:');
+    const store = new UserPromptStore(overrideDb);
+    store.set(0, 'worker-brain', 'You are agent {{agentName}} on {{taskId}}. Do the task and close it.');
+    const prompts = new PromptService(store);
+    const { svc, launchInput, systemPrompts } = setup({ prompts });
+    await svc.launch({ ...launchInput, ownerId: 0, tddMode: true });
+    expect(systemPrompts).toHaveLength(1);
+    expect(systemPrompts[0]).not.toContain('{{tddDirective}}'); // override has no placeholder
+    expect(systemPrompts[0]).toContain('Do the task and close it.'); // override text is in force
+    expect(systemPrompts[0]).toContain('Test-Driven Development'); // directive appended at the seam anyway
   });
 
   it('abort disposes the live session without touching the task row', async () => {

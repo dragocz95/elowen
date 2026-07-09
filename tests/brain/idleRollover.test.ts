@@ -30,4 +30,26 @@ describe('rolloverDue', () => {
   it('an unparseable timestamp is treated as no history (no rollover) rather than an instant cut', () => {
     expect(rolloverDue({ lastMessageAt: 'not-a-date', interactedAt: undefined, now })).toBe(false);
   });
+
+  it('honors an explicit shorter thresholdMs (cron surface) — due at 6 min when the cutoff is 5', () => {
+    const fiveMin = 5 * 60 * 1000;
+    expect(rolloverDue({ lastMessageAt: sqliteTs(now, 6 * 60 * 1000), interactedAt: undefined, now }, fiveMin)).toBe(true);
+    // ...but the same age is NOT due under the 30-min default (proving the param, not a global change).
+    expect(rolloverDue({ lastMessageAt: sqliteTs(now, 6 * 60 * 1000), interactedAt: undefined, now })).toBe(false);
+  });
+
+  it('an explicit thresholdMs still respects the within-cutoff boundary', () => {
+    const fiveMin = 5 * 60 * 1000;
+    expect(rolloverDue({ lastMessageAt: sqliteTs(now, fiveMin - 1000), interactedAt: undefined, now }, fiveMin)).toBe(false);
+  });
+
+  it('an Infinity threshold never rolls over — the "rollover disabled" knob (cron sessionIdleMs=0)', () => {
+    // Even an ancient conversation stays put, so a slow job can keep its context across runs.
+    expect(rolloverDue({ lastMessageAt: sqliteTs(now, 1000 * SESSION_IDLE_ROLLOVER_MS), interactedAt: undefined, now }, Infinity)).toBe(false);
+  });
+
+  it('defaults to SESSION_IDLE_ROLLOVER_MS when thresholdMs is omitted', () => {
+    expect(rolloverDue({ lastMessageAt: sqliteTs(now, SESSION_IDLE_ROLLOVER_MS + 1000), interactedAt: undefined, now })).toBe(true);
+    expect(rolloverDue({ lastMessageAt: sqliteTs(now, SESSION_IDLE_ROLLOVER_MS - 1000), interactedAt: undefined, now })).toBe(false);
+  });
 });

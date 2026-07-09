@@ -30,6 +30,11 @@ export type BrainEvent =
   /** A transient runtime notice (rate-limit retry, context compaction) — so a stalled turn explains
    *  itself instead of just hanging on the spinner. `done` marks the end of that phase. */
   | { type: 'notice'; kind: 'retry' | 'compaction'; message: string; done?: boolean }
+  /** A context compaction just PERSISTED: the daemon replaced the session's stored rows with PI's
+   *  shrunk context (the summary + kept tail), so attached clients should refetch history and collapse
+   *  their transcript to a 'context compacted' divider + that tail. Distinct from the compaction
+   *  `notice` (the one-line status): this event drives the transcript REBUILD, the notice the status. */
+  | { type: 'compacted' }
   /** The agent is asking the user to pick from predefined options and has PARKED the turn until they
    *  answer (see `ask_user_question` plugin + ElicitationRegistry). Synthetic — not derived from a PI
    *  event; the elicitor emits it straight into `listeners`. A client renders the questions as
@@ -54,6 +59,20 @@ export type BrainEvent =
    *  lets a client drill into the child's transcript (`GET /brain/messages?session=…`). Synthetic —
    *  fanned out to the PARENT conversation's listeners; ignoring it is always safe. */
   | { type: 'subagent'; id: string; sessionId: string; status: 'running' | 'done' | 'error'; task: string; detail?: string; tools: number; tokens?: number; seconds: number }
+  /** The pending message queue for this session — a FULL snapshot (an empty array clears it). Synthetic,
+   *  like `card`/`ask`: a message a user sends while a turn is already streaming parks in the daemon's
+   *  per-session SessionQueue instead of steering the running turn, and the parked batch is combined into
+   *  ONE follow-up user message when the turn ends. Emitted straight into `listeners` on every queue
+   *  mutation; a client renders the items as removable pending chips and boot-seeds from status().queued.
+   *  Safe to ignore (the turn still streams). */
+  | { type: 'queue'; items: { id: string; text: string }[] }
+  /** A user message the DAEMON is rendering as the 'you' turn — the single authority for user echoes.
+   *  Emitted right before EVERY real user turn runs: a normal (idle) send AND a drained queued delivery
+   *  alike, so clients never echo optimistically (no client-side busy/isStreaming guess that could drop or
+   *  duplicate the turn). `text` is the client's clean rendering when it supplied one (before
+   *  @mention/prompt expansion), else the persisted model-facing text. Internal goal kickoff/continuation
+   *  turns are NOT user messages and emit nothing. Safe to ignore (the streamed reply still arrives). */
+  | { type: 'user'; text: string }
   | { type: 'idle'; usage?: BrainUsage; model?: string }
   | { type: 'error'; message: string };
 
@@ -146,6 +165,9 @@ export function toBrainEvent(e: AgentSessionEvent): BrainEvent | null {
     toolCallId?: string;
     assistantMessageEvent?: { type?: string; delta?: string };
     attempt?: number; maxAttempts?: number; errorMessage?: string; success?: boolean;
+    // compaction_end carries its outcome: `result` is the CompactionResult on success, undefined on a
+    // no-op/failure; `aborted` marks a cancelled run. Both let the status line avoid a false success.
+    aborted?: boolean;
   };
   if (anyE.type === 'message_update') {
     const ev = anyE.assistantMessageEvent;
@@ -161,7 +183,14 @@ export function toBrainEvent(e: AgentSessionEvent): BrainEvent | null {
   }
   if (anyE.type === 'auto_retry_end') return { type: 'notice', kind: 'retry', message: anyE.success ? 'reconnected' : 'reconnect failed', done: true };
   if (anyE.type === 'compaction_start') return { type: 'notice', kind: 'compaction', message: 'compacting context…' };
-  if (anyE.type === 'compaction_end') return { type: 'notice', kind: 'compaction', message: 'context compacted', done: true };
+  if (anyE.type === 'compaction_end') {
+    // Only a REAL compaction (a CompactionResult present, not aborted) says "context compacted"; a no-op
+    // (session too small / already compacted) or a failed/cancelled run just clears the status line — PI
+    // emits compaction_start then a resultless compaction_end for those, so an unconditional success text
+    // would lie. An empty message with `done` clears the notice without claiming anything happened.
+    const ok = anyE.result != null && anyE.aborted !== true;
+    return { type: 'notice', kind: 'compaction', message: ok ? 'context compacted' : '', done: true };
+  }
   // Emit the tool name ONCE, when it starts — never the raw streamed output (_update noise).
   if (anyE.type === 'tool_execution_start' && typeof anyE.toolName === 'string') {
     // The start event carries the arguments (the end event does not), so the verbatim shell command is

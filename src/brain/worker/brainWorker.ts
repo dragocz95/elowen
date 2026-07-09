@@ -17,6 +17,7 @@ import { runWithPolicy } from '../../plugins/policyContext.js';
 import type { PluginRegistryProvider } from '../../plugins/pluginsProvider.js';
 import { callElowenApi } from '../../shared/apiClient.js';
 import { renderPromptFor } from '../../prompts/index.js';
+import { tddDirective } from '../../prompts/tdd.js';
 import type { PromptService } from '../../prompts/promptService.js';
 import type { TokenUsage } from '../../integrations/usage/types.js';
 import { logger } from '../../shared/logger.js';
@@ -60,6 +61,10 @@ export interface BrainWorkerLaunchInput {
   taskDescription?: string;
   resumeNote?: string;
   ownerId?: number | null;
+  /** TDD mission mode: when on, the Test-Driven-Development directive is appended to the rendered
+   *  worker-brain system prompt (outside the template, so a saved override can't drop it). Resolved
+   *  centrally by the spawn layer. */
+  tddMode?: boolean;
 }
 
 interface LiveWorker {
@@ -185,7 +190,11 @@ export class BrainWorkerService {
       detailsPart: input.taskDescription?.trim() ? `\n\nDetails:\n${input.taskDescription.trim()}` : '',
       resumePart: input.resumeNote?.trim() ? `\n\nNew input for this run — address it:\n${input.resumeNote.trim()}` : '',
     };
-    const systemPrompt = renderPromptFor(this.d.prompts, 'worker-brain', vars, input.ownerId);
+    // Inject the TDD directive AFTER the template renders, not through a `{{tddDirective}}` placeholder:
+    // a user's saved wholesale override (edited before TDD mode existed) carries no such placeholder, so
+    // riding on it would silently drop the directive. Appending here makes the placeholder unnecessary —
+    // TDD mode reaches the worker regardless of the override. Off state appends '' (no-op).
+    const systemPrompt = renderPromptFor(this.d.prompts, 'worker-brain', vars, input.ownerId) + tddDirective(input.tddMode ?? false);
     // The shared assembly (store row + rehydrate + resource loader + PI session + persistence
     // subscription) — identical to the chat brain's, so the two can never drift.
     const { session } = await this.factory.create({

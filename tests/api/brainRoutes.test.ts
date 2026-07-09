@@ -14,13 +14,22 @@ import { UserProjectStore } from '../../src/store/userProjectStore.js';
 function fakeBrain() {
   const started = new Set<number>();
   const sends: { id: number; text: string; mode?: string }[] = [];
+  const queues = new Map<number, { id: string; text: string }[]>();
   return {
     sends,
-    status: (id: number) => ({ running: started.has(id), sessionId: started.has(id) ? `brain-${id}` : null, model: 'm' }),
+    /** Test helper: seed a user's pending mid-turn queue. */
+    __enqueue: (id: number, item: { id: string; text: string }) => { queues.set(id, [...(queues.get(id) ?? []), item]); },
+    status: (id: number) => ({ running: started.has(id), sessionId: started.has(id) ? `brain-${id}` : null, model: 'm', queued: queues.get(id) ?? [] }),
     start: async (id: number) => { started.add(id); return { sessionId: `brain-${id}` }; },
     send: async (id: number, text: string, _images?: unknown, mode?: string) => {
       if (!started.has(id)) throw new Error('brain not started for user');
       sends.push({ id, text, mode });
+    },
+    queueList: (id: number) => queues.get(id) ?? [],
+    queueRemove: (id: number, qid: string) => {
+      const list = queues.get(id) ?? [];
+      queues.set(id, list.filter((q) => q.id !== qid));
+      return (queues.get(id)!.length) < list.length;
     },
     subscribe: () => () => {},
     stop: (id: number) => { started.delete(id); },
@@ -49,6 +58,7 @@ function setup() {
 }
 const auth = (t: string) => ({ headers: { authorization: `Bearer ${t}` } });
 const post = (t: string, body: unknown) => ({ method: 'POST', headers: { authorization: `Bearer ${t}`, 'content-type': 'application/json' }, body: JSON.stringify(body) });
+const del = (t: string) => ({ method: 'DELETE', headers: { authorization: `Bearer ${t}` } });
 
 describe('brain routes', () => {
   it('status → start → send happy path', async () => {
@@ -93,6 +103,26 @@ describe('brain routes', () => {
     expect((await app.request('/brain/send', post(agentTok, { text: 'x' }))).status).toBe(403);
     expect((await app.request('/brain/messages', auth(agentTok))).status).toBe(403);
     expect((await app.request('/brain/search?q=hi', auth(agentTok))).status).toBe(403);
+    expect((await app.request('/brain/queue', auth(agentTok))).status).toBe(403);
+    expect((await app.request('/brain/queue/x', del(agentTok))).status).toBe(403);
+  });
+
+  it('GET /brain/queue lists the caller\'s pending queue; DELETE removes one (unknown id → removed:false)', async () => {
+    const { app, amyTok, brain } = setup();
+    await app.request('/brain/start', post(amyTok, {}));
+    brain.__enqueue(2, { id: 'q1', text: 'first' });
+    brain.__enqueue(2, { id: 'q2', text: 'second' });
+    expect(await (await app.request('/brain/queue', auth(amyTok))).json())
+      .toEqual([{ id: 'q1', text: 'first' }, { id: 'q2', text: 'second' }]);
+    const removed = await app.request('/brain/queue/q1', del(amyTok));
+    expect(removed.status).toBe(200);
+    expect(await removed.json()).toEqual({ removed: true });
+    expect(await (await app.request('/brain/queue', auth(amyTok))).json()).toEqual([{ id: 'q2', text: 'second' }]);
+    // An unknown id is a tolerated no-op, still 200.
+    expect(await (await app.request('/brain/queue/nope', del(amyTok))).json()).toEqual({ removed: false });
+    // The queue also seeds via status().queued for a booting client.
+    expect((await (await app.request('/brain/status', auth(amyTok))).json() as { queued: unknown }).queued)
+      .toEqual([{ id: 'q2', text: 'second' }]);
   });
 
   it('search scopes to the caller and passes q through; short q yields []', async () => {

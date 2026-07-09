@@ -10,11 +10,13 @@ import { BrainSessionFactory } from './session/factory.js';
 import { IdentityResolver } from './identity.js';
 import { LiveSessionRegistry } from './session/liveRegistry.js';
 import type { LiveBrain } from './session/liveBrain.js';
+import { SessionQueue } from './session/sessionQueue.js';
 import { ChannelSessionService } from './channels.js';
 import type { ChannelSendOpts } from './channels.js';
 import { PlatformOrchestrator } from './platforms.js';
 import type { BrainMessageView } from './messageView.js';
 import { runCompaction } from './events.js';
+import { persistCompaction } from './persistence.js';
 import type { AskAnswer, AskQuestion, BrainCard, BrainEvent, BrainUsage, CompactResult } from './events.js';
 import { isNonUserSession } from './sessionId.js';
 import { lastAssistantText } from './goal.js';
@@ -76,6 +78,12 @@ export class BrainService {
   /** Live display cards (ctx.emitCard) per conversation — seeded to clients via status, kept current via
    *  the `card` event. Shared by owner chat and channel sessions. */
   private cards = new CardRegistry();
+  /** Per-session mid-turn message queue (single source of truth for CLI/web/platforms). A message sent
+   *  while a turn streams parks here and is combined into the next turn on flush; every mutation fans a
+   *  full-snapshot `queue` event to that session's listeners. DURABLE (store-backed) so a queued message
+   *  survives a daemon restart. Assigned in the constructor (needs `d.store`), before the sub-services
+   *  that consume it are wired. */
+  private sessionQueue: SessionQueue;
   /** Live client streams + long-lived session taps → the session each is attached to. */
   private attachments = new ClientAttachments();
   /** Effective tool permissions per turn + the approval channel + the session YOLO override. */
@@ -91,6 +99,13 @@ export class BrainService {
   /** Read-only views: status, session lists, history, search, readiness. */
   private statusView: BrainStatusService;
   constructor(private d: BrainDeps) {
+    // The durable mid-turn queue mirrors into the brain store and fans a `queue` snapshot to the session's
+    // listeners on every mutation. Built first — turnRunner/statusView below take it as a dep.
+    this.sessionQueue = new SessionQueue(d.store, (sessionId, items) => {
+      const live = this.sessions.get(sessionId);
+      if (!live) return;
+      for (const l of live.listeners) l({ type: 'queue', items });
+    });
     this.factory = new BrainSessionFactory({ store: d.store, createSession: d.createSession, resourceLoaderFactory: d.resourceLoaderFactory });
     this.identity = new IdentityResolver({ platformOwner: d.platformOwner, resolvePlatformUser: d.resolvePlatformUser, users: d.users });
     this.titler = new ConversationTitler({ store: d.store, inference: d.inference ?? (() => null), logger: logger('conversation-titler') });
@@ -156,7 +171,7 @@ export class BrainService {
     });
     this.turnRunner = new BrainTurnRunner({
       store: d.store, sessions: this.sessions,
-      lifecycle: this.lifecycle, goals: this.goals, permissions: this.permissionSvc,
+      lifecycle: this.lifecycle, goals: this.goals, sessionQueue: this.sessionQueue, permissions: this.permissionSvc,
       elicitation: this.elicitation, cards: this.cards, identity: this.identity,
       titler: this.titler, curator: this.curator,
       get prompts() { return d.prompts; },
@@ -169,7 +184,7 @@ export class BrainService {
     });
     this.statusView = new BrainStatusService({
       store: d.store, sessions: this.sessions, attachments: this.attachments,
-      elicitation: this.elicitation, cards: this.cards,
+      elicitation: this.elicitation, cards: this.cards, sessionQueue: this.sessionQueue,
       lifecycle: this.lifecycle, permissions: this.permissionSvc,
       get config() { return d.config; },
       get authStorage() { return d.authStorage; },
@@ -253,7 +268,11 @@ export class BrainService {
       const live = this.sessions.get(sessionId);
       if (!live) throw new Error('brain not started');
       live.interactedAt = Date.now(); // a manual compact is a deliberate touch — don't idle-roll it over
-      return runCompaction(live.session);
+      const result = await runCompaction(live.session);
+      // Only a real compaction touches the store + clients: mirror PI's shrunk context into SQLite and
+      // fire the `compacted` event so attached surfaces collapse their transcript. A no-op leaves both be.
+      if (result.compacted) persistCompaction(this.d.store, live);
+      return result;
     });
   }
 
@@ -264,6 +283,9 @@ export class BrainService {
     const b = session ? this.sessions.get(this.lifecycle.ownedUserSession(userId, session)) : this.lifecycle.activeLive(userId);
     if (!b) throw new Error('brain not started');
     this.goals.cancelGoalContinuation(b.sessionId);
+    // Esc/stop = the user bails: drop every mid-turn queued message (they were parked behind THIS turn).
+    // Also lets the send()'s flush loop terminate — its next drain returns empty once the prompt settles.
+    this.sessionQueue.clear(b.sessionId);
     // A parked ask_user_question must fail cleanly when the turn is aborted, else the tool Promise
     // (and the awaited prompt()) would hang forever. Reject before aborting the PI session.
     if (b.sessionId) this.elicitation.cancelForSession(b.sessionId, 'aborted');
@@ -317,8 +339,22 @@ export class BrainService {
 
   /** Chat-client status — of the active conversation, or of the caller's explicit `session` (a bound
    *  CLI) — see BrainStatusService.status. */
-  status(userId: number, session?: string): { running: boolean; sessionId: string | null; title: string; model: string; usage: BrainUsage | null; thinkingLevel: string; thinkingLevels: string[]; pendingAsk: { id: string; questions: AskQuestion[]; kind?: 'approval' } | null; cards: BrainCard[]; yolo: boolean } {
+  status(userId: number, session?: string): { running: boolean; sessionId: string | null; title: string; model: string; usage: BrainUsage | null; thinkingLevel: string; thinkingLevels: string[]; pendingAsk: { id: string; questions: AskQuestion[]; kind?: 'approval' } | null; cards: BrainCard[]; queued: { id: string; text: string }[]; yolo: boolean } {
     return this.statusView.status(userId, session);
+  }
+
+  /** The caller's pending mid-turn message queue (full snapshot) — of the active conversation, or of the
+   *  caller's explicit `session` (a bound CLI). Empty when nothing is queued or no conversation is live. */
+  queueList(userId: number, session?: string): { id: string; text: string }[] {
+    const sessionId = session ? this.lifecycle.ownedUserSession(userId, session) : this.sessions.activeIdFor(userId);
+    return sessionId ? this.sessionQueue.list(sessionId) : [];
+  }
+
+  /** Remove one pending queued message by id (the CLI ctrl+x / the web × button). Returns whether it
+   *  matched — an unknown/already-delivered id is a tolerated no-op. */
+  queueRemove(userId: number, id: string, session?: string): boolean {
+    const sessionId = session ? this.lifecycle.ownedUserSession(userId, session) : this.sessions.activeIdFor(userId);
+    return sessionId ? this.sessionQueue.remove(sessionId, id) : false;
   }
 
   /** Flip the SESSION-scoped YOLO override (the CLI `/yolo` command) — see PermissionApprovalService.
@@ -337,6 +373,7 @@ export class BrainService {
     if (!row || row.user_id !== userId || isNonUserSession(sessionId)) throw new Error('unknown session');
     this.elicitation.cancelForSession(sessionId, 'conversation deleted'); // release a parked turn before dropping its session
     this.goals.cancelGoalContinuation(sessionId);
+    this.sessionQueue.clear(sessionId); // drop any pending mid-turn queue with the conversation
     this.cards.clearSession(sessionId);
     this.sessions.dispose(sessionId);
     if (this.sessions.activeIdFor(userId) === sessionId) this.sessions.clearActive(userId);
@@ -441,9 +478,11 @@ export class BrainService {
     }, text);
   }
 
-  /** Run one user turn — see BrainTurnRunner.send. */
-  async send(userId: number, text: string, images?: { data: string; mimeType: string }[], mode: 'build' | 'plan' = 'build', internal?: { goalKickoff?: boolean; goalContinue?: boolean }, clientCwd?: string, session?: string): Promise<void> {
-    return this.turnRunner.send(userId, text, images, mode, internal, clientCwd, session);
+  /** Run one user turn — see BrainTurnRunner.send. `display` is the client's clean rendering of the
+   *  message (before @mention/prompt expansion) that the authoritative `user` echo shows; absent → the
+   *  model-facing text is echoed. */
+  async send(userId: number, text: string, images?: { data: string; mimeType: string }[], mode: 'build' | 'plan' = 'build', internal?: { goalKickoff?: boolean; goalContinue?: boolean }, clientCwd?: string, session?: string, display?: string): Promise<void> {
+    return this.turnRunner.send(userId, text, images, mode, internal, clientCwd, session, display);
   }
 
   /** Restart a user's live session so changed settings apply — see ConversationLifecycle.restart. */

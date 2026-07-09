@@ -10,6 +10,7 @@ import type { LiveSessionRegistry } from '../session/liveRegistry.js';
 import type { LiveBrain } from '../session/liveBrain.js';
 import type { ElicitationRegistry } from '../elicitation.js';
 import type { CardRegistry } from '../cards.js';
+import type { SessionQueue } from '../session/sessionQueue.js';
 import { isNonUserSession } from '../sessionId.js';
 import type { BrainDeps } from '../brainDeps.js';
 import type { ClientAttachments } from './attachments.js';
@@ -23,6 +24,8 @@ interface StatusServiceDeps {
   attachments: ClientAttachments;
   elicitation: ElicitationRegistry;
   cards: CardRegistry;
+  /** Per-session mid-turn message queue — status seeds a booting/reconnecting client's queue from it. */
+  sessionQueue: SessionQueue;
   lifecycle: ConversationLifecycle;
   permissions: PermissionApprovalService;
   config: BrainDeps['config'];
@@ -103,7 +106,7 @@ export class BrainStatusService {
 
   /** Chat-client status — of the active conversation, or of the caller's explicit `session` (a bound
    *  CLI), so a client bound elsewhere never renders another conversation's model/title/pending ask. */
-  status(userId: number, session?: string): { running: boolean; sessionId: string | null; title: string; model: string; usage: BrainUsage | null; thinkingLevel: string; thinkingLevels: string[]; pendingAsk: { id: string; questions: AskQuestion[]; kind?: 'approval' } | null; cards: BrainCard[]; yolo: boolean } {
+  status(userId: number, session?: string): { running: boolean; sessionId: string | null; title: string; model: string; usage: BrainUsage | null; thinkingLevel: string; thinkingLevels: string[]; pendingAsk: { id: string; questions: AskQuestion[]; kind?: 'approval' } | null; cards: BrainCard[]; queued: { id: string; text: string }[]; yolo: boolean } {
     const explicit = session ? this.d.lifecycle.ownedUserSession(userId, session) : undefined;
     const b = explicit ? this.d.sessions.get(explicit) : this.d.lifecycle.activeLive(userId);
     const sess = b?.session as { thinkingLevel?: string; supportsThinking?: () => boolean; getAvailableThinkingLevels?: () => string[] } | undefined;
@@ -121,6 +124,8 @@ export class BrainStatusService {
       pendingAsk: b ? this.d.elicitation.pendingForSession(b.sessionId) : null,
       // The active conversation's live display cards (ctx.emitCard) so a reconnecting client restores them.
       cards: b ? this.d.cards.forSession(b.sessionId) : [],
+      // The pending mid-turn message queue so a reconnecting/booting client restores its queued chips.
+      queued: b ? this.d.sessionQueue.list(b.sessionId) : [],
       // Effective YOLO for the active conversation (session override, else the persisted default) —
       // drives the CLI's warning-toned indicator.
       yolo: this.d.permissions.effectiveYolo(userId, b),

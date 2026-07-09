@@ -103,4 +103,14 @@ describe('slash command registry', () => {
     expect(commandsFor('cli', false).some((c) => c.name === 'lsp')).toBe(false);
     expect(commandsFor('cli', true).some((c) => c.name === 'lsp')).toBe(true);
   });
+
+  it('gates /tdd behind adminOnly and scopes it to the CLI (daemon-wide config toggle)', () => {
+    const tdd = findCommand('tdd')!;
+    expect(tdd.adminOnly).toBe(true);
+    expect(tdd.kind).toBe('action');
+    expect(commandsFor('cli', true).some((c) => c.name === 'tdd')).toBe(true);
+    expect(commandsFor('cli', false).some((c) => c.name === 'tdd')).toBe(false);
+    expect(commandsFor('web', true).some((c) => c.name === 'tdd')).toBe(false);
+    expect(commandsFor('discord', true).some((c) => c.name === 'tdd')).toBe(false);
+  });
 });

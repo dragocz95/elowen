@@ -311,11 +311,33 @@ export function registerBrainRoutes(app: ElowenApp, ctx: RouteContext): void {
   app.post('/brain/send', async c => {
     if (!d.brain) return c.json({ error: 'brain unavailable' }, 503);
     if (forbidden(c)) return c.json({ error: 'forbidden' }, 403);
-    const { text, images, mode, cwd, session } = await parseBody(c, brainSendSchema);
+    const { text, images, mode, cwd, session, display } = await parseBody(c, brainSendSchema);
     // `session` binds the turn to the caller's own explicit conversation (ownership-checked in send();
-    // channel/task sessions rejected). Absent → the active conversation, exactly as before.
-    try { await d.brain.send(c.get('user').id, text, images, mode, undefined, cwd, session); return c.json({ ok: true }); }
+    // channel/task sessions rejected). Absent → the active conversation, exactly as before. `display` is
+    // the clean text the daemon echoes back as the authoritative `user` turn (the client no longer echoes
+    // optimistically); absent → the model-facing text is shown.
+    try { await d.brain.send(c.get('user').id, text, images, mode, undefined, cwd, session, display); return c.json({ ok: true }); }
     catch (e) { return c.json({ error: (e as Error).message }, 409); } // not started yet / unknown session
+  });
+
+  // The caller's pending mid-turn message queue (messages sent while a turn streams, parked until it
+  // ends). `session` scopes it to a bound CLI's conversation; absent → the active one. Full snapshot
+  // (id + text) — the same shape the `queue` stream event carries, so clients seed and reconcile alike.
+  app.get('/brain/queue', c => {
+    if (!d.brain) return c.json([]);
+    if (forbidden(c)) return c.json({ error: 'forbidden' }, 403);
+    try { return c.json(d.brain.queueList(c.get('user').id, c.req.query('session'))); }
+    catch { return c.json({ error: 'unknown session' }, 404); }
+  });
+
+  // Remove ONE pending queued message by id (the CLI's queue-remove keybind / the web × button). Always
+  // 200 with { removed } — an unknown/already-delivered id is a tolerated no-op (removed:false), never an
+  // error. The reduced snapshot fans out to every attached client via the `queue` stream event.
+  app.delete('/brain/queue/:id', c => {
+    if (!d.brain) return c.json({ error: 'brain unavailable' }, 503);
+    if (forbidden(c)) return c.json({ error: 'forbidden' }, 403);
+    try { return c.json({ removed: d.brain.queueRemove(c.get('user').id, c.req.param('id'), c.req.query('session')) }); }
+    catch { return c.json({ error: 'unknown session' }, 404); }
   });
 
   // Answer a parked ask_user_question. Deliberately bypasses the per-turn send() lock (the parked turn

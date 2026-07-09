@@ -38,6 +38,9 @@ export const brainSendSchema = z.object({
   images: z.array(imageSchema).max(4).optional(),
   cwd: z.string().max(4096).optional(),
   session: z.string().max(200).optional(),
+  /** The client's CLEAN rendering of the message (before @mention/prompt expansion) — what the daemon's
+   *  authoritative `user` echo and the queued chip show. Absent → the model-facing `text` is echoed. */
+  display: z.string().optional(),
 });
 
 /** Install one registry language server by its binary name (POST /brain/lsp/install, admin-only). */

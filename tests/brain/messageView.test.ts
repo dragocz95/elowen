@@ -1,5 +1,20 @@
-import { describe, it, expect } from 'vitest';
-import { stripInlineReasoning, extractText, toolOutputView, isThinkingOnlyReply } from '../../src/brain/messageView.js';
+import { describe, it, expect, afterEach } from 'vitest';
+import { stripInlineReasoning, extractText, toolOutputView, isThinkingOnlyReply, shapeBrainMessages, setToolOutputPolicy } from '../../src/brain/messageView.js';
+import { makeToolOutputPolicy } from '../../src/brain/toolOutput.js';
+
+describe('shapeBrainMessages: compaction divider', () => {
+  it('surfaces a persisted compaction row as an empty "compaction" view before the kept tail', () => {
+    const rows = [
+      { role: 'compaction', content: JSON.stringify({ role: 'compactionSummary', summary: 'older turns', tokensBefore: 999 }) },
+      { role: 'user', content: JSON.stringify({ role: 'user', content: 'recent question' }) },
+      { role: 'assistant', content: JSON.stringify({ role: 'assistant', content: [{ type: 'text', text: 'recent answer' }] }) },
+    ];
+    const views = shapeBrainMessages(rows);
+    expect(views[0]).toEqual({ role: 'compaction', text: '' }); // divider, summary stays out of the transcript
+    expect(views[1]).toMatchObject({ role: 'user', text: 'recent question' });
+    expect(views[2]).toMatchObject({ role: 'assistant', text: 'recent answer' });
+  });
+});
 
 describe('isThinkingOnlyReply', () => {
   const asst = (m: Record<string, unknown>) => ({ role: 'assistant', ...m });
@@ -90,6 +105,45 @@ describe('toolOutputView', () => {
   it('still hides a non-console tool that produced no useful output', () => {
     const out = toolOutputView('read_file', { path: 'a.ts' }, { content: [{ type: 'text', text: '' }] });
     expect(out).toBeUndefined();
+  });
+});
+
+describe('toolOutputView — single-source show policy', () => {
+  // Injected once at bootstrap in prod; each test sets its own and restores the show-all default.
+  afterEach(() => setToolOutputPolicy(() => true));
+
+  it('hides an unlisted tool\'s successful output but keeps a shown tool\'s', () => {
+    setToolOutputPolicy(makeToolOutputPolicy(() => ['run_command']));
+    // list_dir / memory_* are NOT on the show allowlist → their (successful) output is dropped so
+    // repeated calls can collapse.
+    expect(toolOutputView('list_dir', { path: 'src' }, { content: [{ type: 'text', text: 'a.ts\nb.ts' }] })).toBeUndefined();
+    expect(toolOutputView('memory_search', {}, { content: [{ type: 'text', text: 'a memory' }] })).toBeUndefined();
+    // run_command IS on the allowlist → its console output surfaces.
+    const shown = toolOutputView('run_command', { command: 'ls' }, { content: [{ type: 'text', text: 'a.ts' }], details: { exitCode: 0 } });
+    expect(shown).toMatchObject({ kind: 'console', text: 'a.ts', status: 'exit 0' });
+  });
+
+  it('hides output by default — a tool on NO show list stays hidden (regression: default is hide)', () => {
+    // Only run_command is allowlisted. cron_list (structured control data) declares nothing → hidden.
+    // Under the old hide-list default-show, cron_list dumped its raw JSON into the transcript.
+    setToolOutputPolicy(makeToolOutputPolicy(() => ['run_command']));
+    expect(toolOutputView('cron_list', {}, { content: [{ type: 'text', text: '[{"id":1}]' }] })).toBeUndefined();
+    expect(toolOutputView('ask_user_question', {}, { content: [{ type: 'text', text: 'picked A' }] })).toBeUndefined();
+    expect(toolOutputView('some_third_party_tool', {}, { content: [{ type: 'text', text: 'noise' }] })).toBeUndefined();
+  });
+
+  it('an unlisted tool\'s FAILURE still surfaces (warning tone overrides the hide default)', () => {
+    setToolOutputPolicy(makeToolOutputPolicy(() => ['run_command']));
+    const failed = toolOutputView('list_dir', { path: 'nope' }, { isError: true, content: [{ type: 'text', text: 'ENOENT' }] });
+    expect(failed).toMatchObject({ tone: 'warning', text: 'ENOENT' });
+    const nonZero = toolOutputView('list_dir', { path: 'x' }, { content: [{ type: 'text', text: 'boom' }], details: { exitCode: 2 } });
+    expect(nonZero?.tone).toBe('warning');
+  });
+
+  it('an unlisted tool\'s hook note still surfaces (a diff-less annotated result)', () => {
+    setToolOutputPolicy(makeToolOutputPolicy(() => ['run_command']));
+    const out = toolOutputView('write_file', { path: 'a.ts' }, { content: [{ type: 'text', text: '' }], details: { notes: ['formatted a.ts'] } });
+    expect(out?.notes).toEqual(['formatted a.ts']);
   });
 });
 

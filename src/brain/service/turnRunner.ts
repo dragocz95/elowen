@@ -11,10 +11,11 @@ import type { ElicitationRegistry } from '../elicitation.js';
 import type { CardRegistry } from '../cards.js';
 import type { IdentityResolver } from '../identity.js';
 import { extractText, frameUntrusted, isThinkingOnlyReply, NO_REPLY_NUDGE } from '../messageView.js';
-import { projectUserTurn } from '../persistence.js';
+import { persistCompaction, projectUserTurn } from '../persistence.js';
 import { applyToolVisibility } from '../session/capabilities.js';
 import type { LiveSessionRegistry } from '../session/liveRegistry.js';
 import type { LiveBrain } from '../session/liveBrain.js';
+import { combineQueuedText, type SessionQueue } from '../session/sessionQueue.js';
 import { summarizePermissions } from '../toolPermissions.js';
 import type { AskQuestion, SubagentUpdate } from '../events.js';
 import type { BrainDeps } from '../brainDeps.js';
@@ -29,6 +30,9 @@ interface TurnRunnerDeps {
   sessions: LiveSessionRegistry<LiveBrain>;
   lifecycle: ConversationLifecycle;
   goals: GoalLoopService;
+  /** Per-session mid-turn message queue (single source of truth for CLI/web/platforms). A message sent
+   *  while a turn streams is enqueued here and drained + combined into the next turn on flush. */
+  sessionQueue: SessionQueue;
   permissions: PermissionApprovalService;
   elicitation: ElicitationRegistry;
   cards: CardRegistry;
@@ -79,7 +83,7 @@ export class BrainTurnRunner {
    *  behavior, unchanged); with `session` (a bound CLI) it targets exactly that conversation, wherever
    *  the active pointer points, and never moves the pointer. A bound target that is not live (daemon
    *  restart between turns) is respawned in place first. */
-  async send(userId: number, text: string, images?: { data: string; mimeType: string }[], mode: 'build' | 'plan' = 'build', internal?: { goalKickoff?: boolean; goalContinue?: boolean }, clientCwd?: string, session?: string): Promise<void> {
+  async send(userId: number, text: string, images?: { data: string; mimeType: string }[], mode: 'build' | 'plan' = 'build', internal?: { goalKickoff?: boolean; goalContinue?: boolean }, clientCwd?: string, session?: string, display?: string): Promise<void> {
     let targetId: string;
     if (session) {
       targetId = this.d.lifecycle.ownedUserSession(userId, session);
@@ -90,68 +94,51 @@ export class BrainTurnRunner {
     const active = this.d.sessions.get(targetId);
     if (!active) throw new Error('brain not started for user');
     if (!internal?.goalKickoff && !internal?.goalContinue) this.d.goals.cancelGoalContinuation(active.sessionId);
-    const modeInstruction = mode === 'plan'
-      ? `${this.d.prompts.render('cli/plan-mode', {}, userId)}\n\n`
-      : '';
-    // Mid-run injection: if a turn is already streaming, STEER this message into the live turn (delivered
-    // after the current tool calls, before the next LLM call) instead of queuing behind the user lock —
-    // which would wait out the whole turn and then run it as a SEPARATE turn. `steer()` only ENQUEUES
-    // (never starts a turn), so the check-then-act is safe: if the turn ends in the race window the
-    // message simply waits for the next turn rather than launching an unlocked, policy-less run.
-    // Text-only: an image mid-turn must take the normal path so the vision-fallback hop can fire (steering
-    // an image into a text-only model would error the running turn). Persist like a normal user turn —
-    // agent_end skips re-persisting user messages, so there's no dup.
-    if (active.session.isStreaming && !images?.length && !internal?.goalKickoff && !internal?.goalContinue) {
-      // A `/plan` steer must actually RESTRICT the running turn. setActiveToolsByName takes effect on the
-      // next agent turn — and in PI a "turn" is one model round-trip (many per run, see the step counter),
-      // NOT the next full prompt — so applying the plan-mode policy here hides write_file/run_command for
-      // the rest of this run. TIGHTEN-ONLY: we apply only for plan mode, never on a build/plain steer, so a
-      // mid-turn message can never surprise-RE-ENABLE unsafe tools under a turn the user put in plan mode.
-      if (mode === 'plan') this.applyOwnerToolPolicy(userId, active, mode);
-      projectUserTurn(this.d.store, active.sessionId, text);
-      await active.session.steer(modeInstruction + text);
+    // Mid-turn: a message sent while a turn is already streaming is ENQUEUED behind it (the daemon's
+    // per-session SessionQueue), NOT steered into the running turn. It — and any others queued during
+    // this turn — drain and combine into ONE follow-up user message when the turn ends (the flush loop
+    // below). Keyed by sessionId so CLI/web/platform clients render the same live queue via the `queue`
+    // snapshot event and boot-seed it from status(). NOT persisted here: a queued message enters the
+    // conversation only when delivered on flush (which projectUserTurns it then). Internal goal
+    // kickoff/continuation is never queued — it drives the loop itself and must run straight through.
+    if (active.session.isStreaming && !internal?.goalKickoff && !internal?.goalContinue) {
+      this.d.sessionQueue.enqueue(active.sessionId, { userId, text, display: display ?? text, images, mode, at: Date.now() });
       return;
     }
-    // Serialized per CONVERSATION for the whole turn (outer `send-<id>` key): the idle rollover and the
-    // vision-fallback respawn below dispose and recreate the session, which MUST NOT race a concurrent
-    // send() into the same conversation (a double-submit would dispose a session mid-prompt). The key is
-    // the TARGET conversation — not the user — so two bound clients working DIFFERENT conversations run
-    // their turns concurrently. The inner (bare session id) lock still guards the prompt itself against
-    // compact/switchModel/start; `send-` prefixing is what keeps ensureLive() re-entrant from here.
-    let completedSessionId = active.sessionId;
-    await this.serial(`send-${targetId}`, async () => {
-    // Re-resolve under the lock: an unbound send that queued behind a rollover/model switch must follow
-    // the active pointer to wherever the conversation went; a bound send stays on its explicit target.
-    let b = session ? this.d.sessions.get(targetId) : this.d.lifecycle.activeLive(userId);
-    if (!b) throw new Error('brain not started for user');
-    // Idle rollover — see ConversationLifecycle.maybeRollover. INTERNAL sends (goal kickoff /
-    // continuation) never roll over — the goal row is keyed to the session it was set on; moving its
-    // kickoff to a fresh session would orphan the goal (judge finds no row, loop never starts).
-    if (!internal) b = await this.d.lifecycle.maybeRollover(userId, b, clientCwd);
-    // Vision fallback — see ConversationLifecycle.maybeVisionHop (an image turn on a text-only model
-    // respawns onto the user's vision model in place, and hops back on the next text-only turn).
-    b = await this.d.lifecycle.maybeVisionHop(userId, b, !!images?.length, clientCwd);
-    const live = b;
-    completedSessionId = live.sessionId;
-    // The conversation ↔ launch-directory binding follows explicit client cwds (feeds the CLI's
-    // default-start resolution); fallback-resolved dirs are never stamped.
-    if (clientCwd) this.d.lifecycle.stampWorkDir(live.sessionId, clientCwd, live.policy);
-    // Serialized per conversation: concurrent prompt() calls on one PI session corrupt turn state.
-    await this.serial(live.sessionId, async () => {
+    // Run ONE user turn on `live`. Refactored out of send() so the flush loop below can replay it for the
+    // drained queue with the same idle-rollover-safe serialization. `isUserTurn` marks a turn the DAEMON
+    // must render as a 'you' bubble — a normal send AND a drained queued delivery, but never an internal
+    // goal kickoff/continuation. When set, a `user` event streams so the sender renders the turn from the
+    // stream (no client-side optimistic echo); `echoDisplay` is the client's clean text (else persistText).
+    const runTurn = async (live: LiveBrain, turnText: string, turnImages: { data: string; mimeType: string }[] | undefined, turnMode: 'build' | 'plan', isUserTurn: boolean, echoDisplay: string | undefined): Promise<void> => {
+      const modeInstruction = turnMode === 'plan'
+        ? `${this.d.prompts.render('cli/plan-mode', {}, userId)}\n\n`
+        : '';
+      // Serialized per conversation: concurrent prompt() calls on one PI session corrupt turn state.
+      await this.serial(live.sessionId, async () => {
       // First user message names the conversation (once). A provisional slice fills the session list
       // immediately (never blank); a cheap background inference then replaces it with a proper
       // agent-generated title — no prompt injected into the turn, and a no-op if that model isn't wired.
       const row = this.d.store.getSession(live.sessionId);
       if (row && !row.title) {
-        this.d.store.setTitle(live.sessionId, text.slice(0, 60));
-        void this.d.titler.run(live.sessionId, text);
+        this.d.store.setTitle(live.sessionId, turnText.slice(0, 60));
+        void this.d.titler.run(live.sessionId, turnText);
       }
       // History stores the text plus an attachment marker; the image bytes live only in the live
       // context (a rehydrated conversation keeps the marker, not the pixels).
-      projectUserTurn(this.d.store, live.sessionId, images?.length ? `${text}\n[📎 ${images.length}× image]` : text);
-      const options = images?.length
-        ? { images: images.map((i) => ({ type: 'image' as const, data: i.data, mimeType: i.mimeType })) }
+      const persistText = turnImages?.length ? `${turnText}\n[📎 ${turnImages.length}× image]` : turnText;
+      projectUserTurn(this.d.store, live.sessionId, persistText);
+      // The DAEMON is the single authority for rendering the user's turn: every real user turn (a normal
+      // send AND a drained queued delivery) streams a `user` event so the sender renders the 'you' bubble
+      // from the stream — no client-side optimistic echo / busy heuristic that could drop or duplicate it.
+      // Internal goal kickoff/continuation turns aren't user messages, so they emit nothing. `echoDisplay`
+      // is the client's clean rendering (before @mention/prompt expansion); it falls back to persistText.
+      if (isUserTurn) { const shown = echoDisplay ?? persistText; for (const l of live.listeners) l({ type: 'user', text: shown }); }
+      const options = turnImages?.length
+        ? { images: turnImages.map((i) => ({ type: 'image' as const, data: i.data, mimeType: i.mimeType })) }
         : undefined;
+      const text = turnText;
+      const mode = turnMode;
       // Establish the user's repo Policy for any plugin tool this turn invokes (read via currentPolicy()).
       // The turn-context prefix rides only in the live prompt (not stored history) → fresh + cache-safe.
       // Owner-chat memory retrieval: prepend the user's most relevant durable memories as a SEPARATE,
@@ -252,10 +239,73 @@ export class BrainTurnRunner {
       if (live.autoCompact) {
         const usage = live.session.getContextUsage();
         if (usage?.tokens && usage.contextWindow > 0 && usage.tokens / usage.contextWindow >= live.autoCompactAt) {
-          try { await live.session.compact(); } catch { /* best-effort; keep the session usable */ }
+          // Same persistence + client-notify path as the manual `/compact` (persistCompaction): once the
+          // in-context compaction succeeds, mirror the shrunk context into the store and fire `compacted`
+          // so surfaces collapse. Best-effort — a compact that throws (no-op/failure) skips both and the
+          // session stays usable, exactly as before.
+          try { await live.session.compact(); persistCompaction(this.d.store, live); } catch { /* keep the session usable */ }
         }
       }
-    });
+      });
+    };
+    // Serialized per CONVERSATION for the whole turn AND its queue flush (outer `send-<id>` key): the idle
+    // rollover and the vision-fallback respawn dispose and recreate the session, which MUST NOT race a
+    // concurrent send() into the same conversation. Holding this lock across the flush loop is what keeps
+    // the queue correct — any concurrent /brain/send either sees isStreaming (→ enqueue) or blocks here,
+    // so no turn ever runs outside the serial. The key is the TARGET conversation (not the user), so two
+    // bound clients working DIFFERENT conversations still run concurrently; `send-` prefixing keeps
+    // ensureLive() re-entrant from here. The inner (bare session id) lock in runTurn guards each prompt().
+    let completedSessionId = active.sessionId;
+    await this.serial(`send-${targetId}`, async () => {
+      // Re-resolve under the lock: an unbound send that queued behind a rollover/model switch must follow
+      // the active pointer to wherever the conversation went; a bound send stays on its explicit target.
+      let b = session ? this.d.sessions.get(targetId) : this.d.lifecycle.activeLive(userId);
+      if (!b) throw new Error('brain not started for user');
+      // Idle rollover — see ConversationLifecycle.maybeRollover. INTERNAL sends (goal kickoff /
+      // continuation) never roll over — the goal row is keyed to the session it was set on; moving its
+      // kickoff to a fresh session would orphan the goal (judge finds no row, loop never starts).
+      if (!internal) b = await this.d.lifecycle.maybeRollover(userId, b, clientCwd);
+      // Vision fallback — see ConversationLifecycle.maybeVisionHop (an image turn on a text-only model
+      // respawns onto the user's vision model in place, and hops back on the next text-only turn).
+      b = await this.d.lifecycle.maybeVisionHop(userId, b, !!images?.length, clientCwd);
+      // The conversation ↔ launch-directory binding follows explicit client cwds (feeds the CLI's
+      // default-start resolution); fallback-resolved dirs are never stamped.
+      if (clientCwd) this.d.lifecycle.stampWorkDir(b.sessionId, clientCwd, b.policy);
+      completedSessionId = b.sessionId;
+      try {
+        await runTurn(b, text, images, mode, !internal, display);
+      } finally {
+        // Flush the queue in a `finally` so it ALWAYS runs — even when the turn above threw — instead of
+        // stranding a queued follow-up behind a failed turn. Messages sent DURING the turn drain here and
+        // combine into follow-up turns until the queue is empty (a message sent during a flush turn queues
+        // again and is picked up on the next pass). abort() clears the queue, so an interrupted turn drains
+        // to nothing and the loop ends cleanly.
+        //
+        // Each pass takes the NEXT deliverable batch (drainBatch): a consecutive same-mode run capped at
+        // the per-send image limit. Same-mode grouping is a SAFETY rule — a plan-mode follow-up must never
+        // ride a build-mode batch's write tools (never widen permissions by combining); the image cap keeps
+        // every image delivered instead of truncated. `!live` is checked BEFORE draining, so a conversation
+        // disposed mid-flush leaves the queue durable (re-seeded + delivered on respawn) rather than
+        // evaporating a drained batch. A flush turn that itself errors notifies the attached clients and
+        // stops draining — anything still queued stays durable for the next opportunity.
+        for (;;) {
+          const live = this.d.sessions.get(completedSessionId);
+          if (!live) break;
+          const batch = this.d.sessionQueue.drainBatch(completedSessionId);
+          if (batch.length === 0) break;
+          const combined = combineQueuedText(batch);
+          const combinedDisplay = combineQueuedText(batch.map((m) => ({ text: m.display })));
+          const images2 = batch.flatMap((m) => m.images ?? []);
+          try {
+            const hopped = await this.d.lifecycle.maybeVisionHop(userId, live, images2.length > 0, clientCwd);
+            completedSessionId = hopped.sessionId;
+            await runTurn(hopped, combined, images2.length ? images2 : undefined, batch[0]!.mode, true, combinedDisplay);
+          } catch (e) {
+            for (const l of live.listeners) l({ type: 'error', message: (e as Error).message });
+            break;
+          }
+        }
+      }
     });
     this.d.goals.afterTurnGoalJudge(userId, completedSessionId, mode, internal);
   }
