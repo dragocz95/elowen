@@ -214,6 +214,26 @@ export const elowenClient = {
   brainSessions: () => req<BrainSessionInfo[]>('/brain/sessions'),
   brainSearch: (q: string) => req<BrainSearchHit[]>(`/brain/search?q=${encodeURIComponent(q)}`),
   brainDeleteSession: (id: string) => req<{ ok: boolean }>(`/brain/sessions/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  /** Download a conversation as a self-contained HTML transcript or a JSONL session file. Fetches the
+   *  attachment over the authenticated (cookie) request, then triggers a browser save via an object URL
+   *  — the daemon streams it with a Content-Disposition filename we honour when present. */
+  brainExportSession: async (id: string, format: 'html' | 'jsonl'): Promise<void> => {
+    const path = `/brain/sessions/${encodeURIComponent(id)}/export?format=${format}`;
+    const res = await fetch(`${BASE}${path}`, { credentials: 'same-origin' });
+    if (res.status === 401) { clearToken(); throw new ElowenApiError(`elowen 401 on ${path}`, 401); }
+    if (!res.ok) throw new ElowenApiError(`elowen ${res.status} on ${path}`, res.status);
+    const blob = await res.blob();
+    const disposition = res.headers.get('content-disposition') ?? '';
+    const filename = /filename="?([^"]+)"?/.exec(disposition)?.[1] ?? `elowen-session.${format}`;
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  },
   /** Admin session-management panel: every brain session the operator anchors (conversations + Discord
    *  channels + task workers), each tagged with its kind. */
   brainManagedSessions: () => req<ManagedSession[]>('/brain/managed-sessions'),

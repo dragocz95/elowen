@@ -1,7 +1,7 @@
 'use client';
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Trash2, MessageSquare, Circle } from 'lucide-react';
+import { Trash2, MessageSquare, Circle, FileCode, FileJson } from 'lucide-react';
 import { elowenClient } from '../../lib/elowenClient';
 import { openBrainSession } from '../../lib/brainDock';
 import { localDateTime } from '../../lib/format';
@@ -55,6 +55,10 @@ export function BrainSessionsPanel() {
       await refresh();
       toast(t.sessionsPanel.deleted, 'ok');
     } catch { toast(t.common.error, 'error'); }
+  };
+  const doExport = async (id: string, format: 'html' | 'jsonl') => {
+    try { await elowenClient.brainExportSession(id, format); }
+    catch { toast(t.common.error, 'error'); }
   };
   const doDeleteAll = async () => {
     setConfirmAll(false);
@@ -118,6 +122,24 @@ export function BrainSessionsPanel() {
                   <span className="truncate font-mono text-tiny text-text-muted">
                     {s.tokens != null ? `${fmtTokens(s.tokens)} ${t.sessionsPanel.tok} · ` : ''}{localDateTime(s.updated_at, locale, false)}
                   </span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void doExport(s.id, 'html')}
+                  aria-label={t.sessionsPanel.exportHtml}
+                  title={t.sessionsPanel.exportHtml}
+                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-text-muted opacity-0 transition-all hover:text-text group-hover:opacity-100"
+                >
+                  <FileCode size={14} aria-hidden />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void doExport(s.id, 'jsonl')}
+                  aria-label={t.sessionsPanel.exportJsonl}
+                  title={t.sessionsPanel.exportJsonl}
+                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-text-muted opacity-0 transition-all hover:text-text group-hover:opacity-100"
+                >
+                  <FileJson size={14} aria-hidden />
                 </button>
                 <button
                   type="button"

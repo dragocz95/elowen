@@ -1,7 +1,7 @@
 // Files plugin: read/write/list, each confined to the caller's accessible repos via ctx.assertPathAllowed
 // (which reads the per-session Policy). A guard rejection is returned as an error text so the model can
 // react, not thrown, matching how the elowen_* tools surface API errors.
-import { defineTool } from '@earendil-works/pi-coding-agent';
+import { defineTool, withFileMutationQueue, truncateHead, formatSize } from '@earendil-works/pi-coding-agent';
 import { Type } from 'typebox';
 import { readFileSync, writeFileSync, readdirSync, statSync } from 'node:fs';
 import { execFile, execFileSync } from 'node:child_process';
@@ -24,10 +24,27 @@ const fail = (tool, e, details = {}) => ok(tool, `Error: ${e instanceof Error ? 
   error: { message: e instanceof Error ? e.message : String(e) },
   ...details,
 });
-const truncate = (text, max = DEFAULT_MAX) => {
-  if (text.length <= max) return { text, truncated: false };
-  return { text: `${text.slice(0, max)}\n...[truncated]`, truncated: true };
+/** Line-aware head truncation via PI's shared util. readCap maps to maxBytes, with no line cap so the
+ *  config knob stays purely byte-based. truncateHead never splits a line, so a single line longer than the
+ *  cap yields empty content (firstLineExceedsLimit) — fall back to a UTF-8-safe byte slice of that line so a
+ *  minified/one-line file still shows its head. The hint carries how much was shown vs. the full size. */
+const truncate = (text, maxBytes = DEFAULT_MAX) => {
+  const r = truncateHead(text, { maxBytes, maxLines: Infinity });
+  if (!r.truncated) return { text: r.content, truncated: false };
+  const shown = r.firstLineExceedsLimit ? sliceBytes(text, maxBytes) : r.content;
+  const shownLines = r.firstLineExceedsLimit ? 1 : r.outputLines;
+  const hint = `…[truncated: showing ${formatSize(Buffer.byteLength(shown))} of ${formatSize(r.totalBytes)}, ${shownLines}/${r.totalLines} lines]`;
+  return { text: `${shown}\n${hint}`, truncated: true };
 };
+
+/** Slice `text` to at most `maxBytes` UTF-8 bytes without splitting a multi-byte character. */
+function sliceBytes(text, maxBytes) {
+  const buf = Buffer.from(text, 'utf-8');
+  if (buf.length <= maxBytes) return text;
+  let end = maxBytes;
+  while (end > 0 && (buf[end] & 0xc0) === 0x80) end -= 1; // back up to a UTF-8 char boundary
+  return buf.subarray(0, end).toString('utf-8');
+}
 
 /** One numbered diff row in pi's display format (sign first, so pi's renderDiff can color it with
  *  intra-line highlighting): `-   12 old` / `+   13 new` / `    11 context`. */
@@ -192,11 +209,15 @@ export function register(ctx) {
     execute: async (_id, p) => {
       try {
         const abs = ctx.assertPathAllowed(p.path);
-        let before = null;
-        try { before = readFileSync(abs, 'utf-8'); } catch { /* new file */ }
-        writeFileSync(abs, p.content, 'utf-8');
-        const diff = overwriteDiff(before, p.content);
-        return ok('write_file', `Wrote ${Buffer.byteLength(p.content)} bytes to ${abs}`, { path: abs, bytes: Buffer.byteLength(p.content), ...(diff ? { diff } : {}) });
+        // Serialize the read-modify-write against other mutations of the SAME file (different files still
+        // run in parallel) so a concurrent edit can't slip between the diff-baseline read and the write.
+        return await withFileMutationQueue(abs, async () => {
+          let before = null;
+          try { before = readFileSync(abs, 'utf-8'); } catch { /* new file */ }
+          writeFileSync(abs, p.content, 'utf-8');
+          const diff = overwriteDiff(before, p.content);
+          return ok('write_file', `Wrote ${Buffer.byteLength(p.content)} bytes to ${abs}`, { path: abs, bytes: Buffer.byteLength(p.content), ...(diff ? { diff } : {}) });
+        });
       } catch (e) { return fail('write_file', e); }
     },
   }));
@@ -218,16 +239,20 @@ export function register(ctx) {
     execute: async (_id, p) => {
       try {
         const abs = ctx.assertPathAllowed(p.path);
-        const before = readFileSync(abs, 'utf-8');
-        if (p.oldText === p.newText) return ok('edit_file', 'Error: oldText and newText are identical.', { ok: false, path: abs });
-        const first = before.indexOf(p.oldText);
-        if (first < 0) return ok('edit_file', 'Error: oldText not found in the file. Match it exactly, including whitespace.', { ok: false, path: abs });
-        const count = before.split(p.oldText).length - 1;
-        if (count > 1 && !p.replaceAll) return ok('edit_file', `Error: oldText matches ${count} times. Provide more context to make it unique, or set replaceAll.`, { ok: false, path: abs, matches: count });
-        const after = p.replaceAll ? before.split(p.oldText).join(p.newText) : `${before.slice(0, first)}${p.newText}${before.slice(first + p.oldText.length)}`;
-        writeFileSync(abs, after, 'utf-8');
-        const diff = p.replaceAll && count > 1 ? overwriteDiff(before, after) : replacementDiff(before, first, p.oldText, p.newText);
-        return ok('edit_file', `Edited ${abs} (${count > 1 ? `${count} replacements` : '1 replacement'})`, { path: abs, replacements: p.replaceAll ? count : 1, diff });
+        // Serialize the read-modify-write against other mutations of the SAME file (different files still
+        // run in parallel) so a concurrent write can't slip between the match read and the write.
+        return await withFileMutationQueue(abs, async () => {
+          const before = readFileSync(abs, 'utf-8');
+          if (p.oldText === p.newText) return ok('edit_file', 'Error: oldText and newText are identical.', { ok: false, path: abs });
+          const first = before.indexOf(p.oldText);
+          if (first < 0) return ok('edit_file', 'Error: oldText not found in the file. Match it exactly, including whitespace.', { ok: false, path: abs });
+          const count = before.split(p.oldText).length - 1;
+          if (count > 1 && !p.replaceAll) return ok('edit_file', `Error: oldText matches ${count} times. Provide more context to make it unique, or set replaceAll.`, { ok: false, path: abs, matches: count });
+          const after = p.replaceAll ? before.split(p.oldText).join(p.newText) : `${before.slice(0, first)}${p.newText}${before.slice(first + p.oldText.length)}`;
+          writeFileSync(abs, after, 'utf-8');
+          const diff = p.replaceAll && count > 1 ? overwriteDiff(before, after) : replacementDiff(before, first, p.oldText, p.newText);
+          return ok('edit_file', `Edited ${abs} (${count > 1 ? `${count} replacements` : '1 replacement'})`, { path: abs, replacements: p.replaceAll ? count : 1, diff });
+        });
       } catch (e) { return fail('edit_file', e); }
     },
   }));

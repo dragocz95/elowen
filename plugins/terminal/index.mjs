@@ -4,7 +4,7 @@
 // list/read/kill tools manage them. NOTE: cwd guarding does NOT contain a shell that reads absolute
 // paths outside the repo (e.g. the prod config DB), so ALL terminal tools are OWNER-ONLY: only the
 // verified operator may run them; role-scoped platform members (Discord) are refused (see denyNonOwner).
-import { defineTool } from '@earendil-works/pi-coding-agent';
+import { defineTool, truncateTail, formatSize } from '@earendil-works/pi-coding-agent';
 import { Type } from 'typebox';
 import { spawn } from 'node:child_process';
 
@@ -57,12 +57,21 @@ function runForeground(command, cwd, outputCap, timeoutMs) {
     let out = '';
     let killed = false;
     const timer = setTimeout(() => { killed = true; child.kill('SIGKILL'); }, timeoutMs);
-    const onData = (d) => { if (out.length < outputCap) out += d.toString(); };
+    // Accumulate output but keep only a bounded rolling tail so a runaway command can't grow `out`
+    // without limit; truncateTail below produces the final line-aware tail — bash errors live at the END,
+    // so we keep the tail (not the head).
+    const onData = (d) => {
+      out += d.toString();
+      if (out.length > outputCap * 2) out = out.slice(out.length - outputCap * 2);
+    };
     child.stdout.on('data', onData);
     child.stderr.on('data', onData);
     child.on('close', (code) => {
       clearTimeout(timer);
-      const body = out.length > outputCap ? `${out.slice(0, outputCap)}\n…[truncated]` : out;
+      const t = truncateTail(out, { maxBytes: outputCap });
+      const body = t.truncated
+        ? `…[truncated: last ${formatSize(t.outputBytes)} of ${formatSize(t.totalBytes)}]\n${t.content}`
+        : t.content;
       done(`$ ${command}\n(cwd: ${cwd})\n${killed ? '[killed: timeout]\n' : ''}${body}[exit ${code}]`);
     });
     child.on('error', (e) => { clearTimeout(timer); done(`Error: ${e.message}`); });

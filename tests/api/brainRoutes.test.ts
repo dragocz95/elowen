@@ -1,4 +1,7 @@
 import { describe, it, expect } from 'vitest';
+import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { openDb } from '../../src/store/db.js';
 import { TaskStore } from '../../src/store/taskStore.js';
 import { Readiness } from '../../src/store/readiness.js';
@@ -32,6 +35,21 @@ function fakeBrain() {
       return (queues.get(id)!.length) < list.length;
     },
     subscribe: () => () => {},
+    /** Writes a real temp file so the route can stream it back; a 'missing' id throws (→ 404). Records
+     *  each cleaned-up path so the test can assert the route removed the temp file afterwards. */
+    cleaned: [] as string[],
+    exportSession(_id: number, sessionId: string, format: 'html' | 'jsonl') {
+      if (sessionId === 'missing') return Promise.reject(new Error('unknown session'));
+      const dir = mkdtempSync(join(tmpdir(), 'test-export-'));
+      const filename = `elowen-${sessionId}.${format}`;
+      const path = join(dir, filename);
+      writeFileSync(path, format === 'html' ? '<!DOCTYPE html><html>hi</html>' : '{"type":"session"}\n');
+      return Promise.resolve({
+        path, filename,
+        contentType: format === 'html' ? 'text/html; charset=utf-8' : 'application/x-ndjson',
+        cleanup: () => { this.cleaned.push(path); rmSync(dir, { recursive: true, force: true }); },
+      });
+    },
     stop: (id: number) => { started.delete(id); },
     history: (_id: number) => [{ role: 'user', text: 'hi' }, { role: 'assistant', text: 'yo' }],
     searchMessages: (id: number, q: string) =>
@@ -123,6 +141,29 @@ describe('brain routes', () => {
     // The queue also seeds via status().queued for a booting client.
     expect((await (await app.request('/brain/status', auth(amyTok))).json() as { queued: unknown }).queued)
       .toEqual([{ id: 'q2', text: 'second' }]);
+  });
+
+  it('GET /brain/sessions/:id/export streams HTML by default and JSONL on request, then cleans up', async () => {
+    const { app, amyTok, brain } = setup();
+    const html = await app.request('/brain/sessions/s-2/export', auth(amyTok));
+    expect(html.status).toBe(200);
+    expect(html.headers.get('content-type')).toBe('text/html; charset=utf-8');
+    expect(html.headers.get('content-disposition')).toBe('attachment; filename="elowen-s-2.html"');
+    expect(await html.text()).toContain('<!DOCTYPE html>');
+
+    const jsonl = await app.request('/brain/sessions/s-2/export?format=jsonl', auth(amyTok));
+    expect(jsonl.status).toBe(200);
+    expect(jsonl.headers.get('content-type')).toBe('application/x-ndjson');
+    expect(jsonl.headers.get('content-disposition')).toBe('attachment; filename="elowen-s-2.jsonl"');
+
+    // The route removes each temp file after streaming it out.
+    expect(brain.cleaned).toHaveLength(2);
+  });
+
+  it('export 404s an unknown/foreign session and 403s an agent token', async () => {
+    const { app, amyTok, agentTok } = setup();
+    expect((await app.request('/brain/sessions/missing/export', auth(amyTok))).status).toBe(404);
+    expect((await app.request('/brain/sessions/s-2/export', auth(agentTok))).status).toBe(403);
   });
 
   it('search scopes to the caller and passes q through; short q yields []', async () => {

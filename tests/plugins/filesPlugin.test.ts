@@ -80,6 +80,21 @@ describe('files plugin', () => {
     expect(res.content[0].text).toMatch(/not allowed/);
   });
 
+  it('serializes concurrent writes to the same file (mutation queue)', async () => {
+    const f = join(dir, 'race.txt');
+    writeFileSync(f, 'zero');
+    // FIFO per file: the first-dispatched write lands first, so the second sees it ('one') as its diff
+    // baseline instead of the original 'zero' — proving the read-modify-write was serialized, not raced.
+    const [, rb] = await runWithPolicy(userPolicy([dir]), () => Promise.all([
+      runTool(reg, 'write_file', { path: f, content: 'one' }),
+      runTool(reg, 'write_file', { path: f, content: 'two' }),
+    ]));
+    const diffB = (rb as { details?: { diff?: string } }).details?.diff ?? '';
+    expect(diffB).toContain('-    1 one');
+    expect(diffB).toContain('+    1 two');
+    expect(readFileSync(f, 'utf-8')).toBe('two');
+  });
+
   it('search_files finds content and file names with structured metadata', async () => {
     mkdirSync(join(dir, 'src'), { recursive: true });
     writeFileSync(join(dir, 'src', 'search-target.ts'), 'export const needle = 42;\n');
@@ -119,6 +134,13 @@ describe('files plugin — configurable readCap', () => {
   let dir: string;
   beforeAll(() => { dir = mkdtempSync(join(tmpdir(), 'elowen-files-cap-')); });
 
+  // shown bytes are everything before the appended "\n…[truncated: …]" hint line.
+  const shownLength = (text: string): number => {
+    const idx = text.indexOf('\n…[truncated');
+    if (idx < 0) throw new Error('not truncated');
+    return idx;
+  };
+
   it('a configured readCap (min-clamped 20000) truncates a read that the default 100000 would not', async () => {
     const reg = await loadPlugins({
       dirs: [join(repoRoot, 'plugins')], enabled: ['files'], logger: log,
@@ -128,23 +150,39 @@ describe('files plugin — configurable readCap', () => {
     writeFileSync(f, 'a'.repeat(30_000));
     const res = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'read_file', { path: f }));
     const text = res.content[0].text;
-    expect(text).toContain('...[truncated]');
-    expect(text.replace('\n...[truncated]', '')).toHaveLength(20_000);
+    expect(text).toContain('…[truncated');
+    expect(shownLength(text)).toBe(20_000); // single-line file: byte-slice fallback keeps exactly the cap
   });
 
-  it('unset readCap reproduces the default 100000-char cap exactly', async () => {
+  it('unset readCap reproduces the default 100000-byte cap exactly', async () => {
     const reg = await loadPlugins({ dirs: [join(repoRoot, 'plugins')], enabled: ['files'], logger: log });
     const under = join(dir, 'under.txt');
     writeFileSync(under, 'a'.repeat(30_000));
     const underRes = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'read_file', { path: under }));
-    expect(underRes.content[0].text).not.toContain('...[truncated]'); // below the 100000 default: untouched
+    expect(underRes.content[0].text).not.toContain('…[truncated'); // below the 100000 default: untouched
 
     const over = join(dir, 'over.txt');
     writeFileSync(over, 'a'.repeat(150_000));
     const overRes = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'read_file', { path: over }));
     const text = overRes.content[0].text;
-    expect(text).toContain('...[truncated]');
-    expect(text.replace('\n...[truncated]', '')).toHaveLength(100_000);
+    expect(text).toContain('…[truncated');
+    expect(shownLength(text)).toBe(100_000);
+  });
+
+  it('truncates line-aware: keeps whole lines within the cap, never a partial line', async () => {
+    const reg = await loadPlugins({
+      dirs: [join(repoRoot, 'plugins')], enabled: ['files'], logger: log,
+      config: { files: { readCap: 20_000 } },
+    });
+    const f = join(dir, 'lines.txt');
+    // 3000 lines of "xxxxxxxxx" (10 bytes incl. newline) => ~30KB, well over the 20KB cap.
+    writeFileSync(f, `${Array.from({ length: 3000 }, () => 'x'.repeat(9)).join('\n')}\n`);
+    const res = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'read_file', { path: f }));
+    const text = res.content[0].text;
+    expect(text).toContain('…[truncated');
+    const shown = text.slice(0, shownLength(text));
+    expect(Buffer.byteLength(shown)).toBeLessThanOrEqual(20_000); // within cap
+    expect(shown.split('\n').every((l) => l === 'x'.repeat(9))).toBe(true); // only whole lines kept
   });
 });
 

@@ -85,13 +85,14 @@ describe('terminal plugin — configurable outputCap', () => {
   let dir: string;
   beforeAll(() => { dir = mkdtempSync(join(tmpdir(), 'elowen-term-cap-')); });
   const bigOutput = (n: number) => `node -e "process.stdout.write('a'.repeat(${n}))"`;
-  // Body length between the "(cwd: …)\n" prefix and the truncation marker == the applied cap.
-  const cappedBodyLength = (text: string): number => {
-    const prefix = /^\$ .*\n\(cwd: .*\)\n/.exec(text);
-    if (!prefix) throw new Error('unexpected run_command output shape');
-    const idx = text.indexOf('\n…[truncated]');
-    if (idx < 0) throw new Error('not truncated');
-    return idx - prefix[0].length;
+  // The shown output is the tail kept after the "…[truncated: …]\n" hint line, up to the trailing
+  // "[exit N]" marker. Its length == the applied cap (bash truncation keeps the END).
+  const shownTailLength = (text: string): number => {
+    const marker = text.indexOf('…[truncated');
+    if (marker < 0) throw new Error('not truncated');
+    const start = text.indexOf('\n', marker) + 1; // first char after the hint line
+    const end = text.lastIndexOf('[exit ');
+    return end - start;
   };
 
   it('a configured outputCap (min-clamped 10000) truncates output that the default 60000 would not', async () => {
@@ -101,18 +102,18 @@ describe('terminal plugin — configurable outputCap', () => {
     });
     const res = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'run_command', { command: bigOutput(15_000) }), { identity: owner });
     const text = res.content[0].text;
-    expect(text).toContain('…[truncated]');
-    expect(cappedBodyLength(text)).toBe(10_000);
+    expect(text).toContain('…[truncated');
+    expect(shownTailLength(text)).toBe(10_000);
   });
 
-  it('unset outputCap reproduces the default 60000-char cap exactly', async () => {
+  it('unset outputCap reproduces the default 60000-byte cap exactly', async () => {
     const reg = await loadPlugins({ dirs: [join(repoRoot, 'plugins')], enabled: ['terminal'], logger: log });
     const under = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'run_command', { command: bigOutput(15_000) }), { identity: owner });
-    expect(under.content[0].text).not.toContain('…[truncated]'); // below the 60000 default: untouched
+    expect(under.content[0].text).not.toContain('…[truncated'); // below the 60000 default: untouched
     const over = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'run_command', { command: bigOutput(65_000) }), { identity: owner });
     const text = over.content[0].text;
-    expect(text).toContain('…[truncated]');
-    expect(cappedBodyLength(text)).toBe(60_000);
+    expect(text).toContain('…[truncated');
+    expect(shownTailLength(text)).toBe(60_000);
   });
 
   it('outputCap also bounds the background process rolling buffer', async () => {

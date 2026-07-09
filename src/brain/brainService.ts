@@ -25,6 +25,8 @@ import { LiveSessionSpawner } from './service/spawner.js';
 import { ConversationLifecycle } from './service/lifecycle.js';
 import { BrainTurnRunner } from './service/turnRunner.js';
 import { BrainStatusService } from './service/statusService.js';
+import { exportBrainSession } from './session/exportSession.js';
+import type { ExportFormat, SessionExport } from './session/exportSession.js';
 import type { BrainDeps } from './brainDeps.js';
 import { DEFAULT_BRAIN_LIMITS } from '../store/configStore.js';
 
@@ -561,5 +563,15 @@ export class BrainService {
   /** ANY of the owner's stored sessions, shaped for display — see BrainStatusService.messagesOf. */
   messagesOf(userId: number, sessionId: string): BrainMessageView[] {
     return this.statusView.messagesOf(userId, sessionId);
+  }
+
+  /** Export one of the caller's OWN conversations (owner-scoped exactly like messagesOf) as a
+   *  self-contained HTML transcript or a JSONL session file. Reads history from the store and renders
+   *  through PI's own exporter into a private temp dir — no live PI session required. Throws for an
+   *  unknown or foreign session; the returned handle's cleanup() removes the temp dir. */
+  exportSession(userId: number, sessionId: string, format: ExportFormat): Promise<SessionExport> {
+    const row = this.d.store.getSession(sessionId);
+    if (!row || row.user_id !== userId) throw new Error('unknown session');
+    return exportBrainSession({ store: this.d.store, sessionId, cwd: row.work_dir || process.cwd(), title: row.title, format });
   }
 }

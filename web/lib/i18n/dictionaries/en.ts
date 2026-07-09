@@ -453,6 +453,8 @@ export const en = {
     tok: 'tok',
     openInChat: 'Open in web chat',
     viewInChat: 'View history in web chat',
+    exportHtml: 'Download as HTML',
+    exportJsonl: 'Download as JSONL',
     viewAll: 'All',
     viewMine: 'Just mine',
     deleteAll: 'Delete all',

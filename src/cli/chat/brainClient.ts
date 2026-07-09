@@ -1,3 +1,5 @@
+import { writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import type { AskAnswer, AskQuestion, BrainCard, BrainEvent } from '../../brain/events.js';
 import type { BrainMessageView } from '../../brain/messageView.js';
 import type { SlashCommandDef } from '../../brain/slashCommands.js';
@@ -237,6 +239,21 @@ export class BrainClient {
     const res = await this.f(`${this.o.base}/brain/sessions/${encodeURIComponent(id)}`, { method: 'DELETE', headers: this.headers() });
     if (res.status === 401) throw new Unauthorized();
     if (!res.ok) throw new Error(`elowen brain ${res.status} on /brain/sessions`);
+  }
+
+  /** Download the bound conversation as HTML or JSONL, writing it into the process cwd (the launch
+   *  directory). Returns the saved absolute path. Honours the server's Content-Disposition filename. */
+  async exportSession(format: 'html' | 'jsonl'): Promise<string> {
+    const id = this.bound;
+    if (!id) throw new Error('no active conversation to export');
+    const res = await this.f(`${this.o.base}/brain/sessions/${encodeURIComponent(id)}/export?format=${format}`, { headers: this.headers() });
+    if (res.status === 401) throw new Unauthorized();
+    if (!res.ok) throw new Error(`elowen brain ${res.status} on /brain/sessions`);
+    const disposition = res.headers.get('content-disposition') ?? '';
+    const filename = /filename="?([^"]+)"?/.exec(disposition)?.[1] ?? `elowen-session.${format}`;
+    const out = join(process.cwd(), filename);
+    writeFileSync(out, Buffer.from(await res.arrayBuffer()));
+    return out;
   }
 
   async renameSession(id: string, title: string): Promise<{ id: string; title: string }> {

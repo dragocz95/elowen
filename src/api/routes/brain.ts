@@ -127,6 +127,27 @@ export function registerBrainRoutes(app: ElowenApp, ctx: RouteContext): void {
     catch (e) { return c.json({ error: (e as Error).message }, 409); }
   });
 
+  // Download one of the caller's OWN conversations as a self-contained HTML transcript (`?format=html`,
+  // the default) or a JSONL session file (`?format=jsonl`). Owner-scoped exactly like /brain/messages —
+  // ownership is enforced in exportSession via the store row's user_id. Rendered into a private temp dir
+  // through PI's own exporter, streamed as a download attachment, then the temp dir is removed. Distinct
+  // path segment (`/export`) so it never collides with the `:id` delete/patch handlers above.
+  app.get('/brain/sessions/:id/export', async c => {
+    if (!d.brain) return c.json({ error: 'brain unavailable' }, 503);
+    if (forbidden(c)) return c.json({ error: 'forbidden' }, 403);
+    const format = c.req.query('format') === 'jsonl' ? 'jsonl' : 'html';
+    let out;
+    try { out = await d.brain.exportSession(c.get('user').id, c.req.param('id'), format); }
+    catch { return c.json({ error: 'unknown session' }, 404); }
+    try {
+      const body = readFileSync(out.path);
+      return c.body(new Uint8Array(body), 200, {
+        'content-type': out.contentType,
+        'content-disposition': `attachment; filename="${out.filename}"`,
+      });
+    } finally { out.cleanup(); }
+  });
+
   // Active conversation's history by default, or ANY of the caller's sessions when `?session=<id>` is
   // given (read-only view of a channel/task session — ownership checked in messagesOf).
   app.get('/brain/messages', async c => {

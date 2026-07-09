@@ -58,6 +58,9 @@ export const SLASH_COMMANDS: readonly SlashCommandDef[] = [
   { name: 'paste', description: 'Attach an image from the system clipboard', kind: 'action', surfaces: ['cli'] },
   // CLI-local like /theme: the TUI suspends itself and round-trips the draft through $VISUAL/$EDITOR.
   { name: 'editor', description: 'Compose the prompt in your $EDITOR', kind: 'picker', surfaces: ['cli'] },
+  // CLI-local: downloads the conversation to the launch directory (HTML transcript or JSONL). The web
+  // dock has its own download buttons in the Sessions panel, so this stays CLI-only.
+  { name: 'export', description: 'Download this conversation ("html" or "jsonl")', kind: 'action', surfaces: ['cli'] },
   // adminOnly: the toggle flips a daemon-wide LspManager singleton (spawns/kills servers for everyone),
   // so it must be gated to operators — a non-admin must not disable diagnostics for other users.
   { name: 'lsp', description: 'Language diagnostics (LSP) — status, servers and on/off', kind: 'action', surfaces: ['cli'], adminOnly: true },

@@ -14,7 +14,7 @@ import type { Pickers } from './pickers.js';
 
 /** Local slash-command routing: returns the recognized command (with its argument) or null for a
  *  regular chat message. Pure, so the command surface is unit-testable without a TTY. */
-export function parseCommand(text: string): { cmd: 'quit' | 'new' | 'stop' | 'status' | 'restart' | 'sessions' | 'resume' | 'delete' | 'model' | 'reasoning' | 'theme' | 'editor' | 'keybinds' | 'lsp' | 'tdd' | 'mcp' | 'skills' | 'tools' | 'goal' | 'subgoal' | 'compact' | 'plan' | 'build' | 'yolo' | 'paste' | 'help'; arg?: string } | null {
+export function parseCommand(text: string): { cmd: 'quit' | 'new' | 'stop' | 'status' | 'restart' | 'sessions' | 'resume' | 'delete' | 'model' | 'reasoning' | 'theme' | 'editor' | 'keybinds' | 'lsp' | 'tdd' | 'mcp' | 'skills' | 'tools' | 'goal' | 'subgoal' | 'compact' | 'plan' | 'build' | 'yolo' | 'paste' | 'export' | 'help'; arg?: string } | null {
   const m = /^\/(\w+)(?:\s+(.+))?$/.exec(text.trim());
   if (!m) return null;
   switch (m[1]) {
@@ -43,6 +43,7 @@ export function parseCommand(text: string): { cmd: 'quit' | 'new' | 'stop' | 'st
     case 'build': return { cmd: 'build', arg: m[2] };
     case 'yolo': return { cmd: 'yolo', arg: m[2] };
     case 'paste': return { cmd: 'paste' };
+    case 'export': return { cmd: 'export', arg: m[2] };
     case 'help': return { cmd: 'help' };
     default: return null;
   }
@@ -331,6 +332,19 @@ export function wireSubmit(rt: ChatRuntime, deps: { stream: StreamController; pi
               await rt.refreshMeta();
               rt.render();
             })
+            .catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); rt.render(); });
+          return;
+        }
+        case 'export': {
+          // Download the CURRENT conversation to the launch directory as a self-contained HTML
+          // transcript (default) or a JSONL session file — the CLI mirror of the web Sessions download.
+          const arg = command.arg?.trim().toLowerCase();
+          if (arg && arg !== 'html' && arg !== 'jsonl') { rt.notice = color.dim('usage: /export · /export html · /export jsonl'); rt.render(); return; }
+          const format = arg === 'jsonl' ? 'jsonl' : 'html';
+          rt.notice = color.dim(`exporting conversation as ${format}…`);
+          rt.render();
+          void client.exportSession(format)
+            .then((path) => { rt.notice = color.success(`saved ${path}`); rt.render(); })
             .catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); rt.render(); });
           return;
         }

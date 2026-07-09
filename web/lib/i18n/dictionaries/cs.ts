@@ -453,6 +453,8 @@ export const cs = {
     tok: 'tok',
     openInChat: 'Otevřít ve web chatu',
     viewInChat: 'Zobrazit historii ve web chatu',
+    exportHtml: 'Stáhnout jako HTML',
+    exportJsonl: 'Stáhnout jako JSONL',
     viewAll: 'Všechny',
     viewMine: 'Jen moje',
     deleteAll: 'Smazat vše',
