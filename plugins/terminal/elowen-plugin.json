@@ -6,6 +6,7 @@
   "entry": "index.mjs",
   "provides": { "tools": ["run_command", "list_processes", "read_process_output", "kill_process"] },
   "icons": { "run_command": "💻", "list_processes": "💻", "read_process_output": "💻", "kill_process": "💻" },
+  "showOutput": ["run_command", "read_process_output"],
   "configSchema": [
     {
       "key": "sec_limits",

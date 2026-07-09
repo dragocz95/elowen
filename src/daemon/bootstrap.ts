@@ -74,7 +74,9 @@ import { MemoryService } from '../brain/memoryService.js';
 import { toEmbeddingConfig } from '../store/configStore.js';
 import { brainConfigFromElowen } from '../brain/config.js';
 import { listBrainModels } from '../brain/models.js';
-import { setToolOutputCaps } from '../brain/messageView.js';
+import { setToolOutputCaps, setToolOutputPolicy } from '../brain/messageView.js';
+import { makeToolOutputPolicy } from '../brain/toolOutput.js';
+import { BUILTIN_TOOL_OUTPUT_SHOWN } from '../brain/tools/index.js';
 import { discoverPlugins, loadPlugins } from '../plugins/loader.js';
 import { MarketplaceService } from '../plugins/marketplace.js';
 import { PluginRegistryProvider } from '../plugins/pluginsProvider.js';
@@ -184,7 +186,7 @@ export function buildApp(opts: BuildOpts) {
   // mid-task (they hold the token they were spawned with); only mints fresh when none is valid.
   const serviceToken = users.count() > 0 ? users.ensureAgentToken(users.list()[0]!.id) : '';
   const elowenCli = { cli, url: `http://localhost:${(process.env.ELOWEN_PORT) ?? 4400}`, token: serviceToken };
-  const spawn = new SpawnService({ tmux, agents, elowen: elowenCli, providers: (program) => config.get().providers[program], prompts });
+  const spawn = new SpawnService({ tmux, agents, elowen: elowenCli, providers: (program) => config.get().providers[program], prompts, tddMode: () => config.get().autopilot.tddMode });
   const bus = new EventBus();
   const events = new EventStore(db);
   const notes = new NoteStore(db);
@@ -404,6 +406,14 @@ export function buildApp(opts: BuildOpts) {
   // providerId/model → the service degrades to keyword search and the queue no-ops.
   // Tool-output preview caps (Elowen AI → Limits) feed the shared messageView renderer; read live.
   setToolOutputCaps(() => ({ lines: config.get().brain.limits.toolOutputMaxLines, chars: config.get().brain.limits.toolOutputMaxChars }));
+  // Tool-output VISIBILITY policy (single source, mirrors the icon pipeline): output is hidden by
+  // default; the built-in show defaults plus every enabled plugin's manifest `showOutput` are merged and
+  // injected into the shared messageView renderer so the live (events.ts) and history (shapeBrainMessages)
+  // paths show the same tools' output. `pluginOutputShowPatterns` is refreshed on each plugin (re)load
+  // below, so a newly enabled plugin's policy applies without a daemon restart — read live per render,
+  // like the caps above.
+  let pluginOutputShowPatterns: readonly string[] = [];
+  setToolOutputPolicy(makeToolOutputPolicy(() => [...BUILTIN_TOOL_OUTPUT_SHOWN, ...pluginOutputShowPatterns]));
   const embeddingConfig = () => toEmbeddingConfig(config.embeddingConfig());
   // Vector retrieval + anti-duplication over the memory store (owner chat only — the caller gates it).
   const memoryService = new MemoryService({
@@ -455,7 +465,18 @@ export function buildApp(opts: BuildOpts) {
           models.filter((m) => isModelVisibleForUser(owner, globalExecs, elowenExec(m.provider, m.model))));
       },
       resolveProvider,
+      // The SHARED embedder + live Settings→Memory config mapper, exposed to plugins as ctx.embeddings
+      // (gated by a `reads:['embeddings']` capability). Same instance the memory retrieval + embed queue
+      // use, so a semantic-index plugin reuses the operator's ONE embedding model — no second provider.
+      embeddings,
+      embeddingConfig,
       logger: log,
+    }).then((registry) => {
+      // Snapshot the merged plugin output-show patterns so the (sync) messageView policy above reads the
+      // current set — refreshed on every reload (a plugin toggle invalidates this provider), so a newly
+      // enabled plugin's `showOutput` applies without a daemon restart.
+      pluginOutputShowPatterns = [...registry.toolShowOutput];
+      return registry;
     });
   });
   // Bounded ring of recent mutating-hook execution records. The brain's owner-chat hook runner is the

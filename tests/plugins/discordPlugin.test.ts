@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadPlugins } from '../../src/plugins/loader.js';
@@ -49,30 +50,33 @@ describe('discord LiveMessage (tool progress)', () => {
     };
   };
 
-  it('tools stack tightly in one bubble with arg previews; the answer is the LAST clean message', async () => {
+  it('tools stack tightly in the progress bubble; a narration-first answer is re-anchored BELOW the trace', async () => {
     const { LiveMessage } = await load();
     const posts: string[] = []; // message ids in creation order
     const edits = new Map<string, string>();
+    const deleted: string[] = [];
     let nextId = 0;
     const adapter = {
       rest: async (method: string, path: string, body: { content: string }) => {
         if (method === 'POST') { const id = `m${++nextId}`; posts.push(id); edits.set(id, body.content); return { id }; }
         const id = path.split('/').pop()!;
+        if (method === 'DELETE') { deleted.push(id); return { id }; }
         edits.set(id, body.content);
         return { id };
       },
     };
     const lm = new LiveMessage(adapter, 'chan');
-    lm.onEvent({ type: 'text', delta: 'Mrknu na to… ' }); // narration BEFORE tools must not create a message
-    lm.onEvent({ type: 'tool', name: 'run_command', detail: 'apt list --upgradable', icon: '💻' });
+    lm.onEvent({ type: 'text', delta: 'Mrknu na to… ' }); // pre-tool narration opens the answer bubble FIRST (m1)
+    lm.onEvent({ type: 'tool', name: 'run_command', detail: 'apt list --upgradable', icon: '💻' }); // tool bubble posts below (m2)
     lm.onEvent({ type: 'tool', name: 'read_file', icon: '📄' });
     await new Promise((r) => setTimeout(r, 20));
     await lm.finalize('Hotovo, vše běží.');
-    expect(posts.length).toBe(2);
-    const [progressId, answerId] = posts;
+    // Bubbles created in order: [stranded draft m1, tool trace m2, re-anchored answer m3].
+    const [draftId, progressId, finalId] = posts;
+    expect(deleted).toContain(draftId); // the draft stranded ABOVE the trace is deleted, not left buried in scrollback
     expect(edits.get(progressId)).toBe('💻 `run_command`: "apt list --upgradable"\n📄 `read_file`…'); // single \n = tight
     expect(edits.get(progressId)).not.toContain('\n\n');
-    expect(edits.get(answerId)).toBe('Hotovo, vše běží.'); // last message = the clean summary
+    expect(edits.get(finalId)).toBe('Hotovo, vše běží.'); // final answer re-posted BELOW the trace, as the LAST message
   });
 
   it('a turn without tools posts only the answer', async () => {
@@ -167,6 +171,291 @@ describe('discord LiveMessage (tool progress)', () => {
     lmOff.onEvent({ type: 'idle', model: 'openai/gpt-5', usage: { percent: 12 } });
     await lmOff.finalize('Hotovo.');
     expect(off.posts).toEqual(['Hotovo.']);
+  });
+});
+
+describe('discord answer streaming (live reply edits, two-bubble model)', () => {
+  interface Ev { type: string; name?: string; detail?: string; icon?: string; delta?: string; model?: string; usage?: { percent: number } }
+  const load = async () => (await import(join(repoRoot, 'plugins/discord/index.mjs'))) as {
+    LiveMessage: new (adapter: unknown, channelId: string, replyToId?: string) => {
+      onEvent: (e: Ev) => void; finalize: (reply?: string) => Promise<void>; abandon: () => void;
+    };
+  };
+  interface Call { method: string; id: string; content: string }
+  const mk = (cfg?: Record<string, unknown>) => {
+    const calls: Call[] = [];
+    const posts: string[] = [];
+    const edits = new Map<string, string>();
+    let nextId = 0;
+    const adapter = {
+      cfg,
+      rest: async (method: string, path: string, body?: { content?: string }) => {
+        const content = body?.content ?? '';
+        if (method === 'POST') { const id = `m${++nextId}`; posts.push(id); edits.set(id, content); calls.push({ method, id, content }); return { id }; }
+        const id = path.split('/').pop()!;
+        if (method === 'PATCH') edits.set(id, content);
+        calls.push({ method, id, content });
+        return { id };
+      },
+    };
+    return { calls, posts, edits, adapter };
+  };
+
+  it('streams the answer into ONE message, PATCHing progressively; the trailing delta lands via the throttle timer', async () => {
+    vi.useFakeTimers();
+    try {
+      const { LiveMessage } = await load();
+      const { posts, edits, adapter } = mk();
+      const lm = new LiveMessage(adapter, 'chan');
+      lm.onEvent({ type: 'text', delta: 'Hello' });   // first delta → immediate POST
+      await vi.advanceTimersByTimeAsync(0);
+      expect(posts).toEqual(['m1']);
+      expect(edits.get('m1')).toBe('Hello');
+      lm.onEvent({ type: 'text', delta: ' world' });  // inside the throttle window → deferred
+      lm.onEvent({ type: 'text', delta: '!' });        // still inside → coalesced with the above
+      expect(edits.get('m1')).toBe('Hello');           // nothing landed yet — throttled
+      await vi.advanceTimersByTimeAsync(1200);          // the self-rescheduled trailing flush fires
+      expect(posts).toEqual(['m1']);                    // still exactly ONE answer message
+      expect(edits.get('m1')).toBe('Hello world!');     // coalesced to the latest content
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('keeps the tool bubble tool-only, then re-anchors the answer BELOW it so the final answer is LAST', async () => {
+    vi.useFakeTimers();
+    try {
+      const { LiveMessage } = await load();
+      const { calls, adapter } = mk();
+      const lm = new LiveMessage(adapter, 'chan');
+      lm.onEvent({ type: 'text', delta: 'Let me check. ' }); // narration opens the answer draft FIRST (m1)
+      await vi.advanceTimersByTimeAsync(0);
+      lm.onEvent({ type: 'tool', name: 'read_file', icon: '📄' }); // tool bubble posts below (m2) → answer stranded above
+      await vi.advanceTimersByTimeAsync(0);
+      lm.onEvent({ type: 'text', delta: 'Found it.' }); // streams live into the stranded draft during the turn
+      await vi.advanceTimersByTimeAsync(1300);
+      await lm.finalize('Found it.');
+      const tools = calls.filter((c) => c.id === 'm2');   // the tool bubble
+      expect(tools.length).toBeGreaterThan(0);
+      expect(tools.every((c) => c.content.includes('read_file'))).toBe(true); // tool bubble only ever holds tool lines
+      expect(calls.filter((c) => c.method === 'DELETE').map((c) => c.id)).toContain('m1'); // stranded draft deleted
+      const posts = calls.filter((c) => c.method === 'POST').map((c) => c.id);
+      const finalId = posts.at(-1)!; // the answer re-posted LAST, below the trace
+      expect(finalId).not.toBe('m1');
+      const finalBubble = calls.filter((c) => c.id === finalId);
+      expect(finalBubble.every((c) => !c.content.includes('read_file'))).toBe(true); // never gets tool lines
+      expect(finalBubble.at(-1)!.content).toBe('Found it.'); // authoritative reply, as the channel's LAST message
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('overflows a long answer into a code-fence-aware continuation message', async () => {
+    vi.useFakeTimers();
+    try {
+      const { LiveMessage } = await load();
+      const { posts, edits, adapter } = mk();
+      const lm = new LiveMessage(adapter, 'chan');
+      const big = '```js\n' + 'const x = 1;\n'.repeat(300) + '```'; // > 1990 chars, one open fence
+      lm.onEvent({ type: 'text', delta: big });
+      await vi.advanceTimersByTimeAsync(1300);
+      await lm.finalize(big);
+      expect(posts.length).toBeGreaterThanOrEqual(2); // split across ≥2 answer bubbles
+      for (const id of posts) {
+        const c = edits.get(id)!;
+        expect(c.length).toBeLessThanOrEqual(2100);
+        expect((c.match(/```/g)?.length ?? 0) % 2).toBe(0); // every bubble has balanced fences
+      }
+      expect(posts.map((id) => edits.get(id)).join('')).toContain('const x = 1;');
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('finalize replaces the streamed draft with the returned reply and appends the footer once', async () => {
+    vi.useFakeTimers();
+    try {
+      const { LiveMessage } = await load();
+      const { edits, adapter } = mk({});
+      const lm = new LiveMessage(adapter, 'chan');
+      lm.onEvent({ type: 'text', delta: 'streamed draft that will be replaced' });
+      lm.onEvent({ type: 'idle', model: 'openai/gpt-5', usage: { percent: 30 } });
+      await vi.advanceTimersByTimeAsync(1300);
+      await lm.finalize('Final clean answer.');
+      expect(edits.get('m1')).toBe('Final clean answer.\n\n-# gpt-5 · 30 %'); // reply wins over the draft, footer once
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('abandon() freezes both bubbles — no edit lands after the error reply', async () => {
+    vi.useFakeTimers();
+    try {
+      const { LiveMessage } = await load();
+      const { calls, adapter } = mk();
+      const lm = new LiveMessage(adapter, 'chan');
+      lm.onEvent({ type: 'text', delta: 'partial answer' });
+      lm.onEvent({ type: 'tool', name: 'read_file', icon: '📄' });
+      await vi.advanceTimersByTimeAsync(0);
+      lm.onEvent({ type: 'text', delta: ' more text' }); // queued behind the throttle
+      lm.onEvent({ type: 'tool', name: 'read_file', icon: '📄' }); // queued behind the throttle
+      lm.abandon();
+      const before = calls.length;
+      await vi.advanceTimersByTimeAsync(5000); // any armed trailing flush would fire in here
+      expect(calls.length).toBe(before); // both bubbles frozen — nothing landed
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('the first answer bubble is a real reply to the triggering message; continuations are plain', async () => {
+    vi.useFakeTimers();
+    try {
+      const { LiveMessage } = await load();
+      const refs: (unknown)[] = [];
+      let nextId = 0;
+      const adapter = {
+        rest: async (method: string, _path: string, body?: { message_reference?: unknown }) => {
+          if (method === 'POST') { refs.push(body?.message_reference); return { id: `m${++nextId}` }; }
+          return { id: 'x' };
+        },
+      };
+      const lm = new LiveMessage(adapter, 'chan', 'TRIGGER');
+      lm.onEvent({ type: 'text', delta: 'answer text' });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(refs[0]).toEqual({ message_id: 'TRIGGER', fail_if_not_exists: false }); // reply ref rides the first POST
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('retries a failed final PATCH instead of freezing the answer at the mid-stream draft (#2)', async () => {
+    const { LiveMessage } = await load();
+    const edits = new Map<string, string>();
+    let nextId = 0;
+    let failNextPatch = false;
+    let patchAttempts = 0;
+    const adapter = {
+      cfg: {},
+      rest: async (method: string, path: string, body?: { content?: string }) => {
+        if (method === 'POST') { const id = `m${++nextId}`; edits.set(id, body?.content ?? ''); return { id }; }
+        if (method === 'PATCH') {
+          patchAttempts++;
+          if (failNextPatch) { failNextPatch = false; throw new Error('429 rate limited'); } // one transient blip
+          edits.set(path.split('/').pop()!, body?.content ?? '');
+        }
+        return { id: 'x' };
+      },
+    };
+    const lm = new LiveMessage(adapter, 'chan');
+    lm.onEvent({ type: 'text', delta: 'streamed draft' });
+    await new Promise((r) => setTimeout(r, 20)); // the draft POSTs as m1
+    failNextPatch = true;                         // the finalize settle's FIRST PATCH hits a 429
+    await lm.finalize('Final clean answer.');
+    expect(patchAttempts).toBe(2);                         // first PATCH threw and was swallowed → retried once
+    expect(edits.get('m1')).toBe('Final clean answer.');   // authoritative reply landed, NOT frozen at the draft
+  });
+
+  it('an image-only reply deletes the streamed raw-markdown draft instead of freezing it (#4)', async () => {
+    const { LiveMessage } = await load();
+    const calls: { method: string; id: string; content: string }[] = [];
+    let uploads = 0;
+    let nextId = 0;
+    const adapter = {
+      cfg: {},
+      resolveImageFiles: (names: string[]) => names.map((n) => ({ name: n, blob: new Uint8Array([1]) })),
+      uploadImages: async () => { uploads++; },
+      rest: async (method: string, path: string, body?: { content?: string }) => {
+        if (method === 'POST') { const id = `m${++nextId}`; calls.push({ method, id, content: body?.content ?? '' }); return { id }; }
+        const id = path.split('/').pop()!;
+        calls.push({ method, id, content: body?.content ?? '' });
+        return { id };
+      },
+    };
+    const lm = new LiveMessage(adapter, 'chan');
+    // The model streams text that is ONLY a generated-image link → a StreamingAnswer bubble is created
+    // holding raw markdown, which is dead text on Discord.
+    lm.onEvent({ type: 'text', delta: '![kočka](/api/brain/images/abc123.png)' });
+    await new Promise((r) => setTimeout(r, 20)); // the draft bubble (m1) is POSTed
+    await lm.finalize('![kočka](/api/brain/images/abc123.png)');
+    expect(uploads).toBe(1); // the image rode its own upload
+    // The raw-markdown draft is DELETED, not left frozen above the standalone image.
+    expect(calls.filter((c) => c.method === 'DELETE').map((c) => c.id)).toContain('m1');
+  });
+
+  it('deletes a leftover continuation bubble whose create POST is still in flight at finalize (#7)', async () => {
+    vi.useFakeTimers();
+    try {
+      const { LiveMessage } = await load();
+      const calls: { method: string; id: string }[] = [];
+      let nextId = 0;
+      const adapter = {
+        rest: (method: string, path: string) => {
+          if (method === 'POST') {
+            const id = `m${++nextId}`;
+            calls.push({ method, id });
+            // bubble0 (m1) posts instantly; the continuation's create (m2) is slow → still in flight at finalize.
+            return new Promise<{ id: string }>((res) => setTimeout(() => res({ id }), id === 'm2' ? 50 : 0));
+          }
+          const id = path.split('/').pop()!;
+          calls.push({ method, id });
+          return Promise.resolve({ id });
+        },
+      };
+      const lm = new LiveMessage(adapter, 'chan');
+      const big = 'A'.repeat(1990) + '\n' + 'B'.repeat(500); // splits into 2 answer bubbles
+      lm.onEvent({ type: 'text', delta: big });
+      await vi.advanceTimersByTimeAsync(0);  // bubble0 (m1) resolves; bubble1's POST (m2) fires, in flight (+50ms)
+      const done = lm.finalize('short');     // final reply is 1 piece → bubble1 (m2) is a leftover to delete
+      await vi.advanceTimersByTimeAsync(0);  // finalize settles bubble0, reaches the leftover loop, awaits bubble1.sending
+      await vi.advanceTimersByTimeAsync(60); // bubble1's in-flight POST resolves → deleteBubble now knows m2 and DELETEs it
+      await done;
+      expect(calls.filter((c) => c.method === 'DELETE').map((c) => c.id)).toContain('m2'); // no orphan mid-stream chunk left
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('serializes continuation-bubble creates so split pieces post in channel order (#9)', async () => {
+    const { LiveMessage } = await load();
+    const initiated: string[] = []; // POST ids in the order they are actually SENT
+    const queue: Array<() => void> = [];
+    let nextId = 0;
+    const adapter = {
+      rest: (method: string, path: string) => {
+        if (method === 'POST') {
+          const id = `m${++nextId}`;
+          initiated.push(id);
+          return new Promise<{ id: string }>((res) => queue.push(() => res({ id }))); // gated: resolve on demand
+        }
+        return Promise.resolve({ id: path.split('/').pop()! });
+      },
+    };
+    const tick = () => new Promise((r) => setTimeout(r, 0));
+    const lm = new LiveMessage(adapter, 'chan');
+    // One big delta that splits into THREE pieces → bubble0,1,2 are created in a SINGLE update() call.
+    const big = 'A'.repeat(1990) + '\n' + 'B'.repeat(1990) + '\n' + 'C'.repeat(500);
+    lm.onEvent({ type: 'text', delta: big });
+    await tick();
+    expect(initiated).toEqual(['m1']);              // serialized: only bubble0's create is in flight
+    queue.shift()!(); await tick();
+    expect(initiated).toEqual(['m1', 'm2']);         // bubble1's create fires only AFTER bubble0's resolves
+    queue.shift()!(); await tick();
+    expect(initiated).toEqual(['m1', 'm2', 'm3']);   // bubble2's create fires only AFTER bubble1's — order preserved
+    queue.shift()!(); await tick();                  // drain the last so no dangling promise
+  });
+
+  it('text→tool→text→tool→text yields exactly ONE final answer, BELOW the trace, no duplicates (#3)', async () => {
+    vi.useFakeTimers();
+    try {
+      const { LiveMessage } = await load();
+      const { calls, adapter } = mk();
+      const lm = new LiveMessage(adapter, 'chan');
+      lm.onEvent({ type: 'text', delta: 'First. ' });             // answer draft m1
+      await vi.advanceTimersByTimeAsync(0);
+      lm.onEvent({ type: 'tool', name: 'read_file', icon: '📄' }); // tool bubble m2 → answer stranded above
+      await vi.advanceTimersByTimeAsync(0);
+      lm.onEvent({ type: 'text', delta: 'Second. ' });
+      await vi.advanceTimersByTimeAsync(1300);
+      lm.onEvent({ type: 'tool', name: 'run_command', icon: '💻' }); // same single trace bubble m2
+      await vi.advanceTimersByTimeAsync(0);
+      lm.onEvent({ type: 'text', delta: 'Third.' });
+      await vi.advanceTimersByTimeAsync(1300);
+      await lm.finalize('The complete answer.');
+      expect(calls.filter((c) => c.method === 'DELETE').map((c) => c.id)).toContain('m1'); // stranded draft removed
+      const answered = new Set(calls.filter((c) => c.content === 'The complete answer.').map((c) => c.id));
+      expect(answered.size).toBe(1);                 // exactly one bubble carries the final answer — no duplicates
+      expect(answered.has('m1')).toBe(false);        // and it is NOT the stranded draft
+      const finalId = [...answered][0];
+      const posts = calls.filter((c) => c.method === 'POST').map((c) => c.id);
+      expect(posts.indexOf(finalId)).toBeGreaterThan(posts.indexOf('m2')); // answer posted AFTER the tool trace
+    } finally { vi.useRealTimers(); }
   });
 });
 
@@ -489,5 +778,21 @@ describe('discord configurable media/timeout limits', () => {
     adapter.pendingAsks.set('ask1', { channelId: 'OTHER', askerId: 'U9', createdAt: Date.now() - 60_000 }); // 60s old > 30s cap
     await adapter.onMessage({ type: 0, guild_id: 'G', channel_id: '999', id: 'M2', author: { id: 'U2', username: 'x' }, member: { roles: [] }, content: 'hi' });
     expect(adapter.pendingAsks.has('ask1')).toBe(false);
+  });
+});
+
+describe('files plugin tool icons are emoji glyphs (Discord toolLine renders manifest.icon verbatim)', () => {
+  it('every icon value in the files manifest is a real emoji, with the expected mapping', () => {
+    // The Discord renderer (stream.mjs toolLine) prints `${c.icon ?? '🔧'}` verbatim, so a word value like
+    // "file"/"edit"/"search" (the original bug) renders as literal text, reading as "no icon". Guard against
+    // a regression to word values across every tool the files plugin ships.
+    const manifest = JSON.parse(readFileSync(join(repoRoot, 'plugins/files/elowen-plugin.json'), 'utf-8')) as { icons: Record<string, string> };
+    const emoji = /\p{Extended_Pictographic}/u;
+    for (const [tool, icon] of Object.entries(manifest.icons)) {
+      expect(emoji.test(icon), `${tool} icon "${icon}" must be an emoji glyph`).toBe(true);
+    }
+    expect(manifest.icons).toMatchObject({
+      read_file: '📄', list_dir: '📂', write_file: '✏️', edit_file: '✏️', search_files: '🔎', file_info: '📄', git_status: '🌿',
+    });
   });
 });

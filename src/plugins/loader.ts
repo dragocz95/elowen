@@ -4,7 +4,9 @@ import { pathToFileURL } from 'node:url';
 import { parseManifest } from './manifest.js';
 import type { PluginManifest } from './manifest.js';
 import { PluginRegistry } from './registry.js';
+import type { PluginEmbedder } from './registry.js';
 import type { PluginLogger, PluginModule, ProviderCredentials } from './api.js';
+import type { EmbeddingConfig } from '../embeddings/embeddingService.js';
 import type { AskAnswer } from '../brain/events.js';
 
 /** Localized overrides for a plugin's user-facing manifest strings, keyed by field key. The manifest's
@@ -80,6 +82,13 @@ export interface LoadPluginsOptions {
   listModels?: () => Promise<{ provider: string; providerLabel: string; model: string }[]>;
   /** Central provider credential resolver exposed to plugins as ctx.resolveProvider(id). */
   resolveProvider?: (id: string) => ProviderCredentials | null;
+  /** The SHARED text→vector embedder (the memory subsystem's EmbeddingService), exposed to plugins as
+   *  ctx.embeddings — gated by a `reads:['embeddings']` capability. Threaded together with the config
+   *  mapper below so a plugin reuses the operator's ONE embedding model (single source of truth). */
+  embeddings?: PluginEmbedder;
+  /** The LIVE embedding config mapper (Settings → Memory), read on each embed so a model change applies
+   *  without a reload. Pairs with `embeddings` above. */
+  embeddingConfig?: () => EmbeddingConfig;
   /** Deliver a parked ask_user_question answer, exposed to plugins as ctx.answerQuestion() — for
    *  interactive transports (Discord) that gather the pick out-of-band. */
   answerQuestion?: (id: string, answers: AskAnswer[]) => boolean;
@@ -120,13 +129,14 @@ export async function loadPlugins(opts: LoadPluginsOptions): Promise<PluginRegis
         // Pass the manifest's declared capabilities + provides so the context can enforce them at
         // registration/resolve time (deny-by-default). Absent blocks default to unconstrained tools/
         // platforms and a deny-all provider gate.
-        const ctx = staging.contextFor(name, opts.config?.[name] ?? {}, opts.logger, opts.dataRoot, opts.notify, opts.listModels, opts.resolveProvider, manifest.capabilities ?? {}, manifest.provides, opts.answerQuestion);
+        const ctx = staging.contextFor(name, opts.config?.[name] ?? {}, opts.logger, opts.dataRoot, opts.notify, opts.listModels, opts.resolveProvider, manifest.capabilities ?? {}, manifest.provides, opts.answerQuestion, opts.embeddings, opts.embeddingConfig);
         await mod.register(ctx);
         registry.merge(staging, (m) => opts.logger.warn(`[plugin:${name}] ${m}`));
         // Capture the plugin's declared capabilities (deny-by-default `{}` when absent) — the manifest
         // is otherwise discarded here, but the hook bus needs these to gate this plugin's mutations.
         registry.setCapabilities(name, manifest.capabilities ?? {});
         registry.setIcons(manifest.icons);
+        registry.setShowOutput(manifest.showOutput);
         loaded.add(name);
         opts.logger.info(`plugin loaded: ${name}@${manifest.version}`);
       } catch (err) {

@@ -2,7 +2,9 @@ import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { ToolDefinition } from '@earendil-works/pi-coding-agent';
-import type { PluginCapabilities, PluginCommand, PluginContext, PluginControl, PluginHook, PluginLogger, PluginSkill, PlatformAdapter, ProviderCredentials } from './api.js';
+import type { PluginCapabilities, PluginCommand, PluginContext, PluginControl, PluginEmbeddings, PluginHook, PluginLogger, PluginSkill, PlatformAdapter, ProviderCredentials } from './api.js';
+import { isEmbeddingConfigured } from '../embeddings/embeddingService.js';
+import type { EmbeddingConfig } from '../embeddings/embeddingService.js';
 import { isBuiltinCommand } from '../brain/slashCommands.js';
 import type { PluginManifest } from './manifest.js';
 import { assertPathAllowed, allowedRoots, defaultCwd, isAllAccess, currentAccess } from './pathGuard.js';
@@ -17,6 +19,16 @@ function collectStringValues(value: unknown, into: Set<string>): void {
   if (typeof value === 'string') { into.add(value); return; }
   if (Array.isArray(value)) { for (const v of value) collectStringValues(v, into); return; }
   if (value && typeof value === 'object') { for (const v of Object.values(value)) collectStringValues(v, into); }
+}
+
+/** The minimal shape of the SHARED embedder the registry exposes to plugins as `ctx.embeddings` — the
+ *  public `embed`/`embedBatch` of the ONE EmbeddingService the memory subsystem uses. Kept structural so
+ *  the registry never imports the concrete class; bootstrap passes the live instance. Signatures take a
+ *  bound `(cfg, …)` — the registry binds the operator's Settings→Memory config internally, so the plugin
+ *  can never point the shared key at a different model/endpoint. */
+export interface PluginEmbedder {
+  embed(cfg: EmbeddingConfig, text: string): Promise<Float32Array>;
+  embedBatch(cfg: EmbeddingConfig, texts: string[]): Promise<Float32Array[]>;
 }
 
 /** Aggregates every enabled plugin's contributions, and hands each plugin a PluginContext scoped to its
@@ -51,6 +63,11 @@ export class PluginRegistry {
   /** Per-tool display icons declared across all plugin manifests (`icons`), keyed by tool name. Merged
    *  with the core defaults by `makeToolIconResolver` when the daemon stamps a `tool` event's icon. */
   readonly toolIcons = new Map<string, string>();
+  /** Output-show patterns declared across all plugin manifests (`showOutput`) — exact tool names or
+   *  `prefix*`. Merged with the core defaults (`BUILTIN_TOOL_OUTPUT_SHOWN`) into the one output policy
+   *  the shared `messageView` renderer consults (`makeToolOutputPolicy`). Output is hidden by default;
+   *  only these tools' output surfaces. */
+  readonly toolShowOutput = new Set<string>();
 
   /** Absorb another registry's contributions (the loader stages each plugin and merges on success).
    *  Controls + commands are name-keyed and drive admin routes / the slash menu, so a later plugin must
@@ -99,9 +116,17 @@ export class PluginRegistry {
     }
   }
 
+  /** Record a plugin's manifest output-show patterns (from `showOutput`). Called by the loader after a
+   *  clean register+merge, mirroring `setIcons`. Patterns are a set, so re-declaring one is idempotent. */
+  setShowOutput(patterns?: string[]): void {
+    for (const p of patterns ?? []) {
+      if (typeof p === 'string' && p.trim()) this.toolShowOutput.add(p.trim());
+    }
+  }
+
   /** Build the context passed to one plugin's `register()`. `config` is that plugin's own slice;
    *  `dataRoot` hosts per-plugin writable dirs (tests fall back to the OS tmpdir). */
-  contextFor(name: string, config: Record<string, unknown>, logger: PluginLogger, dataRoot?: string, notify?: (text: string, channelId?: string) => Promise<void>, listModels?: () => Promise<{ provider: string; providerLabel: string; model: string }[]>, resolveProvider?: (id: string) => ProviderCredentials | null, caps?: PluginCapabilities, provides?: PluginManifest['provides'], answerQuestion?: (id: string, answers: AskAnswer[]) => boolean): PluginContext {
+  contextFor(name: string, config: Record<string, unknown>, logger: PluginLogger, dataRoot?: string, notify?: (text: string, channelId?: string) => Promise<void>, listModels?: () => Promise<{ provider: string; providerLabel: string; model: string }[]>, resolveProvider?: (id: string) => ProviderCredentials | null, caps?: PluginCapabilities, provides?: PluginManifest['provides'], answerQuestion?: (id: string, answers: AskAnswer[]) => boolean, embedder?: PluginEmbedder, embeddingConfig?: () => EmbeddingConfig): PluginContext {
     const scoped: PluginLogger = {
       info: (m) => logger.info(`[plugin:${name}] ${m}`),
       warn: (m) => logger.warn(`[plugin:${name}] ${m}`),
@@ -115,6 +140,39 @@ export class PluginRegistry {
     const configProviderIds = new Set<string>();
     collectStringValues(config, configProviderIds);
     const baseResolveProvider = resolveProvider ?? (() => null);
+    // Deny-by-default embeddings gate: the shared embedder is reachable only when the plugin declared
+    // `reads:['embeddings']`. An existing plugin without it sees isConfigured()===false and rejecting
+    // embed*(), so this adds zero capability to already-installed plugins.
+    const embeddingsAllowed = capabilities.reads?.includes('embeddings') ?? false;
+    // The LIVE, usable embedding config (Settings → Memory), or null when embeddings are disabled or the
+    // capability is absent. Read on EVERY call so a model change applies without a reload.
+    const liveEmbeddingConfig = (): EmbeddingConfig | null => {
+      if (!embeddingsAllowed) return null;
+      const cfg = embeddingConfig?.();
+      return cfg && isEmbeddingConfigured(cfg) ? cfg : null;
+    };
+    const embeddings: PluginEmbeddings = {
+      isConfigured: () => liveEmbeddingConfig() !== null,
+      descriptor: () => {
+        const cfg = liveEmbeddingConfig();
+        if (!cfg) return null;
+        return { provider: cfg.providerId ?? cfg.baseUrl ?? '', model: cfg.model, dimensions: cfg.dimensions ?? null };
+      },
+      embed: async (text) => {
+        if (!embeddingsAllowed) throw new Error("embeddings read capability not declared (add reads:['embeddings'] to the plugin manifest)");
+        const cfg = liveEmbeddingConfig();
+        if (!cfg) throw new Error('embeddings not configured (set the embedding model in Settings → Memory)');
+        if (!embedder) throw new Error('embeddings service not available');
+        return embedder.embed(cfg, text);
+      },
+      embedBatch: async (texts) => {
+        if (!embeddingsAllowed) throw new Error("embeddings read capability not declared (add reads:['embeddings'] to the plugin manifest)");
+        const cfg = liveEmbeddingConfig();
+        if (!cfg) throw new Error('embeddings not configured (set the embedding model in Settings → Memory)');
+        if (!embedder) throw new Error('embeddings service not available');
+        return embedder.embedBatch(cfg, texts);
+      },
+    };
     return {
       // Enforce the manifest's declared tool surface: when a plugin declares `provides.tools`, it may
       // register ONLY those names (an undeclared tool is refused). A manifest that omits the list stays
@@ -191,6 +249,7 @@ export class PluginRegistry {
         }
         return baseResolveProvider(id);
       },
+      embeddings,
       dataDir: () => {
         const dir = join(dataRoot ?? join(tmpdir(), 'elowen-plugins-data'), name);
         mkdirSync(dir, { recursive: true });

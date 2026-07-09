@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { PluginRegistry } from '../../src/plugins/registry.js';
 import type { PluginSkill } from '../../src/plugins/api.js';
+import type { EmbeddingConfig } from '../../src/embeddings/embeddingService.js';
 
 const noopLog = { info() {}, warn() {}, error() {} };
 const fakeSkill = (name: string) => ({ name, description: 'd', filePath: `/s/${name}.md` } as unknown as PluginSkill);
@@ -32,6 +33,80 @@ describe('PluginRegistry', () => {
     const ctx = reg.contextFor('skills', {}, { info: (m) => lines.push(m), warn() {}, error() {} });
     ctx.logger.info('loaded');
     expect(lines).toEqual(['[plugin:skills] loaded']);
+  });
+
+  describe('ctx.embeddings gate (deny-by-default, single-source config)', () => {
+    // A fake embedder that records the config it was called with, so we can prove the LIVE config is
+    // bound internally and forwarded on every call.
+    const makeEmbedder = () => {
+      const seen: EmbeddingConfig[] = [];
+      return {
+        seen,
+        embed: async (cfg: EmbeddingConfig, text: string) => { seen.push(cfg); return Float32Array.from([text.length, cfg.model.length]); },
+        embedBatch: async (cfg: EmbeddingConfig, texts: string[]) => { seen.push(cfg); return texts.map((t) => Float32Array.from([t.length])); },
+      };
+    };
+    const configured: EmbeddingConfig = { providerId: 'openai', model: 'text-embedding-3-small', dimensions: 1536 };
+
+    it('permits embed() and reports configured/descriptor when reads:["embeddings"] is declared', async () => {
+      const reg = new PluginRegistry();
+      const emb = makeEmbedder();
+      const ctx = reg.contextFor('sem', {}, noopLog, undefined, undefined, undefined, undefined, { reads: ['embeddings'] }, undefined, undefined, emb, () => configured);
+      expect(ctx.embeddings.isConfigured()).toBe(true);
+      expect(ctx.embeddings.descriptor()).toEqual({ provider: 'openai', model: 'text-embedding-3-small', dimensions: 1536 });
+      const vec = await ctx.embeddings.embed('hello');
+      expect(Array.from(vec)).toEqual([5, 'text-embedding-3-small'.length]);
+      expect(emb.seen[0]).toEqual(configured); // the bound Settings→Memory config, not a plugin field
+    });
+
+    it('is deny-by-default: without the capability, isConfigured()===false, descriptor()===null, embed() rejects', async () => {
+      const reg = new PluginRegistry();
+      const emb = makeEmbedder();
+      const ctx = reg.contextFor('nocap', {}, noopLog, undefined, undefined, undefined, undefined, {}, undefined, undefined, emb, () => configured);
+      expect(ctx.embeddings.isConfigured()).toBe(false);
+      expect(ctx.embeddings.descriptor()).toBeNull();
+      await expect(ctx.embeddings.embed('x')).rejects.toThrow(/capability/);
+      await expect(ctx.embeddings.embedBatch(['x'])).rejects.toThrow(/capability/);
+      expect(emb.seen).toHaveLength(0); // the embedder was never reached
+    });
+
+    it('rejects with "not configured" when the capability is declared but no embedding model is set', async () => {
+      const reg = new PluginRegistry();
+      const emb = makeEmbedder();
+      const empty: EmbeddingConfig = { providerId: '', model: '', dimensions: undefined };
+      const ctx = reg.contextFor('sem', {}, noopLog, undefined, undefined, undefined, undefined, { reads: ['embeddings'] }, undefined, undefined, emb, () => empty);
+      expect(ctx.embeddings.isConfigured()).toBe(false);
+      expect(ctx.embeddings.descriptor()).toBeNull();
+      await expect(ctx.embeddings.embed('x')).rejects.toThrow(/not configured/);
+    });
+
+    it('forwards the LIVE config on every call (a model switch applies without a reload)', async () => {
+      const reg = new PluginRegistry();
+      const emb = makeEmbedder();
+      let live: EmbeddingConfig = configured;
+      const ctx = reg.contextFor('sem', {}, noopLog, undefined, undefined, undefined, undefined, { reads: ['embeddings'] }, undefined, undefined, emb, () => live);
+      await ctx.embeddings.embed('a');
+      live = { providerId: 'local', model: 'nomic-embed', dimensions: 768 };
+      await ctx.embeddings.embed('b');
+      expect(ctx.embeddings.descriptor()).toEqual({ provider: 'local', model: 'nomic-embed', dimensions: 768 });
+      expect(emb.seen.map((c) => c.model)).toEqual(['text-embedding-3-small', 'nomic-embed']);
+    });
+  });
+
+  describe('setShowOutput (tool-output policy)', () => {
+    it('collects a plugin manifest\'s showOutput patterns, trims blanks, and is idempotent', () => {
+      const reg = new PluginRegistry();
+      reg.setShowOutput(['run_command', ' read_process_output ', 'lsp_*']);
+      reg.setShowOutput(['run_command', 'scan_code', '', '   ']); // re-declares + blanks dropped
+      expect([...reg.toolShowOutput].sort()).toEqual(['lsp_*', 'read_process_output', 'run_command', 'scan_code']);
+    });
+
+    it('an undefined/empty manifest field contributes nothing', () => {
+      const reg = new PluginRegistry();
+      reg.setShowOutput(undefined);
+      reg.setShowOutput([]);
+      expect(reg.toolShowOutput.size).toBe(0);
+    });
   });
 
   describe('registerCommand', () => {

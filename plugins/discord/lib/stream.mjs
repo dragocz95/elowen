@@ -26,34 +26,135 @@ export async function postWithImages(adapter, channelId, text, replyToId) {
 }
 
 /** One editable Discord message: created on the first write, then PATCHed (throttled — Discord allows
- *  ~5 edits / 5 s per channel). Shared by the tool-progress bubble and the streaming answer. */
+ *  ~5 edits / 5 s per channel). Shared by the tool-progress bubble and the streaming answer. Callers keep
+ *  content within Discord's limit (progress slices to CHUNK; the answer pre-splits with splitContent). */
 class EditableMessage {
-  constructor(adapter, channelId) {
+  constructor(adapter, channelId, createExtra = {}) {
     this.a = adapter;
     this.channelId = channelId;
+    this.createExtra = createExtra; // merged into the FIRST POST only (e.g. a reply reference); PATCHes stay plain
     this.messageId = null;
     this.content = '';
+    this.sent = null;    // the content Discord last actually received — skip a redundant edit when unchanged
     this.lastEdit = 0;
-    this.pending = false;
+    this.timer = null;   // a self-rescheduled trailing flush, so the LAST edit always lands even with no further update
+    this.sending = null; // the tail of the serialized send chain — a new send always waits for the prior one
+    this.finalizing = false; // set by settle() to force one last send past the throttle
+    this.closed = false;
   }
   /** Set the full desired content and schedule a (throttled) edit. */
   update(content) {
-    this.content = content.slice(0, CHUNK);
+    this.content = content;
     void this.flush();
   }
-  async flush() {
-    if (this.closed) return; // finalized elsewhere — a straggler edit must not overwrite the final text
-    const now = Date.now();
-    if (now - this.lastEdit < EDIT_THROTTLE_MS) { this.pending = true; return; }
-    this.lastEdit = now;
-    if (!this.messageId) {
-      const msg = await this.a.rest('POST', `/channels/${this.channelId}/messages`, { content: this.content || '💭 …' }).catch(() => null);
-      this.messageId = msg?.id ?? null;
-    } else {
-      await this.a.rest('PATCH', `/channels/${this.channelId}/messages/${this.messageId}`, { content: this.content }).catch(() => {});
-    }
-    if (this.pending) { this.pending = false; setTimeout(() => void this.flush(), EDIT_THROTTLE_MS); }
+  /** Bypass the throttle, settle to a final content exactly once (awaiting the in-flight create/edit chain
+   *  first, so no straggler POST double-creates), then freeze — no later edit can overwrite it. */
+  async settle(content) {
+    this.content = content;
+    this.finalizing = true;
+    await this.flush();
+    // The settle is the AUTHORITATIVE final send. If it failed (a 429/network blip left `sent` behind
+    // `content`), retry once before freezing — otherwise the reply is silently lost, frozen at the
+    // mid-stream draft, with no later drain to retry it (close() below would end the chain).
+    if (this.content !== this.sent) await this.flush();
+    this.close();
   }
+  /** Freeze the message: no further edit lands, and any armed trailing flush is cancelled. */
+  close() {
+    this.closed = true;
+    if (this.timer) { clearTimeout(this.timer); this.timer = null; }
+  }
+  /** Schedule a send of the latest content, honoring the throttle. Sends are SERIALIZED through `sending`
+   *  so the initial create runs (and sets messageId) before any later edit — a burst never double-posts. */
+  flush() {
+    if (this.closed) return Promise.resolve();
+    const elapsed = Date.now() - this.lastEdit;
+    if (!this.finalizing && elapsed < EDIT_THROTTLE_MS) {
+      // Inside the throttle window: arm a SINGLE trailing flush so the latest content always lands ~throttle
+      // later, even if no further update arrives (coalesces a burst into one edit at the window's end).
+      if (!this.timer) {
+        this.timer = setTimeout(() => { this.timer = null; void this.flush(); }, EDIT_THROTTLE_MS - elapsed);
+        if (typeof this.timer.unref === 'function') this.timer.unref();
+      }
+      return Promise.resolve();
+    }
+    if (this.timer) { clearTimeout(this.timer); this.timer = null; }
+    this.sending = (this.sending ?? Promise.resolve()).then(() => this.drain());
+    return this.sending;
+  }
+  /** One serialized send: POST the message the first time (claiming messageId), PATCH it thereafter. Skips
+   *  when the content Discord already has is current, so a coalesced/duplicate flush is a no-op. */
+  async drain() {
+    if (this.closed) return;
+    if (this.content === this.sent) return; // Discord already has the latest content
+    this.lastEdit = Date.now();
+    const content = this.content;
+    if (!this.messageId) {
+      const msg = await this.a.rest('POST', `/channels/${this.channelId}/messages`, { content: content || '💭 …', ...this.createExtra }).catch(() => null);
+      this.messageId = msg?.id ?? null;
+      if (this.messageId) this.sent = content; // a failed POST leaves sent null so the next drain retries the create
+    } else {
+      // A failed PATCH (429/network blip) must leave `sent` unchanged so a later drain/settle retries —
+      // mirroring the POST path, which leaves `sent` null on a failed create. Marking `sent` on failure
+      // would freeze the message at the stale draft with no retry (content === sent skips the next drain).
+      const ok = await this.a.rest('PATCH', `/channels/${this.channelId}/messages/${this.messageId}`, { content }).then(() => true, () => false);
+      if (ok) this.sent = content;
+    }
+  }
+}
+
+/** The streaming answer: the assistant's reply text edited live into its OWN Discord message(s), kept in a
+ *  message SEPARATE from the tool-progress bubble so alternating text→tool→text never loses an edit target.
+ *  Overflow past one Discord message is split code-fence-aware (splitContent) into ordered continuation
+ *  bubbles; only the last (growing) one is edited on each delta — earlier ones freeze at their piece. The
+ *  FIRST bubble is a real reply to the triggering message. */
+class StreamingAnswer {
+  constructor(adapter, channelId, replyToId) {
+    this.a = adapter;
+    this.channelId = channelId;
+    this.replyToId = replyToId; // the first bubble replies to it; continuations are plain
+    this.bubbles = [];          // ordered EditableMessages; index 0 carries the reply reference
+  }
+  bubbleFor(i) {
+    let b = this.bubbles[i];
+    if (!b) {
+      const ref = i === 0 && this.replyToId ? { message_reference: { message_id: this.replyToId, fail_if_not_exists: false } } : {};
+      b = new EditableMessage(this.a, this.channelId, ref);
+      // Serialize the initial create ACROSS bubbles through one linked chain: a new bubble's first send
+      // waits for the previous bubble's send chain, so continuation POSTs land on Discord in piece order.
+      // Independent per-bubble chains could otherwise transpose pieces (a code-fence continuation posted
+      // above its opening part).
+      const prev = this.bubbles[i - 1];
+      if (prev) b.sending = prev.sending ?? Promise.resolve();
+      this.bubbles[i] = b;
+    }
+    return b;
+  }
+  /** Stream the growing answer: split code-fence-aware and edit each piece into its bubble. */
+  update(text) {
+    const pieces = splitContent(text);
+    for (let i = 0; i < pieces.length; i++) this.bubbleFor(i).update(pieces[i]);
+  }
+  /** Settle to the FINAL answer exactly once: each bubble PATCHed to its final piece and frozen. Any extra
+   *  continuation bubble left over from a longer streamed draft (the returned reply is shorter) is deleted,
+   *  so no stale tail remains. */
+  async finalize(text) {
+    const pieces = splitContent(text);
+    for (let i = 0; i < pieces.length; i++) await this.bubbleFor(i).settle(pieces[i]);
+    for (let i = pieces.length; i < this.bubbles.length; i++) await this.deleteBubble(this.bubbles[i]);
+  }
+  /** Freeze a bubble and delete its Discord message, AWAITING any in-flight create/edit first — a
+   *  bubble whose initial POST is still in flight has messageId === null, so deciding close-vs-delete
+   *  before the send settles would let a straggler POST escape and leave an orphan message behind. */
+  async deleteBubble(b) {
+    b.close();
+    await b.sending?.catch(() => {}); // let the in-flight create/edit settle so messageId is known
+    if (b.messageId) await this.a.rest('DELETE', `/channels/${b.channelId}/messages/${b.messageId}`).catch(() => {});
+  }
+  /** Delete EVERY posted bubble and freeze — used to drop a stranded answer draft (re-anchored below a
+   *  tool trace) or an image-only reply's raw-markdown draft. Awaits each in-flight send so none escapes. */
+  async discard() { for (const b of this.bubbles) await this.deleteBubble(b); }
+  close() { for (const b of this.bubbles) b.close(); }
 }
 
 /** One rendered progress line: `<icon> \`tool\`` + optional `: "detail"` + optional ` ×N` counter. The
@@ -77,21 +178,24 @@ function cardLines(card, max = 15) {
   return lines;
 }
 
-/** Streaming turn: tools go into ONE edited progress bubble — one emoji-tagged line per
- *  tool, joined by single newlines so they stack tightly; CONSECUTIVE repeats of the same tool collapse
- *  into a ×N counter on their line (latest detail shown) — and the final answer is posted as its own
- *  clean message AFTER the run settles. Text deltas are working narration between tool calls; they are
- *  not streamed into the channel, so the answer is always the LAST message (the summary), never buried
- *  under a tool trace. No tools → just the answer. */
+/** Streaming turn: TWO independently-edited Discord messages. Tools go into ONE progress bubble — one
+ *  emoji-tagged line per tool, joined by single newlines so they stack tightly; CONSECUTIVE repeats of the
+ *  same tool collapse into a ×N counter on their line (latest detail shown). The assistant's ANSWER streams
+ *  LIVE into its OWN separate message (StreamingAnswer) as text deltas arrive — so alternating text→tool→text
+ *  edits two stably-identified messages and never loses its target. On finalize the answer bubble is settled
+ *  to the returned reply (authoritative over the streamed draft). No tools → just the streaming answer. */
 export class LiveMessage {
   constructor(adapter, channelId, replyToId, askerId) {
     this.a = adapter;
     this.channelId = channelId;
-    this.replyToId = replyToId; // the triggering message — the final answer is a real reply to it
+    this.replyToId = replyToId; // the triggering message — the answer bubble is a real reply to it
     this.askerId = askerId;     // who to route an ask_user_question prompt to (and gate its answer on)
     this.toolCalls = []; // { name, detail?, count } — one entry per rendered line
-    this.progress = null; // created lazily on the first tool event
-    this.text = '';       // accumulated only as the finalize fallback (handler may return undefined)
+    this.progress = null; // the tool-trace bubble, created lazily on the first tool event
+    this.answer = null;   // the live answer bubble(s), created lazily on the first visible text delta
+    this.answerStranded = false; // set when the tool bubble is posted BELOW an already-started answer draft →
+                                 // the answer is stranded ABOVE the trace and must be re-anchored at finalize
+    this.text = '';       // accumulated assistant text — streamed into `answer` and the finalize fallback
     this.imageRefs = [];  // generated-image refs from tool results — attached even if the reply omits them
     this.idle = null;     // the turn's settle event (model + context usage) → runtime footer
     this.reasoning = '';  // reasoning stream, only rendered when cfg.showReasoning (off by default)
@@ -123,8 +227,13 @@ export class LiveMessage {
     if (toolLines.length) sections.push(toolLines.join('\n'));
     sections.push(...cards);
     if (!sections.length) return;
-    this.progress ??= new EditableMessage(this.a, this.channelId);
-    this.progress.update(sections.join('\n-# ┈┈┈┈┈┈┈┈┈┈\n'));
+    if (!this.progress) {
+      this.progress = new EditableMessage(this.a, this.channelId);
+      // The answer draft already started, so this new tool bubble posts BELOW it — stranding the answer
+      // ABOVE the trace. Flag it so finalize re-anchors the answer below and keeps it the LAST message.
+      if (this.answer) this.answerStranded = true;
+    }
+    this.progress.update(sections.join('\n-# ┈┈┈┈┈┈┈┈┈┈\n').slice(0, CHUNK));
   }
   /** (Re)arm the stall hint: after STALL_HINT_MS of no visible tool progress, re-render so the step
    *  counter surfaces even during pure silence (one long-running tool emits no interim events). */
@@ -152,6 +261,13 @@ export class LiveMessage {
       if (this.a.cfg?.showReasoning) this.renderProgress();
     } else if (e.type === 'text' && e.delta) {
       this.text += e.delta;
+      // Stream the growing answer into its OWN message, separate from the tool bubble. Skip pure-thinking
+      // deltas (stripThinking) so no empty/placeholder answer is posted while the model is still reasoning.
+      const visible = stripThinking(this.text);
+      if (visible.trim()) {
+        this.answer ??= new StreamingAnswer(this.a, this.channelId, this.replyToId);
+        this.answer.update(visible);
+      }
     } else if (e.type === 'image' && e.ref) {
       this.imageRefs.push(e.ref);
     } else if (e.type === 'card' && e.card?.id) {
@@ -173,11 +289,12 @@ export class LiveMessage {
       this.idle = e;
     }
   }
-  /** Freeze the live bubble on a FAILED turn: clear the stall-hint timer and close the progress message
-   *  so a straggler "⚙️ Step N" edit can't land after the ❌ + ⚠️ error reply already went out. */
+  /** Freeze the live bubbles on a FAILED turn: clear the stall-hint timer and close BOTH the progress and
+   *  answer messages so a straggler edit can't land after the ❌ + ⚠️ error reply already went out. */
   abandon() {
     clearTimeout(this.stallTimer);
-    if (this.progress) this.progress.closed = true;
+    if (this.progress) this.progress.close();
+    if (this.answer) this.answer.close();
   }
   async finalize(reply) {
     // Settle the progress bubble to its complete tool list (a throttled edit may still be pending),
@@ -186,20 +303,22 @@ export class LiveMessage {
     if (this.progress) {
       this.lastActivityAt = Date.now(); // drop the stall step-counter from the settled tool trace
       this.renderProgress();
-      this.progress.lastEdit = 0; // bypass the throttle for this one final settle
-      await this.progress.flush();
-      this.progress.closed = true;
+      await this.progress.settle(this.progress.content); // bypass the throttle for this one final settle, then freeze
     }
-    // Nothing happened on this message: no streamed tool progress, no assistant text, no reply, no image
-    // refs. That's the mid-run-injection case — the message was steered into another turn that streams its
-    // own bubble — so don't post a "(no response)" placeholder here.
-    if (!reply && !this.text && !this.progress && !this.imageRefs.length) return;
+    // Nothing happened on this message: no streamed tool progress, no assistant text, no live answer, no
+    // reply, no image refs. That's the mid-run-injection case — the message was steered into another turn
+    // that streams its own bubble — so don't post a "(no response)" placeholder here.
+    if (!reply && !this.text && !this.progress && !this.answer && !this.imageRefs.length) return;
+    // The answer draft opened BEFORE the tool bubble, so it is stranded ABOVE the now-settled tool trace.
+    // Drop it here (awaiting its in-flight send) and null it, so the authoritative reply is (re)posted
+    // BELOW the trace — restoring the guarantee that the final answer is the channel's LAST message.
+    if (this.answerStranded && this.answer) { await this.answer.discard(); this.answer = null; }
     // strip any leaked <think> reasoning (vision-fallback models) before it ever reaches the channel.
     const full = stripThinking(reply || this.text || '(no response)');
-    // Generated images this turn produced: links the model repeated in its text PLUS tool-produced refs
-    // it forgot to repeat. They go into their OWN message posted BEFORE the final text, so the artifact
-    // reads as a standalone attachment ABOVE the agent's status/footer line — not a file pinned under the
-    // usage stats. Discord orders messages by send time, so posting the image first puts it on top.
+    // Generated images this turn produced: links the model repeated in its text PLUS tool-produced refs it
+    // forgot to repeat. They go into their OWN message. On a non-streamed turn (no live answer) the image is
+    // posted BEFORE the text so it reads as a standalone attachment above the footer. When the answer already
+    // streamed into its own bubble, the image message follows it (send-time order).
     const { cleaned, files } = extractImageRefs(full);
     const names = new Set(files);
     for (const ref of this.imageRefs) names.add(ref.slice(ref.lastIndexOf('/') + 1));
@@ -211,15 +330,20 @@ export class LiveMessage {
     // Runtime footer (model · context %) rides the text message only, opt-out via config.
     const footer = this.a.cfg?.runtimeFooter !== false ? footerLine(this.idle) : '';
     if (posted) {
-      // The images are their own message now — the text reply carries no image markdown. Skip an empty
-      // text bubble for an image-only reply (the image message already stands alone as the answer).
+      // The images are their own message now — the text reply carries no image markdown. Skip an empty text
+      // bubble for an image-only reply (the image message already stands alone as the answer).
       const body = cleaned.trim() ? (footer ? `${cleaned}\n\n${footer}` : cleaned) : '';
-      if (body) await postWithImages(this.a, this.channelId, body, this.replyToId).catch(() => {});
+      // An image-only reply must NOT freeze the streamed draft (which holds raw, now-dead image markdown):
+      // settle the answer bubble to the cleaned caption if there is one, else DELETE the draft entirely so
+      // only the standalone image message remains.
+      if (this.answer) { if (body) await this.answer.finalize(body); else await this.answer.discard(); }
+      else if (body) await postWithImages(this.a, this.channelId, body, this.replyToId).catch(() => {});
     } else {
-      // No resolvable images (or a bare test fake) — post the full text (postWithImages still handles any
-      // image markdown itself), footer appended, exactly as before.
+      // No resolvable images (or a bare test fake) — settle the answer to the full text (the streamed draft
+      // is replaced by the authoritative reply), footer appended once to the last bubble.
       const body = footer ? `${full}\n\n${footer}` : full;
-      await postWithImages(this.a, this.channelId, body, this.replyToId).catch(() => {});
+      if (this.answer) await this.answer.finalize(body);
+      else await postWithImages(this.a, this.channelId, body, this.replyToId).catch(() => {});
     }
   }
 }

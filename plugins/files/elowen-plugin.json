@@ -15,7 +15,7 @@
     "git_status"
   ]
   },
-  "icons": { "read_file": "file", "list_dir": "file", "write_file": "edit", "edit_file": "edit", "search_files": "search", "file_info": "file", "git_status": "git" },
+  "icons": { "read_file": "📄", "list_dir": "📂", "write_file": "✏️", "edit_file": "✏️", "search_files": "🔎", "file_info": "📄", "git_status": "🌿" },
   "configSchema": [
     {
       "key": "sec_limits",

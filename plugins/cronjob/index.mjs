@@ -17,10 +17,30 @@ const DEFAULT_CHECK_TIMEOUT_MS = 60_000; // a guard shell must finish fast; a hu
 const CHECK_MAX_BUFFER = 1024 * 1024; // 1 MB of stdout is plenty of "what's new" to hand the brain
 const DEFAULT_CRON_TURN_ATTEMPTS = 2; // one retry on a request-time failure (a transient relay/gateway/network blip)
 const DEFAULT_CRON_RETRY_BACKOFF_MS = 3_000; // brief pause before the retry so the transient condition can clear
+// The per-turn idle rollover forwarded to the host as access.sessionIdleMs. It is OPT-IN, not defaulted:
+// leaving the config key unset means the job's channel session rolls over under the host's own shared
+// default (SESSION_IDLE_ROLLOVER_MS, Discord's 30 min) — the same as every other channel — so an
+// existing recurring job never silently loses its cross-run context after an upgrade. See resolveSessionIdleMs.
+const SESSION_IDLE_MIN_MS = 60_000; // an explicit value is clamped UP to a 1-min floor; there is no upper clamp
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /** Read a number config field, falling back to `def` when unset/invalid, then clamp to [min, max]. */
 const clampConfig = (value, def, min, max) => Math.min(Math.max(Number(value) || def, min), max);
+
+/** Resolve the optional per-job session-idle knob into what the host expects as access.sessionIdleMs:
+ *   - unset / blank / invalid → undefined: the override is OMITTED, so the host applies its shared
+ *     SESSION_IDLE_ROLLOVER_MS default (same rollover behavior as Discord — never wipes context per tick).
+ *   - explicit 0 → Infinity: rollover DISABLED for this job's channel, so a slow job that must keep
+ *     continuity across runs is never rotated.
+ *   - explicit > 0 → clamped UP to a 1-min floor (SESSION_IDLE_MIN_MS), with NO upper clamp, so an
+ *     operator can set an arbitrarily long window to opt back into keep-continuity behavior. */
+export function resolveSessionIdleMs(value) {
+  if (value === undefined || value === null || value === '') return undefined;
+  const n = Number(value);
+  if (!Number.isFinite(n) || n < 0) return undefined; // garbage → treat as unset (host default)
+  if (n === 0) return Infinity; // explicit off
+  return Math.max(n, SESSION_IDLE_MIN_MS);
+}
 
 /** Run a job's optional cheap guard command and classify the outcome, so the scheduler can decide
  *  whether the (expensive) brain turn is even worth running. Admin-authored (jobs are admin-only), run
@@ -143,6 +163,10 @@ class CronAdapter {
     this.turnAttempts = clampConfig(config.retryAttempts, DEFAULT_CRON_TURN_ATTEMPTS, 1, 5);
     this.retryBackoffMs = clampConfig(config.retryBackoffMs, DEFAULT_CRON_RETRY_BACKOFF_MS, 1_000, 30_000);
     this.checkTimeoutMs = clampConfig(config.checkTimeoutMs, DEFAULT_CHECK_TIMEOUT_MS, 10_000, 300_000);
+    // Idle cutoff forwarded per turn to the host (access.sessionIdleMs). Unset → undefined (host default,
+    // like Discord); explicit 0 → Infinity (rollover off); explicit > 0 → clamped up to a 1-min floor,
+    // no upper clamp. See resolveSessionIdleMs.
+    this.sessionIdleMs = resolveSessionIdleMs(config.sessionIdleMs);
   }
   listen(onMessage) { this.handler = onMessage; }
   async connect() {
@@ -210,6 +234,10 @@ class CronAdapter {
           prompt: `This is a scheduled ${job.runAt ? 'wake-up' : 'job'} ("${job.name}"). Do the task and summarize the outcome briefly.`,
           // Optional per-job model — the channel session respawns on it (else the server default runs).
           model: job.model?.provider && job.model?.model ? { provider: job.model.provider, model: job.model.model } : undefined,
+          // Per-job idle rollover, forwarded ONLY when configured: unset → key omitted, so the host applies
+          // its shared default (like Discord) and cross-run context is preserved; a shorter value rotates a
+          // frequent job past the cache window; Infinity (config 0) disables rollover for this job entirely.
+          ...(this.sessionIdleMs !== undefined ? { sessionIdleMs: this.sessionIdleMs } : {}),
         },
       };
       const onEvent = (e) => {

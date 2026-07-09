@@ -72,11 +72,14 @@ function outputTitle(toolName: string, kind: ToolOutputView['kind']): string {
   return 'tool result';
 }
 
-function shouldShowToolOutput(toolName: string, text: string, tone: ToolOutputView['tone']): boolean {
-  if (tone === 'warning' || tone === 'danger') return true;
-  return /(shell|bash|command|terminal|exec|test|lint|knip|npm|pnpm|yarn|browser|playwright|chrome|page|grep|search|find|rg)/i.test(toolName)
-    && text.trim().length > 0;
-}
+/** The tool→output-visibility policy (see `toolOutput.ts`): true when a tool's SUCCESSFUL output is
+ *  shown in the transcript (a declarative allowlist; output is hidden by default). Injected once at
+ *  bootstrap via {@link setToolOutputPolicy} — the built-in show defaults merged with plugin manifests'
+ *  `showOutput`, read live — and consulted per render on both the live (events.ts) and history
+ *  (shapeBrainMessages) paths. This is the single seam that replaced the old implicit name-regex
+ *  allowlist. Default shows all, so uninjected callers (unit tests) keep every tool's output. */
+let toolOutputShown: (name: string) => boolean = () => true;
+export function setToolOutputPolicy(resolve: (name: string) => boolean): void { toolOutputShown = resolve; }
 
 /** Neutralize terminal control bytes from untrusted tool output before it reaches a renderer. ESC-led
  *  sequences (CSI colors, but also OSC-52 clipboard writes, title changes, DCS/PM/APC) and C0 controls
@@ -165,12 +168,15 @@ export function toolOutputView(toolName: string, args: unknown, result: unknown,
   // fall back to the result object's own flag for the history path.
   const exitCode = (isError ?? r.isError) === true ? true : (r.details?.exitCode ?? r.details?.code ?? r.status);
   const tone = outputTone(text, exitCode);
-  // A hook-appended note always earns the block a spot — otherwise keep the old gating (most raw
-  // results stay hidden unless useful).
-  if (!consoleCommand && !notes) {
-    if (!text) return undefined;
-    if (!shouldShowToolOutput(toolName, text, tone)) return undefined;
-  }
+  // Single-source output visibility (see `toolOutput.ts`): output is HIDDEN by default — a tool NOT on
+  // the show allowlist (Read/List/Grep/memory/cron/…) keeps its SUCCESSFUL output out of the transcript
+  // so repeated calls collapse into one row — but a FAILURE (warning/danger tone) or a hook-appended note
+  // always surfaces so nothing important is swallowed. This replaced the old name-regex allowlist; the
+  // policy is injected at bootstrap.
+  if (!toolOutputShown(toolName) && tone !== 'warning' && tone !== 'danger' && !notes) return undefined;
+  // Nothing worth a block: a non-console tool that exited truly silently with no notes (a shown tool
+  // whose output was genuinely empty).
+  if (!consoleCommand && !notes && !text) return undefined;
   const status = typeof exitCode === 'number'
     ? `exit ${exitCode}`
     : tone === 'success'
@@ -269,6 +275,10 @@ export function shapeBrainMessages(rows: StoredTurnRow[]): BrainMessageView[] {
   }
   const views: BrainMessageView[] = [];
   for (const row of rows) {
+    // A persisted compaction boundary (persistCompaction stores PI's compactionSummary under this role):
+    // surface a marker turn so every client draws a subtle "context compacted" divider before the kept
+    // tail. The summary itself stays out of the transcript — it's context for the model, not the reader.
+    if (row.role === 'compaction') { views.push({ role: 'compaction', text: '' }); continue; }
     if (row.role !== 'user' && row.role !== 'assistant') continue;
     let msg: { content?: unknown } = {};
     try { msg = JSON.parse(row.content) as { content?: unknown }; } catch { /* malformed row → skipped below */ }

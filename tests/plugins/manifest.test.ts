@@ -11,6 +11,11 @@ describe('parseManifest', () => {
     const m = parseManifest({ ...good, requires: { env: ['X'] }, provides: { skills: ['*'] } });
     expect(m.provides?.skills).toEqual(['*']);
   });
+  it('accepts an optional showOutput list (tool-output policy), absent by default', () => {
+    expect(parseManifest(good).showOutput).toBeUndefined();
+    const m = parseManifest({ ...good, showOutput: ['run_command', 'lsp_*'] });
+    expect(m.showOutput).toEqual(['run_command', 'lsp_*']);
+  });
   it('accepts every declared config field type, including the model picker', () => {
     const m = parseManifest({
       ...good,

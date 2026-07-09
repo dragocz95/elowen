@@ -15,6 +15,17 @@ export const BUILTIN_TOOL_ICONS: Record<string, string> = {
   'lsp_*': '🔎',
 };
 
+/** Output-visibility policy for the brain's BUILT-IN tools (the co-located equivalent of a plugin
+ *  manifest's `showOutput`). Output is HIDDEN by default; only the tools listed here surface their
+ *  SUCCESSFUL output in the transcript. `lsp_*` diagnostics are worth showing. The control plane
+ *  (`elowen_*`) and memory (`memory_*`) are deliberately ABSENT — they return structured data the model
+ *  acts on, not something the reader needs echoed, so their success stays hidden and repeated calls
+ *  collapse into one row (a failure or a hook note still surfaces; see `toolOutputView`). Keys are
+ *  exact names or `prefix*` patterns. */
+export const BUILTIN_TOOL_OUTPUT_SHOWN: string[] = [
+  'lsp_*',
+];
+
 /** The brain's Elowen capability toolset. Every tool wraps callElowenApi (single source of truth), so a
  *  new REST endpoint needs no changes here beyond adding one more thin wrapper. Bundles the LSP
  *  diagnostics tool (owner-chat only, like the elowen_* control plane). */

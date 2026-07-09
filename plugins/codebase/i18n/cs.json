@@ -1,0 +1,49 @@
+{
+  "description": "Sémantický index kódu: prohledávejte repozitáře podle VÝZNAMU, ne podle přesného textu. Rozseká každý přístupný repozitář na bloky, zaindexuje je STEJNÝM embedding modelem jako paměť (Nastavení → Paměť) a uloží vektory do soukromého indexu pro daný repozitář. codebase_search najde nejrelevantnější kód/dokumentaci k dotazu v přirozeném jazyce; codebase_reindex (admin) index inkrementálně obnoví; codebase_status ukáže pokrytí. Doplňuje textové vyhledávání search_files z pluginu files.",
+  "fields": {
+    "sec_indexing": {
+      "label": "Indexace",
+      "hint": "Které soubory se indexují a jak se dělí na bloky."
+    },
+    "includeGlobs": {
+      "label": "Zahrnout (globy)",
+      "hint": "Jeden glob na řádek (nebo oddělené čárkou). Indexují se jen soubory odpovídající některému z nich. Prázdné = vestavěná sada běžných přípon kódu a markdownu."
+    },
+    "excludeGlobs": {
+      "label": "Vyloučit (globy / složky)",
+      "hint": "Složky nebo globy, které se přeskočí. Prostý název (bez lomítka/hvězdičky) se bere jako název složky k vynechání kdekoli ve stromu."
+    },
+    "maxFileBytes": {
+      "label": "Max. velikost souboru (bajty)",
+      "hint": "Větší soubory se přeskočí (přeskakují se i pravděpodobně minifikované soubory s velmi dlouhými řádky)."
+    },
+    "chunkMaxChars": {
+      "label": "Velikost bloku (znaky)",
+      "hint": "Horní hranice velikosti bloku před rozdělením (přednostně dělí na prázdných řádcích)."
+    },
+    "sec_search": {
+      "label": "Vyhledávání a chování",
+      "hint": "Jak se výsledky řadí a kdy se index obnovuje."
+    },
+    "topK": {
+      "label": "Výsledků na vyhledání",
+      "hint": "Výchozí počet shod, které codebase_search vrátí (argument k tento počet přepíše)."
+    },
+    "relevanceFloor": {
+      "label": "Práh relevance",
+      "hint": "Minimální kosinová podobnost, aby se shoda vrátila. Zvyšte pro přísnější výsledky; snižte, pokud vyhledávání vrací prázdno."
+    },
+    "autoReindex": {
+      "label": "Automatická reindexace při hledání",
+      "hint": "Když je zapnuto, vyhledávání líně obnoví index repozitáře, pokud je prázdný nebo zastaralý (s prodlevou), takže codebase_reindex je zřídka potřeba."
+    },
+    "reindexEmbedBudget": {
+      "label": "Embeddingů na průchod",
+      "hint": "Max. počet bloků zaindexovaných v jednom průchodu, aby se velký repozitář rozložil do více průchodů a nezahltil poskytovatele."
+    },
+    "sec_model": {
+      "label": "Embedding model",
+      "hint": "Embedding model se přebírá z Nastavení → Paměť (jediný zdroj pravdy) — zde se žádný samostatný model nenastavuje. Změna toho modelu při další reindexaci index přestaví."
+    }
+  }
+}

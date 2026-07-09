@@ -56,6 +56,15 @@
       "placeholder": "60000",
       "default": 60000,
       "hint": "Timeout for a job's cheap guard `check` command."
+    },
+    {
+      "key": "sessionIdleMs",
+      "label": "Fresh-session idle threshold (ms)",
+      "type": "number",
+      "min": 0,
+      "step": 30000,
+      "placeholder": "host default (30 min)",
+      "hint": "Optional. A job idle longer than this between runs starts a fresh conversation on its next tick — past the model's prompt-cache window, reusing the old context is pure cost with no cache benefit. Leave empty to use the host default (like Discord). Set a smaller value for frequent jobs, a larger one to keep continuity longer, or 0 to never start fresh (always keep the running context)."
     }
   ]
 }

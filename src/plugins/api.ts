@@ -47,9 +47,10 @@ export interface PluginHook { name: PluginHookName; run: (payload: unknown) => H
 /** What a plugin is ALLOWED to do, declared in its manifest (`capabilities`). Deny-by-default: a plugin
  *  with no capabilities block can mutate nothing. `hooks` documents the lifecycle points it subscribes
  *  to; `mutates` gates runtime patches (only `turnContext` is patch-wired in v1); `network` is
- *  declarative intent for the audit/UI. `reads` lists read scopes the plugin claims — `'providers'`
- *  is runtime-wired: it permits `ctx.resolveProvider()` for provider ids beyond the plugin's own
- *  config (see PluginContext.resolveProvider). */
+ *  declarative intent for the audit/UI. `reads` lists read scopes the plugin claims — two are
+ *  runtime-wired: `'providers'` permits `ctx.resolveProvider()` for provider ids beyond the plugin's own
+ *  config (see PluginContext.resolveProvider), and `'embeddings'` permits `ctx.embeddings.embed*()` (the
+ *  shared text→vector pipeline, see PluginContext.embeddings). Both are deny-by-default. */
 export interface PluginCapabilities {
   hooks?: PluginHookName[];
   mutates?: ('prompt' | 'turnContext' | 'tools' | 'memory')[];
@@ -86,7 +87,12 @@ export interface SessionSource {
    *  so the brain can see what was said in the channel before it joined. Returns a ready context
    *  block (or '' when nothing is available). */
   history?: () => Promise<string>;
-  access?: { projectIds: number[]; prompt?: string; admin?: boolean; model?: { provider?: string; model?: string }; thinkingLevel?: string; tools?: string[] };
+  access?: { projectIds: number[]; prompt?: string; admin?: boolean; model?: { provider?: string; model?: string }; thinkingLevel?: string; tools?: string[];
+    /** Idle cutoff (ms) for THIS surface's channel session — forwarded to ChannelSessionService.send as
+     *  `idleRolloverMs`. Set by cron (shorter than the default 30 min) so a frequent job whose gap between
+     *  ticks exceeds the prompt-cache window starts a fresh session instead of re-sending a growing context
+     *  at full price. Unset → the host default (SESSION_IDLE_ROLLOVER_MS). */
+    sessionIdleMs?: number };
 }
 /** A messaging channel a plugin attaches (Discord, …). The host calls `listen` + `connect` at startup;
  *  the handler returns the brain's reply (or undefined to stay silent) and the adapter delivers it. */
@@ -133,6 +139,27 @@ export interface PluginLogger { info(msg: string): void; warn(msg: string): void
  *  so a plugin (voice STT/TTS, image gen) reads ONE shared key instead of duplicating it. `apiKey` is
  *  null for OAuth providers (no static key). */
 export interface ProviderCredentials { id: string; label: string; type: string; baseUrl: string; apiKey: string | null }
+
+/** The SHARED text→vector embedder handed to a plugin (`ctx.embeddings`), gated deny-by-default by a
+ *  `reads:['embeddings']` capability. It is the SAME EmbeddingService + Settings→Memory embedding config
+ *  the memory subsystem uses (single source of truth) — the operator configures ONE embedding model and
+ *  a plugin (semantic code index, RAG…) reuses it; there is no second provider field or HTTP client. The
+ *  bound config is applied internally, so a plugin embeds `(text)` only and can never re-point the shared
+ *  key at a different model/endpoint. `embed`/`embedBatch` REJECT when the capability is absent or no
+ *  embedding model is configured — a plugin must gate on `isConfigured()` first. */
+export interface PluginEmbeddings {
+  /** True only when the plugin declared `reads:['embeddings']` AND the operator has configured an
+   *  embedding model (Settings → Memory). Read live, so a config change applies on the next call. */
+  isConfigured(): boolean;
+  /** The active embedding model's identity, or null when unconfigured/undeclared. `dimensions` is null
+   *  when the provider doesn't pin a width. A plugin persists this alongside stored vectors so it can
+   *  detect a model/dimension switch and re-embed (an old-width vector cosines to 0 otherwise). */
+  descriptor(): { provider: string; model: string; dimensions: number | null } | null;
+  /** Embed one string → one Float32 vector, via the shared pipeline. Rejects when not configured. */
+  embed(text: string): Promise<Float32Array>;
+  /** Embed N strings in ONE request → N vectors in input order. Rejects when not configured. */
+  embedBatch(texts: string[]): Promise<Float32Array[]>;
+}
 
 /** Plugin-owned runtime control surface. Routes may read these from the live merged registry, but the
  *  shape stays plugin-specific so core does not need to import plugin modules or duplicate their state. */
@@ -241,6 +268,12 @@ export interface PluginContext {
    *  covers with a `providers` read capability — any other id returns null (a plugin can't lift an
    *  unrelated central key). */
   resolveProvider(id: string): ProviderCredentials | null;
+  /** The SHARED text→vector embedder — the SAME EmbeddingService + Settings→Memory embedding config the
+   *  memory subsystem uses (single source of truth). Gated deny-by-default by `reads:['embeddings']`:
+   *  without that capability `isConfigured()` is false and `embed*()` reject, so an already-installed
+   *  plugin gains nothing. Lets a semantic-index/RAG plugin reuse the operator's ONE embedding model
+   *  instead of forking a second provider/HTTP client. See PluginEmbeddings. */
+  readonly embeddings: PluginEmbeddings;
   /** This plugin's own config slice (`config.plugins.config[name]`), secrets included daemon-side. */
   readonly config: Record<string, unknown>;
   readonly logger: PluginLogger;
