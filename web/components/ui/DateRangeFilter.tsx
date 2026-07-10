@@ -42,7 +42,7 @@ export function DateRangeFilter({ value, onChange, compact = false }: { value: D
         onClick={() => setOpen((o) => !o)}
         aria-haspopup="dialog"
         aria-expanded={open}
-        className={`inline-flex items-center gap-2 rounded-md border border-border bg-bg font-medium text-text transition-colors hover:border-border-strong hover:bg-elevated ${compact ? 'h-8 px-2.5 text-xs' : 'h-9 px-3 text-sm'}`}
+        className="inline-flex h-9 items-center gap-2 rounded-md border border-border bg-bg px-3 text-sm font-medium text-text transition-colors hover:border-border-strong hover:bg-elevated"
       >
         <CalendarDays size={compact ? 13 : 14} aria-hidden className="text-text-muted" />
         <span className={`${compact ? 'max-w-36' : 'max-w-[14rem]'} truncate`}>{label}</span>

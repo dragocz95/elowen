@@ -8,7 +8,7 @@ import { RANGE_PRESETS } from './dateRange';
 /** Compact date-range control for the Timeline view: a trigger showing the active window, opening a
  *  popover with quick presets (7d / 30d / all). Pure presentational + a single onChange —
  *  all window maths live in `dateRange.ts`. */
-export function DateRangeFilter({ value, onChange, compact = false }: { value: DateRange; onChange: (r: DateRange) => void; compact?: boolean }) {
+export function DateRangeFilter({ value, onChange }: { value: DateRange; onChange: (r: DateRange) => void }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -35,7 +35,7 @@ export function DateRangeFilter({ value, onChange, compact = false }: { value: D
         onClick={() => setOpen((o) => !o)}
         aria-haspopup="dialog"
         aria-expanded={open}
-        className={`inline-flex items-center gap-2 rounded-md border border-border bg-bg text-sm font-medium text-text transition-colors hover:border-border-strong hover:bg-elevated ${compact ? 'h-8 px-2.5 text-xs' : 'h-9 px-3'}`}
+        className="inline-flex h-9 items-center gap-2 rounded-md border border-border bg-bg px-3 text-sm font-medium text-text transition-colors hover:border-border-strong hover:bg-elevated"
       >
         <CalendarDays size={14} aria-hidden className="text-text-muted" />
         <span className="max-w-[14rem] truncate">{presetLabel[value.preset]}</span>

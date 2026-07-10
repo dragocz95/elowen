@@ -349,7 +349,7 @@ export function TimelineView() {
     <div className="@container">
       <ModuleHeader title={t.page.timeline} icon={Activity}>
         <ProjectFilterPills value={selectedProject} onChange={setProject} variant="dropdown" />
-        <DateRangeFilter value={range} onChange={(r) => setRangeRaw(serializeRange(r))} compact />
+        <DateRangeFilter value={range} onChange={(r) => setRangeRaw(serializeRange(r))} />
         <Segmented size="sm" options={[{ label: t.timeline.axis, value: 'axis', icon: Activity }, { label: t.timeline.lanes, value: 'lanes', icon: Columns3 }]} value={view} onChange={setView} />
         <Segmented size="sm" options={FILTER_OPTIONS} value={filter} onChange={setFilter} />
       </ModuleHeader>

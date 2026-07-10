@@ -22,7 +22,7 @@ export function Segmented({ options, value, onChange, size = 'md', className, no
   'aria-label'?: string;
 }) {
   const buttonRefs = useRef<Array<HTMLButtonElement | null>>([]);
-  const pad = size === 'sm' ? 'px-2 py-1' : 'px-3 py-1.5';
+  const pad = size === 'sm' ? 'h-9 px-2.5' : 'h-9 px-3';
   const wrap = nowrap ? 'flex-nowrap' : 'max-w-full flex-wrap';
   const selectedIndex = options.findIndex((option) => option.value === value);
   const tabbableIndex = selectedIndex >= 0 ? selectedIndex : 0;
