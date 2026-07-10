@@ -80,6 +80,28 @@ html[data-effects='full'] .card-interactive:hover { transform: translateY(-1px);
 
 .flow-active { animation: flow-pulse 1.9s ease-in-out infinite; }
 
+/* Orbital navigation nodes stay spatially stable; hover only adds a light trace around the target. */
+.orbit-node { position: relative; isolation: isolate; }
+.orbit-node::before {
+  content: '';
+  position: absolute;
+  z-index: -1;
+  inset: -9px;
+  border: 1px solid rgb(255 82 54 / 0.2);
+  border-radius: 9999px;
+  opacity: 0;
+  transform: scale(0.72) rotate(-24deg);
+  box-shadow: 0 0 24px rgb(255 82 54 / 0.14), inset 0 0 16px rgb(255 82 54 / 0.05);
+  transition: opacity var(--motion-base) var(--ease-out), transform var(--motion-slow) var(--ease-out);
+}
+.group:hover .orbit-node::before,
+.group:focus-visible .orbit-node::before,
+.orbit-node-active::before {
+  opacity: 0.72;
+  transform: scale(1) rotate(18deg);
+}
+.orbit-node-active::before { border-color: rgb(255 82 54 / 0.32); }
+
 /* Keep the original flat Elowen assets on the single OLED palette. */
 .logo-adaptive { content: url('/elowen-logo.png'); }
 

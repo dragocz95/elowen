@@ -27,12 +27,19 @@ describe('OrbitalNav', () => {
     expect(screen.getByRole('link', { name: 'Editor' })).toHaveAttribute('href', '/editor');
   });
 
+  it('magnetically advances one world for a deliberate wheel gesture', () => {
+    mount();
+    fireEvent.wheel(screen.getByTestId('future-navigation'), { deltaY: 60 });
+    expect(screen.getByRole('link', { name: 'Editor' })).toHaveAttribute('href', '/editor');
+  });
+
   it('does not move controls under the pointer and opens button-only groups on click', () => {
     mount();
     fireEvent.mouseEnter(screen.getByRole('link', { name: 'Projects' }));
     expect(screen.queryByRole('link', { name: 'Editor' })).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'System' }));
     expect(screen.getByRole('link', { name: 'Account' })).toHaveAttribute('href', '/account');
+    expect(screen.getByText('Account').closest('.orbit-branch')).toBeTruthy();
   });
 
   it('collapses to an icon orbit when content room is constrained', () => {

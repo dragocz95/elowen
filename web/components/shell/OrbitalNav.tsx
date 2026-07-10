@@ -26,17 +26,27 @@ export function OrbitalNav({ compact = false, side = 'left' }: { compact?: boole
   const entries = useMemo(() => [...worlds, ...systemItems], [worlds, systemItems]);
   const routeIndex = Math.max(0, entries.findIndex((entry) => entryIsActive(entry, pathname)));
   const [focusIndex, setFocusIndex] = useState(routeIndex);
-  const wheelAt = useRef(0);
+  const wheelAt = useRef(Number.NEGATIVE_INFINITY);
+  const wheelDelta = useRef(0);
+  const wheelReset = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => setFocusIndex(routeIndex), [routeIndex]);
+  useEffect(() => () => {
+    if (wheelReset.current) clearTimeout(wheelReset.current);
+  }, []);
   const focus = entries[focusIndex] ?? entries[0];
   const move = (step: number) => setFocusIndex((current) => (current + step + entries.length) % entries.length);
   const onWheel = (event: React.WheelEvent) => {
-    const now = performance.now();
-    if (now - wheelAt.current < 180 || Math.abs(event.deltaY) < 4) return;
+    if (Math.abs(event.deltaY) < 0.5) return;
     event.preventDefault();
+    wheelDelta.current += event.deltaY;
+    if (wheelReset.current) clearTimeout(wheelReset.current);
+    wheelReset.current = setTimeout(() => { wheelDelta.current = 0; }, 160);
+    const now = performance.now();
+    if (now - wheelAt.current < 220 || Math.abs(wheelDelta.current) < 32) return;
     wheelAt.current = now;
-    move(event.deltaY > 0 ? 1 : -1);
+    move(wheelDelta.current > 0 ? 1 : -1);
+    wheelDelta.current = 0;
   };
 
   const centerX = compact ? 64 : 72;
@@ -52,6 +62,8 @@ export function OrbitalNav({ compact = false, side = 'left' }: { compact?: boole
       onKeyDown={(event) => {
         if (event.key === 'ArrowUp') { event.preventDefault(); move(-1); }
         if (event.key === 'ArrowDown') { event.preventDefault(); move(1); }
+        if (event.key === 'ArrowLeft') { event.preventDefault(); move(mirrored ? 1 : -1); }
+        if (event.key === 'ArrowRight') { event.preventDefault(); move(mirrored ? -1 : 1); }
       }}
       className={`relative h-full shrink-0 overflow-visible ${compact ? 'w-32' : 'w-[24rem]'}`}
     >
@@ -70,7 +82,7 @@ export function OrbitalNav({ compact = false, side = 'left' }: { compact?: boole
           const control = `group flex items-center gap-2.5 whitespace-nowrap text-left transition-[color,opacity,transform,filter] duration-300 ${focused ? 'text-accent' : active ? 'text-text' : 'text-text-muted/85 hover:text-text'} ${compact ? 'justify-center' : ''}`;
           const content = (
             <>
-              <span className={`grid shrink-0 place-items-center rounded-full border backdrop-blur-md transition-[width,height,border-color,background-color,box-shadow] ${focused ? 'h-12 w-12 border-accent/50 bg-accent/12 shadow-[0_0_34px_rgb(255_82_54_/_0.2)]' : 'h-10 w-10 border-border-strong/90 bg-black/65'}`}>
+              <span className={`orbit-node ${focused ? 'orbit-node-active' : ''} grid shrink-0 place-items-center rounded-full border backdrop-blur-md transition-[width,height,border-color,background-color,box-shadow] ${focused ? 'h-12 w-12 border-accent/50 bg-accent/12 shadow-[0_0_34px_rgb(255_82_54_/_0.2)]' : 'h-10 w-10 border-border-strong/90 bg-black/65'}`}>
                 <Icon size={focused ? 20 : 18} strokeWidth={1.55} aria-hidden />
               </span>
               {!compact ? <span className={`text-base font-medium tracking-tight ${focused ? 'translate-x-0 opacity-100' : 'opacity-90'}`}>{entry.label}</span> : null}
@@ -98,18 +110,23 @@ export function OrbitalNav({ compact = false, side = 'left' }: { compact?: boole
       </div>
 
       {!compact && focus?.subItems?.length ? (
-        <div className={`absolute top-1/2 z-40 flex w-40 -translate-y-1/2 flex-col gap-1 border-border/80 py-2 ${mirrored ? 'right-[13.75rem] items-end border-r pr-3 text-right' : 'left-[13.75rem] border-l pl-3'}`} aria-label={focus.label}>
-          <span className="mb-1 font-mono text-[9px] uppercase tracking-[.16em] text-accent/70">{focus.label}</span>
-          {focus.subItems.map((item) => {
-            const current = pathname === item.href || pathname.startsWith(`${item.href}/`);
-            const Icon = item.icon;
-            return (
-              <Link key={item.id} href={item.href} aria-current={current ? 'page' : undefined} className={`flex w-full items-center gap-2 py-1.5 text-sm transition-colors ${mirrored ? 'flex-row-reverse' : ''} ${current ? 'text-text' : 'text-text-muted/85 hover:text-text'}`}>
-                {Icon ? <Icon size={13} strokeWidth={1.5} className={current ? 'text-accent' : ''} aria-hidden /> : null}
-                <span className="truncate">{item.label}</span>
-              </Link>
-            );
-          })}
+        <div key={focus.id ?? focus.label} className={`absolute top-1/2 z-40 w-44 -translate-y-1/2 ${mirrored ? 'right-[14rem] text-right' : 'left-[14rem]'}`} aria-label={focus.label}>
+          <span aria-hidden className={`absolute top-1/2 h-px w-12 -translate-y-1/2 ${mirrored ? '-right-12 bg-gradient-to-l' : '-left-12 bg-gradient-to-r'} from-accent/55 via-accent/25 to-border`} />
+          <span aria-hidden className={`absolute top-1/2 h-1.5 w-1.5 -translate-y-1/2 rounded-full bg-accent shadow-[0_0_12px_rgb(255_82_54_/_0.65)] ${mirrored ? '-right-[3px]' : '-left-[3px]'}`} />
+          <div className={`orbit-branch flex flex-col gap-1 py-3 ${mirrored ? 'items-end border-r border-border/90 pr-4' : 'border-l border-border/90 pl-4'}`}>
+            <span className="mb-1 font-mono text-[9px] uppercase tracking-[.18em] text-accent/75">{focus.label}</span>
+            {focus.subItems.map((item) => {
+              const current = pathname === item.href || pathname.startsWith(`${item.href}/`);
+              const Icon = item.icon;
+              return (
+                <Link key={item.id} href={item.href} aria-current={current ? 'page' : undefined} className={`relative flex w-full items-center gap-2 py-1.5 text-sm transition-[color,transform] duration-200 ${mirrored ? 'flex-row-reverse hover:-translate-x-1' : 'hover:translate-x-1'} ${current ? 'text-text' : 'text-text-muted/85 hover:text-text'}`}>
+                  {current ? <span aria-hidden className={`absolute top-1/2 h-1 w-1 -translate-y-1/2 rounded-full bg-accent ${mirrored ? '-right-[18px]' : '-left-[18px]'}`} /> : null}
+                  {Icon ? <Icon size={13} strokeWidth={1.5} className={current ? 'text-accent' : ''} aria-hidden /> : null}
+                  <span className="truncate">{item.label}</span>
+                </Link>
+              );
+            })}
+          </div>
         </div>
       ) : null}
 

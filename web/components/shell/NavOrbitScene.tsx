@@ -84,6 +84,21 @@ export function NavOrbitScene({ side, compact = false }: { side: 'left' | 'right
       inner.rotation.set(-0.42, 0.28, 0.35);
       group.add(inner);
 
+      const haloGeometry = new THREE.RingGeometry(0.88, 1.58, 96);
+      const haloMaterial = new THREE.MeshBasicMaterial({
+        color: 0xff3019,
+        transparent: true,
+        opacity: 0.022,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+        blending: THREE.AdditiveBlending,
+      });
+      disposables.push(haloGeometry, haloMaterial);
+      const halo = new THREE.Mesh(haloGeometry, haloMaterial);
+      halo.position.z = -0.32;
+      halo.rotation.set(0.22, -0.18, 0.48);
+      group.add(halo);
+
       const positions: number[] = [];
       for (let index = 0; index < 92; index += 1) {
         const angle = index * 2.399963;
@@ -122,6 +137,7 @@ export function NavOrbitScene({ side, compact = false }: { side: 'left' | 'right
         ring.rotation.z = seconds * 0.08;
         outer.rotation.z = -seconds * 0.045;
         inner.rotation.z = seconds * 0.06;
+        halo.rotation.z = 0.48 - seconds * 0.018;
         points.rotation.z = seconds * 0.025;
         renderer.render(scene, camera);
       };

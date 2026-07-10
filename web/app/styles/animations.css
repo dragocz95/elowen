@@ -40,12 +40,18 @@
   50% { transform: translate3d(0, calc(0px - var(--motion-distance-md)), 0); }
 }
 
+@keyframes orbit-branch-in {
+  from { opacity: 0; filter: blur(4px); clip-path: inset(0 100% 0 0); }
+  to { opacity: 1; filter: blur(0); clip-path: inset(0 0 0 0); }
+}
+
 .animate-fade-up { animation: fade-up var(--motion-slow) var(--ease-out) both; }
 .animate-pop-in { animation: pop-in var(--motion-base) var(--ease-out) both; }
 
 /* Opacity only: transforms would make fixed descendants anchor to the route container. */
 .animate-route { animation: route-fade var(--motion-base) var(--ease-out) both; }
 .animate-ambient { animation: ambient-drift var(--motion-ambient) ease-in-out infinite; }
+.orbit-branch { animation: orbit-branch-in var(--motion-slow) var(--ease-out) both; }
 
 html[data-effects='reduced'] {
   --motion-fast: 80ms;
