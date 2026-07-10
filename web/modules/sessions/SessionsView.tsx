@@ -8,7 +8,7 @@ import { ModuleHeader } from '../../components/ui/ModuleHeader';
 import { Segmented } from '../../components/ui/Segmented';
 import { Button } from '../../components/ui/Button';
 import { TerminalModal } from '../../components/terminal/TerminalModal';
-import { LoadingState, ErrorState, EmptyState } from '../../components/ui/states';
+import { LoadingState, ErrorState } from '../../components/ui/states';
 import { useTranslation } from '../../lib/i18n';
 import { SessionCard } from './SessionCard';
 import { BrainSessionsPanel } from './BrainSessionsPanel';
@@ -70,8 +70,19 @@ export function SessionsView() {
                 })}
               </div>
             ) : filter === 'needs_input' && allNames.length > 0
-              ? <EmptyState title={t.sessions.filterNeedsInput} description={t.sessions.noNeedsInput} icon={TerminalSquare} />
-              : <EmptyState title={t.sessions.empty} description={t.sessions.emptyDescription} icon={TerminalSquare} action={<Button variant="accent" icon={ArrowRight} onClick={() => router.push('/tasks')}>{t.sessions.emptyAction}</Button>} />}
+              ? <p className="border-b border-border/80 py-7 text-sm text-text-muted">{t.sessions.noNeedsInput}</p>
+              : (
+                <div className="flex flex-col gap-4 border-b border-border/80 py-6 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="flex items-center gap-3">
+                    <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full border border-border text-text-muted"><TerminalSquare size={17} aria-hidden /></span>
+                    <div className="flex flex-col gap-0.5">
+                      <span className="text-sm font-medium text-text">{t.sessions.empty}</span>
+                      <span className="text-xs text-text-muted">{t.sessions.emptyDescription}</span>
+                    </div>
+                  </div>
+                  <Button variant="accent" icon={ArrowRight} onClick={() => router.push('/tasks')}>{t.sessions.emptyAction}</Button>
+                </div>
+              )}
         </section>
 
         <BrainSessionsPanel />
