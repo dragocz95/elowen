@@ -143,18 +143,18 @@ export function MemorySection() {
         </div>
 
         <Field label={t.memory.embeddingProvider} hint={t.help.embeddingProvider}>
-          <ProviderPicker providers={embeddingProviders} value={embProvider} onChange={setEmbProvider} label={t.memory.embeddingProvider} emptyText={t.memory.embeddingProviderPlaceholder} />
+          <ProviderPicker providers={embeddingProviders} value={embProvider} onChange={setEmbProvider} label={t.memory.embeddingProvider} emptyText={t.memory.embeddingProviderPlaceholder} variant="line" />
         </Field>
 
         {/* A div-based label (not Field's <label>): the SelectionSummary's Manage button would otherwise
             become the label's first labelable descendant and inherit the field text as its name. */}
         <div className="flex flex-col gap-1.5">
           <span className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-text-muted">{t.memory.embeddingModel}</span>
-          <ModelCatalogField value={embModel} onChange={setEmbModel} catalog={embCatalog} title={t.memory.embeddingModel} subtitle={t.help.embeddingIntro} />
+          <ModelCatalogField value={embModel} onChange={setEmbModel} catalog={embCatalog} title={t.memory.embeddingModel} subtitle={t.help.embeddingIntro} variant="line" />
         </div>
 
         <Field label={t.memory.embeddingModelCustom} hint={t.help.embeddingModelCustom}>
-          <Input value={embModel} onChange={(e) => setEmbModel(e.target.value)} placeholder={t.memory.embeddingModelPlaceholder} className="font-mono" />
+          <Input value={embModel} onChange={(e) => setEmbModel(e.target.value)} placeholder={t.memory.embeddingModelPlaceholder} className="font-mono" variant="line" />
         </Field>
 
         <Field label={t.memory.embeddingDimensions} hint={t.help.embeddingDimensions}>
@@ -165,6 +165,7 @@ export function MemorySection() {
             onChange={(e) => setDimensions(e.target.value)}
             placeholder="1536"
             className="max-w-40 font-mono"
+            variant="line"
           />
         </Field>
 
@@ -200,13 +201,13 @@ export function MemorySection() {
         </div>
 
         <Field label={t.categorization.providerLabel}>
-          <ProviderPicker providers={providers} value={catProvider} onChange={setCatProvider} label={t.categorization.providerLabel} emptyText={t.memory.embeddingProviderPlaceholder} />
+          <ProviderPicker providers={providers} value={catProvider} onChange={setCatProvider} label={t.categorization.providerLabel} emptyText={t.memory.embeddingProviderPlaceholder} variant="line" />
         </Field>
 
         {/* Div-based label (see the embedding-model field for why Field's <label> is avoided here). */}
         <div className="flex flex-col gap-1.5">
           <span className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-text-muted">{t.categorization.modelLabel}</span>
-          <ModelCatalogField value={catModel ?? ''} onChange={(v) => setCatModel(v || null)} catalog={catCatalog} title={t.categorization.modelLabel} subtitle={t.help.categorizationIntro} />
+          <ModelCatalogField value={catModel ?? ''} onChange={(v) => setCatModel(v || null)} catalog={catCatalog} title={t.categorization.modelLabel} subtitle={t.help.categorizationIntro} variant="line" />
         </div>
 
         {/* Reclassify: runs the categorization model over the caller's uncategorized memories. Needs a

@@ -9,12 +9,13 @@ import { useTranslation } from '../../lib/i18n';
  *  elsewhere, so there is no provider grouping). A compact summary chip + a manage modal whose rows carry
  *  the model's brand icon; a pinned row (id '') clears the pick, and a saved model the catalog no longer
  *  lists stays visible as a pinned, selected row so a save can never silently drop it. */
-export function ModelCatalogField({ value, onChange, catalog, title, subtitle }: {
+export function ModelCatalogField({ value, onChange, catalog, title, subtitle, variant = 'default' }: {
   value: string;
   onChange: (v: string) => void;
   catalog: string[];
   title: string;
   subtitle?: string;
+  variant?: 'default' | 'line';
 }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
@@ -31,6 +32,7 @@ export function ModelCatalogField({ value, onChange, catalog, title, subtitle }:
         moreCount={0}
         onManage={() => setOpen(true)}
         manageLabel={t.managePicker.manage}
+        variant={variant}
       />
       <ManageSelectionModal
         title={title}

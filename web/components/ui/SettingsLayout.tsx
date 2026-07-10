@@ -66,7 +66,7 @@ export function SettingsLayout({ sections, value, onChange, ariaLabel, searchPla
 
   return (
     <div className="grid min-w-0 gap-7 lg:grid-cols-[14rem_minmax(0,1fr)] lg:items-start">
-      <aside className="min-w-0 lg:sticky lg:top-5 lg:border-r lg:border-border/80 lg:pr-5">
+      <aside className="min-w-0 lg:sticky lg:top-20 lg:border-r lg:border-border/80 lg:pr-5">
         <div className="relative mb-2">
           <Search size={14} aria-hidden className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" />
           <Input

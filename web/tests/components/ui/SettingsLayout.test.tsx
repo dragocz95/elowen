@@ -47,4 +47,19 @@ describe('SettingsLayout', () => {
     expect(onChange).toHaveBeenCalledWith('plugins');
     expect(second).toHaveFocus();
   });
+
+  it('pins the desktop navigation below the global top bar', () => {
+    render(
+      <SettingsLayout
+        ariaLabel="Settings sections"
+        sections={[{ id: 'brain', label: 'Elowen AI', icon: Bot }]}
+        value="brain"
+        onChange={vi.fn()}
+      >
+        <div>Panel</div>
+      </SettingsLayout>,
+    );
+    expect(screen.getByRole('complementary')).toHaveClass('lg:top-20');
+    expect(screen.getByRole('complementary')).not.toHaveClass('lg:top-5');
+  });
 });
