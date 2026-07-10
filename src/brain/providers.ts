@@ -40,7 +40,7 @@ export const OAUTH_BUILTIN: Record<string, string> = {
 /** Models exposed by the ChatGPT/OpenAI OAuth account. PI ships the stable core catalog; Elowen adds
  *  newly enabled account models here until they land in the pinned PI release. Registration preserves
  *  PI's exact descriptors for existing models and derives safe descriptors for the additions. */
-export const OPENAI_CODEX_OAUTH_MODELS = [
+const OPENAI_CODEX_OAUTH_MODELS = [
   'gpt-5.3-codex-spark',
   'gpt-5.5',
   'gpt-5.6-luna',

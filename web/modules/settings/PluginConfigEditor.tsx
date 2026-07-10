@@ -20,7 +20,7 @@ import { Checkbox } from '../../components/ui/Checkbox';
 import { BrainModelField } from '../../components/ui/BrainModelField';
 import { Segmented } from '../../components/ui/Segmented';
 import { ChoiceField } from '../../components/ui/ChoiceField';
-import { SettingRow } from '../../components/ui/SettingsPrimitives';
+import { SettingGroup, SettingRow } from '../../components/ui/SettingsPrimitives';
 import { ProviderPicker } from '../../components/ui/ProviderPicker';
 import { useTranslation } from '../../lib/i18n';
 import { usePlugins, useProjects, useConfig, useBrainModels } from '../../lib/queries';
@@ -515,14 +515,9 @@ export function PluginConfigEditor({ detail, fieldLabel, fieldHint, fieldOptions
   const behaviorFields = visibleSchema.filter((f) => !isConnection(f) && !isComplex(f));
   const complexFields = visibleSchema.filter(isComplex);
   const group = (key: string, Icon: LucideIcon, title: string, hint: string | undefined, fields: PluginConfigField[]) => (
-    <div key={key} className="flex flex-col gap-3">
-      <div className="flex items-center gap-2">
-        <Icon size={14} className="text-text-muted" aria-hidden />
-        <span className="text-sm font-medium text-text">{title}</span>
-        {hint ? <HelpTip align="left">{hint}</HelpTip> : null}
-      </div>
-      {fieldList(fields)}
-    </div>
+    <SettingGroup key={key} title={title} description={hint} icon={Icon}>
+      <div className="py-4">{fieldList(fields)}</div>
+    </SettingGroup>
   );
 
   const hasConnectionSection = visibleSchema.some((f) => f.type === 'section' && f.key === 'sec_connection');
@@ -534,18 +529,18 @@ export function PluginConfigEditor({ detail, fieldLabel, fieldHint, fieldOptions
           <p className="text-sm text-text-muted">{t.pluginDetail.configEmpty}</p>
         </Collapsible>
       ) : hasExplicitSections ? (
-        <div className="border-y border-border/80 py-6">
+        <SettingGroup>
+          <div className="py-5">
           {/* WhatsApp: the "Pair device" button (QR/code modal) lives at the top of the Connection section. */}
           {detail.name === 'whatsapp' && hasConnectionSection ? <WhatsAppPairSection /> : null}
           {fieldList(visibleSchema)}
-        </div>
+          </div>
+        </SettingGroup>
       ) : (
-        <div className="border-y border-border/80 py-6">
-          <div className="flex flex-col gap-6">
+        <div className="flex flex-col gap-4">
             {connectionFields.length ? group('connection', Link2, t.pluginCfg.sectionConnection, t.pluginCfg.sectionConnectionHint, connectionFields) : null}
             {behaviorFields.length ? group('behavior', SlidersHorizontal, t.pluginCfg.sectionBehavior, undefined, behaviorFields) : null}
             {complexFields.map((cf) => group(cf.key, Users, fieldLabel(cf), fieldHint(cf), [cf]))}
-          </div>
         </div>
       )}
 

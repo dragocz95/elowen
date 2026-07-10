@@ -1,5 +1,5 @@
 'use client';
-import { useState, useEffect, useRef } from 'react';
+import { Activity, useState, useEffect, useRef, type ReactNode } from 'react';
 import { UserCog, Mail, Cpu, Upload, ShieldCheck, User as UserIcon, KeyRound, ZoomIn, Bell, Sparkles, AtSign, Brain, MessageCircle, SquareTerminal } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { ElowenApiError } from '../../lib/elowenClient';
@@ -16,7 +16,6 @@ import { Input } from '../../components/ui/Input';
 import { ManageSelectionModal, type ManageSelectionItem } from '../../components/ui/ManageSelectionModal';
 import { SelectionSummary } from '../../components/ui/SelectionSummary';
 import { BrainModelField } from '../../components/ui/BrainModelField';
-import { SettingCard } from '../../components/ui/SettingCard';
 import { Toggle } from '../../components/ui/Toggle';
 import { Slider } from '../../components/ui/Slider';
 import { ModuleHeader } from '../../components/ui/ModuleHeader';
@@ -31,11 +30,30 @@ import { isPushSupported, enablePush, disablePush } from '../../lib/pushClient';
 import { SettingsLayout } from '../../components/ui/SettingsLayout';
 import { ChoiceField } from '../../components/ui/ChoiceField';
 import { SettingGroup, SettingRow } from '../../components/ui/SettingsPrimitives';
+import { MotionReveal } from '../../components/ui/Motion';
 import { useEffects, type EffectsMode } from '../../lib/useEffects';
 import { PersonalitySection } from './PersonalitySection';
 import { CliSection } from './CliSection';
 import { TerminalSection } from './TerminalSection';
 import { AccountMemorySection } from './AccountMemorySection';
+
+type AccountSection = 'profile' | 'security' | 'notifications' | 'personality' | 'cli' | 'terminal' | 'memory';
+
+/** Mount a section only after its first visit, then let React Activity retain its local form state.
+ *  This avoids eagerly starting every section's queries while making sidebar switches lossless. */
+function AccountPanel({ id, active, visited, children }: {
+  id: AccountSection;
+  active: AccountSection;
+  visited: ReadonlySet<AccountSection>;
+  children: ReactNode;
+}) {
+  if (id !== active && !visited.has(id)) return null;
+  return (
+    <Activity mode={id === active ? 'visible' : 'hidden'}>
+      <MotionReveal data-account-panel={id}>{children}</MotionReveal>
+    </Activity>
+  );
+}
 
 /** Small provider engine logo for the worker modal's group headers/chips. */
 function ProviderGroupIcon({ provider }: { provider: ProviderId }) {
@@ -108,8 +126,12 @@ export function AccountView() {
   const effects = useEffects();
   const fileRef = useRef<HTMLInputElement>(null);
   const scalePct = Math.round(scale * 100);
-  const [section, setSection] = usePersistentState<'profile' | 'security' | 'notifications' | 'personality' | 'cli' | 'terminal' | 'memory'>(
+  const [section, setSection] = usePersistentState<AccountSection>(
     'elowen.account.section', 'profile', ['profile', 'security', 'notifications', 'personality', 'cli', 'terminal', 'memory']);
+  const [visitedSections, setVisitedSections] = useState<Set<AccountSection>>(() => new Set([section]));
+  useEffect(() => {
+    setVisitedSections((current) => current.has(section) ? current : new Set(current).add(section));
+  }, [section]);
 
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
@@ -244,7 +266,7 @@ export function AccountView() {
   };
   const canSubmitPassword = currentPassword.length > 0 && newPassword.length >= 8 && newPassword === confirmPassword;
 
-  const sections: { id: 'profile' | 'security' | 'notifications' | 'personality' | 'cli' | 'terminal' | 'memory'; icon: LucideIcon; label: string }[] = [
+  const sections: { id: AccountSection; icon: LucideIcon; label: string }[] = [
     { id: 'profile', icon: UserCog, label: t.account.tabProfile },
     { id: 'security', icon: KeyRound, label: t.account.tabSecurity },
     { id: 'notifications', icon: Bell, label: t.account.tabNotifications },
@@ -266,11 +288,13 @@ export function AccountView() {
         onChange={(v) => setSection(v as typeof section)}
         searchPlaceholder={t.managePicker.searchPlaceholder}
       >
-      {section === 'memory' ? <AccountMemorySection /> : section === 'personality' ? <PersonalitySection /> : section === 'terminal' ? <TerminalSection /> : null}
+      <AccountPanel id="memory" active={section} visited={visitedSections}><AccountMemorySection /></AccountPanel>
+      <AccountPanel id="personality" active={section} visited={visitedSections}><PersonalitySection /></AccountPanel>
+      <AccountPanel id="terminal" active={section} visited={visitedSections}><TerminalSection /></AccountPanel>
 
       {/* Elowen AI — every per-user AI knob in one place: the default models (right rail) plus the
           runtime settings (thinking level, vision fallback, auto-compact) from CliSection. */}
-      {section === 'cli' ? (
+      <AccountPanel id="cli" active={section} visited={visitedSections}>
       <div className="@container">
       <div className="flex flex-col gap-6 @3xl:flex-row @3xl:items-start">
       <div className="flex min-w-0 flex-1 flex-col gap-6">
@@ -327,9 +351,9 @@ export function AccountView() {
       </div>
       </div>
       </div>
-      ) : null}
+      </AccountPanel>
 
-      {section === 'profile' ? (
+      <AccountPanel id="profile" active={section} visited={visitedSections}>
       <div className="flex min-w-0 flex-col gap-6">
         {/* Identity hero — avatar, display name, admin badge, avatar upload. */}
         <div className="flex items-center gap-4 rounded-xl border border-border bg-surface p-5" style={{ boxShadow: 'var(--shadow-card)' }}>
@@ -345,27 +369,24 @@ export function AccountView() {
           <Button variant="ghost" icon={Upload} onClick={() => fileRef.current?.click()} disabled={uploadAvatar.isPending}>{t.account.uploadAvatar}</Button>
         </div>
 
-        <div className="@container">
-        <div className="grid grid-cols-1 gap-4 @sm:grid-cols-2">
-          <SettingCard title={t.account.name} icon={UserIcon}>
-            <Input value={name} onChange={(e) => setName(e.target.value)} />
-          </SettingCard>
-          <SettingCard title={t.account.email} icon={Mail}>
-            <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
-          </SettingCard>
-        </div>
-        </div>
-
-        {/* Whole-app zoom — a per-device display preference, applied live via the UiScaleProvider. */}
-        <SettingCard title={t.account.uiScale} icon={ZoomIn} description={t.help.accountUiScale}>
-          <div className="flex items-center gap-4">
-            <Slider value={scalePct} min={MIN_SCALE * 100} max={MAX_SCALE * 100} step={5} onChange={(v) => setScale(v / 100)} aria-label={t.account.uiScale} />
-            <span className="w-12 shrink-0 text-right font-mono text-sm tabular-nums text-text">{scalePct}%</span>
-            <Button variant="ghost" onClick={() => setScale(DEFAULT_SCALE)} disabled={scalePct === DEFAULT_SCALE * 100}>{t.account.uiScaleReset}</Button>
-          </div>
-        </SettingCard>
+        <SettingGroup>
+          <SettingRow title={t.account.name} icon={UserIcon}>
+            <Input value={name} onChange={(e) => setName(e.target.value)} className="sm:w-72" />
+          </SettingRow>
+          <SettingRow title={t.account.email} icon={Mail}>
+            <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} className="sm:w-72" />
+          </SettingRow>
+        </SettingGroup>
 
         <SettingGroup>
+          {/* Whole-app zoom — a per-device display preference, applied live via the UiScaleProvider. */}
+          <SettingRow title={t.account.uiScale} icon={ZoomIn} description={t.help.accountUiScale}>
+            <div className="flex min-w-0 items-center gap-3">
+              <Slider value={scalePct} min={MIN_SCALE * 100} max={MAX_SCALE * 100} step={5} onChange={(v) => setScale(v / 100)} aria-label={t.account.uiScale} />
+              <span className="w-12 shrink-0 text-right font-mono text-sm tabular-nums text-text">{scalePct}%</span>
+              <Button variant="ghost" onClick={() => setScale(DEFAULT_SCALE)} disabled={scalePct === DEFAULT_SCALE * 100}>{t.account.uiScaleReset}</Button>
+            </div>
+          </SettingRow>
           <SettingRow title={t.account.effectsTitle} icon={Sparkles} description={t.account.effectsHint}>
             <ChoiceField
               title={t.account.effectsTitle}
@@ -381,24 +402,24 @@ export function AccountView() {
           </SettingRow>
         </SettingGroup>
 
-        {/* Discord account link — maps your Discord user to this Elowen account (owner persona on Discord). */}
-        <SettingCard title={t.account.discordId} icon={AtSign} description={t.help.accountDiscordId}>
-          <Input value={discordUserId} onChange={(e) => setDiscordUserId(e.target.value)} placeholder="123456789012345678" className="max-w-xs font-mono" aria-label={t.account.discordId} />
-        </SettingCard>
-
-        {/* WhatsApp account link — maps your WhatsApp number to this Elowen account (owner persona on WhatsApp). */}
-        <SettingCard title={t.account.whatsappNumber} icon={MessageCircle} description={t.help.accountWhatsappNumber}>
-          <Input value={whatsappNumber} onChange={(e) => setWhatsappNumber(e.target.value)} placeholder="420778433908" className="max-w-xs font-mono" aria-label={t.account.whatsappNumber} />
-        </SettingCard>
+        <SettingGroup>
+          {/* Discord account link — maps your Discord user to this Elowen account (owner persona on Discord). */}
+          <SettingRow title={t.account.discordId} icon={AtSign} description={t.help.accountDiscordId}>
+            <Input value={discordUserId} onChange={(e) => setDiscordUserId(e.target.value)} placeholder="123456789012345678" className="font-mono sm:w-72" aria-label={t.account.discordId} />
+          </SettingRow>
+          {/* WhatsApp account link — maps your WhatsApp number to this Elowen account (owner persona on WhatsApp). */}
+          <SettingRow title={t.account.whatsappNumber} icon={MessageCircle} description={t.help.accountWhatsappNumber}>
+            <Input value={whatsappNumber} onChange={(e) => setWhatsappNumber(e.target.value)} placeholder="420778433908" className="font-mono sm:w-72" aria-label={t.account.whatsappNumber} />
+          </SettingRow>
+        </SettingGroup>
       </div>
-      ) : null}
+      </AccountPanel>
 
-      {section === 'security' ? (
-        /* Password change — verified server-side against the current password. */
-        <SettingCard title={t.account.password} icon={KeyRound}>
-          <p className="mb-3 text-xs text-text-muted">{t.account.passwordHint}</p>
+      <AccountPanel id="security" active={section} visited={visitedSections}>
+        {/* Password change — verified server-side against the current password. */}
+        <SettingGroup title={t.account.password} icon={KeyRound} description={t.account.passwordHint}>
           <form
-            className="flex flex-col gap-3"
+            className="flex flex-col gap-3 py-4"
             onSubmit={(e) => { e.preventDefault(); submitPassword(); }}
           >
             {/* Username hint helps password managers associate the credential. */}
@@ -437,22 +458,24 @@ export function AccountView() {
               </Button>
             </div>
           </form>
-        </SettingCard>
-      ) : null}
+        </SettingGroup>
+      </AccountPanel>
 
-      {section === 'notifications' ? (
-        /* Phone push — a per-device opt-in. Subscribes this browser/device for off-device alerts.
+      <AccountPanel id="notifications" active={section} visited={visitedSections}>
+        {/* Phone push — a per-device opt-in. Subscribes this browser/device for off-device alerts.
            Rendered as an inline toggle row (like the other account settings) instead of a detached
-           right-aligned button, so the control reads as a setting, not a submit form. */
-        pushSupported ? (
-          <SettingCard title={t.push.title} icon={Bell} description={t.help.pushEnable}>
+           right-aligned button, so the control reads as a setting, not a submit form. */}
+        {pushSupported ? (
+          <SettingGroup>
+          <SettingRow title={t.push.title} icon={Bell} description={t.help.pushEnable}>
             <label className="flex items-center gap-3 text-sm text-text">
               <Toggle checked={pushOn} onChange={togglePush} disabled={pushBusy} label={t.push.deviceToggle} />
               <span>{t.push.deviceToggle}</span>
             </label>
-          </SettingCard>
-        ) : <p className="text-sm text-text-muted">{t.push.unsupported}</p>
-      ) : null}
+          </SettingRow>
+          </SettingGroup>
+        ) : <p className="text-sm text-text-muted">{t.push.unsupported}</p>}
+      </AccountPanel>
       </SettingsLayout>
     </div>
   );

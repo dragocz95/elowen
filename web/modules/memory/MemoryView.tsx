@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useMemo, useState } from 'react';
+import { useDeferredValue, useEffect, useMemo, useState } from 'react';
 import { Brain, Search, Plus, GitMerge, X, ListChecks, Sparkles, Hash, Gauge, Tags, Trash2, RotateCcw, Layers, ChevronLeft, ChevronRight, SlidersHorizontal, Clock, CheckCircle2, Archive } from 'lucide-react';
 import type { Memory, MemoryCategory } from '../../lib/types';
 import { useMemories, useMemoryCategories } from '../../lib/queries';
@@ -16,6 +16,9 @@ import { SelectMenu, type SelectMenuOption } from '../../components/ui/SelectMen
 import { Modal, ModalBody, ModalFooter } from '../../components/ui/Modal';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { LoadingState, ErrorState, EmptyState } from '../../components/ui/states';
+import { DataTable, DataTableCell, DataTableRow } from '../../components/ui/DataTable';
+import { PageFrame } from '../../components/ui/PageFrame';
+import { MotionLayoutItem, MotionPresence } from '../../components/ui/Motion';
 import { useToast } from '../../components/ui/Toast';
 import { useTranslation } from '../../lib/i18n';
 import { usePersistentState } from '../../lib/usePersistentState';
@@ -59,6 +62,8 @@ export function MemoryView() {
   // Flat (paginated) vs grouped-by-category display of the list; persisted like the tab/status filters.
   const [layout, setLayout] = usePersistentState<Layout>('elowen.memory.layout', 'flat', LAYOUT_VALUES);
   const [page, setPage] = useState(0);
+  const deferredQuery = useDeferredValue(query);
+  const searchPending = query !== deferredQuery;
 
   const { toast } = useToast();
   const del = useDeleteMemory();
@@ -73,14 +78,14 @@ export function MemoryView() {
   const kinds = useMemo(() => distinctKinds(memories.data ?? []), [memories.data]);
 
   const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
+    const q = deferredQuery.trim().toLowerCase();
     return (memories.data ?? [])
       .filter((m) => kind === 'all' || m.kind === kind)
       .filter((m) => categoryFilter === 'all'
         || (categoryFilter === 'none' ? m.category_id == null : m.category_id === Number(categoryFilter)))
       .filter((m) => !q || `${m.body} ${m.kind} ${m.source}`.toLowerCase().includes(q))
       .sort((a, b) => (b.updated_at > a.updated_at ? 1 : b.updated_at < a.updated_at ? -1 : 0));
-  }, [memories.data, kind, categoryFilter, query]);
+  }, [memories.data, kind, categoryFilter, deferredQuery]);
 
   // Paginate the filtered rows; the grouped view then buckets the CURRENT page into category sections, so
   // both display modes page through the same window (mirrors how Tasks groups a page into day sections).
@@ -197,15 +202,21 @@ export function MemoryView() {
   const filterCount = Number(kind !== 'all') + Number(categoryFilter !== 'all') + Number(layout === 'grouped');
 
   const row = (m: Memory) => (
-    <MemoryRow
+    <MotionLayoutItem
       key={m.id}
-      memory={m}
-      category={m.category_id != null ? categoryById.get(m.category_id) : undefined}
-      active={selectedId === m.id}
-      selected={selected.has(m.id)}
-      onSelect={() => setSelectedId(m.id)}
-      onToggleSelect={() => toggleSelect(m.id)}
-    />
+      layoutId={`memory-${m.id}`}
+      role="presentation"
+      className="border-b border-border/70 last:border-b-0"
+    >
+      <MemoryRow
+        memory={m}
+        category={m.category_id != null ? categoryById.get(m.category_id) : undefined}
+        active={selectedId === m.id}
+        selected={selected.has(m.id)}
+        onSelect={() => setSelectedId(m.id)}
+        onToggleSelect={() => toggleSelect(m.id)}
+      />
+    </MotionLayoutItem>
   );
 
   return (
@@ -217,15 +228,16 @@ export function MemoryView() {
         <Button variant="accent" icon={Plus} onClick={() => setCreating(true)}>{t.memory.newMemory}</Button>
       </ModuleHeader>
 
-      {tab === 'retrieval' ? <RetrievalDebugPanel />
-        : tab === 'brain' ? (
-          memories.isLoading ? <LoadingState variant="cards" />
+      <PageFrame width={tab === 'brain' ? 'fluid' : 'wide'}>
+        {tab === 'retrieval' ? <RetrievalDebugPanel />
+          : tab === 'brain' ? (
+            memories.isLoading ? <LoadingState variant="cards" />
+            : memories.isError ? <ErrorState message={t.common.daemonUnreachable} onRetry={() => memories.refetch()} />
+            : <MemoryBrainMap memories={memories.data ?? []} categories={categories.data ?? []} onSelectMemory={(id) => { setSelectedId(id); setTab('list'); }} />
+          )
+          : memories.isLoading ? <LoadingState variant="cards" />
           : memories.isError ? <ErrorState message={t.common.daemonUnreachable} onRetry={() => memories.refetch()} />
-          : <MemoryBrainMap memories={memories.data ?? []} categories={categories.data ?? []} onSelectMemory={(id) => { setSelectedId(id); setTab('list'); }} />
-        )
-        : memories.isLoading ? <LoadingState variant="cards" />
-        : memories.isError ? <ErrorState message={t.common.daemonUnreachable} onRetry={() => memories.refetch()} />
-        : (
+          : (
           <div className="flex flex-col gap-4">
             <div className="border-y border-border/80">
               <div className="flex min-w-0 flex-wrap items-center gap-2 py-3">
@@ -301,13 +313,17 @@ export function MemoryView() {
             {(memories.data?.length ?? 0) === 0 ? (
               <EmptyState title={t.memory.empty} description={t.memory.emptyHint} icon={Brain} action={<Button variant="accent" icon={Plus} onClick={() => setCreating(true)}>{t.memory.newMemory}</Button>} />
             ) : (
-              <div className="flex min-w-0 flex-col gap-3">
+              <div className="flex min-w-0 flex-col gap-3" aria-busy={searchPending}>
                 {filtered.length === 0 ? (
                   <EmptyState title={t.memory.emptySearch} icon={Search} />
                 ) : (
-                  <div role="table" aria-label={t.page.memory} className="@container border-y border-border/80">
-                    <div role="row" className="grid grid-cols-[2rem_minmax(0,1fr)_1.25rem] items-center gap-3 border-b border-border/80 px-1 py-2.5 text-[10px] font-semibold uppercase tracking-wider text-text-muted @5xl:grid-cols-[2rem_minmax(0,1fr)_11rem_8rem_6rem_7rem_1.25rem]">
-                      <div role="columnheader" className="flex items-center justify-center">
+                  <DataTable
+                    ariaLabel={t.page.memory}
+                    columns="2rem minmax(0,1fr) 11rem 8rem 6rem 7rem 1.25rem"
+                    compactColumns="2rem minmax(0,1fr) 1.25rem"
+                  >
+                    <DataTableRow header className="px-1">
+                      <DataTableCell header className="flex items-center justify-center">
                         <button
                           type="button"
                           onClick={toggleSelectAll}
@@ -319,14 +335,14 @@ export function MemoryView() {
                         >
                           <Checkbox checked={allSelected} />
                         </button>
-                      </div>
-                      <span role="columnheader">{t.page.memory}</span>
-                      <span role="columnheader" className="hidden @5xl:block">{t.memory.categoryFilter}</span>
-                      <span role="columnheader" className="hidden @5xl:block">{t.memory.filterKind}</span>
-                      <span role="columnheader" className="hidden @5xl:block">{t.memory.fieldImportance}</span>
-                      <span role="columnheader" className="hidden @5xl:block">{t.memory.updatedAt}</span>
-                      <span aria-hidden />
-                    </div>
+                      </DataTableCell>
+                      <DataTableCell header>{t.page.memory}</DataTableCell>
+                      <DataTableCell header priority="wide">{t.memory.categoryFilter}</DataTableCell>
+                      <DataTableCell header priority="wide">{t.memory.filterKind}</DataTableCell>
+                      <DataTableCell header priority="wide">{t.memory.fieldImportance}</DataTableCell>
+                      <DataTableCell header priority="wide">{t.memory.updatedAt}</DataTableCell>
+                      <DataTableCell header role="presentation" aria-hidden>{null}</DataTableCell>
+                    </DataTableRow>
 
                     {layout === 'grouped' ? (
                       sections.map((sec) => (
@@ -336,11 +352,15 @@ export function MemoryView() {
                             label={sec.category ? sec.category.name : t.memory.categoryUncategorized}
                             count={sec.items.length}
                           />
-                          {sec.items.map((m) => row(m))}
+                          <MotionPresence>{sec.items.map((m) => row(m))}</MotionPresence>
                         </section>
                       ))
-                    ) : pageItems.map((m) => row(m))}
-                  </div>
+                    ) : (
+                      <div role="rowgroup">
+                        <MotionPresence>{pageItems.map((m) => row(m))}</MotionPresence>
+                      </div>
+                    )}
+                  </DataTable>
                 )}
 
                 {filtered.length > 0 ? (
@@ -362,8 +382,9 @@ export function MemoryView() {
                 ) : null}
               </div>
             )}
-          </div>
-        )}
+            </div>
+          )}
+      </PageFrame>
 
       {/* Floating bulk toolbar. Merge needs ≥2; soft-delete shows outside the trash, restore inside it,
           permanent delete everywhere (behind a confirm). Kept a sibling of the layout so it's never
@@ -425,12 +446,14 @@ export function MemoryView() {
 function CategorySectionHeader({ category, label, count }: { category?: MemoryCategory; label: string; count: number }) {
   const color = category ? categorySwatch(category.color) : 'var(--color-text-muted)';
   return (
-    <div className="flex items-center gap-2 border-b border-border/70 bg-elevated/20 px-3 py-2">
-      <span className="shrink-0" style={{ color }} aria-hidden>
-        {category ? <CategoryIcon name={category.icon} size={14} /> : <Hash size={14} />}
-      </span>
-      <h3 className="text-[11px] font-semibold uppercase tracking-wider text-text">{label}</h3>
-      <span className="font-mono text-[10px] text-text-muted tabular-nums">{count}</span>
+    <div role="row" className="flex items-center gap-2 border-b border-border/70 bg-elevated/20 px-3 py-2">
+      <div role="cell" className="flex min-w-0 items-center gap-2">
+        <span className="shrink-0" style={{ color }} aria-hidden>
+          {category ? <CategoryIcon name={category.icon} size={14} /> : <Hash size={14} />}
+        </span>
+        <h3 className="truncate text-[11px] font-semibold uppercase tracking-wider text-text">{label}</h3>
+        <span className="font-mono text-[10px] text-text-muted tabular-nums">{count}</span>
+      </div>
     </div>
   );
 }
@@ -442,28 +465,41 @@ function MemoryRow({ memory, category, active, selected, onSelect, onToggleSelec
   const { t, locale } = useTranslation();
   const updated = formatTaskTime(memory.updated_at, Date.now(), locale);
   return (
-    <div data-testid="memory-row" role="row" className={`group grid grid-cols-[2rem_minmax(0,1fr)_1.25rem] items-center gap-3 border-b border-border/70 px-1 py-3 transition-colors last:border-b-0 @5xl:grid-cols-[2rem_minmax(0,1fr)_11rem_8rem_6rem_7rem_1.25rem] ${active ? 'bg-accent/5' : 'hover:bg-elevated/25'}`}>
-      <div role="cell" className="flex items-center justify-center">
+    <DataTableRow
+      data-testid="memory-row"
+      selected={active || selected}
+      interactive
+      aria-selected={active || selected}
+      className="group px-1"
+    >
+      <DataTableCell className="flex items-center justify-center">
         <button type="button" onClick={onToggleSelect} aria-label={t.memory.merge} aria-pressed={selected}>
           <Checkbox checked={selected} />
         </button>
-      </div>
-      <div role="cell" className="min-w-0">
+      </DataTableCell>
+      <DataTableCell>
         <button type="button" onClick={onSelect} className="flex w-full min-w-0 items-center gap-2 text-left">
           <span className="truncate text-sm text-text">{memory.body}</span>
           {memory.status !== 'active' ? <Badge tone={memoryStatusTone(memory.status)}>{memoryStatusLabel(t, memory.status)}</Badge> : null}
         </button>
-      </div>
-      <span role="cell" className="hidden min-w-0 items-center gap-1.5 truncate text-xs text-text-muted @5xl:flex">
+      </DataTableCell>
+      <DataTableCell priority="wide" className="truncate text-xs text-text-muted">
         {category ? (
-          <><span className="shrink-0" style={{ color: categorySwatch(category.color) }}><CategoryIcon name={category.icon} size={12} /></span><span className="truncate">{category.name}</span></>
+          <span className="flex min-w-0 items-center gap-1.5">
+            <span className="shrink-0" style={{ color: categorySwatch(category.color) }}><CategoryIcon name={category.icon} size={12} /></span>
+            <span className="truncate">{category.name}</span>
+          </span>
         ) : <span className="italic text-text-muted/65">{t.memory.categoryUncategorized}</span>}
-      </span>
-      <span role="cell" className="hidden truncate font-mono text-xs text-text-muted @5xl:block">{memory.kind || '—'}</span>
-      <span role="cell" className="hidden items-center gap-1 font-mono text-xs text-text-muted @5xl:flex"><Gauge size={12} aria-hidden />{memory.importance}/5</span>
-      <span role="cell" title={updated.title} className="hidden items-center gap-1.5 whitespace-nowrap text-xs text-text-muted @5xl:flex"><Clock size={12} aria-hidden />{updated.label}</span>
-      <span role="cell" aria-hidden className="text-text-muted/50 transition-colors group-hover:text-text"><ChevronRight size={15} /></span>
-    </div>
+      </DataTableCell>
+      <DataTableCell priority="wide" className="truncate font-mono text-xs text-text-muted">{memory.kind || '—'}</DataTableCell>
+      <DataTableCell priority="wide" className="font-mono text-xs text-text-muted">
+        <span className="flex items-center gap-1"><Gauge size={12} aria-hidden />{memory.importance}/5</span>
+      </DataTableCell>
+      <DataTableCell priority="wide" title={updated.title} className="whitespace-nowrap text-xs text-text-muted">
+        <span className="flex items-center gap-1.5"><Clock size={12} aria-hidden />{updated.label}</span>
+      </DataTableCell>
+      <DataTableCell aria-hidden className="text-text-muted/50 transition-colors group-hover:text-text"><ChevronRight size={15} /></DataTableCell>
+    </DataTableRow>
   );
 }
 

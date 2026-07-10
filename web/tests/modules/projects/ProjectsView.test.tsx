@@ -20,12 +20,14 @@ describe('ProjectsView', () => {
     fireEvent.click(row);
     expect(await screen.findByText('master')).toBeTruthy();
     expect(await screen.findByText('feat: x')).toBeTruthy();
+    expect(screen.getByTestId('projects-register')).toHaveAttribute('role', 'list');
+    expect(row.closest('button')).toHaveAttribute('aria-pressed', 'true');
   });
 
   it('selects a project with Space', async () => {
     const { wrapper: Wrapper } = createWrapper();
     render(<Wrapper><ToastProvider><ProjectsView /></ToastProvider></Wrapper>);
-    const card = (await screen.findByText('elowen')).closest('[role="button"]')!;
+    const card = (await screen.findByText('elowen')).closest('button')!;
     fireEvent.keyDown(card, { key: ' ' });
     expect(await screen.findByText('master')).toBeTruthy();
   });

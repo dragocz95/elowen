@@ -24,13 +24,13 @@ describe('UsersView', () => {
     expect(screen.getByText('bob')).toBeTruthy();
   });
 
-  it('selects rows with Space and ignores bubbled keys from nested actions', async () => {
+  it('selects rows with Space and keeps the always-visible action menu independent', async () => {
     const { wrapper: Wrapper } = createWrapper();
     render(<Wrapper><ToastProvider><UsersView /></ToastProvider></Wrapper>);
-    const bobRow = (await screen.findByText('bob')).closest('[role="button"]')!;
+    const bobRow = (await screen.findByText('bob')).closest('button')!;
     expect(bobRow).toHaveAttribute('aria-pressed', 'false');
 
-    fireEvent.keyDown(within(bobRow as HTMLElement).getByRole('button', { name: 'Delete bob' }), { key: 'Enter' });
+    fireEvent.keyDown(screen.getByRole('button', { name: 'bob: Actions' }), { key: 'Enter' });
     expect(bobRow).toHaveAttribute('aria-pressed', 'false');
 
     fireEvent.keyDown(bobRow, { key: ' ' });
@@ -57,7 +57,7 @@ describe('UsersView', () => {
     // Admin (alice) carries an Admin badge in the list. Select bob → his allowed-models summary shows
     // in the detail pane; Manage opens the selection modal.
     expect(await screen.findByText('Admin')).toBeTruthy();
-    fireEvent.click(await screen.findByText('bob'));
+    fireEvent.click((await screen.findByText('bob')).closest('button')!);
     expect(await screen.findByText('All models allowed · 2 available')).toBeTruthy();
     // Projects list is empty ("—") and bob has no tools, so the models summary owns the only Manage button.
     fireEvent.click(screen.getByRole('button', { name: 'Manage' }));
@@ -87,8 +87,9 @@ describe('UsersView', () => {
     render(<Wrapper><ToastProvider><UsersView /></ToastProvider></Wrapper>);
 
     await screen.findByText('Admin');
-    // The trash button is a DIRECT delete action (impersonate/promote moved to the row's context menu).
-    fireEvent.click(screen.getByRole('button', { name: 'Delete bob' }));
+    // Destructive actions stay visible through the row menu and still require confirmation.
+    fireEvent.click(screen.getByRole('button', { name: 'bob: Actions' }));
+    fireEvent.click(within(screen.getByRole('menu')).getByRole('menuitem', { name: 'Delete bob' }));
     // A confirmation dialog appears; nothing is deleted yet.
     expect(await screen.findByText('Delete bob?')).toBeTruthy();
     expect(deleteHit).toBe(false);

@@ -1,7 +1,7 @@
 'use client';
 import { useState, useEffect, type FormEvent } from 'react';
 import { Plus, Shield, Trash2 } from 'lucide-react';
-import { SettingCard } from '../../components/ui/SettingCard';
+import { SettingGroup } from '../../components/ui/SettingsPrimitives';
 import { Input } from '../../components/ui/Input';
 import { Button } from '../../components/ui/Button';
 import { IconButton } from '../../components/ui/IconButton';
@@ -133,8 +133,8 @@ export function PermissionRulesCard() {
   );
 
   return (
-    <SettingCard title={t.cli.permTitle} icon={Shield} description={t.help.cliPermissions}>
-      <div className="flex flex-col gap-4">
+    <SettingGroup title={t.cli.permTitle} icon={Shield} description={t.help.cliPermissions}>
+      <div className="flex flex-col gap-4 py-4">
         {bashRules.length === 0 ? (
           <p className="text-xs text-text-muted">{t.cli.permEmpty}</p>
         ) : (
@@ -161,6 +161,6 @@ export function PermissionRulesCard() {
           </div>
         ) : null}
       </div>
-    </SettingCard>
+    </SettingGroup>
   );
 }

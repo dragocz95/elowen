@@ -9,6 +9,7 @@ import { ModuleHeader } from '../../components/ui/ModuleHeader';
 import { EmptyState } from '../../components/ui/states';
 import { useTranslation } from '../../lib/i18n';
 import { ProjectEditor } from '../projects/editor/ProjectEditor';
+import { MotionLayoutItem, MotionPresence } from '../../components/ui/Motion';
 
 /** Standalone code-editor page: the very same ProjectEditor that Projects opens as an overlay, here
  *  driven by the shared project-filter pills. The editor needs one concrete project, so an 'all' (or
@@ -36,9 +37,11 @@ export function EditorView() {
             picker to the resolved project id (falls back to the first accessible project). */}
         <ProjectFilterPills value={projectId ?? 'all'} onChange={setProject} includeAll={false} variant="dropdown" />
       </ModuleHeader>
-      {projectId == null
-        ? <EmptyState title={t.editor.noProjects} description={t.editor.noProjectsDescription} icon={Code2} />
-        : <ProjectEditor key={projectId} projectId={projectId} onClose={onClose} />}
+      <MotionPresence mode="wait">
+        {projectId == null
+          ? <MotionLayoutItem key="empty"><EmptyState title={t.editor.noProjects} description={t.editor.noProjectsDescription} icon={Code2} /></MotionLayoutItem>
+          : <MotionLayoutItem key={projectId}><ProjectEditor projectId={projectId} onClose={onClose} /></MotionLayoutItem>}
+      </MotionPresence>
     </>
   );
 }

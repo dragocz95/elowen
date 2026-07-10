@@ -71,11 +71,13 @@ describe('SessionsPage', () => {
     const { wrapper: Wrapper } = createWrapper();
     render(<Wrapper><ToastProvider><SessionsPage /></ToastProvider></Wrapper>);
     await waitFor(() => expect(screen.getByText('Conversation 1')).toBeInTheDocument());
+    expect(screen.getByTestId('brain-sessions-list')).toHaveAttribute('role', 'list');
+    expect(screen.getByRole('button', { name: 'Conversation 1: Actions' })).toBeInTheDocument();
     expect(screen.getByTestId('brain-sessions-list').children).toHaveLength(12);
     expect(screen.queryByText('Conversation 13')).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Next' }));
     expect(await screen.findByText('Conversation 13')).toBeInTheDocument();
-    expect(screen.queryByText('Conversation 1')).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByText('Conversation 1')).not.toBeInTheDocument());
   });
 
   it('opens terminal in modal and closes via modal close button', async () => {

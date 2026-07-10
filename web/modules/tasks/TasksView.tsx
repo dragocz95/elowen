@@ -1,5 +1,5 @@
 'use client';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useDeferredValue, useEffect, useMemo, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Plus, ListChecks, Search, Archive, Trash2, X, ChevronLeft, ChevronRight, CalendarDays, List } from 'lucide-react';
 import type { Task, TaskStatus } from '../../lib/types';
@@ -29,6 +29,7 @@ import { DateRangeFilter } from '../../components/ui/DateRangeFilter';
 import { DEFAULT_RANGE, serializeRange, parseRange, isStoredRange, inRange } from '../../lib/dateRange';
 import { taskDayMs } from './dateRange';
 import { dayKey } from '../kanban/calendar';
+import { MotionLayout, MotionLayoutItem, MotionPresence } from '../../components/ui/Motion';
 
 type Filter = 'all' | TaskStatus | 'autopilot';
 const FILTER_VALUES: readonly Filter[] = ['all', 'open', 'in_progress', 'blocked', 'closed', 'cancelled', 'autopilot'];
@@ -49,6 +50,7 @@ export function TasksView() {
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState<Task | null>(null);
   const [query, setQuery] = useState('');
+  const deferredQuery = useDeferredValue(query);
   const [filter, setFilter] = usePersistentState<Filter>('elowen.tasks.filter', 'in_progress', FILTER_VALUES);
   // Date-range window, persisted as one serialized slot. Defaults to the last 7 days; older work is
   // reached by widening the range (or paging through). Applied caller-side only — the shared /tasks
@@ -128,7 +130,7 @@ export function TasksView() {
   const bulkDelete = () => { selected.forEach((id) => del.mutate(id)); toast(t.tasks.nDeleted.replace('{count}', String(selected.size))); clearSelection(); setConfirmBulkDelete(false); };
 
   const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
+    const q = deferredQuery.trim().toLowerCase();
     const now = Date.now();
     const matchText = (t: Task) => `${t.title} ${t.id} ${t.description ?? ''}`.toLowerCase().includes(q);
     const isEpicActive = (epic: Task): boolean => {
@@ -162,7 +164,7 @@ export function TasksView() {
         }
         return taskDayMs(b) - taskDayMs(a); // newest day first
       });
-  }, [tasks.data, query, filter, range, childMap, phaseSet, sessions.data, signals, missions.data]);
+  }, [tasks.data, deferredQuery, filter, range, childMap, phaseSet, sessions.data, signals, missions.data]);
 
   // Reset to the first page whenever the result set changes shape.
   useEffect(() => { setPage(0); }, [query, filter, range, selectedProject]);
@@ -217,25 +219,31 @@ export function TasksView() {
           <div className="@3xl:flex @3xl:items-start @3xl:gap-5">
             {/* Left — searchable task list */}
             <div className="flex flex-col gap-5 @3xl:w-[42%] @3xl:shrink-0">
+              <MotionLayout className="flex flex-col gap-5">
+              <MotionPresence>
               {groups.map((g) => (
-                <div key={g.key} className="flex flex-col gap-2">
+                <MotionLayoutItem key={g.key} layoutId={`task-day-${g.key}`} className="flex flex-col gap-2">
                   <div className="flex items-center gap-3">
                     <CalendarDays size={12} className="shrink-0 text-text-muted" aria-hidden />
                     <span className="text-[11px] font-semibold uppercase tracking-wider text-text-muted">{g.label}</span>
                     <span className="h-px flex-1 bg-border" />
                     <span className="inline-flex items-center gap-1 font-mono text-tiny text-text-muted"><List size={11} className="shrink-0 text-text-muted" aria-hidden />{g.items.length}</span>
                   </div>
-                  <div className="flex flex-col gap-3">
+                  <MotionLayout className="flex flex-col gap-3">
+                    <MotionPresence>
                     {g.items.map((task) => {
                       const kids = childMap.get(task.id);
                       if (task.type === 'epic' && kids && kids.length > 0) {
-                        return <EpicGroup key={task.id} epic={task} phases={kids} effectiveStatus={epicEffectiveStatus(task, missions.data ?? [], kids)} expanded={expandedEpics.has(task.id)} onToggle={() => toggleEpic(task.id)} onEdit={setEditing} onSelect={(x) => setSelectedId(x.id)} onContextMenu={ctxMenu.open} activeId={selectedId} blockedBy={blockedBy} onDropTask={(e) => taskDrop.handleDrop(e, task)} dropTargetValid={draggingId ? taskDrop.isValidTarget(draggingId, task) : undefined} />;
+                        return <MotionLayoutItem key={task.id} layoutId={`task-${task.id}`}><EpicGroup epic={task} phases={kids} effectiveStatus={epicEffectiveStatus(task, missions.data ?? [], kids)} expanded={expandedEpics.has(task.id)} onToggle={() => toggleEpic(task.id)} onEdit={setEditing} onSelect={(x) => setSelectedId(x.id)} onContextMenu={ctxMenu.open} activeId={selectedId} blockedBy={blockedBy} onDropTask={(e) => taskDrop.handleDrop(e, task)} dropTargetValid={draggingId ? taskDrop.isValidTarget(draggingId, task) : undefined} /></MotionLayoutItem>;
                       }
-                      return <TaskCard key={task.id} task={task} onEdit={setEditing} onSelect={(x) => setSelectedId(x.id)} onContextMenu={ctxMenu.open} active={selectedId === task.id} blockers={blockedBy.get(task.id)} selected={selected.has(task.id)} onToggleSelect={toggleSelect} selecting={selected.size > 0} dragging={draggingId === task.id} onDragStart={(e) => { e.dataTransfer.setData('text/plain', task.id); setDraggingId(task.id); }} onDragEnd={() => setDraggingId(null)} onDropTask={(e) => taskDrop.handleDrop(e, task)} dropTargetValid={draggingId ? taskDrop.isValidTarget(draggingId, task) : undefined} />;
+                      return <MotionLayoutItem key={task.id} layoutId={`task-${task.id}`}><TaskCard task={task} onEdit={setEditing} onSelect={(x) => setSelectedId(x.id)} onContextMenu={ctxMenu.open} active={selectedId === task.id} blockers={blockedBy.get(task.id)} selected={selected.has(task.id)} onToggleSelect={toggleSelect} selecting={selected.size > 0} dragging={draggingId === task.id} onDragStart={(e) => { e.dataTransfer.setData('text/plain', task.id); setDraggingId(task.id); }} onDragEnd={() => setDraggingId(null)} onDropTask={(e) => taskDrop.handleDrop(e, task)} dropTargetValid={draggingId ? taskDrop.isValidTarget(draggingId, task) : undefined} /></MotionLayoutItem>;
                     })}
-                  </div>
-                </div>
+                    </MotionPresence>
+                  </MotionLayout>
+                </MotionLayoutItem>
               ))}
+              </MotionPresence>
+              </MotionLayout>
 
               {filtered.length > PAGE_SIZE && (
                 <div className="flex items-center justify-between border-t border-border pt-3">

@@ -4,7 +4,7 @@ import { useAutoSave } from '../../lib/useAutoSave';
 import { Eye, Gauge, MoonStar, SlidersHorizontal, Zap } from 'lucide-react';
 import { BrainModelField } from '../../components/ui/BrainModelField';
 import { Segmented } from '../../components/ui/Segmented';
-import { SettingCard } from '../../components/ui/SettingCard';
+import { SettingGroup, SettingRow } from '../../components/ui/SettingsPrimitives';
 import { Toggle } from '../../components/ui/Toggle';
 import { Slider } from '../../components/ui/Slider';
 import { LoadingState } from '../../components/ui/states';
@@ -97,7 +97,8 @@ export function CliSection() {
 
   return (
     <div className="flex flex-col gap-4">
-      <SettingCard title={t.cli.thinkingLabel} icon={Gauge} description={t.help.cliThinking}>
+      <SettingGroup>
+      <SettingRow title={t.cli.thinkingLabel} icon={Gauge} description={t.help.cliThinking}>
         <div className="flex flex-wrap gap-1.5">
           {THINKING_LEVELS.map((lv) => (
             <Pill key={lv || 'default'} on={thinkingLevel === lv} onClick={() => setThinkingLevel(lv)}>
@@ -105,9 +106,9 @@ export function CliSection() {
             </Pill>
           ))}
         </div>
-      </SettingCard>
+      </SettingRow>
 
-      <SettingCard title={t.cli.visionModelLabel} icon={Eye} description={t.help.cliVisionModel}>
+      <SettingRow title={t.cli.visionModelLabel} icon={Eye} description={t.help.cliVisionModel}>
         <BrainModelField
           value={visionSelection}
           onChange={setVisionSelection}
@@ -117,9 +118,9 @@ export function CliSection() {
           defaultLabel={t.cli.visionModelDefault}
           keyOf={(m) => `${m.provider}::${m.model}`}
         />
-      </SettingCard>
+      </SettingRow>
 
-      <SettingCard title={t.cli.autoCompact} icon={SlidersHorizontal} description={t.help.cliAutoCompact}>
+      <SettingRow title={t.cli.autoCompact} icon={SlidersHorizontal} description={t.help.cliAutoCompact}>
         <div className="flex flex-col gap-4">
           <label className="flex items-center gap-3 text-sm text-text">
             <Toggle checked={autoCompact} onChange={setAutoCompact} label={t.cli.autoCompactToggle} />
@@ -133,9 +134,9 @@ export function CliSection() {
             </div>
           ) : null}
         </div>
-      </SettingCard>
+      </SettingRow>
 
-      <SettingCard title={t.cli.yoloTitle} icon={Zap}>
+      <SettingRow title={t.cli.yoloTitle} icon={Zap}>
         <div className="flex flex-col gap-3">
           <label className="flex items-center gap-3 text-sm text-text">
             <Toggle checked={yolo} onChange={setYolo} label={t.cli.yoloToggle} />
@@ -146,9 +147,9 @@ export function CliSection() {
             {t.cli.yoloWarning}
           </p>
         </div>
-      </SettingCard>
+      </SettingRow>
 
-      <SettingCard title={t.cli.unattendedTitle} icon={MoonStar} description={t.help.cliUnattendedAsks}>
+      <SettingRow title={t.cli.unattendedTitle} icon={MoonStar} description={t.help.cliUnattendedAsks}>
         <Segmented
           value={unattendedAsks}
           onChange={(v) => setUnattendedAsks(v === 'deny' ? 'deny' : 'allow')}
@@ -158,7 +159,8 @@ export function CliSection() {
           ]}
           aria-label={t.cli.unattendedTitle}
         />
-      </SettingCard>
+      </SettingRow>
+      </SettingGroup>
 
       <PermissionRulesCard />
     </div>

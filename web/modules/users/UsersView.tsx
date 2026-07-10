@@ -1,6 +1,6 @@
 'use client';
 import { useState } from 'react';
-import { Users, UserPlus, Trash2, LogOut, Shield, ShieldCheck, Lock, LogIn } from 'lucide-react';
+import { Users, UserPlus, Trash2, LogOut, Shield, ShieldCheck, Lock, LogIn, MoreHorizontal } from 'lucide-react';
 import { useUsers, useMe, useProjects, useConfig } from '../../lib/queries';
 import { useCreateUser, useDeleteUser, useLogout, useUpdateUser } from '../../lib/mutations';
 import type { User as ElowenUser } from '../../lib/types';
@@ -19,6 +19,10 @@ import { LoadingState, ErrorState, EmptyState } from '../../components/ui/states
 import { useTranslation } from '../../lib/i18n';
 import { localDateTime } from '../../lib/format';
 import { UserDetailPane } from './UserDetailPane';
+import { EntityList, EntityRow } from '../../components/ui/EntityList';
+import { AdaptiveSplit, PageFrame } from '../../components/ui/PageFrame';
+import { MotionLayoutItem, MotionPresence } from '../../components/ui/Motion';
+import { ActionMenu, type ActionMenuItem } from '../../components/ui/ActionMenu';
 
 export function UsersView() {
   const users = useUsers();
@@ -87,6 +91,27 @@ export function UsersView() {
   // Default the detail pane to the first user once the list loads (nothing selected yet).
   const selected = data.find((u) => u.id === selectedId) ?? data[0] ?? null;
 
+  function userActions(user: ElowenUser): ActionMenuItem[] {
+    return [
+      ...(isAdmin && user.id !== me.data?.user?.id ? [{
+        label: t.users.ctxImpersonate,
+        icon: LogIn,
+        onSelect: () => handleImpersonate(user),
+      }] : []),
+      ...(isAdmin ? [{
+        label: user.is_admin ? t.users.removeAdmin : t.users.makeAdmin,
+        icon: user.is_admin ? Shield : ShieldCheck,
+        onSelect: () => { if (!updateUser.isPending) handleRole(user); },
+      }] : []),
+      ...(data.length > 1 ? [{
+        label: t.users.deleteLabel.replace('{username}', user.username),
+        icon: Trash2,
+        tone: 'danger' as const,
+        onSelect: () => setConfirmDelete(user),
+      }] : []),
+    ];
+  }
+
   function openCtxMenu(e: React.MouseEvent, user: ElowenUser) {
     e.preventDefault();
     e.stopPropagation();
@@ -121,7 +146,7 @@ export function UsersView() {
   if (me.data?.user && !isAdmin) return (
     <>
       <ModuleHeader title={t.page.users} icon={Users} />
-      <EmptyState title={t.settings.adminOnly} description={t.settings.adminOnlyDesc} icon={Lock} />
+      <PageFrame width="wide"><EmptyState title={t.settings.adminOnly} description={t.settings.adminOnlyDesc} icon={Lock} /></PageFrame>
     </>
   );
 
@@ -132,71 +157,66 @@ export function UsersView() {
         <Button variant="accent" icon={UserPlus} onClick={() => setCreating(true)}>{t.users.newUser}</Button>
       </ModuleHeader>
 
-      {users.isLoading ? <LoadingState />
-        : users.isError ? <ErrorState message={t.users.loadError} onRetry={() => users.refetch()} />
-        : data.length === 0 ? <EmptyState title={t.users.empty} description={t.users.emptyDescription} icon={Users} action={<Button variant="accent" icon={UserPlus} onClick={() => setCreating(true)}>{t.users.newUser}</Button>} />
-        : (
-          <div className="@container min-h-0 flex-1">
-            <div className="flex flex-col gap-5 @3xl:flex-row">
-              {/* Left: selectable user list */}
-              <ul className="flex shrink-0 flex-col gap-1.5 @3xl:w-80">
-                {data.map((user) => {
-                  const active = selected?.id === user.id;
-                  return (
-                    <li key={user.id}>
-                      <div
-                        role="button"
-                        tabIndex={0}
-                        aria-pressed={active}
-                        onClick={() => setSelectedId(user.id)}
-                        onKeyDown={(e) => {
-                          if (e.target !== e.currentTarget) return;
-                          if (e.key === 'Enter' || e.key === ' ') {
-                            e.preventDefault();
-                            setSelectedId(user.id);
-                          }
-                        }}
-                        onContextMenu={(e) => openCtxMenu(e, user)}
-                        className={`group flex cursor-pointer items-center gap-3 rounded-lg border p-2.5 transition-colors ${active ? 'border-accent bg-accent/10' : 'border-border bg-surface hover:bg-elevated'}`}
-                      >
-                        <Avatar user={user} size={36} />
-                        <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-                          <span className="flex items-center gap-1.5">
-                            <span className="truncate text-sm font-medium text-text">{user.name || user.username}</span>
-                            {user.is_admin ? <Badge tone="accent"><ShieldCheck size={10} aria-hidden /></Badge> : null}
-                          </span>
-                          <span className="truncate font-mono text-[11px] text-text-muted">@{user.username} · {localDateTime(user.created_at, locale, false)}</span>
-                        </div>
-                        {/* Trash = delete only (confirm dialog guards it). Impersonate/promote live in
-                            the row's right-click context menu — a hover dropdown kept tripping people
-                            into the wrong action. */}
-                        <div className="shrink-0 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
-                          <button
-                            type="button"
-                            aria-label={t.users.deleteLabel.replace('{username}', user.username)}
-                            title={data.length <= 1 ? t.users.lastUserHint : t.users.delete}
-                            disabled={data.length <= 1}
-                            onClick={(e) => { e.stopPropagation(); setConfirmDelete(user); }}
-                            className="inline-flex h-8 w-8 items-center justify-center rounded-md bg-danger text-bg transition-colors hover:bg-danger/85 disabled:opacity-40"
-                          >
-                            <Trash2 size={15} aria-hidden />
-                          </button>
-                        </div>
-                      </div>
-                    </li>
-                  );
-                })}
-              </ul>
-
-              {/* Right: detail pane for the selected user */}
-              <div className="min-w-0 flex-1">
-                {selected
-                  ? <UserDetailPane user={selected} projects={projects.data ?? []} globalExecs={globalExecs} customModels={customModels} />
-                  : <EmptyState title={t.users.selectUser} description={t.users.selectUserHint} icon={Users} />}
-              </div>
-            </div>
-          </div>
-        )}
+      <PageFrame width="wide">
+        {users.isLoading ? <LoadingState variant="list" />
+          : users.isError ? <ErrorState message={t.users.loadError} onRetry={() => users.refetch()} />
+          : data.length === 0 ? <EmptyState title={t.users.empty} description={t.users.emptyDescription} icon={Users} action={<Button variant="accent" icon={UserPlus} onClick={() => setCreating(true)}>{t.users.newUser}</Button>} />
+          : (
+            <AdaptiveSplit
+              asideWidth="34rem"
+              aside={(
+                selected ? (
+                  <MotionLayoutItem key={`user-detail-${selected.id}`}>
+                    <UserDetailPane user={selected} projects={projects.data ?? []} globalExecs={globalExecs} customModels={customModels} />
+                  </MotionLayoutItem>
+                ) : <MotionLayoutItem key="user-detail-empty"><EmptyState title={t.users.selectUser} description={t.users.selectUserHint} icon={Users} /></MotionLayoutItem>
+              )}
+            >
+              <EntityList data-testid="users-register">
+                <MotionPresence>
+                  {data.map((user) => {
+                    const active = selected?.id === user.id;
+                    return (
+                      <MotionLayoutItem key={user.id} layoutId={`user-${user.id}`} role="listitem">
+                        <EntityRow role="presentation" selected={active} className="group" onContextMenu={(e) => openCtxMenu(e, user)}>
+                          <div className="flex min-w-0 items-center gap-2">
+                            <button
+                              type="button"
+                              aria-pressed={active}
+                              onClick={() => setSelectedId(user.id)}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter' || e.key === ' ') {
+                                  e.preventDefault();
+                                  setSelectedId(user.id);
+                                }
+                              }}
+                              className="flex min-w-0 flex-1 items-center gap-3 rounded-md px-2 py-1 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70"
+                            >
+                              <Avatar user={user} size={36} />
+                              <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+                                <span className="flex min-w-0 items-center gap-1.5">
+                                  <span className="truncate text-sm font-medium text-text transition-colors group-hover:text-accent">{user.name || user.username}</span>
+                                  {user.is_admin ? <Badge tone="accent"><ShieldCheck size={10} aria-hidden /></Badge> : null}
+                                </span>
+                                <span className="truncate font-mono text-[11px] text-text-muted">@{user.username} · {localDateTime(user.created_at, locale, false)}</span>
+                              </span>
+                            </button>
+                            <ActionMenu
+                              label={`${user.username}: ${t.common.actions}`}
+                              items={userActions(user)}
+                              trigger={<MoreHorizontal size={16} aria-hidden />}
+                              triggerClassName="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-elevated hover:text-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70"
+                            />
+                          </div>
+                        </EntityRow>
+                      </MotionLayoutItem>
+                    );
+                  })}
+                </MotionPresence>
+              </EntityList>
+            </AdaptiveSplit>
+          )}
+      </PageFrame>
 
       {creating && (
         <Modal title={t.users.addUser} onClose={() => setCreating(false)} size="md" icon={UserPlus}>

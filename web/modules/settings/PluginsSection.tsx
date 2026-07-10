@@ -22,6 +22,9 @@ import { useTranslation } from '../../lib/i18n';
 import { usePlugins, useMarketplace } from '../../lib/queries';
 import { useTogglePlugin, useInstallPlugin, useUpdatePlugin, useUninstallPlugin, useRestorePlugin } from '../../lib/mutations';
 import type { PluginInfo, MarketplaceEntry } from '../../lib/types';
+import { EntityList, EntityRow } from '../../components/ui/EntityList';
+import { PageFrame } from '../../components/ui/PageFrame';
+import { MotionLayoutItem, MotionPresence } from '../../components/ui/Motion';
 
 /** Marketplace categories, derived from a plugin's `provides`/name (see `categorize`). */
 type Category = 'platforms' | 'tools' | 'memory' | 'automation' | 'ui' | 'security' | 'development';
@@ -86,46 +89,55 @@ function PluginCard({ p, updatable, onDetail, onFlip, onUpdate, onUninstall, onC
   // so a healthy/disabled plugin shows nothing; errors always surface.
   const showHealth = health === 'error' || p.enabled;
   return (
-    <div
-      onClick={onDetail}
+    <EntityRow
+      role="presentation"
+      busy={busy}
       onContextMenu={onContextMenu}
-      className="group flex cursor-pointer items-center gap-3 px-2 py-3.5 transition-colors hover:bg-elevated/35 @sm:px-3"
+      className="group @container"
       style={{ transitionDuration: 'var(--motion-fast)' }}
     >
-      <span className="relative shrink-0">
-        <PluginIcon name={p.name} hasIcon={p.hasIcon} size={38} />
-        {p.enabled ? <span className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full border border-bg bg-success" aria-hidden /> : null}
-      </span>
-      <div className="min-w-0 flex-1">
-        <div className="flex min-w-0 items-center gap-2">
-          <span className="truncate text-sm font-semibold text-text">{p.name}</span>
-          <span className="flex shrink-0 items-center gap-1 font-mono text-[9px] text-text-muted" title={p.source === 'bundled' ? t.plugins.bundled : t.plugins.user}>
-            {p.source === 'bundled' ? <Package size={10} aria-hidden /> : <UserIcon size={10} aria-hidden />}v{p.version}
+      <div className="flex min-w-0 items-center gap-3 px-1 @sm:px-2">
+        <button
+          type="button"
+          onClick={onDetail}
+          className="flex min-w-0 flex-1 items-center gap-3 rounded-md px-1 py-1 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70"
+        >
+          <span className="relative shrink-0">
+            <PluginIcon name={p.name} hasIcon={p.hasIcon} size={38} />
+            {p.enabled ? <span className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full border border-bg bg-success" aria-hidden /> : null}
           </span>
-          {updatable ? <span className="hidden text-[10px] font-medium text-accent @sm:inline">{t.plugins.updateAvailable}</span> : null}
+          <span className="min-w-0 flex-1">
+            <span className="flex min-w-0 items-center gap-2">
+              <span className="truncate text-sm font-semibold text-text transition-colors group-hover:text-accent">{p.name}</span>
+              <span className="flex shrink-0 items-center gap-1 font-mono text-[9px] text-text-muted" title={p.source === 'bundled' ? t.plugins.bundled : t.plugins.user}>
+                {p.source === 'bundled' ? <Package size={10} aria-hidden /> : <UserIcon size={10} aria-hidden />}v{p.version}
+              </span>
+              {updatable ? <span className="hidden text-[10px] font-medium text-accent @sm:inline">{t.plugins.updateAvailable}</span> : null}
+            </span>
+            <span className="mt-0.5 block truncate text-xs text-text-muted" title={description}>{description}</span>
+          </span>
+        </button>
+        <div className="hidden max-w-[18rem] shrink-0 items-center gap-2 @3xl:flex">
+          <ProvidesBadges counts={{ tools: p.provides.tools?.length ?? 0, skills: p.provides.skills?.length ?? 0, platforms: p.provides.platforms?.length ?? 0 }} />
         </div>
-        <p className="mt-0.5 truncate text-xs text-text-muted" title={description}>{description}</p>
+        <div className="flex shrink-0 items-center gap-2">
+          {showHealth ? (
+            <Badge tone={health === 'error' ? 'danger' : 'success'}>{health === 'error' ? t.plugins.healthError : t.plugins.healthOk}</Badge>
+          ) : null}
+          <Toggle checked={p.enabled} onChange={onFlip} label={`${p.name}: ${p.enabled ? t.plugins.disable : t.plugins.enable}`} disabled={busy} />
+          <ActionMenu
+            label={`${p.name}: ${t.common.actions}`}
+            trigger={<MoreHorizontal size={16} aria-hidden />}
+            triggerClassName="inline-flex h-9 w-9 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-elevated hover:text-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70"
+            items={[
+              { label: t.plugins.detail, icon: Eye, onSelect: onDetail },
+              ...(updatable ? [{ label: t.plugins.update, icon: ArrowUpCircle, onSelect: onUpdate }] : []),
+              { label: p.source === 'bundled' ? t.plugins.remove : t.plugins.uninstall, icon: Trash2, tone: 'danger' as const, onSelect: onUninstall },
+            ]}
+          />
+        </div>
       </div>
-      <div className="hidden max-w-[18rem] shrink-0 items-center gap-2 @3xl:flex">
-        <ProvidesBadges counts={{ tools: p.provides.tools?.length ?? 0, skills: p.provides.skills?.length ?? 0, platforms: p.provides.platforms?.length ?? 0 }} />
-      </div>
-      <div className="flex shrink-0 items-center gap-2" onClick={(e) => e.stopPropagation()}>
-        {showHealth ? (
-          <Badge tone={health === 'error' ? 'danger' : 'success'}>{health === 'error' ? t.plugins.healthError : t.plugins.healthOk}</Badge>
-        ) : null}
-        <Toggle checked={p.enabled} onChange={onFlip} label={`${p.name}: ${p.enabled ? t.plugins.disable : t.plugins.enable}`} disabled={busy} />
-        <ActionMenu
-          label={`${p.name}: ${t.common.actions}`}
-          trigger={<MoreHorizontal size={16} aria-hidden />}
-          triggerClassName="inline-flex h-8 w-8 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-elevated hover:text-text"
-          items={[
-            { label: t.plugins.detail, icon: Eye, onSelect: onDetail },
-            ...(updatable ? [{ label: t.plugins.update, icon: ArrowUpCircle, onSelect: onUpdate }] : []),
-            { label: p.source === 'bundled' ? t.plugins.remove : t.plugins.uninstall, icon: Trash2, tone: 'danger' as const, onSelect: onUninstall },
-          ]}
-        />
-      </div>
-    </div>
+    </EntityRow>
   );
 }
 
@@ -134,7 +146,8 @@ function PluginCard({ p, updatable, onDetail, onFlip, onUpdate, onUninstall, onC
 function MarketplaceCard({ e, onInstall, busy }: { e: MarketplaceEntry; onInstall: () => void; busy: boolean }) {
   const { t } = useTranslation();
   return (
-    <div className="flex items-center gap-3 px-2 py-3.5 @sm:px-3">
+    <EntityRow role="presentation" busy={busy} interactive={false} className="@container">
+      <div className="flex min-w-0 items-center gap-3 px-1 @sm:px-2">
         <PluginIcon name={e.name} size={38} />
         <div className="flex min-w-0 flex-1 flex-col gap-0.5">
           <div className="flex min-w-0 items-center gap-2">
@@ -146,7 +159,8 @@ function MarketplaceCard({ e, onInstall, busy }: { e: MarketplaceEntry; onInstal
         <Button variant="default" icon={Download} onClick={onInstall} disabled={busy} className="shrink-0">
           {busy ? t.plugins.installing : t.plugins.install}
         </Button>
-    </div>
+      </div>
+    </EntityRow>
   );
 }
 
@@ -156,7 +170,8 @@ function RemovedCard({ p, onRestore, busy }: { p: PluginInfo; onRestore: () => v
   const { t, locale } = useTranslation();
   const description = p.i18n?.[locale]?.description ?? p.description;
   return (
-    <div className="flex items-center gap-3 px-2 py-3.5 @sm:px-3">
+    <EntityRow role="presentation" busy={busy} interactive={false} className="@container">
+      <div className="flex min-w-0 items-center gap-3 px-1 @sm:px-2">
         <PluginIcon name={p.name} hasIcon={p.hasIcon} size={38} />
         <div className="flex min-w-0 flex-1 flex-col gap-0.5">
           <div className="flex min-w-0 items-center gap-2">
@@ -168,7 +183,8 @@ function RemovedCard({ p, onRestore, busy }: { p: PluginInfo; onRestore: () => v
         <Button variant="default" icon={RotateCcw} onClick={onRestore} disabled={busy} className="shrink-0">
           {t.plugins.restore}
         </Button>
-    </div>
+      </div>
+    </EntityRow>
   );
 }
 
@@ -239,8 +255,8 @@ export function PluginsSection() {
     });
   }, [available, query, category]);
 
-  if (detail) return <PluginDetail name={detail} onBack={() => setDetail(null)} />;
-  if (isLoading) return <LoadingState variant="cards" />;
+  if (detail) return <PageFrame width="fluid"><PluginDetail name={detail} onBack={() => setDetail(null)} /></PageFrame>;
+  if (isLoading) return <PageFrame width="fluid"><LoadingState variant="list" /></PageFrame>;
 
   const flip = (p: PluginInfo, enabled: boolean) => toggle.mutate(
     { name: p.name, enabled },
@@ -302,7 +318,7 @@ export function PluginsSection() {
   const removeIsBundled = plugins.find((p) => p.name === confirmRemove)?.source === 'bundled';
 
   return (
-    <div className="flex flex-col gap-5">
+    <PageFrame width="fluid">
       <div className="flex items-center gap-2">
         <Segmented variant="line" value={view} onChange={(v) => { setView(v as 'installed' | 'available'); setCategory('all'); }} options={viewOptions} aria-label={t.plugins.tabInstalled} />
         <HelpTip>{t.help.pluginsManage}</HelpTip>
@@ -322,17 +338,21 @@ export function PluginsSection() {
         ) : filteredInstalled.length === 0 ? (
           <EmptyState title={t.plugins.noMatches} description={t.plugins.noMatchesHint} icon={Search} />
         ) : (
-          <div className="@container overflow-hidden border-y border-border/80 divide-y divide-border/70">
+          <EntityList className="@container" data-testid="installed-plugins-list">
+            <MotionPresence>
               {filteredInstalled.map((p) => (
-                <PluginCard
-                  key={p.name} p={p} updatable={updatable.has(p.name)}
-                  busy={pending === p.name || (toggle.isPending && toggle.variables?.name === p.name)}
-                  onFlip={(enabled) => flip(p, enabled)} onDetail={() => setDetail(p.name)}
-                  onUpdate={() => doUpdate(p.name)} onUninstall={() => setConfirmRemove(p.name)}
-                  onContextMenu={(e) => openMenu(e, p)}
-                />
+                <MotionLayoutItem key={p.name} layoutId={`installed-plugin-${p.name}`} role="listitem">
+                  <PluginCard
+                    p={p} updatable={updatable.has(p.name)}
+                    busy={pending === p.name || (toggle.isPending && toggle.variables?.name === p.name)}
+                    onFlip={(enabled) => flip(p, enabled)} onDetail={() => setDetail(p.name)}
+                    onUpdate={() => doUpdate(p.name)} onUninstall={() => setConfirmRemove(p.name)}
+                    onContextMenu={(e) => openMenu(e, p)}
+                  />
+                </MotionLayoutItem>
               ))}
-          </div>
+            </MotionPresence>
+          </EntityList>
         )
       ) : (
         <div className="flex flex-col gap-5">
@@ -340,11 +360,15 @@ export function PluginsSection() {
           {removedBundled.length > 0 ? (
             <div className="flex flex-col gap-3">
               <span className="text-sm font-medium text-text">{t.plugins.removedSection}</span>
-              <div className="@container overflow-hidden border-y border-border/80 divide-y divide-border/70">
+              <EntityList className="@container" data-testid="removed-plugins-list">
+                <MotionPresence>
                   {removedBundled.map((p) => (
-                    <RemovedCard key={p.name} p={p} busy={pending === p.name} onRestore={() => doRestore(p.name)} />
+                    <MotionLayoutItem key={p.name} layoutId={`removed-plugin-${p.name}`} role="listitem">
+                      <RemovedCard p={p} busy={pending === p.name} onRestore={() => doRestore(p.name)} />
+                    </MotionLayoutItem>
                   ))}
-              </div>
+                </MotionPresence>
+              </EntityList>
             </div>
           ) : null}
           {marketplace.isLoading ? (
@@ -356,11 +380,15 @@ export function PluginsSection() {
           ) : filteredAvailable.length === 0 ? (
             <EmptyState title={t.plugins.noMatches} description={t.plugins.noMatchesHint} icon={Search} />
           ) : (
-            <div className="@container overflow-hidden border-y border-border/80 divide-y divide-border/70">
+            <EntityList className="@container" data-testid="available-plugins-list">
+              <MotionPresence>
                 {filteredAvailable.map((e) => (
-                  <MarketplaceCard key={e.name} e={e} busy={pending === e.name} onInstall={() => doInstall(e.name)} />
+                  <MotionLayoutItem key={e.name} layoutId={`available-plugin-${e.name}`} role="listitem">
+                    <MarketplaceCard e={e} busy={pending === e.name} onInstall={() => doInstall(e.name)} />
+                  </MotionLayoutItem>
                 ))}
-            </div>
+              </MotionPresence>
+            </EntityList>
           )}
         </div>
       )}
@@ -376,6 +404,6 @@ export function PluginsSection() {
         onClose={() => setConfirmRemove(null)}
       />
       {menu && <ContextMenu state={menu} onClose={() => setMenu(null)} />}
-    </div>
+    </PageFrame>
   );
 }

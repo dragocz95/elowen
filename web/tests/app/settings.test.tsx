@@ -13,7 +13,11 @@ const server = setupServer(
   http.get('*/api/config', () => HttpResponse.json({ allowedExecs: ['sonnet', 'codex:gpt-5.4'], customModels: [], autopilot: { model: 'mimo-v2.5', apiUrl: 'https://relay.example/v1', apiKeySet: false, notes: '' }, providers: { 'claude-code': { bin: 'claude', args: '' }, opencode: { bin: 'opencode', args: '' }, codex: { bin: 'codex', args: '' } }, defaults: { exec: 'sonnet', autonomy: 'L1', maxSessions: 1 }, security: { tokenTtlDays: 30 } })),
   http.put('*/api/config', async ({ request }) => { putBody = await request.json(); return HttpResponse.json({ allowedExecs: ['sonnet'], customModels: [], autopilot: { model: 'mimo-v2.5', apiUrl: 'https://relay.example/v1', apiKeySet: false, notes: '' }, defaults: { exec: 'sonnet', autonomy: 'L1', maxSessions: 1 }, security: { tokenTtlDays: 30 } }); }),
 );
-beforeAll(() => server.listen({ onUnhandledRequest })); afterEach(() => { server.resetHandlers(); localStorage.clear(); }); afterAll(() => server.close());
+beforeAll(() => server.listen({ onUnhandledRequest })); afterEach(() => {
+  server.resetHandlers();
+  localStorage.clear();
+  window.history.replaceState(null, '', '/settings');
+}); afterAll(() => server.close());
 
 describe('SettingsPage', () => {
   it('auto-saves a changed model allowlist on toggle (no manual save button)', async () => {
@@ -72,6 +76,21 @@ describe('SettingsPage', () => {
     fireEvent.change(search, { target: { value: 'nothing-matches-this' } });
     expect(screen.getByText('No models match this search.')).toBeTruthy();
     expect(screen.queryAllByTestId('model-row')).toHaveLength(0);
+  });
+
+  it('retains a visited settings document and its search state across category switches', async () => {
+    const { wrapper: Wrapper } = createWrapper();
+    render(<Wrapper><ToastProvider><SettingsPage /></ToastProvider></Wrapper>);
+    const search = await screen.findByRole('searchbox', { name: 'Search models…' });
+    fireEvent.change(search, { target: { value: 'sonnet' } });
+
+    fireEvent.click(screen.getByRole('radio', { name: 'Autopilot' }));
+    await waitFor(() => expect(search).not.toBeVisible());
+
+    fireEvent.click(screen.getByRole('radio', { name: 'Models' }));
+    await waitFor(() => expect(search).toBeVisible());
+    expect(screen.getByRole('searchbox', { name: 'Search models…' })).toBe(search);
+    expect(search).toHaveValue('sonnet');
   });
 
   it('add-model modal opens on click and sends customModels with the new entry on save', async () => {

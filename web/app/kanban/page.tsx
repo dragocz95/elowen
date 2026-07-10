@@ -23,6 +23,7 @@ import { useToast } from '../../components/ui/Toast';
 import { useTranslation } from '../../lib/i18n';
 import { usePersistentState } from '../../lib/usePersistentState';
 import { useProjectFilter } from '../../lib/useProjectFilter';
+import { MotionLayoutItem, MotionPresence } from '../../components/ui/Motion';
 
 const KANBAN_DEFAULT_RANGE: DateRange = { preset: 'today', from: null, to: null };
 
@@ -91,7 +92,9 @@ export default function KanbanPage() {
       </ModuleHeader>
 
       {tasks.isLoading ? <LoadingState variant={view === 'board' ? 'kanban' : 'cards'} /> : tasks.isError ? <ErrorState message={t.common.daemonUnreachable} onRetry={() => tasks.refetch()} />
-        : view === 'board' ? (
+        : <MotionPresence mode="wait">
+          {view === 'board' ? (
+          <MotionLayoutItem key="board">
           <KanbanBoard
             tasks={filteredTasks}
             allTasks={tasks.data ?? []}
@@ -101,7 +104,9 @@ export default function KanbanPage() {
             onSelect={openTask}
             onEdit={setEditing}
           />
+          </MotionLayoutItem>
         ) : (
+          <MotionLayoutItem key="calendar">
           <CalendarView
             tasks={filteredTasks}
             onSelect={openTask}
@@ -114,7 +119,9 @@ export default function KanbanPage() {
               updateTask.mutate({ id, patch: { scheduled_at: dt.toISOString() } }, { onError: (e) => toast(String(e), 'error') });
             }}
           />
+          </MotionLayoutItem>
         )}
+        </MotionPresence>}
       {editing && <TaskModal task={editing} onClose={() => setEditing(null)} />}
       {viewing && <TaskResultsModal task={viewing} onClose={() => setViewing(null)} />}
       {createSchedule && <TaskModal initialSchedule={createSchedule} onClose={() => setCreateSchedule(null)} />}

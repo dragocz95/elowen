@@ -8,7 +8,7 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import { LazyMotion, MotionConfig } from 'motion/react';
+import { LazyMotion, MotionConfig, type FeatureBundle, type LazyFeatureBundle } from 'motion/react';
 
 export type EffectsMode = 'auto' | 'full' | 'reduced' | 'off';
 export type ResolvedEffectsMode = Exclude<EffectsMode, 'auto'>;
@@ -71,7 +71,11 @@ function applyDocumentMode(mode: EffectsMode, resolvedMode: ResolvedEffectsMode)
  * `auto` follows the OS reduced-motion preference; explicit modes always win. `off` also disables
  * CSS motion through the root data attribute configured here.
  */
-export function EffectsProvider({ children }: { children: ReactNode }) {
+export function EffectsProvider({ children, features = loadMotionFeatures }: {
+  children: ReactNode;
+  /** Tests can inject the synchronous bundle; production keeps the feature chunk lazy. */
+  features?: FeatureBundle | LazyFeatureBundle;
+}) {
   const [mode, setModeState] = useState<EffectsMode>(DEFAULT_EFFECTS_MODE);
   const [systemReduced, setSystemReduced] = useState(false);
   const [bootstrappedMode] = useState<ResolvedEffectsMode>(readBootstrappedMode);
@@ -113,7 +117,7 @@ export function EffectsProvider({ children }: { children: ReactNode }) {
 
   return (
     <EffectsContext.Provider value={value}>
-      <LazyMotion features={loadMotionFeatures} strict>
+      <LazyMotion features={features} strict>
         <MotionConfig reducedMotion={resolvedMode === 'full' ? 'never' : 'always'}>
           {children}
         </MotionConfig>

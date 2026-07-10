@@ -1,8 +1,23 @@
 'use client';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQueryClient, type QueryClient, type QueryKey } from '@tanstack/react-query';
 import { elowenClient } from './elowenClient';
 import { QUERY_KEYS } from './queries';
-import type { CreateTaskInput, UpdateTaskInput, PlanInput, EngageInput, ConfigPatch, InsertPhasesInput, UserPatch, ProfilePatch, CliSettings, TerminalSettings, PermissionSettings, CronJob, PersonalityCreate, PersonalityPatch, MemoryCreate, MemoryPatch, EmbeddingSettingsPatch, MemoryCategoryCreate, MemoryCategoryPatch, CategorizationSettingsPatch, PluginInfo, PluginDetail } from './types';
+import type { Task, CreateTaskInput, UpdateTaskInput, PlanInput, EngageInput, ConfigPatch, InsertPhasesInput, UserPatch, ProfilePatch, CliSettings, TerminalSettings, PermissionSettings, CronJob, PersonalityCreate, PersonalityPatch, MemoryCreate, MemoryPatch, EmbeddingSettingsPatch, MemoryCategoryCreate, MemoryCategoryPatch, CategorizationSettingsPatch, PluginInfo, PluginDetail } from './types';
+
+type TaskCacheSnapshot = Array<[QueryKey, Task[] | undefined]>;
+
+/** Apply one task patch to every all/project-scoped task cache. The snapshot is restored on failure,
+ * while SSE/invalidation remains the final source of truth after the mutation settles. */
+async function optimisticTaskPatch(qc: QueryClient, id: string, patch: Partial<Task>): Promise<TaskCacheSnapshot> {
+  await qc.cancelQueries({ queryKey: QUERY_KEYS.tasks });
+  const snapshots = qc.getQueriesData<Task[]>({ queryKey: QUERY_KEYS.tasks });
+  qc.setQueriesData<Task[]>({ queryKey: QUERY_KEYS.tasks }, (current) => current?.map((task) => task.id === id ? { ...task, ...patch } : task));
+  return snapshots;
+}
+
+function restoreTaskCaches(qc: QueryClient, snapshots?: TaskCacheSnapshot) {
+  for (const [queryKey, value] of snapshots ?? []) qc.setQueryData(queryKey, value);
+}
 
 export function useSpawn() {
   const qc = useQueryClient();
@@ -17,7 +32,12 @@ export function useCreateTask() {
 }
 export function useUpdateTask() {
   const qc = useQueryClient();
-  return useMutation({ mutationFn: (v: { id: string; patch: UpdateTaskInput }) => elowenClient.updateTask(v.id, v.patch), onSuccess: () => qc.invalidateQueries({ queryKey: QUERY_KEYS.tasks }) });
+  return useMutation({
+    mutationFn: (v: { id: string; patch: UpdateTaskInput }) => elowenClient.updateTask(v.id, v.patch),
+    onMutate: (v) => optimisticTaskPatch(qc, v.id, v.patch as Partial<Task>),
+    onError: (_error, _variables, snapshots) => restoreTaskCaches(qc, snapshots),
+    onSettled: () => qc.invalidateQueries({ queryKey: QUERY_KEYS.tasks }),
+  });
 }
 export function useDeleteTask() {
   const qc = useQueryClient();
@@ -84,7 +104,12 @@ export function useCloseTask() {
 }
 export function useSetTaskStatus() {
   const qc = useQueryClient();
-  return useMutation({ mutationFn: (v: { id: string; status: string }) => elowenClient.setTaskStatus(v.id, v.status), onSuccess: () => qc.invalidateQueries({ queryKey: QUERY_KEYS.tasks }) });
+  return useMutation({
+    mutationFn: (v: { id: string; status: string }) => elowenClient.setTaskStatus(v.id, v.status),
+    onMutate: (v) => optimisticTaskPatch(qc, v.id, { status: v.status as Task['status'] }),
+    onError: (_error, _variables, snapshots) => restoreTaskCaches(qc, snapshots),
+    onSettled: () => qc.invalidateQueries({ queryKey: QUERY_KEYS.tasks }),
+  });
 }
 export function useApproveGate() {
   const qc = useQueryClient();

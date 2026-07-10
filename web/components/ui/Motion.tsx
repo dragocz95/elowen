@@ -1,11 +1,11 @@
 'use client';
 import { AnimatePresence, type HTMLMotionProps } from 'motion/react';
 import * as m from 'motion/react-m';
-import type { ReactNode } from 'react';
+import { forwardRef, type ReactNode } from 'react';
 import { motionTransition, revealVariants, staggerVariants } from '../../lib/motion';
 import { useEffects } from '../../lib/useEffects';
 
-type DivMotionProps = Omit<HTMLMotionProps<'div'>, 'initial' | 'animate' | 'exit' | 'transition' | 'variants'>;
+type DivMotionProps = Omit<HTMLMotionProps<'div'>, 'ref' | 'initial' | 'animate' | 'exit' | 'transition' | 'variants'>;
 
 interface MotionRevealProps extends DivMotionProps {
   children: ReactNode;
@@ -74,17 +74,18 @@ export function MotionPresence({ children, mode = 'popLayout' }: {
 
 /** Shared layout container for registers, grids and changing filter results. */
 export function MotionLayout({ children, ...props }: DivMotionProps & { children: ReactNode }) {
-  return <m.div {...props} layout />;
+  return <m.div {...props} layout>{children}</m.div>;
 }
 
 /** One reorderable/present item. It becomes opacity-only when effects are reduced and static when off. */
-export function MotionLayoutItem({ children, layoutId, ...props }: DivMotionProps & {
+export const MotionLayoutItem = forwardRef<HTMLDivElement, DivMotionProps & {
   children: ReactNode;
   layoutId?: string;
-}) {
+}>(function MotionLayoutItem({ children, layoutId, ...props }, ref) {
   const { resolvedMode } = useEffects();
   return (
     <m.div
+      ref={ref}
       {...props}
       layout={resolvedMode === 'full' ? 'position' : false}
       layoutId={resolvedMode === 'full' ? layoutId : undefined}
@@ -96,4 +97,4 @@ export function MotionLayoutItem({ children, layoutId, ...props }: DivMotionProp
       {children}
     </m.div>
   );
-}
+});

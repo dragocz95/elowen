@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Trash2, MessageSquare, Circle, FileCode, FileJson, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Trash2, MessageSquare, Circle, FileCode, FileJson, ChevronLeft, ChevronRight, MoreHorizontal } from 'lucide-react';
 import { elowenClient } from '../../lib/elowenClient';
 import { openBrainSession } from '../../lib/brainDock';
 import { localDateTime } from '../../lib/format';
@@ -14,6 +14,9 @@ import { Segmented } from '../../components/ui/Segmented';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { HelpTip } from '../../components/ui/HelpTip';
 import { Button } from '../../components/ui/Button';
+import { EntityList, EntityRow } from '../../components/ui/EntityList';
+import { MotionLayoutItem, MotionPresence } from '../../components/ui/Motion';
+import { ActionMenu } from '../../components/ui/ActionMenu';
 
 const PAGE_SIZE = 12;
 
@@ -108,63 +111,53 @@ export function BrainSessionsPanel() {
         : q.isError ? <p className="py-8 text-xs italic text-text-muted">{t.common.daemonUnreachable}</p>
         : sessions.length === 0 ? <p className="py-8 text-xs italic text-text-muted">{t.sessionsPanel.empty}</p>
         : (
-          <div data-testid="brain-sessions-list" role="list" className="flex flex-col divide-y divide-border/80">
-            {pageRows.map((s) => {
-              // Own conversations (web/CLI) resume & continue in the web chat; channel (Discord) and
-              // task-worker sessions open read-only (the daemon won't let the owner post into them).
-              const continuable = s.kind === 'conversation';
-              const label = continuable ? t.sessionsPanel.openInChat : t.sessionsPanel.viewInChat;
-              return (
-              <div key={s.id} role="listitem" className="group flex min-w-0 items-center gap-3 py-3 transition-colors hover:bg-white/[0.015]">
-                <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-border bg-elevated/70">
-                  <ModelIcon name={s.model} size={24} />
-                </span>
-                <button
-                  type="button"
-                  onClick={() => openBrainSession(s.id, continuable)}
-                  title={label}
-                  aria-label={`${label}: ${s.title || t.sessionsPanel.untitled}`}
-                  className="flex min-w-0 flex-1 cursor-pointer flex-col gap-0.5 text-left"
-                >
-                  <span className="flex items-center gap-1.5">
-                    <span className="truncate text-sm font-medium text-text transition-colors group-hover:text-accent">{s.title || t.sessionsPanel.untitled}</span>
-                    {s.running ? <Circle size={7} className="shrink-0 fill-success text-success" aria-label={t.sessionsPanel.running} /> : null}
-                  </span>
-                  <span className="truncate font-mono text-tiny text-text-muted">
-                    {s.tokens != null ? `${fmtTokens(s.tokens)} ${t.sessionsPanel.tok} · ` : ''}{localDateTime(s.updated_at, locale, false)}
-                  </span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => void doExport(s.id, 'html')}
-                  aria-label={t.sessionsPanel.exportHtml}
-                  title={t.sessionsPanel.exportHtml}
-                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-text-muted opacity-0 transition-all hover:bg-elevated hover:text-text focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100"
-                >
-                  <FileCode size={14} aria-hidden />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => void doExport(s.id, 'jsonl')}
-                  aria-label={t.sessionsPanel.exportJsonl}
-                  title={t.sessionsPanel.exportJsonl}
-                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-text-muted opacity-0 transition-all hover:bg-elevated hover:text-text focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100"
-                >
-                  <FileJson size={14} aria-hidden />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setConfirmId(s.id)}
-                  aria-label={t.common.delete}
-                  title={t.common.delete}
-                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-text-muted opacity-0 transition-all hover:bg-danger/10 hover:text-danger focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100"
-                >
-                  <Trash2 size={14} aria-hidden />
-                </button>
-              </div>
-              );
-            })}
-          </div>
+          <EntityList data-testid="brain-sessions-list">
+            <MotionPresence>
+              {pageRows.map((s) => {
+                // Own conversations (web/CLI) resume & continue in the web chat; channel (Discord) and
+                // task-worker sessions open read-only (the daemon won't let the owner post into them).
+                const continuable = s.kind === 'conversation';
+                const label = continuable ? t.sessionsPanel.openInChat : t.sessionsPanel.viewInChat;
+                const title = s.title || t.sessionsPanel.untitled;
+                return (
+                  <MotionLayoutItem key={s.id} layoutId={`brain-session-${s.id}`} role="listitem">
+                    <EntityRow role="presentation" className="group">
+                      <div className="flex min-w-0 items-center gap-3">
+                        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-border bg-elevated/70">
+                          <ModelIcon name={s.model} size={24} />
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => openBrainSession(s.id, continuable)}
+                          title={label}
+                          aria-label={`${label}: ${title}`}
+                          className="flex min-w-0 flex-1 cursor-pointer flex-col gap-0.5 rounded-md px-2 py-1 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70"
+                        >
+                          <span className="flex min-w-0 items-center gap-1.5">
+                            <span className="truncate text-sm font-medium text-text transition-colors group-hover:text-accent">{title}</span>
+                            {s.running ? <Circle size={7} className="shrink-0 fill-success text-success" aria-label={t.sessionsPanel.running} /> : null}
+                          </span>
+                          <span className="truncate font-mono text-tiny text-text-muted">
+                            {s.tokens != null ? `${fmtTokens(s.tokens)} ${t.sessionsPanel.tok} · ` : ''}{localDateTime(s.updated_at, locale, false)}
+                          </span>
+                        </button>
+                        <ActionMenu
+                          label={`${title}: ${t.common.actions}`}
+                          items={[
+                            { label: t.sessionsPanel.exportHtml, icon: FileCode, onSelect: () => { void doExport(s.id, 'html'); } },
+                            { label: t.sessionsPanel.exportJsonl, icon: FileJson, onSelect: () => { void doExport(s.id, 'jsonl'); } },
+                            { label: t.common.delete, icon: Trash2, tone: 'danger', onSelect: () => setConfirmId(s.id) },
+                          ]}
+                          trigger={<MoreHorizontal size={16} aria-hidden />}
+                          triggerClassName="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-elevated hover:text-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70"
+                        />
+                      </div>
+                    </EntityRow>
+                  </MotionLayoutItem>
+                );
+              })}
+            </MotionPresence>
+          </EntityList>
         )}
 
       {sessions.length > 0 ? (

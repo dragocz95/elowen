@@ -1,8 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, within } from '@testing-library/react';
+import { render, screen, fireEvent, within, waitFor } from '@testing-library/react';
 import { LanguageProvider } from '../../../lib/i18n';
 import { en } from '../../../lib/i18n/dictionaries/en';
 import type { PluginInfo, MarketplaceEntry } from '../../../lib/types';
+import { EffectsProvider } from '../../../lib/useEffects';
 
 const usePlugins = vi.hoisted(() => vi.fn());
 const useMarketplace = vi.hoisted(() => vi.fn());
@@ -30,7 +31,7 @@ const entry = (over: Partial<MarketplaceEntry>): MarketplaceEntry => ({
   name: 'weather', version: '1.0.0', description: 'Weather tools', status: 'available', ...over,
 });
 
-const renderSection = () => render(<LanguageProvider><PluginsSection /></LanguageProvider>);
+const renderSection = () => render(<EffectsProvider><LanguageProvider><PluginsSection /></LanguageProvider></EffectsProvider>);
 
 describe('PluginsSection catalog', () => {
   beforeEach(() => {
@@ -44,15 +45,17 @@ describe('PluginsSection catalog', () => {
     renderSection();
     expect(screen.getByText('files')).toBeInTheDocument();
     expect(screen.getByText('discord')).toBeInTheDocument();
+    expect(screen.getByTestId('installed-plugins-list')).toHaveAttribute('role', 'list');
+    expect(screen.getByTestId('installed-plugins-list').children).toHaveLength(2);
     expect(screen.getByRole('radio', { name: en.plugins.catAll })).toBeInTheDocument();
     expect(screen.getByRole('radio', { name: en.plugins.catPlatforms })).toBeInTheDocument();
   });
 
-  it('filters the list by the search query and shows the no-matches empty state', () => {
+  it('filters the list by the search query and shows the no-matches empty state', async () => {
     usePlugins.mockReturnValue({ data: [plugin({ name: 'files' }), plugin({ name: 'discord', provides: { platforms: ['discord'] } })], isLoading: false });
     renderSection();
     fireEvent.change(screen.getByPlaceholderText(en.plugins.searchPlaceholder), { target: { value: 'disc' } });
-    expect(screen.queryByText('files')).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByText('files')).not.toBeInTheDocument());
     expect(screen.getByText('discord')).toBeInTheDocument();
     fireEvent.change(screen.getByPlaceholderText(en.plugins.searchPlaceholder), { target: { value: 'zzz' } });
     expect(screen.getByText(en.plugins.noMatches)).toBeInTheDocument();

@@ -10,7 +10,7 @@ import { EffectsProvider } from '../../../lib/useEffects';
 import { createWrapper } from '../../test-utils';
 
 const server = setupServer();
-beforeAll(() => server.listen({ onUnhandledRequest })); afterEach(() => server.resetHandlers()); afterAll(() => server.close());
+beforeAll(() => server.listen({ onUnhandledRequest })); afterEach(() => { server.resetHandlers(); localStorage.clear(); }); afterAll(() => server.close());
 
 const meUser = (over: Record<string, unknown> = {}) => ({ id: 2, username: 'bob', name: '', email: '', avatar: '', default_exec: '', is_admin: false, allowed_execs: ['sonnet'], created_at: '2026-01-01', ...over });
 
@@ -55,5 +55,40 @@ describe('AccountView', () => {
     // The stale value fails the allowed-list guard, so the default (profile) section renders.
     expect(await screen.findByText('@bob')).toBeTruthy();
     expect(screen.queryByRole('radio', { name: 'Prompts' })).toBeNull();
+  });
+
+  it('retains a visited section\'s local controls while another account panel is active', async () => {
+    localStorage.setItem('elowen.account.section', 'profile');
+    server.use(
+      http.get('*/api/auth/me', () => HttpResponse.json({ user: meUser() })),
+      http.get('*/api/config', () => HttpResponse.json({ allowedExecs: ['sonnet'], customModels: [], hiddenPresets: [], autopilot: {}, providers: {}, defaults: {} })),
+      http.get('*/api/brain/models', () => HttpResponse.json([])),
+      http.get('*/api/auth/me/cli-settings', () => HttpResponse.json({
+        model: '', modelProvider: '', visionModel: '', visionModelProvider: '', thinkingLevel: '',
+        autoCompact: false, autoCompactAt: 80, advisorStyle: 'professional', discordUserId: '', whatsappNumber: '',
+        autoRecall: true, autoSave: true,
+      })),
+      http.get('*/api/personality/profiles', ({ request }) => {
+        const platform = new URL(request.url).searchParams.get('platform') ?? 'web';
+        return HttpResponse.json(platform === 'discord' ? [{
+          id: 2, user_id: 2, platform: 'discord', name: 'Discord persona', description: '', tone: '', style: '', prompt: 'Friendly.',
+          enabled: true, active: false, created_at: '', updated_at: '',
+        }] : []);
+      }),
+    );
+    const { wrapper: Wrapper } = createWrapper();
+    render(<Wrapper><EffectsProvider><UiScaleProvider><ToastProvider><AccountView /></ToastProvider></UiScaleProvider></EffectsProvider></Wrapper>);
+
+    await screen.findByText('@bob');
+    fireEvent.click(screen.getByRole('radio', { name: 'Personality' }));
+    const discord = await screen.findByRole('radio', { name: 'Discord' });
+    fireEvent.click(discord);
+    expect(await screen.findByText('Discord persona')).toBeVisible();
+
+    fireEvent.click(screen.getByRole('radio', { name: 'Account' }));
+    await waitFor(() => expect(screen.getByText('Discord persona')).not.toBeVisible());
+    fireEvent.click(screen.getByRole('radio', { name: 'Personality' }));
+    expect(screen.getByRole('radio', { name: 'Discord' })).toHaveAttribute('aria-checked', 'true');
+    expect(screen.getByText('Discord persona')).toBeVisible();
   });
 });

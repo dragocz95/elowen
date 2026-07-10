@@ -1,6 +1,6 @@
 'use client';
 export const dynamic = 'force-dynamic';
-import { useEffect, useState, useRef, useMemo } from 'react';
+import { Activity, useEffect, useState, useRef, useMemo, type ReactNode } from 'react';
 import { Bot, SlidersHorizontal, Plus, X, Pencil, Radio, Cpu, Gauge, Layers, Link2, KeyRound, FileText, Eye, Lock, Trash2, GitPullRequest, GitBranch, TerminalSquare, RefreshCw, RotateCcw, Sparkles, FlaskConical, Search } from 'lucide-react';
 import { PROVIDERS, ProviderLogo } from '../../modules/settings/providers';
 import { ModelIcon } from '../../components/ui/ModelIcon';
@@ -34,8 +34,9 @@ import { Field } from '../../components/ui/Field';
 import { Badge } from '../../components/ui/Badge';
 import { Toggle } from '../../components/ui/Toggle';
 import { Segmented } from '../../components/ui/Segmented';
-import { SettingCard } from '../../components/ui/SettingCard';
 import { SettingsLayout } from '../../components/ui/SettingsLayout';
+import { SettingGroup, SettingRow } from '../../components/ui/SettingsPrimitives';
+import { MotionReveal } from '../../components/ui/Motion';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { HelpTip } from '../../components/ui/HelpTip';
 import { LoadingState, ErrorState, EmptyState } from '../../components/ui/states';
@@ -61,6 +62,22 @@ function ModelInput({ value, onChange, placeholder }: { value: string; onChange:
 const CATEGORY_VALUES = SETTINGS_CATEGORY_VALUES;
 type Category = SettingsCategory;
 
+/** Keep a settings document alive after its first visit without eagerly mounting every category's
+ *  data hooks. React Activity retains form/search state and pauses effects while a panel is hidden. */
+function SettingsPanel({ id, active, visited, children }: {
+  id: Category;
+  active: Category;
+  visited: ReadonlySet<Category>;
+  children: ReactNode;
+}) {
+  if (id !== active && !visited.has(id)) return null;
+  return (
+    <Activity mode={id === active ? 'visible' : 'hidden'}>
+      <MotionReveal data-settings-panel={id}>{children}</MotionReveal>
+    </Activity>
+  );
+}
+
 export default function SettingsPage() {
   const config = useConfig();
   const update = useUpdateConfig();
@@ -84,6 +101,10 @@ export default function SettingsPage() {
   // the URL (so F5 / share / the sidebar highlight agree).
   const searchParams = useSearchParams();
   const [category, setCategoryState] = usePersistentState<Category>('elowen.settings.category', 'models', CATEGORY_VALUES);
+  const [visitedCategories, setVisitedCategories] = useState<Set<Category>>(() => new Set([category]));
+  useEffect(() => {
+    setVisitedCategories((current) => current.has(category) ? current : new Set(current).add(category));
+  }, [category]);
   const isValidCat = (c: string | null): c is Category => !!c && (CATEGORY_VALUES as readonly string[]).includes(c);
   // React to CLIENT-side URL changes — the sidebar's nested settings sub-items navigate to `?cat=x`
   // without remounting the page, and useSearchParams updates on those.
@@ -343,7 +364,7 @@ export default function SettingsPage() {
         onChange={(value) => setCategory(value as Category)}
         searchPlaceholder={t.managePicker.searchPlaceholder}
       >
-        {category === 'models' && (
+        <SettingsPanel id="models" active={category} visited={visitedCategories}>
           <>
             <div className="relative w-full">
               <Search size={15} aria-hidden className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" />
@@ -477,7 +498,7 @@ export default function SettingsPage() {
               </Button>
             </div>
           </>
-        )}
+        </SettingsPanel>
 
         {showAddForm && (
           <ModelModal
@@ -509,30 +530,29 @@ export default function SettingsPage() {
           />
         )}
 
-        {category === 'autopilot' && (
+        <SettingsPanel id="autopilot" active={category} visited={visitedCategories}>
             <div className="flex flex-col gap-4">
               {/* One clear choice: how the planner + overseer reason. Relay (API) OR CLI agents. */}
-              <section className="border-y border-border/80 py-5">
-                <div className="mb-2 flex items-center gap-1.5">
-                  <span className="text-sm font-medium text-text">{t.settings.backendMode}</span>
-                  <HelpTip>{t.help.backendMode}</HelpTip>
-                </div>
-                <Segmented
-                  value={reasoningMode}
-                  onChange={(v) => switchReasoning(v as 'relay' | 'agents')}
-                  options={[
-                    { value: 'relay', label: t.settings.modeRelay, icon: Radio },
-                    { value: 'agents', label: t.settings.modeAgents, icon: Bot },
-                  ]}
-                />
-                <p className="mt-2 text-xs text-text-muted">{reasoningMode === 'relay' ? t.settings.modeRelayDesc : t.settings.modeAgentsDesc}</p>
-              </section>
+              <SettingGroup>
+                <SettingRow title={t.settings.backendMode} description={t.help.backendMode} icon={Radio}>
+                  <div className="flex flex-col gap-2">
+                    <Segmented
+                      value={reasoningMode}
+                      onChange={(v) => switchReasoning(v as 'relay' | 'agents')}
+                      options={[
+                        { value: 'relay', label: t.settings.modeRelay, icon: Radio },
+                        { value: 'agents', label: t.settings.modeAgents, icon: Bot },
+                      ]}
+                    />
+                    <p className="text-xs text-text-muted">{reasoningMode === 'relay' ? t.settings.modeRelayDesc : t.settings.modeAgentsDesc}</p>
+                  </div>
+                </SettingRow>
+              </SettingGroup>
 
-              <div className="@container">
-              <div className="grid grid-cols-1 gap-x-6 @sm:grid-cols-2">
+              <SettingGroup>
               {reasoningMode === 'relay' ? (
                 <>
-                  <SettingCard title={t.settings.apProvider} description={t.help.apProvider} icon={KeyRound} className="@sm:col-span-2">
+                  <SettingRow title={t.settings.apProvider} description={t.help.apProvider} icon={KeyRound}>
                     <ProviderPicker
                       providers={(config.data?.brain?.providers ?? []).filter((p) => p.apiKeySet).map((p) => ({ id: p.id, label: p.label }))}
                       value={apProviderId}
@@ -540,107 +560,103 @@ export default function SettingsPage() {
                       label={t.settings.apProvider}
                       emptyText={t.settings.apNoProviders}
                     />
-                  </SettingCard>
-                  <SettingCard title={t.settings.plannerModel} description={t.help.plannerModel} icon={Bot}>
+                  </SettingRow>
+                  <SettingRow title={t.settings.plannerModel} description={t.help.plannerModel} icon={Bot}>
                     {apProviderId && apCatalog.length > 0
                       ? <ModelCatalogField value={model} onChange={setModel} catalog={apCatalog} title={t.settings.plannerModel} subtitle={t.help.plannerModel} />
                       : <ModelInput value={model} onChange={setModel} placeholder={t.settings.plannerPlaceholder} />}
-                  </SettingCard>
-                  <SettingCard title={t.settings.overseerModel} description={t.help.overseerModel} icon={Eye}>
+                  </SettingRow>
+                  <SettingRow title={t.settings.overseerModel} description={t.help.overseerModel} icon={Eye}>
                     {apProviderId && apCatalog.length > 0
                       ? <ModelCatalogField value={overseerModel} onChange={setOverseerModel} catalog={apCatalog} title={t.settings.overseerModel} subtitle={t.help.overseerModel} />
                       : <ModelInput value={overseerModel} onChange={setOverseerModel} placeholder={t.settings.overseerPlaceholder} />}
-                  </SettingCard>
+                  </SettingRow>
                   {/* No provider picked → enter an endpoint + key directly. A chosen provider supplies both,
                       so these fields simply don't render (no redundant "inherited" note). */}
                   {apProviderId === '' ? (
                     <>
-                      <SettingCard title={t.settings.apiUrl} description={t.help.apiUrl} icon={Link2}>
+                      <SettingRow title={t.settings.apiUrl} description={t.help.apiUrl} icon={Link2}>
                         <input value={apiUrl} onChange={(e) => setApiUrl(e.target.value)} className={inputClass} />
-                      </SettingCard>
-                      <SettingCard title={t.settings.apiKey} description={apiKeySet ? t.help.apiKey : t.help.apiKeyNotSet} icon={KeyRound}>
+                      </SettingRow>
+                      <SettingRow title={t.settings.apiKey} description={apiKeySet ? t.help.apiKey : t.help.apiKeyNotSet} icon={KeyRound}>
                         <input type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder={apiKeySet ? t.settings.apiKeySetPlaceholder : t.settings.apiKeyPlaceholder} className={inputClass} />
-                      </SettingCard>
+                      </SettingRow>
                     </>
                   ) : null}
                 </>
               ) : (
                 <>
-                  <SettingCard title={t.settings.plannerModel} description={t.help.plannerModel} icon={Bot}>
+                  <SettingRow title={t.settings.plannerModel} description={t.help.plannerModel} icon={Bot}>
                     <BackendPicker value={pilotExec} onChange={setPilotExec} models={models} relayLabel={t.settings.relayOption} allowRelay={false} />
-                  </SettingCard>
-                  <SettingCard title={t.settings.overseerModel} description={t.help.overseerModel} icon={Eye}>
+                  </SettingRow>
+                  <SettingRow title={t.settings.overseerModel} description={t.help.overseerModel} icon={Eye}>
                     <BackendPicker value={overseerExec} onChange={setOverseerExec} models={models} relayLabel={t.settings.relayOption} allowRelay={false} />
-                  </SettingCard>
-                  <SettingCard title={t.settings.reviewOnDone} description={t.help.reviewOnDone} icon={Eye}>
+                  </SettingRow>
+                  <SettingRow title={t.settings.reviewOnDone} description={t.help.reviewOnDone} icon={Eye}>
                     <Toggle checked={reviewOnDone} onChange={setReviewOnDone} label={t.settings.reviewOnDone} />
-                  </SettingCard>
+                  </SettingRow>
                 </>
               )}
-              <SettingCard title={t.settings.notes} description={t.help.notes} icon={FileText}>
+              <SettingRow title={t.settings.notes} description={t.help.notes} icon={FileText}>
                 <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={3} className={`${inputClass} resize-none`} />
-              </SettingCard>
-              </div>
-              </div>
+              </SettingRow>
+              </SettingGroup>
 
               {/* Default mission run — what the pilot actually launches: the worker executor, the
                   autonomy level and how many agents run in parallel. These apply in both reasoning
                   modes, so they live below the relay/agents split. */}
-              <div className="mt-1 flex items-center gap-1.5">
-                <span className="text-sm font-medium text-text">{t.settings.runDefaults}</span>
-              </div>
-              <div className="@container">
-              <div className="grid grid-cols-1 gap-x-6 @sm:grid-cols-2">
-                <SettingCard title={t.settings.executor} description={t.help.executor} icon={Cpu}>
+              <SettingGroup title={t.settings.runDefaults} icon={Cpu}>
+                <SettingRow title={t.settings.executor} description={t.help.executor} icon={Cpu}>
                   {/* Same worker + Elowen AI split the task picker uses, in the unified manage-selection
                       modal, so the default executor can also be a brain model. A saved value missing
                       from the catalog stays selectable as a pinned row. */}
                   <BackendPicker value={defExec} onChange={setDefExec} models={models} relayLabel={t.settings.relayOption} allowRelay={false} />
-                </SettingCard>
-                <SettingCard title={t.settings.autonomy} description={t.help.autonomy} icon={Gauge}>
+                </SettingRow>
+                <SettingRow title={t.settings.autonomy} description={t.help.autonomy} icon={Gauge}>
+                  <div>
                   <Segmented options={['L0', 'L1', 'L2', 'L3'].map((l) => ({ value: l, label: l }))} value={defAutonomy} onChange={setDefAutonomy} />
                   <p className="mt-2 text-xs leading-relaxed text-text-muted">
                     {({ L0: t.missions.autonomyL0Desc, L1: t.missions.autonomyL1Desc, L2: t.missions.autonomyL2Desc, L3: t.missions.autonomyL3Desc } as Record<string, string>)[defAutonomy]}
                   </p>
-                </SettingCard>
-                <SettingCard title={t.settings.maxSessions} description={t.help.maxSessions} icon={Layers}>
+                  </div>
+                </SettingRow>
+                <SettingRow title={t.settings.maxSessions} description={t.help.maxSessions} icon={Layers}>
                   <input type="number" min={1} value={defMaxSessions} onChange={(e) => setDefMaxSessions(Number(e.target.value))} className={inputClass} />
-                </SettingCard>
+                </SettingRow>
                 {/* TDD mission mode applies to every worker (standalone, mission phase, embedded) regardless
                     of the relay/agents split, so it lives here with the run defaults — persisted via the
                     autopilot patch (saveAutopilot). */}
-                <SettingCard title={t.settings.tddMode} description={t.help.tddMode} icon={FlaskConical}>
+                <SettingRow title={t.settings.tddMode} description={t.help.tddMode} icon={FlaskConical}>
                   <Toggle checked={tddMode} onChange={setTddMode} label={t.settings.tddMode} />
-                </SettingCard>
-              </div>
-              </div>
+                </SettingRow>
+              </SettingGroup>
             </div>
-        )}
+        </SettingsPanel>
 
-        {category === 'github' && (
-          <div className="@container">
-          <div className="grid grid-cols-1 gap-x-6 @sm:grid-cols-2">
+        <SettingsPanel id="github" active={category} visited={visitedCategories}>
+          <div className="flex flex-col gap-4">
             <GithubStatusBanner />
-            <SettingCard title={t.settings.ghToken} description={ghTokenSet ? t.help.ghToken : t.help.ghTokenNotSet} icon={KeyRound}>
+            <SettingGroup>
+            <SettingRow title={t.settings.ghToken} description={ghTokenSet ? t.help.ghToken : t.help.ghTokenNotSet} icon={KeyRound}>
               <input type="password" value={ghToken} onChange={(e) => setGhToken(e.target.value)} placeholder={ghTokenSet ? t.settings.apiKeySetPlaceholder : t.settings.ghTokenPlaceholder} className={inputClass} />
-            </SettingCard>
-            <SettingCard title={t.settings.prEnabled} description={t.help.prEnabled} icon={GitPullRequest}>
+            </SettingRow>
+            <SettingRow title={t.settings.prEnabled} description={t.help.prEnabled} icon={GitPullRequest}>
               <Toggle checked={prEnabled} onChange={setPrEnabled} label={t.settings.prEnabled} />
-            </SettingCard>
-            <SettingCard title={t.settings.prBaseBranch} description={t.help.prBaseBranch} icon={GitBranch}>
+            </SettingRow>
+            <SettingRow title={t.settings.prBaseBranch} description={t.help.prBaseBranch} icon={GitBranch}>
               <input value={prBaseBranch} onChange={(e) => setPrBaseBranch(e.target.value)} placeholder={t.settings.prBaseBranchPlaceholder} className={inputClass} />
-            </SettingCard>
-            <SettingCard title={t.settings.prAutoOpen} description={t.help.prAutoOpen} icon={GitPullRequest}>
+            </SettingRow>
+            <SettingRow title={t.settings.prAutoOpen} description={t.help.prAutoOpen} icon={GitPullRequest}>
               <Toggle checked={prAutoOpen} onChange={setPrAutoOpen} label={t.settings.prAutoOpen} />
-            </SettingCard>
-            <SettingCard title={t.settings.prVerifyCommand} description={t.help.prVerifyCommand} icon={TerminalSquare}>
+            </SettingRow>
+            <SettingRow title={t.settings.prVerifyCommand} description={t.help.prVerifyCommand} icon={TerminalSquare}>
               <input value={prVerifyCommand} onChange={(e) => setPrVerifyCommand(e.target.value)} placeholder={t.settings.prVerifyCommandPlaceholder} className={`${inputClass} font-mono text-xs`} />
-            </SettingCard>
+            </SettingRow>
+            </SettingGroup>
           </div>
-          </div>
-        )}
+        </SettingsPanel>
 
-        {category === 'providers' && (
+        <SettingsPanel id="providers" active={category} visited={visitedCategories}>
           <div className="flex flex-col gap-5">
             {/* Agent skills sit at the top of CLI Agents — they install/verify the `elowen-workflow`
                 skill into the very CLI agents this section configures. The daemon self-installs on
@@ -737,10 +753,10 @@ export default function SettingsPage() {
               })}
             </div>
           </div>
-        )}
+        </SettingsPanel>
 
 
-        {category === 'system' && (
+        <SettingsPanel id="system" active={category} visited={visitedCategories}>
             <PageLayout
               rail={
                 <RailCard title={t.settings.services}>
@@ -808,13 +824,10 @@ export default function SettingsPage() {
                 </div>
               </div>
 
-              {/* Auto-update — a full-size pill switch, no fine print. */}
-              <section className="flex flex-col gap-4 border-y border-border/80 py-6">
-                <div className="flex items-center gap-2.5">
-                  <RefreshCw size={16} className="text-text-muted" aria-hidden />
-                  <span className="text-sm font-medium text-text">{t.settings.autoUpdate}</span>
-                </div>
-                <div className="flex items-center gap-3">
+              <SettingGroup>
+                {/* Auto-update — a full-size pill switch, no fine print. */}
+                <SettingRow title={t.settings.autoUpdate} icon={RefreshCw}>
+                  <div className="flex items-center gap-3">
                   <button
                     type="button"
                     role="switch"
@@ -830,19 +843,20 @@ export default function SettingsPage() {
                     />
                   </button>
                   <span className={`text-sm font-medium ${autoUpdate ? 'text-text' : 'text-text-muted'}`}>{autoUpdate ? t.settings.on : t.settings.off}</span>
-                </div>
-              </section>
+                  </div>
+                </SettingRow>
 
-              {/* Session token TTL — a server-wide security setting, so it lives with the other
-                  server controls rather than among the per-task defaults. Same autosave as defaults. */}
-              <SettingCard title={t.settings.tokenTtl} description={t.help.tokenTtl} icon={KeyRound}>
-                <input type="number" min={1} value={defTokenTtl} onChange={(e) => setDefTokenTtl(Number(e.target.value))} className={inputClass} />
-              </SettingCard>
+                {/* Session token TTL — a server-wide security setting, so it lives with the other
+                    server controls rather than among the per-task defaults. Same autosave as defaults. */}
+                <SettingRow title={t.settings.tokenTtl} description={t.help.tokenTtl} icon={KeyRound}>
+                  <input type="number" min={1} value={defTokenTtl} onChange={(e) => setDefTokenTtl(Number(e.target.value))} className={inputClass} />
+                </SettingRow>
+              </SettingGroup>
               </div>
             </PageLayout>
-        )}
+        </SettingsPanel>
 
-        {category === 'brain' && (
+        <SettingsPanel id="brain" active={category} visited={visitedCategories}>
           <>
             {/* Cross-link to the model catalog (enable / context-window per model) — the Models section. */}
             <p className="-mb-2 text-xs">
@@ -852,13 +866,13 @@ export default function SettingsPage() {
             </p>
             <BrainSection />
           </>
-        )}
+        </SettingsPanel>
 
-        {category === 'memory' && <MemorySection />}
+        <SettingsPanel id="memory" active={category} visited={visitedCategories}><MemorySection /></SettingsPanel>
 
-        {category === 'plugins' && <PluginsSection />}
+        <SettingsPanel id="plugins" active={category} visited={visitedCategories}><PluginsSection /></SettingsPanel>
 
-        {category === 'data' && (
+        <SettingsPanel id="data" active={category} visited={visitedCategories}>
           <div className="flex flex-col gap-4">
             <div className="rounded-xl border border-danger/40 bg-danger/[0.04] p-5">
               <div className="flex items-center gap-2 text-sm font-semibold text-danger">
@@ -870,7 +884,7 @@ export default function SettingsPage() {
               </Button>
             </div>
           </div>
-        )}
+        </SettingsPanel>
 
       </SettingsLayout>
       </div>

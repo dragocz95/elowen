@@ -2,7 +2,7 @@
 import { useState, useEffect } from 'react';
 import { useAutoSave } from '../../lib/useAutoSave';
 import { Search, Save } from 'lucide-react';
-import { SettingCard } from '../../components/ui/SettingCard';
+import { SettingGroup, SettingRow } from '../../components/ui/SettingsPrimitives';
 import { Toggle } from '../../components/ui/Toggle';
 import { LoadingState } from '../../components/ui/states';
 import { useToast } from '../../components/ui/Toast';
@@ -25,12 +25,12 @@ export function AccountMemorySection() {
 
   const [seeded, setSeeded] = useState(false);
   useEffect(() => {
-    if (data) {
+    if (data && !seeded) {
       setAutoRecall(data.autoRecall);
       setAutoSave(data.autoSave);
       setSeeded(true);
     }
-  }, [data]);
+  }, [data, seeded]);
 
   // Auto-persist shortly after a toggle. Sends only this section's two fields — the PATCH merges, so
   // the CLI/Personality/Profile picks stay untouched.
@@ -42,20 +42,20 @@ export function AccountMemorySection() {
   if (isLoading || !data) return <LoadingState />;
 
   return (
-    <div className="flex flex-col gap-4">
-      <SettingCard title={t.accountMemory.recallTitle} icon={Search} description={t.help.memoryRecall}>
+    <SettingGroup>
+      <SettingRow title={t.accountMemory.recallTitle} icon={Search} description={t.help.memoryRecall}>
         <label className="flex items-center gap-3 text-sm text-text">
           <Toggle checked={autoRecall} onChange={setAutoRecall} label={t.accountMemory.recallToggle} />
           <span>{t.accountMemory.recallToggle}</span>
         </label>
-      </SettingCard>
+      </SettingRow>
 
-      <SettingCard title={t.accountMemory.saveTitle} icon={Save} description={t.help.memorySave}>
+      <SettingRow title={t.accountMemory.saveTitle} icon={Save} description={t.help.memorySave}>
         <label className="flex items-center gap-3 text-sm text-text">
           <Toggle checked={autoSave} onChange={setAutoSave} label={t.accountMemory.saveToggle} />
           <span>{t.accountMemory.saveToggle}</span>
         </label>
-      </SettingCard>
-    </div>
+      </SettingRow>
+    </SettingGroup>
   );
 }

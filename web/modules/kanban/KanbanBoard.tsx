@@ -1,5 +1,5 @@
 'use client';
-import { Fragment, useState } from 'react';
+import { useState } from 'react';
 import { Circle, LoaderCircle, Ban, CheckCircle2, XCircle, List, type LucideIcon } from 'lucide-react';
 import type { Task, Mission, TaskStatus } from '../../lib/types';
 import { groupByStatus } from './groupByStatus';
@@ -10,6 +10,7 @@ import { statusLabel } from '../tasks/taskMeta';
 import { useTaskContextMenu } from '../tasks/useTaskContextMenu';
 import { useTaskDrop } from '../tasks/useTaskDrop';
 import { useTranslation } from '../../lib/i18n';
+import { MotionLayout, MotionLayoutItem } from '../../components/ui/Motion';
 
 const COLUMNS: { status: TaskStatus; labelKey: string; icon: LucideIcon; color: string }[] = [
   { status: 'open', labelKey: 'columnOpen', icon: Circle, color: 'var(--color-success)' },
@@ -44,6 +45,7 @@ export function KanbanBoard({ tasks, allTasks, onMove, onSelect, onEdit, blocked
   const renderCard = (task: Task, isPhase: boolean) => {
     const blockers = blockedBy?.get(task.id) ?? [];
     return (
+      <MotionLayoutItem key={task.id} layoutId={`kanban-task-${task.id}`}>
       <KanbanCard
         key={task.id}
         task={task}
@@ -59,6 +61,7 @@ export function KanbanBoard({ tasks, allTasks, onMove, onSelect, onEdit, blocked
         onDropTask={(e) => taskDrop.handleDrop(e, task)}
         dropTargetValid={draggingId ? taskDrop.isValidTarget(draggingId, task) : undefined}
       />
+      </MotionLayoutItem>
     );
   };
   return (
@@ -87,21 +90,23 @@ export function KanbanBoard({ tasks, allTasks, onMove, onSelect, onEdit, blocked
             <span className="flex items-center gap-1.5"><col.icon size={12} style={{ color: col.color }} aria-hidden />{colLabel}</span>
             <span className="inline-flex items-center gap-1"><List size={11} className="text-text-muted" aria-hidden />{groups[col.status].filter((task) => !phaseSet.has(task.id)).length}</span>
           </header>
+          <MotionLayout className="flex flex-col gap-2">
           {groups[col.status].map((task) => {
             // Autopilot epic → collapsible container; when expanded its phases nest right
             // under it (in this column) so they never scatter into other status columns.
             if (task.type === 'epic' && childMap.has(task.id)) {
               const phases = childMap.get(task.id) ?? [];
               return (
-                <Fragment key={task.id}>
+                <MotionLayoutItem key={task.id} layoutId={`kanban-task-${task.id}`} className="flex flex-col gap-2">
                   <KanbanEpicCard epic={task} phases={phases} expanded={expanded.has(task.id)} onToggle={() => toggleEpic(task.id)} effectiveStatus={effStatus(task)} trueStatusLabel={statusLabel(t, task.status)} onDropTask={(e) => taskDrop.handleDrop(e, task)} dropTargetValid={draggingId ? taskDrop.isValidTarget(draggingId, task) : undefined} />
                   {expanded.has(task.id) ? phases.map((ph) => renderCard(ph, true)) : null}
-                </Fragment>
+                </MotionLayoutItem>
               );
             }
             if (phaseSet.has(task.id)) return null; // phases only appear nested under their epic
             return renderCard(task, false);
           })}
+          </MotionLayout>
         </div>
       );
     })}

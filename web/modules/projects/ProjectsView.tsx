@@ -1,6 +1,6 @@
 'use client';
 import { useState } from 'react';
-import { FolderGit2, GitBranch, GitCommitHorizontal, Plus, CheckCircle2, AlertTriangle, ArrowUp, ArrowDown, Folder } from 'lucide-react';
+import { FolderGit2, GitBranch, GitCommitHorizontal, Plus, CheckCircle2, AlertTriangle, ArrowUp, ArrowDown, Folder, MoreHorizontal } from 'lucide-react';
 import { useProjects, useProjectGit } from '../../lib/queries';
 import { useCreateProject, useUpdateProject, useRemoveProject } from '../../lib/mutations';
 import type { Project } from '../../lib/types';
@@ -20,6 +20,11 @@ import { ProjectEditor } from './editor/ProjectEditor';
 import { ProjectIcon } from '../../components/ui/ProjectIcon';
 import { ProjectIconPicker } from './ProjectIconPicker';
 import { DirectoryPicker } from './DirectoryPicker';
+import { EntityList, EntityRow } from '../../components/ui/EntityList';
+import { PageFrame } from '../../components/ui/PageFrame';
+import { Surface } from '../../components/ui/Surface';
+import { MotionLayoutItem, MotionPresence } from '../../components/ui/Motion';
+import { ActionMenu, type ActionMenuItem } from '../../components/ui/ActionMenu';
 
 export function ProjectsView() {
   const projects = useProjects();
@@ -74,6 +79,16 @@ export function ProjectsView() {
   // Per-project GitHub PR-flow override: null = inherit the global default, true/false = force on/off.
   const [editPrEnabled, setEditPrEnabled] = useState<boolean | null>(null);
   const openEdit = (p: Project) => { setEditProject(p); setEditPath(p.path); setEditNotes(p.notes); setEditPrEnabled(p.pr_enabled); };
+  const projectActions = (p: Project): ActionMenuItem[] => [
+    {
+      label: t.projects.ctxOpenEditor,
+      icon: Code2,
+      onSelect: () => { setSelectedId(p.id); setEditingId(p.id); setEditingCommit(null); setEditingWorking(false); },
+    },
+    { label: t.projects.ctxEditProject, icon: Pencil, onSelect: () => { setSelectedId(p.id); openEdit(p); } },
+    { label: t.projects.ctxCopyPath, icon: Copy, onSelect: () => { void navigator.clipboard.writeText(p.path); toast(t.projects.ctxPathCopied); } },
+    { label: t.projects.ctxRemove, icon: Trash2, tone: 'danger', onSelect: () => setRemoving(p) },
+  ];
   // Project whose icon is being chosen (drives the icon-picker modal, stacked over the edit modal).
   const [iconFor, setIconFor] = useState<Project | null>(null);
 
@@ -120,123 +135,147 @@ export function ProjectsView() {
     });
   }
 
+  const selectedProject = projects.data?.find((project) => project.id === selectedId) ?? null;
+
   return (
     <>
       <ModuleHeader title={t.page.projects} count={projects.data?.length} icon={FolderGit2}>
         <Button variant="accent" icon={Plus} onClick={() => setCreating(true)}>{t.projects.newProject}</Button>
       </ModuleHeader>
 
-      {projects.isLoading ? <LoadingState variant="cards" />
-        : projects.isError ? <ErrorState message={t.projects.loadError} onRetry={() => projects.refetch()} />
-        : !projects.data || projects.data.length === 0 ? <EmptyState title={t.projects.empty} icon={FolderGit2} action={<Button variant="accent" icon={Plus} onClick={() => setCreating(true)}>{t.projects.newProject}</Button>} />
-        : (
-          <div className="@container">
-          <div className="grid grid-cols-1 gap-3 @sm:grid-cols-2 @3xl:grid-cols-3">
-            {projects.data.map((p) => {
-              const active = selectedId === p.id;
-              const status = active && git.data?.isRepo ? git.data.status : null;
-              return (
-                <div
-                  key={p.id}
-                  role="button"
-                  tabIndex={0}
-                  onClick={() => setSelectedId(p.id)}
-                  onKeyDown={(e) => {
-                    if (e.target !== e.currentTarget) return;
-                    if (e.key === 'Enter' || e.key === ' ') {
-                      e.preventDefault();
-                      setSelectedId(p.id);
-                    }
-                  }}
-                  onContextMenu={(e) => openCtxMenu(e, p)}
-                  className={`card-interactive group flex cursor-pointer gap-3.5 rounded-lg border p-3.5 ${active ? 'border-accent bg-accent/[0.06]' : 'border-border bg-surface'}`}
-                >
-                  <div className="flex shrink-0 items-center">
-                    <span className="flex h-12 w-12 items-center justify-center overflow-hidden rounded-xl border-2 border-border bg-elevated">
-                      <ProjectIcon project={p} size={p.icon ? 44 : 24} className="text-text-muted" />
+      <PageFrame width="wide">
+        {projects.isLoading ? <LoadingState variant="list" />
+          : projects.isError ? <ErrorState message={t.projects.loadError} onRetry={() => projects.refetch()} />
+          : !projects.data || projects.data.length === 0 ? <EmptyState title={t.projects.empty} icon={FolderGit2} action={<Button variant="accent" icon={Plus} onClick={() => setCreating(true)}>{t.projects.newProject}</Button>} />
+          : (
+            <EntityList data-testid="projects-register">
+              <MotionPresence>
+                {projects.data.map((p) => {
+                  const active = selectedId === p.id;
+                  return (
+                    <MotionLayoutItem key={p.id} layoutId={`project-${p.id}`} role="listitem">
+                      <EntityRow
+                        role="presentation"
+                        selected={active}
+                        busy={active && git.isLoading}
+                        className="group"
+                        onContextMenu={(e) => openCtxMenu(e, p)}
+                      >
+                        <div className="flex min-w-0 items-center gap-3">
+                          <button
+                            type="button"
+                            aria-pressed={active}
+                            onClick={() => setSelectedId(p.id)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter' || e.key === ' ') {
+                                e.preventDefault();
+                                setSelectedId(p.id);
+                              }
+                            }}
+                            className="flex min-w-0 flex-1 items-center gap-3 rounded-md px-2 py-1 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70"
+                          >
+                            <span className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-border bg-elevated/70">
+                              <ProjectIcon project={p} size={p.icon ? 36 : 21} className="text-text-muted" />
+                            </span>
+                            <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+                              <span className="truncate text-sm font-semibold text-text transition-colors group-hover:text-accent">{p.slug}</span>
+                              <span className="flex min-w-0 items-center gap-1 truncate font-mono text-xs text-text-muted">
+                                <Folder size={11} className="shrink-0" aria-hidden />
+                                <span className="truncate">{p.path}</span>
+                              </span>
+                              {p.notes ? <span className="truncate text-xs text-text-muted">{p.notes}</span> : null}
+                            </span>
+                          </button>
+                          <ActionMenu
+                            label={`${p.slug}: ${t.common.actions}`}
+                            items={projectActions(p)}
+                            trigger={<MoreHorizontal size={16} aria-hidden />}
+                            triggerClassName="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-elevated hover:text-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70"
+                          />
+                        </div>
+                      </EntityRow>
+                    </MotionLayoutItem>
+                  );
+                })}
+              </MotionPresence>
+            </EntityList>
+          )}
+
+        <MotionPresence mode="wait">
+          {selectedProject ? (
+            <MotionLayoutItem key={`project-detail-${selectedProject.id}`}>
+              <Surface level="panel" padding="md" radius="md" className="flex min-w-0 flex-col gap-5">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="flex min-w-0 items-center gap-3">
+                    <span className="flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-border bg-elevated/70">
+                      <ProjectIcon project={selectedProject} size={selectedProject.icon ? 39 : 22} className="text-text-muted" />
                     </span>
+                    <div className="flex min-w-0 flex-col gap-0.5">
+                      <h2 className="truncate text-base font-semibold text-text">{selectedProject.slug}</h2>
+                      <span className="flex min-w-0 items-center gap-1 truncate font-mono text-xs text-text-muted"><Folder size={11} className="shrink-0" aria-hidden />{selectedProject.path}</span>
+                    </div>
                   </div>
-
-                  <div className="flex min-w-0 flex-1 flex-col gap-1.5">
-                    <span className="truncate font-semibold text-text">{p.slug}</span>
-                    <span className="flex items-center gap-1 truncate font-mono text-xs text-text-muted"><Folder size={11} className="shrink-0" aria-hidden />{p.path}</span>
-
-                    {active && git.isLoading && <span className="font-mono text-[11px] text-text-muted animate-pulse">{t.common.loading}</span>}
-                    {active && git.data && !git.data.isRepo && <Badge tone="muted">{t.projects.notGit}</Badge>}
-                    {status && (
-                      <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
-                        <Badge tone="accent"><GitBranch size={11} className="mr-1" aria-hidden />{status.branch}</Badge>
-                        {status.clean
-                          ? <Badge tone="success"><CheckCircle2 size={11} className="mr-1" aria-hidden />{t.projects.clean}</Badge>
-                          : <button type="button" onClick={(e) => { e.stopPropagation(); openWorking(); }} title={t.projects.viewChanges} className="transition-opacity hover:opacity-80">
-                              <Badge tone="warning"><AlertTriangle size={11} className="mr-1" aria-hidden />{t.projects.dirty.replace('{count}', String(status.dirty))}</Badge>
-                            </button>}
-                        {status.ahead > 0 && <Badge tone="accent"><ArrowUp size={11} className="mr-0.5" aria-hidden />{status.ahead}</Badge>}
-                        {status.behind > 0 && <Badge tone="muted"><ArrowDown size={11} className="mr-0.5" aria-hidden />{status.behind}</Badge>}
-                      </div>
-                    )}
+                  <div className="flex shrink-0 flex-wrap gap-2">
+                    <Button variant="accent" icon={Code2} onClick={() => openEditor(null)}>{t.projects.openEditor}</Button>
+                    <Button icon={Pencil} onClick={() => openEdit(selectedProject)}>{t.projects.editProject}</Button>
                   </div>
                 </div>
-              );
-            })}
-          </div>
-          </div>
-        )}
 
-      {selectedId && !editingId ? (
-        <div className="mt-4 flex flex-wrap gap-2">
-          <Button variant="accent" icon={Code2} onClick={() => openEditor(null)}>{t.projects.openEditor}</Button>
-          <Button icon={Pencil} onClick={() => { const p = projects.data?.find((x) => x.id === selectedId); if (p) openEdit(p); }}>{t.projects.editProject}</Button>
-        </div>
-      ) : null}
+                {git.isLoading ? <span className="font-mono text-xs text-text-muted animate-pulse">{t.common.loading}</span> : null}
+                {git.data && !git.data.isRepo ? <Badge tone="muted">{t.projects.notGit}</Badge> : null}
+                {git.data?.status ? (
+                  <div className="flex flex-wrap items-center gap-1.5 border-y border-border/70 py-3">
+                    <Badge tone="accent"><GitBranch size={11} className="mr-1" aria-hidden />{git.data.status.branch}</Badge>
+                    {git.data.status.clean
+                      ? <Badge tone="success"><CheckCircle2 size={11} className="mr-1" aria-hidden />{t.projects.clean}</Badge>
+                      : <button type="button" onClick={openWorking} title={t.projects.viewChanges} className="rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70">
+                          <Badge tone="warning"><AlertTriangle size={11} className="mr-1" aria-hidden />{t.projects.dirty.replace('{count}', String(git.data.status.dirty))}</Badge>
+                        </button>}
+                    {git.data.status.ahead > 0 ? <Badge tone="accent"><ArrowUp size={11} className="mr-0.5" aria-hidden />{git.data.status.ahead}</Badge> : null}
+                    {git.data.status.behind > 0 ? <Badge tone="muted"><ArrowDown size={11} className="mr-0.5" aria-hidden />{git.data.status.behind}</Badge> : null}
+                  </div>
+                ) : null}
 
-      {editingId ? <ProjectEditor key={editingWorking ? 'working' : (editingCommit ?? 'files')} projectId={editingId} initialCommit={editingCommit} initialWorking={editingWorking} onClose={closeEditor} /> : null}
+                {git.data?.isRepo && git.data.branches.length > 0 ? (
+                  <section className="flex flex-col gap-2">
+                    <h3 className="flex items-center gap-2 text-sm font-medium text-text"><GitBranch size={14} className="text-text-muted" aria-hidden />{t.projects.branches}</h3>
+                    <div className="flex flex-wrap gap-2">
+                      {git.data.branches.map((branch) => <Badge key={branch.name} tone={branch.current ? 'accent' : 'muted'}>{branch.name}{branch.current ? ' *' : ''}</Badge>)}
+                    </div>
+                  </section>
+                ) : null}
 
-      {selectedId && git.data?.isRepo && (git.data.branches.length > 0 || git.data.commits.length > 0) && (
-        <div className="mt-5 flex flex-col gap-5 rounded-lg border border-border bg-surface p-4" style={{ boxShadow: 'var(--shadow-card)' }}>
-          {git.data.branches.length > 0 && (
-            <div className="flex flex-col gap-2">
-              <div className="flex items-center gap-2 text-sm font-medium text-text">
-                <GitBranch size={14} className="text-text-muted" aria-hidden />
-                {t.projects.branches}
-              </div>
-              <div className="flex flex-wrap gap-2">
-                {git.data.branches.map((b) => (
-                  <Badge key={b.name} tone={b.current ? 'accent' : 'muted'}>{b.name}{b.current ? ' *' : ''}</Badge>
-                ))}
-              </div>
-            </div>
-          )}
+                {git.data?.isRepo && git.data.commits.length > 0 ? (
+                  <section className="flex flex-col gap-2">
+                    <h3 className="flex items-center gap-2 text-sm font-medium text-text"><GitCommitHorizontal size={14} className="text-text-muted" aria-hidden />{t.projects.commits}</h3>
+                    <EntityList>
+                      {git.data.commits.map((commit) => (
+                        <EntityRow key={commit.hash} interactive={false} className="py-0">
+                          <button
+                            type="button"
+                            onClick={() => openEditor(commit.hash)}
+                            title={t.projects.viewCommit}
+                            className="flex w-full min-w-0 flex-wrap items-center gap-2 rounded-md px-2 py-3 text-left text-sm transition-colors hover:bg-elevated focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70"
+                          >
+                            <GitCommitHorizontal size={12} className="shrink-0 text-text-muted" aria-hidden />
+                            <span className="font-mono text-xs text-accent">{commit.hash}</span>
+                            <span className="min-w-0 flex-1 truncate text-text">{commit.subject}</span>
+                            <span className="shrink-0 text-xs text-text-muted">{commit.author} · {commit.relative}</span>
+                          </button>
+                        </EntityRow>
+                      ))}
+                    </EntityList>
+                  </section>
+                ) : null}
 
-          {git.data.commits.length > 0 && (
-            <div className="flex flex-col gap-2">
-              <div className="flex items-center gap-2 text-sm font-medium text-text">
-                <GitCommitHorizontal size={14} className="text-text-muted" aria-hidden />
-                {t.projects.commits}
-              </div>
-              <ul className="flex flex-col gap-2">
-                {git.data.commits.map((c) => (
-                  <li key={c.hash}>
-                    <button
-                      type="button"
-                      onClick={() => openEditor(c.hash)}
-                      title={t.projects.viewCommit}
-                      className="flex w-full flex-wrap items-center gap-2 rounded-md border border-border bg-bg px-3 py-2 text-left text-sm transition-colors hover:border-accent/50 hover:bg-elevated"
-                    >
-                      <GitCommitHorizontal size={12} className="shrink-0 text-text-muted" aria-hidden />
-                      <span className="font-mono text-xs text-accent">{c.hash}</span>
-                      <span className="min-w-0 flex-1 truncate text-text">{c.subject}</span>
-                      <span className="shrink-0 text-xs text-text-muted">{c.author} · {c.relative}</span>
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-        </div>
-      )}
+                {git.isError ? <ErrorState message={t.projects.gitError} onRetry={() => git.refetch()} /> : null}
+              </Surface>
+            </MotionLayoutItem>
+          ) : null}
+        </MotionPresence>
 
-      {selectedId && git.isError && <div className="mt-5"><ErrorState message={t.projects.gitError} onRetry={() => git.refetch()} /></div>}
+        {editingId ? <ProjectEditor key={editingWorking ? 'working' : (editingCommit ?? 'files')} projectId={editingId} initialCommit={editingCommit} initialWorking={editingWorking} onClose={closeEditor} /> : null}
+      </PageFrame>
 
       {creating && (
         <Modal title={t.projects.newProject} onClose={() => setCreating(false)} size="md" icon={FolderGit2}>

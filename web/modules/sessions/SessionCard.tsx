@@ -21,6 +21,7 @@ import { TaskUsageBadge } from '../../components/ui/TaskUsageBadge';
 import { LiveTail } from '../../components/terminal/LiveTail';
 import { useToast } from '../../components/ui/Toast';
 import { useTranslation } from '../../lib/i18n';
+import { EntityRow } from '../../components/ui/EntityList';
 
 export function SessionCard({ info, onOpenTerminal, compact = false }: { info: SessionInfo; onOpenTerminal: () => void; compact?: boolean }) {
   const kill = useKillSession();
@@ -66,8 +67,9 @@ export function SessionCard({ info, onOpenTerminal, compact = false }: { info: S
   ];
 
   return (
-    <div
-      className={`group flex flex-col gap-3 border-b bg-transparent ${compact ? 'py-3' : 'py-4'} ${needsInput ? 'border-warning/60' : 'border-border/80'}`}
+    <EntityRow
+      role="presentation"
+      className={`group flex flex-col gap-3 ${needsInput ? 'border-l-2 border-warning/60 pl-3' : ''}`}
       onContextMenu={(e) => { e.preventDefault(); setCtxMenu({ x: e.clientX, y: e.clientY, items: ctxItems }); }}
     >
       <div className="flex items-center gap-2.5">
@@ -147,6 +149,6 @@ export function SessionCard({ info, onOpenTerminal, compact = false }: { info: S
           containing block for this `fixed` menu — so it would anchor to the card, not the viewport,
           and fly off to the clamp edge. Rendering outside the card restores viewport positioning. */}
       {ctxMenu && createPortal(<ContextMenu state={ctxMenu} onClose={() => setCtxMenu(null)} />, document.body)}
-    </div>
+    </EntityRow>
   );
 }

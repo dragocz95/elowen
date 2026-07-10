@@ -19,6 +19,7 @@ import { useTranslation } from '../../lib/i18n';
 import { localDateTime } from '../../lib/format';
 import { ToolPills } from './ToolPills';
 import { UserStatsInline } from './UserStatsInline';
+import { Surface } from '../../components/ui/Surface';
 
 /** Small provider logo for the modal's group headers/filter chips. */
 function ProviderGroupIcon({ provider }: { provider: ProviderId }) {
@@ -193,7 +194,7 @@ export function UserDetailPane({ user, projects, globalExecs, customModels }: {
 }) {
   const { t, locale } = useTranslation();
   return (
-    <div className="rounded-lg border border-border bg-surface p-5" style={{ boxShadow: 'var(--shadow-card)' }}>
+    <Surface level="panel" padding="lg" radius="md">
       <header className="mb-5 flex flex-wrap items-center gap-x-4 gap-y-3 border-b border-border pb-4">
         <Avatar user={user} size={52} />
         <div className="flex min-w-0 flex-col gap-0.5">
@@ -212,6 +213,6 @@ export function UserDetailPane({ user, projects, globalExecs, customModels }: {
         <Block icon={Cpu} title={t.users.allowedModels}><ModelChips user={user} globalExecs={globalExecs} custom={customModels} /></Block>
         <Block icon={Wrench} title={t.users.tools} hint={t.users.toolsHint}><ToolPills userId={user.id} /></Block>
       </div>
-    </div>
+    </Surface>
   );
 }

@@ -21,6 +21,7 @@ import { usePersistentState } from '../../lib/usePersistentState';
 import { useProjectFilter } from '../../lib/useProjectFilter';
 import { ProjectFilterPills } from '../../components/ui/ProjectFilterPills';
 import { DateRangeFilter } from './DateRangeFilter';
+import { MotionLayout, MotionLayoutItem, MotionPresence } from '../../components/ui/Motion';
 import { DEFAULT_RANGE, parseRange, serializeRange, isStoredRange, inRange, rangeWindowCapHours } from './dateRange';
 
 const TONE_DOT: Record<Tone, string> = {
@@ -359,9 +360,9 @@ export function TimelineView() {
       <div className="flex flex-col gap-4">
       {/* Summary strip: big-icon kind counts for the window */}
       {hasData ? (
-        <div data-testid="timeline-summary" className="grid grid-cols-1 gap-2.5 @xs:grid-cols-2 @sm:grid-cols-3 @3xl:grid-cols-5">
-          {STAT_CARDS.map((s) => <StatCard key={s.label} tone={s.tone} count={s.count} label={s.label} />)}
-        </div>
+        <MotionLayout data-testid="timeline-summary" className="grid grid-cols-1 gap-2.5 @xs:grid-cols-2 @sm:grid-cols-3 @3xl:grid-cols-5">
+          {STAT_CARDS.map((s) => <MotionLayoutItem key={s.label} layoutId={`timeline-stat-${s.label}`}><StatCard tone={s.tone} count={s.count} label={s.label} /></MotionLayoutItem>)}
+        </MotionLayout>
       ) : null}
 
       {/* Hero: the lane/axis plot — elowen's signature surface */}
@@ -376,7 +377,8 @@ export function TimelineView() {
           <ErrorState message={t.timeline.loadError} onRetry={() => q.refetch()} />
         ) : !hasData ? (
           <EmptyState title={t.timeline.empty} description={t.timeline.emptyDescription} icon={Activity} />
-        ) : view === 'lanes' ? (
+        ) : <MotionPresence mode="wait">{view === 'lanes' ? (
+          <MotionLayoutItem key="lanes">
           <div className="flex min-w-0 flex-col gap-2.5">
             {lanes.map((l) => <Lane key={l.target} points={l.points} ticks={ticks} resolve={resolve} onPick={setPicked} />)}
             <div className="relative mt-1 mr-3 ml-[16.25rem] hidden h-4 @3xl:block">
@@ -385,9 +387,10 @@ export function TimelineView() {
               ))}
             </div>
           </div>
+          </MotionLayoutItem>
         ) : (
-          <TimelineTrack points={points} ticks={ticks} resolve={resolve} onPick={setPicked} />
-        )}
+          <MotionLayoutItem key="axis"><TimelineTrack points={points} ticks={ticks} resolve={resolve} onPick={setPicked} /></MotionLayoutItem>
+        )}</MotionPresence>}
       </section>
 
       {/* Changes over time: the commit stream + most-touched files for the same window */}

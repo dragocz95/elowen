@@ -46,12 +46,15 @@ describe('StatsView', () => {
     });
   });
 
-  it('uses a compact responsive model row while keeping both figures accessible', async () => {
+  it('uses the shared compact data register while keeping both figures accessible', async () => {
     renderStats();
 
     const row = await screen.findByTestId('model-usage-row');
-    expect(row.className).toContain('grid-cols-[2rem_minmax(0,1fr)_auto]');
-    expect(row.className).toContain('@3xl:grid-cols-');
+    const table = screen.getByRole('table', { name: 'Cost by model' });
+    expect(table).toHaveClass('@container');
+    expect(table.style.getPropertyValue('--data-table-compact-columns')).toBe('2rem minmax(0,1fr) auto');
+    expect(row).toHaveClass('data-table-grid');
+    expect(row).toHaveClass('interactive-row');
     expect(row.className).not.toContain('rounded-xl');
     expect(screen.getByLabelText('Total tokens: 150')).toBeTruthy();
     expect(screen.getByLabelText('Tracked cost: $1.5000')).toBeTruthy();

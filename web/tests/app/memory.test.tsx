@@ -36,10 +36,14 @@ describe('MemoryPage', () => {
     await waitFor(() => expect(screen.getByText('#1')).toBeInTheDocument());
   });
 
-  it('renders a flat full-width row, keeps advanced filters collapsed, and always shows the pager', async () => {
+  it('renders the shared compact register, keeps advanced filters collapsed, and always shows the pager', async () => {
     const { wrapper: Wrapper } = createWrapper();
     render(<Wrapper><ToastProvider><MemoryPage /></ToastProvider></Wrapper>);
     const row = await screen.findByTestId('memory-row');
+    const table = screen.getByRole('table', { name: 'Memory' });
+    expect(table.style.getPropertyValue('--data-table-compact-columns')).toBe('2rem minmax(0,1fr) 1.25rem');
+    expect(row).toHaveClass('data-table-grid');
+    expect(row).toHaveClass('interactive-row');
     expect(row).not.toHaveClass('rounded-lg');
     expect(row).not.toHaveClass('bg-surface');
     expect(screen.getByText('Page 1 of 1')).toBeInTheDocument();
@@ -61,8 +65,11 @@ describe('MemoryPage', () => {
     // Select the row via its checkbox → the merge toolbar shows the selected count.
     fireEvent.click(screen.getAllByLabelText('Merge')[0]);
     await waitFor(() => expect(screen.getByText('1 selected')).toBeInTheDocument());
+    expect(screen.getByTestId('memory-row')).toHaveAttribute('aria-selected', 'true');
     // A search that matches nothing hides the row; the stale selection must be dropped.
-    fireEvent.change(screen.getByPlaceholderText('Search memories…'), { target: { value: 'zzz-no-match' } });
+    const search = screen.getByPlaceholderText('Search memories…');
+    fireEvent.change(search, { target: { value: 'zzz-no-match' } });
+    expect(search).toHaveValue('zzz-no-match');
     await waitFor(() => expect(screen.queryByText('1 selected')).not.toBeInTheDocument());
   });
 

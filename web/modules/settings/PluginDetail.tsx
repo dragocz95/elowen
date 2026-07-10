@@ -1,10 +1,11 @@
 'use client';
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { Activity as ReactActivity, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { ArrowLeft, Check, Circle, Settings2, SlidersHorizontal, Sparkles, Activity, ShieldCheck } from 'lucide-react';
 import { Button } from '../../components/ui/Button';
 import { LoadingState } from '../../components/ui/states';
 import { Segmented } from '../../components/ui/Segmented';
 import { AutoSaveStatus } from '../../components/ui/AutoSaveStatus';
+import { MotionReveal } from '../../components/ui/Motion';
 import { useTranslation } from '../../lib/i18n';
 import { usePluginDetail, usePluginContributions, usePluginLogs, usePluginHookExecutions } from '../../lib/queries';
 import type { PluginConfigField, PluginContributions, PluginDetail as PluginDetailData, PluginHookExecutions, PluginLogs } from '../../lib/types';
@@ -19,6 +20,22 @@ import { PluginLivePreview } from './PluginLivePreview';
 import { usePluginConfigDraft } from './usePluginConfigDraft';
 
 type WorkspaceTab = 'setup' | 'behavior' | 'capabilities' | 'activity' | 'advanced';
+
+/** Lazily retain visited tabs. Config editors keep disclosure/search state, while unvisited panels do
+ *  not mount expensive editors simply because the plugin workspace opened. */
+function WorkspacePanel({ id, active, visited, children }: {
+  id: WorkspaceTab;
+  active: WorkspaceTab;
+  visited: ReadonlySet<WorkspaceTab>;
+  children: ReactNode;
+}) {
+  if (id !== active && !visited.has(id)) return null;
+  return (
+    <ReactActivity mode={id === active ? 'visible' : 'hidden'}>
+      <MotionReveal data-plugin-panel={id}>{children}</MotionReveal>
+    </ReactActivity>
+  );
+}
 
 /** Document-like configuration with a contextual preview rail. The rail only appears beside the
  *  editor when its real container is wide enough; narrower settings layouts keep a single flow. */
@@ -56,6 +73,10 @@ function PluginWorkspace({ name, detail, contributions, logs, hookExecutions, on
     return draftValue == null || String(draftValue).trim() === '';
   }), [detail.configSchema, detail.secretsSet, draft.values]);
   const [tab, setTab] = useState<WorkspaceTab>(missingRequired.length ? 'setup' : 'behavior');
+  const [visitedTabs, setVisitedTabs] = useState<Set<WorkspaceTab>>(() => new Set([tab]));
+  useEffect(() => {
+    setVisitedTabs((current) => current.has(tab) ? current : new Set(current).add(tab));
+  }, [tab]);
 
   // `#plugin-activity` etc. makes a workspace tab shareable without changing the existing settings URL.
   useEffect(() => {
@@ -91,7 +112,7 @@ function PluginWorkspace({ name, detail, contributions, logs, hookExecutions, on
         <AutoSaveStatus status={draft.status} onRetry={draft.retry} />
       </div>
 
-      {tab === 'setup' ? (
+      <WorkspacePanel id="setup" active={tab} visited={visitedTabs}>
         <PluginEditorLayout preview={preview}>
           <section className="border-y border-border/80 py-5">
             <div className="mb-3 flex items-center justify-between gap-3">
@@ -108,27 +129,27 @@ function PluginWorkspace({ name, detail, contributions, logs, hookExecutions, on
           </section>
           <PluginConfigEditor {...editorProps} mode="setup" />
         </PluginEditorLayout>
-      ) : null}
+      </WorkspacePanel>
 
-      {tab === 'behavior' ? (
+      <WorkspacePanel id="behavior" active={tab} visited={visitedTabs}>
         <PluginEditorLayout preview={preview}>
           <PluginConfigEditor {...editorProps} mode="behavior" />
         </PluginEditorLayout>
-      ) : null}
-      {tab === 'capabilities' ? (
+      </WorkspacePanel>
+      <WorkspacePanel id="capabilities" active={tab} visited={visitedTabs}>
         <div className="flex flex-col gap-4">
           <PluginToolsPanel contributions={contributions} />
           <PluginHooksPanel contributions={contributions} hookExecutions={hookExecutions} />
           <PluginPermissionsPanel detail={detail} fieldLabel={fieldLabel} riskText={riskText} toolCount={toolCount} platformCount={platformCount} />
         </div>
-      ) : null}
-      {tab === 'activity' ? <PluginLogsPanel logs={logs} /> : null}
-      {tab === 'advanced' ? (
+      </WorkspacePanel>
+      <WorkspacePanel id="activity" active={tab} visited={visitedTabs}><PluginLogsPanel logs={logs} /></WorkspacePanel>
+      <WorkspacePanel id="advanced" active={tab} visited={visitedTabs}>
         <div className="flex flex-col gap-4">
           <PluginConfigEditor {...editorProps} mode="advanced" />
           <PluginDataPanel name={name} summary={detail.data} />
         </div>
-      ) : null}
+      </WorkspacePanel>
     </div>
   );
 }

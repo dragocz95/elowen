@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { LanguageProvider } from '../../../lib/i18n';
 import { ThemeProvider } from '../../../lib/useTheme';
+import { EffectsProvider } from '../../../lib/useEffects';
 import { en } from '../../../lib/i18n/dictionaries/en';
 import type { PluginDetail as PluginDetailData, PluginConfigField, PluginInfo } from '../../../lib/types';
 
@@ -36,7 +37,7 @@ const plugin = (over: Partial<PluginInfo>): PluginInfo => ({
 });
 
 const renderDetail = () => {
-  render(<ThemeProvider><LanguageProvider><PluginDetail name="testy" onBack={() => {}} /></LanguageProvider></ThemeProvider>);
+  render(<EffectsProvider><ThemeProvider><LanguageProvider><PluginDetail name="testy" onBack={() => {}} /></LanguageProvider></ThemeProvider></EffectsProvider>);
 };
 
 beforeEach(() => {
@@ -120,6 +121,24 @@ describe('PluginDetail workspace', () => {
     usePluginDetail.mockReturnValue({ data: detail([{ key: 'sec_model', label: 'Embedding model', type: 'section', hint: 'Inherited from Settings.' }], {}), isLoading: false });
     renderDetail();
     expect(screen.getByText('Embedding model')).toBeInTheDocument();
+  });
+
+  it('retains local editor disclosure state across workspace tab switches', async () => {
+    usePluginDetail.mockReturnValue({ data: detail(
+      [{ key: 'rolePolicies', label: 'Roles', type: 'rolePolicies' }],
+      { rolePolicies: [{ roleId: '1', name: 'dev', projectIds: [], prompt: '', tools: [] }] },
+    ), isLoading: false });
+    renderDetail();
+
+    fireEvent.click(screen.getByText('dev'));
+    const allTools = screen.getByText(en.pluginCfg.roleToolsAll);
+    await waitFor(() => expect(allTools).toBeVisible());
+
+    fireEvent.click(screen.getByRole('radio', { name: en.pluginDetail.tabCapabilities }));
+    await waitFor(() => expect(allTools).not.toBeVisible());
+
+    fireEvent.click(screen.getByRole('radio', { name: en.pluginDetail.tabBehavior }));
+    await waitFor(() => expect(allTools).toBeVisible());
   });
 });
 

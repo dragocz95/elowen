@@ -12,6 +12,9 @@ import { LoadingState, ErrorState } from '../../components/ui/states';
 import { useTranslation } from '../../lib/i18n';
 import { SessionCard } from './SessionCard';
 import { BrainSessionsPanel } from './BrainSessionsPanel';
+import { EntityList } from '../../components/ui/EntityList';
+import { PageFrame } from '../../components/ui/PageFrame';
+import { MotionLayoutItem, MotionPresence } from '../../components/ui/Motion';
 
 export function SessionsView() {
   const sessions = useSessionInfos();
@@ -43,7 +46,7 @@ export function SessionsView() {
     <>
       <ModuleHeader title={t.page.sessions} icon={TerminalSquare} />
 
-      <div className="@container">
+      <PageFrame width="wide">
       <div className="flex flex-col gap-10">
         <section className="min-w-0">
           <div className="flex flex-col gap-3 border-b border-border/80 pb-3 sm:flex-row sm:items-end sm:justify-between">
@@ -62,13 +65,19 @@ export function SessionsView() {
           {sessions.isLoading ? <LoadingState variant="list" />
             : sessions.isError ? <ErrorState message={t.common.daemonUnreachable} onRetry={() => sessions.refetch()} />
             : names.length > 0 ? (
-              <div data-testid="live-sessions-list" className="flex flex-col">
-                {names.map((s) => {
-                  const info = byName.get(s);
-                  if (!info) return null;
-                  return <SessionCard key={s} info={info} compact onOpenTerminal={() => setOpenTerm(s)} />;
-                })}
-              </div>
+              <EntityList data-testid="live-sessions-list">
+                <MotionPresence>
+                  {names.map((s) => {
+                    const info = byName.get(s);
+                    if (!info) return null;
+                    return (
+                      <MotionLayoutItem key={s} layoutId={`live-session-${s}`} role="listitem">
+                        <SessionCard info={info} compact onOpenTerminal={() => setOpenTerm(s)} />
+                      </MotionLayoutItem>
+                    );
+                  })}
+                </MotionPresence>
+              </EntityList>
             ) : filter === 'needs_input' && allNames.length > 0
               ? <p className="border-b border-border/80 py-7 text-sm text-text-muted">{t.sessions.noNeedsInput}</p>
               : (
@@ -87,7 +96,7 @@ export function SessionsView() {
 
         <BrainSessionsPanel />
       </div>
-      </div>
+      </PageFrame>
 
       {openTerm && <TerminalModal session={openTerm} onClose={() => setOpenTerm(null)} />}
     </>

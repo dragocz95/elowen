@@ -8,6 +8,9 @@ import { Button } from '../../components/ui/Button';
 import { DateRangeFilter } from '../../components/ui/DateRangeFilter';
 import { ModuleHeader } from '../../components/ui/ModuleHeader';
 import { PageMascot } from '../../components/ui/PageMascot';
+import { DataTable, DataTableCell, DataTableRow } from '../../components/ui/DataTable';
+import { PageFrame } from '../../components/ui/PageFrame';
+import { MotionLayoutItem, MotionPresence } from '../../components/ui/Motion';
 import { DEFAULT_RANGE, serializeRange, parseRange, isStoredRange, rangeBounds } from '../../lib/dateRange';
 import { usePersistentState } from '../../lib/usePersistentState';
 import { LoadingState, ErrorState, EmptyState } from '../../components/ui/states';
@@ -33,7 +36,7 @@ export function StatsView() {
         <DateRangeFilter value={range} onChange={(next) => setRangeRaw(serializeRange(next))} compact />
       </ModuleHeader>
 
-      <div className="mx-auto flex w-full max-w-7xl flex-col gap-8">
+      <PageFrame width="wide" className="gap-8">
         {usage.isLoading ? (
           <LoadingState variant="cards" />
         ) : usage.isError ? (
@@ -80,46 +83,56 @@ export function StatsView() {
               {!summary.hasAnyUsage ? (
                 <EmptyState title={t.stats.emptyTitle} description={t.stats.emptyDesc} icon={BarChart3} />
               ) : (
-                <div data-testid="model-usage-list" role="table" aria-label={t.stats.costByModel} className="@container divide-y divide-border/70 border-y border-border/80">
-                  <div role="row" className="hidden grid-cols-[2rem_minmax(0,12rem)_minmax(8rem,1fr)_7rem_7rem] items-center gap-3 px-1 py-2.5 text-[10px] font-semibold uppercase tracking-wider text-text-muted @3xl:grid">
-                    <span aria-hidden />
-                    <span role="columnheader">{t.stats.cardModelsUsed}</span>
-                    <span role="columnheader">{t.stats.pulseLabel}</span>
-                    <span role="columnheader" className="text-right">{t.stats.cardTotalTokens}</span>
-                    <span role="columnheader" className="text-right">{t.stats.cardTotalCost}</span>
-                  </div>
-                  {summary.rows.map((row) => (
-                    <div
-                      key={row.exec}
-                      role="row"
-                      data-testid="model-usage-row"
-                      className="grid grid-cols-[2rem_minmax(0,1fr)_auto] items-center gap-x-3 gap-y-2 px-1 py-3.5 transition-colors hover:bg-elevated/25 @3xl:grid-cols-[2rem_minmax(0,12rem)_minmax(8rem,1fr)_7rem_7rem]"
-                    >
-                      <span role="cell" className="flex h-8 w-8 shrink-0 items-center justify-center text-text-muted">
-                        <ModelIcon name={row.exec} size={17} />
-                      </span>
-                      <span role="cell" className="min-w-0 truncate font-mono text-xs text-text" title={row.exec}>{row.exec}</span>
-                      <div role="cell" className="col-start-2 col-end-4 row-start-2 h-px min-w-0 bg-border @3xl:col-start-3 @3xl:col-end-4 @3xl:row-start-1">
-                        <div aria-hidden className="relative h-px bg-gradient-to-r from-accent via-[#ff955f] to-[#ffd09a] shadow-[0_0_9px_rgb(255_82_54_/_0.35)]" style={{ width: `${row.pct}%` }}>
-                          <span className="absolute -right-0.5 -top-0.5 h-1 w-1 rounded-full bg-[#ffd09a] shadow-[0_0_8px_rgb(255_160_105_/_0.85)]" />
-                        </div>
-                      </div>
-                      <span
-                        role="cell"
-                        className="col-start-2 row-start-3 font-mono text-xs tabular-nums text-text-muted @3xl:col-start-4 @3xl:row-start-1 @3xl:text-right"
-                        aria-label={`${t.stats.cardTotalTokens}: ${row.tokensLabel}`}
-                      >
-                        {row.tokensLabel}
-                      </span>
-                      <span
-                        role="cell"
-                        className="col-start-3 row-start-1 text-right font-mono text-xs tabular-nums text-text @3xl:col-start-5"
-                        aria-label={`${t.stats.cardTotalCost}: ${row.costLabel}`}
-                      >
-                        {row.costLabel}
-                      </span>
+                <div data-testid="model-usage-list">
+                  <DataTable
+                    ariaLabel={t.stats.costByModel}
+                    columns="2rem minmax(0,12rem) minmax(8rem,1fr) 7rem 7rem"
+                    compactColumns="2rem minmax(0,1fr) auto"
+                  >
+                    <DataTableRow header className="px-1">
+                      <DataTableCell header role="presentation" aria-hidden>{null}</DataTableCell>
+                      <DataTableCell header>{t.stats.cardModelsUsed}</DataTableCell>
+                      <DataTableCell header priority="wide">{t.stats.pulseLabel}</DataTableCell>
+                      <DataTableCell header priority="wide" className="text-right">{t.stats.cardTotalTokens}</DataTableCell>
+                      <DataTableCell header className="text-right">{t.stats.cardTotalCost}</DataTableCell>
+                    </DataTableRow>
+                    <div role="rowgroup">
+                      <MotionPresence>
+                        {summary.rows.map((row) => (
+                          <MotionLayoutItem
+                            key={row.exec}
+                            layoutId={`stats-model-${row.exec}`}
+                            role="presentation"
+                            className="border-b border-border/70 last:border-b-0"
+                          >
+                            <DataTableRow data-testid="model-usage-row" interactive className="gap-y-2 px-1">
+                              <DataTableCell className="flex h-8 w-8 shrink-0 items-center justify-center text-text-muted">
+                                <ModelIcon name={row.exec} size={17} />
+                              </DataTableCell>
+                              <DataTableCell className="truncate font-mono text-xs text-text" title={row.exec}>{row.exec}</DataTableCell>
+                              <DataTableCell className="col-start-2 col-end-4 row-start-2 h-px bg-border @4xl:col-start-3 @4xl:col-end-4 @4xl:row-start-1">
+                                <div aria-hidden className="relative h-px bg-gradient-to-r from-accent via-[#ff955f] to-[#ffd09a] shadow-[0_0_9px_rgb(255_82_54_/_0.35)]" style={{ width: `${row.pct}%` }}>
+                                  <span className="absolute -right-0.5 -top-0.5 h-1 w-1 rounded-full bg-[#ffd09a] shadow-[0_0_8px_rgb(255_160_105_/_0.85)]" />
+                                </div>
+                              </DataTableCell>
+                              <DataTableCell
+                                className="col-start-2 row-start-3 font-mono text-xs tabular-nums text-text-muted @4xl:col-start-4 @4xl:row-start-1 @4xl:text-right"
+                                aria-label={`${t.stats.cardTotalTokens}: ${row.tokensLabel}`}
+                              >
+                                {row.tokensLabel}
+                              </DataTableCell>
+                              <DataTableCell
+                                className="col-start-3 row-start-1 text-right font-mono text-xs tabular-nums text-text @4xl:col-start-5"
+                                aria-label={`${t.stats.cardTotalCost}: ${row.costLabel}`}
+                              >
+                                {row.costLabel}
+                              </DataTableCell>
+                            </DataTableRow>
+                          </MotionLayoutItem>
+                        ))}
+                      </MotionPresence>
                     </div>
-                  ))}
+                  </DataTable>
                 </div>
               )}
             </section>
@@ -127,7 +140,7 @@ export function StatsView() {
             {resetOpen ? <ResetUsageModal onClose={() => setResetOpen(false)} /> : null}
           </>
         )}
-      </div>
+      </PageFrame>
     </>
   );
 }

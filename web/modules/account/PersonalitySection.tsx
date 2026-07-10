@@ -16,7 +16,8 @@ import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { LoadingState, EmptyState } from '../../components/ui/states';
 import { useToast } from '../../components/ui/Toast';
 import { useTranslation } from '../../lib/i18n';
-import { Pill, PillGroup } from './pills';
+import { SettingGroup, SettingRow } from '../../components/ui/SettingsPrimitives';
+import { Pill } from './pills';
 
 type Platform = 'web' | 'discord';
 
@@ -70,13 +71,15 @@ export function PersonalitySection() {
       </div>
 
       {/* Communication style pills (applied everywhere, on top of any active profile) */}
-      <div className="flex flex-col gap-4 rounded-xl border border-border bg-surface p-5" style={{ boxShadow: 'var(--shadow-card)' }}>
-        <PillGroup label={t.personality.styleLabel}>
-          {styleOptions.map((o) => (
-            <Pill key={o.value} on={advisorStyle === o.value} onClick={() => setAdvisorStyle(o.value)}>{o.label}</Pill>
-          ))}
-        </PillGroup>
-      </div>
+      <SettingGroup>
+        <SettingRow title={t.personality.styleLabel} icon={Sparkles}>
+          <div className="flex flex-wrap gap-1.5" role="group" aria-label={t.personality.styleLabel}>
+            {styleOptions.map((o) => (
+              <Pill key={o.value} on={advisorStyle === o.value} onClick={() => setAdvisorStyle(o.value)}>{o.label}</Pill>
+            ))}
+          </div>
+        </SettingRow>
+      </SettingGroup>
 
       {/* Persona profiles */}
       {profiles.isLoading ? (

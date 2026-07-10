@@ -1,7 +1,7 @@
 'use client';
 import { useState, useEffect } from 'react';
 import { Type, TextCursorInput, ScrollText, Palette } from 'lucide-react';
-import { SettingCard } from '../../components/ui/SettingCard';
+import { SettingGroup, SettingRow } from '../../components/ui/SettingsPrimitives';
 import { Segmented } from '../../components/ui/Segmented';
 import { Slider } from '../../components/ui/Slider';
 import { Toggle } from '../../components/ui/Toggle';
@@ -37,12 +37,12 @@ export function TerminalSection() {
 
   const [seeded, setSeeded] = useState(false);
   useEffect(() => {
-    if (data) {
+    if (data && !seeded) {
       setFontSize(data.fontSize); setFontFamily(data.fontFamily); setCursorStyle(data.cursorStyle);
       setCursorBlink(data.cursorBlink); setScrollback(data.scrollback); setTheme(data.theme);
       setPalette(data.palette); setShowThoughtsCli(data.showThoughtsCli ?? true); setSeeded(true);
     }
-  }, [data]);
+  }, [data, seeded]);
 
   const settings: TerminalSettings = { fontSize, fontFamily, cursorStyle, cursorBlink, scrollback, theme, palette, showThoughtsCli };
   useAutoSave([fontSize, fontFamily, cursorStyle, cursorBlink, scrollback, theme, palette, showThoughtsCli], () => {
@@ -59,10 +59,10 @@ export function TerminalSection() {
 
   return (
     <div className="flex flex-col gap-4">
-      <SettingCard title={t.terminal.colorsTitle} icon={Palette} description={t.terminal.colorsHelp}>
+      <SettingGroup title={t.terminal.colorsTitle} icon={Palette} description={t.terminal.colorsHelp}>
         {/* The live preview sits NEXT TO the swatches (right column on wide screens, on top on narrow
             ones) so a color tweak is visible without scrolling back to a separate preview card. */}
-        <div className="grid items-start gap-5 lg:grid-cols-2">
+        <div className="grid items-start gap-5 py-5 lg:grid-cols-2">
           <div className="self-start lg:sticky lg:top-4 lg:order-2">
             <TerminalPreview settings={settings} resolvedTheme={resolvedTheme} />
           </div>
@@ -102,9 +102,10 @@ export function TerminalSection() {
             ) : null}
           </div>
         </div>
-      </SettingCard>
+      </SettingGroup>
 
-      <SettingCard title={t.terminal.fontTitle} icon={Type}>
+      <SettingGroup>
+      <SettingRow title={t.terminal.fontTitle} icon={Type}>
         <div className="flex flex-col gap-4">
           <div className="flex flex-col gap-1.5">
             <span className={label}>{t.terminal.fontSize}</span>
@@ -118,9 +119,9 @@ export function TerminalSection() {
             <Segmented options={fontOpts} value={fontFamily} onChange={(v) => setFontFamily(v as TerminalFontFamily)} aria-label={t.terminal.fontFamily} />
           </div>
         </div>
-      </SettingCard>
+      </SettingRow>
 
-      <SettingCard title={t.terminal.cursorTitle} icon={TextCursorInput}>
+      <SettingRow title={t.terminal.cursorTitle} icon={TextCursorInput}>
         <div className="flex flex-col gap-4">
           <div className="flex flex-col gap-1.5">
             <span className={label}>{t.terminal.cursorStyle}</span>
@@ -131,16 +132,16 @@ export function TerminalSection() {
             <Toggle checked={cursorBlink} onChange={setCursorBlink} label={t.terminal.cursorBlink} />
           </div>
         </div>
-      </SettingCard>
+      </SettingRow>
 
-      <SettingCard title={t.terminal.cliTitle} icon={ScrollText} description={t.terminal.showThoughtsHelp}>
-        <div className="flex items-center justify-between gap-3 rounded-md border border-border bg-bg px-3 py-2">
-          <span className="text-sm text-text">{t.terminal.showThoughts}</span>
+      <SettingRow title={t.terminal.cliTitle} icon={ScrollText} description={t.terminal.showThoughtsHelp}>
+        <label className="flex items-center gap-3 text-sm text-text">
           <Toggle checked={showThoughtsCli} onChange={setShowThoughtsCli} label={t.terminal.showThoughts} />
-        </div>
-      </SettingCard>
+          <span>{t.terminal.showThoughts}</span>
+        </label>
+      </SettingRow>
 
-      <SettingCard title={t.terminal.historyTitle} icon={ScrollText} description={t.terminal.scrollbackHelp}>
+      <SettingRow title={t.terminal.historyTitle} icon={ScrollText} description={t.terminal.scrollbackHelp}>
         <div className="flex flex-col gap-1.5">
           <span className={label}>{t.terminal.scrollback}</span>
           <div className="flex items-center gap-4">
@@ -148,7 +149,8 @@ export function TerminalSection() {
             <span className="w-16 shrink-0 text-right font-mono text-sm tabular-nums text-text">{scrollback.toLocaleString()}</span>
           </div>
         </div>
-      </SettingCard>
+      </SettingRow>
+      </SettingGroup>
 
     </div>
   );
