@@ -18,8 +18,8 @@ beforeAll(() => server.listen({ onUnhandledRequest })); afterEach(() => server.r
 describe('Shell', () => {
   it('renders the orbital desktop navigation, frameless masthead and content slot', async () => {
     render(<Shell><span>page-body</span></Shell>);
-    // The mascot hub and Home world appear after the async gate opens.
-    expect((await screen.findAllByAltText('Elowen')).length).toBeGreaterThan(0);
+    // The WebGL-backed navigation and Home world appear after the async gate opens.
+    expect(await screen.findByTestId('orbit-webgl')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Home' })).toBeInTheDocument();
     expect(screen.getByText('page-body')).toBeInTheDocument();
     expect(screen.getByTestId('future-navigation')).toBeInTheDocument();

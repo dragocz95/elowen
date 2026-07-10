@@ -28,7 +28,7 @@ const FRAGMENT = /* glsl */ `
 `;
 
 /** GPU-only ambient orbit behind the real DOM navigation. Navigation never depends on WebGL. */
-export function NavOrbitScene({ side }: { side: 'left' | 'right' }) {
+export function NavOrbitScene({ side, compact = false }: { side: 'left' | 'right'; compact?: boolean }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
@@ -50,11 +50,14 @@ export function NavOrbitScene({ side }: { side: 'left' | 'right' }) {
       renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.4));
 
       const scene = new THREE.Scene();
-      const camera = new THREE.PerspectiveCamera(38, 1, 0.1, 20);
-      camera.position.set(side === 'left' ? 0.45 : -0.45, 0, 5.6);
+      // A narrow navigation viewport makes a perspective camera crop a circular scene heavily.
+      // An orthographic projection keeps the complete ornament visible at every shell width.
+      const camera = new THREE.OrthographicCamera(-2.6, 2.6, 2.6, -2.6, 0.1, 20);
+      camera.position.set(side === 'left' ? 0.35 : -0.35, 0, 5.6);
 
       const group = new THREE.Group();
       group.rotation.set(1.08, side === 'left' ? -0.28 : 0.28, 0.08);
+      group.scale.y = compact ? 2.15 : 1.18;
       scene.add(group);
 
       const ringGeometry = new THREE.TorusGeometry(1.43, 0.028, 12, 128);
@@ -98,7 +101,13 @@ export function NavOrbitScene({ side }: { side: 'left' | 'right' }) {
         if (!renderer) return;
         const rect = host.getBoundingClientRect();
         renderer.setSize(Math.max(1, Math.round(rect.width)), Math.max(1, Math.round(rect.height)), false);
-        camera.aspect = Math.max(1, rect.width) / Math.max(1, rect.height);
+        const aspect = Math.max(1, rect.width) / Math.max(1, rect.height);
+        const horizontalHalf = 2.6;
+        const verticalHalf = horizontalHalf / Math.max(0.18, aspect);
+        camera.left = -horizontalHalf;
+        camera.right = horizontalHalf;
+        camera.top = verticalHalf;
+        camera.bottom = -verticalHalf;
         camera.updateProjectionMatrix();
       };
       const observer = new ResizeObserver(resize);
@@ -149,11 +158,11 @@ export function NavOrbitScene({ side }: { side: 'left' | 'right' }) {
       disposables.forEach((item) => item.dispose());
       renderer?.dispose();
     }
-  }, [side]);
+  }, [compact, side]);
 
   return (
     <div ref={hostRef} data-testid="orbit-webgl" aria-hidden className="pointer-events-none absolute inset-0 overflow-hidden">
-      <span className="absolute left-[8%] top-1/2 h-48 w-48 -translate-y-1/2 rounded-full border border-accent/15 shadow-[0_0_60px_rgb(255_82_54_/_0.08)]" />
+      <span className={`absolute top-1/2 -translate-y-1/2 rounded-full border border-accent/15 shadow-[0_0_60px_rgb(255_82_54_/_0.08)] ${compact ? 'inset-x-3 h-52' : 'inset-x-8 h-80'}`} />
       <canvas ref={canvasRef} className="absolute inset-0 h-full w-full opacity-90" />
     </div>
   );

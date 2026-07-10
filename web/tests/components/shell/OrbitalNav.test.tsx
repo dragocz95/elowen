@@ -15,6 +15,7 @@ describe('OrbitalNav', () => {
   it('keeps real links over the WebGL scene and exposes the active world children', () => {
     mount();
     expect(screen.getByTestId('orbit-webgl').querySelector('canvas')).toBeTruthy();
+    expect(screen.queryByRole('img', { name: 'Elowen' })).toBeNull();
     expect(screen.getByRole('link', { name: 'Work' })).toHaveAttribute('aria-current', 'location');
     expect(screen.getByRole('link', { name: 'Stats' })).toHaveAttribute('aria-current', 'page');
     expect(screen.getByRole('button', { name: 'System' })).toBeInTheDocument();
@@ -24,6 +25,14 @@ describe('OrbitalNav', () => {
     mount();
     fireEvent.click(screen.getByRole('button', { name: 'Next' }));
     expect(screen.getByRole('link', { name: 'Editor' })).toHaveAttribute('href', '/editor');
+  });
+
+  it('does not move controls under the pointer and opens button-only groups on click', () => {
+    mount();
+    fireEvent.mouseEnter(screen.getByRole('link', { name: 'Projects' }));
+    expect(screen.queryByRole('link', { name: 'Editor' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'System' }));
+    expect(screen.getByRole('link', { name: 'Account' })).toHaveAttribute('href', '/account');
   });
 
   it('collapses to an icon orbit when content room is constrained', () => {

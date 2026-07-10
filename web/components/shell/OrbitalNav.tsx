@@ -55,12 +55,7 @@ export function OrbitalNav({ compact = false, side = 'left' }: { compact?: boole
       }}
       className={`relative h-full shrink-0 overflow-visible ${compact ? 'w-28' : 'w-[22rem]'}`}
     >
-      <NavOrbitScene side={side} />
-
-      <div className={`absolute top-1/2 z-20 grid -translate-y-1/2 place-items-center ${mirrored ? 'right-4' : 'left-4'}`}>
-        <span className={`status-orb absolute rounded-full ${health.data?.ok ? 'text-success' : 'text-error'} ${compact ? 'inset-2' : 'inset-0'}`} aria-hidden />
-        <img src="/icon.png" alt={t.common.appName} className={`relative select-none object-contain drop-shadow-[0_14px_30px_rgb(255_82_54_/_0.28)] ${compact ? 'h-12 w-12' : 'h-20 w-20'}`} draggable={false} />
-      </div>
+      <NavOrbitScene side={side} compact={compact} />
 
       <div role="list" className="absolute inset-0 z-30">
         {entries.map((entry, index) => {
@@ -85,15 +80,15 @@ export function OrbitalNav({ compact = false, side = 'left' }: { compact?: boole
             <div
               key={entry.id ?? entry.label}
               role="listitem"
-              className="absolute top-1/2"
+              className="absolute top-1/2 transition-[transform,opacity] duration-500 ease-[var(--ease-out)]"
               style={{ ...position, transform: `translate(${mirrored ? '50%' : '-50%'}, calc(-50% + ${y}px)) scale(${focused ? 1 : Math.max(0.76, 0.94 - Math.abs(delta) * 0.07)})`, opacity: focused ? 1 : Math.max(0.38, 0.8 - Math.abs(delta) * 0.14), zIndex: 20 - Math.abs(delta) }}
             >
               {entry.href ? (
-                <Link href={entry.href} aria-current={active ? (entry.subItems?.length ? 'location' : 'page') : undefined} className={control} onFocus={() => setFocusIndex(index)} onMouseEnter={() => setFocusIndex(index)}>
+                <Link href={entry.href} aria-current={active ? (entry.subItems?.length ? 'location' : 'page') : undefined} className={control}>
                   {content}
                 </Link>
               ) : (
-                <button type="button" aria-expanded={focused && !!entry.subItems?.length} className={control} onClick={() => setFocusIndex(index)} onFocus={() => setFocusIndex(index)} onMouseEnter={() => setFocusIndex(index)}>
+                <button type="button" aria-expanded={focused && !!entry.subItems?.length} className={control} onClick={() => setFocusIndex(index)}>
                   {content}
                 </button>
               )}
