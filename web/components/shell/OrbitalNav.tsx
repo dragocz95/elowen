@@ -54,8 +54,8 @@ export function OrbitalNav({ compact = false, side = 'left' }: { compact?: boole
     wheelDelta.current = 0;
   };
 
-  const centerX = 72;
-  const radiusX = compact ? 44 : 112;
+  const centerX = compact ? 30 : 50;
+  const radiusX = compact ? 46 : 100;
   const verticalStep = compact ? 62 : 76;
   const mirrored = side === 'right';
 
@@ -75,13 +75,15 @@ export function OrbitalNav({ compact = false, side = 'left' }: { compact?: boole
       <div role="list" className="absolute inset-0 z-30">
         {entries.map((entry, index) => {
           const delta = wrapsDelta(index, focusIndex, entries.length);
-          const x = centerX + Math.cos(Math.abs(delta) * 0.34) * radiusX;
+          const distance = Math.abs(delta);
+          const outside = distance > 3;
+          const x = centerX + Math.cos(Math.min(distance, 5) * 0.5) * radiusX;
           const y = delta * verticalStep;
           const focused = index === focusIndex;
           const active = entryIsActive(entry, pathname);
           const Icon = entry.icon;
           const position = mirrored ? { right: x } : { left: x };
-          const control = `group flex items-center gap-3 whitespace-nowrap text-left transition-[color,opacity,transform,filter] duration-300 ${focused ? 'text-accent' : active ? 'text-text' : 'text-text-muted/85 hover:text-text'} ${compact ? 'justify-center' : ''}`;
+          const control = `group flex items-center gap-3 whitespace-nowrap transition-[color,opacity,transform,filter] duration-300 ${focused ? 'text-accent' : active ? 'text-text' : 'text-text-muted/85 hover:text-text'} ${compact ? 'justify-center' : ''} ${mirrored ? 'flex-row-reverse text-right' : 'text-left'}`;
           const content = (
             <>
               <span className={`orbit-node ${focused ? 'orbit-node-active' : ''} grid shrink-0 place-items-center rounded-full border backdrop-blur-md transition-[width,height,border-color,background-color,box-shadow] ${focused ? 'h-14 w-14 border-accent/50 bg-accent/12 shadow-[0_0_38px_rgb(255_82_54_/_0.22)]' : 'h-11 w-11 border-border-strong/90 bg-black/65'}`}>
@@ -94,15 +96,15 @@ export function OrbitalNav({ compact = false, side = 'left' }: { compact?: boole
             <div
               key={entry.id ?? entry.label}
               role="listitem"
-              className="absolute top-1/2 transition-[transform,opacity] duration-500 ease-[var(--ease-out)]"
-              style={{ ...position, transform: `translate(${mirrored ? '50%' : '-50%'}, calc(-50% + ${y}px)) scale(${focused ? 1 : Math.max(0.82, 0.98 - Math.abs(delta) * 0.035)})`, opacity: focused ? 1 : Math.max(0.68, 0.94 - Math.abs(delta) * 0.055), zIndex: 20 - Math.abs(delta) }}
+              className="absolute top-1/2 transition-[transform,opacity] duration-700 ease-[var(--ease-out)]"
+              style={{ ...position, transform: `translateY(calc(-50% + ${y}px)) scale(${focused ? 1 : Math.max(0.84, 0.98 - distance * 0.04)})`, transformOrigin: mirrored ? 'right center' : 'left center', opacity: outside ? 0 : focused ? 1 : Math.max(0.74, 0.94 - distance * 0.06), zIndex: 20 - distance, pointerEvents: outside ? 'none' : undefined }}
             >
               {entry.href ? (
-                <Link href={entry.href} aria-label={compact ? entry.label : undefined} aria-current={active ? (entry.subItems?.length ? 'location' : 'page') : undefined} className={control}>
+                <Link href={entry.href} tabIndex={outside ? -1 : undefined} aria-label={compact ? entry.label : undefined} aria-current={active ? (entry.subItems?.length ? 'location' : 'page') : undefined} className={control}>
                   {content}
                 </Link>
               ) : (
-                <button type="button" aria-label={compact ? entry.label : undefined} aria-expanded={focused && !!entry.subItems?.length} className={control} onClick={() => setFocusIndex(index)}>
+                <button type="button" tabIndex={outside ? -1 : undefined} aria-label={compact ? entry.label : undefined} aria-expanded={focused && !!entry.subItems?.length} className={control} onClick={() => setFocusIndex(index)}>
                   {content}
                 </button>
               )}
@@ -112,7 +114,7 @@ export function OrbitalNav({ compact = false, side = 'left' }: { compact?: boole
       </div>
 
       {!compact && focus?.subItems?.length ? (
-        <div key={focus.id ?? focus.label} className={`absolute top-1/2 z-40 w-40 -translate-y-1/2 ${mirrored ? 'right-[14rem] text-right' : 'left-[14rem]'}`} aria-label={focus.label}>
+        <div key={focus.id ?? focus.label} className={`absolute top-1/2 z-40 w-40 -translate-y-1/2 ${mirrored ? 'right-[14.5rem] text-right' : 'left-[14.5rem]'}`} aria-label={focus.label}>
           <span aria-hidden className={`absolute top-1/2 h-px w-12 -translate-y-1/2 ${mirrored ? '-right-12 bg-gradient-to-l' : '-left-12 bg-gradient-to-r'} from-accent/55 via-accent/25 to-border`} />
           <span aria-hidden className={`absolute top-1/2 h-1.5 w-1.5 -translate-y-1/2 rounded-full bg-accent shadow-[0_0_12px_rgb(255_82_54_/_0.65)] ${mirrored ? '-right-[3px]' : '-left-[3px]'}`} />
           <div className={`orbit-branch flex flex-col gap-1 py-3 ${mirrored ? 'items-end border-r border-border/90 pr-4' : 'border-l border-border/90 pl-4'}`}>

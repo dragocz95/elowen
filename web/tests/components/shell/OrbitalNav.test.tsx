@@ -39,6 +39,13 @@ describe('OrbitalNav', () => {
     expect(screen.getByRole('link', { name: 'Projects' }).closest('[role="listitem"]')).toHaveStyle({ opacity: '1' });
   });
 
+  it('stages distant wrap-around items outside the visible curve', () => {
+    mount();
+    const home = screen.getByRole('link', { name: 'Home' });
+    expect(home).toHaveAttribute('tabindex', '-1');
+    expect(home.closest('[role="listitem"]')).toHaveStyle({ opacity: '0', pointerEvents: 'none' });
+  });
+
   it('does not move controls under the pointer and opens button-only groups on click', () => {
     mount();
     const projects = screen.getByRole('link', { name: 'Projects' }).closest('[role="listitem"]');
