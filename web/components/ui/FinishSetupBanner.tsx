@@ -34,7 +34,7 @@ export function FinishSetupBanner() {
         </div>
         <Link
           href="/settings?cat=brain"
-          className="inline-flex h-9 w-fit items-center justify-center gap-2 rounded-md border border-accent bg-accent px-3.5 text-sm font-medium text-white transition-opacity hover:opacity-90"
+          className="inline-flex h-9 w-fit items-center justify-center gap-2 rounded-md border border-accent bg-accent px-3.5 text-sm font-medium text-bg transition-opacity hover:opacity-90"
         >
           <Sparkles size={14} aria-hidden />{t.dashboard.finishSetup.cta}
         </Link>

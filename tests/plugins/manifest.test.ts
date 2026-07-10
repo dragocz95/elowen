@@ -43,14 +43,14 @@ describe('parseManifest', () => {
     }
     expect(m.configSchema?.find((f) => f.type === 'provider')?.providerType).toBe('openai');
   });
-  it('accepts options/help/risk/visibleWhen/language props', () => {
+  it('accepts options/help/risk/advanced/visibleWhen/language props', () => {
     const m = parseManifest({
       ...good,
       configSchema: [
         {
           key: 'mode', label: 'Mode', type: 'enum',
           options: [{ value: 'a', label: 'A' }, { value: 'b', label: 'B' }],
-          help: 'Pick a mode.', risk: 'high',
+          help: 'Pick a mode.', risk: 'high', advanced: true,
         },
         {
           key: 'body', label: 'Body', type: 'code', language: 'python',
@@ -62,6 +62,7 @@ describe('parseManifest', () => {
     expect(en?.options).toEqual([{ value: 'a', label: 'A' }, { value: 'b', label: 'B' }]);
     expect(en?.help).toBe('Pick a mode.');
     expect(en?.risk).toBe('high');
+    expect(en?.advanced).toBe(true);
     const code = m.configSchema?.find((f) => f.key === 'body');
     expect(code?.language).toBe('python');
     expect(code?.visibleWhen).toEqual({ key: 'mode', equals: 'a' });

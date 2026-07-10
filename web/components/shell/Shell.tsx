@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { usePathname } from 'next/navigation';
-import { BRAIN_OPEN_EVENT } from '../../lib/brainDock';
+import { BRAIN_COMPOSE_EVENT, BRAIN_OPEN_EVENT } from '../../lib/brainDock';
 import { Providers } from '../../app/providers';
 import { LanguageProvider } from '../../lib/i18n';
 import { ToastProvider } from '../ui/Toast';
@@ -34,7 +34,11 @@ function ShellLayout({ children }: { children: ReactNode }) {
   useEffect(() => {
     const onOpen = () => { dock.addAdvisorPane(); dock.setOpen(true); };
     window.addEventListener(BRAIN_OPEN_EVENT, onOpen);
-    return () => window.removeEventListener(BRAIN_OPEN_EVENT, onOpen);
+    window.addEventListener(BRAIN_COMPOSE_EVENT, onOpen);
+    return () => {
+      window.removeEventListener(BRAIN_OPEN_EVENT, onOpen);
+      window.removeEventListener(BRAIN_COMPOSE_EVENT, onOpen);
+    };
   }, [dock]);
   // When the dock takes the left edge, the sidebar moves to the right edge (mirrored) so the two
   // never stack on the same side. Top/bottom docks span the full width above/below the row.

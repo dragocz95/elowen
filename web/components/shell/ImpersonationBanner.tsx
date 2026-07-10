@@ -15,16 +15,16 @@ export function ImpersonationBanner() {
   useEffect(() => { setAs(impersonatingAs()); }, []);
   if (!as) return null;
   return (
-    <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1 bg-danger px-4 py-1.5 text-center text-xs font-medium text-white">
+    <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1 bg-danger px-4 py-1.5 text-center text-xs font-medium text-bg">
       <span className="flex items-center gap-1.5">
-        <UserCog size={14} className="shrink-0 text-white" aria-hidden />
+        <UserCog size={14} className="shrink-0 text-bg" aria-hidden />
         {t.users.impersonatingAs.replace('{name}', as)}
       </span>
       <button
         type="button"
         onClick={() => { setLeaving(true); void stopImpersonation(); }}
         disabled={leaving}
-        className="inline-flex items-center gap-1 rounded-md border border-white/50 px-2 py-0.5 font-semibold text-white transition-colors hover:bg-white/20 disabled:opacity-50"
+        className="inline-flex items-center gap-1 rounded-md border border-bg/45 px-2 py-0.5 font-semibold text-bg transition-colors hover:bg-bg/15 disabled:opacity-50"
       >
         <LogOut size={12} aria-hidden />
         {t.users.stopImpersonating}

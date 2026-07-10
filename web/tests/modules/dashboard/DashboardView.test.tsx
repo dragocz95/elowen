@@ -6,6 +6,7 @@ import { onUnhandledRequest } from '../../msw';
 import { DashboardView } from '../../../modules/dashboard/DashboardView';
 import { ToastProvider } from '../../../components/ui/Toast';
 import { createWrapper } from '../../test-utils';
+import { EffectsProvider } from '../../../lib/useEffects';
 
 const EVENTS = [
   { id: 3, ts: '2026-06-30 12:00:00', type: 'review', target: 't1', detail: 'approved: ok', project_id: 1, label: 'Ship it' },
@@ -15,6 +16,7 @@ const EVENTS = [
 /** Configurable per test: which sessions + tasks the daemon reports. */
 function server(opts: { sessions?: unknown[]; tasks?: unknown[]; jobs?: unknown[] } = {}) {
   return setupServer(
+    http.get('*/api/health', () => HttpResponse.json({ ok: true, version: '0.26.0' })),
     http.get('*/api/tasks', () => HttpResponse.json(opts.tasks ?? [{ id: 't1', title: 'Alpha', status: 'in_progress', labels: ['agent:Iris'] }])),
     http.get('*/api/tasks/deps', () => HttpResponse.json([])),
     http.get('*/api/sessions', () => HttpResponse.json(opts.sessions ?? [{ name: 'elowen-Iris', role: 'agent', agent: 'iris' }])),
@@ -41,7 +43,7 @@ describe('DashboardView', () => {
   it('renders the bento tiles with the live agent work in the hero', async () => {
     const { wrapper: Wrapper, client } = createWrapper();
     client.setQueryData(['session-signals'], { 'elowen-Iris': { type: 'working' } });
-    render(<Wrapper><ToastProvider><DashboardView /></ToastProvider></Wrapper>);
+    render(<Wrapper><EffectsProvider><ToastProvider><DashboardView /></ToastProvider></EffectsProvider></Wrapper>);
 
     // Tile labels.
     expect(await screen.findByText('Right now')).toBeTruthy();
@@ -64,15 +66,25 @@ describe('DashboardView', () => {
   it('shows the resting hero when no agent is running', async () => {
     srv.use(http.get('*/api/sessions', () => HttpResponse.json([])));
     const { wrapper: Wrapper } = createWrapper();
-    render(<Wrapper><ToastProvider><DashboardView /></ToastProvider></Wrapper>);
+    render(<Wrapper><EffectsProvider><ToastProvider><DashboardView /></ToastProvider></EffectsProvider></Wrapper>);
     expect(await screen.findByText('Elowen is resting')).toBeTruthy();
   });
 
   it('shows the needs-input banner when an agent is waiting', async () => {
     const { wrapper: Wrapper, client } = createWrapper();
     client.setQueryData(['session-signals'], { 'elowen-Iris': { type: 'needs_input', question: 'Proceed?' } });
-    render(<Wrapper><ToastProvider><DashboardView /></ToastProvider></Wrapper>);
+    render(<Wrapper><EffectsProvider><ToastProvider><DashboardView /></ToastProvider></EffectsProvider></Wrapper>);
     expect(await screen.findByText('Needs attention')).toBeTruthy();
     expect(await screen.findByText('Proceed?')).toBeTruthy();
+  });
+
+  it('does not present cached sessions as working while the daemon is offline', async () => {
+    srv.use(http.get('*/api/health', () => HttpResponse.json({ ok: false }, { status: 503 })));
+    const { wrapper: Wrapper, client } = createWrapper();
+    client.setQueryData(['session-signals'], { 'elowen-Iris': { type: 'working' } });
+    render(<Wrapper><EffectsProvider><ToastProvider><DashboardView /></ToastProvider></EffectsProvider></Wrapper>);
+    expect(await screen.findAllByText('Offline')).not.toHaveLength(0);
+    expect(screen.queryByText('Agent Iris')).toBeNull();
+    expect(screen.queryByText('Agents working: 1')).toBeNull();
   });
 });

@@ -3,13 +3,13 @@ import { useMemo, useState } from 'react';
 import {
   Package, User as UserIcon, Wrench, GraduationCap, MessageSquare,
   Search, LayoutGrid, Database, Clock, Sparkles, ShieldCheck, Code2, Download, Trash2,
-  ArrowUpCircle, Eye, Power, RotateCcw, type LucideIcon,
+  ArrowUpCircle, Eye, Power, RotateCcw, MoreHorizontal, type LucideIcon,
 } from 'lucide-react';
 import { PluginDetail } from './PluginDetail';
-import { pluginIcon } from './pluginMeta';
+import { PluginIcon } from './PluginIcon';
 import { Badge } from '../../components/ui/Badge';
 import { Button } from '../../components/ui/Button';
-import { IconButton } from '../../components/ui/IconButton';
+import { ActionMenu } from '../../components/ui/ActionMenu';
 import { Input } from '../../components/ui/Input';
 import { Segmented } from '../../components/ui/Segmented';
 import { Toggle } from '../../components/ui/Toggle';
@@ -81,7 +81,6 @@ function PluginCard({ p, updatable, onDetail, onFlip, onUpdate, onUninstall, onC
   onUpdate: () => void; onUninstall: () => void; onContextMenu: (e: React.MouseEvent) => void; busy: boolean;
 }) {
   const { t, locale } = useTranslation();
-  const Icon = pluginIcon(p.name);
   const description = p.i18n?.[locale]?.description ?? p.description;
   const health = p.health ?? 'ok';
   // A health pill only carries meaning for a running plugin (health derives from its recent log ring),
@@ -95,8 +94,11 @@ function PluginCard({ p, updatable, onDetail, onFlip, onUpdate, onUninstall, onC
       style={{ transitionDuration: 'var(--motion-fast)' }}
     >
       <div className="flex items-center gap-3">
-        <span className="relative flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-border bg-elevated text-text-muted">
-          <Icon size={17} aria-hidden />
+        <span className="relative flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-xl">
+          {p.hasIllustration
+            // eslint-disable-next-line @next/next/no-img-element -- served through the daemon BFF
+            ? <img src={`/api/plugins/${encodeURIComponent(p.name)}/illustration`} alt="" className="h-full w-full object-contain" />
+            : <PluginIcon name={p.name} hasIcon={p.hasIcon} size={44} />}
           {p.enabled ? <span className="absolute -right-1 -top-1 h-2.5 w-2.5 rounded-full border border-surface bg-success" aria-hidden /> : null}
         </span>
         <div className="flex min-w-0 flex-1 flex-col gap-0.5">
@@ -112,12 +114,18 @@ function PluginCard({ p, updatable, onDetail, onFlip, onUpdate, onUninstall, onC
             squeeze first — the toggle and remove action never clip or spill past the card edge. The
             health badge moved down to the meta row so a narrow (3-up) card gives the NAME the room. */}
         <div className="flex shrink-0 items-center gap-2" onClick={(e) => e.stopPropagation()}>
-          {/* Both sources can be removed: a user plugin uninstalls (files deleted); a bundled one
-              soft-removes (hidden + unloaded, restorable). The whole card opens the detail on click, so
-              no separate chevron is needed — dropping it keeps room for the name + this remove action. */}
-          <IconButton icon={Trash2} label={`${p.name}: ${p.source === 'bundled' ? t.plugins.remove : t.plugins.uninstall}`} onClick={onUninstall} disabled={busy} />
           {/* Isolate the toggle so flipping enable never bubbles up into the card's open-detail click. */}
           <Toggle checked={p.enabled} onChange={onFlip} label={`${p.name}: ${p.enabled ? t.plugins.disable : t.plugins.enable}`} disabled={busy} />
+          <ActionMenu
+            label={`${p.name}: ${t.common.actions}`}
+            trigger={<MoreHorizontal size={16} aria-hidden />}
+            triggerClassName="inline-flex h-8 w-8 items-center justify-center rounded-md border border-border bg-elevated text-text-muted transition-colors hover:border-border-strong hover:text-text"
+            items={[
+              { label: t.plugins.detail, icon: Eye, onSelect: onDetail },
+              ...(updatable ? [{ label: t.plugins.update, icon: ArrowUpCircle, onSelect: onUpdate }] : []),
+              { label: p.source === 'bundled' ? t.plugins.remove : t.plugins.uninstall, icon: Trash2, tone: 'danger' as const, onSelect: onUninstall },
+            ]}
+          />
         </div>
       </div>
       <div className="flex flex-wrap items-center gap-2">
@@ -127,12 +135,7 @@ function PluginCard({ p, updatable, onDetail, onFlip, onUpdate, onUninstall, onC
         <ProvidesBadges counts={{ tools: p.provides.tools?.length ?? 0, skills: p.provides.skills?.length ?? 0, platforms: p.provides.platforms?.length ?? 0 }} />
       </div>
       <p className="line-clamp-1 text-xs text-text-muted" title={description}>{description}</p>
-      {updatable ? (
-        <div className="flex items-center justify-between gap-2 rounded-lg border border-accent/30 bg-accent/5 px-2.5 py-1.5" onClick={(e) => e.stopPropagation()}>
-          <span className="text-xs text-text-muted">{t.plugins.updateAvailable}</span>
-          <Button variant="accent" icon={ArrowUpCircle} onClick={onUpdate} disabled={busy} className="h-7 px-2.5 text-xs">{t.plugins.update}</Button>
-        </div>
-      ) : null}
+      {updatable ? <span className="text-tiny font-medium text-accent">{t.plugins.updateAvailable}</span> : null}
     </div>
   );
 }
@@ -141,13 +144,10 @@ function PluginCard({ p, updatable, onDetail, onFlip, onUpdate, onUninstall, onC
  *  badges, a one-line description, and an Install button that downloads it from the registry and enables it. */
 function MarketplaceCard({ e, onInstall, busy }: { e: MarketplaceEntry; onInstall: () => void; busy: boolean }) {
   const { t } = useTranslation();
-  const Icon = pluginIcon(e.name);
   return (
     <div className="flex flex-col gap-2 rounded-xl border border-border bg-surface px-4 py-3">
       <div className="flex items-center gap-3">
-        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-border bg-elevated text-text-muted">
-          <Icon size={17} aria-hidden />
-        </span>
+        <PluginIcon name={e.name} size={40} />
         <div className="flex min-w-0 flex-1 flex-col gap-0.5">
           <div className="flex min-w-0 items-center gap-2">
             <span className="truncate text-sm font-semibold text-text">{e.name}</span>
@@ -169,14 +169,11 @@ function MarketplaceCard({ e, onInstall, busy }: { e: MarketplaceEntry; onInstal
  *  version, description, and a Restore button that brings it back (disabled) into the installed list. */
 function RemovedCard({ p, onRestore, busy }: { p: PluginInfo; onRestore: () => void; busy: boolean }) {
   const { t, locale } = useTranslation();
-  const Icon = pluginIcon(p.name);
   const description = p.i18n?.[locale]?.description ?? p.description;
   return (
     <div className="flex flex-col gap-2 rounded-xl border border-dashed border-border bg-surface px-4 py-3">
       <div className="flex items-center gap-3">
-        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-border bg-elevated text-text-muted">
-          <Icon size={17} aria-hidden />
-        </span>
+        <PluginIcon name={p.name} hasIcon={p.hasIcon} size={40} />
         <div className="flex min-w-0 flex-1 flex-col gap-0.5">
           <div className="flex min-w-0 items-center gap-2">
             <span className="truncate text-sm font-semibold text-text">{p.name}</span>

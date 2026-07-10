@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { setupServer } from 'msw/node';
 import { http, HttpResponse } from 'msw';
@@ -24,6 +24,23 @@ function makeDrop(taskId: string) {
 const task = (over: Partial<Task> & { id: string }): Task => ({ title: over.id, status: 'open', project_id: 1, ...over });
 
 describe('TaskCard drag-onto-card', () => {
+  it('opens from Enter or Space without handling key events from nested controls', () => {
+    const open = vi.fn();
+    const { wrapper: W } = createWrapper();
+    render(
+      <ToastProvider><TaskCard task={task({ id: 'keyboard', title: 'Keyboard task' })} onEdit={open} /></ToastProvider>,
+      { wrapper: W },
+    );
+
+    const card = screen.getByText('Keyboard task').closest('[role="button"]')!;
+    fireEvent.keyDown(card, { key: 'Enter' });
+    fireEvent.keyDown(card, { key: ' ' });
+    expect(open).toHaveBeenCalledTimes(2);
+
+    fireEvent.keyDown(screen.getByRole('button', { name: 'Start' }), { key: 'Enter' });
+    expect(open).toHaveBeenCalledTimes(2);
+  });
+
   it('dropping a dragged task onto a plain task card opens the make-subtask/add-dependency choice', () => {
     function Harness() {
       const a = task({ id: 'a', title: 'Alpha' });

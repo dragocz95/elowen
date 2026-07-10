@@ -68,7 +68,8 @@ describe('PluginsSection catalog', () => {
     usePlugins.mockReturnValue({ data: [plugin({ name: 'weather', source: 'user' })], isLoading: false });
     useMarketplace.mockReturnValue({ data: { plugins: [entry({ name: 'weather', status: 'updateAvailable' })] }, isLoading: false });
     renderSection();
-    fireEvent.click(screen.getByRole('button', { name: en.plugins.update }));
+    fireEvent.click(screen.getByRole('button', { name: `weather: ${en.common.actions}` }));
+    fireEvent.click(within(screen.getByRole('menu')).getByRole('menuitem', { name: en.plugins.update }));
     expect(updateMutate).toHaveBeenCalledWith('weather', expect.anything());
   });
 
@@ -87,7 +88,8 @@ describe('PluginsSection catalog', () => {
   it('confirms then uninstalls a user plugin', () => {
     usePlugins.mockReturnValue({ data: [plugin({ name: 'weather', source: 'user' })], isLoading: false });
     renderSection();
-    fireEvent.click(screen.getByRole('button', { name: `weather: ${en.plugins.uninstall}` }));
+    fireEvent.click(screen.getByRole('button', { name: `weather: ${en.common.actions}` }));
+    fireEvent.click(within(screen.getByRole('menu')).getByRole('menuitem', { name: en.plugins.uninstall }));
     // Confirm dialog → the destructive confirm button fires the mutation.
     const confirm = screen.getAllByRole('button', { name: en.plugins.uninstall }).at(-1)!;
     fireEvent.click(confirm);

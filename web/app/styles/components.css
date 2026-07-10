@@ -1,31 +1,87 @@
-/* Black-OLED / Vercel-flat: NO resting shadow, NO hover lift, NO glow, NO gradient. Depth comes only
-   from the hairline border, which lightens a touch on hover. Keeps the whole app dead-flat on black. */
-.card-interactive { transition: border-color var(--motion-base) var(--ease-out), background-color var(--motion-base) var(--ease-out); }
-.card-interactive:hover { border-color: var(--color-border-strong); }
+/* Shared OLED surfaces. The warm edge and local highlight create depth without turning every block
+   into a floating SaaS card. */
+.living-surface {
+  position: relative;
+  border: 1px solid var(--color-border);
+  background:
+    linear-gradient(145deg, rgb(255 255 255 / 0.022), transparent 36%),
+    var(--color-surface);
+  box-shadow: var(--shadow-card);
+}
 
-/* The clock numerals: a vertical text gradient (flat — no glow). */
+.living-surface::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  border-top: 1px solid rgb(255 255 255 / 0.035);
+  pointer-events: none;
+}
+
+.ember-wash {
+  background-image: radial-gradient(circle at 82% 4%, rgb(255 82 54 / 0.11), transparent 45%);
+}
+
+.card-interactive {
+  transition:
+    border-color var(--motion-base) var(--ease-out),
+    background-color var(--motion-base) var(--ease-out),
+    box-shadow var(--motion-base) var(--ease-out),
+    transform var(--motion-base) var(--ease-out);
+}
+.card-interactive:hover {
+  border-color: var(--color-border-strong);
+  box-shadow: var(--shadow-raised);
+}
+html[data-effects='full'] .card-interactive:hover { transform: translateY(-1px); }
+
+.interactive-row {
+  transition: color var(--motion-fast) var(--ease-out), background-color var(--motion-fast) var(--ease-out);
+}
+.interactive-row:hover { background: rgb(255 255 255 / 0.025); }
+
 .hero-clock {
-  background: linear-gradient(180deg, var(--color-text) 35%, color-mix(in srgb, var(--color-text) 50%, transparent) 100%);
+  background: linear-gradient(180deg, var(--color-text) 34%, color-mix(in srgb, var(--color-text) 48%, transparent));
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
 }
 
-.skeleton { background: var(--color-elevated); border-radius: var(--radius-sm); animation: skel-pulse 1.4s ease-in-out infinite; }
+.skeleton {
+  border-radius: var(--radius-sm);
+  background: linear-gradient(100deg, var(--color-elevated) 30%, var(--color-overlay) 50%, var(--color-elevated) 70%);
+  background-size: 240% 100%;
+  animation: skeleton-drift 1.7s var(--ease-standard) infinite;
+}
+
 .live-dot { position: relative; }
-.live-dot::after { content: ''; position: absolute; inset: 0; border-radius: 9999px; animation: live-ring 2s ease-out infinite; }
+.live-dot::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 9999px;
+  animation: live-ring 2.2s var(--ease-out) infinite;
+}
 
-/* Active phase node (Mission Flow canvas): a crisp accent ring that pulses (no blur — stays within
-   the flat OLED look). */
-.flow-active { animation: flow-pulse 1.8s ease-in-out infinite; }
+.status-orb {
+  position: relative;
+  isolation: isolate;
+}
+.status-orb::before {
+  content: '';
+  position: absolute;
+  z-index: -1;
+  inset: -45%;
+  border-radius: 9999px;
+  background: radial-gradient(circle, currentColor 0%, transparent 68%);
+  opacity: 0.14;
+  animation: ember-breathe var(--motion-ambient) ease-in-out infinite;
+}
 
-/* Elowen wordmark is white line-art on transparent — invisible on the white light-mode surface.
-   Inverting the pure-white strokes yields pure black (alpha is preserved), so no separate asset. */
-/* The colored flame logo can't use invert (it would tint the red mascot); swap the wordmark
-   variant per theme instead — white wordmark on dark, black wordmark on light. */
+.flow-active { animation: flow-pulse 1.9s ease-in-out infinite; }
+
+/* Keep the original flat Elowen assets on the single OLED palette. */
 .logo-adaptive { content: url('/elowen-logo.png'); }
-html[data-theme='light'] .logo-adaptive { content: url('/elowen-logo-light.png'); }
 
-/* Hide the scrollbar on horizontally scrollable pill rows (settings/account category nav). */
 .scrollbar-none { scrollbar-width: none; -ms-overflow-style: none; }
 .scrollbar-none::-webkit-scrollbar { display: none; }

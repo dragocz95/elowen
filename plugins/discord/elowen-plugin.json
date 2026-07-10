@@ -184,6 +184,7 @@
       "key": "sec_media",
       "label": "Media limits",
       "type": "section",
+      "advanced": true,
       "hint": "Caps on inbound/outbound images and how long a pending question stays open."
     },
     {

@@ -111,6 +111,14 @@ describe('plugin routes', () => {
     expect(config.pluginConfig('discord')).toMatchObject({ botToken: 'tok-123', guildId: 'g2' });
   });
 
+  it('PATCH config treats null as an explicit clear for non-secret overrides', async () => {
+    const { app, config, adminTok } = setup();
+    await app.request('/plugins/discord/config', patch(adminTok, { values: { historyLimit: 10, botToken: 'tok-123' } }));
+    await app.request('/plugins/discord/config', patch(adminTok, { values: { historyLimit: null, botToken: null } }));
+    expect(config.pluginConfig('discord').historyLimit).toBeUndefined();
+    expect(config.pluginConfig('discord').botToken).toBe('tok-123');
+  });
+
   it('PATCH toggles a plugin, persists config, and hot-reloads the brain', async () => {
     const { app, config, reloadPlugins, adminTok } = setup();
     // Same isolation as above: start from a known-empty enabled set rather than the fresh-install default.

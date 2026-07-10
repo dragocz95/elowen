@@ -100,7 +100,7 @@ export function CalendarView({ tasks, onSelect, onCreateDay, onReschedule }: { t
               <div className="flex items-center justify-between px-0.5">
                 <span className="text-[11px] font-medium uppercase tracking-wide text-text-muted">{WD[(d.getDay() + 6) % 7]}</span>
                 <div className="flex items-center gap-1">
-                  {onCreateDay ? <button type="button" onClick={() => onCreateDay(d)} aria-label={t.tasks.newTask} className="text-text-muted opacity-0 transition-opacity hover:text-accent group-hover:opacity-100"><Plus size={13} /></button> : null}
+                  {onCreateDay ? <button type="button" onClick={() => onCreateDay(d)} aria-label={t.tasks.newTask} className="text-text-muted opacity-0 transition-opacity hover:text-accent focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100"><Plus size={13} /></button> : null}
                   <span className={`text-xs ${sameDay(d, today) ? 'text-accent' : 'text-text-muted'}`}>{d.getDate()}</span>
                 </div>
               </div>
@@ -123,7 +123,7 @@ export function CalendarView({ tasks, onSelect, onCreateDay, onReschedule }: { t
               return (
                 <div key={dayKey(d)} {...dropProps(d)} className={`group min-h-[6.5rem] border-b border-r p-1.5 transition-shadow ${dragDay === dayKey(d) ? 'border-accent' : 'border-border'} ${inMonth ? 'bg-surface' : 'bg-bg'}`}>
                   <div className="mb-1 flex items-center justify-between">
-                    {onCreateDay ? <button type="button" onClick={() => onCreateDay(d)} aria-label={t.tasks.newTask} className="text-text-muted opacity-0 transition-opacity hover:text-accent group-hover:opacity-100"><Plus size={12} /></button> : <span />}
+                    {onCreateDay ? <button type="button" onClick={() => onCreateDay(d)} aria-label={t.tasks.newTask} className="text-text-muted opacity-0 transition-opacity hover:text-accent focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100"><Plus size={12} /></button> : <span />}
                     <span className={`text-[11px] ${sameDay(d, today) ? 'font-bold text-accent' : inMonth ? 'text-text-muted' : 'text-text-muted/40'}`}>{d.getDate()}</span>
                   </div>
                   <div className="flex flex-col gap-1">

@@ -29,6 +29,9 @@ import { useAutoSave } from '../../lib/useAutoSave';
 import { useUiScale, MIN_SCALE, MAX_SCALE, DEFAULT_SCALE } from '../../lib/useUiScale';
 import { isPushSupported, enablePush, disablePush } from '../../lib/pushClient';
 import { SettingsLayout } from '../../components/ui/SettingsLayout';
+import { ChoiceField } from '../../components/ui/ChoiceField';
+import { SettingGroup, SettingRow } from '../../components/ui/SettingsPrimitives';
+import { useEffects, type EffectsMode } from '../../lib/useEffects';
 import { PersonalitySection } from './PersonalitySection';
 import { CliSection } from './CliSection';
 import { TerminalSection } from './TerminalSection';
@@ -102,6 +105,7 @@ export function AccountView() {
   const { toast } = useToast();
   const { t } = useTranslation();
   const { scale, setScale } = useUiScale();
+  const effects = useEffects();
   const fileRef = useRef<HTMLInputElement>(null);
   const scalePct = Math.round(scale * 100);
   const [section, setSection] = usePersistentState<'profile' | 'security' | 'notifications' | 'personality' | 'cli' | 'terminal' | 'memory'>(
@@ -260,6 +264,7 @@ export function AccountView() {
         sections={sections.map(({ id, icon, label }) => ({ id, label, icon }))}
         value={section}
         onChange={(v) => setSection(v as typeof section)}
+        searchPlaceholder={t.managePicker.searchPlaceholder}
       >
       {section === 'memory' ? <AccountMemorySection /> : section === 'personality' ? <PersonalitySection /> : section === 'terminal' ? <TerminalSection /> : null}
 
@@ -359,6 +364,22 @@ export function AccountView() {
             <Button variant="ghost" onClick={() => setScale(DEFAULT_SCALE)} disabled={scalePct === DEFAULT_SCALE * 100}>{t.account.uiScaleReset}</Button>
           </div>
         </SettingCard>
+
+        <SettingGroup>
+          <SettingRow title={t.account.effectsTitle} icon={Sparkles} description={t.account.effectsHint}>
+            <ChoiceField
+              title={t.account.effectsTitle}
+              value={effects.mode}
+              onChange={(value) => effects.setMode(value as EffectsMode)}
+              options={[
+                { value: 'auto', label: t.account.effectsAuto },
+                { value: 'full', label: t.account.effectsFull },
+                { value: 'reduced', label: t.account.effectsReduced },
+                { value: 'off', label: t.account.effectsOff },
+              ]}
+            />
+          </SettingRow>
+        </SettingGroup>
 
         {/* Discord account link — maps your Discord user to this Elowen account (owner persona on Discord). */}
         <SettingCard title={t.account.discordId} icon={AtSign} description={t.help.accountDiscordId}>

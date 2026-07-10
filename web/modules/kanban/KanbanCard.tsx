@@ -49,6 +49,8 @@ export function KanbanCard({ task, blocked, blockers, dragging, statusLabel, isP
 
   return (
     <div
+      role="button"
+      tabIndex={0}
       draggable={!blocked && !isPhase}
       onDragStart={onDragStart}
       onDragEnd={onDragEnd}
@@ -57,6 +59,13 @@ export function KanbanCard({ task, blocked, blockers, dragging, statusLabel, isP
       onDragLeave={drop.onDragLeave}
       onDrop={drop.onDrop}
       onClick={() => onSelect?.(task)}
+      onKeyDown={(e) => {
+        if (e.target !== e.currentTarget) return;
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onSelect?.(task);
+        }
+      }}
       onContextMenu={onContextMenu ? (e) => onContextMenu(e, task) : undefined}
       className={`flex gap-2.5 rounded-md border bg-bg p-2.5 transition-all ${blocked ? 'cursor-pointer border-danger/40' : 'cursor-grab border-border hover:border-border-strong'} ${isPhase ? 'ml-2 border-l-2 border-l-accent/40' : ''} ${dragging ? 'rotate-[1deg] opacity-50' : ''} ${drop.dragOver && dropTargetValid ? 'ring-2 ring-accent/60' : ''} ${drop.dragOver && dropTargetValid === false ? 'ring-2 ring-danger/40 opacity-60' : ''}`}
     >

@@ -23,6 +23,8 @@ import { allModels } from '../../lib/execPresets';
 import { elowenClient } from '../../lib/elowenClient';
 import type { CliStatus as CliStatusType } from '../../lib/types';
 import type { LocaleDict } from '../../lib/i18n/types';
+import { ElowenPresence } from '../../modules/dashboard/ElowenPresence';
+import { MotionItem, MotionStagger } from '../../components/ui/Motion';
 
 const STATUS_TONES = {
   success: { dot: 'bg-[var(--color-success)]', bg: 'bg-[var(--color-success)]/10', border: 'border-[var(--color-success)]/30', text: 'text-[var(--color-success)]' },
@@ -54,14 +56,25 @@ function CliRow({ tool, dict }: { tool: CliStatusType; dict: LocaleDict }) {
   );
 }
 
-function SectionCard({ title, icon: Icon, children }: { title: string; icon?: LucideIcon; children: React.ReactNode }) {
+function SectionCard({ title, icon: Icon, step, children }: { title: string; icon?: LucideIcon; step: number; children: React.ReactNode }) {
   return (
-    <div className="rounded-lg border border-border bg-surface">
-      <div className="flex items-center gap-2 border-b border-border px-5 py-4">
+    <section className="overflow-hidden rounded-2xl border border-border bg-surface shadow-[0_20px_70px_rgb(0_0_0_/_0.24)]">
+      <div className="flex items-center gap-3 border-b border-border px-5 py-4 sm:px-6">
+        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border border-accent/25 bg-accent/10 font-mono text-xs font-semibold text-accent">{String(step).padStart(2, '0')}</span>
         {Icon ? <Icon size={16} className="text-text-muted" aria-hidden /> : null}
         <h2 className="text-sm font-semibold tracking-tight text-text">{title}</h2>
       </div>
-      <div className="px-5 py-5">{children}</div>
+      <div className="px-5 py-5 sm:px-6 sm:py-6">{children}</div>
+    </section>
+  );
+}
+
+function SetupStep({ label, done }: { label: string; done: boolean }) {
+  return (
+    <div className="flex items-center gap-3 text-sm">
+      <span className={`h-2 w-2 rounded-full ${done ? 'bg-[var(--color-success)] shadow-[0_0_12px_rgb(34_197_94_/_0.65)]' : 'bg-text-muted/35'}`} aria-hidden />
+      <span className={done ? 'text-text' : 'text-text-muted'}>{label}</span>
+      {done ? <CheckCircle2 size={13} className="ml-auto text-[var(--color-success)]" aria-hidden /> : null}
     </div>
   );
 }
@@ -168,44 +181,51 @@ export default function OnboardingPage() {
   const backendReady = isFresh
     ? (!isFresh.noApiKey || !!(config.data?.autopilot.pilotExec || config.data?.autopilot.overseerExec))
     : false;
-  const allStepsDone = !isFresh?.noConfigPersisted && backendReady && users.data && users.data.length > 0;
+  const allStepsDone = Boolean(allFunctional && !isFresh?.noConfigPersisted && backendReady && users.data && users.data.length > 0);
 
   const agentTools = cliStatus.data?.tools.filter((t) => ['claude', 'codex', 'opencode', 'kilo'].includes(t.name)) ?? [];
   const sysTools = cliStatus.data?.tools.filter((t) => ['node', 'tmux', 'git'].includes(t.name)) ?? [];
+  const hasUsers = (users.data?.length ?? 0) > 0;
+  const configPersisted = isFresh ? !isFresh.noConfigPersisted : false;
 
   return (
     <ModuleShell moduleId="onboarding">
-      <div className="mx-auto flex max-w-2xl flex-col gap-6">
-        {/* Header */}
-        <div className="flex flex-col items-center gap-3 py-8 text-center">
-          <img src="/elowen-logo.png" alt="Elowen" className="h-12 w-auto" />
-          <h1 className="text-display font-bold tracking-tight text-text">{t.onboarding.title}</h1>
-          <p className="max-w-md text-sm text-text-muted">{t.onboarding.subtitle}</p>
-        </div>
-
-        {/* Progress indicator */}
-        {isFresh && (
-          <div className="flex items-center justify-center gap-3 rounded-lg border border-border bg-surface px-5 py-3">
-            {allStepsDone ? (
-              <>
-                <CheckCircle2 size={18} className="text-[var(--color-success)]" />
-                <span className="text-sm font-medium text-[var(--color-success)]">{t.onboarding.setupComplete}</span>
-              </>
-            ) : (
-              <>
-                <AlertCircle size={18} className="text-[var(--color-warning)]" />
-                <span className="text-sm text-text-muted">{t.onboarding.setupIncomplete}</span>
-              </>
-            )}
+      <div className="mx-auto grid w-full max-w-6xl gap-6 lg:grid-cols-[minmax(17rem,.72fr)_minmax(0,1.28fr)] lg:items-start">
+        <aside className="relative isolate overflow-hidden rounded-[1.5rem] border border-border bg-surface px-6 py-7 shadow-[0_26px_90px_rgb(0_0_0_/_0.4)] lg:sticky lg:top-4">
+          <div className="pointer-events-none absolute inset-0 -z-10 bg-[radial-gradient(circle_at_50%_18%,rgb(255_82_54_/_0.16),transparent_34%),linear-gradient(145deg,rgb(255_82_54_/_0.04),transparent_52%)]" aria-hidden />
+          <div className="mx-auto w-full max-w-[14rem]">
+            <ElowenPresence state={allStepsDone ? 'success' : 'idle'} label={t.common.appName} />
           </div>
-        )}
+          <div className="-mt-5 flex flex-col gap-3 text-center lg:text-left">
+            <span className="text-[11px] font-semibold uppercase tracking-[.15em] text-accent">{t.common.appName}</span>
+            <h1 className="font-display text-3xl font-semibold tracking-[-0.04em] text-text">{t.onboarding.title}</h1>
+            <p className="text-sm leading-relaxed text-text-muted">{t.onboarding.subtitle}</p>
+          </div>
 
-        {isLoading ? (
-          <LoadingState label={t.common.loading} />
-        ) : (
-          <>
+          {isFresh ? (
+            <div className={`mt-6 flex items-center gap-3 rounded-xl border px-4 py-3 ${allStepsDone ? 'border-[var(--color-success)]/25 bg-[var(--color-success)]/[.07]' : 'border-accent/20 bg-black/25'}`}>
+              {allStepsDone ? <CheckCircle2 size={17} className="text-[var(--color-success)]" /> : <AlertCircle size={17} className="text-accent" />}
+              <span className={`text-sm ${allStepsDone ? 'font-medium text-[var(--color-success)]' : 'text-text-muted'}`}>
+                {allStepsDone ? t.onboarding.setupComplete : t.onboarding.setupIncomplete}
+              </span>
+            </div>
+          ) : null}
+
+          <MotionStagger className="mt-6 flex flex-col gap-3 border-t border-border pt-5">
+            <MotionItem><SetupStep label={t.onboarding.systemDeps} done={allFunctional} /></MotionItem>
+            <MotionItem><SetupStep label={t.onboarding.providers} done={configPersisted} /></MotionItem>
+            <MotionItem><SetupStep label={t.onboarding.autopilotBackend} done={backendReady} /></MotionItem>
+            <MotionItem><SetupStep label={t.onboarding.users} done={hasUsers} /></MotionItem>
+          </MotionStagger>
+        </aside>
+
+        <div className="flex min-w-0 flex-col gap-4 py-1">
+          {isLoading ? (
+            <div className="rounded-2xl border border-border bg-surface p-10"><LoadingState label={t.common.loading} /></div>
+          ) : (
+            <>
             {/* System Dependencies */}
-            <SectionCard title={t.onboarding.systemDeps} icon={Terminal}>
+            <SectionCard step={1} title={t.onboarding.systemDeps} icon={Terminal}>
               <p className="mb-4 text-xs text-text-muted">{t.onboarding.systemDepsDesc}</p>
 
               <div className="mb-4 flex flex-col gap-2">
@@ -238,7 +258,7 @@ export default function OnboardingPage() {
             </SectionCard>
 
             {/* Provider Binaries */}
-            <SectionCard title={t.onboarding.providers} icon={HardDrive}>
+            <SectionCard step={2} title={t.onboarding.providers} icon={HardDrive}>
               <p className="mb-4 text-xs text-text-muted">{t.onboarding.providersDesc}</p>
               <div className="flex flex-col gap-4">
                 {PROVIDERS.map((p) => {
@@ -274,7 +294,7 @@ export default function OnboardingPage() {
             </SectionCard>
 
             {/* Autopilot backend — one choice: Relay (API key) OR CLI agents. */}
-            <SectionCard title={t.onboarding.autopilotBackend} icon={Key}>
+            <SectionCard step={3} title={t.onboarding.autopilotBackend} icon={Key}>
               <p className="mb-3 text-xs text-text-muted">{t.onboarding.autopilotBackendDesc}</p>
               <Segmented
                 value={reasoningMode}
@@ -329,7 +349,7 @@ export default function OnboardingPage() {
             </SectionCard>
 
             {/* Users */}
-            <SectionCard title={t.onboarding.users} icon={Users}>
+            <SectionCard step={4} title={t.onboarding.users} icon={Users}>
               <p className="mb-4 text-xs text-text-muted">{t.onboarding.usersDesc}</p>
 
               {/* Existing users */}
@@ -377,13 +397,14 @@ export default function OnboardingPage() {
             </SectionCard>
 
             {/* Action bar */}
-            <div className="flex items-center justify-center gap-4 border-t border-border pt-6 pb-8">
+            <div className="flex items-center justify-end gap-4 pt-3 pb-8">
               <Button variant="accent" icon={ArrowRight} onClick={() => router.push('/dash')}>
                 {t.onboarding.goToDashboard}
               </Button>
             </div>
-          </>
-        )}
+            </>
+          )}
+        </div>
       </div>
     </ModuleShell>
   );

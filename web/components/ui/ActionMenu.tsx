@@ -96,7 +96,7 @@ export function ActionMenu({ items, label, trigger, triggerClassName, align = 'r
         aria-expanded={open}
         title={resolvedLabel}
         onClick={() => (open ? setOpen(false) : openMenu())}
-        className={triggerClassName ?? 'inline-flex h-8 w-8 items-center justify-center rounded-md bg-danger text-white transition-colors hover:bg-danger/85'}
+        className={triggerClassName ?? 'inline-flex h-8 w-8 items-center justify-center rounded-md bg-danger text-bg transition-colors hover:bg-danger/85'}
         style={{ transitionDuration: 'var(--motion-fast)' }}
       >
         {trigger ?? <Trash2 size={15} aria-hidden />}
@@ -119,7 +119,7 @@ export function ActionMenu({ items, label, trigger, triggerClassName, align = 'r
                 type="button"
                 role="menuitem"
                 onClick={() => { setOpen(false); it.onSelect(); }}
-                className={`flex w-full items-center gap-2.5 px-3.5 py-2.5 text-left text-sm transition-colors ${danger ? 'text-danger hover:bg-danger hover:text-white' : 'text-text hover:bg-elevated'}`}
+                className={`flex w-full items-center gap-2.5 px-3.5 py-2.5 text-left text-sm transition-colors ${danger ? 'text-danger hover:bg-danger hover:text-bg' : 'text-text hover:bg-elevated'}`}
                 style={{ transitionDuration: 'var(--motion-fast)' }}
               >
                 {Icon ? <Icon size={15} aria-hidden /> : null}

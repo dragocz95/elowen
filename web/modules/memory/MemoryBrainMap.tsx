@@ -348,6 +348,10 @@ function BrainStyles() {
       }
       @keyframes brain-fiber { 0%, 100% { opacity: 0.06; } 50% { opacity: 0.16; } }
       .brain-edge-glow { opacity: 0.1; animation: brain-fiber 4.2s ease-in-out infinite; }
+      html[data-effects='reduced'] .brain-core-pulse,
+      html[data-effects='reduced'] .brain-edge-glow {
+        animation: none;
+      }
       @media (prefers-reduced-motion: reduce) {
         .brain-core-pulse { animation: none; }
         .brain-edge-glow { animation: none; }

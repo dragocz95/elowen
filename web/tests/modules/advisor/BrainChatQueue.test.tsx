@@ -6,6 +6,7 @@ import { onUnhandledRequest } from '../../msw';
 import { createWrapper } from '../../test-utils';
 import { ToastProvider } from '../../../components/ui/Toast';
 import { BrainChat } from '../../../modules/advisor/BrainChat';
+import { openBrainComposer, openBrainSession } from '../../../lib/brainDock';
 
 /** Minimal EventSource stand-in: BrainChat registers per-event listeners on it and we drive them by
  *  hand (the same pattern as useElowenEvents.test.tsx). `instances` lets a test grab the live stream. */
@@ -30,6 +31,7 @@ const server = setupServer(
   http.post('*/api/brain/start', () => HttpResponse.json({ sessionId: 'brain-1' }, { status: 201 })),
   http.get('*/api/brain/messages', () => HttpResponse.json([])),
   http.get('*/api/brain/status', () => HttpResponse.json({ running: true, sessionId: 'brain-1', model: 'm', usage: null, statusline: null, cards: [], queued: [] })),
+  http.get('*/api/brain/processes', () => HttpResponse.json([])),
   http.get('*/api/brain/sessions', () => HttpResponse.json([{ id: 'brain-1', title: 'Chat', model: 'm', updated_at: '2026-07-08', active: true, attached: 0 }])),
   http.get('*/api/brain/commands', () => HttpResponse.json({ commands: [] })),
   http.delete('*/api/brain/queue/:id', ({ params }) => { removed.push(String(params['id'])); return HttpResponse.json({ removed: true }); }),
@@ -50,6 +52,43 @@ function renderChat() {
 }
 
 describe('BrainChat pending queue', () => {
+  it('consumes a dashboard composer draft when the chat dock mounts', async () => {
+    openBrainComposer('draft from home');
+    renderChat();
+    const textarea = await screen.findByRole('textbox');
+    await waitFor(() => expect(textarea).toHaveValue('draft from home'));
+    expect(document.activeElement).toBe(textarea);
+  });
+
+  it('leaves read-only history, reconnects the personal stream, and preserves a draft on focus-only requests', async () => {
+    renderChat();
+    await waitFor(() => expect(FakeES.instances.length).toBeGreaterThan(0));
+
+    act(() => openBrainSession('discord-channel', false));
+    expect(await screen.findByText(/Read-only history|Historie jen pro čtení/i)).toBeInTheDocument();
+
+    act(() => openBrainComposer('continue in my chat'));
+    const textarea = await screen.findByRole('textbox');
+    await waitFor(() => expect(textarea).toHaveValue('continue in my chat'));
+    await waitFor(() => expect(FakeES.instances.length).toBeGreaterThan(1));
+
+    act(() => fireEvent.change(textarea, { target: { value: 'unsent draft' } }));
+    act(() => openBrainComposer());
+    expect(textarea).toHaveValue('unsent draft');
+    await waitFor(() => expect(document.activeElement).toBe(textarea));
+  });
+
+  it('appends a dashboard request without overwriting an existing unsent draft', async () => {
+    renderChat();
+    const textarea = await screen.findByRole('textbox');
+    act(() => fireEvent.change(textarea, { target: { value: 'existing unsent draft' } }));
+
+    act(() => openBrainComposer('new request from home'));
+
+    expect(textarea).toHaveValue('existing unsent draft\n\nnew request from home');
+    await waitFor(() => expect(document.activeElement).toBe(textarea));
+  });
+
   it('renders a `queue` snapshot as removable chips and DELETEs the item on ×', async () => {
     renderChat();
     // The stream connects after brainStart/history/status resolve.

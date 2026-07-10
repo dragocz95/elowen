@@ -1,13 +1,11 @@
 import './globals.css';
 import { GeistMono } from 'geist/font/mono';
-import { Quicksand } from 'next/font/google';
+import { GeistSans } from 'geist/font/sans';
 import type { ReactNode } from 'react';
 
-// Rounded display face for headings & nav. latin-ext is required for Czech diacritics
-// (Přehled/Nastavení/…). Exposed as --font-quicksand, consumed via --font-display in tokens.css.
-const quicksand = Quicksand({ subsets: ['latin', 'latin-ext'], weight: ['500', '600', '700'], variable: '--font-quicksand', display: 'swap' });
 import { Shell } from '../components/shell/Shell';
 import { en } from '../lib/i18n/dictionaries/en';
+import { EffectsProvider } from '../lib/useEffects';
 
 // Icons come from Next file conventions: app/icon.png → <link rel="icon"> and app/apple-icon.png →
 // <link rel="apple-touch-icon">. Do NOT set metadata.icons here — declaring it overrides the file
@@ -17,26 +15,29 @@ export const metadata = {
   manifest: '/manifest.json',
   appleWebApp: { capable: true, title: en.common.appName, statusBarStyle: 'black' as const },
 };
-// Reacts to the OS scheme so the mobile browser chrome matches the painted palette instead of a
-// hardcoded black (the localStorage override can't be read from the server).
+
+// Elowen is intentionally OLED-only. Browser chrome follows the same black canvas on every device.
 export const viewport = {
-  themeColor: [
-    { media: '(prefers-color-scheme: dark)', color: '#000000' },
-    { media: '(prefers-color-scheme: light)', color: '#ffffff' },
-  ],
+  colorScheme: 'dark' as const,
+  themeColor: '#000000',
 };
 
-// Set data-theme BEFORE first paint from the per-device preference (localStorage 'elowen:theme',
-// falling back to the OS scheme) so there's no light/dark flash on reload. Kept in sync afterwards by
-// ThemeProvider (lib/useTheme.tsx). `html` has suppressHydrationWarning so the attribute we add here
-// doesn't trip React's markup check.
-const NO_FLASH_THEME = `(function(){try{var t=localStorage.getItem('elowen:theme');var d=t==='light'||t==='dark'?t:(window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');document.documentElement.setAttribute('data-theme',d);}catch(e){}})();`;
+// Apply the per-device effects preference before first paint. This prevents an opted-out device from
+// briefly playing entrance or ambient motion while React hydrates. Theme is fixed in the markup.
+const NO_FLASH_EFFECTS = `(function(){try{var m=localStorage.getItem('elowen:effects');m=m==='full'||m==='reduced'||m==='off'?m:'auto';var r=m==='auto'?(window.matchMedia('(prefers-reduced-motion: reduce)').matches?'reduced':'full'):m;document.documentElement.setAttribute('data-effects-mode',m);document.documentElement.setAttribute('data-effects',r);}catch(e){}})();`;
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
-    <html lang="en" className={`${GeistMono.variable} ${quicksand.variable}`} suppressHydrationWarning>
-      <head><script dangerouslySetInnerHTML={{ __html: NO_FLASH_THEME }} /></head>
-      <body><Shell>{children}</Shell></body>
+    <html
+      lang="en"
+      className={`${GeistSans.variable} ${GeistMono.variable}`}
+      data-theme="dark"
+      data-effects-mode="auto"
+      data-effects="full"
+      suppressHydrationWarning
+    >
+      <head><script dangerouslySetInnerHTML={{ __html: NO_FLASH_EFFECTS }} /></head>
+      <body><EffectsProvider><Shell>{children}</Shell></EffectsProvider></body>
     </html>
   );
 }

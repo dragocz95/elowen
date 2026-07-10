@@ -17,4 +17,15 @@ describe('Segmented', () => {
     fireEvent.click(screen.getByRole('radio', { name: 'C' }));
     expect(onChange).toHaveBeenCalledWith('c');
   });
+  it('uses roving focus and arrow keys for the radio group', () => {
+    const onChange = vi.fn();
+    render(<Segmented aria-label="Mode" options={opts} value="b" onChange={onChange} />);
+    const active = screen.getByRole('radio', { name: 'B' });
+    expect(active).toHaveAttribute('tabindex', '0');
+    expect(screen.getByRole('radio', { name: 'A' })).toHaveAttribute('tabindex', '-1');
+    active.focus();
+    fireEvent.keyDown(active, { key: 'ArrowRight' });
+    expect(onChange).toHaveBeenCalledWith('c');
+    expect(screen.getByRole('radio', { name: 'C' })).toHaveFocus();
+  });
 });

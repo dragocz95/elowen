@@ -21,4 +21,12 @@ describe('ProjectsView', () => {
     expect(await screen.findByText('master')).toBeTruthy();
     expect(await screen.findByText('feat: x')).toBeTruthy();
   });
+
+  it('selects a project with Space', async () => {
+    const { wrapper: Wrapper } = createWrapper();
+    render(<Wrapper><ToastProvider><ProjectsView /></ToastProvider></Wrapper>);
+    const card = (await screen.findByText('elowen')).closest('[role="button"]')!;
+    fireEvent.keyDown(card, { key: ' ' });
+    expect(await screen.findByText('master')).toBeTruthy();
+  });
 });

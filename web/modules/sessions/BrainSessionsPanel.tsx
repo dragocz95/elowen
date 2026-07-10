@@ -128,7 +128,7 @@ export function BrainSessionsPanel() {
                   onClick={() => void doExport(s.id, 'html')}
                   aria-label={t.sessionsPanel.exportHtml}
                   title={t.sessionsPanel.exportHtml}
-                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-text-muted opacity-0 transition-all hover:text-text group-hover:opacity-100"
+                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-text-muted opacity-0 transition-all hover:text-text focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100"
                 >
                   <FileCode size={14} aria-hidden />
                 </button>
@@ -137,7 +137,7 @@ export function BrainSessionsPanel() {
                   onClick={() => void doExport(s.id, 'jsonl')}
                   aria-label={t.sessionsPanel.exportJsonl}
                   title={t.sessionsPanel.exportJsonl}
-                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-text-muted opacity-0 transition-all hover:text-text group-hover:opacity-100"
+                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-text-muted opacity-0 transition-all hover:text-text focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100"
                 >
                   <FileJson size={14} aria-hidden />
                 </button>
@@ -146,7 +146,7 @@ export function BrainSessionsPanel() {
                   onClick={() => setConfirmId(s.id)}
                   aria-label={t.common.delete}
                   title={t.common.delete}
-                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-text-muted opacity-0 transition-all hover:text-danger group-hover:opacity-100"
+                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-text-muted opacity-0 transition-all hover:text-danger focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100"
                 >
                   <Trash2 size={14} aria-hidden />
                 </button>

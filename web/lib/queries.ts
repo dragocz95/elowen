@@ -126,11 +126,6 @@ export const useUsageByDay = (projectId?: number, days = 7) =>
 export const useMissions = () =>
   useQuery({ queryKey: QUERY_KEYS.missions, queryFn: elowenClient.missions });
 
-/** Files changed across a mission's phases (aggregated). Invalidated by the SSE `change` event
- *  (see useElowenEvents), so the dashboard's live mission card stays fresh as phases land commits. */
-export const useMissionChangedFiles = (id: string) =>
-  useQuery({ queryKey: ['mission-changed-files', id], queryFn: () => elowenClient.missionChangedFiles(id), enabled: !!id });
-
 export const useHealth = () =>
   useQuery({
     queryKey: QUERY_KEYS.health,

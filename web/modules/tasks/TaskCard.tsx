@@ -65,7 +65,13 @@ export function TaskCard({ task, onEdit, onSelect, onContextMenu, active = false
       onDrop={drop.onDrop}
       onClick={open}
       onContextMenu={onContextMenu ? (e) => onContextMenu(e, task) : undefined}
-      onKeyDown={(e) => { if (e.key === 'Enter') open(); }}
+      onKeyDown={(e) => {
+        if (e.target !== e.currentTarget) return;
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          open();
+        }
+      }}
       className={`card-interactive group relative flex items-center gap-3 rounded-lg border p-2.5 ${onDragStart && !isPhase ? 'cursor-grab' : 'cursor-pointer'} ${selected || active ? 'border-accent bg-accent/[0.06]' : 'border-border bg-surface'} ${dragging ? 'rotate-[1deg] opacity-50' : ''} ${drop.dragOver && dropTargetValid ? 'ring-2 ring-accent/60' : ''} ${drop.dragOver && dropTargetValid === false ? 'ring-2 ring-danger/40 opacity-60' : ''}`}
     >
       {/* model-icon bubble — accent ring while the agent is live */}
@@ -126,7 +132,7 @@ export function TaskCard({ task, onEdit, onSelect, onContextMenu, active = false
           aria-checked={selected}
           aria-label={t.sessions.selectLabel.replace('{id}', task.id)}
           onClick={(e) => { e.stopPropagation(); onToggleSelect(task.id); }}
-          className={`shrink-0 transition-opacity ${selecting || selected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
+          className={`shrink-0 transition-opacity ${selecting || selected ? 'opacity-100' : 'opacity-0 focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100'}`}
         >
           <Checkbox checked={selected} />
         </button>

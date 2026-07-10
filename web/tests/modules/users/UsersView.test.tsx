@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { setupServer } from 'msw/node';
 import { http, HttpResponse } from 'msw';
 import { onUnhandledRequest } from '../../msw';
@@ -22,6 +22,19 @@ describe('UsersView', () => {
     // alice is the first user, so she appears both in the list and (default-selected) the detail pane.
     expect((await screen.findAllByText('alice')).length).toBeGreaterThan(0);
     expect(screen.getByText('bob')).toBeTruthy();
+  });
+
+  it('selects rows with Space and ignores bubbled keys from nested actions', async () => {
+    const { wrapper: Wrapper } = createWrapper();
+    render(<Wrapper><ToastProvider><UsersView /></ToastProvider></Wrapper>);
+    const bobRow = (await screen.findByText('bob')).closest('[role="button"]')!;
+    expect(bobRow).toHaveAttribute('aria-pressed', 'false');
+
+    fireEvent.keyDown(within(bobRow as HTMLElement).getByRole('button', { name: 'Delete bob' }), { key: 'Enter' });
+    expect(bobRow).toHaveAttribute('aria-pressed', 'false');
+
+    fireEvent.keyDown(bobRow, { key: ' ' });
+    expect(bobRow).toHaveAttribute('aria-pressed', 'true');
   });
 
   it('admin can select a user and restrict them to a model from the detail pane', async () => {

@@ -308,6 +308,8 @@ export interface PluginConfigField {
   help?: string;
   /** Per-field risk label surfaced in the UI. */
   risk?: 'low' | 'medium' | 'high';
+  /** Presentational grouping only: render this field in the plugin workspace's Advanced tab. */
+  advanced?: boolean;
   /** Conditional visibility: render this field only when field `key` currently equals `equals`. */
   visibleWhen?: { key: string; equals: string | number | boolean };
 }

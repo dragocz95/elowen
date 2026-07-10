@@ -1,219 +1,191 @@
 'use client';
-import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { useCallback, useEffect, useRef } from 'react';
-import { User, ShieldAlert } from 'lucide-react';
-import { modulesByGroup } from '../../modules/registry';
-import { SETTINGS_SECTIONS } from '../../modules/settings/categories';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
+import { CircleUserRound, Settings2 } from 'lucide-react';
+import { NAVIGATION_WORLDS, SYSTEM_MODULES } from '../../modules/registry';
 import { useSidebarState } from '../../lib/useSidebarState';
-import { useHealth, useTasks, useMe, useEscalations, usePendingAsks } from '../../lib/queries';
+import { useHealth, useTasks, useMe } from '../../lib/queries';
 import { useTranslation } from '../../lib/i18n';
 import { NavGroup } from './NavGroup';
 import { OpsStatusBar } from './OpsStatusBar';
-import { Avatar } from '../ui/Avatar';
 
-const RAIL = 56;
+const RAIL = 68;
 const DAEMON_STATUS = {
   ready: { color: 'var(--color-success)', ring: 'color-mix(in srgb, var(--color-success) 50%, transparent)' },
   busy: { color: 'var(--color-warning)', ring: 'color-mix(in srgb, var(--color-warning) 50%, transparent)' },
   fail: { color: 'var(--color-error)', ring: 'color-mix(in srgb, var(--color-error) 50%, transparent)' },
 } as const;
 
-/** How the sidebar presents itself, decided by the shell from the MEASURED room it has (not the
- *  viewport): `full` = user's pin decides expanded/rail · `rail` = forced icon rail (space is tight) ·
- *  `drawer` = off-canvas hamburger drawer (very tight / phones). */
+/** How the sidebar presents itself, decided by the shell from the measured room it has. */
 export type SidebarMode = 'full' | 'rail' | 'drawer';
 
-export function Sidebar({ mode = 'full', drawerOpen = false, onDrawerClose, side = 'left' }: { mode?: SidebarMode; drawerOpen?: boolean; onDrawerClose?: () => void; side?: 'left' | 'right' }) {
+export function Sidebar({
+  mode = 'full',
+  drawerOpen = false,
+  onDrawerClose,
+  side = 'left',
+}: {
+  mode?: SidebarMode;
+  drawerOpen?: boolean;
+  onDrawerClose?: () => void;
+  side?: 'left' | 'right';
+}) {
   const pathname = usePathname();
   const { collapsed, width, toggle, setWidth } = useSidebarState();
   const { data } = useHealth();
   const tasks = useTasks();
   const me = useMe();
-  const isAdmin = me.data?.user?.is_admin ?? false;
-  const up = data?.ok === true;
-  // ready = up & idle · busy = up & a task is actually in progress · fail = unreachable
-  const working = (tasks.data ?? []).some((t) => t.status === 'in_progress');
-  const status: keyof typeof DAEMON_STATUS = !up ? 'fail' : working ? 'busy' : 'ready';
-  const nextReady = (tasks.data ?? []).find((t) => t.status === 'open' && t.type !== 'epic');
-  const escalations = useEscalations();
-  // Agent questions parked on a human count as escalations for the badge — an agent is blocked on each.
-  const pendingAsks = usePendingAsks().data ?? [];
-  const escalationCount = escalations.length + pendingAsks.length;
+  const { t } = useTranslation();
   const dragging = useRef(false);
 
-  const { t } = useTranslation();
-
+  const isAdmin = me.data?.user?.is_admin ?? false;
+  const up = data?.ok === true;
+  const working = (tasks.data ?? []).some((task) => task.status === 'in_progress');
+  const status: keyof typeof DAEMON_STATUS = !up ? 'fail' : working ? 'busy' : 'ready';
   const drawer = mode === 'drawer';
-  // Drawer shows full content; a forced rail (tight space) collapses; otherwise the user's pin decides.
   const expanded = drawer ? true : mode === 'rail' ? false : !collapsed;
 
-  // Close the drawer after navigating. Keyed on `pathname` ALONE on purpose: `onDrawerClose` is a fresh
-  // inline arrow each render, so listing it would fire this on every parent re-render (closing the
-  // drawer spuriously); `drawer` is read at run time. Only a route change should close it.
-  useEffect(() => { if (drawer) onDrawerClose?.(); }, [pathname]); // eslint-disable-line react-hooks/exhaustive-deps
-  // Same-page section switches (settings sub-items) change only the `?cat=` query, not the pathname, so
-  // the effect above won't fire — they navigate via history + a popstate signal. Close the drawer on
-  // that too (and on browser back/forward) so tapping a settings section on a phone dismisses the menu.
-  useEffect(() => {
-    if (!drawer) return;
-    const close = () => onDrawerClose?.();
-    window.addEventListener('popstate', close);
-    return () => window.removeEventListener('popstate', close);
-  }, [drawer]); // eslint-disable-line react-hooks/exhaustive-deps
+  const worlds = useMemo(() => NAVIGATION_WORLDS.map((world) => ({
+    id: world.id,
+    href: world.route,
+    label: t.nav[world.id],
+    icon: world.icon,
+    activeRoutes: [world.route, ...world.children.map((module) => module.route)],
+    subItems: world.children.length > 0
+      ? world.children.map((module) => ({
+        id: module.id,
+        href: module.route,
+        label: t.nav[module.id as keyof typeof t.nav] ?? module.label,
+        icon: module.icon,
+      }))
+      : undefined,
+  })), [t]);
 
-  const onPointerDown = useCallback((e: React.PointerEvent) => {
+  const systemItems = useMemo(() => {
+    const visibleModules = isAdmin ? SYSTEM_MODULES : [];
+    return [{
+      id: 'system',
+      label: t.nav.system,
+      icon: Settings2,
+      activeRoutes: ['/account', ...visibleModules.map((module) => module.route)],
+      subItems: [
+        { id: 'account', href: '/account', label: t.nav.account, icon: CircleUserRound },
+        ...visibleModules.map((module) => ({
+          id: module.id,
+          href: module.route,
+          label: t.nav[module.id as keyof typeof t.nav] ?? module.label,
+          icon: module.icon,
+        })),
+      ],
+    }];
+  }, [isAdmin, t]);
+
+  // Route changes are the only automatic drawer-close signal; the callback itself is an unstable
+  // inline prop from Shell, so intentionally keep it out of this dependency list.
+  useEffect(() => { if (drawer) onDrawerClose?.(); }, [pathname]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const onPointerDown = useCallback((event: React.PointerEvent) => {
     dragging.current = true;
-    (e.target as Element).setPointerCapture?.(e.pointerId);
+    (event.target as Element).setPointerCapture?.(event.pointerId);
   }, []);
-  const onPointerMove = useCallback((e: React.PointerEvent) => {
-    // When the rail sits on the right edge, width grows as the cursor moves left, so measure from the
-    // viewport's right edge instead of from x=0.
-    if (dragging.current) setWidth(side === 'right' ? window.innerWidth - e.clientX : e.clientX);
+  const onPointerMove = useCallback((event: React.PointerEvent) => {
+    if (dragging.current) setWidth(side === 'right' ? window.innerWidth - event.clientX : event.clientX);
   }, [setWidth, side]);
-  const onPointerUp = useCallback((e: React.PointerEvent) => {
+  const onPointerUp = useCallback((event: React.PointerEvent) => {
     dragging.current = false;
-    (e.target as Element).releasePointerCapture?.(e.pointerId);
+    (event.target as Element).releasePointerCapture?.(event.pointerId);
   }, []);
+
+  const drawerPosition = side === 'right'
+    ? `right-0 border-l ${drawerOpen ? 'translate-x-0' : 'translate-x-full'}`
+    : `left-0 border-r ${drawerOpen ? 'translate-x-0' : '-translate-x-full'}`;
 
   return (
     <>
-      {drawer && (
+      {drawer ? (
         <div
           aria-hidden
           onClick={onDrawerClose}
-          className={`fixed inset-0 z-40 bg-black/50 transition-opacity ${drawerOpen ? 'opacity-100' : 'pointer-events-none opacity-0'}`}
+          className={`fixed inset-0 z-40 bg-black/70 backdrop-blur-[2px] transition-opacity ${drawerOpen ? 'opacity-100' : 'pointer-events-none opacity-0'}`}
         />
-      )}
-    <nav
-      aria-label={t.common.primaryNav}
-      className={drawer
-        ? `fixed inset-y-0 left-0 z-50 flex h-full w-[264px] flex-col overflow-hidden border-r border-border bg-surface transition-transform duration-200 ${drawerOpen ? 'translate-x-0' : '-translate-x-full'}`
-        : `relative flex h-full shrink-0 flex-col ${side === 'right' ? 'border-l' : 'border-r'} border-border bg-surface transition-[width] duration-200`}
-      style={drawer ? { transitionTimingFunction: 'var(--ease-out)' } : { width: expanded ? width : RAIL, transitionTimingFunction: 'var(--ease-out)' }}
-    >
-      <div className="flex h-14 items-center justify-center border-b border-border px-3 overflow-hidden">
-        {expanded
-          ? <img src="/elowen-logo.png" alt={t.common.appName} className="logo-adaptive h-9 w-auto" />
-          : <img src="/icon.png" alt={t.common.appName} className="h-7 w-7 rounded-md" />}
-      </div>
+      ) : null}
 
-      <div className="flex-1 overflow-y-auto py-2">
-        {modulesByGroup().filter((g) => (g.group !== 'Config' || isAdmin) && g.items.length > 0).map((g) => {
-          const groupLabel = g.group === 'Operate' ? t.nav.operate : t.nav.config;
-          return (
-            <NavGroup
-              key={g.group}
-              group={{
-                label: groupLabel,
-                items: g.items.map((m) => ({
-                  href: m.route,
-                  label: t.nav[m.id as keyof typeof t.nav] ?? m.label,
-                  icon: m.icon,
-                  badge: m.id === 'escalations' ? escalationCount : undefined,
-                  subItems: m.id === 'settings'
-                    ? SETTINGS_SECTIONS.map((s) => ({ id: s.id, href: `/settings?cat=${s.id}`, label: t.settings[s.id] }))
-                    : undefined,
-                })),
-              }}
-              pathname={pathname}
-              collapsed={!expanded}
-            />
-          );
-        })}
-      </div>
-
-      {/* Escalations alert — sits above "next ready" so a rejected phase waiting on a human is the
-          first thing you see. Warning-toned, shows the count and the latest rejected phase. */}
-      {expanded && escalationCount > 0 && (() => {
-        const topTitle = escalations[0]?.title ?? pendingAsks[0]?.title ?? t.escalations.askTitle;
-        return (
-          <Link href="/escalations" className="border-t border-warning/30 bg-warning/[0.06] px-4 py-2.5 transition-colors hover:bg-warning/10" title={topTitle}>
-            <div className="flex items-center gap-1.5 text-tiny font-semibold uppercase tracking-wide text-warning">
-              <ShieldAlert size={12} aria-hidden />{t.common.escalationsWaiting.replace('{count}', String(escalationCount))}
-            </div>
-            <div className="mt-0.5 truncate text-xs text-text">{topTitle}</div>
-          </Link>
-        );
-      })()}
-
-      {expanded && nextReady && (
-        <Link href="/tasks" className="border-t border-border px-4 py-2.5 transition-colors hover:bg-elevated" title={nextReady.title}>
-          <div className="text-tiny font-medium uppercase tracking-wide text-text-muted">{t.common.nextReady}</div>
-          <div className="mt-0.5 truncate text-xs text-text">{nextReady.title}</div>
-        </Link>
-      )}
-
-      <OpsStatusBar expanded={expanded} />
-
-      {/* Thin footer: account link (avatar + name + role) with the live daemon-health as a corner dot.
-          The bell / theme / language controls now live in the global top bar. */}
-      <div className={`flex border-t border-border px-3 py-2 ${expanded ? 'items-center gap-1.5' : 'flex-col items-center gap-2'}`}>
-        <Link
-          href="/account"
-          className={`flex min-w-0 items-center gap-2 rounded-md py-1 transition-colors hover:bg-elevated ${expanded ? 'flex-1 px-1' : ''}`}
-          title={me.data?.user ? (me.data.user.name || me.data.user.username) : t.common.daemon}
-        >
-          <span className="relative flex shrink-0 items-center justify-center">
-            {me.data?.user
-              ? <Avatar user={me.data.user} size={28} />
-              : <span className="flex h-7 w-7 items-center justify-center rounded-full border border-border bg-elevated"><User size={14} className="text-text-muted" aria-hidden /></span>}
+      <nav
+        aria-label={t.common.primaryNav}
+        className={drawer
+          ? `fixed inset-y-0 z-50 flex h-full w-[288px] flex-col border-border bg-surface/95 shadow-2xl backdrop-blur-xl transition-transform duration-200 ${drawerPosition}`
+          : `relative flex h-full shrink-0 flex-col ${side === 'right' ? 'border-l' : 'border-r'} border-border bg-surface/80 backdrop-blur-xl transition-[width] duration-200`}
+        style={drawer ? { transitionTimingFunction: 'var(--ease-out)' } : { width: expanded ? width : RAIL, transitionTimingFunction: 'var(--ease-out)' }}
+      >
+        <div className={`flex h-16 shrink-0 items-center border-b border-border/80 ${expanded ? 'justify-between px-4' : 'justify-center px-2'}`}>
+          {expanded ? (
+            <img src="/elowen-logo.png" alt={t.common.appName} className="logo-adaptive h-9 w-auto max-w-[152px]" />
+          ) : (
+            <img src="/icon.png" alt={t.common.appName} className="h-8 w-8 rounded-lg" />
+          )}
+          {expanded ? (
             <span
               role="status"
               aria-label={up ? t.common.daemonUp : t.common.daemonDown}
               title={status === 'fail' ? t.common.daemonOffline : status === 'busy' ? t.common.daemonBusy : t.common.daemonReady}
-              className={`absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border-2 border-surface ${up ? 'live-dot' : ''}`}
+              className={`h-2.5 w-2.5 rounded-full ${up ? 'live-dot' : ''}`}
               style={{ backgroundColor: DAEMON_STATUS[status].color, ['--live-ring' as string]: DAEMON_STATUS[status].ring }}
             />
-          </span>
-          {expanded && me.data?.user && (
-            <span className="flex min-w-0 flex-col leading-tight">
-              <span className="truncate text-xs font-medium text-text">{me.data.user.name || me.data.user.username}</span>
-              <span className="truncate text-tiny text-text-muted">{me.data.user.is_admin ? t.users.admin : t.users.member}</span>
-            </span>
-          )}
-        </Link>
-      </div>
-
-      {/* Version + authorship credit — its own line-separated footer at the very bottom. */}
-      {expanded && (
-        <div className="flex flex-col items-center gap-0.5 border-t border-border px-3 py-2 text-center">
-          <span className="font-mono text-tiny text-text-muted">elowen v{data?.version ?? '—'}</span>
-          <a
-            href="https://dragocz.dev"
-            target="_blank"
-            rel="noreferrer"
-            className="text-tiny font-semibold uppercase tracking-[0.15em] text-text-muted/70 transition-colors hover:text-text"
-          >
-            by dragocz.dev
-          </a>
+          ) : null}
         </div>
-      )}
 
-      {/* Pill handle toggle (pins collapsed/expanded) — only when the user's pin actually decides
-          (`full`); a space-forced rail ignores the pin, so the toggle would be a no-op there. */}
-      {mode === 'full' && (
-        <button
-          type="button"
-          aria-label={t.common.toggleSidebar}
-          onClick={toggle}
-          className={`group absolute ${side === 'right' ? '-left-2.5' : '-right-2.5'} top-1/2 z-10 flex h-14 w-4 -translate-y-1/2 cursor-pointer items-center justify-center`}
-        >
-          <span className="h-9 w-1 rounded-full bg-border-strong transition-all duration-200 group-hover:h-12 group-hover:bg-text-muted" />
-        </button>
-      )}
+        <div className={`flex-1 py-2 ${expanded ? 'overflow-y-auto overflow-x-hidden' : 'overflow-visible'}`}>
+          <NavGroup
+            group={{ label: t.nav.worlds, items: worlds }}
+            pathname={pathname}
+            collapsed={!expanded}
+            forceSubItems={drawer}
+            side={side}
+            expandLabel={t.common.expand}
+            collapseLabel={t.common.collapse}
+          />
+        </div>
 
-      {!drawer && expanded && (
-        <div
-          data-testid="sidebar-resize"
-          onPointerDown={onPointerDown}
-          onPointerMove={onPointerMove}
-          onPointerUp={onPointerUp}
-          onDoubleClick={() => setWidth(224)}
-          className={`absolute ${side === 'right' ? 'left-0' : 'right-0'} top-0 h-full w-1 cursor-col-resize`}
-        />
-      )}
-    </nav>
+        <div className="shrink-0 border-t border-border/80 bg-bg/20">
+          <OpsStatusBar expanded={expanded} />
+          {expanded ? (
+            <div className="px-4 pt-1 text-center font-mono text-[9px] uppercase tracking-[0.14em] text-text-muted/45">
+              Elowen {data?.version ?? '—'}
+            </div>
+          ) : null}
+          <NavGroup
+            group={{ label: t.nav.system, items: systemItems }}
+            pathname={pathname}
+            collapsed={!expanded}
+            forceSubItems={drawer}
+            side={side}
+            expandLabel={t.common.expand}
+            collapseLabel={t.common.collapse}
+          />
+        </div>
+
+        {mode === 'full' ? (
+          <button
+            type="button"
+            aria-label={t.common.toggleSidebar}
+            onClick={toggle}
+            className={`group absolute ${side === 'right' ? '-left-2.5' : '-right-2.5'} top-1/2 z-10 flex h-14 w-4 -translate-y-1/2 cursor-pointer items-center justify-center`}
+          >
+            <span className="h-9 w-1 rounded-full bg-border-strong transition-all duration-200 group-hover:h-12 group-hover:bg-accent/60" />
+          </button>
+        ) : null}
+
+        {!drawer && expanded ? (
+          <div
+            data-testid="sidebar-resize"
+            onPointerDown={onPointerDown}
+            onPointerMove={onPointerMove}
+            onPointerUp={onPointerUp}
+            onDoubleClick={() => setWidth(224)}
+            className={`absolute ${side === 'right' ? 'left-0' : 'right-0'} top-0 h-full w-1 cursor-col-resize`}
+          />
+        ) : null}
+      </nav>
     </>
   );
 }

@@ -26,6 +26,7 @@ export const PLUGIN_API_VERSION = '1';
  *  - `language` — syntax mode for `code`.
  *  - `help` — richer help text than the one-line `hint`.
  *  - `risk` — a per-field risk label (`low`/`medium`/`high`) surfaced in the UI.
+ *  - `advanced` — keeps expert-only controls in the plugin workspace's Advanced tab.
  *  - `visibleWhen` — conditional visibility: show only when field `key` equals `equals`. */
 interface PluginConfigField {
   key: string;
@@ -53,6 +54,8 @@ interface PluginConfigField {
   help?: string;
   /** Per-field risk label surfaced in the UI. */
   risk?: 'low' | 'medium' | 'high';
+  /** Presentational grouping only; runtime config semantics are unchanged. */
+  advanced?: boolean;
   /** Conditional visibility: render this field only when field `key` currently equals `equals`. */
   visibleWhen?: { key: string; equals: string | number | boolean };
 }
@@ -137,6 +140,7 @@ const ManifestSchema = Type.Object({
     risk: Type.Optional(Type.Union([
       Type.Literal('low'), Type.Literal('medium'), Type.Literal('high'),
     ])),
+    advanced: Type.Optional(Type.Boolean()),
     visibleWhen: Type.Optional(Type.Object({
       key: Type.String(),
       equals: Type.Union([Type.String(), Type.Number(), Type.Boolean()]),

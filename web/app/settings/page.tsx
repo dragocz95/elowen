@@ -23,7 +23,7 @@ import { ElowenApiError } from '../../lib/elowenClient';
 import { allModels, isPresetExec, removeModel, upsertModel } from '../../lib/execPresets';
 import { usePersistentState } from '../../lib/usePersistentState';
 import { useSearchParams } from 'next/navigation';
-import { SETTINGS_CATEGORY_VALUES, type SettingsCategory } from '../../modules/settings/categories';
+import { SETTINGS_CATEGORY_VALUES, SETTINGS_SECTIONS, type SettingsCategory } from '../../modules/settings/categories';
 import { PageLayout } from '../../components/ui/PageLayout';
 import { RailCard } from '../../components/ui/RailCard';
 import { useToast } from '../../components/ui/Toast';
@@ -35,6 +35,7 @@ import { Badge } from '../../components/ui/Badge';
 import { Toggle } from '../../components/ui/Toggle';
 import { Segmented } from '../../components/ui/Segmented';
 import { SettingCard } from '../../components/ui/SettingCard';
+import { SettingsLayout } from '../../components/ui/SettingsLayout';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { HelpTip } from '../../components/ui/HelpTip';
 import { LoadingState, ErrorState, EmptyState } from '../../components/ui/states';
@@ -333,10 +334,14 @@ export default function SettingsPage() {
     <ModuleShell moduleId="settings">
       <ModuleHeader title={`${t.page.settings} / ${t.settings[category]}`} icon={SlidersHorizontal} />
 
-      {/* Section content — the category picker now lives in the main sidebar (nested under "Nastavení").
-          Capped + centered at the same max-width as the dashboard so every settings section reads the
-          same on wide screens instead of stretching edge-to-edge. */}
       <div className="mx-auto flex w-full min-w-0 max-w-5xl flex-col gap-6">
+      <SettingsLayout
+        ariaLabel={t.settings.sectionsNav}
+        sections={SETTINGS_SECTIONS.map(({ id, icon }) => ({ id, icon, label: t.settings[id] }))}
+        value={category}
+        onChange={(value) => setCategory(value as Category)}
+        searchPlaceholder={t.managePicker.searchPlaceholder}
+      >
         {category === 'models' && (
           <>
             {/* Cross-link to where models come from (accounts, keys, endpoints) — the Elowen AI section. */}
@@ -386,7 +391,7 @@ export default function SettingsPage() {
                               aria-label={t.settings.deleteLabel.replace('{exec}', p.exec)}
                               title={t.settings.deleteLabel.replace('{exec}', p.exec)}
                               onClick={() => setPendingDelete(p.exec)}
-                              className="flex h-6 w-6 items-center justify-center rounded-md border border-danger/60 bg-surface text-danger transition-colors hover:bg-danger hover:text-white"
+                              className="flex h-6 w-6 items-center justify-center rounded-md border border-danger/60 bg-surface text-danger transition-colors hover:bg-danger hover:text-bg"
                               style={{ transitionDuration: 'var(--motion-fast)' }}
                             >
                               <X size={13} aria-hidden />
@@ -790,7 +795,7 @@ export default function SettingsPage() {
                       onError: (e) => toast(e instanceof ElowenApiError && e.code === 'mission_running' ? t.settings.updateBlockedMission : String(e), 'error'),
                     })}
                     disabled={systemUpdate.isPending || !system.data?.updateAvailable}
-                    className="inline-flex h-9 items-center gap-1.5 rounded-md border border-accent bg-accent px-4 text-xs font-medium text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:border-border disabled:bg-elevated disabled:text-text-muted disabled:opacity-60"
+                    className="inline-flex h-9 items-center gap-1.5 rounded-md border border-accent bg-accent px-4 text-xs font-medium text-bg transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:border-border disabled:bg-elevated disabled:text-text-muted disabled:opacity-60"
                   >
                     <RefreshCw size={14} className={systemUpdate.isPending ? 'animate-spin' : ''} />
                     {systemUpdate.isPending ? t.settings.updating : t.settings.updateNow}
@@ -862,6 +867,7 @@ export default function SettingsPage() {
           </div>
         )}
 
+      </SettingsLayout>
       </div>
 
       <ConfirmDialog

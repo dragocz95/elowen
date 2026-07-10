@@ -1,36 +1,57 @@
-/* Scale the whole UI up ~25% via the rem base — all rem-based type & spacing grow together.
-   Phones keep the natural 100% base so the dense operational UI isn't forced 25% larger into a
-   ~390px viewport; the upscale kicks in at the md breakpoint (768px) where there's room for it. */
-html { font-size: 100%; }
+/* Scale the whole UI from one rem base. Phones stay at 100%; wider workspaces retain Elowen's
+   user-configurable dense/comfortable layout behavior. */
+html { font-size: 100%; background: #000; }
 @media (min-width: 768px) { html { font-size: 125%; } }
 
 html, body {
   height: 100%;
-  background: var(--color-bg);
+  background-color: var(--color-bg);
   color: var(--color-text);
   font-family: var(--font-sans);
   font-weight: 400;
+  font-feature-settings: "ss01" 1, "cv01" 1, "cv09" 1;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
 }
 
-/* App shell owns scrolling (in <main>); keep the page itself from scrolling/rubber-banding
-   so the mobile top bar stays put on iOS instead of moving with elastic overscroll. */
-body { overflow: hidden; overscroll-behavior: none; }
+body {
+  overflow: hidden;
+  overscroll-behavior: none;
+  background-image:
+    radial-gradient(circle at 78% -14%, var(--ambient-accent), transparent 31rem),
+    radial-gradient(circle at 8% 108%, var(--ambient-warm), transparent 27rem);
+  background-attachment: fixed;
+}
 
-/* Always-visible keyboard focus on interactive elements: a 2-tone accent ring that hugs
-   rounded corners (outer + inset), OLED-safe — no outer glow. */
-button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible, [role="switch"]:focus-visible, [role="radio"]:focus-visible, [role="checkbox"]:focus-visible {
+::selection { color: var(--color-text); background: rgb(255 82 54 / 0.34); }
+
+h1, h2, h3, h4, h5, h6, .font-display {
+  font-family: var(--font-display);
+  text-wrap: balance;
+}
+
+button, input, textarea, select { font: inherit; }
+
+/* Visible, compact keyboard focus. It reads as brand state rather than a diffuse neon glow. */
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible,
+[role="button"]:focus-visible,
+[role="switch"]:focus-visible,
+[role="radio"]:focus-visible,
+[role="checkbox"]:focus-visible {
   outline: none;
-  box-shadow: 0 0 0 1px var(--color-accent), inset 0 0 0 1px var(--color-accent);
+  box-shadow: 0 0 0 1px var(--color-bg), 0 0 0 3px color-mix(in srgb, var(--color-accent) 78%, white 22%);
 }
 
 * {
   scrollbar-width: thin;
-  scrollbar-color: var(--color-border) transparent;
+  scrollbar-color: var(--color-border-strong) transparent;
 }
 *::-webkit-scrollbar { width: 8px; height: 8px; }
 *::-webkit-scrollbar-track { background: transparent; }
-*::-webkit-scrollbar-thumb { background: var(--color-border); border-radius: 4px; }
-*::-webkit-scrollbar-thumb:hover { background: var(--color-text-muted); }
-.xterm-viewport::-webkit-scrollbar-thumb { background: var(--color-border); }
+*::-webkit-scrollbar-thumb { background: var(--color-border-strong); border: 2px solid transparent; border-radius: 999px; background-clip: padding-box; }
+*::-webkit-scrollbar-thumb:hover { background-color: var(--color-text-subtle); }
+.xterm-viewport::-webkit-scrollbar-thumb { background-color: var(--color-border-strong); }

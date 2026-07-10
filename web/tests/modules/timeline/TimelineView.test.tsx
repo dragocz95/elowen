@@ -61,6 +61,26 @@ describe('TimelineView', () => {
     expect(dots.length).toBeGreaterThanOrEqual(1);
   });
 
+  it('keeps the dense axis fluid inside a narrow container', async () => {
+    const { wrapper: Wrapper } = createWrapper();
+    render(<Wrapper><TimelineView /></Wrapper>);
+
+    await screen.findAllByTestId('axis-dot');
+    const track = screen.getByTestId('timeline-track');
+    expect(track.className).toContain('min-w-0');
+    expect(track.className).not.toContain('min-w-[');
+  });
+
+  it('stacks lane metadata above its track until the wide container breakpoint', async () => {
+    localStorage.setItem('elowen.timeline.view', 'lanes');
+    const { wrapper: Wrapper } = createWrapper();
+    render(<Wrapper><TimelineView /></Wrapper>);
+
+    const lane = (await screen.findAllByTestId('timeline-lane'))[0];
+    expect(lane?.className).toContain('grid-cols-[auto_minmax(0,1fr)]');
+    expect(lane?.className).toContain('@3xl:grid-cols-');
+  });
+
   it('opens a drill-down detail with the review rationale and the working diff on marker click', async () => {
     const { wrapper: Wrapper } = createWrapper();
     render(<Wrapper><TimelineView /></Wrapper>);

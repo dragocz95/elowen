@@ -45,6 +45,20 @@ describe('KanbanBoard', () => {
     expect(screen.getByText('Alpha')).toBeTruthy();
   });
 
+  it('opens a regular card from Enter or Space', () => {
+    const onSelect = vi.fn();
+    const { wrapper: W } = wrap();
+    render(<KanbanBoard tasks={tasks} onMove={() => {}} onSelect={onSelect} />, { wrapper: W });
+    const card = screen.getByRole('button', { name: /Alpha/ });
+
+    fireEvent.keyDown(card, { key: 'Enter' });
+    fireEvent.keyDown(card, { key: ' ' });
+
+    expect(onSelect).toHaveBeenCalledTimes(2);
+    expect(onSelect).toHaveBeenNthCalledWith(1, tasks[0]);
+    expect(onSelect).toHaveBeenNthCalledWith(2, tasks[0]);
+  });
+
   it('dropping a card on a different column calls onMove(taskId, newStatus)', () => {
     const onMove = vi.fn();
     const { wrapper: W } = wrap();
@@ -76,8 +90,8 @@ describe('KanbanBoard', () => {
     const header = screen.getByRole('button', { name: /Autopilot Epic/ });
     expect(header).toBeTruthy();
     expect(screen.queryByText('Phase One')).toBeNull();
-    // Expanding reveals the phases.
-    fireEvent.click(header);
+    // The whole epic is keyboard-operable; Space expands just like click/Enter.
+    fireEvent.keyDown(header, { key: ' ' });
     expect(screen.getByText('Phase One')).toBeTruthy();
     expect(screen.getByText('Phase Two')).toBeTruthy();
   });

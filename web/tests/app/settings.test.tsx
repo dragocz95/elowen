@@ -46,7 +46,7 @@ describe('SettingsPage', () => {
     fireEvent.click(screen.getAllByRole('button', { name: 'Add description' })[0]);
     // The note modal auto-saves on edit — no manual Save button; the change PUTs shortly after.
     expect(screen.queryByRole('button', { name: 'Save' })).toBeNull();
-    fireEvent.change(screen.getByLabelText('Model description'), { target: { value: 'Strong at refactoring' } });
+    fireEvent.change(screen.getByRole('textbox', { name: 'Model description' }), { target: { value: 'Strong at refactoring' } });
     await waitFor(() => expect((putBody as { modelNotes: Record<string, string> }).modelNotes).toMatchObject({ sonnet: 'Strong at refactoring' }));
   });
 

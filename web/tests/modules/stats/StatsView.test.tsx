@@ -38,4 +38,15 @@ describe('StatsView', () => {
       expect(params.has('to')).toBe(true); // 'today' has both a start and end bound
     });
   });
+
+  it('uses a compact responsive model row while keeping both figures accessible', async () => {
+    const { wrapper: Wrapper } = createWrapper();
+    render(<Wrapper><StatsView /></Wrapper>);
+
+    const row = await screen.findByTestId('model-usage-row');
+    expect(row.className).toContain('grid-cols-[auto_minmax(0,1fr)_auto]');
+    expect(row.className).toContain('@lg:grid-cols-');
+    expect(screen.getByLabelText('Total tokens: 150')).toBeTruthy();
+    expect(screen.getByLabelText('Total cost: $1.5000')).toBeTruthy();
+  });
 });

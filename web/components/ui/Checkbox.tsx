@@ -7,7 +7,7 @@ export function Checkbox({ checked, className = '' }: { checked: boolean; classN
   return (
     <span
       className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-[5px] border transition-colors ${
-        checked ? 'border-accent bg-accent text-white' : 'border-border-strong bg-surface'
+        checked ? 'border-accent bg-accent text-bg' : 'border-border-strong bg-surface'
       } ${className}`}
       aria-hidden
     >

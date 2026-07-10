@@ -11,7 +11,14 @@ import { elowenClient, BASE } from '../../lib/elowenClient';
 import { formatTaskTime } from '../../lib/format';
 import type { AskQuestion, BrainCard, BrainSearchHit, BrainModelOption, BrainUsage, SlashCommandDef, StatuslineConfig } from '../../lib/types';
 import { fromHistory, groupToolItems, reduce, upsertCard, collectSubagents, type ChatTurn, type ToolItem, type TranscriptEvent } from '../../lib/transcript';
-import { BRAIN_OPEN_EVENT, consumePendingBrainSession, type BrainOpenRequest } from '../../lib/brainDock';
+import {
+  BRAIN_COMPOSE_EVENT,
+  BRAIN_OPEN_EVENT,
+  consumePendingBrainComposer,
+  consumePendingBrainSession,
+  mergeBrainComposerText,
+  type BrainOpenRequest,
+} from '../../lib/brainDock';
 import { AskQuestionCard } from './AskQuestionCard';
 import { ProcessPanel } from './ProcessPanel';
 import { AgentsTable } from './AgentsTable';
@@ -243,6 +250,7 @@ export function BrainChat() {
   const [readOnly, setReadOnly] = useState<string | null>(null);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const fileRef = useRef<HTMLInputElement>(null);
+  const composerRef = useRef<HTMLTextAreaElement>(null);
   // Slash-command menu (single source of truth: GET /brain/commands). Level 0 = the command list; a
   // `picker` command (model) opens level 1 with its options. Arrow-navigable, mirrors the CLI palette.
   const { data: commands = [] } = useBrainCommands();
@@ -406,6 +414,11 @@ export function BrainChat() {
     // If another view asked to open a specific session (Sessions → open in chat), open THAT one instead
     // of the default active conversation; otherwise boot the active conversation as usual.
     const pending = consumePendingBrainSession();
+    const pendingText = consumePendingBrainComposer();
+    if (pendingText !== null) {
+      setInput(pendingText);
+      requestAnimationFrame(() => composerRef.current?.focus());
+    }
     const boot = pending ? openRequest(pending) : connect();
     void boot.catch(() => setReady(true)); // surface the input even if the brain is unwired
     return () => esRef.current?.close();
@@ -423,6 +436,32 @@ export function BrainChat() {
     return () => window.removeEventListener(BRAIN_OPEN_EVENT, onOpen);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Dashboard/launcher compose requests share this dock and its authoritative send pipeline. When the
+  // dock is already mounted, seed + focus immediately; when closed, the mount bridge above does it.
+  useEffect(() => {
+    const onCompose = (e: Event) => {
+      const bridged = consumePendingBrainComposer();
+      const detail = (e as CustomEvent<{ text?: string }>).detail;
+      const requestedText = bridged ?? detail?.text ?? '';
+      // An empty launcher request means "focus". A non-empty dashboard request is appended to an
+      // existing draft so opening the shared composer can never silently destroy unsent text.
+      if (requestedText) setInput((current) => mergeBrainComposerText(current, requestedText));
+      const focusComposer = () => requestAnimationFrame(() => composerRef.current?.focus());
+      if (readOnly) {
+        // A read-only preview has closed its EventSource and replaced the personal transcript. Reconnect
+        // before showing the composer so the seeded draft and the stream target the same conversation.
+        setReadOnly(null);
+        void connect().then(focusComposer).catch(() => { setReady(true); focusComposer(); });
+      } else {
+        focusComposer();
+      }
+    };
+    window.addEventListener(BRAIN_COMPOSE_EVENT, onCompose);
+    return () => window.removeEventListener(BRAIN_COMPOSE_EVENT, onCompose);
+    // `connect` is deliberately scoped to this component; re-register only when preview mode changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [readOnly]);
 
   useEffect(() => { scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight }); }, [turns]);
 
@@ -650,7 +689,7 @@ export function BrainChat() {
           />
         ) : null}
         {notice ? <span className="ml-1 text-tiny italic text-text-muted">· {notice}</span> : null}
-        {busy && !ask ? <span className="ml-1 animate-pulse text-xs text-text-muted">{t.brainChat.thinking}</span> : null}
+        {busy && !ask ? <span className="ambient-pulse ml-1 animate-pulse text-xs text-text-muted">{t.brainChat.thinking}</span> : null}
       </div>
 
       {/* Statusline (the statusline plugin's toggles decide what shows; hidden when disabled). */}
@@ -756,6 +795,7 @@ export function BrainChat() {
           <Paperclip size={16} aria-hidden />
         </button>
         <textarea
+          ref={composerRef}
           value={input}
           onChange={(e) => { setInput(e.target.value); if (modelOpts) setModelOpts(null); setSlashIdx(0); }}
           onKeyDown={(e) => {

@@ -30,19 +30,19 @@ export function NeedsInputRow({ name, question, options, exec }: { name: string;
         <span className={`min-w-0 flex-1 text-xs text-text-muted ${isChoice ? '' : 'truncate'}`} title={question}>{question}</span>
         {!isChoice && (
           <div className="flex shrink-0 items-center gap-1.5">
-            <button type="button" onClick={() => sendKeys(['Enter'], t.sessions.approved.replace('{name}', agentDisplayName(name)))} className="rounded-md border border-approve/50 bg-approve/10 px-2.5 py-1 text-xs font-medium text-approve transition-colors hover:bg-approve hover:text-white active:scale-95">{t.sessions.allow}</button>
-            <button type="button" onClick={() => sendKeys(['Escape'], t.sessions.rejected.replace('{name}', agentDisplayName(name)))} className="rounded-md border border-danger/50 bg-danger/10 px-2.5 py-1 text-xs font-medium text-danger transition-colors hover:bg-danger hover:text-white active:scale-95">{t.sessions.reject}</button>
+            <button type="button" onClick={() => sendKeys(['Enter'], t.sessions.approved.replace('{name}', agentDisplayName(name)))} className="rounded-md border border-approve/50 bg-approve/10 px-2.5 py-1 text-xs font-medium text-approve transition-colors hover:bg-approve hover:text-bg active:scale-95">{t.sessions.allow}</button>
+            <button type="button" onClick={() => sendKeys(['Escape'], t.sessions.rejected.replace('{name}', agentDisplayName(name)))} className="rounded-md border border-danger/50 bg-danger/10 px-2.5 py-1 text-xs font-medium text-danger transition-colors hover:bg-danger hover:text-bg active:scale-95">{t.sessions.reject}</button>
           </div>
         )}
       </div>
       {isChoice && (
         <div className="flex flex-wrap items-center gap-1.5 pl-[34px]">
           {options!.map((o) => (
-            <button key={o.id} type="button" title={o.label} onClick={() => sendKeys(keysForOption(o.id), t.sessions.answered.replace('{name}', agentDisplayName(name)).replace('{option}', o.label))} className="max-w-full truncate rounded-md border border-accent/50 bg-accent/10 px-2.5 py-1 text-xs font-medium text-accent transition-colors hover:bg-accent hover:text-white active:scale-95">
+            <button key={o.id} type="button" title={o.label} onClick={() => sendKeys(keysForOption(o.id), t.sessions.answered.replace('{name}', agentDisplayName(name)).replace('{option}', o.label))} className="max-w-full truncate rounded-md border border-accent/50 bg-accent/10 px-2.5 py-1 text-xs font-medium text-accent transition-colors hover:bg-accent hover:text-bg active:scale-95">
               <span className="opacity-60">{o.id}.</span> {o.label}
             </button>
           ))}
-          <button type="button" onClick={() => sendKeys(['Escape'], t.sessions.rejected.replace('{name}', agentDisplayName(name)))} className="rounded-md border border-danger/50 bg-danger/10 px-2.5 py-1 text-xs font-medium text-danger transition-colors hover:bg-danger hover:text-white active:scale-95">{t.sessions.reject}</button>
+          <button type="button" onClick={() => sendKeys(['Escape'], t.sessions.rejected.replace('{name}', agentDisplayName(name)))} className="rounded-md border border-danger/50 bg-danger/10 px-2.5 py-1 text-xs font-medium text-danger transition-colors hover:bg-danger hover:text-bg active:scale-95">{t.sessions.reject}</button>
         </div>
       )}
     </div>

@@ -18,9 +18,9 @@ beforeAll(() => server.listen({ onUnhandledRequest })); afterEach(() => server.r
 describe('Shell', () => {
   it('renders the Sidebar, content slot and a mobile menu trigger', async () => {
     render(<Shell><span>page-body</span></Shell>);
-    // Wordmark appears in the sidebar and the (md:hidden) mobile top bar — after the async gate opens.
+    // Wordmark and the new Home world appear after the async gate opens.
     expect((await screen.findAllByAltText('Elowen')).length).toBeGreaterThan(0);
-    expect(screen.getByRole('link', { name: /Dash/ })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Home' })).toBeInTheDocument();
     expect(screen.getByText('page-body')).toBeInTheDocument();
     // Mobile menu opens the sidebar drawer on click.
     expect(screen.getAllByRole('button', { name: /toggle sidebar/i }).length).toBeGreaterThan(0);

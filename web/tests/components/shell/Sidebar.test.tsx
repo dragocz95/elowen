@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import { setupServer } from 'msw/node';
 import { http, HttpResponse } from 'msw';
 import { onUnhandledRequest } from '../../msw';
@@ -12,31 +12,65 @@ beforeAll(() => server.listen({ onUnhandledRequest })); afterAll(() => server.cl
 beforeEach(() => localStorage.clear());
 
 describe('Sidebar (registry-driven)', () => {
-  it('renders wordmark + groups + active item from the registry', () => {
+  it('renders the four product worlds and the admin System menu', () => {
     const { wrapper: Wrapper, client } = createWrapper();
-    // An admin sees the admin-only "Administration" group.
     client.setQueryData(['me'], { user: { id: 1, username: 'admin', is_admin: true, allowed_execs: [], name: '', email: '', avatar: '', default_exec: '', created_at: '' } });
+    client.setQueryData(['tasks'], []);
     render(<Wrapper><Sidebar /></Wrapper>);
     expect(screen.getByAltText('Elowen')).toBeInTheDocument();
-    expect(screen.getByText('Operate')).toBeInTheDocument();
-    expect(screen.getByText('Administration')).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: /Dash/ }).className).toContain('border-accent'); // Elowen brand-red active line
+    expect(screen.getByText('Spaces')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Home' })).toHaveAttribute('aria-current', 'page');
+    expect(screen.getByRole('link', { name: 'Work' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Projects' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Memory' })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'System' }));
+    expect(screen.getByRole('link', { name: 'Account' })).toHaveAttribute('href', '/account');
+    expect(screen.getByRole('link', { name: 'Settings' })).toHaveAttribute('href', '/settings');
+    expect(screen.getByRole('link', { name: 'Users' })).toHaveAttribute('href', '/users');
   });
 
   it('renders without crashing in setup mode (me resolved but no user yet)', () => {
     const { wrapper: Wrapper, client } = createWrapper();
     client.setQueryData(['me'], { user: undefined }); // /auth/me in setup mode returns { user: undefined }
+    client.setQueryData(['tasks'], []);
     expect(() => render(<Wrapper><Sidebar /></Wrapper>)).not.toThrow();
-    expect(screen.getByText('Operate')).toBeInTheDocument();
-    expect(screen.queryByText('Administration')).not.toBeInTheDocument();
+    expect(screen.getByText('Spaces')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'System' })).toBeInTheDocument();
   });
 
-  it('hides the Administration group from a non-admin', () => {
+  it('keeps admin destinations out of the System menu for a non-admin', () => {
     const { wrapper: Wrapper, client } = createWrapper();
     client.setQueryData(['me'], { user: { id: 2, username: 'bob', is_admin: false, allowed_execs: [], name: '', email: '', avatar: '', default_exec: '', created_at: '' } });
+    client.setQueryData(['tasks'], []);
     render(<Wrapper><Sidebar /></Wrapper>);
-    expect(screen.getByText('Operate')).toBeInTheDocument();
-    expect(screen.queryByText('Administration')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'System' }));
+    expect(screen.getByRole('link', { name: 'Account' })).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Settings' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Users' })).not.toBeInTheDocument();
+  });
+
+  it('shows the complete world hierarchy in the mobile drawer', () => {
+    const { wrapper: Wrapper, client } = createWrapper();
+    client.setQueryData(['me'], { user: { id: 1, username: 'admin', is_admin: true, allowed_execs: [], name: '', email: '', avatar: '', default_exec: '', created_at: '' } });
+    client.setQueryData(['tasks'], []);
+    render(<Wrapper><Sidebar mode="drawer" drawerOpen /></Wrapper>);
+    expect(screen.getByRole('link', { name: 'Tasks' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Kanban' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Sessions' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Timeline' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Stats' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Editor' })).toBeInTheDocument();
+  });
+
+  it('exposes child routes through an accessible flyout in rail mode', () => {
+    const { wrapper: Wrapper, client } = createWrapper();
+    client.setQueryData(['me'], { user: { id: 2, username: 'bob', is_admin: false, allowed_execs: [], name: '', email: '', avatar: '', default_exec: '', created_at: '' } });
+    client.setQueryData(['tasks'], []);
+    render(<Wrapper><Sidebar mode="rail" /></Wrapper>);
+    const workFlyout = screen.getByRole('group', { name: 'Work' });
+    expect(within(workFlyout).getByRole('link', { name: 'Tasks' })).toHaveAttribute('href', '/tasks');
+    expect(within(workFlyout).getByRole('link', { name: 'Kanban' })).toHaveAttribute('href', '/kanban');
   });
 
   it('shows live agents and last outcome in the ops bar', () => {

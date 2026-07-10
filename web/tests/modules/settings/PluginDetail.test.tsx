@@ -15,7 +15,7 @@ const useConfig = vi.hoisted(() => vi.fn());
 const useBrainModels = vi.hoisted(() => vi.fn());
 vi.mock('../../../lib/queries', () => ({ usePluginDetail, usePluginContributions, usePluginLogs, usePluginHookExecutions, usePlugins, useProjects, useConfig, useBrainModels }));
 vi.mock('../../../lib/mutations', () => ({
-  useSavePluginConfig: () => ({ mutate: vi.fn(), isPending: false }),
+  useSavePluginConfig: () => ({ mutate: vi.fn(), mutateAsync: vi.fn().mockResolvedValue({ ok: true }), isPending: false }),
   useTogglePlugin: () => ({ mutate: vi.fn(), isPending: false }),
   useClearPluginData: () => ({ mutate: vi.fn(), isPending: false }),
 }));
@@ -23,8 +23,8 @@ vi.mock('../../../components/ui/Toast', () => ({ useToast: () => ({ toast: vi.fn
 
 import { PluginDetail } from '../../../modules/settings/PluginDetail';
 
-const detail = (configSchema: PluginConfigField[], config: Record<string, unknown>): PluginDetailData => ({
-  name: 'testy', version: '1.0.0', description: 'Test plugin', provides: { tools: [] },
+const detail = (configSchema: PluginConfigField[], config: Record<string, unknown>, name = 'testy'): PluginDetailData => ({
+  name, version: '1.0.0', description: 'Test plugin', provides: { tools: [] },
   source: 'user', enabled: true, configurable: true,
   configSchema, config, secretsSet: [],
   data: { path: '', exists: false, files: 0, bytes: 0 },
@@ -37,8 +37,6 @@ const plugin = (over: Partial<PluginInfo>): PluginInfo => ({
 
 const renderDetail = () => {
   render(<ThemeProvider><LanguageProvider><PluginDetail name="testy" onBack={() => {}} /></LanguageProvider></ThemeProvider>);
-  // The generated Config collapsible is closed by default (no unset required secret) — open it.
-  fireEvent.click(screen.getByRole('button', { name: en.pluginDetail.config }));
 };
 
 beforeEach(() => {
@@ -63,6 +61,50 @@ describe('PluginDetail model field', () => {
     expect(screen.getByRole('searchbox', { name: en.managePicker.searchPlaceholder })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Anthropic' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'claude-opus' })).toHaveAttribute('aria-pressed', 'true');
+  });
+});
+
+describe('PluginDetail workspace', () => {
+  it('exposes the five focused workspace tabs and a live preview', () => {
+    usePluginDetail.mockReturnValue({ data: detail([], {}), isLoading: false });
+    renderDetail();
+    expect(screen.getByRole('radio', { name: en.pluginDetail.tabSetup })).toBeInTheDocument();
+    expect(screen.getByRole('radio', { name: en.pluginDetail.tabBehavior })).toHaveAttribute('aria-checked', 'true');
+    expect(screen.getByRole('radio', { name: en.pluginDetail.tabCapabilities })).toBeInTheDocument();
+    expect(screen.getByRole('radio', { name: en.pluginDetail.tabActivity })).toBeInTheDocument();
+    expect(screen.getByRole('radio', { name: en.pluginDetail.tabAdvanced })).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: en.pluginDetail.livePreview })).toBeInTheDocument();
+  });
+
+  it('opens Setup first when a required secret is missing', () => {
+    usePluginDetail.mockReturnValue({ data: detail([{ key: 'token', label: 'Token', type: 'secret', required: true }], {}), isLoading: false });
+    renderDetail();
+    expect(screen.getByRole('radio', { name: en.pluginDetail.tabSetup })).toHaveAttribute('aria-checked', 'true');
+    expect(screen.getByText(en.pluginDetail.setupMissing.replace('{n}', '1'))).toBeInTheDocument();
+  });
+
+  it('previews Discord per-tool layout and rolling output as separate bubbles', () => {
+    usePluginDetail.mockReturnValue({ data: detail([
+      { key: 'toolActivity', label: 'Tool activity', type: 'enum', options: [{ value: 'status', label: 'Status' }, { value: 'live', label: 'Live' }] },
+      { key: 'toolOutput', label: 'Tool output', type: 'enum', options: [{ value: 'hidden', label: 'Hidden' }, { value: 'summary', label: 'Summary' }, { value: 'tail', label: 'Tail' }] },
+      { key: 'toolMessageMode', label: 'Tool layout', type: 'enum', options: [{ value: 'single', label: 'Single' }, { value: 'per_tool', label: 'Per tool' }] },
+    ], { toolActivity: 'live', toolOutput: 'tail', toolMessageMode: 'per_tool' }, 'discord'), isLoading: false });
+    renderDetail();
+    expect(screen.getAllByTestId('discord-tool-bubble')).toHaveLength(2);
+    expect(screen.getByText(/\$ npm test/)).toBeInTheDocument();
+  });
+
+  it('keeps required non-secret fields reachable on Setup', () => {
+    usePluginDetail.mockReturnValue({ data: detail([{ key: 'workspace', label: 'Workspace', type: 'string', required: true }], {}), isLoading: false });
+    renderDetail();
+    expect(screen.getByRole('radio', { name: en.pluginDetail.tabSetup })).toHaveAttribute('aria-checked', 'true');
+    expect(screen.getByRole('textbox')).toBeInTheDocument();
+  });
+
+  it('keeps terminal informational sections visible', () => {
+    usePluginDetail.mockReturnValue({ data: detail([{ key: 'sec_model', label: 'Embedding model', type: 'section', hint: 'Inherited from Settings.' }], {}), isLoading: false });
+    renderDetail();
+    expect(screen.getByText('Embedding model')).toBeInTheDocument();
   });
 });
 
@@ -111,7 +153,7 @@ describe('PluginDetail config density', () => {
   it('keeps section and field explanations out of the layout until the shared HelpTip is focused', () => {
     usePluginDetail.mockReturnValue({ data: detail(schema, { enabled: true }), isLoading: false });
     renderDetail();
-    expect(screen.getByText('Behavior')).toBeInTheDocument();
+    expect(screen.getAllByText('Behavior')).toHaveLength(2); // workspace tab + manifest section heading
     expect(screen.queryByText('How this plugin behaves.')).toBeNull();
     expect(screen.queryByText('A longer explanation that should stay behind the help affordance.')).toBeNull();
 

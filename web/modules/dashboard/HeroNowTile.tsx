@@ -1,131 +1,90 @@
 'use client';
-import { useMemo } from 'react';
 import Link from 'next/link';
-import { Bot, FileCode2, GitCompareArrows, Plus, Terminal } from 'lucide-react';
-import { BentoTile } from './BentoTile';
-import { useSessionInfos, useSessionSignals, useTasks, useMissions, useActivity, useMissionChangedFiles } from '../../lib/queries';
-import { useSessionPane } from '../../lib/useSessionPane';
-import { taskForSession, tailSnippet, agentDisplayName } from '../../lib/agentUtils';
-import { compactElapsed, parseTs } from '../../lib/format';
+import { ArrowRight, Clock3, Sparkles, WifiOff } from 'lucide-react';
+import { useTasks } from '../../lib/queries';
+import { taskForSession, agentDisplayName } from '../../lib/agentUtils';
 import { useTranslation } from '../../lib/i18n';
-import type { SessionInfo } from '../../lib/types';
+import { ElowenPresence } from './ElowenPresence';
+import { HomeComposer } from './HomeComposer';
+import { useAgentPresence, type AgentPresenceState } from './useAgentPresence';
 
-function Stat({ icon: Icon, value, label }: { icon: typeof FileCode2; value: string; label: string }) {
+/** The personal-agent home hero. Runtime data stays ordinary DOM and the original flat mascot stays
+ *  untouched; the surrounding presence layers communicate whether Elowen is resting, working or waiting. */
+export function HeroNowTile({ now }: { now: number }) {
+  const { t, locale } = useTranslation();
+  const presence = useAgentPresence();
+  const tasks = useTasks();
+  const primaryName = presence.primary?.name ?? '';
+  const task = primaryName ? taskForSession(tasks.data ?? [], primaryName) : undefined;
+  const date = new Date(now);
+  const hour = date.getHours();
+  const greeting = hour < 12 ? t.dashboard.greetingMorning : hour < 18 ? t.dashboard.greetingAfternoon : t.dashboard.greetingEvening;
+  const time = date.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' });
+  const dateLabel = date.toLocaleDateString(locale, { weekday: 'long', day: 'numeric', month: 'long' });
+  const stateLabel = stateText(t.dashboard.presence, presence.state);
+  const statusLine = presence.state === 'offline'
+    ? t.dashboard.presence.offline
+    : presence.waitingCount > 0
+    ? t.dashboard.presence.waiting.replace('{count}', String(presence.waitingCount))
+    : presence.activeCount > 0
+      ? t.dashboard.agentsWorking.replace('{count}', String(presence.activeCount))
+      : t.dashboard.allQuiet;
+
   return (
-    <div className="flex items-center gap-2.5">
-      <Icon size={15} className="text-text-muted" aria-hidden />
-      <div>
-        <div className="font-mono text-[17px] font-semibold leading-none tabular-nums tracking-[-0.03em]">{value}</div>
-        <div className="mt-0.5 text-[11px] text-text-muted">{label}</div>
+    <section className="relative isolate overflow-hidden rounded-[1.4rem] border border-border bg-surface px-5 py-5 shadow-[0_24px_90px_rgb(0_0_0_/_0.55)] @container sm:px-7 sm:py-7">
+      <div className="pointer-events-none absolute inset-0 -z-10 bg-[radial-gradient(circle_at_78%_40%,rgb(255_82_54_/_0.13),transparent_34%),linear-gradient(140deg,rgb(255_82_54_/_0.035),transparent_48%)]" aria-hidden />
+      <div className="grid min-h-[28rem] items-center gap-7 @3xl:grid-cols-[minmax(0,1.12fr)_minmax(18rem,.88fr)]">
+        <div className="flex min-w-0 flex-col gap-5">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div className="flex flex-col gap-1.5">
+              <span className="inline-flex w-fit items-center gap-2 text-[11px] font-semibold uppercase tracking-[.13em] text-accent">
+                <span className="live-dot h-1.5 w-1.5 rounded-full bg-accent" aria-hidden />{t.dashboard.rightNow}
+              </span>
+              <h1 className="font-display text-4xl font-semibold tracking-[-0.045em] text-text sm:text-5xl">{greeting}</h1>
+              <p className="text-sm text-text-muted">{statusLine}</p>
+            </div>
+            <div className="flex shrink-0 flex-col items-end gap-0.5">
+              <span className="font-mono text-xl font-semibold tabular-nums text-text">{time}</span>
+              <span className="text-xs capitalize text-text-muted">{dateLabel}</span>
+            </div>
+          </div>
+
+          {presence.primary ? (
+            <Link href={task ? `/tasks?select=${encodeURIComponent(task.id)}` : '/sessions'} className="group flex items-center gap-3 rounded-xl border border-border bg-black/35 px-4 py-3 transition-[border-color,background-color] hover:border-accent/45 hover:bg-accent/[0.045]">
+              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-accent/25 bg-accent/10 text-accent"><Sparkles size={16} aria-hidden /></span>
+              <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+                <span className="truncate text-sm font-medium text-text">{task?.title ?? agentDisplayName(primaryName)}</span>
+                <span className="truncate text-xs text-text-muted">
+                  <span>{t.dashboard.byAgent.replace('{agent}', agentDisplayName(primaryName))}</span>
+                  <span aria-hidden> · </span>
+                  <span>{stateLabel}</span>
+                </span>
+              </span>
+              <ArrowRight size={15} className="shrink-0 text-text-muted transition-transform group-hover:translate-x-0.5 group-hover:text-accent" aria-hidden />
+            </Link>
+          ) : (
+            <div className="flex items-center gap-3 rounded-xl border border-border bg-black/25 px-4 py-3">
+              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-border bg-elevated text-text-muted">
+                {presence.state === 'offline' ? <WifiOff size={16} aria-hidden /> : <Clock3 size={16} aria-hidden />}
+              </span>
+              <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+                <span className="text-sm font-medium text-text">{presence.state === 'offline' ? stateLabel : t.dashboard.resting}</span>
+                <span className="text-xs text-text-muted">{presence.state === 'offline' ? t.common.daemonUnreachable : t.dashboard.restingDesc}</span>
+              </span>
+            </div>
+          )}
+
+          <HomeComposer placeholder={t.dashboard.composerPlaceholder} actionLabel={t.dashboard.composerAction} />
+        </div>
+
+        <div className="flex min-h-72 items-center justify-center @3xl:min-h-[25rem]">
+          <ElowenPresence state={presence.state} label={`${t.common.appName}: ${stateLabel}`} />
+        </div>
       </div>
-    </div>
+    </section>
   );
 }
 
-/** The 2×2 focal tile: what Elowen is doing *right now*. Picks the primary live agent (a working one, or
- *  the first), the task it's on, and — when that task is a mission phase — the mission's progress and
- *  churn. Shows a live terminal line, a working pill with elapsed time + equalizer, a phase progress
- *  bar, and file/line stats. Falls back to a calm "resting" state with a CTA when no agent runs. */
-export function HeroNowTile({ now }: { now: number }) {
-  const { t } = useTranslation();
-  const infos = useSessionInfos();
-  const signals = useSessionSignals();
-  const tasks = useTasks();
-  const missions = useMissions();
-  const activity = useActivity();
-
-  const agents = (infos.data ?? []).filter((s: SessionInfo) => s.role === 'agent');
-  const primary = agents.find((s) => signals[s.name]?.type === 'working') ?? agents[0];
-  const primaryName = primary?.name ?? '';
-  const working = primaryName ? signals[primaryName]?.type === 'working' : false;
-
-  const task = primaryName ? taskForSession(tasks.data ?? [], primaryName) : undefined;
-  const epicId = task?.parent_id ?? null;
-  const mission = epicId ? (missions.data ?? []).find((m) => m.epic_id === epicId) : undefined;
-
-  const pane = useSessionPane(primaryName, 8, !!primaryName);
-  const changed = useMissionChangedFiles(mission?.id ?? '');
-
-  // Phase progress: closed sibling phases over total (only meaningful for a mission phase).
-  const progress = useMemo(() => {
-    if (!epicId) return null;
-    const phases = (tasks.data ?? []).filter((p) => p.parent_id === epicId);
-    if (phases.length === 0) return null;
-    return { closed: phases.filter((p) => p.status === 'closed').length, total: phases.length };
-  }, [tasks.data, epicId]);
-
-  // Elapsed since the task last went in-progress, from the activity log (newest-first).
-  const elapsed = useMemo(() => {
-    if (!task) return null;
-    const ev = (activity.data ?? []).find((e) => e.type === 'task' && e.target === task.id && (e.detail === 'in_progress' || e.detail === 'working'));
-    const ts = ev ? parseTs(ev.ts) : null;
-    return ts != null ? compactElapsed(now - ts) : null;
-  }, [activity.data, task, now]);
-
-  const churn = useMemo(() => {
-    const files = changed.data ?? [];
-    return files.length ? { files: files.length, added: files.reduce((s, f) => s + f.added, 0) } : null;
-  }, [changed.data]);
-
-  const line = tailSnippet(pane.tail);
-
-  // ── Resting: no live agent ──
-  if (!primary) {
-    return (
-      <BentoTile tone="muted" icon={Bot} label={t.dashboard.rightNow} span="hero">
-        <div className="flex flex-1 flex-col items-center justify-center gap-4 text-center">
-          <div>
-            <h2 className="font-display text-xl font-semibold tracking-[-0.02em]">{t.dashboard.resting}</h2>
-            <p className="mt-1.5 text-sm text-text-muted">{t.dashboard.restingDesc}</p>
-          </div>
-          <Link href="/tasks?new=1" className="inline-flex h-9 items-center gap-1.5 rounded-md border border-border bg-elevated px-3.5 text-sm font-medium text-text transition-colors hover:border-border-strong">
-            <Plus size={14} aria-hidden />{t.tasks.newTask}
-          </Link>
-        </div>
-      </BentoTile>
-    );
-  }
-
-  return (
-    <BentoTile
-      tone={working ? 'accent' : 'muted'} icon={Bot} label={t.dashboard.rightNow} span="hero"
-      trailing={working ? (
-        <span className="inline-flex items-center gap-2 font-mono text-[12px] tabular-nums text-text-muted">
-          <span className="live-dot h-1.5 w-1.5 rounded-full bg-accent" aria-hidden />
-          {elapsed ? t.dashboard.running.replace('{d}', elapsed) : t.dashboard.workingNow}
-        </span>
-      ) : undefined}
-    >
-      <div className="mt-1 flex flex-col gap-1">
-        <h2 className="font-display text-xl font-semibold tracking-[-0.025em]">{task?.title ?? agentDisplayName(primaryName)}</h2>
-        <p className="text-sm text-text-muted">{t.dashboard.byAgent.replace('{agent}', agentDisplayName(primaryName))}</p>
-      </div>
-
-      {line && (
-        <div className="flex items-center gap-2 rounded-lg border border-border bg-bg px-3 py-2 font-mono text-[12px] text-text-muted">
-          <Terminal size={13} className="shrink-0 text-success" aria-hidden />
-          <span className="truncate">{line}</span>
-        </div>
-      )}
-
-      {progress && (
-        <div className="mt-auto flex flex-col gap-1.5">
-          <div className="flex justify-between text-[12px] text-text-muted">
-            <span>{t.dashboard.phaseProgress.replace('{closed}', String(progress.closed)).replace('{total}', String(progress.total))}</span>
-            <span className="font-mono tabular-nums">{Math.round((progress.closed / progress.total) * 100)} %</span>
-          </div>
-          <div className="h-1.5 overflow-hidden rounded-full bg-elevated">
-            <div className="h-full rounded-full bg-accent transition-[width] duration-500" style={{ width: `${(progress.closed / progress.total) * 100}%` }} />
-          </div>
-        </div>
-      )}
-
-      {churn && (
-        <div className={`flex gap-6 border-t border-border pt-3 ${progress ? '' : 'mt-auto'}`}>
-          <Stat icon={FileCode2} value={String(churn.files)} label={t.dashboard.filesLabel} />
-          <Stat icon={GitCompareArrows} value={`+${churn.added}`} label={t.dashboard.linesLabel} />
-        </div>
-      )}
-    </BentoTile>
-  );
+function stateText(labels: Record<AgentPresenceState, string>, state: AgentPresenceState): string {
+  return labels[state];
 }

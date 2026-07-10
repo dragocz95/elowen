@@ -1,8 +1,6 @@
 'use client';
-import { useEffect, useState, type ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import { Plus, Trash2, ChevronDown, ChevronRight, Clock, Users, SlidersHorizontal, Link2, GraduationCap, Info, Wrench, type LucideIcon } from 'lucide-react';
-import { useAutoSave } from '../../lib/useAutoSave';
-import { useTheme } from '../../lib/useTheme';
 import { CronJobsEditor } from './CronJobsEditor';
 import { SkillsEditor } from './SkillsEditor';
 import { WhatsAppPairSection } from './WhatsAppPairSection';
@@ -21,13 +19,14 @@ import { Toggle } from '../../components/ui/Toggle';
 import { Checkbox } from '../../components/ui/Checkbox';
 import { BrainModelField } from '../../components/ui/BrainModelField';
 import { Segmented } from '../../components/ui/Segmented';
+import { ChoiceField } from '../../components/ui/ChoiceField';
+import { SettingRow } from '../../components/ui/SettingsPrimitives';
 import { ProviderPicker } from '../../components/ui/ProviderPicker';
-import { useToast } from '../../components/ui/Toast';
 import { useTranslation } from '../../lib/i18n';
 import { usePlugins, useProjects, useConfig, useBrainModels } from '../../lib/queries';
-import { useSavePluginConfig } from '../../lib/mutations';
 import type { PluginConfigField, PluginDetail, RolePolicy, McpServerSpec } from '../../lib/types';
 import { RISK_TONE, CONNECTION_KEYS } from './pluginDetail.shared';
+import type { PluginConfigDraft } from './usePluginConfigDraft';
 
 const textareaClass = 'w-full rounded-md border border-border bg-bg px-3 py-2 font-mono text-sm text-text placeholder:text-text-muted focus:border-accent';
 
@@ -319,21 +318,6 @@ function PluginProviderField({ value, onChange, providerType }: { value: string;
   return <ProviderPicker providers={providers} value={value} onChange={onChange} emptyText={t.pluginCfg.noProviders} size="sm" />;
 }
 
-/** Drop `json`-typed fields whose current text doesn't parse from the save payload, so a malformed blob
- *  never round-trips to the backend (and into reloadPlugins). The field stays editable/red in the UI —
- *  only the persisted patch skips it, so a valid edit later saves normally. */
-function sanitizeConfig(values: Record<string, unknown>, schema: PluginConfigField[]): Record<string, unknown> {
-  const jsonKeys = new Set(schema.filter((f) => f.type === 'json').map((f) => f.key));
-  const out: Record<string, unknown> = {};
-  for (const [k, v] of Object.entries(values)) {
-    if (jsonKeys.has(k) && typeof v === 'string' && v.trim() !== '') {
-      try { JSON.parse(v); } catch { continue; } // invalid JSON → don't persist this field
-    }
-    out[k] = v;
-  }
-  return out;
-}
-
 /** A config field's compact label row. Long manifest explanations stay behind the shared `?` affordance
  *  instead of expanding every plugin form vertically. A div keeps the help button out of a label. */
 function LabeledField({ label, hint, help, risk, riskLabel, children }: {
@@ -365,41 +349,28 @@ function LabeledField({ label, hint, help, risk, riskLabel, children }: {
  *  one Config collapsible or one collapsible per declared `section`. Secrets are write-only (a
  *  placeholder shows they are set) and saving hot-reloads the brain. Also hosts the cronjob/skills
  *  special sections, whose content is data (jobs.json / .md files), not config schema. */
-export function PluginConfigEditor({ name, detail, fieldLabel, fieldHint, fieldOptions, riskText }: {
+export type PluginConfigMode = 'setup' | 'behavior' | 'advanced';
+
+export function PluginConfigEditor({ detail, fieldLabel, fieldHint, fieldOptions, riskText, draft, mode = 'behavior' }: {
   name: string;
   detail: PluginDetail;
   fieldLabel: (f: PluginConfigField) => string;
   fieldHint: (f: PluginConfigField) => string | undefined;
   fieldOptions: (f: PluginConfigField) => { value: string; label: string }[];
   riskText: (r: 'low' | 'medium' | 'high') => string;
+  draft: PluginConfigDraft;
+  mode?: PluginConfigMode;
 }) {
-  const save = useSavePluginConfig();
-  const { toast } = useToast();
   const { t } = useTranslation();
-  const { resolvedTheme } = useTheme();
   const { data: brainModels } = useBrainModels();
-  const monacoTheme = resolvedTheme === 'light' ? 'elowen-light' : 'elowen-oled';
-  const [values, setValues] = useState<Record<string, unknown>>({});
-  const [seeded, setSeeded] = useState(false);
-
-  // Seed the local draft once, on first arrival. A save invalidates the detail query → refetch; re-seeding
-  // from that refetch would clobber whatever the user is still typing, so only seed while not yet seeded.
-  useEffect(() => { if (!seeded) { setValues(detail.config); setSeeded(true); } }, [detail, seeded]);
-
-  // Auto-persist shortly after any field change; the daemon hot-reloads the brain on save.
-  useAutoSave([values], () => save.mutate(
-    { name, values: sanitizeConfig(values, detail.configSchema) },
-    { onError: () => toast(t.pluginCfg.saveError, 'error') }, // auto-save is silent on success — only failures surface
-  ), { ready: seeded, delay: 1200 });
-
-  const set = (key: string, v: unknown) => setValues((cur) => ({ ...cur, [key]: v }));
+  const { values, setValue: set } = draft;
 
   const renderField = (f: PluginConfigField) => {
     switch (f.type) {
       case 'boolean':
         return <Toggle checked={values[f.key] === true} onChange={(v) => set(f.key, v)} label={f.label} />;
       case 'number':
-        return <Input type="number" min={f.min} max={f.max} step={f.step} placeholder={f.placeholder} value={String(values[f.key] ?? '')} onChange={(e) => set(f.key, e.target.value === '' ? undefined : Number(e.target.value))} />;
+        return <Input type="number" min={f.min} max={f.max} step={f.step} placeholder={f.placeholder} aria-label={fieldLabel(f)} value={String(values[f.key] ?? '')} onChange={(e) => set(f.key, e.target.value === '' ? null : Number(e.target.value))} />;
       case 'textarea':
         return <textarea value={String(values[f.key] ?? '')} onChange={(e) => set(f.key, e.target.value)} rows={4} className={textareaClass} />;
       case 'secret':
@@ -426,7 +397,7 @@ export function PluginConfigEditor({ name, detail, fieldLabel, fieldHint, fieldO
       case 'mcpServers':
         return <McpServersEditor value={Array.isArray(values[f.key]) ? (values[f.key] as McpServerSpec[]) : []} onChange={(v) => set(f.key, v)} />;
       case 'enum':
-        return <Segmented size="sm" options={fieldOptions(f)} value={String(values[f.key] ?? '')} onChange={(v) => set(f.key, v)} />;
+        return <ChoiceField title={fieldLabel(f)} options={fieldOptions(f)} value={String(values[f.key] ?? '')} onChange={(v) => set(f.key, v)} />;
       case 'multiSelect': {
         const sel = Array.isArray(values[f.key]) ? (values[f.key] as string[]) : [];
         return <MultiSelectField label={fieldLabel(f)} options={fieldOptions(f)} value={sel} onChange={(v) => set(f.key, v)} />;
@@ -438,7 +409,7 @@ export function PluginConfigEditor({ name, detail, fieldLabel, fieldHint, fieldO
               language={f.language ?? 'plaintext'}
               value={String(values[f.key] ?? '')}
               onChange={(v) => set(f.key, v ?? '')}
-              theme={monacoTheme}
+              theme="elowen-oled"
               beforeMount={defineEditorThemes}
               options={{ fontSize: 13, minimap: { enabled: false }, scrollBeyondLastLine: false, automaticLayout: true, padding: { top: 12 }, wordWrap: 'on', folding: false }}
             />
@@ -451,7 +422,7 @@ export function PluginConfigEditor({ name, detail, fieldLabel, fieldHint, fieldO
               language="markdown"
               value={String(values[f.key] ?? '')}
               onChange={(v) => set(f.key, v ?? '')}
-              theme={monacoTheme}
+              theme="elowen-oled"
               beforeMount={defineEditorThemes}
               options={{ fontSize: 13, minimap: { enabled: false }, scrollBeyondLastLine: false, automaticLayout: true, padding: { top: 12 }, wordWrap: 'on', lineNumbers: 'off', folding: false }}
             />
@@ -471,9 +442,7 @@ export function PluginConfigEditor({ name, detail, fieldLabel, fieldHint, fieldO
               spellCheck={false}
               className={`${textareaClass}${invalid ? ' border-danger focus:border-danger' : ''}`}
             />
-            {/* No copy for the parse error is in the locked i18n contract yet, so the invalid state is
-                signalled visually (red field + marker) rather than with a hardcoded string. */}
-            {invalid ? <span className="flex items-center gap-1 text-danger" aria-hidden><Info size={13} /></span> : null}
+            {invalid ? <span className="flex items-center gap-1 text-xs text-danger" role="alert"><Info size={13} aria-hidden />{t.pluginCfg.invalidJson}</span> : null}
           </div>
         );
       }
@@ -491,33 +460,60 @@ export function PluginConfigEditor({ name, detail, fieldLabel, fieldHint, fieldO
         // A `section` field is a group heading carrying no input.
         if (f.type === 'section') {
           return (
-            <div key={f.key} className="@lg:col-span-2 flex items-center gap-2 border-t border-border pt-4 first:border-0 first:pt-0">
+            <div key={f.key} className="animate-fade-up @lg:col-span-2 flex items-center gap-2 border-t border-border pt-4 first:border-0 first:pt-0">
               <span className="text-xs font-semibold uppercase tracking-wide text-text">{fieldLabel(f)}</span>
               {fieldHint(f) ? <HelpTip align="left">{fieldHint(f)}</HelpTip> : null}
             </div>
           );
         }
         // Complex editors carry their own row headers, so they render bare (no outer label/hint).
-        if (f.type === 'rolePolicies' || f.type === 'mcpServers') return <div key={f.key} className="@lg:col-span-2">{renderField(f)}</div>;
+        if (f.type === 'rolePolicies' || f.type === 'mcpServers') return <div key={f.key} className="animate-fade-up @lg:col-span-2">{renderField(f)}</div>;
+        if ((f.type === 'boolean' || (f.type === 'enum' && (f.options?.length ?? 0) <= 3)) && !f.risk) {
+          const description = [...new Set([fieldHint(f), f.help].filter((value): value is string => Boolean(value?.trim())))].join('\n\n');
+          return <SettingRow key={f.key} title={fieldLabel(f)} description={description || undefined} className="animate-fade-up @lg:col-span-2">{renderField(f)}</SettingRow>;
+        }
         return (
-          <LabeledField key={f.key} label={fieldLabel(f)} hint={fieldHint(f)} help={f.help} risk={f.risk} riskLabel={f.risk ? riskText(f.risk) : undefined}>
-            {renderField(f)}
-          </LabeledField>
+          <div key={f.key} className="animate-fade-up">
+            <LabeledField label={fieldLabel(f)} hint={fieldHint(f)} help={f.help} risk={f.risk} riskLabel={f.risk ? riskText(f.risk) : undefined}>
+              {renderField(f)}
+            </LabeledField>
+          </div>
         );
       })}
     </div>
   );
 
-  // Config body: when the schema uses explicit `section` headers the author organised it, so render it
-  // in declared order. Otherwise bucket generically (connection/secrets vs behaviour vs complex editors)
-  // so a flat schema with many fields still reads cleanly.
+  // Preserve author-declared section boundaries while assigning them to the workspace tabs. A flat
+  // legacy schema still falls back to key/type inference, so old third-party manifests remain valid.
   const schema = detail.configSchema;
+  let sectionMode: PluginConfigMode = 'behavior';
+  const classified = schema.map((field) => {
+    if (field.type === 'section') {
+      const key = `${field.key} ${field.label}`.toLowerCase();
+      sectionMode = field.advanced ? 'advanced' : /connection|setup|auth|credential/.test(key) ? 'setup' : /advanced/.test(key) ? 'advanced' : 'behavior';
+      return { field, mode: sectionMode };
+    }
+    // Every required input belongs to Setup regardless of its key or the manifest author's language;
+    // otherwise the checklist can say "missing" while hiding the only control on another tab.
+    if (field.required || sectionMode === 'setup' || field.type === 'secret' || CONNECTION_KEYS.has(field.key)) return { field, mode: 'setup' as const };
+    if (field.advanced) return { field, mode: 'advanced' as const };
+    return { field, mode: sectionMode };
+  });
+  const visibleSchema = classified.filter((entry, index) => {
+    if (entry.field.type !== 'section') return entry.mode === mode;
+    const nextSection = classified.findIndex((next, nextIndex) => nextIndex > index && next.field.type === 'section');
+    const children = classified.slice(index + 1, nextSection === -1 ? classified.length : nextSection);
+    const hasModeChild = children.some((child) => child.field.type !== 'section' && child.mode === mode);
+    // A terminal section with no inputs is intentional documentation (e.g. Codebase's inherited
+    // embedding model). Keep it on its declared tab instead of silently dropping its HelpTip.
+    return hasModeChild || (children.length === 0 && entry.mode === mode);
+  }).map((entry) => entry.field);
   const hasExplicitSections = schema.some((f) => f.type === 'section');
   const isComplex = (f: PluginConfigField) => f.type === 'rolePolicies' || f.type === 'mcpServers';
   const isConnection = (f: PluginConfigField) => f.type === 'secret' || CONNECTION_KEYS.has(f.key);
-  const connectionFields = schema.filter((f) => isConnection(f) && !isComplex(f));
-  const behaviorFields = schema.filter((f) => !isConnection(f) && !isComplex(f));
-  const complexFields = schema.filter(isComplex);
+  const connectionFields = visibleSchema.filter((f) => isConnection(f) && !isComplex(f));
+  const behaviorFields = visibleSchema.filter((f) => !isConnection(f) && !isComplex(f));
+  const complexFields = visibleSchema.filter(isComplex);
   const group = (key: string, Icon: LucideIcon, title: string, hint: string | undefined, fields: PluginConfigField[]) => (
     <div key={key} className="flex flex-col gap-3">
       <div className="flex items-center gap-2">
@@ -529,44 +525,39 @@ export function PluginConfigEditor({ name, detail, fieldLabel, fieldHint, fieldO
     </div>
   );
 
-  const hasConnectionSection = schema.some((f) => f.type === 'section' && f.key === 'sec_connection');
-
-  // Open Config first only when there's a required-but-unset secret to fill in; otherwise Overview.
-  const hasUnsetRequiredSecret = schema.some((f) => f.type === 'secret' && f.required && !detail.secretsSet.includes(f.key));
+  const hasConnectionSection = visibleSchema.some((f) => f.type === 'section' && f.key === 'sec_connection');
 
   return (
     <>
-      {/* One Config surface: section headers remain visible inside it and their long explanations live in
-          the same hover-help treatment as field descriptions. */}
-      {schema.length === 0 ? (
-        <Collapsible icon={SlidersHorizontal} title={t.pluginDetail.config}>
+      {visibleSchema.length === 0 && (detail.configSchema.length > 0 || mode !== 'behavior') ? null : visibleSchema.length === 0 ? (
+        <Collapsible icon={SlidersHorizontal} title={t.pluginDetail.config} defaultOpen>
           <p className="text-sm text-text-muted">{t.pluginDetail.configEmpty}</p>
         </Collapsible>
       ) : hasExplicitSections ? (
-        <Collapsible icon={SlidersHorizontal} title={t.pluginDetail.config} defaultOpen={hasUnsetRequiredSecret}>
+        <div className="rounded-xl border border-border bg-surface p-5">
           {/* WhatsApp: the "Pair device" button (QR/code modal) lives at the top of the Connection section. */}
           {detail.name === 'whatsapp' && hasConnectionSection ? <WhatsAppPairSection /> : null}
-          {fieldList(schema)}
-        </Collapsible>
+          {fieldList(visibleSchema)}
+        </div>
       ) : (
-        <Collapsible icon={SlidersHorizontal} title={t.pluginDetail.config} defaultOpen={hasUnsetRequiredSecret}>
+        <div className="rounded-xl border border-border bg-surface p-5">
           <div className="flex flex-col gap-6">
             {connectionFields.length ? group('connection', Link2, t.pluginCfg.sectionConnection, t.pluginCfg.sectionConnectionHint, connectionFields) : null}
             {behaviorFields.length ? group('behavior', SlidersHorizontal, t.pluginCfg.sectionBehavior, undefined, behaviorFields) : null}
             {complexFields.map((cf) => group(cf.key, Users, fieldLabel(cf), fieldHint(cf), [cf]))}
           </div>
-        </Collapsible>
+        </div>
       )}
 
       {/* The cronjob plugin's jobs are data, not config schema — a dedicated editor section. */}
-      {detail.name === 'cronjob' ? (
+      {mode === 'behavior' && detail.name === 'cronjob' ? (
         <Collapsible icon={Clock} title={t.cron.title} subtitle={t.cron.sectionHint} defaultOpen>
           <CronJobsEditor />
         </Collapsible>
       ) : null}
 
       {/* Same story for the skills plugin: its skills are .md files, not config schema. */}
-      {detail.name === 'skills' ? (
+      {mode === 'behavior' && detail.name === 'skills' ? (
         <Collapsible icon={GraduationCap} title={t.skills.title} subtitle={t.skills.sectionHint} defaultOpen>
           <SkillsEditor />
         </Collapsible>

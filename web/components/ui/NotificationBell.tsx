@@ -23,7 +23,11 @@ export function NotificationBell() {
   const waiting = needsInputSessions(sessions.data ?? [], signals);
   const escalations = useEscalations();
   const pendingAsks = usePendingAsks().data ?? [];
-  const count = waiting.length + escalations.length + pendingAsks.length;
+  const inboxCount = escalations.length + pendingAsks.length;
+  const count = waiting.length + inboxCount;
+  const inboxPreview = pendingAsks[0]?.title?.trim()
+    || pendingAsks[0]?.question?.trim()
+    || escalations[0]?.title;
 
   const btnRef = useRef<HTMLButtonElement>(null);
   const [open, setOpen] = useState(false);
@@ -91,8 +95,8 @@ export function NotificationBell() {
               <div className="px-3 py-7 text-center text-xs text-text-muted">{t.sidebar.noNotifications}</div>
             ) : (
               <div className="flex max-h-[60vh] flex-col gap-1.5 overflow-auto p-2">
-                {/* Overseer escalations — one row linking to the full inbox, where they're resolved. */}
-                {escalations.length > 0 && (
+                {/* Human decisions share one inbox: overseer escalations and parked agent asks. */}
+                {inboxCount > 0 && (
                   <Link
                     href="/escalations"
                     onClick={() => setOpen(false)}
@@ -100,8 +104,8 @@ export function NotificationBell() {
                   >
                     <ShieldAlert size={14} className="shrink-0 text-warning" aria-hidden />
                     <span className="min-w-0 flex-1">
-                      <span className="block text-xs font-medium text-text">{t.sidebar.escalations.replace('{count}', String(escalations.length))}</span>
-                      <span className="block truncate text-tiny text-text-muted">{escalations[0]!.title}</span>
+                      <span className="block text-xs font-medium text-text">{t.sidebar.escalations.replace('{count}', String(inboxCount))}</span>
+                      {inboxPreview ? <span className="block truncate text-tiny text-text-muted">{inboxPreview}</span> : null}
                     </span>
                   </Link>
                 )}

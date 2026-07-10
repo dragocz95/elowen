@@ -111,7 +111,7 @@ function AxisMarker({ point, label, onPick }: { point: AxisPoint; label: string;
 
 function TimelineTrack({ points, ticks, resolve, onPick }: { points: AxisPoint[]; ticks: { label: string; frac: number }[]; resolve: (p: AxisPoint) => Display; onPick: (p: AxisPoint) => void }) {
   return (
-    <div className="relative w-full select-none">
+    <div data-testid="timeline-track" className="relative min-w-0 w-full select-none">
       <div className="relative h-16">
         {ticks.map((t) => (
           <div key={t.label} className="absolute inset-y-0 w-px bg-border/50" style={{ left: `${t.frac * 100}%` }} aria-hidden />
@@ -124,8 +124,8 @@ function TimelineTrack({ points, ticks, resolve, onPick }: { points: AxisPoint[]
         {points.map((p) => <AxisMarker key={p.id} point={p} label={resolve(p).label} onPick={onPick} />)}
       </div>
       <div className="relative mt-1.5 h-4">
-        {ticks.map((t) => (
-          <span key={t.label} data-testid="axis-tick" className="absolute -translate-x-1/2 font-mono text-text-muted" style={{ left: `${t.frac * 100}%`, fontSize: 'var(--text-caption)' }}>
+        {ticks.map((t, index) => (
+          <span key={t.label} data-testid="axis-tick" className={`absolute -translate-x-1/2 font-mono text-text-muted ${index % 2 === 1 ? 'hidden @sm:block' : ''}`} style={{ left: `${t.frac * 100}%`, fontSize: 'var(--text-caption)' }}>
             {t.label}
           </span>
         ))}
@@ -143,20 +143,20 @@ function Lane({ points, ticks, resolve, onPick }: { points: AxisPoint[]; ticks: 
   const tone = markerTone(latest.type, latest.detail);
   const { label, projectId } = resolve(latest);
   return (
-    <div className="flex items-center gap-3 rounded-lg border border-border bg-surface px-3 py-2.5">
-      <span className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-xl border-2 ${TONE_BUBBLE[tone]}`}>
-        <Icon size={24} aria-hidden />
+    <div data-testid="timeline-lane" className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-center gap-x-3 gap-y-2 rounded-lg border border-border bg-surface px-3 py-2.5 @3xl:grid-cols-[auto_11rem_minmax(0,1fr)]">
+      <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border-2 @3xl:h-12 @3xl:w-12 ${TONE_BUBBLE[tone]}`}>
+        <Icon size={22} aria-hidden />
       </span>
-      <div className="w-44 shrink-0">
+      <div className="min-w-0 @3xl:w-44 @3xl:shrink-0">
         <div className="flex items-center gap-1.5">
           <span className="truncate text-sm font-medium text-text" title={label}>{label}</span>
         </div>
-        <div className="mt-0.5 flex items-center gap-1.5">
+        <div className="mt-0.5 flex min-w-0 flex-wrap items-center gap-1.5">
           <span className={`shrink-0 text-[11px] ${TONE_TEXT[tone]}`}>{latest.detail}</span>
           <ProjectPill projectId={projectId ?? undefined} />
         </div>
       </div>
-      <div className="relative h-9 flex-1">
+      <div className="relative col-span-2 h-9 min-w-0 @3xl:col-span-1 @3xl:col-start-3 @3xl:row-start-1">
         {ticks.map((t) => <div key={t.label} className="absolute inset-y-0 w-px bg-border/40" style={{ left: `${t.frac * 100}%` }} aria-hidden />)}
         <div className="absolute inset-x-0 top-1/2 h-px -translate-y-1/2 bg-border/60" aria-hidden />
         {points.map((p) => <AxisMarker key={p.id} point={p} label={resolve(p).label} onPick={onPick} />)}
@@ -168,11 +168,11 @@ function Lane({ points, ticks, resolve, onPick }: { points: AxisPoint[]; ticks: 
 /** Big-icon stat card for the summary strip. */
 function StatCard({ tone, count, label }: { tone: Tone; count: number; label: string }) {
   return (
-    <div className="flex items-center gap-3 rounded-lg border border-border bg-surface px-3.5 py-3">
+    <div className="flex min-w-0 items-center gap-2.5 rounded-lg border border-border bg-surface px-3 py-3 @sm:gap-3 @sm:px-3.5">
       <span className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border-2 text-lg font-semibold ${TONE_BUBBLE[tone]}`}>
         {count}
       </span>
-      <span className="text-xs font-medium uppercase tracking-wide text-text-muted">{label}</span>
+      <span className="min-w-0 text-[10px] font-medium uppercase leading-snug tracking-wide text-text-muted @sm:text-xs">{label}</span>
     </div>
   );
 }
@@ -359,13 +359,13 @@ export function TimelineView() {
       <div className="flex flex-col gap-4">
       {/* Summary strip: big-icon kind counts for the window */}
       {hasData ? (
-        <div data-testid="timeline-summary" className="grid grid-cols-2 gap-2.5 @sm:grid-cols-3 @3xl:grid-cols-5">
+        <div data-testid="timeline-summary" className="grid grid-cols-1 gap-2.5 @xs:grid-cols-2 @sm:grid-cols-3 @3xl:grid-cols-5">
           {STAT_CARDS.map((s) => <StatCard key={s.label} tone={s.tone} count={s.count} label={s.label} />)}
         </div>
       ) : null}
 
       {/* Hero: the lane/axis plot — elowen's signature surface */}
-      <section className="rounded-lg border border-border border-t-2 border-t-accent/40 bg-surface p-5" style={{ boxShadow: 'var(--shadow-card)' }}>
+      <section className="min-w-0 rounded-lg border border-border border-t-2 border-t-accent/40 bg-surface p-3 @sm:p-5" style={{ boxShadow: 'var(--shadow-card)' }}>
         <div className="mb-4 flex items-center justify-between gap-2">
           <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-widest text-text-muted"><Clock size={12} className="shrink-0 text-text-muted" aria-hidden />{windowLabel}</div>
           {hasData ? <span className="hidden text-[11px] text-text-muted @sm:inline">{t.timeline.markerHint}</span> : null}
@@ -377,9 +377,9 @@ export function TimelineView() {
         ) : !hasData ? (
           <EmptyState title={t.timeline.empty} description={t.timeline.emptyDescription} icon={Activity} />
         ) : view === 'lanes' ? (
-          <div className="flex flex-col gap-2.5">
+          <div className="flex min-w-0 flex-col gap-2.5">
             {lanes.map((l) => <Lane key={l.target} points={l.points} ticks={ticks} resolve={resolve} onPick={setPicked} />)}
-            <div className="relative mt-1 ml-[10.25rem] h-4">
+            <div className="relative mt-1 mr-3 ml-[16.25rem] hidden h-4 @3xl:block">
               {ticks.map((tk) => (
                 <span key={tk.label} className="absolute -translate-x-1/2 font-mono text-text-muted" style={{ left: `${tk.frac * 100}%`, fontSize: 'var(--text-caption)' }}>{tk.label}</span>
               ))}

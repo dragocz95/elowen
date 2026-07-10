@@ -63,7 +63,7 @@ export function OpsStatusBar({ expanded }: { expanded: boolean }) {
         {stuckCount > 0 && (
           <Link href="/sessions" title={t.sidebar.stuckAgents.replace('{count}', String(stuckCount))} className="relative flex h-7 w-7 items-center justify-center rounded-md text-danger transition-colors hover:bg-elevated">
             <Hourglass size={15} aria-hidden />
-            <span className="absolute -right-0.5 -top-0.5 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-danger px-0.5 text-[9px] font-bold text-white">{stuckCount}</span>
+            <span className="absolute -right-0.5 -top-0.5 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-danger px-0.5 text-[9px] font-bold text-bg">{stuckCount}</span>
           </Link>
         )}
         <Link href="/sessions" title={t.sidebar.liveAgents.replace('{count}', String(liveCount))} className="flex items-center gap-1 rounded-md px-1.5 py-1 transition-colors hover:bg-elevated">

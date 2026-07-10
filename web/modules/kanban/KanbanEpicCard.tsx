@@ -43,7 +43,13 @@ export function KanbanEpicCard({ epic, phases, expanded, onToggle, effectiveStat
       aria-label={`${epic.title} — ${expanded ? t.tasks.collapsePhases : t.tasks.expandPhases}`}
       title={titleText}
       onClick={onToggle}
-      onKeyDown={(e) => { if (e.key === 'Enter') onToggle(); }}
+      onKeyDown={(e) => {
+        if (e.target !== e.currentTarget) return;
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onToggle();
+        }
+      }}
       onDragOver={drop.onDragOver}
       onDragEnter={drop.onDragEnter}
       onDragLeave={drop.onDragLeave}
@@ -56,7 +62,7 @@ export function KanbanEpicCard({ epic, phases, expanded, onToggle, effectiveStat
         <span className="min-w-0 flex-1 truncate text-sm font-semibold text-text">{epic.title}</span>
         {virtual ? <span className="shrink-0 rounded border border-accent/40 px-1 font-mono text-[10px] uppercase tracking-wide text-accent" aria-hidden>{trueStatusLabel}</span> : null}
         {active ? <span className={`h-2 w-2 shrink-0 rounded-full ${active ? 'live-dot' : ''}`} style={{ backgroundColor: dotColor, ['--live-ring' as string]: dotRing }} aria-hidden /> : null}
-        <div className="shrink-0 opacity-0 transition-opacity group-hover:opacity-100" onClick={(e) => e.stopPropagation()}>
+        <div className="shrink-0 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100" onClick={(e) => e.stopPropagation()}>
           <ActionMenu
             label={t.tasks.deleteMission}
             items={[{ label: t.tasks.deleteMission, icon: Trash2, tone: 'danger', onSelect: () => setConfirmDelete(true) }]}

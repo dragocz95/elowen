@@ -43,7 +43,7 @@ export function StatsView() {
         <>
           {/* ── Summary cards ─────────────────────────────────────── */}
           <div className="@container">
-          <section className="grid grid-cols-2 gap-4 @3xl:grid-cols-4">
+          <section className="grid grid-cols-1 gap-3 @sm:grid-cols-2 @3xl:grid-cols-4 @3xl:gap-4">
             <StatCard value={summary.totalCostLabel} label={t.stats.cardTotalCost} icon={DollarSign} />
             <StatCard value={summary.totalTokensLabel} label={t.stats.cardTotalTokens} icon={Coins} />
             <StatCard value={summary.totalCacheLabel} label={t.stats.cardCache} icon={Database} />
@@ -63,18 +63,32 @@ export function StatsView() {
             {!summary.hasAnyUsage ? (
               <EmptyState title={t.stats.emptyTitle} description={t.stats.emptyDesc} icon={BarChart3} />
             ) : (
-              <div className="flex flex-col divide-y divide-border rounded-xl border border-border bg-surface" style={{ boxShadow: 'var(--shadow-card)' }}>
+              <div data-testid="model-usage-list" className="@container flex flex-col divide-y divide-border rounded-xl border border-border bg-surface" style={{ boxShadow: 'var(--shadow-card)' }}>
                 {summary.rows.map((row) => (
-                  <div key={row.exec} className="flex items-center gap-3 px-4 py-3">
-                    <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-border bg-elevated">
+                  <div
+                    key={row.exec}
+                    data-testid="model-usage-row"
+                    className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-3 gap-y-2 px-3 py-3 @sm:grid-cols-[auto_minmax(0,10rem)_minmax(4rem,1fr)_6rem] @sm:px-4 @lg:grid-cols-[auto_minmax(0,10rem)_minmax(4rem,1fr)_5rem_6rem]"
+                  >
+                    <span className="col-start-1 row-start-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-border bg-elevated">
                       <ModelIcon name={row.exec} size={15} />
                     </span>
-                    <span className="w-40 shrink-0 truncate font-mono text-xs text-text" title={row.exec}>{row.exec}</span>
-                    <div className="h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-elevated">
+                    <span className="col-start-2 row-start-1 min-w-0 truncate font-mono text-xs text-text" title={row.exec}>{row.exec}</span>
+                    <div className="col-start-2 col-end-4 row-start-3 h-1.5 min-w-0 overflow-hidden rounded-full bg-elevated @sm:col-start-3 @sm:col-end-4 @sm:row-start-1">
                       <div className="h-full rounded-full bg-accent/55" style={{ width: `${row.pct}%` }} />
                     </div>
-                    <span className="w-20 shrink-0 text-right font-mono text-xs tabular-nums text-text-muted">{row.tokensLabel}</span>
-                    <span className="w-24 shrink-0 text-right font-mono text-xs tabular-nums text-text">{row.costLabel}</span>
+                    <span
+                      className="col-start-2 row-start-2 text-left font-mono text-xs tabular-nums text-text-muted @lg:col-start-4 @lg:row-start-1 @lg:text-right"
+                      aria-label={`${t.stats.cardTotalTokens}: ${row.tokensLabel}`}
+                    >
+                      {row.tokensLabel}
+                    </span>
+                    <span
+                      className="col-start-3 row-start-1 text-right font-mono text-xs tabular-nums text-text @sm:col-start-4 @lg:col-start-5"
+                      aria-label={`${t.stats.cardTotalCost}: ${row.costLabel}`}
+                    >
+                      {row.costLabel}
+                    </span>
                   </div>
                 ))}
               </div>

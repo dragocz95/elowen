@@ -1,24 +1,101 @@
 @keyframes toast-in {
-  from { opacity: 0; transform: translateY(8px) scale(0.98); }
+  from { opacity: 0; transform: translateY(var(--motion-distance-md)) scale(0.985); }
   to { opacity: 1; transform: translateY(0) scale(1); }
 }
 
-@keyframes fade-up { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
-@keyframes pop-in { from { opacity: 0; transform: scale(0.97); } to { opacity: 1; transform: none; } }
-@keyframes skel-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
-@keyframes live-ring { 0% { box-shadow: 0 0 0 0 var(--live-ring, rgba(16,185,129,0.5)); } 70%, 100% { box-shadow: 0 0 0 5px rgba(0,0,0,0); } }
+@keyframes fade-up {
+  from { opacity: 0; transform: translateY(var(--motion-distance-md)); }
+  to { opacity: 1; transform: translateY(0); }
+}
 
-.animate-fade-up { animation: fade-up 260ms var(--ease-out) both; }
-.animate-pop-in { animation: pop-in 180ms var(--ease-out) both; }
+@keyframes pop-in {
+  from { opacity: 0; transform: scale(0.975); }
+  to { opacity: 1; transform: scale(1); }
+}
 
-/* Route transition: opacity only — NO transform, so it never becomes a containing
-   block for the fixed-position modals/overlays rendered inside the page. */
 @keyframes route-fade { from { opacity: 0; } to { opacity: 1; } }
-.animate-route { animation: route-fade 200ms var(--ease-out) both; }
 
-@keyframes flow-pulse { 0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--color-accent) 0%, transparent); } 50% { box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-accent) 45%, transparent); } }
+@keyframes skeleton-drift {
+  from { background-position: 100% 0; }
+  to { background-position: -100% 0; }
+}
+
+@keyframes live-ring {
+  0% { box-shadow: 0 0 0 0 var(--live-ring, rgb(50 201 134 / 0.48)); }
+  72%, 100% { box-shadow: 0 0 0 6px transparent; }
+}
+
+@keyframes flow-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 transparent; }
+  50% { box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-accent) 42%, transparent); }
+}
+
+@keyframes ember-breathe {
+  0%, 100% { opacity: 0.09; transform: scale(0.94); }
+  50% { opacity: 0.18; transform: scale(1.06); }
+}
+
+@keyframes ambient-drift {
+  0%, 100% { transform: translate3d(0, 0, 0); }
+  50% { transform: translate3d(0, calc(0px - var(--motion-distance-md)), 0); }
+}
+
+.animate-fade-up { animation: fade-up var(--motion-slow) var(--ease-out) both; }
+.animate-pop-in { animation: pop-in var(--motion-base) var(--ease-out) both; }
+
+/* Opacity only: transforms would make fixed descendants anchor to the route container. */
+.animate-route { animation: route-fade var(--motion-base) var(--ease-out) both; }
+.animate-ambient { animation: ambient-drift var(--motion-ambient) ease-in-out infinite; }
+
+html[data-effects='reduced'] {
+  --motion-fast: 80ms;
+  --motion-base: 120ms;
+  --motion-slow: 160ms;
+  --motion-distance-sm: 0px;
+  --motion-distance-md: 0px;
+}
+
+html[data-effects='reduced'] .animate-fade-up,
+html[data-effects='reduced'] .animate-pop-in,
+html[data-effects='reduced'] .animate-route { animation-name: route-fade; }
+
+html[data-effects='reduced'] .skeleton,
+html[data-effects='reduced'] .live-dot::after,
+html[data-effects='reduced'] .flow-active,
+html[data-effects='reduced'] .status-orb::before,
+html[data-effects='reduced'] .animate-ambient,
+html[data-effects='reduced'] .ambient-pulse { animation: none !important; }
 
 @media (prefers-reduced-motion: reduce) {
-  .animate-fade-up, .animate-pop-in, .animate-route, .skeleton, .live-dot::after, .flow-active { animation: none !important; }
-  .card-interactive:hover { transform: none; }
+  html[data-effects-mode='auto'] .ambient-pulse { animation: none !important; }
+}
+
+html[data-effects='off'] {
+  --motion-instant: 0ms;
+  --motion-fast: 0ms;
+  --motion-base: 0ms;
+  --motion-slow: 0ms;
+  --motion-ambient: 0ms;
+  scroll-behavior: auto;
+}
+
+html[data-effects='off'] *,
+html[data-effects='off'] *::before,
+html[data-effects='off'] *::after {
+  animation: none !important;
+  scroll-behavior: auto !important;
+  transition-duration: 0ms !important;
+  transition-delay: 0ms !important;
+}
+
+/* `auto` follows the OS even before hydration (and with JS disabled). An explicit `full` preference
+   changes data-effects-mode before paint, so it intentionally overrides the operating system. */
+@media (prefers-reduced-motion: reduce) {
+  html[data-effects-mode='auto'] *,
+  html[data-effects-mode='auto'] *::before,
+  html[data-effects-mode='auto'] *::after {
+    animation: none !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0ms !important;
+  }
 }

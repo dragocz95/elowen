@@ -7,6 +7,8 @@ import { useTranslation } from '../../lib/i18n';
 
 interface Command { id: string; label: string; hint?: string; icon: LucideIcon; run: () => void }
 
+export const COMMAND_PALETTE_OPEN_EVENT = 'elowen:open-command-palette';
+
 /** Accent-highlight the matched query substring within a label. */
 function Highlight({ text, q }: { text: string; q: string }) {
   if (!q) return <>{text}</>;
@@ -28,8 +30,13 @@ export function CommandPalette() {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); setOpen((v) => !v); }
       else if (e.key === 'Escape') setOpen(false);
     };
+    const onOpen = () => setOpen(true);
     window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    window.addEventListener(COMMAND_PALETTE_OPEN_EVENT, onOpen);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      window.removeEventListener(COMMAND_PALETTE_OPEN_EVENT, onOpen);
+    };
   }, []);
 
   useEffect(() => { if (open) { setQuery(''); setActive(0); requestAnimationFrame(() => inputRef.current?.focus()); } }, [open]);

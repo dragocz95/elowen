@@ -298,6 +298,9 @@ export function registerPluginRoutes(app: ElowenApp, ctx: RouteContext): void {
       const v = b.values[f.key];
       if (v === undefined) continue;
       if (f.type === 'secret' && (v === '' || v === null)) continue; // keep the stored secret
+      // `null` is an explicit clear for non-secret overrides. Omitting a key still means "leave it
+      // alone", while clearing a number in the UI can now return it to the manifest/host default.
+      if (v === null) { delete stored[f.key]; continue; }
       stored[f.key] = v;
     }
     d.config.update({ plugins: { config: { [name]: stored as Record<string, never> } } });

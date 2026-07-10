@@ -6,6 +6,7 @@ import { onUnhandledRequest } from '../../msw';
 import { AccountView } from '../../../modules/account/AccountView';
 import { ToastProvider } from '../../../components/ui/Toast';
 import { UiScaleProvider } from '../../../lib/useUiScale';
+import { EffectsProvider } from '../../../lib/useEffects';
 import { createWrapper } from '../../test-utils';
 
 const server = setupServer();
@@ -23,7 +24,7 @@ describe('AccountView', () => {
       http.patch('*/api/auth/me', async ({ request }) => { patched = await request.json() as Record<string, unknown>; return HttpResponse.json(meUser({ default_exec: 'sonnet' })); }),
     );
     const { wrapper: Wrapper } = createWrapper();
-    render(<Wrapper><UiScaleProvider><ToastProvider><AccountView /></ToastProvider></UiScaleProvider></Wrapper>);
+    render(<Wrapper><EffectsProvider><UiScaleProvider><ToastProvider><AccountView /></ToastProvider></UiScaleProvider></EffectsProvider></Wrapper>);
 
     expect(await screen.findByText('@bob')).toBeTruthy();
     // The default-model rail lives on the Elowen AI tab (with the other per-user AI settings).
@@ -49,7 +50,7 @@ describe('AccountView', () => {
       http.get('*/api/brain/models', () => HttpResponse.json([])),
     );
     const { wrapper: Wrapper } = createWrapper();
-    render(<Wrapper><UiScaleProvider><ToastProvider><AccountView /></ToastProvider></UiScaleProvider></Wrapper>);
+    render(<Wrapper><EffectsProvider><UiScaleProvider><ToastProvider><AccountView /></ToastProvider></UiScaleProvider></EffectsProvider></Wrapper>);
 
     // The stale value fails the allowed-list guard, so the default (profile) section renders.
     expect(await screen.findByText('@bob')).toBeTruthy();

@@ -7,7 +7,6 @@ import { useCreatePersonality, useUpdatePersonality, useDeletePersonality, useAc
 import { useAutoSave } from '../../lib/useAutoSave';
 import { MonacoEditor } from '../projects/editor/monacoLoader';
 import { defineEditorThemes } from '../projects/editor/oledTheme';
-import { useTheme } from '../../lib/useTheme';
 import { Segmented } from '../../components/ui/Segmented';
 import { Button } from '../../components/ui/Button';
 import { Badge } from '../../components/ui/Badge';
@@ -129,7 +128,6 @@ function PersonalityModal({ platform, profile, isActive, onClose }: {
 }) {
   const { t } = useTranslation();
   const { toast } = useToast();
-  const { resolvedTheme } = useTheme();
   const create = useCreatePersonality();
   const update = useUpdatePersonality();
   const remove = useDeletePersonality();
@@ -233,7 +231,7 @@ function PersonalityModal({ platform, profile, isActive, onClose }: {
                 language="markdown"
                 value={prompt}
                 onChange={(v) => setPrompt(v ?? '')}
-                theme={resolvedTheme === 'light' ? 'elowen-light' : 'elowen-oled'}
+                theme="elowen-oled"
                 beforeMount={defineEditorThemes}
                 options={{ fontSize: 13, minimap: { enabled: false }, scrollBeyondLastLine: false, automaticLayout: true, padding: { top: 12 }, wordWrap: 'on', lineNumbers: 'off', folding: false }}
               />

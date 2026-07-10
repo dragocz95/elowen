@@ -149,7 +149,13 @@ export function UsersView() {
                         tabIndex={0}
                         aria-pressed={active}
                         onClick={() => setSelectedId(user.id)}
-                        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setSelectedId(user.id); } }}
+                        onKeyDown={(e) => {
+                          if (e.target !== e.currentTarget) return;
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault();
+                            setSelectedId(user.id);
+                          }
+                        }}
                         onContextMenu={(e) => openCtxMenu(e, user)}
                         className={`group flex cursor-pointer items-center gap-3 rounded-lg border p-2.5 transition-colors ${active ? 'border-accent bg-accent/10' : 'border-border bg-surface hover:bg-elevated'}`}
                       >
@@ -164,14 +170,14 @@ export function UsersView() {
                         {/* Trash = delete only (confirm dialog guards it). Impersonate/promote live in
                             the row's right-click context menu — a hover dropdown kept tripping people
                             into the wrong action. */}
-                        <div className="shrink-0 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
+                        <div className="shrink-0 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
                           <button
                             type="button"
                             aria-label={t.users.deleteLabel.replace('{username}', user.username)}
                             title={data.length <= 1 ? t.users.lastUserHint : t.users.delete}
                             disabled={data.length <= 1}
                             onClick={(e) => { e.stopPropagation(); setConfirmDelete(user); }}
-                            className="inline-flex h-8 w-8 items-center justify-center rounded-md bg-danger text-white transition-colors hover:bg-danger/85 disabled:opacity-40"
+                            className="inline-flex h-8 w-8 items-center justify-center rounded-md bg-danger text-bg transition-colors hover:bg-danger/85 disabled:opacity-40"
                           >
                             <Trash2 size={15} aria-hidden />
                           </button>

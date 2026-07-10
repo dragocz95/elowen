@@ -141,7 +141,13 @@ export function ProjectsView() {
                   role="button"
                   tabIndex={0}
                   onClick={() => setSelectedId(p.id)}
-                  onKeyDown={(e) => { if (e.key === 'Enter') setSelectedId(p.id); }}
+                  onKeyDown={(e) => {
+                    if (e.target !== e.currentTarget) return;
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      setSelectedId(p.id);
+                    }
+                  }}
                   onContextMenu={(e) => openCtxMenu(e, p)}
                   className={`card-interactive group flex cursor-pointer gap-3.5 rounded-lg border p-3.5 ${active ? 'border-accent bg-accent/[0.06]' : 'border-border bg-surface'}`}
                 >
