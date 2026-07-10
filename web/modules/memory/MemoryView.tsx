@@ -14,6 +14,7 @@ import { Field } from '../../components/ui/Field';
 import { Checkbox } from '../../components/ui/Checkbox';
 import { Modal, ModalBody, ModalFooter } from '../../components/ui/Modal';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
+import { PageMascot } from '../../components/ui/PageMascot';
 import { LoadingState, ErrorState, EmptyState } from '../../components/ui/states';
 import { useToast } from '../../components/ui/Toast';
 import { useTranslation } from '../../lib/i18n';
@@ -199,6 +200,7 @@ export function MemoryView() {
         <div className="mr-auto min-w-0 overflow-x-auto">
           <Segmented value={tab} onChange={(v) => setTab(v as Tab)} options={TAB_OPTIONS} aria-label={t.page.memory} nowrap variant="line" />
         </div>
+        <PageMascot />
         <Button variant="accent" icon={Plus} onClick={() => setCreating(true)}>{t.memory.newMemory}</Button>
       </ModuleHeader>
 

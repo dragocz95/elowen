@@ -40,6 +40,7 @@ describe('MemoryPage', () => {
     const { wrapper: Wrapper } = createWrapper();
     render(<Wrapper><ToastProvider><MemoryPage /></ToastProvider></Wrapper>);
     const row = await screen.findByTestId('memory-row');
+    expect(screen.getByTestId('page-mascot').querySelector('img')).toHaveAttribute('src', '/icon.png');
     expect(row).not.toHaveClass('rounded-lg');
     expect(row).not.toHaveClass('bg-surface');
     expect(screen.getByText('Page 1 of 1')).toBeInTheDocument();
