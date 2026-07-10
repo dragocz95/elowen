@@ -3,8 +3,6 @@ import { PluginIcon } from './PluginIcon';
 import { PluginActions } from './PluginActions';
 import { Badge } from '../../components/ui/Badge';
 import { HeroCard } from '../../components/ui/HeroCard';
-import { RailCard } from '../../components/ui/RailCard';
-import { HelpTip } from '../../components/ui/HelpTip';
 import { useTranslation } from '../../lib/i18n';
 import type { PluginDetail } from '../../lib/types';
 
@@ -27,39 +25,5 @@ export function PluginHero({ name, detail, description, toolCount }: { name: str
       ]}
       actions={<PluginActions name={name} detail={detail} />}
     />
-  );
-}
-
-/** Status rail: health plus the tools / hooks / platforms counts, shown beside the main column. */
-export function PluginStatusRail({ health, toolCount, hookCount, platformCount }: {
-  health: 'ok' | 'error';
-  toolCount: number;
-  hookCount: number;
-  platformCount: number;
-}) {
-  const { t } = useTranslation();
-  return (
-    <RailCard title={t.pluginDetail.overviewStatus}>
-      <dl className="flex flex-col gap-3">
-        <div className="flex items-center justify-between gap-2">
-          <dt className="flex items-center gap-1 text-xs text-text-muted">{t.pluginDetail.health}<HelpTip align="left">{t.help.pluginHealth}</HelpTip></dt>
-          <dd><Badge tone={health === 'error' ? 'danger' : 'success'}>{health === 'error' ? t.plugins.healthError : t.plugins.healthOk}</Badge></dd>
-        </div>
-        <div className="flex items-center justify-between gap-2">
-          <dt className="text-xs text-text-muted">{t.pluginDetail.tools}</dt>
-          <dd className="font-mono text-sm text-text">{toolCount}</dd>
-        </div>
-        <div className="flex items-center justify-between gap-2">
-          <dt className="text-xs text-text-muted">{t.pluginDetail.hooks}</dt>
-          <dd className="font-mono text-sm text-text">{hookCount}</dd>
-        </div>
-        {platformCount > 0 ? (
-          <div className="flex items-center justify-between gap-2">
-            <dt className="text-xs text-text-muted">{t.pluginDetail.platforms}</dt>
-            <dd className="font-mono text-sm text-text">{platformCount}</dd>
-          </div>
-        ) : null}
-      </dl>
-    </RailCard>
   );
 }

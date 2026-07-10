@@ -197,7 +197,7 @@ export function TasksView() {
       <ModuleHeader title={t.page.tasks} count={filtered.length} icon={ListChecks}>
         <ProjectFilterPills value={selectedProject} onChange={setProject} />
         <DateRangeFilter value={range} onChange={(r) => setRangeRaw(serializeRange(r))} />
-        <Segmented value={filter} onChange={(v) => setFilter(v as Filter)} options={FILTERS} nowrap />
+        <Segmented value={filter} onChange={(v) => setFilter(v as Filter)} options={FILTERS} />
         <div className="relative w-40 @sm:w-52">
           <Search size={14} aria-hidden className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" />
           <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={t.tasks.searchPlaceholder} className="pl-9" />

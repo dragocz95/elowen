@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { LanguageProvider } from '../../../lib/i18n';
 import { ThemeProvider } from '../../../lib/useTheme';
 import { en } from '../../../lib/i18n/dictionaries/en';
@@ -76,6 +76,19 @@ describe('PluginDetail workspace', () => {
     expect(screen.getByRole('region', { name: en.pluginDetail.livePreview })).toBeInTheDocument();
   });
 
+  it('keeps the live preview inline and gives the config editor the full workspace width', () => {
+    usePluginDetail.mockReturnValue({ data: detail([
+      { key: 'message', label: 'Message', type: 'string' },
+    ], { message: 'Hello' }), isLoading: false });
+    renderDetail();
+
+    const layout = screen.getByTestId('plugin-editor-layout');
+    expect(layout).toHaveClass('flex-col');
+    expect(within(layout).getByRole('region', { name: en.pluginDetail.livePreview })).toBeInTheDocument();
+    expect(within(layout).getByRole('textbox')).toBeInTheDocument();
+    expect(screen.queryByText(en.pluginDetail.overviewStatus)).not.toBeInTheDocument();
+  });
+
   it('opens Setup first when a required secret is missing', () => {
     usePluginDetail.mockReturnValue({ data: detail([{ key: 'token', label: 'Token', type: 'secret', required: true }], {}), isLoading: false });
     renderDetail();
@@ -92,6 +105,7 @@ describe('PluginDetail workspace', () => {
     renderDetail();
     expect(screen.getAllByTestId('discord-tool-bubble')).toHaveLength(2);
     expect(screen.getByText(/\$ npm test/)).toBeInTheDocument();
+    expect(screen.getByTestId('discord-preview-layout')).toHaveClass('@lg:grid-cols-[minmax(0,1.35fr)_minmax(0,.65fr)]');
   });
 
   it('keeps required non-secret fields reachable on Setup', () => {

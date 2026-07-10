@@ -30,31 +30,34 @@ function DiscordPreview({ detail, values }: { detail: PluginDetail; values: Reco
       {withOutput ? outputPreview : null}
     </div>
   );
+  const toolPanel = tools === 'off' ? (
+    <div className="rounded-lg border border-border bg-elevated/45 px-3 py-2.5">
+      <div className="mb-1 flex items-center gap-2 text-xs font-medium text-text"><Wrench size={13} aria-hidden />{t.pluginDetail.previewToolActivity}</div>
+      <span className="text-xs text-text-muted">{t.pluginDetail.previewHidden}</span>
+    </div>
+  ) : perTool ? (
+    <div className="flex flex-col gap-2">
+      {bubble('run_command', t.pluginDetail.previewRunning, output !== 'hidden')}
+      {bubble('web_search', t.pluginDetail.previewDone)}
+    </div>
+  ) : (
+    <div data-testid="discord-tool-bubble" className="rounded-lg border-l-2 border-accent bg-elevated/70 px-3 py-2.5">
+      <div className="mb-2 flex items-center gap-2 text-xs font-medium text-text"><Wrench size={13} aria-hidden />{t.pluginDetail.previewToolActivity}</div>
+      <div className="flex flex-col gap-1.5 font-mono text-[11px] text-text-muted">
+        <span className="flex justify-between gap-2"><span>run_command</span><span>{t.pluginDetail.previewRunning}</span></span>
+        {outputPreview}
+        <span className="flex justify-between gap-2"><span>web_search</span><span>{t.pluginDetail.previewDone}</span></span>
+      </div>
+    </div>
+  );
   return (
-    <div className="flex flex-col gap-2.5">
-      {tools === 'off' ? (
-        <div className="rounded-lg border border-border bg-elevated/45 px-3 py-2.5">
-          <div className="mb-1 flex items-center gap-2 text-xs font-medium text-text"><Wrench size={13} aria-hidden />{t.pluginDetail.previewToolActivity}</div>
-          <span className="text-xs text-text-muted">{t.pluginDetail.previewHidden}</span>
+    <div className="@container">
+      <div data-testid="discord-preview-layout" className="grid grid-cols-1 gap-2.5 @lg:grid-cols-[minmax(0,1.35fr)_minmax(0,.65fr)] @lg:items-stretch">
+        {toolPanel}
+        <div className="rounded-lg border border-border bg-surface px-3 py-2.5 text-xs leading-relaxed text-text">
+          <span className="mb-1 block font-medium text-accent">Elowen</span>
+          {answer === 'live' ? t.pluginDetail.previewStreamingAnswer : t.pluginDetail.previewFinalAnswer}
         </div>
-      ) : perTool ? (
-        <div className="flex flex-col gap-2">
-          {bubble('run_command', t.pluginDetail.previewRunning, output !== 'hidden')}
-          {bubble('web_search', t.pluginDetail.previewDone)}
-        </div>
-      ) : (
-        <div data-testid="discord-tool-bubble" className="rounded-lg border-l-2 border-accent bg-elevated/70 px-3 py-2.5">
-          <div className="mb-2 flex items-center gap-2 text-xs font-medium text-text"><Wrench size={13} aria-hidden />{t.pluginDetail.previewToolActivity}</div>
-          <div className="flex flex-col gap-1.5 font-mono text-[11px] text-text-muted">
-            <span className="flex justify-between gap-2"><span>run_command</span><span>{t.pluginDetail.previewRunning}</span></span>
-            {outputPreview}
-            <span className="flex justify-between gap-2"><span>web_search</span><span>{t.pluginDetail.previewDone}</span></span>
-          </div>
-        </div>
-      )}
-      <div className="rounded-lg border border-border bg-surface px-3 py-2.5 text-xs leading-relaxed text-text">
-        <span className="mb-1 block font-medium text-accent">Elowen</span>
-        {answer === 'live' ? t.pluginDetail.previewStreamingAnswer : t.pluginDetail.previewFinalAnswer}
       </div>
     </div>
   );

@@ -1,8 +1,7 @@
 'use client';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { ArrowLeft, Check, Circle, Settings2, SlidersHorizontal, Sparkles, Activity, ShieldCheck } from 'lucide-react';
 import { Button } from '../../components/ui/Button';
-import { PageLayout } from '../../components/ui/PageLayout';
 import { LoadingState } from '../../components/ui/states';
 import { Segmented } from '../../components/ui/Segmented';
 import { AutoSaveStatus } from '../../components/ui/AutoSaveStatus';
@@ -10,7 +9,7 @@ import { useTranslation } from '../../lib/i18n';
 import { usePluginDetail, usePluginContributions, usePluginLogs, usePluginHookExecutions } from '../../lib/queries';
 import type { PluginConfigField, PluginContributions, PluginDetail as PluginDetailData, PluginHookExecutions, PluginLogs } from '../../lib/types';
 import { PluginConfigEditor } from './PluginConfigEditor';
-import { PluginHero, PluginStatusRail } from './PluginSummary';
+import { PluginHero } from './PluginSummary';
 import { PluginToolsPanel } from './PluginToolsPanel';
 import { PluginHooksPanel } from './PluginHooksPanel';
 import { PluginPermissionsPanel } from './PluginPermissionsPanel';
@@ -20,6 +19,17 @@ import { PluginLivePreview } from './PluginLivePreview';
 import { usePluginConfigDraft } from './usePluginConfigDraft';
 
 type WorkspaceTab = 'setup' | 'behavior' | 'capabilities' | 'activity' | 'advanced';
+
+/** Config and its live preview share one full-width flow. Keeping the preview inline avoids a narrow
+ *  editor column at normal desktop widths while preserving immediate visual feedback above the fields. */
+function PluginEditorLayout({ preview, children }: { preview: ReactNode; children: ReactNode }) {
+  return (
+    <div data-testid="plugin-editor-layout" className="flex min-w-0 flex-col gap-4">
+      <div className="min-w-0">{preview}</div>
+      <div className="min-w-0">{children}</div>
+    </div>
+  );
+}
 
 function PluginWorkspace({ name, detail, contributions, logs, hookExecutions, onBack }: {
   name: string;
@@ -59,9 +69,7 @@ function PluginWorkspace({ name, detail, contributions, logs, hookExecutions, on
   };
 
   const pluginDescription = tr?.description ?? detail.description;
-  const health = logs?.health ?? detail.health ?? 'ok';
   const toolCount = detail.provides.tools?.length ?? 0;
-  const hookCount = detail.provides.hooks?.length ?? 0;
   const platformCount = detail.provides.platforms?.length ?? 0;
   const tabs = [
     { value: 'setup', label: t.pluginDetail.tabSetup, icon: Settings2 },
@@ -71,12 +79,7 @@ function PluginWorkspace({ name, detail, contributions, logs, hookExecutions, on
     { value: 'advanced', label: t.pluginDetail.tabAdvanced, icon: Sparkles },
   ];
   const editorProps = { name, detail, fieldLabel, fieldHint, fieldOptions, riskText, draft };
-  const rail = (
-    <div className="flex flex-col gap-4">
-      {(tab === 'setup' || tab === 'behavior') ? <PluginLivePreview detail={detail} values={draft.values} fieldLabel={fieldLabel} /> : null}
-      <PluginStatusRail health={health} toolCount={toolCount} hookCount={hookCount} platformCount={platformCount} />
-    </div>
-  );
+  const preview = <PluginLivePreview detail={detail} values={draft.values} fieldLabel={fieldLabel} />;
 
   return (
     <div className="flex flex-col gap-5">
@@ -89,7 +92,7 @@ function PluginWorkspace({ name, detail, contributions, logs, hookExecutions, on
       </div>
 
       {tab === 'setup' ? (
-        <PageLayout rail={rail}>
+        <PluginEditorLayout preview={preview}>
           <section className="rounded-xl border border-border bg-surface p-4">
             <div className="mb-3 flex items-center justify-between gap-3">
               <div><h2 className="text-sm font-semibold text-text">{t.pluginDetail.setupChecklist}</h2><p className="mt-0.5 text-xs text-text-muted">{t.pluginDetail.setupChecklistHint}</p></div>
@@ -104,10 +107,14 @@ function PluginWorkspace({ name, detail, contributions, logs, hookExecutions, on
             </div>
           </section>
           <PluginConfigEditor {...editorProps} mode="setup" />
-        </PageLayout>
+        </PluginEditorLayout>
       ) : null}
 
-      {tab === 'behavior' ? <PageLayout rail={rail}><PluginConfigEditor {...editorProps} mode="behavior" /></PageLayout> : null}
+      {tab === 'behavior' ? (
+        <PluginEditorLayout preview={preview}>
+          <PluginConfigEditor {...editorProps} mode="behavior" />
+        </PluginEditorLayout>
+      ) : null}
       {tab === 'capabilities' ? (
         <div className="flex flex-col gap-4">
           <PluginToolsPanel contributions={contributions} />

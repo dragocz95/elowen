@@ -34,17 +34,17 @@ describe('ModuleHeader — per-page document title (the single funnel)', () => {
   });
 });
 
-describe('ModuleHeader — one-line toolbar', () => {
-  it('lays the filters/actions row out as a single non-wrapping, horizontally-scrollable line', () => {
+describe('ModuleHeader — responsive toolbar', () => {
+  it('wraps complete filter/action groups without introducing a horizontal scroller', () => {
     renderHeader(
       <ModuleHeader title="Tasks">
         <button data-testid="ctrl">a</button>
       </ModuleHeader>,
     );
     const row = screen.getByTestId('ctrl').parentElement!;
-    expect(row.className).toContain('flex-nowrap');
-    expect(row.className).toContain('overflow-x-auto');
-    expect(row.className).toContain('scrollbar-none');
-    expect(row.className).not.toContain('flex-wrap');
+    expect(row.className).toContain('flex-wrap');
+    expect(row.className).toContain('[&>*]:max-w-full');
+    expect(row.className).not.toContain('flex-nowrap');
+    expect(row.className).not.toContain('overflow-x-auto');
   });
 });

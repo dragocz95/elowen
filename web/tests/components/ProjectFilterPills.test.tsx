@@ -22,6 +22,11 @@ describe('ProjectFilterPills folding (long workspaces must not flood the header 
   it('shows 5 project pills + "+N more", and expands the rest on click', async () => {
     renderPills();
     await waitFor(() => expect(screen.getByText('proj-1')).toBeTruthy());
+    const group = screen.getByRole('group', { name: /project/i });
+    expect(group.className).toContain('flex-wrap');
+    expect(group.className).toContain('max-w-full');
+    expect(group.className).not.toContain('flex-nowrap');
+    expect(group.className).not.toContain('shrink-0');
     expect(screen.getByText('proj-5')).toBeTruthy();
     expect(screen.queryByText('proj-6')).toBeNull();               // folded
     const more = screen.getByRole('button', { name: '+3 more' }); // 8 - 5 = 3

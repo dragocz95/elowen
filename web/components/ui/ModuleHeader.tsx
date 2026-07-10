@@ -31,12 +31,11 @@ export function ModuleHeader({ title, count, icon: Icon, children, subtitle }: {
   return (
     <div className="mb-6 flex flex-col gap-2">
       {subtitle ? <p className="text-sm text-text-muted">{subtitle}</p> : null}
-      {/* One-line toolbar: the filters/actions row never wraps — it scrolls horizontally on overflow
-          (matching the settings pill-row precedent) so every page's header stays a single, consistent
-          line. [&>*]:shrink-0 keeps each control at its natural width; pb-1 -mb-1 keeps focus rings from
-          being clipped by overflow-x-auto. */}
+      {/* Responsive toolbar: filter/action groups wrap as whole controls, while controls that contain
+          their own collections (project pills, segmented filters) may wrap internally. Keeping every
+          direct child bounded to the row prevents one long group from creating body-level overflow. */}
       {children ? (
-        <div className="flex min-w-0 flex-nowrap items-center gap-2 overflow-x-auto scrollbar-none pb-1 -mb-1 [&>*]:shrink-0">
+        <div className="flex min-w-0 flex-wrap items-center gap-2 [&>*]:max-w-full">
           {children}
         </div>
       ) : null}
