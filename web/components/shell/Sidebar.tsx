@@ -144,6 +144,17 @@ export function Sidebar({
             expandLabel={t.common.expand}
             collapseLabel={t.common.collapse}
           />
+          <div className="mt-3 border-t border-border/60 pt-2">
+            <NavGroup
+              group={{ label: t.nav.system, items: systemItems }}
+              pathname={pathname}
+              collapsed={!expanded}
+              forceSubItems={drawer}
+              side={side}
+              expandLabel={t.common.expand}
+              collapseLabel={t.common.collapse}
+            />
+          </div>
         </div>
 
         <div className="shrink-0 border-t border-border/80 bg-bg/20">
@@ -153,15 +164,6 @@ export function Sidebar({
               Elowen {data?.version ?? '—'}
             </div>
           ) : null}
-          <NavGroup
-            group={{ label: t.nav.system, items: systemItems }}
-            pathname={pathname}
-            collapsed={!expanded}
-            forceSubItems={drawer}
-            side={side}
-            expandLabel={t.common.expand}
-            collapseLabel={t.common.collapse}
-          />
         </div>
 
         {mode === 'full' ? (

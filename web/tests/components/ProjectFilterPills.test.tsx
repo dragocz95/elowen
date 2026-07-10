@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { useState } from 'react';
 vi.mock('next/navigation', () => ({ useRouter: () => ({ push: () => {}, replace: () => {} }), useSearchParams: () => new URLSearchParams() }));
 import { setupServer } from 'msw/node';
 import { http, HttpResponse } from 'msw';
@@ -13,9 +14,13 @@ const PROJECTS = Array.from({ length: 8 }, (_, i) => ({ id: i + 1, slug: `proj-$
 const server = setupServer(http.get('*/api/projects', () => HttpResponse.json(PROJECTS)));
 beforeAll(() => server.listen({ onUnhandledRequest })); afterAll(() => server.close());
 
-const renderPills = (value: number | 'all' = 'all') => {
+const renderPills = (value: number | 'all' = 'all', variant: 'pills' | 'dropdown' = 'pills') => {
   const { wrapper: Wrapper } = createWrapper();
-  return render(<Wrapper><ProjectFilterPills value={value} onChange={() => {}} /></Wrapper>);
+  function StatefulPills() {
+    const [selected, setSelected] = useState<number | 'all'>(value);
+    return <ProjectFilterPills value={selected} onChange={setSelected} variant={variant} />;
+  }
+  return render(<Wrapper><StatefulPills /></Wrapper>);
 };
 
 describe('ProjectFilterPills folding (long workspaces must not flood the header row)', () => {
@@ -50,5 +55,19 @@ describe('ProjectFilterPills folding (long workspaces must not flood the header 
     renderPills();
     await waitFor(() => expect(screen.getByText('proj-3')).toBeTruthy());
     expect(screen.queryByRole('button', { name: /more/ })).toBeNull();
+  });
+
+  it('renders a compact project dropdown with All projects selected by default', async () => {
+    renderPills('all', 'dropdown');
+    const trigger = await screen.findByRole('button', { name: 'Project filter' });
+    expect(trigger).toHaveTextContent('All projects');
+    expect(screen.queryByRole('menu')).toBeNull();
+    fireEvent.click(trigger);
+    expect(screen.getByRole('menu')).toBeInTheDocument();
+    expect(screen.getByRole('menuitemradio', { name: 'All projects' })).toHaveAttribute('aria-checked', 'true');
+    expect(screen.getByRole('menuitemradio', { name: 'proj-3' })).toHaveAttribute('aria-checked', 'false');
+    fireEvent.click(screen.getByRole('menuitemradio', { name: 'proj-3' }));
+    expect(screen.queryByRole('menu')).toBeNull();
+    expect(trigger).toHaveTextContent('proj-3');
   });
 });

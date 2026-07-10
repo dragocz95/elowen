@@ -43,14 +43,16 @@ describe('TasksPage project pills', () => {
     expect(screen.getByText('Beta')).toBeInTheDocument();
     expect(lastTasksUrl).not.toContain('project_id=');
 
-    // Click the "other" project pill → only Beta.
-    fireEvent.click(screen.getByRole('button', { name: 'other' }));
+    // Open the project dropdown and choose "other" → only Beta.
+    fireEvent.click(screen.getByRole('button', { name: 'Project filter' }));
+    fireEvent.click(screen.getByRole('menuitemradio', { name: 'other' }));
     await waitFor(() => expect(lastTasksUrl).toContain('project_id=2'));
     await waitFor(() => expect(screen.queryByText('Alpha')).not.toBeInTheDocument());
     expect(screen.getByText('Beta')).toBeInTheDocument();
 
-    // Click "All projects" → both back.
-    fireEvent.click(screen.getByRole('button', { name: /All projects/i }));
+    // Reopen the dropdown and choose "All projects" → both back.
+    fireEvent.click(screen.getByRole('button', { name: 'Project filter' }));
+    fireEvent.click(screen.getByRole('menuitemradio', { name: 'All projects' }));
     await waitFor(() => expect(screen.getByText('Alpha')).toBeInTheDocument());
     expect(lastTasksUrl).not.toContain('project_id=');
   });

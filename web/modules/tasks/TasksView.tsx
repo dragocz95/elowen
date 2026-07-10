@@ -195,7 +195,7 @@ export function TasksView() {
   return (
     <>
       <ModuleHeader title={t.page.tasks} count={filtered.length} icon={ListChecks}>
-        <ProjectFilterPills value={selectedProject} onChange={setProject} />
+        <ProjectFilterPills value={selectedProject} onChange={setProject} variant="dropdown" />
         <DateRangeFilter value={range} onChange={(r) => setRangeRaw(serializeRange(r))} />
         <Segmented value={filter} onChange={(v) => setFilter(v as Filter)} options={FILTERS} />
         <div className="relative w-40 @sm:w-52">

@@ -23,8 +23,8 @@ describe('TasksPage', () => {
   it('keeps the toolbar and its status choices wrapping instead of horizontally scrolling', async () => {
     const { wrapper: Wrapper } = createWrapper();
     render(<Wrapper><ToastProvider><TasksPage /></ToastProvider></Wrapper>);
-    const projects = await screen.findByRole('group', { name: /project/i });
-    const toolbar = projects.parentElement!;
+    const projects = await screen.findByRole('button', { name: /project/i });
+    const toolbar = projects.parentElement?.parentElement!;
     const statuses = screen.getByRole('radiogroup');
     expect(toolbar.className).toContain('flex-wrap');
     expect(toolbar.className).not.toContain('overflow-x-auto');
