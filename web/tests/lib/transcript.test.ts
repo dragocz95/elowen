@@ -59,6 +59,22 @@ describe('web transcript reducer', () => {
     ]);
   });
 
+  it('attaches live run_command progress by id and the final tool_output supersedes it (no doubled dump)', () => {
+    let view = emptyView();
+    view = reduce(view, { type: 'tool', name: 'run_command', id: 'r1' });
+    view = reduce(view, { type: 'tool_progress', id: 'r1', text: 'PASS a' });
+    let turn = view.turns.at(-1);
+    let item = turn?.role === 'elowen' && turn.segments[0]?.kind === 'tools' ? turn.segments[0].items[0] : undefined;
+    expect(item).toMatchObject({ id: 'r1', progress: 'PASS a' });
+
+    view = reduce(view, { type: 'tool_progress', id: 'r1', text: 'PASS a\nPASS b' }); // latest tail replaces
+    view = reduce(view, { type: 'tool_output', id: 'r1', output: { title: 'console output', kind: 'console', text: 'PASS a\nPASS b\n[exit 0]' } });
+    turn = view.turns.at(-1);
+    item = turn?.role === 'elowen' && turn.segments[0]?.kind === 'tools' ? turn.segments[0].items[0] : undefined;
+    expect(item?.progress).toBeUndefined();                 // the live tail is cleared
+    expect(item?.output).toMatchObject({ kind: 'console' }); // only the final block remains
+  });
+
   it('folds a `user` delivery event into a you-turn (a drained queued message)', () => {
     let view = reduce(emptyView(), { type: 'text', delta: 'reply to the first message' });
     view = reduce(view, { type: 'idle' }); // the first turn settles

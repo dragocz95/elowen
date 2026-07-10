@@ -14,6 +14,11 @@ export const TOP_RULE_ROWS = 1;
  *  so tool traffic sits visually SET APART from the answer (opencode-style). The nested blocks a tool
  *  spawns (diff/console output) indent one level deeper again — see components.ts. */
 export const TOOL_INDENT = '    ';
+/** One level deeper than TOOL_INDENT — the live `run_command` progress tail sits under its `$` row, at
+ *  the same depth as a console-output block body (see components.ts BLOCK_BODY_INDENT). */
+const TOOL_OUTPUT_INDENT = '      ';
+/** How many trailing lines of a running command's rolling output tail to show live under its `$` row. */
+const PROGRESS_TAIL_ROWS = 8;
 export const PANEL_GUTTER_COLUMNS = 3;
 export const ENABLE_MOUSE = '\x1b[?1000h\x1b[?1002h\x1b[?1006h';
 export const DISABLE_MOUSE = '\x1b[?1000l\x1b[?1002l\x1b[?1006l';
@@ -435,8 +440,17 @@ export class ChatViewport implements Component {
               // A shell/console tool that finished silently still shows its command on its own line.
               // Tool traffic renders DIM across the board (glyph faint, text muted) — it is secondary
               // to the assistant's answer, opencode-style, instead of glowing green next to it.
-              if (item.command) add(`${TOOL_INDENT}${color.faint('$')} ${color.dim(truncateToWidth(item.command, Math.max(12, width - 12), '…'))} ${color.faint(turn.streaming && item === lastToolItem ? '· running…' : '· done')}`);
-              else {
+              if (item.command) {
+                add(`${TOOL_INDENT}${color.faint('$')} ${color.dim(truncateToWidth(item.command, Math.max(12, width - 12), '…'))} ${color.faint(turn.streaming && item === lastToolItem ? '· running…' : '· done')}`);
+                // Live streamed output of a still-running command (run_command `tool_progress`): the last
+                // few lines of the rolling tail, faint, under the `$` row. Cleared once the final
+                // `tool_output` lands (which renders its own block above), so there's never a doubled dump.
+                if (item.progress) {
+                  for (const l of item.progress.split('\n').slice(-PROGRESS_TAIL_ROWS)) {
+                    add(`${TOOL_OUTPUT_INDENT}${color.faint(truncateToWidth(l, Math.max(12, width - 14), '…'))}`);
+                  }
+                }
+              } else {
                 // Repeated bare rows collapse — the latest detail plus a faint ×N when the run is >1.
                 const spec = toolRowSpec(item.name, item.detail);
                 const suffix = group.count > 1 ? ` ${color.faint(`×${group.count}`)}` : '';

@@ -25,6 +25,14 @@ export type BrainEvent =
    *  replaces it; an empty card (no items/body) removes it. Generalizes what the todo checklist used to
    *  do with its own bespoke event. */
   | { type: 'card'; card: BrainCard }
+  /** Live streamed output of an IN-PROGRESS `run_command` foreground run — and ONLY that tool, so every
+   *  other tool stays silent (no `_update` re-noise flooding the SSE). Mapped from PI's
+   *  `tool_execution_update`, THROTTLED to at most one per `PROGRESS_THROTTLE_MS` per tool call, and
+   *  carrying a bounded rolling TAIL of the output so far (never the whole buffer). Keyed by `id`
+   *  (the `toolCallId`): the reducer renders it under the matching in-progress tool row, and the final
+   *  `tool_output`/`diff` for that id SUPERSEDES it — so a long build streams live without ever doubling
+   *  its dump. Safe to ignore (the final output still arrives). */
+  | { type: 'tool_progress'; id: string; text: string }
   /** A tool produced a stored image (`/api/brain/images/…`) — channels attach it even when the
    *  model's final text forgets to repeat the markdown link. */
   | { type: 'image'; ref: string }
@@ -163,13 +171,37 @@ function retryReason(raw: unknown): string {
   return text.replace(/\s+/g, ' ').trim().slice(0, 70);
 }
 
+/** Only this tool streams live progress — every other tool's `tool_execution_update` is dropped so a
+ *  chatty tool can't re-flood the SSE with the raw output it already returns once at the end. */
+const PROGRESS_TOOL = 'run_command';
+/** At most one `tool_progress` per tool call per this window — the ceiling on how often a running
+ *  command can push a partial to every attached client. Paired with the plugin's own onData throttle
+ *  (the primary emission rate limit); this is the defensive second gate at the single mapping point. */
+const PROGRESS_THROTTLE_MS = 100;
+/** Bounded rolling TAIL kept from a partial result — a runaway command's live view stays a few screens,
+ *  never its whole buffer. Errors live at the end of shell output, so we keep the tail, not the head. */
+const PROGRESS_TAIL_CHARS = 2_000;
+/** Per-`toolCallId` timestamp of the last emitted `tool_progress`, for the throttle above. Entries are
+ *  dropped on the matching `tool_execution_end`, so the map never outgrows the set of live tool calls. */
+const lastProgressAt = new Map<string, number>();
+
+/** Extract the rolling tail of text from a PI `partialResult` (same `{ content: [{ text }] }` shape as
+ *  a final tool result). Concatenates the text parts and keeps only the last `PROGRESS_TAIL_CHARS`. */
+function progressTail(partial: unknown): string {
+  const parts = (partial as { content?: { text?: string }[] } | undefined)?.content;
+  let text = '';
+  for (const part of Array.isArray(parts) ? parts : []) if (typeof part?.text === 'string') text += part.text;
+  text = text.replace(/\s+$/, '');
+  return text.length > PROGRESS_TAIL_CHARS ? text.slice(text.length - PROGRESS_TAIL_CHARS) : text;
+}
+
 /** Translate a PI session event into the stable BrainEvent contract. Defensive: unknown event types
- *  are dropped. */
-export function toBrainEvent(e: AgentSessionEvent): BrainEvent | null {
+ *  are dropped. `now` is injectable so the `tool_progress` throttle is deterministic in tests. */
+export function toBrainEvent(e: AgentSessionEvent, now: number = Date.now()): BrainEvent | null {
   if (e.type === 'agent_end') return { type: 'idle' };
   const anyE = e as {
     type: string; toolName?: string; args?: unknown; result?: { details?: { diff?: unknown } }; isError?: boolean;
-    toolCallId?: string;
+    toolCallId?: string; partialResult?: unknown;
     assistantMessageEvent?: { type?: string; delta?: string };
     attempt?: number; maxAttempts?: number; errorMessage?: string; success?: boolean;
     // compaction_end carries its outcome: `result` is the CompactionResult on success, undefined on a
@@ -202,6 +234,19 @@ export function toBrainEvent(e: AgentSessionEvent): BrainEvent | null {
     const ok = anyE.result != null && anyE.aborted !== true;
     return { type: 'notice', kind: 'compaction', message: ok ? 'context compacted' : '', done: true };
   }
+  // Live streamed output of a running tool. Scoped to `run_command` ONLY (every other tool would just
+  // re-noise the SSE with output it returns once at the end anyway) and throttled per tool call, so a
+  // long build/test streams a bounded rolling tail live. The final `tool_output` for this id supersedes
+  // the partial in the reducer, so a dropped in-window update is harmless.
+  if (anyE.type === 'tool_execution_update') {
+    if (anyE.toolName !== PROGRESS_TOOL || typeof anyE.toolCallId !== 'string') return null;
+    const last = lastProgressAt.get(anyE.toolCallId) ?? 0;
+    if (now - last < PROGRESS_THROTTLE_MS) return null;
+    const text = progressTail(anyE.partialResult);
+    if (!text) return null;
+    lastProgressAt.set(anyE.toolCallId, now);
+    return { type: 'tool_progress', id: anyE.toolCallId, text };
+  }
   // Emit the tool name ONCE, when it starts — never the raw streamed output (_update noise).
   if (anyE.type === 'tool_execution_start' && typeof anyE.toolName === 'string') {
     // The start event carries the arguments (the end event does not), so the verbatim shell command is
@@ -210,6 +255,7 @@ export function toBrainEvent(e: AgentSessionEvent): BrainEvent | null {
   }
   // Edits carry a display diff in their result details — that's the one tool output worth showing.
   if (anyE.type === 'tool_execution_end') {
+    if (typeof anyE.toolCallId === 'string') lastProgressAt.delete(anyE.toolCallId); // release the throttle slot
     const diff = anyE.result?.details?.diff;
     if (typeof diff === 'string' && diff.trim()) {
       // A hook-annotated edit (details.notes) keeps its note: toolOutputView builds a notes-only view

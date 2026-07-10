@@ -11,7 +11,10 @@ import type { ToolOutputView } from './messageView.js';
  *  happened. Consecutive tool calls (no new text between them) collapse into ONE tools segment — the
  *  Claude-Code "grouped" look. Tool outputs are attached only when the daemon marks a compact preview
  *  as useful enough to show (tests, shell errors, browser/search observations). */
-export interface ToolItem { name: string; detail?: string; diff?: string; icon?: string; output?: ToolOutputView; id?: string; command?: string; sub?: SubagentState }
+export interface ToolItem { name: string; detail?: string; diff?: string; icon?: string; output?: ToolOutputView; id?: string; command?: string; sub?: SubagentState;
+  /** Live rolling tail of a still-running `run_command` (from the `tool_progress` event), shown under the
+   *  tool row while it streams. LIVE-only — never persisted; the final `output`/`diff` clears it. */
+  progress?: string }
 
 /** Live progress of a delegated sub-agent, attached to its `delegate` tool item by call id — what the
  *  CLI renders as the `↳ …` line under the tool row (current child tool, counters, drill-in target). */
@@ -42,9 +45,10 @@ export type Segment =
  *  it renders its own block, and a shell command's verbatim text is meaningful per call. */
 export interface ToolGroup { item: ToolItem; count: number }
 
-/** True when an item is a bare tool row (no block of its own), the only kind that collapses. */
+/** True when an item is a bare tool row (no block of its own), the only kind that collapses. A live
+ *  `progress` tail is a block of its own, so a streaming command never folds into a collapsed run. */
 function isCollapsibleTool(item: ToolItem): boolean {
-  return !item.diff && !item.output && !item.sub && !item.command;
+  return !item.diff && !item.output && !item.sub && !item.command && !item.progress;
 }
 
 /** Fold a tools segment's items into render groups (see {@link ToolGroup}). Pure — recomputed every
@@ -168,18 +172,27 @@ export function reduce(view: ChatView, e: BrainEvent): ChatView {
       else t.segments.push({ kind: 'tools', items: [item] });
       return { turns, thinking: true, notice: view.notice };
     }
+    case 'tool_progress': {
+      // Live rolling tail of a running run_command — attach to its in-progress tool row by id so the
+      // renderer shows output as it streams. Superseded by the final `tool_output`/`diff` below.
+      const t = ensureElowen();
+      attachToTool(t, e.id, (item) => ({ ...item, progress: e.text }));
+      return { turns, thinking: true, notice: view.notice };
+    }
     case 'diff': {
       // An edit finished — attach its diff to the matching tool when PI gives an id; fall back to the
       // most recent tool for legacy events. A notes-only output view (hook annotations) rides along.
+      // The final block supersedes any live `progress` tail (reconcile → no doubled dump).
       const t = ensureElowen();
-      attachToTool(t, e.id, (item) => ({ ...item, diff: e.diff, ...(e.output ? { output: e.output } : {}) }));
+      attachToTool(t, e.id, ({ progress: _drop, ...item }) => ({ ...item, diff: e.diff, ...(e.output ? { output: e.output } : {}) }));
       return { turns, thinking: true, notice: view.notice };
     }
     case 'tool_output': {
       const t = ensureElowen();
       // The end event's output has no command (its PI event carries no args) — thread the verbatim
       // command captured on the matching `tool` (start) event so the console block's first line is filled.
-      attachToTool(t, e.id, (item) => ({
+      // The final output supersedes any live `progress` tail (reconcile → no doubled dump).
+      attachToTool(t, e.id, ({ progress: _drop, ...item }) => ({
         ...item,
         output: item.command && !e.output.command ? { ...e.output, command: item.command } : e.output,
       }));

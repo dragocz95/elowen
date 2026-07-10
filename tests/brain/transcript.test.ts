@@ -118,6 +118,43 @@ describe('transcript fold: diff with a notes-only output view', () => {
   });
 });
 
+describe('transcript fold: run_command live progress → reconcile with final output', () => {
+  const toolItem = (v: ChatView): ToolItem => {
+    const turn = v.turns[v.turns.length - 1]!;
+    if (turn.role !== 'elowen') throw new Error('expected elowen turn');
+    const seg = turn.segments.find((s) => s.kind === 'tools');
+    if (seg?.kind !== 'tools') throw new Error('expected tools segment');
+    return seg.items[0]!;
+  };
+
+  it('attaches the live tail to the matching run_command tool item by id, updating in place', () => {
+    let v = beginAssistant(pushUser(emptyView(), 'run tests'));
+    v = reduce(v, { type: 'tool', name: 'run_command', command: 'npm test', id: 'r1' });
+    v = reduce(v, { type: 'tool_progress', id: 'r1', text: 'PASS a.test' });
+    expect(toolItem(v)).toMatchObject({ command: 'npm test', progress: 'PASS a.test' });
+    v = reduce(v, { type: 'tool_progress', id: 'r1', text: 'PASS a.test\nPASS b.test' });
+    expect(toolItem(v).progress).toBe('PASS a.test\nPASS b.test'); // latest tail replaces, never appends
+  });
+
+  it('the final tool_output SUPERSEDES the live progress (reconcile → no doubled dump)', () => {
+    let v = beginAssistant(pushUser(emptyView(), 'run tests'));
+    v = reduce(v, { type: 'tool', name: 'run_command', command: 'npm test', id: 'r1' });
+    v = reduce(v, { type: 'tool_progress', id: 'r1', text: 'PASS a.test' });
+    v = reduce(v, { type: 'tool_output', id: 'r1', output: { title: 'tool result', kind: 'console', text: '$ npm test\nPASS a.test\nPASS b.test\n[exit 0]' } });
+    const item = toolItem(v);
+    expect(item.progress).toBeUndefined();                 // the live tail is cleared
+    expect(item.output).toMatchObject({ kind: 'console' }); // only the final block remains
+  });
+
+  it('a progress-bearing run_command never collapses into a grouped ×N row', () => {
+    const groups = groupToolItems([
+      { name: 'run_command', id: 'r1', progress: 'building…' },
+      { name: 'run_command', id: 'r2', progress: 'linking…' },
+    ]);
+    expect(groups.map((g) => g.count)).toEqual([1, 1]);
+  });
+});
+
 describe('transcript fold: subagent progress', () => {
   const delegateCall = (): ChatView => {
     let v = pushUser(emptyView(), 'do it');

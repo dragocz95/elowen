@@ -150,4 +150,41 @@ describe('brain persistence', () => {
     expect(JSON.parse(rows[1]!.content)).toMatchObject({ content: 'qB' });
     expect(JSON.stringify(rows.map((r) => JSON.parse(r.content)))).not.toContain('qA');
   });
+
+  it('persistCompaction does NOT drop a kept message when a pre-prompt compaction leaves a trailing unprocessed user row', () => {
+    // Reproduces the pre-prompt auto-compact case (channels/turnRunner): projectUserTurn writes the NEW
+    // user turn to the store BEFORE session.prompt(); PI's `_checkCompaction` then runs at the very start
+    // of prompt() — BEFORE that user message is pushed to session.messages. So at compaction time the
+    // store has ONE trailing user row ('q3') that PI's kept tail does NOT contain.
+    projectUserTurn(store, 's1', 'q1');
+    projectEvent(store, 's1', { type: 'agent_end', willRetry: false, messages: [{ role: 'assistant', content: 'a1' }] } as never);
+    projectUserTurn(store, 's1', 'q2');
+    projectEvent(store, 's1', { type: 'agent_end', willRetry: false, messages: [{ role: 'assistant', content: 'a2' }] } as never);
+    projectUserTurn(store, 's1', 'q3'); // the in-flight turn's user row — persisted before prompt()
+    expect(store.getMessages('s1').map((r) => r.role)).toEqual(['user', 'assistant', 'user', 'assistant', 'user']);
+
+    // PI compacted at the start of q3's prompt(): it summarized q1/a1 and kept q2/a2. q3 is NOT in the
+    // live context yet (it is only pushed after the compaction check), so the kept tail ends at a2.
+    const session = {
+      messages: [
+        { role: 'compactionSummary', summary: 'q1/a1 summarized', tokensBefore: 400 },
+        { role: 'user', content: [{ type: 'text', text: '<user_memories>x</user_memories>\n\nq2' }] },
+        { role: 'assistant', content: 'a2' },
+      ],
+    } as unknown as AgentSession;
+
+    persistCompaction(store, session, 's1');
+
+    // The kept context (q2/a2) must survive, the trailing in-flight user row q3 stays as the newest row,
+    // and only q1/a1 are folded into the divider. The bug dropped q2 and mis-kept q3 in its place.
+    const rows = store.getMessages('s1');
+    expect(rows.map((r) => r.role)).toEqual(['compaction', 'user', 'assistant', 'user']);
+    expect(JSON.parse(rows[1]!.content)).toMatchObject({ content: 'q2' });
+    expect(JSON.parse(rows[2]!.content)).toMatchObject({ content: 'a2' });
+    expect(JSON.parse(rows[3]!.content)).toMatchObject({ content: 'q3' });
+    // q1/a1 are gone from the rows (only referenced by the summary divider), and no clean row leaked framing.
+    const body = JSON.stringify(rows.slice(1).map((r) => JSON.parse(r.content)));
+    expect(body).not.toContain('q1');
+    expect(body).not.toContain('user_memories');
+  });
 });

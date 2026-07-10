@@ -58,6 +58,8 @@ function TextSegment({ text }: { text: string }) {
 }
 
 const DIFF_MAX_ROWS = 60;
+/** How many trailing lines of a running command's live output tail to show (mirror of the CLI). */
+const PROGRESS_TAIL_ROWS = 8;
 /** A diff row is `-   12 text` (current pi-compatible format), `  12 - text` (legacy stored rows),
  *  or a bare unified `-text`/`+text`. */
 const DIFF_SIGN = /^([+-])\s*\d+ |^\s*\d+ ([-+ ]) |^([-+])/;
@@ -144,7 +146,19 @@ function ToolPills({ tools }: { tools: ToolItem[] }) {
       </span>
       {tools.filter((t) => t.diff).map((tool, i) => <DiffBlock key={i} diff={tool.diff!} />)}
       {tools.filter((t) => t.output).map((tool, i) => <ToolOutputBlock key={i} output={tool.output!} />)}
+      {tools.filter((t) => t.progress).map((tool, i) => <ProgressBlock key={i} text={tool.progress!} />)}
     </span>
+  );
+}
+
+/** Live rolling tail of a running run_command (the `tool_progress` event): the last lines of its output
+ *  as it streams, in a muted terminal block. Cleared once the final `output`/`diff` lands, so it never
+ *  doubles the final dump. */
+function ProgressBlock({ text }: { text: string }) {
+  return (
+    <pre className="max-w-full overflow-x-auto rounded-md border border-border bg-elevated p-2 font-mono text-tiny leading-relaxed text-text-muted">
+      {text.split('\n').slice(-PROGRESS_TAIL_ROWS).map((l, i) => <div key={i}>{l || ' '}</div>)}
+    </pre>
   );
 }
 
@@ -316,8 +330,16 @@ export function BrainChat() {
       setTurns((cur) => fold(cur, { type: 'reasoning', delta }));
     });
     es.addEventListener('tool', (e) => {
-      const { name, detail, icon } = JSON.parse((e as MessageEvent).data) as { name: string; detail?: string; icon?: string };
-      setTurns((cur) => fold(cur, { type: 'tool', name, detail, icon }));
+      // Keep `id` (the toolCallId): it keys the live `tool_progress` tail onto its in-progress tool pill.
+      const { name, detail, icon, id } = JSON.parse((e as MessageEvent).data) as { name: string; detail?: string; icon?: string; id?: string };
+      setTurns((cur) => fold(cur, { type: 'tool', name, detail, icon, id }));
+    });
+    // Live streamed output of a running run_command (bounded rolling tail): fold onto its tool pill by id
+    // so a long build/test shows output as it runs. The stored history's final output supersedes it on
+    // reload; there is no live tool_output frame in the dock, so nothing doubles it here.
+    es.addEventListener('tool_progress', (e) => {
+      const { id, text } = JSON.parse((e as MessageEvent).data) as { id: string; text: string };
+      setTurns((cur) => fold(cur, { type: 'tool_progress', id, text }));
     });
     // Live sub-agent progress (delegate): fold onto its tool item so the agents table + drill-in read it.
     es.addEventListener('subagent', (e) => {

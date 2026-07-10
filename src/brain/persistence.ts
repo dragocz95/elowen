@@ -62,20 +62,55 @@ function stampCost(m: unknown, cost: number): void {
  *  Mapping PI's kept tail → store rows: every kept PI message has a 1:1 clean store row EXCEPT (a) the
  *  leading compactionSummary (we insert our own divider instead) and (b) any NO_REPLY_NUDGE user message
  *  — prompted straight to PI on a thinking-only turn, never `projectUserTurn`'d, so it has NO store row
- *  (see turnRunner/channels). So `keepLastN` = count of kept messages that are neither. Both sequences
- *  are chronological suffixes of the same conversation, so the last `keepLastN` store rows ARE the clean
- *  tail (handles split-turn cuts too — a partial turn just contributes fewer kept messages). */
+ *  (see turnRunner/channels). So the kept tail is `keptRoles.length` store-backed messages, and both
+ *  sequences are chronological suffixes of the same conversation (handles split-turn cuts too — a partial
+ *  turn just contributes fewer kept messages).
+ *
+ *  Trailing-row alignment: a positional "last N store rows" is WRONG when PI compacts BEFORE it has
+ *  ingested the current turn's user message. Auto-compaction runs inside PI's `_checkCompaction` at the
+ *  very start of `prompt()` — BEFORE the new user message is pushed to `session.messages` — yet
+ *  `projectUserTurn` already wrote that user row to the store BEFORE calling `prompt()` (see
+ *  turnRunner/channels). So at compaction time the store has one (or more) trailing user row(s) the kept
+ *  tail does NOT contain; blindly keeping the last N rows would retain those unprocessed rows and DROP the
+ *  oldest genuinely-kept message. We instead align the kept tail's role sequence against the store rows
+ *  from the tail, allowing the newest store rows that PI hasn't ingested yet to sit AFTER the kept tail:
+ *  the divider lands before the kept tail, and the in-flight user row stays as the newest row. When the
+ *  sequences are already aligned (manual `/compact`, which runs OUTSIDE prompt(); overflow recovery) the
+ *  match is at skip 0 and this is identical to the old count-only behaviour. */
 export function persistCompaction(store: BrainStore, session: AgentSession, sessionId: string): void {
   const messages = session.messages as { role?: string }[];
   const summary = messages.find((m) => m.role === 'compactionSummary');
   if (!summary) return; // no compaction actually present in the live context — nothing to mirror (defensive)
-  let keepLastN = 0;
+  const keptRoles: string[] = [];
   for (const m of messages) {
     if (m.role === 'compactionSummary') continue; // → our inserted divider, not a tail row
     if (m.role === 'user' && extractText(m).trim() === NO_REPLY_NUDGE) continue; // nudge has no store row
-    keepLastN++;
+    keptRoles.push(m.role ?? 'assistant');
   }
-  store.compactSessionMessages(sessionId, { id: randomUUID(), role: 'compaction', content: summary }, keepLastN);
+  const keepCount = alignedKeepCount(store.getMessages(sessionId).map((r) => r.role), keptRoles);
+  store.compactSessionMessages(sessionId, { id: randomUUID(), role: 'compaction', content: summary }, keepCount);
+}
+
+/** How many trailing store rows to keep so the compaction divider lands directly before PI's kept tail.
+ *  `keptRoles` is the ordered role sequence of PI's kept, store-backed messages. We find the SMALLEST
+ *  number of newest store rows to skip (rows PI hasn't ingested yet — the in-flight user turn) such that
+ *  the `keptRoles`-length window ending just before them matches by role, then keep that window PLUS the
+ *  skipped rows (so the in-flight user turn survives as the newest row). Skip 0 = already aligned (manual
+ *  `/compact`, overflow recovery) → identical to keeping the last `keptRoles.length` rows. Falls back to
+ *  `keptRoles.length` when no alignment exists (e.g. the kept tail is longer than the whole store — the
+ *  documented `keepLastN >= total` case that keeps the entire log). */
+function alignedKeepCount(storeRoles: string[], keptRoles: string[]): number {
+  const n = storeRoles.length;
+  const k = keptRoles.length;
+  for (let skip = 0; skip <= n - k; skip++) {
+    const start = n - skip - k;
+    let matches = true;
+    for (let i = 0; i < k; i++) {
+      if (storeRoles[start + i] !== keptRoles[i]) { matches = false; break; }
+    }
+    if (matches) return k + skip;
+  }
+  return k;
 }
 
 /** The stored rows of a session, JSON-parsed defensively: a single corrupt `content` blob skips just

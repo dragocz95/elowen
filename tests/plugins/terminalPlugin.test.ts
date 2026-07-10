@@ -81,6 +81,44 @@ describe('terminal plugin', () => {
   });
 });
 
+describe('terminal plugin — live foreground output (onUpdate streaming)', () => {
+  let reg: PluginRegistry;
+  let dir: string;
+  beforeAll(async () => {
+    reg = await loadPlugins({ dirs: [join(repoRoot, 'plugins')], enabled: ['terminal'], logger: log });
+    dir = mkdtempSync(join(tmpdir(), 'elowen-term-live-'));
+  });
+
+  const runStreaming = (command: string, onUpdate: (p: { content: { text: string }[] }) => void) => {
+    const tool = reg.tools.find((t) => t.name === 'run_command');
+    if (!tool) throw new Error('run_command not registered');
+    const exec = (tool as unknown as { execute: (id: string, p: unknown, signal: undefined, onUpdate: unknown) => Promise<{ content: { text: string }[] }> }).execute;
+    return runWithPolicy(userPolicy([dir]), () => exec('t', { command }, undefined, onUpdate), { identity: owner });
+  };
+
+  it('pushes the rolling output tail LIVE via onUpdate as a foreground command runs, then returns the full result', async () => {
+    const snapshots: string[] = [];
+    // Two writes ~250ms apart: past the 100ms throttle, so the second write yields a second progress push
+    // whose tail carries BOTH lines — proving the output streamed live, not just at the end.
+    const command = `node -e "process.stdout.write('first\\n'); setTimeout(() => process.stdout.write('second\\n'), 250)"`;
+    const res = await runStreaming(command, (p) => snapshots.push(p.content[0].text));
+    expect(snapshots.length).toBeGreaterThanOrEqual(2);
+    expect(snapshots[0]).toContain('first');
+    expect(snapshots[0]).not.toContain('second');        // the first push landed before the second write
+    expect(snapshots[snapshots.length - 1]).toContain('second'); // a later push carries the grown tail
+    // The final result is still complete and correctly framed — streaming didn't replace it.
+    expect(res.content[0].text).toContain('first');
+    expect(res.content[0].text).toContain('second');
+    expect(res.content[0].text).toContain('[exit 0]');
+  }, 15_000);
+
+  it('runs fine with no onUpdate (non-streaming callers): the full result is unchanged', async () => {
+    const res = await runStreaming('echo noupdate', undefined as unknown as (p: { content: { text: string }[] }) => void);
+    expect(res.content[0].text).toContain('noupdate');
+    expect(res.content[0].text).toContain('[exit 0]');
+  });
+});
+
 describe('terminal plugin — configurable outputCap', () => {
   let dir: string;
   beforeAll(() => { dir = mkdtempSync(join(tmpdir(), 'elowen-term-cap-')); });

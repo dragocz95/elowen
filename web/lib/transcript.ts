@@ -13,6 +13,9 @@ export type TranscriptEvent =
   | { type: 'text'; delta: string }
   | { type: 'reasoning'; delta: string }
   | { type: 'tool'; name: string; detail?: string; icon?: string; id?: string }
+  /** Live rolling tail of a running `run_command` (mirror of the daemon `tool_progress` event). Attaches
+   *  to the in-progress tool row by id; the final `tool_output`/`diff` supersedes it (no doubled dump). */
+  | { type: 'tool_progress'; id: string; text: string }
   | { type: 'diff'; diff: string; id?: string }
   | { type: 'tool_output'; output: ToolOutputView; id?: string }
   | { type: 'notice'; kind: 'retry' | 'compaction'; message: string; done?: boolean }
@@ -27,7 +30,10 @@ export type TranscriptEvent =
 /** An assistant turn is an ordered list of segments so text and tool calls render in the sequence they
  *  happened. Consecutive tool calls (no new text between them) collapse into ONE tools segment → the
  *  Claude-Code "grouped pills" look. Useful tool output previews attach to their matching item. */
-export interface ToolItem { name: string; detail?: string; diff?: string; icon?: string; output?: ToolOutputView; id?: string; sub?: SubagentState }
+export interface ToolItem { name: string; detail?: string; diff?: string; icon?: string; output?: ToolOutputView; id?: string; sub?: SubagentState;
+  /** Live rolling tail of a still-running `run_command` (from the `tool_progress` event), rendered under
+   *  the tool pill while it streams. LIVE-only — never persisted; the final `output`/`diff` clears it. */
+  progress?: string }
 
 /** Live progress of a delegated sub-agent, attached to its `delegate` tool item by call id — powers the
  *  agents table + the `↳` drill-in. Mirror of the daemon `SubagentState`. */
@@ -53,7 +59,7 @@ type Segment =
 export interface ToolGroup { item: ToolItem; count: number }
 
 function isCollapsibleTool(item: ToolItem): boolean {
-  return !item.diff && !item.output;
+  return !item.diff && !item.output && !item.progress;
 }
 
 /** Fold a tools segment's items into render groups (see {@link ToolGroup}). Pure — recomputed every
@@ -159,14 +165,23 @@ export function reduce(view: ChatView, e: TranscriptEvent): ChatView {
       else t.segments.push({ kind: 'tools', items: [item] });
       return { turns, thinking: true, notice: view.notice };
     }
-    case 'diff': {
+    case 'tool_progress': {
+      // Live rolling tail of a running run_command — attach to its in-progress tool pill by id so the
+      // dock shows output as it streams. Superseded by the final `tool_output`/`diff` below.
       const t = ensureElowen();
-      attachToTool(t, e.id, (item) => ({ ...item, diff: e.diff }));
+      attachToTool(t, e.id, (item) => ({ ...item, progress: e.text }));
+      return { turns, thinking: true, notice: view.notice };
+    }
+    case 'diff': {
+      // The final block supersedes any live `progress` tail (reconcile → no doubled dump).
+      const t = ensureElowen();
+      attachToTool(t, e.id, ({ progress: _drop, ...item }) => ({ ...item, diff: e.diff }));
       return { turns, thinking: true, notice: view.notice };
     }
     case 'tool_output': {
+      // The final output supersedes any live `progress` tail (reconcile → no doubled dump).
       const t = ensureElowen();
-      attachToTool(t, e.id, (item) => ({ ...item, output: e.output }));
+      attachToTool(t, e.id, ({ progress: _drop, ...item }) => ({ ...item, output: e.output }));
       return { turns, thinking: true, notice: view.notice };
     }
     case 'subagent': {

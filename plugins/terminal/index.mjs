@@ -12,6 +12,8 @@ import { StringDecoder } from 'node:string_decoder';
 const DEFAULT_MAX = 60_000;              // output cap per foreground run / background buffer
 const DEFAULT_TIMEOUT_MS = 120_000;      // foreground runs get killed after this
 const MAX_BG = 16;               // concurrent background processes
+const PROGRESS_THROTTLE_MS = 100;        // min gap between live-output pushes of a foreground run
+const PROGRESS_TAIL = 2_000;             // rolling TAIL of live output sent per push (never the whole buffer)
 const ok = (text) => ({ content: [{ type: 'text', text }], details: {} });
 const fail = (e) => ok(`Error: ${e instanceof Error ? e.message : String(e)}`);
 
@@ -68,7 +70,7 @@ class BgProcess {
   }
 }
 
-async function runForeground(command, cwd, outputCap, timeoutMs) {
+async function runForeground(command, cwd, outputCap, timeoutMs, onProgress) {
   // Streaming UTF-8 decoder: PI hands us raw Buffer chunks; decode incrementally so a multibyte
   // character split across two chunks is reassembled instead of turning into U+FFFD. Keep only a bounded
   // rolling tail (2× the cap of headroom for a clean line-aware final trim) so a runaway command can't
@@ -79,9 +81,20 @@ async function runForeground(command, cwd, outputCap, timeoutMs) {
   // split exactly across a stdout/stderr boundary is an unavoidable PI-level edge (rare, merged stream).
   const decoder = new StringDecoder('utf8');
   let out = '';
+  // Live output: push a bounded rolling TAIL to onProgress as the command runs, THROTTLED so a chatty
+  // command (npm test / build) can't flood the stream. onProgress is absent for callers that don't stream.
+  let lastEmit = 0;
+  const emitProgress = () => {
+    if (!onProgress) return;
+    const now = Date.now();
+    if (now - lastEmit < PROGRESS_THROTTLE_MS) return;
+    lastEmit = now;
+    onProgress(out.length > PROGRESS_TAIL ? out.slice(out.length - PROGRESS_TAIL) : out);
+  };
   const onData = (d) => {
     out += decoder.write(d);
     if (out.length > outputCap * 2) out = out.slice(out.length - outputCap * 2);
+    emitProgress();
   };
   let exitCode = null;
   let killed = false;
@@ -157,12 +170,19 @@ export function register(ctx) {
       cwd: Type.Optional(Type.String({ description: 'Working directory (must be within your repositories)' })),
       background: Type.Optional(Type.Boolean({ description: 'Run detached and return a process id' })),
     }),
-    execute: async (_id, p) => {
+    execute: async (_id, p, _signal, onUpdate) => {
       const denied = denyNonOwner();
       if (denied) return denied;
       try {
         const cwd = guardCwd(p.cwd);
-        if (!p.background) return ok(await runForeground(p.command, cwd, outputCap, commandTimeoutMs));
+        if (!p.background) {
+          // Stream the rolling output tail live as it runs. `onUpdate` is PI's 4th execute argument (the
+          // agent loop passes it, forwarded verbatim through the Elowen tool wrappers); each call emits a
+          // `tool_execution_update` the daemon maps to a throttled `tool_progress` event. Absent for callers
+          // that don't stream (background path never uses it — it has read_process_output instead).
+          const onProgress = onUpdate ? (text) => onUpdate(ok(text)) : undefined;
+          return ok(await runForeground(p.command, cwd, outputCap, commandTimeoutMs, onProgress));
+        }
         // prune finished processes before the cap check so dead entries don't block new work
         for (const [id, bg] of processes) { if (!bg.running) dropProc(id); }
         if (processes.size >= MAX_BG) return ok(`Error: too many background processes (${MAX_BG}); kill one first.`);
