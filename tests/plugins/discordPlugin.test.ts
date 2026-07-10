@@ -75,7 +75,7 @@ describe('discord LiveMessage (tool progress)', () => {
     // Bubbles created in order: [stranded draft m1, tool trace m2, re-anchored answer m3].
     const [draftId, progressId, finalId] = posts;
     expect(deleted).toContain(draftId); // the draft stranded ABOVE the trace is deleted, not left buried in scrollback
-    expect(edits.get(progressId)).toBe('✅ 💻 `run_command`: "apt list --upgradable"\n✅ 📄 `read_file`'); // single \n = tight; finalize closes every row
+    expect(edits.get(progressId)).toBe('💻 `run_command`: "apt list --upgradable"\n📄 `read_file`'); // single \n = tight; finalize closes every row
     expect(edits.get(progressId)).not.toContain('\n\n');
     expect(edits.get(finalId)).toBe('Hotovo, vše běží.'); // final answer re-posted BELOW the trace, as the LAST message
   });
@@ -123,7 +123,7 @@ describe('discord LiveMessage (tool progress)', () => {
       lm.onEvent({ type: 'text', delta: 'working narration' });
       lm.onEvent({ type: 'tool', id: 'cmd1', name: 'run_command', detail: 'npm test', icon: '💻' });
       await vi.advanceTimersByTimeAsync(0);
-      expect(edits.get('m1')).toContain('🔸 💻 `run_command`');
+      expect(edits.get('m1')).toContain('💻 `run_command`');
       expect(posts).toEqual(['m1']); // no answer draft in final mode
 
       lm.onEvent({ type: 'tool_progress', id: 'cmd1', text: 'PASS a.test\nPASS b.test' });
@@ -132,7 +132,7 @@ describe('discord LiveMessage (tool progress)', () => {
 
       lm.onEvent({ type: 'tool_output', id: 'cmd1', output: { title: 'console output', kind: 'console', text: '44 tests passed', status: 'exit 0', tone: 'success' } });
       await lm.finalize('Hotovo.');
-      expect(edits.get('m1')).toContain('✅ 💻 `run_command`');
+      expect(edits.get('m1')).toContain('💻 `run_command`');
       expect(edits.get('m1')).toContain('44 tests passed');
       expect(posts).toEqual(['m1', 'm2']);
       expect(edits.get('m2')).toContain('Hotovo.');
@@ -153,8 +153,8 @@ describe('discord LiveMessage (tool progress)', () => {
     lm.onEvent({ type: 'tool_output', id: 'b', output: { title: 'console output', kind: 'console', text: 'Test failed', status: 'exit 1', tone: 'warning' } });
     lm.onEvent({ type: 'tool_end', id: 'a' });
     await lm.finalize('Opravil jsem chybu.');
-    expect(edits.get('m1')).toContain('✅ 📄 `read_file`: "a.ts"');
-    expect(edits.get('m1')).toContain('❌ 💻 `run_command`: "npm test" — exit 1');
+    expect(edits.get('m1')).toContain('📄 `read_file`: "a.ts"');
+    expect(edits.get('m1')).toContain('💻 `run_command`: "npm test" — exit 1');
   });
 
   it('bounds a long trace around the newest tools and neutralizes mentions from tool data', async () => {
@@ -210,7 +210,7 @@ describe('discord LiveMessage (tool progress)', () => {
     lm.onEvent({ type: 'tool', name: 'sarah_hair', icon: '✂️' }); // NON-consecutive → a fresh line, no merge back
     await new Promise((r) => setTimeout(r, 20));
     await lm.finalize('done');
-    expect(edits.get('m1')).toBe('✅ ✂️ `sarah_hair`: "list_bookings" ×3\n✅ 📄 `read_file`\n✅ ✂️ `sarah_hair`');
+    expect(edits.get('m1')).toBe('✂️ `sarah_hair`: "list_bookings" ×3\n📄 `read_file`\n✂️ `sarah_hair`');
   });
 
   it('renders a ctx.emitCard card in the progress bubble; an empty card removes it', async () => {

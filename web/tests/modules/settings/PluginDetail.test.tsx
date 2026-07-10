@@ -86,6 +86,26 @@ describe('PluginDetail multiSelect field', () => {
   });
 });
 
+describe('PluginDetail config density', () => {
+  const schema: PluginConfigField[] = [
+    { key: 'sec_behavior', label: 'Behavior', type: 'section', hint: 'How this plugin behaves.' },
+    { key: 'enabled', label: 'Enabled', type: 'boolean', hint: 'A longer explanation that should stay behind the help affordance.' },
+  ];
+
+  it('keeps section and field explanations out of the layout until the shared HelpTip is focused', () => {
+    usePluginDetail.mockReturnValue({ data: detail(schema, { enabled: true }), isLoading: false });
+    renderDetail();
+    expect(screen.getByText('Behavior')).toBeInTheDocument();
+    expect(screen.queryByText('How this plugin behaves.')).toBeNull();
+    expect(screen.queryByText('A longer explanation that should stay behind the help affordance.')).toBeNull();
+
+    const helpButtons = screen.getAllByRole('button', { name: en.common.help });
+    expect(helpButtons.length).toBeGreaterThanOrEqual(2);
+    fireEvent.focus(helpButtons.at(-1)!);
+    expect(screen.getByText('A longer explanation that should stay behind the help affordance.')).toBeInTheDocument();
+  });
+});
+
 describe('PluginDetail per-role tool allowlist', () => {
   const schema: PluginConfigField[] = [{ key: 'rolePolicies', label: 'Roles', type: 'rolePolicies' }];
   const role = (tools: string[]) => [{ roleId: '1', name: 'dev', projectIds: [], prompt: '', tools }];

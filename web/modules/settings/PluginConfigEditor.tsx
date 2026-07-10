@@ -334,8 +334,8 @@ function sanitizeConfig(values: Record<string, unknown>, schema: PluginConfigFie
   return out;
 }
 
-/** A config field's label row (label + optional risk badge + help tip) above its control, with an
- *  optional hint below. A div rather than a `<label>` so the help-tip button doesn't nest in a label. */
+/** A config field's compact label row. Long manifest explanations stay behind the shared `?` affordance
+ *  instead of expanding every plugin form vertically. A div keeps the help button out of a label. */
 function LabeledField({ label, hint, help, risk, riskLabel, children }: {
   label: string;
   hint?: string;
@@ -344,15 +344,19 @@ function LabeledField({ label, hint, help, risk, riskLabel, children }: {
   riskLabel?: string;
   children: ReactNode;
 }) {
+  const descriptions = [...new Set([hint, help].filter((value): value is string => Boolean(value?.trim())))];
   return (
     <div className="flex flex-col gap-1.5">
       <span className="flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-text-muted">
         <span>{label}</span>
         {risk && riskLabel ? <Badge tone={RISK_TONE[risk]}>{riskLabel}</Badge> : null}
-        {help ? <HelpTip align="left">{help}</HelpTip> : null}
+        {descriptions.length ? (
+          <HelpTip align="left">
+            <span className="flex flex-col gap-1.5">{descriptions.map((text) => <span key={text}>{text}</span>)}</span>
+          </HelpTip>
+        ) : null}
       </span>
       {children}
-      {hint ? <span className="text-xs text-text-muted">{hint}</span> : null}
     </div>
   );
 }
@@ -480,19 +484,19 @@ export function PluginConfigEditor({ name, detail, fieldLabel, fieldHint, riskTe
   const isVisible = (f: PluginConfigField) => !f.visibleWhen || values[f.visibleWhen.key] === f.visibleWhen.equals;
 
   const fieldList = (fields: PluginConfigField[]) => (
-    <div className="flex flex-col gap-4">
+    <div className="@container grid grid-cols-1 gap-x-5 gap-y-4 @lg:grid-cols-2">
       {fields.filter(isVisible).map((f) => {
         // A `section` field is a group heading carrying no input.
         if (f.type === 'section') {
           return (
-            <div key={f.key} className="border-t border-border pt-3 first:border-0 first:pt-0">
+            <div key={f.key} className="@lg:col-span-2 flex items-center gap-2 border-t border-border pt-4 first:border-0 first:pt-0">
               <span className="text-xs font-semibold uppercase tracking-wide text-text">{fieldLabel(f)}</span>
-              {fieldHint(f) ? <p className="mt-1 text-xs text-text-muted">{fieldHint(f)}</p> : null}
+              {fieldHint(f) ? <HelpTip align="left">{fieldHint(f)}</HelpTip> : null}
             </div>
           );
         }
         // Complex editors carry their own row headers, so they render bare (no outer label/hint).
-        if (f.type === 'rolePolicies' || f.type === 'mcpServers') return <div key={f.key}>{renderField(f)}</div>;
+        if (f.type === 'rolePolicies' || f.type === 'mcpServers') return <div key={f.key} className="@lg:col-span-2">{renderField(f)}</div>;
         return (
           <LabeledField key={f.key} label={fieldLabel(f)} hint={fieldHint(f)} help={f.help} risk={f.risk} riskLabel={f.risk ? riskText(f.risk) : undefined}>
             {renderField(f)}
@@ -517,52 +521,31 @@ export function PluginConfigEditor({ name, detail, fieldLabel, fieldHint, riskTe
       <div className="flex items-center gap-2">
         <Icon size={14} className="text-text-muted" aria-hidden />
         <span className="text-sm font-medium text-text">{title}</span>
+        {hint ? <HelpTip align="left">{hint}</HelpTip> : null}
       </div>
-      {hint ? <p className="text-xs text-text-muted">{hint}</p> : null}
       {fieldList(fields)}
     </div>
   );
 
-  // When the author used explicit `section` headers, each section becomes its OWN top-level collapsible
-  // (a peer of Tools/Hooks/Permissions) instead of being crammed into one Config panel. Partition the flat
-  // schema into { title, hint, fields } groups on section boundaries; fields before the first header (if
-  // any) fall into a generic Config group.
-  type ConfigGroup = { key: string; title: string; hint?: string; fields: PluginConfigField[] };
-  const configGroups: ConfigGroup[] = [];
-  if (hasExplicitSections) {
-    let current: ConfigGroup | null = null;
-    for (const f of schema) {
-      if (f.type === 'section') {
-        current = { key: f.key, title: fieldLabel(f), hint: fieldHint(f), fields: [] };
-        configGroups.push(current);
-      } else {
-        if (!current) { current = { key: '__config', title: t.pluginDetail.config, fields: [] }; configGroups.push(current); }
-        current.fields.push(f);
-      }
-    }
-  }
-  const groupHasUnsetSecret = (g: ConfigGroup) =>
-    g.fields.some((f) => f.type === 'secret' && f.required && !detail.secretsSet.includes(f.key));
+  const hasConnectionSection = schema.some((f) => f.type === 'section' && f.key === 'sec_connection');
 
   // Open Config first only when there's a required-but-unset secret to fill in; otherwise Overview.
   const hasUnsetRequiredSecret = schema.some((f) => f.type === 'secret' && f.required && !detail.secretsSet.includes(f.key));
 
   return (
     <>
-      {/* Config: when the author declared `section` headers, each section is its own collapsible (a
-          peer of Tools/Hooks below); otherwise a single generated Config panel. */}
+      {/* One Config surface: section headers remain visible inside it and their long explanations live in
+          the same hover-help treatment as field descriptions. */}
       {schema.length === 0 ? (
         <Collapsible icon={SlidersHorizontal} title={t.pluginDetail.config}>
           <p className="text-sm text-text-muted">{t.pluginDetail.configEmpty}</p>
         </Collapsible>
       ) : hasExplicitSections ? (
-        configGroups.map((g, i) => (
-          <Collapsible key={g.key} icon={SlidersHorizontal} title={g.title} subtitle={g.hint} defaultOpen={i === 0 || groupHasUnsetSecret(g)}>
-            {/* WhatsApp: the "Pair device" button (QR/code modal) lives at the top of the Connection section. */}
-            {detail.name === 'whatsapp' && g.key === 'sec_connection' ? <WhatsAppPairSection /> : null}
-            {fieldList(g.fields)}
-          </Collapsible>
-        ))
+        <Collapsible icon={SlidersHorizontal} title={t.pluginDetail.config} defaultOpen={hasUnsetRequiredSecret}>
+          {/* WhatsApp: the "Pair device" button (QR/code modal) lives at the top of the Connection section. */}
+          {detail.name === 'whatsapp' && hasConnectionSection ? <WhatsAppPairSection /> : null}
+          {fieldList(schema)}
+        </Collapsible>
       ) : (
         <Collapsible icon={SlidersHorizontal} title={t.pluginDetail.config} defaultOpen={hasUnsetRequiredSecret}>
           <div className="flex flex-col gap-6">

@@ -199,14 +199,14 @@ function diffSummary(diff) {
   return [added ? `+${added}` : '', removed ? `−${removed}` : ''].filter(Boolean).join(' ') || 'updated';
 }
 
-/** One tool row plus optional bounded output. The icon identifies the action; the leading glyph is the
- *  lifecycle, so a settled trace never leaves ambiguous trailing ellipses behind. */
+/** One tool row plus optional bounded output. The tool icon carries the visual identity; completion is
+ *  expressed by the compact result text rather than a second status icon before it. */
 function toolLinesFor(c, display) {
-  const state = c.state === 'error' ? '❌' : c.state === 'done' ? '✅' : '🔸';
-  let line = `${state} ${c.icon ?? '🔧'} \`${c.name}\``;
+  let line = `${c.icon ?? '🔧'} \`${c.name}\``;
   if (c.detail) line += `: "${compactLine(c.detail, 100)}"`;
   if (c.count > 1) line += ` ×${c.count}`;
   if (display.toolOutput !== 'hidden' && c.summary) line += ` — ${compactLine(c.summary)}`;
+  if (c.state === 'error' && !c.summary) line += ' — failed';
   const lines = [line];
   if (display.toolOutput === 'hidden') return lines;
   // Mid-run output is exclusive to live activity. A settled rolling tail is still useful with status
