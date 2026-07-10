@@ -12,7 +12,8 @@ const usePluginHookExecutions = vi.hoisted(() => vi.fn());
 const usePlugins = vi.hoisted(() => vi.fn());
 const useProjects = vi.hoisted(() => vi.fn());
 const useConfig = vi.hoisted(() => vi.fn());
-vi.mock('../../../lib/queries', () => ({ usePluginDetail, usePluginContributions, usePluginLogs, usePluginHookExecutions, usePlugins, useProjects, useConfig }));
+const useBrainModels = vi.hoisted(() => vi.fn());
+vi.mock('../../../lib/queries', () => ({ usePluginDetail, usePluginContributions, usePluginLogs, usePluginHookExecutions, usePlugins, useProjects, useConfig, useBrainModels }));
 vi.mock('../../../lib/mutations', () => ({
   useSavePluginConfig: () => ({ mutate: vi.fn(), isPending: false }),
   useTogglePlugin: () => ({ mutate: vi.fn(), isPending: false }),
@@ -48,6 +49,21 @@ beforeEach(() => {
   useProjects.mockReturnValue({ data: [] });
   useConfig.mockReturnValue({ data: undefined });
   usePlugins.mockReturnValue({ data: [] });
+  useBrainModels.mockReturnValue({ data: [] });
+});
+
+describe('PluginDetail model field', () => {
+  it('uses the shared searchable provider modal for brain models', async () => {
+    useBrainModels.mockReturnValue({ data: [
+      { provider: 'anthropic', providerLabel: 'Anthropic', model: 'claude-opus', exec: 'elowen:anthropic/claude-opus', source: 'oauth' },
+    ] });
+    usePluginDetail.mockReturnValue({ data: detail([{ key: 'visionModel', label: 'Vision model', type: 'model', hint: 'Used for images.' }], { visionModel: 'elowen:anthropic/claude-opus' }), isLoading: false });
+    renderDetail();
+    fireEvent.click(screen.getByRole('button', { name: en.managePicker.manage }));
+    expect(screen.getByRole('searchbox', { name: en.managePicker.searchPlaceholder })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Anthropic' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'claude-opus' })).toHaveAttribute('aria-pressed', 'true');
+  });
 });
 
 describe('PluginDetail multiSelect field', () => {

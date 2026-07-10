@@ -19,12 +19,12 @@ import { SelectionSummary } from '../../components/ui/SelectionSummary';
 import { PluginIcon } from './PluginIcon';
 import { Toggle } from '../../components/ui/Toggle';
 import { Checkbox } from '../../components/ui/Checkbox';
-import { ExecutorPicker } from '../../components/ui/ExecutorPicker';
+import { BrainModelField } from '../../components/ui/BrainModelField';
 import { Segmented } from '../../components/ui/Segmented';
 import { ProviderPicker } from '../../components/ui/ProviderPicker';
 import { useToast } from '../../components/ui/Toast';
 import { useTranslation } from '../../lib/i18n';
-import { usePlugins, useProjects, useConfig } from '../../lib/queries';
+import { usePlugins, useProjects, useConfig, useBrainModels } from '../../lib/queries';
 import { useSavePluginConfig } from '../../lib/mutations';
 import type { PluginConfigField, PluginDetail, RolePolicy, McpServerSpec } from '../../lib/types';
 import { RISK_TONE, CONNECTION_KEYS } from './pluginDetail.shared';
@@ -376,6 +376,7 @@ export function PluginConfigEditor({ name, detail, fieldLabel, fieldHint, riskTe
   const { toast } = useToast();
   const { t } = useTranslation();
   const { resolvedTheme } = useTheme();
+  const { data: brainModels } = useBrainModels();
   const monacoTheme = resolvedTheme === 'light' ? 'elowen-light' : 'elowen-oled';
   const [values, setValues] = useState<Record<string, unknown>>({});
   const [seeded, setSeeded] = useState(false);
@@ -411,11 +412,11 @@ export function PluginConfigEditor({ name, detail, fieldLabel, fieldHint, riskTe
           />
         );
       case 'model':
-        // Brain-only picker: full Elowen AI catalog (incl. OAuth accounts) — image gen never runs a CLI worker.
-        return <ExecutorPicker value={String(values[f.key] ?? '')} onChange={(v) => set(f.key, v)} models={[]} allowDefault={false} kind="brain" />;
+        // Brain-only picker: the shared modal/search catalog used by account and cron settings.
+        return <BrainModelField value={String(values[f.key] ?? '')} onChange={(v) => set(f.key, v)} models={brainModels ?? []} title={fieldLabel(f)} subtitle={fieldHint(f)} defaultLabel={t.managePicker.none} allowDefault={false} keyOf={(m) => m.exec} />;
       case 'embeddingModel':
-        // Same brain catalog, used to pick the model that produces embeddings (parallels `model`).
-        return <ExecutorPicker value={String(values[f.key] ?? '')} onChange={(v) => set(f.key, v)} models={[]} allowDefault={false} kind="brain" />;
+        // Same shared brain catalog, used to pick the model that produces embeddings.
+        return <BrainModelField value={String(values[f.key] ?? '')} onChange={(v) => set(f.key, v)} models={brainModels ?? []} title={fieldLabel(f)} subtitle={fieldHint(f)} defaultLabel={t.managePicker.none} allowDefault={false} keyOf={(m) => m.exec} />;
       case 'provider':
         // Reuse a configured brain provider's key as this plugin's credentials (voice, image gen).
         return <PluginProviderField value={String(values[f.key] ?? '')} onChange={(v) => set(f.key, v)} providerType={f.providerType} />;
