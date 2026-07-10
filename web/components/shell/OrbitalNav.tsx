@@ -48,8 +48,8 @@ export function OrbitalNav({ compact = false, side = 'left' }: { compact?: boole
     wheelDelta.current = 0;
   };
 
-  const centerX = compact ? 72 : 88;
-  const radiusX = compact ? 44 : 128;
+  const centerX = 72;
+  const radiusX = compact ? 44 : 112;
   const radiusY = compact ? 165 : 205;
   const mirrored = side === 'right';
 
@@ -64,12 +64,8 @@ export function OrbitalNav({ compact = false, side = 'left' }: { compact?: boole
         if (event.key === 'ArrowLeft') { event.preventDefault(); move(mirrored ? 1 : -1); }
         if (event.key === 'ArrowRight') { event.preventDefault(); move(mirrored ? -1 : 1); }
       }}
-      className={`relative h-full shrink-0 overflow-visible ${compact ? 'w-36' : 'w-[26rem]'}`}
+      className={`relative h-full shrink-0 overflow-visible ${compact ? 'w-36' : 'w-[23rem]'}`}
     >
-      <div aria-hidden className={`pointer-events-none absolute inset-x-0 top-7 z-30 text-center font-sans font-semibold uppercase text-text/90 ${compact ? 'text-[10px] tracking-[.22em]' : 'text-sm tracking-[.3em]'}`}>
-        ELOWEN
-      </div>
-
       <div role="list" className="absolute inset-0 z-30">
         {entries.map((entry, index) => {
           const delta = wrapsDelta(index, focusIndex, entries.length);
@@ -111,7 +107,7 @@ export function OrbitalNav({ compact = false, side = 'left' }: { compact?: boole
       </div>
 
       {!compact && focus?.subItems?.length ? (
-        <div key={focus.id ?? focus.label} className={`absolute top-1/2 z-40 w-44 -translate-y-1/2 ${mirrored ? 'right-[16.5rem] text-right' : 'left-[16.5rem]'}`} aria-label={focus.label}>
+        <div key={focus.id ?? focus.label} className={`absolute top-1/2 z-40 w-40 -translate-y-1/2 ${mirrored ? 'right-[14rem] text-right' : 'left-[14rem]'}`} aria-label={focus.label}>
           <span aria-hidden className={`absolute top-1/2 h-px w-12 -translate-y-1/2 ${mirrored ? '-right-12 bg-gradient-to-l' : '-left-12 bg-gradient-to-r'} from-accent/55 via-accent/25 to-border`} />
           <span aria-hidden className={`absolute top-1/2 h-1.5 w-1.5 -translate-y-1/2 rounded-full bg-accent shadow-[0_0_12px_rgb(255_82_54_/_0.65)] ${mirrored ? '-right-[3px]' : '-left-[3px]'}`} />
           <div className={`orbit-branch flex flex-col gap-1 py-3 ${mirrored ? 'items-end border-r border-border/90 pr-4' : 'border-l border-border/90 pl-4'}`}>

@@ -24,7 +24,7 @@ import { PageHeaderProvider } from '../../lib/pageHeader';
  *  so the content keeps usable room; above it the user's own pin decides. Driven by the MEASURED region
  *  width (window − dock), not the viewport — so dragging the dock adapts the chrome just like resizing. */
 const DRAWER_MAX = 760;
-const RAIL_MAX = 1380;
+const RAIL_MAX = 1320;
 
 function ShellLayout({ children }: { children: ReactNode }) {
   const [drawerOpen, setDrawerOpen] = useState(false);

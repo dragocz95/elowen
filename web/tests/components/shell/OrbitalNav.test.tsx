@@ -15,7 +15,6 @@ describe('OrbitalNav', () => {
   it('keeps real links in the orbital navigation and exposes the active world children', () => {
     mount();
     expect(screen.getByTestId('future-navigation').querySelector('canvas')).toBeNull();
-    expect(screen.getByText('ELOWEN')).toBeInTheDocument();
     expect(screen.queryByRole('img', { name: 'Elowen' })).toBeNull();
     expect(screen.getByRole('link', { name: 'Work' })).toHaveAttribute('aria-current', 'location');
     expect(screen.getByRole('link', { name: 'Stats' })).toHaveAttribute('aria-current', 'page');
