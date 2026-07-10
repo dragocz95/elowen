@@ -427,6 +427,8 @@ export const cs = {
     emptyDockHint: 'Přidejte asistenta nebo session z nabídky „+“ nahoře.',
   },
   sessions: {
+    liveTitle: 'Živí agenti',
+    liveHint: 'Aktivní terminálové relace a agenti čekající na vstup.',
     needsInput: 'vyžaduje vstup',
     loading: 'načítání…',
     noOutput: '— žádný výstup —',
@@ -460,6 +462,7 @@ export const cs = {
   },
   sessionsPanel: {
     tab: 'Konverzace',
+    hint: 'Historie brainu z webu, CLI, kanálů a agentů úkolů.',
     untitled: 'Bez názvu',
     running: 'Běží',
     tok: 'tok',
@@ -473,6 +476,8 @@ export const cs = {
     deleted: 'Relace smazána',
     deletedAll: 'Všechny relace smazány',
     empty: 'Zatím žádné brain relace',
+    pageRange: '{from}–{to} z {total}',
+    pageLabel: 'Strana {page} z {pages}',
     confirmDeleteTitle: 'Smazat tuto relaci?',
     confirmDeleteDesc: 'Celá historie konverzace bude trvale odstraněna. Tuto akci nelze vrátit.',
     confirmDeleteAllTitle: 'Smazat všechny relace?',

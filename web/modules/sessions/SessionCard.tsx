@@ -67,11 +67,11 @@ export function SessionCard({ info, onOpenTerminal, compact = false }: { info: S
 
   return (
     <div
-      className={`card-interactive flex flex-col gap-3 rounded-lg border bg-surface ${compact ? 'p-3' : 'p-4'} ${needsInput ? 'border-warning/60' : 'border-border'}`}
+      className={`group flex flex-col gap-3 border-b bg-transparent ${compact ? 'py-3' : 'py-4'} ${needsInput ? 'border-warning/60' : 'border-border/80'}`}
       onContextMenu={(e) => { e.preventDefault(); setCtxMenu({ x: e.clientX, y: e.clientY, items: ctxItems }); }}
     >
       <div className="flex items-center gap-2.5">
-        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-border bg-elevated">
+        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-border bg-elevated/70">
           {info.role === 'overseer' ? <Eye size={18} className="text-text-muted" aria-hidden />
             : info.role === 'pilot' ? <Bot size={18} className="text-text-muted" aria-hidden />
             : exec ? <ModelIcon name={exec} size={20} /> : <TypeIcon size={18} className="text-text-muted" aria-hidden />}

@@ -35,12 +35,22 @@ vi.mock('next/dynamic', () => ({
 }));
 
 let killed = false;
+const conversations = Array.from({ length: 13 }, (_, index) => ({
+  id: `brain-${index + 1}`,
+  title: `Conversation ${index + 1}`,
+  model: 'gpt-5.5',
+  updated_at: `2026-07-${String(index + 1).padStart(2, '0')}T10:00:00.000Z`,
+  running: index === 0,
+  active: index === 0,
+}));
 const server = setupServer(
+  http.get('*/api/auth/me', () => HttpResponse.json({ user: { id: 2, username: 'user', is_admin: false } })),
   http.get('*/api/tasks', () => HttpResponse.json([])),
   http.get('*/api/projects', () => HttpResponse.json([{ id: 1, slug: 'elowen', path: '/var/www/elowen', notes: '', icon: '', pr_enabled: null }])),
   http.get('*/api/projects/1/git', () => HttpResponse.json({ isRepo: false, status: null, branches: [], commits: [] })),
   http.get('*/api/sessions', () => HttpResponse.json([{ name: 'elowen-SwiftLake', role: 'agent', agent: 'SwiftLake' }])),
   http.get('*/api/sessions/elowen-SwiftLake/pane', () => HttpResponse.json({ pane: 'line a\nline b' })),
+  http.get('*/api/brain/sessions', () => HttpResponse.json(conversations)),
   http.delete('*/api/sessions/elowen-SwiftLake', () => { killed = true; return HttpResponse.json({ ok: true }); }),
 );
 beforeAll(() => server.listen()); afterAll(() => server.close());
@@ -50,10 +60,22 @@ describe('SessionsPage', () => {
     const { wrapper: Wrapper } = createWrapper();
     render(<Wrapper><ToastProvider><SessionsPage /></ToastProvider></Wrapper>);
     await waitFor(() => expect(screen.getByText('SwiftLake')).toBeInTheDocument());
+    expect(screen.getByTestId('live-sessions-list').firstElementChild).not.toHaveClass('rounded-lg');
     // Kill lives in the red action menu: open it, then pick the item
     fireEvent.click(screen.getByRole('button', { name: 'Kill session' }));
     fireEvent.click(screen.getByRole('menuitem', { name: 'Kill session' }));
     await waitFor(() => expect(killed).toBe(true));
+  });
+
+  it('renders conversations as full-width rows with pagination', async () => {
+    const { wrapper: Wrapper } = createWrapper();
+    render(<Wrapper><ToastProvider><SessionsPage /></ToastProvider></Wrapper>);
+    await waitFor(() => expect(screen.getByText('Conversation 1')).toBeInTheDocument());
+    expect(screen.getByTestId('brain-sessions-list').children).toHaveLength(12);
+    expect(screen.queryByText('Conversation 13')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+    expect(await screen.findByText('Conversation 13')).toBeInTheDocument();
+    expect(screen.queryByText('Conversation 1')).not.toBeInTheDocument();
   });
 
   it('opens terminal in modal and closes via modal close button', async () => {

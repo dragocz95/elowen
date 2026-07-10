@@ -427,6 +427,8 @@ export const en = {
     emptyDockHint: 'Add the assistant or a session from the “+” menu above.',
   },
   sessions: {
+    liveTitle: 'Live agents',
+    liveHint: 'Active terminal sessions and agents waiting for input.',
     needsInput: 'needs input',
     loading: 'loading…',
     noOutput: '— no output —',
@@ -460,6 +462,7 @@ export const en = {
   },
   sessionsPanel: {
     tab: 'Conversations',
+    hint: 'Brain history from web, CLI, channels and task agents.',
     untitled: 'Untitled',
     running: 'Running',
     tok: 'tok',
@@ -473,6 +476,8 @@ export const en = {
     deleted: 'Session deleted',
     deletedAll: 'All sessions deleted',
     empty: 'No brain sessions yet',
+    pageRange: '{from}–{to} of {total}',
+    pageLabel: 'Page {page} of {pages}',
     confirmDeleteTitle: 'Delete this session?',
     confirmDeleteDesc: 'Its whole conversation history will be permanently removed. This cannot be undone.',
     confirmDeleteAllTitle: 'Delete every session?',
