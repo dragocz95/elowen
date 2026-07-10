@@ -69,6 +69,10 @@
       "label": "Detail výstupu nástrojů",
       "hint": "Určuje, kolik omezeného výstupu se ukáže pod stavem nástroje. Celý raw výstup se do Discordu nikdy nevypisuje."
     },
+    "toolMessageMode": {
+      "label": "Rozložení zpráv nástrojů",
+      "hint": "Jedna živá zpráva udrží kanál přehledný. Jedna zpráva na nástroj dá každému volání vlastní upravovanou bublinu v Discordu."
+    },
     "reactions": {
       "label": "Stavové reakce",
       "hint": "Reaguje 👀 při přemýšlení, ✅/❌ po dokončení."

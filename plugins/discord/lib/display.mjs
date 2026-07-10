@@ -1,6 +1,7 @@
 const TOOL_ACTIVITY = new Set(['off', 'status', 'live']);
 const ANSWER_MODES = new Set(['final', 'live']);
 const TOOL_OUTPUT = new Set(['hidden', 'summary', 'tail']);
+const TOOL_MESSAGE_MODES = new Set(['single', 'per_tool']);
 
 function pick(value, allowed, fallback) {
   return typeof value === 'string' && allowed.has(value) ? value : fallback;
@@ -19,17 +20,19 @@ export function resolveDisplaySettings(cfg = {}, channelState = {}) {
   const globalTools = pick(cfg.toolActivity, TOOL_ACTIVITY, legacyTools);
   const globalAnswer = pick(cfg.answerMode, ANSWER_MODES, legacyAnswer);
   const globalOutput = pick(cfg.toolOutput, TOOL_OUTPUT, 'summary');
+  const globalToolMessageMode = pick(cfg.toolMessageMode, TOOL_MESSAGE_MODES, 'single');
   return {
     toolActivity: pick(channel.toolActivity, TOOL_ACTIVITY, globalTools),
     answerMode: pick(channel.answerMode, ANSWER_MODES, globalAnswer),
     toolOutput: pick(channel.toolOutput, TOOL_OUTPUT, globalOutput),
+    toolMessageMode: pick(channel.toolMessageMode, TOOL_MESSAGE_MODES, globalToolMessageMode),
   };
 }
 
 /** Apply optional `/display` values. `default` clears only that channel override; omitted axes are kept. */
 export function updateDisplayOverrides(current = {}, values = {}) {
   const next = { ...current };
-  for (const [key, allowed] of [['toolActivity', TOOL_ACTIVITY], ['answerMode', ANSWER_MODES], ['toolOutput', TOOL_OUTPUT]]) {
+  for (const [key, allowed] of [['toolActivity', TOOL_ACTIVITY], ['answerMode', ANSWER_MODES], ['toolOutput', TOOL_OUTPUT], ['toolMessageMode', TOOL_MESSAGE_MODES]]) {
     const value = values[key];
     if (value === undefined) continue;
     if (value === 'default') delete next[key];

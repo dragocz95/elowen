@@ -250,6 +250,7 @@ export class LiveMessage {
     this.toolById = new Map(); // PI toolCallId → row (parallel-safe completion/progress updates)
     this.notices = new Map(); // retry/compaction status lines by kind
     this.progress = null; // the tool-trace bubble, created lazily on the first tool event
+    this.toolBubbles = new Map(); // per-tool editable bubbles when the channel opts into per_tool layout
     this.answer = null;   // the live answer bubble(s), created lazily on the first visible text delta
     this.answerStranded = false; // set when the tool bubble is posted BELOW an already-started answer draft →
                                  // the answer is stranded ABOVE the trace and must be re-anchored at finalize
@@ -274,7 +275,11 @@ export class LiveMessage {
     if (this.maxSteps > 0 && Date.now() - this.lastActivityAt >= STALL_HINT_MS) {
       toolLines.push(`-# ⚙️ Step ${Math.min(this.step, this.maxSteps)} / ${this.maxSteps}`);
     }
-    for (const call of this.toolCalls) toolLines.push(...toolLinesFor(call, this.display));
+    // In per-tool mode each lifecycle row owns a separate editable message; the aggregate progress
+    // bubble is reserved for cards/notices/reasoning so those surfaces remain coherent.
+    if (this.display.toolMessageMode !== 'per_tool') {
+      for (const call of this.toolCalls) toolLines.push(...toolLinesFor(call, this.display));
+    }
     for (const notice of this.notices.values()) toolLines.push(`🔄 ${compactLine(notice, 240)}`);
     if (this.a.cfg?.showReasoning && this.reasoning.trim()) {
       const tail = this.reasoning.trim().slice(-280).replace(/\s+/g, ' ');
@@ -297,6 +302,19 @@ export class LiveMessage {
     const bounded = rendered.length > CHUNK ? `…\n${rendered.slice(-(CHUNK - 2))}` : rendered;
     this.progress.update(bounded);
   }
+  renderTool(call) {
+    if (this.display.toolMessageMode !== 'per_tool') return;
+    const lines = toolLinesFor(call, this.display);
+    const content = lines.join('\n');
+    let bubble = this.toolBubbles.get(call);
+    if (!bubble) {
+      bubble = new EditableMessage(this.a, this.channelId);
+      this.toolBubbles.set(call, bubble);
+      // A tool bubble posted after an answer draft would otherwise leave the final answer above it.
+      if (this.answer) this.answerStranded = true;
+    }
+    bubble.update(content.slice(0, CHUNK));
+  }
   /** (Re)arm the stall hint: after STALL_HINT_MS of no visible tool progress, re-render so the step
    *  counter surfaces even during pure silence (one long-running tool emits no interim events). */
   armStallHint() {
@@ -316,6 +334,7 @@ export class LiveMessage {
     if (tail) call.finalTail = tail;
     this.lastActivityAt = Date.now();
     this.armStallHint();
+    this.renderTool(call);
     this.renderProgress();
   }
   onEvent(e) {
@@ -340,6 +359,7 @@ export class LiveMessage {
       }
       this.lastActivityAt = Date.now(); // visible progress → reset the stall clock, hide the step counter
       this.armStallHint();
+      this.renderTool(call);
       this.renderProgress();
     } else if (e.type === 'tool_progress' && e.id) {
       const call = this.findTool(e.id);
@@ -347,6 +367,7 @@ export class LiveMessage {
         call.progress = safeTail(e.text);
         this.lastActivityAt = Date.now();
         this.armStallHint();
+        this.renderTool(call);
         this.renderProgress();
       }
     } else if (e.type === 'tool_output') {
@@ -416,6 +437,7 @@ export class LiveMessage {
   abandon() {
     clearTimeout(this.stallTimer);
     if (this.progress) this.progress.close();
+    for (const bubble of this.toolBubbles.values()) bubble.close();
     if (this.answer) this.answer.close();
   }
   /** Settle a failed turn's activity before the adapter posts the error reply. */
@@ -427,7 +449,9 @@ export class LiveMessage {
       if (!call.summary) call.summary = compactLine(message, 140);
     }
     this.notices.clear();
+    for (const call of this.toolCalls) this.renderTool(call);
     this.renderProgress();
+    for (const bubble of this.toolBubbles.values()) await bubble.settle(bubble.content);
     if (this.progress) await this.progress.settle(this.progress.content);
     if (this.answer) this.answer.close();
   }
@@ -437,6 +461,8 @@ export class LiveMessage {
     clearTimeout(this.stallTimer);
     for (const call of this.toolCalls) if (call.state === 'running') call.state = 'done';
     this.notices.clear();
+    for (const call of this.toolCalls) this.renderTool(call);
+    for (const bubble of this.toolBubbles.values()) await bubble.settle(bubble.content);
     if (this.progress) {
       this.lastActivityAt = Date.now(); // drop the stall step-counter from the settled tool trace
       this.renderProgress();
@@ -445,7 +471,7 @@ export class LiveMessage {
     // Nothing happened on this message: no streamed tool progress, no assistant text, no live answer, no
     // reply, no image refs. That's the mid-run-injection case — the message was steered into another turn
     // that streams its own bubble — so don't post a "(no response)" placeholder here.
-    if (!reply && !this.text && !this.progress && !this.answer && !this.imageRefs.length) return;
+    if (!reply && !this.text && !this.progress && !this.answer && !this.toolBubbles.size && !this.imageRefs.length) return;
     // The answer draft opened BEFORE the tool bubble, so it is stranded ABOVE the now-settled tool trace.
     // Drop it here (awaiting its in-flight send) and null it, so the authoritative reply is (re)posted
     // BELOW the trace — restoring the guarantee that the final answer is the channel's LAST message.

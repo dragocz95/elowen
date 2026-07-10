@@ -133,6 +133,9 @@ export class DiscordAdapter {
         { name: 'output', description: 'How much tool output is shown', type: 3, required: false, choices: [
           { name: 'global default', value: 'default' }, { name: 'hidden', value: 'hidden' }, { name: 'summary', value: 'summary' }, { name: 'rolling tail', value: 'tail' },
         ] },
+        { name: 'layout', description: 'How tool activity is grouped into messages', type: 3, required: false, choices: [
+          { name: 'global default', value: 'default' }, { name: 'one message', value: 'single' }, { name: 'one message per tool', value: 'per_tool' },
+        ] },
       ] },
       { name: 'new', description: 'Start a fresh conversation in this channel', type: 1 },
       { name: 'stop', description: 'Stop the running agent in this channel', type: 1 },
@@ -457,6 +460,7 @@ export class DiscordAdapter {
           ...(options.tools ? { toolActivity: options.tools } : {}),
           ...(options.answer ? { answerMode: options.answer } : {}),
           ...(options.output ? { toolOutput: options.output } : {}),
+          ...(options.layout ? { toolMessageMode: options.layout } : {}),
         };
         const state = this.state.get(i.channel_id);
         if (Object.keys(values).length) this.state.patch(i.channel_id, { display: updateDisplayOverrides(state.display, values) });

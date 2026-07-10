@@ -123,6 +123,17 @@
       "hint": "Controls how much bounded tool output appears below each status. Raw full output is never dumped into Discord."
     },
     {
+      "key": "toolMessageMode",
+      "label": "Tool message layout",
+      "type": "enum",
+      "default": "single",
+      "options": [
+        { "value": "single", "label": "One live message" },
+        { "value": "per_tool", "label": "One message per tool" }
+      ],
+      "hint": "One live message keeps the channel compact. One message per tool gives every tool call its own editable Discord bubble."
+    },
+    {
       "key": "reactions",
       "label": "Status reactions",
       "type": "boolean",

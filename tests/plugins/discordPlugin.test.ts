@@ -106,6 +106,32 @@ describe('discord LiveMessage (tool progress)', () => {
     expect(posts.some((p) => p.content.includes('Koukám se na to'))).toBe(false); // narration never became its own message
   });
 
+  it('per_tool layout gives each tool its own editable bubble and keeps the final answer last', async () => {
+    const { LiveMessage } = await load();
+    const posts: { id: string; content: string }[] = [];
+    const edits = new Map<string, string>();
+    let nextId = 0;
+    const adapter = {
+      cfg: {},
+      rest: async (method: string, path: string, body: { content: string }) => {
+        const id = method === 'POST' ? `m${++nextId}` : path.split('/').pop()!;
+        if (method === 'POST') posts.push({ id, content: body.content });
+        edits.set(id, body.content);
+        return { id };
+      },
+    };
+    const lm = new LiveMessage(adapter, 'chan', undefined, undefined, { toolActivity: 'status', answerMode: 'final', toolOutput: 'summary', toolMessageMode: 'per_tool' });
+    lm.onEvent({ type: 'tool', id: 'a', name: 'read_file', detail: 'a.ts', icon: '📄' });
+    lm.onEvent({ type: 'tool', id: 'b', name: 'run_command', detail: 'npm test', icon: '💻' });
+    lm.onEvent({ type: 'tool_output', id: 'b', output: { title: 'console output', kind: 'console', text: 'ok', status: 'exit 0', tone: 'success' } });
+    await lm.finalize('Hotovo.');
+    expect(posts.map((p) => p.id)).toEqual(['m1', 'm2', 'm3']);
+    expect(edits.get('m1')).toContain('read_file');
+    expect(edits.get('m1')).not.toContain('run_command');
+    expect(edits.get('m2')).toContain('run_command');
+    expect(edits.get('m3')).toBe('Hotovo.');
+  });
+
   it('tracks a live command by id: running tail → completed summary, while answerMode=final posts once', async () => {
     vi.useFakeTimers();
     try {
@@ -279,7 +305,7 @@ describe('discord display settings', () => {
     const { resolveDisplaySettings } = (await import(join(repoRoot, 'plugins/discord/index.mjs'))) as {
       resolveDisplaySettings: (cfg?: Record<string, unknown>, state?: Record<string, unknown>) => Record<string, string>;
     };
-    expect(resolveDisplaySettings({})).toEqual({ toolActivity: 'status', answerMode: 'final', toolOutput: 'summary' });
+    expect(resolveDisplaySettings({})).toEqual({ toolActivity: 'status', answerMode: 'final', toolOutput: 'summary', toolMessageMode: 'single' });
     expect(resolveDisplaySettings({ streaming: true, streamAnswer: true })).toMatchObject({ toolActivity: 'status', answerMode: 'live' });
     expect(resolveDisplaySettings({ streaming: true, streamAnswer: false })).toMatchObject({ toolActivity: 'status', answerMode: 'final' });
     expect(resolveDisplaySettings({ streaming: false })).toMatchObject({ toolActivity: 'off', answerMode: 'final' });
@@ -292,9 +318,9 @@ describe('discord display settings', () => {
     };
     const cfg = { toolActivity: 'status', answerMode: 'final', toolOutput: 'summary' };
     const display = updateDisplayOverrides({}, { toolActivity: 'live', toolOutput: 'tail' });
-    expect(resolveDisplaySettings(cfg, { display })).toEqual({ toolActivity: 'live', answerMode: 'final', toolOutput: 'tail' });
+    expect(resolveDisplaySettings(cfg, { display })).toEqual({ toolActivity: 'live', answerMode: 'final', toolOutput: 'tail', toolMessageMode: 'single' });
     const reset = updateDisplayOverrides(display, { toolActivity: 'default' });
-    expect(resolveDisplaySettings(cfg, { display: reset })).toEqual({ toolActivity: 'status', answerMode: 'final', toolOutput: 'tail' });
+    expect(resolveDisplaySettings(cfg, { display: reset })).toEqual({ toolActivity: 'status', answerMode: 'final', toolOutput: 'tail', toolMessageMode: 'single' });
   });
 
   it('/display persists operator-only channel overrides and reports the resolved policy', async () => {
@@ -312,10 +338,10 @@ describe('discord display settings', () => {
     adapter.rest = async (_method: string, _path: string, body: unknown) => { replies.push(body); return {}; };
     await adapter.onInteraction({
       type: 2, id: 'I', token: 'T', channel_id: 'C', member: { roles: ['ADMIN'] },
-      data: { name: 'display', options: [{ name: 'tools', value: 'live' }, { name: 'output', value: 'tail' }] },
+      data: { name: 'display', options: [{ name: 'tools', value: 'live' }, { name: 'output', value: 'tail' }, { name: 'layout', value: 'per_tool' }] },
     });
-    expect(channels.C?.display).toEqual({ toolActivity: 'live', toolOutput: 'tail' });
-    expect(JSON.stringify(replies[0])).toContain('tools **live** · answer **final** · output **tail**');
+    expect(channels.C?.display).toEqual({ toolActivity: 'live', toolOutput: 'tail', toolMessageMode: 'per_tool' });
+    expect(JSON.stringify(replies[0])).toContain('tools **live** · layout **per_tool** · answer **final** · output **tail**');
   });
 });
 
