@@ -56,6 +56,14 @@ describe('buildUsageSummary', () => {
     expect(s.hasAnyUsage).toBe(true);
   });
 
+  it('keeps a provider-reported cost-only row visible when token detail is unavailable', () => {
+    const s = buildUsageSummary([mk('provider/cost-only', 0, 0.75)]);
+    expect(s.totalTokens).toBe(0);
+    expect(s.totalCost).toBe(0.75);
+    expect(s.hasAnyUsage).toBe(true);
+    expect(s.rows).toHaveLength(1);
+  });
+
   it('formats token figures compactly', () => {
     const s = buildUsageSummary([mk('a/x', 1_200_000, null)]);
     expect(s.rows[0].tokensLabel).toBe('1.2M');

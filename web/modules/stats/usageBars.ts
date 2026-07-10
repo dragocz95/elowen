@@ -56,6 +56,8 @@ export function buildUsageSummary(data: ModelUsage[] | undefined): UsageSummary 
     totalCacheTokens,
     totalCacheLabel: formatTokens(totalCacheTokens),
     modelsUsed: rows.length,
-    hasAnyUsage: totalTokens > 0,
+    // A provider may report a settled cost without token detail. Keep that row visible instead of
+    // incorrectly replacing the ledger with the empty state.
+    hasAnyUsage: totalTokens > 0 || costs.some((cost) => cost > 0),
   };
 }
