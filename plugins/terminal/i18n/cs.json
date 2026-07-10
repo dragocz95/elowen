@@ -7,7 +7,7 @@
     },
     "outputCap": {
       "label": "Limit výstupu",
-      "hint": "Kolik znaků stdout/stderr se vrátí před oříznutím. Zároveň omezuje průběžnou vyrovnávací paměť výstupu udržovanou pro procesy na pozadí."
+      "hint": "Kolik bajtů stdout/stderr se vrátí před oříznutím. Zároveň omezuje průběžnou vyrovnávací paměť výstupu udržovanou pro procesy na pozadí."
     },
     "commandTimeoutMs": {
       "label": "Časový limit příkazu (ms)",

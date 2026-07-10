@@ -23,7 +23,7 @@
       "step": 1000,
       "placeholder": "60000",
       "default": 60000,
-      "hint": "How many characters of stdout/stderr are returned before truncation. Also caps the rolling output buffer kept for background processes."
+      "hint": "How many bytes of stdout/stderr are returned before truncation. Also caps the rolling output buffer kept for background processes."
     },
     {
       "key": "commandTimeoutMs",

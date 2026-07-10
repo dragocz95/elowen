@@ -18,8 +18,8 @@ export type TranscriptEvent =
   | { type: 'notice'; kind: 'retry' | 'compaction'; message: string; done?: boolean }
   | { type: 'session'; sessionId: string }
   | { type: 'subagent'; id: string; sessionId: string; status: 'running' | 'done' | 'error'; task: string; detail?: string; tools: number; tokens?: number; seconds: number; model?: string }
-  /** A server-delivered user message (a drained queued message never optimistically echoed) — folded as a
-   *  'you' turn. See the daemon SessionQueue; the `queue` snapshot event is handled outside this fold. */
+  /** A server-delivered user message (a steered mid-turn message never optimistically echoed) — folded as
+   *  a 'you' turn. The `queue` snapshot event (PI steering queue) is handled outside this fold. */
   | { type: 'user'; text: string }
   | { type: 'idle' }
   | { type: 'error'; message: string };

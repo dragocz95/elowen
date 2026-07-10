@@ -277,12 +277,14 @@ export function createShell(rt: ChatRuntime, stream: StreamController, mdTheme: 
     const line = statusline(rt.lineCfg ? { ...rt.lineCfg, showModel: false } : null, rt.usage, rt.modelName);
     promptMeta.setLeft(modelMetaLine(rt.workMode, rt.modelName, rt.thinkingLevel, rt.view.thinking ? generatingChip(currentRunSeconds) : undefined, rt.yoloOn) + leaderChip());
     promptMeta.setRight(panelVisible() || !line ? projectLine : `${color.faint(line)} ${color.faint('·')} ${projectLine}`);
-    cardPanel.set(rt.cards);
+    // Drop the terminal plugin's pinned `bg-processes` card — the dedicated (killable, live) ProcessPanel
+    // below now owns that surface, so keeping the card too would render every background process twice.
+    cardPanel.set(rt.cards.filter((c) => c.id !== 'bg-processes'));
     subPanel.set(stream.subagentStates());
     processPanel.set(rt.processes);
     // Pending mid-turn queue strip above the composer (with the remove-last keybind hint when bound).
     const removeChord = keymap.chordLabel('queue_remove');
-    rt.queuedMessages.set(rt.queued, rt.queued.length && removeChord ? `${removeChord} removes the last queued message` : null);
+    rt.queuedMessages.set(rt.queued, rt.queued.length && removeChord ? `${removeChord} clears the pending queue` : null);
     tui.requestRender();
   };
 
@@ -490,9 +492,11 @@ export function createShell(rt: ChatRuntime, stream: StreamController, mdTheme: 
         // Drop the most recent pending mid-turn queued message. Optimistic local pop; the server's `queue`
         // snapshot reconciles (and is authoritative if the item was already delivered in the meantime).
         case 'queue_remove': {
+          // PI's steering queue only supports clearing the WHOLE backlog (no per-id removal), so this
+          // drops every pending message, not just the last — clear optimistically to match the server.
           const last = rt.queued.at(-1);
           if (!last) { rt.notice = color.dim('no queued messages'); render(); return; }
-          rt.queued = rt.queued.slice(0, -1);
+          rt.queued = [];
           void client.queueRemove(last.id).catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); render(); });
           render();
           return;

@@ -19,7 +19,7 @@ export interface BrainDeps {
   store: BrainStore;
   users: {
     ensureAdvisorToken(userId: number): string;
-    get(userId: number): { name?: string; username?: string; disabled_tools?: string[] } | null | undefined;
+    get(userId: number): { name?: string; username?: string; is_admin?: boolean; disabled_tools?: string[] } | null | undefined;
   };
   /** The provider set, or a live resolver so provider/OAuth changes apply without a daemon restart.
    *  A resolver returning null means "nothing configured yet" — `start` fails with a clear error. */

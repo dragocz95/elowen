@@ -419,9 +419,9 @@ export function BrainChat() {
 
   const submit = async () => {
     const typed = input.trim();
-    // A message sent mid-turn is ENQUEUED server-side (the daemon SessionQueue) and combined into ONE
-    // follow-up when the turn ends — the composer stays live. Same behavior in the CLI. The DAEMON renders
-    // every user turn authoritatively (the `user` stream event), so there is NO optimistic local echo — a
+    // A message sent mid-turn is STEERED into the running turn via PI's steering queue (injected between
+    // steps) — the composer stays live. Same behavior in the CLI. The DAEMON renders every user turn
+    // authoritatively (the `user` stream event), so there is NO optimistic local echo — a
     // mid-turn send that queues can't drop or double-render.
     if (!typed && attachments.length === 0) return;
     // Text files inline as fenced blocks (works with any model); images ride the vision input.

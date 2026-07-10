@@ -68,11 +68,16 @@ function runForeground(command, cwd, outputCap, timeoutMs) {
     child.stderr.on('data', onData);
     child.on('close', (code) => {
       clearTimeout(timer);
-      const t = truncateTail(out, { maxBytes: outputCap });
+      // Byte-only cap: `maxLines: Infinity` overrides PI's 2000-line default, which would otherwise
+      // silently clip long-but-small output (e.g. a lint report) far under the configured `outputCap`.
+      const t = truncateTail(out, { maxBytes: outputCap, maxLines: Infinity });
       const body = t.truncated
         ? `…[truncated: last ${formatSize(t.outputBytes)} of ${formatSize(t.totalBytes)}]\n${t.content}`
         : t.content;
-      done(`$ ${command}\n(cwd: ${cwd})\n${killed ? '[killed: timeout]\n' : ''}${body}[exit ${code}]`);
+      // Ensure the exit marker starts on its own line — the tail may not end in a newline, which would
+      // otherwise glue `[exit N]` onto the last line of real output the model parses.
+      const sep = body.endsWith('\n') || body.length === 0 ? '' : '\n';
+      done(`$ ${command}\n(cwd: ${cwd})\n${killed ? '[killed: timeout]\n' : ''}${body}${sep}[exit ${code}]`);
     });
     child.on('error', (e) => { clearTimeout(timer); done(`Error: ${e.message}`); });
   });

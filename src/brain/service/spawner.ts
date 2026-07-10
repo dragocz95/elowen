@@ -8,6 +8,7 @@ import { buildElowenTools, buildMemoryTools, BUILTIN_TOOL_ICONS } from '../tools
 import { makeToolIconResolver } from '../toolIcons.js';
 import { composeSessionTools } from '../session/capabilities.js';
 import { buildPromptTemplates } from '../slashCommands.js';
+import { formatSkillsForPrompt } from '@earendil-works/pi-coding-agent';
 import { personalityText } from '../personality.js';
 import type { BrainSessionFactory } from '../session/factory.js';
 import type { LiveBrain, SpawnOpts } from '../session/liveBrain.js';
@@ -113,7 +114,13 @@ export class LiveSessionSpawner {
     // so putting it per-turn would waste the prompt cache). Undefined when no enabled profile is pinned →
     // NOTHING appended, so the systemPrompt prefix stays byte-identical for users without one.
     const persoAppend = this.d.activePersonality?.(ownerUserId, opts.platform ?? 'web');
-    const append = [...fragments, ...(opts.extraAppend ?? []), persoAppend ?? ''].filter((s) => s.length > 0);
+    // Skills awareness block (progressive disclosure): PI would render `<available_skills>` itself, but
+    // ONLY when a tool literally named `read` is active (system-prompt.js) — our tools are `read_file`
+    // etc., so PI never renders it. We therefore append it ourselves so the model learns which skills
+    // exist; `skills` still flows to the factory's `skillsOverride` so PI expands `/skill:name` natively.
+    // `formatSkillsForPrompt` already drops disable-model-invocation skills, so the toggle is honoured.
+    const skillsBlock = skills.length ? formatSkillsForPrompt(skills) : '';
+    const append = [skillsBlock, ...fragments, ...(opts.extraAppend ?? []), persoAppend ?? ''].filter((s) => s.length > 0);
 
     // Elowen identity: the editable `advisor` prompt (per-user override aware) becomes the system prompt,
     // so the brain knows it is Elowen — not the underlying model's default persona.
@@ -133,9 +140,12 @@ export class LiveSessionSpawner {
       systemPrompt: persona, appendSystemPrompt: append, skills, promptTemplates,
       tools: allTools, thinkingLevel: opts.thinkingLevel,
       autoCompact: opts.autoCompact, autoCompactAtPct: opts.autoCompactAtPct,
-      // Project AGENTS.md/CLAUDE.md ride the system prompt for the owner's own chat only — a shared
-      // channel (trusted or foreign senders) must never inhale instruction files off the daemon host.
-      contextFiles: !opts.channel,
+      // Project AGENTS.md/CLAUDE.md ride the system prompt for an ADMIN's own chat only. Two guards,
+      // both required: (1) not a shared channel (foreign senders must never see instruction files);
+      // (2) admin owner — a non-admin account with no repo of its own resolves cwd to the daemon's
+      // project path, and PI walks it plus every ancestor up to `/`, so a plain user's chat would
+      // otherwise inhale the operator's private CLAUDE.md (internal hosts, prod credentials).
+      contextFiles: !opts.channel && !!u?.is_admin,
     });
 
     // Resolve tool→icon once per session and stamp it on each tool event, so every client renders the

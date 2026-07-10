@@ -7,7 +7,7 @@
     },
     "readCap": {
       "label": "Limit čtení",
-      "hint": "Maximální počet znaků načtených ze souboru a vrácených před oříznutím."
+      "hint": "Maximální počet bajtů načtených ze souboru a vrácených před oříznutím."
     },
     "searchMaxMatches": {
       "label": "Maximální počet shod hledání",

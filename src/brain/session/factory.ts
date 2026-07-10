@@ -146,9 +146,16 @@ export class BrainSessionFactory {
     // once contextTokens > contextWindow − reserveTokens). Applied AFTER create — createAgentSession reads
     // compaction lazily (getCompactionSettings at each check), so an in-memory override here takes effect;
     // the loader's earlier reload() only rebuilds the system prompt and never touches settings.
-    settingsManager.applyOverrides({
-      compaction: { enabled: spec.autoCompact, reserveTokens: Math.round(spec.model.contextWindow * (1 - spec.autoCompactAtPct / 100)) },
-    });
+    //
+    // We keep compaction `enabled` ALWAYS on, because PI's `_checkCompaction` gates BOTH the threshold
+    // pass AND context-overflow recovery behind `enabled` — turning it off would leave an overflowing
+    // conversation hard-erroring on every turn until a manual /compact. When the user disables proactive
+    // compaction we instead set reserveTokens to 0 so the threshold pass effectively never fires (only at
+    // a full window, i.e. overflow itself), while overflow recovery stays available.
+    const reserveTokens = spec.autoCompact
+      ? Math.round(spec.model.contextWindow * (1 - spec.autoCompactAtPct / 100))
+      : 0;
+    settingsManager.applyOverrides({ compaction: { enabled: true, reserveTokens } });
 
     // Persist settled turns (agent_end) AND every PI compaction (auto at the threshold, manual /compact,
     // overflow recovery) — PI shrinks the live context but writes NOTHING to the store, so without this

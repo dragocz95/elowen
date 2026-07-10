@@ -91,7 +91,8 @@ describe('terminal plugin — configurable outputCap', () => {
     const marker = text.indexOf('…[truncated');
     if (marker < 0) throw new Error('not truncated');
     const start = text.indexOf('\n', marker) + 1; // first char after the hint line
-    const end = text.lastIndexOf('[exit ');
+    let end = text.lastIndexOf('[exit ');
+    if (text[end - 1] === '\n') end -= 1; // drop the separator newline the plugin inserts before [exit N]
     return end - start;
   };
 

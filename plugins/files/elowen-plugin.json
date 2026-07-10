@@ -32,7 +32,7 @@
       "step": 5000,
       "placeholder": "100000",
       "default": 100000,
-      "hint": "Max characters read from a file and returned before truncation."
+      "hint": "Max bytes read from a file and returned before truncation."
     },
     {
       "key": "searchMaxMatches",
