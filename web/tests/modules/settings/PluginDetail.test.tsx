@@ -76,14 +76,15 @@ describe('PluginDetail workspace', () => {
     expect(screen.getByRole('region', { name: en.pluginDetail.livePreview })).toBeInTheDocument();
   });
 
-  it('keeps the live preview inline and gives the config editor the full workspace width', () => {
+  it('places the live preview in a responsive context rail beside the config document', () => {
     usePluginDetail.mockReturnValue({ data: detail([
       { key: 'message', label: 'Message', type: 'string' },
     ], { message: 'Hello' }), isLoading: false });
     renderDetail();
 
     const layout = screen.getByTestId('plugin-editor-layout');
-    expect(layout).toHaveClass('flex-col');
+    expect(layout).toHaveClass('@4xl:grid-cols-[minmax(0,1fr)_19rem]');
+    expect(screen.getByTestId('plugin-preview-rail')).toHaveClass('@4xl:sticky');
     expect(within(layout).getByRole('region', { name: en.pluginDetail.livePreview })).toBeInTheDocument();
     expect(within(layout).getByRole('textbox')).toBeInTheDocument();
     expect(screen.queryByText(en.pluginDetail.overviewStatus)).not.toBeInTheDocument();

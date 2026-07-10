@@ -20,13 +20,13 @@ import { usePluginConfigDraft } from './usePluginConfigDraft';
 
 type WorkspaceTab = 'setup' | 'behavior' | 'capabilities' | 'activity' | 'advanced';
 
-/** Config and its live preview share one full-width flow. Keeping the preview inline avoids a narrow
- *  editor column at normal desktop widths while preserving immediate visual feedback above the fields. */
+/** Document-like configuration with a contextual preview rail. The rail only appears beside the
+ *  editor when its real container is wide enough; narrower settings layouts keep a single flow. */
 function PluginEditorLayout({ preview, children }: { preview: ReactNode; children: ReactNode }) {
   return (
-    <div data-testid="plugin-editor-layout" className="flex min-w-0 flex-col gap-4">
-      <div className="min-w-0">{preview}</div>
+    <div data-testid="plugin-editor-layout" className="@container grid min-w-0 gap-6 @4xl:grid-cols-[minmax(0,1fr)_19rem] @5xl:grid-cols-[minmax(0,1fr)_21rem]">
       <div className="min-w-0">{children}</div>
+      <aside data-testid="plugin-preview-rail" className="min-w-0 self-start @4xl:sticky @4xl:top-20">{preview}</aside>
     </div>
   );
 }
@@ -82,18 +82,18 @@ function PluginWorkspace({ name, detail, contributions, logs, hookExecutions, on
   const preview = <PluginLivePreview detail={detail} values={draft.values} fieldLabel={fieldLabel} />;
 
   return (
-    <div className="flex flex-col gap-5">
+    <div className="flex flex-col gap-6">
       <div><Button variant="ghost" icon={ArrowLeft} onClick={onBack}>{t.pluginCfg.back}</Button></div>
       <PluginHero name={name} detail={detail} description={pluginDescription} toolCount={toolCount} />
 
-      <div className="flex flex-col gap-3 rounded-xl border border-border bg-surface px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+      <div className="flex flex-col gap-3 border-y border-border/80 py-3 sm:flex-row sm:items-center sm:justify-between">
         <Segmented value={tab} onChange={changeTab} options={tabs} aria-label={t.pluginDetail.workspaceNav} />
         <AutoSaveStatus status={draft.status} onRetry={draft.retry} />
       </div>
 
       {tab === 'setup' ? (
         <PluginEditorLayout preview={preview}>
-          <section className="rounded-xl border border-border bg-surface p-4">
+          <section className="border-y border-border/80 py-5">
             <div className="mb-3 flex items-center justify-between gap-3">
               <div><h2 className="text-sm font-semibold text-text">{t.pluginDetail.setupChecklist}</h2><p className="mt-0.5 text-xs text-text-muted">{t.pluginDetail.setupChecklistHint}</p></div>
               <span className={`text-xs font-medium ${missingRequired.length ? 'text-warning' : 'text-success'}`}>{missingRequired.length ? t.pluginDetail.setupMissing.replace('{n}', String(missingRequired.length)) : t.pluginDetail.setupComplete}</span>

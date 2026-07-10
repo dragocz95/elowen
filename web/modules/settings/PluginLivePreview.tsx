@@ -136,8 +136,8 @@ export function PluginLivePreview({ detail, values, fieldLabel }: {
   else if (name.includes('personality')) body = <div className="flex items-center gap-2 rounded-lg border border-border bg-elevated/50 p-3 text-sm text-text"><Bot size={15} className="text-accent" aria-hidden />{t.pluginDetail.previewPersonality}</div>;
   else body = <GenericPreview detail={detail} values={values} fieldLabel={fieldLabel} />;
   return (
-    <section aria-label={t.pluginDetail.livePreview} className="rounded-xl border border-border bg-surface p-4">
-      <header className="mb-3 flex items-center justify-between gap-2"><span className="flex items-center gap-2 text-sm font-medium text-text"><MessageCircle size={15} className="text-accent" aria-hidden />{t.pluginDetail.livePreview}</span><span className="inline-flex items-center gap-1 text-tiny uppercase text-success"><Check size={11} aria-hidden />{t.pluginDetail.previewLive}</span></header>
+    <section aria-label={t.pluginDetail.livePreview} className="border-y border-border/80 py-4">
+      <header className="mb-4 flex items-center justify-between gap-2"><span className="flex items-center gap-2 text-sm font-medium text-text"><MessageCircle size={15} className="text-accent" aria-hidden />{t.pluginDetail.livePreview}</span><span className="inline-flex items-center gap-1 font-mono text-[9px] uppercase tracking-[0.08em] text-success"><Check size={11} aria-hidden />{t.pluginDetail.previewLive}</span></header>
       {body}
     </section>
   );

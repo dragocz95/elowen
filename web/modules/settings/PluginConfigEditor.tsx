@@ -534,13 +534,13 @@ export function PluginConfigEditor({ detail, fieldLabel, fieldHint, fieldOptions
           <p className="text-sm text-text-muted">{t.pluginDetail.configEmpty}</p>
         </Collapsible>
       ) : hasExplicitSections ? (
-        <div className="rounded-xl border border-border bg-surface p-5">
+        <div className="border-y border-border/80 py-6">
           {/* WhatsApp: the "Pair device" button (QR/code modal) lives at the top of the Connection section. */}
           {detail.name === 'whatsapp' && hasConnectionSection ? <WhatsAppPairSection /> : null}
           {fieldList(visibleSchema)}
         </div>
       ) : (
-        <div className="rounded-xl border border-border bg-surface p-5">
+        <div className="border-y border-border/80 py-6">
           <div className="flex flex-col gap-6">
             {connectionFields.length ? group('connection', Link2, t.pluginCfg.sectionConnection, t.pluginCfg.sectionConnectionHint, connectionFields) : null}
             {behaviorFields.length ? group('behavior', SlidersHorizontal, t.pluginCfg.sectionBehavior, undefined, behaviorFields) : null}
