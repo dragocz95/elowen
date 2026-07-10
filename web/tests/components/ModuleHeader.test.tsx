@@ -43,6 +43,7 @@ describe('ModuleHeader — responsive toolbar', () => {
     );
     const row = screen.getByTestId('ctrl').parentElement!;
     expect(row.className).toContain('flex-wrap');
+    expect(row.className).toContain('justify-end');
     expect(row.className).toContain('[&>*]:max-w-full');
     expect(row.className).not.toContain('flex-nowrap');
     expect(row.className).not.toContain('overflow-x-auto');

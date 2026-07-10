@@ -31,7 +31,7 @@ export function StatsView() {
       {/* Date filter lives in the header row — the loading/error states below still respect it,
           so the control stays visible/operable regardless of fetch state. */}
       <ModuleHeader title={t.page.stats} icon={BarChart3}>
-        <DateRangeFilter value={range} onChange={(r) => setRangeRaw(serializeRange(r))} />
+        <DateRangeFilter value={range} onChange={(r) => setRangeRaw(serializeRange(r))} compact />
       </ModuleHeader>
 
       <div className="mx-auto flex w-full max-w-4xl flex-col gap-8">

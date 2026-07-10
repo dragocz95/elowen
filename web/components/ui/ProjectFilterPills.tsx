@@ -44,11 +44,11 @@ export function ProjectFilterPills({ value, onChange, includeAll = true, variant
           aria-expanded={open}
           aria-label={t.tasks.filterProjectsAria}
           onClick={() => setOpen((current) => !current)}
-          className={`inline-flex h-9 max-w-full items-center gap-2 rounded-md border px-3 text-sm font-medium transition-[border-color,background-color,box-shadow] ${open ? 'border-accent/60 bg-accent/10 text-accent shadow-[0_0_0_3px_rgb(255_82_54_/_0.08)]' : 'border-border bg-surface text-text hover:border-border-strong hover:bg-elevated'}`}
+          className={`inline-flex h-8 max-w-full items-center gap-1.5 rounded-md border px-2.5 text-xs font-medium transition-[border-color,background-color,box-shadow] ${open ? 'border-accent/60 bg-accent/10 text-accent shadow-[0_0_0_3px_rgb(255_82_54_/_0.08)]' : 'border-border bg-surface text-text hover:border-border-strong hover:bg-elevated'}`}
         >
-          <FolderGit2 size={14} className="shrink-0 text-accent" aria-hidden />
-          <span className="max-w-40 truncate">{selected?.slug ?? t.tasks.filterAllProjects}</span>
-          <ChevronDown size={14} className={`shrink-0 text-text-muted transition-transform ${open ? 'rotate-180' : ''}`} aria-hidden />
+          <FolderGit2 size={13} className="shrink-0 text-accent" aria-hidden />
+          <span className="max-w-32 truncate">{selected?.slug ?? t.tasks.filterAllProjects}</span>
+          <ChevronDown size={13} className={`shrink-0 text-text-muted transition-transform ${open ? 'rotate-180' : ''}`} aria-hidden />
         </button>
         {open ? (
           <div role="menu" aria-label={t.tasks.filterProjectsAria} className="absolute left-0 top-full z-40 mt-2 w-64 origin-top-left animate-fade-up rounded-xl border border-border bg-surface p-1.5 shadow-[var(--shadow-raised)]">

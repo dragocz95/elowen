@@ -348,10 +348,10 @@ export function TimelineView() {
   return (
     <div className="@container">
       <ModuleHeader title={t.page.timeline} icon={Activity}>
-        <ProjectFilterPills value={selectedProject} onChange={setProject} />
-        <DateRangeFilter value={range} onChange={(r) => setRangeRaw(serializeRange(r))} />
-        <Segmented options={[{ label: t.timeline.axis, value: 'axis', icon: Activity }, { label: t.timeline.lanes, value: 'lanes', icon: Columns3 }]} value={view} onChange={setView} nowrap />
-        <Segmented options={FILTER_OPTIONS} value={filter} onChange={setFilter} nowrap />
+        <ProjectFilterPills value={selectedProject} onChange={setProject} variant="dropdown" />
+        <DateRangeFilter value={range} onChange={(r) => setRangeRaw(serializeRange(r))} compact />
+        <Segmented size="sm" options={[{ label: t.timeline.axis, value: 'axis', icon: Activity }, { label: t.timeline.lanes, value: 'lanes', icon: Columns3 }]} value={view} onChange={setView} />
+        <Segmented size="sm" options={FILTER_OPTIONS} value={filter} onChange={setFilter} />
       </ModuleHeader>
 
       {/* Content stack owns its own vertical rhythm; ModuleHeader's mb-6 provides the gap below the

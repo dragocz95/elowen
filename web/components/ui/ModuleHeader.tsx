@@ -35,7 +35,7 @@ export function ModuleHeader({ title, count, icon: Icon, children, subtitle }: {
           their own collections (project pills, segmented filters) may wrap internally. Keeping every
           direct child bounded to the row prevents one long group from creating body-level overflow. */}
       {children ? (
-        <div className="flex min-w-0 flex-wrap items-center gap-2 [&>*]:max-w-full">
+        <div className="flex min-w-0 flex-wrap items-center justify-end gap-1.5 rounded-xl border border-border bg-surface/80 p-1.5 shadow-[var(--shadow-subtle)] [&>*]:max-w-full">
           {children}
         </div>
       ) : null}

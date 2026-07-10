@@ -193,7 +193,7 @@ describe('TimelineView', () => {
     const { wrapper: Wrapper } = createWrapper();
     render(<Wrapper><TimelineView /></Wrapper>);
     // Pills are rendered asynchronously once the project list resolves.
-    expect(await screen.findByRole('group', { name: 'Project filter' })).toBeTruthy();
+    expect(await screen.findByRole('button', { name: 'Project filter' })).toBeTruthy();
   });
 
   it('project filter — only events from the selected project appear as markers', async () => {

@@ -9,7 +9,7 @@ import type { DateRange, RangePreset } from '../../lib/dateRange';
  *  Kanban, Stats): a trigger showing the active window, opening a popover with quick presets and a
  *  custom from/to picker. Pure presentational + a single onChange — all window maths live in
  *  `lib/dateRange.ts`. */
-export function DateRangeFilter({ value, onChange }: { value: DateRange; onChange: (r: DateRange) => void }) {
+export function DateRangeFilter({ value, onChange, compact = false }: { value: DateRange; onChange: (r: DateRange) => void; compact?: boolean }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -42,11 +42,11 @@ export function DateRangeFilter({ value, onChange }: { value: DateRange; onChang
         onClick={() => setOpen((o) => !o)}
         aria-haspopup="dialog"
         aria-expanded={open}
-        className="inline-flex h-9 items-center gap-2 rounded-md border border-border bg-bg px-3 text-sm font-medium text-text transition-colors hover:border-border-strong hover:bg-elevated"
+        className={`inline-flex items-center gap-2 rounded-md border border-border bg-bg font-medium text-text transition-colors hover:border-border-strong hover:bg-elevated ${compact ? 'h-8 px-2.5 text-xs' : 'h-9 px-3 text-sm'}`}
       >
-        <CalendarDays size={14} aria-hidden className="text-text-muted" />
-        <span className="max-w-[14rem] truncate">{label}</span>
-        <ChevronDown size={14} aria-hidden className="text-text-muted" />
+        <CalendarDays size={compact ? 13 : 14} aria-hidden className="text-text-muted" />
+        <span className={`${compact ? 'max-w-36' : 'max-w-[14rem]'} truncate`}>{label}</span>
+        <ChevronDown size={compact ? 13 : 14} aria-hidden className="text-text-muted" />
       </button>
 
       {open && (

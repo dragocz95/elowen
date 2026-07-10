@@ -78,8 +78,8 @@ export default function KanbanPage() {
   return (
     <ModuleShell moduleId="kanban">
       <ModuleHeader title={t.page.kanban} count={filteredTasks.length} icon={KanbanSquare}>
-        <ProjectFilterPills value={selectedProject} onChange={setProject} />
-        <DateRangeFilter value={range} onChange={(r) => setRangeRaw(serializeRange(r))} />
+        <ProjectFilterPills value={selectedProject} onChange={setProject} variant="dropdown" />
+        <DateRangeFilter value={range} onChange={(r) => setRangeRaw(serializeRange(r))} compact />
         <Segmented
           value={view}
           onChange={(v) => setView(v as 'board' | 'calendar')}
@@ -87,7 +87,6 @@ export default function KanbanPage() {
             { value: 'board', label: t.kanban.board, icon: Columns3 },
             { value: 'calendar', label: t.kanban.calendar, icon: CalendarRange },
           ]}
-          nowrap
         />
       </ModuleHeader>
 

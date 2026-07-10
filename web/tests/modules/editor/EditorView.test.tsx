@@ -59,8 +59,9 @@ describe('EditorView', () => {
     const { wrapper } = createWrapper();
     render(<EditorView />, { wrapper });
     // Both projects are selectable…
-    expect(screen.getByText('elowen')).toBeTruthy();
-    expect(screen.getByText('other')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Project filter' }));
+    expect(screen.getByRole('menuitemradio', { name: 'elowen' })).toBeTruthy();
+    expect(screen.getByRole('menuitemradio', { name: 'other' })).toBeTruthy();
     // …but the editor edits exactly one, so the "All projects" pill must not be there.
     expect(screen.queryByText('All projects')).toBeNull();
   });
