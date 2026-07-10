@@ -559,6 +559,7 @@ export const cs = {
     signalAgentsActive: 'Agenti v akci',
     signalDecisionsWaiting: 'Čeká na rozhodnutí',
     signalMonthCost: 'Tento měsíc',
+    attention: 'Pozornost',
     rightNow: 'Právě teď',
     resting: 'Elowen odpočívá',
     restingDesc: 'Žádný agent neběží. Spusťte úkol a ožije to tady.',

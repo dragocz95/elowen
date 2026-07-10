@@ -1,7 +1,6 @@
 'use client';
 import { useMemo } from 'react';
-import { ListTodo, Check } from 'lucide-react';
-import { BentoTile } from './BentoTile';
+import { Check } from 'lucide-react';
 import { useTasks } from '../../lib/queries';
 import { useTranslation } from '../../lib/i18n';
 import { parseTs } from '../../lib/format';
@@ -31,18 +30,21 @@ export function TodayTasksTile({ now }: { now: number }) {
   const done = rows.filter((r) => r.status === 'closed').length;
 
   return (
-    <BentoTile tone="muted" icon={ListTodo} label={t.dashboard.todayTasks} span="wide"
-      trailing={rows.length > 0 ? <span className="font-mono text-[11px] tabular-nums text-text-muted">{t.dashboard.todayTasksCount.replace('{done}', String(done)).replace('{total}', String(rows.length))}</span> : undefined}>
+    <section aria-labelledby="dashboard-tasks" className="px-1 py-6 @sm:px-3 @2xl:px-5">
+      <header className="mb-3 flex items-center justify-between gap-3">
+        <h2 id="dashboard-tasks" className="text-sm font-semibold text-text">{t.dashboard.todayTasks}</h2>
+        {rows.length > 0 ? <span className="font-mono text-[10px] tabular-nums text-text-muted">{t.dashboard.todayTasksCount.replace('{done}', String(done)).replace('{total}', String(rows.length))}</span> : null}
+      </header>
       {rows.length === 0 ? (
-        <p className="flex flex-1 items-center justify-center py-4 text-center text-xs text-text-muted">{t.dashboard.todayTasksEmpty}</p>
+        <p className="py-5 text-sm text-text-muted">{t.dashboard.todayTasksEmpty}</p>
       ) : (
-        <div className="flex flex-col">
+        <div className="divide-y divide-border/70">
           {rows.map((task) => {
             const closed = task.status === 'closed';
             const running = task.status === 'in_progress';
             return (
-              <div key={task.id} className="flex items-center gap-3 border-t border-border py-2.5 first:border-t-0">
-                <span className={`grid h-[17px] w-[17px] shrink-0 place-items-center rounded-[5px] border ${closed ? 'border-accent bg-accent text-bg' : 'border-border-strong'}`}>
+              <div key={task.id} className="group flex items-center gap-3 py-3">
+                <span className={`grid h-[17px] w-[17px] shrink-0 place-items-center rounded-full border transition-colors ${closed ? 'border-accent bg-accent text-bg' : running ? 'border-accent/70' : 'border-border-strong group-hover:border-text-muted'}`}>
                   {closed && <Check size={11} strokeWidth={3} aria-hidden />}
                 </span>
                 <span className={`flex-1 truncate text-[13.5px] ${closed ? 'text-text-muted line-through decoration-text-muted/50' : 'text-text'}`}>{task.title}</span>
@@ -56,6 +58,6 @@ export function TodayTasksTile({ now }: { now: number }) {
           })}
         </div>
       )}
-    </BentoTile>
+    </section>
   );
 }

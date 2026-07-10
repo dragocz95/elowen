@@ -40,7 +40,7 @@ describe('DashboardView', () => {
   const srv = server();
   beforeAll(() => srv.listen({ onUnhandledRequest })); afterEach(() => srv.resetHandlers()); afterAll(() => srv.close());
 
-  it('renders the bento tiles with the live agent work in the hero', async () => {
+  it('renders the daily journal and attention rail with live agent work in the hero', async () => {
     const { wrapper: Wrapper, client } = createWrapper();
     client.setQueryData(['session-signals'], { 'elowen-Iris': { type: 'working' } });
     render(<Wrapper><EffectsProvider><ToastProvider><DashboardView /></ToastProvider></EffectsProvider></Wrapper>);
@@ -53,6 +53,9 @@ describe('DashboardView', () => {
     expect(screen.getByText('Next run')).toBeTruthy();
     expect(screen.getByText('Activity')).toBeTruthy();
     expect(screen.getByText("Today's tasks")).toBeTruthy();
+    expect(screen.getByRole('region', { name: 'Activity' })).toBeTruthy();
+    expect(screen.getByRole('region', { name: "Today's tasks" })).toBeTruthy();
+    expect(screen.getByRole('complementary', { name: 'Attention' })).toBeTruthy();
 
     // The task the agent is on shows both in the hero and in today's tasks; the hero attributes it.
     expect((await screen.findAllByText('Alpha')).length).toBeGreaterThan(0);

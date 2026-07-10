@@ -1,6 +1,4 @@
 'use client';
-import { Activity } from 'lucide-react';
-import { BentoTile } from './BentoTile';
 import { eventIcon } from '../timeline/eventMeta';
 import { useActivity } from '../../lib/queries';
 import { useTranslation } from '../../lib/i18n';
@@ -30,36 +28,43 @@ function eventVerb(t: LocaleDict, type: string, detail: string): string {
   return e.taskDone;
 }
 
-function EventRow({ event }: { event: ActivityEvent }) {
+function EventRow({ event, last }: { event: ActivityEvent; last: boolean }) {
   const { t } = useTranslation();
   const Icon = eventIcon(event.type);
   const ts = parseTs(event.ts);
   return (
-    <div className="flex items-center gap-3 rounded-lg px-1.5 py-2 transition-colors hover:bg-elevated">
-      <Icon size={14} className="shrink-0 text-text-muted" aria-hidden />
-      <span className="min-w-0 flex-1 truncate text-[13px]">
+    <li className="group relative grid grid-cols-[1.25rem_minmax(0,1fr)_auto] gap-x-3 py-2.5">
+      {!last ? <span aria-hidden className="absolute bottom-[-0.625rem] left-[0.59375rem] top-[1.75rem] w-px bg-border" /> : null}
+      <span className="relative z-[1] mt-0.5 grid h-5 w-5 place-items-center rounded-full border border-border bg-bg transition-colors group-hover:border-border-strong">
+        <Icon size={11} className="text-text-muted" aria-hidden />
+      </span>
+      <span className="min-w-0 truncate text-[13px] leading-5">
         <span className="font-medium text-text">{eventVerb(t, event.type, event.detail)}</span>{' '}
         <span className="text-text-muted">{event.label || event.target}</span>
       </span>
-      {ts != null && <span className="shrink-0 font-mono text-[11px] tabular-nums text-text-muted">{compactElapsed(Date.now() - ts)}</span>}
-    </div>
+      {ts != null && <span className="pt-0.5 font-mono text-[10px] tabular-nums text-text-muted">{compactElapsed(Date.now() - ts)}</span>}
+    </li>
   );
 }
 
-/** The activity feed as a wide bento tile: the daemon's chronological log (signal churn filtered out),
- *  newest first, each row a monochrome icon + verb + subject + relative time. */
+/** The journal's chronological spine: newest daemon activity first, without a card shell. */
 export function ActivityTile({ limit = 5 }: { limit?: number }) {
   const { t } = useTranslation();
   const activity = useActivity();
   const rows = (activity.data ?? []).filter((e) => e.type !== 'signal').slice(0, limit);
   return (
-    <BentoTile tone="muted" icon={Activity} label={t.dashboard.eventStream} span="wide"
-      trailing={<span className="font-mono text-[11px] tabular-nums text-text-muted">{t.dashboard.live}</span>}>
+    <section aria-labelledby="dashboard-activity" className="px-1 py-6 @sm:px-3 @2xl:px-5">
+      <header className="mb-3 flex items-center justify-between gap-3">
+        <h2 id="dashboard-activity" className="text-sm font-semibold text-text">{t.dashboard.eventStream}</h2>
+        <span className="inline-flex items-center gap-1.5 font-mono text-[10px] tabular-nums text-text-muted">
+          <span aria-hidden className="live-dot h-1.5 w-1.5 rounded-full bg-success" />{t.dashboard.live}
+        </span>
+      </header>
       {rows.length === 0 ? (
-        <p className="flex flex-1 items-center justify-center py-4 text-center text-xs text-text-muted">{t.dashboard.eventStreamEmpty}</p>
+        <p className="py-5 text-sm text-text-muted">{t.dashboard.eventStreamEmpty}</p>
       ) : (
-        <div className="-mx-1.5 flex flex-col">{rows.map((e) => <EventRow key={e.id} event={e} />)}</div>
+        <ol>{rows.map((e, index) => <EventRow key={e.id} event={e} last={index === rows.length - 1} />)}</ol>
       )}
-    </BentoTile>
+    </section>
   );
 }

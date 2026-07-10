@@ -559,6 +559,7 @@ export const en = {
     signalAgentsActive: 'Agents active',
     signalDecisionsWaiting: 'Decisions waiting',
     signalMonthCost: 'This month',
+    attention: 'Attention',
     rightNow: 'Right now',
     resting: 'Elowen is resting',
     restingDesc: 'No agent is running. Start a task and it comes alive here.',

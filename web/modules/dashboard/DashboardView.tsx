@@ -4,7 +4,7 @@ import { NeedsInputBanner } from '../../components/ui/NeedsInputBanner';
 import { FinishSetupBanner } from '../../components/ui/FinishSetupBanner';
 import { MotionReveal } from '../../components/ui/Motion';
 import { HeroNowTile } from './HeroNowTile';
-import { DecisionsTile, SpendTile, AgentsTile, CronTile } from './SignalTiles';
+import { AttentionRail } from './SignalTiles';
 import { ActivityTile } from './ActivityTile';
 import { TodayTasksTile } from './TodayTasksTile';
 
@@ -33,16 +33,15 @@ export function DashboardView() {
         <HeroNowTile now={nowMs} />
       </MotionReveal>
 
-      {/* A quiet second layer: human attention and today's story lead, telemetry follows. Unlike the
-          old equal dashboard grid, no metric competes with the personal-agent hero. */}
+      {/* One continuous journal below the hero. Activity and today's work form the story; compact
+          signals sit in a narrow attention rail instead of competing as a grid of equal cards. */}
       <MotionReveal delay={0.06} className="@container">
-        <div className="grid auto-rows-[minmax(9rem,auto)] grid-cols-1 gap-3.5 @xl:grid-cols-2 @4xl:grid-cols-4">
-          <DecisionsTile />
-          <TodayTasksTile now={nowMs} />
-          <CronTile now={nowMs} />
-          <ActivityTile />
-          <AgentsTile />
-          <SpendTile now={nowMs} />
+        <div className="overflow-hidden border-y border-border/80 @3xl:grid @3xl:grid-cols-[minmax(0,1fr)_18rem]">
+          <div className="min-w-0 divide-y divide-border/80">
+            <ActivityTile />
+            <TodayTasksTile now={nowMs} />
+          </div>
+          <AttentionRail now={nowMs} />
         </div>
       </MotionReveal>
     </div>

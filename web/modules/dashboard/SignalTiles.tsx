@@ -1,7 +1,7 @@
 'use client';
-import { useMemo } from 'react';
-import { ShieldQuestion, Coins, Radio, AlarmClock, ArrowRight } from 'lucide-react';
-import { BentoTile } from './BentoTile';
+import Link from 'next/link';
+import { useMemo, type ReactNode } from 'react';
+import { ShieldQuestion, Coins, Radio, AlarmClock, ArrowUpRight, type LucideIcon } from 'lucide-react';
 import { currentMonthBounds } from './metrics';
 import { buildUsageSummary } from '../stats/usageBars';
 import { nextCronRun } from '../../lib/cron';
@@ -12,116 +12,112 @@ import {
 } from '../../lib/queries';
 import type { SessionInfo } from '../../lib/types';
 
-/** A big mono number — the shared metric face across the small tiles. */
-function Metric({ value, className = '' }: { value: string; className?: string }) {
-  return <span className={`font-mono font-semibold leading-none tabular-nums tracking-[-0.03em] ${className}`}>{value}</span>;
+function SignalRow({ icon: Icon, label, value, detail, href, alert = false }: {
+  icon: LucideIcon;
+  label: string;
+  value: ReactNode;
+  detail?: ReactNode;
+  href?: string;
+  alert?: boolean;
+}) {
+  const content = (
+    <>
+      <Icon size={14} aria-hidden className={`mt-0.5 shrink-0 ${alert ? 'text-warning' : 'text-text-muted'}`} />
+      <span className="min-w-0">
+        <span className="block text-[10px] font-semibold uppercase tracking-[0.08em] text-text-muted">{label}</span>
+        {detail ? <span className="mt-1 block truncate text-[11px] text-text-muted">{detail}</span> : null}
+      </span>
+      <span className={`flex items-center gap-1 font-mono text-sm font-semibold tabular-nums ${alert ? 'text-warning' : 'text-text'}`}>
+        {value}{href ? <ArrowUpRight size={11} aria-hidden className="opacity-0 transition-opacity group-hover:opacity-100" /> : null}
+      </span>
+    </>
+  );
+  const className = "group grid grid-cols-[1rem_minmax(0,1fr)_auto] gap-3 border-t border-border/70 py-4 first:border-t-0";
+  return href ? <Link href={href} className={className}>{content}</Link> : <div className={className}>{content}</div>;
 }
-function Caption({ children }: { children: React.ReactNode }) {
-  return <span className="text-[11px] tracking-[0.02em] text-text-muted">{children}</span>;
-}
-const GoLink = ({ children }: { children: React.ReactNode }) => (
-  <span className="mt-auto inline-flex items-center gap-1 text-xs font-semibold text-text-muted transition-colors group-hover:text-text">
-    {children}<ArrowRight size={13} aria-hidden />
-  </span>
-);
 
-/** Decisions a human owes an answer to — pending asks + escalations. Warning-toned when any wait. */
-export function DecisionsTile() {
-  const { t } = useTranslation();
+/** Compact human-attention rail. Operational signals share one typographic column instead of four
+ *  interchangeable cards, leaving the journal as the dashboard's main reading flow. */
+export function AttentionRail({ now }: { now: number }) {
+  const { t, locale } = useTranslation();
   const asks = usePendingAsks();
   const escalations = useEscalations();
-  const count = (asks.data?.length ?? 0) + escalations.length;
-  return (
-    <BentoTile tone={count > 0 ? 'warning' : 'muted'} icon={ShieldQuestion} label={t.dashboard.signalDecisionsWaiting} href={count > 0 ? '/escalations' : undefined}>
-      <div className="mt-auto flex items-baseline gap-2.5">
-        <Metric value={String(count)} className={`text-[40px] ${count > 0 ? 'text-warning' : 'text-text'}`} />
-        <Caption>{t.dashboard.decisionsUnit}</Caption>
-      </div>
-      {count > 0 ? <GoLink>{t.dashboard.decideCta}</GoLink> : <Caption>{t.dashboard.allClear}</Caption>}
-    </BentoTile>
-  );
-}
+  const decisions = (asks.data?.length ?? 0) + escalations.length;
 
-/** This month's spend + a 7-day activity sparkline (bars by daily token volume). Cost reads "—" when
- *  no settled task carried a price (claude/codex-only). `now` drives the month window + day buckets. */
-export function SpendTile({ now }: { now: number }) {
-  const { t } = useTranslation();
-  const monthBounds = useMemo(() => currentMonthBounds(now), [now]);
-  const monthly = useModelUsage(undefined, monthBounds);
-  const daily = useUsageByDay(undefined, 7);
-  const summary = buildUsageSummary(monthly.data);
-
-  // Last 7 UTC days (oldest→newest) mapped onto the returned buckets; missing days pad to zero. The
-  // API keys buckets by UTC date(captured_at), so we build the day keys the same way to line up.
-  const days = useMemo(() => {
-    const byDay = new Map((daily.data ?? []).map((d) => [d.day, d]));
-    return Array.from({ length: 7 }, (_, i) => {
-      const key = new Date(now - (6 - i) * 86_400_000).toISOString().slice(0, 10);
-      return byDay.get(key) ?? { day: key, tokens: 0, cost: null };
-    });
-  }, [daily.data, now]);
-  const max = Math.max(1, ...days.map((d) => d.tokens));
-  const today = days[days.length - 1];
-  const todayLabel = today.cost != null ? formatCost(today.cost) : '—';
-
-  return (
-    <BentoTile tone="muted" icon={Coins} label={t.dashboard.signalMonthCost} trailing={<Metric value={summary.totalCostLabel} className="text-[15px]" />}>
-      <div className="mt-auto flex h-10 items-end gap-1.5" aria-hidden>
-        {days.map((d, i) => (
-          <span
-            key={d.day}
-            className={`flex-1 rounded-t-[3px] ${i === days.length - 1 ? 'bg-accent' : 'bg-elevated'}`}
-            style={{ height: `${Math.max(6, (d.tokens / max) * 100)}%` }}
-          />
-        ))}
-      </div>
-      <Caption>{t.dashboard.last7d} · {t.dashboard.today.replace('{cost}', todayLabel)}</Caption>
-    </BentoTile>
-  );
-}
-
-/** Live agents right now — every session whose role is `agent` (a session exists only while its agent
- *  runs). Accent-toned; links to the sessions view. */
-export function AgentsTile() {
-  const { t } = useTranslation();
   const infos = useSessionInfos();
-  const count = (infos.data ?? []).filter((s: SessionInfo) => s.role === 'agent').length;
-  return (
-    <BentoTile tone="muted" icon={Radio} label={t.dashboard.signalAgentsActive} href="/sessions">
-      <div className="mt-auto flex items-baseline gap-2.5">
-        <Metric value={String(count)} className={`text-[40px] ${count > 0 ? 'text-accent' : 'text-text'}`} />
-        <Caption>{count > 0 ? t.dashboard.agentsWorkingUnit : t.dashboard.allQuiet}</Caption>
-      </div>
-      <GoLink>{t.dashboard.viewSessions}</GoLink>
-    </BentoTile>
-  );
-}
+  const agents = (infos.data ?? []).filter((session: SessionInfo) => session.role === 'agent').length;
 
-/** The next scheduled cron run — soonest `nextCronRun` across enabled jobs, as a local HH:MM + name.
- *  The jobs endpoint is admin-only, so a non-admin simply sees the empty state (no data, no error). */
-export function CronTile({ now }: { now: number }) {
-  const { t, locale } = useTranslation();
   const me = useMe();
-  const jobs = useCronJobs(me.data?.user?.is_admin ?? false); // admin-only endpoint — skip for non-admins
+  const jobs = useCronJobs(me.data?.user?.is_admin ?? false);
   const next = useMemo(() => {
     let best: { at: number; name: string } | null = null;
-    for (const j of jobs.data ?? []) {
-      const at = nextCronRun(j, now);
-      if (at != null && (!best || at < best.at)) best = { at, name: j.name };
+    for (const job of jobs.data ?? []) {
+      const at = nextCronRun(job, now);
+      if (at != null && (!best || at < best.at)) best = { at, name: job.name };
     }
     return best;
   }, [jobs.data, now]);
 
+  const monthBounds = useMemo(() => currentMonthBounds(now), [now]);
+  const monthly = useModelUsage(undefined, monthBounds);
+  const daily = useUsageByDay(undefined, 7);
+  const summary = buildUsageSummary(monthly.data);
+  const days = useMemo(() => {
+    const byDay = new Map((daily.data ?? []).map((day) => [day.day, day]));
+    return Array.from({ length: 7 }, (_, index) => {
+      const key = new Date(now - (6 - index) * 86_400_000).toISOString().slice(0, 10);
+      return byDay.get(key) ?? { day: key, tokens: 0, cost: null };
+    });
+  }, [daily.data, now]);
+  const max = Math.max(1, ...days.map((day) => day.tokens));
+  const today = days[days.length - 1];
+  const todayLabel = today.cost != null ? formatCost(today.cost) : '—';
+
   return (
-    <BentoTile tone="muted" icon={AlarmClock} label={t.dashboard.nextRunLabel} href={next ? '/settings?section=cron' : undefined}>
-      {next ? (
-        <div className="mt-auto">
-          <Metric value={new Date(next.at).toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' })} className="text-[28px]" />
-          <div className="mt-1.5 truncate font-mono text-[11px] text-text-muted" title={next.name}>{next.name}</div>
+    <aside aria-labelledby="dashboard-attention" className="border-t border-border/80 px-1 py-6 @sm:px-3 @2xl:px-5 @3xl:border-l @3xl:border-t-0">
+      <h2 id="dashboard-attention" className="mb-2 text-sm font-semibold text-text">{t.dashboard.attention}</h2>
+      <SignalRow
+        icon={ShieldQuestion}
+        label={t.dashboard.signalDecisionsWaiting}
+        value={decisions}
+        detail={decisions > 0 ? t.dashboard.decisionsUnit : t.dashboard.allClear}
+        href={decisions > 0 ? '/escalations' : undefined}
+        alert={decisions > 0}
+      />
+      <SignalRow
+        icon={AlarmClock}
+        label={t.dashboard.nextRunLabel}
+        value={next ? new Date(next.at).toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' }) : '—'}
+        detail={next?.name ?? t.dashboard.noCron}
+        href={next ? '/settings?section=cron' : undefined}
+      />
+      <SignalRow
+        icon={Radio}
+        label={t.dashboard.signalAgentsActive}
+        value={agents}
+        detail={agents > 0 ? t.dashboard.agentsWorkingUnit : t.dashboard.allQuiet}
+        href="/sessions"
+      />
+
+      <div className="border-t border-border/70 py-4">
+        <div className="flex items-start justify-between gap-3">
+          <span className="flex items-center gap-3">
+            <Coins size={14} aria-hidden className="text-text-muted" />
+            <span className="text-[10px] font-semibold uppercase tracking-[0.08em] text-text-muted">{t.dashboard.signalMonthCost}</span>
+          </span>
+          <span className="font-mono text-sm font-semibold tabular-nums text-text">{summary.totalCostLabel}</span>
         </div>
-      ) : (
-        <div className="mt-auto"><Caption>{t.dashboard.noCron}</Caption></div>
-      )}
-    </BentoTile>
+        <div className="mt-4 flex h-7 items-end gap-1" aria-hidden>
+          {days.map((day, index) => (
+            <span
+              key={day.day}
+              className={`flex-1 rounded-t-sm transition-[height] duration-500 ${index === days.length - 1 ? 'bg-accent' : 'bg-border-strong/70'}`}
+              style={{ height: `${Math.max(10, (day.tokens / max) * 100)}%` }}
+            />
+          ))}
+        </div>
+        <p className="mt-2 text-[10px] text-text-muted">{t.dashboard.last7d} · {t.dashboard.today.replace('{cost}', todayLabel)}</p>
+      </div>
+    </aside>
   );
 }
