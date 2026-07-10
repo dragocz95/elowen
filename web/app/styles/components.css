@@ -40,6 +40,23 @@ html[data-effects='full'] .card-interactive:hover { transform: translateY(-1px);
 }
 .interactive-row:hover { background: rgb(255 255 255 / 0.025); }
 
+/* Shared responsive data-register grammar. Individual tables only define their column templates. */
+.data-table-grid {
+  display: grid;
+  grid-template-columns: var(--data-table-compact-columns, minmax(0, 1fr));
+}
+.data-table-wide { display: none; }
+.data-table-header { background: rgb(255 255 255 / 0.012); }
+@container (min-width: 56rem) {
+  .data-table-grid { grid-template-columns: var(--data-table-columns, minmax(0, 1fr)); }
+  .data-table-wide { display: block; }
+}
+
+.adaptive-split { grid-template-columns: minmax(0, 1fr); }
+@container (min-width: 64rem) {
+  .adaptive-split { grid-template-columns: minmax(0, 1fr) var(--adaptive-aside, 19rem); align-items: start; }
+}
+
 .hero-clock {
   background: linear-gradient(180deg, var(--color-text) 34%, color-mix(in srgb, var(--color-text) 48%, transparent));
   -webkit-background-clip: text;

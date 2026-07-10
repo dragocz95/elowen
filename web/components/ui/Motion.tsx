@@ -1,5 +1,6 @@
 'use client';
-import { m, type HTMLMotionProps } from 'motion/react';
+import { AnimatePresence, type HTMLMotionProps } from 'motion/react';
+import * as m from 'motion/react-m';
 import type { ReactNode } from 'react';
 import { motionTransition, revealVariants, staggerVariants } from '../../lib/motion';
 import { useEffects } from '../../lib/useEffects';
@@ -54,6 +55,42 @@ export function MotionItem({ children, ...props }: DivMotionProps & { children: 
     <m.div
       {...props}
       variants={resolvedMode === 'full' ? revealVariants : undefined}
+      transition={motionTransition}
+    >
+      {children}
+    </m.div>
+  );
+}
+
+/** Keeps structural UI changes spatially understandable. Lists normally use popLayout so the
+ * remaining rows reflow immediately while the removed row finishes its short exit. */
+export function MotionPresence({ children, mode = 'popLayout' }: {
+  children: ReactNode;
+  mode?: 'sync' | 'wait' | 'popLayout';
+}) {
+  const { motionEnabled } = useEffects();
+  return <AnimatePresence initial={false} mode={motionEnabled ? mode : 'sync'}>{children}</AnimatePresence>;
+}
+
+/** Shared layout container for registers, grids and changing filter results. */
+export function MotionLayout({ children, ...props }: DivMotionProps & { children: ReactNode }) {
+  return <m.div {...props} layout />;
+}
+
+/** One reorderable/present item. It becomes opacity-only when effects are reduced and static when off. */
+export function MotionLayoutItem({ children, layoutId, ...props }: DivMotionProps & {
+  children: ReactNode;
+  layoutId?: string;
+}) {
+  const { resolvedMode } = useEffects();
+  return (
+    <m.div
+      {...props}
+      layout={resolvedMode === 'full' ? 'position' : false}
+      layoutId={resolvedMode === 'full' ? layoutId : undefined}
+      initial={resolvedMode === 'off' ? false : { opacity: 0, y: resolvedMode === 'full' ? 6 : 0 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: resolvedMode === 'full' ? -4 : 0 }}
       transition={motionTransition}
     >
       {children}

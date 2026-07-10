@@ -4,7 +4,8 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
-import { motion, useReducedMotion } from 'motion/react';
+import { useReducedMotion } from 'motion/react';
+import * as m from 'motion/react-m';
 import { useHealth } from '../../lib/queries';
 import { useTranslation } from '../../lib/i18n';
 import { entryIsActive } from './NavGroup';
@@ -108,7 +109,7 @@ export function OrbitalNav({ compact = false, side = 'left' }: { compact?: boole
             </>
           );
           return (
-            <motion.div
+            <m.div
               key={entry.id ?? entry.label}
               role="listitem"
               initial={false}
@@ -135,7 +136,7 @@ export function OrbitalNav({ compact = false, side = 'left' }: { compact?: boole
                   </button>
                 )}
               </div>
-            </motion.div>
+            </m.div>
           );
         })}
       </div>

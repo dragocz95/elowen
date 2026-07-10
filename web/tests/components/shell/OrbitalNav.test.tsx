@@ -33,13 +33,21 @@ describe('OrbitalNav', () => {
   it('rotates focus without navigating and magnetically anchors the next destination', async () => {
     mount();
     fireEvent.click(screen.getByRole('button', { name: 'Next' }));
-    await waitFor(() => expect(screen.getByRole('link', { name: 'Projects' }).closest('[role="listitem"]')).toHaveStyle({ opacity: '1' }));
+    await waitFor(() => {
+      const projects = screen.getByRole('link', { name: 'Projects' });
+      expect(projects.querySelector('.orbit-node')).toHaveClass('orbit-node-active');
+      expect(Number.parseFloat(projects.closest<HTMLElement>('[role="listitem"]')?.style.opacity ?? '0')).toBeGreaterThan(0.94);
+    });
   });
 
   it('magnetically advances one world for a deliberate wheel gesture', async () => {
     mount();
     fireEvent.wheel(screen.getByTestId('future-navigation'), { deltaY: 60 });
-    await waitFor(() => expect(screen.getByRole('link', { name: 'Projects' }).closest('[role="listitem"]')).toHaveStyle({ opacity: '1' }));
+    await waitFor(() => {
+      const projects = screen.getByRole('link', { name: 'Projects' });
+      expect(projects.querySelector('.orbit-node')).toHaveClass('orbit-node-active');
+      expect(Number.parseFloat(projects.closest<HTMLElement>('[role="listitem"]')?.style.opacity ?? '0')).toBeGreaterThan(0.94);
+    });
   });
 
   it('places the opposite item at the rear of the spherical path', () => {
