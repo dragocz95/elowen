@@ -2,8 +2,9 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
+import { motion, useReducedMotion } from 'motion/react';
 import { useHealth } from '../../lib/queries';
 import { useTranslation } from '../../lib/i18n';
 import { entryIsActive } from './NavGroup';
@@ -17,12 +18,13 @@ function wrapsDelta(index: number, focus: number, count: number): number {
   return delta;
 }
 
-/** Desktop future navigation: an accessible DOM orbit over a WebGL ambient scene. */
+/** Desktop future navigation: accessible DOM links moving through a CSS 3D scene. */
 export function OrbitalNav({ compact = false, side = 'left' }: { compact?: boolean; side?: 'left' | 'right' }) {
   const pathname = usePathname();
   const { worlds, systemItems } = useShellNavigation();
   const health = useHealth();
   const { t } = useTranslation();
+  const reduceMotion = useReducedMotion();
   const entries = useMemo<NavEntry[]>(() => [
     ...worlds.flatMap((world) => world.id === 'work' || world.id === 'projects'
       ? (world.subItems ?? []).map((item) => ({ ...item, icon: item.icon ?? world.icon }))
@@ -33,50 +35,50 @@ export function OrbitalNav({ compact = false, side = 'left' }: { compact?: boole
   ], [worlds, systemItems]);
   const routeIndex = Math.max(0, entries.findIndex((entry) => entryIsActive(entry, pathname)));
   const [focusIndex, setFocusIndex] = useState(routeIndex);
-  const [suppressedIndex, setSuppressedIndex] = useState<number | null>(null);
+  const navRef = useRef<HTMLElement>(null);
   const wheelAt = useRef(Number.NEGATIVE_INFINITY);
   const wheelDelta = useRef(0);
   const wheelReset = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const motionReset = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => setFocusIndex(routeIndex), [routeIndex]);
   useEffect(() => () => {
     if (wheelReset.current) clearTimeout(wheelReset.current);
-    if (motionReset.current) clearTimeout(motionReset.current);
   }, []);
-  const move = (step: number) => {
-    const next = (focusIndex + step + entries.length) % entries.length;
-    const wrapIndex = entries.findIndex((_, index) => Math.abs(
-      wrapsDelta(index, next, entries.length) - wrapsDelta(index, focusIndex, entries.length),
-    ) > 1);
-    setSuppressedIndex(wrapIndex >= 0 ? wrapIndex : null);
-    if (motionReset.current) clearTimeout(motionReset.current);
-    motionReset.current = setTimeout(() => setSuppressedIndex(null), 620);
-    setFocusIndex(next);
-  };
-  const onWheel = (event: React.WheelEvent) => {
-    if (Math.abs(event.deltaY) < 0.5) return;
-    event.preventDefault();
-    wheelDelta.current += event.deltaY;
-    if (wheelReset.current) clearTimeout(wheelReset.current);
-    wheelReset.current = setTimeout(() => { wheelDelta.current = 0; }, 160);
-    const now = performance.now();
-    if (now - wheelAt.current < 220 || Math.abs(wheelDelta.current) < 32) return;
-    wheelAt.current = now;
-    move(wheelDelta.current > 0 ? 1 : -1);
-    wheelDelta.current = 0;
-  };
+  const move = useCallback((step: number) => {
+    setFocusIndex((current) => (current + step + entries.length) % entries.length);
+  }, [entries.length]);
+  useEffect(() => {
+    const nav = navRef.current;
+    if (!nav) return;
+    const onWheel = (event: WheelEvent) => {
+      if (Math.abs(event.deltaY) < 0.5) return;
+      event.preventDefault();
+      wheelDelta.current += event.deltaY;
+      if (wheelReset.current) clearTimeout(wheelReset.current);
+      wheelReset.current = setTimeout(() => { wheelDelta.current = 0; }, 160);
+      const now = performance.now();
+      if (now - wheelAt.current < 220 || Math.abs(wheelDelta.current) < 32) return;
+      wheelAt.current = now;
+      move(wheelDelta.current > 0 ? 1 : -1);
+      wheelDelta.current = 0;
+    };
+    nav.addEventListener('wheel', onWheel, { passive: false });
+    return () => nav.removeEventListener('wheel', onWheel);
+  }, [move]);
 
-  const centerX = compact ? 30 : 50;
-  const radiusX = compact ? 46 : 100;
-  const verticalStep = compact ? 52 : 62;
+  const centerX = compact ? 55 : 105;
+  const radiusX = compact ? 50 : 100;
+  const radiusY = compact ? 280 : 330;
   const mirrored = side === 'right';
+  const orbitTransition = reduceMotion
+    ? { duration: 0 }
+    : { type: 'spring' as const, stiffness: 190, damping: 27, mass: 0.82, restDelta: 0.01 };
 
   return (
     <nav
+      ref={navRef}
       data-testid="future-navigation"
       aria-label={t.common.primaryNav}
-      onWheel={onWheel}
       onKeyDown={(event) => {
         if (event.key === 'ArrowUp') { event.preventDefault(); move(-1); }
         if (event.key === 'ArrowDown') { event.preventDefault(); move(1); }
@@ -85,17 +87,17 @@ export function OrbitalNav({ compact = false, side = 'left' }: { compact?: boole
       }}
       className={`relative h-full shrink-0 overflow-visible ${compact ? 'w-36' : 'w-[23rem]'}`}
     >
-      <div role="list" className="absolute inset-0 z-30">
+      <div role="list" className="absolute inset-0 z-30 [perspective:900px] [transform-style:preserve-3d]">
         {entries.map((entry, index) => {
           const delta = wrapsDelta(index, focusIndex, entries.length);
-          const distance = Math.abs(delta);
-          const suppressed = suppressedIndex === index;
-          const x = centerX + Math.cos(distance * 0.28) * radiusX;
-          const y = delta * verticalStep;
+          const angle = delta * ((Math.PI * 2) / entries.length);
+          const cosine = Math.cos(angle);
+          const depth = (cosine + 1) / 2;
+          const x = centerX + cosine * radiusX;
+          const y = Math.sin(angle) * radiusY;
           const focused = index === focusIndex;
           const active = entryIsActive(entry, pathname);
           const Icon = entry.icon;
-          const position = mirrored ? { right: x } : { left: x };
           const control = `group flex items-center gap-3 whitespace-nowrap transition-[color,opacity,transform,filter] duration-300 ${focused ? 'text-accent' : active ? 'text-text' : 'text-text-muted/85 hover:text-text'} ${compact ? 'justify-center' : ''} ${mirrored ? 'flex-row-reverse text-right' : 'text-left'}`;
           const content = (
             <>
@@ -106,22 +108,34 @@ export function OrbitalNav({ compact = false, side = 'left' }: { compact?: boole
             </>
           );
           return (
-            <div
+            <motion.div
               key={entry.id ?? entry.label}
               role="listitem"
-              className="absolute top-1/2 transition-[transform,opacity] duration-700 ease-[var(--ease-out)]"
-              style={{ ...position, transform: `translateY(calc(-50% + ${y}px)) scale(${focused ? 1 : Math.max(0.82, 0.98 - distance * 0.03)})`, transformOrigin: mirrored ? 'right center' : 'left center', opacity: suppressed ? 0 : focused ? 1 : Math.max(0.62, 0.94 - distance * 0.05), zIndex: 20 - distance, pointerEvents: suppressed ? 'none' : undefined }}
+              initial={false}
+              animate={{
+                x: mirrored ? -x : x,
+                y,
+                z: Math.round((depth - 0.5) * 90),
+                scale: 0.7 + depth * 0.3,
+                opacity: 0.28 + depth * 0.72,
+                filter: focused ? 'blur(0px)' : `blur(${((1 - depth) * 1.15).toFixed(2)}px)`,
+              }}
+              transition={orbitTransition}
+              className={`absolute top-1/2 ${mirrored ? 'right-0' : 'left-0'}`}
+              style={{ transformOrigin: mirrored ? 'right center' : 'left center', zIndex: Math.round(depth * 20) }}
             >
-              {entry.href ? (
-                <Link href={entry.href} tabIndex={suppressed ? -1 : undefined} aria-label={compact ? entry.label : undefined} aria-current={active ? 'page' : undefined} className={control}>
-                  {content}
-                </Link>
-              ) : (
-                <button type="button" tabIndex={suppressed ? -1 : undefined} aria-label={compact ? entry.label : undefined} className={control} onClick={() => setFocusIndex(index)}>
-                  {content}
-                </button>
-              )}
-            </div>
+              <div className="-translate-y-1/2">
+                {entry.href ? (
+                  <Link href={entry.href} aria-label={compact ? entry.label : undefined} aria-current={active ? 'page' : undefined} className={control}>
+                    {content}
+                  </Link>
+                ) : (
+                  <button type="button" aria-label={compact ? entry.label : undefined} className={control} onClick={() => setFocusIndex(index)}>
+                    {content}
+                  </button>
+                )}
+              </div>
+            </motion.div>
           );
         })}
       </div>

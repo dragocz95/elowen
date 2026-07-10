@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 vi.mock('next/navigation', () => ({ usePathname: () => '/stats' }));
 import { OrbitalNav } from '../../../components/shell/OrbitalNav';
 import { createWrapper } from '../../test-utils';
@@ -30,25 +30,24 @@ describe('OrbitalNav', () => {
     expect(screen.queryByRole('button', { name: 'System' })).toBeNull();
   });
 
-  it('rotates focus without navigating and magnetically anchors the next destination', () => {
+  it('rotates focus without navigating and magnetically anchors the next destination', async () => {
     mount();
     fireEvent.click(screen.getByRole('button', { name: 'Next' }));
-    expect(screen.getByRole('link', { name: 'Projects' }).closest('[role="listitem"]')).toHaveStyle({ opacity: '1' });
+    await waitFor(() => expect(screen.getByRole('link', { name: 'Projects' }).closest('[role="listitem"]')).toHaveStyle({ opacity: '1' }));
   });
 
-  it('magnetically advances one world for a deliberate wheel gesture', () => {
+  it('magnetically advances one world for a deliberate wheel gesture', async () => {
     mount();
     fireEvent.wheel(screen.getByTestId('future-navigation'), { deltaY: 60 });
-    expect(screen.getByRole('link', { name: 'Projects' }).closest('[role="listitem"]')).toHaveStyle({ opacity: '1' });
+    await waitFor(() => expect(screen.getByRole('link', { name: 'Projects' }).closest('[role="listitem"]')).toHaveStyle({ opacity: '1' }));
   });
 
-  it('suppresses only the item wrapping between the two ends of the curve', () => {
+  it('places the opposite item at the rear of the spherical path', () => {
     mount();
     const users = screen.getByRole('link', { name: 'Users' });
     expect(users).not.toHaveAttribute('tabindex', '-1');
-    fireEvent.click(screen.getByRole('button', { name: 'Previous' }));
-    expect(users).toHaveAttribute('tabindex', '-1');
-    expect(users.closest('[role="listitem"]')).toHaveStyle({ opacity: '0', pointerEvents: 'none' });
+    expect(users.closest('[role="listitem"]')).toHaveStyle({ opacity: '0.28', filter: 'blur(1.15px)' });
+    expect(users.closest('[role="listitem"]')?.getAttribute('style')).toContain('translateZ(-45px)');
   });
 
   it('does not move controls under the pointer', () => {
