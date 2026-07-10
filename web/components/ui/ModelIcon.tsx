@@ -3,6 +3,10 @@ import { Cpu } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 import { modelIconSlug } from '../../lib/modelIcon';
 
+// lobe-icons ships this one colored mark as WebP rather than SVG. Knowing its real primary format
+// avoids a guaranteed 404 before the old onError fallback could swap extensions.
+const WEBP_PRIMARY = new Set(['xiaomimimo-color']);
+
 /** Brand icon for a model, resolved from its name/exec string via lobe-icons.
  *  Mono (currentColor) variants are inverted so they read on the OLED surface. */
 export function ModelIcon({ name, size = 20, className = '' }: { name?: string | null; size?: number; className?: string }) {
@@ -15,13 +19,13 @@ export function ModelIcon({ name, size = 20, className = '' }: { name?: string |
   const onError = useCallback(() => {
     // color icon: svg missing → try the webp raster; anything else missing → give up on the <img>
     // and render the generic glyph so there's no broken image (and the 404 loop stops).
-    if (icon?.color && !fallback) setFallback(true);
+    if (icon?.color && !fallback && !WEBP_PRIMARY.has(icon.slug)) setFallback(true);
     else setFailed(true);
-  }, [icon?.color, fallback]);
+  }, [icon?.color, icon?.slug, fallback]);
 
   if (!icon || failed) return <Cpu size={size} className={`text-text-muted ${className}`} aria-hidden />;
 
-  const ext = icon.color && fallback ? 'webp' : 'svg';
+  const ext = WEBP_PRIMARY.has(icon.slug) || (icon.color && fallback) ? 'webp' : 'svg';
   return (
     // eslint-disable-next-line @next/next/no-img-element
     <img

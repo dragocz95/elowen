@@ -11,13 +11,15 @@ interface SelectionSummaryProps {
   moreCount: number;
   onManage: () => void;
   manageLabel: string;
+  /** More specific accessible name when several managed selections share one page. */
+  manageAriaLabel?: string;
   /** Quiet document treatment for settings pages: no raised surface or chip chrome. */
   variant?: 'default' | 'line';
 }
 
 /** Compact on-page summary for a managed selection: a count line, sample chips and a
  *  "Manage" button that opens the ManageSelectionModal. Replaces long toggle-pill rows. */
-export function SelectionSummary({ countText, samples, moreCount, onManage, manageLabel, variant = 'default' }: SelectionSummaryProps) {
+export function SelectionSummary({ countText, samples, moreCount, onManage, manageLabel, manageAriaLabel, variant = 'default' }: SelectionSummaryProps) {
   const line = variant === 'line';
   return (
     <div
@@ -43,6 +45,7 @@ export function SelectionSummary({ countText, samples, moreCount, onManage, mana
       <button
         type="button"
         onClick={onManage}
+        aria-label={manageAriaLabel}
         className={`inline-flex shrink-0 items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium text-text-muted transition-colors hover:bg-elevated hover:text-text ${line ? '' : 'border border-border bg-transparent'}`}
       >
         <Settings2 size={13} aria-hidden />

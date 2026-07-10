@@ -366,23 +366,28 @@ export default function SettingsPage() {
       >
         <SettingsPanel id="models" active={category} visited={visitedCategories}>
           <>
-            <div className="relative w-full">
-              <Search size={15} aria-hidden className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" />
-              <Input
-                type="search"
-                value={modelQuery}
-                onChange={(event) => setModelQuery(event.target.value)}
-                placeholder={t.settings.modelSearchPlaceholder}
-                aria-label={t.settings.modelSearchPlaceholder}
-                className="pl-9"
-              />
-            </div>
-            {/* Cross-link to where models come from (accounts, keys, endpoints) — the Elowen AI section. */}
-            <p className="-mb-2 text-xs">
-              <button type="button" onClick={() => setCategory('brain')} className="font-medium text-accent hover:underline">
+            <div className="flex flex-col gap-2.5 pb-2">
+              <div className="relative w-full">
+                <Search size={15} aria-hidden className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" />
+                <Input
+                  type="search"
+                  value={modelQuery}
+                  onChange={(event) => setModelQuery(event.target.value)}
+                  placeholder={t.settings.modelSearchPlaceholder}
+                  aria-label={t.settings.modelSearchPlaceholder}
+                  className="pl-9"
+                />
+              </div>
+              {/* Quiet cross-link with its own line; it must never collide with the first provider heading. */}
+              <button
+                type="button"
+                onClick={() => setCategory('brain')}
+                className="inline-flex w-fit items-center gap-1.5 px-1 text-xs text-text-muted transition-colors hover:text-accent"
+              >
+                <Link2 size={12} aria-hidden />
                 {t.settings.embeddedProviderLink}
               </button>
-            </p>
+            </div>
             {/* One catalog, grouped by the engine that runs the model — the same grouping the
              *  executor picker uses, so what admins configure here matches what users pick. */}
             {PROVIDERS.map((prov) => {

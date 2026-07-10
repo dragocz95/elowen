@@ -19,7 +19,6 @@ import { BrainModelField } from '../../components/ui/BrainModelField';
 import { Toggle } from '../../components/ui/Toggle';
 import { Slider } from '../../components/ui/Slider';
 import { ModuleHeader } from '../../components/ui/ModuleHeader';
-import { HelpTip } from '../../components/ui/HelpTip';
 import { LoadingState } from '../../components/ui/states';
 import { useToast } from '../../components/ui/Toast';
 import { useTranslation } from '../../lib/i18n';
@@ -96,6 +95,7 @@ function WorkerField({ value, onChange, execs, labelOf, defaultLabel, title }: {
         moreCount={0}
         onManage={() => setOpen(true)}
         manageLabel={t.managePicker.manage}
+        manageAriaLabel={`${t.managePicker.manage}: ${title}`}
       />
       <ManageSelectionModal
         title={title}
@@ -228,7 +228,7 @@ export function AccountView() {
   };
 
   if (me.isLoading || !me.data?.user) {
-    return <div className="mx-auto flex w-full max-w-5xl flex-col"><ModuleHeader title={t.account.title} icon={UserCog} /><LoadingState /></div>;
+    return <div className="mx-auto flex w-full max-w-7xl flex-col"><ModuleHeader title={t.account.title} icon={UserCog} /><LoadingState /></div>;
   }
 
   const u = me.data.user;
@@ -277,8 +277,8 @@ export function AccountView() {
   ];
 
   return (
-    /* Centered, bounded column — same container idiom as the dashboard. */
-    <div className="mx-auto flex w-full max-w-5xl flex-col">
+    /* Match the settings workspace width so account controls have the same calm, useful measure. */
+    <div className="mx-auto flex w-full max-w-7xl flex-col">
       <ModuleHeader title={t.account.title} icon={UserCog} />
 
       <SettingsLayout
@@ -292,65 +292,10 @@ export function AccountView() {
       <AccountPanel id="personality" active={section} visited={visitedSections}><PersonalitySection /></AccountPanel>
       <AccountPanel id="terminal" active={section} visited={visitedSections}><TerminalSection /></AccountPanel>
 
-      {/* Elowen AI — every per-user AI knob in one place: the default models (right rail) plus the
-          runtime settings (thinking level, vision fallback, auto-compact) from CliSection. */}
+      {/* Elowen AI runtime controls. Default models live at the top of the profile workspace, where
+          users see their most consequential personal preference immediately. */}
       <AccountPanel id="cli" active={section} visited={visitedSections}>
-      <div className="@container">
-      <div className="flex flex-col gap-6 @3xl:flex-row @3xl:items-start">
-      <div className="flex min-w-0 flex-1 flex-col gap-6">
         <CliSection />
-      </div>
-
-      {/* Right rail: the models you may run — the default worker and the default Elowen AI chat model,
-          each grouped by provider. Tapping a card makes it that default (they are separate settings). */}
-      <div className="flex shrink-0 flex-col gap-4 @3xl:w-72">
-        <span className="flex items-center gap-2 text-sm font-medium text-text">
-          <Cpu size={16} className="text-text-muted" aria-hidden />{t.account.defaultModel}
-          <HelpTip align="right">{restricted ? t.account.restrictedHint : t.account.defaultModelHint}</HelpTip>
-        </span>
-
-        {workerExecs.length === 0 && elowenModels.length === 0 ? (
-          <p className="text-xs italic text-text-muted">{t.account.noModelLimit}</p>
-        ) : null}
-
-        {/* Default worker (default_exec) */}
-        {workerExecs.length > 0 ? (
-          <div className="flex flex-col gap-2.5">
-            <span className="flex items-center gap-1.5 text-tiny font-semibold uppercase tracking-wide text-text-muted">
-              {t.account.defaultWorker}<HelpTip align="right">{t.account.defaultWorkerHint}</HelpTip>
-            </span>
-            <WorkerField
-              value={defaultExec}
-              onChange={setDefaultExec}
-              execs={workerExecs}
-              labelOf={labelOf}
-              defaultLabel={t.account.defaultWorkerNone}
-              title={t.account.defaultWorker}
-            />
-          </div>
-        ) : null}
-
-        {/* Default Elowen AI model — the embedded brain used by BOTH the web chat and the elowen chat
-            CLI (cliSettings.model), not just chat. */}
-        {elowenModels.length > 0 ? (
-          <div className="flex flex-col gap-2.5">
-            <span className="flex items-center gap-1.5 text-tiny font-semibold uppercase tracking-wide text-text-muted">
-              {t.account.defaultElowenAi}<HelpTip align="right">{t.account.defaultElowenAiHint}</HelpTip>
-            </span>
-            <BrainModelField
-              value={elowenSel}
-              onChange={applyElowen}
-              models={elowenModels}
-              title={t.account.defaultElowenAi}
-              subtitle={t.account.defaultElowenAiHint}
-              defaultLabel={t.account.defaultElowenAiNone}
-              keyOf={(m) => `${m.provider}::${m.model}`}
-            />
-          </div>
-        ) : null}
-      </div>
-      </div>
-      </div>
       </AccountPanel>
 
       <AccountPanel id="profile" active={section} visited={visitedSections}>
@@ -368,6 +313,42 @@ export function AccountView() {
           <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/webp,image/gif" className="hidden" onChange={onFile} />
           <Button variant="ghost" icon={Upload} onClick={() => fileRef.current?.click()} disabled={uploadAvatar.isPending}>{t.account.uploadAvatar}</Button>
         </div>
+
+        <SettingGroup
+          title={t.account.defaultModel}
+          icon={Cpu}
+          description={restricted ? t.account.restrictedHint : t.account.defaultModelHint}
+        >
+          {workerExecs.length > 0 ? (
+            <SettingRow title={t.account.defaultWorker} description={t.account.defaultWorkerHint} icon={Cpu}>
+              <WorkerField
+                value={defaultExec}
+                onChange={setDefaultExec}
+                execs={workerExecs}
+                labelOf={labelOf}
+                defaultLabel={t.account.defaultWorkerNone}
+                title={t.account.defaultWorker}
+              />
+            </SettingRow>
+          ) : null}
+          {elowenModels.length > 0 ? (
+            <SettingRow title={t.account.defaultElowenAi} description={t.account.defaultElowenAiHint} icon={Brain}>
+              <BrainModelField
+                value={elowenSel}
+                onChange={applyElowen}
+                models={elowenModels}
+                title={t.account.defaultElowenAi}
+                subtitle={t.account.defaultElowenAiHint}
+                defaultLabel={t.account.defaultElowenAiNone}
+                keyOf={(m) => `${m.provider}::${m.model}`}
+                manageAriaLabel={`${t.managePicker.manage}: ${t.account.defaultElowenAi}`}
+              />
+            </SettingRow>
+          ) : null}
+          {workerExecs.length === 0 && elowenModels.length === 0 ? (
+            <p className="py-4 text-xs italic text-text-muted">{t.account.noModelLimit}</p>
+          ) : null}
+        </SettingGroup>
 
         <SettingGroup>
           <SettingRow title={t.account.name} icon={UserIcon}>

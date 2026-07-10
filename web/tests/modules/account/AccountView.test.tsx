@@ -27,10 +27,9 @@ describe('AccountView', () => {
     render(<Wrapper><EffectsProvider><UiScaleProvider><ToastProvider><AccountView /></ToastProvider></UiScaleProvider></EffectsProvider></Wrapper>);
 
     expect(await screen.findByText('@bob')).toBeTruthy();
-    // The default-model rail lives on the Elowen AI tab (with the other per-user AI settings).
-    fireEvent.click(screen.getByRole('radio', { name: 'Elowen AI' }));
-    // The worker default is now a summary + manage modal — open it and pick the single allowed model.
-    fireEvent.click(screen.getByRole('button', { name: 'Manage' }));
+    // The default model is the first practical profile setting, not hidden in the Elowen AI section.
+    // Open the worker summary and pick the single allowed model.
+    fireEvent.click(screen.getByRole('button', { name: 'Manage: Default worker' }));
     // The modal groups by engine: a "Claude Code" header carrying the provider logo, and a model row.
     const heading = await screen.findByRole('heading', { name: 'Claude Code' });
     expect(heading.querySelector('img')).toBeTruthy(); // group logo renders

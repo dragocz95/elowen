@@ -12,7 +12,7 @@ import type { BrainModelOption } from '../../lib/types';
  *  `''`) is the "default" pick when enabled; a saved model the catalog no longer lists stays visible as a pinned,
  *  selected row so a save can never silently drop it. `keyOf` bridges the caller's id encoding
  *  (`provider/model` vs `provider::model`) — the empty string always means "default". */
-export function BrainModelField({ value, onChange, models, title, subtitle, defaultLabel, keyOf, allowDefault = true }: {
+export function BrainModelField({ value, onChange, models, title, subtitle, defaultLabel, keyOf, allowDefault = true, manageAriaLabel }: {
   value: string;
   onChange: (key: string) => void;
   models: BrainModelOption[];
@@ -23,6 +23,8 @@ export function BrainModelField({ value, onChange, models, title, subtitle, defa
   keyOf: (m: BrainModelOption) => string;
   /** Whether the modal should offer the empty/default choice. */
   allowDefault?: boolean;
+  /** Optional context-specific accessible name when the page contains several Manage buttons. */
+  manageAriaLabel?: string;
 }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
@@ -56,6 +58,7 @@ export function BrainModelField({ value, onChange, models, title, subtitle, defa
         moreCount={0}
         onManage={() => setOpen(true)}
         manageLabel={t.managePicker.manage}
+        manageAriaLabel={manageAriaLabel}
       />
       <ManageSelectionModal
         title={title}

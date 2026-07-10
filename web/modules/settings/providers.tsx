@@ -5,7 +5,7 @@ export const PROVIDERS: ProviderMeta[] = [
   { id: 'opencode', label: 'OpenCode', color: '#7c8cff', binHint: 'opencode', argsHint: '--pure', icon: '/providers/opencode.png' },
   { id: 'codex', label: 'Codex', color: '#ededed', binHint: 'codex', argsHint: '--full-auto', icon: '/providers/openai.svg' },
   { id: 'kilo', label: 'Kilo Code', color: '#c2e812', binHint: 'kilo', argsHint: '', icon: '/providers/kilo.svg', noBypassFlag: true },
-  { id: 'elowen', label: 'Elowen AI', color: '#3b82f6', binHint: '', argsHint: '', icon: '/elowen-icon.png', embedded: true },
+  { id: 'elowen', label: 'Elowen AI', color: '#3b82f6', binHint: '', argsHint: '', icon: '/icon.png', embedded: true },
 ];
 
 export function ProviderLogo({ meta, alt, size = 36 }: { meta: ProviderMeta; alt?: string; size?: number }) {
@@ -21,4 +21,3 @@ export function ProviderLogo({ meta, alt, size = 36 }: { meta: ProviderMeta; alt
 }
 
 export const providerMeta = (id: string): ProviderMeta | undefined => PROVIDERS.find((p) => p.id === id);
-
