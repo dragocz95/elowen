@@ -22,6 +22,9 @@ describe('UsersView', () => {
     // The full-width directory renders both accounts before any contextual detail is selected.
     expect((await screen.findAllByText('alice')).length).toBeGreaterThan(0);
     expect(screen.getByText('bob')).toBeTruthy();
+    expect(screen.getByTestId('spatial-workspace-layout')).toBeInTheDocument();
+    expect(screen.getAllByTestId('workspace-hero-mascot')).toHaveLength(1);
+    expect(screen.getByTestId('users-register').closest('[data-control-surface]')).toBeInTheDocument();
   });
 
   it('selects rows with Space and keeps the always-visible action menu independent', async () => {

@@ -21,7 +21,8 @@ import { localDateTime } from '../../lib/format';
 import { UserDetailPane } from './UserDetailPane';
 import { ActionMenu, type ActionMenuItem } from '../../components/ui/ActionMenu';
 import { DataTable, DataTableCell, DataTableRow } from '../../components/ui/DataTable';
-import { WorkspaceDetailRail, WorkspaceHeader, WorkspaceMetric, WorkspaceMetrics, WorkspacePage } from '../../components/ui/WorkspacePrimitives';
+import { WorkspaceDetailRail, WorkspaceMetric, SpatialWorkspaceLayout } from '../../components/ui/WorkspacePrimitives';
+import { ControlSurfaceDocument, ControlSurfaceState, ControlSurfaceToolbar } from '../../components/ui/ControlSurface';
 
 export function UsersView() {
   const users = useUsers();
@@ -151,44 +152,48 @@ export function UsersView() {
   if (me.data?.user && !isAdmin) return (
     <>
       <ModuleHeader title={t.page.users} icon={Users} />
-      <WorkspacePage>
-        <WorkspaceHeader eyebrow={t.users.workspaceEyebrow} title={t.page.users} description={t.users.workspaceIntro} icon={Users} />
-        <div className="workspace-content"><EmptyState title={t.settings.adminOnly} description={t.settings.adminOnlyDesc} icon={Lock} /></div>
-      </WorkspacePage>
+      <SpatialWorkspaceLayout hero={{ eyebrow: t.users.workspaceEyebrow, title: t.page.users, description: t.users.workspaceIntro, mascotState: 'error', metrics: <></> }}>
+        <ControlSurfaceDocument>
+          <ControlSurfaceState><EmptyState title={t.settings.adminOnly} description={t.settings.adminOnlyDesc} icon={Lock} /></ControlSurfaceState>
+        </ControlSurfaceDocument>
+      </SpatialWorkspaceLayout>
     </>
   );
 
   return (
     <>
       <ModuleHeader title={t.page.users} count={users.data?.length} icon={Users} />
-      <WorkspacePage>
-        <WorkspaceHeader
-          eyebrow={t.users.workspaceEyebrow}
-          title={t.page.users}
-          count={data.length}
-          description={t.users.workspaceIntro}
-          icon={Users}
-          status={!users.isLoading && !users.isError ? <span className="workspace-status">{t.users.workspaceReady}</span> : undefined}
-          action={<div className="flex items-center gap-3"><button type="button" onClick={handleLogout} disabled={logout.isPending} className="inline-flex items-center gap-1.5 text-xs text-text-muted hover:text-text"><LogOut size={13} aria-hidden />{t.users.logout}</button><Button variant="accent" icon={UserPlus} onClick={() => setCreating(true)}>{t.users.newUser}</Button></div>}
-        />
-        <WorkspaceMetrics visual={<div className="users-core"><Users size={28} strokeWidth={1.25} /></div>} ariaLabel={t.users.summary}>
-          <WorkspaceMetric label={t.users.metricUsers} value={data.length} icon={Users} />
-          <WorkspaceMetric label={t.users.metricAdmins} value={adminCount} icon={ShieldCheck} />
-          <WorkspaceMetric label={t.users.projects} value={projects.data?.length ?? 0} icon={FolderGit2} />
-          <WorkspaceMetric label={t.users.allowedModels} value={globalExecs.length} icon={Cpu} />
-        </WorkspaceMetrics>
-        <div className="workspace-content">
-        {users.isLoading ? <LoadingState variant="list" />
-          : users.isError ? <ErrorState message={t.users.loadError} onRetry={() => users.refetch()} />
-          : data.length === 0 ? <EmptyState title={t.users.empty} description={t.users.emptyDescription} icon={Users} action={<Button variant="accent" icon={UserPlus} onClick={() => setCreating(true)}>{t.users.newUser}</Button>} />
+      <SpatialWorkspaceLayout
+        hero={{
+          eyebrow: t.users.workspaceEyebrow,
+          title: t.page.users,
+          count: data.length,
+          description: t.users.workspaceIntro,
+          mascotState: users.isLoading ? 'saving' : users.isError ? 'error' : 'idle',
+          status: !users.isLoading && !users.isError ? <span className="workspace-status">{t.users.workspaceReady}</span> : undefined,
+          action: <div className="flex items-center gap-3"><button type="button" onClick={handleLogout} disabled={logout.isPending} className="inline-flex items-center gap-1.5 text-xs text-text-muted hover:text-text"><LogOut size={13} aria-hidden />{t.users.logout}</button><Button variant="accent" icon={UserPlus} onClick={() => setCreating(true)}>{t.users.newUser}</Button></div>,
+          metrics: <>
+            <WorkspaceMetric label={t.users.metricUsers} value={data.length} icon={Users} />
+            <WorkspaceMetric label={t.users.metricAdmins} value={adminCount} icon={ShieldCheck} />
+            <WorkspaceMetric label={t.users.projects} value={projects.data?.length ?? 0} icon={FolderGit2} />
+            <WorkspaceMetric label={t.users.allowedModels} value={globalExecs.length} icon={Cpu} />
+          </>,
+        }}
+      >
+        <ControlSurfaceDocument>
+          <ControlSurfaceToolbar>
+            <div className="relative flex-1">
+              <Search size={14} aria-hidden className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" />
+              <Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t.users.searchPlaceholder} className="pl-9" />
+            </div>
+          </ControlSurfaceToolbar>
+        {users.isLoading ? <ControlSurfaceState><LoadingState variant="list" /></ControlSurfaceState>
+          : users.isError ? <ControlSurfaceState tone="danger"><ErrorState message={t.users.loadError} onRetry={() => users.refetch()} /></ControlSurfaceState>
+          : data.length === 0 ? <ControlSurfaceState><EmptyState title={t.users.empty} description={t.users.emptyDescription} icon={Users} action={<Button variant="accent" icon={UserPlus} onClick={() => setCreating(true)}>{t.users.newUser}</Button>} /></ControlSurfaceState>
           : (
             <div className="workspace-master-detail users-workspace-grid" data-detail={selected != null}>
               <div className="min-w-0">
-                <div className="relative border-y border-border/80 py-3">
-                  <Search size={14} aria-hidden className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" />
-                  <Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t.users.searchPlaceholder} className="pl-9" />
-                </div>
-                {filteredUsers.length === 0 ? <EmptyState title={t.users.noMatches} icon={Search} /> : (
+                {filteredUsers.length === 0 ? <ControlSurfaceState><EmptyState title={t.users.noMatches} icon={Search} /></ControlSurfaceState> : (
                   <DataTable ariaLabel={t.users.tableLabel} columns="minmax(13rem,1.2fr) minmax(10rem,1fr) 8rem 10rem 3rem" compactColumns="minmax(0,1fr) 3rem" data-testid="users-register" className="border-t-0">
                     <DataTableRow header>
                       <DataTableCell header>{t.users.user}</DataTableCell>
@@ -215,8 +220,8 @@ export function UsersView() {
               {selected ? <WorkspaceDetailRail label={t.users.detailTitle} closeLabel={t.common.close} onClose={() => setSelectedId(null)}><UserDetailPane user={selected} projects={projects.data ?? []} globalExecs={globalExecs} customModels={customModels} /></WorkspaceDetailRail> : null}
             </div>
           )}
-        </div>
-      </WorkspacePage>
+        </ControlSurfaceDocument>
+      </SpatialWorkspaceLayout>
 
       {creating && (
         <Modal title={t.users.addUser} onClose={() => setCreating(false)} size="md" icon={UserPlus}>
