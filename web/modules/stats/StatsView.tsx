@@ -6,7 +6,6 @@ import { useModelUsage, useMe } from '../../lib/queries';
 import { ModelIcon } from '../../components/ui/ModelIcon';
 import { DateRangeFilter } from '../../components/ui/DateRangeFilter';
 import { ModuleHeader } from '../../components/ui/ModuleHeader';
-import { PageMascot } from '../../components/ui/PageMascot';
 import { DataTable, DataTableCell, DataTableRow } from '../../components/ui/DataTable';
 import { MotionLayoutItem, MotionPresence } from '../../components/ui/Motion';
 import { DEFAULT_RANGE, serializeRange, parseRange, isStoredRange, rangeBounds } from '../../lib/dateRange';
@@ -15,7 +14,8 @@ import { LoadingState, ErrorState, EmptyState } from '../../components/ui/states
 import { useTranslation } from '../../lib/i18n';
 import { buildUsageSummary } from './usageBars';
 import { ResetUsageModal } from './ResetUsageModal';
-import { WorkspaceHeader, WorkspaceMetric, WorkspaceMetrics, WorkspacePage } from '../../components/ui/WorkspacePrimitives';
+import { SpatialWorkspaceLayout, WorkspaceMetric } from '../../components/ui/WorkspacePrimitives';
+import { ControlSurfaceDocument, ControlSurfaceState, ControlSurfaceToolbar } from '../../components/ui/ControlSurface';
 
 export function StatsView() {
   const { t } = useTranslation();
@@ -32,31 +32,30 @@ export function StatsView() {
   return (
     <>
       <ModuleHeader title={t.page.stats} icon={BarChart3} />
-      <WorkspacePage>
-        <WorkspaceHeader
-          eyebrow={t.stats.workspaceEyebrow}
-          title={t.page.stats}
-          count={summary.modelsUsed}
-          description={t.stats.workspaceIntro}
-          icon={BarChart3}
-          status={!usage.isLoading && !usage.isError ? <span className="workspace-status">{t.stats.workspaceReady}</span> : undefined}
-        />
-        <WorkspaceMetrics visual={<div className="stats-mascot-core"><PageMascot size="hero" /></div>} ariaLabel={t.stats.summary} className="stats-workspace-metrics" testId="stats-hero">
+      <SpatialWorkspaceLayout hero={{
+        eyebrow: t.stats.workspaceEyebrow,
+        title: t.page.stats,
+        count: summary.modelsUsed,
+        description: t.stats.workspaceIntro,
+        mascotState: usage.isLoading ? 'saving' : usage.isError ? 'error' : 'idle',
+        status: !usage.isLoading && !usage.isError ? <span className="workspace-status">{t.stats.workspaceReady}</span> : undefined,
+        metrics: <>
           <WorkspaceMetric label={t.stats.cardTotalTokens} value={summary.totalTokensLabel} icon={BarChart3} />
           <WorkspaceMetric label={t.stats.cardTotalCost} value={summary.totalCostLabel} icon={DollarSign} />
           <WorkspaceMetric label={t.stats.cardCache} value={summary.totalCacheLabel} icon={Database} />
           <WorkspaceMetric label={t.stats.cardModelsUsed} value={summary.modelsUsed} icon={Boxes} />
-        </WorkspaceMetrics>
-        <div className="workspace-content">
-          <div className="flex flex-wrap items-center justify-end border-y border-border/80 py-3">
+        </>,
+      }}>
+        <ControlSurfaceDocument>
+          <ControlSurfaceToolbar className="justify-end">
             <DateRangeFilter value={range} onChange={(next) => setRangeRaw(serializeRange(next))} compact />
-          </div>
+          </ControlSurfaceToolbar>
         {usage.isLoading ? (
-          <LoadingState variant="list" />
+          <ControlSurfaceState><LoadingState variant="list" /></ControlSurfaceState>
         ) : usage.isError ? (
-          <ErrorState message={t.common.daemonUnreachable} onRetry={() => usage.refetch()} />
+          <ControlSurfaceState tone="danger"><ErrorState message={t.common.daemonUnreachable} onRetry={() => usage.refetch()} /></ControlSurfaceState>
         ) : (
-          <section className="mt-5 flex flex-col gap-3">
+          <section className="flex flex-col gap-3 p-[clamp(1.25rem,2vw,2rem)]">
               <div className="flex flex-wrap items-end justify-between gap-3">
                 <div className="flex flex-col gap-1">
                   <h2 className="text-sm font-semibold text-text">{t.stats.costByModel}</h2>
@@ -124,8 +123,8 @@ export function StatsView() {
               )}
           </section>
         )}
-        </div>
-      </WorkspacePage>
+        </ControlSurfaceDocument>
+      </SpatialWorkspaceLayout>
       {resetOpen ? <ResetUsageModal onClose={() => setResetOpen(false)} /> : null}
     </>
   );
