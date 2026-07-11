@@ -69,6 +69,24 @@ export function parseSse(buffer: string): { frames: { event?: string; id?: strin
   return { frames, rest: buffer };
 }
 
+/** Abort-aware reconnect delay. The listener and timer are disposed regardless of which side wins, so
+ * stopping a TUI never waits for (or leaks) a backoff timer. */
+function reconnectDelay(ms: number, signal: AbortSignal): Promise<void> {
+  if (signal.aborted) return Promise.resolve();
+  return new Promise<void>((resolve) => {
+    let settled = false;
+    const finish = (): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      signal.removeEventListener('abort', finish);
+      resolve();
+    };
+    const timer = setTimeout(finish, ms);
+    signal.addEventListener('abort', finish, { once: true });
+  });
+}
+
 /** Thin client over the daemon's /brain/* surface. Runs no agent loop — it only starts the session,
  *  posts user turns, reads history, and streams the brain's events.
  *
@@ -562,7 +580,7 @@ export class BrainClient {
         // otherwise fall through to reconnect
       }
       if (signal.aborted) break;
-      await new Promise((r) => setTimeout(r, backoffMs));
+      await reconnectDelay(backoffMs, signal);
     }
   }
 }

@@ -247,6 +247,183 @@ describe('streamController — idle rollover', () => {
   });
 });
 
+describe('streamController — bounded hydration lifecycle', () => {
+  const runtime = (client: BrainClient): ChatRuntime => attachTranscript({
+    client,
+    view: fromHistory([]),
+    childView: null,
+    childAc: null,
+    streamAc: new AbortController(),
+    notice: '',
+    conversationTitle: 'parent',
+    workMode: 'build',
+    queued: [],
+    processes: [],
+    render: () => {},
+    refreshMeta: async () => {},
+    refreshRateLimits: async () => {},
+  } as unknown as ChatRuntime);
+  const flows = { launchAsk: () => {}, openPlanDecision: () => {} } as unknown as Flows;
+
+  it('times out a never-settling parent compaction read, retains live events and ignores the late result', async () => {
+    vi.useFakeTimers();
+    try {
+      let onFrame!: (event: BrainEvent) => void;
+      const history = deferred<{ role: string; text: string }[]>();
+      const client = {
+        stream: (cb: (event: BrainEvent) => void, signal: AbortSignal) => {
+          onFrame = cb;
+          return new Promise<void>((resolve) => signal.addEventListener('abort', () => resolve(), { once: true }));
+        },
+        history: (_session?: string, signal?: AbortSignal) => {
+          signal?.addEventListener('abort', () => { /* deliberately ignored */ });
+          return history.promise;
+        },
+        rebind: () => {},
+      } as unknown as BrainClient;
+      const rt = runtime(client);
+      rt.transcript.replaceHistory([{ role: 'assistant', text: 'last valid parent' }]);
+      const renders = vi.fn();
+      rt.render = renders;
+      const stream = createStreamController(rt, flows);
+      stream.openStream(rt.streamAc);
+
+      onFrame({ type: 'compacted' });
+      onFrame({ type: 'text', delta: 'live while waiting' });
+      await vi.advanceTimersByTimeAsync(10_000);
+
+      expect(JSON.stringify(rt.view)).toContain('last valid parent');
+      expect(JSON.stringify(rt.view)).toContain('live while waiting');
+      expect(rt.notice).toMatch(/timed out/i);
+      const renderCount = renders.mock.calls.length;
+
+      history.resolve([{ role: 'assistant', text: 'late stale parent' }]);
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(JSON.stringify(rt.view)).not.toContain('late stale parent');
+      expect(renders).toHaveBeenCalledTimes(renderCount);
+      stream.stop();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('settles a child fallback timeout, clears loading once and fences its late history', async () => {
+    vi.useFakeTimers();
+    try {
+      const history = deferred<{ role: string; text: string }[]>();
+      const client = {
+        stream: () => Promise.reject(new Error('offline')),
+        history: (_session?: string, signal?: AbortSignal) => {
+          signal?.addEventListener('abort', () => { /* deliberately ignored */ });
+          return history.promise;
+        },
+      } as unknown as BrainClient;
+      const rt = runtime(client);
+      const stream = createStreamController(rt, flows);
+      const opening = stream.openSubagent('child-timeout');
+      await Promise.resolve();
+      await vi.advanceTimersByTimeAsync(10_000);
+      await opening;
+
+      expect(rt.childView?.loading).toBe(false);
+      expect(rt.notice).toMatch(/timed out/i);
+      history.resolve([{ role: 'assistant', text: 'late child' }]);
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(JSON.stringify(rt.childView?.view)).not.toContain('late child');
+      stream.stop();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not replace a valid transcript with empty state when a session history switch fails', async () => {
+    const client = {
+      start: async () => ({ sessionId: 'B' }),
+      history: async () => { throw new Error('history offline'); },
+      stream: async () => {},
+      rebind: () => {},
+    } as unknown as BrainClient;
+    const rt = runtime(client);
+    rt.transcript.replaceHistory([{ role: 'assistant', text: 'last valid A' }]);
+    const stream = createStreamController(rt, flows);
+
+    await stream.switchTo({ session: 'B' });
+
+    expect(JSON.stringify(rt.view)).toContain('last valid A');
+    expect(rt.notice).toMatch(/could not load/i);
+    stream.stop();
+  });
+
+  it('stops parent history, child fallback, streams and all hydration timers together', async () => {
+    vi.useFakeTimers();
+    try {
+      const signals: AbortSignal[] = [];
+      let parentFrame!: (event: BrainEvent) => void;
+      const client = {
+        stream: (cb: (event: BrainEvent) => void, signal: AbortSignal, _backoff: number, _open?: () => void, session?: string) => {
+          signals.push(signal);
+          if (!session) parentFrame = cb;
+          return new Promise<void>(() => {});
+        },
+        history: (_session?: string, signal?: AbortSignal) => {
+          if (signal) signals.push(signal);
+          return new Promise<never>(() => {});
+        },
+        rebind: () => {},
+      } as unknown as BrainClient;
+      const rt = runtime(client);
+      const stream = createStreamController(rt, flows);
+      stream.openStream(rt.streamAc);
+      parentFrame({ type: 'compacted' });
+      const childOpening = stream.openSubagent('child-stop');
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(vi.getTimerCount()).toBeGreaterThan(0);
+
+      stream.stop();
+      await childOpening;
+      expect(signals.every((signal) => signal.aborted)).toBe(true);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('discards an overflowing parent replay and opens exactly one fresh snapshot stream', () => {
+    const callbacks: ((event: BrainEvent) => void)[] = [];
+    const streamSignals: AbortSignal[] = [];
+    let historySignal: AbortSignal | undefined;
+    const client = {
+      stream: (callback: (event: BrainEvent) => void, signal: AbortSignal) => {
+        callbacks.push(callback);
+        streamSignals.push(signal);
+        return new Promise<void>(() => {});
+      },
+      history: (_session?: string, signal?: AbortSignal) => {
+        historySignal = signal;
+        return new Promise<never>(() => {});
+      },
+      rebind: () => {},
+    } as unknown as BrainClient;
+    const rt = runtime(client);
+    const stream = createStreamController(rt, flows);
+    stream.openStream(rt.streamAc);
+    callbacks[0]!({ type: 'compacted' });
+    for (let index = 0; index < 2_049; index += 1) {
+      callbacks[0]!({ type: 'tool', id: `tool-${index}`, name: 'read_file' });
+    }
+
+    expect(callbacks).toHaveLength(2);
+    expect(streamSignals[0]?.aborted).toBe(true);
+    expect(historySignal?.aborted).toBe(true);
+    expect(rt.view.turns).toEqual([]);
+    stream.stop();
+  });
+});
+
 describe('streamController — parent snapshot hydration', () => {
   it('replaces a stale parent view on reconnect and ignores an older history refetch', async () => {
     let onFrame!: (event: BrainEvent | { type: 'snapshot'; cursor: number; history: { role: string; text: string }[]; events: BrainEvent[] }) => void;
@@ -608,6 +785,53 @@ describe('streamController — sub-agent drill-in hydration', () => {
     const stream = createStreamController(rt, flows);
     await stream.openSubagent('child-fallback');
     expect(JSON.stringify(rt.childView?.view)).toContain('fallback history');
+    stream.closeSubagent();
+  });
+
+  it('refetches settled child fallback history and does not duplicate the buffered terminal run', async () => {
+    const history = vi.fn(async () => [{ role: 'assistant', text: 'complete fallback answer' }]);
+    const client = {
+      stream: (callback: (event: BrainEvent) => void) => {
+        callback({ type: 'text', delta: 'complete fallback answer' });
+        callback({ type: 'idle' });
+        return Promise.reject(new Error('snapshot unavailable'));
+      },
+      history,
+    } as unknown as BrainClient;
+    const rt = runtime(client);
+    const stream = createStreamController(rt, flows);
+
+    await stream.openSubagent('child-settled-fallback');
+
+    expect(history).toHaveBeenCalledTimes(2);
+    expect(JSON.stringify(rt.childView?.view).match(/complete fallback answer/g)).toHaveLength(1);
+    stream.closeSubagent();
+  });
+
+  it('repairs a truncated child snapshot from durable history at its terminal boundary', async () => {
+    let onFrame!: (event: BrainEvent | { type: 'snapshot'; cursor: number; truncated?: true; history: { role: string; text: string }[]; events: BrainEvent[] }) => void;
+    const history = vi.fn(async () => [{ role: 'assistant', text: 'complete durable child' }]);
+    const client = {
+      stream: (callback: typeof onFrame, signal: AbortSignal) => {
+        onFrame = callback;
+        callback({
+          type: 'snapshot', cursor: 1, truncated: true, history: [],
+          events: [{ type: 'text', delta: 'partial child suffix' }],
+        });
+        return new Promise<void>((resolve) => signal.addEventListener('abort', () => resolve(), { once: true }));
+      },
+      history,
+    } as unknown as BrainClient;
+    const rt = runtime(client);
+    const stream = createStreamController(rt, flows);
+    await stream.openSubagent('child-truncated');
+
+    onFrame({ type: 'idle' });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(history).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(rt.childView?.view)).toContain('complete durable child');
+    expect(JSON.stringify(rt.childView?.view)).not.toContain('partial child suffix');
     stream.closeSubagent();
   });
 });

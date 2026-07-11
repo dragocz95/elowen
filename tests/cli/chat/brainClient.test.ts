@@ -325,6 +325,26 @@ describe('BrainClient', () => {
     expect(c.boundSession).toBe('brain-fresh');
   });
 
+  it('cancels reconnect backoff immediately on lifecycle abort without leaving a timer', async () => {
+    vi.useFakeTimers();
+    try {
+      const f = vi.fn(async () => new Response(new ReadableStream<Uint8Array>({ start(controller) { controller.close(); } }), { status: 200 })) as unknown as typeof fetch;
+      const client = new BrainClient({ base: 'http://x', token: 't', fetchImpl: f });
+      const lifecycle = new AbortController();
+      const streaming = client.stream(() => {}, lifecycle.signal, 30_000);
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(vi.getTimerCount()).toBe(1);
+
+      lifecycle.abort();
+      await streaming;
+      expect(vi.getTimerCount()).toBe(0);
+      expect(f).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('getTddMode reads autopilot.tddMode from the public config', async () => {
     const f = vi.fn(async () => j(200, { autopilot: { tddMode: true } })) as unknown as typeof fetch;
     const c = new BrainClient({ base: 'http://x', token: 't', fetchImpl: f });

@@ -99,5 +99,7 @@ export interface ChatRuntime {
   /** Slow, best-effort metadata refresh kept outside refreshMeta's blocking status/MCP path. */
   refreshRateLimits(): Promise<void>;
   refreshMeta(): Promise<void>;
+  /** Fence metadata/rate-limit promises that started before a session selection or teardown. */
+  invalidateAsyncState(): void;
   quit(): void;
 }

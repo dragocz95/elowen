@@ -14,6 +14,7 @@ import { UserStore } from '../../src/store/userStore.js';
 import { ProjectStore } from '../../src/store/projectStore.js';
 import { UserProjectStore } from '../../src/store/userProjectStore.js';
 import type { TurnRequest } from '../../src/brain/service/turnRequest.js';
+import type { BrainEvent } from '../../src/brain/events.js';
 
 function fakeBrain() {
   const started = new Set<number>();
@@ -30,6 +31,9 @@ function fakeBrain() {
   let sendBeforeAdmissionError: Error | null = null;
   let sendAfterAdmissionError: Error | null = null;
   let blockSends = false;
+  let snapshotPending: BrainEvent[] = [{ type: 'text', delta: 'post-snapshot event' }];
+  let snapshotPendingSync = false;
+  let snapshotOffCalls = 0;
   const queues = new Map<number, { id: string; text: string }[]>();
   const send = async (request: TurnRequest) => {
     const { userId: id, text, mode, session, client, onAdmitted } = request;
@@ -53,6 +57,11 @@ function fakeBrain() {
     subagentSends,
     acceptedSendFailures,
     turnRequests,
+    get snapshotOffCalls() { return snapshotOffCalls; },
+    __setSnapshotPending: (events: BrainEvent[], synchronous = false) => {
+      snapshotPending = events;
+      snapshotPendingSync = synchronous;
+    },
     __failSubagentPreflight: (message: string | null) => { subagentPreflightError = message ? new Error(message) : null; },
     __failSendBeforeAdmission: (message: string | null) => { sendBeforeAdmissionError = message ? new Error(message) : null; },
     __failSendAfterAdmission: (message: string | null) => { sendAfterAdmissionError = message ? new Error(message) : null; },
@@ -96,12 +105,14 @@ function fakeBrain() {
     },
     subscribe: () => () => {},
     tapSession: () => () => {},
-    tapSessionSnapshot: (id: number, session: string, listener: (event: { type: 'text'; delta: string }) => void) => {
+    tapSessionSnapshot: (id: number, session: string, listener: (event: BrainEvent) => void) => {
       tapSnapshotCalls.push({ id, session });
       // Arrives after the atomic snapshot was captured but while its first SSE frame is flushing.
-      queueMicrotask(() => listener({ type: 'text', delta: 'post-snapshot event' }));
+      const publishPending = () => { for (const event of snapshotPending) listener(event); };
+      if (snapshotPendingSync) publishPending();
+      else queueMicrotask(publishPending);
       return {
-        off: () => {},
+        off: () => { snapshotOffCalls += 1; },
         snapshot: {
           type: 'snapshot' as const,
           cursor: 7,
@@ -303,6 +314,38 @@ describe('brain routes', () => {
     expect(body).toContain('running child output');
     expect(body).toContain('post-snapshot event');
     expect(body.indexOf('running child output')).toBeLessThan(body.indexOf('post-snapshot event'));
+  });
+
+  it('unsubscribes and closes an opt-in snapshot stream when the raw pre-snapshot queue overflows', async () => {
+    const { app, amyTok, brain } = setup();
+    brain.__setSnapshotPending(Array.from({ length: 2_049 }, (_, index) => ({
+      type: 'tool' as const, id: `overflow-${index}`, name: 'read_file',
+    })), true);
+    const ac = new AbortController();
+    const res = await app.request('/brain/stream?session=brain-ch-subagent-overflow&snapshot=1', {
+      headers: { authorization: `Bearer ${amyTok}` }, signal: ac.signal,
+    });
+    expect(res.status).toBe(200);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(brain.snapshotOffCalls).toBe(1);
+    const body = await res.text();
+    expect(body).not.toContain('overflow-2048');
+    ac.abort();
+  });
+
+  it('unsubscribes a pre-snapshot stream when one serialized UTF-8 event exceeds four MiB', async () => {
+    const { app, amyTok, brain } = setup();
+    brain.__setSnapshotPending([{ type: 'text', delta: '🐉'.repeat(1_100_000) }], true);
+    const ac = new AbortController();
+    const res = await app.request('/brain/stream?session=brain-ch-subagent-byte-overflow&snapshot=1', {
+      headers: { authorization: `Bearer ${amyTok}` }, signal: ac.signal,
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(brain.snapshotOffCalls).toBe(1);
+    await res.body?.cancel();
+    ac.abort();
   });
 
   it('send before start returns 409', async () => {

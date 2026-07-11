@@ -1,6 +1,33 @@
 import { describe, it, expect, vi } from 'vitest';
-import { viewToPlainText, installExitGuards, createQuitCoordinator } from '../../../src/cli/chat/app.js';
+import { viewToPlainText, installExitGuards, createQuitCoordinator, loadInitialTranscript } from '../../../src/cli/chat/app.js';
 import { beginAssistant, pushUser, reduce, emptyView } from '../../../src/brain/transcript.js';
+import { SnapshotHydrator } from '../../../src/cli/chat/snapshotHydrator.js';
+import type { BrainClient } from '../../../src/cli/chat/brainClient.js';
+
+describe('initial transcript hydration', () => {
+  it('settles after 10 seconds when boot history ignores abort and fences a late response', async () => {
+    vi.useFakeTimers();
+    try {
+      let resolveHistory!: (history: { role: string; text: string }[]) => void;
+      const history = new Promise<{ role: string; text: string }[]>((resolve) => { resolveHistory = resolve; });
+      const client = { history: (_session?: string, signal?: AbortSignal) => {
+        signal?.addEventListener('abort', () => { /* ignored by transport */ });
+        return history;
+      } } as unknown as BrainClient;
+      const hydrator = new SnapshotHydrator<never>();
+      const lifecycle = new AbortController();
+      const loading = loadInitialTranscript(client, hydrator, lifecycle.signal);
+
+      await vi.advanceTimersByTimeAsync(10_000);
+      await expect(loading).resolves.toEqual({ history: [], notice: expect.stringMatching(/timed out/i) });
+      resolveHistory([{ role: 'assistant', text: 'too late' }]);
+      await Promise.resolve();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
 
 describe('installExitGuards — process listener lifecycle', () => {
   it('registers exit/SIGTERM/SIGHUP guards and the disposer removes exactly those', () => {

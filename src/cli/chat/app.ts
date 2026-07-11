@@ -22,6 +22,34 @@ import { TranscriptModel } from '../../brain/transcriptModel.js';
 import { commandsFor } from '../../brain/slashCommands.js';
 import { createTuiDiagnostics } from './tuiDiagnostics.js';
 import { TerminalLifecycle } from './terminalLifecycle.js';
+import { SnapshotHydrator, SnapshotTimeoutError } from './snapshotHydrator.js';
+import type { BrainEvent } from '../../brain/events.js';
+import type { BrainMessageView } from '../../brain/messageView.js';
+
+/** Boot history uses the same bounded hydrator instance as reconnect/compaction/child drill-in. A dead
+ * daemon cannot keep first paint pending forever, and a transport that ignores abort is fenced by the
+ * lane generation before its late result can escape. */
+export async function loadInitialTranscript<E>(
+  client: Pick<BrainClient, 'history'>,
+  hydrator: SnapshotHydrator<E>,
+  lifecycle: AbortSignal,
+): Promise<{ history: BrainMessageView[]; notice: string }> {
+  let history: BrainMessageView[] = [];
+  let notice = '';
+  const lane = hydrator.openLane('parent', lifecycle, { onOverflow: () => {} });
+  await lane.hydrate(
+    (signal) => client.history(undefined, signal),
+    {
+      commit: (loaded) => { history = loaded; },
+      retain: (_replay, error) => {
+        notice = color.error(error instanceof SnapshotTimeoutError
+          ? 'conversation transcript history timed out'
+          : `could not load the conversation transcript: ${error instanceof Error ? error.message : String(error)}`);
+      },
+    },
+  );
+  return { history, notice };
+}
 
 /** Plain-text rendering of the view — used for the non-TTY fallback and unit tests (no ANSI, so it's
  *  deterministic to assert on). The rich terminal path uses pi-tui components instead. */
@@ -170,16 +198,20 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
 
   const client = opts.client ?? new BrainClient({ base: opts.base, token: opts.token });
   await client.start({ provider: opts.model, session: opts.session, fresh: opts.fresh });
+  const hydrator = new SnapshotHydrator<BrainEvent>();
+  const bootHydrationAc = new AbortController();
   // Everything after session resolution is independent I/O. Fetch it concurrently so first paint pays
   // one localhost round trip instead of five serial ones; the transcript's own Markdown stays tail-lazy.
-  const [boot, bootProcesses, termSettings, history0, serverCommands] = await Promise.all([
+  const [boot, bootProcesses, termSettings, initialTranscript, serverCommands] = await Promise.all([
     client.status().catch(() => null),
     // Boot-seed owner-only background processes; live changes ride the `process` stream afterwards.
     client.processes().catch(() => []),
     client.terminalSettings().catch(() => null),
-    client.history().catch(() => []),
+    loadInitialTranscript(client, hydrator, bootHydrationAc.signal),
     client.commands().catch(() => commandsFor('cli', true)),
   ]);
+  bootHydrationAc.abort();
+  const history0 = initialTranscript.history;
   // Cross-device colors: a CUSTOM web Account → Terminal palette drives the CLI chat theme — but only
   // when THIS machine has no explicit /theme pick saved. A local pick must win, otherwise the web
   // setting silently clobbered it on every launch ("/theme doesn't stick"). Picking "Custom (web)"
@@ -219,6 +251,8 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
   inputStack.addChild(attachmentChips);
   inputStack.addChild(editorSlot);
   let rateLimitRefreshGeneration = 0;
+  let metadataRefreshGeneration = 0;
+  let asyncStateActive = true;
 
   /** The shared runtime: all mutable chat state + the render/refreshMeta/quit callbacks, threaded
    *  through every module factory below (see ChatRuntime). */
@@ -235,7 +269,10 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
     childAc: null,
     streamAc: new AbortController(),
     // Warn ONCE about broken keybind overrides — the binds themselves fell back to their defaults.
-    notice: keymap.warnings.length ? color.warning(`keybinds: ${keymap.warnings.join(' · ')} (see /keybinds)`) : '',
+    notice: [
+      keymap.warnings.length ? color.warning(`keybinds: ${keymap.warnings.join(' · ')} (see /keybinds)`) : '',
+      initialTranscript.notice,
+    ].filter(Boolean).join(' · '),
     modelName: boot?.model || opts.model || '',
     conversationTitle: boot?.title ?? '',
     lineCfg: boot?.statusline ?? null,
@@ -267,17 +304,18 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
         const limits = await client.rateLimits();
         // A rapid session/model switch can finish requests out of order. Only the latest refresh may
         // replace the rail, otherwise an old OpenAI session can flash over a newer provider's null state.
-        if (generation === rateLimitRefreshGeneration) {
+        if (asyncStateActive && generation === rateLimitRefreshGeneration) {
           rt.rateLimits = limits;
           rt.render();
         }
       } catch {
         // The API itself marks a cached provider snapshot `stale`; an arbitrary client-side snapshot from
         // the previous session/model is not safe to retain when the current request failed.
-        if (generation === rateLimitRefreshGeneration) { rt.rateLimits = null; rt.render(); }
+        if (asyncStateActive && generation === rateLimitRefreshGeneration) { rt.rateLimits = null; rt.render(); }
       }
     },
     refreshMeta: async (): Promise<void> => {
+      const generation = ++metadataRefreshGeneration;
       // Deliberately not awaited: a slow provider usage request must never hold up status, model switches,
       // or the first TUI paint. Its own completion schedules a render when a snapshot is available.
       void rt.refreshRateLimits();
@@ -285,14 +323,19 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
         client.status().catch(() => null),
         client.mcpServers().catch(() => null),
       ]);
+      if (!asyncStateActive || generation !== metadataRefreshGeneration) return;
       if (st) { rt.modelName = st.model || rt.modelName; rt.conversationTitle = st.title ?? rt.conversationTitle; rt.lineCfg = st.statusline; rt.usage = st.usage; rt.thinkingLevel = st.thinkingLevel ?? ''; rt.thinkingLevels = st.thinkingLevels ?? []; rt.thinkingLevelLabels = st.thinkingLevelLabels ?? {}; rt.fastOn = st.fast ?? false; rt.fastAvailable = st.fastAvailable ?? false; rt.cards = st.cards ?? []; rt.queued = st.queued ?? []; rt.lspEnabled = st.lspEnabled ?? null; rt.yoloOn = st.yolo ?? rt.yoloOn; }
       rt.mcpList = mcp;
+    },
+    invalidateAsyncState: (): void => {
+      metadataRefreshGeneration += 1;
+      rateLimitRefreshGeneration += 1;
     },
   };
   await rt.refreshMeta();
 
   const flows = createFlows(rt);
-  const stream = createStreamController(rt, flows);
+  const stream = createStreamController(rt, flows, hydrator);
   const shell = createShell(rt, stream, mdTheme, diagnostics);
   rt.render = shell.render;
   rt.renderForced = shell.renderForced;
@@ -319,7 +362,9 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
   const teardown = (): void => {
     if (tornDown) return;
     tornDown = true;
-    rt.streamAc.abort();
+    asyncStateActive = false;
+    rt.invalidateAsyncState();
+    stream.stop();
     diagnostics.record({ type: 'lifecycle', action: 'stop' });
     terminalLifecycle.stop();
     void diagnostics.close();

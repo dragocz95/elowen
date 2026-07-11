@@ -11,7 +11,8 @@ import { commandsWithPlugins, findCommand, type SlashSurface } from '../../brain
 import { processRegistry } from '../../brain/processRegistry.js';
 import { logger } from '../../shared/logger.js';
 import { OpenAiCodexUsageService } from '../../brain/openaiCodexUsage.js';
-import { appendBufferedBrainEvent, brainEventReplayCursor, withoutBrainEventReplayCursor } from '../../brain/session/liveEventReplay.js';
+import { brainEventReplayCursor, withoutBrainEventReplayCursor } from '../../brain/session/liveEventReplay.js';
+import { SerializedEventBuffer } from '../../brain/session/serializedEventBuffer.js';
 import type { ElowenApp, RouteContext } from '../context.js';
 
 /** Per-user embedded brain (the new advisor engine): status / start / send / live event stream.
@@ -560,8 +561,21 @@ export function registerBrainRoutes(app: ElowenApp, ctx: RouteContext): void {
     return streamSSE(c, async stream => {
       let off: (() => void) | null = null;
       let ready = !withSnapshot;
-      const pending: BrainEvent[] = [];
+      const pending = new SerializedEventBuffer<BrainEvent>();
+      let pendingOverflow = false;
+      let overflowClose: Promise<void> | null = null;
       let writes = Promise.resolve();
+      const unsubscribe = (): void => {
+        const dispose = off;
+        off = null;
+        dispose?.();
+      };
+      const closeOverflow = (): Promise<void> => {
+        c.req.raw.signal.removeEventListener('abort', unsubscribe);
+        unsubscribe();
+        overflowClose ??= stream.close();
+        return overflowClose;
+      };
       const writeEvent = (e: BrainEvent): void => {
         const cursor = brainEventReplayCursor(e);
         // Replay identity travels in SSE's standard `id` field, not in the public BrainEvent JSON. That
@@ -574,10 +588,13 @@ export function registerBrainRoutes(app: ElowenApp, ctx: RouteContext): void {
       };
       const deliver = (e: BrainEvent): void => {
         if (!ready) {
-          // Snapshot writes are tiny/fast, but coalesce provider deltas defensively so a stalled socket
-          // cannot retain one object per token before the first frame flushes. The helper replaces the
-          // route-local tail instead of mutating replay's event shared with every concurrent stream.
-          appendBufferedBrainEvent(pending, e, 2_048);
+          // The first snapshot is useful only with its COMPLETE post-capture replay. On either raw-event
+          // or serialized UTF-8 overflow, unsubscribe and close: the reconnect will obtain a new atomic
+          // snapshot instead of treating a retained suffix as complete state.
+          if (pending.append(e) === 'overflow' && !pendingOverflow) {
+            pendingOverflow = true;
+            void closeOverflow();
+          }
           return;
         }
         writeEvent(e);
@@ -593,14 +610,22 @@ export function registerBrainRoutes(app: ElowenApp, ctx: RouteContext): void {
           : brain.subscribe(userId, deliver, clientId, clientGeneration);
       }
       catch { await stream.writeSSE({ data: JSON.stringify({ type: 'error', message: session ? 'unknown session' : 'brain not started' }), event: 'error' }); return; }
-      c.req.raw.signal.addEventListener('abort', off);
+      c.req.raw.signal.addEventListener('abort', unsubscribe, { once: true });
+      if (pendingOverflow) {
+        await closeOverflow();
+        return;
+      }
       if (snapshot) {
         writes = writes.then(() => stream.writeSSE({
           data: JSON.stringify(snapshot), event: 'snapshot', id: String(snapshot.cursor),
         })).catch(() => undefined);
         await writes;
+        if (pendingOverflow) {
+          await closeOverflow();
+          return;
+        }
         ready = true;
-        for (const event of pending.splice(0)) writeEvent(event);
+        for (const event of pending.drain()) writeEvent(event);
         await writes;
       }
       // Comment flush so the channel connects through the BFF proxy on a quiet system (see /events).
