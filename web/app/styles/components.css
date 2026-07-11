@@ -209,7 +209,7 @@ html[data-effects='full'] .spatial-section-node--active .spatial-section-node__i
 .spatial-workspace-hero__header p { max-width: 42rem; margin-top: 0.5rem; color: var(--color-text-muted); font-size: 0.78rem; line-height: 1.55; }
 .spatial-workspace-hero__body { display: grid; min-height: 12rem; grid-template-columns: minmax(16rem, 0.72fr) minmax(0, 1.28fr); }
 .spatial-workspace-hero__mascot { position: relative; min-width: 0; overflow: hidden; border-right: var(--hairline); background: radial-gradient(circle at 46% 54%, rgb(255 82 54 / 0.11), transparent 62%); pointer-events: none; }
-.spatial-workspace-hero__mascot [data-testid='page-mascot'] { position: absolute; inset: -14% 0 -22%; transform: scale(0.72); }
+.spatial-workspace-hero__mascot .spatial-mascot { width: min(100%, 20rem); margin-inline: auto; transform: scale(0.82); transform-origin: center; }
 .spatial-workspace-hero__metrics { display: grid; min-width: 0; grid-template-columns: repeat(4, minmax(8rem, 1fr)); align-items: stretch; }
 .spatial-workspace-hero__metrics .workspace-metric { display: flex; min-width: 0; flex-direction: column; justify-content: center; }
 .workspace-metrics { display: flex; min-height: 8.8rem; align-items: stretch; border-bottom: var(--hairline); }
@@ -304,7 +304,7 @@ html[data-effects='full'] .spatial-section-node--active .spatial-section-node__i
   .spatial-workspace-hero__header { min-height: 0; padding: 1.25rem 1rem; }
   .spatial-workspace-hero__header .workspace-header__actions { width: 100%; justify-content: space-between; }
   .spatial-workspace-hero__mascot { min-height: 7.5rem; }
-  .spatial-workspace-hero__mascot [data-testid='page-mascot'] { inset: -28% 0 -36%; transform: scale(0.58); }
+  .spatial-workspace-hero__mascot .spatial-mascot { transform: scale(0.68); }
 }
 
 @media (max-width: 1100px) {
