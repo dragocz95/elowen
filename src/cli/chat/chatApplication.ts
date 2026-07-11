@@ -61,6 +61,12 @@ export class ChatApplication {
   }
 
   private disposeInteraction(): void {
+    // The child drill-in owns an independent SSE + bounded hydration fallback. It is not covered by the
+    // parent stream controller that runChat aborts, so the application must close it with the rest of
+    // this session's interaction graph. Abort first to cancel fetch/timer work, then discard the view.
+    this.state.childAc?.abort();
+    this.state.childAc = null;
+    this.state.childView = null;
     this.composition.dispose();
     this.composition.animations.stop();
     this.composition.inputRouter()?.stop();

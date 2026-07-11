@@ -10,6 +10,7 @@ import { RenderShell } from '../../../src/cli/chat/renderShell.js';
 import { ChatApplication } from '../../../src/cli/chat/chatApplication.js';
 import { createShell } from '../../../src/cli/chat/shell.js';
 import { startScreenBox, startScreenInputTop, TOP_RULE_ROWS } from '../../../src/cli/chat/startScreen.js';
+import { createStreamController } from '../../../src/cli/chat/streamController.js';
 import { terminalPlainText } from '../../../src/cli/ui/text.js';
 import { applicationHarness } from './chatApplicationHarness.js';
 
@@ -464,6 +465,54 @@ describe('chat application shell ownership', () => {
     expect((active?.options?.margin as { top?: number }).top).toBe(expectedTop);
     expect(active?.options?.maxHeight).toBe(Math.min(15, h.term.rows - expectedTop));
     app.terminalLifecycle.stop();
+  });
+
+  it('teardown aborts a pending child SSE and hydration fallback and clears child state', async () => {
+    const h = applicationHarness({ turns: 4 });
+    let activeChildStreams = 0;
+    let abortedChildStreams = 0;
+    Object.assign(h.rt.client, {
+      stream: (_onEvent: (event: unknown) => void, signal: AbortSignal): Promise<void> => new Promise((resolve) => {
+        activeChildStreams++;
+        const onAbort = (): void => {
+          activeChildStreams--;
+          abortedChildStreams++;
+          resolve();
+        };
+        if (signal.aborted) onAbort();
+        else signal.addEventListener('abort', onAbort, { once: true });
+      }),
+    });
+    const stream = createStreamController(h.rt, { launchAsk: vi.fn(), openPlanDecision: vi.fn() });
+    const app = createShell(h.rt, stream, h.mdTheme, h.diagnostics);
+    h.rt.render = app.render;
+    h.rt.renderForced = app.renderForced;
+    app.attachInput({
+      cycleThinkingLevel: vi.fn(), openHelpModal: vi.fn(), openThemePicker: vi.fn(),
+      openModelPicker: vi.fn(), openSessionsModal: vi.fn(),
+    });
+
+    const opening = stream.openSubagent('child-pending');
+    await vi.advanceTimersByTimeAsync(0); // flush only the render frame; keep the 2s fallback pending
+    const childSignal = h.rt.childAc?.signal;
+    expect(childSignal).toBeDefined();
+    expect(activeChildStreams).toBe(1);
+    expect(vi.getTimerCount()).toBe(1);
+
+    app.terminalLifecycle.stop();
+    try {
+      expect(childSignal?.aborted).toBe(true);
+      expect(h.rt.childAc).toBeNull();
+      expect(h.rt.childView).toBeNull();
+      expect(activeChildStreams).toBe(0);
+      expect(abortedChildStreams).toBe(1);
+      expect(h.tui.listeners.size).toBe(0);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      // RED cleanup: the pre-fix application leaves this controller alive.
+      h.rt.childAc?.abort();
+      await opening;
+    }
   });
 
   it('cancels an armed leader and every scheduler/controller timer through rapid application cycles', () => {
