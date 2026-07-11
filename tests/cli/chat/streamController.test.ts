@@ -398,6 +398,50 @@ describe('streamController — cached sub-agent projection', () => {
     rt.view = reduce(rt.view, { type: 'text', delta: 'unrelated parent token' });
     expect(controller.subagentStates()).toBe(first);
   });
+
+  it('cycles parent to each child and back without replacing the parent transcript', () => {
+    let view = beginAssistant(emptyView());
+    for (const index of [1, 2]) {
+      view = reduce(view, { type: 'tool', id: `delegate-${index}`, name: 'delegate', detail: `child ${index}` });
+      view = reduce(view, {
+        type: 'subagent', id: `delegate-${index}`, sessionId: `child-${index}`, status: 'running',
+        task: `child ${index}`, tools: index, seconds: index,
+      });
+    }
+    const parentView = view;
+    const client = {
+      stream: (
+        onFrame: (frame: { type: 'snapshot'; cursor: number; history: { role: string; text: string }[]; events: BrainEvent[] }) => void,
+        signal: AbortSignal,
+        _backoff: number,
+        _onOpen: (() => void) | undefined,
+        session: string,
+      ) => {
+        onFrame({
+          type: 'snapshot', cursor: 1,
+          history: [{ role: 'assistant', text: `transcript ${session}` }], events: [],
+        });
+        return new Promise<void>((resolve) => signal.addEventListener('abort', () => resolve(), { once: true }));
+      },
+      history: () => Promise.resolve([]),
+    } as unknown as BrainClient;
+    const rt = {
+      client, view, childView: null, childAc: null, streamAc: new AbortController(),
+      notice: '', conversationTitle: '', workMode: 'build', render: () => {},
+      refreshMeta: async () => {}, refreshRateLimits: async () => {},
+    } as unknown as ChatRuntime;
+    const controller = createStreamController(rt, { launchAsk: () => {}, openPlanDecision: () => {} } as unknown as Flows);
+
+    controller.cycleSubagent();
+    expect(rt.childView?.sessionId).toBe('child-1');
+    expect(JSON.stringify(rt.childView?.view)).toContain('transcript child-1');
+    controller.cycleSubagent();
+    expect(rt.childView?.sessionId).toBe('child-2');
+    expect(JSON.stringify(rt.childView?.view)).toContain('transcript child-2');
+    controller.cycleSubagent();
+    expect(rt.childView).toBeNull();
+    expect(rt.view).toBe(parentView);
+  });
 });
 
 describe('streamController — sub-agent drill-in hydration', () => {

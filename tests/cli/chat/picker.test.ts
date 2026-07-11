@@ -1,7 +1,7 @@
-import { beforeAll, describe, it, expect } from 'vitest';
-import type { TUI } from '@earendil-works/pi-tui';
+import { beforeAll, describe, it, expect, vi } from 'vitest';
+import type { Component, TUI } from '@earendil-works/pi-tui';
 import { getSelectListTheme, initTheme } from '@earendil-works/pi-coding-agent';
-import { ChatEditor, sessionItems, modelItems, parseModelValue, pickerContentWidth } from '../../../src/cli/chat/picker.js';
+import { ChatEditor, sessionItems, modelItems, openPicker, parseModelValue, pickerContentWidth } from '../../../src/cli/chat/picker.js';
 
 describe('pickerContentWidth (adaptive modal sizing)', () => {
   it('grows with long descriptions and stays compact for short lists', () => {
@@ -86,5 +86,41 @@ describe('ChatEditor input history recall', () => {
     expect(editor.getText()).toBe('xrecalled');
     press(editor, DOWN); // no longer recalling → the edit is an ordinary draft and is kept
     expect(editor.getText()).toBe('xrecalled');
+  });
+});
+
+describe('picker overlay lifecycle', () => {
+  beforeAll(() => { initTheme(); });
+
+  it('gives the overlay input focus and restores the unchanged editor when Esc closes it', () => {
+    let overlay!: Component;
+    const hide = vi.fn();
+    const focus = vi.fn();
+    const setFocus = vi.fn();
+    const requestRender = vi.fn();
+    const editor = { marker: 'editor' };
+    const tui = {
+      terminal: { rows: 24, columns: 100 },
+      showOverlay: (component: Component) => {
+        overlay = component;
+        return { hide, focus, isHidden: () => false, setHidden: () => {} };
+      },
+      setFocus,
+      requestRender,
+    } as unknown as TUI;
+
+    openPicker({
+      tui,
+      editor: editor as never,
+      items: [{ value: 'one', label: 'One' }],
+      title: 'Choose',
+      onPick: vi.fn(),
+    });
+    expect(focus).toHaveBeenCalledOnce();
+
+    overlay.handleInput?.('\x1b');
+    expect(hide).toHaveBeenCalledOnce();
+    expect(setFocus).toHaveBeenCalledWith(editor);
+    expect(requestRender).toHaveBeenCalledTimes(2);
   });
 });
