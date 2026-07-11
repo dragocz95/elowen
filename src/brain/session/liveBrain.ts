@@ -1,6 +1,9 @@
 import type { AgentSession } from '@earendil-works/pi-coding-agent';
 import type { Policy } from '../../plugins/policy.js';
 import type { BrainEvent } from '../events.js';
+import type { ProviderRequestProfile } from '../modelCapabilities.js';
+import type { LiveEventReplay } from './liveEventReplay.js';
+import type { DelegatedExecutionScope } from '../delegatedScope.js';
 
 /** A queued mid-turn message's image attachments, in PI's ImageContent shape. */
 export type QueuedImage = { type: 'image'; data: string; mimeType: string };
@@ -19,8 +22,15 @@ export interface LiveBrain {
    *  entry) — lets delegation inherit "same provider + model" without re-deriving config defaults. */
   providerId?: string;
   thinkingLevel?: string;
+  /** Resolved provider capabilities + live request switches used by `/fast` and status surfaces. */
+  requestProfile: ProviderRequestProfile;
+  fastAvailable: boolean;
+  thinkingLabels: Record<string, string>;
   policy: Policy;
   listeners: Set<(e: BrainEvent) => void>;
+  /** Bounded current-run event journal + the canonical fan-out seam. Used by opt-in sub-agent stream
+   *  snapshots to reconstruct output emitted before the user opened the drill-in view. */
+  replay: LiveEventReplay;
   turnContext: () => string;
   /** Names of the plugin tools composed into this session — the subset a per-turn ToolPolicy allow-list
    *  may hide (the built-in elowen_ and memory_ tools stay visible). Used by applyToolVisibility to slice
@@ -28,6 +38,15 @@ export interface LiveBrain {
   pluginToolNames: Set<string>;
   /** True while the session runs on the user's vision-fallback model (an image turn hopped onto it). */
   visionFallback?: boolean;
+  /** Exact session-scoped profile to restore after the temporary vision fallback. This cannot be
+   *  re-derived from Account settings: the user may have selected a different provider/model, reasoning
+   *  level or Fast state just for this conversation. */
+  visionFallbackReturn?: {
+    provider?: string;
+    model: string;
+    thinkingLevel?: string;
+    fast: boolean;
+  };
   /** SESSION-scoped YOLO override (the CLI `/yolo` command): true/false wins over the user's persisted
    *  default for this live session only. Deliberately NOT carried across respawns (model switch,
    *  restart, vision hop) — a fresh session starts back at the persisted default. */
@@ -42,10 +61,6 @@ export interface LiveBrain {
    *  from this SAME sender, so one member can never inject instructions into another's (or the admin's)
    *  turn and inherit its policy/toolset. */
   turnSender?: string;
-  /** Session ids of delegated sub-agents currently RUNNING under this conversation's turn — maintained
-   *  by the `subagent` progress emitter (added on 'running', dropped on 'done'/'error'). abort() cancels
-   *  these children along with the parent turn, so an interrupted delegation can't keep burning tokens. */
-  activeChildren?: Set<string>;
   /** Image-carrying mirror of PI's native mid-turn queue (steering + follow-up), kept in sync via the
    *  `queue_update` event. PI's public queue is text-only and clearQueue() drops image attachments, so
    *  these hold what a positional queue-remove needs to re-queue the survivors WITH their images. Ordered
@@ -78,6 +93,12 @@ export interface SpawnOpts {
   trustedChannel?: boolean;
   /** Reasoning effort for extended-thinking models (empty/undefined = the model default). */
   thinkingLevel?: string;
+  /** Initial Fast state for platform sessions; ignored when the resolved model cannot use it. */
+  fast?: boolean;
+  /** Durable parent conversation for delegated sessions (usage attribution + history navigation). */
+  parentSessionId?: string;
+  /** Immutable execution boundary minted by the delegating turn and checked on every child respawn. */
+  delegatedAccess?: DelegatedExecutionScope;
   /** Which personality platform this session is: 'web'|'cli' for per-user owner chat, 'discord' for
    *  shared owner-anchored channels. Selects which active profile the personality chunk resolves from
    *  (owner's per-platform pin). Default 'web'. */

@@ -1,4 +1,5 @@
 import type { AgentSessionEvent } from '@earendil-works/pi-coding-agent';
+import { isRetryableAssistantError } from '@earendil-works/pi-ai';
 import type { PluginRegistry } from '../../plugins/registry.js';
 import { PluginHookBus } from '../../plugins/hookBus.js';
 import { logger } from '../../shared/logger.js';
@@ -13,14 +14,26 @@ import { personalityText } from '../personality.js';
 import type { BrainSessionFactory } from '../session/factory.js';
 import type { LiveBrain, SpawnOpts, QueuedMsg } from '../session/liveBrain.js';
 import { reconcileMirrors } from '../session/queueMirror.js';
-import { toBrainEvent, usageOf } from '../events.js';
+import { isErroredContextOverflow, toBrainEvent, usageOf, withDescendantUsage } from '../events.js';
 import type { BrainEvent } from '../events.js';
 import type { BrainDeps } from '../brainDeps.js';
 import { turnWorkDir } from './workDir.js';
+import { modelCapabilities } from '../modelCapabilities.js';
+import { LiveEventReplay } from '../session/liveEventReplay.js';
+
+/** PI already classifies and retries transient provider failures. Reuse that same classifier after its
+ * retry budget is exhausted so the final transcript never leaks a provider-specific transport or stream
+ * error that PI itself treated as temporary. */
+function publicProviderError(message: string, sessionId: string, provider: string, model: string): string {
+  if (!isRetryableAssistantError({ role: 'assistant', stopReason: 'error', errorMessage: message } as never)) return message;
+  logger('brain-provider').warn(`provider retries exhausted for ${provider}/${model} (${sessionId})`);
+  return 'Provider request failed after automatic retries. Please retry the turn.';
+}
 
 interface SpawnerDeps {
   /** See the BrainDeps fields of the same names — the spawner receives the subset it composes from. */
   config: BrainDeps['config'];
+  store: BrainDeps['store'];
   authStorage?: BrainDeps['authStorage'];
   users: BrainDeps['users'];
   prompts: BrainDeps['prompts'];
@@ -63,6 +76,8 @@ export class LiveSessionSpawner {
     const cfg = this.runtimeConfig();
     const registry = buildBrainRegistry(cfg, this.d.authStorage);
     const model = resolveBrainModel(registry, cfg, opts.selection);
+    const capabilities = modelCapabilities(model);
+    const requestProfile = { fast: capabilities.fast && opts.fast === true };
     // The CONFIG entry id this session runs on (mirror of resolveBrainModel's entry pick) — stored so a
     // turn can tell delegation "run the child on my provider+model" without re-deriving the default.
     const providerId = (opts.selection.provider && cfg.providers.some((p) => p.id === opts.selection.provider))
@@ -137,9 +152,9 @@ export class LiveSessionSpawner {
       : this.d.prompts.render('advisor', { userName, personality, agentName }, ownerUserId);
 
     const { session } = await this.d.factory.create({
-      sessionId, ownerUserId, registry, model, cwd,
+      sessionId, ownerUserId, parentSessionId: opts.parentSessionId, delegatedAccess: opts.delegatedAccess, registry, model, cwd,
       systemPrompt: persona, appendSystemPrompt: append, skills, promptTemplates,
-      tools: allTools, thinkingLevel: opts.thinkingLevel,
+      tools: allTools, thinkingLevel: opts.thinkingLevel, requestProfile,
       autoCompact: opts.autoCompact, autoCompactAtPct: opts.autoCompactAtPct,
       // Project AGENTS.md/CLAUDE.md ride the system prompt for an ADMIN's own chat only. Two guards,
       // both required: (1) not a shared channel (foreign senders must never see instruction files);
@@ -160,24 +175,57 @@ export class LiveSessionSpawner {
     // LRU eviction + revival) builds a fresh listener set, and without this the tapped stream would
     // silently go dark while the client believes it is still following the session.
     for (const tap of this.d.sessionTaps(opts.sessionId)) listeners.add(tap);
+    const replay = new LiveEventReplay(listeners);
     // Image-carrying mirror of PI's mid-turn queue — the SAME array instances returned on the LiveBrain, so
     // reconciling them here (in place) keeps the live wrapper's queue in sync. PI's public queue is text-only.
     const queuedSteer: QueuedMsg[] = [];
     const queuedFollowUp: QueuedMsg[] = [];
+    // PI decides overflow compact-and-retry only after emitting the errored agent_end. Hold that error
+    // until compaction_end tells us whether recovery really failed; otherwise headless clients would
+    // exit 1 while the same turn was already compacting and about to succeed.
+    let deferredOverflowError: string | null = null;
+    let terminalIdleDeferred = false;
     let steps = 0; // model round-trips in the current run — reset on agent_start, one per turn_start
     session.subscribe((e: AgentSessionEvent) => {
       const raw = (e as { type?: string }).type;
+      let suppressAgentEndIdle = raw === 'agent_end' && (e as { willRetry?: boolean }).willRetry === true;
+      let emitFailedRecoveryIdle = false;
+      // Canonical fallback: PI can settle without a second agent_end when retry backoff is cancelled, or
+      // without compaction_end when an overflow has nothing summarizable. Flush the deferred terminal
+      // state here so no client remains spinning and a genuine overflow failure is still visible.
+      if (raw === 'agent_settled') {
+        if (deferredOverflowError) {
+          replay.publish({ type: 'error', message: deferredOverflowError });
+          deferredOverflowError = null;
+          terminalIdleDeferred = true;
+        }
+        if (terminalIdleDeferred) {
+          replay.publish({
+            type: 'idle', model: model.id,
+            usage: withDescendantUsage(usageOf(session), this.d.store.descendantUsage(sessionId)),
+          });
+          terminalIdleDeferred = false;
+        }
+        return;
+      }
       // Step accounting + ceiling. Each run resets on agent_start; every turn_start is one step. The
       // limit is read fresh per turn (a config change applies without a session restart). Past the
       // ceiling the run is aborted so a wedged agent can't loop forever — it settles into agent_end/idle
       // like a normal stop. `maxSteps ≤ 0` means unlimited (no counter emitted, no enforcement).
-      if (raw === 'agent_start') steps = 0;
+      if (raw === 'agent_start') { replay.beginRun(); steps = 0; }
       else if (raw === 'turn_start') {
         steps += 1;
         const maxSteps = this.d.maxSteps?.() ?? 0;
         if (maxSteps > 0 && steps > maxSteps) void session.abort().catch(() => { /* already settling */ });
-        else for (const l of listeners) l({ type: 'step', step: steps, maxSteps, usage: usageOf(session) });
+        else {
+          const usage = withDescendantUsage(usageOf(session), this.d.store.descendantUsage(sessionId));
+          replay.publish({ type: 'step', step: steps, maxSteps, usage });
+        }
       }
+      if (suppressAgentEndIdle) terminalIdleDeferred = true;
+      // BrainSessionFactory subscribed before this spawner and persists `agent_end` synchronously. At
+      // this exact boundary the journal is redundant with SQLite, so clear it before terminal events.
+      if (raw === 'agent_end') replay.settleRun();
       // A turn that settled on a provider error (stopReason 'error', no text) would otherwise wind down
       // as a bare idle — the web/CLI client shows NOTHING and the failure is invisible (the silent-reply
       // bug). Surface the provider's message as an error event ahead of the terminal idle. NOT when PI is
@@ -190,8 +238,14 @@ export class LiveSessionSpawner {
           ? (last.content as { type?: string; text?: string }[]).filter((b) => b.type === 'text').map((b) => b.text ?? '').join('')
           : '';
         if (last?.stopReason === 'error' && !text.trim()) {
-          const message = last.errorMessage?.trim() || 'the model returned no reply (provider error)';
-          for (const l of listeners) l({ type: 'error', message });
+          const rawMessage = last.errorMessage?.trim() || 'the model returned no reply (provider error)';
+          if (isErroredContextOverflow(last, model.contextWindow)) {
+            deferredOverflowError = rawMessage;
+            suppressAgentEndIdle = true;
+          } else {
+            const message = publicProviderError(rawMessage, sessionId, providerId ?? model.provider, model.id);
+            replay.publish({ type: 'error', message });
+          }
         }
       }
       // A PI compaction just settled (auto at the threshold, manual /compact, overflow recovery): the
@@ -199,7 +253,17 @@ export class LiveSessionSpawner {
       // subscribed during create()), so tell attached clients to refetch history and collapse. Only a REAL
       // compaction (result present, not aborted) — a no-op/failed run leaves the transcript as-is.
       if (raw === 'compaction_end' && (e as { result?: unknown }).result != null && (e as { aborted?: boolean }).aborted !== true) {
-        for (const l of listeners) l({ type: 'compacted' });
+        replay.publish({ type: 'compacted' });
+      }
+      if (raw === 'compaction_end' && (e as { reason?: string }).reason === 'overflow') {
+        const ce = e as { result?: unknown; aborted?: boolean; willRetry?: boolean; errorMessage?: string };
+        const recovering = ce.result != null && ce.aborted !== true && ce.willRetry === true;
+        if (recovering) deferredOverflowError = null;
+        else if (deferredOverflowError) {
+          replay.publish({ type: 'error', message: ce.errorMessage?.trim() || deferredOverflowError });
+          deferredOverflowError = null;
+          emitFailedRecoveryIdle = true;
+        }
       }
       // Keep the image-carrying queue mirror aligned with PI's native queue on every enqueue/delivery/clear.
       if (raw === 'queue_update') {
@@ -208,9 +272,23 @@ export class LiveSessionSpawner {
       }
       const be = toBrainEvent(e);
       if (!be) return;
-      if (be.type === 'idle') { be.usage = usageOf(session); be.model = model.id; } // statusline data rides the idle event
+      // PI emits this intermediate agent_end before ordinary retry / overflow recovery. It is not a
+      // terminal idle: headless must keep waiting and interactive clients must keep their spinner alive.
+      if (suppressAgentEndIdle && be.type === 'idle') return;
+      if (be.type === 'idle') {
+        be.usage = withDescendantUsage(usageOf(session), this.d.store.descendantUsage(sessionId));
+        be.model = model.id;
+        terminalIdleDeferred = false;
+      } // statusline data rides the idle event
       if (be.type === 'tool') be.icon = iconOf(be.name);
-      for (const l of listeners) l(be);
+      replay.publish(be);
+      if (emitFailedRecoveryIdle) {
+        replay.publish({
+          type: 'idle', model: model.id,
+          usage: withDescendantUsage(usageOf(session), this.d.store.descendantUsage(sessionId)),
+        });
+        terminalIdleDeferred = false;
+      }
     });
 
     // Ephemeral per-turn context (date/time, …) is injected into each user message — see send() — so it
@@ -220,6 +298,13 @@ export class LiveSessionSpawner {
       const parts = providers.map((f) => { try { return f(); } catch { return ''; } }).filter((x) => x && x.trim());
       return parts.length ? `<context>\n${parts.join('\n')}\n</context>\n\n` : '';
     };
-    return { session, sessionId, model: model.id, providerId, thinkingLevel: opts.thinkingLevel, policy: opts.policy, listeners, turnContext, pluginToolNames: new Set(pluginTools.map((t) => t.name)), workDir: cwd, queuedSteer, queuedFollowUp };
+    return {
+      session, sessionId, model: model.id, providerId, thinkingLevel: opts.thinkingLevel,
+      requestProfile, fastAvailable: capabilities.fast,
+      thinkingLabels: Object.fromEntries(capabilities.levels.map((level) => [level, capabilities.labels[level] ?? level])),
+      policy: opts.policy, listeners, replay, turnContext,
+      pluginToolNames: new Set(pluginTools.map((t) => t.name)), workDir: cwd,
+      queuedSteer, queuedFollowUp,
+    };
   }
 }

@@ -2,7 +2,9 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import {
   chordFromInput, createKeymap, createLeaderState, keybindDefault, keybindRows, parseKeybind, KEYBIND_ACTIONS,
 } from '../../../src/cli/chat/keys.js';
-import { bottomHints, startScreenHints, quitHint } from '../../../src/cli/chat/shell.js';
+import {
+  allocateShellRows, bottomHints, INTERRUPT_CONFIRM_MS, interruptPress, startScreenHints, quitHint,
+} from '../../../src/cli/chat/shell.js';
 
 // Raw bytes the terminal sends for the chords under test.
 const CTRL = (letter: string): string => String.fromCharCode(letter.charCodeAt(0) - 96);
@@ -46,6 +48,34 @@ describe('parseKeybind — chord syntax', () => {
   it('rejects leader-of-leader and esc after the leader', () => {
     expect(parseKeybind('leader x', { forLeader: true }).ok).toBe(false);
     expect(parseKeybind('leader escape').ok).toBe(false);
+  });
+});
+
+describe('stream interrupt + shell row budget', () => {
+  it('requires a second Esc inside the confirmation window and expires cleanly', () => {
+    const first = interruptPress(0, 10_000);
+    expect(first).toEqual({ armedUntil: 10_000 + INTERRUPT_CONFIRM_MS, abort: false });
+    expect(interruptPress(first.armedUntil, 10_500)).toEqual({ armedUntil: 0, abort: true });
+    expect(interruptPress(first.armedUntil, first.armedUntil)).toEqual({
+      armedUntil: first.armedUntil + INTERRUPT_CONFIRM_MS,
+      abort: false,
+    });
+  });
+
+  it('changes the thinking footer while interrupt is armed', () => {
+    const map = createKeymap();
+    expect(bottomHints(map, 'thinking', false, false)).toContain('esc interrupt');
+    expect(bottomHints(map, 'thinking', false, true)).toContain('esc again to interrupt');
+  });
+
+  it('allocates exactly the terminal height even with huge input, Todos and sub-agent panels', () => {
+    for (const terminalRows of [4, 8, 12, 24, 40]) {
+      const b = allocateShellRows({ terminalRows, inputRows: 80, cardRows: 40, subagentRows: 40 });
+      expect(1 + b.viewportRows + b.subagentRows + b.cardRows + b.inputRows + 2).toBe(terminalRows);
+      expect(b.viewportRows).toBeGreaterThanOrEqual(1);
+      expect(b.cardRows).toBeLessThanOrEqual(6);
+      expect(b.subagentRows).toBeLessThanOrEqual(4);
+    }
   });
 });
 

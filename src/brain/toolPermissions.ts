@@ -15,6 +15,18 @@ export type PermissionScope = 'tools' | 'bash';
 
 export interface PermissionRule { scope: PermissionScope; pattern: string; action: PermissionAction }
 
+/**
+ * The durable part of a permission context which is safe to hand to an unattended delegated run.
+ * It deliberately stores the already-effective ordered rules rather than a user id: a sub-agent can
+ * be resumed after eviction without re-reading a different account's current settings. `yolo`, approval
+ * callbacks and "always allow" persistence are intentionally absent — a delegated channel has no
+ * interactive approval surface.
+ */
+export interface NoninteractivePermissionBoundary {
+  rules: PermissionRule[];
+  unattendedAsks: 'allow' | 'deny';
+}
+
 /** The per-user persisted shape (userSettingStore JSON blob under key `permissions`): rule maps keep
  *  their JSON insertion order (it is load-bearing — see {@link resolveToolPermission}), plus the
  *  persisted YOLO default a session's `/yolo` override layers on top of. */
@@ -54,6 +66,10 @@ const DEFAULT_PERMISSION_RULES: readonly PermissionRule[] = [
 
 const ACTIONS: readonly PermissionAction[] = ['allow', 'ask', 'deny'];
 const isAction = (v: unknown): v is PermissionAction => ACTIONS.includes(v as PermissionAction);
+const isPermissionScope = (v: unknown): v is PermissionScope => v === 'tools' || v === 'bash';
+/** 13 built-ins + at most 200 user rules in each map today; leave bounded headroom for future defaults. */
+const MAX_BOUNDARY_RULES = 512;
+const MAX_BOUNDARY_PATTERN_CHARS = 200;
 
 /** Keep a user's rule maps bounded and well-typed. Invalid keys/actions are dropped (the blob is
  *  untrusted JSON); insertion order of the surviving entries is preserved — it decides precedence. */
@@ -104,6 +120,49 @@ export function buildPermissionRuleset(user: PermissionSettings): PermissionRule
     ...Object.entries(user.tools).map(([pattern, action]) => ({ scope: 'tools' as const, pattern, action })),
     ...Object.entries(user.bash).map(([pattern, action]) => ({ scope: 'bash' as const, pattern, action })),
   ];
+}
+
+/** Strictly validate an immutable delegated permission boundary. Unlike account-setting sanitization,
+ * this never drops malformed entries: changing a stored child from deny to an implicit default would be
+ * a privilege escalation, so corrupt/legacy boundaries must fail closed. Rule order is load-bearing. */
+export function normalizeNoninteractivePermissionBoundary(raw: unknown): NoninteractivePermissionBoundary | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const value = raw as Record<string, unknown>;
+  if (!Array.isArray(value.rules) || value.rules.length > MAX_BOUNDARY_RULES
+    || (value.unattendedAsks !== 'allow' && value.unattendedAsks !== 'deny')) return undefined;
+  const rules: PermissionRule[] = [];
+  for (const rawRule of value.rules) {
+    if (!rawRule || typeof rawRule !== 'object' || Array.isArray(rawRule)) return undefined;
+    const rule = rawRule as Record<string, unknown>;
+    if (!isPermissionScope(rule.scope) || typeof rule.pattern !== 'string'
+      || !rule.pattern.trim() || rule.pattern.length > MAX_BOUNDARY_PATTERN_CHARS || !isAction(rule.action)) return undefined;
+    rules.push({ scope: rule.scope, pattern: rule.pattern, action: rule.action });
+  }
+  return { rules, unattendedAsks: value.unattendedAsks };
+}
+
+/** Snapshot the currently effective permission context for a child. A malformed in-memory context is
+ * rejected rather than represented as `null` (which means permission wiring was genuinely absent). */
+export function noninteractivePermissionBoundary(permissions: TurnPermissions | undefined): NoninteractivePermissionBoundary | null {
+  if (!permissions) return null;
+  const boundary = normalizeNoninteractivePermissionBoundary({
+    rules: permissions.ruleset,
+    unattendedAsks: permissions.unattendedAsks,
+  });
+  if (!boundary) throw new Error('invalid turn permission boundary');
+  return boundary;
+}
+
+/** Rebuild the noninteractive execution context from its durable child boundary. */
+export function noninteractiveTurnPermissions(boundary: NoninteractivePermissionBoundary | null): TurnPermissions | undefined {
+  if (boundary === null) return undefined;
+  // DelegatedExecutionScope normalized this before persistence/read. Clone anyway so a caller cannot
+  // mutate a shared stored scope while the current prompt is in flight.
+  return {
+    ruleset: boundary.rules.map((rule) => ({ ...rule })),
+    yolo: false,
+    unattendedAsks: boundary.unattendedAsks,
+  };
 }
 
 /** Simple wildcard match (opencode semantics): `*` = zero or more of any character, `?` = exactly one,

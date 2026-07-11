@@ -24,7 +24,7 @@ export function register(ctx) {
   const state = new StateStore(join(dataDir, 'channel-state.json'));
   // The image-gen/image-edit plugins are data-dir siblings — their generated PNGs upload from there.
   const imageDirs = [join(dataDir, '..', 'image-gen'), join(dataDir, '..', 'image-edit')];
-  const adapter = new DiscordAdapter({ ...ctx.config, botToken: token }, ctx.logger, state, ctx.listModels, imageDirs, ctx.resolveProvider, ctx.answerQuestion);
+  const adapter = new DiscordAdapter({ ...ctx.config, botToken: token }, ctx.logger, state, ctx.listModels, imageDirs, ctx.resolveProvider, ctx.answerQuestion, ctx.chatCommands('discord'));
   ctx.registerPlatform(adapter);
   registerTools(ctx, adapter);
   ctx.logger.info('discord platform registered (slash commands + per-channel display + live tools + server tools)');

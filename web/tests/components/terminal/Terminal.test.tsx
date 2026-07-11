@@ -24,8 +24,9 @@ const HIDE = '\x1b[?25l';
 
 describe('Terminal', () => {
   it('mounts xterm and writes pane frames atomically (no separate clear)', () => {
-    render(<Terminal name="elowen-A" />, { wrapper: createWrapper().wrapper });
+    const { container } = render(<Terminal name="elowen-A" />, { wrapper: createWrapper().wrapper });
     expect(openSpy).toHaveBeenCalled();
+    expect(container.firstChild).toHaveClass('elowen-terminal', 'overflow-hidden');
     act(() => FakeES.last.emit('pane', { pane: 'frame-1' }));
     expect(clearSpy).not.toHaveBeenCalled();
     expect(writeSpy).toHaveBeenCalledWith(`${CLEAR}frame-1${HIDE}`);

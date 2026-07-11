@@ -39,11 +39,19 @@ describe('IdentityResolver — owner vs admin gating', () => {
     expect(unlinked.linkedUserId).toBeUndefined(); // unlinked sender → no memory
   });
 
-  it('owner-authored internal automation (cron/subagent with admin access) IS owner', () => {
-    for (const platform of ['cron', 'subagent']) {
-      const { identity } = resolver(null).forPlatformTurn(src({ platform, userId: 'auto', access: { projectIds: [], admin: true } }), 1);
-      expect(identity.owner).toBe(true);
-    }
+  it('cron admin automation is owner, while subagents preserve the origin owner bit independently of admin', () => {
+    const cron = resolver(null).forPlatformTurn(src({ platform: 'cron', userId: 'auto', access: { projectIds: [], admin: true } }), 1);
+    expect(cron.identity.owner).toBe(true);
+
+    const foreignAdminChild = resolver(null).forPlatformTurn(src({
+      platform: 'subagent', userId: 'auto', access: { projectIds: [], admin: true, owner: false },
+    }), 1);
+    expect(foreignAdminChild.identity).toMatchObject({ admin: true, owner: false });
+
+    const ownerChild = resolver(null).forPlatformTurn(src({
+      platform: 'subagent', userId: 'auto', access: { projectIds: [], admin: true, owner: true },
+    }), 1);
+    expect(ownerChild.identity.owner).toBe(true);
   });
 
   it('cron WITHOUT admin access is not owner (foreign-scoped automation stays scoped)', () => {

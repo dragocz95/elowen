@@ -10,7 +10,133 @@ describe('BrainStore', () => {
   it('creates and reads back a session', () => {
     const s = store.createSession({ id: 's1', userId: 7, model: 'anthropic/claude' });
     expect(s.user_id).toBe(7);
+    expect(s.parent_session_id).toBeNull();
     expect(store.getSession('s1')?.model).toBe('anthropic/claude');
+  });
+
+  it('creates direct and nested delegated sessions only under a same-user parent', () => {
+    store.createSession({ id: 'root', userId: 7, model: 'm' });
+    const child = store.createSession({ id: 'child', userId: 7, model: 'm', parentSessionId: 'root' });
+    const nested = store.createSession({ id: 'nested', userId: 7, model: 'm', parentSessionId: 'child' });
+    store.createSession({ id: 'foreign', userId: 9, model: 'm' });
+
+    expect(child.parent_session_id).toBe('root');
+    expect(nested.parent_session_id).toBe('child');
+    expect(() => store.createSession({ id: 'missing-child', userId: 7, model: 'm', parentSessionId: 'nope' })).toThrow(/parent brain session not found/);
+    expect(() => store.createSession({ id: 'foreign-child', userId: 7, model: 'm', parentSessionId: 'foreign' })).toThrow(/another user/);
+    expect(store.getSession('missing-child')).toBeUndefined();
+    expect(store.getSession('foreign-child')).toBeUndefined();
+  });
+
+  it('persists a canonical immutable delegated execution scope and fails closed for legacy/corrupt rows', () => {
+    store.createSession({ id: 'root', userId: 7, model: 'm' });
+    store.createSession({
+      id: 'child', userId: 7, model: 'm', parentSessionId: 'root',
+      delegatedAccess: {
+        admin: false, projectIds: [9, 3, 9], owner: false,
+        permissionBoundary: null,
+        toolPolicy: { allow: [], deny: ['discord_api', 'discord_api'] },
+        promptAppend: ['focused child', 'focused child'],
+      },
+    });
+    store.createSession({ id: 'legacy', userId: 7, model: 'm', parentSessionId: 'root' });
+
+    expect(store.delegatedAccessFor('child')).toEqual({
+      admin: false, projectIds: [3, 9], owner: false,
+      permissionBoundary: null,
+      toolPolicy: { allow: [], deny: ['discord_api'] }, promptAppend: ['focused child'],
+    });
+    expect(store.hasDelegatedAccess('child', {
+      admin: false, projectIds: [3, 9], owner: false,
+      permissionBoundary: null,
+      toolPolicy: { allow: [], deny: ['discord_api'] }, promptAppend: ['focused child'],
+    })).toBe(true);
+    expect(store.hasDelegatedAccess('child', {
+      admin: true, projectIds: [], owner: true, permissionBoundary: null,
+    })).toBe(false);
+    expect(store.delegatedAccessFor('legacy')).toBeUndefined();
+    // A row minted before permissionBoundary existed is no safer than a NULL legacy scope: it must not
+    // resume under the row owner's current settings after an idle child eviction.
+    db.prepare("UPDATE brain_sessions SET delegated_access = ? WHERE id = 'child'").run(JSON.stringify({
+      admin: false, projectIds: [3, 9], owner: false, toolPolicy: { allow: [], deny: ['discord_api'] },
+    }));
+    expect(store.delegatedAccessFor('child')).toBeUndefined();
+    db.prepare("UPDATE brain_sessions SET delegated_access = '{bad json' WHERE id = 'child'").run();
+    expect(store.delegatedAccessFor('child')).toBeUndefined();
+  });
+
+  it('reassignSession keeps delegated children attached to the archived parent id', () => {
+    store.createSession({ id: 'root', userId: 1, model: 'm' });
+    store.createSession({ id: 'child', userId: 1, model: 'm', parentSessionId: 'root' });
+    store.reassignSession('root', 'root-archived');
+    expect(store.getSession('root')).toBeUndefined();
+    expect(store.getSession('child')?.parent_session_id).toBe('root-archived');
+  });
+
+  it('persists only validated direct same-owner sub-agent progress', () => {
+    store.createSession({ id: 'root', userId: 1, model: 'm' });
+    store.createSession({ id: 'child', userId: 1, model: 'm', parentSessionId: 'root' });
+    store.createSession({ id: 'same-owner-unrelated', userId: 1, model: 'm' });
+    store.createSession({ id: 'foreign', userId: 2, model: 'm' });
+    // Simulate a corrupted/manual cross-owner relation: the upsert must still reject it.
+    db.prepare("UPDATE brain_sessions SET parent_session_id = 'root' WHERE id = 'foreign'").run();
+
+    expect(store.upsertSubagentRun('root', {
+      id: 'delegate-1', sessionId: 'child', status: 'running', task: 'inspect',
+      detail: 'read_file src/a.ts', tools: 2, tokens: 1234, seconds: 2, model: 'm',
+    })).toBe(true);
+    expect(store.getSubagentRuns('root')).toEqual([{
+      toolCallId: 'delegate-1', sessionId: 'child', status: 'running', task: 'inspect',
+      detail: 'read_file src/a.ts', tools: 2, tokens: 1234, seconds: 2, model: 'm',
+    }]);
+    expect(store.upsertSubagentRun('root', {
+      id: 'unrelated', sessionId: 'same-owner-unrelated', status: 'running', task: 'x', tools: 0, seconds: 0,
+    })).toBe(false);
+    expect(store.upsertSubagentRun('root', {
+      id: 'foreign', sessionId: 'foreign', status: 'running', task: 'x', tools: 0, seconds: 0,
+    })).toBe(false);
+    expect(store.upsertSubagentRun('root', {
+      id: 'bad', sessionId: 'child', status: 'running', task: 'x', tools: -1, seconds: 0,
+    })).toBe(false);
+    // A call id cannot later be rebound to a different child.
+    store.createSession({ id: 'child-2', userId: 1, model: 'm', parentSessionId: 'root' });
+    expect(store.upsertSubagentRun('root', {
+      id: 'delegate-1', sessionId: 'child-2', status: 'done', task: 'x', tools: 1, seconds: 1,
+    })).toBe(false);
+    db.prepare("UPDATE brain_subagent_runs SET state = '{bad json' WHERE tool_call_id = 'delegate-1'").run();
+    expect(store.getSubagentRuns('root')).toEqual([]); // corrupt state never reaches a renderer
+  });
+
+  it('reassigns and deletes sub-agent sidecars with their session tree', () => {
+    store.createSession({ id: 'root', userId: 1, model: 'm' });
+    store.createSession({ id: 'child', userId: 1, model: 'm', parentSessionId: 'root' });
+    store.createSession({ id: 'nested', userId: 1, model: 'm', parentSessionId: 'child' });
+    expect(store.upsertSubagentRun('root', {
+      id: 'root-call', sessionId: 'child', status: 'running', task: 'child', tools: 0, seconds: 0,
+    })).toBe(true);
+    expect(store.upsertSubagentRun('child', {
+      id: 'child-call', sessionId: 'nested', status: 'done', task: 'nested', tools: 3, seconds: 5,
+    })).toBe(true);
+
+    store.reassignSession('root', 'root-archived');
+    expect(store.getSubagentRuns('root-archived')[0]).toMatchObject({ toolCallId: 'root-call', sessionId: 'child' });
+    store.reassignSession('child', 'child-archived');
+    expect(store.getSubagentRuns('root-archived')[0]).toMatchObject({ sessionId: 'child-archived' });
+    expect(store.getSubagentRuns('child-archived')[0]).toMatchObject({ toolCallId: 'child-call', sessionId: 'nested' });
+
+    store.deleteSession('child-archived');
+    expect(store.getSubagentRuns('root-archived')).toEqual([]);
+    expect(store.getSubagentRuns('child-archived')).toEqual([]);
+  });
+
+  it('removeForUser drops all of that owner\'s sub-agent sidecars', () => {
+    store.createSession({ id: 'root', userId: 1, model: 'm' });
+    store.createSession({ id: 'child', userId: 1, model: 'm', parentSessionId: 'root' });
+    expect(store.upsertSubagentRun('root', {
+      id: 'delegate-1', sessionId: 'child', status: 'running', task: 'x', tools: 0, seconds: 0,
+    })).toBe(true);
+    store.removeForUser(1);
+    expect((db.prepare('SELECT COUNT(*) AS n FROM brain_subagent_runs').get() as { n: number }).n).toBe(0);
   });
 
   it('appends messages and returns them in order', () => {
@@ -32,6 +158,15 @@ describe('BrainStore', () => {
     store.createSession({ id: 'a', userId: 1, model: 'm1' });
     store.touchSession('a', 'm2');
     expect(store.getSession('a')?.model).toBe('m2');
+  });
+
+  it('conditionally replaces only the still-current provisional title', () => {
+    store.createSession({ id: 'a', userId: 1, model: 'm' });
+    store.setTitle('a', 'provisional');
+    expect(store.setTitleIfCurrent('a', 'provisional', 'Generated title')).toBe(true);
+    store.renameSession('a', 'Manual title');
+    expect(store.setTitleIfCurrent('a', 'Generated title', 'Late generated title')).toBe(false);
+    expect(store.getSession('a')?.title).toBe('Manual title');
   });
 
   it('sessions start cwd-less; setWorkDir binds them to a directory', () => {
@@ -57,6 +192,48 @@ describe('BrainStore', () => {
     store.removeForUser(1);
     expect(store.getSession('a')).toBeUndefined();
     expect(store.getMessages('a')).toHaveLength(0);
+  });
+
+  it('recursively sums descendant normalized usage and compaction rollups without changing global totals', () => {
+    const usage = (sessionId: string, id: string, totalTokens: number, cost: number, input = 0) =>
+      store.appendMessage({
+        id, sessionId, parentId: null, role: 'assistant',
+        content: {
+          role: 'assistant', model: 'm', timestamp: Date.now(),
+          usage: { input, output: 2, cacheRead: 3, cacheWrite: 4, reasoning: 1, totalTokens, cost: { total: cost } },
+        },
+      });
+
+    store.createSession({ id: 'root', userId: 1, model: 'm' });
+    store.createSession({ id: 'child', userId: 1, model: 'm', parentSessionId: 'root' });
+    store.createSession({ id: 'nested', userId: 1, model: 'm', parentSessionId: 'child' });
+    store.createSession({ id: 'unrelated', userId: 1, model: 'm' });
+    usage('root', 'root-msg', 100, 0.1, 10); // root is deliberately excluded from descendantUsage
+    usage('child', 'child-msg', 20, 0.02, 2);
+    usage('nested', 'nested-old', 30, 0.03, 3);
+    usage('nested', 'nested-keep', 40, 0.04, 4);
+    usage('unrelated', 'other-msg', 500, 0.5, 50);
+    // The old nested row now exists only in the compaction divider's `usageRollup`.
+    store.compactSessionMessages('nested', { id: 'nested-summary', role: 'compaction', content: { role: 'compactionSummary' } }, 1);
+
+    expect(store.descendantUsage('root')).toEqual({
+      input: 9, output: 6, cacheRead: 9, cacheWrite: 12, totalTokens: 90, reasoning: 3, cost: 0.09,
+    });
+    expect(store.descendantUsage('child')).toEqual({
+      input: 7, output: 4, cacheRead: 6, cacheWrite: 8, totalTokens: 70, reasoning: 2, cost: 0.07,
+    });
+    expect(store.descendantUsage('unrelated')).toEqual({
+      input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, reasoning: 0, cost: 0,
+    });
+    expect(store.descendantUsage('missing')).toEqual({
+      input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, reasoning: 0, cost: 0,
+    });
+
+    // Global accounting still reads every stored session exactly once; the tree helper is additive
+    // status metadata only and never rewrites or filters `/usage/by-*` source rows.
+    const [global] = store.usageByModel(1);
+    expect(global!.usage.total).toBe(690);
+    expect(global!.usage.costUsd).toBeCloseTo(0.69);
   });
 
   describe('compactSessionMessages', () => {

@@ -1,5 +1,5 @@
 import type { TUI, ProcessTerminal, Container } from '@earendil-works/pi-tui';
-import type { BrainClient, BrainStatus, BrainWorkMode, McpServerView } from './brainClient.js';
+import type { BrainClient, BrainRateLimits, BrainStatus, BrainWorkMode, McpServerView } from './brainClient.js';
 import type { ChatEditor } from './picker.js';
 import type { AttachmentChips, QueuedMessages } from './components.js';
 import type { PromptStash } from './promptHistory.js';
@@ -45,7 +45,7 @@ export interface ChatRuntime {
   /** Drill-in to a delegated sub-agent's session (opened by clicking its row/panel entry or ctrl+o).
    *  Fully interactive: its own live tap stream feeds the view and the input steers the child. The
    *  server's ACTIVE conversation stays the parent — Esc returns without any server round-trip. */
-  childView: { sessionId: string; view: ChatView } | null;
+  childView: { sessionId: string; view: ChatView; loading: boolean } | null;
   childAc: AbortController | null;
   streamAc: AbortController;
   /** Transient system lines (help, session list, errors) rendered under the conversation. */
@@ -56,12 +56,18 @@ export interface ChatRuntime {
   usage: BrainStatus['usage'];
   thinkingLevel: string;
   thinkingLevels: string[];
+  thinkingLevelLabels: Record<string, string>;
+  /** OpenAI OAuth fast mode is session-scoped and only offered when the live model supports it. */
+  fastOn: boolean;
+  fastAvailable: boolean;
   lspEnabled: boolean | null;
   /** Effective YOLO (session /yolo override, else the persisted Account default) — server-authoritative,
    *  refreshed with every status fetch; drives the warning chip in the prompt meta line. */
   yoloOn: boolean;
   /** MCP servers for the telemetry panel; null (fetch failed / non-admin) hides the section. */
   mcpList: McpServerView[] | null;
+  /** OpenAI OAuth subscription windows. Null on other providers/accounts and while not yet available. */
+  rateLimits: BrainRateLimits | null;
   workMode: BrainWorkMode;
   /** Live display cards (ctx.emitCard) — a persistent panel above the status bar, tracked outside the
    *  ChatView like `usage`. Seeded from status (survives reconnect) and updated on each `card` event. */
@@ -84,6 +90,8 @@ export interface ChatRuntime {
 
   // ── callbacks wired in runChat ──
   render(): void;
+  /** Slow, best-effort metadata refresh kept outside refreshMeta's blocking status/MCP path. */
+  refreshRateLimits(): Promise<void>;
   refreshMeta(): Promise<void>;
   quit(): void;
 }

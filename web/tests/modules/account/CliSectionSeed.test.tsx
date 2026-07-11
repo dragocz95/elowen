@@ -18,7 +18,18 @@ vi.mock('../../../lib/queries', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   useMyCliSettings: () => ({ data: state.cli, isLoading: false }),
   useMyPermissions: () => ({ data: state.perm, isLoading: false }),
-  useBrainModels: () => ({ data: [] }),
+  useBrainModels: () => ({ data: [
+    {
+      provider: 'plain', providerLabel: 'Plain', model: 'catalog-first', exec: 'elowen:plain/catalog-first',
+      source: 'api-key', contextWindow: 32000, contextWindowSet: false,
+    },
+    {
+      provider: 'openai', providerLabel: 'OpenAI', model: 'gpt-5.6-sol', exec: 'elowen:openai/gpt-5.6-sol',
+      source: 'oauth', contextWindow: 372000, contextWindowSet: false, default: true,
+      reasoningLevels: ['low', 'medium', 'high', 'xhigh', 'max'],
+      reasoningLabels: { xhigh: 'ultra', max: 'max' },
+    },
+  ] }),
 }));
 
 import { CliSection } from '../../../modules/account/CliSection';
@@ -54,6 +65,21 @@ describe('CliSection — seed guard', () => {
     expect(screen.getByRole('button', { name: 'high' }).getAttribute('aria-pressed')).toBe('true');
     expect(screen.getByRole('button', { name: 'low' }).getAttribute('aria-pressed')).toBe('false');
     // And the value that autosaves is the local edit, never the clobbering server value.
+    await waitFor(() => expect(mocks.saveCli).toHaveBeenCalled(), { timeout: 1500 });
+    expect(mocks.saveCli.mock.calls.at(-1)![0]).toMatchObject({ thinkingLevel: 'high' });
+  });
+
+  it('renders only the active model capabilities with provider-facing ultra and max labels', () => {
+    renderSection();
+    expect(screen.getByRole('button', { name: 'ultra' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'max' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'minimal' })).toBeNull();
+  });
+
+  it('changes reasoning through the draggable range control', async () => {
+    renderSection();
+    const scale = screen.getByRole('slider', { name: en.cli.thinkingLabel });
+    fireEvent.change(scale, { target: { value: '3' } });
     await waitFor(() => expect(mocks.saveCli).toHaveBeenCalled(), { timeout: 1500 });
     expect(mocks.saveCli.mock.calls.at(-1)![0]).toMatchObject({ thinkingLevel: 'high' });
   });

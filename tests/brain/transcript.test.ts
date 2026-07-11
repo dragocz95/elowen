@@ -186,13 +186,44 @@ describe('transcript fold: subagent progress', () => {
     expect(seg.items[0]!.sub).toMatchObject({ status: 'done', tools: 5, tokens: 9000, seconds: 31 });
   });
 
+  it('done after parent idle patches the original settled row without a new turn or spinner', () => {
+    let v = reduce(delegateCall(), {
+      type: 'subagent', id: 'call-1', sessionId: 's', status: 'running', task: 't', tools: 1, seconds: 2,
+    });
+    v = reduce(v, { type: 'idle' });
+    const turnsBefore = v.turns.length;
+    expect(v.thinking).toBe(false);
+
+    v = reduce(v, {
+      type: 'subagent', id: 'call-1', sessionId: 's', status: 'done', task: 't', tools: 5, seconds: 31,
+    });
+
+    expect(v.turns).toHaveLength(turnsBefore);
+    expect(v.thinking).toBe(false);
+    const turn = v.turns.find((candidate) => candidate.role === 'elowen');
+    if (!turn || turn.role !== 'elowen') throw new Error('expected original elowen turn');
+    const seg = turn.segments.find((candidate) => candidate.kind === 'tools');
+    if (!seg || seg.kind !== 'tools') throw new Error('expected delegate tool');
+    expect(seg.items[0]!.sub?.status).toBe('done');
+  });
+
+  it('rehydrates a durable running child with its drill-in session id', () => {
+    const v = fromHistory([{ role: 'assistant', text: '', segments: [{
+      kind: 'tool', id: 'call-1', name: 'delegate', detail: 'inspect',
+      sub: { sessionId: 'brain-ch-subagent-child', status: 'running', task: 'inspect', tools: 1, seconds: 3 },
+    }] }]);
+    const turn = v.turns[0];
+    if (!turn || turn.role !== 'elowen' || turn.segments[0]?.kind !== 'tools') throw new Error('expected delegate row');
+    expect(turn.segments[0].items[0]).toMatchObject({
+      id: 'call-1', sub: { sessionId: 'brain-ch-subagent-child', status: 'running' },
+    });
+    expect(v.thinking).toBe(false);
+  });
+
   it('an update with an unknown call id is a safe no-op', () => {
-    const before = delegateCall();
+    const before = reduce(delegateCall(), { type: 'idle' });
     const after = reduce(before, { type: 'subagent', id: 'other', sessionId: 's', status: 'running', task: 't', tools: 0, seconds: 0 });
-    const turn = after.turns[after.turns.length - 1]!;
-    if (turn.role !== 'elowen') throw new Error('expected elowen turn');
-    const seg = turn.segments.find((s) => s.kind === 'tools');
-    if (seg?.kind !== 'tools') throw new Error('expected tools segment');
-    expect(seg.items[0]!.sub).toBeUndefined();
+    expect(after).toBe(before);
+    expect(after.thinking).toBe(false);
   });
 });

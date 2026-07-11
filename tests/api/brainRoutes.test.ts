@@ -17,16 +17,35 @@ import { UserProjectStore } from '../../src/store/userProjectStore.js';
 function fakeBrain() {
   const started = new Set<number>();
   const sends: { id: number; text: string; mode?: string }[] = [];
+  const boundSendCalls: { session?: string; client?: { id: string; generation: number } }[] = [];
+  const fastCalls: { id: number; on?: boolean; session?: string }[] = [];
+  const stopSessionCalls: { id: number; session?: string; client?: string; generation?: number }[] = [];
+  const startCalls: { id: number; opts?: { fresh?: boolean; clientId?: string; clientGeneration?: number } }[] = [];
+  const tapSnapshotCalls: { id: number; session: string }[] = [];
+  const subagentSends: { id: number; session: string; text: string }[] = [];
+  let subagentPreflightError: Error | null = null;
   const queues = new Map<number, { id: string; text: string }[]>();
   return {
     sends,
+    boundSendCalls,
+    fastCalls,
+    stopSessionCalls,
+    startCalls,
+    tapSnapshotCalls,
+    subagentSends,
+    __failSubagentPreflight: (message: string | null) => { subagentPreflightError = message ? new Error(message) : null; },
     /** Test helper: seed a user's pending mid-turn queue. */
     __enqueue: (id: number, item: { id: string; text: string }) => { queues.set(id, [...(queues.get(id) ?? []), item]); },
-    status: (id: number) => ({ running: started.has(id), sessionId: started.has(id) ? `brain-${id}` : null, model: 'm', queued: queues.get(id) ?? [] }),
-    start: async (id: number) => { started.add(id); return { sessionId: `brain-${id}` }; },
-    send: async (id: number, text: string, _images?: unknown, mode?: string) => {
+    status: (id: number) => ({ running: started.has(id), sessionId: started.has(id) ? `brain-${id}` : null, model: 'm', queued: queues.get(id) ?? [], fast: false, fastAvailable: true }),
+    start: async (id: number, opts?: { fresh?: boolean; clientId?: string; clientGeneration?: number }) => {
+      startCalls.push({ id, opts });
+      started.add(id);
+      return { sessionId: `brain-${id}` };
+    },
+    send: async (id: number, text: string, _images?: unknown, mode?: string, _internal?: unknown, _cwd?: string, session?: string, _display?: string, client?: { id: string; generation: number }) => {
       if (!started.has(id)) throw new Error('brain not started for user');
       sends.push({ id, text, mode });
+      boundSendCalls.push({ session, client });
     },
     queueList: (id: number) => queues.get(id) ?? [],
     queueRemove: (id: number, qid: string) => {
@@ -35,6 +54,21 @@ function fakeBrain() {
       return (queues.get(id)!.length) < list.length;
     },
     subscribe: () => () => {},
+    tapSession: () => () => {},
+    tapSessionSnapshot: (id: number, session: string, listener: (event: { type: 'text'; delta: string }) => void) => {
+      tapSnapshotCalls.push({ id, session });
+      // Arrives after the atomic snapshot was captured but while its first SSE frame is flushing.
+      queueMicrotask(() => listener({ type: 'text', delta: 'post-snapshot event' }));
+      return {
+        off: () => {},
+        snapshot: {
+          type: 'snapshot' as const,
+          cursor: 7,
+          history: [{ role: 'user', text: 'stored child turn' }],
+          events: [{ type: 'text' as const, delta: 'running child output' }],
+        },
+      };
+    },
     /** Writes a real temp file so the route can stream it back; a 'missing' id throws (→ 404). Records
      *  each cleaned-up path so the test can assert the route removed the temp file afterwards. */
     cleaned: [] as string[],
@@ -51,7 +85,18 @@ function fakeBrain() {
       });
     },
     stop: (id: number) => { started.delete(id); },
+    setFast: (id: number, on?: boolean, session?: string) => {
+      fastCalls.push({ id, on, session });
+      return { fast: on ?? true, fastAvailable: true };
+    },
+    stopSession: async (id: number, session?: string, client?: string, generation?: number) => {
+      stopSessionCalls.push({ id, session, client, generation });
+      return { stopped: true, disposed: true };
+    },
     history: (_id: number) => [{ role: 'user', text: 'hi' }, { role: 'assistant', text: 'yo' }],
+    messagesOf: () => [],
+    preflightSubagentSend: () => { if (subagentPreflightError) throw subagentPreflightError; },
+    sendToSubagent: async (id: number, session: string, text: string) => { subagentSends.push({ id, session, text }); },
     searchMessages: (id: number, q: string) =>
       q.trim().length < 2 ? [] : [{ sessionId: `s-${id}`, sessionTitle: 'T', role: 'user', snippet: q, ts: '2026-01-01 00:00:00' }],
   };
@@ -89,6 +134,15 @@ describe('brain routes', () => {
     expect((await app.request('/brain/send', post(amyTok, { text: 'hi' }))).status).toBe(200);
   });
 
+  it('passes the authenticated stable client identity through start', async () => {
+    const { app, amyTok, brain } = setup();
+    const start = await app.request('/brain/start', post(amyTok, { fresh: true, client: 'cli-a', generation: 7 }));
+    expect(start.status).toBe(201);
+    expect(brain.startCalls.at(-1)).toEqual({ id: 2, opts: {
+      provider: undefined, session: undefined, fresh: true, cwd: undefined, clientId: 'cli-a', clientGeneration: 7,
+    } });
+  });
+
   it('passes plan mode through /brain/send', async () => {
     const { app, amyTok, brain } = setup();
     await app.request('/brain/start', post(amyTok, {}));
@@ -96,11 +150,63 @@ describe('brain routes', () => {
     expect(brain.sends.at(-1)).toEqual({ id: 2, text: 'outline', mode: 'plan' });
   });
 
+  it('passes a bound client generation through /brain/send', async () => {
+    const { app, amyTok, brain } = setup();
+    await app.request('/brain/start', post(amyTok, {}));
+    const res = await app.request('/brain/send', post(amyTok, {
+      text: 'late-safe', session: 'brain-2', client: 'cli-a', generation: 7,
+    }));
+    expect(res.status).toBe(200);
+    expect(brain.boundSendCalls.at(-1)).toEqual({
+      session: 'brain-2', client: { id: 'cli-a', generation: 7 },
+    });
+  });
+
   it('messages returns the display history', async () => {
     const { app, amyTok } = setup();
     const res = await app.request('/brain/messages', auth(amyTok));
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual([{ role: 'user', text: 'hi' }, { role: 'assistant', text: 'yo' }]);
+  });
+
+  it('preflights a delegated continuation so a legacy child is rejected instead of silently detached', async () => {
+    const { app, amyTok, brain } = setup();
+    brain.__failSubagentPreflight('delegated access unavailable');
+    const rejected = await app.request('/brain/subagent/send', post(amyTok, { session: 'brain-ch-subagent-legacy', text: 'continue' }));
+    expect(rejected.status).toBe(409);
+    expect(await rejected.json()).toEqual({ error: 'delegated access unavailable' });
+    expect(brain.subagentSends).toEqual([]);
+
+    brain.__failSubagentPreflight(null);
+    const accepted = await app.request('/brain/subagent/send', post(amyTok, { session: 'brain-ch-subagent-good', text: 'continue' }));
+    expect(accepted.status).toBe(200);
+    await Promise.resolve(); // detached route continuation
+    expect(brain.subagentSends).toEqual([{ id: 2, session: 'brain-ch-subagent-good', text: 'continue' }]);
+  });
+
+  it('opt-in fixed-session stream starts with one durable + live snapshot frame', async () => {
+    const { app, amyTok, brain } = setup();
+    const ac = new AbortController();
+    const res = await app.request('/brain/stream?session=brain-ch-subagent-a&snapshot=1', {
+      headers: { authorization: `Bearer ${amyTok}` }, signal: ac.signal,
+    });
+    expect(res.status).toBe(200);
+    const reader = res.body!.getReader();
+    const decoder = new TextDecoder();
+    let body = '';
+    for (let i = 0; i < 6 && !body.includes('post-snapshot event'); i++) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      body += decoder.decode(chunk.value, { stream: true });
+    }
+    ac.abort();
+    await reader.cancel().catch(() => {});
+    expect(brain.tapSnapshotCalls).toEqual([{ id: 2, session: 'brain-ch-subagent-a' }]);
+    expect(body).toContain('event: snapshot');
+    expect(body).toContain('stored child turn');
+    expect(body).toContain('running child output');
+    expect(body).toContain('post-snapshot event');
+    expect(body.indexOf('running child output')).toBeLessThan(body.indexOf('post-snapshot event'));
   });
 
   it('send before start returns 409', async () => {
@@ -123,6 +229,46 @@ describe('brain routes', () => {
     expect((await app.request('/brain/search?q=hi', auth(agentTok))).status).toBe(403);
     expect((await app.request('/brain/queue', auth(agentTok))).status).toBe(403);
     expect((await app.request('/brain/queue/x', del(agentTok))).status).toBe(403);
+    expect((await app.request('/brain/rate-limits', auth(agentTok))).status).toBe(403);
+    expect((await app.request('/brain/fast', post(agentTok, { on: true }))).status).toBe(403);
+    expect((await app.request('/brain/session/stop', post(agentTok, {}))).status).toBe(403);
+  });
+
+  it('toggles Fast for the bound session through both action routes', async () => {
+    const { app, amyTok, brain } = setup();
+    const direct = await app.request('/brain/fast', post(amyTok, { on: true, session: 'brain-child' }));
+    expect(direct.status).toBe(200);
+    expect(await direct.json()).toEqual({ fast: true, fastAvailable: true });
+    expect(brain.fastCalls.at(-1)).toEqual({ id: 2, on: true, session: 'brain-child' });
+
+    const command = await app.request('/brain/command', post(amyTok, { name: 'fast', on: false, session: 'brain-child' }));
+    expect(command.status).toBe(200);
+    expect((await command.json() as { message: string }).message).toBe('Fast mode disabled.');
+    expect(brain.fastCalls.at(-1)).toEqual({ id: 2, on: false, session: 'brain-child' });
+  });
+
+  it('stops a bound live session without deleting its persisted conversation', async () => {
+    const { app, amyTok, brain } = setup();
+    const res = await app.request('/brain/session/stop', post(amyTok, { session: 'brain-child', client: 'cli-a', generation: 3 }));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ stopped: true, disposed: true });
+    expect(brain.stopSessionCalls).toEqual([{ id: 2, session: 'brain-child', client: 'cli-a', generation: 3 }]);
+  });
+
+  it('publishes surface-specific Fast and rename commands from one catalog', async () => {
+    const { app, amyTok } = setup();
+    const cli = await (await app.request('/brain/commands?surface=cli', auth(amyTok))).json() as { commands: { name: string }[] };
+    const whatsapp = await (await app.request('/brain/commands?surface=whatsapp', auth(amyTok))).json() as { commands: { name: string }[] };
+    expect(cli.commands.map((c) => c.name)).toEqual(expect.arrayContaining(['fast', 'rename']));
+    expect(whatsapp.commands.map((c) => c.name)).toContain('fast');
+    expect(whatsapp.commands.map((c) => c.name)).not.toContain('rename');
+  });
+
+  it('returns no OAuth usage when no auth storage is configured', async () => {
+    const { app, amyTok } = setup();
+    const res = await app.request('/brain/rate-limits?session=brain-2', auth(amyTok));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toBeNull();
   });
 
   it('GET /brain/queue lists the caller\'s pending queue; DELETE removes one (unknown id → removed:false)', async () => {

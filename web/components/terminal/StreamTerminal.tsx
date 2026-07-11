@@ -105,5 +105,5 @@ export function StreamTerminal({ name }: { name: string }) {
   useEffect(() => { if (stream.status === 'open') syncSizeRef.current(); }, [stream.status]);
 
   if (fallback) return <Terminal name={name} interactive />;
-  return <div ref={ref} className="h-full w-full border border-border bg-bg" />;
+  return <div ref={ref} className="elowen-terminal h-full w-full overflow-hidden border border-border bg-bg" />;
 }

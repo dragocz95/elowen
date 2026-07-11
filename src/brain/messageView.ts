@@ -2,7 +2,7 @@
  *  raw content JSON). Kept as a local structural contract rather than importing `BrainMessageRow` from
  *  the store: the store imports `extractText` from here, so a type import back into the store would form
  *  a module cycle. `BrainMessageRow` satisfies this structurally, so callers pass their rows unchanged. */
-type StoredTurnRow = { role: string; content: string };
+type StoredTurnRow = { id?: string; role: string; content: string };
 
 export interface ToolOutputView {
   title: string;
@@ -17,15 +17,33 @@ export interface ToolOutputView {
   notes?: string[];
 }
 
+/** Durable latest state attached to a delegated tool call. Kept structural so BrainStore can pass its
+ *  validated sidecar rows without a store↔messageView import cycle. */
+export interface BrainSubagentView {
+  sessionId: string;
+  status: 'running' | 'done' | 'error';
+  task: string;
+  detail?: string;
+  tools: number;
+  tokens?: number;
+  seconds: number;
+  model?: string;
+}
+
 /** One display piece of an assistant turn, in the order it happened: a text block, or a tool call
- *  (with a short argument summary and, for edits, the display diff). */
+ *  (with a short argument summary and, for edits, the display diff). The call id stays on the wire so
+ *  a post-parent-idle background update can patch the already-settled row. */
 type BrainSegment =
   | { kind: 'text'; text: string }
-  | { kind: 'tool'; name: string; detail?: string; diff?: string; output?: ToolOutputView; command?: string };
+  | { kind: 'tool'; name: string; id?: string; detail?: string; diff?: string; output?: ToolOutputView; command?: string; sub?: BrainSubagentView };
 
 /** A stored turn shaped for display (the `GET /brain/messages` payload consumed by channels).
  *  `text` is the flat reply (title derivation, plain clients); `segments` preserve the true order. */
-export interface BrainMessageView { role: string; text: string; segments?: BrainSegment[] }
+/** A durable display row. `id` is the SQLite message UUID when the source is a real store row (the only
+ * case served over HTTP); structural callers without a store row may omit it. Reconnect consumers use it
+ * as identity, never a text/JSON fingerprint — compaction can delete an old identical reply and delegate
+ * progress can mutate one row's rendered segments without turning it into a new terminal line. */
+export interface BrainMessageView { id?: string; role: string; text: string; segments?: BrainSegment[] }
 
 /** A short, human-scannable summary of a tool call's most salient argument (the file path, command,
  *  query…), opencode-style: `read src/foo.ts`, `bash "npm test"`. */
@@ -277,13 +295,17 @@ export function isThinkingOnlyReply(msg: unknown): boolean {
  *  task-conversation endpoint. Only user + assistant turns surface; toolResult/summary rows are
  *  persisted for rehydration but never shown (edit diffs are lifted off toolResult rows onto their
  *  matching assistant toolCall segment). */
-export function shapeBrainMessages(rows: StoredTurnRow[]): BrainMessageView[] {
+export function shapeBrainMessages(
+  rows: StoredTurnRow[],
+  subagentRuns: readonly ({ toolCallId: string } & BrainSubagentView)[] = [],
+): BrainMessageView[] {
   // Edit diffs and raw tool results live on the toolResult rows (never shown raw) — index them by
   // toolCallId so the matching assistant toolCall segment can lift its diff and build its output view.
   // The result view is built LATER, from the assistant toolCall's `arguments` (the toolResult row has no
   // arguments), so a console tool's verbatim command survives into the preview.
   const diffs = new Map<string, string>();
   const results = new Map<string, { result: unknown; isError?: boolean }>();
+  const subagents = new Map(subagentRuns.map(({ toolCallId, ...state }) => [toolCallId, state]));
   for (const row of rows) {
     if (row.role !== 'toolResult') continue;
     try {
@@ -298,13 +320,16 @@ export function shapeBrainMessages(rows: StoredTurnRow[]): BrainMessageView[] {
     // A persisted compaction boundary (persistCompaction stores PI's compactionSummary under this role):
     // surface a marker turn so every client draws a subtle "context compacted" divider before the kept
     // tail. The summary itself stays out of the transcript — it's context for the model, not the reader.
-    if (row.role === 'compaction') { views.push({ role: 'compaction', text: '' }); continue; }
+    if (row.role === 'compaction') {
+      views.push({ ...(row.id ? { id: row.id } : {}), role: 'compaction', text: '' });
+      continue;
+    }
     if (row.role !== 'user' && row.role !== 'assistant') continue;
     let msg: { content?: unknown } = {};
     try { msg = JSON.parse(row.content) as { content?: unknown }; } catch { /* malformed row → skipped below */ }
     if (row.role === 'user') {
       const text = extractText(msg);
-      if (text.trim()) views.push({ role: 'user', text });
+      if (text.trim()) views.push({ ...(row.id ? { id: row.id } : {}), role: 'user', text });
       continue;
     }
     // Assistant: the content array preserves the true order of text and tool calls.
@@ -322,14 +347,25 @@ export function shapeBrainMessages(rows: StoredTurnRow[]): BrainMessageView[] {
         // only place the verbatim shell command survives — reaches the console renderer.
         const res = p.id ? results.get(p.id) : undefined;
         const output = res ? toolOutputView(p.name, p.arguments, res.result, res.isError) : undefined;
-        segments.push({ kind: 'tool', name: p.name, detail: toolDetail(p.arguments), diff: p.id ? diffs.get(p.id) : undefined, output, command: toolCommand(p.arguments) });
+        const detail = toolDetail(p.arguments);
+        const diff = p.id ? diffs.get(p.id) : undefined;
+        const command = toolCommand(p.arguments);
+        segments.push({
+          kind: 'tool', name: p.name,
+          ...(p.id ? { id: p.id } : {}),
+          ...(detail ? { detail } : {}),
+          ...(diff ? { diff } : {}),
+          ...(output ? { output } : {}),
+          ...(command ? { command } : {}),
+          ...(p.id && subagents.has(p.id) ? { sub: subagents.get(p.id) } : {}),
+        });
       }
     }
     if (typeof msg.content === 'string') {
       const clean = stripInlineReasoning(msg.content);
       if (clean.trim()) { text = clean; segments.push({ kind: 'text', text }); }
     }
-    if (segments.length > 0) views.push({ role: 'assistant', text, segments });
+    if (segments.length > 0) views.push({ ...(row.id ? { id: row.id } : {}), role: 'assistant', text, segments });
   }
   return views;
 }

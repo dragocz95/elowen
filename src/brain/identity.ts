@@ -1,6 +1,7 @@
 import type { TurnIdentity } from '../plugins/policyContext.js';
 import type { Policy } from '../plugins/policy.js';
 import type { SessionSource } from '../plugins/api.js';
+import type { DelegatedExecutionScope } from './delegatedScope.js';
 
 /** A platform sender resolved to the Elowen account that claimed the platform id in Account settings. */
 interface LinkedUser { id: number; name: string; username?: string; admin: boolean }
@@ -42,6 +43,18 @@ export class IdentityResolver {
     };
   }
 
+  /** Rehydrate the original identity of an idle delegated child. The child is never reinterpreted as
+   * the account owner merely because that account owns its SQLite row: only the captured origin-owner
+   * bit survives, and even that is meaningful only for the configured instance operator. */
+  forDelegatedTurn(scope: DelegatedExecutionScope, ownerUserId: number): TurnIdentity {
+    return {
+      platform: 'subagent',
+      userId: 'subagent',
+      admin: scope.admin,
+      owner: scope.owner && this.isOwner(ownerUserId),
+    };
+  }
+
   /** The identity of a platform turn (Discord message, cron tick, subagent delegation) plus the
    *  verified-identity line spliced ABOVE the sender's text when their platform id is linked to an
    *  Elowen account. The display name is attacker-influenced (a user picks their own Elowen name), so
@@ -53,16 +66,19 @@ export class IdentityResolver {
     const verifiedPrefix = linked
       ? `[Verified: this sender is the Elowen user "${safeName}"${linked.id === owner ? ' — the operator of this instance' : ''}]\n`
       : '';
-    // Owner-authored server-internal automation (cron/subagent) runs as the operator; a foreign
-    // platform member never does, regardless of admin-mapped roles.
-    const internalAutomation = src.platform === 'cron' || src.platform === 'subagent';
+    // Cron is owner-authored server automation. A subagent is different: it must carry the ORIGINAL
+    // turn's owner truth explicitly, because a foreign platform role can legitimately have admin scope.
+    // Deriving subagent ownership from `admin` would elevate that role into owner-only raw-token tools.
+    const automationOwner = src.platform === 'cron'
+      ? src.access?.admin === true
+      : src.platform === 'subagent' && src.access?.owner === true;
     const identity: TurnIdentity = {
       platform: src.platform,
       userId: src.userId,
       elowenUserId: linked?.id, // the verified Elowen account behind this platform sender (undefined = unlinked)
       elowenUsername: linked?.username || linked?.name,
       admin: src.access?.admin === true || linked?.admin === true,
-      owner: (linked?.id !== undefined && this.isOwner(linked.id)) || (internalAutomation && src.access?.admin === true),
+      owner: (linked?.id !== undefined && this.isOwner(linked.id)) || automationOwner,
     };
     // linkedUserId is the Elowen account this platform sender is verified as (their Discord id claimed in
     // Account settings). Memory recall/save keys on it: an unlinked sender has no account, so no memory.

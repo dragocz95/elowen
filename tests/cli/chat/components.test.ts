@@ -42,6 +42,15 @@ describe('chat components', () => {
     expect(lines[6]).toContain('+3 more queued');
   });
 
+  it('QueuedMessages obeys the shell hard cap even when the queue and hint are large', () => {
+    const q = new QueuedMessages();
+    q.setMaxRows(2);
+    q.set(Array.from({ length: 9 }, (_, i) => ({ id: String(i), text: `msg ${i}` })), 'remove hint');
+    const lines = q.render(40);
+    expect(lines).toHaveLength(2);
+    expect(lines[1]).toContain('more queued');
+  });
+
   it('StatusBar justifies left and right to the edges', () => {
     const [line] = new StatusBar('L', 'R').render(10);
     expect(visibleWidth(line!)).toBe(10);
@@ -86,6 +95,19 @@ describe('chat components', () => {
     expect(panel.render(80)).toEqual([]);
   });
 
+  it('CardPanel clips a large Todo card to its assigned row budget', () => {
+    const panel = new CardPanel();
+    panel.setMaxRows(3);
+    panel.set([{
+      id: 'todos', title: 'Todos', pinned: true,
+      items: Array.from({ length: 20 }, (_, i) => ({ text: `Task ${i}`, status: 'pending' as const })),
+    }]);
+    const lines = panel.render(80);
+    expect(lines).toHaveLength(3);
+    expect(lines[2]).toContain('more');
+    expect(panel.isHeaderRow(0)).toBe(true);
+  });
+
   it('cardBlock renders a compact todo checklist plus optional body', () => {
     const out = cardBlock({
       id: 'todos', title: 'Todos',
@@ -127,6 +149,19 @@ describe('SubagentPanel', () => {
     expect(p.targetAt(1)).toBe('brain-ch-subagent-a');
     expect(p.targetAt(0)).toBeNull();
   });
+
+  it('caps running sub-agents and exposes click targets only for rendered rows', () => {
+    const p = new SubagentPanel();
+    p.setMaxRows(3);
+    p.set(Array.from({ length: 8 }, (_, i) => ({ ...running, sessionId: `child-${i}`, task: `task ${i}` })));
+    expect(p.render(80)).toHaveLength(3);
+    expect(p.targetAt(1)).toBe('child-0');
+    expect(p.targetAt(2)).toBe('child-1');
+    expect(p.targetAt(3)).toBeNull();
+    p.setMaxRows(0);
+    expect(p.render(80)).toEqual([]);
+    expect(p.isHeaderRow(0)).toBe(false);
+  });
 });
 
 describe('ProcessPanel', () => {
@@ -166,5 +201,15 @@ describe('ProcessPanel', () => {
     expect(lines).toHaveLength(1);
     expect(p.isHeaderRow(0)).toBe(true);
     expect(p.killAt(1, 79)).toBeNull();
+  });
+
+  it('caps a large process list and never leaves kill zones for clipped rows', () => {
+    const p = new ProcessPanel();
+    p.setMaxRows(3);
+    p.set(Array.from({ length: 8 }, (_, i) => proc({ id: `p${i}`, command: `job ${i}` })));
+    const lines = p.render(50, now);
+    expect(lines).toHaveLength(3);
+    expect(lines[2]).toContain('more running');
+    expect(p.killAt(3, 50)).toBeNull();
   });
 });

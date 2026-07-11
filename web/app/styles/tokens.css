@@ -1,11 +1,11 @@
 @theme {
   /* OLED Ember: true black canvas, warm near-black surfaces, one unmistakable Elowen accent. */
   --color-bg: #000000;
-  --color-surface: #090807;
-  --color-elevated: #13100f;
-  --color-overlay: #1b1614;
-  --color-border: #29221f;
-  --color-border-strong: #40332e;
+  --color-surface: #070707;
+  --color-elevated: #0d0d0d;
+  --color-overlay: #151515;
+  --color-border: #242424;
+  --color-border-strong: #363636;
   --color-accent: #ff5236;
   --color-accent-hot: #ff735c;
   --color-ember: #ff9a62;
@@ -58,5 +58,5 @@
 :root {
   color-scheme: dark;
   --ambient-accent: rgb(255 82 54 / 0.1);
-  --ambient-warm: rgb(255 154 98 / 0.055);
+  --ambient-warm: rgb(255 82 54 / 0.025);
 }

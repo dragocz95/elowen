@@ -1,13 +1,29 @@
 import { AuthStorage } from '@earendil-works/pi-coding-agent';
 import { APP_IDENTITY_HEADERS } from '../inference/appIdentity.js';
 import type { BrainProviderEntry, BrainRuntimeConfig } from './providers.js';
-import { buildBrainRegistry, registryProviderName, OAUTH_BUILTIN, DEFAULT_CONTEXT_WINDOW } from './providers.js';
+import { buildBrainRegistry, registryProviderName, resolveBrainModel, OAUTH_BUILTIN, DEFAULT_CONTEXT_WINDOW } from './providers.js';
+import { inferredModelCapabilities, modelCapabilities } from './modelCapabilities.js';
 
 /** One pickable model for the account UI dropdown, grouped by the provider entry it runs through.
  *  `source` marks how the provider authenticates (OAuth account / API key / relay fallback).
  *  `contextWindow` is the effective max context (operator override for `providerId/model`, else the
  *  default placeholder); `contextWindowSet` tells the UI whether it's a pinned value or the fallback. */
-export interface BrainModelOption { provider: string; providerLabel: string; model: string; source: 'api-key' | 'oauth' | 'relay'; contextWindow: number; contextWindowSet: boolean; free?: boolean }
+export interface BrainModelOption {
+  provider: string;
+  providerLabel: string;
+  model: string;
+  source: 'api-key' | 'oauth' | 'relay';
+  contextWindow: number;
+  contextWindowSet: boolean;
+  free?: boolean;
+  /** PI-canonical reasoning ids plus provider-facing display labels (e.g. xhigh → ultra). */
+  reasoningLevels?: string[];
+  reasoningLabels?: Record<string, string>;
+  /** Whether ChatGPT OAuth priority processing can be selected for this model. */
+  fastAvailable?: boolean;
+  /** The exact provider/model resolveBrainModel() chooses when no per-user/channel override exists. */
+  default?: boolean;
+}
 
 const FETCH_TTL_MS = 60_000;
 /** One model advertised by an endpoint's /models — its id plus the context window when the provider
@@ -71,8 +87,16 @@ export function oauthBuiltinCatalog(type: string): string[] {
  *  the built-in pi-ai catalog for their upstream. */
 export async function listBrainModels(cfg: BrainRuntimeConfig, fetchImpl: typeof fetch = fetch): Promise<BrainModelOption[]> {
   const out: BrainModelOption[] = [];
-  // One registry just to read the built-in catalogs for OAuth providers (no auth needed to list).
-  const registry = buildBrainRegistry({ providers: [] }, AuthStorage.inMemory());
+  // One registry to read both built-in OAuth metadata and Elowen's custom-model capability profiles.
+  // No credentials are required to inspect descriptors.
+  const registry = buildBrainRegistry(cfg, AuthStorage.inMemory());
+  let defaultProvider: string | undefined;
+  let defaultModel: string | undefined;
+  try {
+    const resolved = resolveBrainModel(registry, cfg);
+    defaultProvider = cfg.providers[0]?.id;
+    defaultModel = resolved.id;
+  } catch { /* an incomplete provider can still expose its fetched catalog, but has no runnable default */ }
   for (const p of cfg.providers) {
     // Prefer the endpoint's own /models (it may report per-model context windows) — for BOTH an empty
     // manual list AND a manually-listed openai provider (so a hand-picked model still gets its reported
@@ -104,7 +128,23 @@ export async function listBrainModels(cfg: BrainRuntimeConfig, fetchImpl: typeof
       const pinned = cfg.contextWindows?.[`${p.id}/${e.id}`];
       // Effective context window precedence: operator override → provider-reported → default placeholder.
       const effective = pinned && pinned > 0 ? pinned : (e.contextWindow ?? DEFAULT_CONTEXT_WINDOW);
-      return { provider: p.id, providerLabel: p.label, model: e.id, source: p.origin ?? 'api-key' as const, contextWindow: effective, contextWindowSet: !!(pinned && pinned > 0), ...(free ? { free } : {}) };
+      const resolved = registry.find(registryProviderName(p), e.id);
+      const capabilities = resolved
+        ? modelCapabilities(resolved)
+        : inferredModelCapabilities(registryProviderName(p), e.id);
+      return {
+        provider: p.id, providerLabel: p.label, model: e.id,
+        source: p.origin ?? 'api-key' as const,
+        contextWindow: effective,
+        contextWindowSet: !!(pinned && pinned > 0),
+        ...(free ? { free } : {}),
+        ...(capabilities.reasoning ? {
+          reasoningLevels: capabilities.levels,
+          reasoningLabels: Object.fromEntries(capabilities.levels.map((level) => [level, capabilities.labels[level] ?? level])),
+        } : {}),
+        ...(capabilities.fast ? { fastAvailable: true } : {}),
+        ...(p.id === defaultProvider && e.id === defaultModel ? { default: true } : {}),
+      };
     };
     out.push(...entries.map((e) => toOption(e)));
     out.push(...freeEntries.map((e) => toOption(e, true)));

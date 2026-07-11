@@ -2,6 +2,7 @@ import type { Skill, ToolDefinition } from '@earendil-works/pi-coding-agent';
 import type { SubagentEmitter, TurnIdentity, TurnModel } from './policyContext.js';
 import type { AskAnswer, AskQuestion, BrainCard } from '../brain/events.js';
 import type { ProcessRegistry } from '../brain/processRegistry.js';
+import type { NoninteractivePermissionBoundary } from '../brain/toolPermissions.js';
 
 /** A skill contributed by a plugin. Reuses pi's file-backed `Skill` (name/description/filePath…), so it
  *  feeds PI's native path unchanged (the session factory's `skillsOverride` → progressive disclosure in
@@ -89,7 +90,18 @@ export interface SessionSource {
    *  so the brain can see what was said in the channel before it joined. Returns a ready context
    *  block (or '' when nothing is available). */
   history?: () => Promise<string>;
-  access?: { projectIds: number[]; prompt?: string; admin?: boolean; model?: { provider?: string; model?: string }; thinkingLevel?: string; tools?: string[];
+  access?: { projectIds: number[]; prompt?: string; admin?: boolean; model?: { provider?: string; model?: string }; thinkingLevel?: string; fast?: boolean; tools?: string[];
+    /** True only when the ORIGINAL delegating turn belongs to the instance operator. `admin` is project
+     *  scope and is deliberately insufficient: a foreign platform role may be admin without being owner. */
+    owner?: boolean;
+    /** Exact execute-time plugin-tool policy inherited by a delegated child. Arrays preserve an empty
+    *  allow-list (deny everything), unlike a platform role's legacy `tools: []` = unrestricted convention. */
+    toolPolicy?: { allow?: string[]; deny?: string[] };
+    /** Effective ordered granular permission boundary captured by `ctx.currentAccess()` for a delegated
+     * child. Explicit null means the parent turn had no permission gate wired; absence is rejected. */
+    permissionBoundary?: NoninteractivePermissionBoundary | null;
+    /** Delegated channel session's durable parent conversation. Host validates owner + existence. */
+    parentSessionId?: string;
     /** Idle cutoff (ms) for THIS surface's channel session — forwarded to ChannelSessionService.send as
      *  `idleRolloverMs`. Set by cron (shorter than the default 30 min) so a frequent job whose gap between
      *  ticks exceeds the prompt-cache window starts a fresh session instead of re-sending a growing context
@@ -122,13 +134,15 @@ export interface ChannelRef { platform: string; channelId: string; threadId?: st
 export interface PlatformControlApi {
   /** Live model, whether a turn is in flight, and context usage of the channel's session — or null when
    *  nothing is spawned. */
-  status(ref: ChannelRef): { model: string; streaming: boolean; usage: { tokens: number | null; contextWindow: number; percent: number | null } } | null;
+  status(ref: ChannelRef): { provider?: string; model: string; streaming: boolean; usage: { tokens: number | null; contextWindow: number; percent: number | null }; fast: boolean; fastAvailable: boolean } | null;
   /** Abort the channel's in-flight turn (no-op when idle). */
-  abort(ref: ChannelRef): void;
+  abort(ref: ChannelRef): Promise<void>;
   /** Compact the channel session's context; resolves to `{ usage, compacted }` (null if no session).
    *  `compacted:false` is a benign no-op (nothing to compact yet), not an error — only a real compaction
    *  failure rejects, so the caller can tell "no session" from "nothing to do" from a genuine error. */
   compact(ref: ChannelRef): Promise<{ usage: { tokens: number | null; contextWindow: number; percent: number | null }; compacted: boolean; message?: string } | null>;
+  /** Set/toggle ChatGPT OAuth priority processing for this channel. */
+  setFast(ref: ChannelRef, on?: boolean): { fast: boolean; fastAvailable: boolean } | null;
   /** Admin-only daemon restart (attributed to the instance operator); rejects when restart isn't
    *  available on this deployment. The caller is responsible for its own admin gate. */
   restart(): Promise<void>;
@@ -141,6 +155,16 @@ export interface PluginLogger { info(msg: string): void; warn(msg: string): void
  *  so a plugin (voice STT/TTS, image gen) reads ONE shared key instead of duplicating it. `apiKey` is
  *  null for OAuth providers (no static key). */
 export interface ProviderCredentials { id: string; label: string; type: string; baseUrl: string; apiKey: string | null }
+
+export interface PluginModelOption {
+  provider: string;
+  providerLabel: string;
+  model: string;
+  default?: boolean;
+  reasoningLevels?: string[];
+  reasoningLabels?: Record<string, string>;
+  fastAvailable?: boolean;
+}
 
 /** The SHARED text→vector embedder handed to a plugin (`ctx.embeddings`), gated deny-by-default by a
  *  `reads:['embeddings']` capability. It is the SAME EmbeddingService + Settings→Memory embedding config
@@ -180,7 +204,7 @@ export interface PluginCommand {
   /** The prompt sent to the agent; PI substitutes `$ARGUMENTS`/`$@`, `$1`..`$9`, `${N:-default}`. */
   prompt: string;
   /** Which surfaces expose it (default: all). */
-  surfaces?: ('cli' | 'discord' | 'web')[];
+  surfaces?: ('cli' | 'discord' | 'whatsapp' | 'web')[];
 }
 
 /** What a plugin's `register(ctx)` receives. Every `register*` call feeds the shared PluginRegistry. */
@@ -194,6 +218,8 @@ export interface PluginContext {
    *  Refused (and warned) if the name is not kebab-case, shadows a built-in, or collides with another
    *  plugin's command. */
   registerCommand(command: PluginCommand): void;
+  /** Core chat command metadata for a platform. Adapters own presentation only; names/help live once. */
+  chatCommands(surface: 'discord' | 'whatsapp'): { name: string; description: string; adminOnly?: boolean }[];
   /** Append a chunk of instructions to the brain's system prompt, after the Elowen persona. */
   registerSystemPromptFragment(fragment: string): void;
   registerHook(hook: PluginHook): void;
@@ -219,9 +245,10 @@ export interface PluginContext {
   /** Whether the CURRENT turn runs with the owner's all-access policy (admin chat session). Tools that
    *  manage shared state (cron jobs, skills) gate on this so channel senders can't reach them. */
   isAdminSession(): boolean;
-  /** The current turn's access (admin flag + project ids) — a plugin forwards this when delegating to
-   *  a sub-agent so the child inherits exactly the caller's scope, never more. */
-  currentAccess(): { projectIds: number[]; admin: boolean };
+  /** The current turn's complete delegable authorization descriptor. `owner` is independent from admin,
+   *  toolPolicy carries exact allow+deny sets, and permissionBoundary carries the effective unattended
+   *  granular-rule context so a child inherits exactly the caller's scope. */
+  currentAccess(): { projectIds: number[]; admin: boolean; owner: boolean; toolPolicy?: { allow?: string[]; deny?: string[] }; permissionBoundary: NoninteractivePermissionBoundary | null };
   /** Who is driving the current turn (platform sender, resolved Elowen account, admin flag) — plugins
    *  that persist per-user state (long-term memory) key it on this. Null outside a prompt turn. */
   currentIdentity(): TurnIdentity | null;
@@ -267,7 +294,7 @@ export interface PluginContext {
   currentModel(): TurnModel | null;
   /** Pickable brain models across every configured provider (feeds the Discord /model dropdown).
    *  Empty when nothing is wired. */
-  listModels(): Promise<{ provider: string; providerLabel: string; model: string }[]>;
+  listModels(): Promise<PluginModelOption[]>;
   /** Resolve a configured brain provider's credentials (baseUrl + apiKey) by id — lets a plugin reuse
    *  the operator's central provider key (voice STT/TTS, image gen) instead of its own secret field.
    *  Null when the id is unknown. Reads live config, so a key change applies on the next call.

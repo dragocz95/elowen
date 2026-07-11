@@ -61,6 +61,24 @@ describe('exportBrainSession', () => {
     } finally { out.cleanup(); }
   });
 
+  it('includes durable delegated-child status in the HTML transcript', async () => {
+    store.appendMessage({
+      id: 'a2', sessionId: 's1', parentId: null, role: 'assistant',
+      content: { role: 'assistant', content: [{ type: 'toolCall', id: 'delegate-1', name: 'delegate', arguments: { task: 'inspect' } }] },
+    });
+    store.createSession({ id: 'brain-ch-subagent-child', userId: 1, model: 'child-model', parentSessionId: 's1' });
+    expect(store.upsertSubagentRun('s1', {
+      id: 'delegate-1', sessionId: 'brain-ch-subagent-child', status: 'done', task: 'inspect',
+      detail: 'finished safely', tools: 3, tokens: 700, seconds: 5, model: 'child-model',
+    })).toBe(true);
+    const out = await exportBrainSession({ store, sessionId: 's1', cwd: '/tmp', title: 'Chat about pi', format: 'html' });
+    try {
+      const html = readFileSync(out.path, 'utf8');
+      expect(html).toContain('sub-agent · done · 3 tools · 700 tokens · 5s · child-model');
+      expect(html).toContain('finished safely');
+    } finally { out.cleanup(); }
+  });
+
   it('falls back to the session id when the title has no filename-safe characters', async () => {
     const out = await exportBrainSession({ store, sessionId: 's1', cwd: '/tmp', title: '···', format: 'jsonl' });
     try { expect(out.filename).toBe('elowen-s1.jsonl'); } finally { out.cleanup(); }

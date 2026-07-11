@@ -35,7 +35,7 @@ export function register(ctx) {
   try { mkdirSync(authDir, { recursive: true }); } catch { /* exists */ }
   // The image-gen/image-edit plugins are data-dir siblings — their generated PNGs upload from there.
   const imageDirs = [join(dataDir, '..', 'image-gen'), join(dataDir, '..', 'image-edit')];
-  const adapter = new WhatsAppAdapter({ ...ctx.config }, ctx.logger, state, ctx.listModels, imageDirs, authDir, join(dataDir, 'qr.png'), ctx.answerQuestion);
+  const adapter = new WhatsAppAdapter({ ...ctx.config }, ctx.logger, state, ctx.listModels, imageDirs, authDir, join(dataDir, 'qr.png'), ctx.answerQuestion, ctx.chatCommands('whatsapp'));
   ctx.registerPlatform(adapter);
   registerTools(ctx, adapter);
   ctx.logger.info('whatsapp platform registered (text commands + model picker + streaming + group tools)');

@@ -18,8 +18,15 @@ describe('decideVisionHop — the vision-fallback decision, isolated from sessio
   });
 
   it('an image turn when the current model already IS the vision model never hops', () => {
-    expect(decideVisionHop({ hasImages: true, onFallback: false, currentModel: 'v', visionModel: 'v' }))
+    expect(decideVisionHop({ hasImages: true, onFallback: false, currentModel: 'v', currentProvider: 'p', visionModel: 'v', visionModelProvider: 'p' }))
       .toEqual({ action: 'none' });
+  });
+
+  it('hops when the same model id is configured through a different provider', () => {
+    expect(decideVisionHop({
+      hasImages: true, onFallback: false, currentModel: 'shared', currentProvider: 'text-provider',
+      visionModel: 'shared', visionModelProvider: 'vision-provider',
+    })).toEqual({ action: 'hop', provider: 'vision-provider', model: 'shared' });
   });
 
   it('a text-only turn while parked on the fallback hops back to the normal model', () => {
@@ -33,7 +40,7 @@ describe('decideVisionHop — the vision-fallback decision, isolated from sessio
   });
 
   it('consecutive image turns while parked on the fallback stay put (already on the vision model)', () => {
-    expect(decideVisionHop({ hasImages: true, onFallback: true, currentModel: 'v', visionModel: 'v' }))
+    expect(decideVisionHop({ hasImages: true, onFallback: true, currentModel: 'v', currentProvider: 'p', visionModel: 'v', visionModelProvider: 'p' }))
       .toEqual({ action: 'none' });
   });
 });

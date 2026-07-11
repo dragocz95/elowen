@@ -345,6 +345,250 @@ describe('discord display settings', () => {
   });
 });
 
+describe('discord reasoning picker', () => {
+  const makeAdapter = async (models: unknown[], initial: Record<string, unknown> = {}, language = 'en') => {
+    const { DiscordAdapter } = await import(join(repoRoot, 'plugins/discord/lib/adapter.mjs')) as { DiscordAdapter: new (...args: unknown[]) => any };
+    const channels: Record<string, Record<string, unknown>> = { C: initial };
+    const state = {
+      get: (id: string) => channels[id] ?? {},
+      patch: (id: string, fields: Record<string, unknown>) => { channels[id] = { ...(channels[id] ?? {}), ...fields }; },
+    };
+    const adapter = new DiscordAdapter(
+      { language, rolePolicies: [{ roleId: 'ADMIN', admin: true }] },
+      log, state, async () => models,
+    );
+    const replies: unknown[] = [];
+    adapter.rest = async (_method: string, _path: string, body: unknown) => { replies.push(body); return {}; };
+    return { adapter, channels, replies };
+  };
+
+  it('registers /reasoning without a static universal choice list', async () => {
+    const { adapter, replies } = await makeAdapter([]);
+    adapter.appId = 'APP';
+    await adapter.registerCommands();
+    const commands = replies[0] as Array<{ name: string; options?: unknown[] }>;
+    expect(commands.find((command) => command.name === 'reasoning')).toEqual({
+      name: 'reasoning', description: 'Set reasoning effort for this channel', type: 1,
+    });
+  });
+
+  it('uses only the selected model capabilities and shows the supplied xhigh label as ultra', async () => {
+    const models = [
+      { provider: 'plain', providerLabel: 'Plain', model: 'chat-only' },
+      {
+        provider: 'oauth', providerLabel: 'OpenAI OAuth', model: 'gpt-5.4',
+        reasoningLevels: ['low', 'medium', 'high', 'xhigh'],
+        reasoningLabels: { low: 'low', medium: 'medium', high: 'high', xhigh: 'ultra' },
+      },
+    ];
+    const { adapter, channels, replies } = await makeAdapter(models, {
+      model: { provider: 'oauth', model: 'gpt-5.4' }, thinkingLevel: 'xhigh',
+    });
+    await adapter.onInteraction({
+      type: 2, id: 'I', token: 'T', channel_id: 'C', member: { roles: ['ADMIN'] }, data: { name: 'reasoning' },
+    });
+    const response = replies[0] as { type: number; data: { components: Array<{ components: Array<{ options: Array<{ label: string; value: string; default: boolean }> }> }> } };
+    expect(response.type).toBe(4);
+    expect(response.data.components[0]!.components[0]!.options).toEqual([
+      { label: 'Default (model default)', value: 'default', default: false },
+      { label: 'low', value: 'low', default: false },
+      { label: 'medium', value: 'medium', default: false },
+      { label: 'high', value: 'high', default: false },
+      { label: 'ultra', value: 'xhigh', default: true },
+    ]);
+
+    replies.length = 0;
+    await adapter.onInteraction({
+      type: 3, id: 'I2', token: 'T2', channel_id: 'C', member: { roles: ['ADMIN'] },
+      data: { custom_id: 'pick_reasoning', values: ['xhigh'] },
+    });
+    expect(channels.C?.thinkingLevel).toBe('xhigh');
+    expect(JSON.stringify(replies[0])).toContain('Reasoning effort set to **ultra**');
+  });
+
+  it('uses the daemon-resolved default when the channel has no model override', async () => {
+    const models = [
+      { provider: 'plain', providerLabel: 'Plain', model: 'catalog-first' },
+      { provider: 'oauth', providerLabel: 'OAuth', model: 'actual-default', default: true, reasoningLevels: ['low'] },
+    ];
+    const { adapter, replies } = await makeAdapter(models);
+    await adapter.onInteraction({
+      type: 2, id: 'I', token: 'T', channel_id: 'C', member: { roles: ['ADMIN'] }, data: { name: 'reasoning' },
+    });
+    expect(JSON.stringify(replies[0])).toContain('"value":"low"');
+
+    replies.length = 0;
+    await adapter.onInteraction({
+      type: 2, id: 'I2', token: 'T2', channel_id: 'C', member: { roles: ['ADMIN'] }, data: { name: 'model' },
+    });
+    const options = (replies[0] as { data: { components: Array<{ components: Array<{ options: Array<{ value: string; default: boolean }> }> }> } })
+      .data.components[0]!.components[0]!.options;
+    expect(options.find((option) => option.value === 'oauth::actual-default')?.default).toBe(true);
+  });
+
+  it('localizes the model-default reasoning reply', async () => {
+    const models = [{ provider: 'oauth', providerLabel: 'OAuth', model: 'reasoner', default: true, reasoningLevels: ['low'] }];
+    const { adapter, replies } = await makeAdapter(models, {}, 'cs');
+    await adapter.onInteraction({
+      type: 3, id: 'I', token: 'T', channel_id: 'C', member: { roles: ['ADMIN'] },
+      data: { custom_id: 'pick_reasoning', values: ['default'] },
+    });
+    expect(JSON.stringify(replies[0])).toContain('**výchozí**');
+    expect(JSON.stringify(replies[0])).not.toContain('**default**');
+  });
+
+  it('clearly rejects a selected model without configurable reasoning in both locales', async () => {
+    const models = [
+      { provider: 'oauth', providerLabel: 'OpenAI OAuth', model: 'gpt-5.4', reasoningLevels: ['low', 'high'] },
+      { provider: 'plain', providerLabel: 'Plain', model: 'chat-only' },
+    ];
+    for (const [language, message] of [
+      ['en', 'does not support configurable reasoning effort'],
+      ['cs', 'nepodporuje nastavitelnou úroveň uvažování'],
+    ] as const) {
+      const { adapter, replies } = await makeAdapter(models, { model: { provider: 'plain', model: 'chat-only' } }, language);
+      await adapter.onInteraction({
+        type: 2, id: 'I', token: 'T', channel_id: 'C', member: { roles: ['ADMIN'] }, data: { name: 'reasoning' },
+      });
+      const response = replies[0] as { data: { content: string; components?: unknown[] } };
+      expect(response.data.content).toContain(message);
+      expect(response.data.components).toBeUndefined();
+    }
+  });
+
+  it('revalidates component values against current model capabilities before persisting', async () => {
+    const models = [{
+      provider: 'oauth', providerLabel: 'OpenAI OAuth', model: 'gpt-5.4',
+      reasoningLevels: ['low', 'high'], reasoningLabels: { low: 'low', high: 'high' },
+    }];
+    const { adapter, channels, replies } = await makeAdapter(models, {
+      model: { provider: 'oauth', model: 'gpt-5.4' }, thinkingLevel: 'low',
+    });
+    await adapter.onInteraction({
+      type: 3, id: 'I', token: 'T', channel_id: 'C', member: { roles: ['ADMIN'] },
+      data: { custom_id: 'pick_reasoning', values: ['xhigh'] },
+    });
+    expect(channels.C?.thinkingLevel).toBe('low');
+    expect(JSON.stringify(replies[0])).toContain('does not support configurable reasoning effort');
+  });
+
+  it('keeps explicit off distinct from the model default', async () => {
+    const models = [{
+      provider: 'oauth', providerLabel: 'OAuth', model: 'reasoner',
+      reasoningLevels: ['off', 'low', 'high'],
+    }];
+    const { adapter, channels } = await makeAdapter(models, { model: { provider: 'oauth', model: 'reasoner' } });
+    await adapter.onInteraction({
+      type: 3, id: 'I-off', token: 'T-off', channel_id: 'C', member: { roles: ['ADMIN'] },
+      data: { custom_id: 'pick_reasoning', values: ['off'] },
+    });
+    expect(channels.C?.thinkingLevel).toBe('off');
+  });
+});
+
+describe('discord /fast capability gate', () => {
+  const makeAdapter = async (models: unknown[], initial: Record<string, unknown> = {}) => {
+    const { DiscordAdapter } = await import(join(repoRoot, 'plugins/discord/lib/adapter.mjs')) as { DiscordAdapter: new (...args: unknown[]) => any };
+    const channels: Record<string, Record<string, unknown>> = { C: initial };
+    const state = {
+      get: (id: string) => channels[id] ?? {},
+      patch: (id: string, fields: Record<string, unknown>) => { channels[id] = { ...(channels[id] ?? {}), ...fields }; },
+    };
+    const adapter = new DiscordAdapter(
+      { language: 'en', rolePolicies: [{ roleId: 'ADMIN', admin: true }] },
+      log, state, async () => models,
+    );
+    const replies: unknown[] = [];
+    adapter.rest = async (_method: string, _path: string, body: unknown) => { replies.push(body); return {}; };
+    return { adapter, channels, replies };
+  };
+
+  it('does not let a stale OAuth live session enable fast for a selected non-OAuth model', async () => {
+    const models = [{ provider: 'plain', providerLabel: 'Plain', model: 'chat-only' }];
+    const { adapter, channels, replies } = await makeAdapter(models, {
+      model: { provider: 'plain', model: 'chat-only' }, fast: false,
+    });
+    const setFast = vi.fn(() => ({ fast: true, fastAvailable: true }));
+    adapter.control({
+      status: () => ({ provider: 'oauth', model: 'gpt-5.4', streaming: false, usage: {}, fast: false, fastAvailable: true }),
+      setFast,
+    });
+
+    await adapter.onInteraction({
+      type: 2, id: 'I', token: 'T', channel_id: 'C', member: { roles: ['ADMIN'] }, data: { name: 'fast' },
+    });
+    expect(setFast).not.toHaveBeenCalled();
+    expect(channels.C?.fast).toBe(false);
+    expect(JSON.stringify(replies[0])).toContain('available only with an OpenAI OAuth model');
+  });
+
+  it('persists Fast for a newly selected OAuth model without asking the stale non-OAuth live session', async () => {
+    const models = [{ provider: 'oauth', providerLabel: 'OpenAI OAuth', model: 'gpt-5.4', fastAvailable: true }];
+    const { adapter, channels } = await makeAdapter(models, { model: { provider: 'oauth', model: 'gpt-5.4' }, fast: false });
+    const setFast = vi.fn(() => ({ fast: false, fastAvailable: false }));
+    adapter.control({
+      status: () => ({ provider: 'plain', model: 'chat-only', streaming: false, usage: {}, fast: false, fastAvailable: false }),
+      setFast,
+    });
+
+    await adapter.onInteraction({
+      type: 2, id: 'I', token: 'T', channel_id: 'C', member: { roles: ['ADMIN'] },
+      data: { name: 'fast', options: [{ name: 'state', value: 'on' }] },
+    });
+
+    expect(setFast).not.toHaveBeenCalled();
+    expect(channels.C?.fast).toBe(true);
+  });
+
+  it('toggles fast for an OAuth model and allows stale state to be disabled elsewhere', async () => {
+    const models = [
+      { provider: 'oauth', providerLabel: 'OpenAI OAuth', model: 'gpt-5.4', fastAvailable: true },
+      { provider: 'plain', providerLabel: 'Plain', model: 'chat-only' },
+    ];
+    const { adapter, channels, replies } = await makeAdapter(models, {
+      model: { provider: 'oauth', model: 'gpt-5.4' }, fast: false,
+    });
+    const setFast = vi.fn((_ref: unknown, on?: boolean) => ({ fast: on === true, fastAvailable: true }));
+    adapter.control({
+      status: () => ({ provider: 'oauth', model: 'gpt-5.4', streaming: false, usage: {}, fast: false, fastAvailable: true }),
+      setFast,
+    });
+
+    await adapter.onInteraction({
+      type: 2, id: 'I1', token: 'T1', channel_id: 'C', member: { roles: ['ADMIN'] },
+      data: { name: 'fast', options: [{ name: 'state', value: 'on' }] },
+    });
+    expect(setFast).toHaveBeenCalledWith({ platform: 'discord', channelId: 'C#0' }, true);
+    expect(channels.C?.fast).toBe(true);
+    expect(JSON.stringify(replies.at(-1))).toContain('Fast mode **on**');
+
+    channels.C = { model: { provider: 'plain', model: 'chat-only' }, fast: true };
+    setFast.mockClear();
+    await adapter.onInteraction({
+      type: 2, id: 'I2', token: 'T2', channel_id: 'C', member: { roles: ['ADMIN'] },
+      data: { name: 'fast', options: [{ name: 'state', value: 'off' }] },
+    });
+    expect(setFast).not.toHaveBeenCalled();
+    expect(channels.C?.fast).toBe(false);
+    expect(JSON.stringify(replies.at(-1))).toContain('Fast mode **off**');
+  });
+
+  it('clears fast when the model picker moves the channel away from OpenAI OAuth', async () => {
+    const models = [
+      { provider: 'oauth', providerLabel: 'OpenAI OAuth', model: 'gpt-5.4', fastAvailable: true },
+      { provider: 'plain', providerLabel: 'Plain', model: 'chat-only' },
+    ];
+    const { adapter, channels } = await makeAdapter(models, {
+      model: { provider: 'oauth', model: 'gpt-5.4' }, fast: true,
+    });
+    await adapter.onInteraction({
+      type: 3, id: 'I', token: 'T', channel_id: 'C', member: { roles: ['ADMIN'] },
+      data: { custom_id: 'pick_model', values: ['plain::chat-only'] },
+    });
+    expect(channels.C).toMatchObject({ model: { provider: 'plain', model: 'chat-only' }, fast: false });
+  });
+});
+
 describe('discord answer streaming (live reply edits, two-bubble model)', () => {
   interface Ev { type: string; name?: string; detail?: string; icon?: string; delta?: string; model?: string; usage?: { percent: number } }
   const load = async () => (await import(join(repoRoot, 'plugins/discord/index.mjs'))) as {
@@ -810,6 +1054,44 @@ describe('discord onMessage context pipeline', () => {
     expect(seen!.src.channelTopic).toBe('Team chat');
     expect(seen!.src.images).toBeUndefined();
     expect(seen!.src.channelId).toBe('100#0');
+  });
+
+  it('clears Fast only on a temporary non-OAuth vision fallback without changing channel state', async () => {
+    const reg = await loadPlugins({
+      dirs: [join(repoRoot, 'plugins')], enabled: ['discord'], logger: log,
+      config: { discord: {
+        botToken: 'tok', visionModel: 'elowen:vision/image-model',
+        rolePolicies: [{ roleId: 'R1', name: 'Dev', projectIds: [1] }], streaming: false, reactions: false,
+      } },
+      listModels: async () => [
+        { provider: 'oauth', providerLabel: 'OAuth', model: 'normal', fastAvailable: true },
+        { provider: 'vision', providerLabel: 'Vision', model: 'image-model' },
+      ],
+    });
+    const adapter = reg.platforms[0] as unknown as {
+      botId: string | null;
+      state: { get(id: string): Record<string, unknown>; patch(id: string, fields: Record<string, unknown>): void };
+      rest: (method: string, path: string, body?: unknown) => Promise<unknown>;
+      listen: (h: (src: { access?: Record<string, unknown> }) => Promise<string | undefined>) => void;
+      onMessage: (m: unknown) => Promise<void>;
+    };
+    adapter.botId = 'BOT';
+    adapter.state.patch('100', { model: { provider: 'oauth', model: 'normal' }, fast: true });
+    adapter.rest = async (_method, path) => path === '/channels/100' ? { id: '100', name: 'general', type: 0 } : {};
+    let turnAccess: Record<string, unknown> | undefined;
+    adapter.listen(async (src) => { turnAccess = src.access; return undefined; });
+    const oldFetch = global.fetch;
+    global.fetch = vi.fn(async () => new Response(new Uint8Array([1]), { status: 200 })) as unknown as typeof fetch;
+    try {
+      await adapter.onMessage({
+        type: 0, guild_id: 'G', channel_id: '100', id: 'MSG',
+        author: { id: 'U1', username: 'anna' }, member: { roles: ['R1'] }, content: 'look',
+        attachments: [{ filename: 'x.png', content_type: 'image/png', size: 1, url: 'http://cdn/x.png' }],
+      });
+    } finally { global.fetch = oldFetch; }
+
+    expect(turnAccess).toMatchObject({ model: { provider: 'vision', model: 'image-model' }, fast: false });
+    expect(adapter.state.get('100')).toMatchObject({ model: { provider: 'oauth', model: 'normal' }, fast: true });
   });
 
   it('ignores Discord system messages (channel renames, pins, joins) — only DEFAULT/REPLY are turns', async () => {

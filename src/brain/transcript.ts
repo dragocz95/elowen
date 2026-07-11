@@ -82,7 +82,7 @@ export interface ChatView { turns: ChatTurn[]; thinking: boolean; notice?: strin
 export interface HistoryMessage {
   role: string;
   text: string;
-  segments?: ({ kind: 'text'; text: string } | { kind: 'tool'; name: string; detail?: string; diff?: string; output?: ToolOutputView; command?: string })[];
+  segments?: ({ kind: 'text'; text: string } | { kind: 'tool'; name: string; id?: string; detail?: string; diff?: string; output?: ToolOutputView; command?: string; sub?: SubagentState })[];
 }
 
 export const emptyView = (): ChatView => ({ turns: [], thinking: false });
@@ -103,7 +103,7 @@ export function fromHistory(msgs: HistoryMessage[]): ChatView {
       if (seg.kind === 'text') {
         segments.push({ kind: 'text', text: seg.text });
       } else {
-        const item: ToolItem = { name: seg.name, detail: seg.detail, diff: seg.diff, output: seg.output, command: seg.command };
+        const item: ToolItem = { name: seg.name, id: seg.id, detail: seg.detail, diff: seg.diff, output: seg.output, command: seg.command, sub: seg.sub };
         const tail = segments[segments.length - 1];
         if (tail?.kind === 'tools') tail.items.push(item);
         else segments.push({ kind: 'tools', items: [item] });
@@ -199,14 +199,14 @@ export function reduce(view: ChatView, e: BrainEvent): ChatView {
       return { turns, thinking: true, notice: view.notice };
     }
     case 'subagent': {
-      // Live progress of a delegated child run — attach to the matching `delegate` tool item so the
-      // renderer can draw the `↳ current tool · Ns · tokens` line and offer the drill-in target.
-      const t = ensureElowen();
-      attachToTool(t, e.id, (item) => ({
+      // A background child may outlive its parent's turn. Search ALL assistant turns backwards by the
+      // stable tool-call id and patch that settled row in place; never create a fresh empty/spinning turn.
+      // An unknown id is untrusted/stale progress and therefore a true no-op.
+      const patched = attachToToolInTurns(turns, e.id, (item) => ({
         ...item,
         sub: { sessionId: e.sessionId, status: e.status, task: e.task, detail: e.detail, tools: e.tools, tokens: e.tokens, seconds: e.seconds, model: e.model },
       }));
-      return { turns, thinking: true, notice: view.notice };
+      return patched ? { ...view, turns } : view;
     }
     case 'session': {
       // Idle rollover mid-send: the server moved this message into a FRESH conversation. Reset the
@@ -248,6 +248,28 @@ function attachToTool(t: ElowenTurn, id: string | undefined, patch: (item: ToolI
     t.segments[i] = { kind: 'tools', items };
     return;
   }
+}
+
+/** Immutable backward lookup across settled + streaming turns, used by background delegate progress.
+ *  Tool ids are stable and globally unique enough within one transcript; newest match wins defensively. */
+function attachToToolInTurns(turns: ChatTurn[], id: string, patch: (item: ToolItem) => ToolItem): boolean {
+  for (let ti = turns.length - 1; ti >= 0; ti--) {
+    const turn = turns[ti]!;
+    if (turn.role !== 'elowen') continue;
+    for (let si = turn.segments.length - 1; si >= 0; si--) {
+      const seg = turn.segments[si]!;
+      if (seg.kind !== 'tools') continue;
+      const ii = seg.items.findLastIndex((item) => item.id === id);
+      if (ii < 0) continue;
+      const items = seg.items.slice();
+      items[ii] = patch(items[ii]!);
+      const segments = turn.segments.slice();
+      segments[si] = { kind: 'tools', items };
+      turns[ti] = { ...turn, segments };
+      return true;
+    }
+  }
+  return false;
 }
 
 /** Fold a live `card` event into a card list: replace by id, append when new, or drop when the card came

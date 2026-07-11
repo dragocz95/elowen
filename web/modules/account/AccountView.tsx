@@ -228,7 +228,7 @@ export function AccountView() {
   };
 
   if (me.isLoading || !me.data?.user) {
-    return <div className="mx-auto flex w-full max-w-7xl flex-col"><ModuleHeader title={t.account.title} icon={UserCog} /><LoadingState /></div>;
+    return <div className="flex w-full min-w-0 flex-col"><ModuleHeader title={t.account.title} icon={UserCog} /><LoadingState /></div>;
   }
 
   const u = me.data.user;
@@ -278,7 +278,7 @@ export function AccountView() {
 
   return (
     /* Match the settings workspace width so account controls have the same calm, useful measure. */
-    <div className="mx-auto flex w-full max-w-7xl flex-col">
+    <div className="flex w-full min-w-0 flex-col">
       <ModuleHeader title={t.account.title} icon={UserCog} />
 
       <SettingsLayout
@@ -301,7 +301,7 @@ export function AccountView() {
       <AccountPanel id="profile" active={section} visited={visitedSections}>
       <div className="flex min-w-0 flex-col gap-6">
         {/* Identity hero — avatar, display name, admin badge, avatar upload. */}
-        <div className="flex items-center gap-4 rounded-xl border border-border bg-surface p-5" style={{ boxShadow: 'var(--shadow-card)' }}>
+        <div className="flex items-center gap-4 border-b border-border/45 px-1 py-5">
           <Avatar user={u} size={72} />
           <div className="flex min-w-0 flex-1 flex-col gap-1">
             <span className="flex items-center gap-2">

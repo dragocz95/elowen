@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { viewToPlainText, installExitGuards } from '../../../src/cli/chat/app.js';
+import { viewToPlainText, installExitGuards, createQuitCoordinator } from '../../../src/cli/chat/app.js';
 import { beginAssistant, pushUser, reduce, emptyView } from '../../../src/brain/transcript.js';
 
 describe('installExitGuards — process listener lifecycle', () => {
@@ -30,6 +30,51 @@ describe('installExitGuards — process listener lifecycle', () => {
     expect(calls).toEqual(['teardown', 'mouse', 'exit:143']);
     exitSpy.mockRestore();
     dispose();
+  });
+});
+
+describe('createQuitCoordinator', () => {
+  it('restores the terminal synchronously, stops the bound session once, and waits before completing', async () => {
+    let resolveStop!: () => void;
+    const stopBoundSession = vi.fn(() => new Promise<void>((resolve) => { resolveStop = resolve; }));
+    const teardown = vi.fn();
+    const removeExitGuards = vi.fn();
+    const done = vi.fn();
+    const quit = createQuitCoordinator({ teardown, removeExitGuards, stopBoundSession, done, timeoutMs: 5_000 });
+
+    quit();
+    // Raw mode / alternate-screen cleanup cannot wait on the daemon request.
+    expect(teardown).toHaveBeenCalledTimes(1);
+    expect(removeExitGuards).toHaveBeenCalledTimes(1);
+    expect(done).not.toHaveBeenCalled();
+    quit(); // a second Ctrl+C must not send another stop or tear down twice
+    await Promise.resolve();
+    expect(stopBoundSession).toHaveBeenCalledTimes(1);
+
+    resolveStop();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(done).toHaveBeenCalledTimes(1);
+  });
+
+  it('completes after the bounded timeout when the daemon never answers', async () => {
+    vi.useFakeTimers();
+    const done = vi.fn();
+    let stopSignal: AbortSignal | undefined;
+    const quit = createQuitCoordinator({
+      teardown: vi.fn(), removeExitGuards: vi.fn(),
+      stopBoundSession: vi.fn((signal) => {
+        stopSignal = signal;
+        return new Promise<void>(() => {});
+      }),
+      done, timeoutMs: 25,
+    });
+    quit();
+    await Promise.resolve();
+    expect(stopSignal?.aborted).toBe(false);
+    await vi.advanceTimersByTimeAsync(25);
+    expect(stopSignal?.aborted).toBe(true);
+    expect(done).toHaveBeenCalledTimes(1);
+    vi.useRealTimers();
   });
 });
 
@@ -70,15 +115,15 @@ describe('reduce — reasoning + notice', () => {
     expect(v.notice).toBe('retrying — attempt 1/5…');
     v = reduce(v, { type: 'notice', kind: 'retry', message: 'retry succeeded', done: true });
     expect(v.notice).toBeUndefined();
-    v = reduce(v, { type: 'notice', kind: 'compaction', message: 'compacting context…' });
-    expect(v.notice).toBe('compacting context…');
+    v = reduce(v, { type: 'notice', kind: 'compaction', message: 'compacting conversation…' });
+    expect(v.notice).toBe('compacting conversation…');
     v = reduce(v, { type: 'idle' });
     expect(v.notice).toBeUndefined(); // settled turn drops the transient line
   });
 
   it('first answer text clears a pending notice', () => {
     let v = beginAssistant(pushUser(emptyView(), 'x'));
-    v = reduce(v, { type: 'notice', kind: 'compaction', message: 'compacting context…' });
+    v = reduce(v, { type: 'notice', kind: 'compaction', message: 'compacting conversation…' });
     v = reduce(v, { type: 'text', delta: 'done' });
     expect(v.notice).toBeUndefined();
   });
@@ -90,9 +135,12 @@ describe('parseCommand', () => {
     expect(parseCommand('/new')).toEqual({ cmd: 'new' });
     expect(parseCommand('/sessions')).toEqual({ cmd: 'sessions' });
     expect(parseCommand('/resume 2')).toEqual({ cmd: 'resume', arg: '2' });
+    expect(parseCommand('/rename Release chat')).toEqual({ cmd: 'rename', arg: 'Release chat' });
     expect(parseCommand('/model')).toEqual({ cmd: 'model' });
     expect(parseCommand('/reasoning')).toEqual({ cmd: 'reasoning', arg: undefined });
     expect(parseCommand('/reasoning high')).toEqual({ cmd: 'reasoning', arg: 'high' });
+    expect(parseCommand('/fast')).toEqual({ cmd: 'fast', arg: undefined });
+    expect(parseCommand('/fast on')).toEqual({ cmd: 'fast', arg: 'on' });
     expect(parseCommand('/theme')).toEqual({ cmd: 'theme', arg: undefined });
     expect(parseCommand('/theme mono')).toEqual({ cmd: 'theme', arg: 'mono' });
     expect(parseCommand('/editor')).toEqual({ cmd: 'editor' });

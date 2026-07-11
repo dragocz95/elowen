@@ -9,8 +9,6 @@ import { LiveMessage, postWithImages } from './stream.mjs';
 import { resolveDisplaySettings, updateDisplayOverrides } from './display.mjs';
 
 const API = 'https://discord.com/api/v10';
-// Reasoning-effort levels PI accepts for extended-thinking models (mirrors THINKING_LEVELS daemon-side).
-const THINKING_LEVELS = ['minimal', 'low', 'medium', 'high', 'xhigh'];
 const GATEWAY = 'wss://gateway.discord.gg/?v=10&encoding=json';
 // GUILDS + GUILD_MESSAGES + MESSAGE_CONTENT
 const INTENTS = (1 << 0) | (1 << 9) | (1 << 15);
@@ -64,7 +62,7 @@ function rolePrompt(policy) {
 
 export class DiscordAdapter {
   name = 'discord';
-  constructor(cfg, logger, state, listModels, imageDirs = [], resolveProvider = () => null, answerQuestion = () => false) {
+  constructor(cfg, logger, state, listModels, imageDirs = [], resolveProvider = () => null, answerQuestion = () => false, chatCommands = []) {
     this.cfg = cfg;
     this.log = logger;
     this.state = state;
@@ -72,6 +70,7 @@ export class DiscordAdapter {
     this.resolveProvider = resolveProvider; // central brain-provider key resolver (voice STT/TTS)
     this.imageDirs = imageDirs; // where the image-gen/image-edit plugins store their generated files
     this.answerQuestion = answerQuestion; // deliver a parked ask_user_question answer back to the turn
+    this.chatCommands = chatCommands; // core names/descriptions — presentation/dispatch remains local
     this.pendingAsks = new Map(); // id → { channelId, messageId, questions, askerId, selected, awaitingText }
     this.handler = null;
     this.ctl = null; // host channel-control surface (stop/status/compact/restart), wired via control()
@@ -96,6 +95,15 @@ export class DiscordAdapter {
    *  folded with the /new generation), so a command targets the exact session a message would. */
   channelRef(channelId) { return { platform: 'discord', channelId: `${channelId}#${this.state.get(channelId).gen ?? 0}` }; }
 
+  /** Resolve the model that will drive the next turn. The catalog marks the daemon's real resolved
+   *  default; catalog ordering is presentation-only and must not silently choose a different model. */
+  modelForChannel(channelId, models) {
+    const chosen = this.state.get(channelId).model;
+    return chosen
+      ? models.find((m) => m.provider === chosen.provider && m.model === chosen.model)
+      : (models.find((m) => m.default === true) ?? models[0]);
+  }
+
   async connect() {
     // Validate the token up front so a bad config fails loudly at startup, not silently in the gateway.
     const me = await this.rest('GET', '/users/@me');
@@ -115,14 +123,15 @@ export class DiscordAdapter {
   /** Register the bot's slash commands. Guild-scoped when a guildId is set (instant), else global.
    *  Fingerprint the payload so an unchanged set skips the PUT — avoids needless syncs + rate limits. */
   async registerCommands() {
+    const description = (name, fallback) => this.chatCommands.find((c) => c.name === name)?.description ?? fallback;
     const commands = [
-      { name: 'model', description: 'Pick the AI model for this channel', type: 1 },
-      { name: 'reasoning', description: 'Set reasoning effort for this channel', type: 1, options: [
-        { name: 'level', description: 'Reasoning effort for this channel', type: 3, required: true, choices: [
-          { name: 'default (model default)', value: 'default' },
-          ...THINKING_LEVELS.map((level) => ({ name: level, value: level })),
+      { name: 'model', description: description('model', 'Pick the AI model for this channel'), type: 1 },
+      { name: 'reasoning', description: description('reasoning', 'Set reasoning effort for this channel'), type: 1 },
+      ...(this.chatCommands.some((c) => c.name === 'fast') ? [{ name: 'fast', description: description('fast', 'Toggle OpenAI OAuth priority processing'), type: 1, options: [
+        { name: 'state', description: 'on or off (omit to toggle)', type: 3, required: false, choices: [
+          { name: 'on', value: 'on' }, { name: 'off', value: 'off' },
         ] },
-      ] },
+      ] }] : []),
       { name: 'voice', description: 'Toggle spoken audio replies in this channel', type: 1, options: [
         { name: 'state', description: 'on or off (omit to toggle)', type: 3, required: false, choices: [
           { name: 'on', value: 'on' }, { name: 'off', value: 'off' },
@@ -142,12 +151,12 @@ export class DiscordAdapter {
           { name: 'global default', value: 'default' }, { name: 'one message', value: 'single' }, { name: 'one message per tool', value: 'per_tool' },
         ] },
       ] },
-      { name: 'new', description: 'Start a fresh conversation in this channel', type: 1 },
-      { name: 'stop', description: 'Stop the running agent in this channel', type: 1 },
-      { name: 'status', description: 'Show the model, context and usage for this channel', type: 1 },
-      { name: 'compact', description: 'Summarize the conversation to free up context', type: 1 },
-      { name: 'restart', description: 'Restart the Elowen daemon (admin only)', type: 1 },
-      { name: 'help', description: 'What can Elowen do here?', type: 1 },
+      { name: 'new', description: description('new', 'Start a fresh conversation in this channel'), type: 1 },
+      { name: 'stop', description: description('stop', 'Stop the running agent in this channel'), type: 1 },
+      { name: 'status', description: description('status', 'Show the model, context and usage for this channel'), type: 1 },
+      { name: 'compact', description: description('compact', 'Summarize the conversation to free up context'), type: 1 },
+      { name: 'restart', description: description('restart', 'Restart the Elowen daemon (admin only)'), type: 1 },
+      { name: 'help', description: description('help', 'What can Elowen do here?'), type: 1 },
     ];
     const globalPath = `/applications/${this.appId}/commands`;
     const path = this.cfg.guildId ? `/applications/${this.appId}/guilds/${this.cfg.guildId}/commands` : globalPath;
@@ -240,6 +249,7 @@ export class DiscordAdapter {
         model: chosen ? { provider: chosen.provider, model: chosen.model } : undefined,
         // Per-channel reasoning effort (set via /reasoning); empty = the model default.
         thinkingLevel: typeof st.thinkingLevel === 'string' ? st.thinkingLevel : undefined,
+        fast: st.fast === true,
         // Per-role tool allowlist (undefined or ['*'] = everything the session would normally get).
         tools: Array.isArray(match.tools) && match.tools.length > 0 ? match.tools : undefined,
       },
@@ -368,7 +378,14 @@ export class DiscordAdapter {
 
     // Image turns steer to the configured vision model — the channel's normal model may be text-only.
     const vision = images.length ? parseModelExec(this.cfg.visionModel) : null;
-    const turnAccess = vision ? { ...access, model: vision } : access;
+    let turnAccess = access;
+    if (vision) {
+      const models = await this.listModels().catch(() => []);
+      const visionOption = models.find((m) => m.model === vision.model && (!vision.provider || m.provider === vision.provider));
+      // Fast belongs to the normal channel profile. A non-OAuth vision hop clears it only for this
+      // temporary request; persisted channel state stays untouched and resumes on the normal model.
+      turnAccess = { ...access, model: vision, ...(!visionOption?.fastAvailable ? { fast: false } : {}) };
+    }
 
     try {
       const reply = await this.handler(
@@ -426,21 +443,61 @@ export class DiscordAdapter {
           label: mo.model.slice(0, 100),
           value: `${mo.provider}::${mo.model}`.slice(0, 100),
           description: mo.providerLabel.slice(0, 100),
-          default: !!current && current.provider === mo.provider && current.model === mo.model,
+          default: current
+            ? current.provider === mo.provider && current.model === mo.model
+            : mo.default === true,
         }));
         return this.respond(i, 4, {
           content: this.msg.pickModel,
           flags: 64,
-          components: [{ type: 1, components: [{ type: 3, custom_id: 'pick_model', options, placeholder: 'Choose a model…' }] }],
+          components: [{ type: 1, components: [{ type: 3, custom_id: 'pick_model', options, placeholder: this.msg.modelPlaceholder }] }],
         });
       }
       if (name === 'reasoning') {
         // Same operator-only gate as /model — reasoning effort is a shared per-channel setting.
         if (!this.isAdminMember(i.member)) return this.respond(i, 4, { content: this.msg.modelForbidden, flags: 64 });
-        const level = String((i.data?.options ?? []).find((o) => o.name === 'level')?.value ?? '');
-        if (!['default', ...THINKING_LEVELS].includes(level)) return this.respond(i, 4, { content: this.msg.pickThinking, flags: 64 });
-        this.state.patch(i.channel_id, { thinkingLevel: level === 'default' ? '' : level });
-        return this.respond(i, 4, { content: this.msg.thinkingSet(level === 'default' ? 'default' : level), flags: 64 });
+        const models = await this.listModels().catch(() => []);
+        if (!models.length) return this.respond(i, 4, { content: this.msg.noModels, flags: 64 });
+        const active = this.modelForChannel(i.channel_id, models);
+        const levels = Array.isArray(active?.reasoningLevels) ? active.reasoningLevels : [];
+        if (!levels.length) return this.respond(i, 4, { content: this.msg.reasoningUnavailable, flags: 64 });
+        const current = this.state.get(i.channel_id).thinkingLevel ?? '';
+        const options = [
+          { label: this.msg.reasoningDefault, value: 'default', default: current === '' || !levels.includes(current) },
+          ...levels.map((level) => ({
+            label: String(active.reasoningLabels?.[level] ?? level).slice(0, 100),
+            value: level.slice(0, 100),
+            default: current === level,
+          })),
+        ];
+        return this.respond(i, 4, {
+          content: this.msg.pickThinking,
+          flags: 64,
+          components: [{ type: 1, components: [{ type: 3, custom_id: 'pick_reasoning', options, placeholder: this.msg.reasoningPlaceholder }] }],
+        });
+      }
+      if (name === 'fast') {
+        if (!this.isAdminMember(i.member)) return this.respond(i, 4, { content: this.msg.controlForbidden, flags: 64 });
+        const opt = (i.data?.options ?? []).find((o) => o.name === 'state')?.value;
+        const saved = this.state.get(i.channel_id).fast === true;
+        const wanted = opt === 'on' ? true : opt === 'off' ? false : !saved;
+        const models = await this.listModels().catch(() => []);
+        const active = this.modelForChannel(i.channel_id, models);
+        // Validate the selected catalog model before touching a possibly stale live session, which may
+        // still be running the previous OAuth model until the next channel message rebuilds it.
+        if (!active?.fastAvailable) {
+          if (wanted) return this.respond(i, 4, { content: this.msg.fastUnavailable, flags: 64 });
+          // A stale persisted `fast:true` must remain switchable off after moving to a non-OAuth model.
+          this.state.patch(i.channel_id, { fast: false });
+          return this.respond(i, 4, { content: this.msg.fastSet(false), flags: 64 });
+        }
+        const ref = this.channelRef(i.channel_id);
+        const live = this.ctl?.status?.(ref) ?? null;
+        const liveMatchesSelection = live?.provider === active.provider && live.model === active.model;
+        const result = liveMatchesSelection ? (this.ctl?.setFast(ref, wanted) ?? null) : null;
+        if (result && !result.fastAvailable) return this.respond(i, 4, { content: this.msg.fastUnavailable, flags: 64 });
+        this.state.patch(i.channel_id, { fast: wanted });
+        return this.respond(i, 4, { content: this.msg.fastSet(wanted), flags: 64 });
       }
       if (name === 'voice') {
         // Spoken replies are a shared per-channel setting → operator-only, same gate as /model.
@@ -477,7 +534,7 @@ export class DiscordAdapter {
         if (name === 'stop') {
           const st = this.ctl.status(ref);
           if (!st?.streaming) return this.respond(i, 4, { content: this.msg.nothingRunning, flags: 64 });
-          this.ctl.abort(ref);
+          await this.ctl.abort(ref);
           return this.respond(i, 4, { content: this.msg.stopped, flags: 64 });
         }
         if (name === 'status') {
@@ -512,11 +569,34 @@ export class DiscordAdapter {
     if (i.type === 3 && typeof i.data?.custom_id === 'string' && i.data.custom_id.startsWith('ask:')) {
       return this.onAskInteraction(i);
     }
+    if (i.type === 3 && i.data?.custom_id === 'pick_reasoning') {
+      // Re-resolve capabilities on submit: the channel model or provider catalog may have changed while
+      // the picker was open, and component values are user-controlled Discord payloads.
+      if (!this.isAdminMember(i.member)) return this.respond(i, 7, { content: this.msg.modelForbidden, components: [] });
+      const models = await this.listModels().catch(() => []);
+      const active = this.modelForChannel(i.channel_id, models);
+      const levels = Array.isArray(active?.reasoningLevels) ? active.reasoningLevels : [];
+      if (!levels.length) return this.respond(i, 7, { content: this.msg.reasoningUnavailable, components: [] });
+      const value = String(i.data.values?.[0] ?? '');
+      if (value !== 'default' && !levels.includes(value)) {
+        return this.respond(i, 7, { content: this.msg.reasoningUnavailable, components: [] });
+      }
+      const level = value === 'default' ? '' : value;
+      this.state.patch(i.channel_id, { thinkingLevel: level });
+      const displayLevel = level ? String(active.reasoningLabels?.[level] ?? level) : this.msg.reasoningDefaultValue;
+      return this.respond(i, 7, { content: this.msg.thinkingSet(displayLevel), components: [] });
+    }
     if (i.type === 3 && i.data?.custom_id === 'pick_model') {
       // Re-check on submit: the select menu was admin-gated, but the component round-trips independently.
       if (!this.isAdminMember(i.member)) return this.respond(i, 7, { content: this.msg.modelForbidden, components: [] });
       const [provider, model] = String(i.data.values?.[0] ?? '').split('::');
-      if (provider && model) this.state.patch(i.channel_id, { model: { provider, model } });
+      if (provider && model) {
+        const models = await this.listModels().catch(() => []);
+        const selected = models.find((entry) => entry.provider === provider && entry.model === model);
+        // Fast is a provider capability, not a portable channel preference. Clear it when leaving the
+        // OpenAI OAuth descriptor so the next turn cannot send priority service_tier to another API.
+        this.state.patch(i.channel_id, { model: { provider, model }, ...(!selected?.fastAvailable ? { fast: false } : {}) });
+      }
       return this.respond(i, 7, { content: this.msg.modelSet(model), components: [] });
     }
   }

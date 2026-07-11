@@ -190,7 +190,7 @@ export default function OnboardingPage() {
 
   return (
     <ModuleShell moduleId="onboarding">
-      <div className="mx-auto grid w-full max-w-6xl gap-6 lg:grid-cols-[minmax(17rem,.72fr)_minmax(0,1.28fr)] lg:items-start">
+      <div className="grid w-full min-w-0 gap-6 lg:grid-cols-[minmax(17rem,.72fr)_minmax(0,1.28fr)] lg:items-start">
         <aside className="relative isolate overflow-hidden rounded-[1.5rem] border border-border bg-surface px-6 py-7 shadow-[0_26px_90px_rgb(0_0_0_/_0.4)] lg:sticky lg:top-4">
           <div className="pointer-events-none absolute inset-0 -z-10 bg-[radial-gradient(circle_at_50%_18%,rgb(255_82_54_/_0.16),transparent_34%),linear-gradient(145deg,rgb(255_82_54_/_0.04),transparent_52%)]" aria-hidden />
           <div className="mx-auto w-full max-w-[14rem]">

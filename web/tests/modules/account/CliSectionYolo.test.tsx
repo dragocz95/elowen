@@ -32,10 +32,12 @@ const renderSection = () => render(<ToastProvider><CliSection /></ToastProvider>
 beforeEach(() => { saveCli.mockClear(); savePermissions.mockClear(); });
 
 describe('CliSection — YOLO default toggle', () => {
-  it('renders the YOLO card with its warning description, seeded off', () => {
+  it('keeps the YOLO warning behind the standard help affordance, seeded off', () => {
     renderSection();
-    expect(screen.getByText(en.cli.yoloTitle)).toBeTruthy();
-    expect(screen.getByText(en.cli.yoloWarning)).toBeTruthy();
+    const title = screen.getByText(en.cli.yoloTitle);
+    expect(screen.queryByText(en.cli.yoloWarning)).toBeNull();
+    fireEvent.click(title.parentElement!.querySelector('button')!);
+    expect(screen.getByRole('tooltip')).toHaveTextContent(en.cli.yoloWarning);
     const toggle = screen.getByRole('switch', { name: en.cli.yoloToggle });
     expect(toggle.getAttribute('aria-checked')).toBe('false');
   });

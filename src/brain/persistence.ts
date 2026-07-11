@@ -1,18 +1,21 @@
 import { randomUUID } from 'node:crypto';
 import { SessionManager } from '@earendil-works/pi-coding-agent';
 import type { AgentSession, AgentSessionEvent } from '@earendil-works/pi-coding-agent';
-import type { BrainStore } from '../store/brainStore.js';
+import type { BrainRunMessage, BrainStore } from '../store/brainStore.js';
 import { extractText, NO_REPLY_NUDGE } from './messageView.js';
 import { currentMeter } from './openrouterMeter.js';
+import { isErroredContextOverflow } from './events.js';
 
-/** Append the user's prompt. Called by BrainService before session.prompt(), because the terminal
- *  agent_end event carries only the assistant/tool messages produced during the turn. */
-export function projectUserTurn(store: BrainStore, sessionId: string, text: string): void {
-  store.appendMessage({ id: randomUUID(), sessionId, parentId: null, role: 'user', content: { role: 'user', content: text } });
+/** Append the user's clean prompt before session.prompt(), so pre-prompt compaction can see it. A later
+ *  agent_end atomically reorders this row with the generated messages when mid-turn steering occurred. */
+export function projectUserTurn(store: BrainStore, sessionId: string, text: string): string {
+  const row = store.appendMessage({ id: randomUUID(), sessionId, parentId: null, role: 'user', content: { role: 'user', content: text } });
   store.touchSession(sessionId);
+  return row.id;
 }
 
-/** Mirror a finished turn into SQLite (the sole store). Only agent_end carries the settled messages.
+/** Mirror a finished turn into SQLite (the sole store). `agent_end` carries the complete run order,
+ *  including already-projected user prompts, so a steer can be placed after its preceding output.
  *  Stamps the turn's real provider cost (OpenRouter / an OpenRouter-backed proxy) onto its last assistant
  *  row: pi-ai drops `usage.cost` for models it has no price sheet for (e.g. `sarah-mimo-v2.5`), so without
  *  this their chat/channel spend persists as $0 and never reaches usageByModel/usageByDay. Only stamps
@@ -27,13 +30,84 @@ export function projectEvent(store: BrainStore, sessionId: string, event: AgentS
   // lumping the turn's cost on one row is exact for the per-model aggregates that read it.
   let lastAssistant = -1;
   event.messages.forEach((m, i) => { if (((m as { role?: string }).role ?? 'assistant') === 'assistant') lastAssistant = i; });
+  const run: BrainRunMessage[] = [];
   event.messages.forEach((m, i) => {
     const role = (m as { role?: string }).role ?? 'assistant';
-    if (role === 'user') return; // the user turn is already persisted by projectUserTurn — avoid a dup
+    // Internal no-reply nudges deliberately never have a durable user row. Every other user already
+    // exists as a clean pre-prompt row and is reused by persistAgentRun instead of serializing PI's
+    // ephemeral framing / image data.
+    if (role === 'user') {
+      if (extractText(m).trim() !== NO_REPLY_NUDGE) run.push({ role, reusePreprojectedUser: true });
+      return;
+    }
     if (i === lastAssistant && costDelta > 0) stampCost(m, costDelta);
-    store.appendMessage({ id: randomUUID(), sessionId, parentId: null, role, content: m });
+    run.push({ id: randomUUID(), role, content: m });
   });
+  const reordered = store.persistAgentRun(sessionId, run);
+  if (!reordered) {
+    for (const message of run) {
+      if (message.reusePreprojectedUser) continue;
+      // Every non-user run entry was created above with a UUID and content. Keep this defensive guard
+      // so a malformed PI event cannot turn into a half-written transcript.
+      if (!message.id || message.content === undefined) continue;
+      store.appendMessage({ id: message.id, sessionId, parentId: message.parentId ?? null, role: message.role, content: message.content });
+    }
+  }
   store.touchSession(sessionId);
+}
+
+/** PI decides overflow compact-and-retry only after its first errored `agent_end` has been emitted. This
+ * projector mirrors that event order without ever making the transient overflow assistant durable:
+ * defer it, persist the compacted clean context (omitting PI's still-present trailing error), then let
+ * the retry's successful `agent_end` append normally. If compaction itself fails, persist the deferred
+ * error so the conversation still records the genuine terminal failure. Generic auto-retry errors stay
+ * durable because PI also keeps them in its SessionManager branch; store and PI must remain alignable. */
+export function createSessionPersistenceProjector(
+  store: BrainStore,
+  session: AgentSession,
+  sessionId: string,
+  contextWindow: number,
+): (event: AgentSessionEvent) => void {
+  let deferredOverflow: AgentSessionEvent | null = null;
+  return (event): void => {
+    if (event.type === 'agent_end') {
+      const assistants = event.messages.filter((message) => (message as { role?: string }).role === 'assistant');
+      const last = assistants.at(-1);
+      if (last && isErroredContextOverflow(last, contextWindow)) {
+        deferredOverflow = event;
+        return;
+      }
+      deferredOverflow = null;
+      // Generic retry errors remain in PI's SessionManager branch even when removed from live agent
+      // state. Persist them too so a later compaction can align the same clean row sequence.
+      projectEvent(store, sessionId, event);
+      return;
+    }
+
+    if ((event as { type?: string }).type === 'agent_settled') {
+      if (deferredOverflow) projectEvent(store, sessionId, deferredOverflow);
+      deferredOverflow = null;
+      return;
+    }
+
+    if (event.type !== 'compaction_end') return;
+    const compact = event as AgentSessionEvent & {
+      reason?: string; result?: unknown; aborted?: boolean; willRetry?: boolean;
+    };
+    const overflow = compact.reason === 'overflow';
+    const succeeded = compact.result != null && compact.aborted !== true;
+    if (succeeded) {
+      persistCompaction(store, session, sessionId, {
+        omitTrailingOverflowError: overflow && compact.willRetry === true && deferredOverflow !== null,
+      });
+      if (overflow) deferredOverflow = null;
+      return;
+    }
+    if (overflow && deferredOverflow) {
+      projectEvent(store, sessionId, deferredOverflow);
+      deferredOverflow = null;
+    }
+  };
 }
 
 /** Set `usage.cost.total` on a message to the provider-reported cost pi-ai dropped. Overrides pi-ai's
@@ -77,8 +151,20 @@ function stampCost(m: unknown, cost: number): void {
  *  the divider lands before the kept tail, and the in-flight user row stays as the newest row. When the
  *  sequences are already aligned (manual `/compact`, which runs OUTSIDE prompt(); overflow recovery) the
  *  match is at skip 0 and this is identical to the old count-only behaviour. */
-export function persistCompaction(store: BrainStore, session: AgentSession, sessionId: string): void {
-  const messages = session.messages as { role?: string }[];
+export function persistCompaction(
+  store: BrainStore,
+  session: AgentSession,
+  sessionId: string,
+  options: { omitTrailingOverflowError?: boolean } = {},
+): void {
+  let messages = session.messages as { role?: string; stopReason?: string }[];
+  if (options.omitTrailingOverflowError) {
+    const last = messages.at(-1);
+    // At successful overflow `compaction_end`, PI has appended the summary but intentionally removes
+    // the errored assistant only *after* listeners return. Mirror the post-listener context, not that
+    // transient pre-removal snapshot. The factory calls this option only for reason=overflow+willRetry.
+    if (last?.role === 'assistant' && last.stopReason === 'error') messages = messages.slice(0, -1);
+  }
   const summary = messages.find((m) => m.role === 'compactionSummary');
   if (!summary) return; // no compaction actually present in the live context — nothing to mirror (defensive)
   const keptRoles: string[] = [];

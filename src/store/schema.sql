@@ -144,6 +144,14 @@ CREATE TABLE IF NOT EXISTS brain_sessions (
   -- cwd-less, e.g. web-dock sessions). Drives the CLI's default-start resolution: a CLI launched in a
   -- directory resumes the most recent unattached conversation with a matching work_dir.
   work_dir TEXT NOT NULL DEFAULT '',
+  -- Delegated agents run as ordinary isolated brain sessions, but retain their durable parent so the
+  -- parent conversation can include the whole nested session tree in its own usage/cost status. NULL
+  -- is a top-level conversation. The index is created in db.ts after the additive migration so an old
+  -- brain_sessions table can be upgraded before SQLite tries to index the new column.
+  parent_session_id TEXT,
+  -- Immutable, validated execution boundary for a delegated child. NULL is a legacy/non-delegated row;
+  -- an idle child without this value must fail closed instead of resuming under its account owner's scope.
+  delegated_access TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -157,6 +165,19 @@ CREATE TABLE IF NOT EXISTS brain_messages (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_brain_messages_session ON brain_messages(session_id);
+-- Latest durable UI state for each delegated tool call. The parent assistant message remains the
+-- canonical transcript row; this sidecar supplies the child session id + rolling status that PI's
+-- message format does not carry. No foreign keys here: brain sessions are re-keyed during channel
+-- rollover, so BrainStore updates/deletes these rows in the same lifecycle transactions instead.
+CREATE TABLE IF NOT EXISTS brain_subagent_runs (
+  parent_session_id TEXT NOT NULL,
+  tool_call_id TEXT NOT NULL,
+  child_session_id TEXT NOT NULL,
+  state TEXT NOT NULL,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (parent_session_id, tool_call_id)
+);
+CREATE INDEX IF NOT EXISTS idx_brain_subagent_runs_child ON brain_subagent_runs(child_session_id);
 -- Mid-turn messages are STEERED into the running turn via PI's native session queue (no daemon-side
 -- persistence): a message sent while a turn streams lands between steps, so there is no durable queue table.
 CREATE TABLE IF NOT EXISTS brain_goals (

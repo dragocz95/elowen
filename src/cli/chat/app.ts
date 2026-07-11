@@ -88,6 +88,42 @@ export function installExitGuards(teardown: () => void, disableMouse: () => void
   };
 }
 
+/** Idempotent Ctrl+C / `/quit` coordinator. Terminal cleanup is synchronous (never leave raw mode or the
+ *  alternate screen up), while the bound server session gets one best-effort stop before runChat resolves.
+ *  The timeout prevents a dead daemon from keeping the CLI process alive after its terminal is restored. */
+export function createQuitCoordinator(o: {
+  teardown(): void;
+  removeExitGuards(): void;
+  stopBoundSession(signal: AbortSignal): Promise<void>;
+  done(): void;
+  timeoutMs?: number;
+}): () => void {
+  let quitting = false;
+  return (): void => {
+    if (quitting) return;
+    quitting = true;
+    o.teardown();
+    o.removeExitGuards();
+    const stopAc = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const timeout = new Promise<void>((resolve) => {
+      timer = setTimeout(() => {
+        // Abort the losing fetch, not only our wait for it. A fetch whose daemon/socket never settles can
+        // otherwise keep Node's event loop alive after `done()` returned control to the menu/process.
+        stopAc.abort();
+        resolve();
+      }, o.timeoutMs ?? 750);
+    });
+    void Promise.race([
+      Promise.resolve().then(() => o.stopBoundSession(stopAc.signal)).catch(() => { /* already idle / daemon gone */ }),
+      timeout,
+    ]).finally(() => {
+      if (timer) clearTimeout(timer);
+      o.done();
+    });
+  };
+}
+
 export interface RunChatOpts {
   base: string;
   token: string;
@@ -127,20 +163,24 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
 
   const client = opts.client ?? new BrainClient({ base: opts.base, token: opts.token });
   await client.start({ provider: opts.model, session: opts.session, fresh: opts.fresh });
-  const boot = await client.status().catch(() => null);
-  // Boot-seed the background-process panel (owner-only; a non-owner 403s → empty). Live spawn/exit/kill
-  // updates then ride the `process` stream event, so this is only the initial snapshot.
-  const bootProcesses = await client.processes().catch(() => []);
+  // Everything after session resolution is independent I/O. Fetch it concurrently so first paint pays
+  // one localhost round trip instead of five serial ones; the transcript's own Markdown stays tail-lazy.
+  const [boot, bootProcesses, termSettings, history0, serverCommands] = await Promise.all([
+    client.status().catch(() => null),
+    // Boot-seed owner-only background processes; live changes ride the `process` stream afterwards.
+    client.processes().catch(() => []),
+    client.terminalSettings().catch(() => null),
+    client.history().catch(() => []),
+    client.commands().catch(() => commandsFor('cli', true)),
+  ]);
   // Cross-device colors: a CUSTOM web Account → Terminal palette drives the CLI chat theme — but only
   // when THIS machine has no explicit /theme pick saved. A local pick must win, otherwise the web
   // setting silently clobbered it on every launch ("/theme doesn't stick"). Picking "Custom (web)"
   // in /theme stores theme:'custom', which is not a preset name, so the palette applies again here.
-  const termSettings = await client.terminalSettings().catch(() => null);
   const localPick = !!(prefs0.theme && isChatThemeName(prefs0.theme));
   if (!localPick && termSettings?.theme === 'custom' && termSettings.palette) setCustomChatTheme(termSettings.palette);
   if (typeof termSettings?.showThoughtsCli === 'boolean') showThoughts = termSettings.showThoughtsCli;
-  const history0 = await client.history().catch(() => []);
-  let commandDefs = await client.commands().catch(() => commandsFor('cli', true));
+  let commandDefs = serverCommands;
   if (commandDefs.length === 0) commandDefs = commandsFor('cli', true);
   // /keybinds is CLI-local (the keymap lives in this terminal's prefs, like /theme's palette), so the
   // TUI surfaces it itself instead of the server's command list.
@@ -150,6 +190,9 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
 
   const term = new ProcessTerminal();
   const tui = new TUI(term);
+  // The shell now keeps a strict row budget, but a forced/modal structural shrink should still clear the
+  // dependency renderer's historical working area instead of ever exposing a stale status row.
+  tui.setClearOnShrink(true);
   const cwdLabel = prettyCwd();
   const branchLabel = gitBranch();
   const editor = new ChatEditor(tui, { borderColor: color.faint, selectList: getSelectListTheme() }, {});
@@ -167,6 +210,7 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
   inputStack.addChild(queuedMessages);
   inputStack.addChild(attachmentChips);
   inputStack.addChild(editorSlot);
+  let rateLimitRefreshGeneration = 0;
 
   /** The shared runtime: all mutable chat state + the render/refreshMeta/quit callbacks, threaded
    *  through every module factory below (see ChatRuntime). */
@@ -188,9 +232,13 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
     usage: boot?.usage ?? null,
     thinkingLevel: boot?.thinkingLevel ?? '',
     thinkingLevels: boot?.thinkingLevels ?? [],
+    thinkingLevelLabels: boot?.thinkingLevelLabels ?? {},
+    fastOn: boot?.fast ?? false,
+    fastAvailable: boot?.fastAvailable ?? false,
     lspEnabled: boot?.lspEnabled ?? null,
     yoloOn: boot?.yolo ?? false,
     mcpList: null,
+    rateLimits: null,
     workMode: 'build',
     cards: boot?.cards ?? [],
     queued: boot?.queued ?? [],
@@ -201,12 +249,31 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
     mentionFrecency: loadMentionFrecency(process.cwd()),
     render: () => { /* wired to the shell below */ },
     quit: () => { /* wired below, after the shell exists */ },
+    refreshRateLimits: async (): Promise<void> => {
+      const generation = ++rateLimitRefreshGeneration;
+      try {
+        const limits = await client.rateLimits();
+        // A rapid session/model switch can finish requests out of order. Only the latest refresh may
+        // replace the rail, otherwise an old OpenAI session can flash over a newer provider's null state.
+        if (generation === rateLimitRefreshGeneration) {
+          rt.rateLimits = limits;
+          rt.render();
+        }
+      } catch {
+        // The API itself marks a cached provider snapshot `stale`; an arbitrary client-side snapshot from
+        // the previous session/model is not safe to retain when the current request failed.
+        if (generation === rateLimitRefreshGeneration) { rt.rateLimits = null; rt.render(); }
+      }
+    },
     refreshMeta: async (): Promise<void> => {
+      // Deliberately not awaited: a slow provider usage request must never hold up status, model switches,
+      // or the first TUI paint. Its own completion schedules a render when a snapshot is available.
+      void rt.refreshRateLimits();
       const [st, mcp] = await Promise.all([
         client.status().catch(() => null),
         client.mcpServers().catch(() => null),
       ]);
-      if (st) { rt.modelName = st.model || rt.modelName; rt.conversationTitle = st.title ?? rt.conversationTitle; rt.lineCfg = st.statusline; rt.usage = st.usage; rt.thinkingLevel = st.thinkingLevel ?? ''; rt.thinkingLevels = st.thinkingLevels ?? []; rt.cards = st.cards ?? []; rt.queued = st.queued ?? []; rt.lspEnabled = st.lspEnabled ?? null; rt.yoloOn = st.yolo ?? rt.yoloOn; }
+      if (st) { rt.modelName = st.model || rt.modelName; rt.conversationTitle = st.title ?? rt.conversationTitle; rt.lineCfg = st.statusline; rt.usage = st.usage; rt.thinkingLevel = st.thinkingLevel ?? ''; rt.thinkingLevels = st.thinkingLevels ?? []; rt.thinkingLevelLabels = st.thinkingLevelLabels ?? {}; rt.fastOn = st.fast ?? false; rt.fastAvailable = st.fastAvailable ?? false; rt.cards = st.cards ?? []; rt.queued = st.queued ?? []; rt.lspEnabled = st.lspEnabled ?? null; rt.yoloOn = st.yolo ?? rt.yoloOn; }
       rt.mcpList = mcp;
     },
   };
@@ -247,11 +314,12 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
   // on `process` would stack listeners (MaxListenersExceededWarning bleeding into the menu, plus each
   // dead handler pinning the previous session's closure) on every chat open/close.
   const removeExitGuards = installExitGuards(teardown, disableMouse);
-  rt.quit = (): void => {
-    teardown();
-    removeExitGuards();
-    done();
-  };
+  rt.quit = createQuitCoordinator({
+    teardown,
+    removeExitGuards,
+    stopBoundSession: (signal) => client.stopSession(signal),
+    done,
+  });
   shell.attachInput({
     cycleThinkingLevel: pickers.cycleThinkingLevel,
     openHelpModal: pickers.openHelpModal,

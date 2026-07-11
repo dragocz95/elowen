@@ -18,6 +18,8 @@ describe('listBrainModels', () => {
     expect(models.find((m) => m.model === 'a')!.contextWindow).toBe(32000); // provider-reported enrichment
     expect(models.find((m) => m.model === 'a')!.contextWindowSet).toBe(false); // reported ≠ operator override
     expect(models.find((m) => m.model === 'b')!.contextWindow).toBe(200000); // default when not reported
+    expect(models.find((m) => m.model === 'a')!.default).toBe(true);
+    expect(models.find((m) => m.model === 'b')!.default).toBeUndefined();
   });
 
   it('an operator override wins over the provider-reported context window', async () => {
@@ -36,6 +38,19 @@ describe('listBrainModels', () => {
     expect(f).toHaveBeenCalledWith('https://ai.example/v1/models', expect.objectContaining({
       headers: expect.objectContaining({ authorization: 'Bearer k', 'x-title': 'Elowen' }),
     }));
+  });
+
+  it('enriches dynamically discovered known families with reasoning modes and labels', async () => {
+    const f = vi.fn(async () => new Response(JSON.stringify({ data: [
+      { id: 'openai/gpt-5.6-sol' }, { id: 'plain/chat-model' },
+    ] }), { status: 200 })) as unknown as typeof fetch;
+    const cfg: BrainRuntimeConfig = { providers: [openaiProvider()] };
+    const models = await listBrainModels(cfg, f);
+    expect(models.find((m) => m.model === 'openai/gpt-5.6-sol')).toMatchObject({
+      reasoningLevels: ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'],
+      reasoningLabels: { minimal: 'minimal', low: 'low', medium: 'medium', high: 'high', xhigh: 'ultra', max: 'max' },
+    });
+    expect(models.find((m) => m.model === 'plain/chat-model')?.reasoningLevels).toBeUndefined();
   });
 
   it('surfaces OpenRouter :free variants as a FREE section even with a manual paid list', async () => {
@@ -73,6 +88,7 @@ describe('listBrainModels', () => {
     const models = await listBrainModels(cfg, f);
     expect(models.length).toBeGreaterThan(0);
     expect(models.every((m) => m.provider === 'claude')).toBe(true);
+    expect(models.filter((m) => m.default).map((m) => m.model)).toEqual(['claude-opus-4-8']);
   });
 
   it('adds the complete OpenAI OAuth account catalog', async () => {

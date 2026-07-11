@@ -1,7 +1,7 @@
 import { Container } from '@earendil-works/pi-tui';
 import type { Component, MarkdownTheme, TUI } from '@earendil-works/pi-tui';
 import { color } from './theme.js';
-import { StatusBar, CardPanel, SubagentPanel, ProcessPanel, spinnerFrame } from './components.js';
+import { StatusBar, CardPanel, SubagentPanel, spinnerFrame } from './components.js';
 import { MascotFloat } from './mascotFloat.js';
 import { activeMention, CLIPBOARD_MENTION, imageMimeFor, rankMentionFiles, bumpMentionFrecency, mentionInsertText } from './mentions.js';
 import { isSlashCommandDraft } from './commands.js';
@@ -59,7 +59,12 @@ function generatingChip(seconds: number): string {
 
 /** The bottom-bar hint line for the given chat state, rendered from the ACTIVE keymap — hints must
  *  stay truthful when the user rebinds a shortcut. Unbound actions drop their segment. Pure. */
-export function bottomHints(keymap: Keymap, state: 'child' | 'thinking' | 'idle', hasSubagents = false): string {
+export function bottomHints(
+  keymap: Keymap,
+  state: 'child' | 'thinking' | 'idle',
+  hasSubagents = false,
+  interruptArmed = false,
+): string {
   const k = (action: KeybindAction, label: string): string => {
     const chord = keymap.chordLabel(action);
     return chord ? `${chord} ${label}` : '';
@@ -67,7 +72,7 @@ export function bottomHints(keymap: Keymap, state: 'child' | 'thinking' | 'idle'
   const parts = state === 'child'
     ? ['⏎ message the sub-agent', 'esc back', k('subagent_cycle', 'next session')]
     : state === 'thinking'
-      ? ['esc interrupt', '/help commands', k('reasoning_cycle', 'reasoning'), hasSubagents ? k('subagent_cycle', 'subagents') : '']
+      ? [interruptArmed ? 'esc again to interrupt' : 'esc interrupt', '/help commands', k('reasoning_cycle', 'reasoning'), hasSubagents ? k('subagent_cycle', 'subagents') : '']
       : ['⏎ send', '/ slash', '@ files', '! shell', k('stash', 'stash'), k('mode_toggle', 'mode'), k('reasoning_cycle', 'reasoning'), k('telemetry_toggle', 'telemetry')];
   return parts.filter(Boolean).join('   ·   ');
 }
@@ -84,7 +89,51 @@ export function quitHint(keymap: Keymap): string {
   return chord ? `${chord} quit` : '';
 }
 
-function modelMetaLine(mode: BrainWorkMode, modelName: string, thinkingLevel: string, generating?: string, yolo?: boolean): string {
+export const INTERRUPT_CONFIRM_MS = 1_800;
+
+/** Pure half of the double-Esc contract. The shell owns the expiry timer; this function makes the
+ *  boundary deterministic in focused tests and prevents an old armed window from aborting a later turn. */
+export function interruptPress(armedUntil: number, now: number, windowMs = INTERRUPT_CONFIRM_MS): { armedUntil: number; abort: boolean } {
+  return armedUntil > now
+    ? { armedUntil: 0, abort: true }
+    : { armedUntil: now + windowMs, abort: false };
+}
+
+export interface ShellRowBudget {
+  viewportRows: number;
+  inputRows: number;
+  cardRows: number;
+  subagentRows: number;
+}
+
+/** Allocate the full-screen left column exactly once. Chrome is fixed (top rule + meta + footer), input
+ *  is bounded, Todos are preferred next so they stay immediately above the composer, and sub-agents use
+ *  the remaining fixed-panel budget. The transcript receives every leftover row, so the sum is ALWAYS the
+ *  terminal height (for the supported >=4-row terminal) and pi-tui never has to scroll its alt screen. */
+export function allocateShellRows(o: {
+  terminalRows: number;
+  inputRows: number;
+  cardRows: number;
+  subagentRows: number;
+  minViewportRows?: number;
+  maxCardRows?: number;
+  maxSubagentRows?: number;
+}): ShellRowBudget {
+  const terminalRows = Math.max(4, Math.floor(o.terminalRows));
+  const available = terminalRows - TOP_RULE_ROWS - 2; // prompt meta + bottom bar
+  const minViewport = Math.min(Math.max(1, o.minViewportRows ?? 4), available);
+  // Keep at least the Todo header when a card is active; queued prompts get clipped before it disappears.
+  const cardReserve = o.cardRows > 0 && available > minViewport ? 1 : 0;
+  const inputRows = Math.min(Math.max(0, o.inputRows), Math.max(0, available - minViewport - cardReserve));
+  let panelBudget = Math.max(0, available - minViewport - inputRows);
+  const cardRows = Math.min(Math.max(0, o.cardRows), o.maxCardRows ?? 6, panelBudget);
+  panelBudget -= cardRows;
+  const subagentRows = Math.min(Math.max(0, o.subagentRows), o.maxSubagentRows ?? 4, panelBudget);
+  const viewportRows = Math.max(1, available - inputRows - cardRows - subagentRows);
+  return { viewportRows, inputRows, cardRows, subagentRows };
+}
+
+function modelMetaLine(mode: BrainWorkMode, modelName: string, thinkingLevel: string, generating?: string, yolo?: boolean, fast?: boolean): string {
   const raw = modelName || '—';
   const slash = raw.indexOf('/');
   const provider = slash > 0 ? raw.slice(0, slash) : '';
@@ -95,6 +144,7 @@ function modelMetaLine(mode: BrainWorkMode, modelName: string, thinkingLevel: st
     color.text(model),
     provider ? color.dim(provider) : '',
     thinkingLevel ? color.warning(thinkingLevel) : '',
+    fast ? color.accent('FAST') : '',
     // Warning-toned so auto-approved tool asks are never invisible (session /yolo or the persisted default).
     yolo ? color.warning('YOLO') : '',
     generating ?? '',
@@ -142,7 +192,9 @@ export function createShell(rt: ChatRuntime, stream: StreamController, mdTheme: 
 
   const cardPanel = new CardPanel();
   const subPanel = new SubagentPanel();
-  const processPanel = new ProcessPanel();
+  // A queue is useful context, but six rows plus its hint can crowd Todos and the transcript out on a
+  // normal 24-row terminal. The complete queue stays server-authoritative; this is presentation-only.
+  rt.queuedMessages.setMaxRows(4);
   const promptMeta = new StatusBar('', '');
   const quitLabel = quitHint(keymap);
   const bottomBar = new StatusBar(color.faint(`  ${bottomHints(keymap, 'idle')}`), quitLabel ? color.faint(`${quitLabel}  `) : '');
@@ -169,7 +221,9 @@ export function createShell(rt: ChatRuntime, stream: StreamController, mdTheme: 
   // The right-panel flame's eased drift-on-scroll. A pure spring-damper (mascotFloat) is nudged on each
   // scroll and integrated by a self-canceling ~30fps ticker that stops the moment the motion settles, so
   // an idle session pays zero CPU — mirroring app.ts's thinking-only render timer.
-  const FLOAT_TICK_MS = 33;
+  // Decorative motion must never compete with streamed Markdown. Ten frames/sec is still visibly eased
+  // while cutting the old 30fps full-TUI repaint loop by two thirds.
+  const FLOAT_TICK_MS = 100;
   const mascotFloat = new MascotFloat();
   let floatTimer: ReturnType<typeof setInterval> | null = null;
   const armFloat = (): void => {
@@ -196,21 +250,50 @@ export function createShell(rt: ChatRuntime, stream: StreamController, mdTheme: 
   const panelReserve = (): number => panelVisible() ? panelWidth + PANEL_GUTTER_COLUMNS : 0;
   const chatWidth = (): number => Math.max(24, term.columns - panelReserve());
   const panelLeftEdge = (): number => term.columns - panelWidth;
-  const fixedRows = (): number => {
-    const cardRows = cardPanel.render(Math.max(24, chatWidth())).length;
-    const subRows = subPanel.render(Math.max(24, chatWidth())).length;
-    const procRows = processPanel.render(Math.max(24, chatWidth())).length;
-    const inputRows = inputStack.render(Math.max(24, chatWidth())).length;
-    return TOP_RULE_ROWS + cardRows + subRows + procRows + inputRows + 2;
+  let inputRowLimit = Number.POSITIVE_INFINITY;
+  const boundedInput: Component = {
+    invalidate: () => inputStack.invalidate?.(),
+    render: (width: number): string[] => {
+      const rows = inputStack.render(width);
+      if (rows.length <= inputRowLimit) return rows;
+      if (inputRowLimit <= 0) return [];
+      // Queue/attachment rows are above the editor, so keeping the bottom preserves the focused composer
+      // and its cursor on exceptionally short terminals.
+      return rows.slice(-inputRowLimit);
+    },
   };
+  const rowBudget = (): ShellRowBudget => {
+    const width = Math.max(24, chatWidth());
+    const budget = allocateShellRows({
+      terminalRows: term.rows,
+      inputRows: inputStack.render(width).length,
+      cardRows: cardPanel.desiredRows(width),
+      subagentRows: subPanel.desiredRows(),
+    });
+    inputRowLimit = budget.inputRows;
+    cardPanel.setMaxRows(budget.cardRows);
+    subPanel.setMaxRows(budget.subagentRows);
+    return budget;
+  };
+  const fixedRows = (): number => term.rows - rowBudget().viewportRows;
 
-  const viewport = new ChatViewport(
+  const parentViewport = new ChatViewport(
     { view: rt.view, notice: rt.notice, modelName: rt.modelName, thinkingSeconds: 0 },
     mdTheme,
-    () => Math.max(8, term.rows - fixedRows()),
+    () => rowBudget().viewportRows,
     () => TOP_RULE_ROWS + 1,
     chatWidth,
   );
+  let childViewport: ChatViewport | null = null;
+  let childViewportSession = '';
+  const newChildViewport = (): ChatViewport => new ChatViewport(
+    { view: rt.childView?.view ?? rt.view, notice: '', modelName: rt.modelName, thinkingSeconds: 0 },
+    mdTheme,
+    () => rowBudget().viewportRows,
+    () => TOP_RULE_ROWS + 1,
+    chatWidth,
+  );
+  const activeViewport = (): ChatViewport => rt.childView ? (childViewport ?? parentViewport) : parentViewport;
   let currentRunSeconds = 0;
   const telemetry = new TelemetryPanel(() => ({
     usage: rt.usage,
@@ -218,13 +301,15 @@ export function createShell(rt: ChatRuntime, stream: StreamController, mdTheme: 
     branch: branchLabel,
     mcp: rt.mcpList,
     lspEnabled: rt.lspEnabled,
+    processes: rt.processes,
+    rateLimits: rt.rateLimits,
     floatOffset: mascotFloat.value(),
   }));
   const startScreen = new StartScreen(
     inputStack,
-    () => Math.max(12, term.rows - TOP_RULE_ROWS),
+    () => Math.max(1, term.rows - TOP_RULE_ROWS),
     () => ({
-      modelLine: modelMetaLine(rt.workMode, rt.modelName, rt.thinkingLevel, undefined, rt.yoloOn) + leaderChip(),
+      modelLine: modelMetaLine(rt.workMode, rt.modelName, rt.thinkingLevelLabels[rt.thinkingLevel] ?? rt.thinkingLevel, undefined, rt.yoloOn, rt.fastOn) + leaderChip(),
       hints: color.faint(startScreenHints(keymap)),
       tip: `${color.warning('●')} ${color.bold(color.text('Tip'))} ${color.dim('ask anything — try')} ${color.text('"What is the tech stack of this project?"')}`,
       notice: rt.notice,
@@ -261,37 +346,76 @@ export function createShell(rt: ChatRuntime, stream: StreamController, mdTheme: 
   };
 
   let thinkStart = 0;
-  const render = (): void => {
+  let interruptArmedUntil = 0;
+  let interruptTimer: ReturnType<typeof setTimeout> | null = null;
+  let renderTimer: ReturnType<typeof setTimeout> | null = null;
+  const clearInterruptArm = (): void => {
+    interruptArmedUntil = 0;
+    if (interruptTimer) { clearTimeout(interruptTimer); interruptTimer = null; }
+  };
+  const flushRender = (): void => {
+    if (renderTimer) clearTimeout(renderTimer);
+    renderTimer = null;
     if (rt.view.thinking) {
       if (!thinkStart) thinkStart = Date.now();
     } else {
       thinkStart = 0;
+      clearInterruptArm();
     }
     currentRunSeconds = thinkStart ? Math.max(0, Math.round((Date.now() - thinkStart) / 1000)) : 0;
-    viewport.setState({
-      view: rt.childView?.view ?? rt.view,
-      notice: rt.childView ? color.dim('· sub-agent session — your messages go to this agent') : rt.notice,
+    parentViewport.setState({
+      view: rt.view,
+      notice: rt.notice,
       modelName: rt.modelName,
       thinkingSeconds: currentRunSeconds,
       showThoughts: rt.showThoughts,
     });
+    if (rt.childView) {
+      if (!childViewport || childViewportSession !== rt.childView.sessionId) {
+        childViewport = newChildViewport();
+        childViewportSession = rt.childView.sessionId;
+      }
+      childViewport.setState({
+        view: rt.childView.view,
+        notice: rt.childView.loading
+          ? color.dim('· loading sub-agent transcript…')
+          : (rt.notice || color.dim('· sub-agent session — your messages go to this agent')),
+        modelName: rt.modelName,
+        thinkingSeconds: currentRunSeconds,
+        showThoughts: rt.showThoughts,
+      });
+    } else if (childViewport) {
+      // Parent and child keep independent scroll/expand registries. Closing a child discards only its
+      // viewport state; reopening starts clean and can never inherit the parent's scroll anchor.
+      childViewport = null;
+      childViewportSession = '';
+    }
     // Contextual footer: while streaming, Esc interrupts; inside a sub-agent view, input steers the child.
     const footerState = rt.childView ? 'child' : rt.view.thinking ? 'thinking' : 'idle';
-    bottomBar.setLeft(color.faint(`  ${bottomHints(keymap, footerState, stream.subagentSessions().length > 0)}`)
+    const agents = stream.subagentStates(); // one transcript scan per frame (formerly two)
+    bottomBar.setLeft(color.faint(`  ${bottomHints(keymap, footerState, agents.length > 0, interruptArmedUntil > Date.now())}`)
       + (footerState === 'idle' && rt.shellContext.pending ? `   ${color.warning('· ! output → next message')}` : ''));
     const projectLine = `${color.dim(cwdLabel)}${branchLabel ? color.faint(` · ${branchLabel}`) : ''}`;
     const line = statusline(rt.lineCfg ? { ...rt.lineCfg, showModel: false } : null, rt.usage, rt.modelName);
-    promptMeta.setLeft(modelMetaLine(rt.workMode, rt.modelName, rt.thinkingLevel, rt.view.thinking ? generatingChip(currentRunSeconds) : undefined, rt.yoloOn) + leaderChip());
+    promptMeta.setLeft(modelMetaLine(rt.workMode, rt.modelName, rt.thinkingLevelLabels[rt.thinkingLevel] ?? rt.thinkingLevel, rt.view.thinking ? generatingChip(currentRunSeconds) : undefined, rt.yoloOn, rt.fastOn) + leaderChip());
     promptMeta.setRight(panelVisible() || !line ? projectLine : `${color.faint(line)} ${color.faint('·')} ${projectLine}`);
-    // Drop the terminal plugin's pinned `bg-processes` card — the dedicated (killable, live) ProcessPanel
-    // below now owns that surface, so keeping the card too would render every background process twice.
-    cardPanel.set(rt.cards.filter((c) => c.id !== 'bg-processes'));
-    subPanel.set(stream.subagentStates());
-    processPanel.set(rt.processes);
+    // Drop the terminal plugin's pinned `bg-processes` card only while the dedicated right rail is
+    // actually visible. Narrow terminals cannot fit that rail; retaining the compact card there avoids
+    // making background work disappear entirely while still preventing duplicates on wide layouts.
+    cardPanel.set(rt.cards.filter((c) => c.id !== 'bg-processes' || !panelVisible()));
+    subPanel.set(agents);
     // Pending mid-turn queue strip above the composer (with the remove-last keybind hint when bound).
     const removeChord = keymap.chordLabel('queue_remove');
     rt.queuedMessages.set(rt.queued, rt.queued.length && removeChord ? `${removeChord} removes the last queued message` : null);
     tui.requestRender();
+  };
+  const render = (): void => {
+    const streaming = rt.view.thinking || !!rt.childView?.view.thinking;
+    if (!streaming) { flushRender(); return; }
+    if (renderTimer) return;
+    // Coalesce token/tool bursts into one terminal frame. Twenty fps stays fluid but avoids repeatedly
+    // parsing a growing Markdown turn at the dependency renderer's 60fps ceiling.
+    renderTimer = setTimeout(flushRender, 50);
   };
 
   // Live-apply a rebind from the /keybinds editor: point `keymap` at the freshly-built active map and
@@ -326,7 +450,9 @@ export function createShell(rt: ChatRuntime, stream: StreamController, mdTheme: 
       const { boxWidth, leftPad } = startScreenBox(term.columns);
       const inputRows = inputStack.render(boxWidth).length;
       const noticeRows = rt.notice ? rt.notice.split('\n').length : 0;
-      const top = TOP_RULE_ROWS + startScreenInputTop(Math.max(12, term.rows - TOP_RULE_ROWS), inputRows, noticeRows) + inputRows;
+      const screenRows = Math.max(1, term.rows - TOP_RULE_ROWS);
+      const shownInputRows = Math.min(inputRows, Math.max(0, screenRows - 1));
+      const top = TOP_RULE_ROWS + startScreenInputTop(screenRows, inputRows, noticeRows) + shownInputRows;
       return tui.showOverlay(overlay, {
         anchor: 'top-left',
         width: boxWidth,
@@ -434,13 +560,24 @@ export function createShell(rt: ChatRuntime, stream: StreamController, mdTheme: 
     if (mentionHandle && mentionOverlay) updateMention();
   };
 
-  // Esc closes an open sub-agent view first; while a turn streams it aborts server-side (agent_end →
-  // idle winds the spinner down). When idle it drops any pending image attachments (the chip row's
-  // advertised "esc to drop"), then falls through to the base editor.
+  // Esc closes an open sub-agent view first. A parent turn deliberately takes TWO presses: the first arms
+  // a short confirmation window (truthfully shown in the footer), the second aborts server-side. This makes
+  // an accidental Esc harmless without changing one-Esc dismissal for overlays/attachments/child drill-in.
   editor.onEscape = (): boolean => {
     if (rt.childView) { stream.closeSubagent(); return true; }
     if (rt.view.thinking) {
-      void client.abort().catch(() => { /* already idle */ });
+      const next = interruptPress(interruptArmedUntil, Date.now());
+      interruptArmedUntil = next.armedUntil;
+      if (interruptTimer) { clearTimeout(interruptTimer); interruptTimer = null; }
+      if (next.abort) {
+        void client.abort().catch(() => { /* already idle */ });
+      } else {
+        const armed = interruptArmedUntil;
+        interruptTimer = setTimeout(() => {
+          if (interruptArmedUntil === armed) { clearInterruptArm(); render(); }
+        }, INTERRUPT_CONFIRM_MS);
+      }
+      flushRender(); // confirmation feedback must appear immediately, not after the streaming frame gate
       return true;
     }
     if (rt.pendingImages.length > 0) {
@@ -455,8 +592,12 @@ export function createShell(rt: ChatRuntime, stream: StreamController, mdTheme: 
 
   const root = new Container();
   root.addChild(new TopRule(() => rt.conversationTitle));
-  const chatStack = [viewport, cardPanel, subPanel, processPanel, inputStack, promptMeta, bottomBar];
-  root.addChild(new MainColumn(panelReserve, () => hasMessages() ? chatStack : [startScreen]));
+  root.addChild(new MainColumn(panelReserve, () => {
+    if (!hasMessages()) return [startScreen];
+    rowBudget(); // applies caps before any child renders
+    // Todos stay immediately above the composer; background Processes moved into the right telemetry rail.
+    return [activeViewport(), subPanel, cardPanel, boundedInput, promptMeta, bottomBar];
+  }));
   tui.addChild(root);
   tui.setFocus(editor);
   showPanel(false);
@@ -531,14 +672,14 @@ export function createShell(rt: ChatRuntime, stream: StreamController, mdTheme: 
         if (draggingHistoryScroll && isPrimaryDrag) {
           nudgeFloat(lastScrollDragRow - ev.y); // drag up (y falls) scrolls into history → flame lifts
           lastScrollDragRow = ev.y;
-          viewport.setScrollFromRow(ev.y);
+          activeViewport().setScrollFromRow(ev.y);
           tui.requestRender();
           return { consume: true };
         }
-        if (isPrimaryDrag && hasMessages() && viewport.isScrollbarHit(ev.x, ev.y)) {
+        if (isPrimaryDrag && hasMessages() && activeViewport().isScrollbarHit(ev.x, ev.y)) {
           draggingHistoryScroll = true;
           lastScrollDragRow = ev.y;
-          viewport.setScrollFromRow(ev.y);
+          activeViewport().setScrollFromRow(ev.y);
           tui.requestRender();
           return { consume: true };
         }
@@ -569,29 +710,37 @@ export function createShell(rt: ChatRuntime, stream: StreamController, mdTheme: 
       // The start screen has no transcript, so those interactions also need a rendered chat stack.
       const noModal = editor.focused && !slashHandle && !mentionHandle && hasMessages();
       const click = mouseClick(data);
-      // A sub-agent row opens the child transcript (its own registry — these rows don't expand in place).
-      if (click && noModal && !rt.childView) {
-        const subId = viewport.subagentAt(click.x, click.y);
-        if (subId) { void stream.openSubagent(subId); return { consume: true }; }
-      }
-      if (click && noModal && viewport.isThoughtRow(click.x, click.y)) {
-        viewport.toggleThought(click.y);
-        tui.requestRender();
-        return { consume: true };
-      }
-      // Click the Todos header to collapse/expand the checklist. The card panel sits directly below the
-      // viewport in the fixed stack, so its first row is TOP_RULE_ROWS + viewport-height + 1 (1-based).
-      // The Sub-agents panel renders right below it — a click on one of its rows opens that child.
-      if (click && noModal) {
-        const cardTop = TOP_RULE_ROWS + Math.max(8, term.rows - fixedRows()) + 1;
-        const rel = click.y - cardTop;
-        if (rel >= 0 && cardPanel.isHeaderRow(rel)) {
-          cardPanel.toggleCollapsed();
+      // Background processes live in the right telemetry rail. Keep hit testing with the rail that rendered
+      // them, instead of subtracting rows from the left transcript stack.
+      if (click && noModal && panelVisible() && click.x > panelLeftEdge()) {
+        const localRow = click.y - TOP_RULE_ROWS - 1;
+        const localX = click.x - panelLeftEdge();
+        if (telemetry.isProcessHeaderRow(localRow)) {
+          telemetry.toggleProcesses();
           tui.requestRender();
           return { consume: true };
         }
+        const killId = telemetry.processKillAt(localRow, localX);
+        if (killId) { killProcess(killId); return { consume: true }; }
+      }
+      // A sub-agent row opens the child transcript (its own registry — these rows don't expand in place).
+      if (click && noModal && !rt.childView) {
+        const subId = activeViewport().subagentAt(click.x, click.y);
+        if (subId) { void stream.openSubagent(subId); return { consume: true }; }
+      }
+      if (click && noModal && activeViewport().isThoughtRow(click.x, click.y)) {
+        activeViewport().toggleThought(click.y);
+        tui.requestRender();
+        return { consume: true };
+      }
+      // The fixed left stack is viewport → Sub-agents → Todos → composer. Hit-test with the SAME
+      // row budget and capped renders used by layout, so a short terminal never drifts from what is visible.
+      if (click && noModal) {
+        const budget = rowBudget();
+        const panelsTop = TOP_RULE_ROWS + budget.viewportRows + 1;
+        const subRel = click.y - panelsTop;
         const chatW = Math.max(24, chatWidth());
-        const subRel = rel - cardPanel.render(chatW).length;
+        const renderedSubRows = subPanel.render(chatW).length;
         if (subRel >= 0 && subPanel.isHeaderRow(subRel)) {
           subPanel.toggleCollapsed();
           tui.requestRender();
@@ -599,22 +748,16 @@ export function createShell(rt: ChatRuntime, stream: StreamController, mdTheme: 
         }
         const target = subRel >= 0 ? subPanel.targetAt(subRel) : null;
         if (target) { void stream.openSubagent(target); return { consume: true }; }
-        // The Processes panel sits right below the Sub-agents panel — its header toggles the list, and a
-        // click on a row's ✕ kills that background process (the daemon's `process` snapshot then drops it).
-        const procRel = subRel - subPanel.render(chatW).length;
-        if (procRel >= 0) {
-          if (processPanel.isHeaderRow(procRel)) {
-            processPanel.toggleCollapsed();
-            tui.requestRender();
-            return { consume: true };
-          }
-          const killId = processPanel.killAt(procRel, click.x);
-          if (killId) { killProcess(killId); return { consume: true }; }
+        const cardRel = subRel - renderedSubRows;
+        if (cardRel >= 0 && cardPanel.isHeaderRow(cardRel)) {
+          cardPanel.toggleCollapsed();
+          tui.requestRender();
+          return { consume: true };
         }
       }
       const wheel = mouseWheel(data);
       if (wheel && noModal) {
-        viewport.scroll(wheel);
+        activeViewport().scroll(wheel);
         nudgeFloat(Math.sign(wheel)); // flame follows the content, then eases back
         tui.requestRender();
         return { consume: true };
@@ -623,14 +766,14 @@ export function createShell(rt: ChatRuntime, stream: StreamController, mdTheme: 
       // consumed their presses already), dragging extends + highlights it, and release copies the lines
       // to the system clipboard via OSC 52 (works over SSH too). A no-drag click just clears quietly.
       if (ev && noModal) {
-        if (ev.down && ev.code === 0 && viewport.beginSelect(ev.x, ev.y)) return { consume: true };
-        if (ev.down && ev.code === 32 && viewport.hasSelection()) {
-          viewport.dragSelect(ev.y);
+        if (ev.down && ev.code === 0 && activeViewport().beginSelect(ev.x, ev.y)) return { consume: true };
+        if (ev.down && ev.code === 32 && activeViewport().hasSelection()) {
+          activeViewport().dragSelect(ev.y);
           tui.requestRender();
           return { consume: true };
         }
-        if ((!ev.down || ev.code === 3) && viewport.hasSelection()) {
-          const text = viewport.takeSelection();
+        if ((!ev.down || ev.code === 3) && activeViewport().hasSelection()) {
+          const text = activeViewport().takeSelection();
           tui.requestRender();
           if (text) {
             term.write(`\x1b]52;c;${Buffer.from(text.slice(0, 100_000)).toString('base64')}\x07`);
@@ -722,13 +865,13 @@ export function createShell(rt: ChatRuntime, stream: StreamController, mdTheme: 
         return undefined;
       }
       if (noModal && isPageUpKey(data)) {
-        viewport.scroll(4);
+        activeViewport().scroll(4);
         nudgeFloat(1);
         tui.requestRender();
         return { consume: true };
       }
       if (noModal && isPageDownKey(data)) {
-        viewport.scroll(-4);
+        activeViewport().scroll(-4);
         nudgeFloat(-1);
         tui.requestRender();
         return { consume: true };
@@ -739,6 +882,8 @@ export function createShell(rt: ChatRuntime, stream: StreamController, mdTheme: 
 
   const hideOverlays = (): void => {
     if (floatTimer) { clearInterval(floatTimer); floatTimer = null; } // no dangling ticker on quit
+    if (renderTimer) { clearTimeout(renderTimer); renderTimer = null; }
+    clearInterruptArm();
     panelHandle?.hide();
     slashHandle?.hide();
     mentionHandle?.hide();

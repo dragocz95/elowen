@@ -3,6 +3,7 @@ import type { Model, Api } from '@earendil-works/pi-ai';
 import { APP_IDENTITY_HEADERS } from '../inference/appIdentity.js';
 import { installOpenRouterMeter } from './openrouterMeter.js';
 import type { BrainProviderType, BrainProviderApi } from '../store/configStore.js';
+import { descriptorCapabilities } from './modelCapabilities.js';
 
 /** One brain model provider, daemon-side (API key included). `openai`/`anthropic` register a custom
  *  endpoint; `oauth-*` rely on pi-ai's built-in providers + an OAuth credential in the AuthStorage. */
@@ -74,13 +75,14 @@ function extendOpenAiCodexCatalog(registry: ModelRegistry): void {
   }));
   for (const id of OPENAI_CODEX_OAUTH_MODELS) {
     if (existing.has(id)) continue;
+    const capabilities = descriptorCapabilities(provider, id);
     models.push({
       id,
       name: id,
       api: template.api,
       baseUrl: template.baseUrl,
-      reasoning: !id.startsWith('gpt-image-'),
-      thinkingLevelMap: template.thinkingLevelMap,
+      reasoning: capabilities.reasoning,
+      thinkingLevelMap: capabilities.thinkingLevelMap,
       input: ['text', 'image'],
       cost: template.cost,
       contextWindow: template.contextWindow,
@@ -122,15 +124,14 @@ export function openAiApiFor(p: Pick<BrainProviderEntry, 'api' | 'baseUrl'>): Br
 /** Default context window when the operator hasn't pinned one and the endpoint doesn't report a reliable
  *  max — a safe placeholder the model list requires. */
 export const DEFAULT_CONTEXT_WINDOW = 200_000;
-function modelEntry(id: string, contextWindow?: number) {
+function modelEntry(provider: string, id: string, contextWindow?: number) {
+  const capabilities = descriptorCapabilities(provider, id);
   return {
-    id, name: id, reasoning: true, input: ['text', 'image'] as ('text' | 'image')[],
-    // PI's session default thinking level is "minimal", but many OpenAI-compatible backends (e.g.
-    // ollama) only accept low/medium/high — an unmapped "minimal" goes out as
-    // `reasoning_effort: "minimal"`, the endpoint 400s, and the whole turn fails with an EMPTY reply
-    // (the default-settings silent-Discord bug). Map the two levels such endpoints don't know onto
-    // their nearest supported neighbour; off/low/medium/high pass through unchanged.
-    thinkingLevelMap: { minimal: 'low', xhigh: 'high' },
+    id, name: id, reasoning: capabilities.reasoning, input: ['text', 'image'] as ('text' | 'image')[],
+    // Per-provider/model reasoning support lives in modelCapabilities.ts. In particular, an unknown
+    // custom chat model is not sent a speculative reasoning_effort that would turn a healthy request
+    // into a 400; known reasoning families expose only their real canonical levels.
+    thinkingLevelMap: capabilities.thinkingLevelMap,
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     contextWindow: contextWindow && contextWindow > 0 ? contextWindow : DEFAULT_CONTEXT_WINDOW, maxTokens: 8_192,
   };
@@ -162,7 +163,7 @@ export function buildBrainRegistry(cfg: BrainRuntimeConfig, authStorage: AuthSto
         baseUrl: normOpenAiBase(p.baseUrl || 'https://api.openai.com/v1'),
         apiKey: p.apiKey ?? undefined,
         headers: { ...APP_IDENTITY_HEADERS },
-        models: p.models.map((m) => modelEntry(m, windowFor(cfg, p.id, m))),
+        models: p.models.map((m) => modelEntry(registryProviderName(p), m, windowFor(cfg, p.id, m))),
       });
     } else if (p.type === 'anthropic') {
       registry.registerProvider(registryProviderName(p), {
@@ -171,7 +172,7 @@ export function buildBrainRegistry(cfg: BrainRuntimeConfig, authStorage: AuthSto
         baseUrl: p.baseUrl || 'https://api.anthropic.com',
         apiKey: p.apiKey ?? undefined,
         headers: { ...APP_IDENTITY_HEADERS },
-        models: p.models.map((m) => modelEntry(m, windowFor(cfg, p.id, m))),
+        models: p.models.map((m) => modelEntry(registryProviderName(p), m, windowFor(cfg, p.id, m))),
       });
     }
     // oauth-* types: built-in providers already carry their model catalogs; auth comes from AuthStorage.
@@ -217,7 +218,7 @@ export function resolveBrainModel(
       baseUrl: entry.type === 'openai' ? normOpenAiBase(entry.baseUrl || 'https://api.openai.com/v1') : (entry.baseUrl || 'https://api.anthropic.com'),
       apiKey: entry.apiKey ?? undefined,
       headers: { ...APP_IDENTITY_HEADERS },
-      models: [...new Set([...entry.models, modelId])].map((m) => modelEntry(m, windowFor(cfg, entry.id, m))),
+      models: [...new Set([...entry.models, modelId])].map((m) => modelEntry(providerName, m, windowFor(cfg, entry.id, m))),
     });
     const added = registry.find(providerName, modelId);
     if (added) return added;

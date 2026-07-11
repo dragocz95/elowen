@@ -1,4 +1,5 @@
 import type { AgentSession, AgentSessionEvent } from '@earendil-works/pi-coding-agent';
+import { isContextOverflow } from '@earendil-works/pi-ai';
 import { toolCommand, toolDetail, toolOutputView } from './messageView.js';
 import type { ToolOutputView } from './messageView.js';
 import type { ProcessInfo } from './processRegistry.js';
@@ -83,7 +84,7 @@ export type BrainEvent =
    *  duplicate the turn). `text` is the client's clean rendering when it supplied one (before
    *  @mention/prompt expansion), else the persisted model-facing text. Internal goal kickoff/continuation
    *  turns are NOT user messages and emit nothing. Safe to ignore (the streamed reply still arrives). */
-  | { type: 'user'; text: string }
+  | { type: 'user'; text: string; /** Store row replaced by this ordered live marker in snapshots. */ durableId?: string }
   /** A FULL snapshot of the owner's background shell processes (the terminal plugin's
    *  `run_command(background:true)` children), pushed to the owner's live client streams whenever one
    *  spawns/exits/is killed — so the CLI/web process panel updates OUT of turn. Owner-only: a command
@@ -154,6 +155,27 @@ export interface BrainUsage {
   percent: number | null;
   totalTokens: number;
   cost: number;
+}
+
+/** PI's overflow detector expects a fully shaped assistant usage object, while tests/custom stream
+ * adapters may omit it on provider errors. Normalize that optional field and only classify errored
+ * assistants: a successful over-window response is compacted without retry and must stay durable. */
+export function isErroredContextOverflow(message: unknown, contextWindow: number): boolean {
+  if (!message || typeof message !== 'object') return false;
+  const raw = message as { stopReason?: string; usage?: Record<string, unknown> };
+  if (raw.stopReason !== 'error') return false;
+  const usage = {
+    input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0,
+    ...(raw.usage ?? {}),
+  };
+  try { return isContextOverflow({ ...(message as object), usage } as Parameters<typeof isContextOverflow>[0], contextWindow); }
+  catch { return false; }
+}
+
+/** Add settled delegated-session spend while preserving the root conversation's live context fill. */
+export function withDescendantUsage(usage: BrainUsage, extra: { totalTokens: number; cost: number }): BrainUsage {
+  if (!extra.totalTokens && !extra.cost) return usage;
+  return { ...usage, totalTokens: usage.totalTokens + extra.totalTokens, cost: usage.cost + extra.cost };
 }
 
 /** A short human reason for a retry notice. Provider errors usually arrive as `429 {json blob}` — the
@@ -228,14 +250,14 @@ export function toBrainEvent(e: AgentSessionEvent, now: number = Date.now()): Br
     return { type: 'notice', kind: 'retry', message: `reconnecting ${anyE.attempt ?? 1}/${anyE.maxAttempts ?? 1}${reason ? ` · ${reason}` : ''}…` };
   }
   if (anyE.type === 'auto_retry_end') return { type: 'notice', kind: 'retry', message: anyE.success ? 'reconnected' : 'reconnect failed', done: true };
-  if (anyE.type === 'compaction_start') return { type: 'notice', kind: 'compaction', message: 'compacting context…' };
+  if (anyE.type === 'compaction_start') return { type: 'notice', kind: 'compaction', message: 'compacting conversation…' };
   if (anyE.type === 'compaction_end') {
     // Only a REAL compaction (a CompactionResult present, not aborted) says "context compacted"; a no-op
     // (session too small / already compacted) or a failed/cancelled run just clears the status line — PI
     // emits compaction_start then a resultless compaction_end for those, so an unconditional success text
     // would lie. An empty message with `done` clears the notice without claiming anything happened.
     const ok = anyE.result != null && anyE.aborted !== true;
-    return { type: 'notice', kind: 'compaction', message: ok ? 'context compacted' : '', done: true };
+    return { type: 'notice', kind: 'compaction', message: ok ? 'conversation compacted' : '', done: true };
   }
   // Live streamed output of a running tool. Scoped to `run_command` ONLY (every other tool would just
   // re-noise the SSE with output it returns once at the end anyway) and throttled per tool call, so a

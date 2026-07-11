@@ -356,7 +356,7 @@ export default function SettingsPage() {
     <ModuleShell moduleId="settings">
       <ModuleHeader title={`${t.page.settings} / ${t.settings[category]}`} icon={SlidersHorizontal} />
 
-      <div className="mx-auto flex w-full min-w-0 max-w-7xl flex-col gap-6">
+      <div className="flex w-full min-w-0 flex-col gap-6">
       <SettingsLayout
         ariaLabel={t.settings.sectionsNav}
         sections={SETTINGS_SECTIONS.map(({ id, icon }) => ({ id, icon, label: t.settings[id] }))}

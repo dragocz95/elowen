@@ -4,7 +4,7 @@ import type { BrainRuntimeConfig } from '../providers.js';
 import { buildBrainRegistry, resolveBrainModel } from '../providers.js';
 import { extractText, shapeBrainMessages } from '../messageView.js';
 import type { BrainMessageView } from '../messageView.js';
-import { usageOf, queueItems } from '../events.js';
+import { usageOf, queueItems, withDescendantUsage } from '../events.js';
 import type { AskQuestion, BrainCard, BrainUsage } from '../events.js';
 import type { LiveSessionRegistry } from '../session/liveRegistry.js';
 import type { LiveBrain } from '../session/liveBrain.js';
@@ -15,6 +15,7 @@ import type { BrainDeps } from '../brainDeps.js';
 import type { ClientAttachments } from './attachments.js';
 import type { ConversationLifecycle } from './lifecycle.js';
 import type { PermissionApprovalService } from './permissionApproval.js';
+import type { BrainStreamSnapshot } from '../session/liveEventReplay.js';
 
 interface StatusServiceDeps {
   store: BrainStore;
@@ -103,7 +104,7 @@ export class BrainStatusService {
 
   /** Chat-client status — of the active conversation, or of the caller's explicit `session` (a bound
    *  CLI), so a client bound elsewhere never renders another conversation's model/title/pending ask. */
-  status(userId: number, session?: string): { running: boolean; sessionId: string | null; title: string; model: string; usage: BrainUsage | null; thinkingLevel: string; thinkingLevels: string[]; pendingAsk: { id: string; questions: AskQuestion[]; kind?: 'approval' } | null; cards: BrainCard[]; queued: { id: string; text: string }[]; yolo: boolean } {
+  status(userId: number, session?: string): { running: boolean; sessionId: string | null; title: string; model: string; usage: BrainUsage | null; thinkingLevel: string; thinkingLevels: string[]; thinkingLevelLabels: Record<string, string>; fast: boolean; fastAvailable: boolean; pendingAsk: { id: string; questions: AskQuestion[]; kind?: 'approval' } | null; cards: BrainCard[]; queued: { id: string; text: string }[]; yolo: boolean } {
     const explicit = session ? this.d.lifecycle.ownedUserSession(userId, session) : undefined;
     const b = explicit ? this.d.sessions.get(explicit) : this.d.lifecycle.activeLive(userId);
     const sess = b?.session as { thinkingLevel?: string; supportsThinking?: () => boolean; getAvailableThinkingLevels?: () => string[] } | undefined;
@@ -113,9 +114,13 @@ export class BrainStatusService {
     const activeId = explicit ?? b?.sessionId ?? this.d.lifecycle.activeSessionId(userId);
     const title = (activeId && this.d.store.getSession(activeId)?.title) || '';
     return {
-      running: !!b, sessionId: b?.sessionId ?? null, title, model: b?.model ?? '', usage: b ? usageOf(b.session) : null,
+      running: !!b, sessionId: b?.sessionId ?? null, title, model: b?.model ?? '',
+      usage: b ? withDescendantUsage(usageOf(b.session), this.d.store.descendantUsage(b.sessionId)) : null,
       thinkingLevel: (sess?.thinkingLevel as string) ?? b?.thinkingLevel ?? '',
       thinkingLevels: supports ? (sess?.getAvailableThinkingLevels?.() ?? []) : [],
+      thinkingLevelLabels: b?.thinkingLabels ?? {},
+      fast: b?.requestProfile.fast ?? false,
+      fastAvailable: b?.fastAvailable ?? false,
       // A question parked for the active conversation, so a client reconnecting mid-question (refresh, SSE
       // drop) restores the picker instead of hanging until the timeout.
       pendingAsk: b ? this.d.elicitation.pendingForSession(b.sessionId) : null,
@@ -166,7 +171,8 @@ export class BrainStatusService {
   /** The user's stored conversation, shaped for display (channels render this on connect). Reads the
    *  sole store; no live session required, so it works before/independently of `start`. */
   history(userId: number): BrainMessageView[] {
-    return shapeBrainMessages(this.d.store.getMessages(this.d.lifecycle.activeSessionId(userId)));
+    const sessionId = this.d.lifecycle.activeSessionId(userId);
+    return shapeBrainMessages(this.d.store.getMessages(sessionId), this.d.store.getSubagentRuns(sessionId));
   }
 
   /** ANY of the owner's stored sessions, shaped for display — including the channel (Discord) and
@@ -175,6 +181,31 @@ export class BrainStatusService {
   messagesOf(userId: number, sessionId: string): BrainMessageView[] {
     const row = this.d.store.getSession(sessionId);
     if (!row || row.user_id !== userId) throw new Error('unknown session');
-    return shapeBrainMessages(this.d.store.getMessages(sessionId));
+    return shapeBrainMessages(this.d.store.getMessages(sessionId), this.d.store.getSubagentRuns(sessionId));
+  }
+
+  /** Atomic, idempotent first frame for an opt-in fixed-session SSE stream. Reads the clean durable
+   *  history and the live run journal synchronously on the same event-loop turn, so an event cannot
+   *  fall between the two halves. The route installs its tap immediately before calling this method. */
+  streamSnapshot(userId: number, sessionId: string): BrainStreamSnapshot {
+    const row = this.d.store.getSession(sessionId);
+    if (!row || row.user_id !== userId) throw new Error('unknown session');
+    const live = this.d.sessions.get(sessionId)
+      ?? (sessionId.startsWith('brain-ch-') ? this.d.sessions.channelGet(sessionId.slice('brain-ch-'.length)) : undefined);
+    const replay = live?.replay.transportSnapshot() ?? { cursor: 0, events: [], run: 0, eventCursors: [] };
+    const orderedUserRows = new Set(replay.events.flatMap((event) =>
+      event.type === 'user' && event.durableId ? [event.durableId] : []));
+    return {
+      type: 'snapshot',
+      sessionId,
+      // Journaled users are already durable, but replaying them is what preserves their position among
+      // pre/post-steer deltas. Remove exactly those id-matched rows from the history prefix (no text
+      // guessing: display text may differ from persisted image/mention framing).
+      history: shapeBrainMessages(
+        this.d.store.getMessages(sessionId).filter((message) => !orderedUserRows.has(message.id)),
+        this.d.store.getSubagentRuns(sessionId),
+      ),
+      ...replay,
+    };
   }
 }

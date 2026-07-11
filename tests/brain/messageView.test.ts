@@ -16,6 +16,29 @@ describe('shapeBrainMessages: compaction divider', () => {
   });
 });
 
+describe('shapeBrainMessages: durable sub-agent state', () => {
+  it('keeps the tool-call id and attaches the validated sidecar snapshot for reconnect/drill-in', () => {
+    const rows = [{
+      role: 'assistant',
+      content: JSON.stringify({
+        role: 'assistant',
+        content: [{ type: 'toolCall', id: 'delegate-1', name: 'delegate', arguments: { task: 'inspect' } }],
+      }),
+    }];
+    const [view] = shapeBrainMessages(rows, [{
+      toolCallId: 'delegate-1', sessionId: 'brain-ch-subagent-child', status: 'running', task: 'inspect',
+      detail: 'read_file src/a.ts', tools: 2, tokens: 900, seconds: 4, model: 'm',
+    }]);
+    expect(view?.segments?.[0]).toMatchObject({
+      kind: 'tool', id: 'delegate-1', name: 'delegate',
+      sub: {
+        sessionId: 'brain-ch-subagent-child', status: 'running', task: 'inspect',
+        detail: 'read_file src/a.ts', tools: 2, tokens: 900, seconds: 4, model: 'm',
+      },
+    });
+  });
+});
+
 describe('isThinkingOnlyReply', () => {
   const asst = (m: Record<string, unknown>) => ({ role: 'assistant', ...m });
 

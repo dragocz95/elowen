@@ -7,6 +7,8 @@
   "provides": {
     "tools": [
       "delegate",
+      "delegate_status",
+      "delegate_result",
       "delegate_models"
     ],
     "platforms": [
@@ -15,6 +17,8 @@
   },
   "icons": {
     "delegate": "\ud83e\udd1d",
+    "delegate_status": "\u23f3",
+    "delegate_result": "\ud83d\udce5",
     "delegate_models": "\ud83e\udd1d"
   }
 }

@@ -1,15 +1,17 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { openDb } from '../../src/store/db.js';
 import { BrainStore } from '../../src/store/brainStore.js';
-import { persistCompaction, projectEvent, projectUserTurn, rehydrate } from '../../src/brain/persistence.js';
+import { createSessionPersistenceProjector, persistCompaction, projectEvent, projectUserTurn, rehydrate } from '../../src/brain/persistence.js';
 import { newCostMeter, runWithMeter } from '../../src/brain/openrouterMeter.js';
 import { NO_REPLY_NUDGE } from '../../src/brain/messageView.js';
 import type { AgentSession } from '@earendil-works/pi-coding-agent';
 
 describe('brain persistence', () => {
+  let db: ReturnType<typeof openDb>;
   let store: BrainStore;
   beforeEach(() => {
-    store = new BrainStore(openDb(':memory:'));
+    db = openDb(':memory:');
+    store = new BrainStore(db);
     store.createSession({ id: 's1', userId: 1, model: 'm' });
   });
 
@@ -27,9 +29,127 @@ describe('brain persistence', () => {
     expect(JSON.parse(msgs.at(-1)!.content)).toMatchObject({ content: 'hello' });
   });
 
+  it('reorders pre-projected steering into the settled PI run instead of leaving it before earlier output', () => {
+    const initialId = projectUserTurn(store, 's1', 'initial clean prompt');
+    // A steer is durable immediately for reconnect safety, but it arrived after the agent had already
+    // emitted an assistant/tool pair. PI's terminal run carries that true order.
+    const steerId = projectUserTurn(store, 's1', 'steer after the tool');
+    // Make the regression deterministic: generated rows are persisted at agent_end (much later), whereas
+    // these already-durable users retain when they were actually received. created_at must remain metadata;
+    // it cannot override the PI event sequence reconstructed by persistAgentRun.
+    db.prepare('UPDATE brain_messages SET created_at = ? WHERE id = ?').run('2000-01-01 00:00:00', initialId);
+    db.prepare('UPDATE brain_messages SET created_at = ? WHERE id = ?').run('2000-01-01 00:00:05', steerId);
+    projectEvent(store, 's1', {
+      type: 'agent_end', willRetry: false,
+      messages: [
+        { role: 'user', content: '<ephemeral context>initial clean prompt' },
+        { role: 'assistant', content: 'I will inspect it.' },
+        { role: 'tool', content: 'read_file complete' },
+        { role: 'user', content: 'steer after the tool' },
+        { role: 'assistant', content: 'Adjusted course.' },
+      ],
+    } as never);
+
+    const rows = store.getMessages('s1');
+    expect(rows.map((row) => row.role)).toEqual(['user', 'assistant', 'tool', 'user', 'assistant']);
+    expect(rows.map((row) => JSON.parse(row.content).content)).toEqual([
+      'initial clean prompt', 'I will inspect it.', 'read_file complete', 'steer after the tool', 'Adjusted course.',
+    ]);
+    expect(rows.find((row) => row.id === steerId)?.created_at).toBe('2000-01-01 00:00:05');
+  });
+
   it('projectEvent ignores non-terminal events', () => {
     projectEvent(store, 's1', { type: 'queue_update', steering: [], followUp: [] } as never);
     expect(store.getMessages('s1')).toHaveLength(0);
+  });
+
+  it('persists overflow recovery in PI post-removal order, without the transient 400 assistant', () => {
+    projectUserTurn(store, 's1', 'old question');
+    projectEvent(store, 's1', { type: 'agent_end', willRetry: false, messages: [{ role: 'assistant', content: 'old answer' }] } as never);
+    projectUserTurn(store, 's1', 'question at the context cliff');
+
+    const overflow = {
+      role: 'assistant', content: [], stopReason: 'error', provider: 'deepseek', model: 'deepseek-chat',
+      errorMessage: '400 status code (no body)', timestamp: 10,
+      usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { total: 0 } },
+    };
+    const session = { messages: [] as unknown[] } as unknown as AgentSession;
+    const project = createSessionPersistenceProjector(store, session, 's1', 200_000);
+
+    // PI emits this before deciding to compact. It must not become durable yet.
+    project({ type: 'agent_end', willRetry: false, messages: [overflow] } as never);
+    expect(store.getMessages('s1').map((row) => row.role)).toEqual(['user', 'assistant', 'user']);
+
+    // At compaction_end PI's live list still contains the overflow error after the kept tail. PI removes
+    // it immediately after listeners return; the store must mirror that post-listener context.
+    session.messages = [
+      { role: 'compactionSummary', summary: 'old turn summarized', tokensBefore: 200_000 },
+      { role: 'user', content: '<context>ephemeral</context>\n\nquestion at the context cliff' },
+      overflow,
+    ] as never;
+    project({
+      type: 'compaction_end', reason: 'overflow', result: { summary: 'old turn summarized' },
+      aborted: false, willRetry: true,
+    } as never);
+    expect(store.getMessages('s1').map((row) => row.role)).toEqual(['compaction', 'user']);
+
+    // The retry succeeds. Rehydration now equals PI's post-removal context plus that success.
+    session.messages = session.messages.slice(0, -1) as never;
+    project({ type: 'agent_end', willRetry: false, messages: [{ role: 'assistant', content: 'recovered answer', stopReason: 'stop' }] } as never);
+    const context = rehydrate(store, 's1', process.cwd()).buildSessionContext().messages;
+    expect(context.map((message) => message.role)).toEqual(['compactionSummary', 'user', 'assistant']);
+    expect(JSON.stringify(context)).not.toContain('400 status code');
+    expect(JSON.stringify(context)).not.toContain('ephemeral');
+    expect(JSON.stringify(context)).toContain('recovered answer');
+  });
+
+  it('persists the deferred overflow assistant when recovery compaction itself fails', () => {
+    projectUserTurn(store, 's1', 'too large');
+    const overflow = {
+      role: 'assistant', content: [], stopReason: 'error', provider: 'deepseek', model: 'deepseek-chat',
+      errorMessage: '400 status code (no body)', timestamp: 10,
+      usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { total: 0 } },
+    };
+    const session = { messages: [overflow] } as unknown as AgentSession;
+    const project = createSessionPersistenceProjector(store, session, 's1', 200_000);
+    project({ type: 'agent_end', willRetry: false, messages: [overflow] } as never);
+    project({ type: 'compaction_end', reason: 'overflow', result: undefined, aborted: false, willRetry: false } as never);
+    expect(store.getMessages('s1').map((row) => row.role)).toEqual(['user', 'assistant']);
+    expect(store.getMessages('s1').at(-1)!.content).toContain('400 status code');
+  });
+
+  it('persists a successful over-window assistant before non-retrying overflow compaction', () => {
+    projectUserTurn(store, 's1', 'large but successful');
+    const success = {
+      role: 'assistant', content: 'complete answer', stopReason: 'stop', provider: 'relay', model: 'm', timestamp: 10,
+      usage: { input: 210_000, output: 100, cacheRead: 0, cacheWrite: 0, totalTokens: 210_100, cost: { total: 0 } },
+    };
+    const session = { messages: [
+      { role: 'compactionSummary', summary: 'large exchange summarized', tokensBefore: 210_100 }, success,
+    ] } as unknown as AgentSession;
+    const project = createSessionPersistenceProjector(store, session, 's1', 200_000);
+    project({ type: 'agent_end', willRetry: false, messages: [success] } as never);
+    expect(store.getMessages('s1').map((row) => row.role)).toEqual(['user', 'assistant']);
+    project({
+      type: 'compaction_end', reason: 'overflow', result: { summary: 'large exchange summarized' },
+      aborted: false, willRetry: false,
+    } as never);
+    expect(store.getMessages('s1').map((row) => row.role)).toEqual(['compaction', 'assistant']);
+    expect(store.getMessages('s1').at(-1)!.content).toContain('complete answer');
+  });
+
+  it('flushes a deferred overflow error when PI settles without a compaction_end', () => {
+    projectUserTurn(store, 's1', 'nothing summarizable');
+    const overflow = {
+      role: 'assistant', content: [], stopReason: 'error', provider: 'deepseek', model: 'deepseek-chat',
+      errorMessage: '400 status code (no body)', timestamp: 10,
+      usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { total: 0 } },
+    };
+    const session = { messages: [overflow] } as unknown as AgentSession;
+    const project = createSessionPersistenceProjector(store, session, 's1', 200_000);
+    project({ type: 'agent_end', willRetry: false, messages: [overflow] } as never);
+    project({ type: 'agent_settled' } as never);
+    expect(store.getMessages('s1').map((row) => row.role)).toEqual(['user', 'assistant']);
   });
 
   const costOf = (row: { content: string }) => JSON.parse(row.content).usage?.cost?.total;

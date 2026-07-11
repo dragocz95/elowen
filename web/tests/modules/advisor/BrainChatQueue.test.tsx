@@ -139,4 +139,17 @@ describe('BrainChat pending queue', () => {
     expect(await screen.findByText('hello there')).toBeTruthy();
     expect(screen.getAllByText('hello there')).toHaveLength(1);
   });
+
+  it('keeps the submitted draft when the daemon rejects a send during a slow session start', async () => {
+    server.use(http.post('*/api/brain/send', () => HttpResponse.json({ error: 'brain not started' }, { status: 409 })));
+    renderChat();
+    await waitFor(() => expect(FakeES.instances.length).toBeGreaterThan(0));
+    const textarea = screen.getByRole('textbox');
+    act(() => fireEvent.change(textarea, { target: { value: 'do not lose this' } }));
+
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: /Send|Odeslat/i })); });
+
+    await waitFor(() => expect(textarea).toHaveValue('do not lose this'));
+    expect(screen.getByText(/Message was not sent|Zprávu se nepodařilo odeslat/i)).toBeInTheDocument();
+  });
 });

@@ -15,7 +15,7 @@ import { ChannelSessionService } from './channels.js';
 import type { ChannelSendOpts } from './channels.js';
 import { PlatformOrchestrator } from './platforms.js';
 import type { BrainMessageView } from './messageView.js';
-import { runCompaction, queueItems } from './events.js';
+import { runCompaction, queueItems, withDescendantUsage } from './events.js';
 import type { AskAnswer, AskQuestion, BrainCard, BrainEvent, BrainUsage, CompactResult } from './events.js';
 import { isNonUserSession } from './sessionId.js';
 import { lastAssistantText } from './goal.js';
@@ -25,12 +25,17 @@ import { GoalLoopService } from './service/goalLoop.js';
 import { LiveSessionSpawner } from './service/spawner.js';
 import { ConversationLifecycle } from './service/lifecycle.js';
 import { BrainTurnRunner } from './service/turnRunner.js';
+import type { BoundClientRequest } from './service/turnRunner.js';
 import { BrainStatusService } from './service/statusService.js';
 import { exportBrainSession } from './session/exportSession.js';
 import type { ExportFormat, SessionExport } from './session/exportSession.js';
 import type { BrainDeps } from './brainDeps.js';
 import type { ProcessInfo } from './processRegistry.js';
+import type { BrainStreamSnapshot } from './session/liveEventReplay.js';
+import { delegatedToolPolicy, type DelegatedExecutionScope } from './delegatedScope.js';
 import { DEFAULT_BRAIN_LIMITS } from '../store/configStore.js';
+import type { Model, Api } from '@earendil-works/pi-ai';
+import { CANONICAL_THINKING_LEVELS, canonicalThinkingLevel } from './modelCapabilities.js';
 
 export type { BrainDeps } from './brainDeps.js';
 
@@ -134,6 +139,7 @@ export class BrainService {
     });
     this.spawner = new LiveSessionSpawner({
       get config() { return d.config; },
+      store: d.store,
       get authStorage() { return d.authStorage; },
       get users() { return d.users; },
       get prompts() { return d.prompts; },
@@ -262,7 +268,9 @@ export class BrainService {
       // A real compaction fires PI's `compaction_end`, which the factory's session subscription mirrors
       // into the store and the spawner fans `compacted` to attached clients — persistence + notify ride the
       // event, not this call. A no-op (session too small) emits no result and leaves the store untouched.
-      return runCompaction(live.session);
+      const result = await runCompaction(live.session);
+      result.usage = withDescendantUsage(result.usage, this.d.store.descendantUsage(live.sessionId));
+      return result;
     });
   }
 
@@ -272,20 +280,67 @@ export class BrainService {
   async abort(userId: number, session?: string): Promise<void> {
     const b = session ? this.sessions.get(this.lifecycle.ownedUserSession(userId, session)) : this.lifecycle.activeLive(userId);
     if (!b) throw new Error('brain not started');
-    this.goals.cancelGoalContinuation(b.sessionId);
-    // Esc/stop = the user bails: drop every mid-turn steered message still pending in PI's queue so an
-    // interrupted turn doesn't deliver words the user meant for the turn they just killed.
-    b.session.clearQueue();
-    // A parked ask_user_question must fail cleanly when the turn is aborted, else the tool Promise
-    // (and the awaited prompt()) would hang forever. Reject before aborting the PI session.
-    if (b.sessionId) this.elicitation.cancelForSession(b.sessionId, 'aborted');
-    // Cascade into running delegations: without this the child keeps working (and burning tokens)
-    // after the parent turn died — and the user's interrupt looks like it didn't take.
-    for (const child of b.activeChildren ?? []) {
-      if (child.startsWith('brain-ch-')) this.channelService.abort(child.slice('brain-ch-'.length));
+    // Fence before taking the child snapshot. Otherwise an idle drill-in continuation can register a
+    // fresh child between childrenOf() and clearChildren(), escaping this stop tree.
+    this.sessions.beginParentAbort(b.sessionId);
+    try {
+      this.goals.cancelGoalContinuation(b.sessionId);
+      // Esc/stop = the user bails: drop every mid-turn steered message still pending in PI's queue so an
+      // interrupted turn doesn't deliver words the user meant for the turn they just killed.
+      b.session.clearQueue();
+      // A parked ask_user_question must fail cleanly when the turn is aborted, else the tool Promise
+      // (and the awaited prompt()) would hang forever. Reject before aborting the PI session.
+      if (b.sessionId) this.elicitation.cancelForSession(b.sessionId, 'aborted');
+      // Cascade into running delegations: without this the child keeps working (and burning tokens)
+      // after the parent turn died — and the user's interrupt looks like it didn't take.
+      await Promise.all(this.sessions.childrenOf(b.sessionId)
+        .filter((child) => child.startsWith('brain-ch-'))
+        .map((child) => this.channelService.abort(child.slice('brain-ch-'.length))));
+      this.sessions.clearChildren(b.sessionId);
+      await b.session.abort();
+    } finally {
+      this.sessions.endParentAbort(b.sessionId);
     }
-    b.activeChildren?.clear();
-    await b.session.abort();
+  }
+
+  /** A CLI is closing: stop its bound run and release the live PI session when it is the last attached
+   *  client. History stays in SQLite and can be resumed; another terminal/web stream keeps the shared
+   *  live session alive. Idempotent for an already-stopped conversation. */
+  async stopSession(userId: number, session?: string, clientId?: string, clientGeneration?: number): Promise<{ stopped: boolean; disposed: boolean }> {
+    // Consume the authenticated client's attachment FIRST. Its binding follows idle rollover inside the
+    // daemon, so it is more authoritative than the (possibly pre-rollover) id the CLI last observed.
+    // Releasing invokes only this client's stream disposer; every other attachment remains counted.
+    const released = clientId
+      ? this.attachments.release(userId, clientId, clientGeneration)
+      : { accepted: true as const, sessionId: undefined };
+    // A delayed stop from generation N must not abort a newer N+1 selection owned by the same CLI id.
+    if (!released.accepted) return { stopped: false, disposed: false };
+    const bound = released.sessionId;
+    const cleanUp = async (sessionId: string): Promise<{ stopped: boolean; disposed: boolean }> => {
+      const live = this.sessions.get(sessionId);
+      if (!live) return { stopped: false, disposed: false };
+      try { await this.abort(userId, sessionId); } catch { /* already idle/settled */ }
+      // The caller's own attachment was removed above, so zero now unambiguously means no other observer.
+      // Legacy callers without a stable id retain the conservative behavior: only an already-detached
+      // stream can make the count zero; we never guess which remaining listener belongs to the caller.
+      const disposable = this.attachments.attachedCount(sessionId) === 0;
+      if (disposable) {
+        this.goals.cancelGoalContinuation(sessionId);
+        this.elicitation.cancelForSession(sessionId, 'client closed');
+        this.cards.clearSession(sessionId);
+        this.sessions.dispose(sessionId);
+      }
+      return { stopped: true, disposed: disposable };
+    };
+    // Reserve the bare session lock BEFORE any wait/ownership lookup. `settled(bound)` outside this lock
+    // can race a replacement start (and can deadlock when that lifecycle holder waits on this cleanup).
+    // Once queued here, a start either finishes first and this stops that exact live instance, or waits
+    // behind us and creates a fresh one only after the old instance was disposed.
+    if (bound) {
+      return this.serial(bound, async () => cleanUp(this.lifecycle.ownedUserSession(userId, bound)));
+    }
+    const sessionId = session ? this.lifecycle.ownedUserSession(userId, session) : this.lifecycle.activeSessionId(userId);
+    return this.serial(sessionId, async () => cleanUp(sessionId));
   }
 
   /** Settle a parked `ask_user_question` with the user's picks (from POST /brain/answer or a Discord
@@ -319,17 +374,29 @@ export class BrainService {
     const b = session ? this.sessions.get(this.lifecycle.ownedUserSession(userId, session)) : this.lifecycle.activeLive(userId);
     if (!b) throw new Error('brain not started');
     const sess = b.session as { setThinkingLevel?: (l: string) => void; thinkingLevel?: string; getAvailableThinkingLevels?: () => string[] };
-    const available = new Set(sess.getAvailableThinkingLevels?.() ?? ['minimal', 'low', 'medium', 'high', 'xhigh']);
-    if (!available.has(level)) throw new Error(`model does not support reasoning effort "${level}"`);
-    sess.setThinkingLevel?.(level);
-    b.thinkingLevel = level;
+    const model = b.session.model as Model<Api> | undefined;
+    const canonical = model ? canonicalThinkingLevel(model, level) : level;
+    const available = new Set(sess.getAvailableThinkingLevels?.() ?? CANONICAL_THINKING_LEVELS);
+    if (!available.has(canonical)) throw new Error(`model does not support reasoning effort "${level}"`);
+    sess.setThinkingLevel?.(canonical);
+    b.thinkingLevel = canonical;
     b.interactedAt = Date.now(); // a reasoning-effort change is a deliberate touch — don't idle-roll it over
-    return { thinkingLevel: (sess.thinkingLevel as string) ?? level };
+    return { thinkingLevel: (sess.thinkingLevel as string) ?? canonical };
+  }
+
+  /** Toggle ChatGPT OAuth priority processing for one live conversation. */
+  setFast(userId: number, on?: boolean, session?: string): { fast: boolean; fastAvailable: boolean } {
+    const b = session ? this.sessions.get(this.lifecycle.ownedUserSession(userId, session)) : this.lifecycle.activeLive(userId);
+    if (!b) throw new Error('brain not started');
+    if (!b.fastAvailable) throw new Error('Fast mode is available only for OpenAI OAuth models');
+    b.requestProfile.fast = on ?? !b.requestProfile.fast;
+    b.interactedAt = Date.now();
+    return { fast: b.requestProfile.fast, fastAvailable: true };
   }
 
   /** Chat-client status — of the active conversation, or of the caller's explicit `session` (a bound
    *  CLI) — see BrainStatusService.status. */
-  status(userId: number, session?: string): { running: boolean; sessionId: string | null; title: string; model: string; usage: BrainUsage | null; thinkingLevel: string; thinkingLevels: string[]; pendingAsk: { id: string; questions: AskQuestion[]; kind?: 'approval' } | null; cards: BrainCard[]; queued: { id: string; text: string }[]; yolo: boolean } {
+  status(userId: number, session?: string): { running: boolean; sessionId: string | null; title: string; model: string; usage: BrainUsage | null; thinkingLevel: string; thinkingLevels: string[]; thinkingLevelLabels: Record<string, string>; fast: boolean; fastAvailable: boolean; pendingAsk: { id: string; questions: AskQuestion[]; kind?: 'approval' } | null; cards: BrainCard[]; queued: { id: string; text: string }[]; yolo: boolean } {
     return this.statusView.status(userId, session);
   }
 
@@ -454,18 +521,56 @@ export class BrainService {
   }
 
   /** Start (or resume) a conversation — see ConversationLifecycle.start. */
-  async start(userId: number, opts?: { provider?: string; model?: string; session?: string; fresh?: boolean; cwd?: string }): Promise<{ sessionId: string }> {
+  async start(userId: number, opts?: { provider?: string; model?: string; session?: string; fresh?: boolean; cwd?: string; clientId?: string; clientGeneration?: number }): Promise<{ sessionId: string }> {
     return this.lifecycle.start(userId, opts);
   }
 
   /** Follow the user's ACTIVE conversation live — see ConversationLifecycle.subscribe. */
-  subscribe(userId: number, listener: (e: BrainEvent) => void): () => void {
-    return this.lifecycle.subscribe(userId, listener);
+  subscribe(userId: number, listener: (e: BrainEvent) => void, clientId?: string, clientGeneration?: number): () => void {
+    return this.lifecycle.subscribe(userId, listener, clientId, clientGeneration);
   }
 
   /** Follow one of the CALLER'S OWN sessions live, by explicit id — see ConversationLifecycle.tapSession. */
-  tapSession(userId: number, sessionId: string, listener: (e: BrainEvent) => void): () => void {
-    return this.lifecycle.tapSession(userId, sessionId, listener);
+  tapSession(userId: number, sessionId: string, listener: (e: BrainEvent) => void, clientId?: string, clientGeneration?: number): () => void {
+    return this.lifecycle.tapSession(userId, sessionId, listener, clientId, clientGeneration);
+  }
+
+  /** Install a fixed-session tap and capture its durable+live snapshot without yielding. The caller
+   *  must buffer listener events until it has written `snapshot`; because both operations are
+   *  synchronous, every event belongs exactly once (inside the snapshot or after it). */
+  tapSessionSnapshot(userId: number, sessionId: string, listener: (e: BrainEvent) => void, clientId?: string, clientGeneration?: number): { off: () => void; snapshot: BrainStreamSnapshot } {
+    // A reconnect can carry the pre-rollover id while its stable client binding has already moved to the
+    // fresh session. Resolve once up front so BOTH the tap and atomic history/journal snapshot name the
+    // same target; otherwise the tap follows fresh but the first frame accidentally hydrates old history.
+    const targetSessionId = this.lifecycle.resolveStreamSession(userId, sessionId, clientId, clientGeneration);
+    const off = this.lifecycle.tapSession(userId, targetSessionId, listener, clientId, clientGeneration);
+    try { return { off, snapshot: this.statusView.streamSnapshot(userId, targetSessionId) }; }
+    catch (error) { off(); throw error; }
+  }
+
+  /** Resolve the durable, immutable scope for an owner drill-in. Kept synchronous so the HTTP route can
+   * reject a legacy/corrupt child before it fire-and-forgets the actual long-running continuation. */
+  private delegatedContinuation(userId: number, sessionId: string): {
+    row: { id: string; user_id: number; parent_session_id: string | null };
+    parentSessionId: string;
+    scope: DelegatedExecutionScope;
+  } {
+    const row = this.d.store.getSession(sessionId);
+    if (!row || row.user_id !== userId) throw new Error('unknown session');
+    if (!sessionId.startsWith('brain-ch-subagent-')) throw new Error('not a sub-agent session');
+    const parentSessionId = row.parent_session_id;
+    if (!parentSessionId) throw new Error('invalid parent session');
+    const parent = this.d.store.getSession(parentSessionId);
+    if (!parent || parent.user_id !== userId) throw new Error('invalid parent session');
+    const scope = this.d.store.delegatedAccessFor(sessionId);
+    if (!scope) throw new Error('delegated access unavailable');
+    return { row, parentSessionId, scope };
+  }
+
+  /** Synchronous route preflight for `/brain/subagent/send`: a legacy child with no immutable scope
+   * must return 409 now, not be silently swallowed by the route's detached promise. */
+  preflightSubagentSend(userId: number, sessionId: string): void {
+    this.delegatedContinuation(userId, sessionId);
   }
 
   /** The owner talking INTO a delegated sub-agent's session: steers the message into the child's
@@ -475,16 +580,26 @@ export class BrainService {
    *  delegation, so this can never escalate; shared platform channels are deliberately NOT reachable
    *  here (steering another member's turn would mix privileges). */
   async sendToSubagent(userId: number, sessionId: string, text: string): Promise<void> {
-    const row = this.d.store.getSession(sessionId);
-    if (!row || row.user_id !== userId) throw new Error('unknown session');
-    if (!sessionId.startsWith('brain-ch-subagent-')) throw new Error('not a sub-agent session');
-    const policy = this.d.policy?.(userId) ?? { allowedProjectIds: 'all' as const, allowedPaths: () => [] };
+    const { row, parentSessionId, scope } = this.delegatedContinuation(userId, sessionId);
+    const policy = scope.admin
+      ? { allowedProjectIds: 'all' as const, allowedPaths: () => [] }
+      : this.d.policyForProjects?.(scope.projectIds)
+        ?? { allowedProjectIds: new Set(scope.projectIds), allowedPaths: () => [] };
+    const deniedTools = this.d.users.get(userId)?.disabled_tools ?? [];
     await this.channelService.send({
       channelId: sessionId.slice('brain-ch-'.length),
       ownerUserId: row.user_id,
+      // A drill-in continuation is a new child run, not a standalone channel turn. Preserve the durable
+      // edge so parent stop/status and eviction guards keep owning it even after the child respawns.
+      parentSessionId,
       policy,
-      identity: this.identity.forOwnerChat(userId, policy),
-      writerUserId: userId,
+      delegatedAccess: scope,
+      promptAppend: scope.promptAppend,
+      trusted: scope.admin,
+      // The captured allow/deny policy remains authoritative; current account disabled tools may only add
+      // a deny. A mid-run steer still executes under the already-running child's original turn scope.
+      toolPolicy: delegatedToolPolicy(scope, deniedTools),
+      identity: this.identity.forDelegatedTurn(scope, row.user_id),
       ownerSteer: true,
     }, text);
   }
@@ -510,8 +625,8 @@ export class BrainService {
     }
   }
 
-  async send(userId: number, text: string, images?: { data: string; mimeType: string }[], mode: 'build' | 'plan' = 'build', internal?: { goalKickoff?: boolean; goalContinue?: boolean; systemNudge?: boolean }, clientCwd?: string, session?: string, display?: string): Promise<void> {
-    return this.turnRunner.send(userId, text, images, mode, internal, clientCwd, session, display);
+  async send(userId: number, text: string, images?: { data: string; mimeType: string }[], mode: 'build' | 'plan' = 'build', internal?: { goalKickoff?: boolean; goalContinue?: boolean; systemNudge?: boolean }, clientCwd?: string, session?: string, display?: string, client?: BoundClientRequest): Promise<void> {
+    return this.turnRunner.send(userId, text, images, mode, internal, clientCwd, session, display, client);
   }
 
   /** Restart a user's live session so changed settings apply — see ConversationLifecycle.restart. */

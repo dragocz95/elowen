@@ -1,6 +1,7 @@
 import { realpathSync } from 'node:fs';
 import { resolve, sep, dirname, basename, join } from 'node:path';
-import { currentPolicy, currentWorkDir } from './policyContext.js';
+import { currentIdentity, currentPolicy, currentToolPolicy, currentTurnPermissions, currentWorkDir } from './policyContext.js';
+import { noninteractivePermissionBoundary, type NoninteractivePermissionBoundary } from '../brain/toolPermissions.js';
 
 /** The repo roots the current session may operate in. Empty for an admin (all-access) or outside a
  *  prompt turn. A tool uses this to default a working directory. */
@@ -21,12 +22,24 @@ export function isAllAccess(): boolean {
   return currentPolicy()?.allowedProjectIds === 'all';
 }
 
-/** The current turn's access as a plain descriptor a plugin can forward when delegating to a sub-agent:
- *  admin (all repos) or an explicit project-id list. */
-export function currentAccess(): { projectIds: number[]; admin: boolean } {
+/** The current turn's complete access as a plain descriptor a plugin can safely forward to a sub-agent.
+ *  Owner truth stays independent from admin project scope, Set policies cross the platform boundary as
+ *  arrays without losing the significant empty-allow-list case, and the effective granular permission
+ *  boundary is snapshotted rather than re-resolved from the durable child row owner later. */
+export function currentAccess(): { projectIds: number[]; admin: boolean; owner: boolean; toolPolicy?: { allow?: string[]; deny?: string[] }; permissionBoundary: NoninteractivePermissionBoundary | null } {
   const p = currentPolicy();
-  if (!p || p.allowedProjectIds === 'all') return { projectIds: [], admin: p?.allowedProjectIds === 'all' };
-  return { projectIds: [...p.allowedProjectIds], admin: false };
+  const tools = currentToolPolicy();
+  const toolPolicy = tools ? {
+    ...(tools.allow ? { allow: [...tools.allow] } : {}),
+    ...(tools.deny ? { deny: [...tools.deny] } : {}),
+  } : undefined;
+  return {
+    projectIds: !p || p.allowedProjectIds === 'all' ? [] : [...p.allowedProjectIds],
+    admin: p?.allowedProjectIds === 'all',
+    owner: currentIdentity()?.owner === true,
+    permissionBoundary: noninteractivePermissionBoundary(currentTurnPermissions()),
+    ...(toolPolicy ? { toolPolicy } : {}),
+  };
 }
 
 /** Resolve to the REAL absolute path (symlinks followed), so a link inside an allowed repo pointing

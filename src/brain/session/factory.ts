@@ -1,8 +1,10 @@
 import { createAgentSession, DefaultResourceLoader, SettingsManager } from '@earendil-works/pi-coding-agent';
-import type { AgentSession, AgentSessionEvent, ExtensionAPI, PromptTemplate, ResourceLoader, Skill, ToolDefinition, ModelRegistry } from '@earendil-works/pi-coding-agent';
+import type { AgentSession, ExtensionAPI, PromptTemplate, ResourceLoader, Skill, ToolDefinition, ModelRegistry } from '@earendil-works/pi-coding-agent';
 import type { Model, Api } from '@earendil-works/pi-ai';
 import type { BrainStore } from '../../store/brainStore.js';
-import { persistCompaction, projectEvent, rehydrate } from '../persistence.js';
+import { createSessionPersistenceProjector, rehydrate } from '../persistence.js';
+import { applyProviderRequestProfile, isCanonicalThinkingLevel, type ProviderRequestProfile } from '../modelCapabilities.js';
+import type { DelegatedExecutionScope } from '../delegatedScope.js';
 
 /** Everything one PI brain session needs, composed by the caller: the chat brain renders the Elowen
  *  persona and gates elowen_* tools by session kind; the task worker bakes in its close tool and the
@@ -11,6 +13,10 @@ export interface SessionSpec {
   sessionId: string;
   /** The Elowen user the store row belongs to (0 for ownerless task sessions). */
   ownerUserId: number;
+  /** Parent conversation for delegated sessions; persisted for usage/navigation. */
+  parentSessionId?: string;
+  /** Immutable access boundary for a delegated child; verified on every respawn. */
+  delegatedAccess?: DelegatedExecutionScope;
   registry: ModelRegistry;
   model: Model<Api>;
   cwd: string;
@@ -29,6 +35,8 @@ export interface SessionSpec {
   tools: ToolDefinition[];
   /** Reasoning effort for extended-thinking models (empty/undefined = the model default). */
   thinkingLevel?: string;
+  /** Mutable provider switches (currently ChatGPT OAuth Fast) read before every request. */
+  requestProfile?: ProviderRequestProfile;
   /** PI's built-in auto-compaction: on/off. When on, PI summarizes the context on its own once it fills
    *  past `autoCompactAtPct` — no separate trigger in our turn loop. */
   autoCompact: boolean;
@@ -50,7 +58,16 @@ export interface SessionFactoryDeps {
   createSession?: typeof createAgentSession;
   /** Injected for tests; builds the resource loader that carries the system prompt. A test passes
    *  `() => undefined` so no disk-touching loader is constructed. */
-  resourceLoaderFactory?: (o: { cwd: string; systemPrompt: string; appendSystemPrompt?: string[]; skills?: Skill[]; prompts?: PromptTemplate[]; contextFiles?: boolean; codexReasoningFix?: boolean; settingsManager: SettingsManager }) => ResourceLoader | undefined;
+  resourceLoaderFactory?: (o: { cwd: string; systemPrompt: string; appendSystemPrompt?: string[]; skills?: Skill[]; prompts?: PromptTemplate[]; contextFiles?: boolean; codexReasoningFix?: boolean; requestProfile?: ProviderRequestProfile; settingsManager: SettingsManager }) => ResourceLoader | undefined;
+}
+
+/** PI uses the same reserve both as the proactive threshold and as the summary-output budget during
+ * overflow recovery. A zero reserve therefore cannot mean "overflow only": it produces a zero-token
+ * summary and makes the recovery fail. Keep disabled proactive compaction at a small emergency margin
+ * (5% of context, capped at 4k) so it triggers only at the cliff but still has room to summarize. */
+export function compactionReserveTokens(contextWindow: number, proactive: boolean, atPercent: number): number {
+  if (proactive) return Math.max(2, Math.round(contextWindow * (1 - atPercent / 100)));
+  return Math.max(256, Math.min(4_096, Math.round(contextWindow * 0.05)));
 }
 
 /** The ChatGPT (Codex) backend returns reasoning-summary text ONLY for `reasoning.summary:"concise"`
@@ -66,6 +83,18 @@ function codexReasoningSummary(pi: ExtensionAPI): void {
   });
 }
 
+/** ChatGPT OAuth Fast mode is OpenAI's priority service tier. The state object is deliberately mutable:
+ *  `/fast` changes it live and this hook reads the newest value on every model round-trip. */
+function codexRequestProfile(profile: ProviderRequestProfile): (pi: ExtensionAPI) => void {
+  return (pi) => {
+    pi.on('before_provider_request', (event) => {
+      if (!profile.fast) return undefined;
+      const payload = event.payload as Record<string, unknown> | null | undefined;
+      return payload ? applyProviderRequestProfile(payload, profile) : undefined;
+    });
+  };
+}
+
 /** Default resource loader: carries the composed system prompt, appends the extra chunks after it,
  *  and disables most disk discovery — the brain is a lean, in-process agent. `noExtensions` skips only
  *  DISCOVERED extensions; the inline factories below still load. Context files are OWNER-ONLY opt-in
@@ -74,7 +103,7 @@ function codexReasoningSummary(pi: ExtensionAPI): void {
  *  surfaces — a channel session whose cwd falls back to the daemon's project path would inhale internal
  *  instruction files into a prompt foreign senders talk to — so channels and task workers keep it off.
  *  It sits in a separate prompt block from the Elowen persona/appends, so there is no duplication. */
-function defaultResourceLoaderFactory(o: { cwd: string; systemPrompt: string; appendSystemPrompt?: string[]; skills?: Skill[]; prompts?: PromptTemplate[]; contextFiles?: boolean; codexReasoningFix?: boolean; settingsManager: SettingsManager }): ResourceLoader {
+function defaultResourceLoaderFactory(o: { cwd: string; systemPrompt: string; appendSystemPrompt?: string[]; skills?: Skill[]; prompts?: PromptTemplate[]; contextFiles?: boolean; codexReasoningFix?: boolean; requestProfile?: ProviderRequestProfile; settingsManager: SettingsManager }): ResourceLoader {
   const skills = o.skills ?? [];
   const prompts = o.prompts ?? [];
   return new DefaultResourceLoader({
@@ -89,7 +118,9 @@ function defaultResourceLoaderFactory(o: { cwd: string; systemPrompt: string; ap
     // feeds PI our in-memory plugin templates, which it exposes as `/name` slash commands and expands
     // ($1/$@/$ARGUMENTS/${N:-default}) itself in prompt()/steer()/followUp() — no daemon-side expansion.
     promptsOverride: () => ({ prompts, diagnostics: [] }),
-    ...(o.codexReasoningFix ? { extensionFactories: [codexReasoningSummary] } : {}),
+    ...(o.codexReasoningFix ? {
+      extensionFactories: [codexReasoningSummary, ...(o.requestProfile ? [codexRequestProfile(o.requestProfile)] : [])],
+    } : {}),
   });
 }
 
@@ -101,9 +132,24 @@ export class BrainSessionFactory {
 
   async create(spec: SessionSpec): Promise<{ session: AgentSession }> {
     // Ensure the store row (sole source of truth) exists before rehydration.
-    if (!this.d.store.getSession(spec.sessionId)) {
-      this.d.store.createSession({ id: spec.sessionId, userId: spec.ownerUserId, model: spec.model.id });
+    const existing = this.d.store.getSession(spec.sessionId);
+    if (!existing) {
+      this.d.store.createSession({
+        id: spec.sessionId, userId: spec.ownerUserId, model: spec.model.id,
+        parentSessionId: spec.parentSessionId, delegatedAccess: spec.delegatedAccess,
+      });
     } else {
+      // A durable delegated child never accepts a replacement scope after its first spawn. In
+      // particular, a legacy/corrupt child with no scope cannot be upgraded by an owner continuation.
+      if (spec.parentSessionId) {
+        if (existing.parent_session_id !== spec.parentSessionId
+          || !spec.delegatedAccess
+          || !this.d.store.hasDelegatedAccess(spec.sessionId, spec.delegatedAccess)) {
+          throw new Error('delegated access unavailable');
+        }
+      } else if (spec.delegatedAccess) {
+        throw new Error('delegated access requires a parent session');
+      }
       this.d.store.touchSession(spec.sessionId, spec.model.id);
     }
     if (spec.title && !this.d.store.getSession(spec.sessionId)?.title) {
@@ -123,7 +169,7 @@ export class BrainSessionFactory {
     const resourceLoader = (this.d.resourceLoaderFactory ?? defaultResourceLoaderFactory)({
       cwd: spec.cwd, systemPrompt: spec.systemPrompt, appendSystemPrompt: spec.appendSystemPrompt,
       skills: spec.skills, prompts: spec.promptTemplates, contextFiles: spec.contextFiles,
-      codexReasoningFix: spec.model.provider === 'openai-codex', settingsManager,
+      codexReasoningFix: spec.model.provider === 'openai-codex', requestProfile: spec.requestProfile, settingsManager,
     });
     // A resource loader passed to createAgentSession is NOT auto-reloaded (only one it builds itself
     // is), so its system prompt stays empty unless we reload it here. Without this the brain falls
@@ -133,7 +179,7 @@ export class BrainSessionFactory {
     const create = this.d.createSession ?? createAgentSession;
     // Reasoning effort for extended-thinking models — PI clamps an unsupported level to the model's
     // range, so passing it for a non-thinking model is harmless. Empty → leave the model default.
-    const thinkingLevel = (['minimal', 'low', 'medium', 'high', 'xhigh'] as const).find((l) => l === spec.thinkingLevel);
+    const thinkingLevel = spec.thinkingLevel && isCanonicalThinkingLevel(spec.thinkingLevel) ? spec.thinkingLevel : undefined;
     const { session } = await create({
       cwd: spec.cwd,
       sessionManager,
@@ -153,12 +199,9 @@ export class BrainSessionFactory {
     //
     // We keep compaction `enabled` ALWAYS on, because PI's `_checkCompaction` gates BOTH the threshold
     // pass AND context-overflow recovery behind `enabled` — turning it off would leave an overflowing
-    // conversation hard-erroring on every turn until a manual /compact. When the user disables proactive
-    // compaction we instead set reserveTokens to 0 so the threshold pass effectively never fires (only at
-    // a full window, i.e. overflow itself), while overflow recovery stays available.
-    const reserveTokens = spec.autoCompact
-      ? Math.round(spec.model.contextWindow * (1 - spec.autoCompactAtPct / 100))
-      : 0;
+    // conversation hard-erroring on every turn until a manual /compact. "Proactive off" therefore uses
+    // only the small emergency reserve described above, rather than PI's normal early threshold.
+    const reserveTokens = compactionReserveTokens(spec.model.contextWindow, spec.autoCompact, spec.autoCompactAtPct);
     settingsManager.applyOverrides({ compaction: { enabled: true, reserveTokens } });
 
     // Persist settled turns (agent_end) AND every PI compaction (auto at the threshold, manual /compact,
@@ -166,12 +209,9 @@ export class BrainSessionFactory {
     // the token savings evaporate on the next rehydrate. Only a REAL compaction (result present, not
     // aborted) mirrors; a no-op/failed run leaves the store untouched. Callers layer their own
     // subscriptions on top (the `compacted` client-notify in the chat brain, liveness in the worker).
-    session.subscribe((e: AgentSessionEvent) => {
-      projectEvent(this.d.store, spec.sessionId, e);
-      if (e.type === 'compaction_end' && e.result != null && e.aborted !== true) {
-        persistCompaction(this.d.store, session, spec.sessionId);
-      }
-    });
+    session.subscribe(createSessionPersistenceProjector(
+      this.d.store, session, spec.sessionId, spec.model.contextWindow,
+    ));
     return { session };
   }
 }

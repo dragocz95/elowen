@@ -99,3 +99,11 @@ html[data-effects='off'] *::after {
     transition-duration: 0ms !important;
   }
 }
+@keyframes orbit-scroll-cue {
+  0%, 100% { opacity: 0.35; transform: translateY(-2px); }
+  48% { opacity: 1; transform: translateY(3px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .orbit-scroll-arrow { animation: none; }
+}

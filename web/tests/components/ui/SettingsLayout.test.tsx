@@ -39,7 +39,7 @@ describe('SettingsLayout', () => {
     const first = screen.getByRole('radio', { name: 'Elowen AI' });
     const second = screen.getByRole('radio', { name: 'Plugins' });
     expect(first).toHaveAttribute('tabindex', '0');
-    expect(first).toHaveClass('border-accent');
+    expect(first.querySelector('span')).toHaveClass('border-accent');
     expect(first).not.toHaveClass('rounded-lg');
     expect(second).toHaveAttribute('tabindex', '-1');
     first.focus();

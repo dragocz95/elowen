@@ -10,6 +10,18 @@ export const brainStartSchema = z.object({
   /** Open a brand-new conversation instead of resuming. */
   fresh: z.boolean().optional(),
   cwd: z.string().max(4096).optional(),
+  /** Stable CLI identity, scoped to the authenticated user by the route/service. */
+  client: z.string().min(1).max(200).optional(),
+  /** Monotonic per-process start generation; rejects network-reordered older selections server-side. */
+  generation: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),
+});
+
+/** Finalize one stable CLI generation. `generation` is the highest start the process has issued, so the
+ *  daemon can fence a request that is still buffered behind this stop on another connection. */
+export const brainStopSchema = z.object({
+  session: z.string().max(200).optional(),
+  client: z.string().min(1).max(200).optional(),
+  generation: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),
 });
 
 /** Switch a conversation to another configured provider/model (the /model picker). `session` targets
@@ -38,6 +50,10 @@ export const brainSendSchema = z.object({
   images: z.array(imageSchema).max(4).optional(),
   cwd: z.string().max(4096).optional(),
   session: z.string().max(200).optional(),
+  /** A bound CLI carries the generation that committed `session`. Both remain optional so web/API sends
+   *  keep their existing resume-on-demand behavior; together they fence delayed sends after CLI stop. */
+  client: z.string().min(1).max(200).optional(),
+  generation: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),
   /** The client's CLEAN rendering of the message (before @mention/prompt expansion) — what the daemon's
    *  authoritative `user` echo and the queued chip show. Absent → the model-facing `text` is echoed. */
   display: z.string().optional(),

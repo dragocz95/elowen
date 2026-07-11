@@ -2,8 +2,13 @@ import type { BrainStore } from '../store/brainStore.js';
 import type { Policy } from '../plugins/policy.js';
 import type { TurnIdentity, ToolPolicy } from '../plugins/policyContext.js';
 import { runWithPolicy } from '../plugins/policyContext.js';
-import type { AskQuestion, BrainEvent, BrainUsage, CompactResult } from './events.js';
-import { usageOf, runCompaction } from './events.js';
+import {
+  delegatedToolPolicy,
+  normalizeDelegatedExecutionScope,
+  type DelegatedExecutionScope,
+} from './delegatedScope.js';
+import type { AskQuestion, BrainEvent, BrainUsage, CompactResult, SubagentUpdate } from './events.js';
+import { usageOf, runCompaction, withDescendantUsage } from './events.js';
 import type { ElicitationRegistry } from './elicitation.js';
 import { normalizeCard } from './cards.js';
 import { projectUserTurn } from './persistence.js';
@@ -13,7 +18,7 @@ import { channelSessionId, archivedChannelSessionId } from './sessionId.js';
 import { isPromptCommand } from './slashCommands.js';
 import { rolloverDue, SESSION_IDLE_ROLLOVER_MS } from './session/idleRollover.js';
 import { applyToolVisibility } from './session/capabilities.js';
-import { buildPermissionRuleset } from './toolPermissions.js';
+import { buildPermissionRuleset, noninteractiveTurnPermissions } from './toolPermissions.js';
 import type { PermissionSettings, TurnPermissions } from './toolPermissions.js';
 import type { MemoryService } from './memoryService.js';
 import type { MemoryCurator } from './memoryCurator.js';
@@ -34,6 +39,11 @@ export interface ChannelSendOpts {
   trusted?: boolean;
   model?: { provider?: string; model?: string };
   thinkingLevel?: string;
+  fast?: boolean;
+  /** Durable parent for delegated sessions; never accepted from ordinary external adapters. */
+  parentSessionId?: string;
+  /** Immutable policy/identity boundary minted by the delegating turn. Required for a child send. */
+  delegatedAccess?: DelegatedExecutionScope;
   /** The sender's effective tool access for THIS turn (see ToolPolicy). Sourced by the orchestrator
    *  from the linked Elowen account (deny-list) or the platform role (allow-list). Enforced at
    *  execute time by the plugin-tool gate. Undefined → no restriction. */
@@ -89,6 +99,18 @@ export interface ChannelServiceDeps {
   permissions?: (userId: number) => PermissionSettings;
 }
 
+const sameScopePolicy = (policy: Policy, scope: DelegatedExecutionScope): boolean => {
+  const ids = policy.allowedProjectIds;
+  if (scope.admin) return ids === 'all';
+  if (ids === 'all') return false;
+  if (ids.size !== scope.projectIds.length) return false;
+  return scope.projectIds.every((id) => ids.has(id));
+};
+
+const samePromptAppend = (actual: string[] | undefined, expected: string[] | undefined): boolean =>
+  (actual?.length ?? 0) === (expected?.length ?? 0)
+  && (actual ?? []).every((chunk, index) => chunk === expected?.[index]);
+
 /** Platform channel conversations (Discord threads, …): one session per channel — keyed by the
  *  channel, NOT the Elowen user — run with the caller-resolved Policy (role → projects) plus optional
  *  role prompt fragments. Persisted like any brain conversation (`brain-ch-<id>`), owned by
@@ -97,10 +119,65 @@ export class ChannelSessionService {
   /** Resolved per eviction so an operator's config change to the live-session cap applies without a
    *  restart (a fixed number or a resolver both accepted). */
   private readonly maxChannels: () => number;
+  /** Number of overlapping sends that currently hold each durable parent→child lifecycle edge. A
+   *  steering request can overlap the child's original run; boolean Set bookkeeping alone would let
+   *  the short steering call remove the edge while the original child was still running. */
+  private readonly delegatedCalls = new Map<string, Map<string, number>>();
 
   constructor(private d: ChannelServiceDeps) {
     const m = d.maxChannels;
     this.maxChannels = typeof m === 'function' ? m : () => m ?? 32;
+  }
+
+  private beginDelegatedCall(parentSessionId: string, childSessionId: string): void {
+    let children = this.delegatedCalls.get(parentSessionId);
+    if (!children) { children = new Map(); this.delegatedCalls.set(parentSessionId, children); }
+    children.set(childSessionId, (children.get(childSessionId) ?? 0) + 1);
+    this.d.registry.setChildRunning(parentSessionId, childSessionId, true);
+  }
+
+  private endDelegatedCall(parentSessionId: string, childSessionId: string): void {
+    const children = this.delegatedCalls.get(parentSessionId);
+    const count = children?.get(childSessionId) ?? 0;
+    if (count > 1) { children!.set(childSessionId, count - 1); return; }
+    children?.delete(childSessionId);
+    if (children?.size === 0) this.delegatedCalls.delete(parentSessionId);
+    this.d.registry.setChildRunning(parentSessionId, childSessionId, false);
+    this.d.registry.consumePendingAbort(childSessionId);
+  }
+
+  /** A child can only execute under the immutable scope minted by its original delegate call. This is
+   * enforced here because this service owns first spawn, LRU revival, and idle drill-in continuations. */
+  private delegatedExecution(opts: ChannelSendOpts, sessionId: string): {
+    scope: DelegatedExecutionScope;
+    toolPolicy: ToolPolicy | undefined;
+  } {
+    const scope = normalizeDelegatedExecutionScope(opts.delegatedAccess);
+    if (!scope || !opts.identity || opts.writerUserId !== undefined
+      || opts.identity.platform !== 'subagent' || opts.identity.userId !== 'subagent'
+      || opts.identity.elowenUserId !== undefined || opts.identity.elowenUsername !== undefined
+      || opts.identity.admin !== scope.admin || opts.identity.owner !== scope.owner
+      || opts.trusted !== scope.admin
+      || !sameScopePolicy(opts.policy, scope)
+      || !samePromptAppend(opts.promptAppend, scope.promptAppend)) {
+      throw new Error('invalid delegated access');
+    }
+    const existing = this.d.store.getSession(sessionId);
+    // Never write a scope into a legacy child row. A matching persisted scope is the only authority for
+    // respawns, so malformed/NULL data fails before it can run under the caller's ambient privileges.
+    if (existing && (existing.parent_session_id !== opts.parentSessionId
+      || !this.d.store.hasDelegatedAccess(sessionId, scope))) {
+      throw new Error('delegated access unavailable');
+    }
+    // The captured allow-list is authoritative. A caller may only add current account denies; it cannot
+    // swap the inherited allow/deny shape while the child is idle.
+    return { scope, toolPolicy: delegatedToolPolicy(scope, opts.toolPolicy?.deny ?? []) };
+  }
+
+  /** Resolve the durable owner of a prospective delegated parent. PlatformOrchestrator uses this before
+   *  entering send(); send() repeats the parent/owner check at the write boundary to close TOCTOU races. */
+  sessionOwnerUserId(sessionId: string): number | undefined {
+    return this.d.store.getSession(sessionId)?.user_id;
   }
 
   /** Send one channel message into that channel's own conversation; resolves with the final
@@ -108,6 +185,26 @@ export class ChannelSessionService {
    *  concurrently (and must not both spawn it). */
   async send(opts: ChannelSendOpts, text: string): Promise<string> {
     const sessionId = channelSessionId(opts.channelId);
+    const parentSessionId = opts.parentSessionId;
+    if (opts.ownerSteer && !parentSessionId) throw new Error('invalid delegated access');
+    const delegated = parentSessionId ? this.delegatedExecution(opts, sessionId) : undefined;
+    const effectiveToolPolicy = delegated?.toolPolicy ?? opts.toolPolicy;
+    // `pendingAbort` is deliberately observed (not consumed) on the owner-steer fast path: the original
+    // child turn must still consume it after prompt() and report a terminal abort instead of success.
+    const delegationAborted = () => !!parentSessionId && (
+      this.d.registry.isParentAborting(parentSessionId) || this.d.registry.hasPendingAbort(sessionId)
+    );
+    let delegatedCall = false;
+    if (parentSessionId) {
+      if (this.d.registry.isParentAborting(parentSessionId)) throw new Error('delegation aborted');
+      const parent = this.d.store.getSession(parentSessionId);
+      if (!parent || parent.user_id !== opts.ownerUserId || parent.id === sessionId) throw new Error('invalid parent session');
+      // Register before the first async boundary. A background delegate may be stopped immediately after
+      // its tool returns, before spawn has emitted the child's `session` progress event.
+      this.beginDelegatedCall(parentSessionId, sessionId);
+      delegatedCall = true;
+    }
+    try {
     // Mid-run: a SAME-SENDER message that arrives while this channel's turn streams is STEERED into the
     // running turn — PI delivers it between steps (after the current tool calls, before the next model
     // call), so the agent folds it in without stalling the Discord handler on the channel lock or spawning
@@ -120,8 +217,17 @@ export class ChannelSessionService {
       // guidance mid-run — the owner owns the child, so redirecting it immediately is the point. Now the
       // SAME primitive as the Discord same-sender path below.
       if (opts.ownerSteer) {
-        projectUserTurn(this.d.store, sessionId, text);
+        // This path intentionally does not take the channel lock (it must steer the current PI turn), so
+        // fence it on both sides of the await. If stop clears PI's queue while steer() is pending, the
+        // second check clears it again before rejecting; no late instruction survives the aborted tree.
+        if (delegationAborted()) throw new Error('delegation aborted');
+        const durableId = projectUserTurn(this.d.store, sessionId, text);
+        streaming.replay.publish({ type: 'user', text, durableId });
         await streaming.session.steer(text);
+        if (delegationAborted()) {
+          streaming.session.clearQueue();
+          throw new Error('delegation aborted');
+        }
         return '';
       }
       // A platform (Discord) SAME-SENDER follow-up: steer it into the running turn. Persist it (agent_end
@@ -129,13 +235,17 @@ export class ChannelSessionService {
       // deliver the image bytes alongside; the reply rides the ORIGINAL turn's live sink, so no separate
       // onEvent is stashed.
       if (streaming.turnSender != null && streaming.turnSender === opts.identity?.userId) {
-        projectUserTurn(this.d.store, sessionId, opts.images?.length ? `${text}\n[📎 ${opts.images.length}× image]` : text);
+        const persisted = opts.images?.length ? `${text}\n[📎 ${opts.images.length}× image]` : text;
+        const durableId = projectUserTurn(this.d.store, sessionId, persisted);
+        streaming.replay.journal({ type: 'user', text: persisted, durableId });
         // Mirror the enqueue so the image bytes survive a positional queue-remove (PI's clearQueue drops them).
         await enqueueMirrored(streaming, 'steer', text, opts.images?.map((i) => ({ type: 'image' as const, data: i.data, mimeType: i.mimeType })));
         return '';
       }
     }
-    return this.d.registry.withLock(sessionId, async () => {
+    return await this.d.registry.withLock(sessionId, async () => {
+      if (parentSessionId && this.d.registry.isParentAborting(parentSessionId)) throw new Error('delegation aborted');
+      if (this.d.registry.consumePendingAbort(sessionId)) throw new Error('delegation aborted');
       // Idle rollover (cache-cost fix): a channel that sat quiet past the idle cutoff has a long-expired
       // prompt cache, so continuing would re-send its whole stale transcript at full price for no benefit.
       // Roll it over like owner chat (lifecycle.maybeRollover): drop the live PI session and ARCHIVE the
@@ -149,6 +259,7 @@ export class ChannelSessionService {
       // a recent interaction vetoes the rollover even when the last stored message is stale.
       const live = this.d.registry.channelGet(opts.channelId);
       if (!live?.session.isStreaming
+          && !this.d.registry.hasActiveChildren(sessionId)
           && rolloverDue({ lastMessageAt: this.d.store.lastMessageAt(sessionId), interactedAt: live?.interactedAt, now: Date.now() }, opts.idleRolloverMs ?? SESSION_IDLE_ROLLOVER_MS)) {
         this.d.registry.channelDispose(opts.channelId);
         this.d.store.reassignSession(sessionId, archivedChannelSessionId(opts.channelId));
@@ -164,22 +275,29 @@ export class ChannelSessionService {
         const past = await opts.history().catch(() => '');
         if (past.trim()) text = `${past.trim()}\n\n${text}`;
       }
+      if (this.d.registry.consumePendingAbort(sessionId)) throw new Error('delegation aborted');
       let ch = this.d.registry.channelGet(opts.channelId);
-      // A model or reasoning-effort switch mid-conversation rebuilds the session (history rehydrates).
+      // A provider, model or reasoning-effort switch mid-conversation rebuilds the session (history
+      // rehydrates). Model ids are not globally unique: two configured providers may both expose e.g.
+      // `gpt-5`, so comparing only the model would silently keep sending to the old credentials/base URL.
       const modelChanged = !!opts.model?.model && ch?.model !== opts.model.model;
+      const providerChanged = !!opts.model?.provider && ch?.providerId !== opts.model.provider;
       const thinkingChanged = !!ch && (ch.thinkingLevel ?? '') !== (opts.thinkingLevel ?? '');
-      if (ch && (modelChanged || thinkingChanged)) { this.d.registry.channelDispose(opts.channelId); ch = undefined; }
+      if (ch && (providerChanged || modelChanged || thinkingChanged)) { this.d.registry.channelDispose(opts.channelId); ch = undefined; }
       if (!ch) {
         this.d.registry.channelEvictOldestIfFull(this.maxChannels());
         ch = await this.d.spawn({
           sessionId,
           ownerUserId: opts.ownerUserId,
+          parentSessionId: opts.parentSessionId,
+          delegatedAccess: delegated?.scope,
           selection: opts.model ?? {},
           policy: opts.policy,
           extraAppend: opts.promptAppend,
           channel: true, // a shared platform channel is NEVER owner-chat — no elowen_* tools, no owner token
           trustedChannel: opts.trusted, // admin-role sender → trusted-channel (all projects + full plugin toolset), still no elowen_*
           thinkingLevel: opts.thinkingLevel,
+          fast: opts.fast,
           // Channels are the shared, owner-anchored Discord surface — the personality chunk always resolves
           // the OWNER's 'discord' active profile (never the per-sender id: that persona would leak to the
           // next sender in the shared session). 'discord' is the only locked channel platform, so it's
@@ -188,6 +306,15 @@ export class ChannelSessionService {
           autoCompact: true, // channels are long-lived and unattended — keep their context bounded
           autoCompactAtPct: DEFAULT_AUTO_COMPACT_PCT,
         });
+        if (this.d.registry.consumePendingAbort(sessionId)) {
+          ch.session.dispose();
+          throw new Error('delegation aborted');
+        }
+      }
+      // Fast is a mutable request profile, so a platform toggle applies without rebuilding the session.
+      if (opts.fast !== undefined) {
+        if (opts.fast && !ch.fastAvailable) throw new Error('Fast mode is available only for OpenAI OAuth models');
+        ch.requestProfile.fast = ch.fastAvailable && opts.fast;
       }
       this.d.registry.channelTouch(opts.channelId, ch); // (re-)insert → Map order doubles as LRU order
       ch.turnSender = opts.identity?.userId; // whose turn this is → mid-run injection only steers same-sender messages in
@@ -197,13 +324,19 @@ export class ChannelSessionService {
       // follow-up sent mid-turn is steered into THIS running turn (see send()'s top), not a fresh turn.
       const runOne = async (turnText: string, senderMsg: string, turnImages: { data: string; mimeType: string }[] | undefined, turnOnEvent?: (e: BrainEvent) => void): Promise<string> => {
         // Same image handling as owner chat: history keeps a marker, the pixels ride only the live prompt.
-        projectUserTurn(this.d.store, sessionId, turnImages?.length ? `${turnText}\n[📎 ${turnImages.length}× image]` : turnText);
+        const displayText = turnImages?.length ? `${turnText}\n[📎 ${turnImages.length}× image]` : turnText;
+        const durableId = projectUserTurn(this.d.store, sessionId, displayText);
+        // A child transcript is an owner-facing chat surface, so its daemon stream is the one echo
+        // authority just like owner chat. Ordinary Discord/WhatsApp messages remain platform-rendered
+        // and do not broadcast this marker back into their room.
+        if (opts.ownerSteer) ch.replay.publish({ type: 'user', text: displayText, durableId });
         // Name a brand-new channel conversation from the sender's own words (pre-backfill, so injected
         // channel history never leaks into the title).
         const titleRow = this.d.store.getSession(sessionId);
         if (titleRow && !titleRow.title && senderMsg.trim()) {
-          this.d.store.setTitle(sessionId, senderMsg.slice(0, 60));
-          if (this.d.titler) void this.d.titler.run(sessionId, senderMsg);
+          const provisionalTitle = senderMsg.slice(0, 60);
+          this.d.store.setTitle(sessionId, provisionalTitle);
+          if (this.d.titler) void this.d.titler.run(sessionId, senderMsg, provisionalTitle);
         }
         // Verified-sender memory recall (ephemeral, never persisted), keyed on their linked account + gated
         // by autoRecall; an unlinked sender has no writerUserId → no recall (shared-space privacy).
@@ -227,18 +360,28 @@ export class ChannelSessionService {
         turnOnEvent?.({ type: 'session', sessionId });
         // Turn-bound elicitor + broadcast-only cards, same as before — fan to the channel's listeners.
         const elicit = this.d.elicitation
-          ? (qs: AskQuestion[]) => this.d.elicitation!.ask(sessionId, qs, (e) => { for (const l of ch.listeners) l(e); })
+          ? (qs: AskQuestion[]) => this.d.elicitation!.ask(sessionId, qs, (e) => ch.replay.publish(e))
           : undefined;
-        const emitCard = (raw: unknown) => { const card = normalizeCard(raw); if (card) for (const l of ch.listeners) l({ type: 'card', card }); };
+        const emitCard = (raw: unknown) => { const card = normalizeCard(raw); if (card) ch.replay.publish({ type: 'card', card }); };
+        // Mirror owner-chat delegation tracking: the progress event is both the live UI seam and the
+        // abort tree. A channel can delegate recursively, so every channel node owns its direct children.
+        const emitSubagent = (u: SubagentUpdate) => {
+          if (!this.d.store.upsertSubagentRun(ch.sessionId, u)) return;
+          this.d.registry.setChildRunning(ch.sessionId, u.sessionId, u.status === 'running');
+          ch.replay.publish({ type: 'subagent', ...u });
+        };
         try {
-          applyToolVisibility(ch.session, ch.pluginToolNames, opts.toolPolicy);
-          // Granular tool permissions WITHOUT an approval channel: `ask` resolves per the account's
-          // unattendedAsks (allow by default), explicit `deny` always bites; rules from the verified sender
-          // else the channel owner. YOLO is irrelevant when nothing ever asks.
-          const permSettings = this.d.permissions?.(opts.writerUserId ?? opts.ownerUserId);
-          const permissions: TurnPermissions | undefined = permSettings
-            ? { ruleset: buildPermissionRuleset(permSettings), yolo: false, unattendedAsks: permSettings.unattendedAsks }
-            : undefined;
+          applyToolVisibility(ch.session, ch.pluginToolNames, effectiveToolPolicy);
+          // Granular permissions without an approval channel: ordinary platform turns read the verified
+          // sender (else their channel owner) fresh, but a delegated child MUST use its immutable captured
+          // boundary. Resolving `writerUserId ?? ownerUserId` here would let an idle child inherit the
+          // durable row owner's newer/wider settings; it also must not gain owner-memory identity.
+          const livePermissionSettings = delegated ? undefined : this.d.permissions?.(opts.writerUserId ?? opts.ownerUserId);
+          const permissions: TurnPermissions | undefined = delegated
+            ? noninteractiveTurnPermissions(delegated.scope.permissionBoundary)
+            : livePermissionSettings
+              ? { ruleset: buildPermissionRuleset(livePermissionSettings), yolo: false, unattendedAsks: livePermissionSettings.unattendedAsks }
+              : undefined;
           // Meter the channel turn too (Discord runs the OpenRouter-backed sarah-mimo etc.) so its real cost
           // is stamped onto the persisted assistant row by projectEvent, not lost as pi-ai's $0 estimate.
           const meter = newCostMeter();
@@ -247,14 +390,21 @@ export class ChannelSessionService {
             // only fires when the message starts with the slash, so it is sent alone (self-contained macro,
             // no per-turn context prefix). Everything else gets the ephemeral context blocks prepended.
             const prompted = isPromptCommand(turnText, ch.session) ? turnText : memoryBlock + ch.turnContext() + turnText;
+            if (this.d.registry.consumePendingAbort(sessionId)) throw new Error('delegation aborted');
             await (options ? ch.session.prompt(prompted, options) : ch.session.prompt(prompted));
+            // A parent stop that landed during prompt() must make the child terminally unsuccessful;
+            // otherwise an empty aborted assistant is mistaken for a successful "returned nothing" job.
+            if (this.d.registry.consumePendingAbort(sessionId)) throw new Error('delegation aborted');
             // Thinking-only guard (#115): a reasoning model that ends a 'stop' turn with ONLY a thinking
             // block would settle with an empty reply. ONE automatic nudge, never persisted, no loop.
             const settled = [...(ch.session.messages as { role?: string }[])].reverse().find((m) => m.role === 'assistant');
-            if (settled && isThinkingOnlyReply(settled)) await ch.session.prompt(NO_REPLY_NUDGE);
-          }, { identity: opts.identity, elicit, emitCard, toolPolicy: opts.toolPolicy, permissions, sessionId, model: { provider: ch.providerId, model: ch.model } }));
+            if (settled && isThinkingOnlyReply(settled)) {
+              await ch.session.prompt(NO_REPLY_NUDGE);
+              if (this.d.registry.consumePendingAbort(sessionId)) throw new Error('delegation aborted');
+            }
+          }, { identity: opts.identity, elicit, emitCard, emitSubagent, toolPolicy: effectiveToolPolicy, permissions, sessionId, model: { provider: ch.providerId, model: ch.model } }));
           // Deterministic settled idle (model + context fill) AFTER the turn — proactive footers depend on it.
-          turnOnEvent?.({ type: 'idle', model: ch.model, usage: usageOf(ch.session) });
+          turnOnEvent?.({ type: 'idle', model: ch.model, usage: withDescendantUsage(usageOf(ch.session), this.d.store.descendantUsage(ch.sessionId)) });
         } finally { detach?.(); }
         // Auto-compaction is PI-native (the factory configures the channel's reserveTokens from
         // DEFAULT_AUTO_COMPACT_PCT): PI compacts on its own after this turn's agent_end, and the factory's
@@ -278,21 +428,73 @@ export class ChannelSessionService {
       // between steps — so there is no post-turn flush: the running turn is the single place its words land.
       return runOne(text, senderMessage, opts.images, opts.onEvent);
     });
+    } finally {
+      if (parentSessionId && delegatedCall) this.endDelegatedCall(parentSessionId, sessionId);
+    }
   }
 
   /** Live status of a channel session (model + whether a turn is in flight + context usage) for a platform
    *  `/status` (and `/stop`) slash. Null when the channel has no live session yet (never spawned, or
    *  LRU-evicted). Read-only — no lock needed. */
-  status(channelId: string): { model: string; streaming: boolean; usage: BrainUsage } | null {
+  status(channelId: string): { provider?: string; model: string; streaming: boolean; usage: BrainUsage; fast: boolean; fastAvailable: boolean } | null {
     const ch = this.d.registry.channelGet(channelId);
-    return ch ? { model: ch.model, streaming: ch.session.isStreaming, usage: usageOf(ch.session) } : null;
+    return ch ? {
+      provider: ch.providerId,
+      model: ch.model,
+      // A background delegate can outlive the parent's own prompt. Keep `/stop` available while any
+      // tracked descendant is still running so the channel can cancel the whole tree.
+      streaming: ch.session.isStreaming || this.d.registry.hasActiveChildren(ch.sessionId),
+      usage: withDescendantUsage(usageOf(ch.session), this.d.store.descendantUsage(ch.sessionId)),
+      fast: ch.requestProfile.fast,
+      fastAvailable: ch.fastAvailable,
+    } : null;
   }
 
-  /** Abort the in-flight turn on a channel session (a platform `/stop` slash). No-op when idle/absent.
-   *  Fire-and-forget: abort() signals cancellation into the prompt running under the channel's lock. */
-  abort(channelId: string): void {
+  /** Set/toggle ChatGPT OAuth priority processing without respawning the channel session. */
+  setFast(channelId: string, on?: boolean): { fast: boolean; fastAvailable: boolean } | null {
     const ch = this.d.registry.channelGet(channelId);
-    void ch?.session.abort().catch(() => { /* nothing in flight / already settling */ });
+    if (!ch) return null;
+    if (!ch.fastAvailable) return { fast: false, fastAvailable: false };
+    ch.requestProfile.fast = on ?? !ch.requestProfile.fast;
+    ch.interactedAt = Date.now();
+    return { fast: ch.requestProfile.fast, fastAvailable: true };
+  }
+
+  /** Abort the in-flight turn on a channel session (a platform `/stop` slash). Delegated descendants
+   *  are stopped depth-first before their parent, so a nested child cannot keep working after the room's
+   *  `/stop`. No-op when idle/absent. */
+  async abort(channelId: string): Promise<void> {
+    await this.abortTree(channelId, new Set());
+  }
+
+  private async abortTree(channelId: string, seen: Set<string>): Promise<void> {
+    if (seen.has(channelId)) return;
+    seen.add(channelId);
+    const sessionId = channelSessionId(channelId);
+    // Fence before inspecting descendants. A fresh idle-child continuation must not register itself
+    // after this snapshot and then get erased by clearChildren() without being aborted.
+    this.d.registry.beginParentAbort(sessionId);
+    try {
+      const ch = this.d.registry.channelGet(channelId);
+      if (!ch) {
+        if (this.d.registry.isActiveChild(sessionId)) this.d.registry.requestPendingAbort(sessionId);
+        return;
+      }
+      // Record cancellation before awaiting PI. The running send consumes this marker immediately after
+      // prompt settles and throws, so the delegate plugin records ERROR rather than DONE/empty output.
+      if (this.d.registry.isActiveChild(ch.sessionId)) this.d.registry.requestPendingAbort(ch.sessionId);
+      for (const child of this.d.registry.childrenOf(ch.sessionId)) {
+        if (child.startsWith('brain-ch-')) await this.abortTree(child.slice('brain-ch-'.length), seen);
+      }
+      this.d.registry.clearChildren(ch.sessionId);
+      // Match owner-chat stop semantics: queued steering belongs to the interrupted turn and a parked
+      // ask_user_question must reject before PI aborts, otherwise `/stop` can leave prompt() hanging.
+      ch.session.clearQueue();
+      this.d.elicitation?.cancelForSession(ch.sessionId, 'aborted');
+      await ch.session.abort().catch(() => { /* nothing in flight / already settling */ });
+    } finally {
+      this.d.registry.endParentAbort(sessionId);
+    }
   }
 
   /** Compact a channel session's context (a platform `/compact` slash), serialized against its turns so
@@ -306,7 +508,9 @@ export class ChannelSessionService {
       // A real compaction fires PI's `compaction_end`, which the factory's session subscription mirrors
       // into the store (and the spawner fans `compacted` to clients) — so persistence rides the event, not
       // this call. A no-op (session too small) emits no result and leaves the store untouched.
-      return runCompaction(ch.session);
+      const result = await runCompaction(ch.session);
+      result.usage = withDescendantUsage(result.usage, this.d.store.descendantUsage(ch.sessionId));
+      return result;
     });
   }
 

@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { buildBrainRegistry, resolveBrainModel, openAiApiFor } from '../../src/brain/providers.js';
+import { applyProviderRequestProfile, modelCapabilities } from '../../src/brain/modelCapabilities.js';
 import type { BrainRuntimeConfig } from '../../src/brain/providers.js';
 
 const cfg: BrainRuntimeConfig = {
@@ -23,12 +24,78 @@ describe('brain providers', () => {
     expect(resolveBrainModel(reg, cfg, { provider: 'relay', model: 'kimi' }).id).toBe('kimi');
   });
 
-  it('maps the thinking levels ollama-style backends reject (minimal→low, xhigh→high)', () => {
-    // PI's session default is "minimal"; unmapped it goes out as reasoning_effort:"minimal" and e.g.
-    // ollama 400s ("valid levels: low, medium, high") → the whole turn fails with an empty reply.
+  it('does not advertise speculative reasoning controls for an unknown custom model', () => {
     const reg = buildBrainRegistry(cfg);
-    const m = resolveBrainModel(reg, cfg, { provider: 'relay', model: 'kimi' }) as { thinkingLevelMap?: Record<string, string> };
-    expect(m.thinkingLevelMap).toEqual({ minimal: 'low', xhigh: 'high' });
+    const m = resolveBrainModel(reg, cfg, { provider: 'relay', model: 'kimi' });
+    expect(m.reasoning).toBe(false);
+    expect(m.thinkingLevelMap).toBeUndefined();
+  });
+
+  it('declares known OpenAI reasoning levels centrally and labels xhigh as ultra', () => {
+    const known: BrainRuntimeConfig = {
+      providers: [{ id: 'oa', label: 'OpenAI', type: 'openai', baseUrl: 'https://api.openai.com/v1', models: ['gpt-5.4'], apiKey: 'k' }],
+    };
+    const m = resolveBrainModel(buildBrainRegistry(known), known);
+    expect(m.thinkingLevelMap).toMatchObject({ minimal: 'low', low: 'low', medium: 'medium', high: 'high', xhigh: 'xhigh' });
+    expect(modelCapabilities(m).labels.xhigh).toBe('ultra');
+  });
+
+  it('keeps provider-native ultra and max as distinct top reasoning modes', () => {
+    const profiled: BrainRuntimeConfig = { providers: [
+      { id: 'oa', label: 'OpenAI', type: 'openai', baseUrl: 'https://api.openai.com/v1', models: ['gpt-5.6-sol'], apiKey: 'k' },
+      { id: 'ant', label: 'Anthropic', type: 'anthropic', baseUrl: 'https://api.anthropic.com', models: ['claude-sonnet-5'], apiKey: 'k' },
+    ] };
+    const registry = buildBrainRegistry(profiled);
+    const openai = modelCapabilities(resolveBrainModel(registry, profiled, { provider: 'oa' }));
+    const claude = modelCapabilities(resolveBrainModel(registry, profiled, { provider: 'ant' }));
+    expect(openai.levels).toEqual(['minimal', 'low', 'medium', 'high', 'xhigh', 'max']);
+    expect(openai.labels).toEqual({ xhigh: 'ultra' });
+    expect(claude.levels).toEqual(['minimal', 'low', 'medium', 'high', 'xhigh', 'max']);
+    expect(claude.labels).toEqual({});
+  });
+
+  it('matches Claude 4.6 max support without inventing xhigh', () => {
+    const profiled: BrainRuntimeConfig = { providers: [{
+      id: 'ant', label: 'Anthropic', type: 'anthropic', baseUrl: 'https://api.anthropic.com',
+      models: ['claude-sonnet-4-6'], apiKey: 'k',
+    }] };
+    expect(modelCapabilities(resolveBrainModel(buildBrainRegistry(profiled), profiled)).levels)
+      .toEqual(['minimal', 'low', 'medium', 'high', 'max']);
+  });
+
+  it('recognizes dotted Claude generation ids and their upper reasoning levels', () => {
+    const profiled: BrainRuntimeConfig = { providers: [{
+      id: 'ant', label: 'Anthropic', type: 'anthropic', baseUrl: 'https://api.anthropic.com',
+      models: ['claude-opus-4.8'], apiKey: 'k',
+    }] };
+    expect(modelCapabilities(resolveBrainModel(buildBrainRegistry(profiled), profiled)).levels)
+      .toEqual(['minimal', 'low', 'medium', 'high', 'xhigh', 'max']);
+  });
+
+  it('recognizes namespaced reasoning ids from OpenRouter-style catalogs', () => {
+    const namespaced: BrainRuntimeConfig = { providers: [{
+      id: 'router', label: 'Router', type: 'openai', baseUrl: 'https://openrouter.ai/api/v1',
+      models: ['openai/gpt-5.6-sol', 'anthropic/claude-sonnet-5'], apiKey: 'k',
+    }] };
+    const registry = buildBrainRegistry(namespaced);
+    expect(modelCapabilities(resolveBrainModel(registry, namespaced, { model: 'openai/gpt-5.6-sol' })).levels).toContain('max');
+    expect(modelCapabilities(resolveBrainModel(registry, namespaced, { model: 'anthropic/claude-sonnet-5' })).reasoning).toBe(true);
+  });
+
+  it('marks Fast available only on OpenAI Codex OAuth response models', () => {
+    const oauth: BrainRuntimeConfig = {
+      providers: [{ id: 'codex', label: 'ChatGPT', type: 'oauth-openai-codex', baseUrl: '', models: ['gpt-5.5'], apiKey: null }],
+    };
+    const m = resolveBrainModel(buildBrainRegistry(oauth), oauth);
+    expect(modelCapabilities(m).fast).toBe(true);
+    const regular = resolveBrainModel(buildBrainRegistry(cfg), cfg);
+    expect(modelCapabilities(regular).fast).toBe(false);
+  });
+
+  it('projects Fast onto the official priority service tier without mutating normal payloads', () => {
+    const payload = { model: 'gpt-5.5', input: [] };
+    expect(applyProviderRequestProfile(payload, { fast: true })).toEqual({ ...payload, service_tier: 'priority' });
+    expect(applyProviderRequestProfile(payload, { fast: false })).toBe(payload);
   });
 
   it('registers a hand-typed model id on the fly for a custom endpoint', () => {

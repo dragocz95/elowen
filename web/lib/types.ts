@@ -70,7 +70,15 @@ export interface BrainProvider {
   apiKeySet: boolean;
 }
 /** One Elowen AI (brain) model. `source` = how its provider authenticates (drives the OAuth badge). */
-export interface BrainModelOption { provider: string; providerLabel: string; model: string; exec: string; source: 'api-key' | 'oauth' | 'relay'; contextWindow: number; contextWindowSet: boolean }
+export interface BrainModelOption {
+  provider: string; providerLabel: string; model: string; exec: string;
+  source: 'api-key' | 'oauth' | 'relay'; contextWindow: number; contextWindowSet: boolean;
+  /** Model/provider-derived reasoning controls. Absent means the model must not receive an effort. */
+  reasoningLevels?: string[];
+  reasoningLabels?: Record<string, string>;
+  fastAvailable?: boolean;
+  default?: boolean;
+}
 /** One brain conversation in the session picker (web chat + CLI). */
 export interface BrainSessionInfo { id: string; title: string; model: string; updated_at: string; running: boolean; active: boolean }
 /** A row in the admin session-management panel (all brain sessions the operator anchors). */
@@ -93,7 +101,10 @@ export interface ToolOutputView {
 }
 type BrainSegment =
   | { kind: 'text'; text: string }
-  | { kind: 'tool'; name: string; detail?: string; diff?: string; output?: ToolOutputView };
+  | { kind: 'tool'; name: string; id?: string; detail?: string; diff?: string; output?: ToolOutputView; command?: string; sub?: {
+      sessionId: string; status: 'running' | 'done' | 'error'; task: string; detail?: string;
+      tools: number; tokens?: number; seconds: number; model?: string;
+    } };
 export interface BrainMessage { role: string; text: string; segments?: BrainSegment[] }
 
 /** ask_user_question wire shapes (mirror src/brain/events.ts). The `ask` SSE event carries `id` +

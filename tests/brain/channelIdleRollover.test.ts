@@ -10,7 +10,7 @@ const agedTs = (agoMs: number): string => new Date(Date.now() - agoMs).toISOStri
 
 /** A minimal fake LiveBrain — only the fields ChannelSessionService.send touches. `prompt` appends a
  *  settled assistant message so the reply-extraction + thinking-only guard have something to read. */
-function fakeBrain() {
+function fakeBrain(sessionId = 'brain-ch-discord-c1') {
   const messages: { role?: string; content?: unknown }[] = [];
   const session = {
     isStreaming: false,
@@ -23,7 +23,7 @@ function fakeBrain() {
     setActiveToolsByName: () => {},
   };
   return {
-    session,
+    session, sessionId,
     model: 'kimi',
     thinkingLevel: undefined as string | undefined,
     providerId: 'moonshot',
@@ -180,6 +180,19 @@ describe('ChannelSessionService.send — idle rollover (cache-cost fix)', () => 
     expect(live.session.dispose).not.toHaveBeenCalled();
     expect(t.spawn).not.toHaveBeenCalled();
     // deleteSession never ran → the stale message is still there.
+    expect(t.store.getMessages(t.sessionId).some((m) => JSON.parse(m.content).content === 'old')).toBe(true);
+  });
+
+  it('never rolls over a parent while its background child is still running', async () => {
+    const t = setup();
+    const live = fakeBrain(t.sessionId);
+    t.seed(THIRTY_ONE_MIN, live);
+    t.registry.setChildRunning(t.sessionId, 'brain-ch-subagent-running', true);
+
+    await t.svc.send({ ...t.baseOpts }, 'hello');
+
+    expect(live.session.dispose).not.toHaveBeenCalled();
+    expect(t.spawn).not.toHaveBeenCalled();
     expect(t.store.getMessages(t.sessionId).some((m) => JSON.parse(m.content).content === 'old')).toBe(true);
   });
 

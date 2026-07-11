@@ -57,6 +57,24 @@ export class ConversationLifecycle {
     return sessionId;
   }
 
+  /** Resolve an explicit parent-stream target through the stable CLI attachment when it carries a
+   * generation. A live idle rollover re-keys that attachment before the client has necessarily received
+   * its `session` event, so the reconnect's old URL must land on the fresh replacement. Validate BOTH
+   * ids as this user's ordinary conversation: a client binding is a routing hint, never an ownership
+   * bypass. */
+  resolveStreamSession(userId: number, sessionId: string, clientId?: string, clientGeneration?: number): string {
+    // Drill-in taps deliberately reach an owned delegated/channel child as read-only history/live output.
+    // They never carry a stable parent CLI identity, so validate ownership without the owner-chat-only
+    // `isNonUserSession` restriction. A generation-bound parent stream below remains owner-chat only.
+    const requested = this.d.store.getSession(sessionId);
+    if (!requested || requested.user_id !== userId) throw new Error('unknown session');
+    if (!clientId || clientGeneration === undefined) return sessionId;
+    this.ownedUserSession(userId, sessionId);
+    const resolved = this.d.attachments.resolveStreamSession(userId, clientId, clientGeneration, sessionId);
+    if (!resolved.accepted) throw new Error('stale client stream');
+    return this.ownedUserSession(userId, resolved.sessionId);
+  }
+
   /** DEFAULT start resolution for a cwd-reporting client (the CLI): the most recent conversation whose
    *  stored work_dir matches the launch directory AND that no other client stream currently holds; else
    *  the most recent unattached cwd-less conversation (legacy/web sessions, so a lone CLI keeps resuming
@@ -66,7 +84,7 @@ export class ConversationLifecycle {
     let real = '';
     try { real = realpathSync(cwd); } catch { /* vanished/unreadable dir — no cwd match possible */ }
     const rows = this.d.store.listSessions(userId).filter((s) => !isNonUserSession(s.id));
-    const unattached = (s: { id: string }) => this.d.attachments.attachedCount(s.id) === 0;
+    const unattached = (s: { id: string }) => this.d.attachments.availableForDefaultStart(s.id);
     const match = real ? rows.find((s) => s.work_dir === real && unattached(s)) : undefined;
     if (match) return match.id;
     const legacy = rows.find((s) => !s.work_dir && unattached(s));
@@ -89,30 +107,67 @@ export class ConversationLifecycle {
    *  `resolveStartSession` (cwd match, never a conversation another client holds); a bare start without
    *  one (the web dock) keeps following the active pointer. Either way it becomes the user's active
    *  conversation. Idempotent when the target is already live. */
-  async start(userId: number, opts?: { provider?: string; model?: string; session?: string; fresh?: boolean; cwd?: string }): Promise<{ sessionId: string }> {
+  async start(userId: number, opts?: { provider?: string; model?: string; session?: string; fresh?: boolean; cwd?: string; clientId?: string; clientGeneration?: number }): Promise<{ sessionId: string }> {
     let sessionId: string;
     if (opts?.fresh) sessionId = freshUserSessionId(userId);
     else if (opts?.session) sessionId = this.ownedUserSession(userId, opts.session);
     else if (opts?.cwd) sessionId = this.resolveStartSession(userId, opts.cwd);
     else sessionId = this.activeSessionId(userId);
+    const prevActive = this.d.sessions.activeIdFor(userId);
+    // Claim synchronously, before ensureLive's first async boundary. Besides making Ctrl+C during start
+    // target this requested conversation, claim() detaches only THIS client's old stream; the guard below
+    // consequently sees any genuinely remaining terminal/web attachment and preserves its old driver.
+    const claim = opts?.clientId
+      ? this.d.attachments.claim(userId, opts.clientId, sessionId, opts.clientGeneration)
+      : undefined;
+    // A newer request from this same CLI identity already selected another target. This older network-
+    // reordered request must not mutate the active pointer, old-driver cleanup, or spawn state at all.
+    if (claim && !claim.accepted) {
+      if (claim.closed) throw new Error('client request is no longer current');
+      return { sessionId: claim.sessionId };
+    }
+    const claimGeneration = claim?.generation;
+    // A bound CLI can be following non-active A while another client has moved the global pointer to B.
+    // Its stable binding, not that shared pointer, identifies the driver this switch actually leaves.
+    const leavingSessionId = opts?.clientId ? claim?.previousSessionId : prevActive;
     // Switching AWAY from a conversation that's parked on an ask_user_question: release its question so
     // the abandoned turn settles and frees its session lock. ONLY when no other client stream is still
     // attached to it — a second terminal (or the dock) holding that conversation must keep its pending
     // ask and its running goal; the pointer moving away from THEM must never kill THEIR turn.
-    const prevActive = this.d.sessions.activeIdFor(userId);
-    if (prevActive && prevActive !== sessionId && this.d.attachments.attachedCount(prevActive) === 0) {
-      this.d.elicitation.cancelForSession(prevActive, 'switched conversation');
-      this.d.goals.cancelGoalContinuation(prevActive);
+    if (leavingSessionId && leavingSessionId !== sessionId && this.d.attachments.attachedCount(leavingSessionId) === 0) {
+      this.d.elicitation.cancelForSession(leavingSessionId, 'switched conversation');
+      this.d.goals.cancelGoalContinuation(leavingSessionId);
       // Switching away stops the goal's only driver (the in-memory timer) — so don't leave the row saying
       // "active" while nothing runs. Pause it; the user resumes with /goal resume when they switch back.
-      this.d.goals.reconcileGoal(prevActive, 'interrupted (switched conversation)');
+      this.d.goals.reconcileGoal(leavingSessionId, 'interrupted (switched conversation)');
     }
     this.d.sessions.setActive(userId, sessionId);
     // NOTE: no reconcile of the TARGET goal here. Restart zombies are handled once at boot
     // (reconcileGoalsOnBoot); a timer-less goal on a start()/reconnect is usually a healthy mid-flight turn
     // (its timer self-deleted when it fired), so pausing it here would kill a running goal.
-    await this.ensureLive(userId, sessionId, { provider: opts?.provider, model: opts?.model, clientCwd: opts?.cwd, explicitResume: !!opts?.session });
+    try {
+      await this.ensureLive(userId, sessionId, { provider: opts?.provider, model: opts?.model, clientCwd: opts?.cwd, explicitResume: !!opts?.session });
+    } catch (error) {
+      if (opts?.clientId && claimGeneration !== undefined) this.d.attachments.cancelClaim(userId, opts.clientId, claimGeneration);
+      throw error;
+    }
+    if (opts?.clientId && claimGeneration !== undefined
+      && !this.d.attachments.isCurrentClaim(userId, opts.clientId, claimGeneration)
+      && this.d.attachments.claimedSession(userId, opts.clientId) !== sessionId
+      && this.d.attachments.attachedCount(sessionId) === 0) {
+      // Stop (or a newer switch elsewhere) consumed/superseded this claim while spawn was in flight.
+      // Nothing follows the newly-live target, so do not leak a PI session after Ctrl+C already finished.
+      this.d.goals.cancelGoalContinuation(sessionId);
+      this.d.elicitation.cancelForSession(sessionId, 'client closed during start');
+      this.d.sessions.dispose(sessionId);
+    }
     return { sessionId };
+  }
+
+  /** Validate (or, after a daemon restart, reconstruct) the stable generation binding carried by a bound
+   *  CLI request. A stop/cancel tombstone makes this false until a strictly newer start claims the id. */
+  authorizeClientRequest(userId: number, clientId: string, generation: number, sessionId: string): boolean {
+    return this.d.attachments.authorizeRequest(userId, clientId, sessionId, generation);
   }
 
   /** Make one conversation live (spawn if needed) WITHOUT touching the active pointer — the shared tail
@@ -120,7 +175,7 @@ export class ConversationLifecycle {
    *  directory (validated, then stamped as the session's work_dir); `spawnCwd` is an internal carry-over
    *  (respawn keeping its previous workDir) that must NOT be stamped — a cwd-less web session stays
    *  cwd-less. Serialized per conversation: two concurrent spawns would leak one PI session. */
-  async ensureLive(userId: number, sessionId: string, o: { provider?: string; model?: string; clientCwd?: string; spawnCwd?: string; explicitResume?: boolean } = {}): Promise<void> {
+  async ensureLive(userId: number, sessionId: string, o: { provider?: string; model?: string; clientCwd?: string; spawnCwd?: string; explicitResume?: boolean; fast?: boolean; thinkingLevel?: string | null } = {}): Promise<void> {
     await this.serial(sessionId, async () => {
       // An EXPLICIT resume (the session picker / `/resume <id>`) is a deliberate choice to continue
       // that conversation — stamp it so the idle-rollover check in send() respects it. A default
@@ -143,7 +198,10 @@ export class ConversationLifecycle {
         ownerUserId: userId,
         selection,
         policy,
-        thinkingLevel: userCfg?.thinkingLevel,
+        // `null` explicitly restores a session whose live reasoning level was unset; omitted keeps the
+        // normal Account default. This distinction matters when returning from a temporary vision hop.
+        thinkingLevel: o.thinkingLevel === null ? undefined : (o.thinkingLevel ?? userCfg?.thinkingLevel),
+        fast: o.fast,
         autoCompact: !!userCfg?.autoCompact,
         autoCompactAtPct: userCfg?.autoCompactAt ?? DEFAULT_AUTO_COMPACT_PCT,
         clientCwd: o.clientCwd ?? o.spawnCwd,
@@ -176,7 +234,9 @@ export class ConversationLifecycle {
     this.d.elicitation.cancelForSession(sessionId, 'model switched');
     this.d.goals.cancelGoalContinuation(sessionId);
     return this.serial(sessionId, async () => {
-      const prevWorkDir = this.d.sessions.get(sessionId)?.workDir; // the switch must not move the session cwd
+      const previous = this.d.sessions.get(sessionId);
+      const prevWorkDir = previous?.workDir; // the switch must not move the session cwd
+      const prevFast = previous?.requestProfile.fast;
       this.d.sessions.dispose(sessionId);
       const userCfg = this.d.userSettings?.(userId);
       const live = await this.d.spawn({
@@ -184,6 +244,7 @@ export class ConversationLifecycle {
         ownerUserId: userId,
         selection: sel, // the explicit pick wins over the user's saved default
         policy: this.d.policy?.(userId) ?? { allowedProjectIds: 'all' as const, allowedPaths: () => [] },
+        fast: prevFast,
         autoCompact: !!userCfg?.autoCompact,
         autoCompactAtPct: userCfg?.autoCompactAt ?? DEFAULT_AUTO_COMPACT_PCT,
         clientCwd: prevWorkDir,
@@ -206,24 +267,31 @@ export class ConversationLifecycle {
    *  `session` event so their transcript restarts at this message (a bound CLI rebinds to the id the
    *  event carries). Returns the (possibly replaced) live session. */
   async maybeRollover(userId: number, b: LiveBrain, clientCwd?: string): Promise<LiveBrain> {
-    if (b.session.isStreaming || !rolloverDue({ lastMessageAt: this.d.store.lastMessageAt(b.sessionId), interactedAt: b.interactedAt, now: Date.now() })) return b;
+    // A background delegate can outlive the parent's own prompt. Its durable parent id must stay stable
+    // until the child settles, so never archive/replace a conversation that still owns running children.
+    if (b.session.isStreaming || this.d.sessions.hasActiveChildren(b.sessionId)
+        || !rolloverDue({ lastMessageAt: this.d.store.lastMessageAt(b.sessionId), interactedAt: b.interactedAt, now: Date.now() })) return b;
     const carried = b.listeners;
     const oldId = b.sessionId;
     const wasActive = this.activeSessionId(userId) === oldId;
+    const freshId = freshUserSessionId(userId);
+    // Publish the identity transition to attachment bookkeeping before the first async spawn boundary.
+    // A quit POST can race while ensureLive awaits provider/session setup; it must already resolve the
+    // old client-visible id to `freshId` rather than concluding that the disposed predecessor is gone.
+    this.d.attachments.retarget(oldId, freshId);
     this.d.goals.cancelGoalContinuation(oldId);
     this.d.elicitation.cancelForSession(oldId, 'session stopped');
     this.d.sessions.dispose(oldId);
-    const freshId = freshUserSessionId(userId);
     await this.ensureLive(userId, freshId, { clientCwd });
     const fresh = this.d.sessions.get(freshId);
     if (!fresh) throw new Error('brain not started for user');
     // The pointer follows the rollover only when it pointed at the rolled-over conversation — a bound
     // send on a non-active conversation must not hijack the pointer from another client.
     if (wasActive) this.d.sessions.setActive(userId, freshId);
-    // Attached client streams and session taps re-key onto the replacement — see ClientAttachments.
-    this.d.attachments.retarget(oldId, freshId);
+    // Attached listener sets were re-keyed before spawn so both the spawner and a racing stop request see
+    // the replacement identity. Carry the raw live listeners as well (non-client internal listeners).
     for (const l of carried) fresh.listeners.add(l);
-    for (const l of fresh.listeners) l({ type: 'session', sessionId: fresh.sessionId });
+    fresh.replay.publish({ type: 'session', sessionId: fresh.sessionId });
     return fresh;
   }
 
@@ -235,64 +303,113 @@ export class ConversationLifecycle {
     const settings = this.d.userSettings?.(userId);
     const hop = decideVisionHop({
       hasImages, onFallback: !!b.visionFallback,
-      currentModel: b.model, visionModel: settings?.visionModel, visionModelProvider: settings?.visionModelProvider,
+      currentModel: b.model, currentProvider: b.providerId,
+      visionModel: settings?.visionModel, visionModelProvider: settings?.visionModelProvider,
     });
     if (hop.action === 'none') return b;
     const hopId = b.sessionId;
     const prevWorkDir = b.workDir; // survive the respawn — the hop must not move the session cwd
+    const listeners = b.listeners; // direct web subscribers are not sessionTaps; carry them explicitly
+    const returnProfile = hop.action === 'hop'
+      ? {
+          provider: b.providerId,
+          model: b.model,
+          thinkingLevel: b.thinkingLevel,
+          fast: b.requestProfile.fast,
+        }
+      : b.visionFallbackReturn;
     this.d.goals.cancelGoalContinuation(hopId);
     this.d.elicitation.cancelForSession(hopId, 'session stopped');
     this.d.sessions.dispose(hopId);
     await this.ensureLive(userId, hopId, {
-      clientCwd, spawnCwd: prevWorkDir,
-      ...(hop.action === 'hop' ? { provider: hop.provider, model: hop.model } : {}),
+      clientCwd,
+      spawnCwd: prevWorkDir,
+      // Fast belongs to the original conversation profile. Never send priority-service metadata to a
+      // temporary fallback (which may be non-OAuth); restore the exact prior value on hop-back.
+      fast: hop.action === 'hop' ? false : returnProfile?.fast,
+      ...(hop.action === 'hop'
+        ? { provider: hop.provider, model: hop.model }
+        : returnProfile
+          ? {
+              provider: returnProfile.provider,
+              model: returnProfile.model,
+              thinkingLevel: returnProfile.thinkingLevel ?? null,
+            }
+          : {}),
     });
     const fresh = this.d.sessions.get(hopId);
     if (!fresh) throw new Error('brain not started for user');
+    for (const listener of listeners) fresh.listeners.add(listener);
     // Mark the fallback active only if the respawn actually reached the requested vision model (not the
     // configured default because the vision model was unavailable/disallowed) — so the NEXT text turn
-    // hops back. Compare the reached model id directly.
-    if (hop.action === 'hop') fresh.visionFallback = fresh.model === hop.model;
+    // hops back. Provider matters too: two configured entries can expose the same model id.
+    if (hop.action === 'hop') {
+      const reachedFallback = fresh.model === hop.model && (!hop.provider || fresh.providerId === hop.provider);
+      fresh.visionFallback = reachedFallback;
+      if (reachedFallback) fresh.visionFallbackReturn = returnProfile;
+    }
     return fresh;
   }
 
-  subscribe(userId: number, listener: (e: BrainEvent) => void): () => void {
+  subscribe(userId: number, listener: (e: BrainEvent) => void, clientId?: string, clientGeneration?: number): () => void {
     const b = this.activeLive(userId);
     if (!b) throw new Error('brain not started for user');
-    b.listeners.add(listener);
-    this.d.attachments.clientStreams.set(listener, b.sessionId); // a real client stream is now attached here
-    return () => {
-      this.d.attachments.clientStreams.delete(listener);
+    let detached = false;
+    const off = (): void => {
+      if (detached) return;
+      detached = true;
+      this.d.attachments.detachTransport(listener);
       // An idle rollover may have MOVED this listener onto a replacement session (send() carries
       // subscribers over so open streams survive) — and the user may have switched active sessions
       // since, so sweep EVERY live session, not just the original and the currently active one
       // (a listener left on a non-active live would keep receiving events for a dead stream forever).
       for (const [, live] of this.d.sessions.liveEntries()) live.listeners.delete(listener);
+      // The source LiveBrain may already have been removed from the registry during rollover; clearing
+      // its captured set prevents the carry step from resurrecting a transport stopped mid-spawn.
+      b.listeners.delete(listener);
     };
+    if (!this.d.attachments.attach(userId, b.sessionId, listener, off, clientId, clientGeneration)) {
+      throw new Error('stale client stream');
+    }
+    b.listeners.add(listener);
+    return off;
   }
 
   /** Follow one of the CALLER'S OWN sessions live, by explicit id — the CLI's bound conversation
    *  stream and the sub-agent drill-in stream. Unlike subscribe() (which follows the active
    *  conversation), a tap targets a fixed session and keeps delivering across respawns. Throws on an
    *  unknown/foreign session. */
-  tapSession(userId: number, sessionId: string, listener: (e: BrainEvent) => void): () => void {
-    const row = this.d.store.getSession(sessionId);
+  tapSession(userId: number, sessionId: string, listener: (e: BrainEvent) => void, clientId?: string, clientGeneration?: number): () => void {
+    const targetSessionId = this.resolveStreamSession(userId, sessionId, clientId, clientGeneration);
+    const row = this.d.store.getSession(targetSessionId);
     if (!row || row.user_id !== userId) throw new Error('unknown session');
-    const { sessionTaps, clientStreams } = this.d.attachments;
-    let taps = sessionTaps.get(sessionId);
-    if (!taps) { taps = new Set(); sessionTaps.set(sessionId, taps); }
-    taps.add(listener);
-    clientStreams.set(listener, sessionId); // a real client stream is now attached here
-    this.liveFor(sessionId)?.listeners.add(listener); // the session may already be running — attach now
-    return () => {
-      clientStreams.delete(listener);
-      taps.delete(listener);
-      if (taps.size === 0) sessionTaps.delete(sessionId);
+    const { sessionTaps } = this.d.attachments;
+    const initialLive = this.liveFor(targetSessionId);
+    let detached = false;
+    const off = (): void => {
+      if (detached) return;
+      detached = true;
+      this.d.attachments.detachTransport(listener);
+      // Rollover can re-key (or merge) the original tap set, so remove from every key rather than the
+      // captured pre-rollover id. This also avoids leaving an empty replacement tap set behind.
+      for (const [id, set] of sessionTaps) {
+        set.delete(listener);
+        if (set.size === 0) sessionTaps.delete(id);
+      }
       // An idle rollover may have CARRIED this listener onto a replacement session (send() moves
       // subscribers so open streams survive) — sweep every live user session, then the channel bucket.
       for (const [, live] of this.d.sessions.liveEntries()) live.listeners.delete(listener);
-      this.liveFor(sessionId)?.listeners.delete(listener);
+      this.liveFor(targetSessionId)?.listeners.delete(listener);
+      initialLive?.listeners.delete(listener);
     };
+    if (!this.d.attachments.attach(userId, targetSessionId, listener, off, clientId, clientGeneration)) {
+      throw new Error('stale client stream');
+    }
+    let taps = sessionTaps.get(targetSessionId);
+    if (!taps) { taps = new Set(); sessionTaps.set(targetSessionId, taps); }
+    taps.add(listener);
+    initialLive?.listeners.add(listener); // the session may already be running — attach now
+    return off;
   }
 
   /** Restart a user's live session so changed settings (model override, plugins) apply immediately.
@@ -307,8 +424,9 @@ export class ConversationLifecycle {
     this.d.elicitation.cancelForSession(sessionId, 'session restarted');
     await this.d.sessions.settled(sessionId); // let an in-flight turn settle before disposing the session
     const prevWorkDir = b.workDir; // the restart must not move the session cwd
+    const prevFast = b.requestProfile.fast;
     this.stop(userId);
-    await this.ensureLive(userId, sessionId, { spawnCwd: prevWorkDir });
+    await this.ensureLive(userId, sessionId, { spawnCwd: prevWorkDir, fast: prevFast });
   }
 
   stop(userId: number): void {

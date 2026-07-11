@@ -12,7 +12,7 @@ describe('openDb', () => {
   it('applies schema (tables exist) on a fresh :memory: db', () => {
     const db = openDb(':memory:');
     const names = db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map((r: any) => r.name);
-    expect(names).toEqual(expect.arrayContaining(['projects', 'tasks', 'task_deps', 'agents', 'missions']));
+    expect(names).toEqual(expect.arrayContaining(['projects', 'tasks', 'task_deps', 'agents', 'missions', 'brain_subagent_runs']));
   });
 
   it('migrates a pre-project_id events table without throwing (adds the column + index)', () => {
@@ -49,5 +49,27 @@ describe('openDb', () => {
     expect(cols).toContain('work_dir');
     // Legacy rows come back with an EMPTY work_dir — treated as cwd-less by the CLI start resolution.
     expect((db.prepare("SELECT work_dir FROM brain_sessions WHERE id='brain-1'").get() as any).work_dir).toBe('');
+  });
+
+  it('migrates a pre-parent brain_sessions table and creates the delegation index afterwards', () => {
+    dir = mkdtempSync(join(tmpdir(), 'elowen-db-'));
+    const path = join(dir, 'old.db');
+    const old = new Database(path);
+    old.exec(`CREATE TABLE brain_sessions (
+      id TEXT PRIMARY KEY, user_id INTEGER NOT NULL, title TEXT NOT NULL DEFAULT '',
+      model TEXT NOT NULL DEFAULT '', work_dir TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')))`);
+    old.prepare("INSERT INTO brain_sessions (id, user_id, model) VALUES ('brain-1', 1, 'm')").run();
+    old.close();
+
+    const db = openDb(path);
+    const cols = db.prepare('PRAGMA table_info(brain_sessions)').all().map((r: any) => r.name);
+    expect(cols).toContain('parent_session_id');
+    expect(cols).toContain('delegated_access');
+    expect((db.prepare("SELECT parent_session_id FROM brain_sessions WHERE id='brain-1'").get() as any).parent_session_id).toBeNull();
+    expect((db.prepare("SELECT delegated_access FROM brain_sessions WHERE id='brain-1'").get() as any).delegated_access).toBeNull();
+    expect(db.prepare("SELECT name FROM sqlite_master WHERE type='index' AND name='idx_brain_sessions_parent'").get()).toBeTruthy();
+    expect(db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='brain_subagent_runs'").get()).toBeTruthy();
   });
 });

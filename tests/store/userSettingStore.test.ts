@@ -14,6 +14,14 @@ describe('UserSettingStore', () => {
     expect(s.cliSettings(1)).toEqual({ model: 'ollama/kimi-k2.7-code', modelProvider: 'relay', visionModel: '', visionModelProvider: '', thinkingLevel: '', autoCompact: true, autoCompactAt: 70, advisorStyle: 'professional', discordUserId: '', whatsappNumber: '', autoRecall: true, autoSave: true });
   });
 
+  it('round-trips the provider-native max reasoning level', () => {
+    const s = new UserSettingStore(openDb(':memory:'));
+    s.setCliSettings(1, { thinkingLevel: 'max' });
+    expect(s.cliSettings(1).thinkingLevel).toBe('max');
+    s.setCliSettings(1, { thinkingLevel: 'off' });
+    expect(s.cliSettings(1).thinkingLevel).toBe('off');
+  });
+
   it('memory autoRecall/autoSave default on and round-trip false', () => {
     const s = new UserSettingStore(openDb(':memory:'));
     expect(s.cliSettings(1).autoRecall).toBe(true);

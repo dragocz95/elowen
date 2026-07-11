@@ -51,6 +51,12 @@ interface TurnRunnerDeps {
   projectPath?: () => string | undefined;
 }
 
+/** Stable identity carried by generation-bound CLI requests. Web/channel/internal sends omit it. */
+export interface BoundClientRequest {
+  id: string;
+  generation: number;
+}
+
 /** The owner-chat turn pipeline: mid-run steering, idle rollover + vision hop (delegated to the
  *  lifecycle), the live-prompt assembly (memory/hook/permissions blocks + turn context), the
  *  runWithPolicy scope with its turn-bound emitters, the thinking-only nudge, the post-turn curator
@@ -82,13 +88,27 @@ export class BrainTurnRunner {
    *  behavior, unchanged); with `session` (a bound CLI) it targets exactly that conversation, wherever
    *  the active pointer points, and never moves the pointer. A bound target that is not live (daemon
    *  restart between turns) is respawned in place first. */
-  async send(userId: number, text: string, images?: { data: string; mimeType: string }[], mode: 'build' | 'plan' = 'build', internal?: { goalKickoff?: boolean; goalContinue?: boolean; systemNudge?: boolean }, clientCwd?: string, session?: string, display?: string): Promise<void> {
+  async send(userId: number, text: string, images?: { data: string; mimeType: string }[], mode: 'build' | 'plan' = 'build', internal?: { goalKickoff?: boolean; goalContinue?: boolean; systemNudge?: boolean }, clientCwd?: string, session?: string, display?: string, client?: BoundClientRequest): Promise<void> {
+    const assertClientCurrent = (sessionId: string): void => {
+      if (client && !this.d.lifecycle.authorizeClientRequest(userId, client.id, client.generation, sessionId)) {
+        throw new Error('client session has stopped');
+      }
+    };
     let targetId: string;
     if (session) {
       targetId = this.d.lifecycle.ownedUserSession(userId, session);
+      assertClientCurrent(targetId);
       if (!this.d.sessions.get(targetId)) await this.d.lifecycle.ensureLive(userId, targetId, { clientCwd });
+      // Stop may have landed while ensureLive awaited provider/session setup. Re-check before this request
+      // can persist a user row or enter PI; stopSession itself waits for that spawn lock and disposes it.
+      assertClientCurrent(targetId);
     } else {
       targetId = this.d.lifecycle.activeSessionId(userId);
+      // start() deliberately publishes the new active pointer before its provider/session assembly
+      // finishes, so every surface agrees on the selected conversation. An immediately submitted web
+      // turn must join that same per-session spawn lock instead of seeing the pointer without a live PI
+      // wrapper and being rejected (which used to drop the composer text client-side).
+      if (!this.d.sessions.get(targetId)) await this.d.lifecycle.ensureLive(userId, targetId, { clientCwd });
     }
     const active = this.d.sessions.get(targetId);
     if (!active) throw new Error('brain not started for user');
@@ -107,8 +127,8 @@ export class BrainTurnRunner {
     // kickoff/continuation is never steered — it drives the loop itself and must run its own turn.
     if (active.session.isStreaming && !internal?.goalKickoff && !internal?.goalContinue) {
       const persistText = images?.length ? `${text}\n[📎 ${images.length}× image]` : text;
-      projectUserTurn(this.d.store, active.sessionId, persistText);
-      for (const l of active.listeners) l({ type: 'user', text: display ?? persistText });
+      const durableId = projectUserTurn(this.d.store, active.sessionId, persistText);
+      active.replay.publish({ type: 'user', text: display ?? persistText, durableId });
       // Route through the mirror so the image attachments survive a later positional queue-remove (PI's
       // clearQueue drops them). PI's queue_update then reconciles the mirror.
       await enqueueMirrored(active, 'steer', text, images?.map((i) => ({ type: 'image' as const, data: i.data, mimeType: i.mimeType })));
@@ -125,24 +145,26 @@ export class BrainTurnRunner {
         : '';
       // Serialized per conversation: concurrent prompt() calls on one PI session corrupt turn state.
       await this.serial(live.sessionId, async () => {
+      assertClientCurrent(live.sessionId);
       // First user message names the conversation (once). A provisional slice fills the session list
       // immediately (never blank); a cheap background inference then replaces it with a proper
       // agent-generated title — no prompt injected into the turn, and a no-op if that model isn't wired.
       const row = this.d.store.getSession(live.sessionId);
       if (row && !row.title) {
-        this.d.store.setTitle(live.sessionId, turnText.slice(0, 60));
-        void this.d.titler.run(live.sessionId, turnText);
+        const provisionalTitle = turnText.slice(0, 60);
+        this.d.store.setTitle(live.sessionId, provisionalTitle);
+        void this.d.titler.run(live.sessionId, turnText, provisionalTitle);
       }
       // History stores the text plus an attachment marker; the image bytes live only in the live
       // context (a rehydrated conversation keeps the marker, not the pixels).
       const persistText = turnImages?.length ? `${turnText}\n[📎 ${turnImages.length}× image]` : turnText;
-      projectUserTurn(this.d.store, live.sessionId, persistText);
+      const durableId = projectUserTurn(this.d.store, live.sessionId, persistText);
       // The DAEMON is the single authority for rendering the user's turn: every real user turn (a normal
       // send AND a drained queued delivery) streams a `user` event so the sender renders the 'you' bubble
       // from the stream — no client-side optimistic echo / busy heuristic that could drop or duplicate it.
       // Internal goal kickoff/continuation turns aren't user messages, so they emit nothing. `echoDisplay`
       // is the client's clean rendering (before @mention/prompt expansion); it falls back to persistText.
-      if (isUserTurn) { const shown = echoDisplay ?? persistText; for (const l of live.listeners) l({ type: 'user', text: shown }); }
+      if (isUserTurn) { const shown = echoDisplay ?? persistText; live.replay.publish({ type: 'user', text: shown, durableId }); }
       const options = turnImages?.length
         ? { images: turnImages.map((i) => ({ type: 'image' as const, data: i.data, mimeType: i.mimeType })) }
         : undefined;
@@ -192,16 +214,19 @@ export class BrainTurnRunner {
       // Turn-bound elicitor for ctx.askUser: emit the `ask` event to this conversation's clients and park
       // the answer in the shared registry (settled by /brain/answer). Resolving it does NOT re-enter the
       // held session lock, so it can't deadlock the parked turn.
-      const elicit = (qs: AskQuestion[]) => this.d.elicitation.ask(live.sessionId, qs, (e) => { for (const l of live.listeners) l(e); });
+      const elicit = (qs: AskQuestion[]) => this.d.elicitation.ask(live.sessionId, qs, (e) => live.replay.publish(e));
       // ctx.emitCard: update the conversation's card registry and broadcast a `card` event to its clients.
-      const emitCard = (raw: unknown) => { const card = this.d.cards.set(live.sessionId, raw); if (card) for (const l of live.listeners) l({ type: 'card', card }); };
+      const emitCard = (raw: unknown) => { const card = this.d.cards.set(live.sessionId, raw); if (card) live.replay.publish({ type: 'card', card }); };
       // Live sub-agent progress: the delegate plugin captures this before spawning its child and pushes
       // updates as the child works — each fans out to THIS conversation's clients as a `subagent` event.
-      // The running set doubles as the abort cascade's target list (see abort()).
+      // The registry entry doubles as the abort cascade's target list and survives LiveBrain respawns.
       const emitSubagent = (u: SubagentUpdate) => {
-        if (u.status === 'running') (live.activeChildren ??= new Set()).add(u.sessionId);
-        else live.activeChildren?.delete(u.sessionId);
-        for (const l of live.listeners) l({ type: 'subagent', ...u });
+        // The store verifies that this is a real direct child owned by the same user and persists the
+        // snapshot synchronously. Only then may its drill-in id reach clients — plugin input cannot point
+        // a parent transcript at an unrelated/foreign session, and reconnect can never race the event.
+        if (!this.d.store.upsertSubagentRun(live.sessionId, u)) return;
+        this.d.sessions.setChildRunning(live.sessionId, u.sessionId, u.status === 'running');
+        live.replay.publish({ type: 'subagent', ...u });
       };
       // Assemble the live prompt INSIDE the identity/policy scope: turnContext providers run here, so a
       // plugin can scope its injection to the current user via currentIdentity() (e.g. per-user todos
@@ -228,6 +253,9 @@ export class BrainTurnRunner {
       // stamped onto the persisted assistant row by projectEvent (fired synchronously in this scope).
       const meter = newCostMeter();
       await runWithMeter(meter, () => runWithPolicy(live.policy, async () => {
+        // Context/memory/plugin hooks above are asynchronous. A quit that landed while they ran must fence
+        // the provider call even though this send had already entered its turn callback.
+        assertClientCurrent(live.sessionId);
         // A plugin prompt-command (`/name args`) is sent RAW so PI expands its template natively in
         // prompt(); that only fires when the message STARTS with the slash, so it is passed alone — the
         // macro is a self-contained instruction that needs no per-turn context prefix. Everything else
@@ -242,7 +270,10 @@ export class BrainTurnRunner {
         // persists and streams to attached clients as a normal continuation. Straight-line by design:
         // a nudge that again produces nothing simply ends — no loop.
         const settled = [...(live.session.messages as { role?: string }[])].reverse().find((m) => m.role === 'assistant');
-        if (settled && isThinkingOnlyReply(settled)) await live.session.prompt(NO_REPLY_NUDGE);
+        if (settled && isThinkingOnlyReply(settled)) {
+          assertClientCurrent(live.sessionId);
+          await live.session.prompt(NO_REPLY_NUDGE);
+        }
       }, { identity, elicit, emitCard, emitSubagent, toolPolicy, permissions, workDir, sessionId: live.sessionId, model: { provider: live.providerId, model: live.model } }));
       // Post-turn curator: extract durable facts from this exchange in the background. Fire-and-forget
       // (mirrors brainWorker) — never awaited, never touches live.session, swallows its own errors.
@@ -270,6 +301,7 @@ export class BrainTurnRunner {
       // the active pointer to wherever the conversation went; a bound send stays on its explicit target.
       let b = session ? this.d.sessions.get(targetId) : this.d.lifecycle.activeLive(userId);
       if (!b) throw new Error('brain not started for user');
+      assertClientCurrent(b.sessionId);
       // Idle rollover — see ConversationLifecycle.maybeRollover. INTERNAL sends (goal kickoff /
       // continuation) never roll over — the goal row is keyed to the session it was set on; moving its
       // kickoff to a fresh session would orphan the goal (judge finds no row, loop never starts).
@@ -277,6 +309,7 @@ export class BrainTurnRunner {
       // Vision fallback — see ConversationLifecycle.maybeVisionHop (an image turn on a text-only model
       // respawns onto the user's vision model in place, and hops back on the next text-only turn).
       b = await this.d.lifecycle.maybeVisionHop(userId, b, !!images?.length, clientCwd);
+      assertClientCurrent(b.sessionId);
       // The conversation ↔ launch-directory binding follows explicit client cwds (feeds the CLI's
       // default-start resolution); fallback-resolved dirs are never stamped.
       if (clientCwd) this.d.lifecycle.stampWorkDir(b.sessionId, clientCwd, b.policy);

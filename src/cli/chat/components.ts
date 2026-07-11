@@ -49,14 +49,33 @@ export class UserBlock implements Component {
 export class CardPanel implements Component {
   private cards: BrainCard[] = [];
   private collapsed = false;
+  /** Hard layout budget supplied by the shell. A pinned card must never be allowed to grow the
+   *  full-screen TUI beyond the terminal height; the transcript gets whatever rows remain. */
+  private maxRows = Number.POSITIVE_INFINITY;
   /** Row indices (0-based, within this panel's own output) that are clickable card headers — so the app
    *  can hit-test a mouse click against them and toggle the checklist open/closed. */
   private headerRows = new Set<number>();
   invalidate(): void { /* re-rendered on the next frame */ }
   set(cards: BrainCard[]): void { this.cards = cards; }
+  setMaxRows(rows: number): void { this.maxRows = Math.max(0, Math.floor(rows)); }
   toggleCollapsed(): void { this.collapsed = !this.collapsed; }
   isHeaderRow(index: number): boolean { return this.headerRows.has(index); }
+  /** Uncapped row count for the shell's row allocator. */
+  desiredRows(_width = 80): number { return this.buildRows().length; }
   render(_width?: number): string[] {
+    const lines = this.buildRows();
+    if (lines.length <= this.maxRows) return lines;
+    if (this.maxRows <= 0) { this.headerRows = new Set(); return []; }
+    const shown = lines.slice(0, this.maxRows);
+    if (this.maxRows > 1) {
+      shown[this.maxRows - 1] = `    ${FAINTC(`… +${lines.length - this.maxRows + 1} more`)}`;
+      this.headerRows.delete(this.maxRows - 1); // the replacement summary is not a clickable card header
+    }
+    this.headerRows = new Set([...this.headerRows].filter((row) => row < this.maxRows));
+    return shown;
+  }
+
+  private buildRows(): string[] {
     // Pinned cards only; a checklist whose items are ALL completed collapses (the work is done).
     const visible = this.cards.filter((c) => c.pinned
       && !(c.items && c.items.length > 0 && c.items.every((i) => i.status === 'completed')));
@@ -89,20 +108,24 @@ export interface SubagentPanelEntry {
 export class SubagentPanel implements Component {
   private entries: SubagentPanelEntry[] = [];
   private collapsed = false;
+  private maxRows = Number.POSITIVE_INFINITY;
   /** Row index (0-based within this panel's output) → the sub-agent session that row opens. */
   private rowTargets = new Map<number, string>();
   invalidate(): void { /* re-rendered on the next frame */ }
   set(entries: SubagentPanelEntry[]): void { this.entries = entries.filter((e) => e.status === 'running'); }
+  setMaxRows(rows: number): void { this.maxRows = Math.max(0, Math.floor(rows)); }
+  desiredRows(): number { return this.entries.length === 0 ? 0 : this.collapsed ? 1 : this.entries.length + 1; }
   targetAt(index: number): string | null { return this.rowTargets.get(index) ?? null; }
   /** The header (row 0) toggles the agent list open/closed, mirroring the Todos card. */
-  isHeaderRow(index: number): boolean { return index === 0 && this.entries.length > 0; }
+  isHeaderRow(index: number): boolean { return index === 0 && this.entries.length > 0 && this.maxRows > 0; }
   toggleCollapsed(): void { this.collapsed = !this.collapsed; }
   render(width = 80): string[] {
     this.rowTargets = new Map();
-    if (this.entries.length === 0) return [];
+    if (this.entries.length === 0 || this.maxRows <= 0) return [];
     const lines: string[] = [`  ${FAINTC(this.collapsed ? '▸' : '▾')} ${bold(WHITE('Sub-agents'))}${FAINTC(`  ${this.entries.length} running`)} ${FAINTC('click')}`];
     if (this.collapsed) return lines;
-    for (const e of this.entries) {
+    const shownEntries = this.entries.slice(0, Math.max(0, this.maxRows - 1));
+    for (const e of shownEntries) {
       const meta = [e.detail, e.model, formatDuration(e.seconds), e.tokens ? `${formatK(e.tokens)} tok` : ''].filter(Boolean).join(' · ');
       const metaText = FAINTC(truncateToWidth(meta, Math.max(10, Math.floor(width * 0.5)), '…'));
       const task = DIM(truncateToWidth(e.task.replace(/\s+/g, ' ').trim(), Math.max(10, width - visibleWidth(metaText) - 12), '…'));
@@ -110,6 +133,9 @@ export class SubagentPanel implements Component {
       const gap = Math.max(1, width - visibleWidth(row) - visibleWidth(metaText) - 2);
       this.rowTargets.set(lines.length, e.sessionId);
       lines.push(`${row}${' '.repeat(gap)}${metaText}`);
+    }
+    if (shownEntries.length < this.entries.length && lines.length < this.maxRows) {
+      lines.push(`    ${FAINTC(`… +${this.entries.length - shownEntries.length} more`)}`);
     }
     return lines;
   }
@@ -123,14 +149,16 @@ export class SubagentPanel implements Component {
 export class ProcessPanel implements Component {
   private entries: ProcessInfo[] = [];
   private collapsed = false;
+  private maxRows = Number.POSITIVE_INFINITY;
   /** Row index (0-based within this panel's output) → the kill target on that row: the process id and
    *  the 1-based screen-column span its ✕ occupies (the panel renders flush to the left edge, so a
    *  visible-string column maps directly to a screen column for hit-testing). */
   private killZones = new Map<number, { id: string; x0: number; x1: number }>();
   invalidate(): void { /* re-rendered on the next frame */ }
   set(processes: ProcessInfo[]): void { this.entries = processes.filter((p) => p.running); }
+  setMaxRows(rows: number): void { this.maxRows = Math.max(0, Math.floor(rows)); }
   /** The header (row 0) toggles the process list open/closed, mirroring the Todos card. */
-  isHeaderRow(index: number): boolean { return index === 0 && this.entries.length > 0; }
+  isHeaderRow(index: number): boolean { return index === 0 && this.entries.length > 0 && this.maxRows > 0; }
   toggleCollapsed(): void { this.collapsed = !this.collapsed; }
   /** The process whose ✕ covers screen column `x` on panel row `index`, or null (no ✕ there). */
   killAt(index: number, x: number): string | null {
@@ -139,10 +167,13 @@ export class ProcessPanel implements Component {
   }
   render(width = 80, now = Date.now()): string[] {
     this.killZones = new Map();
-    if (this.entries.length === 0) return [];
+    if (this.entries.length === 0 || this.maxRows <= 0) return [];
     const lines = [`  ${FAINTC(this.collapsed ? '▸' : '▾')} ${bold(WHITE('Processes'))}${FAINTC(`  ${this.entries.length} running`)} ${FAINTC('click ✕')}`];
     if (this.collapsed) return lines;
-    for (const p of this.entries) {
+    const room = Math.max(0, this.maxRows - 1);
+    const needsSummary = this.entries.length > room;
+    const shownEntries = this.entries.slice(0, Math.max(0, room - (needsSummary && room > 1 ? 1 : 0)));
+    for (const p of shownEntries) {
       const secs = Math.max(0, Math.round((now - new Date(p.startedAt).getTime()) / 1000));
       const meta = FAINTC(formatDuration(secs));
       const kill = color.error('✕');
@@ -155,6 +186,9 @@ export class ProcessPanel implements Component {
       const killCol = visibleWidth(full);
       this.killZones.set(lines.length, { id: p.id, x0: killCol - 1, x1: killCol + 1 });
       lines.push(full);
+    }
+    if (shownEntries.length < this.entries.length && lines.length < this.maxRows) {
+      lines.push(`    ${FAINTC(`… +${this.entries.length - shownEntries.length} more running`)}`);
     }
     return lines;
   }
@@ -288,19 +322,26 @@ export class AttachmentChips implements Component {
 export class QueuedMessages implements Component {
   private items: { id: string; text: string }[] = [];
   private removeHint: string | null = null;
+  private maxRows = Number.POSITIVE_INFINITY;
   /** How many queued lines to show before collapsing the rest into a "+N more" row. */
   private static readonly MAX_ROWS = 6;
   invalidate(): void { /* state driven */ }
   set(items: { id: string; text: string }[], removeHint?: string | null): void { this.items = items; this.removeHint = removeHint ?? null; }
+  /** Bound the queue strip inside the full-screen shell. The complete queue remains in state; this only
+   *  changes its compact presentation so queued prompts can never crowd the transcript off-screen. */
+  setMaxRows(rows: number): void { this.maxRows = Math.max(0, Math.floor(rows)); }
   render(width: number): string[] {
-    if (this.items.length === 0) return [];
+    if (this.items.length === 0 || this.maxRows <= 0) return [];
     const pill = color.selected(' QUEUED ');
     const room = Math.max(8, width - 2 - visibleWidth(pill) - 2);
     const shown = this.items.slice(0, QueuedMessages.MAX_ROWS);
     const lines = shown.map((it) => `  ${pill} ${DIM(truncateToWidth(it.text.replace(/\s+/g, ' ').trim(), room, '…'))}`);
     if (this.items.length > shown.length) lines.push(`  ${FAINTC(`… +${this.items.length - shown.length} more queued`)}`);
     if (this.removeHint) lines.push(`  ${FAINTC(this.removeHint)}`);
-    return lines;
+    if (lines.length <= this.maxRows) return lines;
+    const clipped = lines.slice(0, this.maxRows);
+    clipped[this.maxRows - 1] = `  ${FAINTC(`… +${Math.max(1, this.items.length - Math.max(0, this.maxRows - 1))} more queued`)}`;
+    return clipped;
   }
 }
 

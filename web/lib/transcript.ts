@@ -12,7 +12,7 @@ import type { BrainCard, BrainMessage, ToolOutputView } from './types';
 export type TranscriptEvent =
   | { type: 'text'; delta: string }
   | { type: 'reasoning'; delta: string }
-  | { type: 'tool'; name: string; detail?: string; icon?: string; id?: string }
+  | { type: 'tool'; name: string; detail?: string; icon?: string; id?: string; command?: string }
   /** Live rolling tail of a running `run_command` (mirror of the daemon `tool_progress` event). Attaches
    *  to the in-progress tool row by id; the final `tool_output`/`diff` supersedes it (no doubled dump). */
   | { type: 'tool_progress'; id: string; text: string }
@@ -30,7 +30,7 @@ export type TranscriptEvent =
 /** An assistant turn is an ordered list of segments so text and tool calls render in the sequence they
  *  happened. Consecutive tool calls (no new text between them) collapse into ONE tools segment → the
  *  Claude-Code "grouped pills" look. Useful tool output previews attach to their matching item. */
-export interface ToolItem { name: string; detail?: string; diff?: string; icon?: string; output?: ToolOutputView; id?: string; sub?: SubagentState;
+export interface ToolItem { name: string; detail?: string; diff?: string; icon?: string; output?: ToolOutputView; id?: string; command?: string; sub?: SubagentState;
   /** Live rolling tail of a still-running `run_command` (from the `tool_progress` event), rendered under
    *  the tool pill while it streams. LIVE-only — never persisted; the final `output`/`diff` clears it. */
   progress?: string }
@@ -59,7 +59,7 @@ type Segment =
 export interface ToolGroup { item: ToolItem; count: number }
 
 function isCollapsibleTool(item: ToolItem): boolean {
-  return !item.diff && !item.output && !item.progress;
+  return !item.diff && !item.output && !item.sub && !item.command && !item.progress;
 }
 
 /** Fold a tools segment's items into render groups (see {@link ToolGroup}). Pure — recomputed every
@@ -105,7 +105,7 @@ export function fromHistory(msgs: BrainMessage[]): ChatView {
       if (seg.kind === 'text') {
         segments.push({ kind: 'text', text: seg.text });
       } else {
-        const item: ToolItem = { name: seg.name, detail: seg.detail, diff: seg.diff, output: seg.output };
+        const item: ToolItem = { name: seg.name, id: seg.id, detail: seg.detail, diff: seg.diff, output: seg.output, command: seg.command, sub: seg.sub };
         const tail = segments[segments.length - 1];
         if (tail?.kind === 'tools') tail.items.push(item);
         else segments.push({ kind: 'tools', items: [item] });
@@ -159,7 +159,7 @@ export function reduce(view: ChatView, e: TranscriptEvent): ChatView {
     }
     case 'tool': {
       const t = ensureElowen();
-      const item: ToolItem = { name: e.name, detail: e.detail, icon: e.icon, ...(e.id ? { id: e.id } : {}) };
+      const item: ToolItem = { name: e.name, detail: e.detail, icon: e.icon, ...(e.id ? { id: e.id } : {}), ...(e.command ? { command: e.command } : {}) };
       const tail = t.segments[t.segments.length - 1];
       if (tail?.kind === 'tools') t.segments[t.segments.length - 1] = { kind: 'tools', items: [...tail.items, item] };
       else t.segments.push({ kind: 'tools', items: [item] });
@@ -185,14 +185,13 @@ export function reduce(view: ChatView, e: TranscriptEvent): ChatView {
       return { turns, thinking: true, notice: view.notice };
     }
     case 'subagent': {
-      // Live progress of a delegated child run — attach to its `delegate` tool item so the agents table +
-      // the `↳` drill-in can read model/tokens/tools/status. Mirror of the daemon fold.
-      const t = ensureElowen();
-      attachToTool(t, e.id, (item) => ({
+      // Background children can finish after the parent assistant turn is already settled. Patch that
+      // historical delegate row by id; do not fabricate an empty streaming turn or re-enable thinking.
+      const patched = attachToToolInTurns(turns, e.id, (item) => ({
         ...item,
         sub: { sessionId: e.sessionId, status: e.status, task: e.task, detail: e.detail, tools: e.tools, tokens: e.tokens, seconds: e.seconds, model: e.model },
       }));
-      return { turns, thinking: true, notice: view.notice };
+      return patched ? { ...view, turns } : view;
     }
     case 'session': {
       // Idle rollover mid-send: the server moved this message into a FRESH conversation. Reset the
@@ -232,6 +231,26 @@ function attachToTool(t: ElowenTurn, id: string | undefined, patch: (item: ToolI
     t.segments[i] = { kind: 'tools', items };
     return;
   }
+}
+
+function attachToToolInTurns(turns: ChatTurn[], id: string, patch: (item: ToolItem) => ToolItem): boolean {
+  for (let ti = turns.length - 1; ti >= 0; ti--) {
+    const turn = turns[ti]!;
+    if (turn.role !== 'elowen') continue;
+    for (let si = turn.segments.length - 1; si >= 0; si--) {
+      const seg = turn.segments[si]!;
+      if (seg.kind !== 'tools') continue;
+      const ii = seg.items.findLastIndex((item) => item.id === id);
+      if (ii < 0) continue;
+      const items = seg.items.slice();
+      items[ii] = patch(items[ii]!);
+      const segments = turn.segments.slice();
+      segments[si] = { kind: 'tools', items };
+      turns[ti] = { ...turn, segments };
+      return true;
+    }
+  }
+  return false;
 }
 
 /** Collect the delegated sub-agents across the whole transcript (one per child session, latest state

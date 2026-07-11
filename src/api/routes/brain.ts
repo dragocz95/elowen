@@ -2,7 +2,7 @@ import { streamSSE } from 'hono/streaming';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { parseBody } from '../validation.js';
-import { brainStartSchema, brainSendSchema, brainModelSchema, brainAnswerSchema, lspInstallSchema, subagentSendSchema } from '../schemas/brain.js';
+import { brainStartSchema, brainStopSchema, brainSendSchema, brainModelSchema, brainAnswerSchema, lspInstallSchema, subagentSendSchema } from '../schemas/brain.js';
 import { brainConfigFromElowen } from '../../brain/config.js';
 import { listBrainModels, fetchOpenAiModels } from '../../brain/models.js';
 import { elowenExec, isExecAllowedForUser } from '../../shared/execs.js';
@@ -10,6 +10,8 @@ import type { BrainEvent } from '../../brain/events.js';
 import { commandsWithPlugins, findCommand, type SlashSurface } from '../../brain/slashCommands.js';
 import { processRegistry } from '../../brain/processRegistry.js';
 import { logger } from '../../shared/logger.js';
+import { OpenAiCodexUsageService } from '../../brain/openaiCodexUsage.js';
+import { appendBufferedBrainEvent, brainEventReplayCursor, withoutBrainEventReplayCursor } from '../../brain/session/liveEventReplay.js';
 import type { ElowenApp, RouteContext } from '../context.js';
 
 /** Per-user embedded brain (the new advisor engine): status / start / send / live event stream.
@@ -17,6 +19,7 @@ import type { ElowenApp, RouteContext } from '../context.js';
  *  caller's own conversation (`brain-<userId>`). Degrades gracefully when the brain is not wired. */
 export function registerBrainRoutes(app: ElowenApp, ctx: RouteContext): void {
   const { d } = ctx;
+  const codexUsage = d.brainAuth ? new OpenAiCodexUsageService({ auth: d.brainAuth }) : null;
   const forbidden = (c: { get: (k: 'tokenScope') => string }) => c.get('tokenScope') === 'agent';
 
   app.get('/brain/status', async c => {
@@ -34,12 +37,29 @@ export function registerBrainRoutes(app: ElowenApp, ctx: RouteContext): void {
     catch { return c.json({ error: 'unknown session' }, 404); }
   });
 
+  /** ChatGPT OAuth subscription windows for the caller's active/bound OpenAI session. Kept separate
+   *  from the hot status poll: the CLI can refresh these slow-changing limits independently. */
+  app.get('/brain/rate-limits', async c => {
+    if (forbidden(c)) return c.json({ error: 'forbidden' }, 403);
+    if (!d.brain || !codexUsage) return c.json(null);
+    try {
+      const status = d.brain.status(c.get('user').id, c.req.query('session'));
+      if (!status.fastAvailable) return c.json(null);
+      return c.json(await codexUsage.getUsage());
+    } catch { return c.json({ error: 'unknown session' }, 404); }
+  });
+
   app.post('/brain/start', async c => {
     if (!d.brain) return c.json({ error: 'brain unavailable' }, 503);
     if (forbidden(c)) return c.json({ error: 'forbidden' }, 403);
-    const { provider, session, fresh, cwd } = await parseBody(c, brainStartSchema);
-    try { return c.json(await d.brain.start(c.get('user').id, { provider, session, fresh, cwd }), 201); }
-    catch (e) { return c.json({ error: (e as Error).message }, 500); }
+    const { provider, session, fresh, cwd, client, generation } = await parseBody(c, brainStartSchema);
+    try { return c.json(await d.brain.start(c.get('user').id, { provider, session, fresh, cwd, clientId: client, clientGeneration: generation }), 201); }
+    catch (e) {
+      const message = (e as Error).message;
+      return message === 'client request is no longer current'
+        ? c.json({ error: message }, 409)
+        : c.json({ error: message }, 500);
+    }
   });
 
   // The caller's conversations (most recent first) for the session pickers in web chat and the CLI.
@@ -223,6 +243,16 @@ export function registerBrainRoutes(app: ElowenApp, ctx: RouteContext): void {
     catch (e) { return c.json({ error: (e as Error).message }, 409); }
   });
 
+  // Closing a session-bound client: abort its active run and dispose the live PI session only when no
+  // other client is attached. Persisted history remains resumable.
+  app.post('/brain/session/stop', async c => {
+    if (!d.brain) return c.json({ error: 'brain unavailable' }, 503);
+    if (forbidden(c)) return c.json({ error: 'forbidden' }, 403);
+    const { session, client, generation } = await parseBody(c, brainStopSchema);
+    try { return c.json(await d.brain.stopSession(c.get('user').id, session, client, generation)); }
+    catch (e) { return c.json({ error: (e as Error).message }, 404); }
+  });
+
   // Switch the active conversation to another configured model (the /model picker). Existing event
   // streams die with the old session — clients reopen their stream after this call.
   app.post('/brain/model', async c => {
@@ -240,6 +270,16 @@ export function registerBrainRoutes(app: ElowenApp, ctx: RouteContext): void {
     const b = (await c.req.json().catch(() => ({}))) as { level?: unknown; session?: unknown };
     if (typeof b.level !== 'string') return c.json({ error: 'level must be a string' }, 400);
     try { return c.json(await d.brain.setThinkingLevel(c.get('user').id, b.level, typeof b.session === 'string' ? b.session : undefined)); }
+    catch (e) { return c.json({ error: (e as Error).message }, 409); }
+  });
+
+  // OpenAI OAuth priority service tier (`service_tier: priority`). Session-scoped and live, like YOLO;
+  // unsupported providers are rejected instead of silently pretending Fast is active.
+  app.post('/brain/fast', async c => {
+    if (!d.brain) return c.json({ error: 'brain unavailable' }, 503);
+    if (forbidden(c)) return c.json({ error: 'forbidden' }, 403);
+    const b = (await c.req.json().catch(() => ({}))) as { on?: unknown; session?: unknown };
+    try { return c.json(d.brain.setFast(c.get('user').id, typeof b.on === 'boolean' ? b.on : undefined, typeof b.session === 'string' ? b.session : undefined)); }
     catch (e) { return c.json({ error: (e as Error).message }, 409); }
   });
 
@@ -271,7 +311,7 @@ export function registerBrainRoutes(app: ElowenApp, ctx: RouteContext): void {
   app.get('/brain/commands', async c => {
     if (forbidden(c)) return c.json({ error: 'forbidden' }, 403);
     const q = c.req.query('surface');
-    const surface: SlashSurface = q === 'cli' || q === 'discord' ? q : 'web';
+    const surface: SlashSurface = q === 'cli' || q === 'discord' || q === 'whatsapp' ? q : 'web';
     // Built-ins + any plugin-contributed prompt commands from the live registry (surface-scoped; a plugin
     // can never shadow a built-in — enforced both at registration and in commandsWithPlugins).
     const registry = await d.plugins?.get().catch(() => null);
@@ -287,15 +327,19 @@ export function registerBrainRoutes(app: ElowenApp, ctx: RouteContext): void {
     if (!d.brain) return c.json({ error: 'brain unavailable' }, 503);
     if (forbidden(c)) return c.json({ error: 'forbidden' }, 403);
     const user = c.get('user');
-    const body = (await c.req.json().catch(() => ({}))) as { name?: unknown };
+    const body = (await c.req.json().catch(() => ({}))) as { name?: unknown; session?: unknown; on?: unknown };
     const cmd = typeof body.name === 'string' ? findCommand(body.name) : undefined;
     if (!cmd || cmd.kind !== 'action') return c.json({ error: 'unknown command' }, 400);
     if (cmd.adminOnly && !user.is_admin) return c.json({ error: 'forbidden' }, 403);
     try {
       switch (cmd.name) {
-        case 'stop': await d.brain.abort(user.id); return c.json({ ok: true, message: 'Agent stopped.' });
+        case 'stop': await d.brain.abort(user.id, typeof body.session === 'string' ? body.session : undefined); return c.json({ ok: true, message: 'Agent stopped.' });
         case 'new': return c.json({ ok: true, message: 'Started a fresh conversation.', data: await d.brain.start(user.id, { fresh: true }) });
-        case 'compact': { const r = await d.brain.compact(user.id); return c.json({ ok: true, message: r.compacted ? 'Conversation compacted.' : (r.message ?? 'Nothing to compact yet.'), data: { usage: r.usage } }); }
+        case 'compact': { const r = await d.brain.compact(user.id, typeof body.session === 'string' ? body.session : undefined); return c.json({ ok: true, message: r.compacted ? 'Conversation compacted.' : (r.message ?? 'Nothing to compact yet.'), data: { usage: r.usage } }); }
+        case 'fast': {
+          const r = d.brain.setFast(user.id, typeof body.on === 'boolean' ? body.on : undefined, typeof body.session === 'string' ? body.session : undefined);
+          return c.json({ ok: true, message: `Fast mode ${r.fast ? 'enabled' : 'disabled'}.`, data: r });
+        }
         case 'restart':
           if (!d.restartDaemon) return c.json({ error: 'restart is not available on this deployment' }, 501);
           await d.restartDaemon(user.id);
@@ -361,12 +405,13 @@ export function registerBrainRoutes(app: ElowenApp, ctx: RouteContext): void {
   app.post('/brain/send', async c => {
     if (!d.brain) return c.json({ error: 'brain unavailable' }, 503);
     if (forbidden(c)) return c.json({ error: 'forbidden' }, 403);
-    const { text, images, mode, cwd, session, display } = await parseBody(c, brainSendSchema);
+    const { text, images, mode, cwd, session, display, client, generation } = await parseBody(c, brainSendSchema);
     // `session` binds the turn to the caller's own explicit conversation (ownership-checked in send();
     // channel/task sessions rejected). Absent → the active conversation, exactly as before. `display` is
     // the clean text the daemon echoes back as the authoritative `user` turn (the client no longer echoes
     // optimistically); absent → the model-facing text is shown.
-    try { await d.brain.send(c.get('user').id, text, images, mode, undefined, cwd, session, display); return c.json({ ok: true }); }
+    const boundClient = session && client && generation ? { id: client, generation } : undefined;
+    try { await d.brain.send(c.get('user').id, text, images, mode, undefined, cwd, session, display, boundClient); return c.json({ ok: true }); }
     catch (e) { return c.json({ error: (e as Error).message }, 409); } // not started yet / unknown session
   });
 
@@ -452,6 +497,11 @@ export function registerBrainRoutes(app: ElowenApp, ctx: RouteContext): void {
     const brain = d.brain;
     const body = await parseBody(c, subagentSendSchema);
     try { brain.messagesOf(c.get('user').id, body.session); } catch { return c.json({ error: 'unknown session' }, 404); }
+    // Validate the durable child boundary before detaching the potentially minutes-long turn. Without this
+    // preflight, a legacy child (no persisted scope) would reject inside the swallowed Promise and the
+    // caller would receive a misleading `{ok:true}` with no continuation ever running.
+    try { brain.preflightSubagentSend(c.get('user').id, body.session); }
+    catch (e) { return c.json({ error: (e as Error).message }, 409); }
     void brain.sendToSubagent(c.get('user').id, body.session, body.text).catch(() => { /* surfaced on the child's stream */ });
     return c.json({ ok: true });
   });
@@ -464,12 +514,68 @@ export function registerBrainRoutes(app: ElowenApp, ctx: RouteContext): void {
     const brain = d.brain;
     const userId = c.get('user').id;
     const session = c.req.query('session');
+    const rawClientId = c.req.query('client');
+    if (rawClientId !== undefined && (rawClientId.length === 0 || rawClientId.length > 200)) {
+      return c.json({ error: 'invalid client id' }, 400);
+    }
+    // Authentication is already complete at this point; lifecycle scopes the opaque client id by this
+    // userId, so another account can never detach or stop this caller's attachment.
+    const clientId = rawClientId;
+    const rawClientGeneration = c.req.query('generation');
+    const clientGeneration = rawClientGeneration === undefined ? undefined : Number(rawClientGeneration);
+    if (clientGeneration !== undefined
+      && (!Number.isSafeInteger(clientGeneration) || clientGeneration <= 0 || !clientId)) {
+      return c.json({ error: 'invalid client generation' }, 400);
+    }
+    // Explicit opt-in: normal parent/web streams keep their existing non-replaying contract. Drill-in
+    // clients request one replace-in-place snapshot so reconnecting never appends duplicate deltas.
+    const withSnapshot = !!session && c.req.query('snapshot') === '1';
     return streamSSE(c, async stream => {
       let off: (() => void) | null = null;
-      const deliver = (e: BrainEvent): void => void stream.writeSSE({ data: JSON.stringify(e), event: e.type });
-      try { off = session ? brain.tapSession(userId, session, deliver) : brain.subscribe(userId, deliver); }
+      let ready = !withSnapshot;
+      const pending: BrainEvent[] = [];
+      let writes = Promise.resolve();
+      const writeEvent = (e: BrainEvent): void => {
+        const cursor = brainEventReplayCursor(e);
+        // Replay identity travels in SSE's standard `id` field, not in the public BrainEvent JSON. That
+        // keeps Discord/plugin consumers and existing JSONL clients on the stable event schema while a
+        // reconnecting CLI can still distinguish an already seen coalesced delta from a new one.
+        writes = writes.then(() => stream.writeSSE({
+          data: JSON.stringify(withoutBrainEventReplayCursor(e)), event: e.type,
+          ...(cursor !== undefined ? { id: String(cursor) } : {}),
+        })).catch(() => undefined);
+      };
+      const deliver = (e: BrainEvent): void => {
+        if (!ready) {
+          // Snapshot writes are tiny/fast, but coalesce provider deltas defensively so a stalled socket
+          // cannot retain one object per token before the first frame flushes. The helper replaces the
+          // route-local tail instead of mutating replay's event shared with every concurrent stream.
+          appendBufferedBrainEvent(pending, e, 2_048);
+          return;
+        }
+        writeEvent(e);
+      };
+      let snapshot: ReturnType<typeof brain.tapSessionSnapshot>['snapshot'] | null = null;
+      try {
+        if (session && withSnapshot) {
+          const attached = brain.tapSessionSnapshot(userId, session, deliver, clientId, clientGeneration);
+          off = attached.off;
+          snapshot = attached.snapshot;
+        } else off = session
+          ? brain.tapSession(userId, session, deliver, clientId, clientGeneration)
+          : brain.subscribe(userId, deliver, clientId, clientGeneration);
+      }
       catch { await stream.writeSSE({ data: JSON.stringify({ type: 'error', message: session ? 'unknown session' : 'brain not started' }), event: 'error' }); return; }
       c.req.raw.signal.addEventListener('abort', off);
+      if (snapshot) {
+        writes = writes.then(() => stream.writeSSE({
+          data: JSON.stringify(snapshot), event: 'snapshot', id: String(snapshot.cursor),
+        })).catch(() => undefined);
+        await writes;
+        ready = true;
+        for (const event of pending.splice(0)) writeEvent(event);
+        await writes;
+      }
       // Comment flush so the channel connects through the BFF proxy on a quiet system (see /events).
       await stream.write(': connected\n\n');
       while (!c.req.raw.signal.aborted) {

@@ -65,7 +65,7 @@ export class PermissionApprovalService {
       requestApproval: async (req) => {
         const answers = await this.d.elicitation.ask(
           live.sessionId, [approvalQuestion(req)],
-          (e) => { for (const l of live.listeners) l(e); },
+          (e) => live.replay.publish(e),
           'approval',
         );
         return approvalDecision(answers);

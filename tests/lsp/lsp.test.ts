@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { detectLanguage, serverForLanguage, commandExists, listServers, resolveServerCommand } from '../../src/lsp/servers.js';
 import { parsePublishDiagnostics, LspClient, type LspTransport, type JsonRpcMessage } from '../../src/lsp/client.js';
-import { LspManager, formatCheckResult } from '../../src/lsp/manager.js';
+import { LspManager, formatCheckResult, projectRootForFile } from '../../src/lsp/manager.js';
 import { buildLspTools, toggleLsp, lspManager } from '../../src/brain/tools/lspTools.js';
 
 describe('LSP protocol codec', () => {
@@ -210,6 +210,31 @@ function controllableServer(diagnosticsByFile: Record<string, unknown[]>): { tra
   return ctl;
 }
 
+/** Real TypeScript servers commonly publish once after didOpen but stay silent for a byte-identical
+ *  didChange. This fake deliberately never republishes, exposing stale-cache and needless-wait bugs. */
+function publishOnceServer(diags: unknown[]): { transport: LspTransport; opens: number; changes: number } {
+  let onMsg: (m: JsonRpcMessage) => void = () => {};
+  const ctl = { opens: 0, changes: 0 } as { transport: LspTransport; opens: number; changes: number };
+  ctl.transport = {
+    send: (framed) => {
+      const msg = JSON.parse(framed.split('\r\n\r\n')[1]!) as JsonRpcMessage;
+      if (msg.method === 'initialize' && typeof msg.id === 'number') {
+        queueMicrotask(() => onMsg({ jsonrpc: '2.0', id: msg.id, result: { capabilities: {} } }));
+      } else if (msg.method === 'textDocument/didOpen') {
+        ctl.opens++;
+        const uri = (msg.params as { textDocument: { uri: string } }).textDocument.uri;
+        queueMicrotask(() => onMsg({ jsonrpc: '2.0', method: 'textDocument/publishDiagnostics', params: { uri, diagnostics: diags } }));
+      } else if (msg.method === 'textDocument/didChange') {
+        ctl.changes++;
+      }
+    },
+    onMessage: (cb) => { onMsg = cb; },
+    onExit: () => {},
+    dispose: () => {},
+  };
+  return ctl;
+}
+
 describe('LspClient end-to-end (fake transport)', () => {
   it('initializes, opens a doc, and returns its diagnostics', async () => {
     const transport = fakeServer({
@@ -280,6 +305,78 @@ describe('LspClient end-to-end (fake transport)', () => {
     expect(ctl.changes).toBe(1);
   });
 
+  it('returns the confirmed cached verdict immediately for byte-identical content without didChange', async () => {
+    const ctl = publishOnceServer([]);
+    const client = new LspClient(ctl.transport, '/proj');
+    const first = await client.diagnose('/proj/a.ts', 'const ok = true', 'typescript', 200, 10);
+    const second = await client.diagnose('/proj/a.ts', 'const ok = true', 'typescript', 200, 10);
+    expect(first).toEqual({ diagnostics: [], published: true });
+    expect(second).toEqual(first);
+    expect(ctl.opens).toBe(1);
+    expect(ctl.changes).toBe(0);
+  });
+
+  it('invalidates a confirmed clean verdict when content changes and never reports it as fresh', async () => {
+    const ctl = publishOnceServer([]);
+    const client = new LspClient(ctl.transport, '/proj');
+    await client.diagnose('/proj/a.ts', 'const ok = true', 'typescript', 200, 10);
+    const changed = await client.diagnose('/proj/a.ts', 'const broken: string = 1', 'typescript', 30, 5);
+    expect(changed).toEqual({ diagnostics: [], published: false });
+    expect(ctl.opens).toBe(1);
+    expect(ctl.changes).toBe(1);
+  });
+
+  it('invalidates an exact-text verdict when workspace analysis republishes that document', async () => {
+    let onMsg: (message: JsonRpcMessage) => void = () => {};
+    let changesForB = 0;
+    const uriB = 'file:///proj/b.ts';
+    const publish = (uri: string, message?: string): void => queueMicrotask(() => onMsg({
+      jsonrpc: '2.0', method: 'textDocument/publishDiagnostics',
+      params: { uri, diagnostics: message ? [{ severity: 1, message, range: { start: { line: 0, character: 0 } } }] : [] },
+    }));
+    const transport: LspTransport = {
+      send: (framed) => {
+        const msg = JSON.parse(framed.split('\r\n\r\n')[1]!) as JsonRpcMessage;
+        if (msg.method === 'initialize' && typeof msg.id === 'number') {
+          queueMicrotask(() => onMsg({ jsonrpc: '2.0', id: msg.id, result: { capabilities: {} } }));
+        } else if (msg.method === 'textDocument/didOpen') {
+          const uri = (msg.params as { textDocument: { uri: string } }).textDocument.uri;
+          if (uri === uriB) publish(uri, 'OLD B');
+          else {
+            // Changing A can alter B's diagnostics without changing B's bytes.
+            publish(uriB, 'WORKSPACE UPDATED B');
+            publish(uri);
+          }
+        } else if (msg.method === 'textDocument/didChange') {
+          const uri = (msg.params as { textDocument: { uri: string } }).textDocument.uri;
+          if (uri === uriB) { changesForB++; publish(uri, 'FRESH B'); }
+        }
+      },
+      onMessage: (callback) => { onMsg = callback; }, onExit: () => {}, dispose: () => {},
+    };
+    const client = new LspClient(transport, '/proj');
+    const firstB = await client.diagnose('/proj/b.ts', 'export const b = 1', 'typescript', 200, 5);
+    expect(firstB.diagnostics.map((diagnostic) => diagnostic.message)).toEqual(['OLD B']);
+    await client.diagnose('/proj/a.ts', 'import { b } from "./b"', 'typescript', 200, 5);
+
+    const secondB = await client.diagnose('/proj/b.ts', 'export const b = 1', 'typescript', 200, 5);
+    expect(changesForB).toBe(1);
+    expect(secondB.diagnostics.map((diagnostic) => diagnostic.message)).toEqual(['FRESH B']);
+  });
+
+  it('shares one in-flight diagnosis for concurrent identical content', async () => {
+    const ctl = publishOnceServer([{ severity: 1, message: 'bad', range: { start: { line: 0, character: 0 } } }]);
+    const client = new LspClient(ctl.transport, '/proj');
+    const [a, b] = await Promise.all([
+      client.diagnose('/proj/a.ts', 'same', 'typescript', 200, 10),
+      client.diagnose('/proj/a.ts', 'same', 'typescript', 200, 10),
+    ]);
+    expect(a).toEqual(b);
+    expect(a.diagnostics).toHaveLength(1);
+    expect(ctl.opens).toBe(1);
+    expect(ctl.changes).toBe(0);
+  });
+
   it('initializes exactly once under concurrent diagnose of different files', async () => {
     let inits = 0;
     const base = fakeServer({});
@@ -297,6 +394,44 @@ describe('LspClient end-to-end (fake transport)', () => {
     await expect(client.diagnose('/proj/a.ts', '', 'typescript', 30)).rejects.toThrow();
   });
 
+  it('dispose rejects an initialize request already in flight instead of waiting for its timeout', async () => {
+    let disposed = false;
+    const transport: LspTransport = {
+      send: () => { /* initialize deliberately never receives a response */ },
+      onMessage: () => {}, onExit: () => {}, dispose: () => { disposed = true; },
+    };
+    const client = new LspClient(transport, '/proj');
+    const pending = client.diagnose('/proj/a.ts', 'x', 'typescript', 60_000);
+    const rejected = expect(pending).rejects.toThrow('language server disposed');
+    client.dispose();
+    await rejected;
+    expect(disposed).toBe(true);
+  });
+
+  it('server exit rejects an active diagnostics wait instead of returning a partial verdict', async () => {
+    let onMsg: (message: JsonRpcMessage) => void = () => {};
+    let onExit: () => void = () => {};
+    let opened!: () => void;
+    const didOpen = new Promise<void>((resolve) => { opened = resolve; });
+    const transport: LspTransport = {
+      send: (framed) => {
+        const msg = JSON.parse(framed.split('\r\n\r\n')[1]!) as JsonRpcMessage;
+        if (msg.method === 'initialize' && typeof msg.id === 'number') {
+          queueMicrotask(() => onMsg({ jsonrpc: '2.0', id: msg.id, result: { capabilities: {} } }));
+        } else if (msg.method === 'textDocument/didOpen') opened();
+      },
+      onMessage: (callback) => { onMsg = callback; },
+      onExit: (callback) => { onExit = callback; },
+      dispose: () => {},
+    };
+    const client = new LspClient(transport, '/proj');
+    const pending = client.diagnose('/proj/a.ts', 'x', 'typescript', 60_000);
+    await didOpen;
+    const rejected = expect(pending).rejects.toThrow('language server exited');
+    onExit();
+    await rejected;
+  });
+
   it('answers a server workspace/configuration request (one null per item) so diagnostics unblock', async () => {
     const srv = configRequestingServer([{ severity: 1, message: 'bad', range: { start: { line: 0, character: 0 } } }]);
     const client = new LspClient(srv.transport, '/proj');
@@ -306,6 +441,67 @@ describe('LspClient end-to-end (fake transport)', () => {
     expect(r.diagnostics).toHaveLength(1);
     expect(srv.replies).toHaveLength(1);
     expect(srv.replies[0]).toMatchObject({ id: 'cfg-1', result: [null, null] });
+  });
+
+  it('bounds open document text/verdicts and sends didClose for the LRU document', async () => {
+    let onMsg: (message: JsonRpcMessage) => void = () => {};
+    const sent: JsonRpcMessage[] = [];
+    const transport: LspTransport = {
+      send: (framed) => {
+        const msg = JSON.parse(framed.split('\r\n\r\n')[1]!) as JsonRpcMessage;
+        sent.push(msg);
+        if (msg.method === 'initialize' && typeof msg.id === 'number') {
+          queueMicrotask(() => onMsg({ jsonrpc: '2.0', id: msg.id, result: { capabilities: {} } }));
+        } else if (msg.method === 'textDocument/didOpen') {
+          const uri = (msg.params as { textDocument: { uri: string } }).textDocument.uri;
+          queueMicrotask(() => onMsg({ jsonrpc: '2.0', method: 'textDocument/publishDiagnostics', params: { uri, diagnostics: [] } }));
+        }
+      },
+      onMessage: (callback) => { onMsg = callback; }, onExit: () => {}, dispose: () => {},
+    };
+    const client = new LspClient(transport, '/proj', 2);
+    await client.diagnose('/proj/a.ts', 'a', 'typescript', 100, 5);
+    await client.diagnose('/proj/b.ts', 'b', 'typescript', 100, 5);
+    await client.diagnose('/proj/c.ts', 'c', 'typescript', 100, 5);
+    const closes = sent.filter((message) => message.method === 'textDocument/didClose');
+    expect(closes).toHaveLength(1);
+    expect(JSON.stringify(closes[0])).toContain('/proj/a.ts');
+  });
+
+  it('does not LRU-close a document while its diagnostics are still in flight', async () => {
+    let onMsg: (message: JsonRpcMessage) => void = () => {};
+    let openedA!: (uri: string) => void;
+    let openedB!: (uri: string) => void;
+    const didOpenA = new Promise<string>((resolve) => { openedA = resolve; });
+    const didOpenB = new Promise<string>((resolve) => { openedB = resolve; });
+    const closed: string[] = [];
+    const transport: LspTransport = {
+      send: (framed) => {
+        const msg = JSON.parse(framed.split('\r\n\r\n')[1]!) as JsonRpcMessage;
+        if (msg.method === 'initialize' && typeof msg.id === 'number') {
+          queueMicrotask(() => onMsg({ jsonrpc: '2.0', id: msg.id, result: { capabilities: {} } }));
+        } else if (msg.method === 'textDocument/didOpen') {
+          const uri = (msg.params as { textDocument: { uri: string } }).textDocument.uri;
+          if (uri.endsWith('/a.ts')) openedA(uri); else openedB(uri);
+        } else if (msg.method === 'textDocument/didClose') {
+          closed.push((msg.params as { textDocument: { uri: string } }).textDocument.uri);
+        }
+      },
+      onMessage: (callback) => { onMsg = callback; }, onExit: () => {}, dispose: () => {},
+    };
+    const client = new LspClient(transport, '/proj', 1);
+    const pendingA = client.diagnose('/proj/a.ts', 'a', 'typescript', 500, 5);
+    const uriA = await didOpenA;
+    const pendingB = client.diagnose('/proj/b.ts', 'b', 'typescript', 500, 5);
+    const uriB = await didOpenB;
+    expect(closed).toEqual([]);
+
+    onMsg({ jsonrpc: '2.0', method: 'textDocument/publishDiagnostics', params: { uri: uriA, diagnostics: [] } });
+    onMsg({ jsonrpc: '2.0', method: 'textDocument/publishDiagnostics', params: { uri: uriB, diagnostics: [] } });
+    await expect(Promise.all([pendingA, pendingB])).resolves.toEqual([
+      { diagnostics: [], published: true }, { diagnostics: [], published: true },
+    ]);
+    expect(closed).toHaveLength(1);
   });
 
   it('answers an unknown server request with a MethodNotFound error instead of silence', async () => {
@@ -384,12 +580,169 @@ describe('LspManager', () => {
     expect(spawns).toBe(1);
   });
 
+  it('pools one server per nearest project root while reusing it inside that project', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'elowen-lsp-roots-'));
+    try {
+      const repoA = join(dir, 'repo-a');
+      const repoB = join(dir, 'repo-b');
+      mkdirSync(join(repoA, 'src'), { recursive: true });
+      mkdirSync(join(repoB, 'src'), { recursive: true });
+      writeFileSync(join(repoA, 'package.json'), '{}');
+      writeFileSync(join(repoB, 'package.json'), '{}');
+      const roots: string[] = [];
+      const mgr = new LspManager({
+        root: dir,
+        readFile: () => 'code',
+        spawn: (_spec, root) => { roots.push(root); return fakeServer({}); },
+        settleMs: 5,
+      });
+      await mgr.checkFile(join(repoA, 'src', 'a.ts'));
+      await mgr.checkFile(join(repoA, 'src', 'b.ts'));
+      await mgr.checkFile(join(repoB, 'src', 'c.ts'));
+      expect(roots).toEqual([repoA, repoB]);
+      mgr.disposeAll();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('LRU-evicts the oldest project server when the daemon-wide cap is crossed', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'elowen-lsp-cap-'));
+    try {
+      const repos = ['a', 'b', 'c'].map((name) => join(dir, name));
+      for (const repo of repos) { mkdirSync(repo, { recursive: true }); writeFileSync(join(repo, 'package.json'), '{}'); }
+      const disposed: string[] = [];
+      const mgr = new LspManager({
+        root: dir, maxClients: 2, readFile: () => 'code', settleMs: 5,
+        spawn: (_spec, root) => {
+          const transport = fakeServer({});
+          transport.dispose = () => { disposed.push(root); };
+          return transport;
+        },
+      });
+      await mgr.checkFile(join(repos[0]!, 'a.ts'));
+      await mgr.checkFile(join(repos[1]!, 'b.ts'));
+      await mgr.checkFile(join(repos[0]!, 'again.ts')); // touch A → B becomes oldest
+      await mgr.checkFile(join(repos[2]!, 'c.ts'));
+      expect(disposed).toEqual([repos[1]]);
+      mgr.disposeAll();
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  it('does not LRU-dispose a project server while it is diagnosing a file', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'elowen-lsp-active-cap-'));
+    try {
+      const repoA = join(dir, 'a');
+      const repoB = join(dir, 'b');
+      for (const repo of [repoA, repoB]) { mkdirSync(repo, { recursive: true }); writeFileSync(join(repo, 'package.json'), '{}'); }
+      const publishers = new Map<string, () => void>();
+      const disposed: string[] = [];
+      let openedA!: () => void;
+      let openedB!: () => void;
+      const didOpenA = new Promise<void>((resolve) => { openedA = resolve; });
+      const didOpenB = new Promise<void>((resolve) => { openedB = resolve; });
+      const mgr = new LspManager({
+        root: dir, maxClients: 1, readFile: () => 'code', settleMs: 5,
+        spawn: (_spec, root) => {
+          let onMsg: (message: JsonRpcMessage) => void = () => {};
+          return {
+            send: (framed) => {
+              const msg = JSON.parse(framed.split('\r\n\r\n')[1]!) as JsonRpcMessage;
+              if (msg.method === 'initialize' && typeof msg.id === 'number') {
+                queueMicrotask(() => onMsg({ jsonrpc: '2.0', id: msg.id, result: { capabilities: {} } }));
+              } else if (msg.method === 'textDocument/didOpen') {
+                const uri = (msg.params as { textDocument: { uri: string } }).textDocument.uri;
+                publishers.set(root, () => onMsg({ jsonrpc: '2.0', method: 'textDocument/publishDiagnostics', params: { uri, diagnostics: [] } }));
+                if (root === repoA) openedA(); else openedB();
+              }
+            },
+            onMessage: (callback) => { onMsg = callback; }, onExit: () => {},
+            dispose: () => { disposed.push(root); },
+          };
+        },
+      });
+
+      const checkA = mgr.checkFile(join(repoA, 'a.ts'));
+      await didOpenA;
+      const checkB = mgr.checkFile(join(repoB, 'b.ts'));
+      await didOpenB;
+      expect(disposed).not.toContain(repoA);
+      publishers.get(repoB)!();
+      const resultB = await checkB;
+      expect(resultB.skipped).toBeUndefined();
+      expect(disposed).not.toContain(repoA);
+      publishers.get(repoA)!();
+      const resultA = await checkA;
+      expect(resultA.skipped).toBeUndefined();
+      mgr.disposeAll();
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  it('never walks above the supplied access boundary when selecting a project root', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'elowen-lsp-boundary-'));
+    try {
+      const allowed = join(dir, 'allowed');
+      const source = join(allowed, 'nested', 'src');
+      mkdirSync(source, { recursive: true });
+      writeFileSync(join(dir, 'package.json'), '{}'); // marker outside the allowed project
+      expect(projectRootForFile(join(source, 'a.ts'), allowed)).toBe(allowed);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('selects the nearest project marker inside the access boundary', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'elowen-lsp-nearest-'));
+    try {
+      const nested = join(dir, 'packages', 'app');
+      const source = join(nested, 'src');
+      mkdirSync(source, { recursive: true });
+      writeFileSync(join(dir, 'package.json'), '{}');
+      writeFileSync(join(nested, 'tsconfig.json'), '{}');
+      expect(projectRootForFile(join(source, 'a.ts'), dir)).toBe(nested);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('reports no-response (never "no problems") when the server publishes nothing in time', async () => {
     const mgr = new LspManager({ root: '/proj', readFile: () => 'x', spawn: () => silentServer(), firstCheckTimeoutMs: 30, recheckTimeoutMs: 30 });
     const r = await mgr.checkFile('/proj/a.ts');
     expect(r.skipped).toBe('no-response');
     expect(formatCheckResult(r)).toContain('no verdict');
     expect(formatCheckResult(r)).not.toContain('no problems');
+  });
+
+  it('quarantines a no-verdict client so a delayed publish for text A cannot pass text B', async () => {
+    let spawns = 0;
+    let text = 'A';
+    const delayedA = (): LspTransport => {
+      let onMsg: (message: JsonRpcMessage) => void = () => {};
+      return {
+        send: (framed) => {
+          const msg = JSON.parse(framed.split('\r\n\r\n')[1]!) as JsonRpcMessage;
+          if (msg.method === 'initialize' && typeof msg.id === 'number') {
+            queueMicrotask(() => onMsg({ jsonrpc: '2.0', id: msg.id, result: { capabilities: {} } }));
+          } else if (msg.method === 'textDocument/didOpen') {
+            const uri = (msg.params as { textDocument: { uri: string } }).textDocument.uri;
+            setTimeout(() => onMsg({ jsonrpc: '2.0', method: 'textDocument/publishDiagnostics', params: {
+              uri, diagnostics: [{ severity: 1, message: 'STALE A', range: { start: { line: 0, character: 0 } } }],
+            } }), 30);
+          }
+        },
+        onMessage: (callback) => { onMsg = callback; }, onExit: () => {}, dispose: () => {},
+      };
+    };
+    const freshB = fakeServer({ '/proj/a.ts': [{ severity: 1, message: 'FRESH B', range: { start: { line: 0, character: 0 } } }] });
+    const mgr = new LspManager({
+      root: '/proj', readFile: () => text, firstCheckTimeoutMs: 10, recheckTimeoutMs: 60, settleMs: 5,
+      spawn: () => (++spawns === 1 ? delayedA() : freshB),
+    });
+    expect((await mgr.checkFile('/proj/a.ts')).skipped).toBe('no-response');
+    text = 'B';
+    const second = await mgr.checkFile('/proj/a.ts');
+    expect(spawns).toBe(2);
+    expect(second.diagnostics.map((diagnostic) => diagnostic.message)).toEqual(['FRESH B']);
   });
 
   it('status() reports enabled/running plus per-server installed/running rows', async () => {

@@ -1,7 +1,8 @@
 import { defineTool } from '@earendil-works/pi-coding-agent';
 import { Type } from 'typebox';
 import { LspManager, formatCheckResult } from '../../lsp/manager.js';
-import { assertPathAllowed } from '../../plugins/pathGuard.js';
+import { allowedRoots, assertPathAllowed, realPathWithin } from '../../plugins/pathGuard.js';
+import { currentWorkDir } from '../../plugins/policyContext.js';
 
 /** One daemon-wide LSP manager (owns the live language-server clients). Shared by the `lsp_diagnostics`
  *  tool and the `/lsp` toggle so enabling/disabling and diagnostics hit the same servers. Lazily built so
@@ -16,6 +17,20 @@ export function lspManager(): LspManager {
  *  /brain/status so chat clients can show the live Active/Inactive state next to the `/lsp` toggle. */
 export function lspEnabled(): boolean {
   return manager ? manager.isEnabled() : true;
+}
+
+/** Most-specific current-turn root containing the checked file. This is both the LSP search boundary
+ *  and the security boundary: project marker discovery must never walk above a scoped user's repo. */
+function lspBoundary(path: string): string | undefined {
+  // An allowed repo is the hard security floor. Prefer it over a possibly deeper client cwd so a turn
+  // launched from `<repo>/src` can still discover `<repo>/tsconfig.json` without ever reaching outside
+  // the repo. All-access turns have no allowed roots, so their validated cwd is the useful fallback.
+  const permitted = allowedRoots()
+    .filter((root) => realPathWithin(path, [root]) !== null)
+    .sort((a, b) => b.length - a.length)[0];
+  if (permitted) return permitted;
+  const workDir = currentWorkDir();
+  return workDir && realPathWithin(path, [workDir]) !== null ? workDir : undefined;
 }
 
 /** The `/lsp` toggle: flip live diagnostics on/off and report the new state. Off frees every spawned
@@ -42,7 +57,7 @@ export function buildLspTools() {
         let path: string;
         try { path = assertPathAllowed(p.path); }
         catch (e) { return { content: [{ type: 'text' as const, text: `LSP: ${(e as Error).message}` }], details: {} }; }
-        const result = await lspManager().checkFile(path);
+        const result = await lspManager().checkFile(path, lspBoundary(path));
         const text = formatCheckResult(result) || `LSP: nothing to check for ${p.path}.`;
         return { content: [{ type: 'text' as const, text }], details: {} };
       },

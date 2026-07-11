@@ -87,24 +87,45 @@ export function spawnStdioTransport(spec: LanguageServerSpec, cwd: string): LspT
  *  still be indexing); `true` means the diagnostics are a real server verdict (possibly cached). */
 export interface DiagnoseResult { diagnostics: Diagnostic[]; published: boolean }
 
+interface OpenDocument {
+  language: string;
+  version: number;
+  text: string;
+  confirmed?: Diagnostic[];
+}
+
+interface DiagnosticWaiter {
+  publish: (diagnostics: Diagnostic[]) => void;
+  fail: (error: Error) => void;
+}
+
 /** A minimal LSP client: initialize handshake, then open/update a document and collect the diagnostics
  *  the server publishes for it. Deliberately request/notify only what diagnostics need — this is a
  *  "did I break it?" probe for the agent, not a full editor client. */
 export class LspClient {
+  private static readonly DEFAULT_MAX_DOCUMENTS = 128;
   private nextId = 1;
   private pending = new Map<number, { resolve: (m: JsonRpcMessage) => void; reject: (e: Error) => void }>();
-  private diagnosticsByUri = new Map<string, Diagnostic[]>();
+  // A diagnostics verdict is valid only for the exact bytes the server checked. Keeping the text on
+  // the open-document record makes that relationship explicit: an identical re-check can return the
+  // confirmed verdict immediately, while any edit invalidates it before didChange is sent.
+  private documents = new Map<string, OpenDocument>();
+  // publishDiagnostics has no reliably-present document version across servers. Serialize checks for
+  // one URI so a publish can never be consumed by two different document contents; different files
+  // still diagnose concurrently. Identical concurrent calls share the same in-flight promise.
+  private diagnosesByUri = new Map<string, { language: string; text: string; promise: Promise<DiagnoseResult> }>();
   // Multiple concurrent diagnose() calls can await the SAME uri — keep every waiter, not just the last,
   // or an earlier caller's promise would never settle. Waiters stay registered across publishes (they
   // resolve on quiescence, not on the first publish) and remove themselves when they finish.
-  private diagnosticWaiters = new Map<string, Set<{ publish: (d: Diagnostic[]) => void; abort: () => void }>>();
-  // Which documents have been opened (didOpen). A re-check must send didChange, not a second didOpen
-  // (which LSP forbids and servers ignore — they'd keep the stale first text). Tracks the doc version too.
-  private openVersions = new Map<string, number>();
+  private diagnosticWaiters = new Map<string, Set<DiagnosticWaiter>>();
   private starting: Promise<void> | null = null;
   private disposed = false;
 
-  constructor(private readonly transport: LspTransport, private readonly rootPath: string) {
+  constructor(
+    private readonly transport: LspTransport,
+    private readonly rootPath: string,
+    private readonly maxDocuments = LspClient.DEFAULT_MAX_DOCUMENTS,
+  ) {
     transport.onMessage((msg) => this.onMessage(msg));
     transport.onExit(() => this.onExit());
   }
@@ -112,16 +133,24 @@ export class LspClient {
   isDisposed(): boolean { return this.disposed; }
 
   private onExit(): void {
+    this.close(new Error('language server exited'));
+  }
+
+  /** Mark the client unusable and settle every promise which otherwise depends on more server I/O. */
+  private close(error: Error): void {
+    if (this.disposed) return;
     this.disposed = true;
     // Fail every in-flight request so no caller hangs on a dead server.
-    for (const { reject } of this.pending.values()) reject(new Error('language server exited'));
+    for (const { reject } of this.pending.values()) reject(error);
     this.pending.clear();
-    // Abort every diagnostics waiter so their promises settle immediately (each resolves with whatever
-    // it saw / has cached). Copy first — aborting removes the entry from its set.
+    // A partial publish is not a trustworthy verdict: reject diagnostics waits so the manager reports a
+    // server error and replaces the client. Copy first because fail() removes itself from the waiter set.
     for (const waiters of this.diagnosticWaiters.values()) {
-      for (const w of [...waiters]) w.abort();
+      for (const waiter of [...waiters]) waiter.fail(error);
     }
     this.diagnosticWaiters.clear();
+    this.diagnosesByUri.clear();
+    this.documents.clear();
   }
 
   private onMessage(msg: JsonRpcMessage): void {
@@ -142,7 +171,11 @@ export class LspClient {
     }
     if (msg.method === 'textDocument/publishDiagnostics') {
       const { uri, diagnostics } = parsePublishDiagnostics(msg.params);
-      this.diagnosticsByUri.set(uri, diagnostics);
+      // A workspace edit can republish diagnostics for another, byte-identical open document. Its old
+      // exact-text verdict is stale even when nobody is currently waiting on that URI; the next explicit
+      // check must ask the server again instead of returning the old cached answer.
+      const document = this.documents.get(uri);
+      if (document) document.confirmed = undefined;
       // Notify (don't resolve) every waiter — servers publish in passes and the waiter decides when
       // the stream has gone quiet enough to trust.
       for (const w of this.diagnosticWaiters.get(uri) ?? []) w.publish(diagnostics);
@@ -177,6 +210,7 @@ export class LspClient {
   }
 
   private request(method: string, params: unknown, timeoutMs = 8000): Promise<JsonRpcMessage> {
+    if (this.disposed) return Promise.reject(new Error('language server disposed'));
     const id = this.nextId++;
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => { this.pending.delete(id); reject(new Error(`LSP ${method} timed out`)); }, timeoutMs);
@@ -211,59 +245,127 @@ export class LspClient {
    *  is gone (so the manager can evict + respawn). */
   async diagnose(path: string, text: string, language: string, timeoutMs = 4000, settleMs = 1000): Promise<DiagnoseResult> {
     if (this.disposed) throw new Error('language server disposed');
-    await this.start();
     const uri = pathToFileURL(path).href;
-    const wait = new Promise<DiagnoseResult>((resolve) => {
-      const waiters = this.diagnosticWaiters.get(uri) ?? new Set<{ publish: (d: Diagnostic[]) => void; abort: () => void }>();
+    // A single LSP document has one current version. Queue a different-content check behind the current
+    // one; otherwise an unversioned publish could satisfy both callers with the wrong document state.
+    // The loop matters when multiple changed-content calls arrive while the first one is still running.
+    while (true) {
+      const active = this.diagnosesByUri.get(uri);
+      if (!active) break;
+      if (active.language === language && active.text === text) return active.promise;
+      await active.promise;
+      if (this.disposed) throw new Error('language server disposed');
+    }
+    const promise = this.diagnoseCurrent(uri, text, language, timeoutMs, settleMs);
+    const active = { language, text, promise };
+    this.diagnosesByUri.set(uri, active);
+    try { return await promise; }
+    finally {
+      // A later queued call may already own the slot; never delete its entry from an older finally.
+      if (this.diagnosesByUri.get(uri) === active) this.diagnosesByUri.delete(uri);
+      // The document cap may have been exceeded while every eviction candidate was being diagnosed.
+      // Enforce it as soon as one of those documents becomes idle.
+      this.trimDocuments();
+    }
+  }
+
+  private async diagnoseCurrent(uri: string, text: string, language: string, timeoutMs: number, settleMs: number): Promise<DiagnoseResult> {
+    await this.start();
+    const previous = this.documents.get(uri);
+    if (previous?.language === language && previous.text === text && previous.confirmed !== undefined) {
+      this.touchDocument(uri, previous);
+      return { diagnostics: previous.confirmed, published: true };
+    }
+
+    // didOpen exactly once; every later probe is didChange. Invalidate a previous verdict before the
+    // update so a quiet/busy server can never turn a stale clean result into a fresh all-clear.
+    const version = (previous?.version ?? 0) + 1;
+    const document: OpenDocument = { language, version, text };
+    if (!previous) this.evictDocumentsFor(uri);
+    else this.documents.delete(uri); // reinsert below → newest in the LRU order
+    this.documents.set(uri, document);
+    const wait = new Promise<DiagnoseResult>((resolve, reject) => {
+      const waiters = this.diagnosticWaiters.get(uri) ?? new Set<DiagnosticWaiter>();
       this.diagnosticWaiters.set(uri, waiters);
       let latest: DiagnoseResult | null = null;
       let settle: NodeJS.Timeout | undefined;
-      const finish = (): void => {
+      let overall: NodeJS.Timeout | undefined;
+      let finished = false;
+      const cleanup = (): boolean => {
+        if (finished) return false;
+        finished = true;
         if (settle) clearTimeout(settle);
-        clearTimeout(overall);
+        if (overall) clearTimeout(overall);
         waiters.delete(entry);
         if (waiters.size === 0) this.diagnosticWaiters.delete(uri);
-        resolve(latest ?? { diagnostics: this.diagnosticsByUri.get(uri) ?? [], published: this.diagnosticsByUri.has(uri) });
+        return true;
       };
-      const entry = {
+      const finish = (): void => {
+        if (!cleanup()) return;
+        // Only cache the quiesced, final publish and only if this exact document version is still open.
+        // A timeout with no publish deliberately leaves the document unconfirmed.
+        if (latest?.published && this.documents.get(uri) === document) document.confirmed = latest.diagnostics;
+        resolve(latest ?? { diagnostics: [], published: false });
+      };
+      const entry: DiagnosticWaiter = {
         publish: (diagnostics: Diagnostic[]): void => {
+          if (finished) return;
           latest = { diagnostics, published: true };
           if (settle) clearTimeout(settle);
           settle = setTimeout(finish, settleMs);
           settle.unref?.();
         },
-        abort: finish, // server exited — resolve now with whatever was seen
+        fail: (error): void => { if (cleanup()) reject(error); },
       };
       waiters.add(entry);
-      const overall = setTimeout(finish, timeoutMs);
+      overall = setTimeout(finish, timeoutMs);
       overall.unref?.();
     });
-    // First sight of a doc → didOpen; thereafter → didChange with a monotone version (re-opening is a
-    // protocol violation and servers keep the stale first text otherwise).
-    const version = (this.openVersions.get(uri) ?? 0) + 1;
-    this.openVersions.set(uri, version);
-    if (version === 1) {
+    if (!previous) {
       this.notify('textDocument/didOpen', { textDocument: { uri, languageId: language, version, text } });
     } else {
-      // The cached publish belongs to the PREVIOUS document version — drop it, or a slow re-check
-      // (server busy past timeoutMs) would pass the old verdict off as `published:true` for the new
-      // text: a clean cache + a freshly introduced error = exactly the false all-clear this class
-      // exists to prevent.
-      this.diagnosticsByUri.delete(uri);
       this.notify('textDocument/didChange', { textDocument: { uri, version }, contentChanges: [{ text }] });
     }
     return wait;
   }
 
+  private touchDocument(uri: string, document: OpenDocument): void {
+    this.documents.delete(uri);
+    this.documents.set(uri, document);
+  }
+
+  /** Bound cached text/verdict memory and tell the server it may release the corresponding document. */
+  private evictDocumentsFor(incomingUri: string): void {
+    const cap = Math.max(1, Math.floor(this.maxDocuments));
+    while (this.documents.size >= cap && this.evictOldestIdleDocument(incomingUri)) { /* trim */ }
+  }
+
+  private trimDocuments(): void {
+    const cap = Math.max(1, Math.floor(this.maxDocuments));
+    while (this.documents.size > cap && this.evictOldestIdleDocument()) { /* trim */ }
+  }
+
+  /** Never didClose a document whose diagnostics are still in flight. If every candidate is active,
+   *  the soft memory cap may be exceeded briefly and trimDocuments() restores it when one settles. */
+  private evictOldestIdleDocument(excludeUri?: string): boolean {
+    for (const uri of this.documents.keys()) {
+      if (uri === excludeUri || this.diagnosesByUri.has(uri)) continue;
+      this.documents.delete(uri);
+      this.notify('textDocument/didClose', { textDocument: { uri } });
+      return true;
+    }
+    return false;
+  }
+
   dispose(): void {
     if (this.disposed) return;
-    this.disposed = true;
     // Best-effort graceful shutdown, then drop the transport. `shutdown` is a REQUEST in LSP (it needs
     // an id or conformant servers reject it as malformed); we fire it without awaiting the response.
     try {
       this.transport.send(encodeMessage({ jsonrpc: '2.0', id: this.nextId++, method: 'shutdown', params: null }));
       this.notify('exit', null);
     } catch { /* transport may be dead */ }
+    this.close(new Error('language server disposed'));
     this.transport.dispose();
   }
 }

@@ -65,8 +65,11 @@ function ShellLayout({ children }: { children: ReactNode }) {
           instead, keeping overlays outside it. */}
       <main className="flex-1 overflow-y-auto overflow-x-hidden overscroll-contain [scrollbar-gutter:stable]">
         {/* Frameless page heading + global actions. In drawer mode it also opens mobile navigation. */}
-        <TopBar onMenuClick={mode === 'drawer' ? () => setDrawerOpen(true) : undefined} />
-        <div className="px-5 pb-5">{children}</div>
+        <TopBar
+          onMenuClick={mode === 'drawer' ? () => setDrawerOpen(true) : undefined}
+          showLocation={mode === 'drawer'}
+        />
+        <div className="px-2 pb-8">{children}</div>
       </main>
     </div>
   );

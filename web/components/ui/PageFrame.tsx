@@ -1,7 +1,10 @@
 import type { ReactNode } from 'react';
 
 const WIDTHS = {
-  reading: 'max-w-4xl', workspace: 'max-w-6xl', wide: 'max-w-7xl', fluid: 'max-w-none',
+  // Width remains part of the public API because callers use it to describe their intended
+  // composition. The application shell now owns the available width, however: every regular
+  // workspace is edge-to-edge and only Dashboard opts into its own centred measure.
+  reading: 'max-w-none', workspace: 'max-w-none', wide: 'max-w-none', fluid: 'max-w-none',
 } as const;
 
 /** Common body frame below ModuleHeader. Specialist canvases can opt into fluid width. */
@@ -13,7 +16,7 @@ export function PageFrame({ children, toolbar, intro, width = 'wide', className 
   className?: string;
 }) {
   return (
-    <div className={`mx-auto flex w-full min-w-0 flex-col gap-5 ${WIDTHS[width]} ${className}`}>
+    <div data-page-frame className={`flex w-full min-w-0 flex-col gap-5 ${WIDTHS[width]} ${className}`}>
       {intro ? <div className="max-w-3xl text-sm leading-relaxed text-text-muted">{intro}</div> : null}
       {toolbar ? <div className="flex min-w-0 flex-wrap items-center justify-end gap-2 border-y border-border/70 py-2.5">{toolbar}</div> : null}
       {children}

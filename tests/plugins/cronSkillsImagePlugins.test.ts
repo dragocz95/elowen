@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { mkdtempSync, readFileSync, existsSync } from 'node:fs';
@@ -13,7 +13,7 @@ const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const pluginsDir = join(repoRoot, 'plugins');
 const ADMIN: Policy = { allowedProjectIds: 'all', allowedPaths: () => [] };
 const LIMITED: Policy = { allowedProjectIds: new Set([1]), allowedPaths: () => [] };
-const OWNER: TurnIdentity = { platform: 'elowen', userId: '1', admin: true, owner: true };
+const OWNER: TurnIdentity = { platform: 'elowen', userId: '1', elowenUserId: 1, admin: true, owner: true };
 const asText = (r: { content: { text?: string }[] }) => (r.content[0] as { text: string }).text;
 
 function freshDataRoot(): string { return mkdtempSync(join(tmpdir(), 'elowen-pdata-')); }
@@ -157,10 +157,11 @@ describe('terminal plugin background processes', () => {
 });
 
 describe('subagent plugin', () => {
-  it('delegate forwards the caller access + task to the host handler and returns its reply', async () => {
+  it('delegate forwards the caller access, parent session + task and blocks by default', async () => {
     const dataRoot = freshDataRoot();
     const reg = await loadPlugins({ dirs: [pluginsDir], enabled: ['subagent'], dataRoot, logger: log });
     expect(reg.platforms.map((p) => p.name)).toEqual(['subagent']);
+    expect(reg.tools.map((t) => t.name).sort()).toEqual(['delegate', 'delegate_models', 'delegate_result', 'delegate_status']);
     const delegate = reg.tools.find((t) => t.name === 'delegate')!;
 
     // Before the host wires the platform handler, delegate fails gracefully.
@@ -169,24 +170,158 @@ describe('subagent plugin', () => {
     });
 
     // Capture the handler the way the host does, then delegate under a scoped policy.
-    let seen: { access?: { projectIds: number[]; admin: boolean } } | null = null;
+    let seen: { access?: { projectIds: number[]; admin: boolean; owner: boolean; parentSessionId?: string; toolPolicy?: { allow?: string[]; deny?: string[] } } } | null = null;
     reg.platforms[0]!.listen(async (src, text) => { seen = src; return `sub did: ${text}`; });
     await runWithPolicy(LIMITED, async () => {
       const out = asText(await delegate.execute('t', { task: 'najdi bug' }, undefined as never, undefined as never));
       expect(out).toBe('sub did: najdi bug');
+    }, {
+      sessionId: 'brain-parent-1',
+      identity: { platform: 'discord', userId: 'foreign-admin', admin: true, owner: false },
+      toolPolicy: { allow: new Set(['delegate']), deny: new Set(['discord_api']) },
     });
-    expect(seen!.access).toMatchObject({ projectIds: [1], admin: false }); // inherits caller scope, not admin
+    expect(seen!.access).toMatchObject({
+      projectIds: [1], admin: false, owner: false, parentSessionId: 'brain-parent-1',
+      toolPolicy: { allow: ['delegate'], deny: ['discord_api'] },
+    });
   });
 
-  it('delegate inherits admin access from an admin session', async () => {
+  it('delegate inherits admin scope and owner truth independently', async () => {
     const dataRoot = freshDataRoot();
     const reg = await loadPlugins({ dirs: [pluginsDir], enabled: ['subagent'], dataRoot, logger: log });
     const delegate = reg.tools.find((t) => t.name === 'delegate')!;
-    let seen: { access?: { admin: boolean } } | null = null;
+    let seen: { access?: { admin: boolean; owner: boolean } } | null = null;
     reg.platforms[0]!.listen(async (src) => { seen = src; return 'ok'; });
     await runWithPolicy(ADMIN, async () => {
       await delegate.execute('t', { task: 'cokoliv' }, undefined as never, undefined as never);
+    }, { identity: OWNER });
+    expect(seen!.access).toMatchObject({ admin: true, owner: true });
+  });
+
+  it('returns a background handle immediately, exposes progress/result, and keeps emitting the child session', async () => {
+    const dataRoot = freshDataRoot();
+    const reg = await loadPlugins({ dirs: [pluginsDir], enabled: ['subagent'], dataRoot, logger: log });
+    const delegate = reg.tools.find((t) => t.name === 'delegate')!;
+    const status = reg.tools.find((t) => t.name === 'delegate_status')!;
+    const result = reg.tools.find((t) => t.name === 'delegate_result')!;
+
+    let resolveReply!: (reply: string) => void;
+    const childReply = new Promise<string>((resolve) => { resolveReply = resolve; });
+    let childStarted!: () => void;
+    const started = new Promise<void>((resolve) => { childStarted = resolve; });
+    let seen: { access?: { parentSessionId?: string } } | null = null;
+    reg.platforms[0]!.listen(async (src, _text, onEvent) => {
+      seen = src;
+      onEvent?.({ type: 'session', sessionId: 'brain-ch-subagent-background' });
+      onEvent?.({ type: 'tool', name: 'read_file', detail: 'src/a.ts' } as never);
+      onEvent?.({ type: 'step', usage: { totalTokens: 321 } } as never);
+      childStarted();
+      return childReply;
     });
-    expect(seen!.access).toMatchObject({ admin: true });
+
+    const emitted: { status: string; sessionId: string }[] = [];
+    let terminalEmitted!: () => void;
+    const terminal = new Promise<void>((resolve) => { terminalEmitted = resolve; });
+    const startedText = await runWithPolicy(ADMIN, async () =>
+      asText(await delegate.execute('call-bg', { task: 'inspect the parser', background: true }, undefined as never, undefined as never)), {
+      sessionId: 'brain-parent-bg',
+      identity: OWNER,
+      emitSubagent: (update) => {
+        emitted.push(update);
+        if (update.status === 'done' || update.status === 'error') terminalEmitted();
+      },
+    });
+    const jobId = /Started background delegation (dlg-[\w-]+)\./.exec(startedText)?.[1];
+    expect(jobId).toBeTruthy();
+    expect(startedText).toContain('Do not busy-wait');
+    await started;
+
+    const asOwner = <T>(fn: () => T): T => runWithPolicy(ADMIN, fn, { sessionId: 'brain-parent-bg', identity: OWNER });
+    const liveStatus = await asOwner(async () => asText(await status.execute('status', { id: jobId! }, undefined as never, undefined as never)));
+    expect(liveStatus).toContain('RUNNING');
+    expect(liveStatus).toContain('brain-ch-subagent-background');
+    expect(liveStatus).toContain('Progress: read_file src/a.ts');
+    expect(liveStatus).toContain('Tokens: 321');
+    expect(await asOwner(async () => asText(await result.execute('result', { id: jobId! }, undefined as never, undefined as never)))).toContain('still running');
+    const foreignSender: TurnIdentity = { platform: 'discord', userId: 'other-sender', admin: true, owner: false };
+    const denied = await runWithPolicy(ADMIN, async () =>
+      asText(await result.execute('result', { id: jobId! }, undefined as never, undefined as never)), {
+      sessionId: 'brain-parent-bg', identity: foreignSender,
+    });
+    expect(denied).toMatch(/no background delegation/);
+    expect(seen!.access).toMatchObject({ parentSessionId: 'brain-parent-bg' });
+
+    resolveReply('background result');
+    await terminal;
+    expect(await asOwner(async () => asText(await result.execute('result', { id: jobId! }, undefined as never, undefined as never)))).toBe('background result');
+    expect(emitted).toEqual(expect.arrayContaining([
+      expect.objectContaining({ status: 'running', sessionId: 'brain-ch-subagent-background' }),
+      expect.objectContaining({ status: 'done', sessionId: 'brain-ch-subagent-background' }),
+    ]));
+  });
+
+  it('retains a canceled background child as ERROR (never DONE) and expires the terminal job', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-07-10T20:00:00Z'));
+    try {
+      const dataRoot = freshDataRoot();
+      const reg = await loadPlugins({ dirs: [pluginsDir], enabled: ['subagent'], dataRoot, logger: log });
+      const delegate = reg.tools.find((t) => t.name === 'delegate')!;
+      const status = reg.tools.find((t) => t.name === 'delegate_status')!;
+      const result = reg.tools.find((t) => t.name === 'delegate_result')!;
+      reg.platforms[0]!.listen(async (_src, _text, onEvent) => {
+        onEvent?.({ type: 'session', sessionId: 'brain-ch-subagent-failed' });
+        onEvent?.({ type: 'text', delta: 'partial output before cancellation' } as never);
+        throw new Error('delegation aborted');
+      });
+
+      let terminalEmitted!: () => void;
+      const terminal = new Promise<void>((resolve) => { terminalEmitted = resolve; });
+      const startedText = await runWithPolicy(ADMIN, async () =>
+        asText(await delegate.execute('call-fail', { task: 'fail safely', background: true }, undefined as never, undefined as never)), {
+        sessionId: 'brain-parent-fail',
+        identity: OWNER,
+        emitSubagent: (update) => { if (update.status === 'error') terminalEmitted(); },
+      });
+      const jobId = /Started background delegation (dlg-[\w-]+)\./.exec(startedText)?.[1];
+      expect(jobId).toBeTruthy();
+      await terminal;
+      const scoped = <T>(fn: () => T): T => runWithPolicy(ADMIN, fn, { sessionId: 'brain-parent-fail', identity: OWNER });
+      expect(await scoped(async () => asText(await status.execute('status', { id: jobId! }, undefined as never, undefined as never)))).toContain('ERROR');
+      expect(await scoped(async () => asText(await result.execute('result', { id: jobId! }, undefined as never, undefined as never)))).toBe('Error: delegation aborted');
+
+      vi.setSystemTime(new Date('2026-07-10T22:00:01Z'));
+      expect(await scoped(async () => asText(await status.execute('status', { id: jobId! }, undefined as never, undefined as never)))).toMatch(/may have expired/);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('contains a failed progress fan-out so a detached background job still settles', async () => {
+    const dataRoot = freshDataRoot();
+    const warnings: string[] = [];
+    const reg = await loadPlugins({
+      dirs: [pluginsDir], enabled: ['subagent'], dataRoot,
+      logger: { ...log, warn: (message: string) => warnings.push(message) },
+    });
+    const delegate = reg.tools.find((t) => t.name === 'delegate')!;
+    const result = reg.tools.find((t) => t.name === 'delegate_result')!;
+    reg.platforms[0]!.listen(async (_src, _text, onEvent) => {
+      onEvent?.({ type: 'session', sessionId: 'brain-ch-subagent-fanout' });
+      return 'child completed';
+    });
+
+    const started = await runWithPolicy(ADMIN, async () =>
+      asText(await delegate.execute('call-fanout', { task: 'finish safely', background: true }, undefined as never, undefined as never)), {
+      sessionId: 'brain-parent-fanout', identity: OWNER,
+      emitSubagent: () => { throw new Error('parent fan-out unavailable'); },
+    });
+    const jobId = /Started background delegation (dlg-[\w-]+)\./.exec(started)?.[1];
+    expect(jobId).toBeTruthy();
+
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    const scoped = <T>(fn: () => T): T => runWithPolicy(ADMIN, fn, { sessionId: 'brain-parent-fanout', identity: OWNER });
+    expect(await scoped(async () => asText(await result.execute('result', { id: jobId! }, undefined as never, undefined as never)))).toBe('child completed');
+    expect(warnings).toContainEqual(expect.stringContaining('subagent progress fan-out failed'));
   });
 });

@@ -1,8 +1,23 @@
 import { describe, it, expect } from 'vitest';
 import { toBrainEvent } from '../../src/brain/events.js';
+import { isContextOverflow } from '@earendil-works/pi-ai';
 import type { AgentSessionEvent } from '@earendil-works/pi-coding-agent';
 
 const ev = (e: unknown) => toBrainEvent(e as AgentSessionEvent);
+
+describe('PI overflow recovery contract', () => {
+  const assistantError = (errorMessage: string) => ({
+    role: 'assistant', stopReason: 'error', errorMessage, content: [],
+    usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+  }) as never;
+
+  it('classifies terse HTTP 400 and descriptive provider context overflows for compact-and-retry', () => {
+    expect(isContextOverflow(assistantError('400 status code (no body)'))).toBe(true);
+    expect(isContextOverflow(assistantError('Prompt has 210,000 tokens, but the configured context size is 200,000 tokens'))).toBe(true);
+    // A throttling response must stay on PI's retry path, never compact healthy context.
+    expect(isContextOverflow(assistantError('429 rate limit: too many tokens, retry later'))).toBe(false);
+  });
+});
 
 describe('retry notices (reconnect line above the input)', () => {
   it('renders a compact reconnect counter and digs the human message out of a provider JSON blob', () => {
@@ -30,12 +45,12 @@ describe('retry notices (reconnect line above the input)', () => {
 describe('compaction status notice (single source of truth, no false success)', () => {
   it('compaction_start opens the one status line', () => {
     expect(ev({ type: 'compaction_start', reason: 'manual' }))
-      .toEqual({ type: 'notice', kind: 'compaction', message: 'compacting context…' });
+      .toEqual({ type: 'notice', kind: 'compaction', message: 'compacting conversation…' });
   });
 
   it('a REAL compaction (result present, not aborted) closes it with "context compacted"', () => {
     expect(ev({ type: 'compaction_end', reason: 'manual', aborted: false, result: { summary: 's', estimatedTokensAfter: 10 } }))
-      .toEqual({ type: 'notice', kind: 'compaction', message: 'context compacted', done: true });
+      .toEqual({ type: 'notice', kind: 'compaction', message: 'conversation compacted', done: true });
   });
 
   it('a no-op compaction (no result) clears the line WITHOUT a false "context compacted"', () => {

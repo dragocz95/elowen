@@ -31,7 +31,8 @@ import { createWrapper } from '../../test-utils';
 
 describe('StreamTerminal', () => {
   it('writes inbound stream bytes into xterm', () => {
-    render(<StreamTerminal name="elowen-advisor-1" />, { wrapper: createWrapper().wrapper });
+    const { container } = render(<StreamTerminal name="elowen-advisor-1" />, { wrapper: createWrapper().wrapper });
+    expect(container.firstChild).toHaveClass('elowen-terminal', 'overflow-hidden');
     act(() => capturedOnData!('\x1b[32mhi'));
     expect(writeSpy).toHaveBeenCalledWith('\x1b[32mhi');
   });

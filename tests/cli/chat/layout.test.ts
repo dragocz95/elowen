@@ -1,8 +1,10 @@
-import { beforeAll, describe, expect, it } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { getMarkdownTheme, initTheme } from '@earendil-works/pi-coding-agent';
 import { visibleWidth } from '@earendil-works/pi-tui';
 import { beginAssistant, emptyView, fromHistory, pushUser, reduce } from '../../../src/brain/transcript.js';
-import { ChatViewport, mouseWheel, SlashOverlay, StartScreen, TelemetryPanel, TOOL_INDENT, type TelemetryState } from '../../../src/cli/chat/layout.js';
+import { CHAT_VIEWPORT_ROW_CACHE_LIMIT, ChatViewport, mouseWheel, SlashOverlay, StartScreen, TelemetryPanel, TOOL_INDENT, type TelemetryState } from '../../../src/cli/chat/layout.js';
+
+afterEach(() => { vi.useRealTimers(); });
 
 describe('chat layout components', () => {
   beforeAll(() => { initTheme(); });
@@ -28,7 +30,7 @@ describe('chat layout components', () => {
       () => 60,
     );
     const bottom = viewport.render(60);
-    expect(bottom).toHaveLength(8);
+    expect(bottom).toHaveLength(6); // the viewport now obeys its exact shell allocation (no old 8-row floor)
     expect(bottom.every((line) => visibleWidth(line) === 60)).toBe(true);
     viewport.scroll(3);
     expect(viewport.render(60).join('\n')).toContain('History');
@@ -277,6 +279,8 @@ describe('chat layout components', () => {
     branch: 'main',
     mcp: null,
     lspEnabled: null,
+    processes: [],
+    rateLimits: null,
     floatOffset: 0,
     ...over,
   });
@@ -339,6 +343,42 @@ describe('chat layout components', () => {
     expect(wide).not.toContain('▰');
   });
 
+  it('shows compact 5h and weekly subscription meters, and hides them when unavailable', () => {
+    const hidden = new TelemetryPanel(() => telemetryState());
+    expect(hidden.render(46).join('\n')).not.toContain('Limits');
+
+    const panel = new TelemetryPanel(() => telemetryState({
+      rateLimits: {
+        provider: 'openai-codex', planType: 'team', fetchedAt: 123, stale: false,
+        primary: { usedPercent: 25, windowMinutes: 300, resetsAt: 1_900_000_000 },
+        secondary: { usedPercent: 80, windowMinutes: 10_080, resetsAt: 1_900_500_000 },
+      },
+    }));
+    const rendered = panel.render(46).map((line) => line.replace(/\x1b\[[0-9;]*m/g, '')).join('\n');
+    expect(rendered).toContain('Limits team');
+    expect(rendered).toContain('5h');
+    expect(rendered).toContain('weekly');
+    expect(rendered).toContain('25%');
+    expect(rendered).toContain('80%');
+    expect(rendered).toContain('↻');
+  });
+
+  it('renders running Processes in the telemetry rail with working kill hit zones', () => {
+    const panel = new TelemetryPanel(() => telemetryState({
+      processes: [{
+        id: 'p-right', command: 'npm run build', cwd: '/x',
+        startedAt: new Date(Date.now() - 5_000).toISOString(), running: true, exitCode: null,
+      }],
+    }));
+    const rows = panel.render(46);
+    const plain = rows.map((line) => line.replace(/\x1b\[[0-9;]*m/g, ''));
+    const processRow = plain.findIndex((line) => line.includes('npm run build'));
+    expect(processRow).toBeGreaterThan(0);
+    expect(plain.join('\n')).toContain('Processes');
+    const killColumn = plain[processRow]!.indexOf('✕') + 1;
+    expect(panel.processKillAt(processRow, killColumn)).toBe('p-right');
+  });
+
   it('lists connected MCP servers with a count and shows the LSP state', () => {
     const panel = new TelemetryPanel(() => telemetryState({
       mcp: [
@@ -395,6 +435,19 @@ describe('chat layout components', () => {
     expect(last).toContain('~/elowen · main');
     expect(last).toContain('elowen v1.8.7');
     expect(last.indexOf('elowen v1.8.7')).toBeGreaterThan(last.indexOf('~/elowen · main'));
+  });
+
+  it('keeps the compact start screen inside a very short terminal allocation', () => {
+    const input = { invalidate: (): void => {}, render: (): string[] => ['input one', 'input two', 'input three'] };
+    const screen = new StartScreen(input, () => 6, () => ({
+      modelLine: 'Build · model', hints: 'enter send', tip: 'tip', notice: '',
+      statusLeft: '~/elowen', version: '1.0.0',
+    }));
+    const rows = screen.render(60);
+    expect(rows).toHaveLength(6);
+    expect(rows.join('\n')).toContain('input three');
+    expect(rows.at(-1)).toContain('elowen v1.0.0');
+    expect(rows.join('\n')).not.toContain('▀'); // decorative mascot yields to the composer on short screens
   });
 
   it('surfaces transient notices on the start screen', () => {
@@ -469,7 +522,7 @@ describe('drag-to-copy selection', () => {
 });
 
 describe('per-turn render cache', () => {
-  it('reuses settled turn rows until the epoch changes (typing must not re-render history)', () => {
+  it('reuses settled turn rows while no owning turn is invalidated', () => {
     const view = fromHistory([
       { role: 'user', text: 'question' },
       { role: 'assistant', text: 'settled answer' },
@@ -486,8 +539,98 @@ describe('per-turn render cache', () => {
     const turn = view.turns[1]!;
     if (turn.role === 'elowen' && turn.segments[0]?.kind === 'text') turn.segments[0].text = 'MUTATED answer';
     expect(viewport.render(60).join('\n')).toBe(first);
-    // ...until the cache epoch changes (an expand toggle invalidates everything).
-    viewport.toggleThought(-999); // no-op key → no epoch bump
+    viewport.toggleThought(-999); // no interactive row → no invalidation
     expect(viewport.render(60).join('\n')).toBe(first);
+  });
+});
+
+describe('progressive history layout', () => {
+  const largeHistory = (pairs = 100) => fromHistory(Array.from({ length: pairs }, (_, i) => [
+    { role: 'user', text: `question ${i}` },
+    { role: 'assistant', text: `## answer ${i}\n\n- evidence one\n- evidence two\n\nNewest marker ${i}` },
+  ]).flat());
+
+  it('paints only the exact tail and leaves untouched history cold until the user scrolls', async () => {
+    vi.useFakeTimers();
+    const view = largeHistory();
+    const viewport = new ChatViewport(
+      { view, notice: '', modelName: 'kimi', thinkingSeconds: 0 },
+      getMarkdownTheme(), () => 6, () => 1, () => 60,
+    );
+
+    const first = viewport.render(60).join('\n');
+    expect(first).toContain('Newest marker 99');
+    expect(viewport.indexedHistoryTurns()).toBeLessThan(20);
+    expect(viewport.indexedHistoryTurns()).toBeLessThan(view.turns.length);
+    expect(viewport.isHistoryIndexComplete()).toBe(false);
+    expect(viewport.isScrollbarHit(60, 3)).toBe(false); // no approximate thumb/hit target
+
+    const afterFirstPaint = viewport.indexedHistoryTurns();
+    await vi.runAllTimersAsync();
+    expect(viewport.indexedHistoryTurns()).toBe(afterFirstPaint); // no idle full-history CPU pass
+    expect(viewport.isHistoryIndexComplete()).toBe(false);
+    viewport.scroll(30);
+    expect(viewport.indexedHistoryTurns()).toBeGreaterThan(afterFirstPaint);
+    expect(viewport.cachedHistoryRows()).toBeLessThanOrEqual(CHAT_VIEWPORT_ROW_CACHE_LIMIT);
+  });
+
+  it('PageUp indexes just enough older turns and keeps an exact bottom-relative offset', () => {
+    vi.useFakeTimers();
+    const viewport = new ChatViewport(
+      { view: largeHistory(), notice: '', modelName: 'kimi', thinkingSeconds: 0 },
+      getMarkdownTheme(), () => 6, () => 1, () => 60,
+    );
+    viewport.render(60);
+    const initiallyIndexed = viewport.indexedHistoryTurns();
+    viewport.scroll(30);
+    expect(viewport.indexedHistoryTurns()).toBeGreaterThan(initiallyIndexed);
+    expect(viewport.isHistoryIndexComplete()).toBe(false);
+    const beforeDrag = viewport.render(60).map((line) => line.replace(/\x1b\[[0-9;]*m/g, '')).join('\n');
+    expect(beforeDrag).toContain('History +30 lines');
+    viewport.setScrollFromRow(1); // incomplete total: scrollbar drag is a strict no-op
+    const afterDrag = viewport.render(60).map((line) => line.replace(/\x1b\[[0-9;]*m/g, '')).join('\n');
+    expect(afterDrag).toContain('History +30 lines');
+  });
+
+  it('invalidates only the turn that owns an expanded Thought', () => {
+    const view = fromHistory([
+      { role: 'assistant', text: 'ORIGINAL settled answer' },
+      { role: 'assistant', text: 'placeholder' },
+    ]);
+    view.turns[1] = {
+      role: 'elowen', streaming: false,
+      segments: [{ kind: 'reasoning', text: 'summary words followed by the hidden expanded detail' }],
+    };
+    const viewport = new ChatViewport(
+      { view, notice: '', modelName: 'kimi', thinkingSeconds: 0 },
+      getMarkdownTheme(), () => 20, () => 1, () => 72,
+    );
+    const first = viewport.render(72);
+    const thoughtRow = first.findIndex((line) => line.includes('Thought'));
+    expect(thoughtRow).toBeGreaterThanOrEqual(0);
+    const oldTurn = view.turns[0]!;
+    if (oldTurn.role === 'elowen' && oldTurn.segments[0]?.kind === 'text') oldTurn.segments[0].text = 'MUTATED off-screen cache';
+
+    viewport.toggleThought(thoughtRow + 1);
+    const expanded = viewport.render(72).join('\n');
+    expect(expanded).toContain('ORIGINAL settled answer');
+    expect(expanded).not.toContain('MUTATED off-screen cache');
+    expect(expanded).toContain('hidden expanded detail');
+  });
+
+  it('a width change discards exact heights but still re-paints only the newest tail', () => {
+    vi.useFakeTimers();
+    const view = largeHistory();
+    let width = 60;
+    const viewport = new ChatViewport(
+      { view, notice: '', modelName: 'kimi', thinkingSeconds: 0 },
+      getMarkdownTheme(), () => 6, () => 1, () => width,
+    );
+    viewport.render(width);
+    width = 72;
+    const resized = viewport.render(width).join('\n');
+    expect(resized).toContain('Newest marker 99');
+    expect(viewport.isHistoryIndexComplete()).toBe(false);
+    expect(viewport.indexedHistoryTurns()).toBeLessThan(20);
   });
 });

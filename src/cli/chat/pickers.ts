@@ -42,7 +42,7 @@ export function createPickers(
   const applyThinkingLevel = (level: string): void => {
     void client.setThinkingLevel(level).then((r) => {
       rt.thinkingLevel = r.thinkingLevel;
-      rt.notice = color.dim(`reasoning effort: ${r.thinkingLevel}`);
+      rt.notice = color.dim(`reasoning effort: ${rt.thinkingLevelLabels[r.thinkingLevel] ?? r.thinkingLevel}`);
       rt.render();
     }).catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); rt.render(); });
   };
@@ -51,7 +51,11 @@ export function createPickers(
     if (rt.thinkingLevels.length === 0) { rt.notice = color.dim('this model has no reasoning-effort levels'); rt.render(); return; }
     openPicker({
       tui, editor, title: 'Reasoning effort',
-      items: rt.thinkingLevels.map((lv) => ({ value: lv, label: lv, description: lv === rt.thinkingLevel ? 'current' : undefined })),
+      items: rt.thinkingLevels.map((lv) => {
+        const label = rt.thinkingLevelLabels[lv] ?? lv;
+        const raw = label === lv ? '' : lv;
+        return { value: lv, label, description: [raw, lv === rt.thinkingLevel ? 'current' : ''].filter(Boolean).join(' · ') || undefined };
+      }),
       onPick: (value) => applyThinkingLevel(value),
     });
   };
@@ -65,10 +69,10 @@ export function createPickers(
     const previous = rt.thinkingLevel;
     const next = rt.thinkingLevels[(rt.thinkingLevels.indexOf(rt.thinkingLevel) + 1) % rt.thinkingLevels.length]!;
     rt.thinkingLevel = next;
-    rt.notice = color.dim(`reasoning effort: ${next}`);
+    rt.notice = color.dim(`reasoning effort: ${rt.thinkingLevelLabels[next] ?? next}`);
     rt.render();
     void client.setThinkingLevel(next)
-      .then((r) => { rt.thinkingLevel = r.thinkingLevel; rt.notice = color.dim(`reasoning effort: ${r.thinkingLevel}`); rt.render(); })
+      .then((r) => { rt.thinkingLevel = r.thinkingLevel; rt.notice = color.dim(`reasoning effort: ${rt.thinkingLevelLabels[r.thinkingLevel] ?? r.thinkingLevel}`); rt.render(); })
       .catch((e: Error) => { rt.thinkingLevel = previous; rt.notice = color.error(`error: ${e.message}`); rt.render(); });
   };
 
@@ -254,7 +258,8 @@ export function createPickers(
       const kv = (k: string, v: string): void => { lines.push(`${color.faint(k.padEnd(12))} ${color.text(v)}`); };
       if (s?.title) kv('conversation', s.title);
       kv('model', s?.model || '—');
-      if (s?.thinkingLevel) kv('reasoning', s.thinkingLevel);
+      if (s?.thinkingLevel) kv('reasoning', s.thinkingLevelLabels?.[s.thinkingLevel] ?? s.thinkingLevel);
+      if (s?.fastAvailable) kv('fast', s.fast ? 'on' : 'off');
       kv('mode', rt.workMode === 'plan' ? 'Plan' : 'Build');
       const u = s?.usage;
       if (u) {
@@ -315,7 +320,10 @@ export function createPickers(
             openTextInput({
               tui, editor, title: 'Rename conversation', initial: row.title,
               onSubmit: (title) => {
-                void client.renameSession(row.id, title).then(() => { rt.notice = color.dim('conversation renamed'); refresh(); rt.render(); })
+                void client.renameSession(row.id, title).then((renamed) => {
+                  if (row.id === client.boundSession) rt.conversationTitle = renamed.title;
+                  rt.notice = color.dim('conversation renamed'); refresh(); rt.render();
+                })
                   .catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); rt.render(); });
               },
             });

@@ -2,6 +2,7 @@ import type { Db } from './db.js';
 import { DEFAULT_ADVISOR_STYLE, isAdvisorStyle } from '../brain/personality.js';
 import { sanitizeTerminalSettings, mergeTerminalSettings, type TerminalSettings } from './terminalSettings.js';
 import { sanitizePermissionSettings, mergePermissionSettings, type PermissionAction, type PermissionScope, type PermissionSettings } from '../brain/toolPermissions.js';
+import { isCanonicalThinkingLevel } from '../brain/modelCapabilities.js';
 
 /** Typed per-user CLI/brain settings. `model`/`modelProvider` empty → use the configured brain default.
  *  `autoCompactAt` is the context-window fill percentage at which the conversation is auto-summarized.
@@ -9,10 +10,6 @@ import { sanitizePermissionSettings, mergePermissionSettings, type PermissionAct
 export interface CliSettings { model: string; modelProvider: string; visionModel: string; visionModelProvider: string; thinkingLevel: string; autoCompact: boolean; autoCompactAt: number; advisorStyle: string; discordUserId: string; whatsappNumber: string; autoRecall: boolean; autoSave: boolean }
 // autoRecall/autoSave default to true so upgrading users keep the prior always-on memory behaviour.
 const CLI_DEFAULTS: CliSettings = { model: '', modelProvider: '', visionModel: '', visionModelProvider: '', thinkingLevel: '', autoCompact: false, autoCompactAt: 80, advisorStyle: DEFAULT_ADVISOR_STYLE, discordUserId: '', whatsappNumber: '', autoRecall: true, autoSave: true };
-
-/** Reasoning-effort levels PI accepts (extended-thinking models). Empty = leave the model default. */
-const THINKING_LEVELS = ['minimal', 'low', 'medium', 'high', 'xhigh'] as const;
-function isThinkingLevel(v: string): boolean { return (THINKING_LEVELS as readonly string[]).includes(v); }
 
 /** Raised when a user tries to link a Discord snowflake another user has already claimed. The route
  *  maps it to a 409 with a Czech user message; the identity link stays with the original owner. */
@@ -87,7 +84,7 @@ export class UserSettingStore {
       modelProvider: all.modelProvider ?? CLI_DEFAULTS.modelProvider,
       visionModel: all.visionModel ?? CLI_DEFAULTS.visionModel,
       visionModelProvider: all.visionModelProvider ?? CLI_DEFAULTS.visionModelProvider,
-      thinkingLevel: isThinkingLevel(all.thinkingLevel ?? '') ? (all.thinkingLevel as string) : CLI_DEFAULTS.thinkingLevel,
+      thinkingLevel: isCanonicalThinkingLevel(all.thinkingLevel ?? '') ? (all.thinkingLevel as string) : CLI_DEFAULTS.thinkingLevel,
       autoCompact: all.autoCompact !== undefined ? all.autoCompact === 'true' : CLI_DEFAULTS.autoCompact,
       autoCompactAt: all.autoCompactAt !== undefined ? clampPercent(Number(all.autoCompactAt)) : CLI_DEFAULTS.autoCompactAt,
       advisorStyle: isAdvisorStyle(all.advisorStyle) ? all.advisorStyle : CLI_DEFAULTS.advisorStyle,
@@ -111,7 +108,7 @@ export class UserSettingStore {
       // Empty clears the override (model default); anything else must be a known level.
       if (patch.thinkingLevel !== undefined) {
         if (patch.thinkingLevel === '') this.remove(userId, 'thinkingLevel');
-        else if (isThinkingLevel(patch.thinkingLevel)) this.set(userId, 'thinkingLevel', patch.thinkingLevel);
+        else if (isCanonicalThinkingLevel(patch.thinkingLevel)) this.set(userId, 'thinkingLevel', patch.thinkingLevel);
       }
       if (patch.autoCompact !== undefined) this.set(userId, 'autoCompact', String(patch.autoCompact));
       if (patch.autoCompactAt !== undefined) this.set(userId, 'autoCompactAt', String(clampPercent(patch.autoCompactAt)));

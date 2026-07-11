@@ -4,17 +4,23 @@ import { appendPromptHistory } from './promptHistory.js';
 import { localShellTurn, parseBangCommand, runLocalShell } from './localShell.js';
 import { editTextExternally } from './externalEditor.js';
 import { composeWithAttachments, expandMentions, MAX_IMAGES_PER_MESSAGE, readClipboardImage, type PendingImage } from './mentions.js';
-import { sessionItems, openPicker } from './picker.js';
+import { sessionItems, openPicker, openTextInput } from './picker.js';
 import { ALT_SCREEN_OFF, ALT_SCREEN_ON, DISABLE_MOUSE, ENABLE_MOUSE } from './layout.js';
-import { pushUser, reduce } from '../../brain/transcript.js';
+import { reduce } from '../../brain/transcript.js';
 import type { BrainClient } from './brainClient.js';
 import type { ChatRuntime } from './runtime.js';
 import type { StreamController } from './streamController.js';
 import type { Pickers } from './pickers.js';
 
+/** Resolve either PI's canonical reasoning id or its provider-facing label (`ultra` → `xhigh`). */
+export function resolveThinkingLevel(value: string, levels: string[], labels: Record<string, string>): string | null {
+  const wanted = value.trim().toLowerCase();
+  return levels.find((level) => level.toLowerCase() === wanted || (labels[level] ?? '').toLowerCase() === wanted) ?? null;
+}
+
 /** Local slash-command routing: returns the recognized command (with its argument) or null for a
  *  regular chat message. Pure, so the command surface is unit-testable without a TTY. */
-export function parseCommand(text: string): { cmd: 'quit' | 'new' | 'stop' | 'status' | 'restart' | 'sessions' | 'resume' | 'delete' | 'model' | 'reasoning' | 'theme' | 'editor' | 'keybinds' | 'lsp' | 'tdd' | 'mcp' | 'skills' | 'tools' | 'goal' | 'subgoal' | 'compact' | 'plan' | 'build' | 'yolo' | 'paste' | 'export' | 'help'; arg?: string } | null {
+export function parseCommand(text: string): { cmd: 'quit' | 'new' | 'stop' | 'status' | 'restart' | 'sessions' | 'resume' | 'rename' | 'delete' | 'model' | 'reasoning' | 'fast' | 'theme' | 'editor' | 'keybinds' | 'lsp' | 'tdd' | 'mcp' | 'skills' | 'tools' | 'goal' | 'subgoal' | 'compact' | 'plan' | 'build' | 'yolo' | 'paste' | 'export' | 'help'; arg?: string } | null {
   const m = /^\/(\w+)(?:\s+(.+))?$/.exec(text.trim());
   if (!m) return null;
   switch (m[1]) {
@@ -25,9 +31,11 @@ export function parseCommand(text: string): { cmd: 'quit' | 'new' | 'stop' | 'st
     case 'restart': return { cmd: 'restart' };
     case 'sessions': return { cmd: 'sessions' };
     case 'resume': return { cmd: 'resume', arg: m[2] };
+    case 'rename': return { cmd: 'rename', arg: m[2] };
     case 'delete': return { cmd: 'delete', arg: m[2] };
     case 'model': return { cmd: 'model', arg: m[2] };
     case 'reasoning': return { cmd: 'reasoning', arg: m[2] };
+    case 'fast': return { cmd: 'fast', arg: m[2] };
     case 'theme': return { cmd: 'theme', arg: m[2] };
     case 'editor': return { cmd: 'editor' };
     case 'keybinds': return { cmd: 'keybinds' };
@@ -152,8 +160,9 @@ export function wireSubmit(rt: ChatRuntime, deps: { stream: StreamController; pi
     // parent conversation, so they snap back first (running /new while "inside" a child would be chaos).
     if (rt.childView && !command) {
       const target = rt.childView.sessionId;
-      rt.childView.view = pushUser(rt.childView.view, trimmed); // local echo; the store copy lands server-side
-      rt.render();
+      // The child daemon stream emits the authoritative `user` event for both a running steer and an
+      // idle fresh turn. Do not echo locally: on a running child that produced two identical bubbles.
+      rt.render(); // flush the cleared editor while the request reaches the daemon
       void client.subagentSend(target, trimmed).catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); rt.render(); });
       return;
     }
@@ -175,6 +184,24 @@ export function wireSubmit(rt: ChatRuntime, deps: { stream: StreamController; pi
           const target = Number.isInteger(n) && n >= 1 ? rt.listed[n - 1]?.id : command.arg;
           if (!target) { rt.notice = color.dim('use /resume and pick with the arrows'); rt.render(); return; }
           void stream.switchTo({ session: target }).catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); rt.render(); });
+          return;
+        }
+        case 'rename': {
+          const sessionId = client.boundSession;
+          if (!sessionId) { rt.notice = color.error('no active conversation to rename'); rt.render(); return; }
+          const apply = (raw: string): void => {
+            const title = raw.trim();
+            if (!title) { rt.notice = color.error('conversation title cannot be empty'); rt.render(); return; }
+            void client.renameSession(sessionId, title)
+              .then((renamed) => {
+                rt.conversationTitle = renamed.title;
+                rt.notice = color.dim('conversation renamed');
+                rt.render();
+              })
+              .catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); rt.render(); });
+          };
+          if (command.arg) apply(command.arg);
+          else openTextInput({ tui, editor, title: 'Rename conversation', initial: rt.conversationTitle, onSubmit: apply });
           return;
         }
         case 'model': {
@@ -201,8 +228,30 @@ export function wireSubmit(rt: ChatRuntime, deps: { stream: StreamController; pi
             }).catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); rt.render(); });
           };
           // A bare "/reasoning high" applies directly; "/reasoning" opens the picker over the model's levels.
-          if (command.arg && rt.thinkingLevels.includes(command.arg.trim())) { apply(command.arg.trim()); return; }
+          const direct = command.arg ? resolveThinkingLevel(command.arg, rt.thinkingLevels, rt.thinkingLevelLabels) : null;
+          if (direct) { apply(direct); return; }
           pickers.openThinkingPicker();
+          return;
+        }
+        case 'fast': {
+          const arg = command.arg?.trim().toLowerCase();
+          if (arg === 'status') {
+            rt.notice = rt.fastAvailable
+              ? color.dim(`fast mode ${rt.fastOn ? 'on' : 'off'}`)
+              : color.dim('fast mode is not available for this model/account');
+            rt.render();
+            return;
+          }
+          if (arg && arg !== 'on' && arg !== 'off') { rt.notice = color.dim('usage: /fast · /fast on · /fast off · /fast status'); rt.render(); return; }
+          if (!rt.fastAvailable) { rt.notice = color.dim('fast mode is not available for this model/account'); rt.render(); return; }
+          void client.setFast(arg === 'on' ? true : arg === 'off' ? false : undefined)
+            .then((r) => {
+              rt.fastOn = r.fast;
+              rt.fastAvailable = r.fastAvailable;
+              rt.notice = color.dim(`fast mode ${r.fast ? 'on' : 'off'}`);
+              rt.render();
+            })
+            .catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); rt.render(); });
           return;
         }
         case 'theme': {

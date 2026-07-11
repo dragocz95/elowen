@@ -1,23 +1,45 @@
 import { writeFileSync, existsSync } from 'node:fs';
 import { join, basename } from 'node:path';
+import { randomUUID } from 'node:crypto';
 import type { AskAnswer, AskQuestion, BrainCard, BrainEvent } from '../../brain/events.js';
 import type { ProcessInfo } from '../../brain/processRegistry.js';
 import type { BrainMessageView } from '../../brain/messageView.js';
 import type { SlashCommandDef } from '../../brain/slashCommands.js';
 import type { LspStatus } from '../../lsp/manager.js';
+import {
+  stampBrainEventReplayCursor,
+  type BrainStreamSnapshot,
+} from '../../brain/session/liveEventReplay.js';
+
+export type BrainStreamFrame = BrainEvent | BrainStreamSnapshot;
 
 /** Thrown on a 401 so the caller can drop the cached token and re-login. */
 export class Unauthorized extends Error {
   constructor() { super('unauthorized'); this.name = 'Unauthorized'; }
 }
 
-export interface BrainClientOpts { base: string; token: string; fetchImpl?: typeof fetch }
+export interface BrainClientOpts {
+  base: string;
+  token: string;
+  fetchImpl?: typeof fetch;
+  /** Stable identity for this CLI process. Injectable only so transport tests can assert exact URLs. */
+  clientId?: string;
+}
 
 /** Statusline display toggles (the statusline plugin's config; null when the plugin is disabled). */
 interface StatuslineConfig { showModel?: boolean; showContext?: boolean; showTokens?: boolean; showCost?: boolean }
 export interface BrainUsageView { tokens: number | null; contextWindow: number; percent: number | null; totalTokens: number; cost: number }
 export type BrainWorkMode = 'build' | 'plan';
-export interface BrainStatus { running: boolean; sessionId: string | null; title?: string; model: string; usage: BrainUsageView | null; statusline: StatuslineConfig | null; thinkingLevel?: string; thinkingLevels?: string[]; pendingAsk?: { id: string; questions: AskQuestion[]; kind?: 'approval' } | null; cards?: BrainCard[]; queued?: { id: string; text: string }[]; lspEnabled?: boolean; yolo?: boolean }
+export interface BrainRateLimitWindow { usedPercent: number; windowMinutes: number | null; resetsAt: number | null }
+export interface BrainRateLimits {
+  provider: string;
+  planType: string | null;
+  primary: BrainRateLimitWindow | null;
+  secondary: BrainRateLimitWindow | null;
+  fetchedAt: number;
+  stale: boolean;
+}
+export interface BrainStatus { running: boolean; sessionId: string | null; title?: string; model: string; usage: BrainUsageView | null; statusline: StatuslineConfig | null; thinkingLevel?: string; thinkingLevels?: string[]; thinkingLevelLabels?: Record<string, string>; fast?: boolean; fastAvailable?: boolean; pendingAsk?: { id: string; questions: AskQuestion[]; kind?: 'approval' } | null; cards?: BrainCard[]; queued?: { id: string; text: string }[]; lspEnabled?: boolean; yolo?: boolean }
 export interface McpServerView { name: string; transport: string; status: 'connected' | 'connecting' | 'disconnected' | 'error' | 'disabled'; toolCount: number; tools: { name: string; title?: string; description?: string; schema?: unknown }[]; lastError: string | null; reconnecting?: boolean }
 export interface SkillView { name: string; description: string; source: 'bundled' | 'user'; scope?: string; location?: string; active?: boolean; canDelete?: boolean; missingRequirement?: string }
 export interface GoalView { session_id: string; user_id: number; status: 'active' | 'draft' | 'paused' | 'done'; goal: string; draft: string; subgoals: string; turns_used: number; turn_budget: number; last_verdict: string; last_evidence: string; paused_reason: string }
@@ -28,19 +50,21 @@ export interface BrainProviderView { id: string; label: string; type: string; ba
 /** Parse accumulated SSE text into complete frames, returning the events and the unconsumed tail.
  *  Pure and buffer-safe (a frame split across chunks stays in `rest` until its blank-line terminator).
  *  Comment lines (`: ping`) yield no data and are skipped. */
-export function parseSse(buffer: string): { frames: { event?: string; data: string }[]; rest: string } {
-  const frames: { event?: string; data: string }[] = [];
+export function parseSse(buffer: string): { frames: { event?: string; id?: string; data: string }[]; rest: string } {
+  const frames: { event?: string; id?: string; data: string }[] = [];
   let idx: number;
   while ((idx = buffer.indexOf('\n\n')) >= 0) {
     const raw = buffer.slice(0, idx);
     buffer = buffer.slice(idx + 2);
     let event: string | undefined;
+    let id: string | undefined;
     let data = '';
     for (const line of raw.split('\n')) {
       if (line.startsWith('event:')) event = line.slice(6).trim();
+      else if (line.startsWith('id:')) id = line.slice(3).trim();
       else if (line.startsWith('data:')) data += line.slice(5).trim();
     }
-    if (data) frames.push({ event, data });
+    if (data) frames.push({ event, ...(id ? { id } : {}), data });
   }
   return { frames, rest: buffer };
 }
@@ -54,9 +78,16 @@ export function parseSse(buffer: string): { frames: { event?: string; data: stri
  *  CLI (or the web dock) working another conversation can't interleave into this one. */
 export class BrainClient {
   private f: typeof fetch;
+  private readonly clientId: string;
+  private startGeneration = 0;
+  /** Generation that actually committed `bound`; preserved across server-driven idle rollover rebinds. */
+  private boundGeneration?: number;
   /** The conversation this client is bound to — set by start(), updated by rebind() (idle rollover). */
   private bound?: string;
-  constructor(private o: BrainClientOpts) { this.f = o.fetchImpl ?? fetch; }
+  constructor(private o: BrainClientOpts) {
+    this.f = o.fetchImpl ?? fetch;
+    this.clientId = o.clientId ?? randomUUID();
+  }
 
   /** The bound conversation id (undefined before the first start()). */
   get boundSession(): string | undefined { return this.bound; }
@@ -76,8 +107,8 @@ export class BrainClient {
     return h;
   }
 
-  private async post(path: string, body: unknown): Promise<Response> {
-    const res = await this.f(`${this.o.base}${path}`, { method: 'POST', headers: this.headers(true), body: JSON.stringify(body) });
+  private async post(path: string, body: unknown, signal?: AbortSignal): Promise<Response> {
+    const res = await this.f(`${this.o.base}${path}`, { method: 'POST', headers: this.headers(true), body: JSON.stringify(body), signal });
     if (res.status === 401) throw new Unauthorized();
     if (!res.ok) {
       // Surface the server's message ("Nothing to compact…") instead of a bare status code.
@@ -91,9 +122,18 @@ export class BrainClient {
     // The launch directory rides along: it drives the server's default-session resolution (resume the
     // conversation belonging to THIS directory, never one another client holds) and becomes the SESSION
     // cwd (which pi tells the model about), not just the per-message tool default.
-    const res = await this.post('/brain/start', { ...opts, cwd: process.cwd() });
+    // Claim this stable client identity on the selected conversation as part of start itself. The TUI
+    // aborts the old SSE before loading the new history/status; Ctrl+C in that gap must stop `sessionId`,
+    // not whichever conversation the old transport had previously bound to this client id.
+    const generation = ++this.startGeneration;
+    const res = await this.post('/brain/start', { ...opts, cwd: process.cwd(), client: this.clientId, generation });
     const body = (await res.json()) as { sessionId: string };
-    this.bound = body.sessionId; // every session-scoped call from here on targets this conversation
+    // Concurrent A/B switches may resolve out of order. Only the latest request is allowed to commit the
+    // shared bound session; streamController independently guards its view/history/stream side effects.
+    if (generation === this.startGeneration) {
+      this.bound = body.sessionId;
+      this.boundGeneration = generation;
+    }
     return body;
   }
 
@@ -114,7 +154,10 @@ export class BrainClient {
     // where the server's active pointer moved meanwhile. `display` is the user's CLEAN text (before
     // @mention/prompt expansion); the daemon echoes it as the authoritative `user` turn — the CLI no
     // longer pushes an optimistic bubble, so this is what renders in every following client.
-    await this.post('/brain/send', { text, cwd: process.cwd(), ...(this.bound ? { session: this.bound } : {}), ...(mode ? { mode } : {}), ...(images?.length ? { images } : {}), ...(display !== undefined && display !== text ? { display } : {}) });
+    const binding = this.bound && this.boundGeneration !== undefined
+      ? { session: this.bound, client: this.clientId, generation: this.boundGeneration }
+      : this.bound ? { session: this.bound } : {};
+    await this.post('/brain/send', { text, cwd: process.cwd(), ...binding, ...(mode ? { mode } : {}), ...(images?.length ? { images } : {}), ...(display !== undefined && display !== text ? { display } : {}) });
   }
 
   /** Answer a parked ask_user_question — settles the paused turn so it resumes with the user's picks. */
@@ -133,6 +176,27 @@ export class BrainClient {
   /** Stop the streaming turn (Esc) — on the bound conversation. */
   async abort(): Promise<void> {
     await this.post('/brain/abort', this.bound ? { session: this.bound } : {});
+  }
+
+  /** Leave the bound interactive session. The daemon aborts/cascades the active turn and disposes the
+   *  live session only when this CLI is its final attachment; persisted conversation history remains. */
+  async stopSession(signal?: AbortSignal): Promise<void> {
+    // Fence every start this process has ISSUED, not only the one whose response last committed `bound`.
+    // A concurrent switch request can still be buffered behind this stop on another connection.
+    await this.post('/brain/session/stop', {
+      ...(this.bound ? { session: this.bound } : {}),
+      client: this.clientId,
+      ...(this.startGeneration > 0 ? { generation: this.startGeneration } : {}),
+    }, signal);
+  }
+
+  /** Slow-changing ChatGPT subscription windows for the bound OpenAI OAuth conversation. Kept separate
+   *  from status so callers can refresh it best-effort without delaying the hot chat metadata path. */
+  async rateLimits(): Promise<BrainRateLimits | null> {
+    const res = await this.f(`${this.o.base}/brain/rate-limits${this.boundQs()}`, { headers: this.headers() });
+    if (res.status === 401) throw new Unauthorized();
+    if (!res.ok) throw new Error(`elowen brain ${res.status} on /brain/rate-limits`);
+    return (await res.json()) as BrainRateLimits | null;
   }
 
   /** Remove one pending mid-turn queued message from the bound conversation (the queue-remove keybind).
@@ -168,7 +232,7 @@ export class BrainClient {
    *  `/compact`, `/restart`). Returns the human-readable result message when the server sends one. */
   async command(name: string): Promise<{ message?: string } | null> {
     // `post()` already throws (with the server's message) on any non-OK status.
-    const res = await this.post('/brain/command', { name });
+    const res = await this.post('/brain/command', { name, ...(this.bound ? { session: this.bound } : {}) });
     return (await res.json().catch(() => null)) as { message?: string } | null;
   }
 
@@ -183,6 +247,13 @@ export class BrainClient {
   async setThinkingLevel(level: string): Promise<{ thinkingLevel: string }> {
     const res = await this.post('/brain/think', { level, ...(this.bound ? { session: this.bound } : {}) });
     return (await res.json()) as { thinkingLevel: string };
+  }
+
+  /** Toggle (or explicitly set) OpenAI OAuth fast mode for the bound conversation. Availability is
+   *  server/model-derived; callers use status.fastAvailable to hide a dead command on other providers. */
+  async setFast(on?: boolean): Promise<{ fast: boolean; fastAvailable: boolean }> {
+    const res = await this.post('/brain/fast', { ...(on === undefined ? {} : { on }), ...(this.bound ? { session: this.bound } : {}) });
+    return (await res.json()) as { fast: boolean; fastAvailable: boolean };
   }
 
   /** Flip the SESSION-scoped YOLO override (the /yolo command): `on` forces a state, omitted toggles.
@@ -398,9 +469,9 @@ export class BrainClient {
 
   /** Transcript of the bound conversation by default, or of an explicit session id (e.g. a delegated
    *  sub-agent's `brain-ch-subagent-…` session for the drill-in view). */
-  async history(session: string | undefined = this.bound): Promise<BrainMessageView[]> {
+  async history(session: string | undefined = this.bound, signal?: AbortSignal): Promise<BrainMessageView[]> {
     const qs = session ? `?session=${encodeURIComponent(session)}` : '';
-    const res = await this.f(`${this.o.base}/brain/messages${qs}`, { headers: this.headers() });
+    const res = await this.f(`${this.o.base}/brain/messages${qs}`, { headers: this.headers(), signal });
     if (res.status === 401) throw new Unauthorized();
     if (!res.ok) throw new Error(`elowen brain ${res.status} on /brain/messages`);
     return (await res.json()) as BrainMessageView[];
@@ -420,14 +491,26 @@ export class BrainClient {
   /** Open the SSE stream and deliver each BrainEvent to `onEvent` until `signal` aborts. Follows the
    *  BOUND conversation by default (an explicit server-side session tap — never the active pointer,
    *  so another client's conversation can't leak in), or one explicit owned session when `session` is
-   *  given (the sub-agent drill-in stream). Reconnects with a fixed backoff on a dropped connection
-   *  (the server re-streams live events). A 401 propagates so the caller can re-login. */
-  async stream(onEvent: (e: BrainEvent) => void, signal: AbortSignal, backoffMs = 1000, onOpen?: () => void, session?: string): Promise<void> {
+   *  given (the sub-agent drill-in stream). With `snapshot:true`, each fresh connection starts with the
+   *  durable transcript plus its live tail, so callers can replace their local view before replaying it.
+   *  Reconnects with a fixed backoff on a dropped connection. A 401 propagates so the caller can re-login. */
+  async stream(onEvent: (e: BrainEvent) => void, signal: AbortSignal, backoffMs?: number, onOpen?: () => void, session?: string, snapshot?: false): Promise<void>;
+  async stream(onEvent: (e: BrainStreamFrame) => void, signal: AbortSignal, backoffMs: number | undefined, onOpen: (() => void) | undefined, session: string | undefined, snapshot: true): Promise<void>;
+  async stream(onEvent: ((e: BrainEvent) => void) | ((e: BrainStreamFrame) => void), signal: AbortSignal, backoffMs = 1000, onOpen?: () => void, session?: string, snapshot = false): Promise<void> {
     while (!signal.aborted) {
       // Re-resolve per attempt: an idle rollover rebinds the client mid-stream, and a RECONNECT must
       // tap the replacement conversation, not the dead one it originally opened on.
       const sid = session ?? this.bound;
-      const qs = sid ? `?session=${encodeURIComponent(sid)}` : '';
+      const params = new URLSearchParams();
+      if (sid) params.set('session', sid);
+      // Only the parent/bound stream owns this CLI process's attachment identity. Explicit streams are
+      // sub-agent drill-ins and must not replace (or later release) the parent attachment.
+      if (sid && session === undefined) {
+        params.set('client', this.clientId);
+        if (this.boundGeneration !== undefined) params.set('generation', String(this.boundGeneration));
+      }
+      if (sid && snapshot) params.set('snapshot', '1');
+      const qs = params.size > 0 ? `?${params.toString()}` : '';
       try {
         const res = await this.f(`${this.o.base}/brain/stream${qs}`, { headers: this.headers(), signal });
         if (res.status === 401) throw new Unauthorized();
@@ -448,7 +531,30 @@ export class BrainClient {
           buf = rest;
           for (const frame of frames) {
             // Skip our error-sentinel and malformed frames rather than crashing the UI.
-            try { onEvent(JSON.parse(frame.data) as BrainEvent); } catch { /* ignore bad frame */ }
+            try {
+              const parsed = JSON.parse(frame.data) as BrainStreamFrame;
+              if (parsed.type === 'snapshot') {
+                // Snapshot journal entries carry their individual replay cursors in a parallel array so
+                // event JSON stays backward-compatible. Restore them as non-enumerable transport metadata
+                // before the headless reconciler/TUI sees the frame.
+                if (Array.isArray(parsed.eventCursors)) {
+                  parsed.events = parsed.events.map((event, index) => {
+                    const cursor = parsed.eventCursors?.[index];
+                    return stampBrainEventReplayCursor(event, typeof cursor === 'number' && Number.isSafeInteger(cursor) && cursor > 0 ? cursor : undefined);
+                  });
+                }
+                // The server may have resolved this attempt's old bound id through the stable attachment
+                // after an idle rollover. Commit the fresh id before the loop's next reconnect URL.
+                if (session === undefined && typeof parsed.sessionId === 'string' && parsed.sessionId) this.rebind(parsed.sessionId);
+              } else {
+                const cursor = frame.id === undefined ? undefined : Number(frame.id);
+                if (Number.isSafeInteger(cursor) && cursor! > 0) {
+                  (onEvent as (event: BrainStreamFrame) => void)(stampBrainEventReplayCursor(parsed, cursor));
+                  continue;
+                }
+              }
+              (onEvent as (event: BrainStreamFrame) => void)(parsed);
+            } catch { /* ignore bad frame */ }
           }
         }
       } catch (err) {

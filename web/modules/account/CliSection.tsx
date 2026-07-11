@@ -7,15 +7,15 @@ import { Segmented } from '../../components/ui/Segmented';
 import { SettingGroup, SettingRow } from '../../components/ui/SettingsPrimitives';
 import { Toggle } from '../../components/ui/Toggle';
 import { Slider } from '../../components/ui/Slider';
+import { ReasoningScale } from '../../components/ui/ReasoningScale';
 import { LoadingState } from '../../components/ui/states';
 import { useToast } from '../../components/ui/Toast';
 import { useTranslation } from '../../lib/i18n';
 import { useMyCliSettings, useMyPermissions, useBrainModels } from '../../lib/queries';
 import { useSaveMyCliSettings, useSaveMyPermissions } from '../../lib/mutations';
 import { PermissionRulesCard } from './PermissionRulesCard';
-import { Pill } from './pills';
 
-const THINKING_LEVELS = ['', 'minimal', 'low', 'medium', 'high', 'xhigh'];
+const NO_REASONING_LEVELS: string[] = [];
 
 /** Account → Elowen AI: per-user runtime settings for the embedded brain (web chat + `elowen chat`).
  *  Thinking level + vision fallback + auto-compact; the default model pickers render beside this
@@ -46,6 +46,22 @@ export function CliSection() {
       setSeeded(true);
     }
   }, [data, seeded]);
+
+  // Reasoning effort belongs to the selected model, not to a global universal list. The daemon enriches
+  // every model option from PI's provider descriptor, including provider-facing labels such as
+  // OpenAI's `ultra` (canonical xhigh) and the distinct `max` supported by newer models.
+  const modelOptions = models.data ?? [];
+  const activeModel = data
+      ? (data.model
+        ? modelOptions.find((m) => m.provider === data.modelProvider && m.model === data.model)
+        : (modelOptions.find((m) => m.default) ?? modelOptions[0]))
+    : undefined;
+  const reasoningLevels = activeModel?.reasoningLevels ?? NO_REASONING_LEVELS;
+  useEffect(() => {
+    // A sibling default-model change invalidates cli-settings. If the new model cannot accept the old
+    // effort, clear the override instead of keeping a request-breaking hidden value in the account.
+    if (seeded && activeModel && thinkingLevel && !reasoningLevels.includes(thinkingLevel)) setThinkingLevel('');
+  }, [activeModel, reasoningLevels, seeded, thinkingLevel]);
 
   // YOLO default + unattended-ask mode live in the separate permissions blob (GET/PATCH
   // /auth/me/permissions) — their own query + seed + autosave so flipping them never touches (or
@@ -99,13 +115,15 @@ export function CliSection() {
     <div className="flex flex-col gap-4">
       <SettingGroup>
       <SettingRow title={t.cli.thinkingLabel} icon={Gauge} description={t.help.cliThinking}>
-        <div className="flex flex-wrap gap-1.5">
-          {THINKING_LEVELS.map((lv) => (
-            <Pill key={lv || 'default'} on={thinkingLevel === lv} onClick={() => setThinkingLevel(lv)}>
-              {lv === '' ? t.cli.thinkingDefault : lv}
-            </Pill>
-          ))}
-        </div>
+        <ReasoningScale
+          ariaLabel={t.cli.thinkingLabel}
+          value={thinkingLevel}
+          onChange={setThinkingLevel}
+          options={['', ...reasoningLevels].map((lv) => ({
+            value: lv,
+            label: lv === '' ? t.cli.thinkingDefault : (activeModel?.reasoningLabels?.[lv] ?? lv),
+          }))}
+        />
       </SettingRow>
 
       <SettingRow title={t.cli.visionModelLabel} icon={Eye} description={t.help.cliVisionModel}>
@@ -136,17 +154,11 @@ export function CliSection() {
         </div>
       </SettingRow>
 
-      <SettingRow title={t.cli.yoloTitle} icon={Zap}>
-        <div className="flex flex-col gap-3">
-          <label className="flex items-center gap-3 text-sm text-text">
-            <Toggle checked={yolo} onChange={setYolo} label={t.cli.yoloToggle} />
-            <span>{t.cli.yoloToggle}</span>
-          </label>
-          {/* Always-visible warning (not a HelpTip): auto-approving tool runs is a security trade-off. */}
-          <p className="rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-xs text-warning">
-            {t.cli.yoloWarning}
-          </p>
-        </div>
+      <SettingRow title={t.cli.yoloTitle} icon={Zap} description={t.cli.yoloWarning}>
+        <label className="flex items-center gap-3 text-sm text-text">
+          <Toggle checked={yolo} onChange={setYolo} label={t.cli.yoloToggle} />
+          <span>{t.cli.yoloToggle}</span>
+        </label>
       </SettingRow>
 
       <SettingRow title={t.cli.unattendedTitle} icon={MoonStar} description={t.help.cliUnattendedAsks}>

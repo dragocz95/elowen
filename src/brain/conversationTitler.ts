@@ -57,9 +57,10 @@ export class ConversationTitler {
     return this.inference() !== null;
   }
 
-  /** Generate + persist a title for `sessionId` from its first message. Best-effort: swallows every error
-   *  (it rides fire-and-forget from send()). No-op when no model is wired. */
-  async run(sessionId: string, firstMessage: string): Promise<void> {
+  /** Generate + persist a title for `sessionId` from its first message. `provisionalTitle` is the exact
+   *  seed written before this background job started: the final write is a compare-and-set, so a manual
+   *  rename performed while inference is running always wins. Best-effort: swallows every error. */
+  async run(sessionId: string, firstMessage: string, provisionalTitle: string): Promise<void> {
     const inf = this.inference();
     if (!inf) return;
     const msg = firstMessage.trim();
@@ -67,8 +68,7 @@ export class ConversationTitler {
     try {
       const { text } = await inf.decide(buildPrompt(msg));
       const title = sanitizeTitle(text);
-      if (title) {
-        this.store.setTitle(sessionId, title);
+      if (title && this.store.setTitleIfCurrent(sessionId, provisionalTitle, title)) {
         this.logger?.info('named conversation', { sessionId, model: inf.model });
       }
     } catch (e) {

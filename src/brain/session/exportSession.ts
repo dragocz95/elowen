@@ -31,12 +31,15 @@ function renderDiff(diff: string): string {
 
 /** One assistant tool segment → an HTML block: the tool name + argument summary, an optional colorized
  *  diff, and any console/result output body. */
-function renderTool(seg: { name: string; detail?: string; diff?: string; output?: { text?: string; notes?: string[] } }): string {
+function renderTool(seg: { name: string; detail?: string; diff?: string; output?: { text?: string; notes?: string[] }; sub?: { status: string; detail?: string; tools: number; tokens?: number; seconds: number; model?: string } }): string {
   const head = `<div class="tool-head"><span class="tool-name">${esc(seg.name)}</span>${seg.detail ? `<span class="tool-detail">${esc(seg.detail)}</span>` : ''}</div>`;
   const diff = seg.diff ? renderDiff(seg.diff) : '';
   const outText = seg.output?.text?.trim() ? `<pre class="tool-out">${esc(seg.output.text)}</pre>` : '';
   const notes = (seg.output?.notes ?? []).map((n) => `<div class="tool-note">${esc(n)}</div>`).join('');
-  return `<div class="tool">${head}${diff}${outText}${notes}</div>`;
+  const sub = seg.sub
+    ? `<div class="tool-sub">sub-agent · ${esc(seg.sub.status)} · ${seg.sub.tools} tools${seg.sub.tokens == null ? '' : ` · ${seg.sub.tokens} tokens`} · ${seg.sub.seconds}s${seg.sub.model ? ` · ${esc(seg.sub.model)}` : ''}${seg.sub.detail ? `<br>${esc(seg.sub.detail)}` : ''}</div>`
+    : '';
+  return `<div class="tool">${head}${diff}${outText}${notes}${sub}</div>`;
 }
 
 /** Render a shaped transcript to a self-contained HTML page. This is Elowen's OWN renderer over the same
@@ -79,6 +82,7 @@ function renderSessionHtml(views: BrainMessageView[], title: string, generatedAt
   pre.diff .add { color:var(--add); }
   pre.diff .del { color:var(--del); }
   .tool-note { padding:6px 12px; font-size:12px; color:var(--muted); border-top:1px solid var(--line); }
+  .tool-sub { padding:7px 12px; font-size:12px; color:var(--muted); border-top:1px solid var(--line); }
   .divider { text-align:center; margin:26px 0; color:var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:.08em; position:relative; }
   .divider span { background:var(--bg); padding:0 12px; position:relative; }
   .divider::before { content:""; position:absolute; left:0; right:0; top:50%; border-top:1px solid var(--line); }
@@ -143,7 +147,7 @@ export async function exportBrainSession(o: {
     }
     // HTML: render with Elowen's own template over the shared shapeBrainMessages view (the same one the
     // web/CLI use), NOT PI's non-exported core/export-html — no fragile deep import to break on a PI bump.
-    const views = shapeBrainMessages(o.store.getMessages(o.sessionId));
+    const views = shapeBrainMessages(o.store.getMessages(o.sessionId), o.store.getSubagentRuns(o.sessionId));
     const htmlPath = join(dir, `${base}.html`);
     writeFileSync(htmlPath, renderSessionHtml(views, o.title || o.sessionId, new Date().toISOString().slice(0, 10)), 'utf8');
     return { path: htmlPath, filename: `${base}.html`, contentType: 'text/html; charset=utf-8', cleanup };

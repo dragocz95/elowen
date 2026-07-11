@@ -2,9 +2,10 @@ import { Markdown, truncateToWidth, visibleWidth, wrapTextWithAnsi } from '@eare
 import { MASCOT_ART } from './mascot.js';
 import { FLOAT_BAND } from './mascotFloat.js';
 import type { Component, MarkdownTheme } from '@earendil-works/pi-tui';
-import { framedDiffBlock, spinnerFrame, toolOutputBlock, UserBlock } from './components.js';
+import { framedDiffBlock, ProcessPanel, spinnerFrame, toolOutputBlock, UserBlock } from './components.js';
 import { ansi, chatTheme, color, glyph } from './theme.js';
-import type { BrainUsageView, McpServerView } from './brainClient.js';
+import type { BrainRateLimits, BrainRateLimitWindow, BrainUsageView, McpServerView } from './brainClient.js';
+import type { ProcessInfo } from '../../brain/processRegistry.js';
 import type { ChatView, ToolItem } from '../../brain/transcript.js';
 import { groupToolItems } from '../../brain/transcript.js';
 import { formatDuration, formatK, padAnsi } from '../ui/text.js';
@@ -88,7 +89,22 @@ interface TranscriptRow {
   line: string;
   kind?: 'thought' | 'expandable' | 'subagent';
   key?: string;
+  /** Owning turn for targeted expansion invalidation. Kept on interactive rows only. */
+  turnIndex?: number;
 }
+
+interface TurnLayoutEntry {
+  turn: ChatView['turns'][number];
+  /** Exact rendered height for the current width/theme/visibility context; null until indexed. */
+  height: number | null;
+  /** Optional rendered rows. Off-screen heights are learned only as the user scrolls; visible rows live
+   *  in an LRU so opening a large history never schedules a full-transcript Markdown pass. */
+  rows: TranscriptRow[] | null;
+}
+
+const HISTORY_OVERSCAN_ROWS = 8;
+/** Soft bound: one exceptionally tall visible turn may exceed it, but off-screen rows are evicted. */
+export const CHAT_VIEWPORT_ROW_CACHE_LIMIT = 2_048;
 
 export class TopRule implements Component {
   /** `getTitle` supplies the active conversation's name; falls back to the brand when it's still empty
@@ -149,6 +165,18 @@ export function startScreenBox(width: number): { boxWidth: number; leftPad: numb
  *  centering in {@link StartScreen.render}, kept here so overlay anchoring can never drift from it. */
 export function startScreenInputTop(rows: number, inputRows: number, noticeRows: number): number {
   const bodyLength = BANNER_ROWS + 1 + inputRows + 2 + 2 + 1 + (noticeRows ? 1 + noticeRows : 0);
+  if (bodyLength > rows - 1) {
+    let room = Math.max(0, rows - 1);
+    const inputCount = Math.min(inputRows, room);
+    room -= inputCount;
+    const noticeCount = Math.min(noticeRows, room);
+    room -= noticeCount;
+    const modelCount = room > 0 ? 1 : 0;
+    room -= modelCount;
+    const hintCount = room > 0 ? 1 : 0;
+    const compactLength = inputCount + noticeCount + modelCount + hintCount;
+    return Math.max(0, rows - 1 - compactLength);
+  }
   const topPad = Math.max(0, Math.floor((rows - 1 - bodyLength) / 2) - 1);
   return topPad + BANNER_ROWS + 1;
 }
@@ -185,7 +213,28 @@ export class StartScreen implements Component {
     const versionLabel = color.faint(`elowen v${st.version}`);
     const statusGap = Math.max(1, width - 2 - visibleWidth(st.statusLeft) - visibleWidth(versionLabel) - 2);
     const statusRow = `  ${st.statusLeft}${' '.repeat(statusGap)}${versionLabel}`;
-    const rows = this.getRows();
+    const rows = Math.max(1, Math.floor(this.getRows()));
+    // Short terminals cannot fit the decorative mascot/tip block. Keep the composer and status pinned,
+    // then spend any remaining rows on live notices/model/hints; never return more than the allocation.
+    if (body.length > rows - 1) {
+      let room = Math.max(0, rows - 1);
+      const inputCount = Math.min(inputLines.length, room);
+      const shownInput = (inputCount > 0 ? inputLines.slice(-inputCount) : []).map((line) => `${indent}${line}`);
+      room -= shownInput.length;
+      const shownNotice = noticeLines.slice(0, room).map((line) => center(line));
+      room -= shownNotice.length;
+      const showModel = room > 0;
+      if (showModel) room--;
+      const showHints = room > 0;
+      const compact = [
+        ...shownInput,
+        ...(showModel ? [`${indent}${truncateToWidth(st.modelLine, boxWidth, '…')}`] : []),
+        ...(showHints ? [`${' '.repeat(Math.max(0, leftPad + boxWidth - visibleWidth(st.hints)))}${st.hints}`] : []),
+        ...shownNotice,
+      ];
+      while (compact.length < rows - 1) compact.unshift('');
+      return [...compact, statusRow];
+    }
     // Center the block vertically, biased slightly upward (startScreenInputTop mirrors this math);
     // the status row is pinned to the last line.
     const topPad = Math.max(0, startScreenInputTop(rows, inputLines.length, noticeLines.length) - BANNER_ROWS - 1);
@@ -213,19 +262,32 @@ export class ChatViewport implements Component {
   private viewportHeight = 0;
   private totalLines = 0;
   private scrollbarColumn = 0;
-  private expandableRows = new Map<number, string>();
+  private expandableRows = new Map<number, { key: string; turnIndex: number }>();
   private subagentRows = new Map<number, string>();
-  // Drag-to-copy selection: transcript row indices (into the FULL rendered transcript, not the visible
-  // window) so a selection survives scrolling while the button is held.
+  // Drag-to-copy selection uses exact BOTTOM-relative row offsets. Discovering an older prefix in the
+  // background therefore cannot move an active selection or the visible viewport.
   private selAnchor: number | null = null;
   private selHead: number | null = null;
+  /** Only the currently visible transcript rows. Older code retained/mapped the entire flattened history
+   *  on every frame solely for drag-copy; a long conversation therefore stayed O(total rendered lines)
+   *  even though the terminal can show only `viewportHeight` rows. */
   private lastRows: string[] = [];
   private lastStart = 0;
-  // Per-turn render cache (see renderTranscript): settled turns render once per (width, theme,
-  // expand-state, index) — typing must not pay for Markdown-ing the whole history every keystroke.
-  private turnCache = new WeakMap<object, { key: string; rows: TranscriptRow[] }>();
-  private renderEpoch = 0;
-  private lastTheme: unknown = null;
+  private lastTotal = 0;
+  // Tail-first layout index. Heights are authoritative; row arrays are retained only for the visible/recent
+  // LRU. `knownStart` means every entry from it through the tail has an exact height.
+  private layout: TurnLayoutEntry[] = [];
+  private layoutTurnsRef: ChatView['turns'] | null = null;
+  private knownStart = 0;
+  private knownSuffixRows = 0;
+  private prefixHeights: number[] | null = null;
+  private layoutWidth = 0;
+  private layoutTheme: unknown = null;
+  private layoutShowsThoughts = true;
+  private rowLru = new Map<TurnLayoutEntry, true>();
+  private cachedRowCount = 0;
+  private currentExtraRows: TranscriptRow[] = [];
+  private currentContentWidth = 0;
   private expandedThoughts = new Set<string>();
   private expandedTools = new Set<string>();
 
@@ -245,7 +307,19 @@ export class ChatViewport implements Component {
 
   invalidate(): void { /* computed from current state */ }
 
+  /** Introspection used by focused tests/benchmarks and by no UI decisions: true only when totalLines is
+   *  exact for every turn at the current layout context. */
+  isHistoryIndexComplete(): boolean {
+    return this.currentContentWidth > 0
+      && this.knownStart === 0
+      && this.layout.length === this.state.view.turns.length;
+  }
+
+  indexedHistoryTurns(): number { return this.layout.filter((entry) => entry.height != null).length; }
+  cachedHistoryRows(): number { return this.cachedRowCount; }
+
   scroll(delta: number): void {
+    if (delta > 0) this.ensureScrollCapacity(this.scrollOffset + delta);
     this.scrollOffset = Math.max(0, Math.min(this.maxOffset, this.scrollOffset + delta));
   }
 
@@ -259,7 +333,8 @@ export class ChatViewport implements Component {
     const local = absRow - this.getTopRow() + 1;
     if (local < 1 || local > this.viewportHeight) return null;
     const idx = this.lastStart + local - 1;
-    return idx >= 0 && idx < this.lastRows.length ? idx : null;
+    if (idx < this.lastStart || idx >= this.lastTotal || idx >= this.lastStart + this.lastRows.length) return null;
+    return this.lastTotal - 1 - idx;
   }
 
   /** Start a drag-to-copy selection at a screen position. False when the press lands outside the
@@ -289,8 +364,13 @@ export class ChatViewport implements Component {
     this.selAnchor = null;
     this.selHead = null;
     if (a == null || h == null || a === h) return null;
-    const [lo, hi] = a <= h ? [a, h] : [h, a];
-    const text = this.lastRows.slice(lo, hi + 1)
+    // Larger bottom-offset = visually older/higher row. Convert the stable offsets into this frame's
+    // top-to-bottom visible indices only at copy time.
+    const older = Math.max(a, h);
+    const newer = Math.min(a, h);
+    const lo = this.lastTotal - 1 - older;
+    const hi = this.lastTotal - 1 - newer;
+    const text = this.lastRows.slice(lo - this.lastStart, hi - this.lastStart + 1)
       .map((line) => line.replace(/\x1b\[[0-9;]*m/g, '').replace(/\s+$/, ''))
       .join('\n');
     return text.trim() ? text : null;
@@ -305,23 +385,29 @@ export class ChatViewport implements Component {
   }
 
   toggleThought(absRow: number): void {
-    const key = this.expandableRows.get(absRow - this.getTopRow() + 1);
-    if (!key) return;
-    const store = key.startsWith('tool:') ? this.expandedTools : this.expandedThoughts;
-    if (store.has(key)) store.delete(key);
-    else store.add(key);
-    this.renderEpoch++; // expansion changes a SETTLED turn's rows → invalidate the per-turn cache
+    const target = this.expandableRows.get(absRow - this.getTopRow() + 1);
+    if (!target) return;
+    const store = target.key.startsWith('tool:') ? this.expandedTools : this.expandedThoughts;
+    if (store.has(target.key)) store.delete(target.key);
+    else store.add(target.key);
+    // Only this turn's height/rows changed. Updating its exact delta keeps every other settled Markdown
+    // cache valid (the old global epoch made one click re-render a thousand off-screen turns).
+    this.reindexTurn(target.turnIndex, true);
   }
 
   isScrollbarHit(x: number, y: number): boolean {
     const localRow = y - this.getTopRow() + 1;
-    return this.totalLines > this.viewportHeight
+    return this.isHistoryIndexComplete()
+      && this.totalLines > this.viewportHeight
       && localRow >= 1
       && localRow <= this.viewportHeight
       && Math.abs(x - this.scrollbarColumn) <= 1;
   }
 
   setScrollFromRow(absRow: number): void {
+    // A thumb ratio is meaningful only after every older turn has an exact height. PageUp/wheel remain
+    // available while indexing because their bottom-relative offsets can be satisfied incrementally.
+    if (!this.isHistoryIndexComplete()) return;
     if (this.totalLines <= this.viewportHeight || this.maxOffset <= 0) {
       this.scrollOffset = 0;
       return;
@@ -335,27 +421,34 @@ export class ChatViewport implements Component {
   }
 
   render(width: number): string[] {
-    const height = Math.max(8, this.getRows());
+    const height = Math.max(1, this.getRows());
     const chatWidth = Math.max(24, Math.min(width, this.getWidth()));
     const contentWidth = Math.max(20, chatWidth - 5);
-    const rows = this.renderTranscript(contentWidth);
-    this.maxOffset = Math.max(0, rows.length - height);
-    this.scrollOffset = Math.max(0, Math.min(this.maxOffset, this.scrollOffset));
+    this.prepareLayout(contentWidth);
+    this.currentExtraRows = this.extraRows();
     this.viewportHeight = height;
     this.scrollbarColumn = chatWidth;
-    this.totalLines = rows.length;
+    // The first synchronous paint touches only the exact tail needed for the screen plus a small wheel
+    // buffer. Older turns remain completely cold until PageUp/wheel asks for them, so an idle CLI never
+    // spends seconds parsing history the user did not open.
+    this.ensureTail(height + this.scrollOffset + HISTORY_OVERSCAN_ROWS, true);
+    this.refreshMetrics();
     this.expandableRows = new Map();
     this.subagentRows = new Map();
 
-    const start = Math.max(0, rows.length - height - this.scrollOffset);
-    this.lastRows = rows.map((r) => r.line);
+    const totalRows = this.totalLines;
+    const start = Math.max(0, totalRows - height - this.scrollOffset);
     this.lastStart = start;
     const selLo = this.selAnchor != null && this.selHead != null ? Math.min(this.selAnchor, this.selHead) : -1;
     const selHi = this.selAnchor != null && this.selHead != null ? Math.max(this.selAnchor, this.selHead) : -1;
-    const visible = rows.slice(start, start + height);
+    const visible = this.collectWindow(start, start + height);
     while (visible.length < height) visible.push({ line: '' });
-    return visible.map((entry, i) => {
-      if ((entry.kind === 'thought' || entry.kind === 'expandable') && entry.key) this.expandableRows.set(i + 1, entry.key);
+    this.lastRows = visible.map((r) => r.line);
+    this.lastTotal = totalRows;
+    const rendered = visible.map((entry, i) => {
+      if ((entry.kind === 'thought' || entry.kind === 'expandable') && entry.key && entry.turnIndex != null) {
+        this.expandableRows.set(i + 1, { key: entry.key, turnIndex: entry.turnIndex });
+      }
       if (entry.kind === 'subagent' && entry.key) this.subagentRows.set(i + 1, entry.key);
       const content = i === 0 && this.scrollOffset > 0
         ? this.historyChip(entry.line, chatWidth - 2)
@@ -363,38 +456,241 @@ export class ChatViewport implements Component {
       let cell = padAnsi(content, chatWidth - 2);
       // Drag-to-copy highlight: reverse-video the selected rows; re-arm after every SGR reset inside
       // the line, otherwise the first themed span would cancel the inversion mid-row.
-      if (start + i >= selLo && start + i <= selHi) cell = `\x1b[7m${cell.split('\x1b[0m').join('\x1b[0m\x1b[7m')}\x1b[27m`;
-      return padAnsi(`${cell} ${this.scrollbar(i, height, rows.length)}`, width);
+      const bottomOffset = totalRows - 1 - (start + i);
+      if (bottomOffset >= selLo && bottomOffset <= selHi) cell = `\x1b[7m${cell.split('\x1b[0m').join('\x1b[0m\x1b[7m')}\x1b[27m`;
+      return padAnsi(`${cell} ${this.scrollbar(i, height, totalRows)}`, width);
     });
+    return rendered;
   }
 
-  private renderTranscript(width: number): TranscriptRow[] {
-    // Per-turn row cache: settled turns are immutable, but re-rendering the WHOLE history through
-    // Markdown on every keystroke made typing visibly lag on long conversations. Streaming turns
-    // (and anything whose cache key drifted — width, theme, expand state, index) render fresh.
-    if (this.lastTheme !== chatTheme()) { this.lastTheme = chatTheme(); this.renderEpoch++; }
-    const baseKey = `${width}|${this.state.showThoughts !== false}|${this.renderEpoch}`;
-    const rows: TranscriptRow[] = [{ line: '' }];
-    for (const [turnIndex, turn] of this.state.view.turns.entries()) {
-      const turnKey = `${baseKey}|${turnIndex}`;
-      const cached = this.turnCache.get(turn);
-      if (cached && cached.key === turnKey) { rows.push(...cached.rows); continue; }
-      const turnRows = this.renderTurn(turn, turnIndex, width);
-      if (turn.role !== 'elowen' || !turn.streaming) this.turnCache.set(turn, { key: turnKey, rows: turnRows });
-      rows.push(...turnRows);
+  private prepareLayout(width: number): void {
+    this.currentContentWidth = width;
+    const theme = chatTheme();
+    const showThoughts = this.state.showThoughts !== false;
+    const turns = this.state.view.turns;
+    const contextChanged = this.layoutWidth !== width
+      || this.layoutTheme !== theme
+      || this.layoutShowsThoughts !== showThoughts;
+
+    if (contextChanged) {
+      this.clearSelection();
+      this.clearAllCachedRows();
+      this.layout = turns.map((turn) => ({ turn, height: null, rows: null }));
+      this.layoutTurnsRef = turns;
+      this.knownStart = this.layout.length;
+      this.knownSuffixRows = 0;
+      this.prefixHeights = null;
+      this.layoutWidth = width;
+      this.layoutTheme = theme;
+      this.layoutShowsThoughts = showThoughts;
+      return;
     }
-    if (this.state.notice) for (const line of this.state.notice.split('\n')) rows.push({ line: `  ${line}` });
+
+    if (this.layoutTurnsRef !== turns || this.layout.length !== turns.length) {
+      let common = 0;
+      while (common < this.layout.length && common < turns.length && this.layout[common]!.turn === turns[common]) common++;
+      if (common !== this.layout.length || common !== turns.length) {
+        this.clearSelection();
+        const replacedWholeTranscript = this.layout.length > 0 && common === 0;
+        for (const entry of this.layout.slice(common)) this.discardRows(entry);
+        this.layout.length = common;
+        for (let i = common; i < turns.length; i++) this.layout.push({ turn: turns[i]!, height: null, rows: null });
+        if (replacedWholeTranscript) { this.expandedThoughts.clear(); this.expandedTools.clear(); }
+        this.prefixHeights = null;
+        this.recomputeKnownSuffix();
+      }
+      this.layoutTurnsRef = turns;
+    }
+
+    // The live tail can mutate its elapsed label/output between object replacements. It alone is volatile;
+    // settled entries keep both exact heights and any retained rows.
+    const volatile = this.layout.at(-1);
+    if (volatile?.turn.role === 'elowen' && volatile.turn.streaming && volatile.height != null) {
+      this.clearSelection();
+      this.discardRows(volatile);
+      volatile.height = null;
+      this.prefixHeights = null;
+      this.recomputeKnownSuffix();
+    }
+  }
+
+  private extraRows(): TranscriptRow[] {
+    const rows: TranscriptRow[] = [];
+    if (this.state.notice) rows.push(...this.state.notice.split('\n').map((line) => ({ line: `  ${line}` })));
     if (this.state.view.notice) rows.push({ line: `  ${color.faint(`· ${this.state.view.notice}`)}` });
-    // No "thinking… Ns" transcript line — the generating state animates in the prompt meta line
-    // under the input instead (a line under the message just pushed the conversation around).
     return rows;
+  }
+
+  private clearSelection(): void { this.selAnchor = null; this.selHead = null; }
+
+  private clearAllCachedRows(): void {
+    for (const entry of this.rowLru.keys()) entry.rows = null;
+    this.rowLru.clear();
+    this.cachedRowCount = 0;
+  }
+
+  private discardRows(entry: TurnLayoutEntry): void {
+    if (!entry.rows) return;
+    this.cachedRowCount = Math.max(0, this.cachedRowCount - entry.rows.length);
+    entry.rows = null;
+    this.rowLru.delete(entry);
+  }
+
+  private retainRows(entry: TurnLayoutEntry, rows: TranscriptRow[]): void {
+    this.discardRows(entry);
+    entry.rows = rows;
+    this.cachedRowCount += rows.length;
+    this.rowLru.set(entry, true);
+    for (const candidate of this.rowLru.keys()) {
+      if (this.cachedRowCount <= CHAT_VIEWPORT_ROW_CACHE_LIMIT) break;
+      if (candidate === entry) continue; // soft cap: never evict the turn needed by this frame
+      this.discardRows(candidate);
+    }
+  }
+
+  private touchRows(entry: TurnLayoutEntry): void {
+    if (!entry.rows || !this.rowLru.has(entry)) return;
+    this.rowLru.delete(entry);
+    this.rowLru.set(entry, true);
+  }
+
+  private renderAndRecord(index: number, retain: boolean): TranscriptRow[] {
+    const entry = this.layout[index]!;
+    const oldHeight = entry.height;
+    const rows = this.renderTurn(entry.turn, index, this.currentContentWidth);
+    entry.height = rows.length;
+    if (retain) this.retainRows(entry, rows);
+    else this.discardRows(entry);
+    if (oldHeight != null && oldHeight !== rows.length) {
+      const delta = rows.length - oldHeight;
+      if (index >= this.knownStart) this.knownSuffixRows += delta;
+      if (this.prefixHeights) {
+        for (let i = index + 1; i < this.prefixHeights.length; i++) this.prefixHeights[i]! += delta;
+      }
+    }
+    return rows;
+  }
+
+  private rowsFor(index: number): TranscriptRow[] {
+    const entry = this.layout[index]!;
+    if (entry.rows) { this.touchRows(entry); return entry.rows; }
+    return this.renderAndRecord(index, true);
+  }
+
+  private reindexTurn(index: number, retain: boolean): void {
+    if (index < 0 || index >= this.layout.length || this.currentContentWidth <= 0) return;
+    this.renderAndRecord(index, retain);
+    this.refreshMetrics();
+  }
+
+  private recomputeKnownSuffix(): void {
+    this.knownStart = this.layout.length;
+    this.knownSuffixRows = 0;
+    while (this.knownStart > 0) {
+      const height = this.layout[this.knownStart - 1]!.height;
+      if (height == null) break;
+      this.knownStart--;
+      this.knownSuffixRows += height;
+    }
+    if (this.knownStart === 0) this.buildPrefixHeights();
+  }
+
+  private indexPrevious(retain: boolean): void {
+    if (this.knownStart <= 0) return;
+    const index = this.knownStart - 1;
+    const entry = this.layout[index]!;
+    if (entry.height == null) this.renderAndRecord(index, retain);
+    this.knownStart = index;
+    this.knownSuffixRows += entry.height ?? 0;
+    // Appending/replacing a live tail can reconnect to an already-indexed suffix. Absorb it without
+    // re-rendering; this is cheap integer work and preserves all settled caches.
+    while (this.knownStart > 0) {
+      const previous = this.layout[this.knownStart - 1]!.height;
+      if (previous == null) break;
+      this.knownStart--;
+      this.knownSuffixRows += previous;
+    }
+    if (this.knownStart === 0) this.buildPrefixHeights();
+  }
+
+  private ensureTail(requiredRows: number, retain: boolean): void {
+    const requiredTurnRows = Math.max(0, requiredRows - this.currentExtraRows.length);
+    while (this.knownStart > 0 && this.knownSuffixRows < requiredTurnRows) this.indexPrevious(retain);
+  }
+
+  private ensureScrollCapacity(targetOffset: number): void {
+    if (this.currentContentWidth <= 0) return;
+    this.ensureTail(this.viewportHeight + Math.max(0, targetOffset), true);
+    this.refreshMetrics();
+  }
+
+  private refreshMetrics(): void {
+    const leadingBlank = this.knownStart === 0 ? 1 : 0;
+    this.totalLines = leadingBlank + this.knownSuffixRows + this.currentExtraRows.length;
+    this.maxOffset = Math.max(0, this.totalLines - this.viewportHeight);
+    this.scrollOffset = Math.max(0, Math.min(this.maxOffset, this.scrollOffset));
+  }
+
+  private buildPrefixHeights(): void {
+    const prefix = new Array<number>(this.layout.length + 1).fill(0);
+    for (let i = 0; i < this.layout.length; i++) prefix[i + 1] = prefix[i]! + (this.layout[i]!.height ?? 0);
+    this.prefixHeights = prefix;
+  }
+
+  private firstTurnEndingAfter(offset: number): number {
+    const prefix = this.prefixHeights!;
+    let lo = 0;
+    let hi = this.layout.length;
+    while (lo < hi) {
+      const mid = Math.floor((lo + hi) / 2);
+      if (prefix[mid + 1]! <= offset) lo = mid + 1;
+      else hi = mid;
+    }
+    return lo;
+  }
+
+  private collectWindow(start: number, end: number): TranscriptRow[] {
+    const visible: TranscriptRow[] = [];
+    const append = (rows: TranscriptRow[], chunkStart: number): void => {
+      const chunkEnd = chunkStart + rows.length;
+      if (chunkEnd <= start || chunkStart >= end) return;
+      visible.push(...rows.slice(Math.max(0, start - chunkStart), Math.min(rows.length, end - chunkStart)));
+    };
+
+    if (this.knownStart === 0 && this.prefixHeights) {
+      append([{ line: '' }], 0);
+      const turnTotal = this.prefixHeights[this.layout.length]!;
+      const localStart = Math.max(0, start - 1);
+      const localEnd = Math.min(turnTotal, end - 1);
+      if (localStart < localEnd) {
+        for (let i = this.firstTurnEndingAfter(localStart); i < this.layout.length; i++) {
+          const chunkStart = 1 + this.prefixHeights[i]!;
+          if (chunkStart >= end || this.prefixHeights[i]! >= localEnd) break;
+          append(this.rowsFor(i), chunkStart);
+        }
+      }
+      append(this.currentExtraRows, 1 + turnTotal);
+      return visible;
+    }
+
+    let cursor = 0;
+    for (let i = this.knownStart; i < this.layout.length; i++) {
+      const height = this.layout[i]!.height ?? 0;
+      if (cursor + height > start && cursor < end) append(this.rowsFor(i), cursor);
+      cursor += height;
+      if (cursor >= end) break;
+    }
+    append(this.currentExtraRows, this.knownSuffixRows);
+    return visible;
   }
 
   /** All rows of ONE turn, starting from an (assumed) blank boundary and ending with a trailing blank —
    *  the cacheable unit of the transcript. */
   private renderTurn(turn: ChatView['turns'][number], turnIndex: number, width: number): TranscriptRow[] {
     const rows: TranscriptRow[] = [];
-    const add = (line: string, kind?: TranscriptRow['kind'], key?: string): void => { rows.push(kind ? { line, kind, key } : { line }); };
+    const add = (line: string, kind?: TranscriptRow['kind'], key?: string): void => {
+      rows.push(kind ? { line, kind, key, turnIndex } : { line });
+    };
     const addBlank = (): void => add('');
     {
       if (turn.role === 'you') {
@@ -434,7 +730,9 @@ export class ChatViewport implements Component {
               const before = rows.length;
               for (const line of toolOutputBlock(item.output, width, expanded)) add(line);
               if (item.output.fullText && item.output.fullText !== item.output.text) {
-                for (let i = before + 1; i <= rows.length; i++) rows[i - 1] = { ...rows[i - 1]!, kind: 'expandable', key: keyBase };
+                for (let i = before + 1; i <= rows.length; i++) {
+                  rows[i - 1] = { ...rows[i - 1]!, kind: 'expandable', key: keyBase, turnIndex };
+                }
               }
             } else if (!item.diff && !item.sub) {
               // A shell/console tool that finished silently still shows its command on its own line.
@@ -518,6 +816,7 @@ export class ChatViewport implements Component {
   }
 
   private scrollbar(index: number, height: number, total: number): string {
+    if (!this.isHistoryIndexComplete()) return ' ';
     if (total <= height) return color.faint('│');
     const thumbSize = this.thumbSize(height, total);
     const top = Math.floor(((this.maxOffset - this.scrollOffset) / this.maxOffset) * (height - thumbSize));
@@ -525,7 +824,7 @@ export class ChatViewport implements Component {
   }
 
   private thumbSize(height: number, total: number): number {
-    return Math.max(2, Math.floor((height / total) * height));
+    return Math.min(height, Math.max(1, Math.floor((height / total) * height)));
   }
 
   private renderTextWithPlans(text: string, width: number): string[] {
@@ -578,6 +877,11 @@ export interface TelemetryState {
   mcp: Pick<McpServerView, 'name' | 'status'>[] | null;
   /** Live LSP diagnostics state; null when the daemon doesn't report it → line hidden. */
   lspEnabled: boolean | null;
+  /** Owner-scoped background commands. They live in the right rail so they no longer consume transcript
+   *  height; the rail keeps the existing collapse + click-to-kill ProcessPanel behavior. */
+  processes?: ProcessInfo[];
+  /** OpenAI OAuth subscription usage. Null on other providers/accounts, which hides the whole section. */
+  rateLimits?: BrainRateLimits | null;
   /** Eased vertical drift of the flame (in panel rows) while the transcript is being scrolled; 0 at
    *  rest. The flame floats within a reserved ±{@link FLOAT_BAND} band so the Context section never moves. */
   floatOffset: number;
@@ -587,8 +891,17 @@ const PANEL_BAR_MARGIN = 2;
 const MCP_NAMES_SHOWN = 4;
 
 export class TelemetryPanel implements Component {
+  private readonly processPanel = new ProcessPanel();
+  private processTop = -1;
   constructor(private getState: () => TelemetryState) {}
   invalidate(): void { /* state driven */ }
+  isProcessHeaderRow(row: number): boolean {
+    return this.processTop >= 0 && this.processPanel.isHeaderRow(row - this.processTop);
+  }
+  toggleProcesses(): void { this.processPanel.toggleCollapsed(); }
+  processKillAt(row: number, x: number): string | null {
+    return this.processTop >= 0 ? this.processPanel.killAt(row - this.processTop, x) : null;
+  }
   render(width: number): string[] {
     const st = this.getState();
     const usage = st.usage;
@@ -602,14 +915,65 @@ export class TelemetryPanel implements Component {
       `  ${color.bold(color.text('Context'))}`,
       `  ${color.text(tokens)} ${color.faint('tokens')} ${color.faint(`· ${pct}`)}${usage ? ` ${color.faint(`· $${usage.cost.toFixed(2)}`)}` : ''}`,
       `${' '.repeat(PANEL_BAR_MARGIN)}${this.contextBar(usage?.percent ?? 0, width)}`,
+    ];
+    const limitRows = this.rateLimitRows(st.rateLimits ?? null, width);
+    if (limitRows.length > 0) rows.push('', ...limitRows);
+    this.processPanel.set(st.processes ?? []);
+    this.processPanel.setMaxRows(5);
+    const processRows = this.processPanel.render(width);
+    this.processTop = processRows.length > 0 ? rows.length + 1 : -1;
+    if (processRows.length > 0) rows.push('', ...processRows);
+    rows.push(
       '',
       `  ${color.bold(color.text('Project'))}`,
       `  ${color.text(truncateToWidth(st.cwd, Math.max(1, width - 4), '…'))}`,
       `  ${color.faint('branch')} ${color.accent(st.branch || 'unknown')}`,
       ...this.mcpRows(st.mcp, width),
       ...this.lspRows(st.lspEnabled),
-    ];
+    );
     return rows.map((r) => color.panelBg(padAnsi(r, width)));
+  }
+
+  /** Two deliberately one-line subscription meters: enough to spot the 5h/weekly pressure and reset
+   *  without turning the telemetry rail into a dashboard. Missing windows disappear independently. */
+  private rateLimitRows(limits: BrainRateLimits | null, width: number): string[] {
+    if (!limits) return [];
+    const meta = [limits.planType, limits.stale ? 'stale' : ''].filter(Boolean).join(' · ');
+    const rows = [`  ${color.bold(color.text('Limits'))}${meta ? ` ${color.faint(meta)}` : ''}`];
+    if (limits.primary) rows.push(this.rateLimitWindowRow(limits.primary, width));
+    if (limits.secondary) rows.push(this.rateLimitWindowRow(limits.secondary, width));
+    return rows.length > 1 ? rows : [];
+  }
+
+  private rateLimitWindowRow(window: BrainRateLimitWindow, width: number): string {
+    const labelWidth = 7;
+    const label = this.rateLimitDuration(window.windowMinutes).padEnd(labelWidth);
+    const pctValue = Math.max(0, Math.min(100, window.usedPercent));
+    const pct = `${Math.round(pctValue)}%`.padStart(4);
+    const reset = this.rateLimitReset(window.resetsAt, window.windowMinutes);
+    // `  label` + bar + ` pct reset`; at the supported 36-col rail minimum this still leaves >=9 cells.
+    const cells = Math.max(4, width - 15 - visibleWidth(reset));
+    const filled = Math.max(0, Math.min(cells, Math.round((pctValue / 100) * cells)));
+    const bar = `${color.accent('█'.repeat(filled))}${color.faint('░'.repeat(cells - filled))}`;
+    return `  ${color.faint(label)}${bar} ${color.text(pct)} ${color.faint(reset)}`;
+  }
+
+  private rateLimitDuration(minutes: number | null): string {
+    if (minutes === 10_080) return 'weekly';
+    if (minutes == null || minutes <= 0) return 'window';
+    if (minutes % 1_440 === 0) return `${minutes / 1_440}d`;
+    if (minutes % 60 === 0) return `${minutes / 60}h`;
+    return `${Math.round(minutes)}m`;
+  }
+
+  private rateLimitReset(seconds: number | null, minutes: number | null): string {
+    if (seconds == null || !Number.isFinite(seconds)) return '↻ —';
+    const at = new Date(seconds * 1_000);
+    if (Number.isNaN(at.getTime())) return '↻ —';
+    const time = at.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+    if ((minutes ?? 0) < 1_440) return `↻ ${time}`;
+    const weekday = at.toLocaleDateString(undefined, { weekday: 'short' });
+    return `↻ ${weekday} ${time}`;
   }
 
   /** The context meter spans the panel minus an equal margin on both edges, so it grows and shrinks

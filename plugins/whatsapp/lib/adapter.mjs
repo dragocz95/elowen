@@ -13,8 +13,6 @@ import { sameId, isGroup, numberOf, toJid, senderIsAdmin } from './jid.mjs';
 import { MESSAGES } from './messages.mjs';
 import { LiveMessage } from './stream.mjs';
 
-// Reasoning-effort levels PI accepts for extended-thinking models (mirrors THINKING_LEVELS daemon-side).
-const THINKING_LEVELS = ['minimal', 'low', 'medium', 'high', 'xhigh'];
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024; // default: larger inbound images are noted, not downloaded (cfg: maxImageBytes)
 const MAX_IMAGES = 4;                    // default vision cap per message (cfg: maxImages)
 const ASK_TTL_MS = 6 * 60_000;           // default: drop a pending ask after this (cfg: askTimeoutMs; > the core 5-min timeout)
@@ -53,7 +51,7 @@ function rolePrompt(policy) {
 
 export class WhatsAppAdapter {
   name = 'whatsapp';
-  constructor(cfg, logger, state, listModels, imageDirs, authDir, qrPngPath, answerQuestion) {
+  constructor(cfg, logger, state, listModels, imageDirs, authDir, qrPngPath, answerQuestion, chatCommands = []) {
     this.cfg = cfg;
     this.log = logger;
     this.plog = pinoShim(logger); // pino-shaped logger for Baileys internals
@@ -63,6 +61,7 @@ export class WhatsAppAdapter {
     this.authDir = authDir;
     this.qrPngPath = qrPngPath;
     this.answerQuestion = answerQuestion;
+    this.chatCommands = chatCommands;
     this.handler = null;
     this.ctl = null;
     this.sock = null;
@@ -89,6 +88,17 @@ export class WhatsAppAdapter {
   /** The chat conversation reference for commands: same identity onMessage reports (chat id folded
    *  with the /new generation), so a command targets the exact session a message would. */
   chatRef(jid) { return { platform: 'whatsapp', channelId: `${jid}#${this.state.get(jid).gen ?? 0}` }; }
+
+  /** Resolve the model whose per-chat override will drive the next turn. Without an override use the
+   *  exact daemon-resolved default marker; catalog ordering is presentation-only. */
+  async modelForChat(jid) {
+    const models = await this.listModels().catch(() => []);
+    const chosen = this.state.get(jid).model;
+    const active = chosen
+      ? models.find((m) => m.provider === chosen.provider && m.model === chosen.model)
+      : (models.find((m) => m.default === true) ?? models[0]);
+    return { models, active };
+  }
 
   /** Live pairing snapshot for the Pair modal: the current QR (as a PNG data URL), the phone pairing
    *  code, and whether the device is already linked. Read by GET /plugins/whatsapp/pairing. */
@@ -247,6 +257,7 @@ export class WhatsAppAdapter {
         prompt: rolePrompt(match),
         model: chosen ? { provider: chosen.provider, model: chosen.model } : undefined,
         thinkingLevel: typeof st.thinkingLevel === 'string' ? st.thinkingLevel : undefined,
+        fast: st.fast === true,
         tools: Array.isArray(match.tools) && match.tools.length > 0 ? match.tools : undefined,
       },
     };
@@ -320,7 +331,14 @@ export class WhatsAppAdapter {
     if (reactions) void this.react(m.key, '👀').catch(() => {});
 
     const vision = images.length ? parseModelExec(this.cfg.visionModel) : null;
-    const turnAccess = vision ? { ...access, model: vision } : access;
+    let turnAccess = access;
+    if (vision) {
+      const models = await this.listModels().catch(() => []);
+      const visionOption = models.find((model) => model.model === vision.model && (!vision.provider || model.provider === vision.provider));
+      // Do not leak the normal chat's OAuth priority tier into a temporary non-OAuth vision call.
+      // This only changes the current access descriptor; the saved Fast preference remains intact.
+      turnAccess = { ...access, model: vision, ...(!visionOption?.fastAvailable ? { fast: false } : {}) };
+    }
 
     try {
       const reply = await this.handler(
@@ -420,17 +438,39 @@ export class WhatsAppAdapter {
       if (!senderIsAdmin(ids, this.cfg.senderPolicies)) { await this.sendText(chatJid, this.msg.modelForbidden, m); return true; }
       const [, provider] = id.split(':');
       const [prov, mod] = [provider, id.slice(`model:${provider}:`.length)];
-      if (prov && mod) { this.state.patch(chatJid, { model: { provider: prov, model: mod } }); await this.sendText(chatJid, this.msg.modelSet(mod), m); }
+      if (prov && mod) {
+        const models = await this.listModels().catch(() => []);
+        const selected = models.find((model) => model.provider === prov && model.model === mod);
+        // Fast is a provider capability, not a portable chat preference. Clear it when leaving the
+        // OpenAI OAuth descriptor so the next turn cannot send priority service_tier to another API.
+        this.state.patch(chatJid, { model: { provider: prov, model: mod }, ...(!selected?.fastAvailable ? { fast: false } : {}) });
+        await this.sendText(chatJid, this.msg.modelSet(mod), m);
+      }
       this.pendingMenus.delete(chatJid);
       return true;
     }
     if (id.startsWith('think:')) {
       const ids = this.senderIds(senderJid, chatJid);
       if (!senderIsAdmin(ids, this.cfg.senderPolicies)) { await this.sendText(chatJid, this.msg.modelForbidden, m); return true; }
-      const v = id.slice('think:'.length);
-      const level = v === 'default' ? '' : (THINKING_LEVELS.includes(v) ? v : '');
+      // Re-resolve capabilities when the numeric reply arrives: the selected model/provider catalog can
+      // change while the menu is open, and only values the active descriptor advertises are accepted.
+      const { models, active } = await this.modelForChat(chatJid);
+      if (!models.length) {
+        this.pendingMenus.delete(chatJid);
+        await this.sendText(chatJid, this.msg.noModels, m);
+        return true;
+      }
+      const levels = Array.isArray(active?.reasoningLevels) ? active.reasoningLevels : [];
+      const value = id.slice('think:'.length);
+      if (!levels.length || (value !== 'default' && !levels.includes(value))) {
+        this.pendingMenus.delete(chatJid);
+        await this.sendText(chatJid, this.msg.reasoningUnavailable, m);
+        return true;
+      }
+      const level = value === 'default' ? '' : value;
       this.state.patch(chatJid, { thinkingLevel: level });
-      await this.sendText(chatJid, this.msg.thinkingSet(level || 'default'), m);
+      const displayLevel = level ? String(active.reasoningLabels?.[level] ?? level) : this.msg.reasoningDefaultValue;
+      await this.sendText(chatJid, this.msg.thinkingSet(displayLevel), m);
       this.pendingMenus.delete(chatJid);
       return true;
     }
@@ -539,7 +579,7 @@ export class WhatsAppAdapter {
 
   /** Handle a `/command`. Returns true when the text was a (recognized) command. */
   async handleCommand(chatJid, senderJid, text) {
-    const [cmd] = text.slice(1).split(/\s+/);
+    const [cmd, arg] = text.slice(1).trim().split(/\s+/);
     const admin = () => senderIsAdmin(this.senderIds(senderJid, chatJid), this.cfg.senderPolicies);
     switch (cmd.toLowerCase()) {
       case 'help':
@@ -561,8 +601,40 @@ export class WhatsAppAdapter {
       }
       case 'thinking': {
         if (!admin()) { await this.sendText(chatJid, this.msg.modelForbidden); return true; }
-        const options = [{ id: 'think:default', label: 'default', description: 'model default' }, ...THINKING_LEVELS.map((lv) => ({ id: `think:${lv}`, label: lv }))];
+        const { models, active } = await this.modelForChat(chatJid);
+        if (!models.length) { await this.sendText(chatJid, this.msg.noModels); return true; }
+        const levels = Array.isArray(active?.reasoningLevels) ? active.reasoningLevels : [];
+        if (!levels.length) { await this.sendText(chatJid, this.msg.reasoningUnavailable); return true; }
+        const options = [
+          { id: 'think:default', label: this.msg.reasoningDefaultValue, description: this.msg.reasoningDefault },
+          ...levels.map((level) => ({ id: `think:${level}`, label: active.reasoningLabels?.[level] ?? level })),
+        ];
         await this.sendMenu(chatJid, 'thinking', this.msg.pickThinking, options);
+        return true;
+      }
+      case 'fast': {
+        if (!this.chatCommands.some((c) => c.name === 'fast')) return false;
+        if (!admin()) { await this.sendText(chatJid, this.msg.controlForbidden); return true; }
+        const current = this.state.get(chatJid).fast === true;
+        const wanted = arg?.toLowerCase() === 'on' ? true : arg?.toLowerCase() === 'off' ? false : !current;
+        if (arg && !['on', 'off'].includes(arg.toLowerCase())) { await this.sendText(chatJid, this.msg.fastUsage); return true; }
+        const { active } = await this.modelForChat(chatJid);
+        // The catalog capability describes the selected provider/model for the next turn. Check it
+        // before touching a possibly stale live channel session, which may still run the previous model.
+        if (!active?.fastAvailable) {
+          if (wanted) { await this.sendText(chatJid, this.msg.fastUnavailable); return true; }
+          // A stale persisted `fast:true` must remain switchable off after moving to a non-OAuth model.
+          this.state.patch(chatJid, { fast: false });
+          await this.sendText(chatJid, this.msg.fastSet(false));
+          return true;
+        }
+        const ref = this.chatRef(chatJid);
+        const live = this.ctl?.status?.(ref) ?? null;
+        const liveMatchesSelection = live?.provider === active.provider && live.model === active.model;
+        const result = liveMatchesSelection ? (this.ctl?.setFast(ref, wanted) ?? null) : null;
+        if (result && !result.fastAvailable) { await this.sendText(chatJid, this.msg.fastUnavailable); return true; }
+        this.state.patch(chatJid, { fast: wanted });
+        await this.sendText(chatJid, this.msg.fastSet(wanted));
         return true;
       }
       case 'stop': case 'status': case 'compact': {
@@ -572,7 +644,7 @@ export class WhatsAppAdapter {
         if (cmd.toLowerCase() === 'stop') {
           const st = this.ctl.status(ref);
           if (!st?.streaming) { await this.sendText(chatJid, this.msg.nothingRunning); return true; }
-          this.ctl.abort(ref);
+          await this.ctl.abort(ref);
           await this.sendText(chatJid, this.msg.stopped);
           return true;
         }

@@ -59,6 +59,133 @@ describe('PlatformOrchestrator — unified per-turn access', () => {
     expect(sent.toolPolicy).toBeUndefined(); // admin role → full plugin toolset
   });
 
+  it('anchors a delegated child to its non-owner parent account, never the platform owner', async () => {
+    let sent: ChannelSendOpts | undefined;
+    let handler: ((src: never, text: string) => Promise<unknown>) | undefined;
+    const adapter = { name: 'subagent', listen: (fn: never) => { handler = fn as never; }, connect: async () => {} };
+    const channels = {
+      sessionOwnerUserId: (sessionId: string) => sessionId === 'brain-2' ? 2 : undefined,
+      send: async (o: ChannelSendOpts) => { sent = o; return 'ok'; },
+      fragmentFor: () => '',
+    };
+    const orch = new PlatformOrchestrator({
+      plugins: async () => ({ platforms: [adapter] }) as never,
+      platformOwner: () => 1,
+      policyForProjects: () => rolePolicy,
+      identity: linkedResolver(false),
+      channels: channels as never,
+    });
+    await orch.startAll();
+
+    await handler!({
+      platform: 'subagent', userId: 'subagent', channelId: 'sub-1', roleIds: [],
+      access: { admin: true, projectIds: [], parentSessionId: 'brain-2', permissionBoundary: null },
+    } as never, 'inspect');
+
+    expect(sent).toMatchObject({ ownerUserId: 2, parentSessionId: 'brain-2' });
+    expect(sent?.identity?.owner).toBe(false); // a second admin's child is not the instance operator
+  });
+
+  it('preserves delegated origin-owner truth and exact allow+deny policy for an owner-anchored parent', async () => {
+    let sent: ChannelSendOpts | undefined;
+    let handler: ((src: never, text: string) => Promise<unknown>) | undefined;
+    const adapter = { name: 'subagent', listen: (fn: never) => { handler = fn as never; }, connect: async () => {} };
+    const orch = new PlatformOrchestrator({
+      plugins: async () => ({ platforms: [adapter] }) as never,
+      platformOwner: () => 1,
+      policyForProjects: () => rolePolicy,
+      identity: linkedResolver(false),
+      channels: {
+        sessionOwnerUserId: () => 1, // shared Discord parent rows are anchored to the operator
+        send: async (o: ChannelSendOpts) => { sent = o; return 'ok'; },
+        fragmentFor: () => '',
+      } as never,
+    });
+    await orch.startAll();
+
+    await handler!({
+      platform: 'subagent', userId: 'subagent', channelId: 'sub-foreign-admin', roleIds: [],
+      access: {
+        admin: true, owner: false, projectIds: [], parentSessionId: 'brain-owner-channel',
+        toolPolicy: { allow: [], deny: ['discord_api'] },
+        permissionBoundary: null,
+      },
+    } as never, 'inspect');
+
+    expect(sent?.identity).toMatchObject({ admin: true, owner: false });
+    expect(sent?.toolPolicy).toEqual({ allow: new Set(), deny: new Set(['discord_api']) });
+    expect(sent?.delegatedAccess).toEqual({
+      admin: true, projectIds: [], owner: false,
+      permissionBoundary: null,
+      toolPolicy: { allow: [], deny: ['discord_api'] },
+    });
+  });
+
+  it('persists the account disabled-tools union in a delegated scope, never just the caller policy', async () => {
+    let sent: ChannelSendOpts | undefined;
+    let handler: ((src: never, text: string) => Promise<unknown>) | undefined;
+    const adapter = { name: 'subagent', listen: (fn: never) => { handler = fn as never; }, connect: async () => {} };
+    const orch = new PlatformOrchestrator({
+      plugins: async () => ({ platforms: [adapter] }) as never,
+      platformOwner: () => 1,
+      policyForProjects: () => rolePolicy,
+      disabledToolsFor: () => ['terminal_exec'],
+      identity: linkedResolver(false),
+      channels: {
+        sessionOwnerUserId: () => 1,
+        send: async (o: ChannelSendOpts) => { sent = o; return 'ok'; },
+        fragmentFor: () => '',
+      } as never,
+    });
+    await orch.startAll();
+
+    await handler!({
+      platform: 'subagent', userId: 'subagent', channelId: 'sub-scope', roleIds: [],
+      access: { admin: false, owner: true, projectIds: [3], parentSessionId: 'brain-owner', toolPolicy: { allow: ['read_file'] }, permissionBoundary: null },
+    } as never, 'inspect');
+
+    expect(sent?.delegatedAccess).toEqual({
+      admin: false, owner: true, projectIds: [3],
+      permissionBoundary: null,
+      toolPolicy: { allow: ['read_file'], deny: ['terminal_exec'] },
+    });
+    expect(sent?.toolPolicy).toEqual({ allow: new Set(['read_file']), deny: new Set(['terminal_exec']) });
+  });
+
+  it('carries a linked non-owner granular deny into the immutable child scope', async () => {
+    let sent: ChannelSendOpts | undefined;
+    let handler: ((src: never, text: string) => Promise<unknown>) | undefined;
+    const adapter = { name: 'subagent', listen: (fn: never) => { handler = fn as never; }, connect: async () => {} };
+    const boundary = {
+      rules: [{ scope: 'tools' as const, pattern: 'write_file', action: 'deny' as const }],
+      unattendedAsks: 'deny' as const,
+    };
+    const orch = new PlatformOrchestrator({
+      plugins: async () => ({ platforms: [adapter] }) as never,
+      platformOwner: () => 1,
+      policyForProjects: () => rolePolicy,
+      // The parent row belongs to the platform owner, while the original linked Discord participant is
+      // a different account. The boundary must therefore travel in source access, not be inferred later.
+      identity: linkedResolver(true),
+      channels: {
+        sessionOwnerUserId: () => 1,
+        send: async (o: ChannelSendOpts) => { sent = o; return 'ok'; },
+        fragmentFor: () => '',
+      } as never,
+    });
+    await orch.startAll();
+
+    await handler!({
+      platform: 'subagent', userId: 'subagent', channelId: 'sub-linked-non-owner', roleIds: [],
+      access: { admin: false, owner: false, projectIds: [3], parentSessionId: 'brain-owner', permissionBoundary: boundary },
+    } as never, 'inspect');
+
+    expect(sent?.delegatedAccess).toMatchObject({
+      admin: false, owner: false, projectIds: [3], permissionBoundary: boundary,
+    });
+    expect(sent?.writerUserId).toBeUndefined(); // no owner/private-memory identity crosses the boundary
+  });
+
   it('an origin-carrying message routes through the BOUND send (no channel session touched)', async () => {
     let sent: ChannelSendOpts | undefined;
     let handler: ((src: never, text: string, onEvent?: unknown) => Promise<unknown>) | undefined;

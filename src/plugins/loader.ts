@@ -8,6 +8,7 @@ import type { PluginEmbedder } from './registry.js';
 import type { PluginLogger, PluginModule, ProviderCredentials } from './api.js';
 import type { EmbeddingConfig } from '../embeddings/embeddingService.js';
 import type { AskAnswer } from '../brain/events.js';
+import type { PluginModelOption } from './api.js';
 
 /** Localized overrides for a plugin's user-facing manifest strings, keyed by field key. The manifest's
  *  own English strings stay the source/fallback; a `<lang>.json` supplies translations for other locales. */
@@ -79,7 +80,7 @@ export interface LoadPluginsOptions {
   /** Proactive-notification sink exposed to plugins as ctx.notify(). */
   notify?: (text: string, channelId?: string) => Promise<void>;
   /** Model catalog provider exposed to plugins as ctx.listModels(). */
-  listModels?: () => Promise<{ provider: string; providerLabel: string; model: string }[]>;
+  listModels?: () => Promise<PluginModelOption[]>;
   /** Central provider credential resolver exposed to plugins as ctx.resolveProvider(id). */
   resolveProvider?: (id: string) => ProviderCredentials | null;
   /** The SHARED text→vector embedder (the memory subsystem's EmbeddingService), exposed to plugins as

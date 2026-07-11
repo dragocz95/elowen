@@ -1,6 +1,11 @@
 import type { BrainEvent } from '../../brain/events.js';
 import { BrainClient } from './brainClient.js';
-import type { GoalView } from './brainClient.js';
+import type { BrainStreamFrame, GoalView } from './brainClient.js';
+import {
+  appendReplayBrainEvent,
+  brainEventReplayCursor,
+  type BrainStreamSnapshot,
+} from '../../brain/session/liveEventReplay.js';
 import { parseCommand } from './commands.js';
 import { resolveToken } from './token.js';
 
@@ -77,6 +82,205 @@ const dim = (s: string): string => `[2m${s}[0m`;
 const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
+/** A reconnect snapshot is a complete replacement for an interactive view, but headless output has
+ * already been written to a terminal and cannot be replaced. Keep a server-equivalent replay tail plus
+ * stable durable row ids: that lets us recover missed output without turning a compaction, identical
+ * answer, or mutable delegate state into a duplicate terminal line. The first snapshot is a baseline and
+ * may contain an older conversation, so it is never printed. */
+class HeadlessSnapshotReconciler {
+  private historySeeded = false;
+  /** Real server snapshots expose these SQLite UUIDs. They survive compaction for kept rows, while an
+   * identical new answer receives a distinct id; a sidecar update retains the id and is not reprinted. */
+  private durableIds = new Set<string>();
+  /** Locally observed current-run events, normalized with the exact server replacement rules. */
+  private tail: BrainEvent[] = [];
+  /** `agent_start` generation from the latest transport snapshot. Goal continuations have no user event,
+   * so this is the authoritative reconnect boundary between their runs. */
+  private snapshotRun: number | undefined;
+  private terminalSeen = false;
+  /** Visible assistant text emitted live but not yet consumed by a durable assistant row. It is a queue,
+   * rather than one row's text, because a PI run may contain text → tool → text before agent_end. */
+  private pendingAssistantText = '';
+  private needsDurableHistory = false;
+
+  constructor(private readonly deliver: (event: BrainEvent) => void) {}
+
+  live(event: BrainEvent): void {
+    // The next goal continuation starts with `step`, not a user echo. Mirror server beginRun() after a
+    // terminal boundary so an old idle/replay cursor never corrupts its new journal comparison.
+    if (this.terminalSeen && (event.type === 'user' || event.type === 'step')) {
+      this.tail = [];
+      this.terminalSeen = false;
+    }
+    this.remember(event);
+    this.emitLive(event);
+  }
+
+  snapshot(snapshot: BrainStreamSnapshot, suppressTerminal = false): void {
+    if (snapshot.run !== undefined) {
+      if (this.snapshotRun !== undefined && snapshot.run !== this.snapshotRun) {
+        this.tail = [];
+        this.terminalSeen = false;
+      }
+      this.snapshotRun = snapshot.run;
+    }
+    if (snapshot.truncated) this.needsDurableHistory = true;
+    this.reconcileHistory(snapshot.history);
+    this.reconcileTail(snapshot.events, suppressTerminal);
+    // At a terminal boundary the server persisted the run before it published idle/error, so the
+    // snapshot history itself is already the complete repair for an earlier truncated journal.
+    if (snapshot.events.some((event) => event.type === 'idle' || event.type === 'error')) {
+      this.needsDurableHistory = false;
+    }
+  }
+
+  /** Reconcile an explicit durable history fetch after `idle`. This is required even when no new SSE
+   * reconnect happens: a prior bounded snapshot may have omitted early live entries, and the settled
+   * store is then the only complete transcript. */
+  reconcileDurableHistory(history: BrainStreamSnapshot['history']): void {
+    this.reconcileHistory(history);
+    this.needsDurableHistory = false;
+  }
+
+  needsDurableReconcile(): boolean { return this.needsDurableHistory; }
+
+  private emitLive(event: BrainEvent): void {
+    if (event.type === 'text') this.pendingAssistantText += event.delta;
+    if (event.type === 'idle' || event.type === 'error') this.terminalSeen = true;
+    this.deliver(event);
+  }
+
+  private remember(event: BrainEvent): void {
+    void appendReplayBrainEvent(this.tail, event);
+  }
+
+  private setTail(events: BrainEvent[]): void {
+    this.tail = [];
+    for (const event of events) this.remember(event);
+  }
+
+  private reconcileHistory(history: BrainStreamSnapshot['history']): void {
+    const added: BrainStreamSnapshot['history'] = [];
+    for (const message of history) {
+      // Do not fall back to JSON/text occurrence counts here: compaction can remove an old identical
+      // reply, and progress sidecars mutate a row's representation. A daemon predating durable ids still
+      // has its live replay tail, but cannot safely offer the post-settle repair contract.
+      if (!message.id) continue;
+      if (this.historySeeded && !this.durableIds.has(message.id)) added.push(message);
+      this.durableIds.add(message.id);
+    }
+    if (!this.historySeeded) { this.historySeeded = true; return; }
+
+    for (const message of added) {
+      if (message.role !== 'assistant') continue;
+      const missing = consumeDurableText(message.text, this);
+      // A recovered row is ALREADY durable: write it but do not put it back into pendingAssistantText,
+      // or the next history refresh would compare that same output again.
+      if (missing) this.deliver({ type: 'text', delta: missing });
+    }
+  }
+
+  private reconcileTail(events: BrainEvent[], suppressTerminal: boolean): void {
+    const emitSnapshotEvent = (event: BrainEvent): void => {
+      // The first snapshot is captured before this invocation's `send()` runs. Its old `idle`/`error`
+      // describes the conversation that existed before this command, not this command's result; retain
+      // it in the reconciliation tail but do not let it finish the new invocation prematurely.
+      if (suppressTerminal && (event.type === 'idle' || event.type === 'error')) {
+        this.terminalSeen = true;
+        return;
+      }
+      this.emitLive(event);
+    };
+    const hasCursors = events.some((event) => brainEventReplayCursor(event) !== undefined);
+    if (hasCursors) {
+      const localByCursor = new Map<number, BrainEvent>();
+      for (const event of this.tail) {
+        const cursor = brainEventReplayCursor(event);
+        if (cursor !== undefined) localByCursor.set(cursor, event);
+      }
+      for (const event of events) {
+        const cursor = brainEventReplayCursor(event);
+        const known = cursor === undefined ? undefined : localByCursor.get(cursor);
+        if (known) continue;
+        // A newly coalesced text entry may carry a fresh latest cursor while the old connection already
+        // printed its prefix. The normalized local tail supplies that prefix even when state replacement
+        // changed an earlier entry's position.
+        if ((event.type === 'text' || event.type === 'reasoning')) {
+          const prior = [...this.tail].reverse().find((candidate) => candidate.type === event.type) as typeof event | undefined;
+          const delta = prior && prior.delta && event.delta.startsWith(prior.delta)
+            ? event.delta.slice(prior.delta.length) : prior && prior.delta?.startsWith(event.delta) ? '' : event.delta;
+          if (delta) emitSnapshotEvent({ type: event.type, delta });
+        } else emitSnapshotEvent(event);
+      }
+      this.setTail(events);
+      return;
+    }
+
+    // Legacy daemon fallback (no SSE/snapshot cursors). The shared normalizer above still makes state
+    // replacements deterministic; compare a suffix of the local tail to tolerate a bounded snapshot
+    // whose earliest entries were already dropped.
+    const local = this.tail;
+    let known = 0;
+    let incoming = 0;
+    while (known < local.length && incoming < events.length) {
+      const prior = local[known]!;
+      const next = events[incoming]!;
+      if (sameEvent(prior, next)) { known++; incoming++; continue; }
+      // The replay buffer coalesces adjacent token deltas. A live stream may have already printed a
+      // prefix, while a reconnect sees the larger coalesced event; write only its new suffix.
+      if ((prior.type === 'text' && next.type === 'text') || (prior.type === 'reasoning' && next.type === 'reasoning')) {
+        const priorDelta = prior.delta;
+        const nextDelta = next.delta;
+        if (nextDelta.startsWith(priorDelta)) {
+          const suffix = nextDelta.slice(priorDelta.length);
+          if (suffix) emitSnapshotEvent({ type: next.type, delta: suffix });
+          known++; incoming++;
+          continue;
+        }
+        // A socket can finish delivering bytes immediately before the reconnect snapshot was captured.
+        // They are already on stdout, so an older snapshot prefix is safely ignored.
+        if (priorDelta.startsWith(nextDelta)) { known++; incoming++; continue; }
+      }
+      break;
+    }
+    for (; incoming < events.length; incoming++) emitSnapshotEvent(events[incoming]!);
+    this.setTail(events);
+  }
+
+  /** Consume the oldest already-printed assistant bytes against one newly durable assistant row. */
+  takePendingAssistantText(full: string): string {
+    const pending = this.pendingAssistantText;
+    if (!pending) return full;
+    if (pending.startsWith(full)) {
+      this.pendingAssistantText = pending.slice(full.length);
+      return '';
+    }
+    if (full.startsWith(pending)) {
+      this.pendingAssistantText = '';
+      return full.slice(pending.length);
+    }
+    let overlap = 0;
+    for (let n = Math.min(full.length, pending.length); n > 0; n--) {
+      if (pending.slice(-n) === full.slice(0, n)) { overlap = n; break; }
+    }
+    if (overlap > 0) {
+      this.pendingAssistantText = '';
+      return full.slice(overlap);
+    }
+    return full;
+  }
+}
+
+function consumeDurableText(full: string, reconciler: HeadlessSnapshotReconciler): string {
+  return reconciler.takePendingAssistantText(full);
+}
+
+function sameEvent(a: BrainEvent, b: BrainEvent): boolean {
+  // Events are plain wire objects. Structural comparison keeps snapshot replay independent of object
+  // identity (the server intentionally gives concurrent streams distinct serialized frames).
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
 /** Non-interactive Elowen: start (or resume) a conversation, run one turn / slash / goal, stream the result
  *  to stdout, and exit with a code that reflects the outcome. The daemon + token plumbing is the same the
  *  TUI uses, so this exercises the full stack (model select, prompts, slash commands, autonomous goals)
@@ -139,6 +343,25 @@ export async function runHeadless(
   const doneP = new Promise<void>((r) => { resolveDone = r; });
   const finish = (code: number): void => { if (settled) return; settled = true; exit = code; resolveDone(); ctrl.abort(); };
   const emit = (e: BrainEvent): void => io.stdout(`${JSON.stringify(e)}\n`);
+  let snapshots!: HeadlessSnapshotReconciler;
+  // Every terminal event happens after persistence. Serialise the tiny history repair so a goal that
+  // immediately starts its next run cannot race a previous turn's identity bookkeeping, and so a
+  // truncated reconnect receives the complete durable assistant row before this command exits.
+  let idleReconciliation = Promise.resolve();
+  let awaitingIdleReconciliation = false;
+  const reconcileAtIdle = (): Promise<void> => {
+    awaitingIdleReconciliation = true;
+    idleReconciliation = idleReconciliation.then(async () => {
+      try { snapshots.reconcileDurableHistory(await c.history()); }
+      catch (error) {
+        // Live output remains usable on a transient history failure. Call it out only when the bounded
+        // replay actually required this repair, rather than turning a healthy finished turn into a hard
+        // failure because a best-effort GET raced daemon shutdown.
+        if (snapshots.needsDurableReconcile() && !o.json) io.stderr(`\n[unable to reconcile complete transcript: ${errMsg(error)}]\n`);
+      }
+    }).finally(() => { awaitingIdleReconciliation = false; });
+    return idleReconciliation;
+  };
 
   const onEvent = (e: BrainEvent): void => {
     if (o.json) emit(e);
@@ -158,10 +381,22 @@ export async function runHeadless(
       case 'error': if (!o.json) io.stderr(`\n[error] ${e.message}\n`); finish(1); break;
       case 'idle':
         // A turn settles at idle (agent_end). It is ordered AFTER every text frame on the same stream, so
-        // by here all output has been printed. Goals keep looping (many idles) — those settle via pollGoal.
-        if (!isGoalRun && activity) { if (!o.json) io.stdout('\n'); finish(0); }
+        // by here all output has been printed. Re-read the durable rows before finishing: a reconnect may
+        // have received a truncated replay journal, and goals need the stable ids before their next run.
+        // Goals keep looping (many idles) — their final code still comes from pollGoal.
+        void reconcileAtIdle().then(() => {
+          if (!isGoalRun && !settled && activity) { if (!o.json) io.stdout('\n'); finish(0); }
+        });
         break;
     }
+  };
+  snapshots = new HeadlessSnapshotReconciler(onEvent);
+  let firstSnapshot = true;
+  const onFrame = (frame: BrainStreamFrame): void => {
+    if (frame.type === 'snapshot') {
+      snapshots.snapshot(frame, firstSnapshot);
+      firstSnapshot = false;
+    } else snapshots.live(frame);
   };
 
   const printGoal = (g: GoalView | null): void => {
@@ -185,6 +420,7 @@ export async function runHeadless(
       if (!g && seen) { if (!o.json) io.stdout('\n[goal gone — cleared or conversation switched]\n'); finish(1); return; }
       if (g && g.status !== 'active' && g.status !== 'draft') {
         const code = g.status === 'done' ? 0 : g.last_verdict === 'blocked' ? 4 : 3;
+        await idleReconciliation;
         if (o.json) io.stdout(`${JSON.stringify({ type: 'goal', goal: g })}\n`);
         else io.stdout(`\n[goal ${g.status}${g.paused_reason ? `: ${g.paused_reason}` : ''}${g.last_evidence ? ` — ${g.last_evidence}` : ''}]\n`);
         finish(code);
@@ -205,7 +441,9 @@ export async function runHeadless(
   // streamed (e.g. "brain not started"), never the 300s timeout on a working turn.
   const fireTurn = (text: string, mode: 'build' | 'plan'): void => {
     void c.send(text, mode).then(
-      () => { if (!settled) setTimeout(() => { if (!settled) { if (!o.json) io.stdout('\n'); finish(0); } }, 300); },
+      () => { if (!settled) setTimeout(() => {
+        if (!settled && !awaitingIdleReconciliation) { if (!o.json) io.stdout('\n'); finish(0); }
+      }, 300); },
       (e) => { if (!settled && !activity) { io.stderr(`\n${errMsg(e)}\n`); finish(1); } },
     );
   };
@@ -237,6 +475,11 @@ export async function runHeadless(
         else for (const r of rows) io.stdout(`${r.active ? '* ' : '  '}${r.id}\t${r.title || '(untitled)'}\t${r.model}\n`);
         finish(0); break;
       }
+      case 'rename': {
+        if (!arg) { io.stderr('/rename needs a conversation title.\n'); finish(2); break; }
+        const renamed = await c.renameSession(sessionId, arg);
+        outResult(`renamed: ${renamed.title}`, { sessionId, title: renamed.title }); finish(0); break;
+      }
       case 'model': {
         const parts = arg.split(/\s+/).filter(Boolean);
         // No arg would send `{}` and SILENTLY reset the model to the default — refuse instead.
@@ -245,8 +488,24 @@ export async function runHeadless(
         outResult(`model: ${r.model}`, { model: r.model }); finish(0); break;
       }
       case 'reasoning': {
-        if (!arg) { io.stderr('/reasoning needs a level (minimal|low|medium|high|xhigh).\n'); finish(2); break; }
+        if (!arg) { io.stderr('/reasoning needs a model-supported level (for example low|medium|high|ultra|max).\n'); finish(2); break; }
         const r = await c.setThinkingLevel(arg); outResult(`thinking: ${r.thinkingLevel}`, { thinkingLevel: r.thinkingLevel }); finish(0); break;
+      }
+      case 'fast': {
+        const value = arg.toLowerCase();
+        if (value === 'status') {
+          const s = await c.status();
+          outResult(`fast: ${s.fastAvailable ? (s.fast ? 'on' : 'off') : 'unavailable'}`, {
+            fast: s.fast ?? false, fastAvailable: s.fastAvailable ?? false,
+          });
+          finish(0);
+          break;
+        }
+        if (value && value !== 'on' && value !== 'off') {
+          io.stderr('/fast accepts on, off, status, or no argument (toggle).\n'); finish(2); break;
+        }
+        const r = await c.setFast(value === 'on' ? true : value === 'off' ? false : undefined);
+        outResult(`fast: ${r.fast ? 'on' : 'off'}`, r); finish(0); break;
       }
       case 'help': io.stdout(`${USAGE}\n`); finish(0); break;
       case 'resume': io.stderr('use --resume <id> (or --list to see ids) in headless mode.\n'); finish(2); break;
@@ -277,7 +536,9 @@ export async function runHeadless(
     } catch (e) { io.stderr(`\n${errMsg(e)}\n`); finish(1); }
   };
 
-  const streamP = c.stream(onEvent, ctrl.signal, 1000, () => void dispatch())
+  // The bound stream gets the same reconnect snapshot contract as the TUI. The reconciler above keeps
+  // the append-only terminal truthful when a completed reply was missed during a socket drop.
+  const streamP = c.stream(onFrame, ctrl.signal, 1000, () => void dispatch(), undefined, true)
     .catch((e) => { if (!settled) { io.stderr(`stream error: ${errMsg(e)}\n`); finish(1); } });
 
   const timer = setTimeout(() => {

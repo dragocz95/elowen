@@ -114,5 +114,5 @@ export function Terminal({ name, interactive = false }: { name: string; interact
     term.write(composeFrame(pane));
   }, [pane]);
 
-  return <div ref={ref} className="h-full w-full border border-border bg-bg" />;
+  return <div ref={ref} className="elowen-terminal h-full w-full overflow-hidden border border-border bg-bg" />;
 }

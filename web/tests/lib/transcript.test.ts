@@ -27,6 +27,17 @@ describe('web groupToolItems: collapse consecutive same-tool pills', () => {
       ['read_file', 1], ['list_dir', 1], ['read_file', 1], ['read_file', 1], ['edit_file', 1],
     ]);
   });
+
+  it('keeps a delegate row carrying sub-agent state out of collapsed tool groups', () => {
+    const sub = { sessionId: 'brain-ch-subagent-child', status: 'running' as const, task: 'inspect', tools: 1, seconds: 2 };
+    const groups = groupToolItems([
+      { name: 'delegate', detail: 'first' },
+      { name: 'delegate', detail: 'background', sub },
+      { name: 'delegate', detail: 'third' },
+    ]);
+    expect(groups.map((group) => group.count)).toEqual([1, 1, 1]);
+    expect(groups[1]!.item.sub?.sessionId).toBe('brain-ch-subagent-child');
+  });
 });
 
 describe('web transcript fromHistory: compaction divider', () => {
@@ -80,5 +91,35 @@ describe('web transcript reducer', () => {
     view = reduce(view, { type: 'idle' }); // the first turn settles
     view = reduce(view, { type: 'user', text: 'queued follow-up' });
     expect(view.turns.at(-1)).toEqual({ role: 'you', text: 'queued follow-up' });
+  });
+
+  it('rehydrates durable child state and patches done after parent idle without a new spinner turn', () => {
+    let view = fromHistory([{ role: 'assistant', text: '', segments: [{
+      kind: 'tool', id: 'delegate-1', name: 'delegate', detail: 'inspect',
+      sub: { sessionId: 'brain-ch-subagent-child', status: 'running', task: 'inspect', tools: 1, seconds: 2 },
+    }] }]);
+    expect(view.thinking).toBe(false);
+    const before = view.turns.length;
+
+    view = reduce(view, {
+      type: 'subagent', id: 'delegate-1', sessionId: 'brain-ch-subagent-child', status: 'done',
+      task: 'inspect', tools: 4, tokens: 800, seconds: 9,
+    });
+    expect(view.turns).toHaveLength(before);
+    expect(view.thinking).toBe(false);
+    const turn = view.turns[0];
+    if (!turn || turn.role !== 'elowen' || turn.segments[0]?.kind !== 'tools') throw new Error('expected delegate row');
+    expect(turn.segments[0].items[0]).toMatchObject({
+      id: 'delegate-1', sub: { sessionId: 'brain-ch-subagent-child', status: 'done', tools: 4 },
+    });
+  });
+
+  it('ignores an unknown post-idle sub-agent id without creating a turn', () => {
+    const before = fromHistory([{ role: 'assistant', text: 'settled' }]);
+    const after = reduce(before, {
+      type: 'subagent', id: 'missing', sessionId: 'child', status: 'done', task: 'x', tools: 1, seconds: 1,
+    });
+    expect(after).toBe(before);
+    expect(after.thinking).toBe(false);
   });
 });

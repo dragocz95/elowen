@@ -50,6 +50,7 @@ function fakeClient(goalRow: GoalView | null = null): { client: never; calls: st
     async start(o: { session?: string }) { calls.push(`start:${JSON.stringify(o)}`); return { sessionId: o.session ?? 'sess-1' }; },
     async setModel(s: { provider?: string; model?: string }) { calls.push(`setModel:${s.provider ?? ''}/${s.model ?? ''}`); return { model: s.model ?? 'default' }; },
     async setThinkingLevel(l: string) { calls.push(`think:${l}`); return { thinkingLevel: l }; },
+    async setFast(on?: boolean) { calls.push(`fast:${String(on)}`); return { fast: on ?? true, fastAvailable: true }; },
     async stream(onEvent: (e: BrainEvent) => void, signal: AbortSignal, _b: number, onOpen?: () => void) {
       sink = onEvent; onOpen?.();
       // A slash/turn can settle (and abort) synchronously inside onOpen's dispatch, before we'd register
@@ -61,7 +62,9 @@ function fakeClient(goalRow: GoalView | null = null): { client: never; calls: st
     async compact() { calls.push('compact'); return { message: 'compacted 3 turns', usage: null, compacted: true }; },
     async status() { calls.push('status'); return { model: 'm', title: 't' } as never; },
     async skills() { calls.push('skills'); return []; },
+    async history() { return []; },
     async sessions() { calls.push('sessions'); return [{ id: 'brain-1', title: 'First chat', model: 'm', updated_at: '2026-07-07', active: true }]; },
+    async renameSession(id: string, title: string) { calls.push(`rename:${id}:${title}`); return { id, title }; },
     async commands() { calls.push('commands'); return [{ name: 'review', description: 'Review code', kind: 'prompt', prompt: 'Review the following: $ARGUMENTS' }]; },
     async goal() { return goalRow; },
     async setGoal(text: string, _d: boolean, budget?: number) { calls.push(`setGoal:${text}:${budget ?? ''}`); return {} as GoalView; },
@@ -81,6 +84,155 @@ describe('cli/chat/headless.runHeadless', () => {
     expect(code).toBe(0);
     expect(out.join('')).toContain('hello world');
     expect(calls).toContain('send:build:hello');
+  });
+
+  it('recovers a reconnect snapshot tail without reprinting durable history or prior live text', async () => {
+    const calls: string[] = [];
+    let snapshotRequested: boolean | undefined;
+    const client = {
+      async start() { return { sessionId: 'sess-1' }; },
+      async stream(
+        onFrame: (frame: BrainEvent | { type: 'snapshot'; cursor: number; history: { id?: string; role: string; text: string }[]; events: BrainEvent[] }) => void,
+        signal: AbortSignal,
+        _backoff: number,
+        onOpen?: () => void,
+        _session?: string,
+        snapshot?: boolean,
+      ) {
+        snapshotRequested = snapshot;
+        // Initial history is a baseline, not output for this invocation.
+        onFrame({ type: 'snapshot', cursor: 1, history: [{ id: 'old-u', role: 'user', text: 'old question' }, { id: 'old-a', role: 'assistant', text: 'old answer' }], events: [] });
+        onOpen?.();
+        await Promise.resolve();
+
+        // The original connection printed the prefix, then dropped. The replacement snapshot coalesces
+        // it with bytes that arrived while the socket was gone.
+        onFrame({ type: 'user', text: 'new question', durableId: 'u-live' });
+        onFrame({ type: 'text', delta: 'hello ' });
+        onFrame({
+          type: 'snapshot', cursor: 4,
+          history: [{ id: 'old-u', role: 'user', text: 'old question' }, { id: 'old-a', role: 'assistant', text: 'old answer' }],
+          events: [{ type: 'user', text: 'new question', durableId: 'u-live' }, { type: 'text', delta: 'hello world' }],
+        });
+        // The turn settles while disconnected. The next snapshot has the complete durable assistant row
+        // plus idle; it must neither lose `world` nor print `hello world` a second time.
+        onFrame({
+          type: 'snapshot', cursor: 5,
+          history: [
+            { id: 'old-u', role: 'user', text: 'old question' }, { id: 'old-a', role: 'assistant', text: 'old answer' },
+            { id: 'new-u', role: 'user', text: 'new question' }, { id: 'new-a', role: 'assistant', text: 'hello world' },
+          ],
+          events: [{ type: 'idle' }],
+        });
+        if (!signal.aborted) await new Promise<void>((resolve) => signal.addEventListener('abort', () => resolve(), { once: true }));
+      },
+      async send(text: string, mode: string) { calls.push(`send:${mode}:${text}`); },
+    };
+    const { io: sink, out } = io();
+    const code = await runHeadless('http://x', {}, ['new question'], { client: client as never, io: sink });
+
+    const printed = out.join('');
+    expect(code).toBe(0);
+    expect(snapshotRequested).toBe(true);
+    expect(calls).toEqual(['send:build:new question']);
+    expect(printed).toContain('hello world');
+    expect(printed.match(/hello world/g)).toHaveLength(1);
+    expect(printed).not.toContain('old answer');
+  });
+
+  it('uses durable row ids so compaction can replace identical text without losing it or reprinting a mutable row', async () => {
+    const initial = [
+      { id: 'old-ok', role: 'assistant', text: 'OK' },
+      { id: 'delegate-row', role: 'assistant', text: 'already rendered', segments: [{ kind: 'tool', name: 'delegate', sub: { status: 'running' } }] },
+    ];
+    const settled = [
+      // The old identical OK row was compacted away. The delegate row changed only its durable sidecar.
+      { id: 'delegate-row', role: 'assistant', text: 'already rendered', segments: [{ kind: 'tool', name: 'delegate', sub: { status: 'done' } }] },
+      { id: 'new-ok', role: 'assistant', text: 'OK' },
+    ];
+    const client = {
+      async start() { return { sessionId: 'sess-1' }; },
+      async history() { return settled; },
+      async stream(onFrame: (frame: unknown) => void, signal: AbortSignal, _backoff: number, onOpen?: () => void) {
+        onFrame({ type: 'snapshot', cursor: 1, run: 0, history: initial, events: [] });
+        onOpen?.();
+        await Promise.resolve();
+        onFrame({ type: 'snapshot', cursor: 2, run: 1, history: settled, events: [{ type: 'idle' }] });
+        if (!signal.aborted) await new Promise<void>((resolve) => signal.addEventListener('abort', resolve, { once: true }));
+      },
+      async send() {},
+    };
+    const { io: sink, out } = io();
+    const code = await runHeadless('http://x', {}, ['answer'], { client: client as never, io: sink });
+    const printed = out.join('');
+
+    expect(code).toBe(0);
+    expect(printed.match(/OK/g)).toHaveLength(1);
+    expect(printed).not.toContain('already rendered');
+  });
+
+  it('normalizes state replacements and resets a goal replay journal between terminal runs', async () => {
+    let historyReads = 0;
+    let frameSink!: (frame: unknown) => void;
+    const one = [{ id: 'a-one', role: 'assistant', text: 'one' }];
+    const two = [...one, { id: 'a-two', role: 'assistant', text: 'two' }];
+    const client = {
+      async start() { return { sessionId: 'sess-1' }; },
+      async history() { return ++historyReads === 1 ? one : two; },
+      async stream(onFrame: (frame: unknown) => void, signal: AbortSignal, _backoff: number, onOpen?: () => void) {
+        frameSink = onFrame;
+        onFrame({ type: 'snapshot', cursor: 1, run: 0, history: [], events: [] });
+        onOpen?.();
+        if (!signal.aborted) await new Promise<void>((resolve) => signal.addEventListener('abort', resolve, { once: true }));
+      },
+      async setGoal() {
+        // Two updates to the same state key must collapse exactly like LiveEventReplay; the reconnect
+        // tail below contains only the second one and must not cause `one` to be emitted again.
+        frameSink({ type: 'tool_progress', id: 'build', text: 'old' });
+        frameSink({ type: 'tool_progress', id: 'build', text: 'new' });
+        frameSink({ type: 'step', step: 1, maxSteps: 8 });
+        frameSink({ type: 'text', delta: 'one' });
+        frameSink({ type: 'idle' });
+        // Goal continuation: no user event separates runs. `run:2` is the server-authoritative reset.
+        frameSink({ type: 'snapshot', cursor: 5, run: 2, history: one, events: [
+          { type: 'tool_progress', id: 'build', text: 'newer' },
+          { type: 'step', step: 1, maxSteps: 8 }, { type: 'text', delta: 'two' },
+        ] });
+        frameSink({ type: 'snapshot', cursor: 7, run: 2, history: two, events: [{ type: 'idle' }] });
+        return {};
+      },
+      async goal() { return { status: 'done', last_verdict: 'done', last_evidence: '', subgoals: '[]', turns_used: 2, turn_budget: 4, paused_reason: '' }; },
+    };
+    const { io: sink, out } = io();
+    const code = await runHeadless('http://x', {}, ['--goal', 'finish both'], { client: client as never, io: sink });
+    const printed = out.join('');
+
+    expect(code).toBe(0);
+    const reply = printed.split('[goal')[0] ?? '';
+    expect(reply.match(/one/g)).toHaveLength(1);
+    expect(reply.match(/two/g)).toHaveLength(1);
+  });
+
+  it('recovers a truncated reconnect from settled durable history before exiting', async () => {
+    const history = [{ id: 'a-recovered', role: 'assistant', text: 'full reply recovered from SQLite' }];
+    const client = {
+      async start() { return { sessionId: 'sess-1' }; },
+      async history() { return history; },
+      async stream(onFrame: (frame: unknown) => void, signal: AbortSignal, _backoff: number, onOpen?: () => void) {
+        onFrame({ type: 'snapshot', cursor: 1, run: 0, history: [], events: [] });
+        onOpen?.();
+        await Promise.resolve();
+        onFrame({ type: 'snapshot', cursor: 999, run: 1, truncated: true, history: [], events: [] });
+        onFrame({ type: 'idle' });
+        if (!signal.aborted) await new Promise<void>((resolve) => signal.addEventListener('abort', resolve, { once: true }));
+      },
+      async send() {},
+    };
+    const { io: sink, out } = io();
+    const code = await runHeadless('http://x', {}, ['recover'], { client: client as never, io: sink });
+
+    expect(code).toBe(0);
+    expect(out.join('')).toContain('full reply recovered from SQLite');
   });
 
   it('continues the active conversation by default; --new starts fresh; prints the session id', async () => {
@@ -134,6 +286,24 @@ describe('cli/chat/headless.runHeadless', () => {
     expect(code).toBe(0);
     expect(calls).toContain('status');
     expect(out.join('')).toContain('"model"');
+  });
+
+  it('sets Fast explicitly in headless CLI instead of dropping the slash argument', async () => {
+    const { client, calls } = fakeClient();
+    const { io: sink, out } = io();
+    const code = await runHeadless('http://x', {}, ['-p', '/fast off'], { client, io: sink });
+    expect(code).toBe(0);
+    expect(calls).toContain('fast:false');
+    expect(out.join('')).toContain('fast: off');
+  });
+
+  it('renames the bound conversation from headless CLI', async () => {
+    const { client, calls } = fakeClient();
+    const { io: sink, out } = io();
+    const code = await runHeadless('http://x', {}, ['-p', '/rename Release triage'], { client, io: sink });
+    expect(code).toBe(0);
+    expect(calls).toContain('rename:sess-1:Release triage');
+    expect(out.join('')).toContain('renamed: Release triage');
   });
 
   it('runs a goal (--goal) and maps a done outcome to exit 0', async () => {

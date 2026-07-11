@@ -3,7 +3,7 @@ import { SLASH_COMMANDS, commandsFor, commandsWithPlugins, buildPromptTemplates,
 
 describe('slash command registry', () => {
   it('exposes the core commands', () => {
-    for (const n of ['new', 'stop', 'status', 'compact', 'plan', 'build', 'model', 'reasoning', 'restart', 'help']) {
+    for (const n of ['new', 'stop', 'status', 'compact', 'plan', 'build', 'model', 'fast', 'reasoning', 'rename', 'restart', 'help']) {
       expect(findCommand(n), n).toBeDefined();
     }
   });
@@ -16,7 +16,7 @@ describe('slash command registry', () => {
   });
 
   it('scopes the CLI conversation pickers to the CLI surface only', () => {
-    for (const n of ['sessions', 'resume', 'delete', 'quit']) {
+    for (const n of ['sessions', 'resume', 'rename', 'delete', 'quit']) {
       expect(commandsFor('cli', true).some((c) => c.name === n), `cli ${n}`).toBe(true);
       expect(commandsFor('discord', true).some((c) => c.name === n), `discord ${n}`).toBe(false);
       expect(commandsFor('web', true).some((c) => c.name === n), `web ${n}`).toBe(false);
@@ -24,10 +24,16 @@ describe('slash command registry', () => {
   });
 
   it('publishes stop/status/compact to every surface', () => {
-    for (const surface of ['cli', 'discord', 'web'] as const) {
+    for (const surface of ['cli', 'discord', 'whatsapp', 'web'] as const) {
       for (const n of ['stop', 'status', 'compact']) {
         expect(commandsFor(surface, true).some((c) => c.name === n), `${surface} ${n}`).toBe(true);
       }
+    }
+  });
+
+  it('publishes /fast from the same catalog to every supported chat surface', () => {
+    for (const surface of ['cli', 'discord', 'whatsapp', 'web'] as const) {
+      expect(commandsFor(surface, true).some((c) => c.name === 'fast'), surface).toBe(true);
     }
   });
 

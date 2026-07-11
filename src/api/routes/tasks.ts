@@ -167,7 +167,8 @@ export function registerTaskRoutes(app: ElowenApp, ctx: RouteContext): void {
     if (!task) return c.json({ error: 'not found' }, 404);
     if (!canAccessProject(c, task.project_id)) return c.json({ error: 'forbidden' }, 403);
     if (!d.brainStore) return c.json([]);
-    return c.json(shapeBrainMessages(d.brainStore.getMessages(`brain-task-${id}`)));
+    const sessionId = `brain-task-${id}`;
+    return c.json(shapeBrainMessages(d.brainStore.getMessages(sessionId), d.brainStore.getSubagentRuns(sessionId)));
   });
 
   app.patch('/tasks/:id', async c => {

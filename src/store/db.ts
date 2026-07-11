@@ -98,6 +98,14 @@ export function openDb(path: string): Db {
   // Brain conversation ↔ working directory binding (per-client CLI sessions). Empty on migrated rows =
   // a cwd-less legacy/web session; stamped from the validated client-reported cwd on start/send.
   addColumn(db, 'brain_sessions', 'work_dir', "TEXT NOT NULL DEFAULT ''");
+  // Durable delegation tree. NULL keeps every existing conversation top-level. Create the index only
+  // AFTER adding the column: schema.sql runs before additive migrations, so putting this index there
+  // would make an old brain_sessions table fail with "no such column: parent_session_id" on startup.
+  addColumn(db, 'brain_sessions', 'parent_session_id', 'TEXT');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_brain_sessions_parent ON brain_sessions(parent_session_id)');
+  // Immutable, JSON-serialized delegated execution scope. Legacy child rows intentionally remain NULL:
+  // a continuation must reject them rather than guessing an owner-wide replacement scope.
+  addColumn(db, 'brain_sessions', 'delegated_access', 'TEXT');
   // Extended usage/cost accounting (see task_usage in schema.sql). All nullable/zero-default so existing
   // rows read as legacy (reasoning 0, no currency, cost_source NULL treated as unknown).
   addColumn(db, 'task_usage', 'reasoning', 'INTEGER NOT NULL DEFAULT 0');

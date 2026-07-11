@@ -353,6 +353,9 @@ export function BrainChat() {
     es.addEventListener('subagent', (e) => {
       const s = JSON.parse((e as MessageEvent).data) as { id: string; sessionId: string; status: 'running' | 'done' | 'error'; task: string; detail?: string; tools: number; tokens?: number; seconds: number; model?: string };
       setTurns((cur) => fold(cur, { type: 'subagent', ...s }));
+      // The child usage is persisted before its terminal progress event. Refresh the parent status now
+      // so the session price includes delegated work immediately, not only after the next parent turn.
+      if (s.status !== 'running') void elowenClient.brainStatus().then((status) => setUsage(status.usage)).catch(() => { /* best-effort */ });
     });
     es.addEventListener('card', (e) => {
       const { card } = JSON.parse((e as MessageEvent).data) as { card: BrainCard };
@@ -495,12 +498,20 @@ export function BrainChat() {
       ...textFiles.map((a) => `\n\`${a.name}\`:\n\`\`\`\n${a.data}\n\`\`\``),
     ].join('\n');
     const shown = [typed || t.brainChat.attachOnly, ...attachments.map((a) => `📎 ${a.name}`)].join('\n');
+    const submittedInput = input;
+    const submittedAttachments = attachments;
     setInput('');
     setAttachments([]);
     // No optimistic bubble: the daemon streams a `user` event (which flips busy on + renders the 'you'
     // turn) for both an immediate run and a queued delivery. `shown` rides as the clean display (the sent
-    // `text` carries the fenced text-file blocks). A network failure just leaves the stream to drive busy.
-    try { await elowenClient.brainSend(text, images, shown); } catch { /* network error — the stream drives state */ }
+    // `text` carries the fenced text-file blocks). If the daemon genuinely rejects the request, restore
+    // this draft unless the user has already started composing a newer one while the POST was in flight.
+    try { await elowenClient.brainSend(text, images, shown); }
+    catch {
+      setInput((current) => current || submittedInput);
+      setAttachments((current) => current.length ? current : submittedAttachments);
+      toast(t.brainChat.sendError, 'error');
+    }
   };
 
   const switchSession = async (opts: { session?: string; fresh?: boolean }) => {

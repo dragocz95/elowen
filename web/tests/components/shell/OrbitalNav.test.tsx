@@ -30,45 +30,47 @@ describe('OrbitalNav', () => {
     expect(screen.queryByRole('button', { name: 'System' })).toBeNull();
   });
 
-  it('rotates focus without navigating and magnetically anchors the next destination', async () => {
+  it('keeps a link stable under the pointer so one click can navigate', () => {
     mount();
-    fireEvent.click(screen.getByRole('button', { name: 'Next' }));
-    await waitFor(() => {
-      const projects = screen.getByRole('link', { name: 'Projects' });
-      expect(projects.querySelector('.orbit-node')).toHaveClass('orbit-node-active');
-      expect(Number.parseFloat(projects.closest<HTMLElement>('[role="listitem"]')?.style.opacity ?? '0')).toBeGreaterThan(0.94);
-    });
+    const projects = screen.getByRole('link', { name: 'Projects' });
+    const before = projects.closest('[role="listitem"]')?.getAttribute('style');
+    fireEvent.focus(projects);
+    expect(projects.closest('[role="listitem"]')?.getAttribute('style')).toBe(before);
+    expect(projects).toHaveAttribute('href', '/projects');
   });
 
-  it('magnetically advances one world for a deliberate wheel gesture', async () => {
+  it('moves spatial focus by one destination for a deliberate wheel gesture', async () => {
     mount();
     fireEvent.wheel(screen.getByTestId('future-navigation'), { deltaY: 60 });
     await waitFor(() => {
-      const projects = screen.getByRole('link', { name: 'Projects' });
-      expect(projects.querySelector('.orbit-node')).toHaveClass('orbit-node-active');
-      expect(Number.parseFloat(projects.closest<HTMLElement>('[role="listitem"]')?.style.opacity ?? '0')).toBeGreaterThan(0.94);
+      expect(screen.getByRole('link', { name: 'Projects' }).querySelector('.orbit-node')).toHaveClass('orbit-node-active');
     });
   });
 
-  it('places the opposite item at the rear of the spherical path', () => {
+  it('does not render the old scroll cue', () => {
+    mount();
+    expect(screen.queryByText('Scroll')).toBeNull();
+  });
+
+  it('keeps every destination on one vertical orbital rail', () => {
     mount();
     const users = screen.getByRole('link', { name: 'Users' });
     expect(users).not.toHaveAttribute('tabindex', '-1');
-    expect(users.closest('[role="listitem"]')).toHaveStyle({ opacity: '0.28', filter: 'blur(1.15px)' });
-    expect(users.closest('[role="listitem"]')?.getAttribute('style')).toContain('translateZ(-45px)');
+    expect(screen.getByTestId('future-navigation')).toHaveClass('w-[13rem]');
+    expect(users.closest('[role="listitem"]')).toHaveClass('absolute');
   });
 
   it('does not move controls under the pointer', () => {
     mount();
     const projects = screen.getByRole('link', { name: 'Projects' }).closest('[role="listitem"]');
-    const before = projects?.getAttribute('style');
+    const before = projects?.className;
     fireEvent.mouseEnter(screen.getByRole('link', { name: 'Projects' }));
-    expect(projects?.getAttribute('style')).toBe(before);
+    expect(projects?.className).toBe(before);
   });
 
   it('collapses to an icon orbit when content room is constrained', () => {
     mount(true);
-    expect(screen.getByTestId('future-navigation')).toHaveClass('w-36');
+    expect(screen.getByTestId('future-navigation')).toHaveClass('w-20');
     expect(screen.getByRole('link', { name: 'Stats' })).toHaveAttribute('aria-current', 'page');
   });
 });
