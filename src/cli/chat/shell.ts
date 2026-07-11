@@ -2,39 +2,32 @@ import { Container, visibleWidth } from '@earendil-works/pi-tui';
 import type { Component, MarkdownTheme, TUI } from '@earendil-works/pi-tui';
 import { color } from './theme.js';
 import { StatusBar, CardPanel, SubagentPanel, spinnerFrame } from './components.js';
-import { MascotFloat } from './mascotFloat.js';
 import { activeMention, CLIPBOARD_MENTION, imageMimeFor, rankMentionFiles, bumpMentionFrecency, mentionInsertText } from './mentions.js';
 import { isSlashCommandDraft } from './commands.js';
-import {
-  activeKeymap, createLeaderState, isDownKey, isEnterKey, isEscapeKey,
-  isPageDownKey, isPageUpKey, isTabByte, isUpKey,
-} from './keys.js';
+import { activeKeymap, createLeaderState } from './keys.js';
 import type { Keymap, KeybindAction } from './keys.js';
-import { formatDuration, formatK, padAnsi, terminalSafeAnsi, terminalSafeComponent } from '../ui/text.js';
+import { formatDuration, formatK, padAnsi, terminalSafeAnsi } from '../ui/text.js';
 import { ELOWEN_CLI_VERSION } from '../version.js';
-import { computeLayoutBudget, constrainFrame } from './layoutBudget.js';
 import type { LayoutBudget } from './layoutBudget.js';
-import { FrameScheduler } from './frameScheduler.js';
 import type { TuiDiagnostics } from './tuiDiagnostics.js';
 import {
   ChatViewport,
-  MainColumn,
-  mouseClick,
-  mouseEvent,
-  mouseWheel,
-  MentionOverlay,
-  PANEL_GUTTER_COLUMNS,
-  SlashOverlay,
-  StartScreen,
-  startScreenBox,
-  startScreenInputTop,
-  TelemetryPanel,
-  TOP_RULE_ROWS,
-  TopRule,
-} from './layout.js';
+} from './chatViewport.js';
+import {
+  MainColumn, PANEL_GUTTER_COLUMNS, StartScreen,
+  TOP_RULE_ROWS, TopRule,
+} from './startScreen.js';
+import { TelemetryPanel } from './telemetryPanel.js';
+import { MentionOverlay, SlashOverlay } from './suggestionOverlay.js';
 import type { BrainWorkMode } from './brainClient.js';
 import type { ChatRuntime } from './runtime.js';
 import type { StreamController } from './streamController.js';
+import { AnimationController } from './animationController.js';
+import { InputRouter } from './inputRouter.js';
+import { OverlayController } from './overlayController.js';
+import { RenderShell } from './renderShell.js';
+import { ChatApplication } from './chatApplication.js';
+import type { ShellInputDeps } from './chatApplication.js';
 
 /** Render the bottom statusline from the plugin's display toggles + live usage. Empty string when the
  *  statusline plugin is disabled or nothing is toggled on. Pure — unit-testable without a TTY. */
@@ -103,40 +96,6 @@ export function interruptPress(armedUntil: number, now: number, windowMs = INTER
     : { armedUntil: now + windowMs, abort: false };
 }
 
-export interface ShellRowBudget {
-  viewportRows: number;
-  inputRows: number;
-  cardRows: number;
-  subagentRows: number;
-}
-
-/** Allocate the full-screen left column exactly once. Chrome is fixed (top rule + meta + footer), input
- *  is bounded, Todos are preferred next so they stay immediately above the composer, and sub-agents use
- *  the remaining fixed-panel budget. The transcript receives every leftover row, so the sum is ALWAYS the
- *  terminal height (for the supported >=4-row terminal) and pi-tui never has to scroll its alt screen. */
-export function allocateShellRows(o: {
-  terminalRows: number;
-  inputRows: number;
-  cardRows: number;
-  subagentRows: number;
-  minViewportRows?: number;
-  maxCardRows?: number;
-  maxSubagentRows?: number;
-}): ShellRowBudget {
-  const terminalRows = Math.max(4, Math.floor(o.terminalRows));
-  const available = terminalRows - TOP_RULE_ROWS - 2; // prompt meta + bottom bar
-  const minViewport = Math.min(Math.max(1, o.minViewportRows ?? 4), available);
-  // Keep at least the Todo header when a card is active; queued prompts get clipped before it disappears.
-  const cardReserve = o.cardRows > 0 && available > minViewport ? 1 : 0;
-  const inputRows = Math.min(Math.max(0, o.inputRows), Math.max(0, available - minViewport - cardReserve));
-  let panelBudget = Math.max(0, available - minViewport - inputRows);
-  const cardRows = Math.min(Math.max(0, o.cardRows), o.maxCardRows ?? 6, panelBudget);
-  panelBudget -= cardRows;
-  const subagentRows = Math.min(Math.max(0, o.subagentRows), o.maxSubagentRows ?? 4, panelBudget);
-  const viewportRows = Math.max(1, available - inputRows - cardRows - subagentRows);
-  return { viewportRows, inputRows, cardRows, subagentRows };
-}
-
 function modelMetaLine(mode: BrainWorkMode, modelName: string, thinkingLevel: string, generating?: string, yolo?: boolean, fast?: boolean): string {
   const raw = modelName || '—';
   const slash = raw.indexOf('/');
@@ -155,37 +114,13 @@ function modelMetaLine(mode: BrainWorkMode, modelName: string, thinkingLevel: st
   ].filter(Boolean).join(' ');
 }
 
-/** What keybind actions need from the picker surface — wired in runChat, after the pickers exist. */
-interface ShellInputDeps {
-  cycleThinkingLevel(): void;
-  openHelpModal(): void;
-  openThemePicker(): void;
-  openModelPicker(): void;
-  openSessionsModal(): void;
-}
-
-export interface Shell {
-  render(reason?: string): void;
-  renderForced(reason?: string): void;
-  pauseRendering(): void;
-  resumeRendering(): void;
-  stopRendering(): void;
-  showPanel(hidden?: boolean): void;
-  /** Re-open the telemetry panel so it picks up freshly applied theme colors, keeping its hidden state. */
-  reshowPanel(): void;
-  /** Register the global key/mouse listener. Called once in runChat, after the pickers exist. */
-  attachInput(deps: ShellInputDeps): void;
-  /** Swap the running session onto the freshly-built active keymap (after a /keybinds rebind) — no
-   *  restart: dispatch resolution and every hint line pick up the new bindings on the next keypress. */
-  reloadKeymap(): void;
-  /** Hide every owned overlay (telemetry panel + suggestion popups) — the quit path. */
-  hideOverlays(): void;
-}
-
 /** The render shell: layout composition (chat stack vs start screen, telemetry panel), the render()
  *  pass, the slash/mention suggestion overlays, and the global mouse/key input routing. */
-export function createShell(rt: ChatRuntime, stream: StreamController, mdTheme: MarkdownTheme, diagnostics: TuiDiagnostics): Shell {
+export function createShell(rt: ChatRuntime, stream: StreamController, mdTheme: MarkdownTheme, diagnostics: TuiDiagnostics): ChatApplication {
   const { client, tui, term, editor, editorSlot, inputStack, attachmentChips, cwdLabel, branchLabel } = rt;
+  let renderOwner!: RenderShell;
+  const render = (reason = 'state'): void => renderOwner.scheduleRender(reason);
+  const renderForced = (reason = 'geometry'): void => renderOwner.scheduleForcedRender(reason);
 
   // `let`, not `const`: the /keybinds editor swaps the live keymap (and its leader window) in place via
   // reloadKeymap below. Every closure here — the input dispatcher, the hint lines, the leader chip —
@@ -193,16 +128,13 @@ export function createShell(rt: ChatRuntime, stream: StreamController, mdTheme: 
   let keymap = activeKeymap();
   // The leader window: after the leader chord, the next keypress resolves leader-bound actions. The
   // expiry re-render clears the "waiting" chip from the meta line.
-  let leader = createLeaderState(keymap, { onExpire: () => render() });
+  let leader = createLeaderState(keymap, { onExpire: () => render('input:leader-expired') });
   /** The subtle "leader pressed, waiting for the second key" chip appended to the meta line. */
   const leaderChip = (): string =>
     leader.pending() ? ` ${color.accent('⌘')} ${color.faint(`${keymap.chordLabel('leader') ?? 'leader'} —`)}` : '';
 
   const cardPanel = new CardPanel();
   const subPanel = new SubagentPanel();
-  // A queue is useful context, but six rows plus its hint can crowd Todos and the transcript out on a
-  // normal 24-row terminal. The complete queue stays server-authoritative; this is presentation-only.
-  rt.queuedMessages.setMaxRows(4);
   const promptMeta = new StatusBar('', '');
   const quitLabel = quitHint(keymap);
   const bottomBar = new StatusBar(color.faint(`  ${bottomHints(keymap, 'idle')}`), quitLabel ? color.faint(`${quitLabel}  `) : '');
@@ -221,52 +153,19 @@ export function createShell(rt: ChatRuntime, stream: StreamController, mdTheme: 
   let mentionHandle: ReturnType<TUI['showOverlay']> | null = null;
   let mentionOverlay: MentionOverlay | null = null;
   let panelWidth = 46;
-  let resizingPanel = false;
-  let draggingHistoryScroll = false;
-  let draggedHistoryViewport: ChatViewport | null = null;
-  let historyDragTimer: ReturnType<typeof setTimeout> | null = null;
-  // Screen row of the last scrollbar-drag sample — its delta gives the drag direction for the mascot float.
-  let lastScrollDragRow = 0;
-  let removeInputListener: (() => void) | null = null;
-
-  // The right-panel flame's eased drift-on-scroll. A pure spring-damper (mascotFloat) is nudged on each
-  // scroll and integrated by a self-canceling ~30fps ticker that stops the moment the motion settles, so
-  // an idle session pays zero CPU — mirroring app.ts's thinking-only render timer.
-  // Decorative motion must never compete with streamed Markdown. Ten frames/sec is still visibly eased
-  // while cutting the old 30fps full-TUI repaint loop by two thirds.
-  const FLOAT_TICK_MS = 100;
-  const mascotFloat = new MascotFloat();
-  let floatTimer: ReturnType<typeof setTimeout> | null = null;
-  const cancelFloat = (): void => {
-    if (floatTimer) clearTimeout(floatTimer);
-    floatTimer = null;
-    mascotFloat.reset();
-  };
-  const armFloat = (): void => {
-    // Debounce rapid wheel/drag bursts: transcript interaction gets the frame budget; decorative easing
-    // starts only after the input quiets down.
-    if (floatTimer) clearTimeout(floatTimer);
-    floatTimer = setTimeout(() => {
-      floatTimer = null;
-      if (!panelVisible() || rt.view.thinking || rt.childView?.view.thinking) { cancelFloat(); return; }
-      mascotFloat.tick(FLOAT_TICK_MS);
-      render('animation:mascot');
-      if (!mascotFloat.settled()) armFloat();
-    }, FLOAT_TICK_MS);
-  };
-  // Nudge the flame in a scroll direction, but only when the panel is actually on screen (≥104 cols +
-  // a conversation) — on a narrow terminal there is no flame to float, so the spring stays at rest.
-  const nudgeFloat = (dir: number): void => {
-    if (!panelVisible() || rt.view.thinking || rt.childView?.view.thinking) { cancelFloat(); return; }
-    mascotFloat.impulse(dir);
-    armFloat();
-  };
+  let inputRouter: InputRouter | null = null;
+  let overlayController!: OverlayController;
   /** An empty conversation renders the centered start screen instead of the chat stack + panel. */
   const hasMessages = (): boolean => rt.view.turns.length > 0;
   const panelVisible = (): boolean => term.columns >= 104 && hasMessages() && !panelHandle?.isHidden();
   const panelReserve = (): number => panelVisible() ? panelWidth + PANEL_GUTTER_COLUMNS : 0;
   const chatWidth = (): number => Math.max(1, term.columns - panelReserve());
   const panelLeftEdge = (): number => term.columns - panelWidth;
+  const animations = new AnimationController({
+    render,
+    canAnimateMascot: () => panelVisible() && !rt.view.thinking && !rt.childView?.view.thinking,
+  });
+  const cancelFloat = (): void => animations.cancelMascot();
   let currentBudget: LayoutBudget | null = null;
   let preparedInput: { width: number; queue: string[]; attachments: string[]; editor: string[] } | null = null;
   const activeInputComponent = (): (Component & { setMaxRows?: (rows: number | null) => void }) | undefined =>
@@ -292,9 +191,8 @@ export function createShell(rt: ChatRuntime, stream: StreamController, mdTheme: 
   };
   const refreshLayoutBudget = (): LayoutBudget => {
     const width = chatWidth();
-    // Reset the queue's presentation cap before measuring its desired compact height; a previous short
-    // frame must not permanently pin it after the terminal grows again.
-    rt.queuedMessages.setMaxRows(4);
+    // Desired queue height is uncapped; computeLayoutBudget is the sole presentation cap.
+    rt.queuedMessages.setMaxRows(null);
     activeInputComponent()?.setMaxRows?.(null);
     preparedInput = {
       width,
@@ -302,7 +200,7 @@ export function createShell(rt: ChatRuntime, stream: StreamController, mdTheme: 
       attachments: attachmentChips.render(width),
       editor: editorSlot.render(width),
     };
-    const budget = computeLayoutBudget({
+    const budget = renderOwner.allocateLayout({
       columns: term.columns,
       rows: term.rows,
       hasTranscript: hasMessages(),
@@ -357,7 +255,7 @@ export function createShell(rt: ChatRuntime, stream: StreamController, mdTheme: 
     lspEnabled: rt.lspEnabled,
     processes: rt.processes,
     rateLimits: rt.rateLimits,
-    floatOffset: mascotFloat.value(),
+    floatOffset: animations.mascotOffset,
   }));
   const startScreen = new StartScreen(
     inputStack,
@@ -392,7 +290,7 @@ export function createShell(rt: ChatRuntime, stream: StreamController, mdTheme: 
 
   const showPanel = (hidden = false): void => {
     panelHandle?.hide();
-    panelHandle = tui.showOverlay(telemetry, {
+    panelHandle = overlayController.show('telemetry', telemetry, {
       anchor: 'top-right',
       width: panelWidth,
       maxHeight: Math.max(1, term.rows - TOP_RULE_ROWS),
@@ -412,22 +310,19 @@ export function createShell(rt: ChatRuntime, stream: StreamController, mdTheme: 
       // Already gone → no `process` snapshot will fire, so refetch to drop the stale row the user clicked.
       if (!killed) {
         rt.notice = color.dim('process already finished');
-        void client.processes().then((p) => { rt.processes = p; render(); }).catch(() => { /* offline */ });
+        void client.processes().then((p) => { rt.processes = p; render('process:refresh-after-kill'); }).catch(() => { /* offline */ });
       }
-    }).catch((e: Error) => { rt.notice = color.error(`could not kill process: ${e.message}`); render(); });
+    }).catch((e: Error) => { rt.notice = color.error(`could not kill process: ${e.message}`); render('process:kill-error'); });
   };
 
   let thinkStart = 0;
-  let thinkingAnimationTimer: ReturnType<typeof setTimeout> | null = null;
   let interruptArmedUntil = 0;
-  let interruptTimer: ReturnType<typeof setTimeout> | null = null;
-  let copyNoticeTimer: ReturnType<typeof setTimeout> | null = null;
   const clearInterruptArm = (): void => {
     interruptArmedUntil = 0;
-    if (interruptTimer) { clearTimeout(interruptTimer); interruptTimer = null; }
+    animations.cancelVisual('interrupt-arm');
   };
   const prepareFrame = (): void => {
-    if (!panelVisible() && floatTimer) cancelFloat();
+    if (!panelVisible()) cancelFloat();
     if (rt.view.thinking) {
       if (!thinkStart) thinkStart = Date.now();
     } else {
@@ -435,15 +330,7 @@ export function createShell(rt: ChatRuntime, stream: StreamController, mdTheme: 
       clearInterruptArm();
     }
     const animateThinking = rt.view.thinking || !!rt.childView?.view.thinking;
-    if (animateThinking && !thinkingAnimationTimer) {
-      thinkingAnimationTimer = setTimeout(() => {
-        thinkingAnimationTimer = null;
-        render('animation:thinking');
-      }, 250);
-    } else if (!animateThinking && thinkingAnimationTimer) {
-      clearTimeout(thinkingAnimationTimer);
-      thinkingAnimationTimer = null;
-    }
+    animations.updateThinking(animateThinking);
     currentRunSeconds = thinkStart ? Math.max(0, Math.round((Date.now() - thinkStart) / 1000)) : 0;
     parentViewport.setState({
       transcript: rt.transcript,
@@ -492,80 +379,19 @@ export function createShell(rt: ChatRuntime, stream: StreamController, mdTheme: 
     const removeChord = keymap.chordLabel('queue_remove');
     rt.queuedMessages.set(rt.queued, rt.queued.length && removeChord ? `${removeChord} removes the last queued message` : null);
   };
-  const nativeRequestRender = tui.requestRender.bind(tui);
-  let previousDimensions: { columns: number; rows: number } | null = null;
-  let pendingFrame: { reasons: Set<string>; forced: boolean; requestedAt: number; prepareMs: number } | null = null;
-  const scheduler = new FrameScheduler((frame) => {
-    const prepareStartedAt = performance.now();
-    const dimensions = { columns: term.columns, rows: term.rows };
-    if (previousDimensions && (previousDimensions.columns !== dimensions.columns || previousDimensions.rows !== dimensions.rows)) {
-      frame.forced = true;
-      if (!frame.reasons.includes('resize')) frame.reasons.push('resize');
-    }
-    previousDimensions = dimensions;
-    currentBudget = null;
-    preparedInput = null;
-    prepareFrame();
-    const prepareMs = performance.now() - prepareStartedAt;
-    if (pendingFrame) {
-      for (const reason of frame.reasons) pendingFrame.reasons.add(reason);
-      pendingFrame.forced ||= frame.forced;
-      pendingFrame.prepareMs += prepareMs;
-    } else {
-      pendingFrame = { reasons: new Set(frame.reasons), forced: frame.forced, requestedAt: prepareStartedAt, prepareMs };
-    }
-    diagnostics.record({ type: 'scheduler', action: 'flush', reasons: frame.reasons, forced: frame.forced });
-    nativeRequestRender(frame.forced);
+  renderOwner = new RenderShell({
+    tui,
+    term,
+    prepare: () => {
+      currentBudget = null;
+      preparedInput = null;
+      prepareFrame();
+    },
+    onFlush: (frame) => diagnostics.record({
+      type: 'scheduler', action: 'flush', reasons: frame.reasons, forced: frame.forced,
+    }),
   });
-  // pi-tui components call requestRender directly. Route those requests through the same coordinator too,
-  // while retaining the original bound method as the scheduler's only terminal-render sink.
-  tui.requestRender = (force = false): void => {
-    if (force) scheduler.scheduleForced('pi-tui:forced-request');
-    else scheduler.schedule('pi-tui:request', 'interactive');
-  };
-  const nativeShowOverlay = tui.showOverlay.bind(tui);
-  tui.showOverlay = ((component, options) => {
-    // PI composites overlays after the root frame sanitizer. Wrap every overlay (pickers, telemetry,
-    // suggestions, editors) at the final component boundary so API/plugin-controlled labels cannot
-    // bypass terminal safety through SelectList or modal rows.
-    const handle = nativeShowOverlay(terminalSafeComponent(component), options);
-    scheduler.scheduleForced('overlay:open');
-    return {
-      ...handle,
-      hide: () => { handle.hide(); scheduler.scheduleForced('overlay:close'); },
-      setHidden: (hidden: boolean) => {
-        const changed = handle.isHidden() !== hidden;
-        handle.setHidden(hidden);
-        if (changed) scheduler.scheduleForced(hidden ? 'overlay:hide' : 'overlay:show');
-      },
-    };
-  }) as TUI['showOverlay'];
-  const render = (reason = 'state'): void => {
-    scheduler.schedule(reason, reason.startsWith('scroll:') || reason.startsWith('input:') ? 'interactive' : 'normal');
-  };
-  const renderForced = (reason = 'geometry'): void => scheduler.scheduleForced(reason);
-  const cancelHistoryScrollbarDrag = (): void => {
-    if (historyDragTimer) clearTimeout(historyDragTimer);
-    historyDragTimer = null;
-    draggedHistoryViewport?.endScrollbarDrag();
-    draggedHistoryViewport = null;
-    draggingHistoryScroll = false;
-  };
-  const scheduleHistoryScrollbarContinuation = (needed: boolean): void => {
-    if (!needed || !draggingHistoryScroll || !draggedHistoryViewport) {
-      if (historyDragTimer) clearTimeout(historyDragTimer);
-      historyDragTimer = null;
-      return;
-    }
-    if (historyDragTimer) return;
-    historyDragTimer = setTimeout(() => {
-      historyDragTimer = null;
-      if (!draggingHistoryScroll || !draggedHistoryViewport) return;
-      const pending = draggedHistoryViewport.continueScrollbarDrag();
-      render('scroll:drag-index');
-      scheduleHistoryScrollbarContinuation(pending);
-    }, 16);
-  };
+  overlayController = new OverlayController(tui, renderForced);
 
   // Live-apply a rebind from the /keybinds editor: point `keymap` at the freshly-built active map and
   // rebuild the leader window around it (the old one may hold a stale keymap + pending timer). The
@@ -577,60 +403,28 @@ export function createShell(rt: ChatRuntime, stream: StreamController, mdTheme: 
     leader = createLeaderState(keymap, { onExpire: () => render('input:leader-expired') });
     const q = quitHint(keymap);
     bottomBar.setRight(q ? color.faint(`${q}  `) : '');
-    render();
+    render('input:keymap-reload');
   };
 
   const closeSlash = (): void => {
     slashHandle?.hide();
     slashHandle = null;
     slashOverlay = null;
-    tui.requestRender();
+    render('overlay:slash-close');
   };
 
   /** Anchor a NON-capturing suggestion popup (slash commands, @ mentions) above the input — under the
    *  centered box on the start screen, at the bottom-of-screen slot otherwise. Shared geometry so the
    *  two overlays can never drift apart. */
-  const showSuggestions = (overlay: Component): ReturnType<TUI['showOverlay']> => {
-    const constrain = (rows: number): number => {
-      const maxRows = Math.max(1, Math.floor(rows));
-      (overlay as Component & { setMaxRows?: (value: number) => void }).setMaxRows?.(maxRows);
-      return maxRows;
-    };
-    // Tallest render: top + hint + blank + 10 items + counter + bottom = 15 rows. One less would clip
-    // the bottom border whenever the counter row shows (which, with 20+ commands, is always).
-    if (!hasMessages()) {
-      // Start screen: the input is vertically centered, so anchor the suggestions right UNDER it
-      // (aligned to the box) — the normal bottom-of-screen slot would float rows below the input.
-      const { boxWidth, leftPad } = startScreenBox(term.columns);
-      const inputRows = inputStack.render(boxWidth).length;
-      const noticeRows = rt.notice ? rt.notice.split('\n').length : 0;
-      const screenRows = Math.max(1, term.rows - TOP_RULE_ROWS);
-      const shownInputRows = Math.min(inputRows, Math.max(0, screenRows - 1));
-      const top = TOP_RULE_ROWS + startScreenInputTop(screenRows, inputRows, noticeRows) + shownInputRows;
-      const maxHeight = constrain(Math.min(15, Math.max(1, term.rows - top)));
-      return tui.showOverlay(overlay, {
-        anchor: 'top-left',
-        width: boxWidth,
-        maxHeight,
-        margin: { top, left: leftPad, right: 0, bottom: 0 },
-        nonCapturing: true,
-      });
-    }
-    const reserve = panelReserve();
-    const budget = rowBudget();
-    // Suggestions are transient overlays: reserve only the actual composer/footer below them and allow
-    // the popup to cover transcript/cards above. Reserving every fixed section made a 15-row menu clip
-    // to a handful of rows on short terminals.
-    const bottom = budget.sections.queue + budget.sections.attachments + budget.sections.editor
-      + budget.sections.status + budget.sections.hints;
-    const available = Math.max(1, term.rows - TOP_RULE_ROWS - bottom);
-    const maxHeight = constrain(Math.min(15, available));
-    return tui.showOverlay(overlay, {
-      anchor: 'bottom-left',
-      width: Math.max(1, term.columns - reserve - 1),
-      maxHeight,
-      margin: { top: TOP_RULE_ROWS, left: 0, right: reserve, bottom },
-      nonCapturing: true,
+  const showSuggestions = (name: 'slash' | 'mention', overlay: Component): ReturnType<TUI['showOverlay']> => {
+    return overlayController.showSuggestion(name, overlay, {
+      columns: term.columns,
+      rows: term.rows,
+      hasMessages: hasMessages(),
+      panelReserve: panelReserve(),
+      input: inputStack,
+      notice: rt.notice,
+      budget: hasMessages() ? rowBudget() : null,
     });
   };
 
@@ -641,15 +435,15 @@ export function createShell(rt: ChatRuntime, stream: StreamController, mdTheme: 
     const overlay = new SlashOverlay(slashItems);
     overlay.setFilter(editor.getText());
     slashOverlay = overlay;
-    slashHandle = showSuggestions(overlay);
-    tui.requestRender();
+    slashHandle = showSuggestions('slash', overlay);
+    render('overlay:slash-open');
   };
 
   const closeMention = (): void => {
     mentionHandle?.hide();
     mentionHandle = null;
     mentionOverlay = null;
-    tui.requestRender();
+    render('overlay:mention-close');
   };
 
   /** The `@` token being typed at the cursor (word-start only — see activeMention), or null. */
@@ -677,7 +471,7 @@ export function createShell(rt: ChatRuntime, stream: StreamController, mdTheme: 
     const m = mentionAtCursor();
     if (!m) { closeMention(); return; }
     mentionOverlay.setItems(mentionItems(m.query));
-    tui.requestRender();
+    render('input:mention-filter');
   };
 
   /** Open the file-mention suggestions (same non-capturing pattern as the slash overlay). */
@@ -687,8 +481,8 @@ export function createShell(rt: ChatRuntime, stream: StreamController, mdTheme: 
     const overlay = new MentionOverlay();
     overlay.setItems(mentionItems(''));
     mentionOverlay = overlay;
-    mentionHandle = showSuggestions(overlay);
-    tui.requestRender();
+    mentionHandle = showSuggestions('mention', overlay);
+    render('overlay:mention-open');
   };
 
   /** Replace the active `@` token with the picked path (quoted when it has spaces) and bump its
@@ -703,7 +497,7 @@ export function createShell(rt: ChatRuntime, stream: StreamController, mdTheme: 
     const nextLine = `${lineText.slice(0, m.start)}${mentionInsertText(path)} ${lineText.slice(cur.col)}`;
     editor.setText([...lines.slice(0, cur.line), nextLine, ...lines.slice(cur.line + 1)].join('\n'));
     if (path !== CLIPBOARD_MENTION) rt.mentionFrecency = bumpMentionFrecency(process.cwd(), path);
-    tui.requestRender();
+    render('input:mention-insert');
   };
 
   // The slash overlay is a live suggestion popup driven by the input text: it filters while the text can
@@ -713,7 +507,7 @@ export function createShell(rt: ChatRuntime, stream: StreamController, mdTheme: 
     if (slashHandle && slashOverlay) {
       if (isSlashCommandDraft(text)) {
         slashOverlay.setFilter(text);
-        tui.requestRender();
+        render('input:slash-filter');
       } else {
         closeSlash();
       }
@@ -731,14 +525,14 @@ export function createShell(rt: ChatRuntime, stream: StreamController, mdTheme: 
     if (rt.view.thinking) {
       const next = interruptPress(interruptArmedUntil, Date.now());
       interruptArmedUntil = next.armedUntil;
-      if (interruptTimer) { clearTimeout(interruptTimer); interruptTimer = null; }
+      animations.cancelVisual('interrupt-arm');
       if (next.abort) {
         void client.abort().catch(() => { /* already idle */ });
       } else {
         const armed = interruptArmedUntil;
-        interruptTimer = setTimeout(() => {
-          if (interruptArmedUntil === armed) { clearInterruptArm(); render(); }
-        }, INTERRUPT_CONFIRM_MS);
+        animations.scheduleVisual('interrupt-arm', INTERRUPT_CONFIRM_MS, () => {
+          if (interruptArmedUntil === armed) { clearInterruptArm(); render('input:interrupt-expired'); }
+        });
       }
       render('input:interrupt-arm');
       return true;
@@ -747,7 +541,7 @@ export function createShell(rt: ChatRuntime, stream: StreamController, mdTheme: 
       rt.pendingImages = [];
       attachmentChips.set([]);
       rt.notice = color.dim('image attachments dropped');
-      render();
+      render('input:attachments-dropped');
       return true;
     }
     return false;
@@ -769,7 +563,7 @@ export function createShell(rt: ChatRuntime, stream: StreamController, mdTheme: 
       const rawLines = root.render(width).map(terminalSafeAnsi);
       // Final defense at the single root boundary. A custom child must never make pi-tui write a wrapping
       // line or a frame taller than the alternate screen, even if its own local sizing regresses later.
-      const lines = constrainFrame(rawLines, width, term.rows);
+      const lines = renderOwner.composeRoot(rawLines, width, term.rows);
       const reverseSpans = diagnostics.enabled
         ? (['raw', 'constrained'] as const).flatMap((stage) => {
           const source = stage === 'raw' ? rawLines : lines;
@@ -783,8 +577,7 @@ export function createShell(rt: ChatRuntime, stream: StreamController, mdTheme: 
         })
         : undefined;
       const transcript = hasMessages() ? activeViewport().metrics() : null;
-      const frame = pendingFrame;
-      pendingFrame = null;
+      const frame = renderOwner.takeFrame();
       const sections = currentBudget?.sections ?? {
         header: TOP_RULE_ROWS,
         transcript: Math.max(0, term.rows - TOP_RULE_ROWS),
@@ -816,7 +609,7 @@ export function createShell(rt: ChatRuntime, stream: StreamController, mdTheme: 
   showPanel(false);
 
   const attachInput = (deps: ShellInputDeps): void => {
-    if (removeInputListener) return;
+    if (inputRouter) return;
     /** Run one keybind action. Fired by its direct chord (while the main editor is focused) or as a
      *  resolved leader sequence — one dispatcher so both paths share guards and behavior. */
     const dispatchAction = (action: KeybindAction): void => {
@@ -828,8 +621,8 @@ export function createShell(rt: ChatRuntime, stream: StreamController, mdTheme: 
           if (!hasMessages()) return;
           panelHandle?.setHidden(!panelHandle.isHidden());
           if (panelHandle?.isHidden()) cancelFloat();
-          resizingPanel = false;
-          render();
+          inputRouter?.cancelPanelResize();
+          render('input:telemetry-toggle');
           return;
         }
         case 'reasoning_cycle': deps.cycleThinkingLevel(); return;
@@ -846,7 +639,7 @@ export function createShell(rt: ChatRuntime, stream: StreamController, mdTheme: 
             if (restored != null) { editor.setText(restored); rt.notice = color.dim('Stashed draft restored'); }
             else rt.notice = color.dim(`no stashed draft — ${stashChord} with text stashes it`);
           }
-          render();
+          render('input:stash');
           return;
         }
         // Cycle main conversation → each sub-agent session → back to main (opencode-style).
@@ -855,10 +648,10 @@ export function createShell(rt: ChatRuntime, stream: StreamController, mdTheme: 
         // snapshot reconciles (and is authoritative if the item was already delivered in the meantime).
         case 'queue_remove': {
           const last = rt.queued.at(-1);
-          if (!last) { rt.notice = color.dim('no queued messages'); render(); return; }
+          if (!last) { rt.notice = color.dim('no queued messages'); render('input:queue-remove-empty'); return; }
           rt.queued = rt.queued.slice(0, -1); // optimistic; the queue_update snapshot reconciles
-          void client.queueRemove(last.id).catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); render(); });
-          render();
+          void client.queueRemove(last.id).catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); render('input:queue-remove-error'); });
+          render('input:queue-remove');
           return;
         }
         case 'mode_toggle': {
@@ -866,7 +659,7 @@ export function createShell(rt: ChatRuntime, stream: StreamController, mdTheme: 
           rt.notice = color.dim(rt.workMode === 'plan'
             ? 'plan mode: Elowen will reason through approach, risks and tests before editing'
             : 'build mode: Elowen can implement with tools');
-          render();
+          render('input:mode-toggle');
           return;
         }
         case 'help': deps.openHelpModal(); return;
@@ -875,260 +668,66 @@ export function createShell(rt: ChatRuntime, stream: StreamController, mdTheme: 
         case 'sessions_picker': deps.openSessionsModal(); return;
       }
     };
-    removeInputListener = tui.addInputListener((data) => {
-      const ev = mouseEvent(data);
-      if (ev) {
-        const isRelease = !ev.down || ev.code === 3;
-        const isPrimaryDrag = ev.down && (ev.code === 0 || ev.code === 32);
-        if (draggingHistoryScroll && isRelease) {
-          cancelHistoryScrollbarDrag();
-          return { consume: true };
+    inputRouter = new InputRouter(tui, {
+      rt,
+      stream,
+      keymap: () => keymap,
+      leader: () => leader,
+      dispatchAction,
+      render,
+      animations,
+      hasMessages,
+      activeViewport,
+      panelVisible,
+      panelLeftEdge,
+      setPanelWidth: (width) => { panelWidth = width; },
+      reflowPanel: () => {
+        showPanel(false);
+        if (slashHandle) openSlash();
+        if (mentionHandle && mentionOverlay) {
+          mentionHandle.hide();
+          mentionHandle = showSuggestions('mention', mentionOverlay);
         }
-        if (draggingHistoryScroll && isPrimaryDrag) {
-          nudgeFloat(lastScrollDragRow - ev.y); // drag up (y falls) scrolls into history → flame lifts
-          lastScrollDragRow = ev.y;
-          const pending = draggedHistoryViewport?.updateScrollbarDrag(ev.y) ?? false;
-          scheduleHistoryScrollbarContinuation(pending);
-          render('scroll:drag');
-          return { consume: true };
-        }
-        if (isPrimaryDrag && hasMessages() && activeViewport().isScrollbarHit(ev.x, ev.y)) {
-          draggingHistoryScroll = true;
-          lastScrollDragRow = ev.y;
-          draggedHistoryViewport = activeViewport();
-          scheduleHistoryScrollbarContinuation(draggedHistoryViewport.beginScrollbarDrag(ev.y));
-          render('scroll:drag-start');
-          return { consume: true };
-        }
-        if (panelVisible()) {
-          const edge = panelLeftEdge();
-          if (resizingPanel && isRelease) {
-            resizingPanel = false;
-            return { consume: true };
-          }
-          if (resizingPanel && ev.down) {
-            panelWidth = Math.max(36, Math.min(68, term.columns - ev.x + 1));
-            showPanel(false);
-            if (slashHandle) openSlash();
-            // Re-anchor an open mention overlay to the new geometry, keeping its items/selection.
-            if (mentionHandle && mentionOverlay) { mentionHandle.hide(); mentionHandle = showSuggestions(mentionOverlay); }
-            tui.requestRender(true);
-            return { consume: true };
-          }
-          if (ev.down && ev.code === 0 && Math.abs(ev.x - edge) <= 1) {
-            resizingPanel = true;
-            return { consume: true };
-          }
-        }
-      }
-      // Background transcript/card interactions must not fire while a modal owns focus (a picker, the rename
-      // input, the ask dock — which unfocus the editor — or the inline slash overlay): otherwise a click or
-      // scroll inside the overlay would toggle the Todos checklist / scroll the transcript hidden underneath.
-      // The start screen has no transcript, so those interactions also need a rendered chat stack.
-      const noModal = editor.focused && !slashHandle && !mentionHandle && hasMessages();
-      const click = mouseClick(data);
-      // Background processes live in the right telemetry rail. Keep hit testing with the rail that rendered
-      // them, instead of subtracting rows from the left transcript stack.
-      if (click && noModal && panelVisible() && click.x > panelLeftEdge()) {
-        const localRow = click.y - TOP_RULE_ROWS - 1;
-        const localX = click.x - panelLeftEdge();
-        if (telemetry.isProcessHeaderRow(localRow)) {
-          telemetry.toggleProcesses();
-          tui.requestRender();
-          return { consume: true };
-        }
-        const killId = telemetry.processKillAt(localRow, localX);
-        if (killId) { killProcess(killId); return { consume: true }; }
-      }
-      // A sub-agent row opens the child transcript (its own registry — these rows don't expand in place).
-      if (click && noModal && !rt.childView) {
-        const subId = activeViewport().subagentAt(click.x, click.y);
-        if (subId) { void stream.openSubagent(subId); return { consume: true }; }
-      }
-      if (click && noModal && activeViewport().isThoughtRow(click.x, click.y)) {
-        activeViewport().toggleThought(click.y);
-        tui.requestRender();
-        return { consume: true };
-      }
-      // The fixed left stack is viewport → Sub-agents → Todos → composer. Hit-test with the SAME
-      // row budget and capped renders used by layout, so a short terminal never drifts from what is visible.
-      if (click && noModal) {
-        const budget = rowBudget();
-        const panelsTop = TOP_RULE_ROWS + budget.sections.transcript + 1;
-        const subRel = click.y - panelsTop;
-        const chatW = chatWidth();
-        const renderedSubRows = subPanel.render(chatW).length;
-        if (subRel >= 0 && subPanel.isHeaderRow(subRel)) {
-          subPanel.toggleCollapsed();
-          tui.requestRender();
-          return { consume: true };
-        }
-        const target = subRel >= 0 ? subPanel.targetAt(subRel) : null;
-        if (target) { void stream.openSubagent(target); return { consume: true }; }
-        const cardRel = subRel - renderedSubRows;
-        if (cardRel >= 0 && cardPanel.isMoreRow(cardRel)) {
-          cardPanel.toggleExpanded();
-          tui.requestRender(true);
-          return { consume: true };
-        }
-        if (cardRel >= 0 && cardPanel.isHeaderRow(cardRel)) {
-          cardPanel.toggleCollapsed();
-          tui.requestRender();
-          return { consume: true };
-        }
-      }
-      const wheel = mouseWheel(data);
-      if (wheel && noModal) {
-        activeViewport().scroll(wheel);
-        nudgeFloat(Math.sign(wheel)); // flame follows the content, then eases back
-        render('scroll:wheel');
-        return { consume: true };
-      }
-      // Drag-to-copy: a press on plain transcript text anchors a line selection (interactive rows above
-      // consumed their presses already), dragging extends + highlights it, and release copies the lines
-      // to the system clipboard via OSC 52 (works over SSH too). A no-drag click just clears quietly.
-      if (ev && noModal) {
-        if (ev.down && ev.code === 0 && activeViewport().beginSelect(ev.x, ev.y)) return { consume: true };
-        if (ev.down && ev.code === 32 && activeViewport().hasSelection()) {
-          activeViewport().dragSelect(ev.y);
-          tui.requestRender();
-          return { consume: true };
-        }
-        if ((!ev.down || ev.code === 3) && activeViewport().hasSelection()) {
-          const text = activeViewport().takeSelection();
-          tui.requestRender();
-          if (text) {
-            term.write(`\x1b]52;c;${Buffer.from(text.slice(0, 100_000)).toString('base64')}\x07`);
-            const n = text.split('\n').length;
-            rt.notice = color.success(`✓ Copied ${n} line${n === 1 ? '' : 's'}`);
-            render();
-            if (copyNoticeTimer) clearTimeout(copyNoticeTimer);
-            copyNoticeTimer = setTimeout(() => {
-              copyNoticeTimer = null;
-              if (rt.notice.includes('Copied')) { rt.notice = ''; render(); }
-            }, 1800);
-          }
-          return { consume: true };
-        }
-      }
-      if (keymap.matches('quit', data)) { rt.quit(); return { consume: true }; }
-      // Leader window open: the NEXT keypress resolves leader-bound actions. Esc and unbound keys
-      // cancel quietly; either way the key is swallowed (it must not type into the editor). Mouse
-      // traffic is ignored so a stray wheel event can't eat the sequence.
-      if (leader.pending() && !ev) {
-        const action = leader.resolve(data);
-        render(); // clear the waiting chip
-        if (action) dispatchAction(action);
-        return { consume: true };
-      }
-      // Mention suggestions: like the slash overlay, the editor keeps focus — only the navigation keys
-      // are stolen (↑/↓ must steer the list, NOT the prompt-history recall, while it is open).
-      if (editor.focused && mentionHandle && mentionOverlay) {
-        if (isEscapeKey(data)) { closeMention(); return { consume: true }; }
-        if (isUpKey(data)) { mentionOverlay.moveSelection(-1); tui.requestRender(); return { consume: true }; }
-        if (isDownKey(data)) { mentionOverlay.moveSelection(1); tui.requestRender(); return { consume: true }; }
-        // Tab/Enter insert the highlighted path as an `@` token. Enter with NO match falls through —
-        // the "@something" the user typed is deliberate text, send it as-is.
-        if (isTabByte(data) || isEnterKey(data)) {
-          const value = mentionOverlay.selectedValue();
-          if (value) { insertMention(value); return { consume: true }; }
-          closeMention();
-          return isTabByte(data) ? { consume: true } : undefined;
-        }
-      }
-      // Slash suggestions: the editor KEEPS focus while the overlay is open (typing keeps landing in the
-      // input line), so only the overlay-navigation keys are stolen here — everything else falls through.
-      if (editor.focused && slashHandle && slashOverlay) {
-        if (isEscapeKey(data)) { closeSlash(); return { consume: true }; }
-        if (isUpKey(data)) { slashOverlay.moveSelection(-1); tui.requestRender(); return { consume: true }; }
-        if (isDownKey(data)) { slashOverlay.moveSelection(1); tui.requestRender(); return { consume: true }; }
-        // Tab COMPLETES the highlighted command into the input (ready for arguments); Enter runs it.
-        if (isTabByte(data)) {
-          const value = slashOverlay.selectedValue();
-          closeSlash();
-          if (value) { editor.setText(`${value} `); tui.requestRender(); }
-          return { consume: true };
-        }
-        if (isEnterKey(data)) {
-          const value = slashOverlay.selectedValue();
-          closeSlash();
-          if (value) { editor.setText(''); editor.onSubmit?.(value); return { consume: true }; }
-          // No matching command: let Enter fall through and send the text as-is.
-          return undefined;
-        }
-      }
-      // Global chat shortcuts only fire while the MAIN editor is focused and the slash suggestions are
-      // closed. Input listeners run before the focused component, so without this guard ctrl+r/ctrl+p/'/'/
-      // shift+tab would hijack an open modal (a picker, the rename input, the ask-question dock) instead
-      // of reaching it.
-      const editing = editor.focused && !slashHandle && !mentionHandle;
-      // The leader chord opens the two-key window (chip in the meta line; see the pending block above).
-      if (editing && keymap.isLeader(data)) {
-        leader.arm();
-        render();
-        return { consume: true };
-      }
-      // Every other bindable shortcut resolves through the keymap — one lookup instead of a predicate
-      // per action, so user overrides and defaults take the same path.
-      const action = editing ? keymap.directAction(data) : null;
-      if (action) {
-        dispatchAction(action);
-        return { consume: true };
-      }
-      // '/' at an empty prompt opens the command suggestions but is NOT consumed — it falls through to the
-      // editor, so the typed text (a command or a path like /var/www/x) always lives in the input line.
-      if (editing && editor.getText() === '' && data === '/') {
-        openSlash();
-        return undefined;
-      }
-      // '@' at a word start (line start or after whitespace) opens the file-mention suggestions — also
-      // not consumed, so the '@' lands in the input. Mid-word '@'s (emails) never trigger.
-      if (editing && data === '@' && !rt.childView) {
-        const cur = editor.getCursor();
-        const lineText = editor.getLines()[cur.line] ?? '';
-        const prev = cur.col > 0 ? lineText[cur.col - 1]! : '';
-        if (!prev || /\s/.test(prev)) openMention();
-        return undefined;
-      }
-      if (noModal && isPageUpKey(data)) {
-        activeViewport().scroll(4);
-        nudgeFloat(1);
-        render('scroll:page-up');
-        return { consume: true };
-      }
-      if (noModal && isPageDownKey(data)) {
-        activeViewport().scroll(-4);
-        nudgeFloat(-1);
-        render('scroll:page-down');
-        return { consume: true };
-      }
-      return undefined;
+      },
+      telemetry,
+      killProcess,
+      rowBudget,
+      subPanel,
+      cardPanel,
+      chatWidth,
+      slashOverlay: () => slashOverlay,
+      mentionOverlay: () => mentionOverlay,
+      closeSlash,
+      closeMention,
+      openSlash,
+      openMention,
+      insertMention,
     });
+    inputRouter.attach();
   };
 
-  const hideOverlays = (): void => {
-    cancelFloat();
-    cancelHistoryScrollbarDrag();
-    if (thinkingAnimationTimer) { clearTimeout(thinkingAnimationTimer); thinkingAnimationTimer = null; }
-    if (copyNoticeTimer) { clearTimeout(copyNoticeTimer); copyNoticeTimer = null; }
+  const cleanup = (): void => {
     clearInterruptArm();
-    panelHandle?.hide();
-    slashHandle?.hide();
-    mentionHandle?.hide();
-    removeInputListener?.();
-    removeInputListener = null;
+    panelHandle = null;
+    slashHandle = null;
+    slashOverlay = null;
+    mentionHandle = null;
+    mentionOverlay = null;
   };
 
-  return {
+  return new ChatApplication({
+    term,
+    tui,
+    renderOwner,
+    animations,
+    overlays: overlayController,
+    inputRouter: () => inputRouter,
     render,
     renderForced,
-    pauseRendering: () => scheduler.pause(),
-    resumeRendering: () => scheduler.resume(),
-    stopRendering: () => scheduler.stop(),
     showPanel,
     reshowPanel,
     attachInput,
-    hideOverlays,
     reloadKeymap,
-  };
+    cleanup,
+  });
 }

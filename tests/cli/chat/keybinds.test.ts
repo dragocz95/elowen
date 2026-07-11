@@ -3,7 +3,7 @@ import {
   chordFromInput, createKeymap, createLeaderState, keybindDefault, keybindRows, parseKeybind, KEYBIND_ACTIONS,
 } from '../../../src/cli/chat/keys.js';
 import {
-  allocateShellRows, bottomHints, INTERRUPT_CONFIRM_MS, interruptPress, startScreenHints, quitHint,
+  bottomHints, INTERRUPT_CONFIRM_MS, interruptPress, startScreenHints, quitHint,
 } from '../../../src/cli/chat/shell.js';
 
 // Raw bytes the terminal sends for the chords under test.
@@ -68,15 +68,6 @@ describe('stream interrupt + shell row budget', () => {
     expect(bottomHints(map, 'thinking', false, true)).toContain('esc again to interrupt');
   });
 
-  it('allocates exactly the terminal height even with huge input, Todos and sub-agent panels', () => {
-    for (const terminalRows of [4, 8, 12, 24, 40]) {
-      const b = allocateShellRows({ terminalRows, inputRows: 80, cardRows: 40, subagentRows: 40 });
-      expect(1 + b.viewportRows + b.subagentRows + b.cardRows + b.inputRows + 2).toBe(terminalRows);
-      expect(b.viewportRows).toBeGreaterThanOrEqual(1);
-      expect(b.cardRows).toBeLessThanOrEqual(6);
-      expect(b.subagentRows).toBeLessThanOrEqual(4);
-    }
-  });
 });
 
 describe('chordFromInput — raw keypress → chord spec', () => {

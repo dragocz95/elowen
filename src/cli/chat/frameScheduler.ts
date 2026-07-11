@@ -1,4 +1,4 @@
-export type FramePriority = 'interactive' | 'normal' | 'background';
+export type FramePriority = 'interactive' | 'normal';
 
 export interface ScheduledFrame {
   reasons: string[];
@@ -8,7 +8,6 @@ export interface ScheduledFrame {
 export interface FrameSchedulerOptions {
   interactiveIntervalMs?: number;
   normalIntervalMs?: number;
-  backgroundIntervalMs?: number;
   now?: () => number;
 }
 
@@ -20,7 +19,7 @@ export class FrameScheduler {
   private readonly intervals: Record<FramePriority, number>;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private timerDueAt = Number.POSITIVE_INFINITY;
-  private priority: FramePriority = 'background';
+  private priority: FramePriority = 'normal';
   private forced = false;
   private paused = false;
   private stopped = false;
@@ -34,7 +33,6 @@ export class FrameScheduler {
     this.intervals = {
       interactive: options.interactiveIntervalMs ?? 16,
       normal: options.normalIntervalMs ?? 33,
-      background: options.backgroundIntervalMs ?? 100,
     };
   }
 
@@ -89,7 +87,7 @@ export class FrameScheduler {
     const frame = { reasons: [...this.reasons], forced: this.forced };
     this.reasons.clear();
     this.forced = false;
-    this.priority = 'background';
+    this.priority = 'normal';
     this.lastFrameAt = this.now();
     this.render(frame);
   }
@@ -100,10 +98,10 @@ export class FrameScheduler {
     this.timerDueAt = Number.POSITIVE_INFINITY;
     this.reasons.clear();
     this.forced = false;
-    this.priority = 'background';
+    this.priority = 'normal';
   }
 
   private rank(priority: FramePriority): number {
-    return priority === 'interactive' ? 3 : priority === 'normal' ? 2 : 1;
+    return priority === 'interactive' ? 2 : 1;
   }
 }

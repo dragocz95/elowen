@@ -77,6 +77,90 @@ describe('ChatEditor input history recall', () => {
     expect(editor.getText()).toBe('line one\nline two');
   });
 
+  it('auto-grows through six content rows and scrolls internally beyond that cap', () => {
+    const editor = makeEditor();
+    editor.focused = true;
+
+    editor.setText('one');
+    expect(editor.render(40)).toHaveLength(3); // top rule + one content row + bottom rule
+
+    editor.setText(Array.from({ length: 6 }, (_, index) => `line ${index + 1}`).join('\n'));
+    expect(editor.render(40)).toHaveLength(8); // six content rows + the two rules
+
+    editor.setText(Array.from({ length: 12 }, (_, index) => `line ${index + 1}`).join('\n'));
+    const capped = editor.render(40);
+    expect(capped).toHaveLength(8);
+    expect(capped.join('\n')).toContain('line 12');
+    expect(capped.join('\n')).not.toContain('line 1\n');
+  });
+
+  it('keeps the cursor-visible explicit line while moving through a long draft', () => {
+    const editor = makeEditor();
+    editor.focused = true;
+    editor.setText(Array.from({ length: 12 }, (_, index) => `line ${index + 1}`).join('\n'));
+
+    for (let index = 0; index < 9; index += 1) press(editor, UP);
+    const rendered = editor.render(40).join('\n');
+    expect(editor.getCursor().line).toBe(2);
+    expect(rendered).toContain('line 3');
+    expect(rendered).toContain('\x1b[7m');
+    expect(rendered).not.toContain('line 12');
+  });
+
+  it('follows the cursor across wrapped rows and a terminal resize', () => {
+    const editor = makeEditor();
+    editor.focused = true;
+    editor.setText('alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima');
+
+    const narrowBottom = editor.render(16);
+    expect(narrowBottom).toHaveLength(8); // six wrapped rows at this width + rules
+    expect(narrowBottom.join('\n')).toContain('\x1b[7m');
+
+    for (let index = 0; index < 3; index += 1) {
+      editor.render(16);
+      editor.handleInput(UP);
+    }
+    const narrowTop = editor.render(16).join('\n');
+    expect(narrowTop).toContain('\x1b[7m');
+    expect(narrowTop).toContain('alpha');
+
+    const wide = editor.render(60);
+    expect(wide.length).toBeLessThanOrEqual(8);
+    expect(wide.join('\n')).toContain('\x1b[7m');
+  });
+
+  it('obeys a smaller central layout allocation without losing the cursor', () => {
+    const editor = makeEditor();
+    editor.focused = true;
+    editor.setText(Array.from({ length: 8 }, (_, index) => `draft ${index + 1}`).join('\n'));
+    editor.setMaxRows(4); // two content rows plus the editor rules on a short terminal
+
+    expect(editor.render(40)).toHaveLength(4);
+    press(editor, UP);
+    const rendered = editor.render(40);
+    expect(rendered).toHaveLength(4);
+    expect(rendered.join('\n')).toContain('\x1b[7m');
+  });
+
+  it('submits multiline text once, clears the viewport, and keeps history boundaries intact', () => {
+    const editor = makeEditor();
+    const submitted: string[] = [];
+    editor.onSubmit = (text) => submitted.push(text);
+    editor.setText('first\nsecond');
+    press(editor, '\r');
+    expect(submitted).toEqual(['first\nsecond']);
+    expect(editor.getText()).toBe('');
+    expect(editor.render(40)).toHaveLength(3);
+
+    editor.addToHistory('older');
+    press(editor, UP);
+    expect(editor.getText()).toBe('older');
+    press(editor, DOWN);
+    expect(editor.getText()).toBe('');
+    press(editor, DOWN);
+    expect(editor.getText()).toBe('');
+  });
+
   it('drops out of history mode once a recalled entry is edited', () => {
     const editor = makeEditor();
     editor.addToHistory('recalled');

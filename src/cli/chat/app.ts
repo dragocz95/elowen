@@ -21,12 +21,12 @@ import { groupToolItems, type ChatView } from '../../brain/transcript.js';
 import { TranscriptModel } from '../../brain/transcriptModel.js';
 import { commandsFor } from '../../brain/slashCommands.js';
 import { createTuiDiagnostics } from './tuiDiagnostics.js';
-import { TerminalLifecycle } from './terminalLifecycle.js';
 import { SnapshotHydrator, SnapshotTimeoutError } from './snapshotHydrator.js';
 import type { BrainEvent } from '../../brain/events.js';
 import type { BrainMessageView } from '../../brain/messageView.js';
 import { HydrationNoticeOwner } from './hydrationNoticeOwner.js';
 import { AsyncPublicationFence } from './asyncPublicationFence.js';
+import { ChatState } from './chatState.js';
 
 /** Boot history uses the same bounded hydrator instance as reconnect/compaction/child drill-in. A dead
  * daemon cannot keep first paint pending forever, and a transport that ignores abort is fenced by the
@@ -257,21 +257,12 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
     ? color.warning(`keybinds: ${keymap.warnings.join(' · ')} (see /keybinds)`) : '';
   const hydrationNotices = new HydrationNoticeOwner({ base: keymapNotice, parent: initialTranscript.notice });
 
-  /** The shared runtime: all mutable chat state + the render/refreshMeta/quit callbacks, threaded
-   *  through every module factory below (see ChatRuntime). */
+  /** One mutable state object, augmented with fixed application services/callbacks for the current
+   * factory boundary. Task 7 switches the entrypoint itself; all production modules already share this
+   * ChatState instance rather than parallel snapshots. */
   const transcript = new TranscriptModel(history0);
-  const rt: ChatRuntime = {
-    client, tui, term, editor, editorSlot, inputStack, attachmentChips, queuedMessages,
-    promptStash: new PromptStash(),
-    shellContext: new LocalShellBuffer(),
-    mentionIndex: new FileIndex(process.cwd()),
-    commandDefs, termSettings, cwdLabel, branchLabel,
+  const state = new ChatState({
     transcript,
-    get view() { return transcript.view; },
-    childView: null,
-    childAc: null,
-    streamAc: new AbortController(),
-    // Warn ONCE about broken keybind overrides — the binds themselves fell back to their defaults.
     notice: hydrationNotices.render(),
     modelName: boot?.model || opts.model || '',
     conversationTitle: boot?.title ?? '',
@@ -284,16 +275,19 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
     fastAvailable: boot?.fastAvailable ?? false,
     lspEnabled: boot?.lspEnabled ?? null,
     yoloOn: boot?.yolo ?? false,
-    mcpList: null,
-    rateLimits: null,
     workMode: 'build',
     cards: boot?.cards ?? [],
     queued: boot?.queued ?? [],
     processes: bootProcesses,
-    listed: [],
     showThoughts,
-    pendingImages: [],
     mentionFrecency: loadMentionFrecency(process.cwd()),
+  });
+  const rt = Object.assign(state, {
+    client, tui, term, editor, editorSlot, inputStack, attachmentChips, queuedMessages,
+    promptStash: new PromptStash(),
+    shellContext: new LocalShellBuffer(),
+    mentionIndex: new FileIndex(process.cwd()),
+    commandDefs, termSettings, cwdLabel, branchLabel,
     terminalLifecycle: null,
     render: () => { /* wired to the shell below */ },
     renderForced: () => { /* wired to the shell below */ },
@@ -329,7 +323,7 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
       });
     },
     invalidateAsyncState: (): void => publicationFence.invalidate(),
-  };
+  }) as ChatRuntime;
   await rt.refreshMeta();
 
   const flows = createFlows(rt);
@@ -337,17 +331,7 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
   const shell = createShell(rt, stream, mdTheme, diagnostics);
   rt.render = shell.render;
   rt.renderForced = shell.renderForced;
-  const terminalLifecycle = new TerminalLifecycle({
-    term,
-    tui,
-    scheduler: {
-      pause: shell.pauseRendering,
-      resume: shell.resumeRendering,
-      stop: shell.stopRendering,
-    },
-    forceRender: shell.renderForced,
-    beforeStop: shell.hideOverlays,
-  });
+  const terminalLifecycle = shell.terminalLifecycle;
   rt.terminalLifecycle = terminalLifecycle;
   const pickers = createPickers(rt, stream, { reshowPanel: shell.reshowPanel, reloadKeymap: shell.reloadKeymap });
   wireSubmit(rt, { stream, pickers });

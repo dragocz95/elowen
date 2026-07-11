@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { ALT_SCREEN_OFF, ALT_SCREEN_ON, DISABLE_MOUSE, ENABLE_MOUSE } from '../../../src/cli/chat/layout.js';
+import { ALT_SCREEN_OFF, ALT_SCREEN_ON, DISABLE_MOUSE, ENABLE_MOUSE } from '../../../src/cli/chat/terminalProtocol.js';
 import { TerminalLifecycle } from '../../../src/cli/chat/terminalLifecycle.js';
 
 function harness() {

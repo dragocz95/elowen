@@ -55,12 +55,12 @@ describe('chat components', () => {
     expect(lines[0]).toContain('…'); // truncated
   });
 
-  it('QueuedMessages caps the visible list and rolls the rest into a "+N more" row', () => {
+  it('QueuedMessages reports its uncapped desired rows until the central layout assigns a cap', () => {
     const q = new QueuedMessages();
     q.set(Array.from({ length: 9 }, (_, i) => ({ id: String(i), text: `msg ${i}` })));
     const lines = q.render(40);
-    expect(lines).toHaveLength(7); // 6 shown + the overflow row
-    expect(lines[6]).toContain('+3 more queued');
+    expect(lines).toHaveLength(9);
+    expect(lines.at(-1)).toContain('msg 8');
   });
 
   it('QueuedMessages obeys the shell hard cap even when the queue and hint are large', () => {

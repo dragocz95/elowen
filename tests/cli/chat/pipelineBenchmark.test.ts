@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { getMarkdownTheme, initTheme } from '@earendil-works/pi-coding-agent';
 import { TranscriptModel } from '../../../src/brain/transcriptModel.js';
-import { ChatViewport } from '../../../src/cli/chat/layout.js';
+import { ChatViewport } from '../../../src/cli/chat/chatViewport.js';
 // The benchmark is an executable repository script rather than compiled application source.
 // @ts-expect-error JavaScript benchmark modules intentionally have no declaration file.
 import {

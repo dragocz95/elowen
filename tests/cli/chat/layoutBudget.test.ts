@@ -2,7 +2,7 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import { initTheme } from '@earendil-works/pi-coding-agent';
 import { visibleWidth } from '@earendil-works/pi-tui';
 import { computeLayoutBudget, constrainFrame } from '../../../src/cli/chat/layoutBudget.js';
-import { MainColumn, StartScreen } from '../../../src/cli/chat/layout.js';
+import { MainColumn, StartScreen } from '../../../src/cli/chat/startScreen.js';
 
 beforeAll(() => initTheme());
 
@@ -101,6 +101,15 @@ describe('central chat layout budget', () => {
     expect(narrow.telemetryColumns).toBe(0);
     expect(wide.telemetryColumns).toBeGreaterThan(0);
     expect(wide.chatColumns).toBeGreaterThanOrEqual(32);
+  });
+
+  it('allocates at most six editor content rows plus its two rules on a normal terminal', () => {
+    const budget = computeLayoutBudget({
+      columns: 120, rows: 40, hasTranscript: true, telemetryRequested: false,
+      desired: { editor: 40, queue: 0, attachments: 0, cards: 0, subagents: 0 },
+    });
+    expect(budget.sections.editor).toBe(8);
+    expect(budget.rootRows).toBe(40);
   });
 });
 

@@ -5,7 +5,7 @@ import type { AskQuestion, BrainCard } from '../../brain/events.js';
 import type { ProcessInfo } from '../../brain/processRegistry.js';
 import { ansi, chatTheme, color } from './theme.js';
 import type { ToolOutputView } from '../../brain/messageView.js';
-import { formatDuration, formatK, padAnsi, terminalPlainText } from '../ui/text.js';
+import { formatDuration, formatK, padAnsi, terminalInlineText, terminalPlainText } from '../ui/text.js';
 
 /** opencode-style visual building blocks, hand-rolled on pi-tui's Component contract (render(width)
  *  → lines). Kept separate from app.ts so the layout logic stays readable and these are unit-testable. */
@@ -26,7 +26,7 @@ const WHITE = color.text;
 const DIM = color.dim;
 const FAINTC = color.faint;
 const GREENC = color.success;
-const inlineText = (value: string): string => terminalPlainText(value).replace(/\s+/g, ' ').trim();
+const inlineText = terminalInlineText;
 
 /** A full-width user message: a blue left rail and a raised gray background (opencode backgroundElement),
  *  padded to width. The rows are wrapped in one blank raised row top and bottom for breathing room. */
@@ -337,20 +337,18 @@ export class QueuedMessages implements Component {
   private items: { id: string; text: string }[] = [];
   private removeHint: string | null = null;
   private maxRows = Number.POSITIVE_INFINITY;
-  /** How many queued lines to show before collapsing the rest into a "+N more" row. */
-  private static readonly MAX_ROWS = 6;
   invalidate(): void { /* state driven */ }
   set(items: { id: string; text: string }[], removeHint?: string | null): void { this.items = items; this.removeHint = removeHint ?? null; }
   /** Bound the queue strip inside the full-screen shell. The complete queue remains in state; this only
    *  changes its compact presentation so queued prompts can never crowd the transcript off-screen. */
-  setMaxRows(rows: number): void { this.maxRows = Math.max(0, Math.floor(rows)); }
+  setMaxRows(rows: number | null): void {
+    this.maxRows = rows == null ? Number.POSITIVE_INFINITY : Math.max(0, Math.floor(rows));
+  }
   render(width: number): string[] {
     if (this.items.length === 0 || this.maxRows <= 0) return [];
     const pill = color.selected(' QUEUED ');
     const room = Math.max(8, width - 2 - visibleWidth(pill) - 2);
-    const shown = this.items.slice(0, QueuedMessages.MAX_ROWS);
-    const lines = shown.map((it) => `  ${pill} ${DIM(truncateToWidth(inlineText(it.text), room, '…'))}`);
-    if (this.items.length > shown.length) lines.push(`  ${FAINTC(`… +${this.items.length - shown.length} more queued`)}`);
+    const lines = this.items.map((it) => `  ${pill} ${DIM(truncateToWidth(inlineText(it.text), room, '…'))}`);
     if (this.removeHint) lines.push(`  ${FAINTC(inlineText(this.removeHint))}`);
     if (lines.length <= this.maxRows) return lines;
     const clipped = lines.slice(0, this.maxRows);

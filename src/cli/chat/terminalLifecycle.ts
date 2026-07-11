@@ -1,4 +1,4 @@
-import { ALT_SCREEN_OFF, ALT_SCREEN_ON, DISABLE_MOUSE, ENABLE_MOUSE } from './layout.js';
+import { ALT_SCREEN_OFF, ALT_SCREEN_ON, DISABLE_MOUSE, ENABLE_MOUSE } from './terminalProtocol.js';
 
 export type TerminalLifecycleState = 'new' | 'active' | 'suspended' | 'stopped';
 

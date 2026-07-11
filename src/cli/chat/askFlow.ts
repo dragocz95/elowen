@@ -5,14 +5,14 @@ import { getSelectListTheme } from '@earendil-works/pi-coding-agent';
 import type { AskAnswer, AskQuestion } from '../../brain/events.js';
 import { ChatEditor } from './picker.js';
 import { ansi, chatTheme, color } from './theme.js';
-import { padAnsi, terminalPlainText } from '../ui/text.js';
+import { padAnsi, terminalInlineText, terminalPlainText } from '../ui/text.js';
 
 const OTHER = '\u0000other';
 
 const fillInputBg = (text: string, width: number): string => `\x1b[${chatTheme().inputBg}m${padAnsi(text, width)}\x1b[0m`;
 const open = (code: string, text: string): string => ansi.open(code, text);
 const selectedGlyph = (active: boolean): string => active ? '☑' : '☐';
-const inlineText = (value: string): string => terminalPlainText(value).replace(/\s+/g, ' ').trim();
+const inlineText = terminalInlineText;
 
 export interface AskChoiceDockOpts {
   tui: TUI;

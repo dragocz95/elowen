@@ -170,6 +170,12 @@ export function terminalPlainText(input: string): string {
   return lines.join('\n');
 }
 
+/** Printable one-line projection for labels, counters and metadata. Keep this centralized so every chat
+ * surface applies identical control stripping and whitespace folding to untrusted text. */
+export function terminalInlineText(input: string): string {
+  return terminalPlainText(input).replace(/\s+/g, ' ').trim();
+}
+
 export function formatK(n: number): string {
   return n < 1000 ? String(n) : n < 1_000_000 ? `${Math.round(n / 1000)}k` : `${(n / 1_000_000).toFixed(1)}M`;
 }

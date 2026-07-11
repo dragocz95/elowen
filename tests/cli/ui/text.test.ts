@@ -1,8 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { CURSOR_MARKER } from '@earendil-works/pi-tui';
-import { terminalPlainText, terminalSafeAnsi, terminalSafeComponent } from '../../../src/cli/ui/text.js';
+import { terminalInlineText, terminalPlainText, terminalSafeAnsi, terminalSafeComponent } from '../../../src/cli/ui/text.js';
 
 describe('terminal text trust boundary', () => {
+  it('normalizes untrusted labels through one shared printable inline projection', () => {
+    expect(terminalInlineText('  first\nsecond\t\x1b[2J third  ')).toBe('first second third');
+  });
+
   it('keeps renderer-owned SGR, OSC 8 links, and the PI cursor marker only', () => {
     const input = [
       '\x1b[31mred\x1b[0m',

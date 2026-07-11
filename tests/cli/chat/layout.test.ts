@@ -4,7 +4,12 @@ import { getCapabilities, setCapabilities, visibleWidth } from '@earendil-works/
 import { beginAssistant, emptyView, fromHistory, pushUser, reduce, type ChatView } from '../../../src/brain/transcript.js';
 import { TranscriptModel } from '../../../src/brain/transcriptModel.js';
 import type { BrainEvent } from '../../../src/brain/events.js';
-import { CHAT_VIEWPORT_ROW_CACHE_LIMIT, ChatViewport, MentionOverlay, mouseWheel, SlashOverlay, StartScreen, TelemetryPanel, TOOL_INDENT, type ChatViewportState, type TelemetryState } from '../../../src/cli/chat/layout.js';
+import { CHAT_VIEWPORT_ROW_CACHE_LIMIT, ChatViewport, type ChatViewportState } from '../../../src/cli/chat/chatViewport.js';
+import { TOOL_INDENT, TurnRenderer } from '../../../src/cli/chat/turnRenderer.js';
+import { mouseWheel } from '../../../src/cli/chat/terminalProtocol.js';
+import { StartScreen } from '../../../src/cli/chat/startScreen.js';
+import { TelemetryPanel, type TelemetryState } from '../../../src/cli/chat/telemetryPanel.js';
+import { MentionOverlay, SlashOverlay, SuggestionOverlay } from '../../../src/cli/chat/suggestionOverlay.js';
 
 const transcriptState = (
   transcript: TranscriptModel,
@@ -26,6 +31,14 @@ const viewportState = (
 afterEach(() => { vi.useRealTimers(); });
 
 describe('chat layout components', () => {
+  it('renders one turn through the focused turn renderer without owning viewport state', () => {
+    const renderer = new TurnRenderer(getMarkdownTheme());
+    const rows = renderer.render({ role: 'you', text: 'focused module' }, 0, 40, {
+      showThoughts: true, thinkingSeconds: 0, expandedThoughts: new Set(), expandedTools: new Set(),
+    });
+    expect(rows.map((row) => row.line).join('\n')).toContain('focused module');
+  });
+
   beforeAll(() => { initTheme(); });
 
   it('parses SGR mouse wheel events', () => {
@@ -304,6 +317,21 @@ describe('chat layout components', () => {
     const rows = overlay.render(48);
     expect(rows.length).toBeGreaterThan(3);
     expect(rows.every((line) => visibleWidth(line) === 48)).toBe(true);
+  });
+
+  it('shares one suggestion viewport implementation between commands and files', () => {
+    const commands = new SuggestionOverlay('commands', Array.from({ length: 10 }, (_, index) => ({
+      value: `/command-${index}`, label: `/command-${index}`, description: 'Switch theme',
+    })));
+    const files = new SuggestionOverlay('files', Array.from({ length: 10 }, (_, index) => ({
+      value: `src/file-${index}.ts`, label: `src/file-${index}.ts`, description: 'file',
+    })));
+    commands.setMaxRows(6);
+    files.setMaxRows(6);
+    expect(commands.render(48)).toHaveLength(6);
+    expect(files.render(48)).toHaveLength(6);
+    expect(commands.render(48).join('\n')).toContain('commands');
+    expect(files.render(48).join('\n')).toContain('files');
   });
 
   it('filters slash commands from the editor text by description as well as the command name', () => {

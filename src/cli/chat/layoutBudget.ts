@@ -130,7 +130,8 @@ export function computeLayoutBudget(input: LayoutBudgetInput): LayoutBudget {
     subagents: input.editorPriority || input.cardsPriority ? 0 : rows(input.desired.subagents, 4),
     queue: input.editorPriority ? 0 : rows(input.desired.queue, 4),
     attachments: input.editorPriority ? 0 : (input.desired.attachments > 0 ? 1 : 0),
-    editor: rows(input.desired.editor, input.editorPriority ? Math.max(1, terminalRows - 3) : 7),
+    // Ordinary composer: at most six content rows plus PI Editor's two horizontal rules.
+    editor: rows(input.desired.editor, input.editorPriority ? Math.max(1, terminalRows - 3) : 8),
     status: terminalRows > 1 ? 1 : 0,
     hints: input.editorPriority || input.cardsPriority ? 0 : (terminalRows >= RECOMMENDED_TUI_ROWS ? 1 : 0),
   };
