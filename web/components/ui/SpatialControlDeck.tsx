@@ -11,6 +11,7 @@ export interface SpatialDeckSection {
   label: string;
   icon: LucideIcon;
   description?: string;
+  count?: number;
 }
 
 function mascotState(status: SaveStatus): SpatialMascotState {
@@ -36,7 +37,7 @@ function SpatialSectionHero({ status = 'idle', onRetry, children }: {
   );
 }
 
-function SpatialSectionRail({ sections, value, onChange, ariaLabel }: {
+export function SpatialSectionRail({ sections, value, onChange, ariaLabel }: {
   sections: SpatialDeckSection[];
   value: string;
   onChange: (id: string) => void;
@@ -85,6 +86,7 @@ function SpatialSectionRail({ sections, value, onChange, ariaLabel }: {
               ref={(node) => { refs.current[section.id] = node; }}
               type="button"
               role="radio"
+              aria-label={section.count === undefined ? section.label : `${section.label} ${section.count}`}
               aria-checked={selected}
               tabIndex={selected ? 0 : -1}
               onClick={() => onChange(section.id)}
@@ -92,7 +94,7 @@ function SpatialSectionRail({ sections, value, onChange, ariaLabel }: {
               className={`spatial-section-node ${selected ? 'spatial-section-node--active' : ''}`}
             >
               <span className="spatial-section-node__icon"><Icon size={selected ? 20 : 17} strokeWidth={1.55} aria-hidden /></span>
-              <span className="spatial-section-node__label">{section.label}</span>
+              <span className="spatial-section-node__label">{section.label}{section.count !== undefined ? <span className="spatial-section-node__count">{section.count}</span> : null}</span>
             </button>
           );
         })}

@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { Bot, Server } from 'lucide-react';
 import { LanguageProvider } from '../../../lib/i18n';
-import { SpatialControlDeck } from '../../../components/ui/SpatialControlDeck';
+import { SpatialControlDeck, SpatialSectionRail } from '../../../components/ui/SpatialControlDeck';
 
 const sections = [
   { id: 'system', label: 'System', description: 'Runtime and security.', icon: Server },
@@ -64,6 +64,25 @@ describe('SpatialControlDeck', () => {
     Object.defineProperty(rail, 'scrollBy', { value: scrollBy });
     fireEvent.wheel(rail, { deltaY: 72, deltaX: 0 });
     expect(scrollBy).toHaveBeenCalledWith({ left: 72, behavior: 'auto' });
+  });
+
+  it('exposes the shared rail with live counts and complete roving-keyboard navigation', () => {
+    const onChange = vi.fn();
+    render(<SpatialSectionRail ariaLabel="Task status" sections={[
+      { id: 'active', label: 'Active', icon: Server, count: 4 },
+      { id: 'all', label: 'All', icon: Bot, count: 12 },
+    ]} value="active" onChange={onChange} />);
+
+    expect(screen.getByText('4')).toBeInTheDocument();
+    expect(screen.getByText('12')).toBeInTheDocument();
+    const active = screen.getByRole('radio', { name: /Active/ });
+    const all = screen.getByRole('radio', { name: /All/ });
+    fireEvent.keyDown(active, { key: 'End' });
+    expect(onChange).toHaveBeenCalledWith('all');
+    expect(all).toHaveFocus();
+    fireEvent.keyDown(all, { key: 'Home' });
+    expect(onChange).toHaveBeenCalledWith('active');
+    expect(active).toHaveFocus();
   });
 
   it('keeps failed auto-save retry in the hero', () => {
