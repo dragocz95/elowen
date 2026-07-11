@@ -2,7 +2,7 @@ import { compact } from '@earendil-works/pi-coding-agent';
 import type { ExtensionAPI, ModelRegistry } from '@earendil-works/pi-coding-agent';
 import type { Api, Model } from '@earendil-works/pi-ai';
 
-export const CODEX_COMPACTION_FALLBACK_MODEL = 'gpt-5.5';
+const CODEX_COMPACTION_FALLBACK_MODEL = 'gpt-5.5';
 
 interface CodexCompactionFallbackOptions {
   model: Model<Api>;
