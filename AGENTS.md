@@ -10,6 +10,7 @@ This repository is Elowen (`github.com/dragocz95/elowen`), a TypeScript daemon w
 - Reuse PI-native skills, compaction, steering, context files, and shared UI components before adding parallel mechanisms.
 - Keep plugin behavior in the plugin; keep shared transport/runtime behavior in `src/`.
 - Do not touch unrelated worktree changes, especially `benchmark-env/`.
+- After completing each logical change, create a scoped local git commit automatically. Do not wait for a separate commit request, never include unrelated worktree changes, and do not treat this rule as authorization to push.
 - Preserve Czech and English user-facing text. Plugin manifests provide English fallback; add locale overrides under `plugins/<name>/i18n/<lang>.json`, including enum option labels when needed.
 - Do not push, publish npm packages, or deploy production unless the user explicitly asks.
 
