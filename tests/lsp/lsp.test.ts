@@ -386,6 +386,46 @@ describe('LspClient end-to-end (fake transport)', () => {
     expect(inits).toBe(1);
   });
 
+  it('matches percent-encoded server URIs for parallel files in route-group directories', async () => {
+    let onMsg: (message: JsonRpcMessage) => void = () => {};
+    const transport: LspTransport = {
+      send: (framed) => {
+        const msg = JSON.parse(framed.split('\r\n\r\n')[1]!) as JsonRpcMessage;
+        if (msg.method === 'initialize' && typeof msg.id === 'number') {
+          queueMicrotask(() => onMsg({ jsonrpc: '2.0', id: msg.id, result: { capabilities: {} } }));
+        } else if (msg.method === 'textDocument/didOpen') {
+          const requestedUri = (msg.params as { textDocument: { uri: string } }).textDocument.uri;
+          // typescript-language-server percent-encodes parentheses even though Node's pathToFileURL leaves
+          // them literal. Both spellings identify the same file and must reach the same document waiter.
+          const publishedUri = requestedUri.replaceAll('(', '%28').replaceAll(')', '%29');
+          queueMicrotask(() => onMsg({
+            jsonrpc: '2.0', method: 'textDocument/publishDiagnostics',
+            params: {
+              uri: publishedUri,
+              diagnostics: [{
+                severity: 1,
+                message: requestedUri.includes('(auth)') ? 'route verdict' : 'plain verdict',
+                range: { start: { line: 0, character: 0 } },
+              }],
+            },
+          }));
+        }
+      },
+      onMessage: (callback) => { onMsg = callback; },
+      onExit: () => {},
+      dispose: () => {},
+    };
+    const client = new LspClient(transport, '/proj');
+
+    const [route, plain] = await Promise.all([
+      client.diagnose('/proj/app/(auth)/page.tsx', 'route', 'typescriptreact', 100, 5),
+      client.diagnose('/proj/app/page.tsx', 'plain', 'typescriptreact', 100, 5),
+    ]);
+
+    expect(route).toMatchObject({ published: true, diagnostics: [{ message: 'route verdict' }] });
+    expect(plain).toMatchObject({ published: true, diagnostics: [{ message: 'plain verdict' }] });
+  });
+
   it('rejects diagnose after the server exits (so the manager can evict + respawn)', async () => {
     const ctl = controllableServer({});
     const client = new LspClient(ctl.transport, '/proj');
