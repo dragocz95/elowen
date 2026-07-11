@@ -40,6 +40,13 @@ describe('DashboardView', () => {
   const srv = server();
   beforeAll(() => srv.listen({ onUnhandledRequest })); afterEach(() => srv.resetHandlers()); afterAll(() => srv.close());
 
+  it('uses the canonical spatial workspace with exactly one Elowen mascot', async () => {
+    const { wrapper: Wrapper } = createWrapper();
+    render(<Wrapper><EffectsProvider><ToastProvider><DashboardView /></ToastProvider></EffectsProvider></Wrapper>);
+    expect(await screen.findByTestId('spatial-workspace-layout')).toBeInTheDocument();
+    expect(screen.getAllByTestId('workspace-hero-mascot')).toHaveLength(1);
+  });
+
   it('renders the daily journal and attention rail with live agent work in the hero', async () => {
     const { wrapper: Wrapper, client } = createWrapper();
     client.setQueryData(['session-signals'], { 'elowen-Iris': { type: 'working' } });
