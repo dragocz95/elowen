@@ -22,7 +22,8 @@ import { ProjectFilterPills } from '../../components/ui/ProjectFilterPills';
 import { DateRangeFilter } from './DateRangeFilter';
 import { MotionLayoutItem, MotionPresence } from '../../components/ui/Motion';
 import { DEFAULT_RANGE, parseRange, serializeRange, isStoredRange, inRange, rangeWindowCapHours } from './dateRange';
-import { WorkspaceDetailRail, WorkspaceHeader, WorkspaceMetric, WorkspaceMetrics, WorkspacePage } from '../../components/ui/WorkspacePrimitives';
+import { SpatialWorkspaceLayout, WorkspaceDetailRail, WorkspaceMetric } from '../../components/ui/WorkspacePrimitives';
+import { ControlSurfaceDocument, ControlSurfaceState, ControlSurfaceToolbar } from '../../components/ui/ControlSurface';
 
 const TONE_DOT: Record<Tone, string> = {
   accent: 'bg-accent', danger: 'bg-danger', success: 'bg-success',
@@ -327,41 +328,40 @@ export function TimelineView() {
   return (
     <div className="@container">
       <ModuleHeader title={t.page.timeline} count={filteredEvents.length} icon={Activity} />
-      <WorkspacePage>
-        <WorkspaceHeader
-          eyebrow={t.timeline.workspaceEyebrow}
-          title={t.page.timeline}
-          count={filteredEvents.length}
-          description={t.timeline.workspaceIntro}
-          icon={Activity}
-          status={!q.isLoading && !q.isError ? <span className="workspace-status">{t.timeline.workspaceReady}</span> : undefined}
-        />
-        <WorkspaceMetrics visual={<div className="timeline-core"><Activity size={29} strokeWidth={1.2} /></div>} ariaLabel={t.timeline.summary} testId="timeline-summary">
-          <WorkspaceMetric label={t.timeline.filterTasks} value={stats.task} icon={Activity} />
-          <WorkspaceMetric label={t.timeline.filterMissions} value={stats.mission} icon={Columns3} />
-          <WorkspaceMetric label={t.timeline.approved} value={stats.approved} icon={CheckCircle2} />
-          <WorkspaceMetric label={t.timeline.escalated} value={stats.escalated} icon={AlertTriangle} />
-        </WorkspaceMetrics>
-        <div className="workspace-tabs">
-          <Segmented size="sm" options={[{ label: t.timeline.axis, value: 'axis', icon: Activity }, { label: t.timeline.lanes, value: 'lanes', icon: Columns3 }]} value={view} onChange={setView} variant="line" nowrap aria-label={t.page.timeline} />
-        </div>
-        <div className="workspace-content">
-          <div className="flex min-w-0 flex-wrap items-center gap-2 border-y border-border/80 py-3">
+      <SpatialWorkspaceLayout
+        hero={{
+          eyebrow: t.timeline.workspaceEyebrow,
+          title: t.page.timeline,
+          count: filteredEvents.length,
+          description: t.timeline.workspaceIntro,
+          mascotState: q.isLoading ? 'saving' : q.isError ? 'error' : 'idle',
+          status: !q.isLoading && !q.isError ? <span className="workspace-status">{t.timeline.workspaceReady}</span> : undefined,
+          metrics: <div className="contents" data-testid="timeline-summary">
+            <WorkspaceMetric label={t.timeline.filterTasks} value={stats.task} icon={Activity} />
+            <WorkspaceMetric label={t.timeline.filterMissions} value={stats.mission} icon={Columns3} />
+            <WorkspaceMetric label={t.timeline.approved} value={stats.approved} icon={CheckCircle2} />
+            <WorkspaceMetric label={t.timeline.escalated} value={stats.escalated} icon={AlertTriangle} />
+          </div>,
+        }}
+        navigation={{ sections: [{ id: 'axis', label: t.timeline.axis, icon: Activity }, { id: 'lanes', label: t.timeline.lanes, icon: Columns3 }], value: view, onChange: setView, ariaLabel: t.page.timeline }}
+      >
+        <ControlSurfaceDocument>
+          <ControlSurfaceToolbar className="flex-wrap">
             <div className="min-w-0 flex-1"><Segmented size="sm" options={FILTER_OPTIONS} value={filter} onChange={setFilter} /></div>
             <ProjectFilterPills value={selectedProject} onChange={setProject} variant="dropdown" />
             <DateRangeFilter value={range} onChange={(next) => setRangeRaw(serializeRange(next))} />
-          </div>
+          </ControlSurfaceToolbar>
 
-          <div className="workspace-master-detail timeline-workspace-grid mt-4" data-detail={picked != null}>
+          <div className="workspace-master-detail timeline-workspace-grid" data-detail={picked != null}>
             <div className="min-w-0">
               <section className="min-w-0 border-y border-border/80 px-1 py-4">
                 <div className="mb-4 flex items-center justify-between gap-2">
                   <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-widest text-text-muted"><Clock size={12} className="shrink-0" aria-hidden />{windowLabel}</div>
                   {hasData ? <span className="hidden text-[11px] text-text-muted @sm:inline">{t.timeline.markerHint}</span> : null}
                 </div>
-                {q.isLoading ? <LoadingState />
-                  : q.isError ? <ErrorState message={t.timeline.loadError} onRetry={() => q.refetch()} />
-                  : !hasData ? <EmptyState title={t.timeline.empty} description={t.timeline.emptyDescription} icon={Activity} />
+                {q.isLoading ? <ControlSurfaceState><LoadingState /></ControlSurfaceState>
+                  : q.isError ? <ControlSurfaceState tone="danger"><ErrorState message={t.timeline.loadError} onRetry={() => q.refetch()} /></ControlSurfaceState>
+                  : !hasData ? <ControlSurfaceState><EmptyState title={t.timeline.empty} description={t.timeline.emptyDescription} icon={Activity} /></ControlSurfaceState>
                   : <MotionPresence mode="wait">{view === 'lanes' ? (
                     <MotionLayoutItem key="lanes">
                       <div className="flex min-w-0 flex-col">
@@ -387,8 +387,8 @@ export function TimelineView() {
               </WorkspaceDetailRail>
             ) : null}
           </div>
-        </div>
-      </WorkspacePage>
+        </ControlSurfaceDocument>
+      </SpatialWorkspaceLayout>
     </div>
   );
 }

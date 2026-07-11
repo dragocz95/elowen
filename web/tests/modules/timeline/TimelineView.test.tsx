@@ -43,6 +43,16 @@ beforeAll(() => server.listen({ onUnhandledRequest })); afterEach(() => server.r
 beforeEach(() => localStorage.clear());
 
 describe('TimelineView', () => {
+  it('uses the spatial workspace shell with one mascot and primary rail navigation', async () => {
+    const { wrapper: Wrapper } = createWrapper();
+    const { container } = render(<Wrapper><TimelineView /></Wrapper>);
+    await screen.findAllByTestId('axis-dot');
+    expect(screen.getByTestId('spatial-workspace-layout')).toBeInTheDocument();
+    expect(screen.getAllByTestId('workspace-hero-mascot')).toHaveLength(1);
+    expect(container.querySelector('.workspace-tabs')).toBeNull();
+    expect(container.querySelector('[data-control-surface]')).toBeInTheDocument();
+  });
+
   it('renders the timeline track tick labels', async () => {
     const { wrapper: Wrapper } = createWrapper();
     render(<Wrapper><TimelineView /></Wrapper>);
