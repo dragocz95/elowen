@@ -15,6 +15,25 @@ beforeAll(() => server.listen({ onUnhandledRequest })); afterEach(() => { server
 const meUser = (over: Record<string, unknown> = {}) => ({ id: 2, username: 'bob', name: '', email: '', avatar: '', default_exec: '', is_admin: false, allowed_execs: ['sonnet'], created_at: '2026-01-01', ...over });
 
 describe('AccountView', () => {
+  it('uses the shared control deck with the approved Account section order and one mascot', async () => {
+    server.use(
+      http.get('*/api/auth/me', () => HttpResponse.json({ user: meUser({ name: 'Bob' }) })),
+      http.get('*/api/config', () => HttpResponse.json({ allowedExecs: ['sonnet'], customModels: [], hiddenPresets: [], autopilot: {}, providers: {}, defaults: {} })),
+      http.get('*/api/brain/models', () => HttpResponse.json([])),
+      http.get('*/api/auth/me/cli-settings', () => HttpResponse.json({ model: '', modelProvider: '', discordUserId: '', whatsappNumber: '' })),
+    );
+    const { wrapper: Wrapper } = createWrapper();
+    render(<Wrapper><EffectsProvider><UiScaleProvider><ToastProvider><AccountView /></ToastProvider></UiScaleProvider></EffectsProvider></Wrapper>);
+
+    expect(await screen.findByRole('heading', { level: 1, name: 'Account' })).toBeInTheDocument();
+    const rail = screen.getByRole('radiogroup', { name: 'Account sections' });
+    expect(Array.from(rail.querySelectorAll('[role="radio"]')).map((node) => node.textContent)).toEqual([
+      'Account', 'Security', 'Notifications', 'Personality', 'Memory', 'Terminal', 'Elowen AI',
+    ]);
+    expect(screen.getAllByRole('img', { name: 'Elowen' })).toHaveLength(1);
+    expect(screen.getByTestId('spatial-content-surface')).toContainElement(screen.getByText('@bob'));
+  });
+
   it('shows the user identity, and saves a default worker picked in the manage modal', async () => {
     let patched: Record<string, unknown> | null = null;
     server.use(

@@ -1,0 +1,23 @@
+/* Account shares the Settings control deck while keeping personal identity content distinct. */
+[data-module="account"] .spatial-content-surface { padding: 1rem 0.5rem 2rem; }
+[data-module="account"] [data-account-panel] { min-width: 0; overflow: clip; border: 1px solid rgb(255 255 255 / 0.085); border-radius: var(--radius-xl); background: linear-gradient(145deg, rgb(255 255 255 / 0.018), transparent 34%), #030303; box-shadow: var(--shadow-card); padding: 0.75rem clamp(0.75rem, 1.8vw, 1.5rem) 1.5rem; }
+
+.account-hero-summary { display: flex; width: 100%; align-items: center; gap: 1.25rem; }
+.account-hero-summary__icon { display: grid; width: 4.8rem; height: 4.8rem; flex: none; place-items: center; border: 1px solid rgb(255 82 54 / 0.2); border-radius: 50%; color: var(--color-accent); background: radial-gradient(circle, rgb(255 82 54 / 0.1), transparent 68%); box-shadow: var(--glow-soft); }
+.account-hero-summary strong { display: block; color: var(--color-text); font-size: clamp(1.45rem, 1.2rem + 0.5vw, 1.9rem); font-weight: 610; letter-spacing: -0.035em; }
+.account-hero-summary p { max-width: 38rem; margin-top: 0.45rem; color: var(--color-text-muted); font-size: 0.8rem; line-height: 1.55; }
+
+.account-identity-hero { display: flex; width: 100%; align-items: center; gap: 1.25rem; }
+.account-identity-hero > span:first-child { box-shadow: 0 0 0 1px rgb(255 82 54 / 0.22), 0 0 36px rgb(255 82 54 / 0.12); }
+.account-identity-hero__copy { display: flex; min-width: 0; flex-direction: column; align-items: flex-start; gap: 0.32rem; }
+.account-identity-hero__name { max-width: 30rem; overflow: hidden; color: var(--color-text); font-size: 1.7rem; font-weight: 620; letter-spacing: -0.035em; text-overflow: ellipsis; white-space: nowrap; }
+.account-identity-hero__role { display: inline-flex; align-items: center; gap: 0.35rem; margin-top: 0.3rem; color: var(--color-accent); font-size: 0.68rem; font-weight: 620; }
+
+[data-module="account"] .spatial-form-group { margin-bottom: 1rem; border: 1px solid rgb(255 255 255 / 0.075); border-radius: var(--radius-lg); background: rgb(255 255 255 / 0.012); padding-inline: 1rem; }
+[data-module="account"] .spatial-form-group:last-child { margin-bottom: 0; }
+
+@media (max-width: 620px) {
+  [data-module="account"] [data-account-panel] { padding-inline: 0.65rem; border-inline: 0; border-radius: 0; }
+  .account-identity-hero { align-items: flex-end; }
+  .account-identity-hero__name { font-size: 1.35rem; }
+}

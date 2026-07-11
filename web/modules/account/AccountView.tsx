@@ -27,7 +27,7 @@ import { useAutoSaveStatus, type SaveStatus } from '../../lib/useAutoSaveStatus'
 import { useUiScale, MIN_SCALE, MAX_SCALE, DEFAULT_SCALE } from '../../lib/useUiScale';
 import { isPushSupported, enablePush, disablePush } from '../../lib/pushClient';
 import { ChoiceField } from '../../components/ui/ChoiceField';
-import { SpatialControlSurface } from '../../components/ui/SpatialControlSurface';
+import { SpatialControlDeck } from '../../components/ui/SpatialControlDeck';
 import { SpatialGroup, SpatialIdentity, SpatialRow } from '../../components/ui/SpatialPrimitives';
 import { MotionReveal } from '../../components/ui/Motion';
 import { useEffects, type EffectsMode } from '../../lib/useEffects';
@@ -35,6 +35,7 @@ import { PersonalitySection } from './PersonalitySection';
 import { CliSection } from './CliSection';
 import { TerminalSection } from './TerminalSection';
 import { AccountMemorySection } from './AccountMemorySection';
+import { AccountDeckHero } from './AccountDeckHero';
 
 type AccountSection = 'profile' | 'security' | 'notifications' | 'personality' | 'cli' | 'terminal' | 'memory';
 type SaveFeedback = { status: SaveStatus; retry?: () => void };
@@ -294,10 +295,10 @@ export function AccountView() {
     { id: 'profile', icon: UserCog, label: t.account.tabProfile },
     { id: 'security', icon: KeyRound, label: t.account.tabSecurity },
     { id: 'notifications', icon: Bell, label: t.account.tabNotifications },
-    { id: 'cli', icon: Cpu, label: t.account.tabCli },
-    { id: 'terminal', icon: SquareTerminal, label: t.account.tabTerminal },
-    { id: 'memory', icon: Brain, label: t.account.tabMemory },
     { id: 'personality', icon: Sparkles, label: t.account.tabPersonality },
+    { id: 'memory', icon: Brain, label: t.account.tabMemory },
+    { id: 'terminal', icon: SquareTerminal, label: t.account.tabTerminal },
+    { id: 'cli', icon: Cpu, label: t.account.tabCli },
   ];
   const spatialSections = sections.map((item) => ({
     ...item,
@@ -315,19 +316,22 @@ export function AccountView() {
     { status: saveModel.isError ? 'error' : saveModel.isPending ? 'saving' : saveModel.isSuccess ? 'saved' : 'idle', retry: () => applyElowen(elowenSel) },
   );
   const activeFeedback = section === 'profile' ? profileFeedback : (sectionFeedback[section] ?? { status: 'idle' as const });
+  const activeSection = spatialSections.find((item) => item.id === section) ?? spatialSections[0]!;
 
   return (
     /* Match the settings workspace width so account controls have the same calm, useful measure. */
     <div className="flex w-full min-w-0 flex-col">
       <ModuleHeader title={t.account.title} icon={UserCog} />
 
-      <SpatialControlSurface
+      <SpatialControlDeck
+        eyebrow={t.account.title}
         ariaLabel={t.account.sectionsNav}
         sections={spatialSections}
         value={section}
         onChange={(v) => setSection(v as typeof section)}
         status={activeFeedback.status}
         onRetry={activeFeedback.retry}
+        hero={<AccountDeckHero section={activeSection} user={u} adminLabel={t.users.admin} />}
       >
       <AccountPanel id="memory" active={section} visited={visitedSections}><AccountMemorySection onSaveState={reportSaveState} /></AccountPanel>
       <AccountPanel id="personality" active={section} visited={visitedSections}><PersonalitySection onSaveState={reportSaveState} /></AccountPanel>
@@ -502,7 +506,7 @@ export function AccountView() {
           </SpatialGroup>
         ) : <p className="text-sm text-text-muted">{t.push.unsupported}</p>}
       </AccountPanel>
-      </SpatialControlSurface>
+      </SpatialControlDeck>
     </div>
   );
 }
