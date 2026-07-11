@@ -223,6 +223,8 @@ export function createShell(rt: ChatRuntime, stream: StreamController, mdTheme: 
   let panelWidth = 46;
   let resizingPanel = false;
   let draggingHistoryScroll = false;
+  let draggedHistoryViewport: ChatViewport | null = null;
+  let historyDragTimer: ReturnType<typeof setTimeout> | null = null;
   // Screen row of the last scrollbar-drag sample — its delta gives the drag direction for the mascot float.
   let lastScrollDragRow = 0;
   let removeInputListener: (() => void) | null = null;
@@ -536,6 +538,28 @@ export function createShell(rt: ChatRuntime, stream: StreamController, mdTheme: 
     scheduler.schedule(reason, reason.startsWith('scroll:') || reason.startsWith('input:') ? 'interactive' : 'normal');
   };
   const renderForced = (reason = 'geometry'): void => scheduler.scheduleForced(reason);
+  const cancelHistoryScrollbarDrag = (): void => {
+    if (historyDragTimer) clearTimeout(historyDragTimer);
+    historyDragTimer = null;
+    draggedHistoryViewport?.endScrollbarDrag();
+    draggedHistoryViewport = null;
+    draggingHistoryScroll = false;
+  };
+  const scheduleHistoryScrollbarContinuation = (needed: boolean): void => {
+    if (!needed || !draggingHistoryScroll || !draggedHistoryViewport) {
+      if (historyDragTimer) clearTimeout(historyDragTimer);
+      historyDragTimer = null;
+      return;
+    }
+    if (historyDragTimer) return;
+    historyDragTimer = setTimeout(() => {
+      historyDragTimer = null;
+      if (!draggingHistoryScroll || !draggedHistoryViewport) return;
+      const pending = draggedHistoryViewport.continueScrollbarDrag();
+      render('scroll:drag-index');
+      scheduleHistoryScrollbarContinuation(pending);
+    }, 16);
+  };
 
   // Live-apply a rebind from the /keybinds editor: point `keymap` at the freshly-built active map and
   // rebuild the leader window around it (the old one may hold a stale keymap + pending timer). The
@@ -844,20 +868,22 @@ export function createShell(rt: ChatRuntime, stream: StreamController, mdTheme: 
         const isRelease = !ev.down || ev.code === 3;
         const isPrimaryDrag = ev.down && (ev.code === 0 || ev.code === 32);
         if (draggingHistoryScroll && isRelease) {
-          draggingHistoryScroll = false;
+          cancelHistoryScrollbarDrag();
           return { consume: true };
         }
         if (draggingHistoryScroll && isPrimaryDrag) {
           nudgeFloat(lastScrollDragRow - ev.y); // drag up (y falls) scrolls into history → flame lifts
           lastScrollDragRow = ev.y;
-          activeViewport().setScrollFromRow(ev.y);
+          const pending = draggedHistoryViewport?.updateScrollbarDrag(ev.y) ?? false;
+          scheduleHistoryScrollbarContinuation(pending);
           render('scroll:drag');
           return { consume: true };
         }
         if (isPrimaryDrag && hasMessages() && activeViewport().isScrollbarHit(ev.x, ev.y)) {
           draggingHistoryScroll = true;
           lastScrollDragRow = ev.y;
-          activeViewport().setScrollFromRow(ev.y);
+          draggedHistoryViewport = activeViewport();
+          scheduleHistoryScrollbarContinuation(draggedHistoryViewport.beginScrollbarDrag(ev.y));
           render('scroll:drag-start');
           return { consume: true };
         }
@@ -1069,6 +1095,7 @@ export function createShell(rt: ChatRuntime, stream: StreamController, mdTheme: 
 
   const hideOverlays = (): void => {
     cancelFloat();
+    cancelHistoryScrollbarDrag();
     if (thinkingAnimationTimer) { clearTimeout(thinkingAnimationTimer); thinkingAnimationTimer = null; }
     if (copyNoticeTimer) { clearTimeout(copyNoticeTimer); copyNoticeTimer = null; }
     clearInterruptArm();

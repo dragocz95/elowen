@@ -286,6 +286,8 @@ export interface ChatViewportMetrics {
   indexedTurns: number;
   cachedRows: number;
   layoutVisits: number;
+  scrollOffset: number;
+  maxScrollOffset: number;
 }
 
 interface VisualScrollMetrics {
@@ -338,6 +340,7 @@ export class ChatViewport implements Component {
   private indexedTurnCount = 0;
   private lastRenderMs = 0;
   private frameLayoutVisits = 0;
+  private scrollbarDrag: { localRow: number; grabOffset: number } | null = null;
 
   constructor(
     initial: ChatViewportState,
@@ -376,6 +379,8 @@ export class ChatViewport implements Component {
       indexedTurns: this.indexedTurnCount,
       cachedRows: this.cachedRowCount,
       layoutVisits: this.frameLayoutVisits,
+      scrollOffset: this.scrollOffset,
+      maxScrollOffset: this.maxOffset,
     };
   }
 
@@ -467,29 +472,74 @@ export class ChatViewport implements Component {
       && localRow - 1 < metrics.thumbTop + metrics.thumbSize;
   }
 
+  /** Begin a real thumb drag without moving it. Remembering where inside the thumb the pointer landed
+   *  prevents the common "grab then jump to centre" glitch. Returns whether older history still needs
+   *  bounded background indexing (normally false until the pointer actually moves upward). */
+  beginScrollbarDrag(absRow: number): boolean {
+    if (this.viewportHeight <= 0) return false;
+    const metrics = this.visualScrollMetrics(this.viewportHeight);
+    const localRow = Math.max(0, Math.min(this.viewportHeight - 1, absRow - this.getTopRow()));
+    this.scrollbarDrag = {
+      localRow,
+      grabOffset: Math.max(0, Math.min(metrics.thumbSize - 1, localRow - metrics.thumbTop)),
+    };
+    return false;
+  }
+
+  /** Move an active scrollbar drag. One call performs at most one bounded history-index batch. The
+   *  boolean tells the shell to schedule another one-shot continuation even if the mouse stops moving. */
+  updateScrollbarDrag(absRow: number): boolean {
+    if (!this.scrollbarDrag || this.viewportHeight <= 0) return false;
+    const localRow = Math.max(0, Math.min(this.viewportHeight - 1, absRow - this.getTopRow()));
+    if (localRow === this.scrollbarDrag.localRow) return false;
+    this.scrollbarDrag.localRow = localRow;
+    return this.advanceScrollbarDrag();
+  }
+
+  continueScrollbarDrag(): boolean {
+    return this.scrollbarDrag ? this.advanceScrollbarDrag() : false;
+  }
+
+  endScrollbarDrag(): void {
+    this.scrollbarDrag = null;
+  }
+
   setScrollFromRow(absRow: number): void {
     if (this.viewportHeight <= 0) return;
+    const metrics = this.visualScrollMetrics(this.viewportHeight);
+    this.scrollbarDrag = {
+      localRow: Math.max(0, Math.min(this.viewportHeight - 1, absRow - this.getTopRow())),
+      grabOffset: Math.floor(metrics.thumbSize / 2),
+    };
+    this.advanceScrollbarDrag();
+    this.endScrollbarDrag();
+  }
+
+  private advanceScrollbarDrag(): boolean {
+    const drag = this.scrollbarDrag;
+    if (!drag || this.viewportHeight <= 0) return false;
     let metrics = this.visualScrollMetrics(this.viewportHeight);
     if (metrics.total <= this.viewportHeight || metrics.maxOffset <= 0) {
       this.scrollOffset = 0;
-      return;
+      return false;
     }
-    const localRow = absRow - this.getTopRow() + 1;
     const targetOffset = (visual: VisualScrollMetrics): number => {
       const maxTop = Math.max(1, this.viewportHeight - visual.thumbSize);
-      const targetTop = Math.max(0, Math.min(maxTop, localRow - 1 - Math.floor(visual.thumbSize / 2)));
+      const targetTop = Math.max(0, Math.min(maxTop, drag.localRow - drag.grabOffset));
       return Math.round(visual.maxOffset - (targetTop / maxTop) * visual.maxOffset);
     };
 
-    // The estimated thumb is a real control. Index only a bounded older slice when the requested
-    // position lies beyond the exact suffix. Small histories become exact on first grab; large ones
-    // make progressive forward progress without turning one pointer sample into an unbounded frame.
+    // Each continuation remains frame-budgeted. The shell re-arms a one-shot timer while this returns
+    // true, so a stationary pointer can still reach an estimated old-history target without blocking
+    // input or creating a permanent/idle render loop.
     if (!this.isHistoryIndexComplete() && targetOffset(metrics) > this.maxOffset) {
       this.indexOlderBounded(SCROLLBAR_DRAG_INDEX_TURNS, SCROLLBAR_DRAG_INDEX_MS);
       this.refreshMetrics();
       metrics = this.visualScrollMetrics(this.viewportHeight);
     }
-    this.scrollOffset = Math.max(0, Math.min(this.maxOffset, targetOffset(metrics)));
+    const desired = targetOffset(metrics);
+    this.scrollOffset = Math.max(0, Math.min(this.maxOffset, desired));
+    return !this.isHistoryIndexComplete() && desired > this.maxOffset;
   }
 
   render(width: number): string[] {

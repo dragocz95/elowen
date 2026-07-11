@@ -708,6 +708,58 @@ describe('progressive history layout', () => {
     expect(viewport.render(80).join('\n')).toMatch(/History.*\+\d+ lines/);
   });
 
+  it('preserves the pointer offset when grabbing a multi-row scrollbar thumb', () => {
+    const viewport = new ChatViewport(
+      { view: largeHistory(24), notice: '', modelName: 'kimi', thinkingSeconds: 0 },
+      getMarkdownTheme(), () => 24, () => 1, () => 80,
+    );
+    viewport.render(80);
+    viewport.scroll(1_000_000);
+    viewport.render(80);
+    viewport.scroll(-Math.floor(viewport.metrics().transcriptRows / 2));
+    const before = viewport.render(80);
+    const thumbRows = before
+      .map((line, index) => line.includes('█') ? index + 1 : 0)
+      .filter(Boolean);
+    expect(thumbRows.length).toBeGreaterThan(1);
+    const grabbedRow = thumbRows.at(-1)!;
+    const beforeOffset = viewport.metrics().scrollOffset;
+
+    expect(viewport.beginScrollbarDrag(grabbedRow)).toBe(false);
+    viewport.updateScrollbarDrag(grabbedRow);
+
+    expect(viewport.metrics().scrollOffset).toBe(beforeOffset);
+    viewport.endScrollbarDrag();
+  });
+
+  it('continues a bounded drag toward old history without another pointer event', () => {
+    const view = largeHistory(5_000);
+    const viewport = new ChatViewport(
+      { view, notice: '', modelName: 'kimi', thinkingSeconds: 0 },
+      getMarkdownTheme(), () => 12, () => 1, () => 80,
+    );
+    const first = viewport.render(80);
+    const thumbRow = first.findIndex((line) => line.includes('█')) + 1;
+    expect(thumbRow).toBeGreaterThan(0);
+    expect(viewport.beginScrollbarDrag(thumbRow)).toBe(false);
+    let pending = viewport.updateScrollbarDrag(1);
+    const afterPointerEvent = viewport.indexedHistoryTurns();
+    expect(pending).toBe(true);
+    expect(afterPointerEvent).toBeLessThan(view.turns.length);
+
+    let continuations = 0;
+    while (pending && continuations < 200) {
+      pending = viewport.continueScrollbarDrag();
+      continuations++;
+    }
+
+    expect(pending).toBe(false);
+    expect(continuations).toBeGreaterThan(1);
+    expect(viewport.isHistoryIndexComplete()).toBe(true);
+    expect(viewport.metrics().scrollOffset).toBe(viewport.metrics().maxScrollOffset);
+    viewport.endScrollbarDrag();
+  });
+
   it('invalidates only the turn that owns an expanded Thought', () => {
     const view = fromHistory([
       { role: 'assistant', text: 'ORIGINAL settled answer' },
