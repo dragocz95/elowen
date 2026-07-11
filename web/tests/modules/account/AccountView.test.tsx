@@ -101,7 +101,7 @@ describe('AccountView', () => {
     fireEvent.click(screen.getByRole('radio', { name: 'Personality' }));
     const discord = await screen.findByRole('radio', { name: 'Discord' });
     fireEvent.click(discord);
-    expect(await screen.findByText('Discord persona')).toBeVisible();
+    await waitFor(() => expect(screen.getByText('Discord persona')).toBeVisible());
 
     fireEvent.click(screen.getByRole('radio', { name: 'Account' }));
     await waitFor(() => expect(screen.getByText('Discord persona')).not.toBeVisible());
