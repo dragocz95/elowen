@@ -14,7 +14,7 @@ import {
   ChatViewport,
 } from './chatViewport.js';
 import {
-  MainColumn, PANEL_GUTTER_COLUMNS, StartScreen,
+  MainColumn, PANEL_GUTTER_COLUMNS, StartScreen, startScreenBox,
   TOP_RULE_ROWS, TopRule,
 } from './startScreen.js';
 import { TelemetryPanel } from './telemetryPanel.js';
@@ -196,6 +196,8 @@ export function createChatComposition(
   const cancelFloat = (): void => animations.cancelMascot();
   let currentBudget: LayoutBudget | null = null;
   let preparedInput: { width: number; queue: string[]; attachments: string[]; editor: string[] } | null = null;
+  let overlayGeometryRevision: string | null = null;
+  let fullOverlayReflowPending = false;
   const activeInputComponent = (): (Component & { setMaxRows?: (rows: number | null) => void }) | undefined =>
     editorSlot.children[0] as (Component & { setMaxRows?: (rows: number | null) => void }) | undefined;
   const hasPriorityInput = (): boolean => activeInputComponent() !== editor;
@@ -257,6 +259,35 @@ export function createChatComposition(
     return budget;
   };
   const rowBudget = (): LayoutBudget => currentBudget ?? refreshLayoutBudget();
+  /** Overlay option factories are evaluated only when their native PI overlay is opened. Derive one
+   * deterministic revision from the geometry that those factories actually consume, after root layout
+   * has allocated the editor/bottom stack. A revision is committed before reflow so the forced follow-up
+   * frame is stable instead of becoming a render loop. */
+  const preparedOverlayGeometryRevision = (): string => {
+    const messages = hasMessages();
+    const base = [term.columns, term.rows, messages ? 1 : 0, panelReserve()];
+    if (!messages) {
+      const { boxWidth, leftPad } = startScreenBox(term.columns);
+      const screenRows = Math.max(1, term.rows - TOP_RULE_ROWS);
+      const inputRows = Math.min(startInput.render(boxWidth).length, Math.max(0, screenRows - 1));
+      const noticeRows = rt.notice ? rt.notice.split('\n').length : 0;
+      return [...base, boxWidth, leftPad, inputRows, noticeRows].join(':');
+    }
+    const budget = rowBudget();
+    const bottom = budget.sections.queue + budget.sections.attachments + budget.sections.editor
+      + budget.sections.status + budget.sections.hints;
+    return [...base, budget.chatColumns, bottom].join(':');
+  };
+  const synchronizeOverlayGeometry = (): void => {
+    const revision = preparedOverlayGeometryRevision();
+    const changed = overlayGeometryRevision !== null && overlayGeometryRevision !== revision;
+    overlayGeometryRevision = revision;
+    const reflowAll = fullOverlayReflowPending;
+    fullOverlayReflowPending = false;
+    if (reflowAll || (changed && (slashHandle !== null || mentionHandle !== null))) {
+      overlayController.reflow();
+    }
+  };
 
   const parentViewport = new ChatViewport(
     { transcript: rt.transcript, transcriptNotice: rt.view.notice, notice: rt.notice, modelName: rt.modelName, thinkingSeconds: 0 },
@@ -416,11 +447,11 @@ export function createChatComposition(
     tui,
     term,
     onResize: () => {
-      // Suggestion geometry reads rowBudget(); invalidate the previous terminal's allocation before
-      // OverlayController resolves every active option factory against the new dimensions.
+      // Invalidate now, but reflow only after the resized root has prepared its editor/layout allocation.
+      // Generic modals and the telemetry rail also depend on terminal dimensions, hence the full flag.
       currentBudget = null;
       preparedInput = null;
-      overlayController.reflow();
+      fullOverlayReflowPending = true;
     },
     prepare: () => {
       currentBudget = null;
@@ -601,6 +632,7 @@ export function createChatComposition(
     render: (width: number): string[] => {
       const renderStartedAt = performance.now();
       const rawLines = root.render(width).map(terminalSafeAnsi);
+      synchronizeOverlayGeometry();
       // Final defense at the single root boundary. A custom child must never make pi-tui write a wrapping
       // line or a frame taller than the alternate screen, even if its own local sizing regresses later.
       const lines = renderOwner.composeRoot(rawLines, width, term.rows);
@@ -720,8 +752,11 @@ export function createChatComposition(
       activeViewport,
       panelVisible,
       panelLeftEdge,
-      setPanelWidth: (width) => { panelWidth = width; },
-      reflowPanel: () => overlayController.reflow(),
+      setPanelWidth: (width) => {
+        if (panelWidth === width) return;
+        panelWidth = width;
+        fullOverlayReflowPending = true;
+      },
       telemetry,
       killProcess,
       rowBudget,

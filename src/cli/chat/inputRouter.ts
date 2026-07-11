@@ -36,7 +36,6 @@ export interface ChatInputContext {
   panelVisible(): boolean;
   panelLeftEdge(): number;
   setPanelWidth(width: number): void;
-  reflowPanel(): void;
   telemetry: TelemetryPanel;
   killProcess(id: string): void;
   rowBudget(): LayoutBudget;
@@ -117,7 +116,6 @@ export class InputRouter {
         if (this.resizingPanel && release) { this.resizingPanel = false; return { consume: true }; }
         if (this.resizingPanel && event.down) {
           context.setPanelWidth(Math.max(36, Math.min(68, term.columns - event.x + 1)));
-          context.reflowPanel();
           rt.renderForced('geometry:telemetry-resize');
           return { consume: true };
         }

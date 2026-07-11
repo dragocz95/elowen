@@ -9,6 +9,7 @@ import { OverlayController } from '../../../src/cli/chat/overlayController.js';
 import { RenderShell } from '../../../src/cli/chat/renderShell.js';
 import { ChatApplication } from '../../../src/cli/chat/chatApplication.js';
 import { createShell } from '../../../src/cli/chat/shell.js';
+import { startScreenBox, startScreenInputTop, TOP_RULE_ROWS } from '../../../src/cli/chat/startScreen.js';
 import { terminalPlainText } from '../../../src/cli/ui/text.js';
 import { applicationHarness } from './chatApplicationHarness.js';
 
@@ -335,6 +336,7 @@ describe('chat application shell ownership', () => {
     h.term.rows = 12;
     app.renderForced('test:resize');
     await vi.runOnlyPendingTimersAsync();
+    h.tui.children[0]!.render(h.term.columns);
 
     expect(h.tui.overlays.length).toBeGreaterThan(beforeResize.length);
     expect(beforeResize.every((overlay) => overlay.removed)).toBe(true);
@@ -368,12 +370,99 @@ describe('chat application shell ownership', () => {
     h.term.rows = 14;
     app.renderForced('test:resize');
     await vi.runOnlyPendingTimersAsync();
+    h.tui.children[0]!.render(h.term.columns);
     expect(before.every((overlay) => overlay.removed)).toBe(true);
     const reflowed = h.tui.overlays.filter((overlay) => !overlay.removed)
       .find((overlay) => overlay.options?.anchor === 'bottom-left');
     expect(reflowed).toBeDefined();
     expect(reflowed?.options?.width).toBeLessThanOrEqual(50);
     expect(reflowed?.options?.maxHeight).toBeLessThanOrEqual(14);
+    app.terminalLifecycle.stop();
+  });
+
+  it('reflows an active suggestion from the prepared editor, queue, attachment, and panel budget exactly once', async () => {
+    const h = applicationHarness({ columns: 120, rows: 30, turns: 8 });
+    const app = createShell(h.rt, h.stream, h.mdTheme, h.diagnostics);
+    h.rt.render = app.render;
+    h.rt.renderForced = app.renderForced;
+    app.attachInput({
+      cycleThinkingLevel: vi.fn(), openHelpModal: vi.fn(), openThemePicker: vi.fn(),
+      openModelPicker: vi.fn(), openSessionsModal: vi.fn(),
+    });
+    app.renderForced('test:initial');
+    await vi.runOnlyPendingTimersAsync();
+    h.tui.children[0]!.render(h.term.columns);
+    h.tui.emit('/');
+    await vi.runOnlyPendingTimersAsync();
+    h.tui.children[0]!.render(h.term.columns);
+
+    const initial = h.tui.overlays.filter((overlay) => !overlay.removed)
+      .find((overlay) => overlay.options?.anchor === 'bottom-left');
+    expect(initial).toBeDefined();
+    expect(typeof initial?.options?.margin).toBe('object');
+    expect((initial?.options?.margin as { bottom?: number }).bottom).toBe(5);
+
+    h.rt.editor.setText(`/${'x'.repeat(420)}`);
+    h.rt.queued = [
+      { id: 'queued-1', text: 'first' },
+      { id: 'queued-2', text: 'second' },
+      { id: 'queued-3', text: 'third' },
+    ];
+    h.rt.attachmentChips.set([{ name: 'layout.png', bytes: 1024 }]);
+    // Resize the visible telemetry rail through the real mouse router. The old implementation reflowed
+    // here, before prepareFrame/root allocation had made the new bottom stack authoritative.
+    expect(h.tui.emit('\x1b[<0;74;5M')?.consume).toBe(true);
+    expect(h.tui.emit('\x1b[<32;60;5M')?.consume).toBe(true);
+    await vi.runOnlyPendingTimersAsync();
+    h.tui.children[0]!.render(h.term.columns);
+
+    const reflowed = h.tui.overlays.filter((overlay) => !overlay.removed)
+      .find((overlay) => overlay.options?.anchor === 'bottom-left');
+    expect(reflowed).toBeDefined();
+    expect(reflowed).not.toBe(initial);
+    expect(reflowed?.options?.width).toBe(55);
+    expect(reflowed?.options?.maxHeight).toBe(14);
+    expect((reflowed?.options?.margin as { bottom?: number }).bottom).toBe(15);
+
+    const suggestionRecords = h.tui.overlays.filter((overlay) => overlay.options?.anchor === 'bottom-left').length;
+    await vi.runOnlyPendingTimersAsync();
+    h.tui.children[0]!.render(h.term.columns);
+    expect(h.tui.overlays.filter((overlay) => overlay.options?.anchor === 'bottom-left')).toHaveLength(suggestionRecords);
+    expect(vi.getTimerCount()).toBe(0);
+    app.terminalLifecycle.stop();
+  });
+
+  it('reflows a start-screen suggestion only after a grow-resize allocates the editor', async () => {
+    const h = applicationHarness({ columns: 60, rows: 8, turns: 0 });
+    const app = createShell(h.rt, h.stream, h.mdTheme, h.diagnostics);
+    h.rt.render = app.render;
+    h.rt.renderForced = app.renderForced;
+    app.attachInput({
+      cycleThinkingLevel: vi.fn(), openHelpModal: vi.fn(), openThemePicker: vi.fn(),
+      openModelPicker: vi.fn(), openSessionsModal: vi.fn(),
+    });
+    app.renderForced('test:initial-small');
+    await vi.runOnlyPendingTimersAsync();
+    h.tui.children[0]!.render(h.term.columns);
+    h.tui.emit('/');
+    h.rt.editor.setText(`/${'y'.repeat(420)}`);
+    await vi.runOnlyPendingTimersAsync();
+    h.tui.children[0]!.render(h.term.columns);
+
+    h.term.rows = 30;
+    app.renderForced('test:grow');
+    await vi.runOnlyPendingTimersAsync();
+    h.tui.children[0]!.render(h.term.columns);
+
+    const active = h.tui.overlays.filter((overlay) => !overlay.removed)
+      .find((overlay) => overlay.options?.anchor === 'top-left');
+    const { boxWidth } = startScreenBox(h.term.columns);
+    const screenRows = h.term.rows - TOP_RULE_ROWS;
+    const inputRows = Math.min(h.rt.inputStack.render(boxWidth).length, screenRows - 1);
+    const expectedTop = TOP_RULE_ROWS + startScreenInputTop(screenRows, inputRows, 0) + inputRows;
+    expect(active).toBeDefined();
+    expect((active?.options?.margin as { top?: number }).top).toBe(expectedTop);
+    expect(active?.options?.maxHeight).toBe(Math.min(15, h.term.rows - expectedTop));
     app.terminalLifecycle.stop();
   });
 
