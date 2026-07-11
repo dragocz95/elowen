@@ -1,4 +1,5 @@
 import { CURSOR_MARKER, truncateToWidth, visibleWidth } from '@earendil-works/pi-tui';
+import type { Component } from '@earendil-works/pi-tui';
 
 export function padAnsi(text: string, width: number): string {
   const w = visibleWidth(text);
@@ -82,6 +83,27 @@ export function terminalSafeAnsi(input: string): string {
     i += point > 0xffff ? 2 : 1;
   }
   return out;
+}
+
+/** Wrap a PI overlay at its final render boundary. Overlays are composited after the root frame, so
+ * source-level sanitization alone cannot protect pickers supplied by API/plugin metadata. Delegating
+ * input/focus keeps the wrapper transparent to PI while every produced row crosses the same invariant. */
+export function terminalSafeComponent(component: Component): Component {
+  const safe: Component = {
+    invalidate: () => component.invalidate(),
+    render: (width) => component.render(width).map(terminalSafeAnsi),
+    ...(component.handleInput ? { handleInput: (data: string) => component.handleInput?.(data) } : {}),
+    ...(component.wantsKeyRelease != null ? { wantsKeyRelease: component.wantsKeyRelease } : {}),
+  };
+  if ('focused' in component) {
+    Object.defineProperty(safe, 'focused', {
+      enumerable: true,
+      configurable: false,
+      get: () => (component as Component & { focused: boolean }).focused,
+      set: (value: boolean) => { (component as Component & { focused: boolean }).focused = value; },
+    });
+  }
+  return safe;
 }
 
 /** Encode untrusted/user-controlled text into printable terminal cells. Stored transcripts remain byte-for-

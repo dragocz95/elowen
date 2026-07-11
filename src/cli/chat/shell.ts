@@ -10,7 +10,7 @@ import {
   isPageDownKey, isPageUpKey, isTabByte, isUpKey,
 } from './keys.js';
 import type { Keymap, KeybindAction } from './keys.js';
-import { formatDuration, formatK, padAnsi, terminalSafeAnsi } from '../ui/text.js';
+import { formatDuration, formatK, padAnsi, terminalSafeAnsi, terminalSafeComponent } from '../ui/text.js';
 import { ELOWEN_CLI_VERSION } from '../version.js';
 import { computeLayoutBudget, constrainFrame } from './layoutBudget.js';
 import type { LayoutBudget } from './layoutBudget.js';
@@ -516,7 +516,10 @@ export function createShell(rt: ChatRuntime, stream: StreamController, mdTheme: 
   };
   const nativeShowOverlay = tui.showOverlay.bind(tui);
   tui.showOverlay = ((component, options) => {
-    const handle = nativeShowOverlay(component, options);
+    // PI composites overlays after the root frame sanitizer. Wrap every overlay (pickers, telemetry,
+    // suggestions, editors) at the final component boundary so API/plugin-controlled labels cannot
+    // bypass terminal safety through SelectList or modal rows.
+    const handle = nativeShowOverlay(terminalSafeComponent(component), options);
     scheduler.scheduleForced('overlay:open');
     return {
       ...handle,

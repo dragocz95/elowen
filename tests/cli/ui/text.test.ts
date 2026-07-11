@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { CURSOR_MARKER } from '@earendil-works/pi-tui';
-import { terminalPlainText, terminalSafeAnsi } from '../../../src/cli/ui/text.js';
+import { terminalPlainText, terminalSafeAnsi, terminalSafeComponent } from '../../../src/cli/ui/text.js';
 
 describe('terminal text trust boundary', () => {
   it('keeps renderer-owned SGR, OSC 8 links, and the PI cursor marker only', () => {
@@ -25,5 +25,26 @@ describe('terminal text trust boundary', () => {
     expect(safe).not.toContain('\x1bP');
     expect(safe).not.toContain('\x1b_forged');
     expect(terminalPlainText(safe).replace(/\s+/g, ' ')).toContain('red link clear title clipboard dcs apc');
+  });
+
+  it('projects overlay rows while preserving focus and input delegation', () => {
+    let focused = false;
+    let input = '';
+    const source = {
+      get focused() { return focused; },
+      set focused(value: boolean) { focused = value; },
+      invalidate: () => {},
+      handleInput: (value: string) => { input = value; },
+      render: () => ['hostile session\x1b]52;c;Zm9yZ2Vk\x07\x1b[2J'],
+    };
+    const safe = terminalSafeComponent(source) as typeof source;
+    safe.focused = true;
+    safe.handleInput('enter');
+    const rendered = safe.render(80).join('\n');
+    expect(focused).toBe(true);
+    expect(input).toBe('enter');
+    expect(rendered).toContain('hostile session');
+    expect(rendered).not.toContain('\x1b]52;');
+    expect(rendered).not.toContain('\x1b[2J');
   });
 });
