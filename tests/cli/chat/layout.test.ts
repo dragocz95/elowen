@@ -804,4 +804,26 @@ describe('progressive history layout', () => {
     expect(viewport.metrics().reconciledTurns).toBeLessThanOrEqual(2);
     expect(viewport.metrics().renderedTurns).toBeLessThanOrEqual(2);
   });
+
+  it('updates a fully indexed 10k-turn streaming tail without walking settled heights', () => {
+    let view = largeHistory(5_000);
+    const viewport = new ChatViewport(
+      { view, notice: '', modelName: 'kimi', thinkingSeconds: 0 },
+      getMarkdownTheme(), () => 18, () => 1, () => 80,
+    );
+    viewport.render(80);
+    viewport.scroll(1_000_000);
+    viewport.render(80);
+    expect(viewport.isHistoryIndexComplete()).toBe(true);
+
+    view = beginAssistant(view);
+    viewport.setState({ view, notice: '', modelName: 'kimi', thinkingSeconds: 0 });
+    viewport.render(80);
+    view = reduce(view, { type: 'text', delta: 'streaming after full index' });
+    viewport.setState({ view, notice: '', modelName: 'kimi', thinkingSeconds: 0 });
+    viewport.render(80);
+
+    expect(viewport.metrics().layoutVisits).toBeLessThan(20);
+    expect(viewport.metrics().renderedTurns).toBeLessThanOrEqual(1);
+  });
 });

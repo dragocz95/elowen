@@ -285,6 +285,7 @@ export interface ChatViewportMetrics {
   reconciledTurns: number;
   indexedTurns: number;
   cachedRows: number;
+  layoutVisits: number;
 }
 
 interface VisualScrollMetrics {
@@ -321,6 +322,7 @@ export class ChatViewport implements Component {
   private layoutViewRef: ChatView | null = null;
   private knownStart = 0;
   private knownSuffixRows = 0;
+  private suffixReconnect: { boundary: number; start: number; rows: number } | null = null;
   private prefixHeights: number[] | null = null;
   private layoutWidth = 0;
   private layoutTheme: unknown = null;
@@ -335,6 +337,7 @@ export class ChatViewport implements Component {
   private frameReconciledTurns = 0;
   private indexedTurnCount = 0;
   private lastRenderMs = 0;
+  private frameLayoutVisits = 0;
 
   constructor(
     initial: ChatViewportState,
@@ -372,6 +375,7 @@ export class ChatViewport implements Component {
       reconciledTurns: this.frameReconciledTurns,
       indexedTurns: this.indexedTurnCount,
       cachedRows: this.cachedRowCount,
+      layoutVisits: this.frameLayoutVisits,
     };
   }
 
@@ -492,6 +496,7 @@ export class ChatViewport implements Component {
     const startedAt = performance.now();
     this.frameRenderedTurns = 0;
     this.frameReconciledTurns = 0;
+    this.frameLayoutVisits = 0;
     const height = Math.max(1, this.getRows());
     const chatWidth = Math.max(1, Math.min(width, this.getWidth()));
     const contentWidth = Math.max(1, chatWidth - 5);
@@ -557,6 +562,7 @@ export class ChatViewport implements Component {
       this.indexedTurnCount = 0;
       this.knownStart = this.layout.length;
       this.knownSuffixRows = 0;
+      this.suffixReconnect = null;
       this.prefixHeights = null;
       this.layoutWidth = width;
       this.layoutTheme = theme;
@@ -576,8 +582,12 @@ export class ChatViewport implements Component {
         && change.from <= this.layout.length
         && change.from <= turns.length) {
         if (change.from < this.layout.length) this.clearSelection();
+        const oldKnownStart = this.knownStart;
+        const oldKnownRows = this.knownSuffixRows;
+        let removedKnownRows = 0;
         for (const entry of this.layout.slice(change.from)) {
           if (entry.height != null) this.indexedTurnCount--;
+          removedKnownRows += entry.height ?? 0;
           this.discardRows(entry);
         }
         this.layout.length = change.from;
@@ -585,8 +595,7 @@ export class ChatViewport implements Component {
           this.layout.push({ turn: turns[i]!, height: null, rows: null });
         }
         this.frameReconciledTurns += turns.length - change.from;
-        this.prefixHeights = null;
-        this.recomputeKnownSuffix();
+        this.resetKnownSuffixAfterReplacement(change.from, oldKnownStart, oldKnownRows, removedKnownRows);
         handled = true;
       } else if (change?.kind === 'reset') {
         this.clearSelection();
@@ -595,6 +604,7 @@ export class ChatViewport implements Component {
         this.indexedTurnCount = 0;
         this.knownStart = this.layout.length;
         this.knownSuffixRows = 0;
+        this.suffixReconnect = null;
         this.prefixHeights = null;
         this.expandedThoughts.clear();
         this.expandedTools.clear();
@@ -612,15 +622,18 @@ export class ChatViewport implements Component {
         if (common !== this.layout.length || common !== turns.length) {
           this.clearSelection();
           const replacedWholeTranscript = this.layout.length > 0 && common === 0;
+          const oldKnownStart = this.knownStart;
+          const oldKnownRows = this.knownSuffixRows;
+          let removedKnownRows = 0;
           for (const entry of this.layout.slice(common)) {
             if (entry.height != null) this.indexedTurnCount--;
+            removedKnownRows += entry.height ?? 0;
             this.discardRows(entry);
           }
           this.layout.length = common;
           for (let i = common; i < turns.length; i++) this.layout.push({ turn: turns[i]!, height: null, rows: null });
           if (replacedWholeTranscript) { this.expandedThoughts.clear(); this.expandedTools.clear(); }
-          this.prefixHeights = null;
-          this.recomputeKnownSuffix();
+          this.resetKnownSuffixAfterReplacement(common, oldKnownStart, oldKnownRows, removedKnownRows);
         }
       }
       this.layoutTurnsRef = turns;
@@ -632,11 +645,14 @@ export class ChatViewport implements Component {
     const volatile = this.layout.at(-1);
     if (volatile?.turn.role === 'elowen' && volatile.turn.streaming && volatile.height != null) {
       this.clearSelection();
+      const index = this.layout.length - 1;
+      const oldKnownStart = this.knownStart;
+      const oldKnownRows = this.knownSuffixRows;
+      const removedKnownRows = volatile.height;
       this.discardRows(volatile);
       volatile.height = null;
       this.indexedTurnCount--;
-      this.prefixHeights = null;
-      this.recomputeKnownSuffix();
+      this.resetKnownSuffixAfterReplacement(index, oldKnownStart, oldKnownRows, removedKnownRows);
     }
   }
 
@@ -711,14 +727,21 @@ export class ChatViewport implements Component {
     this.refreshMetrics();
   }
 
-  private recomputeKnownSuffix(): void {
+  private resetKnownSuffixAfterReplacement(from: number, oldStart: number, oldRows: number, removedRows: number): void {
+    if (this.prefixHeights) this.prefixHeights.length = Math.min(this.prefixHeights.length, from + 1);
     this.knownStart = this.layout.length;
     this.knownSuffixRows = 0;
-    while (this.knownStart > 0) {
-      const height = this.layout[this.knownStart - 1]!.height;
-      if (height == null) break;
-      this.knownStart--;
-      this.knownSuffixRows += height;
+    this.suffixReconnect = from >= oldStart
+      ? { boundary: from, start: oldStart, rows: Math.max(0, oldRows - removedRows) }
+      : null;
+    this.applySuffixReconnect();
+  }
+
+  private applySuffixReconnect(): void {
+    if (this.suffixReconnect && this.knownStart === this.suffixReconnect.boundary) {
+      this.knownStart = this.suffixReconnect.start;
+      this.knownSuffixRows += this.suffixReconnect.rows;
+      this.suffixReconnect = null;
     }
     if (this.knownStart === 0) this.buildPrefixHeights();
   }
@@ -726,19 +749,12 @@ export class ChatViewport implements Component {
   private indexPrevious(retain: boolean): void {
     if (this.knownStart <= 0) return;
     const index = this.knownStart - 1;
+    this.frameLayoutVisits++;
     const entry = this.layout[index]!;
     if (entry.height == null) this.renderAndRecord(index, retain);
     this.knownStart = index;
     this.knownSuffixRows += entry.height ?? 0;
-    // Appending/replacing a live tail can reconnect to an already-indexed suffix. Absorb it without
-    // re-rendering; this is cheap integer work and preserves all settled caches.
-    while (this.knownStart > 0) {
-      const previous = this.layout[this.knownStart - 1]!.height;
-      if (previous == null) break;
-      this.knownStart--;
-      this.knownSuffixRows += previous;
-    }
-    if (this.knownStart === 0) this.buildPrefixHeights();
+    this.applySuffixReconnect();
   }
 
   private ensureTail(requiredRows: number, retain: boolean): void {
@@ -770,8 +786,10 @@ export class ChatViewport implements Component {
   }
 
   private buildPrefixHeights(): void {
-    const prefix = new Array<number>(this.layout.length + 1).fill(0);
-    for (let i = 0; i < this.layout.length; i++) prefix[i + 1] = prefix[i]! + (this.layout[i]!.height ?? 0);
+    const prefix = this.prefixHeights ?? [0];
+    const start = Math.max(0, prefix.length - 1);
+    prefix.length = this.layout.length + 1;
+    for (let i = start; i < this.layout.length; i++) prefix[i + 1] = prefix[i]! + (this.layout[i]!.height ?? 0);
     this.prefixHeights = prefix;
   }
 
