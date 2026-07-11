@@ -1,10 +1,9 @@
 /* Settings-specific control-deck composition. Shared deck geometry stays in components.css. */
-[data-module="settings"] { --settings-rack-surface: linear-gradient(135deg, rgb(255 255 255 / 0.022), transparent 38%), var(--color-surface); }
 [data-module="settings"] .spatial-deck-heading h1 { letter-spacing: -0.045em; }
 [data-module="settings"] .spatial-content-surface { padding: 1rem 0.5rem 2rem; }
 [data-module="settings"] [data-settings-panel] { min-width: 0; }
 
-.settings-document { display: flex; min-width: 0; flex-direction: column; overflow: clip; border: 1px solid rgb(255 255 255 / 0.085); border-radius: var(--radius-xl); background: var(--settings-rack-surface); box-shadow: var(--shadow-card); }
+.settings-document { display: flex; flex-direction: column; }
 .settings-group { min-width: 0; border-bottom: var(--hairline); }
 .settings-group:last-child { border-bottom: 0; }
 .settings-group[data-tone="danger"] { background: linear-gradient(90deg, rgb(239 68 68 / 0.055), transparent 62%); }
@@ -23,9 +22,7 @@
 .settings-row__title { display: flex; min-width: 0; align-items: center; gap: 0.4rem; color: var(--color-text); font-size: 0.78rem; font-weight: 570; }
 .settings-row__status { margin-top: 0.25rem; color: var(--color-text-muted); font-size: 0.68rem; line-height: 1.45; }
 .settings-row__control { min-width: 0; }
-.settings-toolbar { position: sticky; top: 0; z-index: 8; display: flex; min-width: 0; align-items: center; gap: 0.75rem; padding: 1rem clamp(1.25rem, 2vw, 2rem); border-bottom: var(--hairline); background: linear-gradient(180deg, var(--color-surface) 88%, transparent); }
-.settings-state { padding: 2.5rem clamp(1.25rem, 2vw, 2rem); color: var(--color-text-muted); text-align: center; }
-.settings-state[data-tone="danger"] { color: var(--color-danger); }
+.settings-toolbar { position: sticky; top: 0; z-index: 8; background: linear-gradient(180deg, var(--color-surface) 88%, transparent); }
 
 @media (max-width: 800px) {
   .settings-group__header, .settings-row, .settings-toolbar { padding-inline: 1rem; }

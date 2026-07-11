@@ -6,7 +6,7 @@ type SettingsTone = 'default' | 'danger';
 type SettingsDensity = 'comfortable' | 'compact';
 
 export function SettingsDocument({ children, className = '' }: { children: ReactNode; className?: string }) {
-  return <div data-settings-document className={`settings-document ${className}`}>{children}</div>;
+  return <div data-control-surface data-settings-document className={`control-surface-document settings-document ${className}`}>{children}</div>;
 }
 
 export function SettingsGroup({ title, description, icon: Icon, actions, tone = 'default', density = 'comfortable', children, className = '' }: {
@@ -63,9 +63,9 @@ export function SettingsRow({ label, description, icon: Icon, status, actions, c
 }
 
 export function SettingsToolbar({ children }: { children: ReactNode }) {
-  return <div className="settings-toolbar">{children}</div>;
+  return <div className="control-surface-toolbar settings-toolbar">{children}</div>;
 }
 
 export function SettingsState({ children, tone = 'default' }: { children: ReactNode; tone?: SettingsTone }) {
-  return <div className="settings-state" data-tone={tone}>{children}</div>;
+  return <div className="control-surface-state settings-state" data-tone={tone}>{children}</div>;
 }

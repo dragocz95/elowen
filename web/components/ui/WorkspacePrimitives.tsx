@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import type { LucideIcon } from 'lucide-react';
+import { SpatialMascot, type SpatialMascotState } from './SpatialMascot';
 
 export function WorkspacePage({ children, className = '' }: { children: ReactNode; className?: string }) {
   return <div className={`workspace-page ${className}`}>{children}</div>;
@@ -32,6 +33,37 @@ export function WorkspaceHeader({ eyebrow, title, count, description, status, ac
         {action}
       </div>
     </header>
+  );
+}
+
+export function SpatialWorkspaceHero({ eyebrow, title, count, description, status, action, mascotState = 'idle', children }: {
+  eyebrow?: string;
+  title: string;
+  count?: number;
+  description?: string;
+  status?: ReactNode;
+  action?: ReactNode;
+  mascotState?: SpatialMascotState;
+  children: ReactNode;
+}) {
+  return (
+    <section className="spatial-workspace-hero">
+      <header className="spatial-workspace-hero__header">
+        <div className="min-w-0">
+          {eyebrow ? <div className="workspace-header__eyebrow">{eyebrow}</div> : null}
+          <div className="flex min-w-0 items-baseline gap-3">
+            <h1>{title}</h1>
+            {count !== undefined ? <span className="workspace-header__count">{count}</span> : null}
+          </div>
+          {description ? <p>{description}</p> : null}
+        </div>
+        <div className="workspace-header__actions">{status}{action}</div>
+      </header>
+      <div className="spatial-workspace-hero__body">
+        <div className="spatial-workspace-hero__mascot" data-testid="workspace-hero-mascot"><SpatialMascot state={mascotState} /></div>
+        <div className="spatial-workspace-hero__metrics">{children}</div>
+      </div>
+    </section>
   );
 }
 
