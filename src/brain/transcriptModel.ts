@@ -99,7 +99,7 @@ export class TranscriptModel implements TranscriptRead {
   get turnCount(): number { return this.turns.length; }
   get view(): ChatView { return this.currentView; }
 
-  turnAt(index: number): ChatTurn | undefined { return this.turns[index]; }
+  turnAt(index: number): ChatTurn | undefined { return this.visit(index); }
   subagents(): readonly SubagentState[] { return this.subagentProjection; }
   lastAssistantText(): string { return this.lastAssistant; }
 
@@ -125,14 +125,14 @@ export class TranscriptModel implements TranscriptRead {
         this.lastAssistant = (fresh ? '' : this.lastAssistant) + event.delta;
         this.thinking = true;
         this.notice = undefined;
-        this.publish({ kind: 'turn', index });
+        this.publish(fresh ? { kind: 'append', index } : { kind: 'turn', index });
         return true;
       }
       case 'reasoning': {
-        const { turn, index } = this.ensureAssistant();
+        const { turn, index, fresh } = this.ensureAssistant();
         appendSegmentText(turn, 'reasoning', event.delta);
         this.thinking = true;
-        this.publish({ kind: 'turn', index });
+        this.publish(fresh ? { kind: 'append', index } : { kind: 'turn', index });
         return true;
       }
       case 'notice':
@@ -140,7 +140,7 @@ export class TranscriptModel implements TranscriptRead {
         this.publish({ kind: 'none' });
         return true;
       case 'tool': {
-        const { turn, index } = this.ensureAssistant();
+        const { turn, index, fresh } = this.ensureAssistant();
         const item: ToolItem = {
           name: event.name,
           detail: event.detail,
@@ -166,7 +166,7 @@ export class TranscriptModel implements TranscriptRead {
         this.lastToolLocation = location;
         if (event.id) this.toolLocations.set(event.id, location);
         this.thinking = true;
-        this.publish({ kind: 'turn', index });
+        this.publish(fresh ? { kind: 'append', index } : { kind: 'turn', index });
         return true;
       }
       case 'tool_progress':
@@ -231,7 +231,7 @@ export class TranscriptModel implements TranscriptRead {
         this.lastAssistant = (fresh ? '' : this.lastAssistant) + text;
         this.thinking = false;
         this.notice = undefined;
-        this.publish({ kind: 'turn', index });
+        this.publish(fresh ? { kind: 'append', index } : { kind: 'turn', index });
         return true;
       }
       default:

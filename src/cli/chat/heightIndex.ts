@@ -28,6 +28,16 @@ export class DynamicHeightIndex {
     assertLength(length);
     assertHeight(fill);
     if (length >= this.values.length) {
+      if (this.values.length === 0 && length > 0) {
+        this.capacity = nextPowerOfTwo(length);
+        this.values = new Array<number>(length).fill(fill);
+        this.tree = new Array<number>(this.capacity + 1).fill(0);
+        for (let index = 1; index <= length; index += 1) {
+          this.tree[index] = lowBit(index) * fill;
+          this.operations += 1;
+        }
+        return;
+      }
       while (this.values.length < length) this.append(fill);
       return;
     }
@@ -47,6 +57,11 @@ export class DynamicHeightIndex {
       this.tree[cursor] = (this.tree[cursor] ?? 0) + delta;
       this.operations += 1;
     }
+  }
+
+  valueAt(index: number): number {
+    assertIndex(index, this.values.length);
+    return this.values[index]!;
   }
 
   prefixSum(end: number): number {

@@ -3,6 +3,7 @@ import { getMarkdownTheme, initTheme } from '@earendil-works/pi-coding-agent';
 import { getCapabilities, setCapabilities, visibleWidth } from '@earendil-works/pi-tui';
 import { beginAssistant, emptyView, fromHistory, pushUser, reduce, type ChatView } from '../../../src/brain/transcript.js';
 import { TranscriptModel } from '../../../src/brain/transcriptModel.js';
+import type { BrainEvent } from '../../../src/brain/events.js';
 import { CHAT_VIEWPORT_ROW_CACHE_LIMIT, ChatViewport, MentionOverlay, mouseWheel, SlashOverlay, StartScreen, TelemetryPanel, TOOL_INDENT, type ChatViewportState, type TelemetryState } from '../../../src/cli/chat/layout.js';
 
 const transcriptState = (
@@ -676,10 +677,88 @@ describe('per-turn render cache', () => {
 describe('progressive history layout', () => {
   beforeAll(() => initTheme());
 
-  const largeHistory = (pairs = 100) => fromHistory(Array.from({ length: pairs }, (_, i) => [
+  const largeMessages = (pairs = 100) => Array.from({ length: pairs }, (_, i) => [
     { role: 'user', text: `question ${i}` },
     { role: 'assistant', text: `## answer ${i}\n\n- evidence one\n- evidence two\n\nNewest marker ${i}` },
-  ]).flat());
+  ]).flat();
+  const largeHistory = (pairs = 100) => fromHistory(largeMessages(pairs));
+
+  it.each([
+    ['text', { type: 'text', delta: 'first fresh answer' } satisfies BrainEvent, 'first fresh answer'],
+    ['reasoning', { type: 'reasoning', delta: 'first fresh thought' } satisfies BrainEvent, 'Thought'],
+    ['tool', { type: 'tool', id: 'first-tool', name: 'read_file', detail: 'src/fresh.ts' } satisfies BrainEvent, 'fresh.ts'],
+  ])('journals the first fresh %s turn as a bounded append frame', (_name, event, visibleText) => {
+    let visits = 0;
+    const transcript = TranscriptModel.fromView(largeHistory(2_000), { onTurnVisit: () => { visits++; } });
+    const viewport = new ChatViewport(
+      transcriptState(transcript),
+      getMarkdownTheme(), () => 18, () => 1, () => 80,
+    );
+    viewport.render(80);
+    visits = 0;
+
+    transcript.apply(event);
+    viewport.setState(transcriptState(transcript));
+    const firstFrame = viewport.render(80).join('\n');
+
+    expect(firstFrame).toContain(visibleText);
+    expect(viewport.metrics().reconciledTurns).toBeLessThanOrEqual(1);
+    expect(viewport.metrics().renderedTurns).toBeLessThanOrEqual(1);
+    expect(viewport.metrics().layoutVisits).toBeLessThanOrEqual(1);
+    expect(visits).toBeLessThanOrEqual(3);
+  });
+
+  it('restores a deep logical anchor after resize without rendering Markdown to the old row depth', () => {
+    let visits = 0;
+    const transcript = TranscriptModel.fromView(largeHistory(4_000), { onTurnVisit: () => { visits++; } });
+    let width = 80;
+    const viewport = new ChatViewport(
+      transcriptState(transcript),
+      getMarkdownTheme(), () => 18, () => 1, () => width,
+    );
+    viewport.render(width);
+    viewport.scroll(4_000);
+    const before = viewport.render(width).join('\n');
+    const beforeMarker = Number(before.match(/Newest marker (\d+)/)?.[1]);
+    expect(Number.isFinite(beforeMarker)).toBe(true);
+    visits = 0;
+
+    width = 62;
+    const after = viewport.render(width).join('\n');
+    const afterMarker = Number(after.match(/Newest marker (\d+)/)?.[1]);
+
+    expect(Number.isFinite(afterMarker)).toBe(true);
+    expect(Math.abs(afterMarker - beforeMarker)).toBeLessThanOrEqual(100);
+    expect(viewport.metrics().renderedTurns).toBeLessThanOrEqual(64);
+    expect(viewport.metrics().layoutVisits).toBeLessThanOrEqual(64);
+    expect(visits).toBeLessThanOrEqual(96);
+  });
+
+  it('restores a deep logical anchor after full history replacement with bounded first-frame work', () => {
+    let visits = 0;
+    const transcript = new TranscriptModel(largeMessages(2_500), { onTurnVisit: () => { visits++; } });
+    const viewport = new ChatViewport(
+      transcriptState(transcript),
+      getMarkdownTheme(), () => 18, () => 1, () => 80,
+    );
+    viewport.render(80);
+    viewport.scroll(4_000);
+    const before = viewport.render(80).join('\n');
+    const beforeMarker = Number(before.match(/Newest marker (\d+)/)?.[1]);
+    expect(Number.isFinite(beforeMarker)).toBe(true);
+    visits = 0;
+
+    transcript.replaceHistory(largeMessages(2_500));
+    viewport.setState(transcriptState(transcript));
+    const after = viewport.render(80).join('\n');
+    const afterMarker = Number(after.match(/Newest marker (\d+)/)?.[1]);
+
+    expect(Number.isFinite(afterMarker)).toBe(true);
+    expect(Math.abs(afterMarker - beforeMarker)).toBeLessThanOrEqual(100);
+    expect(viewport.metrics().renderedTurns).toBeLessThanOrEqual(64);
+    expect(viewport.metrics().layoutVisits).toBeLessThanOrEqual(64);
+    expect(visits).toBeLessThanOrEqual(96);
+  });
 
   it('reads turns and sparse revisions directly from TranscriptModel', () => {
     const transcript = TranscriptModel.fromView(largeHistory(20));

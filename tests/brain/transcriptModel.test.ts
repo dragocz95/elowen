@@ -167,12 +167,27 @@ describe('TranscriptModel', () => {
     model.apply({ type: 'notice', kind: 'retry', message: 'retry' });
 
     expect(model.changesSince(afterAppend)).toEqual({
-      kind: 'turns', indices: [1], revision: model.revision,
+      kind: 'suffix', from: 1, revision: model.revision,
     });
 
     model.apply({ type: 'reasoning', delta: 'b' });
     expect(model.changesSince(base)).toEqual({ kind: 'full', revision: model.revision });
     expect(model.changesSince(model.revision)).toEqual({ kind: 'none', revision: model.revision });
+  });
+
+  it.each([
+    { type: 'text', delta: 'answer' } as const,
+    { type: 'reasoning', delta: 'thought' } as const,
+    { type: 'tool', id: 'tool-1', name: 'read_file', detail: 'src/index.ts' } as const,
+  ])('publishes a fresh assistant $type event as an appended suffix', (event) => {
+    const model = new TranscriptModel([{ role: 'assistant', text: 'settled' }]);
+    const revision = model.revision;
+
+    model.apply(event);
+
+    expect(model.changesSince(revision)).toEqual({
+      kind: 'suffix', from: 1, revision: model.revision,
+    });
   });
 
   it('visits at most one turn for a steady event at exactly 40,000 turns', () => {

@@ -99,4 +99,17 @@ describe('DynamicHeightIndex', () => {
     const logarithmicStepBound = operations * 2 * (Math.ceil(Math.log2(turns)) + 1);
     expect(index.operationCount()).toBeLessThanOrEqual(logarithmicStepBound);
   });
+
+  it('bulk-initializes cold and estimated histories in one linear pass', () => {
+    const turns = 40_000;
+    const cold = new DynamicHeightIndex();
+    cold.resize(turns);
+    expect(cold.operationCount()).toBe(turns);
+    expect(cold.prefixSum(turns)).toBe(0);
+
+    const estimated = new DynamicHeightIndex();
+    estimated.resize(turns, 6);
+    expect(estimated.operationCount()).toBe(turns);
+    expect(estimated.prefixSum(turns)).toBe(turns * 6);
+  });
 });
