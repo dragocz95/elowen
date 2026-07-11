@@ -439,7 +439,10 @@ export async function runHeadless(
   const fireTurn = (text: string, mode: 'build' | 'plan'): void => {
     void c.send(text, mode).then(
       () => { /* accepted; the stream owns completion */ },
-      (e) => { if (!settled && !activity) { io.stderr(`\n${errMsg(e)}\n`); finish(1); } },
+      // With admission-only POST semantics, every rejection means THIS prompt was not accepted. Stream
+      // activity may belong to an already-running turn (notably a failed steer), so it cannot suppress
+      // the admission failure; only a terminal stream event that already settled this run wins the race.
+      (e) => { if (!settled) { io.stderr(`\n${errMsg(e)}\n`); finish(1); } },
     );
   };
 

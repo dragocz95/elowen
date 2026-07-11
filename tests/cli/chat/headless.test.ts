@@ -107,6 +107,25 @@ describe('cli/chat/headless.runHeadless', () => {
     expect(out.join('')).toContain('delayed answer');
   });
 
+  it('fails an admission rejection even after prior stream activity', async () => {
+    const client = {
+      async start() { return { sessionId: 'sess-1' }; },
+      async stream(onFrame: (frame: BrainEvent) => void, signal: AbortSignal, _backoff: number, onOpen?: () => void) {
+        onOpen?.();
+        onFrame({ type: 'text', delta: 'activity from the existing turn' });
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        if (!signal.aborted) onFrame({ type: 'idle' });
+        if (!signal.aborted) await new Promise<void>((resolve) => signal.addEventListener('abort', () => resolve(), { once: true }));
+      },
+      async send() { throw new Error('new prompt was not admitted'); },
+      async history() { return []; },
+    };
+    const { io: sink, err } = io();
+    const code = await runHeadless('http://x', {}, ['new prompt'], { client: client as never, io: sink });
+    expect(code).toBe(1);
+    expect(err.join('')).toContain('new prompt was not admitted');
+  });
+
   it('recovers a reconnect snapshot tail without reprinting durable history or prior live text', async () => {
     const calls: string[] = [];
     let snapshotRequested: boolean | undefined;
