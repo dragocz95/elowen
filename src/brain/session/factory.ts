@@ -5,6 +5,7 @@ import type { BrainStore } from '../../store/brainStore.js';
 import { createSessionPersistenceProjector, rehydrate } from '../persistence.js';
 import { applyProviderRequestProfile, isCanonicalThinkingLevel, type ProviderRequestProfile } from '../modelCapabilities.js';
 import type { DelegatedExecutionScope } from '../delegatedScope.js';
+import { codexCompactionModelFallback } from './codexCompaction.js';
 
 /** Everything one PI brain session needs, composed by the caller: the chat brain renders the Elowen
  *  persona and gates elowen_* tools by session kind; the task worker bakes in its close tool and the
@@ -119,7 +120,11 @@ function defaultResourceLoaderFactory(o: { cwd: string; systemPrompt: string; ap
     // ($1/$@/$ARGUMENTS/${N:-default}) itself in prompt()/steer()/followUp() — no daemon-side expansion.
     promptsOverride: () => ({ prompts, diagnostics: [] }),
     ...(o.codexReasoningFix ? {
-      extensionFactories: [codexReasoningSummary, ...(o.requestProfile ? [codexRequestProfile(o.requestProfile)] : [])],
+      extensionFactories: [
+        codexReasoningSummary,
+        codexCompactionModelFallback,
+        ...(o.requestProfile ? [codexRequestProfile(o.requestProfile)] : []),
+      ],
     } : {}),
   });
 }
