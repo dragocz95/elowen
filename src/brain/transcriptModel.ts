@@ -27,6 +27,14 @@ export interface TranscriptModelOptions {
   journalLimit?: number;
 }
 
+/** Minimal revisioned transcript contract consumed by virtualized terminal views. */
+export interface TranscriptRead {
+  readonly revision: number;
+  readonly turnCount: number;
+  turnAt(index: number): ChatTurn | undefined;
+  changesSince(revision: number): TranscriptChange;
+}
+
 interface ToolLocation {
   turn: number;
   segment: number;
@@ -39,7 +47,7 @@ interface ToolLocation {
  * most one turn for a steady BrainEvent. Cheap ChatView shells preserve the existing renderer contract;
  * they never clone the history. Durable history replacement is the only intentionally O(history) path.
  */
-export class TranscriptModel {
+export class TranscriptModel implements TranscriptRead {
   private readonly turns: ChatTurn[] = [];
   private readonly toolLocations = new Map<string, ToolLocation>();
   private lastToolLocation: ToolLocation | null = null;

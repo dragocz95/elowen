@@ -6,8 +6,10 @@ import { framedDiffBlock, ProcessPanel, spinnerFrame, toolOutputBlock, UserBlock
 import { ansi, chatTheme, color, glyph } from './theme.js';
 import type { BrainRateLimits, BrainRateLimitWindow, BrainUsageView, McpServerView } from './brainClient.js';
 import type { ProcessInfo } from '../../brain/processRegistry.js';
-import type { ChatView, ToolItem } from '../../brain/transcript.js';
-import { getChatViewChange, groupToolItems } from '../../brain/transcript.js';
+import type { ChatTurn, ToolItem } from '../../brain/transcript.js';
+import { groupToolItems } from '../../brain/transcript.js';
+import type { TranscriptRead } from '../../brain/transcriptModel.js';
+import { DynamicHeightIndex } from './heightIndex.js';
 import { formatDuration, formatK, padAnsi, terminalPlainText } from '../ui/text.js';
 
 const inlineText = (value: string): string => terminalPlainText(value).replace(/\s+/g, ' ').trim();
@@ -98,7 +100,7 @@ interface TranscriptRow {
 }
 
 interface TurnLayoutEntry {
-  turn: ChatView['turns'][number];
+  turn: ChatTurn | null;
   /** Exact rendered height for the current width/theme/visibility context; null until indexed. */
   height: number | null;
   /** Optional rendered rows. Off-screen heights are learned only as the user scrolls; visible rows live
@@ -268,7 +270,8 @@ export class StartScreen implements Component {
 }
 
 export interface ChatViewportState {
-  view: ChatView;
+  transcript: TranscriptRead;
+  transcriptNotice?: string;
   notice: string;
   modelName: string;
   thinkingSeconds: number;
@@ -288,6 +291,7 @@ export interface ChatViewportMetrics {
   layoutVisits: number;
   scrollOffset: number;
   maxScrollOffset: number;
+  heightIndexOperations: number;
 }
 
 interface VisualScrollMetrics {
@@ -320,16 +324,11 @@ export class ChatViewport implements Component {
   // Tail-first layout index. Heights are authoritative; row arrays are retained only for the visible/recent
   // LRU. `knownStart` means every entry from it through the tail has an exact height.
   private layout: TurnLayoutEntry[] = [];
-  private layoutTurnsRef: ChatView['turns'] | null = null;
-  private layoutViewRef: ChatView | null = null;
+  private layoutTranscript: TranscriptRead | null = null;
+  private layoutRevision = -1;
   private knownStart = 0;
-  private knownSuffixRows = 0;
-  private suffixReconnect: { boundary: number; start: number; rows: number } | null = null;
-  private prefixHeights: number[] | null = null;
-  /** Sparse height corrections after the last full prefix build. An old sub-agent row can change height;
-   *  recording one point delta keeps prefix queries O(number of dirty turns), instead of rewriting every
-   *  later prefix cell (O(history)) for a single background progress event. */
-  private prefixHeightDeltas = new Map<number, number>();
+  private suffixReconnect: { boundary: number; start: number } | null = null;
+  private heightIndex = new DynamicHeightIndex();
   private layoutWidth = 0;
   private layoutTheme: unknown = null;
   private layoutShowsThoughts = true;
@@ -367,7 +366,7 @@ export class ChatViewport implements Component {
   isHistoryIndexComplete(): boolean {
     return this.currentContentWidth > 0
       && this.knownStart === 0
-      && this.layout.length === this.state.view.turns.length;
+      && this.layout.length === this.state.transcript.turnCount;
   }
 
   indexedHistoryTurns(): number { return this.indexedTurnCount; }
@@ -385,8 +384,11 @@ export class ChatViewport implements Component {
       layoutVisits: this.frameLayoutVisits,
       scrollOffset: this.scrollOffset,
       maxScrollOffset: this.maxOffset,
+      heightIndexOperations: this.heightIndex.operationCount(),
     };
   }
+
+  resetHeightIndexOperationCount(): void { this.heightIndex.resetOperationCount(); }
 
   scroll(delta: number): void {
     if (delta > 0) this.ensureScrollCapacity(this.scrollOffset + delta);
@@ -602,142 +604,115 @@ export class ChatViewport implements Component {
     this.currentContentWidth = width;
     const theme = chatTheme();
     const showThoughts = this.state.showThoughts !== false;
-    const turns = this.state.view.turns;
+    const transcript = this.state.transcript;
+    const transcriptChanged = this.layoutTranscript !== transcript;
     const contextChanged = this.layoutWidth !== width
       || this.layoutTheme !== theme
       || this.layoutShowsThoughts !== showThoughts;
 
-    if (contextChanged) {
-      this.clearSelection();
-      this.clearAllCachedRows();
-      this.layout = turns.map((turn) => ({ turn, height: null, rows: null }));
-      this.layoutTurnsRef = turns;
-      this.layoutViewRef = this.state.view;
-      this.indexedTurnCount = 0;
-      this.knownStart = this.layout.length;
-      this.knownSuffixRows = 0;
-      this.suffixReconnect = null;
-      this.prefixHeights = null;
-      this.prefixHeightDeltas.clear();
+    if (transcriptChanged || contextChanged) {
+      this.resetLayout(transcript.turnCount, transcriptChanged);
+      this.layoutTranscript = transcript;
+      this.layoutRevision = transcript.revision;
       this.layoutWidth = width;
       this.layoutTheme = theme;
       this.layoutShowsThoughts = showThoughts;
       return;
     }
 
-    if (this.layoutViewRef !== this.state.view || this.layoutTurnsRef !== turns || this.layout.length !== turns.length) {
-      const change = this.layoutViewRef
-        ? getChatViewChange(this.state.view, this.layoutViewRef)
-        : undefined;
-      let handled = false;
-      const dirtyIndices = change?.kind === 'turns' || change?.kind === 'patch' ? change.indices : [];
-      const sparseValid = dirtyIndices.every((index) => index >= 0 && index < this.layout.length && index < turns.length);
-      if (sparseValid && dirtyIndices.length) {
-        this.clearSelection();
-        for (const index of dirtyIndices) {
-          const entry = this.layout[index]!;
-          const nextTurn = turns[index]!;
-          if (entry.turn === nextTurn) continue;
-          const retain = entry.rows != null;
-          entry.turn = nextTurn;
-          this.frameReconciledTurns++;
-          // The volatile streaming tail is invalidated once by the dedicated block below; eagerly
-          // rendering it here would immediately discard and render it a second time in the same frame.
-          if (entry.height != null && !(nextTurn.role === 'elowen' && nextTurn.streaming)) {
-            this.renderAndRecord(index, retain);
+    const change = transcript.changesSince(this.layoutRevision);
+    if (change.kind === 'full' || this.layout.length > transcript.turnCount) {
+      this.resetLayout(transcript.turnCount, true);
+    } else {
+      const dirtyIndices = change.kind === 'turns' || change.kind === 'patch' ? change.indices : [];
+      const sparseValid = dirtyIndices.every((index) => index >= 0 && index < this.layout.length && index < transcript.turnCount);
+      if (!sparseValid) {
+        this.resetLayout(transcript.turnCount, true);
+      } else {
+        for (const index of dirtyIndices) this.reconcileTurn(index);
+        const suffixFrom = change.kind === 'suffix' || change.kind === 'patch' ? change.from : null;
+        if (suffixFrom != null) {
+          if (suffixFrom < 0 || suffixFrom > this.layout.length || suffixFrom > transcript.turnCount) {
+            this.resetLayout(transcript.turnCount, true);
+          } else {
+            this.replaceSuffix(suffixFrom, transcript.turnCount);
           }
+        } else if (this.layout.length !== transcript.turnCount) {
+          this.resetLayout(transcript.turnCount, true);
         }
       }
-      const suffixFrom = change?.kind === 'suffix' || change?.kind === 'patch' ? change.from : null;
-      if (change?.kind === 'none' && this.layout.length === turns.length) {
-        handled = true;
-      } else if (change?.kind === 'turns' && sparseValid) {
-        handled = true;
-      } else if (suffixFrom != null
-        && sparseValid
-        && suffixFrom >= 0
-        && suffixFrom <= this.layout.length
-        && suffixFrom <= turns.length) {
-        if (suffixFrom < this.layout.length) this.clearSelection();
-        const oldKnownStart = this.knownStart;
-        const oldKnownRows = this.knownSuffixRows;
-        let removedKnownRows = 0;
-        for (const entry of this.layout.slice(suffixFrom)) {
-          if (entry.height != null) this.indexedTurnCount--;
-          removedKnownRows += entry.height ?? 0;
-          this.discardRows(entry);
-        }
-        this.layout.length = suffixFrom;
-        for (let i = suffixFrom; i < turns.length; i++) {
-          this.layout.push({ turn: turns[i]!, height: null, rows: null });
-        }
-        this.frameReconciledTurns += turns.length - suffixFrom;
-        this.resetKnownSuffixAfterReplacement(suffixFrom, oldKnownStart, oldKnownRows, removedKnownRows);
-        handled = true;
-      } else if (change?.kind === 'reset') {
-        this.clearSelection();
-        this.clearAllCachedRows();
-        this.layout = turns.map((turn) => ({ turn, height: null, rows: null }));
-        this.indexedTurnCount = 0;
-        this.knownStart = this.layout.length;
-        this.knownSuffixRows = 0;
-        this.suffixReconnect = null;
-        this.prefixHeights = null;
-        this.prefixHeightDeltas.clear();
-        this.expandedThoughts.clear();
-        this.expandedTools.clear();
-        this.frameReconciledTurns += turns.length;
-        handled = true;
-      }
-
-      if (!handled) {
-        let common = 0;
-        while (common < this.layout.length && common < turns.length) {
-          this.frameReconciledTurns++;
-          if (this.layout[common]!.turn !== turns[common]) break;
-          common++;
-        }
-        if (common !== this.layout.length || common !== turns.length) {
-          this.clearSelection();
-          const replacedWholeTranscript = this.layout.length > 0 && common === 0;
-          const oldKnownStart = this.knownStart;
-          const oldKnownRows = this.knownSuffixRows;
-          let removedKnownRows = 0;
-          for (const entry of this.layout.slice(common)) {
-            if (entry.height != null) this.indexedTurnCount--;
-            removedKnownRows += entry.height ?? 0;
-            this.discardRows(entry);
-          }
-          this.layout.length = common;
-          for (let i = common; i < turns.length; i++) this.layout.push({ turn: turns[i]!, height: null, rows: null });
-          if (replacedWholeTranscript) { this.expandedThoughts.clear(); this.expandedTools.clear(); }
-          this.resetKnownSuffixAfterReplacement(common, oldKnownStart, oldKnownRows, removedKnownRows);
-        }
-      }
-      this.layoutTurnsRef = turns;
-      this.layoutViewRef = this.state.view;
     }
+    this.layoutRevision = change.revision;
 
     // The live tail can mutate its elapsed label/output between object replacements. It alone is volatile;
     // settled entries keep both exact heights and any retained rows.
     const volatile = this.layout.at(-1);
-    if (volatile?.turn.role === 'elowen' && volatile.turn.streaming && volatile.height != null) {
+    if (volatile?.turn?.role === 'elowen' && volatile.turn.streaming && volatile.height != null) {
       this.clearSelection();
-      const index = this.layout.length - 1;
-      const oldKnownStart = this.knownStart;
-      const oldKnownRows = this.knownSuffixRows;
-      const removedKnownRows = volatile.height;
-      this.discardRows(volatile);
-      volatile.height = null;
-      this.indexedTurnCount--;
-      this.resetKnownSuffixAfterReplacement(index, oldKnownStart, oldKnownRows, removedKnownRows);
+      this.invalidateKnownTail(this.layout.length - 1);
     }
+  }
+
+  private resetLayout(turnCount: number, clearExpansions: boolean): void {
+    this.clearSelection();
+    this.clearAllCachedRows();
+    this.layout = Array.from({ length: turnCount }, () => ({ turn: null, height: null, rows: null }));
+    this.heightIndex = new DynamicHeightIndex();
+    this.heightIndex.resize(turnCount);
+    this.indexedTurnCount = 0;
+    this.knownStart = turnCount;
+    this.suffixReconnect = null;
+    if (clearExpansions) {
+      this.expandedThoughts.clear();
+      this.expandedTools.clear();
+    }
+  }
+
+  private reconcileTurn(index: number): void {
+    const entry = this.layout[index]!;
+    const nextTurn = this.state.transcript.turnAt(index);
+    if (!nextTurn || entry.turn === nextTurn) return;
+    this.clearSelection();
+    const retain = entry.rows != null;
+    entry.turn = nextTurn;
+    this.frameReconciledTurns++;
+    if (entry.height != null && !(nextTurn.role === 'elowen' && nextTurn.streaming)) {
+      this.renderAndRecord(index, retain);
+    }
+  }
+
+  private replaceSuffix(from: number, turnCount: number): void {
+    if (from < this.layout.length) this.clearSelection();
+    const oldKnownStart = this.knownStart;
+    for (const entry of this.layout.slice(from)) {
+      if (entry.height != null) this.indexedTurnCount--;
+      this.discardRows(entry);
+    }
+    this.layout.length = from;
+    this.heightIndex.resize(from);
+    while (this.layout.length < turnCount) this.layout.push({ turn: null, height: null, rows: null });
+    this.heightIndex.resize(turnCount);
+    this.frameReconciledTurns += turnCount - from;
+    this.knownStart = turnCount;
+    this.suffixReconnect = from >= oldKnownStart ? { boundary: from, start: oldKnownStart } : null;
+    this.applySuffixReconnect();
+  }
+
+  private invalidateKnownTail(index: number): void {
+    const entry = this.layout[index]!;
+    const oldKnownStart = this.knownStart;
+    this.discardRows(entry);
+    entry.height = null;
+    this.heightIndex.replace(index, 0);
+    this.indexedTurnCount--;
+    this.knownStart = this.layout.length;
+    this.suffixReconnect = index >= oldKnownStart ? { boundary: index, start: oldKnownStart } : null;
   }
 
   private extraRows(): TranscriptRow[] {
     const rows: TranscriptRow[] = [];
     if (this.state.notice) rows.push(...terminalPlainText(this.state.notice).split('\n').map((line) => ({ line: `  ${line}` })));
-    if (this.state.view.notice) rows.push({ line: `  ${color.faint(`· ${inlineText(this.state.view.notice)}`)}` });
+    if (this.state.transcriptNotice) rows.push({ line: `  ${color.faint(`· ${inlineText(this.state.transcriptNotice)}`)}` });
     return rows;
   }
 
@@ -777,21 +752,16 @@ export class ChatViewport implements Component {
   private renderAndRecord(index: number, retain: boolean): TranscriptRow[] {
     this.frameRenderedTurns++;
     const entry = this.layout[index]!;
+    const turn = this.state.transcript.turnAt(index);
+    if (!turn) return [];
+    entry.turn = turn;
     const oldHeight = entry.height;
-    const rows = this.renderTurn(entry.turn, index, this.currentContentWidth);
+    const rows = this.renderTurn(turn, index, this.currentContentWidth);
     entry.height = rows.length;
     if (oldHeight == null) this.indexedTurnCount++;
+    this.heightIndex.replace(index, rows.length);
     if (retain) this.retainRows(entry, rows);
     else this.discardRows(entry);
-    if (oldHeight != null && oldHeight !== rows.length) {
-      const delta = rows.length - oldHeight;
-      if (index >= this.knownStart) this.knownSuffixRows += delta;
-      if (this.prefixHeights) {
-        const adjusted = (this.prefixHeightDeltas.get(index) ?? 0) + delta;
-        if (adjusted === 0) this.prefixHeightDeltas.delete(index);
-        else this.prefixHeightDeltas.set(index, adjusted);
-      }
-    }
     return rows;
   }
 
@@ -807,24 +777,11 @@ export class ChatViewport implements Component {
     this.refreshMetrics();
   }
 
-  private resetKnownSuffixAfterReplacement(from: number, oldStart: number, oldRows: number, removedRows: number): void {
-    if (this.prefixHeights) this.prefixHeights.length = Math.min(this.prefixHeights.length, from + 1);
-    for (const index of this.prefixHeightDeltas.keys()) if (index >= from) this.prefixHeightDeltas.delete(index);
-    this.knownStart = this.layout.length;
-    this.knownSuffixRows = 0;
-    this.suffixReconnect = from >= oldStart
-      ? { boundary: from, start: oldStart, rows: Math.max(0, oldRows - removedRows) }
-      : null;
-    this.applySuffixReconnect();
-  }
-
   private applySuffixReconnect(): void {
     if (this.suffixReconnect && this.knownStart === this.suffixReconnect.boundary) {
       this.knownStart = this.suffixReconnect.start;
-      this.knownSuffixRows += this.suffixReconnect.rows;
       this.suffixReconnect = null;
     }
-    if (this.knownStart === 0) this.buildPrefixHeights();
   }
 
   private indexPrevious(retain: boolean): void {
@@ -834,13 +791,15 @@ export class ChatViewport implements Component {
     const entry = this.layout[index]!;
     if (entry.height == null) this.renderAndRecord(index, retain);
     this.knownStart = index;
-    this.knownSuffixRows += entry.height ?? 0;
     this.applySuffixReconnect();
   }
 
   private ensureTail(requiredRows: number, retain: boolean): void {
     const requiredTurnRows = Math.max(0, requiredRows - this.currentExtraRows.length);
-    while (this.knownStart > 0 && this.knownSuffixRows < requiredTurnRows) this.indexPrevious(retain);
+    while (this.knownStart > 0
+      && this.heightIndex.rangeSum(this.knownStart, this.layout.length) < requiredTurnRows) {
+      this.indexPrevious(retain);
+    }
   }
 
   private ensureScrollCapacity(targetOffset: number): void {
@@ -861,37 +820,11 @@ export class ChatViewport implements Component {
 
   private refreshMetrics(): void {
     const leadingBlank = this.knownStart === 0 ? 1 : 0;
-    this.totalLines = leadingBlank + this.knownSuffixRows + this.currentExtraRows.length;
+    this.totalLines = leadingBlank
+      + this.heightIndex.rangeSum(this.knownStart, this.layout.length)
+      + this.currentExtraRows.length;
     this.maxOffset = Math.max(0, this.totalLines - this.viewportHeight);
     this.scrollOffset = Math.max(0, Math.min(this.maxOffset, this.scrollOffset));
-  }
-
-  private buildPrefixHeights(): void {
-    const fresh = this.prefixHeights == null;
-    const prefix = this.prefixHeights ?? [0];
-    if (fresh) this.prefixHeightDeltas.clear();
-    const start = Math.max(0, prefix.length - 1);
-    prefix.length = this.layout.length + 1;
-    for (let i = start; i < this.layout.length; i++) prefix[i + 1] = prefix[i]! + (this.layout[i]!.height ?? 0);
-    this.prefixHeights = prefix;
-  }
-
-  private adjustedPrefixHeight(index: number): number {
-    const prefix = this.prefixHeights!;
-    let value = prefix[index] ?? 0;
-    for (const [turnIndex, delta] of this.prefixHeightDeltas) if (turnIndex < index) value += delta;
-    return value;
-  }
-
-  private firstTurnEndingAfter(offset: number): number {
-    let lo = 0;
-    let hi = this.layout.length;
-    while (lo < hi) {
-      const mid = Math.floor((lo + hi) / 2);
-      if (this.adjustedPrefixHeight(mid + 1) <= offset) lo = mid + 1;
-      else hi = mid;
-    }
-    return lo;
   }
 
   private collectWindow(start: number, end: number): TranscriptRow[] {
@@ -902,37 +835,28 @@ export class ChatViewport implements Component {
       visible.push(...rows.slice(Math.max(0, start - chunkStart), Math.min(rows.length, end - chunkStart)));
     };
 
-    if (this.knownStart === 0 && this.prefixHeights) {
-      append([{ line: '' }], 0);
-      const turnTotal = this.adjustedPrefixHeight(this.layout.length);
-      const localStart = Math.max(0, start - 1);
-      const localEnd = Math.min(turnTotal, end - 1);
-      if (localStart < localEnd) {
-        for (let i = this.firstTurnEndingAfter(localStart); i < this.layout.length; i++) {
-          const turnStart = this.adjustedPrefixHeight(i);
-          const chunkStart = 1 + turnStart;
-          if (chunkStart >= end || turnStart >= localEnd) break;
-          append(this.rowsFor(i), chunkStart);
-        }
+    const leadingBlank = this.knownStart === 0 ? 1 : 0;
+    if (leadingBlank) append([{ line: '' }], 0);
+    const knownBase = this.heightIndex.prefixSum(this.knownStart);
+    const turnTotal = this.heightIndex.rangeSum(this.knownStart, this.layout.length);
+    const localStart = Math.max(0, start - leadingBlank);
+    const localEnd = Math.min(turnTotal, end - leadingBlank);
+    if (localStart < localEnd) {
+      for (let index = this.heightIndex.lowerBoundOffset(knownBase + localStart);
+        index < this.layout.length; index += 1) {
+        const turnStart = this.heightIndex.prefixSum(index) - knownBase;
+        const chunkStart = leadingBlank + turnStart;
+        if (chunkStart >= end || turnStart >= localEnd) break;
+        append(this.rowsFor(index), chunkStart);
       }
-      append(this.currentExtraRows, 1 + turnTotal);
-      return visible;
     }
-
-    let cursor = 0;
-    for (let i = this.knownStart; i < this.layout.length; i++) {
-      const height = this.layout[i]!.height ?? 0;
-      if (cursor + height > start && cursor < end) append(this.rowsFor(i), cursor);
-      cursor += height;
-      if (cursor >= end) break;
-    }
-    append(this.currentExtraRows, this.knownSuffixRows);
+    append(this.currentExtraRows, leadingBlank + turnTotal);
     return visible;
   }
 
   /** All rows of ONE turn, starting from an (assumed) blank boundary and ending with a trailing blank —
    *  the cacheable unit of the transcript. */
-  private renderTurn(turn: ChatView['turns'][number], turnIndex: number, width: number): TranscriptRow[] {
+  private renderTurn(turn: ChatTurn, turnIndex: number, width: number): TranscriptRow[] {
     const rows: TranscriptRow[] = [];
     const add = (line: string, kind?: TranscriptRow['kind'], key?: string): void => {
       rows.push(kind ? { line, kind, key, turnIndex } : { line });
@@ -1070,11 +994,12 @@ export class ChatViewport implements Component {
       // Virtualized history knows that `knownStart` older turns exist even before their Markdown heights
       // are materialized. Painting and pointer hit-testing share this geometry, so the visible control
       // and the area the user can grab cannot diverge.
+      const knownRows = this.heightIndex.rangeSum(this.knownStart, this.layout.length);
       const averageTurnRows = this.indexedTurnCount > 0
-        ? Math.max(1, this.knownSuffixRows / this.indexedTurnCount)
+        ? Math.max(1, knownRows / this.indexedTurnCount)
         : Math.max(1, height / 2);
       visualTotal = Math.max(height + 1, Math.ceil(
-        this.knownSuffixRows + averageTurnRows * this.knownStart + this.currentExtraRows.length + 1,
+        knownRows + averageTurnRows * this.knownStart + this.currentExtraRows.length + 1,
       ));
     }
     const visualMaxOffset = Math.max(0, visualTotal - height);

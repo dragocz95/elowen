@@ -77,7 +77,11 @@ export async function runPipelineBenchmark({ root = process.cwd(), samples = 20,
     const parentTranscript = new TranscriptModel(history(historyTurns));
     const state = { parentTranscript, childTranscript: null };
     const viewport = new ChatViewport(
-      { view: parentTranscript.view, notice: '', modelName: 'benchmark', thinkingSeconds: 0 },
+      {
+        transcript: parentTranscript,
+        transcriptNotice: parentTranscript.view.notice,
+        notice: '', modelName: 'benchmark', thinkingSeconds: 0,
+      },
       getMarkdownTheme(), () => 18, () => 1, () => 80,
     );
     viewport.render(80);
@@ -103,8 +107,12 @@ export async function runPipelineBenchmark({ root = process.cwd(), samples = 20,
       // This deliberately mirrors the current application handoff instead of calling render in
       // isolation: apply the BrainEvent, publish parent state, select the active view, then frame it.
       state.parentTranscript = parentTranscript;
-      const activeView = (state.childTranscript ?? state.parentTranscript).view;
-      viewport.setState({ view: activeView, notice: '', modelName: 'benchmark', thinkingSeconds: 0 });
+      const activeTranscript = state.childTranscript ?? state.parentTranscript;
+      viewport.setState({
+        transcript: activeTranscript,
+        transcriptNotice: activeTranscript.view.notice,
+        notice: '', modelName: 'benchmark', thinkingSeconds: 0,
+      });
       viewport.render(80);
       eventToFrameSamples.push(performance.now() - eventStarted);
     }

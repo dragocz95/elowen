@@ -328,7 +328,7 @@ export function createShell(rt: ChatRuntime, stream: StreamController, mdTheme: 
   const rowBudget = (): LayoutBudget => currentBudget ?? refreshLayoutBudget();
 
   const parentViewport = new ChatViewport(
-    { view: rt.view, notice: rt.notice, modelName: rt.modelName, thinkingSeconds: 0 },
+    { transcript: rt.transcript, transcriptNotice: rt.view.notice, notice: rt.notice, modelName: rt.modelName, thinkingSeconds: 0 },
     mdTheme,
     () => rowBudget().sections.transcript,
     () => TOP_RULE_ROWS + 1,
@@ -337,7 +337,11 @@ export function createShell(rt: ChatRuntime, stream: StreamController, mdTheme: 
   let childViewport: ChatViewport | null = null;
   let childViewportSession = '';
   const newChildViewport = (): ChatViewport => new ChatViewport(
-    { view: rt.childView?.view ?? rt.view, notice: '', modelName: rt.modelName, thinkingSeconds: 0 },
+    {
+      transcript: rt.childView?.transcript ?? rt.transcript,
+      transcriptNotice: (rt.childView?.view ?? rt.view).notice,
+      notice: '', modelName: rt.modelName, thinkingSeconds: 0,
+    },
     mdTheme,
     () => rowBudget().sections.transcript,
     () => TOP_RULE_ROWS + 1,
@@ -442,7 +446,8 @@ export function createShell(rt: ChatRuntime, stream: StreamController, mdTheme: 
     }
     currentRunSeconds = thinkStart ? Math.max(0, Math.round((Date.now() - thinkStart) / 1000)) : 0;
     parentViewport.setState({
-      view: rt.view,
+      transcript: rt.transcript,
+      transcriptNotice: rt.view.notice,
       notice: rt.notice,
       modelName: rt.modelName,
       thinkingSeconds: currentRunSeconds,
@@ -454,7 +459,8 @@ export function createShell(rt: ChatRuntime, stream: StreamController, mdTheme: 
         childViewportSession = rt.childView.sessionId;
       }
       childViewport.setState({
-        view: rt.childView.view,
+        transcript: rt.childView.transcript,
+        transcriptNotice: rt.childView.view.notice,
         notice: rt.childView.loading
           ? color.dim('· loading sub-agent transcript…')
           : (rt.notice || color.dim('· sub-agent session — your messages go to this agent')),

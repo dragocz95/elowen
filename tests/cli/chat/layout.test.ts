@@ -1,8 +1,26 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { getMarkdownTheme, initTheme } from '@earendil-works/pi-coding-agent';
 import { getCapabilities, setCapabilities, visibleWidth } from '@earendil-works/pi-tui';
-import { beginAssistant, emptyView, fromHistory, pushUser, reduce } from '../../../src/brain/transcript.js';
-import { CHAT_VIEWPORT_ROW_CACHE_LIMIT, ChatViewport, MentionOverlay, mouseWheel, SlashOverlay, StartScreen, TelemetryPanel, TOOL_INDENT, type TelemetryState } from '../../../src/cli/chat/layout.js';
+import { beginAssistant, emptyView, fromHistory, pushUser, reduce, type ChatView } from '../../../src/brain/transcript.js';
+import { TranscriptModel } from '../../../src/brain/transcriptModel.js';
+import { CHAT_VIEWPORT_ROW_CACHE_LIMIT, ChatViewport, MentionOverlay, mouseWheel, SlashOverlay, StartScreen, TelemetryPanel, TOOL_INDENT, type ChatViewportState, type TelemetryState } from '../../../src/cli/chat/layout.js';
+
+const transcriptState = (
+  transcript: TranscriptModel,
+  overrides: Partial<Omit<ChatViewportState, 'transcript' | 'transcriptNotice'>> = {},
+): ChatViewportState => ({
+  transcript,
+  transcriptNotice: transcript.view.notice,
+  notice: '',
+  modelName: 'kimi',
+  thinkingSeconds: 0,
+  ...overrides,
+});
+
+const viewportState = (
+  view: ChatView,
+  overrides: Partial<Omit<ChatViewportState, 'transcript' | 'transcriptNotice'>> = {},
+): ChatViewportState => transcriptState(TranscriptModel.fromView(view), overrides);
 
 afterEach(() => { vi.useRealTimers(); });
 
@@ -23,7 +41,7 @@ describe('chat layout components', () => {
       view = reduce(view, { type: 'idle' });
     }
     const viewport = new ChatViewport(
-      { view, notice: '', modelName: 'kimi', thinkingSeconds: 0 },
+      viewportState(view),
       getMarkdownTheme(),
       () => 6,
       () => 1,
@@ -38,13 +56,10 @@ describe('chat layout components', () => {
 
   it('does not reverse-video the first padding row when no drag selection exists', () => {
     const viewport = new ChatViewport(
-      {
-        view: fromHistory([
+      viewportState(fromHistory([
           { role: 'user', text: 'short question' },
           { role: 'assistant', text: 'short answer' },
-        ]),
-        notice: '', modelName: 'kimi', thinkingSeconds: 0,
-      },
+        ])),
       getMarkdownTheme(),
       () => 20,
       () => 1,
@@ -61,7 +76,7 @@ describe('chat layout components', () => {
     view = reduce(view, { type: 'text', delta: 'done' });
     view = reduce(view, { type: 'idle' });
     const viewport = new ChatViewport(
-      { view, notice: '', modelName: 'kimi', thinkingSeconds: 0 },
+      viewportState(view),
       getMarkdownTheme(),
       () => 12,
       () => 1,
@@ -81,7 +96,7 @@ describe('chat layout components', () => {
     view = reduce(view, { type: 'reasoning', delta: 'now decide the next step' });
     view = reduce(view, { type: 'idle' });
     const viewport = new ChatViewport(
-      { view, notice: '', modelName: 'kimi', thinkingSeconds: 0 },
+      viewportState(view),
       getMarkdownTheme(),
       () => 30,
       () => 1,
@@ -98,7 +113,7 @@ describe('chat layout components', () => {
     view = reduce(view, { type: 'tool', id: 'cmd-1', name: 'run_command', detail: 'du -xhd2', command: 'du -xhd2' });
     view = reduce(view, { type: 'tool_progress', id: 'cmd-1', text: '984M\t/var/www/.local\x1b[2J\rupdated' });
     const viewport = new ChatViewport(
-      { view, notice: '', modelName: 'kimi', thinkingSeconds: 0 },
+      viewportState(view),
       getMarkdownTheme(), () => 20, () => 1, () => 72,
     );
 
@@ -115,7 +130,7 @@ describe('chat layout components', () => {
     view = reduce(view, { type: 'reasoning', delta: 'reason\x1b]0;forged\x07 text' });
     view = reduce(view, { type: 'text', delta: '**bold answer**\x1b]52;c;Zm9yZ2Vk\x07' });
     const viewport = new ChatViewport(
-      { view, notice: 'notice\x1b[3J', modelName: 'kimi', thinkingSeconds: 0 },
+      viewportState(view, { notice: 'notice\x1b[3J' }),
       getMarkdownTheme(), () => 24, () => 1, () => 72,
     );
 
@@ -136,7 +151,7 @@ describe('chat layout components', () => {
     view = reduce(view, { type: 'tool', name: 'run_command', detail: 'npm test' });
     view = reduce(view, { type: 'tool_output', output: { title: 'console output', kind: 'console', text: 'Tests 4 passed', command: 'npm test', status: 'exit 0', tone: 'success' } });
     const viewport = new ChatViewport(
-      { view, notice: '', modelName: 'kimi', thinkingSeconds: 0 },
+      viewportState(view),
       getMarkdownTheme(),
       () => 12,
       () => 1,
@@ -156,7 +171,7 @@ describe('chat layout components', () => {
     view = reduce(view, { type: 'tool', name: 'run_command', command: 'echo one' });
     view = reduce(view, { type: 'tool', name: 'run_command', command: 'sleep 5' });
     const render = (v: typeof view): string => new ChatViewport(
-      { view: v, notice: '', modelName: 'kimi', thinkingSeconds: 0 },
+      viewportState(v),
       getMarkdownTheme(),
       () => 14,
       () => 1,
@@ -180,7 +195,7 @@ describe('chat layout components', () => {
       output: { title: 'console output', kind: 'console', text: 'line 9\nline 10', fullText: 'line 1\nline 2\nline 9\nline 10', command: 'npm test' },
     });
     const viewport = new ChatViewport(
-      { view, notice: '', modelName: 'kimi', thinkingSeconds: 0 },
+      viewportState(view),
       getMarkdownTheme(),
       () => 14,
       () => 1,
@@ -200,7 +215,7 @@ describe('chat layout components', () => {
     view = reduce(view, { type: 'tool', name: 'read_file', detail: 'b.ts' });
     view = reduce(view, { type: 'idle' });
     const viewport = new ChatViewport(
-      { view, notice: '', modelName: 'kimi', thinkingSeconds: 0 },
+      viewportState(view),
       getMarkdownTheme(),
       () => 12,
       () => 1,
@@ -224,7 +239,7 @@ describe('chat layout components', () => {
     view = reduce(view, { type: 'tool', name: 'read_file', detail: 'b.ts' });
     view = reduce(view, { type: 'idle' });
     const rendered = new ChatViewport(
-      { view, notice: '', modelName: 'kimi', thinkingSeconds: 0 },
+      viewportState(view),
       getMarkdownTheme(),
       () => 12,
       () => 1,
@@ -239,7 +254,7 @@ describe('chat layout components', () => {
     view = reduce(view, { type: 'tool', name: 'edit_file', detail: 'test.php' });
     view = reduce(view, { type: 'diff', diff: '-  1 old\n+  1 new' });
     const viewport = new ChatViewport(
-      { view, notice: '', modelName: 'kimi', thinkingSeconds: 0 },
+      viewportState(view),
       getMarkdownTheme(),
       () => 12,
       () => 1,
@@ -255,7 +270,7 @@ describe('chat layout components', () => {
     view = reduce(view, { type: 'text', delta: '<proposed_plan>\n# Migration\n- Move prompt into CLI prompts.\n</proposed_plan>' });
     view = reduce(view, { type: 'idle' });
     const viewport = new ChatViewport(
-      { view, notice: '', modelName: 'kimi', thinkingSeconds: 0 },
+      viewportState(view),
       getMarkdownTheme(),
       () => 12,
       () => 1,
@@ -271,7 +286,7 @@ describe('chat layout components', () => {
     let view = beginAssistant(emptyView());
     view = reduce(view, { type: 'text', delta: '<proposed_plan>\n# Draft\n- Check tests' });
     const viewport = new ChatViewport(
-      { view, notice: '', modelName: 'kimi', thinkingSeconds: 0 },
+      viewportState(view),
       getMarkdownTheme(),
       () => 12,
       () => 1,
@@ -563,7 +578,7 @@ describe('drag-to-copy selection', () => {
       { role: 'assistant', text: 'line one answer\nline two answer' },
     ]);
     const viewport = new ChatViewport(
-      { view, notice: '', modelName: 'kimi', thinkingSeconds: 0 },
+      viewportState(view),
       getMarkdownTheme(),
       () => 12,
       () => 1,
@@ -602,7 +617,7 @@ describe('drag-to-copy selection', () => {
     setCapabilities({ ...previous, hyperlinks: true });
     try {
       const viewport = new ChatViewport(
-        { view: fromHistory([{ role: 'assistant', text: '[example](https://example.com)\nsecond line' }]), notice: '', modelName: 'kimi', thinkingSeconds: 0 },
+        viewportState(fromHistory([{ role: 'assistant', text: '[example](https://example.com)\nsecond line' }])),
         getMarkdownTheme(), () => 6, () => 1, () => 60,
       );
       const rendered = viewport.render(60);
@@ -623,7 +638,7 @@ describe('drag-to-copy selection', () => {
     const view = fromHistory([{ role: 'assistant', text: 'answer' }]);
     view.turns = [{ role: 'elowen', segments: [{ kind: 'reasoning', text: 'secret chain' }, { kind: 'text', text: 'answer' }], streaming: false }];
     const viewport = new ChatViewport(
-      { view, notice: '', modelName: 'kimi', thinkingSeconds: 0, showThoughts: false },
+      viewportState(view, { showThoughts: false }),
       getMarkdownTheme(),
       () => 12,
       () => 1,
@@ -642,7 +657,7 @@ describe('per-turn render cache', () => {
       { role: 'assistant', text: 'settled answer' },
     ]);
     const viewport = new ChatViewport(
-      { view, notice: '', modelName: 'kimi', thinkingSeconds: 0 },
+      viewportState(view),
       getMarkdownTheme(),
       () => 12,
       () => 1,
@@ -666,11 +681,29 @@ describe('progressive history layout', () => {
     { role: 'assistant', text: `## answer ${i}\n\n- evidence one\n- evidence two\n\nNewest marker ${i}` },
   ]).flat());
 
+  it('reads turns and sparse revisions directly from TranscriptModel', () => {
+    const transcript = TranscriptModel.fromView(largeHistory(20));
+    const viewport = new ChatViewport(
+      { transcript, transcriptNotice: transcript.view.notice, notice: '', modelName: 'kimi', thinkingSeconds: 0 },
+      getMarkdownTheme(), () => 8, () => 1, () => 60,
+    );
+
+    expect(viewport.render(60).join('\n')).toContain('Newest marker 19');
+    transcript.apply({ type: 'user', text: 'revision handoff' });
+    viewport.setState({
+      transcript,
+      transcriptNotice: transcript.view.notice,
+      notice: '', modelName: 'kimi', thinkingSeconds: 0,
+    });
+    expect(viewport.render(60).join('\n')).toContain('revision handoff');
+    expect(viewport.metrics().reconciledTurns).toBeLessThanOrEqual(1);
+  });
+
   it('paints only the exact tail and leaves untouched history cold until the user scrolls', async () => {
     vi.useFakeTimers();
     const view = largeHistory();
     const viewport = new ChatViewport(
-      { view, notice: '', modelName: 'kimi', thinkingSeconds: 0 },
+      viewportState(view),
       getMarkdownTheme(), () => 6, () => 1, () => 60,
     );
 
@@ -696,7 +729,7 @@ describe('progressive history layout', () => {
   it('PageUp indexes just enough older turns and keeps an exact bottom-relative offset', () => {
     vi.useFakeTimers();
     const viewport = new ChatViewport(
-      { view: largeHistory(), notice: '', modelName: 'kimi', thinkingSeconds: 0 },
+      viewportState(largeHistory()),
       getMarkdownTheme(), () => 6, () => 1, () => 60,
     );
     viewport.render(60);
@@ -715,7 +748,7 @@ describe('progressive history layout', () => {
 
   it('finishes a normal history index on grab so the thumb becomes exact', () => {
     const viewport = new ChatViewport(
-      { view: largeHistory(12), notice: '', modelName: 'kimi', thinkingSeconds: 0 },
+      viewportState(largeHistory(12)),
       getMarkdownTheme(), () => 6, () => 1, () => 60,
     );
     viewport.render(60);
@@ -728,7 +761,7 @@ describe('progressive history layout', () => {
   it('bounds progressive indexing for a huge history on each drag sample', () => {
     const view = largeHistory(5_000);
     const viewport = new ChatViewport(
-      { view, notice: '', modelName: 'kimi', thinkingSeconds: 0 },
+      viewportState(view),
       getMarkdownTheme(), () => 12, () => 1, () => 80,
     );
     viewport.render(80);
@@ -741,7 +774,7 @@ describe('progressive history layout', () => {
 
   it('preserves the pointer offset when grabbing a multi-row scrollbar thumb', () => {
     const viewport = new ChatViewport(
-      { view: largeHistory(24), notice: '', modelName: 'kimi', thinkingSeconds: 0 },
+      viewportState(largeHistory(24)),
       getMarkdownTheme(), () => 24, () => 1, () => 80,
     );
     viewport.render(80);
@@ -766,7 +799,7 @@ describe('progressive history layout', () => {
   it('continues a bounded drag toward old history without another pointer event', () => {
     const view = largeHistory(5_000);
     const viewport = new ChatViewport(
-      { view, notice: '', modelName: 'kimi', thinkingSeconds: 0 },
+      viewportState(view),
       getMarkdownTheme(), () => 12, () => 1, () => 80,
     );
     const first = viewport.render(80);
@@ -801,7 +834,7 @@ describe('progressive history layout', () => {
       segments: [{ kind: 'reasoning', text: 'summary words followed by the hidden expanded detail' }],
     };
     const viewport = new ChatViewport(
-      { view, notice: '', modelName: 'kimi', thinkingSeconds: 0 },
+      viewportState(view),
       getMarkdownTheme(), () => 20, () => 1, () => 72,
     );
     const first = viewport.render(72);
@@ -822,7 +855,7 @@ describe('progressive history layout', () => {
     const view = largeHistory();
     let width = 60;
     const viewport = new ChatViewport(
-      { view, notice: '', modelName: 'kimi', thinkingSeconds: 0 },
+      viewportState(view),
       getMarkdownTheme(), () => 6, () => 1, () => width,
     );
     viewport.render(width);
@@ -835,7 +868,7 @@ describe('progressive history layout', () => {
 
   it('reports viewport-sized work and renders no settled Markdown again during cached scroll', () => {
     const viewport = new ChatViewport(
-      { view: largeHistory(1_000), notice: '', modelName: 'kimi', thinkingSeconds: 0 },
+      viewportState(largeHistory(1_000)),
       getMarkdownTheme(), () => 18, () => 1, () => 80,
     );
     viewport.render(80);
@@ -852,36 +885,36 @@ describe('progressive history layout', () => {
   });
 
   it('reconciles only the streaming tail instead of comparing every settled turn', () => {
-    let view = largeHistory(1_000);
+    const transcript = TranscriptModel.fromView(largeHistory(1_000));
     const viewport = new ChatViewport(
-      { view, notice: '', modelName: 'kimi', thinkingSeconds: 0 },
+      transcriptState(transcript),
       getMarkdownTheme(), () => 18, () => 1, () => 80,
     );
     viewport.render(80);
-    view = beginAssistant(view);
-    viewport.setState({ view, notice: '', modelName: 'kimi', thinkingSeconds: 0 });
+    transcript.apply({ type: 'text', delta: '' });
+    viewport.setState(transcriptState(transcript));
     viewport.render(80);
-    view = reduce(view, { type: 'text', delta: 'one streaming token' });
-    viewport.setState({ view, notice: '', modelName: 'kimi', thinkingSeconds: 0 });
+    transcript.apply({ type: 'text', delta: 'one streaming token' });
+    viewport.setState(transcriptState(transcript));
     viewport.render(80);
     expect(viewport.metrics().reconciledTurns).toBeLessThanOrEqual(1);
     expect(viewport.metrics().renderedTurns).toBeLessThanOrEqual(1);
   });
 
   it('accumulates a coalesced user and assistant burst without scanning settled history', () => {
-    let view = largeHistory(5_000);
+    const transcript = TranscriptModel.fromView(largeHistory(5_000));
     const viewport = new ChatViewport(
-      { view, notice: '', modelName: 'kimi', thinkingSeconds: 0 },
+      transcriptState(transcript),
       getMarkdownTheme(), () => 18, () => 1, () => 80,
     );
     viewport.render(80);
 
     // The frame scheduler may fold this whole event sequence into one paint. Change metadata must retain
     // the append even though the final event itself only mutates the new assistant tail.
-    view = reduce(view, { type: 'user', text: 'coalesced question' });
-    view = reduce(view, { type: 'text', delta: 'first token' });
-    view = reduce(view, { type: 'tool', id: 't-coalesced', name: 'read_file', detail: 'src/index.ts' });
-    viewport.setState({ view, notice: '', modelName: 'kimi', thinkingSeconds: 0 });
+    transcript.apply({ type: 'user', text: 'coalesced question' });
+    transcript.apply({ type: 'text', delta: 'first token' });
+    transcript.apply({ type: 'tool', id: 't-coalesced', name: 'read_file', detail: 'src/index.ts' });
+    viewport.setState(transcriptState(transcript));
     viewport.render(80);
 
     expect(viewport.metrics().reconciledTurns).toBeLessThanOrEqual(2);
@@ -889,9 +922,9 @@ describe('progressive history layout', () => {
   });
 
   it('updates a fully indexed 10k-turn streaming tail without walking settled heights', () => {
-    let view = largeHistory(5_000);
+    const transcript = TranscriptModel.fromView(largeHistory(5_000));
     const viewport = new ChatViewport(
-      { view, notice: '', modelName: 'kimi', thinkingSeconds: 0 },
+      transcriptState(transcript),
       getMarkdownTheme(), () => 18, () => 1, () => 80,
     );
     viewport.render(80);
@@ -899,11 +932,11 @@ describe('progressive history layout', () => {
     viewport.render(80);
     expect(viewport.isHistoryIndexComplete()).toBe(true);
 
-    view = beginAssistant(view);
-    viewport.setState({ view, notice: '', modelName: 'kimi', thinkingSeconds: 0 });
+    transcript.apply({ type: 'text', delta: '' });
+    viewport.setState(transcriptState(transcript));
     viewport.render(80);
-    view = reduce(view, { type: 'text', delta: 'streaming after full index' });
-    viewport.setState({ view, notice: '', modelName: 'kimi', thinkingSeconds: 0 });
+    transcript.apply({ type: 'text', delta: 'streaming after full index' });
+    viewport.setState(transcriptState(transcript));
     viewport.render(80);
 
     expect(viewport.metrics().layoutVisits).toBeLessThan(20);
@@ -915,9 +948,9 @@ describe('progressive history layout', () => {
       { role: 'assistant', text: '', segments: [{ kind: 'tool' as const, id: 'delegate-old', name: 'delegate', detail: 'old child' }] },
       ...Array.from({ length: 4_999 }, (_, index) => ({ role: 'assistant', text: `settled answer ${index}` })),
     ];
-    let view = fromHistory(history);
+    const transcript = TranscriptModel.fromView(fromHistory(history));
     const viewport = new ChatViewport(
-      { view, notice: '', modelName: 'kimi', thinkingSeconds: 0 },
+      transcriptState(transcript),
       getMarkdownTheme(), () => 18, () => 1, () => 80,
     );
     viewport.render(80);
@@ -928,11 +961,11 @@ describe('progressive history layout', () => {
     viewport.render(80);
     const bottomBefore = [...(viewport as unknown as { lastPlainRows: string[] }).lastPlainRows];
 
-    view = reduce(view, {
+    transcript.apply({
       type: 'subagent', id: 'delegate-old', sessionId: 'child-old', status: 'running',
       task: 'old child', detail: 'still checking', tools: 3, seconds: 9,
     });
-    viewport.setState({ view, notice: '', modelName: 'kimi', thinkingSeconds: 0 });
+    viewport.setState(transcriptState(transcript));
     viewport.render(80);
     const bottomAfter = (viewport as unknown as { lastPlainRows: string[] }).lastPlainRows;
 
@@ -940,5 +973,42 @@ describe('progressive history layout', () => {
     expect(viewport.metrics().renderedTurns).toBeLessThanOrEqual(1);
     expect(viewport.metrics().layoutVisits).toBeLessThanOrEqual(1);
     expect(bottomAfter).toEqual(bottomBefore);
+  });
+
+  it('keeps 1,200 old-turn height replacements and viewport offset lookups logarithmic', () => {
+    const updates = 1_200;
+    const history = [
+      ...Array.from({ length: updates }, (_, index) => ({
+        role: 'assistant' as const,
+        text: '',
+        segments: [{ kind: 'tool' as const, id: `delegate-${index}`, name: 'delegate', detail: `child ${index}` }],
+      })),
+      ...Array.from({ length: 200 }, (_, index) => ({ role: 'assistant' as const, text: `tail ${index}` })),
+    ];
+    const transcript = TranscriptModel.fromView(fromHistory(history));
+    const viewport = new ChatViewport(
+      transcriptState(transcript),
+      getMarkdownTheme(), () => 18, () => 1, () => 80,
+    );
+    viewport.render(80);
+    viewport.scroll(1_000_000);
+    viewport.render(80);
+    expect(viewport.isHistoryIndexComplete()).toBe(true);
+    viewport.scroll(-1_000_000);
+    viewport.render(80);
+    viewport.resetHeightIndexOperationCount();
+
+    for (let index = 0; index < updates; index += 1) {
+      transcript.apply({
+        type: 'subagent', id: `delegate-${index}`, sessionId: `child-${index}`, status: 'running',
+        task: `child ${index}`, detail: 'checking', tools: 1, seconds: index,
+      });
+      viewport.setState(transcriptState(transcript));
+      viewport.render(80);
+    }
+
+    const logarithmicFrameBound = updates * 12 * (Math.ceil(Math.log2(transcript.turnCount)) + 1);
+    expect(viewport.metrics().heightIndexOperations).toBeGreaterThan(updates);
+    expect(viewport.metrics().heightIndexOperations).toBeLessThanOrEqual(logarithmicFrameBound);
   });
 });
