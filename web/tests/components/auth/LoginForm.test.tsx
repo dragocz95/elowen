@@ -10,6 +10,13 @@ const server = setupServer();
 beforeAll(() => server.listen()); afterEach(() => server.resetHandlers()); afterAll(() => server.close());
 
 describe('LoginForm', () => {
+  it('uses the shared control surface without app-workspace identity chrome', () => {
+    const { wrapper: Wrapper } = createWrapper();
+    const { container } = render(<Wrapper><ToastProvider><LoginForm onAuthed={() => {}} /></ToastProvider></Wrapper>);
+    expect(container.querySelectorAll('[data-control-surface]')).toHaveLength(1);
+    expect(container.querySelector('.spatial-mascot')).toBeNull();
+  });
+
   it('calls onAuthed on a successful login (the proxy set the cookie; nothing stored client-side)', async () => {
     server.use(http.post('*/api/auth/login', () => HttpResponse.json({ ok: true })));
     const onAuthed = vi.fn();

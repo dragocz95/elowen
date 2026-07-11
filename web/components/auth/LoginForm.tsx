@@ -4,6 +4,7 @@ import { useLogin } from '../../lib/mutations';
 import { useToast } from '../ui/Toast';
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';
+import { ControlSurfaceDocument } from '../ui/ControlSurface';
 import { useTranslation } from '../../lib/i18n';
 
 export function LoginForm({ onAuthed }: { onAuthed: () => void }) {
@@ -31,7 +32,7 @@ export function LoginForm({ onAuthed }: { onAuthed: () => void }) {
 
   return (
     <div className="flex h-screen items-center justify-center bg-bg">
-      <div className="animate-pop-in flex w-full max-w-sm flex-col gap-4 rounded-xl border border-border bg-surface p-8" style={{ boxShadow: 'var(--shadow-raised)' }}>
+      <ControlSurfaceDocument className="animate-pop-in flex w-full max-w-sm flex-col gap-4 p-8">
         <img src="/elowen-logo.png" alt="Elowen" className="logo-adaptive mx-auto h-auto w-64" />
         <h1 className="text-center text-sm uppercase tracking-wide text-text-muted">{t.auth.signIn}</h1>
         <form onSubmit={handleSubmit} className="flex flex-col gap-3">
@@ -41,7 +42,7 @@ export function LoginForm({ onAuthed }: { onAuthed: () => void }) {
             {t.auth.signIn}
           </Button>
         </form>
-      </div>
+      </ControlSurfaceDocument>
     </div>
   );
 }
