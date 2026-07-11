@@ -1,4 +1,4 @@
-import { truncateToWidth, visibleWidth } from '@earendil-works/pi-tui';
+import { CURSOR_MARKER, truncateToWidth, visibleWidth } from '@earendil-works/pi-tui';
 import type { Component } from '@earendil-works/pi-tui';
 import { MASCOT_ART } from './mascot.js';
 import { color, glyph } from './theme.js';
@@ -85,6 +85,22 @@ export function startScreenInputTop(rows: number, inputRows: number, noticeRows:
   return topPad + BANNER_ROWS + 1;
 }
 
+/** Render an input inside a physical row budget without losing its focused cursor. ChatEditor understands
+ * `setMaxRows()` and performs its own cursor-aware viewport; the fallback keeps a cursor-bearing window
+ * for composite inputs (attachments/queue/editor inside a Container) that cannot accept the allocation. */
+function renderInputViewport(input: Component, width: number, maxRows: number): string[] {
+  const allocation = Math.max(0, Math.floor(maxRows));
+  if (allocation <= 0) return [];
+  (input as Component & { setMaxRows?: (rows: number | null) => void }).setMaxRows?.(allocation);
+  const lines = input.render(width);
+  if (lines.length <= allocation) return lines;
+  const cursor = lines.findIndex((line) => line.includes(CURSOR_MARKER) || line.includes('\x1b[7m'));
+  if (cursor < 0) return lines.slice(-allocation);
+  const before = Math.floor((allocation - 1) / 2);
+  const start = Math.max(0, Math.min(cursor - before, lines.length - allocation));
+  return lines.slice(start, start + allocation);
+}
+
 /** The empty-conversation start screen (opencode-style): a centered two-tone ELOWEN wordmark, the input
  *  box beneath it with the model line, keyboard hints, a tip — and a slim bottom status row with the
  *  project on the left and the Elowen version in the bottom-right corner. The right telemetry panel stays
@@ -98,6 +114,7 @@ export class StartScreen implements Component {
   invalidate(): void { this.input.invalidate?.(); }
   render(width: number): string[] {
     width = Math.max(1, Math.floor(width));
+    const rows = Math.max(1, Math.floor(this.getRows()));
     const st = this.getState();
     const center = (text: string): string => {
       const clipped = truncateToWidth(text, width, '…');
@@ -105,7 +122,9 @@ export class StartScreen implements Component {
     };
     const { boxWidth, leftPad } = startScreenBox(width);
     const indent = ' '.repeat(leftPad);
-    const inputLines = this.input.render(boxWidth);
+    // The pinned status consumes one row. Budget the editor before composing the compact body so a
+    // bottom slice can never discard the actual cursor row on a tiny empty-conversation screen.
+    const inputLines = renderInputViewport(this.input, boxWidth, Math.max(0, rows - 1));
     const noticeLines = st.notice ? st.notice.split('\n') : [];
     const boxLine = (line: string): string => `${indent}${truncateToWidth(line, boxWidth, '…')}`;
     const hint = truncateToWidth(st.hints, boxWidth, '…');
@@ -130,13 +149,12 @@ export class StartScreen implements Component {
     }
     const statusGap = Math.max(0, available - visibleWidth(statusLeft) - visibleWidth(versionLabel));
     const statusRow = padAnsi(`${' '.repeat(sidePad)}${statusLeft}${' '.repeat(statusGap)}${versionLabel}`, width);
-    const rows = Math.max(1, Math.floor(this.getRows()));
     // Short terminals cannot fit the decorative mascot/tip block. Keep the composer and status pinned,
     // then spend any remaining rows on live notices/model/hints; never return more than the allocation.
     if (body.length > rows - 1) {
       let room = Math.max(0, rows - 1);
       const inputCount = Math.min(inputLines.length, room);
-      const shownInput = (inputCount > 0 ? inputLines.slice(-inputCount) : []).map(boxLine);
+      const shownInput = inputLines.slice(0, inputCount).map(boxLine);
       room -= shownInput.length;
       const shownNotice = noticeLines.slice(0, room).map((line) => center(line));
       room -= shownNotice.length;

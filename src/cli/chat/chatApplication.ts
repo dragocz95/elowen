@@ -1,87 +1,69 @@
+import type { Component, MarkdownTheme } from '@earendil-works/pi-tui';
+import { createChatComposition } from './chatComposition.js';
+import type { ChatComposition, ShellInputDeps } from './chatComposition.js';
+import type { ChatRuntime } from './runtime.js';
+import type { StreamController } from './streamController.js';
 import { TerminalLifecycle } from './terminalLifecycle.js';
+import type { TuiDiagnostics } from './tuiDiagnostics.js';
 
-export interface ShellInputDeps {
-  cycleThinkingLevel(): void;
-  openHelpModal(): void;
-  openThemePicker(): void;
-  openModelPicker(): void;
-  openSessionsModal(): void;
-}
-
-interface ApplicationRenderOwner {
-  pause(): void;
-  resume(): void;
-  stop(): void;
-}
-
-interface ApplicationAnimations {
-  pause(): void;
-  stop(): void;
-}
-
-interface ApplicationOverlays { stop(): void }
-interface ApplicationInputRouter { stop(): void }
+export type { ShellInputDeps } from './chatComposition.js';
 
 export interface ChatApplicationOptions {
-  term: { write(data: string): void };
-  tui: { start(): void; stop(): void };
-  renderOwner: ApplicationRenderOwner;
-  animations: ApplicationAnimations;
-  overlays: ApplicationOverlays;
-  inputRouter(): ApplicationInputRouter | null;
-  render(reason?: string): void;
-  renderForced(reason?: string): void;
-  attachInput(deps: ShellInputDeps): void;
-  showPanel(hidden?: boolean): void;
-  reshowPanel(): void;
-  reloadKeymap(): void;
-  cleanup(): void;
+  rt: ChatRuntime;
+  stream: StreamController;
+  mdTheme: MarkdownTheme;
+  diagnostics: TuiDiagnostics;
 }
 
-/** Application-level owner for shell composition and terminal lifecycle. The legacy `createShell` factory
- * now returns this class; Task 7 only replaces the outer `runChat` entry graph, not another renderer. */
+/** The real application root for one chat session. It constructs one cohesive production composition
+ * from narrow runtime dependencies, owns its mounted root/controllers, and is the sole owner of terminal
+ * lifecycle transitions. `shell.ts` remains only the stable factory boundary used by runChat. */
 export class ChatApplication {
+  readonly state: ChatRuntime;
+  readonly root: Component;
   readonly terminalLifecycle: TerminalLifecycle;
+  private readonly composition: ChatComposition;
 
-  constructor(private readonly options: ChatApplicationOptions) {
+  constructor(options: ChatApplicationOptions) {
+    this.state = options.rt;
+    this.composition = createChatComposition(options.rt, options.stream, options.mdTheme, options.diagnostics);
+    this.root = this.composition.root;
     this.terminalLifecycle = new TerminalLifecycle({
-      term: options.term,
-      tui: options.tui,
+      term: options.rt.term,
+      tui: options.rt.tui,
       scheduler: {
         pause: () => this.pauseRendering(),
         resume: () => this.resumeRendering(),
         stop: () => this.stopRendering(),
       },
       forceRender: (reason) => this.renderForced(reason),
-      beforeStop: () => this.hideOverlays(),
+      beforeStop: () => this.disposeInteraction(),
     });
+    options.rt.terminalLifecycle = this.terminalLifecycle;
   }
 
-  render = (reason?: string): void => this.options.render(reason);
-  renderForced = (reason?: string): void => this.options.renderForced(reason);
-  attachInput = (deps: ShellInputDeps): void => this.options.attachInput(deps);
-  showPanel = (hidden?: boolean): void => this.options.showPanel(hidden);
-  reshowPanel = (): void => this.options.reshowPanel();
-  reloadKeymap = (): void => this.options.reloadKeymap();
+  render = (reason?: string): void => this.composition.render(reason);
+  renderForced = (reason?: string): void => this.composition.renderForced(reason);
+  attachInput = (deps: ShellInputDeps): void => this.composition.attachInput(deps);
+  reshowPanel = (): void => this.composition.reshowPanel();
+  reloadKeymap = (): void => this.composition.reloadKeymap();
 
-  pauseRendering = (): void => {
-    this.options.animations.pause();
-    this.options.renderOwner.pause();
-  };
+  private pauseRendering(): void {
+    this.composition.animations.pause();
+    this.composition.renderShell.pause();
+  }
 
-  resumeRendering = (): void => this.options.renderOwner.resume();
+  private resumeRendering(): void { this.composition.renderShell.resume(); }
 
-  stopRendering = (): void => {
-    this.options.animations.stop();
-    this.options.inputRouter()?.stop();
-    this.options.overlays.stop();
-    this.options.renderOwner.stop();
-  };
+  private stopRendering(): void {
+    this.disposeInteraction();
+    this.composition.renderShell.stop();
+  }
 
-  hideOverlays = (): void => {
-    this.options.cleanup();
-    this.options.animations.stop();
-    this.options.inputRouter()?.stop();
-    this.options.overlays.stop();
-  };
+  private disposeInteraction(): void {
+    this.composition.dispose();
+    this.composition.animations.stop();
+    this.composition.inputRouter()?.stop();
+    this.composition.overlays.stop();
+  }
 }

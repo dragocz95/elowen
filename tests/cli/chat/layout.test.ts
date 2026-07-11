@@ -1,6 +1,7 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
-import { getMarkdownTheme, initTheme } from '@earendil-works/pi-coding-agent';
-import { getCapabilities, setCapabilities, visibleWidth } from '@earendil-works/pi-tui';
+import { getMarkdownTheme, getSelectListTheme, initTheme } from '@earendil-works/pi-coding-agent';
+import { CURSOR_MARKER, getCapabilities, setCapabilities, visibleWidth } from '@earendil-works/pi-tui';
+import type { TUI } from '@earendil-works/pi-tui';
 import { beginAssistant, emptyView, fromHistory, pushUser, reduce, type ChatView } from '../../../src/brain/transcript.js';
 import { TranscriptModel } from '../../../src/brain/transcriptModel.js';
 import type { BrainEvent } from '../../../src/brain/events.js';
@@ -10,6 +11,7 @@ import { mouseWheel } from '../../../src/cli/chat/terminalProtocol.js';
 import { StartScreen } from '../../../src/cli/chat/startScreen.js';
 import { TelemetryPanel, type TelemetryState } from '../../../src/cli/chat/telemetryPanel.js';
 import { MentionOverlay, SlashOverlay, SuggestionOverlay } from '../../../src/cli/chat/suggestionOverlay.js';
+import { ChatEditor } from '../../../src/cli/chat/picker.js';
 
 const transcriptState = (
   transcript: TranscriptModel,
@@ -583,6 +585,55 @@ describe('chat layout components', () => {
     expect(rows.join('\n')).toContain('input three');
     expect(rows.at(-1)).toContain('elowen v1.0.0');
     expect(rows.join('\n')).not.toContain('▀'); // decorative mascot yields to the composer on short screens
+  });
+
+  it('keeps a 12-line editor cursor on line 1 visible in a six-row compact start screen', () => {
+    const tui = { requestRender: () => {}, terminal: { rows: 6, columns: 40 } } as unknown as TUI;
+    const editor = new ChatEditor(tui, { borderColor: (value) => value, selectList: getSelectListTheme() }, {});
+    editor.focused = true;
+    editor.setText(Array.from({ length: 12 }, (_, index) => `draft-${String(index + 1).padStart(2, '0')}`).join('\n'));
+    for (let index = 0; index < 11; index++) {
+      editor.render(32);
+      editor.handleInput('\x1b[A');
+    }
+    expect(editor.getCursor().line).toBe(0);
+    expect(editor.render(32).join('\n')).toContain(CURSOR_MARKER);
+
+    const screen = new StartScreen(editor, () => 6, () => ({
+      modelLine: 'Build · model', hints: 'enter send', tip: 'tip', notice: '',
+      statusLeft: '~/elowen', version: '1.0.0',
+    }));
+    const rendered = screen.render(40);
+    expect(rendered).toHaveLength(6);
+    expect(rendered.join('\n')).toContain('draft-01');
+    expect(rendered.join('\n')).toContain(CURSOR_MARKER);
+    expect(rendered.at(-1)).toContain('elowen v1.0.0');
+  });
+
+  it('retains the wrapped editor cursor when the compact start screen narrows and shrinks', () => {
+    const terminal = { rows: 8, columns: 60 };
+    const tui = { requestRender: () => {}, terminal } as unknown as TUI;
+    const editor = new ChatEditor(tui, { borderColor: (value) => value, selectList: getSelectListTheme() }, {});
+    editor.focused = true;
+    editor.setText(Array.from({ length: 28 }, (_, index) => `word-${index}`).join(' '));
+    let allocatedRows = 8;
+    const screen = new StartScreen(editor, () => allocatedRows, () => ({
+      modelLine: 'Build · model', hints: 'enter send', tip: 'tip', notice: '',
+      statusLeft: '~/elowen', version: '1.0.0',
+    }));
+    expect(screen.render(60).join('\n')).toContain(CURSOR_MARKER);
+
+    terminal.columns = 24;
+    terminal.rows = 6;
+    allocatedRows = 6;
+    for (let index = 0; index < 8; index++) {
+      editor.render(24);
+      editor.handleInput('\x1b[A');
+    }
+    const resized = screen.render(24);
+    expect(resized).toHaveLength(6);
+    expect(resized.join('\n')).toContain(CURSOR_MARKER);
+    expect(resized.every((line) => visibleWidth(line) <= 24)).toBe(true);
   });
 
   it('surfaces transient notices on the start screen', () => {
