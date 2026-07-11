@@ -88,6 +88,7 @@ describe('TimelineView', () => {
     render(<Wrapper><TimelineView /></Wrapper>);
 
     const lane = (await screen.findAllByTestId('timeline-lane'))[0];
+    expect(lane).toHaveClass('px-4');
     expect(lane?.className).toContain('grid-cols-[auto_minmax(0,1fr)]');
     expect(lane?.className).toContain('@3xl:grid-cols-');
   });

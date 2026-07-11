@@ -72,7 +72,7 @@ export function TaskCard({ task, onEdit, onSelect, onContextMenu, active = false
           open();
         }
       }}
-      className={`task-register-row group relative flex items-center gap-3 border-b border-border/70 px-1 py-3.5 transition-colors ${onDragStart && !isPhase ? 'cursor-grab' : 'cursor-pointer'} ${selected || active ? 'bg-accent/[0.055]' : 'hover:bg-elevated/35'} ${dragging ? 'translate-x-1 opacity-50' : ''} ${drop.dragOver && dropTargetValid ? 'ring-1 ring-inset ring-accent/60' : ''} ${drop.dragOver && dropTargetValid === false ? 'ring-1 ring-inset ring-danger/40 opacity-60' : ''}`}
+      className={`task-register-row group relative flex items-center gap-3 border-b border-border/70 px-4 py-3.5 transition-colors ${onDragStart && !isPhase ? 'cursor-grab' : 'cursor-pointer'} ${selected || active ? 'bg-accent/[0.055]' : 'hover:bg-elevated/35'} ${dragging ? 'translate-x-1 opacity-50' : ''} ${drop.dragOver && dropTargetValid ? 'ring-1 ring-inset ring-accent/60' : ''} ${drop.dragOver && dropTargetValid === false ? 'ring-1 ring-inset ring-danger/40 opacity-60' : ''}`}
     >
       {/* model-icon bubble — accent ring while the agent is live */}
       <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border bg-elevated/70 ${running ? 'border-accent shadow-[var(--glow-soft)]' : 'border-border'}`}>

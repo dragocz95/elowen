@@ -145,7 +145,7 @@ function Lane({ points, ticks, resolve, onPick }: { points: AxisPoint[]; ticks: 
   const tone = markerTone(latest.type, latest.detail);
   const { label, projectId } = resolve(latest);
   return (
-    <div data-testid="timeline-lane" className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-center gap-x-3 gap-y-2 border-b border-border/70 px-1 py-3 @3xl:grid-cols-[auto_11rem_minmax(0,1fr)]">
+    <div data-testid="timeline-lane" className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-center gap-x-3 gap-y-2 border-b border-border/70 px-4 py-3 @3xl:grid-cols-[auto_11rem_minmax(0,1fr)]">
       <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border-2 @3xl:h-12 @3xl:w-12 ${TONE_BUBBLE[tone]}`}>
         <Icon size={22} aria-hidden />
       </span>
@@ -354,7 +354,7 @@ export function TimelineView() {
 
           <ControlSurfaceRegister className="workspace-master-detail timeline-workspace-grid" data-detail={picked != null}>
             <div className="min-w-0">
-              <section className="min-w-0 border-y border-border/80 px-1 py-4">
+              <section className="min-w-0 rounded-lg border border-border/80 px-4 py-4">
                 <div className="mb-4 flex items-center justify-between gap-2">
                   <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-widest text-text-muted"><Clock size={12} className="shrink-0" aria-hidden />{windowLabel}</div>
                   {hasData ? <span className="hidden text-[11px] text-text-muted @sm:inline">{t.timeline.markerHint}</span> : null}

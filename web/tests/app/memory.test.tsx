@@ -83,6 +83,8 @@ describe('MemoryPage', () => {
     expect(table.style.getPropertyValue('--data-table-compact-columns')).toBe('2rem minmax(0,1fr) 1.25rem');
     expect(row).toHaveClass('data-table-grid');
     expect(row).toHaveClass('interactive-row');
+    expect(row).toHaveClass('px-4');
+    expect(row).not.toHaveClass('px-1');
     expect(row).not.toHaveClass('rounded-lg');
     expect(row).not.toHaveClass('bg-surface');
     expect(row.closest('.control-surface-register')).toBeInTheDocument();

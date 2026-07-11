@@ -34,7 +34,7 @@ function PendingAskCard({ ask }: { ask: PendingAsk }) {
     });
   };
   return (
-    <article className="escalation-register-row flex flex-col gap-4 border-t border-accent/30 px-1 py-5 sm:px-3">
+    <article className="escalation-register-row flex flex-col gap-4 border-t border-accent/30 px-4 py-5">
       <div className="flex items-start gap-3">
         <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-accent/40 bg-accent/10">
           <MessagesSquare size={20} className="text-accent" aria-hidden />
@@ -123,13 +123,13 @@ export function EscalationsView() {
       ) : (
         <ControlSurfaceRegister>
           {/* Agent questions waiting on a human come first — an agent is actively blocked on each. */}
-          {pendingAsks.length > 0 ? <h2 className="border-b border-border/80 px-1 pb-3 font-mono text-[10px] font-semibold uppercase tracking-[.14em] text-accent sm:px-3">{t.escalations.questionsSection}</h2> : null}
+          {pendingAsks.length > 0 ? <h2 className="border-b border-border/80 px-4 pb-3 font-mono text-[10px] font-semibold uppercase tracking-[.14em] text-accent">{t.escalations.questionsSection}</h2> : null}
           {pendingAsks.map((a) => <PendingAskCard key={a.askId} ask={a} />)}
-          {escalations.length > 0 ? <h2 className="border-b border-border/80 px-1 pb-3 pt-7 font-mono text-[10px] font-semibold uppercase tracking-[.14em] text-warning sm:px-3">{t.escalations.reviewsSection}</h2> : null}
+          {escalations.length > 0 ? <h2 className="border-b border-border/80 px-4 pb-3 pt-7 font-mono text-[10px] font-semibold uppercase tracking-[.14em] text-warning">{t.escalations.reviewsSection}</h2> : null}
           {escalations.map((e) => {
             const when = formatTaskTime(e.ts, Date.now(), locale);
             return (
-              <article key={`${e.taskId}-${e.ts}`} className="escalation-register-row flex flex-col gap-4 border-t border-warning/30 px-1 py-5 sm:px-3">
+              <article key={`${e.taskId}-${e.ts}`} className="escalation-register-row flex flex-col gap-4 border-t border-warning/30 px-4 py-5">
                 <div className="flex items-start gap-3">
                   <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-warning/40 bg-warning/10">
                     <ShieldAlert size={20} className="text-warning" aria-hidden />

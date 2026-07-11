@@ -46,6 +46,11 @@ function renderEpic(extra: Partial<React.ComponentProps<typeof EpicGroup>> = {})
 }
 
 describe('EpicGroup — delete mission', () => {
+  it('uses the same horizontal register rhythm as plain task rows', () => {
+    renderEpic();
+    expect(screen.getByRole('button', { name: /ship feature/i })).toHaveClass('px-4');
+  });
+
   it('confirming the delete-mission action issues DELETE /tasks/:id?subtree=1', async () => {
     let deleted: { id: string; subtree: string | null } | null = null;
     server.use(

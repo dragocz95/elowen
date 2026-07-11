@@ -528,7 +528,7 @@ function MemoryRow({ memory, category, active, selected, onSelect, onToggleSelec
       selected={active || selected}
       interactive
       aria-selected={active || selected}
-      className="group px-1"
+      className="group"
     >
       <DataTableCell className="flex items-center justify-center">
         <button type="button" onClick={onToggleSelect} aria-label={t.memory.merge} aria-pressed={selected}>

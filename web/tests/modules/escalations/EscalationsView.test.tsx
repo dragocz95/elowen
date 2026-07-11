@@ -41,6 +41,7 @@ describe('EscalationsView', () => {
     expect(screen.getAllByRole('img', { name: 'Elowen' })).toHaveLength(1);
     expect(container.querySelectorAll('[data-control-surface]')).toHaveLength(1);
     expect(container.querySelector('.escalation-register-row')?.closest('.control-surface-register')).toBeInTheDocument();
+    expect(container.querySelector('.escalation-register-row')).toHaveClass('px-4');
   });
 
   it('shows the overseer rationale, the rejected phase and the blocked dependent', () => {

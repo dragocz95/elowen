@@ -33,6 +33,7 @@ describe('TaskCard drag-onto-card', () => {
     );
 
     const card = screen.getByText('Keyboard task').closest('[role="button"]')!;
+    expect(card).toHaveClass('px-4');
     fireEvent.keyDown(card, { key: 'Enter' });
     fireEvent.keyDown(card, { key: ' ' });
     expect(open).toHaveBeenCalledTimes(2);

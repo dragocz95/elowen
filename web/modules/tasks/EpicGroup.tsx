@@ -118,7 +118,7 @@ export function EpicGroup({ epic, phases, effectiveStatus, expanded, onToggle, o
           type="button"
           onClick={() => { onToggle(); onSelect(epic); }}
           aria-expanded={expanded}
-          className="flex min-w-0 flex-1 items-center gap-3 px-1 py-3.5 text-left"
+          className="flex min-w-0 flex-1 items-center gap-3 px-4 py-3.5 text-left"
         >
           <ChevronRight size={16} className={`shrink-0 text-text-muted transition-transform ${expanded ? 'rotate-90' : ''}`} aria-hidden />
           <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-accent/25 bg-accent/[0.035]"><Icon size={18} className="text-accent" aria-hidden /></span>
