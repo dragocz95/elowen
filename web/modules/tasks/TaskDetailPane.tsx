@@ -87,7 +87,7 @@ export function TaskDetailPane({ taskId, onEdit, onBack }: { taskId: string; onE
     <div className="flex flex-col gap-4">
       {/* Identity + actions. Not sticky: the pane sizes to its content and scrolls with the page, so a
           pinned header would collide with the (variable-height) module toolbar above it. */}
-      <div className="-mx-4 flex flex-col gap-2 border-b border-border bg-surface px-4 pb-3 pt-1">
+      <div className="-mx-4 flex flex-col gap-2 border-b border-border bg-transparent px-4 pb-3 pt-1">
         {onBack ? (
           <button type="button" onClick={onBack} className="-ml-1 inline-flex w-fit items-center gap-1 rounded-md px-1.5 py-1 text-xs text-text-muted transition-colors hover:bg-elevated hover:text-text">
             <ChevronLeft size={14} aria-hidden />{t.tasks.backToFlow}

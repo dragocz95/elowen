@@ -1,6 +1,6 @@
 'use client';
 import { useState } from 'react';
-import { Pencil, Play, Square, Pause, Archive, Trash2, Clock, Zap } from 'lucide-react';
+import { Pencil, Play, Square, Pause, Archive, Trash2, Clock, Zap, MoreHorizontal } from 'lucide-react';
 import type { Task } from '../../lib/types';
 import { useCloseTask, useDeleteTask } from '../../lib/mutations';
 import { useConfig, useSessionSignal } from '../../lib/queries';
@@ -72,11 +72,11 @@ export function TaskCard({ task, onEdit, onSelect, onContextMenu, active = false
           open();
         }
       }}
-      className={`card-interactive group relative flex items-center gap-3 rounded-lg border p-2.5 ${onDragStart && !isPhase ? 'cursor-grab' : 'cursor-pointer'} ${selected || active ? 'border-accent bg-accent/[0.06]' : 'border-border bg-surface'} ${dragging ? 'rotate-[1deg] opacity-50' : ''} ${drop.dragOver && dropTargetValid ? 'ring-2 ring-accent/60' : ''} ${drop.dragOver && dropTargetValid === false ? 'ring-2 ring-danger/40 opacity-60' : ''}`}
+      className={`task-register-row group relative flex items-center gap-3 border-b border-border/70 px-1 py-3.5 transition-colors ${onDragStart && !isPhase ? 'cursor-grab' : 'cursor-pointer'} ${selected || active ? 'bg-accent/[0.055]' : 'hover:bg-elevated/35'} ${dragging ? 'translate-x-1 opacity-50' : ''} ${drop.dragOver && dropTargetValid ? 'ring-1 ring-inset ring-accent/60' : ''} ${drop.dragOver && dropTargetValid === false ? 'ring-1 ring-inset ring-danger/40 opacity-60' : ''}`}
     >
       {/* model-icon bubble — accent ring while the agent is live */}
-      <span className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border-2 bg-elevated ${running ? 'border-accent' : 'border-border'}`}>
-        {iconExec ? <ModelIcon name={iconExec} size={26} /> : <Icon size={22} className="text-text-muted" aria-hidden />}
+      <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border bg-elevated/70 ${running ? 'border-accent shadow-[var(--glow-soft)]' : 'border-border'}`}>
+        {iconExec ? <ModelIcon name={iconExec} size={21} /> : <Icon size={18} className="text-text-muted" aria-hidden />}
       </span>
 
       {/* title, then the model name on its own line, then the status/meta pills below it — stacked so
@@ -115,14 +115,18 @@ export function TaskCard({ task, onEdit, onSelect, onContextMenu, active = false
           ? <IconButton icon={Square} label={t.tasks.stop} variant="danger" onClick={stop} />
           : <IconButton icon={Play} label={t.tasks.start} onClick={start} />}
         {running ? <IconButton icon={Pause} label={t.tasks.pause} onClick={pause} /> : null}
-        <IconButton icon={Pencil} label={t.common.edit} onClick={() => onEdit(task)} />
-        <ActionMenu
-          label={t.tasks.deleteOrClose}
-          items={[
-            { label: t.tasks.closeArchive, icon: Archive, onSelect: () => close.mutate(task.id, { onSuccess: () => toast(t.tasks.closed.replace('{id}', task.id)), onError: (e) => toast(String(e), 'error') }) },
-            { label: t.tasks.deletePermanently, icon: Trash2, tone: 'danger', onSelect: () => setConfirmDelete(true) },
-          ]}
-        />
+        <span className="flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+          <IconButton icon={Pencil} label={t.common.edit} onClick={() => onEdit(task)} />
+          <ActionMenu
+            label={t.tasks.deleteOrClose}
+            trigger={<MoreHorizontal size={15} aria-hidden />}
+            triggerClassName="inline-flex h-8 w-8 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-elevated hover:text-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70"
+            items={[
+              { label: t.tasks.closeArchive, icon: Archive, onSelect: () => close.mutate(task.id, { onSuccess: () => toast(t.tasks.closed.replace('{id}', task.id)), onError: (e) => toast(String(e), 'error') }) },
+              { label: t.tasks.deletePermanently, icon: Trash2, tone: 'danger', onSelect: () => setConfirmDelete(true) },
+            ]}
+          />
+        </span>
       </div>
 
       {onToggleSelect ? (

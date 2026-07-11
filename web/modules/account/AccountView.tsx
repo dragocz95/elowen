@@ -1,5 +1,5 @@
 'use client';
-import { Activity, useState, useEffect, useRef, type ReactNode } from 'react';
+import { Activity, useCallback, useState, useEffect, useRef, type ReactNode } from 'react';
 import { UserCog, Mail, Cpu, Upload, ShieldCheck, User as UserIcon, KeyRound, ZoomIn, Bell, Sparkles, AtSign, Brain, MessageCircle, SquareTerminal } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { ElowenApiError } from '../../lib/elowenClient';
@@ -23,12 +23,12 @@ import { LoadingState } from '../../components/ui/states';
 import { useToast } from '../../components/ui/Toast';
 import { useTranslation } from '../../lib/i18n';
 import { usePersistentState } from '../../lib/usePersistentState';
-import { useAutoSave } from '../../lib/useAutoSave';
+import { useAutoSaveStatus, type SaveStatus } from '../../lib/useAutoSaveStatus';
 import { useUiScale, MIN_SCALE, MAX_SCALE, DEFAULT_SCALE } from '../../lib/useUiScale';
 import { isPushSupported, enablePush, disablePush } from '../../lib/pushClient';
-import { SettingsLayout } from '../../components/ui/SettingsLayout';
 import { ChoiceField } from '../../components/ui/ChoiceField';
-import { SettingGroup, SettingRow } from '../../components/ui/SettingsPrimitives';
+import { SpatialControlSurface } from '../../components/ui/SpatialControlSurface';
+import { SpatialGroup, SpatialIdentity, SpatialRow } from '../../components/ui/SpatialPrimitives';
 import { MotionReveal } from '../../components/ui/Motion';
 import { useEffects, type EffectsMode } from '../../lib/useEffects';
 import { PersonalitySection } from './PersonalitySection';
@@ -37,6 +37,15 @@ import { TerminalSection } from './TerminalSection';
 import { AccountMemorySection } from './AccountMemorySection';
 
 type AccountSection = 'profile' | 'security' | 'notifications' | 'personality' | 'cli' | 'terminal' | 'memory';
+type SaveFeedback = { status: SaveStatus; retry?: () => void };
+
+function combineSaveFeedback(...items: SaveFeedback[]): SaveFeedback {
+  const error = items.find((item) => item.status === 'error');
+  if (error) return error;
+  if (items.some((item) => item.status === 'saving')) return { status: 'saving' };
+  if (items.some((item) => item.status === 'saved')) return { status: 'saved' };
+  return { status: 'idle' };
+}
 
 /** Mount a section only after its first visit, then let React Activity retain its local form state.
  *  This avoids eagerly starting every section's queries while making sidebar switches lossless. */
@@ -117,7 +126,8 @@ export function AccountView() {
   const cli = useMyCliSettings();
   const brainModels = useBrainModels();
   const updateMe = useUpdateMe();
-  const saveCli = useSaveMyCliSettings();
+  const saveLinks = useSaveMyCliSettings();
+  const saveModel = useSaveMyCliSettings();
   const uploadAvatar = useUploadAvatar();
   const changePassword = useChangePassword();
   const { toast } = useToast();
@@ -129,6 +139,11 @@ export function AccountView() {
   const [section, setSection] = usePersistentState<AccountSection>(
     'elowen.account.section', 'profile', ['profile', 'security', 'notifications', 'personality', 'cli', 'terminal', 'memory']);
   const [visitedSections, setVisitedSections] = useState<Set<AccountSection>>(() => new Set([section]));
+  const [sectionFeedback, setSectionFeedback] = useState<Partial<Record<AccountSection, SaveFeedback>>>({});
+  const reportSaveState = useCallback((id: string, status: SaveStatus, retry?: () => void) => {
+    if (!['profile', 'security', 'notifications', 'personality', 'cli', 'terminal', 'memory'].includes(id)) return;
+    setSectionFeedback((current) => ({ ...current, [id as AccountSection]: { status, retry } }));
+  }, []);
   useEffect(() => {
     setVisitedSections((current) => current.has(section) ? current : new Set(current).add(section));
   }, [section]);
@@ -162,11 +177,14 @@ export function AccountView() {
   }, [me.data]);
 
   // Auto-persist the profile shortly after any change — no Save button.
-  const saveProfile = () => updateMe.mutate(
-    { name: name.trim(), email: email.trim(), default_exec: defaultExec },
-    { onError: () => toast(t.account.saveError, 'error') },
-  );
-  useAutoSave([name, email, defaultExec], saveProfile, { ready: formSeeded });
+  const profileSave = useAutoSaveStatus([name, email, defaultExec], async () => {
+    try {
+      await updateMe.mutateAsync({ name: name.trim(), email: email.trim(), default_exec: defaultExec });
+    } catch (error) {
+      toast(t.account.saveError, 'error');
+      throw error;
+    }
+  }, { ready: formSeeded });
 
   // Seed the Elowen-AI default once cliSettings load; thereafter local state is the source of truth.
   useEffect(() => {
@@ -178,8 +196,14 @@ export function AccountView() {
     }
   }, [cli.data, elowenSeeded]);
   // Autosave the Discord / WhatsApp links (cli-settings PATCH merges, so the model picks stay untouched).
-  useAutoSave([discordUserId], () => saveCli.mutate({ discordUserId }), { ready: elowenSeeded });
-  useAutoSave([whatsappNumber], () => saveCli.mutate({ whatsappNumber }), { ready: elowenSeeded });
+  const linksSave = useAutoSaveStatus([discordUserId, whatsappNumber], async () => {
+    try {
+      await saveLinks.mutateAsync({ discordUserId, whatsappNumber });
+    } catch (error) {
+      toast(t.account.saveError, 'error');
+      throw error;
+    }
+  }, { ready: elowenSeeded });
 
   // Picking an Elowen AI model writes ONLY model+modelProvider (the cli-settings PATCH merges, so
   // CliSection's other fields are untouched) and the daemon restarts a running brain on the new model.
@@ -190,7 +214,7 @@ export function AccountView() {
     const sep = key.indexOf('::');
     const provider = sep > -1 ? key.slice(0, sep) : '';
     const model = sep > -1 ? key.slice(sep + 2) : '';
-    saveCli.mutate(
+    saveModel.mutate(
       { model: key ? model : '', modelProvider: key ? provider : '' },
       // Revert the optimistic highlight if the server rejects the pick, so it can't drift from state.
       { onError: () => { setElowenSel(prev); toast(t.account.saveError, 'error'); } },
@@ -275,33 +299,54 @@ export function AccountView() {
     { id: 'memory', icon: Brain, label: t.account.tabMemory },
     { id: 'personality', icon: Sparkles, label: t.account.tabPersonality },
   ];
+  const spatialSections = sections.map((item) => ({
+    ...item,
+    description: item.id === 'profile' ? t.account.profileHint
+      : item.id === 'security' ? t.account.passwordHint
+      : item.id === 'notifications' ? t.help.pushEnable
+      : item.id === 'cli' ? t.account.defaultElowenAiHint
+      : item.id === 'terminal' ? t.terminal.colorsHelp
+      : item.id === 'memory' ? t.help.memoryRecall
+      : t.personality.intro,
+  }));
+  const profileFeedback = combineSaveFeedback(
+    { status: profileSave.status, retry: profileSave.retry },
+    { status: linksSave.status, retry: linksSave.retry },
+    { status: saveModel.isError ? 'error' : saveModel.isPending ? 'saving' : saveModel.isSuccess ? 'saved' : 'idle', retry: () => applyElowen(elowenSel) },
+  );
+  const activeFeedback = section === 'profile' ? profileFeedback : (sectionFeedback[section] ?? { status: 'idle' as const });
 
   return (
     /* Match the settings workspace width so account controls have the same calm, useful measure. */
     <div className="flex w-full min-w-0 flex-col">
       <ModuleHeader title={t.account.title} icon={UserCog} />
 
-      <SettingsLayout
+      <SpatialControlSurface
         ariaLabel={t.account.sectionsNav}
-        sections={sections.map(({ id, icon, label }) => ({ id, label, icon }))}
+        sections={spatialSections}
         value={section}
         onChange={(v) => setSection(v as typeof section)}
-        searchPlaceholder={t.managePicker.searchPlaceholder}
+        status={activeFeedback.status}
+        onRetry={activeFeedback.retry}
       >
-      <AccountPanel id="memory" active={section} visited={visitedSections}><AccountMemorySection /></AccountPanel>
-      <AccountPanel id="personality" active={section} visited={visitedSections}><PersonalitySection /></AccountPanel>
-      <AccountPanel id="terminal" active={section} visited={visitedSections}><TerminalSection /></AccountPanel>
+      <AccountPanel id="memory" active={section} visited={visitedSections}><AccountMemorySection onSaveState={reportSaveState} /></AccountPanel>
+      <AccountPanel id="personality" active={section} visited={visitedSections}><PersonalitySection onSaveState={reportSaveState} /></AccountPanel>
+      <AccountPanel id="terminal" active={section} visited={visitedSections}><TerminalSection onSaveState={reportSaveState} /></AccountPanel>
 
       {/* Elowen AI runtime controls. Default models live at the top of the profile workspace, where
           users see their most consequential personal preference immediately. */}
       <AccountPanel id="cli" active={section} visited={visitedSections}>
-        <CliSection />
+        <CliSection onSaveState={reportSaveState} />
       </AccountPanel>
 
       <AccountPanel id="profile" active={section} visited={visitedSections}>
       <div className="flex min-w-0 flex-col gap-6">
-        {/* Identity hero — avatar, display name, admin badge, avatar upload. */}
-        <div className="flex items-center gap-4 border-b border-border/45 px-1 py-5">
+        <SpatialIdentity actions={(
+          <button type="button" className="spatial-inline-action" onClick={() => fileRef.current?.click()} disabled={uploadAvatar.isPending}>
+            <Upload size={14} aria-hidden />{t.account.uploadAvatar}
+          </button>
+        )}>
+        <div className="flex items-center gap-4">
           <Avatar user={u} size={72} />
           <div className="flex min-w-0 flex-1 flex-col gap-1">
             <span className="flex items-center gap-2">
@@ -311,16 +356,16 @@ export function AccountView() {
             <span className="truncate font-mono text-xs text-text-muted">@{u.username}</span>
           </div>
           <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/webp,image/gif" className="hidden" onChange={onFile} />
-          <Button variant="ghost" icon={Upload} onClick={() => fileRef.current?.click()} disabled={uploadAvatar.isPending}>{t.account.uploadAvatar}</Button>
         </div>
+        </SpatialIdentity>
 
-        <SettingGroup
+        <SpatialGroup
           title={t.account.defaultModel}
           icon={Cpu}
           description={restricted ? t.account.restrictedHint : t.account.defaultModelHint}
         >
           {workerExecs.length > 0 ? (
-            <SettingRow title={t.account.defaultWorker} description={t.account.defaultWorkerHint} icon={Cpu}>
+            <SpatialRow title={t.account.defaultWorker} description={t.account.defaultWorkerHint} icon={Cpu}>
               <WorkerField
                 value={defaultExec}
                 onChange={setDefaultExec}
@@ -329,10 +374,10 @@ export function AccountView() {
                 defaultLabel={t.account.defaultWorkerNone}
                 title={t.account.defaultWorker}
               />
-            </SettingRow>
+            </SpatialRow>
           ) : null}
           {elowenModels.length > 0 ? (
-            <SettingRow title={t.account.defaultElowenAi} description={t.account.defaultElowenAiHint} icon={Brain}>
+            <SpatialRow title={t.account.defaultElowenAi} description={t.account.defaultElowenAiHint} icon={Brain}>
               <BrainModelField
                 value={elowenSel}
                 onChange={applyElowen}
@@ -343,32 +388,32 @@ export function AccountView() {
                 keyOf={(m) => `${m.provider}::${m.model}`}
                 manageAriaLabel={`${t.managePicker.manage}: ${t.account.defaultElowenAi}`}
               />
-            </SettingRow>
+            </SpatialRow>
           ) : null}
           {workerExecs.length === 0 && elowenModels.length === 0 ? (
             <p className="py-4 text-xs italic text-text-muted">{t.account.noModelLimit}</p>
           ) : null}
-        </SettingGroup>
+        </SpatialGroup>
 
-        <SettingGroup>
-          <SettingRow title={t.account.name} icon={UserIcon}>
+        <SpatialGroup>
+          <SpatialRow title={t.account.name} icon={UserIcon}>
             <Input value={name} onChange={(e) => setName(e.target.value)} className="sm:w-72" />
-          </SettingRow>
-          <SettingRow title={t.account.email} icon={Mail}>
+          </SpatialRow>
+          <SpatialRow title={t.account.email} icon={Mail}>
             <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} className="sm:w-72" />
-          </SettingRow>
-        </SettingGroup>
+          </SpatialRow>
+        </SpatialGroup>
 
-        <SettingGroup>
+        <SpatialGroup>
           {/* Whole-app zoom — a per-device display preference, applied live via the UiScaleProvider. */}
-          <SettingRow title={t.account.uiScale} icon={ZoomIn} description={t.help.accountUiScale}>
+          <SpatialRow title={t.account.uiScale} icon={ZoomIn} description={t.help.accountUiScale}>
             <div className="flex min-w-0 items-center gap-3">
               <Slider value={scalePct} min={MIN_SCALE * 100} max={MAX_SCALE * 100} step={5} onChange={(v) => setScale(v / 100)} aria-label={t.account.uiScale} />
               <span className="w-12 shrink-0 text-right font-mono text-sm tabular-nums text-text">{scalePct}%</span>
-              <Button variant="ghost" onClick={() => setScale(DEFAULT_SCALE)} disabled={scalePct === DEFAULT_SCALE * 100}>{t.account.uiScaleReset}</Button>
+              <button type="button" className="spatial-inline-action" onClick={() => setScale(DEFAULT_SCALE)} disabled={scalePct === DEFAULT_SCALE * 100}>{t.account.uiScaleReset}</button>
             </div>
-          </SettingRow>
-          <SettingRow title={t.account.effectsTitle} icon={Sparkles} description={t.account.effectsHint}>
+          </SpatialRow>
+          <SpatialRow title={t.account.effectsTitle} icon={Sparkles} description={t.account.effectsHint}>
             <ChoiceField
               title={t.account.effectsTitle}
               value={effects.mode}
@@ -380,25 +425,25 @@ export function AccountView() {
                 { value: 'off', label: t.account.effectsOff },
               ]}
             />
-          </SettingRow>
-        </SettingGroup>
+          </SpatialRow>
+        </SpatialGroup>
 
-        <SettingGroup>
+        <SpatialGroup>
           {/* Discord account link — maps your Discord user to this Elowen account (owner persona on Discord). */}
-          <SettingRow title={t.account.discordId} icon={AtSign} description={t.help.accountDiscordId}>
+          <SpatialRow title={t.account.discordId} icon={AtSign} description={t.help.accountDiscordId}>
             <Input value={discordUserId} onChange={(e) => setDiscordUserId(e.target.value)} placeholder="123456789012345678" className="font-mono sm:w-72" aria-label={t.account.discordId} />
-          </SettingRow>
+          </SpatialRow>
           {/* WhatsApp account link — maps your WhatsApp number to this Elowen account (owner persona on WhatsApp). */}
-          <SettingRow title={t.account.whatsappNumber} icon={MessageCircle} description={t.help.accountWhatsappNumber}>
+          <SpatialRow title={t.account.whatsappNumber} icon={MessageCircle} description={t.help.accountWhatsappNumber}>
             <Input value={whatsappNumber} onChange={(e) => setWhatsappNumber(e.target.value)} placeholder="420778433908" className="font-mono sm:w-72" aria-label={t.account.whatsappNumber} />
-          </SettingRow>
-        </SettingGroup>
+          </SpatialRow>
+        </SpatialGroup>
       </div>
       </AccountPanel>
 
       <AccountPanel id="security" active={section} visited={visitedSections}>
         {/* Password change — verified server-side against the current password. */}
-        <SettingGroup title={t.account.password} icon={KeyRound} description={t.account.passwordHint}>
+        <SpatialGroup title={t.account.password} icon={KeyRound} description={t.account.passwordHint}>
           <form
             className="flex flex-col gap-3 py-4"
             onSubmit={(e) => { e.preventDefault(); submitPassword(); }}
@@ -439,7 +484,7 @@ export function AccountView() {
               </Button>
             </div>
           </form>
-        </SettingGroup>
+        </SpatialGroup>
       </AccountPanel>
 
       <AccountPanel id="notifications" active={section} visited={visitedSections}>
@@ -447,17 +492,17 @@ export function AccountView() {
            Rendered as an inline toggle row (like the other account settings) instead of a detached
            right-aligned button, so the control reads as a setting, not a submit form. */}
         {pushSupported ? (
-          <SettingGroup>
-          <SettingRow title={t.push.title} icon={Bell} description={t.help.pushEnable}>
+          <SpatialGroup>
+          <SpatialRow title={t.push.title} icon={Bell} description={t.help.pushEnable}>
             <label className="flex items-center gap-3 text-sm text-text">
               <Toggle checked={pushOn} onChange={togglePush} disabled={pushBusy} label={t.push.deviceToggle} />
               <span>{t.push.deviceToggle}</span>
             </label>
-          </SettingRow>
-          </SettingGroup>
+          </SpatialRow>
+          </SpatialGroup>
         ) : <p className="text-sm text-text-muted">{t.push.unsupported}</p>}
       </AccountPanel>
-      </SettingsLayout>
+      </SpatialControlSurface>
     </div>
   );
 }

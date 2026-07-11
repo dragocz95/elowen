@@ -1,10 +1,11 @@
 'use client';
 import { useState, useEffect, type FormEvent } from 'react';
 import { Plus, Shield, Trash2 } from 'lucide-react';
-import { SettingGroup } from '../../components/ui/SettingsPrimitives';
+import { SpatialGroup } from '../../components/ui/SpatialPrimitives';
 import { Input } from '../../components/ui/Input';
 import { Button } from '../../components/ui/Button';
 import { IconButton } from '../../components/ui/IconButton';
+import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { useToast } from '../../components/ui/Toast';
 import { useTranslation } from '../../lib/i18n';
 import { useMyPermissions } from '../../lib/queries';
@@ -73,6 +74,7 @@ export function PermissionRulesCard() {
   const [toolsRules, setToolsRules] = useState<Rule[]>([]);
   const [draft, setDraft] = useState('');
   const [draftAction, setDraftAction] = useState<PermissionAction>('allow');
+  const [pendingDelete, setPendingDelete] = useState<{ scope: Scope; index: number; pattern: string } | null>(null);
 
   useEffect(() => {
     if (permissions.data) {
@@ -127,13 +129,13 @@ export function PermissionRulesCard() {
         icon={Trash2}
         variant="danger"
         label={`${t.cli.permDelete}: ${rule.pattern}`}
-        onClick={() => persist(scope, rules.filter((_, j) => j !== i))}
+        onClick={() => setPendingDelete({ scope, index: i, pattern: rule.pattern })}
       />
     </li>
   );
 
   return (
-    <SettingGroup title={t.cli.permTitle} icon={Shield} description={t.help.cliPermissions}>
+    <SpatialGroup title={t.cli.permTitle} icon={Shield} description={t.help.cliPermissions}>
       <div className="flex flex-col gap-4 py-4">
         {bashRules.length === 0 ? (
           <p className="text-xs text-text-muted">{t.cli.permEmpty}</p>
@@ -161,6 +163,19 @@ export function PermissionRulesCard() {
           </div>
         ) : null}
       </div>
-    </SettingGroup>
+      <ConfirmDialog
+        open={pendingDelete !== null}
+        title={`${t.cli.permDelete}?`}
+        description={pendingDelete?.pattern}
+        confirmLabel={t.cli.permDelete}
+        onConfirm={() => {
+          if (!pendingDelete) return;
+          const rules = pendingDelete.scope === 'bash' ? bashRules : toolsRules;
+          persist(pendingDelete.scope, rules.filter((_, index) => index !== pendingDelete.index));
+          setPendingDelete(null);
+        }}
+        onClose={() => setPendingDelete(null)}
+      />
+    </SpatialGroup>
   );
 }

@@ -17,7 +17,7 @@ import { Modal, ModalBody, ModalFooter } from '../../components/ui/Modal';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { LoadingState, ErrorState, EmptyState } from '../../components/ui/states';
 import { DataTable, DataTableCell, DataTableRow } from '../../components/ui/DataTable';
-import { PageFrame } from '../../components/ui/PageFrame';
+import { WorkspaceDetailRail, WorkspaceHeader, WorkspaceMetric, WorkspaceMetrics, WorkspacePage } from '../../components/ui/WorkspacePrimitives';
 import { MotionLayoutItem, MotionPresence } from '../../components/ui/Motion';
 import { useToast } from '../../components/ui/Toast';
 import { useTranslation } from '../../lib/i18n';
@@ -34,6 +34,7 @@ import { memoryStatusTone, memoryStatusLabel, distinctKinds, categoriesById, cat
 type Tab = 'list' | 'brain' | 'retrieval';
 type StatusFilter = 'active' | 'archived' | 'deleted' | 'all';
 type Layout = 'flat' | 'grouped';
+type SortKey = 'updated' | 'importance';
 const TABS: readonly Tab[] = ['list', 'brain', 'retrieval'];
 const STATUS_VALUES: readonly StatusFilter[] = ['active', 'archived', 'deleted', 'all'];
 const LAYOUT_VALUES: readonly Layout[] = ['flat', 'grouped'];
@@ -62,6 +63,8 @@ export function MemoryView() {
   // Flat (paginated) vs grouped-by-category display of the list; persisted like the tab/status filters.
   const [layout, setLayout] = usePersistentState<Layout>('elowen.memory.layout', 'flat', LAYOUT_VALUES);
   const [page, setPage] = useState(0);
+  const [sortKey, setSortKey] = useState<SortKey>('updated');
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
   const deferredQuery = useDeferredValue(query);
   const searchPending = query !== deferredQuery;
 
@@ -72,6 +75,7 @@ export function MemoryView() {
   const emptyTrash = useEmptyTrash();
 
   const memories = useMemories(status === 'all' ? undefined : { status });
+  const allMemories = useMemories();
   const categories = useMemoryCategories();
   const categoryById = useMemo(() => categoriesById(categories.data ?? []), [categories.data]);
 
@@ -84,8 +88,27 @@ export function MemoryView() {
       .filter((m) => categoryFilter === 'all'
         || (categoryFilter === 'none' ? m.category_id == null : m.category_id === Number(categoryFilter)))
       .filter((m) => !q || `${m.body} ${m.kind} ${m.source}`.toLowerCase().includes(q))
-      .sort((a, b) => (b.updated_at > a.updated_at ? 1 : b.updated_at < a.updated_at ? -1 : 0));
-  }, [memories.data, kind, categoryFilter, deferredQuery]);
+      .sort((a, b) => {
+        const delta = sortKey === 'importance'
+          ? a.importance - b.importance
+          : a.updated_at.localeCompare(b.updated_at);
+        return sortDirection === 'asc' ? delta : -delta;
+      });
+  }, [memories.data, kind, categoryFilter, deferredQuery, sortDirection, sortKey]);
+
+  const summary = useMemo(() => {
+    const items = allMemories.data ?? [];
+    return {
+      active: items.filter((memory) => memory.status === 'active').length,
+      decisions: items.filter((memory) => memory.kind.toLowerCase() === 'decision').length,
+      facts: items.filter((memory) => memory.kind.toLowerCase() === 'fact').length,
+    };
+  }, [allMemories.data]);
+
+  const changeSort = (next: SortKey) => {
+    if (sortKey === next) setSortDirection((direction) => direction === 'desc' ? 'asc' : 'desc');
+    else { setSortKey(next); setSortDirection('desc'); }
+  };
 
   // Paginate the filtered rows; the grouped view then buckets the CURRENT page into category sections, so
   // both display modes page through the same window (mirrors how Tasks groups a page into day sections).
@@ -215,20 +238,45 @@ export function MemoryView() {
         selected={selected.has(m.id)}
         onSelect={() => setSelectedId(m.id)}
         onToggleSelect={() => toggleSelect(m.id)}
+        onNavigate={(direction) => {
+          const index = pageItems.findIndex((item) => item.id === m.id);
+          const next = direction === 'home' ? pageItems[0]
+            : direction === 'end' ? pageItems.at(-1)
+              : pageItems[index + (direction === 'next' ? 1 : -1)];
+          if (!next) return;
+          setSelectedId(next.id);
+          requestAnimationFrame(() => document.querySelector<HTMLButtonElement>(`[data-memory-open="${next.id}"]`)?.focus());
+        }}
       />
     </MotionLayoutItem>
   );
 
   return (
     <>
-      <ModuleHeader title={t.page.memory} count={tab === 'list' ? filtered.length : undefined} icon={Brain}>
-        <div className="mr-auto min-w-0 overflow-x-auto">
+      <ModuleHeader title={t.page.memory} count={tab === 'list' ? filtered.length : undefined} icon={Brain} />
+      <WorkspacePage>
+        <WorkspaceHeader
+          eyebrow={t.page.memory}
+          title={t.page.memory}
+          count={allMemories.data?.length ?? 0}
+          description={t.memory.workspaceIntro}
+          icon={Brain}
+          status={!allMemories.isLoading && !allMemories.isError ? <span className="workspace-status">{t.memory.synchronized}</span> : undefined}
+          action={<Button variant="accent" icon={Plus} onClick={() => setCreating(true)}>{t.memory.newMemory}</Button>}
+        />
+        <WorkspaceMetrics visual={<div className="memory-core" />} ariaLabel={t.memory.summary}>
+          <WorkspaceMetric label={t.memory.statusActive} value={summary.active} icon={CheckCircle2} />
+          <WorkspaceMetric label={t.memory.metricDecisions} value={summary.decisions} icon={ListChecks} />
+          <WorkspaceMetric label={t.memory.metricFacts} value={summary.facts} icon={Sparkles} />
+          <WorkspaceMetric label={t.memory.categoriesTitle} value={categories.data?.length ?? 0} icon={Tags} />
+        </WorkspaceMetrics>
+        <div className="workspace-tabs">
+          <div className="min-w-0 overflow-x-auto">
           <Segmented value={tab} onChange={(v) => setTab(v as Tab)} options={TAB_OPTIONS} aria-label={t.page.memory} nowrap variant="line" />
+          </div>
         </div>
-        <Button variant="accent" icon={Plus} onClick={() => setCreating(true)}>{t.memory.newMemory}</Button>
-      </ModuleHeader>
 
-      <PageFrame width={tab === 'brain' ? 'fluid' : 'wide'}>
+      <div className="workspace-content">
         {tab === 'retrieval' ? <RetrievalDebugPanel />
           : tab === 'brain' ? (
             memories.isLoading ? <LoadingState variant="cards" />
@@ -238,7 +286,8 @@ export function MemoryView() {
           : memories.isLoading ? <LoadingState variant="cards" />
           : memories.isError ? <ErrorState message={t.common.daemonUnreachable} onRetry={() => memories.refetch()} />
           : (
-          <div className="flex flex-col gap-4">
+          <div className="workspace-master-detail" data-detail={selectedId != null}>
+          <div className="flex min-w-0 flex-col gap-4">
             <div className="border-y border-border/80">
               <div className="flex min-w-0 flex-wrap items-center gap-2 py-3">
                 <div className="relative min-w-[15rem] flex-1">
@@ -339,8 +388,16 @@ export function MemoryView() {
                       <DataTableCell header>{t.page.memory}</DataTableCell>
                       <DataTableCell header priority="wide">{t.memory.categoryFilter}</DataTableCell>
                       <DataTableCell header priority="wide">{t.memory.filterKind}</DataTableCell>
-                      <DataTableCell header priority="wide">{t.memory.fieldImportance}</DataTableCell>
-                      <DataTableCell header priority="wide">{t.memory.updatedAt}</DataTableCell>
+                      <DataTableCell header priority="wide" aria-sort={sortKey === 'importance' ? (sortDirection === 'desc' ? 'descending' : 'ascending') : 'none'}>
+                        <button type="button" onClick={() => changeSort('importance')} className="inline-flex items-center gap-1 hover:text-text">
+                          {t.memory.fieldImportance}{sortKey === 'importance' ? <span aria-hidden>{sortDirection === 'desc' ? '↓' : '↑'}</span> : null}
+                        </button>
+                      </DataTableCell>
+                      <DataTableCell header priority="wide" aria-sort={sortKey === 'updated' ? (sortDirection === 'desc' ? 'descending' : 'ascending') : 'none'}>
+                        <button type="button" onClick={() => changeSort('updated')} className="inline-flex items-center gap-1 hover:text-text">
+                          {t.memory.updatedAt}{sortKey === 'updated' ? <span aria-hidden>{sortDirection === 'desc' ? '↓' : '↑'}</span> : null}
+                        </button>
+                      </DataTableCell>
                       <DataTableCell header role="presentation" aria-hidden>{null}</DataTableCell>
                     </DataTableRow>
 
@@ -383,8 +440,15 @@ export function MemoryView() {
               </div>
             )}
             </div>
+            {selectedId != null ? (
+              <WorkspaceDetailRail label={t.memory.detailTitle} closeLabel={t.common.close} onClose={() => setSelectedId(null)}>
+                <MemoryDetail memoryId={selectedId} />
+              </WorkspaceDetailRail>
+            ) : null}
+          </div>
           )}
-      </PageFrame>
+      </div>
+      </WorkspacePage>
 
       {/* Floating bulk toolbar. Merge needs ≥2; soft-delete shows outside the trash, restore inside it,
           permanent delete everywhere (behind a confirm). Kept a sibling of the layout so it's never
@@ -410,16 +474,6 @@ export function MemoryView() {
           onClose={() => setMerging(false)}
           onMerged={(id) => { clearSelection(); setMerging(false); setSelectedId(id); }}
         />
-      ) : null}
-
-      {/* Detail modal — the right column now holds stats, so a picked memory (list click or brain-map
-          navigation) opens here instead of a side pane. */}
-      {selectedId != null ? (
-        <Modal title={t.page.memory} icon={Brain} size="xl" onClose={() => setSelectedId(null)}>
-          <ModalBody>
-            <MemoryDetail memoryId={selectedId} />
-          </ModalBody>
-        </Modal>
       ) : null}
 
       <ConfirmDialog
@@ -459,8 +513,14 @@ function CategorySectionHeader({ category, label, count }: { category?: MemoryCa
 }
 
 /** One memory = one registry row. Secondary columns progressively appear as the workspace widens. */
-function MemoryRow({ memory, category, active, selected, onSelect, onToggleSelect }: {
-  memory: Memory; category?: MemoryCategory; active: boolean; selected: boolean; onSelect: () => void; onToggleSelect: () => void;
+function MemoryRow({ memory, category, active, selected, onSelect, onToggleSelect, onNavigate }: {
+  memory: Memory;
+  category?: MemoryCategory;
+  active: boolean;
+  selected: boolean;
+  onSelect: () => void;
+  onToggleSelect: () => void;
+  onNavigate: (direction: 'next' | 'previous' | 'home' | 'end') => void;
 }) {
   const { t, locale } = useTranslation();
   const updated = formatTaskTime(memory.updated_at, Date.now(), locale);
@@ -478,7 +538,18 @@ function MemoryRow({ memory, category, active, selected, onSelect, onToggleSelec
         </button>
       </DataTableCell>
       <DataTableCell>
-        <button type="button" onClick={onSelect} className="flex w-full min-w-0 items-center gap-2 text-left">
+        <button
+          type="button"
+          data-memory-open={memory.id}
+          onClick={onSelect}
+          onKeyDown={(event) => {
+            const direction = event.key === 'ArrowDown' ? 'next' : event.key === 'ArrowUp' ? 'previous' : event.key === 'Home' ? 'home' : event.key === 'End' ? 'end' : null;
+            if (!direction) return;
+            event.preventDefault();
+            onNavigate(direction);
+          }}
+          className="flex w-full min-w-0 items-center gap-2 text-left"
+        >
           <span className="truncate text-sm text-text">{memory.body}</span>
           {memory.status !== 'active' ? <Badge tone={memoryStatusTone(memory.status)}>{memoryStatusLabel(t, memory.status)}</Badge> : null}
         </button>

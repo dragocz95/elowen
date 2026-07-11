@@ -5,13 +5,13 @@ export type SaveStatus = 'idle' | 'saving' | 'saved' | 'error';
 
 /**
  * Debounced auto-persist with a visible status, stale-response protection, and a flush hook — the
- * modal-grade successor to `useAutoSave`. Runs `save` shortly after any of `deps` change, but never
+ * Shared race-safe auto-save controller. Runs `save` shortly after any of `deps` change, but never
  * for the seed value; `ready` gates it until the form has been seeded from the server.
  *
  * - `status`: 'idle' | 'saving' | 'saved' | 'error' — render it in the modal footer.
- * - stale-response guard: a monotonic generation id means only the LATEST save's outcome drives the
- *   status, so a slow earlier response can't flip a newer "saved" back to an error (and vice-versa).
- *   Rapid edits are coalesced by the debounce, so at most one save is normally in flight.
+ * - serialized writes: when another edit lands during an in-flight request, exactly one follow-up
+ *   write with the latest form state runs after it. This prevents an older request from finishing
+ *   last and overwriting a newer value on the server.
  * - `flush()`: run any pending debounced save immediately (call it before closing the modal). It also
  *   runs automatically on unmount, so a change made moments before close is never silently dropped.
  * - `retry()`: re-run the save after a failure.
@@ -29,18 +29,34 @@ export function useAutoSaveStatus(
   const saveRef = useRef(save);
   saveRef.current = save;
   const [status, setStatus] = useState<SaveStatus>('idle');
-  const gen = useRef(0);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pending = useRef(false);
+  const running = useRef(false);
+  const queued = useRef(false);
 
   const run = useCallback(() => {
     pending.current = false;
-    const mine = ++gen.current; // only the newest save may set the terminal status
+    queued.current = true;
     setStatus('saving');
-    Promise.resolve()
-      .then(() => saveRef.current())
-      .then(() => { if (mine === gen.current) setStatus('saved'); })
-      .catch(() => { if (mine === gen.current) setStatus('error'); });
+    if (running.current) return;
+
+    running.current = true;
+    void (async () => {
+      let terminal: SaveStatus = 'saved';
+      // A rapid burst never creates a request pile-up: changes made while saving collapse into one
+      // queued pass, and that pass reads the latest callback/state through saveRef.
+      while (queued.current) {
+        queued.current = false;
+        try {
+          await saveRef.current();
+          terminal = 'saved';
+        } catch {
+          terminal = 'error';
+        }
+      }
+      running.current = false;
+      setStatus(terminal);
+    })();
   }, []);
 
   useEffect(() => {

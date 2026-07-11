@@ -13,7 +13,7 @@ vi.mock('@xterm/addon-fit', () => ({ FitAddon: class { fit = vi.fn(); } }));
 vi.mock('@xterm/xterm/css/xterm.css', () => ({}));
 
 const mutate = vi.fn();
-vi.mock('../../../lib/mutations', () => ({ useSaveMyTerminalSettings: () => ({ mutate }) }));
+vi.mock('../../../lib/mutations', () => ({ useSaveMyTerminalSettings: () => ({ mutate, mutateAsync: mutate }) }));
 
 const SEED: TerminalSettings = { fontSize: 16, fontFamily: 'menlo', cursorStyle: 'bar', cursorBlink: false, scrollback: 2000, theme: 'auto', palette: DARK_PALETTE };
 vi.mock('../../../lib/queries', () => ({ useMyTerminalSettings: () => ({ data: SEED, isLoading: false }) }));

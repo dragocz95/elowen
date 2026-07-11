@@ -2,7 +2,7 @@
 import { useState } from 'react';
 import { createPortal } from 'react-dom';
 import Link from 'next/link';
-import { TerminalSquare, SquareSlash, Power, SquareTerminal, Eye, Bot } from 'lucide-react';
+import { TerminalSquare, SquareSlash, Power, SquareTerminal, Eye, Bot, MoreHorizontal } from 'lucide-react';
 import { useKillSession, useSendInput } from '../../lib/mutations';
 import { useTasks, useSessionSignal, useConfig } from '../../lib/queries';
 import { taskTypeMeta } from '../tasks/taskMeta';
@@ -22,6 +22,7 @@ import { LiveTail } from '../../components/terminal/LiveTail';
 import { useToast } from '../../components/ui/Toast';
 import { useTranslation } from '../../lib/i18n';
 import { EntityRow } from '../../components/ui/EntityList';
+import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 
 export function SessionCard({ info, onOpenTerminal, compact = false }: { info: SessionInfo; onOpenTerminal: () => void; compact?: boolean }) {
   const kill = useKillSession();
@@ -33,14 +34,15 @@ export function SessionCard({ info, onOpenTerminal, compact = false }: { info: S
   const name = info.name;
   const signal = useSessionSignal(name);
   const [ctxMenu, setCtxMenu] = useState<ContextMenuState | null>(null);
+  const [confirmKill, setConfirmKill] = useState(false);
 
   // Map session → its task (prefer the in_progress one; agent names are reused across tasks).
   const task = taskForSession(tasks.data ?? [], name);
   const exec = taskExec(task?.labels);
   // The model running in this session: the task's exec for a worker, else the configured
   // pilot/overseer backend for the autopilot's own reasoning agents.
-  const roleExec = info.role === 'overseer' ? config.data?.autopilot.overseerExec
-    : info.role === 'pilot' ? config.data?.autopilot.pilotExec : undefined;
+  const roleExec = info.role === 'overseer' ? config.data?.autopilot?.overseerExec
+    : info.role === 'pilot' ? config.data?.autopilot?.pilotExec : undefined;
   // `taskExec` returns '' (not undefined) when a session has no task — pilot/overseer agents. Use
   // `||` so that empty worker exec falls through to the configured pilot/overseer backend, otherwise
   // `?? ` keeps the '' and the model pill never renders for the autopilot's own reasoning agents.
@@ -57,13 +59,13 @@ export function SessionCard({ info, onOpenTerminal, compact = false }: { info: S
   // Action handlers defined once, shared between visible triggers and context menu.
   const handleTerminal = onOpenTerminal;
   const handleInterrupt = () => send.mutate({ name, keys: ['C-c'] }, { onSuccess: () => toast(t.sessions.interrupted.replace('{name}', agentDisplayName(name))) });
-  const handleKill = () => kill.mutate(name, { onSuccess: () => toast(t.sessions.killed.replace('{name}', agentDisplayName(name))), onError: (e) => toast(String(e), 'error') });
+  const handleKill = () => kill.mutate(name, { onSuccess: () => { setConfirmKill(false); toast(t.sessions.killed.replace('{name}', agentDisplayName(name))); }, onError: (e) => toast(String(e), 'error') });
 
   const ctxItems: ContextMenuState['items'] = [
     { label: t.sessions.ctxTerminal, icon: TerminalSquare, onClick: handleTerminal },
     { label: t.sessions.ctxInterrupt, icon: SquareSlash, onClick: handleInterrupt },
     DIVIDER,
-    { label: t.sessions.ctxKill, icon: Power, onClick: handleKill, danger: true },
+    { label: t.sessions.ctxKill, icon: Power, onClick: () => setConfirmKill(true), danger: true },
   ];
 
   return (
@@ -140,15 +142,30 @@ export function SessionCard({ info, onOpenTerminal, compact = false }: { info: S
               <ModelIcon name={modelExec} size={13} /><span className="max-w-28 truncate">{execModel(modelExec)}</span>
             </span>
           ) : null}
-          <IconButton icon={TerminalSquare} label={t.sessions.terminal} onClick={handleTerminal} />
-          <IconButton icon={SquareSlash} label={t.sessions.interrupt} onClick={handleInterrupt} />
-          <ActionMenu label={t.sessions.kill} items={[{ label: t.sessions.kill, icon: Power, tone: 'danger', onSelect: handleKill }]} />
+          <span className="flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+            <IconButton icon={TerminalSquare} label={t.sessions.terminal} onClick={handleTerminal} />
+            <IconButton icon={SquareSlash} label={t.sessions.interrupt} onClick={handleInterrupt} />
+            <ActionMenu
+              label={t.sessions.kill}
+              trigger={<MoreHorizontal size={15} aria-hidden />}
+              triggerClassName="inline-flex h-8 w-8 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-elevated hover:text-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70"
+              items={[{ label: t.sessions.kill, icon: Power, tone: 'danger', onSelect: () => setConfirmKill(true) }]}
+            />
+          </span>
         </div>
       </div>
       {/* Portal to <body>: the card lifts on hover (`transform: translateY`), which makes it the
           containing block for this `fixed` menu — so it would anchor to the card, not the viewport,
           and fly off to the clamp edge. Rendering outside the card restores viewport positioning. */}
       {ctxMenu && createPortal(<ContextMenu state={ctxMenu} onClose={() => setCtxMenu(null)} />, document.body)}
+      <ConfirmDialog
+        open={confirmKill}
+        title={t.sessions.confirmKillTitle.replace('{name}', agentDisplayName(name))}
+        description={t.sessions.confirmKillDescription}
+        confirmLabel={t.sessions.kill}
+        onClose={() => setConfirmKill(false)}
+        onConfirm={handleKill}
+      />
     </EntityRow>
   );
 }

@@ -18,6 +18,8 @@ import { useElementWidth } from '../../lib/useElementWidth';
 import { UiScaleProvider } from '../../lib/useUiScale';
 import { ThemeProvider } from '../../lib/useTheme';
 import { PageHeaderProvider } from '../../lib/pageHeader';
+import { RouteTransition } from './RouteTransition';
+import { EffectsProvider } from '../../lib/useEffects';
 
 /** Below this many px of room for the sidebar+content region the sidebar becomes a hamburger drawer
  *  (real phones, or a dock dragged nearly full-width); below the next it auto-collapses to an icon rail
@@ -69,7 +71,7 @@ function ShellLayout({ children }: { children: ReactNode }) {
           onMenuClick={mode === 'drawer' ? () => setDrawerOpen(true) : undefined}
           showLocation={mode === 'drawer'}
         />
-        <div className="px-2 pb-8">{children}</div>
+        <div className="px-2 pb-8"><RouteTransition>{children}</RouteTransition></div>
       </main>
     </div>
   );
@@ -105,20 +107,22 @@ function ShellBody({ children }: { children: ReactNode }) {
 
 export function Shell({ children }: { children: ReactNode }) {
   return (
-    <Providers>
-      <ThemeProvider>
-      <UiScaleProvider>
-      <LanguageProvider>
-      <ToastProvider>
-        <PageHeaderProvider>
-          <LoginGate>
-            <ShellBody>{children}</ShellBody>
-          </LoginGate>
-        </PageHeaderProvider>
-      </ToastProvider>
-      </LanguageProvider>
-      </UiScaleProvider>
-      </ThemeProvider>
-    </Providers>
+    <EffectsProvider>
+      <Providers>
+        <ThemeProvider>
+        <UiScaleProvider>
+        <LanguageProvider>
+        <ToastProvider>
+          <PageHeaderProvider>
+            <LoginGate>
+              <ShellBody>{children}</ShellBody>
+            </LoginGate>
+          </PageHeaderProvider>
+        </ToastProvider>
+        </LanguageProvider>
+        </UiScaleProvider>
+        </ThemeProvider>
+      </Providers>
+    </EffectsProvider>
   );
 }

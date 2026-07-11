@@ -39,7 +39,7 @@ const clampEditorH = (px: number) =>
 /** Full project code editor: file tree with a right-click file-manager (new/rename/duplicate/delete),
  *  open-file tabs, Monaco editor (Cmd+S save), side-by-side working diff, Markdown/image previews,
  *  plus read-only commit-diff views when opened from the git log. */
-export function ProjectEditor({ projectId, onClose, initialCommit, initialWorking }: { projectId: number; onClose?: () => void; initialCommit?: string | null; initialWorking?: boolean }) {
+export function ProjectEditor({ projectId, onClose, initialCommit, initialWorking, fill = false }: { projectId: number; onClose?: () => void; initialCommit?: string | null; initialWorking?: boolean; fill?: boolean }) {
   const { t } = useTranslation();
   const { toast } = useToast();
   const files = useProjectFiles(projectId);
@@ -230,8 +230,8 @@ export function ProjectEditor({ projectId, onClose, initialCommit, initialWorkin
     <div
       className={fullscreen
         ? 'fixed inset-0 z-50 flex h-screen flex-col overflow-hidden bg-surface'
-        : 'flex flex-col overflow-hidden rounded-lg border border-border bg-surface'}
-      style={fullscreen ? undefined : { boxShadow: 'var(--shadow-card)', height: editorH }}
+        : 'flex flex-col overflow-hidden border-y border-border bg-[#030303]'}
+      style={fullscreen ? undefined : { height: fill ? 'calc(100dvh - 13rem)' : editorH }}
     >
       {/* toolbar */}
       <div className="flex items-center gap-2 border-b border-border px-3 py-2">
@@ -329,7 +329,7 @@ export function ProjectEditor({ projectId, onClose, initialCommit, initialWorkin
 
       {/* Full-width bottom drag edge: grab anywhere along it to resize the embedded editor. The centered
           pill hints at the affordance (same visual language as the sidebar handle). */}
-      {!fullscreen ? (
+      {!fullscreen && !fill ? (
         <div
           role="separator"
           aria-orientation="horizontal"

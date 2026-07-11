@@ -19,7 +19,7 @@ describe('UsersView', () => {
   it('lists users from the API', async () => {
     const { wrapper: Wrapper } = createWrapper();
     render(<Wrapper><ToastProvider><UsersView /></ToastProvider></Wrapper>);
-    // alice is the first user, so she appears both in the list and (default-selected) the detail pane.
+    // The full-width directory renders both accounts before any contextual detail is selected.
     expect((await screen.findAllByText('alice')).length).toBeGreaterThan(0);
     expect(screen.getByText('bob')).toBeTruthy();
   });
@@ -27,14 +27,14 @@ describe('UsersView', () => {
   it('selects rows with Space and keeps the always-visible action menu independent', async () => {
     const { wrapper: Wrapper } = createWrapper();
     render(<Wrapper><ToastProvider><UsersView /></ToastProvider></Wrapper>);
-    const bobRow = (await screen.findByText('bob')).closest('button')!;
-    expect(bobRow).toHaveAttribute('aria-pressed', 'false');
+    const bobRow = (await screen.findByText('bob')).closest('[role="row"]')!;
+    expect(bobRow).toHaveAttribute('aria-selected', 'false');
 
     fireEvent.keyDown(screen.getByRole('button', { name: 'bob: Actions' }), { key: 'Enter' });
-    expect(bobRow).toHaveAttribute('aria-pressed', 'false');
+    expect(bobRow).toHaveAttribute('aria-selected', 'false');
 
     fireEvent.keyDown(bobRow, { key: ' ' });
-    expect(bobRow).toHaveAttribute('aria-pressed', 'true');
+    expect(bobRow).toHaveAttribute('aria-selected', 'true');
   });
 
   it('admin can select a user and restrict them to a model from the detail pane', async () => {
@@ -57,7 +57,7 @@ describe('UsersView', () => {
     // Admin (alice) carries an Admin badge in the list. Select bob → his allowed-models summary shows
     // in the detail pane; Manage opens the selection modal.
     expect(await screen.findByText('Admin')).toBeTruthy();
-    fireEvent.click((await screen.findByText('bob')).closest('button')!);
+    fireEvent.click((await screen.findByText('bob')).closest('[role="row"]')!);
     expect(await screen.findByText('All models allowed · 2 available')).toBeTruthy();
     // Projects list is empty ("—") and bob has no tools, so the models summary owns the only Manage button.
     fireEvent.click(screen.getByRole('button', { name: 'Manage' }));

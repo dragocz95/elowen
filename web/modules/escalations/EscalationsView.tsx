@@ -1,6 +1,6 @@
 'use client';
 import { useState } from 'react';
-import { ShieldAlert, ShieldCheck, Rocket, Play, RotateCcw, Link2, Clock, MessagesSquare } from 'lucide-react';
+import { ShieldAlert, ShieldCheck, Rocket, Play, RotateCcw, Link2, Clock, MessagesSquare, GitBranch, Inbox } from 'lucide-react';
 import type { Escalation } from '../../lib/escalations';
 import type { PendingAsk } from '../../lib/types';
 import { useEscalations, usePendingAsks } from '../../lib/queries';
@@ -13,6 +13,7 @@ import { Input } from '../../components/ui/Input';
 import { EmptyState } from '../../components/ui/states';
 import { useToast } from '../../components/ui/Toast';
 import { useTranslation } from '../../lib/i18n';
+import { WorkspaceHeader, WorkspaceMetric, WorkspaceMetrics, WorkspacePage } from '../../components/ui/WorkspacePrimitives';
 
 /** One worker question parked on a human: shows the question and a reply box that unblocks the agent
  *  (POST /tasks/:id/ask/:askId/reply). Distinct from a review escalation — there's no gate to release,
@@ -32,9 +33,9 @@ function PendingAskCard({ ask }: { ask: PendingAsk }) {
     });
   };
   return (
-    <article className="flex flex-col gap-3 rounded-lg border border-accent/40 bg-accent/[0.05] p-4" style={{ boxShadow: 'var(--shadow-card)' }}>
+    <article className="escalation-register-row flex flex-col gap-4 border-t border-accent/30 px-1 py-5 sm:px-3">
       <div className="flex items-start gap-3">
-        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-accent/40 bg-accent/10">
+        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-accent/40 bg-accent/10">
           <MessagesSquare size={20} className="text-accent" aria-hidden />
         </span>
         <div className="min-w-0 flex-1">
@@ -45,7 +46,7 @@ function PendingAskCard({ ask }: { ask: PendingAsk }) {
           </div>
         </div>
       </div>
-      <div className="rounded-md border border-border bg-elevated p-3">
+      <div className="border-l border-accent/35 py-1 pl-4">
         <p className="whitespace-pre-wrap text-sm leading-relaxed text-text">{ask.question}</p>
       </div>
       <p className="text-xs text-text-muted">{t.escalations.askDesc}</p>
@@ -68,6 +69,8 @@ export function EscalationsView() {
   const approveGate = useApproveGate();
   const resume = useResumeMission();
   const { toast } = useToast();
+  const blockedCount = escalations.reduce((sum, escalation) => sum + escalation.blocked.length, 0);
+  const total = escalations.length + pendingAsks.length;
 
   // Accept the rejection: ask the daemon to release this phase's review gate. It re-opens only the
   // dependents no OTHER predecessor still gates (a DAG dependent can be held by several phases), so a
@@ -97,19 +100,36 @@ export function EscalationsView() {
   return (
     <>
       <ModuleHeader title={t.escalations.title} count={escalations.length + pendingAsks.length} icon={ShieldAlert} />
+      <WorkspacePage>
+        <WorkspaceHeader
+          eyebrow={t.escalations.workspaceEyebrow}
+          title={t.escalations.title}
+          count={total}
+          description={t.escalations.workspaceIntro}
+          icon={ShieldAlert}
+          status={<span className="workspace-status">{total > 0 ? t.escalations.workspaceWaiting : t.escalations.workspaceReady}</span>}
+        />
+        <WorkspaceMetrics visual={<div className="escalations-core"><Inbox size={28} strokeWidth={1.25} /></div>} ariaLabel={t.escalations.summary}>
+          <WorkspaceMetric label={t.escalations.metricTotal} value={total} icon={Inbox} />
+          <WorkspaceMetric label={t.escalations.metricQuestions} value={pendingAsks.length} icon={MessagesSquare} />
+          <WorkspaceMetric label={t.escalations.metricReviews} value={escalations.length} icon={ShieldAlert} />
+          <WorkspaceMetric label={t.escalations.metricBlocked} value={blockedCount} icon={GitBranch} />
+        </WorkspaceMetrics>
 
-      {escalations.length === 0 && pendingAsks.length === 0 ? (
-        <EmptyState title={t.escalations.empty} description={t.escalations.emptyDesc} icon={ShieldCheck} />
+      {total === 0 ? (
+        <div className="workspace-content"><EmptyState title={t.escalations.empty} description={t.escalations.emptyDesc} icon={ShieldCheck} /></div>
       ) : (
-        <div className="flex flex-col gap-3">
+        <div className="workspace-content">
           {/* Agent questions waiting on a human come first — an agent is actively blocked on each. */}
+          {pendingAsks.length > 0 ? <h2 className="border-b border-border/80 px-1 pb-3 font-mono text-[10px] font-semibold uppercase tracking-[.14em] text-accent sm:px-3">{t.escalations.questionsSection}</h2> : null}
           {pendingAsks.map((a) => <PendingAskCard key={a.askId} ask={a} />)}
+          {escalations.length > 0 ? <h2 className="border-b border-border/80 px-1 pb-3 pt-7 font-mono text-[10px] font-semibold uppercase tracking-[.14em] text-warning sm:px-3">{t.escalations.reviewsSection}</h2> : null}
           {escalations.map((e) => {
             const when = formatTaskTime(e.ts, Date.now(), locale);
             return (
-              <article key={`${e.taskId}-${e.ts}`} className="flex flex-col gap-3 rounded-lg border border-warning/40 bg-warning/[0.05] p-4" style={{ boxShadow: 'var(--shadow-card)' }}>
+              <article key={`${e.taskId}-${e.ts}`} className="escalation-register-row flex flex-col gap-4 border-t border-warning/30 px-1 py-5 sm:px-3">
                 <div className="flex items-start gap-3">
-                  <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-warning/40 bg-warning/10">
+                  <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-warning/40 bg-warning/10">
                     <ShieldAlert size={20} className="text-warning" aria-hidden />
                   </span>
                   <div className="min-w-0 flex-1">
@@ -122,7 +142,7 @@ export function EscalationsView() {
                 </div>
 
                 {/* The overseer's verdict — the long text that used to be a toast, now readable. */}
-                <div className="rounded-md border border-border bg-elevated p-3">
+                <div className="border-l border-warning/35 py-1 pl-4">
                   <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-text-muted">{t.escalations.rationale}</div>
                   <p className="whitespace-pre-wrap text-sm leading-relaxed text-text">{e.rationale || t.escalations.noReason}</p>
                 </div>
@@ -142,7 +162,7 @@ export function EscalationsView() {
                 ) : null}
 
                 <div className="flex flex-wrap items-center justify-end gap-2">
-                  <Button variant="ghost" icon={RotateCcw} onClick={() => rerun(e)} disabled={setStatus.isPending}>{t.escalations.rerun}</Button>
+                  <button type="button" onClick={() => rerun(e)} disabled={setStatus.isPending} className="inline-flex items-center gap-1.5 px-1 py-2 text-xs text-text-muted transition-colors hover:text-warning disabled:opacity-40"><RotateCcw size={13} aria-hidden />{t.escalations.rerun}</button>
                   <Button variant="accent" icon={Play} onClick={() => approve(e)} disabled={e.blocked.length === 0 || approveGate.isPending}>{t.escalations.approve}</Button>
                 </div>
               </article>
@@ -150,6 +170,7 @@ export function EscalationsView() {
           })}
         </div>
       )}
+      </WorkspacePage>
     </>
   );
 }

@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { vi } from 'vitest';
 import React from 'react';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { setupServer } from 'msw/node';
 import { http, HttpResponse } from 'msw';
 import SessionsPage from '../../app/sessions/page';
@@ -61,15 +61,19 @@ describe('SessionsPage', () => {
     render(<Wrapper><ToastProvider><SessionsPage /></ToastProvider></Wrapper>);
     await waitFor(() => expect(screen.getByText('SwiftLake')).toBeInTheDocument());
     expect(screen.getByTestId('live-sessions-list').firstElementChild).not.toHaveClass('rounded-lg');
-    // Kill lives in the red action menu: open it, then pick the item
+    // Kill lives in the action menu and requires explicit confirmation.
     fireEvent.click(screen.getByRole('button', { name: 'Kill session' }));
     fireEvent.click(screen.getByRole('menuitem', { name: 'Kill session' }));
+    const dialog = screen.getByRole('dialog');
+    expect(dialog).toHaveTextContent('Kill SwiftLake?');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Kill session' }));
     await waitFor(() => expect(killed).toBe(true));
   });
 
   it('renders conversations as full-width rows with pagination', async () => {
     const { wrapper: Wrapper } = createWrapper();
     render(<Wrapper><ToastProvider><SessionsPage /></ToastProvider></Wrapper>);
+    fireEvent.click(screen.getByRole('radio', { name: 'Conversations' }));
     await waitFor(() => expect(screen.getByText('Conversation 1')).toBeInTheDocument());
     expect(screen.getByTestId('brain-sessions-list')).toHaveAttribute('role', 'list');
     expect(screen.getByRole('button', { name: 'Conversation 1: Actions' })).toBeInTheDocument();

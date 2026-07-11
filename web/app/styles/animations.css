@@ -47,6 +47,12 @@
 .animate-route { animation: route-fade var(--motion-base) var(--ease-out) both; }
 .animate-ambient { animation: ambient-drift var(--motion-ambient) ease-in-out infinite; }
 
+/* The spatial route rail needs a little more time than ordinary micro-interactions. */
+html[data-effects='reduced'] [data-testid='future-navigation'] [role='listitem'],
+html[data-effects='reduced'] [data-testid='future-navigation'] .orbit-node {
+  transition-duration: 140ms !important;
+}
+
 html[data-effects='reduced'] {
   --motion-fast: 80ms;
   --motion-base: 120ms;

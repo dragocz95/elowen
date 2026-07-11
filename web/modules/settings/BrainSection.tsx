@@ -1,6 +1,6 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
-import { BrainCircuit, Plus, Pencil, Trash2, KeyRound, Link2, Unlink, ExternalLink, Check, ListChecks, SlidersHorizontal } from 'lucide-react';
+import { BrainCircuit, Plus, Pencil, Trash2, KeyRound, Link2, Unlink, ExternalLink, Check, ListChecks, SlidersHorizontal, Gauge } from 'lucide-react';
 import { Badge } from '../../components/ui/Badge';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
@@ -11,13 +11,14 @@ import { ManageSelectionModal, type ManageSelectionItem } from '../../components
 import { SelectionSummary } from '../../components/ui/SelectionSummary';
 import { Modal, ModalBody } from '../../components/ui/Modal';
 import { BrainLimitsModal, BRAIN_LIMIT_DEFAULTS } from './BrainLimitsModal';
+import { SpatialGroup, SpatialRow } from '../../components/ui/SpatialPrimitives';
+import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { LoadingState } from '../../components/ui/states';
 import { useToast } from '../../components/ui/Toast';
 import { useTranslation } from '../../lib/i18n';
 import { useConfig, useBrainOauthStatus } from '../../lib/queries';
-import { HelpTip } from '../../components/ui/HelpTip';
 import { useUpdateConfig } from '../../lib/mutations';
-import { useAutoSave } from '../../lib/useAutoSave';
+import { useAutoSaveStatus, type SaveStatus } from '../../lib/useAutoSaveStatus';
 import { useSaveBrainProviders, useBrainOauthDisconnect } from '../../lib/mutations';
 import { elowenClient } from '../../lib/elowenClient';
 import type { BrainProvider, BrainProviderType, OAuthFlowState, BrainLimits } from '../../lib/types';
@@ -229,7 +230,7 @@ function ProviderModal({ draft: initial, existingIds, onSave, onClose }: {
 }
 
 /** Settings → Brain: the model providers behind `elowen chat` (custom endpoints + OAuth accounts). */
-export function BrainSection() {
+export function BrainSection({ onSaveState }: { onSaveState?: (section: string, status: SaveStatus, retry?: () => void) => void }) {
   const { data: config } = useConfig();
   const oauth = useBrainOauthStatus();
   const save = useSaveBrainProviders();
@@ -240,6 +241,8 @@ export function BrainSection() {
   const [flow, setFlow] = useState<OAuthFlowState | null>(null);
   const [modelsFor, setModelsFor] = useState<BrainProviderType | null>(null);
   const [limitsOpen, setLimitsOpen] = useState(false);
+  const [disconnectTarget, setDisconnectTarget] = useState<BrainProviderType | null>(null);
+  const [removeTarget, setRemoveTarget] = useState<string | null>(null);
 
   // The assistant's display identity ("Elowen" by default) — feeds the persona everywhere it speaks.
   const updateConfig = useUpdateConfig();
@@ -248,9 +251,10 @@ export function BrainSection() {
   useEffect(() => {
     if (config && !nameSeeded) { setAgentName(config.brain?.agentName ?? 'Elowen'); setNameSeeded(true); }
   }, [config, nameSeeded]);
-  useAutoSave([agentName], () => {
-    if (agentName.trim()) updateConfig.mutate({ brain: { agentName: agentName.trim() } }, { onError: () => toast(t.brain.saveError, 'error') });
-  }, { ready: nameSeeded });
+  const { status: nameStatus, retry: retryName } = useAutoSaveStatus([agentName], async () => {
+    try { await updateConfig.mutateAsync({ brain: { agentName: agentName.trim() } }); }
+    catch (error) { toast(t.brain.saveError, 'error'); throw error; }
+  }, { ready: nameSeeded && !!agentName.trim() });
 
   // Max agent steps per run (the turn is aborted past this) — a validated 1..200 integer.
   const [maxSteps, setMaxSteps] = useState('');
@@ -258,10 +262,12 @@ export function BrainSection() {
   useEffect(() => {
     if (config && !stepsSeeded) { setMaxSteps(String(config.brain?.maxSteps ?? 20)); setStepsSeeded(true); }
   }, [config, stepsSeeded]);
-  useAutoSave([maxSteps], () => {
+  const parsedSteps = Number(maxSteps);
+  const { status: stepsStatus, retry: retrySteps } = useAutoSaveStatus([maxSteps], async () => {
     const n = Number(maxSteps);
-    if (Number.isFinite(n) && n >= 1) updateConfig.mutate({ brain: { maxSteps: Math.min(200, Math.max(1, Math.floor(n))) } }, { onError: () => toast(t.brain.saveError, 'error') });
-  }, { ready: stepsSeeded });
+    try { await updateConfig.mutateAsync({ brain: { maxSteps: Math.min(200, Math.max(1, Math.floor(n))) } }); }
+    catch (error) { toast(t.brain.saveError, 'error'); throw error; }
+  }, { ready: stepsSeeded && Number.isFinite(parsedSteps) && parsedSteps >= 1 });
 
   // Operator-tunable brain limits (one draft record, autosaved whole). The daemon re-clamps every field,
   // so an out-of-range keystroke is corrected server-side; the inputs carry the same bounds for the UI.
@@ -270,9 +276,25 @@ export function BrainSection() {
   useEffect(() => {
     if (config && !limitsSeeded) { setLimits(config.brain?.limits ?? BRAIN_LIMIT_DEFAULTS); setLimitsSeeded(true); }
   }, [config, limitsSeeded]);
-  useAutoSave([limits], () => {
-    if (limits) updateConfig.mutate({ brain: { limits } }, { onError: () => toast(t.brain.saveError, 'error') });
+  const { status: limitsStatus, retry: retryLimits } = useAutoSaveStatus([limits], async () => {
+    if (!limits) return;
+    try { await updateConfig.mutateAsync({ brain: { limits } }); }
+    catch (error) { toast(t.brain.saveError, 'error'); throw error; }
   }, { ready: limitsSeeded && !!limits });
+
+  const saveStatus: SaveStatus = [nameStatus, stepsStatus, limitsStatus].includes('error')
+    ? 'error'
+    : [nameStatus, stepsStatus, limitsStatus].includes('saving')
+      ? 'saving'
+      : [nameStatus, stepsStatus, limitsStatus].includes('saved') ? 'saved' : 'idle';
+  useEffect(() => {
+    const retry = saveStatus === 'error' ? () => {
+      if (nameStatus === 'error') retryName();
+      if (stepsStatus === 'error') retrySteps();
+      if (limitsStatus === 'error') retryLimits();
+    } : undefined;
+    onSaveState?.('brain', saveStatus, retry);
+  }, [limitsStatus, nameStatus, onSaveState, retryLimits, retryName, retrySteps, saveStatus, stepsStatus]);
 
   if (!config) return <LoadingState />;
   const providers = config.brain?.providers ?? [];
@@ -314,37 +336,28 @@ export function BrainSection() {
     <div className="flex flex-col gap-6">
       {/* Identity + step ceiling on one row: the assistant's name (everywhere it speaks) and the max
           agent steps per run (Discord shows "Step N / MAX"). */}
-      <div className="flex max-w-md flex-wrap items-end gap-3">
-        <div className="flex min-w-[12rem] max-w-xs flex-1 flex-col gap-2">
-          <span className="text-sm font-medium text-text">{t.brain.agentName}</span>
+      <SpatialGroup>
+        <SpatialRow title={t.brain.agentName} icon={BrainCircuit}>
           <Input value={agentName} onChange={(e) => setAgentName(e.target.value)} placeholder="Elowen" aria-label={t.brain.agentName} />
-        </div>
-        <div className="flex w-32 flex-col gap-2">
-          <span className="flex items-center gap-1 whitespace-nowrap text-sm font-medium text-text">{t.brain.maxSteps}<HelpTip>{t.brain.maxStepsHint}</HelpTip></span>
+        </SpatialRow>
+        <SpatialRow title={t.brain.maxSteps} description={t.brain.maxStepsHint} icon={Gauge}>
           <Input type="number" min={1} max={200} value={maxSteps} onChange={(e) => setMaxSteps(e.target.value)} aria-label={t.brain.maxSteps} />
-        </div>
-      </div>
-
-      {/* Limits: the brain's tunable ceilings — output size, waits, recall, goal autonomy, channel cap.
-          The 8-field grid lives in a modal so it doesn't crowd the section; edits still autosave live. */}
-      {limits && (
-        <div className="flex flex-col gap-3">
-          <div className="flex flex-col gap-0.5">
-            <span className="text-sm font-medium text-text">{t.brain.limits.title}</span>
-            <span className="text-tiny text-text-muted">{t.brain.limits.hint}</span>
-          </div>
-          <div>
-            <Button variant="default" icon={SlidersHorizontal} onClick={() => setLimitsOpen(true)}>{t.brain.limits.manage}</Button>
-          </div>
-          {limitsOpen ? (
+        </SpatialRow>
+        {limits ? (
+          <SpatialRow title={t.brain.limits.title} description={t.brain.limits.hint} icon={SlidersHorizontal}>
+            <button type="button" className="spatial-inline-action" onClick={() => setLimitsOpen(true)}>
+              <SlidersHorizontal size={14} aria-hidden />{t.brain.limits.manage}
+            </button>
+          </SpatialRow>
+        ) : null}
+      </SpatialGroup>
+      {limits && limitsOpen ? (
             <BrainLimitsModal
               limits={limits}
               onChange={(fn) => setLimits((cur) => (cur ? fn(cur) : cur))}
               onClose={() => setLimitsOpen(false)}
             />
-          ) : null}
-        </div>
-      )}
+      ) : null}
 
       {/* OAuth accounts: one row per supported account type, connect/disconnect. */}
       <div className="flex flex-col gap-2">
@@ -364,7 +377,7 @@ export function BrainSection() {
                 {connected ? (
                   <span className="flex shrink-0 flex-wrap justify-end gap-1">
                     <Button variant="ghost" icon={ListChecks} aria-label={`${t.brain.pickModels}: ${t.brain.types[type]}`} onClick={() => setModelsFor(type)}>{t.brain.pickModels}</Button>
-                    <Button variant="ghost" icon={Unlink} aria-label={`${t.brain.disconnect}: ${t.brain.types[type]}`} onClick={() => disconnect.mutate(type, { onSuccess: () => toast(t.brain.disconnected) })} />
+                    <Button variant="ghost" icon={Unlink} aria-label={`${t.brain.disconnect}: ${t.brain.types[type]}`} onClick={() => setDisconnectTarget(type)} />
                   </span>
                 ) : (
                   <Button variant="accent" icon={Link2} onClick={() => startConnect(type)}>{t.brain.connect}</Button>
@@ -402,7 +415,7 @@ export function BrainSection() {
                   {p.apiKeySet ? <Badge tone="accent"><KeyRound size={10} className="mr-1" aria-hidden />{t.brain.keySet}</Badge> : null}
                   <span className="ml-auto flex shrink-0 gap-1">
                     <Button variant="ghost" icon={Pencil} aria-label={`${t.brain.editProvider}: ${p.label}`} onClick={() => setModal({ id: p.id, label: p.label, type: p.type, baseUrl: p.baseUrl, models: p.models.join('\n'), apiKey: '', api: p.api ?? '' })} />
-                    <Button variant="ghost" icon={Trash2} aria-label={`${t.brain.removeProvider}: ${p.label}`} onClick={() => remove(p.id)} />
+                    <Button variant="ghost" icon={Trash2} aria-label={`${t.brain.removeProvider}: ${p.label}`} onClick={() => setRemoveTarget(p.id)} />
                   </span>
                 </div>
                 {p.baseUrl ? <span className="truncate font-mono text-tiny text-text-muted">{p.baseUrl}</span> : null}
@@ -441,6 +454,26 @@ export function BrainSection() {
           }}
         />
       ) : null}
+      <ConfirmDialog
+        open={disconnectTarget !== null}
+        title={t.brain.disconnect}
+        description={disconnectTarget ? t.brain.disconnectConfirm.replace('{provider}', t.brain.types[disconnectTarget]) : undefined}
+        confirmLabel={t.brain.disconnect}
+        onConfirm={() => {
+          const target = disconnectTarget;
+          setDisconnectTarget(null);
+          if (target) disconnect.mutate(target, { onSuccess: () => toast(t.brain.disconnected) });
+        }}
+        onClose={() => setDisconnectTarget(null)}
+      />
+      <ConfirmDialog
+        open={removeTarget !== null}
+        title={t.brain.removeProvider}
+        description={removeTarget ? t.brain.removeProviderConfirm.replace('{provider}', providers.find((provider) => provider.id === removeTarget)?.label ?? removeTarget) : undefined}
+        confirmLabel={t.brain.removeProvider}
+        onConfirm={() => { if (removeTarget) remove(removeTarget); setRemoveTarget(null); }}
+        onClose={() => setRemoveTarget(null)}
+      />
     </div>
   );
 }

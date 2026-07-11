@@ -2,19 +2,17 @@
 import { useEffect, useMemo, useState } from 'react';
 import { FlaskConical, RefreshCw } from 'lucide-react';
 import { Badge } from '../../components/ui/Badge';
-import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
-import { Field } from '../../components/ui/Field';
-import { HelpTip } from '../../components/ui/HelpTip';
 import { ProviderPicker } from '../../components/ui/ProviderPicker';
 import { ModelCatalogField } from '../../components/ui/ModelCatalogField';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
+import { SpatialGroup, SpatialRow } from '../../components/ui/SpatialPrimitives';
 import { LoadingState } from '../../components/ui/states';
 import { useToast } from '../../components/ui/Toast';
 import { useTranslation } from '../../lib/i18n';
 import { useConfig, useEmbeddingSettings, useCategorizationSettings, useBrainModels } from '../../lib/queries';
 import { useSaveEmbeddingSettings, useReindexMemories, useSaveCategorizationSettings, useReclassifyMemories } from '../../lib/mutations';
-import { useAutoSave } from '../../lib/useAutoSave';
+import { useAutoSaveStatus, type SaveStatus } from '../../lib/useAutoSaveStatus';
 import { elowenClient, ElowenApiError } from '../../lib/elowenClient';
 import type { BrainModelOption } from '../../lib/types';
 
@@ -32,7 +30,7 @@ function useProviderCatalog(brainModels: BrainModelOption[] | undefined, provide
  *  → vectors for semantic recall) and the categorization model (sorts memories into categories). Both
  *  inherit their API key + endpoint from the referenced brain provider (Settings → Elowen AI); there is
  *  no separate base URL. Admin-only (the Settings config group is already admin-gated). */
-export function MemorySection() {
+export function MemorySection({ onSaveState }: { onSaveState?: (section: string, status: SaveStatus, retry?: () => void) => void }) {
   const { t } = useTranslation();
   const { data: config } = useConfig();
   const { data: embedding } = useEmbeddingSettings();
@@ -77,24 +75,32 @@ export function MemorySection() {
 
   // baseUrl is intentionally omitted from the UI — the referenced provider already carries the API
   // endpoint. We send '' so any previously stored override is cleared and the provider endpoint wins.
-  const onSaveEmbedding = () => {
+  const onSaveEmbedding = async () => {
     const dim = dimensions.trim();
-    saveEmbedding.mutate(
-      { providerId: embProvider.trim(), model: embModel.trim(), baseUrl: '', dimensions: dim ? Number(dim) : null },
-      { onError: () => toast(t.memory.embeddingSaveError, 'error') },
-    );
+    try { await saveEmbedding.mutateAsync({ providerId: embProvider.trim(), model: embModel.trim(), baseUrl: '', dimensions: dim ? Number(dim) : null }); }
+    catch (error) { toast(t.memory.embeddingSaveError, 'error'); throw error; }
   };
 
-  const onSaveCategorization = () => {
-    saveCategorization.mutate(
-      { providerId: catProvider.trim(), model: (catModel ?? '').trim(), baseUrl: '' },
-      { onError: () => toast(t.categorization.saveError, 'error') },
-    );
+  const onSaveCategorization = async () => {
+    try { await saveCategorization.mutateAsync({ providerId: catProvider.trim(), model: (catModel ?? '').trim(), baseUrl: '' }); }
+    catch (error) { toast(t.categorization.saveError, 'error'); throw error; }
   };
 
   // Auto-persist like the rest of Settings (silent on success, toast on error) — no Save buttons.
-  useAutoSave([embProvider, embModel, dimensions], onSaveEmbedding, { ready: seeded });
-  useAutoSave([catProvider, catModel], onSaveCategorization, { ready: seeded });
+  const { status: embeddingStatus, retry: retryEmbedding } = useAutoSaveStatus([embProvider, embModel, dimensions], onSaveEmbedding, { ready: seeded });
+  const { status: categorizationStatus, retry: retryCategorization } = useAutoSaveStatus([catProvider, catModel], onSaveCategorization, { ready: seeded });
+  const saveStatus: SaveStatus = embeddingStatus === 'error' || categorizationStatus === 'error'
+    ? 'error'
+    : embeddingStatus === 'saving' || categorizationStatus === 'saving'
+      ? 'saving'
+      : embeddingStatus === 'saved' || categorizationStatus === 'saved' ? 'saved' : 'idle';
+  useEffect(() => {
+    const retry = saveStatus === 'error' ? () => {
+      if (embeddingStatus === 'error') retryEmbedding();
+      if (categorizationStatus === 'error') retryCategorization();
+    } : undefined;
+    onSaveState?.('memory', saveStatus, retry);
+  }, [categorizationStatus, embeddingStatus, onSaveState, retryCategorization, retryEmbedding, saveStatus]);
 
   if (!config || !embedding || !categorization) return <LoadingState />;
 
@@ -132,32 +138,26 @@ export function MemorySection() {
 
   return (
     <div className="@container flex flex-col gap-4">
-      {/* Embedding model */}
-      <section className="flex flex-col gap-5 border-y border-border/80 py-6">
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="text-sm font-semibold text-text">{t.memory.embeddingHeading}</span>
-          <HelpTip align="left">{t.help.embeddingIntro}</HelpTip>
-          {embedding.configured
-            ? <Badge tone="accent">{t.memory.embeddingConfigured}</Badge>
-            : <Badge>{t.memory.embeddingUnconfigured}</Badge>}
+      <SpatialGroup title={t.memory.embeddingHeading} description={t.help.embeddingIntro} icon={FlaskConical}>
+        <div className="flex flex-wrap items-center justify-between gap-3 py-3">
+          {embedding.configured ? <Badge tone="accent">{t.memory.embeddingConfigured}</Badge> : <Badge>{t.memory.embeddingUnconfigured}</Badge>}
+          <button type="button" className="spatial-inline-action" disabled={testing} onClick={onTest}>
+            <FlaskConical size={14} aria-hidden />{testing ? t.memory.embeddingTesting : t.memory.embeddingTest}
+          </button>
         </div>
-
-        <Field label={t.memory.embeddingProvider} hint={t.help.embeddingProvider}>
+        <SpatialRow title={t.memory.embeddingProvider} description={t.help.embeddingProvider}>
           <ProviderPicker providers={embeddingProviders} value={embProvider} onChange={setEmbProvider} label={t.memory.embeddingProvider} emptyText={t.memory.embeddingProviderPlaceholder} variant="line" />
-        </Field>
+        </SpatialRow>
 
-        {/* A div-based label (not Field's <label>): the SelectionSummary's Manage button would otherwise
-            become the label's first labelable descendant and inherit the field text as its name. */}
-        <div className="flex flex-col gap-1.5">
-          <span className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-text-muted">{t.memory.embeddingModel}</span>
+        <SpatialRow title={t.memory.embeddingModel} description={t.help.embeddingIntro}>
           <ModelCatalogField value={embModel} onChange={setEmbModel} catalog={embCatalog} title={t.memory.embeddingModel} subtitle={t.help.embeddingIntro} variant="line" />
-        </div>
+        </SpatialRow>
 
-        <Field label={t.memory.embeddingModelCustom} hint={t.help.embeddingModelCustom}>
+        <SpatialRow title={t.memory.embeddingModelCustom} description={t.help.embeddingModelCustom}>
           <Input value={embModel} onChange={(e) => setEmbModel(e.target.value)} placeholder={t.memory.embeddingModelPlaceholder} className="font-mono" variant="line" />
-        </Field>
+        </SpatialRow>
 
-        <Field label={t.memory.embeddingDimensions} hint={t.help.embeddingDimensions}>
+        <SpatialRow title={t.memory.embeddingDimensions} description={t.help.embeddingDimensions}>
           <Input
             type="number"
             inputMode="numeric"
@@ -167,65 +167,44 @@ export function MemorySection() {
             className="max-w-40 font-mono"
             variant="line"
           />
-        </Field>
+        </SpatialRow>
 
-        <div className="flex flex-wrap gap-2">
-          <Button variant="default" icon={FlaskConical} disabled={testing} onClick={onTest}>{testing ? t.memory.embeddingTesting : t.memory.embeddingTest}</Button>
-        </div>
-
-        {/* Reindex: re-embeds memories still missing a vector. Needs a configured provider first. */}
-        <div className="flex flex-col gap-2 border-t border-border/70 pt-5">
-          <span className="text-sm font-medium text-text">{t.memory.reindex}</span>
-          <p className="text-xs text-text-muted">{t.memory.reindexConfirmBody}</p>
-          {embedding.configured ? null : <p className="text-xs italic text-text-muted">{t.memory.reindexUnconfigured}</p>}
-          <Button
-            variant="default"
-            icon={RefreshCw}
-            className="self-start"
+        <SpatialRow title={t.memory.reindex} description={embedding.configured ? t.memory.reindexConfirmBody : t.memory.reindexUnconfigured} icon={RefreshCw}>
+          <button
+            type="button"
+            className="spatial-inline-action"
             disabled={!embedding.configured || reindex.isPending}
             onClick={() => setReindexOpen(true)}
           >
-            {t.memory.reindex}
-          </Button>
-        </div>
-      </section>
+            <RefreshCw size={14} aria-hidden />{t.memory.reindex}
+          </button>
+        </SpatialRow>
+      </SpatialGroup>
 
-      {/* Categorization model */}
-      <section className="flex flex-col gap-5 border-y border-border/80 py-6">
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="text-sm font-semibold text-text">{t.categorization.title}</span>
-          <HelpTip align="left">{t.help.categorizationIntro}</HelpTip>
-          {categorization.configured
-            ? <Badge tone="accent">{t.categorization.configured}</Badge>
-            : <Badge>{t.categorization.notConfigured}</Badge>}
+      <SpatialGroup title={t.categorization.title} description={t.help.categorizationIntro} icon={RefreshCw}>
+        <div className="flex items-center py-3">
+          {categorization.configured ? <Badge tone="accent">{t.categorization.configured}</Badge> : <Badge>{t.categorization.notConfigured}</Badge>}
         </div>
 
-        <Field label={t.categorization.providerLabel}>
+        <SpatialRow title={t.categorization.providerLabel}>
           <ProviderPicker providers={providers} value={catProvider} onChange={setCatProvider} label={t.categorization.providerLabel} emptyText={t.memory.embeddingProviderPlaceholder} variant="line" />
-        </Field>
+        </SpatialRow>
 
-        {/* Div-based label (see the embedding-model field for why Field's <label> is avoided here). */}
-        <div className="flex flex-col gap-1.5">
-          <span className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-text-muted">{t.categorization.modelLabel}</span>
+        <SpatialRow title={t.categorization.modelLabel} description={t.help.categorizationIntro}>
           <ModelCatalogField value={catModel ?? ''} onChange={(v) => setCatModel(v || null)} catalog={catCatalog} title={t.categorization.modelLabel} subtitle={t.help.categorizationIntro} variant="line" />
-        </div>
+        </SpatialRow>
 
-        {/* Reclassify: runs the categorization model over the caller's uncategorized memories. Needs a
-            configured model first. */}
-        <div className="flex flex-col gap-2 border-t border-border/70 pt-5">
-          <span className="text-sm font-medium text-text">{t.categorization.reclassify}</span>
-          <p className="text-xs text-text-muted">{t.categorization.reclassifyHint}</p>
-          <Button
-            variant="default"
-            icon={RefreshCw}
-            className="self-start"
+        <SpatialRow title={t.categorization.reclassify} description={t.categorization.reclassifyHint} icon={RefreshCw}>
+          <button
+            type="button"
+            className="spatial-inline-action"
             disabled={!categorization.configured || reclassify.isPending}
             onClick={onReclassify}
           >
-            {t.categorization.reclassify}
-          </Button>
-        </div>
-      </section>
+            <RefreshCw size={14} aria-hidden />{t.categorization.reclassify}
+          </button>
+        </SpatialRow>
+      </SpatialGroup>
 
       <ConfirmDialog
         open={reindexOpen}

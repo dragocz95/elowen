@@ -8,9 +8,9 @@ import type { EmbeddingSettings, CategorizationSettings, BrainModelOption } from
 const saveCategorization = vi.fn();
 const saveEmbedding = vi.fn();
 vi.mock('../../../lib/mutations', () => ({
-  useSaveEmbeddingSettings: () => ({ mutate: saveEmbedding }),
+  useSaveEmbeddingSettings: () => ({ mutate: saveEmbedding, mutateAsync: saveEmbedding }),
   useReindexMemories: () => ({ mutate: vi.fn(), isPending: false }),
-  useSaveCategorizationSettings: () => ({ mutate: saveCategorization }),
+  useSaveCategorizationSettings: () => ({ mutate: saveCategorization, mutateAsync: saveCategorization }),
   useReclassifyMemories: () => ({ mutate: vi.fn(), isPending: false }),
 }));
 

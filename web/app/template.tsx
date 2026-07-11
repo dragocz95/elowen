@@ -1,8 +1,8 @@
 'use client';
 import type { ReactNode } from 'react';
 
-// Re-mounts on every navigation (Next.js template semantics), so the page content
-// area fades in on each route change. Sidebar lives in the layout, so it stays put.
+// RouteTransition in the persistent Shell owns the enter/exit choreography. The template deliberately
+// stays neutral so the incoming page does not play a second, much faster fade on top of it.
 export default function Template({ children }: { children: ReactNode }) {
-  return <div className="h-full animate-route">{children}</div>;
+  return <div className="h-full">{children}</div>;
 }

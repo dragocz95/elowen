@@ -10,6 +10,7 @@ import { EmptyState } from '../../components/ui/states';
 import { useTranslation } from '../../lib/i18n';
 import { ProjectEditor } from '../projects/editor/ProjectEditor';
 import { MotionLayoutItem, MotionPresence } from '../../components/ui/Motion';
+import { WorkspaceHeader, WorkspacePage } from '../../components/ui/WorkspacePrimitives';
 
 /** Standalone code-editor page: the very same ProjectEditor that Projects opens as an overlay, here
  *  driven by the shared project-filter pills. The editor needs one concrete project, so an 'all' (or
@@ -22,6 +23,7 @@ export function EditorView() {
   const { selectedProject, setProject } = useProjectFilter('elowen.editor.project');
   const list = projects.data ?? [];
   const projectId = selectedProject === 'all' ? (list[0]?.id ?? null) : selectedProject;
+  const project = list.find((item) => item.id === projectId) ?? null;
 
   // On mobile the editor auto-fullscreens and covers the app nav, so without a way out it traps the
   // user. Give it an onClose that leaves the editor back to the app (history if any, else the
@@ -32,16 +34,24 @@ export function EditorView() {
 
   return (
     <>
-      <ModuleHeader title={t.page.editor} icon={Code2}>
-        {/* The editor always edits one concrete project — never "All" — so drop that pill and bind the
-            picker to the resolved project id (falls back to the first accessible project). */}
-        <ProjectFilterPills value={projectId ?? 'all'} onChange={setProject} includeAll={false} variant="dropdown" />
-      </ModuleHeader>
-      <MotionPresence mode="wait">
-        {projectId == null
-          ? <MotionLayoutItem key="empty"><EmptyState title={t.editor.noProjects} description={t.editor.noProjectsDescription} icon={Code2} /></MotionLayoutItem>
-          : <MotionLayoutItem key={projectId}><ProjectEditor projectId={projectId} onClose={onClose} /></MotionLayoutItem>}
-      </MotionPresence>
+      <ModuleHeader title={t.page.editor} icon={Code2} />
+      <WorkspacePage>
+        <WorkspaceHeader
+          eyebrow={t.editor.workspaceEyebrow}
+          title={t.page.editor}
+          description={t.editor.workspaceIntro}
+          icon={Code2}
+          status={project ? <span className="workspace-status">{t.editor.workspaceReady.replace('{project}', project.slug)}</span> : undefined}
+          action={<ProjectFilterPills value={projectId ?? 'all'} onChange={setProject} includeAll={false} variant="dropdown" />}
+        />
+        <div className="workspace-content">
+          <MotionPresence mode="wait">
+            {projectId == null
+              ? <MotionLayoutItem key="empty"><EmptyState title={t.editor.noProjects} description={t.editor.noProjectsDescription} icon={Code2} /></MotionLayoutItem>
+              : <MotionLayoutItem key={projectId}><ProjectEditor projectId={projectId} onClose={onClose} fill /></MotionLayoutItem>}
+          </MotionPresence>
+        </div>
+      </WorkspacePage>
     </>
   );
 }

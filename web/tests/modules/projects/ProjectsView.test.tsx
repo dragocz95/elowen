@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { setupServer } from 'msw/node';
 import { http, HttpResponse } from 'msw';
 import { ProjectsView } from '../../../modules/projects/ProjectsView';
@@ -20,15 +20,29 @@ describe('ProjectsView', () => {
     fireEvent.click(row);
     expect(await screen.findByText('master')).toBeTruthy();
     expect(await screen.findByText('feat: x')).toBeTruthy();
-    expect(screen.getByTestId('projects-register')).toHaveAttribute('role', 'list');
-    expect(row.closest('button')).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByTestId('projects-register')).toHaveAttribute('role', 'table');
+    expect(row.closest('[role="row"]')).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('complementary', { name: 'Project detail' })).toBeInTheDocument();
   });
 
   it('selects a project with Space', async () => {
     const { wrapper: Wrapper } = createWrapper();
     render(<Wrapper><ToastProvider><ProjectsView /></ToastProvider></Wrapper>);
-    const card = (await screen.findByText('elowen')).closest('button')!;
+    const card = (await screen.findByText('elowen')).closest('[role="row"]')!;
     fireEvent.keyDown(card, { key: ' ' });
     expect(await screen.findByText('master')).toBeTruthy();
+  });
+
+  it('filters the project register without losing the workspace layout', async () => {
+    server.use(http.get('*/api/projects', () => HttpResponse.json([
+      { id: 1, slug: 'elowen', path: '/var/www/elowen', notes: '', icon: '', pr_enabled: null },
+      { id: 2, slug: 'website', path: '/var/www/site', notes: 'public', icon: '', pr_enabled: true },
+    ])));
+    const { wrapper: Wrapper } = createWrapper();
+    render(<Wrapper><ToastProvider><ProjectsView /></ToastProvider></Wrapper>);
+    await screen.findByText('website');
+    fireEvent.change(screen.getByPlaceholderText('Search projects, paths or notes…'), { target: { value: 'elowen' } });
+    await waitFor(() => expect(screen.queryByText('website')).not.toBeInTheDocument());
+    expect(screen.getByText('elowen')).toBeInTheDocument();
   });
 });

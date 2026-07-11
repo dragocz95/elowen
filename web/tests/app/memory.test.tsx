@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 vi.mock('next/navigation', () => ({ useRouter: () => ({ push: () => {}, replace: () => {} }), useSearchParams: () => new URLSearchParams() }));
 import { setupServer } from 'msw/node';
 import { http, HttpResponse } from 'msw';
@@ -34,6 +34,34 @@ describe('MemoryPage', () => {
     // Selecting the row opens the detail pane, which shows the memory id (#1).
     fireEvent.click(screen.getAllByText('Filip prefers pnpm over npm')[0]);
     await waitFor(() => expect(screen.getByText('#1')).toBeInTheDocument());
+    expect(screen.getByRole('complementary', { name: 'Memory detail' })).toBeInTheDocument();
+    expect(screen.queryByRole('dialog', { name: 'Memory' })).toBeNull();
+  });
+
+  it('supports keyboard row navigation and sortable columns', async () => {
+    const memories = [
+      { ...MEMORY, id: 1, body: 'Lower importance', importance: 1, updated_at: '2026-01-01 00:00:02' },
+      { ...MEMORY, id: 2, body: 'Higher importance', importance: 5, updated_at: '2026-01-01 00:00:01' },
+    ];
+    server.use(
+      http.get('*/api/memory', () => HttpResponse.json(memories)),
+      http.get('*/api/memory/:id', ({ params }) => {
+        const id = Number(params.id);
+        return HttpResponse.json(Number.isFinite(id) ? (memories.find((memory) => memory.id === id) ?? memories[0]) : []);
+      }),
+    );
+    const { wrapper: Wrapper } = createWrapper();
+    render(<Wrapper><ToastProvider><MemoryPage /></ToastProvider></Wrapper>);
+    const first = (await screen.findAllByTestId('memory-row'))[0]!;
+    expect(within(first).getByText('Lower importance')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Importance' }));
+    await waitFor(() => expect(within(screen.getAllByTestId('memory-row')[0]!).getByText('Higher importance')).toBeInTheDocument());
+
+    const higher = screen.getByRole('button', { name: 'Higher importance' });
+    higher.focus();
+    fireEvent.keyDown(higher, { key: 'ArrowDown' });
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Lower importance' })).toHaveFocus());
   });
 
   it('renders the shared compact register, keeps advanced filters collapsed, and always shows the pager', async () => {

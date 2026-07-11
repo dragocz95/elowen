@@ -6,15 +6,15 @@ type TableStyle = CSSProperties & {
 };
 
 /** Responsive register table. Wide-only cells disappear as a unit and the compact grid closes ranks. */
-export function DataTable({ ariaLabel, columns, compactColumns = 'minmax(0,1fr)', children, className = '' }: {
+export function DataTable({ ariaLabel, columns, compactColumns = 'minmax(0,1fr)', children, className = '', ...rest }: {
   ariaLabel: string;
   columns: string;
   compactColumns?: string;
   children: ReactNode;
   className?: string;
-}) {
+} & Omit<HTMLAttributes<HTMLDivElement>, 'children'>) {
   const style: TableStyle = { '--data-table-columns': columns, '--data-table-compact-columns': compactColumns };
-  return <div role="table" aria-label={ariaLabel} style={style} className={`@container overflow-hidden border-y border-border/80 ${className}`}>{children}</div>;
+  return <div role="table" aria-label={ariaLabel} style={style} className={`@container overflow-x-clip border-y border-border/80 ${className}`} {...rest}>{children}</div>;
 }
 
 export function DataTableRow({ children, header = false, selected = false, interactive = false, className = '', ...rest }: {
@@ -27,7 +27,7 @@ export function DataTableRow({ children, header = false, selected = false, inter
     <div
       role="row"
       data-state={selected ? 'selected' : 'idle'}
-      className={`data-table-grid items-center gap-x-3 border-b border-border/70 last:border-b-0 ${header ? 'data-table-header py-2.5' : `py-3.5 ${interactive ? 'interactive-row' : ''}`} ${selected ? 'bg-accent/[0.055]' : ''} ${className}`}
+      className={`data-table-grid items-center gap-x-3 border-b border-border/70 last:border-b-0 ${header ? 'data-table-header sticky top-0 z-10 py-2.5' : `py-3.5 ${interactive ? 'interactive-row' : ''}`} ${selected ? 'bg-accent/[0.055]' : ''} ${className}`}
       {...rest}
     >
       {children}

@@ -1,7 +1,7 @@
 'use client';
 import { useState, useEffect } from 'react';
 import { Type, TextCursorInput, ScrollText, Palette } from 'lucide-react';
-import { SettingGroup, SettingRow } from '../../components/ui/SettingsPrimitives';
+import { SpatialGroup, SpatialRow } from '../../components/ui/SpatialPrimitives';
 import { Segmented } from '../../components/ui/Segmented';
 import { Slider } from '../../components/ui/Slider';
 import { Toggle } from '../../components/ui/Toggle';
@@ -9,7 +9,7 @@ import { LoadingState } from '../../components/ui/states';
 import { useToast } from '../../components/ui/Toast';
 import { useTranslation } from '../../lib/i18n';
 import { useTheme } from '../../lib/useTheme';
-import { useAutoSave } from '../../lib/useAutoSave';
+import { useAutoSaveStatus, type SaveStatus } from '../../lib/useAutoSaveStatus';
 import { useMyTerminalSettings } from '../../lib/queries';
 import { useSaveMyTerminalSettings } from '../../lib/mutations';
 import { TerminalPreview } from '../../components/terminal/TerminalPreview';
@@ -19,7 +19,7 @@ import type { TerminalSettings, TerminalPalette, TerminalFontFamily, TerminalCur
 /** Account → Terminal: per-user appearance for every web xterm (advisor dock, session cards, pop-out).
  *  Font, cursor, scrollback and a full 21-colour custom palette, with a live preview and debounced
  *  autosave. `theme:'auto'` keeps the app-theme-following default. */
-export function TerminalSection() {
+export function TerminalSection({ onSaveState }: { onSaveState?: (section: string, status: SaveStatus, retry?: () => void) => void } = {}) {
   const { data, isLoading } = useMyTerminalSettings();
   const save = useSaveMyTerminalSettings();
   const { resolvedTheme } = useTheme();
@@ -45,9 +45,11 @@ export function TerminalSection() {
   }, [data, seeded]);
 
   const settings: TerminalSettings = { fontSize, fontFamily, cursorStyle, cursorBlink, scrollback, theme, palette, showThoughtsCli };
-  useAutoSave([fontSize, fontFamily, cursorStyle, cursorBlink, scrollback, theme, palette, showThoughtsCli], () => {
-    save.mutate(settings, { onError: () => toast(t.terminal.saveError, 'error') });
+  const autosave = useAutoSaveStatus([fontSize, fontFamily, cursorStyle, cursorBlink, scrollback, theme, palette, showThoughtsCli], async () => {
+    try { await save.mutateAsync(settings); }
+    catch (error) { toast(t.terminal.saveError, 'error'); throw error; }
   }, { ready: seeded });
+  useEffect(() => onSaveState?.('terminal', autosave.status, autosave.retry), [onSaveState, autosave.status, autosave.retry]);
 
   if (isLoading || !data) return <LoadingState />;
 
@@ -59,7 +61,7 @@ export function TerminalSection() {
 
   return (
     <div className="flex flex-col gap-4">
-      <SettingGroup title={t.terminal.colorsTitle} icon={Palette} description={t.terminal.colorsHelp}>
+      <SpatialGroup title={t.terminal.colorsTitle} icon={Palette} description={t.terminal.colorsHelp}>
         {/* The live preview sits NEXT TO the swatches (right column on wide screens, on top on narrow
             ones) so a color tweak is visible without scrolling back to a separate preview card. */}
         <div className="grid items-start gap-5 py-5 lg:grid-cols-2">
@@ -102,10 +104,10 @@ export function TerminalSection() {
             ) : null}
           </div>
         </div>
-      </SettingGroup>
+      </SpatialGroup>
 
-      <SettingGroup>
-      <SettingRow title={t.terminal.fontTitle} icon={Type}>
+      <SpatialGroup>
+      <SpatialRow title={t.terminal.fontTitle} icon={Type}>
         <div className="flex flex-col gap-4">
           <div className="flex flex-col gap-1.5">
             <span className={label}>{t.terminal.fontSize}</span>
@@ -119,9 +121,9 @@ export function TerminalSection() {
             <Segmented options={fontOpts} value={fontFamily} onChange={(v) => setFontFamily(v as TerminalFontFamily)} aria-label={t.terminal.fontFamily} />
           </div>
         </div>
-      </SettingRow>
+      </SpatialRow>
 
-      <SettingRow title={t.terminal.cursorTitle} icon={TextCursorInput}>
+      <SpatialRow title={t.terminal.cursorTitle} icon={TextCursorInput}>
         <div className="flex flex-col gap-4">
           <div className="flex flex-col gap-1.5">
             <span className={label}>{t.terminal.cursorStyle}</span>
@@ -132,16 +134,16 @@ export function TerminalSection() {
             <Toggle checked={cursorBlink} onChange={setCursorBlink} label={t.terminal.cursorBlink} />
           </div>
         </div>
-      </SettingRow>
+      </SpatialRow>
 
-      <SettingRow title={t.terminal.cliTitle} icon={ScrollText} description={t.terminal.showThoughtsHelp}>
+      <SpatialRow title={t.terminal.cliTitle} icon={ScrollText} description={t.terminal.showThoughtsHelp}>
         <label className="flex items-center gap-3 text-sm text-text">
           <Toggle checked={showThoughtsCli} onChange={setShowThoughtsCli} label={t.terminal.showThoughts} />
           <span>{t.terminal.showThoughts}</span>
         </label>
-      </SettingRow>
+      </SpatialRow>
 
-      <SettingRow title={t.terminal.historyTitle} icon={ScrollText} description={t.terminal.scrollbackHelp}>
+      <SpatialRow title={t.terminal.historyTitle} icon={ScrollText} description={t.terminal.scrollbackHelp}>
         <div className="flex flex-col gap-1.5">
           <span className={label}>{t.terminal.scrollback}</span>
           <div className="flex items-center gap-4">
@@ -149,8 +151,8 @@ export function TerminalSection() {
             <span className="w-16 shrink-0 text-right font-mono text-sm tabular-nums text-text">{scrollback.toLocaleString()}</span>
           </div>
         </div>
-      </SettingRow>
-      </SettingGroup>
+      </SpatialRow>
+      </SpatialGroup>
 
     </div>
   );

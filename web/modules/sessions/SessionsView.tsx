@@ -1,7 +1,7 @@
 'use client';
 import { useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { TerminalSquare, ArrowRight, List, Bell } from 'lucide-react';
+import { TerminalSquare, ArrowRight, List, Bell, MessageSquare, Activity, Bot, Eye } from 'lucide-react';
 import { useSessionInfos, useSessionSignals } from '../../lib/queries';
 import { needsInputSessions } from '../../lib/agentUtils';
 import { ModuleHeader } from '../../components/ui/ModuleHeader';
@@ -13,8 +13,8 @@ import { useTranslation } from '../../lib/i18n';
 import { SessionCard } from './SessionCard';
 import { BrainSessionsPanel } from './BrainSessionsPanel';
 import { EntityList } from '../../components/ui/EntityList';
-import { PageFrame } from '../../components/ui/PageFrame';
 import { MotionLayoutItem, MotionPresence } from '../../components/ui/Motion';
+import { WorkspaceHeader, WorkspaceMetric, WorkspaceMetrics, WorkspacePage } from '../../components/ui/WorkspacePrimitives';
 
 export function SessionsView() {
   const sessions = useSessionInfos();
@@ -23,6 +23,7 @@ export function SessionsView() {
   const params = useSearchParams();
   const { t } = useTranslation();
   const [openTerm, setOpenTerm] = useState<string | null>(null);
+  const [view, setView] = useState<'live' | 'brain'>('live');
 
   const filter = params.get('filter') === 'needs_input' ? 'needs_input' : 'all';
   const infos = sessions.data ?? [];
@@ -40,15 +41,46 @@ export function SessionsView() {
     return ra !== rb ? ra - rb : a.localeCompare(b);
   });
   const names = filter === 'needs_input' ? needsInputSessions(sortedAll, signals) : sortedAll;
+  const needsInputCount = needsInputSessions(sortedAll, signals).length;
+  const workerCount = infos.filter((info) => info.role !== 'pilot' && info.role !== 'overseer').length;
+  const controlCount = infos.length - workerCount;
   const setFilter = (f: string) => router.replace(f === 'needs_input' ? '/sessions?filter=needs_input' : '/sessions');
 
   return (
     <>
       <ModuleHeader title={t.page.sessions} icon={TerminalSquare} />
+      <WorkspacePage>
+        <WorkspaceHeader
+          eyebrow={t.sessions.workspaceEyebrow}
+          title={t.page.sessions}
+          count={infos.length}
+          description={t.sessions.workspaceIntro}
+          icon={TerminalSquare}
+          status={!sessions.isLoading && !sessions.isError ? <span className="workspace-status">{t.sessions.workspaceReady}</span> : undefined}
+        />
+        <WorkspaceMetrics visual={<div className="sessions-core"><TerminalSquare size={28} strokeWidth={1.25} /></div>} ariaLabel={t.sessions.summary}>
+          <WorkspaceMetric label={t.sessions.metricLive} value={infos.length} icon={Activity} />
+          <WorkspaceMetric label={t.sessions.metricNeedsInput} value={needsInputCount} icon={Bell} />
+          <WorkspaceMetric label={t.sessions.metricWorkers} value={workerCount} icon={Bot} />
+          <WorkspaceMetric label={t.sessions.metricControl} value={controlCount} icon={Eye} />
+        </WorkspaceMetrics>
+        <div className="workspace-tabs">
+          <Segmented
+            size="sm"
+            value={view}
+            onChange={(value) => setView(value as 'live' | 'brain')}
+            options={[
+              { value: 'live', label: t.sessions.liveTitle, icon: TerminalSquare },
+              { value: 'brain', label: t.sessionsPanel.tab, icon: MessageSquare },
+            ]}
+            variant="line"
+            nowrap
+            aria-label={t.page.sessions}
+          />
+        </div>
 
-      <PageFrame width="wide">
-      <div className="flex flex-col gap-10">
-        <section className="min-w-0">
+        <div className="workspace-content">
+        {view === 'live' ? <section className="min-w-0">
           <div className="flex flex-col gap-3 border-b border-border/80 pb-3 sm:flex-row sm:items-end sm:justify-between">
             <div className="flex min-w-0 flex-col gap-1">
               <div className="flex items-baseline gap-2">
@@ -92,11 +124,9 @@ export function SessionsView() {
                   <Button variant="accent" icon={ArrowRight} onClick={() => router.push('/tasks')}>{t.sessions.emptyAction}</Button>
                 </div>
               )}
-        </section>
-
-        <BrainSessionsPanel />
-      </div>
-      </PageFrame>
+        </section> : <BrainSessionsPanel />}
+        </div>
+      </WorkspacePage>
 
       {openTerm && <TerminalModal session={openTerm} onClose={() => setOpenTerm(null)} />}
     </>

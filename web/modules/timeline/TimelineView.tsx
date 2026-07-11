@@ -1,7 +1,7 @@
 'use client';
 import { useMemo, useState } from 'react';
 import Link from 'next/link';
-import { Activity, Clock, Columns3, ArrowUpRight, FileDiff } from 'lucide-react';
+import { Activity, Clock, Columns3, ArrowUpRight, FileDiff, CheckCircle2, AlertTriangle } from 'lucide-react';
 import { useActivity, useProjectChanged, useProjectChanges, useProjects, useProjectsCommits, useTasks } from '../../lib/queries';
 import { parseTs } from '../../lib/format';
 import { ChangesOverTime } from './ChangesOverTime';
@@ -9,7 +9,6 @@ import { plotAxis, type AxisEvent, type AxisPoint } from './axis';
 import { eventIcon, markerTone } from './eventMeta';
 import { Segmented, type SegmentedOption } from '../../components/ui/Segmented';
 import { ModuleHeader } from '../../components/ui/ModuleHeader';
-import { Modal } from '../../components/ui/Modal';
 import { Badge } from '../../components/ui/Badge';
 import { ProjectPill } from '../../components/ui/ProjectPill';
 import type { Task } from '../../lib/types';
@@ -21,8 +20,9 @@ import { usePersistentState } from '../../lib/usePersistentState';
 import { useProjectFilter } from '../../lib/useProjectFilter';
 import { ProjectFilterPills } from '../../components/ui/ProjectFilterPills';
 import { DateRangeFilter } from './DateRangeFilter';
-import { MotionLayout, MotionLayoutItem, MotionPresence } from '../../components/ui/Motion';
+import { MotionLayoutItem, MotionPresence } from '../../components/ui/Motion';
 import { DEFAULT_RANGE, parseRange, serializeRange, isStoredRange, inRange, rangeWindowCapHours } from './dateRange';
+import { WorkspaceDetailRail, WorkspaceHeader, WorkspaceMetric, WorkspaceMetrics, WorkspacePage } from '../../components/ui/WorkspacePrimitives';
 
 const TONE_DOT: Record<Tone, string> = {
   accent: 'bg-accent', danger: 'bg-danger', success: 'bg-success',
@@ -144,7 +144,7 @@ function Lane({ points, ticks, resolve, onPick }: { points: AxisPoint[]; ticks: 
   const tone = markerTone(latest.type, latest.detail);
   const { label, projectId } = resolve(latest);
   return (
-    <div data-testid="timeline-lane" className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-center gap-x-3 gap-y-2 rounded-lg border border-border bg-surface px-3 py-2.5 @3xl:grid-cols-[auto_11rem_minmax(0,1fr)]">
+    <div data-testid="timeline-lane" className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-center gap-x-3 gap-y-2 border-b border-border/70 px-1 py-3 @3xl:grid-cols-[auto_11rem_minmax(0,1fr)]">
       <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border-2 @3xl:h-12 @3xl:w-12 ${TONE_BUBBLE[tone]}`}>
         <Icon size={22} aria-hidden />
       </span>
@@ -166,21 +166,9 @@ function Lane({ points, ticks, resolve, onPick }: { points: AxisPoint[]; ticks: 
   );
 }
 
-/** Big-icon stat card for the summary strip. */
-function StatCard({ tone, count, label }: { tone: Tone; count: number; label: string }) {
-  return (
-    <div className="flex min-w-0 items-center gap-2.5 rounded-lg border border-border bg-surface px-3 py-3 @sm:gap-3 @sm:px-3.5">
-      <span className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border-2 text-lg font-semibold ${TONE_BUBBLE[tone]}`}>
-        {count}
-      </span>
-      <span className="min-w-0 text-[10px] font-medium uppercase leading-snug tracking-wide text-text-muted @sm:text-xs">{label}</span>
-    </div>
-  );
-}
-
 /** Drill-down: full event detail + the project's working-tree diff (for task/review events that
  *  carry a project). Reuses the existing PatchView so diff rendering stays single-source. */
-function EventDetail({ point, display, onClose }: { point: AxisPoint; display: Display; onClose: () => void }) {
+function EventDetail({ point, display }: { point: AxisPoint; display: Display }) {
   const { t } = useTranslation();
   const Icon = eventIcon(point.type);
   const tone = markerTone(point.type, point.detail);
@@ -189,11 +177,10 @@ function EventDetail({ point, display, onClose }: { point: AxisPoint; display: D
   const changed = useProjectChanged(projectId);
   const changes = useProjectChanges(projectId, true);
   return (
-    <Modal title={display.label} description={`${point.detail} · ${clock(point.timestamp)}`} icon={Icon} size="lg" onClose={onClose}>
-      <div className="@container flex h-full flex-col gap-4 overflow-hidden p-5">
+      <div className="@container flex min-h-0 flex-col gap-4 overflow-hidden">
         <div className="flex flex-wrap items-start gap-3">
-          <span className={`flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl border-2 ${TONE_BUBBLE[tone]}`}>
-            <Icon size={30} aria-hidden />
+          <span className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border ${TONE_BUBBLE[tone]}`}>
+            <Icon size={22} aria-hidden />
           </span>
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
@@ -221,14 +208,13 @@ function EventDetail({ point, display, onClose }: { point: AxisPoint; display: D
         ) : null}
 
         {projectId ? (
-          <div className="min-h-0 flex-1 overflow-hidden rounded-lg border border-border">
+          <div className="min-h-48 flex-1 overflow-hidden border-y border-border">
             {changes.isLoading ? <LoadingState /> : <PatchView diff={changes.data?.diff ?? ''} empty={t.timeline.noChanges} />}
           </div>
         ) : (
-          <p className="rounded-lg border border-border bg-elevated p-4 text-center text-sm text-text-muted">{t.timeline.noChanges}</p>
+          <p className="border-y border-border py-4 text-center text-sm text-text-muted">{t.timeline.noChanges}</p>
         )}
       </div>
-    </Modal>
   );
 }
 
@@ -338,73 +324,71 @@ export function TimelineView() {
   }, [projects.data, selectedProject]);
   const commitsQ = useProjectsCommits(projectIds, windowHours);
 
-  const STAT_CARDS: { tone: Tone; count: number; label: string }[] = [
-    { tone: 'accent', count: stats.task, label: t.timeline.filterTasks },
-    { tone: 'accent', count: stats.mission, label: t.timeline.filterMissions },
-    { tone: 'success', count: stats.approved, label: t.timeline.approved },
-    { tone: 'danger', count: stats.escalated, label: t.timeline.escalated },
-    { tone: 'muted', count: stats.signal, label: t.timeline.filterSignals },
-  ];
-
   return (
     <div className="@container">
-      <ModuleHeader title={t.page.timeline} icon={Activity}>
-        <ProjectFilterPills value={selectedProject} onChange={setProject} variant="dropdown" />
-        <DateRangeFilter value={range} onChange={(r) => setRangeRaw(serializeRange(r))} />
-        <Segmented size="sm" options={[{ label: t.timeline.axis, value: 'axis', icon: Activity }, { label: t.timeline.lanes, value: 'lanes', icon: Columns3 }]} value={view} onChange={setView} />
-        <Segmented size="sm" options={FILTER_OPTIONS} value={filter} onChange={setFilter} />
-      </ModuleHeader>
-
-      {/* Content stack owns its own vertical rhythm; ModuleHeader's mb-6 provides the gap below the
-          toolbar (matching every other view's fragment-then-content layout). */}
-      <div className="flex flex-col gap-4">
-      {/* Summary strip: big-icon kind counts for the window */}
-      {hasData ? (
-        <MotionLayout data-testid="timeline-summary" className="grid grid-cols-1 gap-2.5 @xs:grid-cols-2 @sm:grid-cols-3 @3xl:grid-cols-5">
-          {STAT_CARDS.map((s) => <MotionLayoutItem key={s.label} layoutId={`timeline-stat-${s.label}`}><StatCard tone={s.tone} count={s.count} label={s.label} /></MotionLayoutItem>)}
-        </MotionLayout>
-      ) : null}
-
-      {/* Hero: the lane/axis plot — elowen's signature surface */}
-      <section className="min-w-0 rounded-lg border border-border border-t-2 border-t-accent/40 bg-surface p-3 @sm:p-5" style={{ boxShadow: 'var(--shadow-card)' }}>
-        <div className="mb-4 flex items-center justify-between gap-2">
-          <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-widest text-text-muted"><Clock size={12} className="shrink-0 text-text-muted" aria-hidden />{windowLabel}</div>
-          {hasData ? <span className="hidden text-[11px] text-text-muted @sm:inline">{t.timeline.markerHint}</span> : null}
-        </div>
-        {q.isLoading ? (
-          <LoadingState />
-        ) : q.isError ? (
-          <ErrorState message={t.timeline.loadError} onRetry={() => q.refetch()} />
-        ) : !hasData ? (
-          <EmptyState title={t.timeline.empty} description={t.timeline.emptyDescription} icon={Activity} />
-        ) : <MotionPresence mode="wait">{view === 'lanes' ? (
-          <MotionLayoutItem key="lanes">
-          <div className="flex min-w-0 flex-col gap-2.5">
-            {lanes.map((l) => <Lane key={l.target} points={l.points} ticks={ticks} resolve={resolve} onPick={setPicked} />)}
-            <div className="relative mt-1 mr-3 ml-[16.25rem] hidden h-4 @3xl:block">
-              {ticks.map((tk) => (
-                <span key={tk.label} className="absolute -translate-x-1/2 font-mono text-text-muted" style={{ left: `${tk.frac * 100}%`, fontSize: 'var(--text-caption)' }}>{tk.label}</span>
-              ))}
-            </div>
-          </div>
-          </MotionLayoutItem>
-        ) : (
-          <MotionLayoutItem key="axis"><TimelineTrack points={points} ticks={ticks} resolve={resolve} onPick={setPicked} /></MotionLayoutItem>
-        )}</MotionPresence>}
-      </section>
-
-      {/* Changes over time: the commit stream + most-touched files for the same window */}
-      {hasData ? (
-        <ChangesOverTime
-          commits={commitsQ.commits}
-          windowStart={Date.now() - windowHours * 3_600_000}
-          now={Date.now()}
-          multiProject={projectIds.length > 1}
+      <ModuleHeader title={t.page.timeline} count={filteredEvents.length} icon={Activity} />
+      <WorkspacePage>
+        <WorkspaceHeader
+          eyebrow={t.timeline.workspaceEyebrow}
+          title={t.page.timeline}
+          count={filteredEvents.length}
+          description={t.timeline.workspaceIntro}
+          icon={Activity}
+          status={!q.isLoading && !q.isError ? <span className="workspace-status">{t.timeline.workspaceReady}</span> : undefined}
         />
-      ) : null}
+        <WorkspaceMetrics visual={<div className="timeline-core"><Activity size={29} strokeWidth={1.2} /></div>} ariaLabel={t.timeline.summary} testId="timeline-summary">
+          <WorkspaceMetric label={t.timeline.filterTasks} value={stats.task} icon={Activity} />
+          <WorkspaceMetric label={t.timeline.filterMissions} value={stats.mission} icon={Columns3} />
+          <WorkspaceMetric label={t.timeline.approved} value={stats.approved} icon={CheckCircle2} />
+          <WorkspaceMetric label={t.timeline.escalated} value={stats.escalated} icon={AlertTriangle} />
+        </WorkspaceMetrics>
+        <div className="workspace-tabs">
+          <Segmented size="sm" options={[{ label: t.timeline.axis, value: 'axis', icon: Activity }, { label: t.timeline.lanes, value: 'lanes', icon: Columns3 }]} value={view} onChange={setView} variant="line" nowrap aria-label={t.page.timeline} />
+        </div>
+        <div className="workspace-content">
+          <div className="flex min-w-0 flex-wrap items-center gap-2 border-y border-border/80 py-3">
+            <div className="min-w-0 flex-1"><Segmented size="sm" options={FILTER_OPTIONS} value={filter} onChange={setFilter} /></div>
+            <ProjectFilterPills value={selectedProject} onChange={setProject} variant="dropdown" />
+            <DateRangeFilter value={range} onChange={(next) => setRangeRaw(serializeRange(next))} />
+          </div>
 
-      {picked ? <EventDetail point={picked} display={resolve(picked)} onClose={() => setPicked(null)} /> : null}
-      </div>
+          <div className="workspace-master-detail timeline-workspace-grid mt-4" data-detail={picked != null}>
+            <div className="min-w-0">
+              <section className="min-w-0 border-y border-border/80 px-1 py-4">
+                <div className="mb-4 flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-widest text-text-muted"><Clock size={12} className="shrink-0" aria-hidden />{windowLabel}</div>
+                  {hasData ? <span className="hidden text-[11px] text-text-muted @sm:inline">{t.timeline.markerHint}</span> : null}
+                </div>
+                {q.isLoading ? <LoadingState />
+                  : q.isError ? <ErrorState message={t.timeline.loadError} onRetry={() => q.refetch()} />
+                  : !hasData ? <EmptyState title={t.timeline.empty} description={t.timeline.emptyDescription} icon={Activity} />
+                  : <MotionPresence mode="wait">{view === 'lanes' ? (
+                    <MotionLayoutItem key="lanes">
+                      <div className="flex min-w-0 flex-col">
+                        {lanes.map((lane) => <Lane key={lane.target} points={lane.points} ticks={ticks} resolve={resolve} onPick={setPicked} />)}
+                        <div className="relative mt-2 mr-3 ml-[16.25rem] hidden h-4 @3xl:block">
+                          {ticks.map((tick) => <span key={tick.label} className="absolute -translate-x-1/2 font-mono text-text-muted" style={{ left: `${tick.frac * 100}%`, fontSize: 'var(--text-caption)' }}>{tick.label}</span>)}
+                        </div>
+                      </div>
+                    </MotionLayoutItem>
+                  ) : <MotionLayoutItem key="axis"><TimelineTrack points={points} ticks={ticks} resolve={resolve} onPick={setPicked} /></MotionLayoutItem>}</MotionPresence>}
+              </section>
+
+              {hasData ? (
+                <div className="mt-5">
+                  <ChangesOverTime commits={commitsQ.commits} windowStart={Date.now() - windowHours * 3_600_000} now={Date.now()} multiProject={projectIds.length > 1} />
+                </div>
+              ) : null}
+            </div>
+
+            {picked ? (
+              <WorkspaceDetailRail label={t.timeline.detailTitle} closeLabel={t.common.close} onClose={() => setPicked(null)}>
+                <EventDetail point={picked} display={resolve(picked)} />
+              </WorkspaceDetailRail>
+            ) : null}
+          </div>
+        </div>
+      </WorkspacePage>
     </div>
   );
 }

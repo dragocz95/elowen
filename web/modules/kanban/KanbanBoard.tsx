@@ -76,7 +76,7 @@ export function KanbanBoard({ tasks, allTasks, onMove, onSelect, onEdit, blocked
         <div
           key={col.status}
           data-testid={`column-${col.status}`}
-          className={`flex w-[80cqw] shrink-0 flex-col gap-2 rounded-lg border bg-surface p-2 transition-colors @sm:w-auto @sm:min-w-[14rem] @sm:shrink @sm:flex-1 ${isDropTarget ? 'border-accent/60 bg-elevated/40' : 'border-border'}`}
+          className={`flex w-[80cqw] shrink-0 flex-col gap-2 border-y border-r bg-surface/25 px-2 py-3 transition-colors first:border-l @sm:w-auto @sm:min-w-[14rem] @sm:shrink @sm:flex-1 ${isDropTarget ? 'border-accent/60 bg-elevated/40' : 'border-border'}`}
           onDragOver={(e) => { e.preventDefault(); if (dragOver !== col.status) setDragOver(col.status); }}
           onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragOver((s) => (s === col.status ? null : s)); }}
           onDrop={(e) => {

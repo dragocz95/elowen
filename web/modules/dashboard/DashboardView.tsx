@@ -7,6 +7,7 @@ import { HeroNowTile } from './HeroNowTile';
 import { AttentionRail } from './SignalTiles';
 import { ActivityTile } from './ActivityTile';
 import { TodayTasksTile } from './TodayTasksTile';
+import { WorkspacePage } from '../../components/ui/WorkspacePrimitives';
 
 /** A clock that re-renders every 30s (enough for an HH:MM display, keeps the month window + elapsed live). */
 function useNow(): Date {
@@ -25,7 +26,7 @@ export function DashboardView() {
   const nowMs = now.getTime();
 
   return (
-    <div className="mx-auto flex w-full max-w-6xl flex-col gap-5">
+    <WorkspacePage className="dashboard-workspace flex flex-col gap-5">
       <FinishSetupBanner />
       <NeedsInputBanner />
 
@@ -44,6 +45,6 @@ export function DashboardView() {
           <AttentionRail now={nowMs} />
         </div>
       </MotionReveal>
-    </div>
+    </WorkspacePage>
   );
 }

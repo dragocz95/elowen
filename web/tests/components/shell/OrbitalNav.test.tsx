@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-vi.mock('next/navigation', () => ({ usePathname: () => '/stats' }));
+import { fireEvent, render, screen } from '@testing-library/react';
+const pushSpy = vi.hoisted(() => vi.fn());
+vi.mock('next/navigation', () => ({ usePathname: () => '/stats', useRouter: () => ({ push: pushSpy }) }));
 import { OrbitalNav } from '../../../components/shell/OrbitalNav';
 import { createWrapper } from '../../test-utils';
 
@@ -39,25 +40,26 @@ describe('OrbitalNav', () => {
     expect(projects).toHaveAttribute('href', '/projects');
   });
 
-  it('moves spatial focus by one destination for a deliberate wheel gesture', async () => {
+  it('steps to the next route when the wheel is used over navigation', () => {
     mount();
     fireEvent.wheel(screen.getByTestId('future-navigation'), { deltaY: 60 });
-    await waitFor(() => {
-      expect(screen.getByRole('link', { name: 'Projects' }).querySelector('.orbit-node')).toHaveClass('orbit-node-active');
-    });
+    expect(pushSpy).toHaveBeenCalledWith('/memory');
   });
 
-  it('does not render the old scroll cue', () => {
+  it('renders the scroll cue above the version', () => {
     mount();
-    expect(screen.queryByText('Scroll')).toBeNull();
+    expect(screen.getByText('SCROLL')).toBeInTheDocument();
+    expect(screen.getByText('v0.26.0')).toBeInTheDocument();
   });
 
   it('keeps every destination on one vertical orbital rail', () => {
     mount();
     const users = screen.getByRole('link', { name: 'Users' });
     expect(users).not.toHaveAttribute('tabindex', '-1');
-    expect(screen.getByTestId('future-navigation')).toHaveClass('w-[13rem]');
+    expect(screen.getByTestId('future-navigation')).toHaveClass('w-[14.5rem]');
     expect(users.closest('[role="listitem"]')).toHaveClass('absolute');
+    const origins = screen.getAllByRole('listitem').map((item) => item.style.transformOrigin);
+    expect(new Set(origins)).toEqual(new Set(['2.2rem center']));
   });
 
   it('does not move controls under the pointer', () => {
@@ -70,7 +72,7 @@ describe('OrbitalNav', () => {
 
   it('collapses to an icon orbit when content room is constrained', () => {
     mount(true);
-    expect(screen.getByTestId('future-navigation')).toHaveClass('w-20');
+    expect(screen.getByTestId('future-navigation')).toHaveClass('w-[4.75rem]');
     expect(screen.getByRole('link', { name: 'Stats' })).toHaveAttribute('aria-current', 'page');
   });
 });

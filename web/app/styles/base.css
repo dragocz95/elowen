@@ -1,7 +1,6 @@
-/* Scale the whole UI from one rem base. Phones stay at 100%; wider workspaces retain Elowen's
-   user-configurable dense/comfortable layout behavior. */
+/* The reference density is based on a true 16px root. Per-device zoom remains available through
+   UiScaleProvider; the viewport itself no longer inflates every desktop control by 25%. */
 html { font-size: 100%; background: #000; }
-@media (min-width: 768px) { html { font-size: 125%; } }
 
 html, body {
   height: 100%;
@@ -18,8 +17,8 @@ body {
   overflow: hidden;
   overscroll-behavior: none;
   background-image:
-    radial-gradient(circle at 78% -14%, rgb(255 82 54 / 0.035), transparent 31rem),
-    radial-gradient(circle at 8% 108%, rgb(255 82 54 / 0.018), transparent 27rem);
+    radial-gradient(circle at 71% -20%, rgb(255 82 54 / 0.03), transparent 34rem),
+    radial-gradient(circle at 10% 112%, rgb(255 82 54 / 0.014), transparent 30rem);
   background-attachment: fixed;
 }
 

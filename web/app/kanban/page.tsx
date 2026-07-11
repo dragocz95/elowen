@@ -1,7 +1,7 @@
 'use client';
 export const dynamic = 'force-dynamic';
 import { useState, useMemo } from 'react';
-import { KanbanSquare, Columns3, CalendarRange } from 'lucide-react';
+import { KanbanSquare, Columns3, CalendarRange, Plus, Activity, Ban, CheckCircle2 } from 'lucide-react';
 import type { Task } from '../../lib/types';
 import { useTasks, useAllDeps, useMissions } from '../../lib/queries';
 import { taskBlockers } from '../../lib/agentUtils';
@@ -24,6 +24,8 @@ import { useTranslation } from '../../lib/i18n';
 import { usePersistentState } from '../../lib/usePersistentState';
 import { useProjectFilter } from '../../lib/useProjectFilter';
 import { MotionLayoutItem, MotionPresence } from '../../components/ui/Motion';
+import { Button } from '../../components/ui/Button';
+import { WorkspaceHeader, WorkspaceMetric, WorkspaceMetrics, WorkspacePage } from '../../components/ui/WorkspacePrimitives';
 
 const KANBAN_DEFAULT_RANGE: DateRange = { preset: 'today', from: null, to: null };
 
@@ -44,6 +46,7 @@ export default function KanbanPage() {
   const [editing, setEditing] = useState<Task | null>(null);
   const [viewing, setViewing] = useState<Task | null>(null);
   const [createSchedule, setCreateSchedule] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
 
   // A finished card shows its result (read-only); a live/open one opens the editor.
   const openTask = (task: Task) =>
@@ -76,54 +79,89 @@ export default function KanbanPage() {
     return [...base, ...missingEpics];
   }, [tasks.data, range]);
 
+  const summary = useMemo(() => ({
+    open: filteredTasks.filter((task) => task.status === 'open').length,
+    active: filteredTasks.filter((task) => task.status === 'in_progress').length,
+    blocked: filteredTasks.filter((task) => task.status === 'blocked').length,
+    closed: filteredTasks.filter((task) => task.status === 'closed').length,
+  }), [filteredTasks]);
+
   return (
     <ModuleShell moduleId="kanban">
-      <ModuleHeader title={t.page.kanban} count={filteredTasks.length} icon={KanbanSquare}>
-        <ProjectFilterPills value={selectedProject} onChange={setProject} variant="dropdown" />
-        <DateRangeFilter value={range} onChange={(r) => setRangeRaw(serializeRange(r))} compact />
-        <Segmented
-          value={view}
-          onChange={(v) => setView(v as 'board' | 'calendar')}
-          options={[
-            { value: 'board', label: t.kanban.board, icon: Columns3 },
-            { value: 'calendar', label: t.kanban.calendar, icon: CalendarRange },
-          ]}
+      <ModuleHeader title={t.page.kanban} count={filteredTasks.length} icon={KanbanSquare} />
+      <WorkspacePage>
+        <WorkspaceHeader
+          eyebrow={t.kanban.workspaceEyebrow}
+          title={t.page.kanban}
+          count={filteredTasks.length}
+          description={t.kanban.workspaceIntro}
+          icon={KanbanSquare}
+          status={!tasks.isLoading && !tasks.isError ? <span className="workspace-status">{t.kanban.workspaceReady}</span> : undefined}
+          action={<Button variant="accent" icon={Plus} onClick={() => setCreating(true)}>{t.tasks.newTask}</Button>}
         />
-      </ModuleHeader>
+        <WorkspaceMetrics visual={<div className="kanban-core"><KanbanSquare size={28} strokeWidth={1.25} /></div>} ariaLabel={t.kanban.summary}>
+          <WorkspaceMetric label={t.tasks.filterOpen} value={summary.open} icon={Columns3} />
+          <WorkspaceMetric label={t.tasks.filterActive} value={summary.active} icon={Activity} />
+          <WorkspaceMetric label={t.tasks.filterBlocked} value={summary.blocked} icon={Ban} />
+          <WorkspaceMetric label={t.tasks.filterClosed} value={summary.closed} icon={CheckCircle2} />
+        </WorkspaceMetrics>
+        <div className="workspace-tabs">
+          <Segmented
+            value={view}
+            onChange={(v) => setView(v as 'board' | 'calendar')}
+            options={[
+              { value: 'board', label: t.kanban.board, icon: Columns3 },
+              { value: 'calendar', label: t.kanban.calendar, icon: CalendarRange },
+            ]}
+            variant="line"
+            nowrap
+            aria-label={t.page.kanban}
+          />
+        </div>
+        <div className="workspace-content">
+          <div className="flex flex-wrap items-center justify-end gap-2 border-y border-border/80 py-3">
+            <ProjectFilterPills value={selectedProject} onChange={setProject} variant="dropdown" />
+            <DateRangeFilter value={range} onChange={(r) => setRangeRaw(serializeRange(r))} compact />
+          </div>
 
-      {tasks.isLoading ? <LoadingState variant={view === 'board' ? 'kanban' : 'cards'} /> : tasks.isError ? <ErrorState message={t.common.daemonUnreachable} onRetry={() => tasks.refetch()} />
-        : <MotionPresence mode="wait">
-          {view === 'board' ? (
-          <MotionLayoutItem key="board">
-          <KanbanBoard
-            tasks={filteredTasks}
-            allTasks={tasks.data ?? []}
-            blockedBy={blockedBy}
-            missions={missions.data ?? []}
-            onMove={(id, status) => setStatus.mutate({ id, status }, { onError: (e) => toast(String(e), 'error') })}
-            onSelect={openTask}
-            onEdit={setEditing}
-          />
-          </MotionLayoutItem>
-        ) : (
-          <MotionLayoutItem key="calendar">
-          <CalendarView
-            tasks={filteredTasks}
-            onSelect={openTask}
-            onCreateDay={(d) => { const dt = new Date(d); dt.setHours(9, 0, 0, 0); setCreateSchedule(dt.toISOString()); }}
-            onReschedule={(id, day) => {
-              const task = (tasks.data ?? []).find((x) => x.id === id);
-              const prev = task?.scheduled_at ? new Date(task.scheduled_at) : null;
-              const dt = new Date(day);
-              dt.setHours(prev ? prev.getHours() : 9, prev ? prev.getMinutes() : 0, 0, 0);
-              updateTask.mutate({ id, patch: { scheduled_at: dt.toISOString() } }, { onError: (e) => toast(String(e), 'error') });
-            }}
-          />
-          </MotionLayoutItem>
-        )}
-        </MotionPresence>}
+          <div className="mt-4">
+            {tasks.isLoading ? <LoadingState variant={view === 'board' ? 'kanban' : 'cards'} /> : tasks.isError ? <ErrorState message={t.common.daemonUnreachable} onRetry={() => tasks.refetch()} />
+              : <MotionPresence mode="wait">
+                {view === 'board' ? (
+                <MotionLayoutItem key="board">
+                <KanbanBoard
+                  tasks={filteredTasks}
+                  allTasks={tasks.data ?? []}
+                  blockedBy={blockedBy}
+                  missions={missions.data ?? []}
+                  onMove={(id, status) => setStatus.mutate({ id, status }, { onError: (e) => toast(String(e), 'error') })}
+                  onSelect={openTask}
+                  onEdit={setEditing}
+                />
+                </MotionLayoutItem>
+              ) : (
+                <MotionLayoutItem key="calendar">
+                <CalendarView
+                  tasks={filteredTasks}
+                  onSelect={openTask}
+                  onCreateDay={(d) => { const dt = new Date(d); dt.setHours(9, 0, 0, 0); setCreateSchedule(dt.toISOString()); }}
+                  onReschedule={(id, day) => {
+                    const task = (tasks.data ?? []).find((x) => x.id === id);
+                    const prev = task?.scheduled_at ? new Date(task.scheduled_at) : null;
+                    const dt = new Date(day);
+                    dt.setHours(prev ? prev.getHours() : 9, prev ? prev.getMinutes() : 0, 0, 0);
+                    updateTask.mutate({ id, patch: { scheduled_at: dt.toISOString() } }, { onError: (e) => toast(String(e), 'error') });
+                  }}
+                />
+                </MotionLayoutItem>
+              )}
+              </MotionPresence>}
+          </div>
+        </div>
+      </WorkspacePage>
       {editing && <TaskModal task={editing} onClose={() => setEditing(null)} />}
       {viewing && <TaskResultsModal task={viewing} onClose={() => setViewing(null)} />}
+      {creating && <TaskModal onClose={() => setCreating(false)} defaultProjectId={selectedProject === 'all' ? undefined : selectedProject} />}
       {createSchedule && <TaskModal initialSchedule={createSchedule} onClose={() => setCreateSchedule(null)} />}
     </ModuleShell>
   );

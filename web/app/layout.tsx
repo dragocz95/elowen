@@ -5,7 +5,6 @@ import type { ReactNode } from 'react';
 
 import { Shell } from '../components/shell/Shell';
 import { en } from '../lib/i18n/dictionaries/en';
-import { EffectsProvider } from '../lib/useEffects';
 
 // Icons come from Next file conventions: app/icon.png → <link rel="icon"> and app/apple-icon.png →
 // <link rel="apple-touch-icon">. Do NOT set metadata.icons here — declaring it overrides the file
@@ -38,7 +37,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
       suppressHydrationWarning
     >
       <head><script dangerouslySetInnerHTML={{ __html: NO_FLASH_EFFECTS }} /></head>
-      <body style={{ backgroundColor: '#000000' }}><EffectsProvider><Shell>{children}</Shell></EffectsProvider></body>
+      <body style={{ backgroundColor: '#000000' }}><Shell>{children}</Shell></body>
     </html>
   );
 }

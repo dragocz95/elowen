@@ -31,9 +31,9 @@ export function HeroNowTile({ now }: { now: number }) {
       : t.dashboard.allQuiet;
 
   return (
-    <section className="relative isolate overflow-hidden rounded-[1.4rem] border border-border bg-surface px-5 py-5 shadow-[0_24px_90px_rgb(0_0_0_/_0.55)] @container sm:px-7 sm:py-7">
-      <div className="pointer-events-none absolute inset-0 -z-10 bg-[radial-gradient(circle_at_78%_40%,rgb(255_82_54_/_0.13),transparent_34%),linear-gradient(140deg,rgb(255_82_54_/_0.035),transparent_48%)]" aria-hidden />
-      <div className="grid min-h-[28rem] items-center gap-7 @3xl:grid-cols-[minmax(0,1.12fr)_minmax(18rem,.88fr)]">
+    <section className="dashboard-hero relative isolate overflow-hidden border-b border-border/80 px-1 py-5 @container sm:px-3 sm:py-7">
+      <div className="pointer-events-none absolute inset-0 -z-10 bg-[radial-gradient(circle_at_78%_40%,rgb(255_82_54_/_0.1),transparent_35%),linear-gradient(140deg,rgb(255_82_54_/_0.022),transparent_52%)]" aria-hidden />
+      <div className="grid min-h-[29rem] items-center gap-7 @3xl:grid-cols-[minmax(0,1.08fr)_minmax(21rem,.92fr)]">
         <div className="flex min-w-0 flex-col gap-5">
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div className="flex flex-col gap-1.5">
@@ -50,7 +50,7 @@ export function HeroNowTile({ now }: { now: number }) {
           </div>
 
           {presence.primary ? (
-            <Link href={task ? `/tasks?select=${encodeURIComponent(task.id)}` : '/sessions'} className="group flex items-center gap-3 rounded-xl border border-border bg-black/35 px-4 py-3 transition-[border-color,background-color] hover:border-accent/45 hover:bg-accent/[0.045]">
+            <Link href={task ? `/tasks?select=${encodeURIComponent(task.id)}` : '/sessions'} className="group flex items-center gap-3 border-y border-border/80 px-1 py-3 transition-[border-color,background-color] hover:border-accent/35 hover:bg-accent/[0.025] sm:px-3">
               <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-accent/25 bg-accent/10 text-accent"><Sparkles size={16} aria-hidden /></span>
               <span className="flex min-w-0 flex-1 flex-col gap-0.5">
                 <span className="truncate text-sm font-medium text-text">{task?.title ?? agentDisplayName(primaryName)}</span>
@@ -63,7 +63,7 @@ export function HeroNowTile({ now }: { now: number }) {
               <ArrowRight size={15} className="shrink-0 text-text-muted transition-transform group-hover:translate-x-0.5 group-hover:text-accent" aria-hidden />
             </Link>
           ) : (
-            <div className="flex items-center gap-3 rounded-xl border border-border bg-black/25 px-4 py-3">
+            <div className="flex items-center gap-3 border-y border-border/80 px-1 py-3 sm:px-3">
               <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-border bg-elevated text-text-muted">
                 {presence.state === 'offline' ? <WifiOff size={16} aria-hidden /> : <Clock3 size={16} aria-hidden />}
               </span>

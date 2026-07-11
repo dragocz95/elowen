@@ -20,7 +20,7 @@ import { Checkbox } from '../../components/ui/Checkbox';
 import { BrainModelField } from '../../components/ui/BrainModelField';
 import { Segmented } from '../../components/ui/Segmented';
 import { ChoiceField } from '../../components/ui/ChoiceField';
-import { SettingGroup, SettingRow } from '../../components/ui/SettingsPrimitives';
+import { SpatialGroup, SpatialRow } from '../../components/ui/SpatialPrimitives';
 import { ProviderPicker } from '../../components/ui/ProviderPicker';
 import { useTranslation } from '../../lib/i18n';
 import { usePlugins, useProjects, useConfig, useBrainModels } from '../../lib/queries';
@@ -470,7 +470,7 @@ export function PluginConfigEditor({ detail, fieldLabel, fieldHint, fieldOptions
         if (f.type === 'rolePolicies' || f.type === 'mcpServers') return <div key={f.key} className="animate-fade-up @lg:col-span-2">{renderField(f)}</div>;
         if ((f.type === 'boolean' || (f.type === 'enum' && (f.options?.length ?? 0) <= 3)) && !f.risk) {
           const description = [...new Set([fieldHint(f), f.help].filter((value): value is string => Boolean(value?.trim())))].join('\n\n');
-          return <SettingRow key={f.key} title={fieldLabel(f)} description={description || undefined} className="animate-fade-up @lg:col-span-2">{renderField(f)}</SettingRow>;
+          return <SpatialRow key={f.key} title={fieldLabel(f)} description={description || undefined} className="animate-fade-up @lg:col-span-2">{renderField(f)}</SpatialRow>;
         }
         return (
           <div key={f.key} className="animate-fade-up">
@@ -515,9 +515,9 @@ export function PluginConfigEditor({ detail, fieldLabel, fieldHint, fieldOptions
   const behaviorFields = visibleSchema.filter((f) => !isConnection(f) && !isComplex(f));
   const complexFields = visibleSchema.filter(isComplex);
   const group = (key: string, Icon: LucideIcon, title: string, hint: string | undefined, fields: PluginConfigField[]) => (
-    <SettingGroup key={key} title={title} description={hint} icon={Icon}>
+    <SpatialGroup key={key} title={title} description={hint} icon={Icon}>
       <div className="py-4">{fieldList(fields)}</div>
-    </SettingGroup>
+    </SpatialGroup>
   );
 
   const hasConnectionSection = visibleSchema.some((f) => f.type === 'section' && f.key === 'sec_connection');
@@ -529,13 +529,13 @@ export function PluginConfigEditor({ detail, fieldLabel, fieldHint, fieldOptions
           <p className="text-sm text-text-muted">{t.pluginDetail.configEmpty}</p>
         </Collapsible>
       ) : hasExplicitSections ? (
-        <SettingGroup>
+        <SpatialGroup>
           <div className="py-5">
           {/* WhatsApp: the "Pair device" button (QR/code modal) lives at the top of the Connection section. */}
           {detail.name === 'whatsapp' && hasConnectionSection ? <WhatsAppPairSection /> : null}
           {fieldList(visibleSchema)}
           </div>
-        </SettingGroup>
+        </SpatialGroup>
       ) : (
         <div className="flex flex-col gap-4">
             {connectionFields.length ? group('connection', Link2, t.pluginCfg.sectionConnection, t.pluginCfg.sectionConnectionHint, connectionFields) : null}

@@ -41,7 +41,7 @@ function CliRow({ tool, dict }: { tool: CliStatusType; dict: LocaleDict }) {
   const tone = tool.functional ? 'success' : 'danger';
   const st = STATUS_TONES[tone];
   return (
-    <div className={`flex items-center gap-3 rounded-lg border px-4 py-3 ${st.bg} ${st.border}`}>
+    <div className={`flex items-center gap-3 border-b px-1 py-3 sm:px-3 ${st.bg} ${st.border}`}>
       <StatusDot tone={tone} />
       <div className="flex min-w-0 flex-1 items-center gap-2">
         <span className="text-sm font-medium text-text uppercase tracking-wide">{tool.name}</span>
@@ -58,13 +58,13 @@ function CliRow({ tool, dict }: { tool: CliStatusType; dict: LocaleDict }) {
 
 function SectionCard({ title, icon: Icon, step, children }: { title: string; icon?: LucideIcon; step: number; children: React.ReactNode }) {
   return (
-    <section className="overflow-hidden rounded-2xl border border-border bg-surface shadow-[0_20px_70px_rgb(0_0_0_/_0.24)]">
-      <div className="flex items-center gap-3 border-b border-border px-5 py-4 sm:px-6">
-        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border border-accent/25 bg-accent/10 font-mono text-xs font-semibold text-accent">{String(step).padStart(2, '0')}</span>
+    <section className="onboarding-step border-t border-border/80">
+      <div className="flex items-center gap-3 px-1 py-5 sm:px-3">
+        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-accent/25 bg-accent/10 font-mono text-xs font-semibold text-accent">{String(step).padStart(2, '0')}</span>
         {Icon ? <Icon size={16} className="text-text-muted" aria-hidden /> : null}
         <h2 className="text-sm font-semibold tracking-tight text-text">{title}</h2>
       </div>
-      <div className="px-5 py-5 sm:px-6 sm:py-6">{children}</div>
+      <div className="border-t border-border/60 px-1 py-5 sm:px-3 sm:py-6">{children}</div>
     </section>
   );
 }
@@ -190,8 +190,8 @@ export default function OnboardingPage() {
 
   return (
     <ModuleShell moduleId="onboarding">
-      <div className="grid w-full min-w-0 gap-6 lg:grid-cols-[minmax(17rem,.72fr)_minmax(0,1.28fr)] lg:items-start">
-        <aside className="relative isolate overflow-hidden rounded-[1.5rem] border border-border bg-surface px-6 py-7 shadow-[0_26px_90px_rgb(0_0_0_/_0.4)] lg:sticky lg:top-4">
+      <div className="onboarding-workspace grid w-full min-w-0 gap-6 lg:grid-cols-[minmax(18rem,.72fr)_minmax(0,1.28fr)] lg:items-start">
+        <aside className="onboarding-intro relative isolate overflow-hidden px-3 py-7 lg:sticky lg:top-4 lg:border-r lg:border-border/80 lg:pr-8">
           <div className="pointer-events-none absolute inset-0 -z-10 bg-[radial-gradient(circle_at_50%_18%,rgb(255_82_54_/_0.16),transparent_34%),linear-gradient(145deg,rgb(255_82_54_/_0.04),transparent_52%)]" aria-hidden />
           <div className="mx-auto w-full max-w-[14rem]">
             <ElowenPresence state={allStepsDone ? 'success' : 'idle'} label={t.common.appName} />
@@ -203,7 +203,7 @@ export default function OnboardingPage() {
           </div>
 
           {isFresh ? (
-            <div className={`mt-6 flex items-center gap-3 rounded-xl border px-4 py-3 ${allStepsDone ? 'border-[var(--color-success)]/25 bg-[var(--color-success)]/[.07]' : 'border-accent/20 bg-black/25'}`}>
+            <div className={`mt-6 flex items-center gap-3 border-y px-1 py-3 sm:px-3 ${allStepsDone ? 'border-[var(--color-success)]/25 bg-[var(--color-success)]/[.035]' : 'border-accent/20 bg-black/15'}`}>
               {allStepsDone ? <CheckCircle2 size={17} className="text-[var(--color-success)]" /> : <AlertCircle size={17} className="text-accent" />}
               <span className={`text-sm ${allStepsDone ? 'font-medium text-[var(--color-success)]' : 'text-text-muted'}`}>
                 {allStepsDone ? t.onboarding.setupComplete : t.onboarding.setupIncomplete}
@@ -221,7 +221,7 @@ export default function OnboardingPage() {
 
         <div className="flex min-w-0 flex-col gap-4 py-1">
           {isLoading ? (
-            <div className="rounded-2xl border border-border bg-surface p-10"><LoadingState label={t.common.loading} /></div>
+            <div className="border-y border-border/80 p-10"><LoadingState label={t.common.loading} /></div>
           ) : (
             <>
             {/* System Dependencies */}
@@ -266,7 +266,7 @@ export default function OnboardingPage() {
                   const set = (patch: Partial<{ bin: string; args: string }>) =>
                     setProviders((prev) => ({ ...prev, [p.id]: { ...cur, ...patch } }));
                   return (
-                    <div key={p.id} className="flex flex-col gap-3 rounded-lg border border-border bg-elevated/40 p-4 sm:flex-row sm:items-center">
+                    <div key={p.id} className="flex flex-col gap-3 border-b border-border/70 px-1 py-4 sm:flex-row sm:items-center sm:px-3">
                       <div className="flex items-center gap-3 sm:w-40 sm:shrink-0">
                         <span className="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-border bg-elevated">
                           <img src={p.icon} alt="" width={22} height={22} style={{ objectFit: 'contain' }} />
@@ -356,7 +356,7 @@ export default function OnboardingPage() {
               {users.data && users.data.length > 0 ? (
                 <div className="mb-4 flex flex-col gap-2">
                   {users.data.map((u) => (
-                    <div key={u.id} className="flex items-center gap-3 rounded-lg border border-border bg-elevated/40 px-4 py-2.5">
+                      <div key={u.id} className="flex items-center gap-3 border-b border-border/70 px-1 py-2.5 sm:px-3">
                       <div className="flex h-7 w-7 items-center justify-center rounded-full border border-border bg-elevated">
                         <span className="text-xs font-medium text-text-muted">{u.username.charAt(0).toUpperCase()}</span>
                       </div>
@@ -366,14 +366,14 @@ export default function OnboardingPage() {
                   ))}
                 </div>
               ) : (
-                <div className="mb-4 flex items-center gap-2 rounded-lg border border-border bg-elevated/40 px-4 py-3">
+                <div className="mb-4 flex items-center gap-2 border-y border-border/70 px-1 py-3 sm:px-3">
                   <AlertCircle size={14} className="text-[var(--color-warning)] shrink-0" />
                   <span className="text-xs text-text-muted">{t.onboarding.noUsers}</span>
                 </div>
               )}
 
               {/* Add user form */}
-              <div className="flex flex-col gap-3 rounded-lg border border-border bg-elevated/40 p-4">
+              <div className="flex flex-col gap-3 border-y border-border/70 px-1 py-4 sm:px-3">
                 <span className="text-xs font-semibold uppercase tracking-wide text-text-muted">{t.onboarding.addUser}</span>
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
                   <div className="flex-1">

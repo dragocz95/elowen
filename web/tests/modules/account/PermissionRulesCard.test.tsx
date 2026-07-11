@@ -95,6 +95,8 @@ describe('PermissionRulesCard', () => {
     const patches = mountWith({ tools: {}, bash: { 'git status*': 'allow', 'rm *': 'deny' }, yolo: false });
     await screen.findByText('rm *');
     fireEvent.click(screen.getByRole('button', { name: `${en.cli.permDelete}: rm *` }));
+    expect(patches.length).toBe(0);
+    fireEvent.click(screen.getByRole('button', { name: en.cli.permDelete }));
     await waitFor(() => expect(patches.length).toBe(1));
     expect(patches[0]).toEqual({ bash: { 'git status*': 'allow' } });
   });

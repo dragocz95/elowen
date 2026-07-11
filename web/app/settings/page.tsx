@@ -1,7 +1,7 @@
 'use client';
 export const dynamic = 'force-dynamic';
-import { Activity, useEffect, useState, useRef, useMemo, type ReactNode } from 'react';
-import { Bot, SlidersHorizontal, Plus, X, Pencil, Radio, Cpu, Gauge, Layers, Link2, KeyRound, FileText, Eye, Lock, Trash2, GitPullRequest, GitBranch, TerminalSquare, RefreshCw, RotateCcw, Sparkles, FlaskConical, Search } from 'lucide-react';
+import { Activity, useCallback, useEffect, useState, useRef, useMemo, type ReactNode } from 'react';
+import { Bot, SlidersHorizontal, Plus, X, Pencil, Radio, Cpu, Gauge, Layers, Link2, KeyRound, FileText, Eye, Lock, Trash2, GitPullRequest, GitBranch, TerminalSquare, RefreshCw, RotateCcw, Sparkles, FlaskConical, Search, Server } from 'lucide-react';
 import { PROVIDERS, ProviderLogo } from '../../modules/settings/providers';
 import { ModelIcon } from '../../components/ui/ModelIcon';
 import { BackendPicker } from '../../components/ui/BackendPicker';
@@ -17,15 +17,13 @@ import { MemorySection } from '../../modules/settings/MemorySection';
 import { execProvider, execModel, type ProviderId } from '../../lib/modelProvider';
 import { formatTokens } from '../../lib/format';
 import { useBrainModels, useConfig, useMe, useSystem, useSystemSkills } from '../../lib/queries';
-import { useAutoSave } from '../../lib/useAutoSave';
+import { useAutoSaveStatus, type SaveStatus } from '../../lib/useAutoSaveStatus';
 import { useUpdateConfig, useCleanupAll, useSystemUpdate, useSystemRestart, useInstallSkills } from '../../lib/mutations';
 import { ElowenApiError } from '../../lib/elowenClient';
 import { allModels, isPresetExec, removeModel, upsertModel } from '../../lib/execPresets';
 import { usePersistentState } from '../../lib/usePersistentState';
 import { useSearchParams } from 'next/navigation';
 import { SETTINGS_CATEGORY_VALUES, SETTINGS_SECTIONS, type SettingsCategory } from '../../modules/settings/categories';
-import { PageLayout } from '../../components/ui/PageLayout';
-import { RailCard } from '../../components/ui/RailCard';
 import { useToast } from '../../components/ui/Toast';
 import { ModuleHeader } from '../../components/ui/ModuleHeader';
 import { Button } from '../../components/ui/Button';
@@ -34,8 +32,8 @@ import { Field } from '../../components/ui/Field';
 import { Badge } from '../../components/ui/Badge';
 import { Toggle } from '../../components/ui/Toggle';
 import { Segmented } from '../../components/ui/Segmented';
-import { SettingsLayout } from '../../components/ui/SettingsLayout';
-import { SettingGroup, SettingRow } from '../../components/ui/SettingsPrimitives';
+import { SpatialControlSurface } from '../../components/ui/SpatialControlSurface';
+import { SpatialGroup, SpatialRow } from '../../components/ui/SpatialPrimitives';
 import { MotionReveal } from '../../components/ui/Motion';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { HelpTip } from '../../components/ui/HelpTip';
@@ -61,6 +59,15 @@ function ModelInput({ value, onChange, placeholder }: { value: string; onChange:
 
 const CATEGORY_VALUES = SETTINGS_CATEGORY_VALUES;
 type Category = SettingsCategory;
+type SaveFeedback = { status: SaveStatus; retry?: () => void };
+
+function combineSaveFeedback(...items: SaveFeedback[]): SaveFeedback {
+  const error = items.find((item) => item.status === 'error');
+  if (error) return error;
+  if (items.some((item) => item.status === 'saving')) return { status: 'saving' };
+  if (items.some((item) => item.status === 'saved')) return { status: 'saved' };
+  return { status: 'idle' };
+}
 
 /** Keep a settings document alive after its first visit without eagerly mounting every category's
  *  data hooks. React Activity retains form/search state and pauses effects while a panel is hidden. */
@@ -102,6 +109,11 @@ export default function SettingsPage() {
   const searchParams = useSearchParams();
   const [category, setCategoryState] = usePersistentState<Category>('elowen.settings.category', 'models', CATEGORY_VALUES);
   const [visitedCategories, setVisitedCategories] = useState<Set<Category>>(() => new Set([category]));
+  const [sectionFeedback, setSectionFeedback] = useState<Partial<Record<Category, SaveFeedback>>>({});
+  const reportSaveState = useCallback((id: string, status: SaveStatus, retry?: () => void) => {
+    if (!(CATEGORY_VALUES as readonly string[]).includes(id)) return;
+    setSectionFeedback((current) => ({ ...current, [id as Category]: { status, retry } }));
+  }, []);
   useEffect(() => {
     setVisitedCategories((current) => current.has(category) ? current : new Set(current).add(category));
   }, [category]);
@@ -221,43 +233,55 @@ export default function SettingsPage() {
 
   // Persist only the active mode's fields, and explicitly clear the other backend so the two never
   // coexist (relay clears the execs; agents leave the relay model/key untouched but unused).
-  const saveAutopilot = () => {
-    update.mutate(
-      { autopilot: reasoningMode === 'agents'
+  const saveAutopilot = async () => {
+    try {
+      await update.mutateAsync({ autopilot: reasoningMode === 'agents'
         ? { pilotExec, overseerExec, reviewOnDone, tddMode, notes }
-        : { model, overseerModel, apiUrl, providerId: apProviderId, pilotExec: '', overseerExec: '', tddMode, notes, ...(apiKey ? { apiKey } : {}) } },
-      { onSuccess: () => { if (apiKey) setApiKey(''); }, onError: (e) => toast(String(e), 'error') },
-    );
+        : { model, overseerModel, apiUrl, providerId: apProviderId, pilotExec: '', overseerExec: '', tddMode, notes, ...(apiKey ? { apiKey } : {}) } });
+      if (apiKey) setApiKey('');
+    } catch (error) { toast(String(error), 'error'); throw error; }
   };
 
   // GitHub / PR-native settings live in their own section. The global prEnabled is the DEFAULT for new
   // projects; each project can override it. The ghToken is write-only — sent only when freshly typed.
-  const saveGithub = () => {
-    update.mutate(
-      { autopilot: { prEnabled, prBaseBranch, prAutoOpen, prVerifyCommand, ...(ghToken ? { ghToken } : {}) } },
-      { onSuccess: () => { if (ghToken) setGhToken(''); }, onError: (e) => toast(String(e), 'error') },
-    );
+  const saveGithub = async () => {
+    try {
+      await update.mutateAsync({ autopilot: { prEnabled, prBaseBranch, prAutoOpen, prVerifyCommand, ...(ghToken ? { ghToken } : {}) } });
+      if (ghToken) setGhToken('');
+    } catch (error) { toast(String(error), 'error'); throw error; }
   };
 
-  const saveProviders = () =>
-    update.mutate({ providers }, { onError: (e) => toast(String(e), 'error') });
+  const saveProviders = async () => {
+    try { await update.mutateAsync({ providers }); }
+    catch (error) { toast(String(error), 'error'); throw error; }
+  };
 
   // autoUpdate is NOT bundled here — the System toggle is its single writer (it persists inline).
-  const saveDefaults = () =>
-    update.mutate(
-      { defaults: { exec: defExec, autonomy: defAutonomy, maxSessions: defMaxSessions }, security: { tokenTtlDays: defTokenTtl } },
-      { onError: (e) => toast(String(e), 'error') },
-    );
+  const saveDefaults = async () => {
+    try { await update.mutateAsync({ defaults: { exec: defExec, autonomy: defAutonomy, maxSessions: defMaxSessions }, security: { tokenTtlDays: defTokenTtl } }); }
+    catch (error) { toast(String(error), 'error'); throw error; }
+  };
 
   // Auto-persist: every settings form saves itself shortly after a change (no Save buttons anywhere).
   // Secrets (apiKey/ghToken) ride along only when freshly typed, exactly as with the old buttons.
   const ready = seeded.current;
-  useAutoSave([reasoningMode, pilotExec, overseerExec, reviewOnDone, tddMode, notes, model, overseerModel, apiUrl, apiKey, apProviderId], saveAutopilot, { ready });
-  useAutoSave([prEnabled, prBaseBranch, prAutoOpen, prVerifyCommand, ghToken], saveGithub, { ready });
-  useAutoSave([providers], saveProviders, { ready });
-  useAutoSave([defExec, defAutonomy, defMaxSessions, defTokenTtl], saveDefaults, { ready });
+  const autopilotSave = useAutoSaveStatus([reasoningMode, pilotExec, overseerExec, reviewOnDone, tddMode, notes, model, overseerModel, apiUrl, apiKey, apProviderId], saveAutopilot, { ready });
+  const githubSave = useAutoSaveStatus([prEnabled, prBaseBranch, prAutoOpen, prVerifyCommand, ghToken], saveGithub, { ready });
+  const providersSave = useAutoSaveStatus([providers], saveProviders, { ready });
+  const defaultsSave = useAutoSaveStatus([defExec, defAutonomy, defMaxSessions, defTokenTtl], saveDefaults, { ready });
   // Per-model context windows auto-persist like every other model setting (no Save button).
-  useAutoSave([modelWindows], () => update.mutate({ brain: { modelContextWindows: modelWindows } }, { onError: (e) => toast(String(e), 'error') }), { ready });
+  const windowsSave = useAutoSaveStatus([modelWindows], async () => {
+    try { await update.mutateAsync({ brain: { modelContextWindows: modelWindows } }); }
+    catch (error) { toast(String(error), 'error'); throw error; }
+  }, { ready });
+  const modelsSave = useAutoSaveStatus([allowed, customModels, hiddenPresets, modelNotes], async () => {
+    try { await update.mutateAsync({ allowedExecs: allowed, customModels, hiddenPresets, modelNotes }); }
+    catch (error) { toast(String(error), 'error'); throw error; }
+  }, { ready, delay: 0 });
+  const autoUpdateSave = useAutoSaveStatus([autoUpdate], async () => {
+    try { await update.mutateAsync({ autoUpdate }); }
+    catch (error) { toast(String(error), 'error'); throw error; }
+  }, { ready, delay: 0 });
   // Set (or clear, with null) one model's context-window override; the autosave above persists it.
   const setWindow = (key: string, value: number | null) =>
     setModelWindows((cur) => {
@@ -292,10 +316,6 @@ export default function SettingsPage() {
     setCustomModels(cm);
     setHiddenPresets(hp);
     setModelNotes(mn);
-    update.mutate(
-      { allowedExecs, customModels: cm, hiddenPresets: hp, modelNotes: mn },
-      { onError: (e) => toast(String(e), 'error') }, // auto-persist is silent on success
-    );
   };
 
   // Persist a single model's autopilot description (empty string clears the entry). Persist-only — the
@@ -351,22 +371,45 @@ export default function SettingsPage() {
   // Providers the user has actually configured (non-empty binary) — the only ones offered when
   // adding a model, and the source for the executor picker's grouping.
   const activeProviders = PROVIDERS.filter((p) => (providers[p.id]?.bin ?? '').trim() !== '').map((p) => p.id as ProviderId);
+  const feedbackByCategory: Partial<Record<Category, SaveFeedback>> = {
+    models: combineSaveFeedback(modelsSave, windowsSave),
+    providers: providersSave,
+    autopilot: combineSaveFeedback(autopilotSave, defaultsSave),
+    github: githubSave,
+    system: combineSaveFeedback(autoUpdateSave, defaultsSave),
+    brain: sectionFeedback.brain,
+    memory: sectionFeedback.memory,
+    plugins: sectionFeedback.plugins,
+  };
+  const activeFeedback = feedbackByCategory[category] ?? { status: 'idle' as const };
+  const sectionHints: Record<Category, string> = {
+    models: t.settings.modelsSectionHint,
+    providers: t.settings.providersSectionHint,
+    brain: t.settings.brainSectionHint,
+    memory: t.settings.memorySectionHint,
+    plugins: t.settings.pluginsSectionHint,
+    autopilot: t.settings.autopilotSectionHint,
+    github: t.settings.githubSectionHint,
+    data: t.settings.dataSectionHint,
+    system: t.settings.systemSectionHint,
+  };
 
   return (
     <ModuleShell moduleId="settings">
-      <ModuleHeader title={`${t.page.settings} / ${t.settings[category]}`} icon={SlidersHorizontal} />
+      <ModuleHeader title={t.page.settings} icon={SlidersHorizontal} />
 
       <div className="flex w-full min-w-0 flex-col gap-6">
-      <SettingsLayout
+      <SpatialControlSurface
         ariaLabel={t.settings.sectionsNav}
-        sections={SETTINGS_SECTIONS.map(({ id, icon }) => ({ id, icon, label: t.settings[id] }))}
+        sections={SETTINGS_SECTIONS.map(({ id, icon }) => ({ id, icon, label: t.settings[id], description: sectionHints[id] }))}
         value={category}
         onChange={(value) => setCategory(value as Category)}
-        searchPlaceholder={t.managePicker.searchPlaceholder}
+        status={activeFeedback.status}
+        onRetry={activeFeedback.retry}
       >
         <SettingsPanel id="models" active={category} visited={visitedCategories}>
-          <>
-            <div className="flex flex-col gap-2.5 pb-2">
+          <div className="settings-model-catalog">
+            <div className="settings-model-catalog__tools">
               <div className="relative w-full">
                 <Search size={15} aria-hidden className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" />
                 <Input
@@ -400,18 +443,18 @@ export default function SettingsPage() {
               const groupExecs = [...allCliItems.map((m) => m.exec), ...allElowenItems.map((m) => m.exec)];
               const enabledCount = groupExecs.filter((e) => allowed.includes(e)).length;
               return (
-                <div key={prov.id} className="flex flex-col gap-3">
-                  <div className="flex items-center gap-2.5">
+                <section key={prov.id} className="settings-model-group">
+                  <header className="settings-model-group__header">
                     <ProviderLogo meta={prov} size={28} />
                     <span className="text-sm font-semibold text-text">{prov.label}</span>
                     <span className="font-mono text-tiny text-text-muted">{enabledCount}/{groupExecs.length}</span>
                     {prov.embedded ? <HelpTip align="left">{t.help.elowenModels}</HelpTip> : null}
-                  </div>
-                  <div className="@container divide-y divide-border/70 border-y border-border/80">
+                  </header>
+                  <div className="settings-model-register divide-y divide-border/70">
                     {cliItems.map((p) => {
                       const isCustom = !isPresetExec(p.exec);
                       return (
-                        <div data-testid="model-row" key={p.exec} className="group flex min-w-0 items-center gap-3 px-1 py-3.5 transition-colors hover:bg-elevated/30">
+                        <div data-testid="model-row" key={p.exec} className="settings-model-row group flex min-w-0 items-center gap-3 transition-colors">
                           <span className="flex h-9 w-9 shrink-0 items-center justify-center text-text-muted">
                             <ModelIcon name={p.exec} size={20} />
                           </span>
@@ -462,7 +505,7 @@ export default function SettingsPage() {
                       const override = modelWindows[winKey];
                       const overridden = override != null;
                       return (
-                      <div data-testid="model-row" key={m.exec} className="flex min-w-0 items-center gap-3 px-1 py-3.5 transition-colors hover:bg-elevated/30">
+                      <div data-testid="model-row" key={m.exec} className="settings-model-row flex min-w-0 items-center gap-3 transition-colors">
                           <span className="flex h-9 w-9 shrink-0 items-center justify-center text-text-muted"><ModelIcon name={m.model} size={20} /></span>
                           <div className="min-w-0 flex-1">
                             <span className="truncate text-sm font-medium text-text">{m.model}</span>
@@ -486,7 +529,7 @@ export default function SettingsPage() {
                       );
                     })}
                   </div>
-                </div>
+                </section>
               );
             })}
 
@@ -502,7 +545,7 @@ export default function SettingsPage() {
                 {t.settings.addModel}
               </Button>
             </div>
-          </>
+          </div>
         </SettingsPanel>
 
         {showAddForm && (
@@ -538,8 +581,8 @@ export default function SettingsPage() {
         <SettingsPanel id="autopilot" active={category} visited={visitedCategories}>
             <div className="flex flex-col gap-4">
               {/* One clear choice: how the planner + overseer reason. Relay (API) OR CLI agents. */}
-              <SettingGroup>
-                <SettingRow title={t.settings.backendMode} description={t.help.backendMode} icon={Radio}>
+              <SpatialGroup>
+                <SpatialRow title={t.settings.backendMode} description={t.help.backendMode} icon={Radio}>
                   <div className="flex flex-col gap-2">
                     <Segmented
                       value={reasoningMode}
@@ -551,13 +594,13 @@ export default function SettingsPage() {
                     />
                     <p className="text-xs text-text-muted">{reasoningMode === 'relay' ? t.settings.modeRelayDesc : t.settings.modeAgentsDesc}</p>
                   </div>
-                </SettingRow>
-              </SettingGroup>
+                </SpatialRow>
+              </SpatialGroup>
 
-              <SettingGroup>
+              <SpatialGroup>
               {reasoningMode === 'relay' ? (
                 <>
-                  <SettingRow title={t.settings.apProvider} description={t.help.apProvider} icon={KeyRound}>
+                  <SpatialRow title={t.settings.apProvider} description={t.help.apProvider} icon={KeyRound}>
                     <ProviderPicker
                       providers={(config.data?.brain?.providers ?? []).filter((p) => p.apiKeySet).map((p) => ({ id: p.id, label: p.label }))}
                       value={apProviderId}
@@ -565,99 +608,99 @@ export default function SettingsPage() {
                       label={t.settings.apProvider}
                       emptyText={t.settings.apNoProviders}
                     />
-                  </SettingRow>
-                  <SettingRow title={t.settings.plannerModel} description={t.help.plannerModel} icon={Bot}>
+                  </SpatialRow>
+                  <SpatialRow title={t.settings.plannerModel} description={t.help.plannerModel} icon={Bot}>
                     {apProviderId && apCatalog.length > 0
                       ? <ModelCatalogField value={model} onChange={setModel} catalog={apCatalog} title={t.settings.plannerModel} subtitle={t.help.plannerModel} />
                       : <ModelInput value={model} onChange={setModel} placeholder={t.settings.plannerPlaceholder} />}
-                  </SettingRow>
-                  <SettingRow title={t.settings.overseerModel} description={t.help.overseerModel} icon={Eye}>
+                  </SpatialRow>
+                  <SpatialRow title={t.settings.overseerModel} description={t.help.overseerModel} icon={Eye}>
                     {apProviderId && apCatalog.length > 0
                       ? <ModelCatalogField value={overseerModel} onChange={setOverseerModel} catalog={apCatalog} title={t.settings.overseerModel} subtitle={t.help.overseerModel} />
                       : <ModelInput value={overseerModel} onChange={setOverseerModel} placeholder={t.settings.overseerPlaceholder} />}
-                  </SettingRow>
+                  </SpatialRow>
                   {/* No provider picked → enter an endpoint + key directly. A chosen provider supplies both,
                       so these fields simply don't render (no redundant "inherited" note). */}
                   {apProviderId === '' ? (
                     <>
-                      <SettingRow title={t.settings.apiUrl} description={t.help.apiUrl} icon={Link2}>
+                      <SpatialRow title={t.settings.apiUrl} description={t.help.apiUrl} icon={Link2}>
                         <input value={apiUrl} onChange={(e) => setApiUrl(e.target.value)} className={inputClass} />
-                      </SettingRow>
-                      <SettingRow title={t.settings.apiKey} description={apiKeySet ? t.help.apiKey : t.help.apiKeyNotSet} icon={KeyRound}>
+                      </SpatialRow>
+                      <SpatialRow title={t.settings.apiKey} description={apiKeySet ? t.help.apiKey : t.help.apiKeyNotSet} icon={KeyRound}>
                         <input type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder={apiKeySet ? t.settings.apiKeySetPlaceholder : t.settings.apiKeyPlaceholder} className={inputClass} />
-                      </SettingRow>
+                      </SpatialRow>
                     </>
                   ) : null}
                 </>
               ) : (
                 <>
-                  <SettingRow title={t.settings.plannerModel} description={t.help.plannerModel} icon={Bot}>
+                  <SpatialRow title={t.settings.plannerModel} description={t.help.plannerModel} icon={Bot}>
                     <BackendPicker value={pilotExec} onChange={setPilotExec} models={models} relayLabel={t.settings.relayOption} allowRelay={false} />
-                  </SettingRow>
-                  <SettingRow title={t.settings.overseerModel} description={t.help.overseerModel} icon={Eye}>
+                  </SpatialRow>
+                  <SpatialRow title={t.settings.overseerModel} description={t.help.overseerModel} icon={Eye}>
                     <BackendPicker value={overseerExec} onChange={setOverseerExec} models={models} relayLabel={t.settings.relayOption} allowRelay={false} />
-                  </SettingRow>
-                  <SettingRow title={t.settings.reviewOnDone} description={t.help.reviewOnDone} icon={Eye}>
+                  </SpatialRow>
+                  <SpatialRow title={t.settings.reviewOnDone} description={t.help.reviewOnDone} icon={Eye}>
                     <Toggle checked={reviewOnDone} onChange={setReviewOnDone} label={t.settings.reviewOnDone} />
-                  </SettingRow>
+                  </SpatialRow>
                 </>
               )}
-              <SettingRow title={t.settings.notes} description={t.help.notes} icon={FileText}>
+              <SpatialRow title={t.settings.notes} description={t.help.notes} icon={FileText}>
                 <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={3} className={`${inputClass} resize-none`} />
-              </SettingRow>
-              </SettingGroup>
+              </SpatialRow>
+              </SpatialGroup>
 
               {/* Default mission run — what the pilot actually launches: the worker executor, the
                   autonomy level and how many agents run in parallel. These apply in both reasoning
                   modes, so they live below the relay/agents split. */}
-              <SettingGroup title={t.settings.runDefaults} icon={Cpu}>
-                <SettingRow title={t.settings.executor} description={t.help.executor} icon={Cpu}>
+              <SpatialGroup title={t.settings.runDefaults} icon={Cpu}>
+                <SpatialRow title={t.settings.executor} description={t.help.executor} icon={Cpu}>
                   {/* Same worker + Elowen AI split the task picker uses, in the unified manage-selection
                       modal, so the default executor can also be a brain model. A saved value missing
                       from the catalog stays selectable as a pinned row. */}
                   <BackendPicker value={defExec} onChange={setDefExec} models={models} relayLabel={t.settings.relayOption} allowRelay={false} />
-                </SettingRow>
-                <SettingRow title={t.settings.autonomy} description={t.help.autonomy} icon={Gauge}>
+                </SpatialRow>
+                <SpatialRow title={t.settings.autonomy} description={t.help.autonomy} icon={Gauge}>
                   <div>
                   <Segmented options={['L0', 'L1', 'L2', 'L3'].map((l) => ({ value: l, label: l }))} value={defAutonomy} onChange={setDefAutonomy} />
                   <p className="mt-2 text-xs leading-relaxed text-text-muted">
                     {({ L0: t.missions.autonomyL0Desc, L1: t.missions.autonomyL1Desc, L2: t.missions.autonomyL2Desc, L3: t.missions.autonomyL3Desc } as Record<string, string>)[defAutonomy]}
                   </p>
                   </div>
-                </SettingRow>
-                <SettingRow title={t.settings.maxSessions} description={t.help.maxSessions} icon={Layers}>
+                </SpatialRow>
+                <SpatialRow title={t.settings.maxSessions} description={t.help.maxSessions} icon={Layers}>
                   <input type="number" min={1} value={defMaxSessions} onChange={(e) => setDefMaxSessions(Number(e.target.value))} className={inputClass} />
-                </SettingRow>
+                </SpatialRow>
                 {/* TDD mission mode applies to every worker (standalone, mission phase, embedded) regardless
                     of the relay/agents split, so it lives here with the run defaults — persisted via the
                     autopilot patch (saveAutopilot). */}
-                <SettingRow title={t.settings.tddMode} description={t.help.tddMode} icon={FlaskConical}>
+                <SpatialRow title={t.settings.tddMode} description={t.help.tddMode} icon={FlaskConical}>
                   <Toggle checked={tddMode} onChange={setTddMode} label={t.settings.tddMode} />
-                </SettingRow>
-              </SettingGroup>
+                </SpatialRow>
+              </SpatialGroup>
             </div>
         </SettingsPanel>
 
         <SettingsPanel id="github" active={category} visited={visitedCategories}>
           <div className="flex flex-col gap-4">
             <GithubStatusBanner />
-            <SettingGroup>
-            <SettingRow title={t.settings.ghToken} description={ghTokenSet ? t.help.ghToken : t.help.ghTokenNotSet} icon={KeyRound}>
+            <SpatialGroup>
+            <SpatialRow title={t.settings.ghToken} description={ghTokenSet ? t.help.ghToken : t.help.ghTokenNotSet} icon={KeyRound}>
               <input type="password" value={ghToken} onChange={(e) => setGhToken(e.target.value)} placeholder={ghTokenSet ? t.settings.apiKeySetPlaceholder : t.settings.ghTokenPlaceholder} className={inputClass} />
-            </SettingRow>
-            <SettingRow title={t.settings.prEnabled} description={t.help.prEnabled} icon={GitPullRequest}>
+            </SpatialRow>
+            <SpatialRow title={t.settings.prEnabled} description={t.help.prEnabled} icon={GitPullRequest}>
               <Toggle checked={prEnabled} onChange={setPrEnabled} label={t.settings.prEnabled} />
-            </SettingRow>
-            <SettingRow title={t.settings.prBaseBranch} description={t.help.prBaseBranch} icon={GitBranch}>
+            </SpatialRow>
+            <SpatialRow title={t.settings.prBaseBranch} description={t.help.prBaseBranch} icon={GitBranch}>
               <input value={prBaseBranch} onChange={(e) => setPrBaseBranch(e.target.value)} placeholder={t.settings.prBaseBranchPlaceholder} className={inputClass} />
-            </SettingRow>
-            <SettingRow title={t.settings.prAutoOpen} description={t.help.prAutoOpen} icon={GitPullRequest}>
+            </SpatialRow>
+            <SpatialRow title={t.settings.prAutoOpen} description={t.help.prAutoOpen} icon={GitPullRequest}>
               <Toggle checked={prAutoOpen} onChange={setPrAutoOpen} label={t.settings.prAutoOpen} />
-            </SettingRow>
-            <SettingRow title={t.settings.prVerifyCommand} description={t.help.prVerifyCommand} icon={TerminalSquare}>
+            </SpatialRow>
+            <SpatialRow title={t.settings.prVerifyCommand} description={t.help.prVerifyCommand} icon={TerminalSquare}>
               <input value={prVerifyCommand} onChange={(e) => setPrVerifyCommand(e.target.value)} placeholder={t.settings.prVerifyCommandPlaceholder} className={`${inputClass} font-mono text-xs`} />
-            </SettingRow>
-            </SettingGroup>
+            </SpatialRow>
+            </SpatialGroup>
           </div>
         </SettingsPanel>
 
@@ -699,13 +742,13 @@ export default function SettingsPage() {
                 })}
               </div>
             </section>
-            <div className="flex flex-col gap-3">
+            <div className="flex flex-col divide-y divide-border/70 border-y border-border/80">
               {PROVIDERS.map((p) => {
                 const cur = providers[p.id] ?? { bin: p.binHint, args: '', skipPermissions: true, resume: true };
                 const set = (patch: Partial<{ bin: string; args: string; skipPermissions: boolean; resume: boolean }>) => setProviders((prev) => ({ ...prev, [p.id]: { ...cur, ...patch } }));
                 return (
                   <div key={p.id} className="@container">
-                  <div className="flex flex-col gap-3 border-y border-border/80 py-5 @sm:flex-row @sm:items-start">
+                  <div className="flex flex-col gap-3 py-5 @sm:flex-row @sm:items-start">
                     <div className="flex items-center gap-3 @sm:w-44 @sm:shrink-0 @sm:pt-1">
                       <ProviderLogo meta={p} alt={t.providers[p.id as keyof typeof t.providers]} size={56} />
                       <div className="min-w-0">
@@ -733,9 +776,9 @@ export default function SettingsPage() {
                         </Field>
                       </div>
                       {p.noBypassFlag ? (
-                        <div className="rounded-md border border-border bg-bg px-3 py-2 text-[11px] text-text-muted">{t.settings.skipPermissionsNoop}</div>
+                        <p className="border-t border-border/70 pt-2 text-[11px] leading-relaxed text-text-muted">{t.settings.skipPermissionsNoop}</p>
                       ) : (
-                        <label className="flex items-center justify-between gap-3 rounded-md border border-border bg-bg px-3 py-2">
+                        <label className="flex items-center justify-between gap-3 border-t border-border/70 pt-2">
                           <span className="flex min-w-0 items-center gap-1.5 text-xs font-medium text-text">
                             {t.settings.skipPermissions}
                             <HelpTip align="left">{t.help.skipPermissions}</HelpTip>
@@ -743,7 +786,7 @@ export default function SettingsPage() {
                           <Toggle checked={cur.skipPermissions !== false} onChange={(v) => set({ skipPermissions: v })} label={t.settings.skipPermissions} />
                         </label>
                       )}
-                      <label className="flex items-center justify-between gap-3 rounded-md border border-border bg-bg px-3 py-2">
+                      <label className="flex items-center justify-between gap-3 border-t border-border/70 pt-2">
                         <span className="flex min-w-0 items-center gap-1.5 text-xs font-medium text-text">
                           {t.settings.resumeSessions}
                           <HelpTip align="left">{t.help.resumeSessions}</HelpTip>
@@ -762,103 +805,73 @@ export default function SettingsPage() {
 
 
         <SettingsPanel id="system" active={category} visited={visitedCategories}>
-            <PageLayout
-              rail={
-                <RailCard title={t.settings.services}>
-                  <div className="flex flex-col gap-3.5">
-                    {[
-                      { name: t.settings.serviceDaemon, port: ':4400', up: !system.isError, target: 'daemon' as const, restartLabel: t.settings.restartDaemon },
-                      { name: t.settings.serviceWeb, port: ':4500', up: true, target: 'web' as const, restartLabel: t.settings.restartWeb },
-                    ].map((s) => (
-                      <div key={s.port} className="flex items-center justify-between">
-                        <span className="flex items-center gap-2.5 text-sm text-text">
-                          <span className={s.up ? 'live-dot inline-block h-2.5 w-2.5 rounded-full bg-success' : 'inline-block h-2.5 w-2.5 rounded-full bg-danger'} />
-                          {s.name} <span className="font-mono text-xs text-text-muted">{s.port}</span>
-                        </span>
-                        <span className="flex items-center gap-2.5">
-                          <span className={`text-xs font-medium ${s.up ? 'text-success' : 'text-danger'}`}>{s.up ? t.settings.serviceUp : t.settings.serviceDown}</span>
-                          <button
-                            type="button"
-                            aria-label={s.restartLabel}
-                            title={s.restartLabel}
-                            disabled={systemRestart.isPending}
-                            onClick={() => setRestartTarget(s.target)}
-                            className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-border bg-elevated text-text-muted transition-colors hover:border-accent hover:text-text disabled:cursor-not-allowed disabled:opacity-60"
-                          >
-                            <RotateCcw size={13} aria-hidden />
-                          </button>
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                </RailCard>
-              }
-            >
-              <div className="flex flex-col gap-5">
-              {/* Hero — Elowen identity, current version and the update affordance. Flat OLED: hairline
-                  border, no glow/gradient/shadow. */}
-              <div className="relative w-full rounded-2xl border border-border bg-surface px-6 py-9 text-center">
-                <div className="relative flex flex-col items-center gap-5">
-                  <img src="/elowen-logo.png" alt={t.common.appName} className="h-12 w-auto" />
-                  <div className="flex flex-col items-center gap-2.5">
-                    <span className="font-mono text-4xl font-bold tracking-tight text-text">{system.data?.version ?? '—'}</span>
+          <div className="flex flex-col gap-5">
+            <SpatialGroup title={t.settings.version} icon={RefreshCw} description={t.settings.versionDesc}>
+              <div className="spatial-identity">
+                <img src="/elowen-logo.png" alt={t.common.appName} className="h-9 w-auto shrink-0" />
+                <div className="flex min-w-0 flex-1 flex-col gap-1">
+                  <span className="font-mono text-xl font-semibold tracking-tight text-text">{system.data?.version ?? '—'}</span>
+                  <span className="flex flex-wrap items-center gap-2">
                     {system.data?.updateAvailable
                       ? <Badge tone="warning">{t.settings.updateAvailable.replace('{v}', system.data.latest ?? '')}</Badge>
                       : system.data?.latest ? <Badge tone="success">{t.settings.upToDate}</Badge> : null}
-                  </div>
-                  {system.data?.lastUpdatedAt && (() => {
-                    const lastUpdated = new Date(system.data.lastUpdatedAt).toLocaleString();
-                    return (
-                      <span className="text-xs text-text-muted" title={lastUpdated}>
-                        {t.settings.lastUpdated.replace('{date}', lastUpdated)}
-                      </span>
-                    );
-                  })()}
+                    {system.data?.lastUpdatedAt ? (
+                      <span className="text-xs text-text-muted">{t.settings.lastUpdated.replace('{date}', new Date(system.data.lastUpdatedAt).toLocaleString())}</span>
+                    ) : null}
+                  </span>
+                </div>
+                {system.data?.updateAvailable ? (
                   <button
                     type="button"
                     onClick={() => systemUpdate.mutate(undefined, {
                       onSuccess: () => toast(t.settings.updateStarted),
                       onError: (e) => toast(e instanceof ElowenApiError && e.code === 'mission_running' ? t.settings.updateBlockedMission : String(e), 'error'),
                     })}
-                    disabled={systemUpdate.isPending || !system.data?.updateAvailable}
-                    className="inline-flex h-9 items-center gap-1.5 rounded-md border border-accent bg-accent px-4 text-xs font-medium text-bg transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:border-border disabled:bg-elevated disabled:text-text-muted disabled:opacity-60"
+                    disabled={systemUpdate.isPending}
+                    className="inline-flex h-9 items-center gap-1.5 rounded-md bg-accent px-4 text-xs font-medium text-bg transition-opacity hover:opacity-90 disabled:opacity-60"
                   >
                     <RefreshCw size={14} className={systemUpdate.isPending ? 'animate-spin' : ''} />
                     {systemUpdate.isPending ? t.settings.updating : t.settings.updateNow}
                   </button>
-                </div>
+                ) : null}
               </div>
+            </SpatialGroup>
 
-              <SettingGroup>
+            <SpatialGroup title={t.settings.services} icon={Server}>
+              {[
+                { name: t.settings.serviceDaemon, port: ':4400', up: !system.isError, target: 'daemon' as const, restartLabel: t.settings.restartDaemon },
+                { name: t.settings.serviceWeb, port: ':4500', up: true, target: 'web' as const, restartLabel: t.settings.restartWeb },
+              ].map((service) => (
+                <SpatialRow key={service.port} title={`${service.name} ${service.port}`} icon={Server}>
+                  <span className="flex items-center justify-end gap-3">
+                    <span className={`inline-flex items-center gap-2 text-xs font-medium ${service.up ? 'text-success' : 'text-danger'}`}>
+                      <span className={`h-2 w-2 rounded-full ${service.up ? 'live-dot bg-success' : 'bg-danger'}`} aria-hidden />
+                      {service.up ? t.settings.serviceUp : t.settings.serviceDown}
+                    </span>
+                    <button type="button" className="spatial-inline-action" disabled={systemRestart.isPending} onClick={() => setRestartTarget(service.target)}>
+                      <RotateCcw size={13} aria-hidden />{service.restartLabel}
+                    </button>
+                  </span>
+                </SpatialRow>
+              ))}
+            </SpatialGroup>
+
+            <SpatialGroup>
                 {/* Auto-update — a full-size pill switch, no fine print. */}
-                <SettingRow title={t.settings.autoUpdate} icon={RefreshCw}>
+                <SpatialRow title={t.settings.autoUpdate} icon={RefreshCw}>
                   <div className="flex items-center gap-3">
-                  <button
-                    type="button"
-                    role="switch"
-                    aria-checked={autoUpdate}
-                    aria-label={t.settings.autoUpdate}
-                    onClick={() => { const v = !autoUpdate; setAutoUpdate(v); update.mutate({ autoUpdate: v }, { onError: (e) => toast(String(e), 'error') }); }}
-                    className={`relative inline-flex h-7 w-12 shrink-0 cursor-pointer items-center rounded-full border transition-colors ${autoUpdate ? 'border-accent bg-accent' : 'border-border bg-elevated'}`}
-                    style={{ transitionDuration: 'var(--motion-fast)' }}
-                  >
-                    <span
-                      className={`absolute top-1/2 h-5 w-5 -translate-y-1/2 rounded-full shadow-sm ${autoUpdate ? 'bg-bg translate-x-[22px]' : 'bg-text-muted translate-x-[3px]'}`}
-                      style={{ transition: 'transform var(--motion-base) var(--ease-spring)' }}
-                    />
-                  </button>
+                  <Toggle checked={autoUpdate} onChange={setAutoUpdate} label={t.settings.autoUpdate} />
                   <span className={`text-sm font-medium ${autoUpdate ? 'text-text' : 'text-text-muted'}`}>{autoUpdate ? t.settings.on : t.settings.off}</span>
                   </div>
-                </SettingRow>
+                </SpatialRow>
 
                 {/* Session token TTL — a server-wide security setting, so it lives with the other
                     server controls rather than among the per-task defaults. Same autosave as defaults. */}
-                <SettingRow title={t.settings.tokenTtl} description={t.help.tokenTtl} icon={KeyRound}>
+                <SpatialRow title={t.settings.tokenTtl} description={t.help.tokenTtl} icon={KeyRound}>
                   <input type="number" min={1} value={defTokenTtl} onChange={(e) => setDefTokenTtl(Number(e.target.value))} className={inputClass} />
-                </SettingRow>
-              </SettingGroup>
-              </div>
-            </PageLayout>
+                </SpatialRow>
+            </SpatialGroup>
+          </div>
         </SettingsPanel>
 
         <SettingsPanel id="brain" active={category} visited={visitedCategories}>
@@ -869,11 +882,11 @@ export default function SettingsPage() {
                 {t.settings.brainModelsLink}
               </button>
             </p>
-            <BrainSection />
+            <BrainSection onSaveState={reportSaveState} />
           </>
         </SettingsPanel>
 
-        <SettingsPanel id="memory" active={category} visited={visitedCategories}><MemorySection /></SettingsPanel>
+        <SettingsPanel id="memory" active={category} visited={visitedCategories}><MemorySection onSaveState={reportSaveState} /></SettingsPanel>
 
         <SettingsPanel id="plugins" active={category} visited={visitedCategories}><PluginsSection /></SettingsPanel>
 
@@ -891,7 +904,7 @@ export default function SettingsPage() {
           </div>
         </SettingsPanel>
 
-      </SettingsLayout>
+      </SpatialControlSurface>
       </div>
 
       <ConfirmDialog

@@ -1,26 +1,27 @@
 'use client';
 import { useState, useEffect } from 'react';
-import { useAutoSave } from '../../lib/useAutoSave';
 import { Eye, Gauge, MoonStar, SlidersHorizontal, Zap } from 'lucide-react';
 import { BrainModelField } from '../../components/ui/BrainModelField';
 import { Segmented } from '../../components/ui/Segmented';
-import { SettingGroup, SettingRow } from '../../components/ui/SettingsPrimitives';
+import { SpatialGroup, SpatialRow } from '../../components/ui/SpatialPrimitives';
 import { Toggle } from '../../components/ui/Toggle';
 import { Slider } from '../../components/ui/Slider';
 import { ReasoningScale } from '../../components/ui/ReasoningScale';
 import { LoadingState } from '../../components/ui/states';
 import { useToast } from '../../components/ui/Toast';
 import { useTranslation } from '../../lib/i18n';
+import { useAutoSaveStatus, type SaveStatus } from '../../lib/useAutoSaveStatus';
 import { useMyCliSettings, useMyPermissions, useBrainModels } from '../../lib/queries';
 import { useSaveMyCliSettings, useSaveMyPermissions } from '../../lib/mutations';
 import { PermissionRulesCard } from './PermissionRulesCard';
+import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 
 const NO_REASONING_LEVELS: string[] = [];
 
 /** Account → Elowen AI: per-user runtime settings for the embedded brain (web chat + `elowen chat`).
  *  Thinking level + vision fallback + auto-compact; the default model pickers render beside this
  *  section in AccountView. Communication style lives in Personality. Its own load/save + autosave. */
-export function CliSection() {
+export function CliSection({ onSaveState }: { onSaveState?: (section: string, status: SaveStatus, retry?: () => void) => void }) {
   const { data, isLoading } = useMyCliSettings();
   const models = useBrainModels();
   const save = useSaveMyCliSettings();
@@ -32,6 +33,7 @@ export function CliSection() {
   const [thinkingLevel, setThinkingLevel] = useState('');
   const [autoCompact, setAutoCompact] = useState(false);
   const [autoCompactAt, setAutoCompactAt] = useState(80);
+  const [confirmYolo, setConfirmYolo] = useState(false);
 
   const [seeded, setSeeded] = useState(false);
   // Seed once, on first arrival. A sibling save (AccountView's Elowen-model pick, or this section's own
@@ -81,40 +83,62 @@ export function CliSection() {
       setYoloSeeded(true);
     }
   }, [permissions.data, yoloSeeded]);
-  // On save error, revert the optimistic value to the server truth. The query cache is never
-  // optimistically mutated, so permissions.data still holds the pre-edit value; without this the
-  // toggle would stay stuck on a value the server rejected (the seed guard won't re-seed it).
-  useAutoSave([yolo], () => {
-    savePermissions.mutate({ yolo }, {
-      onError: () => { toast(t.cli.saveError, 'error'); if (permissions.data) setYolo(permissions.data.yolo); },
-    });
-  }, { ready: yoloSeeded });
-  useAutoSave([unattendedAsks], () => {
-    savePermissions.mutate({ unattendedAsks }, {
-      onError: () => { toast(t.cli.saveError, 'error'); if (permissions.data) setUnattendedAsks(permissions.data.unattendedAsks); },
-    });
-  }, { ready: yoloSeeded });
+  // Permission defaults persist immediately. Failed values stay visible so the user can retry from
+  // the section header instead of silently losing their intent.
+  const { status: yoloStatus, retry: retryYolo } = useAutoSaveStatus([yolo], async () => {
+    try {
+      await savePermissions.mutateAsync({ yolo });
+    } catch (error) {
+      toast(t.cli.saveError, 'error');
+      throw error;
+    }
+  }, { ready: yoloSeeded, delay: 0 });
+  const { status: unattendedStatus, retry: retryUnattended } = useAutoSaveStatus([unattendedAsks], async () => {
+    try {
+      await savePermissions.mutateAsync({ unattendedAsks });
+    } catch (error) {
+      toast(t.cli.saveError, 'error');
+      throw error;
+    }
+  }, { ready: yoloSeeded, delay: 0 });
 
   // Auto-persist shortly after any change. Sends only the fields this section owns — the PATCH merges,
   // so the Personality/default-model picks stay untouched.
-  const persist = () => {
+  const { status: settingsStatus, retry: retrySettings } = useAutoSaveStatus([visionSelection, thinkingLevel, autoCompact, autoCompactAt], async () => {
     const [vProvider, ...vRest] = visionSelection.split('::');
-    save.mutate(
-      {
+    try {
+      await save.mutateAsync({
         visionModel: visionSelection ? vRest.join('::') : '', visionModelProvider: visionSelection ? (vProvider ?? '') : '',
         thinkingLevel, autoCompact, autoCompactAt,
-      },
-      { onError: () => toast(t.cli.saveError, 'error') },
-    );
-  };
-  useAutoSave([visionSelection, thinkingLevel, autoCompact, autoCompactAt], persist, { ready: seeded });
+      });
+    } catch (error) {
+      toast(t.cli.saveError, 'error');
+      throw error;
+    }
+  }, { ready: seeded });
+
+  const status = settingsStatus === 'error' || yoloStatus === 'error' || unattendedStatus === 'error'
+    ? 'error'
+    : settingsStatus === 'saving' || yoloStatus === 'saving' || unattendedStatus === 'saving'
+      ? 'saving'
+      : settingsStatus === 'saved' || yoloStatus === 'saved' || unattendedStatus === 'saved' ? 'saved' : 'idle';
+  useEffect(() => {
+    const retry = status === 'error'
+      ? () => {
+        if (settingsStatus === 'error') retrySettings();
+        if (yoloStatus === 'error') retryYolo();
+        if (unattendedStatus === 'error') retryUnattended();
+      }
+      : undefined;
+    onSaveState?.('cli', status, retry);
+  }, [onSaveState, retrySettings, retryUnattended, retryYolo, settingsStatus, status, unattendedStatus, yoloStatus]);
 
   if (isLoading || !data) return <LoadingState />;
 
   return (
     <div className="flex flex-col gap-4">
-      <SettingGroup>
-      <SettingRow title={t.cli.thinkingLabel} icon={Gauge} description={t.help.cliThinking}>
+      <SpatialGroup>
+      <SpatialRow title={t.cli.thinkingLabel} icon={Gauge} description={t.help.cliThinking}>
         <ReasoningScale
           ariaLabel={t.cli.thinkingLabel}
           value={thinkingLevel}
@@ -124,9 +148,9 @@ export function CliSection() {
             label: lv === '' ? t.cli.thinkingDefault : (activeModel?.reasoningLabels?.[lv] ?? lv),
           }))}
         />
-      </SettingRow>
+      </SpatialRow>
 
-      <SettingRow title={t.cli.visionModelLabel} icon={Eye} description={t.help.cliVisionModel}>
+      <SpatialRow title={t.cli.visionModelLabel} icon={Eye} description={t.help.cliVisionModel}>
         <BrainModelField
           value={visionSelection}
           onChange={setVisionSelection}
@@ -136,9 +160,9 @@ export function CliSection() {
           defaultLabel={t.cli.visionModelDefault}
           keyOf={(m) => `${m.provider}::${m.model}`}
         />
-      </SettingRow>
+      </SpatialRow>
 
-      <SettingRow title={t.cli.autoCompact} icon={SlidersHorizontal} description={t.help.cliAutoCompact}>
+      <SpatialRow title={t.cli.autoCompact} icon={SlidersHorizontal} description={t.help.cliAutoCompact}>
         <div className="flex flex-col gap-4">
           <label className="flex items-center gap-3 text-sm text-text">
             <Toggle checked={autoCompact} onChange={setAutoCompact} label={t.cli.autoCompactToggle} />
@@ -152,16 +176,16 @@ export function CliSection() {
             </div>
           ) : null}
         </div>
-      </SettingRow>
+      </SpatialRow>
 
-      <SettingRow title={t.cli.yoloTitle} icon={Zap} description={t.cli.yoloWarning}>
+      <SpatialRow title={t.cli.yoloTitle} icon={Zap} description={t.cli.yoloWarning}>
         <label className="flex items-center gap-3 text-sm text-text">
-          <Toggle checked={yolo} onChange={setYolo} label={t.cli.yoloToggle} />
+          <Toggle checked={yolo} onChange={(next) => next ? setConfirmYolo(true) : setYolo(false)} label={t.cli.yoloToggle} />
           <span>{t.cli.yoloToggle}</span>
         </label>
-      </SettingRow>
+      </SpatialRow>
 
-      <SettingRow title={t.cli.unattendedTitle} icon={MoonStar} description={t.help.cliUnattendedAsks}>
+      <SpatialRow title={t.cli.unattendedTitle} icon={MoonStar} description={t.help.cliUnattendedAsks}>
         <Segmented
           value={unattendedAsks}
           onChange={(v) => setUnattendedAsks(v === 'deny' ? 'deny' : 'allow')}
@@ -171,10 +195,18 @@ export function CliSection() {
           ]}
           aria-label={t.cli.unattendedTitle}
         />
-      </SettingRow>
-      </SettingGroup>
+      </SpatialRow>
+      </SpatialGroup>
 
       <PermissionRulesCard />
+      <ConfirmDialog
+        open={confirmYolo}
+        title={t.cli.yoloConfirmTitle}
+        description={t.cli.yoloWarning}
+        confirmLabel={t.cli.yoloConfirm}
+        onConfirm={() => { setConfirmYolo(false); setYolo(true); }}
+        onClose={() => setConfirmYolo(false)}
+      />
     </div>
   );
 }

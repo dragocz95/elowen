@@ -8,8 +8,8 @@ import type { CliSettings, PermissionSettings, BrainModelOption } from '../../..
 const saveCli = vi.fn();
 const savePermissions = vi.fn();
 vi.mock('../../../lib/mutations', () => ({
-  useSaveMyCliSettings: () => ({ mutate: saveCli }),
-  useSaveMyPermissions: () => ({ mutate: savePermissions }),
+  useSaveMyCliSettings: () => ({ mutate: saveCli, mutateAsync: saveCli }),
+  useSaveMyPermissions: () => ({ mutate: savePermissions, mutateAsync: savePermissions }),
 }));
 
 const CLI: CliSettings = {

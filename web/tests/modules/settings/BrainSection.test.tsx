@@ -5,6 +5,7 @@ import { createWrapper } from '../../test-utils';
 import { en } from '../../../lib/i18n/dictionaries/en';
 
 const saveProviders = vi.fn();
+const disconnect = vi.fn();
 const CONFIG = { brain: { providers: [], agentName: 'Elowen', maxSteps: 20 } };
 const OAUTH = { 'oauth-anthropic': true, 'oauth-openai-codex': false, 'oauth-github-copilot': false };
 
@@ -15,9 +16,9 @@ vi.mock('../../../lib/queries', async (importOriginal) => ({
 }));
 vi.mock('../../../lib/mutations', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
-  useUpdateConfig: () => ({ mutate: vi.fn() }),
+  useUpdateConfig: () => ({ mutate: vi.fn(), mutateAsync: vi.fn() }),
   useSaveBrainProviders: () => ({ mutate: saveProviders }),
-  useBrainOauthDisconnect: () => ({ mutate: vi.fn() }),
+  useBrainOauthDisconnect: () => ({ mutate: disconnect }),
 }));
 vi.mock('../../../lib/elowenClient', async (importOriginal) => {
   const actual = await importOriginal<Record<string, unknown>>();
@@ -31,7 +32,7 @@ import { BrainSection } from '../../../modules/settings/BrainSection';
 
 const renderSection = () => render(<ToastProvider><BrainSection /></ToastProvider>, { wrapper: createWrapper().wrapper });
 
-beforeEach(() => { saveProviders.mockClear(); });
+beforeEach(() => { saveProviders.mockClear(); disconnect.mockClear(); });
 
 describe('BrainSection — OAuth account model picker', () => {
   it('opens the manage modal for a connected account, picks a model (icon rows), and saves the selection', async () => {
@@ -48,5 +49,14 @@ describe('BrainSection — OAuth account model picker', () => {
     const payload = saveProviders.mock.calls.at(-1)![0] as { id: string; models: string[] }[];
     const entry = payload.find((p) => p.id === 'anthropic');
     expect(entry?.models).toEqual(['claude-opus']);
+  });
+
+  it('confirms before disconnecting an OAuth account', () => {
+    renderSection();
+    fireEvent.click(screen.getByRole('button', { name: `${en.brain.disconnect}: ${en.brain.types['oauth-anthropic']}` }));
+    expect(disconnect).not.toHaveBeenCalled();
+    expect(screen.getByText(en.brain.disconnectConfirm.replace('{provider}', en.brain.types['oauth-anthropic']))).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: en.brain.disconnect }));
+    expect(disconnect).toHaveBeenCalledWith('oauth-anthropic', expect.any(Object));
   });
 });

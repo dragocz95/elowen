@@ -1,7 +1,7 @@
 'use client';
 import { useCallback, useDeferredValue, useEffect, useMemo, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { Plus, ListChecks, Search, Archive, Trash2, X, ChevronLeft, ChevronRight, CalendarDays, List } from 'lucide-react';
+import { Plus, ListChecks, Search, Archive, Trash2, X, ChevronLeft, ChevronRight, CalendarDays, List, Activity, Ban, Rocket } from 'lucide-react';
 import type { Task, TaskStatus } from '../../lib/types';
 import { useTasks, useAllDeps, useSessions, useSessionSignals, useMissions } from '../../lib/queries';
 import { taskBlockers, taskSessionName } from '../../lib/agentUtils';
@@ -30,6 +30,7 @@ import { DEFAULT_RANGE, serializeRange, parseRange, isStoredRange, inRange } fro
 import { taskDayMs } from './dateRange';
 import { dayKey } from '../kanban/calendar';
 import { MotionLayout, MotionLayoutItem, MotionPresence } from '../../components/ui/Motion';
+import { WorkspaceDetailRail, WorkspaceHeader, WorkspaceMetric, WorkspaceMetrics, WorkspacePage } from '../../components/ui/WorkspacePrimitives';
 
 type Filter = 'all' | TaskStatus | 'autopilot';
 const FILTER_VALUES: readonly Filter[] = ['all', 'open', 'in_progress', 'blocked', 'closed', 'cancelled', 'autopilot'];
@@ -194,94 +195,112 @@ export function TasksView() {
     return out;
   }, [pageItems, dayLabel]);
 
+  const summary = useMemo(() => {
+    const items = tasks.data ?? [];
+    return {
+      active: items.filter((task) => task.status === 'in_progress').length,
+      blocked: items.filter((task) => task.status === 'blocked').length,
+      autopilot: items.filter((task) => task.type === 'epic' && (childMap.get(task.id)?.length ?? 0) > 0).length,
+      closed: items.filter((task) => task.status === 'closed').length,
+    };
+  }, [childMap, tasks.data]);
+
   return (
     <>
-      <ModuleHeader title={t.page.tasks} count={filtered.length} icon={ListChecks}>
-        <ProjectFilterPills value={selectedProject} onChange={setProject} variant="dropdown" />
-        <DateRangeFilter value={range} onChange={(r) => setRangeRaw(serializeRange(r))} compact />
-        <Segmented size="sm" value={filter} onChange={(v) => setFilter(v as Filter)} options={FILTERS} />
-        <div className="relative w-40 @sm:w-52">
-          <Search size={14} aria-hidden className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" />
-          <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={t.tasks.searchPlaceholder} className="pl-9" />
+      <ModuleHeader title={t.page.tasks} count={filtered.length} icon={ListChecks} />
+      <WorkspacePage>
+        <WorkspaceHeader
+          eyebrow={t.tasks.workspaceEyebrow}
+          title={t.page.tasks}
+          count={tasks.data?.length ?? 0}
+          description={t.tasks.workspaceIntro}
+          icon={ListChecks}
+          status={!tasks.isLoading && !tasks.isError ? <span className="workspace-status">{t.tasks.workspaceReady}</span> : undefined}
+          action={<Button variant="accent" icon={Plus} onClick={() => setCreating(true)}>{t.tasks.newTask}</Button>}
+        />
+        <WorkspaceMetrics visual={<div className="task-core"><ListChecks size={28} strokeWidth={1.25} /></div>} ariaLabel={t.tasks.summary}>
+          <WorkspaceMetric label={t.tasks.metricActive} value={summary.active} icon={Activity} />
+          <WorkspaceMetric label={t.tasks.metricBlocked} value={summary.blocked} icon={Ban} />
+          <WorkspaceMetric label={t.tasks.metricAutopilot} value={summary.autopilot} icon={Rocket} />
+          <WorkspaceMetric label={t.tasks.metricClosed} value={summary.closed} icon={Archive} />
+        </WorkspaceMetrics>
+        <div className="workspace-tabs">
+          <div className="min-w-0 overflow-x-auto">
+            <Segmented size="sm" value={filter} onChange={(v) => setFilter(v as Filter)} options={FILTERS} variant="line" nowrap aria-label={t.tasks.filterLabel} />
+          </div>
         </div>
-        <Button variant="accent" icon={Plus} onClick={() => setCreating(true)}>{t.tasks.newTask}</Button>
-      </ModuleHeader>
 
-      {tasks.isLoading ? <LoadingState variant="cards" />
-        : tasks.isError ? <ErrorState message={t.common.daemonUnreachable} onRetry={() => tasks.refetch()} />
-        : !tasks.data || tasks.data.length === 0 ? <EmptyState title={t.tasks.empty} description={t.tasks.emptyDescription} icon={ListChecks} action={<Button variant="accent" icon={Plus} onClick={() => setCreating(true)}>{t.tasks.newTask}</Button>} />
-        : filtered.length === 0 ? <EmptyState title={t.tasks.noMatches} description={t.tasks.noMatchesDescription} icon={Search} />
-        : (
-          // @container so the master/detail split reacts to the CONTENT width (dock-aware), not the
-          // viewport. The fixed bulk toolbar + modals below stay OUTSIDE it (siblings) so container
-          // containment never re-anchors them.
-          <div className="@container">
-          <div className="@3xl:flex @3xl:items-start @3xl:gap-5">
-            {/* Left — searchable task list */}
-            <div className="flex flex-col gap-5 @3xl:w-[42%] @3xl:shrink-0">
-              <MotionLayout className="flex flex-col gap-5">
-              <MotionPresence>
-              {groups.map((g) => (
-                <MotionLayoutItem key={g.key} layoutId={`task-day-${g.key}`} className="flex flex-col gap-2">
-                  <div className="flex items-center gap-3">
-                    <CalendarDays size={12} className="shrink-0 text-text-muted" aria-hidden />
-                    <span className="text-[11px] font-semibold uppercase tracking-wider text-text-muted">{g.label}</span>
-                    <span className="h-px flex-1 bg-border" />
-                    <span className="inline-flex items-center gap-1 font-mono text-tiny text-text-muted"><List size={11} className="shrink-0 text-text-muted" aria-hidden />{g.items.length}</span>
-                  </div>
-                  <MotionLayout className="flex flex-col gap-3">
+        <div className="workspace-content">
+          <div className="flex min-w-0 flex-wrap items-center gap-2 border-y border-border/80 py-3">
+            <div className="relative min-w-[15rem] flex-1">
+              <Search size={14} aria-hidden className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" />
+              <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={t.tasks.searchPlaceholder} className="pl-9" />
+            </div>
+            <ProjectFilterPills value={selectedProject} onChange={setProject} variant="dropdown" />
+            <DateRangeFilter value={range} onChange={(r) => setRangeRaw(serializeRange(r))} compact />
+          </div>
+
+          {tasks.isLoading ? <LoadingState variant="list" />
+            : tasks.isError ? <ErrorState message={t.common.daemonUnreachable} onRetry={() => tasks.refetch()} />
+            : !tasks.data || tasks.data.length === 0 ? <EmptyState title={t.tasks.empty} description={t.tasks.emptyDescription} icon={ListChecks} action={<Button variant="accent" icon={Plus} onClick={() => setCreating(true)}>{t.tasks.newTask}</Button>} />
+            : filtered.length === 0 ? <EmptyState title={t.tasks.noMatches} description={t.tasks.noMatchesDescription} icon={Search} />
+            : (
+              <div className="workspace-master-detail tasks-workspace-grid mt-4" data-detail={selectedId != null}>
+                <div className="min-w-0">
+                  <MotionLayout className="flex flex-col gap-5">
                     <MotionPresence>
-                    {g.items.map((task) => {
-                      const kids = childMap.get(task.id);
-                      if (task.type === 'epic' && kids && kids.length > 0) {
-                        return <MotionLayoutItem key={task.id} layoutId={`task-${task.id}`}><EpicGroup epic={task} phases={kids} effectiveStatus={epicEffectiveStatus(task, missions.data ?? [], kids)} expanded={expandedEpics.has(task.id)} onToggle={() => toggleEpic(task.id)} onEdit={setEditing} onSelect={(x) => setSelectedId(x.id)} onContextMenu={ctxMenu.open} activeId={selectedId} blockedBy={blockedBy} onDropTask={(e) => taskDrop.handleDrop(e, task)} dropTargetValid={draggingId ? taskDrop.isValidTarget(draggingId, task) : undefined} /></MotionLayoutItem>;
-                      }
-                      return <MotionLayoutItem key={task.id} layoutId={`task-${task.id}`}><TaskCard task={task} onEdit={setEditing} onSelect={(x) => setSelectedId(x.id)} onContextMenu={ctxMenu.open} active={selectedId === task.id} blockers={blockedBy.get(task.id)} selected={selected.has(task.id)} onToggleSelect={toggleSelect} selecting={selected.size > 0} dragging={draggingId === task.id} onDragStart={(e) => { e.dataTransfer.setData('text/plain', task.id); setDraggingId(task.id); }} onDragEnd={() => setDraggingId(null)} onDropTask={(e) => taskDrop.handleDrop(e, task)} dropTargetValid={draggingId ? taskDrop.isValidTarget(draggingId, task) : undefined} /></MotionLayoutItem>;
-                    })}
+                    {groups.map((group) => (
+                      <MotionLayoutItem key={group.key} layoutId={`task-day-${group.key}`} className="task-day-section">
+                        <div className="flex items-center gap-3 border-b border-border/70 py-2.5">
+                          <CalendarDays size={12} className="shrink-0 text-text-muted" aria-hidden />
+                          <span className="text-[11px] font-semibold uppercase tracking-wider text-text-muted">{group.label}</span>
+                          <span className="h-px flex-1 bg-border" />
+                          <span className="inline-flex items-center gap-1 font-mono text-tiny text-text-muted"><List size={11} className="shrink-0" aria-hidden />{group.items.length}</span>
+                        </div>
+                        <MotionLayout className="flex flex-col">
+                          <MotionPresence>
+                          {group.items.map((task) => {
+                            const kids = childMap.get(task.id);
+                            if (task.type === 'epic' && kids && kids.length > 0) {
+                              return <MotionLayoutItem key={task.id} layoutId={`task-${task.id}`}><EpicGroup epic={task} phases={kids} effectiveStatus={epicEffectiveStatus(task, missions.data ?? [], kids)} expanded={expandedEpics.has(task.id)} onToggle={() => toggleEpic(task.id)} onEdit={setEditing} onSelect={(item) => setSelectedId(item.id)} onContextMenu={ctxMenu.open} activeId={selectedId} blockedBy={blockedBy} onDropTask={(event) => taskDrop.handleDrop(event, task)} dropTargetValid={draggingId ? taskDrop.isValidTarget(draggingId, task) : undefined} /></MotionLayoutItem>;
+                            }
+                            return <MotionLayoutItem key={task.id} layoutId={`task-${task.id}`}><TaskCard task={task} onEdit={setEditing} onSelect={(item) => setSelectedId(item.id)} onContextMenu={ctxMenu.open} active={selectedId === task.id} blockers={blockedBy.get(task.id)} selected={selected.has(task.id)} onToggleSelect={toggleSelect} selecting={selected.size > 0} dragging={draggingId === task.id} onDragStart={(event) => { event.dataTransfer.setData('text/plain', task.id); setDraggingId(task.id); }} onDragEnd={() => setDraggingId(null)} onDropTask={(event) => taskDrop.handleDrop(event, task)} dropTargetValid={draggingId ? taskDrop.isValidTarget(draggingId, task) : undefined} /></MotionLayoutItem>;
+                          })}
+                          </MotionPresence>
+                        </MotionLayout>
+                      </MotionLayoutItem>
+                    ))}
                     </MotionPresence>
                   </MotionLayout>
-                </MotionLayoutItem>
-              ))}
-              </MotionPresence>
-              </MotionLayout>
 
-              {filtered.length > PAGE_SIZE && (
-                <div className="flex items-center justify-between border-t border-border pt-3">
-                  <span className="font-mono text-xs text-text-muted">
-                    {t.tasks.pageRange
-                      .replace('{from}', String(clampedPage * PAGE_SIZE + 1))
-                      .replace('{to}', String(clampedPage * PAGE_SIZE + pageItems.length))
-                      .replace('{total}', String(filtered.length))}
-                  </span>
-                  <div className="flex items-center gap-2">
-                    <Button variant="ghost" icon={ChevronLeft} disabled={clampedPage === 0} onClick={() => setPage(clampedPage - 1)}>{t.tasks.prevPage}</Button>
-                    <Button variant="ghost" disabled={clampedPage >= pageCount - 1} onClick={() => setPage(clampedPage + 1)}>{t.tasks.nextPage}<ChevronRight size={15} className="ml-1" /></Button>
-                  </div>
+                  {filtered.length > PAGE_SIZE ? (
+                    <div className="flex items-center justify-between border-t border-border py-3">
+                      <span className="font-mono text-xs text-text-muted">{t.tasks.pageRange.replace('{from}', String(clampedPage * PAGE_SIZE + 1)).replace('{to}', String(clampedPage * PAGE_SIZE + pageItems.length)).replace('{total}', String(filtered.length))}</span>
+                      <div className="flex items-center gap-2">
+                        <Button variant="ghost" icon={ChevronLeft} disabled={clampedPage === 0} onClick={() => setPage(clampedPage - 1)}>{t.tasks.prevPage}</Button>
+                        <Button variant="ghost" disabled={clampedPage >= pageCount - 1} onClick={() => setPage(clampedPage + 1)}>{t.tasks.nextPage}<ChevronRight size={15} className="ml-1" /></Button>
+                      </div>
+                    </div>
+                  ) : null}
                 </div>
-              )}
-            </div>
 
-            {/* Right — persistent detail pane. Sizes to its content and scrolls with the page (no inner
-                scrollbar); its own header is sticky below the module toolbar so it stays visible. */}
-            <aside className="mt-5 min-w-0 @3xl:mt-0 @3xl:flex-1">
-              {(() => {
-                if (!selectedId) {
-                  return <div className="hidden items-center justify-center gap-2 rounded-lg border border-dashed border-border py-20 text-sm text-text-muted @3xl:flex"><ListChecks size={14} className="shrink-0 text-text-muted/50" aria-hidden />{t.tasks.selectHint}</div>;
-                }
-                const selTask = tasks.data?.find((x) => x.id === selectedId);
-                const selPhases = selTask?.type === 'epic' ? (childMap.get(selTask.id) ?? []) : [];
-                // A selected mission (epic with phases) shows the flow graph; everything else — including
-                // a phase drilled into from the graph — shows the task/agent detail with a back chip.
-                if (selTask?.type === 'epic' && selPhases.length > 0) {
-                  return <div className="rounded-lg border border-border bg-surface p-4" style={{ boxShadow: 'var(--shadow-card)' }}><MissionFlow epic={selTask} phases={selPhases} activeId={selectedId} onSelectPhase={setSelectedId} onContextMenu={ctxMenu.open} /></div>;
-                }
-                const backToEpic = selTask?.parent_id && tasks.data?.some((x) => x.id === selTask.parent_id && x.type === 'epic') ? selTask.parent_id : null;
-                return <div className="rounded-lg border border-border bg-surface p-4" style={{ boxShadow: 'var(--shadow-card)' }}><TaskDetailPane taskId={selectedId} onEdit={setEditing} onBack={backToEpic ? () => setSelectedId(backToEpic) : undefined} /></div>;
-              })()}
-            </aside>
-          </div>
-          </div>
-        )}
+                {selectedId ? (
+                  <WorkspaceDetailRail label={t.tasks.detailTitle} closeLabel={t.common.close} onClose={() => setSelectedId(null)}>
+                    {(() => {
+                      const selectedTask = tasks.data?.find((item) => item.id === selectedId);
+                      const selectedPhases = selectedTask?.type === 'epic' ? (childMap.get(selectedTask.id) ?? []) : [];
+                      if (selectedTask?.type === 'epic' && selectedPhases.length > 0) {
+                        return <MissionFlow epic={selectedTask} phases={selectedPhases} activeId={selectedId} onSelectPhase={setSelectedId} onContextMenu={ctxMenu.open} />;
+                      }
+                      const backToEpic = selectedTask?.parent_id && tasks.data?.some((item) => item.id === selectedTask.parent_id && item.type === 'epic') ? selectedTask.parent_id : null;
+                      return <TaskDetailPane taskId={selectedId} onEdit={setEditing} onBack={backToEpic ? () => setSelectedId(backToEpic) : undefined} />;
+                    })()}
+                  </WorkspaceDetailRail>
+                ) : null}
+              </div>
+            )}
+        </div>
+      </WorkspacePage>
 
       {selected.size > 0 && (
         <div className="fixed bottom-6 left-1/2 z-40 flex -translate-x-1/2 items-center gap-2 rounded-xl border border-border bg-elevated px-3 py-2 shadow-[var(--shadow-raised)] animate-fade-up">

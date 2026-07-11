@@ -15,21 +15,22 @@ const server = setupServer(
     { id: 1, slug: 'alpha', path: '/repo/alpha', notes: '', icon: '', pr_enabled: null },
     { id: 2, slug: 'beta', path: '/repo/beta', notes: '', icon: '', pr_enabled: null },
   ])),
+  http.get('*/api/config', () => HttpResponse.json({ autopilot: { overseerExec: '' }, defaults: { exec: '', autonomy: 'L3', maxSessions: 1 } })),
   http.post('*/api/sessions', async ({ request }) => { spawnBody = await request.json(); return HttpResponse.json({ session: 'elowen-A' }, { status: 201 }); }),
 );
 beforeAll(() => server.listen({ onUnhandledRequest })); afterAll(() => server.close());
 
 describe('TasksPage', () => {
-  it('keeps the toolbar and its status choices wrapping instead of horizontally scrolling', async () => {
+  it('keeps filters responsive while status navigation stays on one compact line', async () => {
     const { wrapper: Wrapper } = createWrapper();
     render(<Wrapper><ToastProvider><TasksPage /></ToastProvider></Wrapper>);
     const projects = await screen.findByRole('button', { name: /project/i });
     const toolbar = projects.parentElement?.parentElement!;
-    const statuses = screen.getByRole('radiogroup');
+    const statuses = screen.getByRole('radiogroup', { name: 'Task status' });
     expect(toolbar.className).toContain('flex-wrap');
     expect(toolbar.className).not.toContain('overflow-x-auto');
-    expect(statuses.className).toContain('flex-wrap');
-    expect(statuses.className).not.toContain('flex-nowrap');
+    expect(statuses.className).toContain('flex-nowrap');
+    expect(statuses.parentElement?.className).toContain('overflow-x-auto');
     expect(screen.getByRole('button', { name: 'New task' })).toBeInTheDocument();
   });
 
@@ -40,5 +41,14 @@ describe('TasksPage', () => {
     // No live session for this task → the run control shows "Start"
     fireEvent.click(screen.getByRole('button', { name: 'Start' }));
     await waitFor(() => expect(spawnBody).toMatchObject({ taskId: 'elowen-1' }));
+  });
+
+  it('opens task context in the workspace detail rail', async () => {
+    const { wrapper: Wrapper } = createWrapper();
+    render(<Wrapper><ToastProvider><TasksPage /></ToastProvider></Wrapper>);
+    const row = (await screen.findByText('Build')).closest('[role="button"]')!;
+    fireEvent.click(row);
+    expect(await screen.findByRole('complementary', { name: 'Task detail' })).toBeInTheDocument();
+    expect(screen.queryByRole('dialog', { name: 'Task detail' })).toBeNull();
   });
 });

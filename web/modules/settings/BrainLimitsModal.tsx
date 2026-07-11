@@ -27,7 +27,7 @@ const BRAIN_LIMIT_FIELDS: { key: keyof BrainLimits; min: number; max: number; st
 ];
 
 /** Modal editor for the operator-tunable brain limits. Edits flow straight back into the caller's
- *  `limits` state (which autosaves via useAutoSave), so there is no Save button — Done just closes.
+ *  `limits` state (which auto-saves through the shared status controller), so there is no Save button — Done just closes.
  *  Clearing a field snaps it to the min so the local input matches what the daemon stores. */
 export function BrainLimitsModal({ limits, onChange, onClose }: {
   limits: BrainLimits;

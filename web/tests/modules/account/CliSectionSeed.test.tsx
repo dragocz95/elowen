@@ -11,8 +11,8 @@ const state = vi.hoisted(() => ({ cli: null as CliSettings | null, perm: null as
 const mocks = vi.hoisted(() => ({ saveCli: vi.fn(), savePermissions: vi.fn() }));
 
 vi.mock('../../../lib/mutations', () => ({
-  useSaveMyCliSettings: () => ({ mutate: mocks.saveCli }),
-  useSaveMyPermissions: () => ({ mutate: mocks.savePermissions }),
+  useSaveMyCliSettings: () => ({ mutate: mocks.saveCli, mutateAsync: mocks.saveCli }),
+  useSaveMyPermissions: () => ({ mutate: mocks.savePermissions, mutateAsync: mocks.savePermissions }),
 }));
 vi.mock('../../../lib/queries', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
@@ -84,15 +84,15 @@ describe('CliSection — seed guard', () => {
     expect(mocks.saveCli.mock.calls.at(-1)![0]).toMatchObject({ thinkingLevel: 'high' });
   });
 
-  it('reverts the YOLO toggle to the server value when the autosave fails', async () => {
-    mocks.savePermissions.mockImplementation((_patch: unknown, opts?: { onError?: () => void }) => opts?.onError?.());
+  it('preserves a failed YOLO value so the user can retry it', async () => {
+    mocks.savePermissions.mockRejectedValueOnce(new Error('failed'));
     renderSection();
     const toggle = () => screen.getByRole('switch', { name: en.cli.yoloToggle });
     fireEvent.click(toggle());
-    expect(toggle().getAttribute('aria-checked')).toBe('true'); // optimistic
+    fireEvent.click(screen.getByRole('button', { name: en.cli.yoloConfirm }));
+    expect(toggle().getAttribute('aria-checked')).toBe('true');
 
     await waitFor(() => expect(mocks.savePermissions).toHaveBeenCalled(), { timeout: 1500 });
-    // Save rejected → revert to server truth (false), not left stuck on the optimistic value.
-    await waitFor(() => expect(toggle().getAttribute('aria-checked')).toBe('false'), { timeout: 1500 });
+    expect(toggle().getAttribute('aria-checked')).toBe('true');
   });
 });

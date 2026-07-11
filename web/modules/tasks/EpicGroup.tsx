@@ -111,17 +111,17 @@ export function EpicGroup({ epic, phases, effectiveStatus, expanded, onToggle, o
       onDragEnter={drop.onDragEnter}
       onDragLeave={drop.onDragLeave}
       onDrop={drop.onDrop}
-      className={`group/epic rounded-lg border transition-colors ${activeId === epic.id ? 'border-accent bg-accent/[0.08]' : 'border-accent/25 bg-accent/[0.035] hover:bg-accent/[0.05]'} ${drop.dragOver && dropTargetValid ? 'ring-2 ring-accent/60' : ''} ${drop.dragOver && dropTargetValid === false ? 'ring-2 ring-danger/40 opacity-60' : ''}`}
+      className={`group/epic border-b border-border/70 transition-colors ${activeId === epic.id ? 'bg-accent/[0.065]' : 'hover:bg-accent/[0.025]'} ${drop.dragOver && dropTargetValid ? 'ring-1 ring-inset ring-accent/60' : ''} ${drop.dragOver && dropTargetValid === false ? 'ring-1 ring-inset ring-danger/40 opacity-60' : ''}`}
     >
       <div className="flex items-center" onContextMenu={onContextMenu ? (e) => onContextMenu(e, epic) : undefined}>
         <button
           type="button"
           onClick={() => { onToggle(); onSelect(epic); }}
           aria-expanded={expanded}
-          className="flex min-w-0 flex-1 items-center gap-3 p-3 text-left"
+          className="flex min-w-0 flex-1 items-center gap-3 px-1 py-3.5 text-left"
         >
           <ChevronRight size={16} className={`shrink-0 text-text-muted transition-transform ${expanded ? 'rotate-90' : ''}`} aria-hidden />
-          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-border bg-elevated"><Icon size={20} className="text-accent" aria-hidden /></span>
+          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-accent/25 bg-accent/[0.035]"><Icon size={18} className="text-accent" aria-hidden /></span>
           <div className="flex min-w-0 flex-1 flex-col gap-1.5">
             <div className="flex items-center gap-2">
               <span className="min-w-0 flex-1 truncate text-sm font-semibold text-text">{epic.title}</span>
@@ -143,7 +143,7 @@ export function EpicGroup({ epic, phases, effectiveStatus, expanded, onToggle, o
         {/* Status + delete menu, kept together top-right (siblings of the toggle so a click here never
             collapses the epic). The menu reveals on epic hover; its slot stays reserved so the badge
             never shifts. */}
-        <div className="flex shrink-0 items-center gap-2 pr-3">
+        <div className="flex shrink-0 items-center gap-2 pr-1">
           <Badge tone={statusTone(effectiveStatus ?? epic.status)}>{statusLabel(t, effectiveStatus ?? epic.status)}</Badge>
           <div className="opacity-0 transition-opacity group-hover/epic:opacity-100">
             <ActionMenu
@@ -160,7 +160,7 @@ export function EpicGroup({ epic, phases, effectiveStatus, expanded, onToggle, o
       {/* Mission lifecycle pills — their own row under the progress bar, rendered only when there's at
           least one, so a quiet epic stays a single compact line. Indented to line up under the title. */}
       {hasActions ? (
-      <div className="flex flex-wrap items-center gap-1.5 px-3 pb-3 pl-[5.75rem]">
+      <div className="flex flex-wrap items-center gap-1.5 pb-3 pl-[5.35rem] pr-1">
         {pr?.prUrl ? (
           <a
             href={pr.prUrl}
@@ -204,7 +204,7 @@ export function EpicGroup({ epic, phases, effectiveStatus, expanded, onToggle, o
       ) : null}
 
       {expanded ? (
-        <div className="flex flex-col gap-2.5 rounded-b-lg border-t border-accent/20 bg-bg/30 p-2.5 pl-5">
+        <div className="flex flex-col border-t border-accent/15 bg-bg/20 pl-5">
           {phases.map((p) => (
             <TaskCard key={p.id} task={p} onEdit={onEdit} onSelect={onSelect} onContextMenu={onContextMenu} active={activeId === p.id} blockers={blockedBy.get(p.id)} isPhase />
           ))}

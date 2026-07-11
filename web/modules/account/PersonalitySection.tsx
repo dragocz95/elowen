@@ -4,7 +4,7 @@ import { Save, Copy, Trash2, Check, Plus, X, Sparkles } from 'lucide-react';
 import type { PersonalityProfile } from '../../lib/types';
 import { usePersonalities, useMyCliSettings } from '../../lib/queries';
 import { useCreatePersonality, useUpdatePersonality, useDeletePersonality, useActivatePersonality, useSaveMyCliSettings } from '../../lib/mutations';
-import { useAutoSave } from '../../lib/useAutoSave';
+import { useAutoSaveStatus, type SaveStatus } from '../../lib/useAutoSaveStatus';
 import { MonacoEditor } from '../projects/editor/monacoLoader';
 import { defineEditorThemes } from '../projects/editor/oledTheme';
 import { Segmented } from '../../components/ui/Segmented';
@@ -16,7 +16,7 @@ import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { LoadingState, EmptyState } from '../../components/ui/states';
 import { useToast } from '../../components/ui/Toast';
 import { useTranslation } from '../../lib/i18n';
-import { SettingGroup, SettingRow } from '../../components/ui/SettingsPrimitives';
+import { SpatialGroup, SpatialRow } from '../../components/ui/SpatialPrimitives';
 import { Pill } from './pills';
 
 type Platform = 'web' | 'discord';
@@ -24,8 +24,9 @@ type Platform = 'web' | 'discord';
 /** Per-user personality: how the assistant communicates (style, applied everywhere) plus named
  *  persona profiles per surface (web / discord). One profile can be pinned active. Runtime knobs
  *  (models, thinking level, context) live in the account's Elowen AI section. */
-export function PersonalitySection() {
+export function PersonalitySection({ onSaveState }: { onSaveState?: (section: string, status: SaveStatus, retry?: () => void) => void }) {
   const { t } = useTranslation();
+  const { toast } = useToast();
   const [platform, setPlatform] = useState<Platform>('web');
   const [editing, setEditing] = useState<PersonalityProfile | 'new' | null>(null);
   const profiles = usePersonalities(platform);
@@ -42,7 +43,13 @@ export function PersonalitySection() {
       setSeeded(true);
     }
   }, [cli.data, seeded]);
-  useAutoSave([advisorStyle], () => saveCli.mutate({ advisorStyle }), { ready: seeded });
+  const styleSave = useAutoSaveStatus([advisorStyle], async () => {
+    try { await saveCli.mutateAsync({ advisorStyle }); }
+    catch (error) { toast(t.personality.saveError, 'error'); throw error; }
+  }, { ready: seeded });
+  useEffect(() => {
+    onSaveState?.('personality', styleSave.status, styleSave.status === 'error' ? styleSave.retry : undefined);
+  }, [onSaveState, styleSave.retry, styleSave.status]);
 
   const platformOptions = [
     { value: 'web', label: t.personality.platformWeb },
@@ -71,15 +78,15 @@ export function PersonalitySection() {
       </div>
 
       {/* Communication style pills (applied everywhere, on top of any active profile) */}
-      <SettingGroup>
-        <SettingRow title={t.personality.styleLabel} icon={Sparkles}>
+      <SpatialGroup>
+        <SpatialRow title={t.personality.styleLabel} icon={Sparkles}>
           <div className="flex flex-wrap gap-1.5" role="group" aria-label={t.personality.styleLabel}>
             {styleOptions.map((o) => (
               <Pill key={o.value} on={advisorStyle === o.value} onClick={() => setAdvisorStyle(o.value)}>{o.label}</Pill>
             ))}
           </div>
-        </SettingRow>
-      </SettingGroup>
+        </SpatialRow>
+      </SpatialGroup>
 
       {/* Persona profiles */}
       {profiles.isLoading ? (
@@ -87,13 +94,13 @@ export function PersonalitySection() {
       ) : list.length === 0 ? (
         <EmptyState title={t.personality.empty} icon={Sparkles} />
       ) : (
-        <div className="flex flex-col divide-y divide-border rounded-xl border border-border bg-surface">
+        <div className="flex flex-col divide-y divide-border/70 border-y border-border/70">
           {list.map((p) => (
             <button
               key={p.id}
               type="button"
               onClick={() => setEditing(p)}
-              className="group flex items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-elevated/40"
+              className="group flex items-center gap-3 px-1 py-3.5 text-left transition-colors hover:bg-elevated/30"
             >
               <div className="flex min-w-0 flex-1 flex-col gap-0.5">
                 <span className="flex items-center gap-2">

@@ -8,8 +8,8 @@ import type { CliSettings, PermissionSettings } from '../../../lib/types';
 const saveCli = vi.fn();
 const savePermissions = vi.fn();
 vi.mock('../../../lib/mutations', () => ({
-  useSaveMyCliSettings: () => ({ mutate: saveCli }),
-  useSaveMyPermissions: () => ({ mutate: savePermissions }),
+  useSaveMyCliSettings: () => ({ mutate: saveCli, mutateAsync: saveCli }),
+  useSaveMyPermissions: () => ({ mutate: savePermissions, mutateAsync: savePermissions }),
 }));
 
 const CLI: CliSettings = {
@@ -42,9 +42,12 @@ describe('CliSection — YOLO default toggle', () => {
     expect(toggle.getAttribute('aria-checked')).toBe('false');
   });
 
-  it('flipping the toggle autosaves ONLY the permissions blob ({ yolo: true })', async () => {
+  it('confirms the risky change, then autosaves ONLY the permissions blob ({ yolo: true })', async () => {
     renderSection();
     fireEvent.click(screen.getByRole('switch', { name: en.cli.yoloToggle }));
+    expect(savePermissions).not.toHaveBeenCalled();
+    expect(screen.getByRole('dialog', { name: en.cli.yoloConfirmTitle })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: en.cli.yoloConfirm }));
     await waitFor(() => expect(savePermissions).toHaveBeenCalled(), { timeout: 1500 });
     expect(savePermissions.mock.calls[0]![0]).toEqual({ yolo: true });
     // The YOLO flip never rides the cli-settings PATCH (that one restarts the brain).

@@ -74,7 +74,7 @@ function MemoryDetailBody({ memory, t, locale }: { memory: Memory; t: ReturnType
     }
     if (categoryId !== memory.category_id) await setCategory.mutateAsync({ id: memory.id, categoryId });
   };
-  const autosave = useAutoSaveStatus([body, kind, importance, categoryId], saveEdits);
+  const autosave = useAutoSaveStatus([body, kind, importance, categoryId], saveEdits, { ready: !!body.trim() });
   // Leave edit mode — flush any pending save first so the last keystroke is never dropped.
   const done = () => { autosave.flush(); setEditing(false); };
   const doDelete = () => {
@@ -92,9 +92,9 @@ function MemoryDetailBody({ memory, t, locale }: { memory: Memory; t: ReturnType
   return (
     <div className="flex flex-col gap-4">
       {/* Header — identity, status, actions */}
-      <div className="-mx-4 flex flex-col gap-2 border-b border-border bg-surface px-4 pb-3 pt-1">
+      <div className="flex flex-col gap-3 border-b border-border/70 pb-4">
         <div className="flex items-start gap-3">
-          <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl border border-border bg-elevated">
+          <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-border bg-elevated/30">
             <Brain size={22} className="text-text-muted" aria-hidden />
           </span>
           <div className="min-w-0 flex-1">
@@ -170,7 +170,7 @@ function MemoryDetailBody({ memory, t, locale }: { memory: Memory; t: ReturnType
           <RankSlider label={t.memory.fieldImportance} icon={Gauge} value={importance} onChange={setImportance} />
         </>
       ) : (
-        <div className="grid grid-cols-2 gap-3 @sm:grid-cols-3">
+        <div className="grid grid-cols-2 divide-x divide-border/70 border-y border-border/70 @sm:grid-cols-3">
           <Metric icon={Gauge} label={t.memory.fieldImportance} value={`${memory.importance} / 5`} />
           <Metric icon={Activity} label={t.memory.usage} value={memory.use_count > 0 ? t.memory.useCount.replace('{n}', String(memory.use_count)) : t.memory.neverUsed} />
           <Metric icon={Clock} label={t.memory.updatedAt} value={updated.label || '—'} title={updated.title} />
@@ -206,10 +206,9 @@ function Section({ label, children }: { label: string; children: React.ReactNode
 
 function Metric({ icon: Icon, label, value, title }: { icon: typeof Gauge; label: string; value: string; title?: string }) {
   return (
-    <div className="flex flex-col gap-1 rounded-md border border-border bg-surface p-2.5" title={title}>
+    <div className="flex min-w-0 flex-col gap-1 px-2 py-3" title={title}>
       <span className="inline-flex items-center gap-1 text-[10px] uppercase tracking-wide text-text-muted"><Icon size={11} aria-hidden />{label}</span>
       <span className="truncate font-mono text-xs text-text">{value}</span>
     </div>
   );
 }
-

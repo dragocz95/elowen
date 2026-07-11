@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useState } from 'react';
 import { CalendarClock, Check, ChevronDown, ChevronRight, Clock, Hash, MessageSquare, Plus, Trash2, X } from 'lucide-react';
-import { useAutoSave } from '../../lib/useAutoSave';
+import { useAutoSaveStatus } from '../../lib/useAutoSaveStatus';
 import { compactElapsed, parseTs } from '../../lib/format';
 import { Badge } from '../../components/ui/Badge';
 import { Button } from '../../components/ui/Button';
@@ -9,6 +9,7 @@ import { Input } from '../../components/ui/Input';
 import { Field } from '../../components/ui/Field';
 import { Toggle } from '../../components/ui/Toggle';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
+import { AutoSaveStatus } from '../../components/ui/AutoSaveStatus';
 import { LoadingState } from '../../components/ui/states';
 import { useToast } from '../../components/ui/Toast';
 import { ManageSelectionModal, type ManageSelectionItem } from '../../components/ui/ManageSelectionModal';
@@ -104,10 +105,10 @@ export function CronJobsEditor() {
   // refetch would clobber whatever the user typed while the auto-save was in flight.
   useEffect(() => { if (data && !seeded) { setJobs(data); setSeeded(true); } }, [data, seeded]);
 
-  useAutoSave([jobs], () => {
-    if (!jobs.every(isSavable)) return; // a half-filled new row would 400 — wait until it qualifies
-    save.mutate(jobs, { onError: () => toast(t.cron.saveError, 'error') }); // silent on success
-  }, { ready: seeded, delay: 1200 });
+  const autosave = useAutoSaveStatus([jobs], async () => {
+    try { await save.mutateAsync(jobs); }
+    catch (error) { toast(t.cron.saveError, 'error'); throw error; }
+  }, { ready: seeded && jobs.every(isSavable), delay: 900 });
 
   if (isLoading || !seeded) return <LoadingState />;
 
@@ -241,9 +242,10 @@ export function CronJobsEditor() {
           </div>
         );
       })}
-      <Button variant="ghost" icon={Plus} className="self-start" onClick={addJob}>
-        {t.cron.addJob}
-      </Button>
+      <div className="flex items-center justify-between gap-3">
+        <button type="button" className="spatial-inline-action" onClick={addJob}><Plus size={14} aria-hidden />{t.cron.addJob}</button>
+        <AutoSaveStatus status={autosave.status} onRetry={autosave.retry} />
+      </div>
 
       <ConfirmDialog
         open={pendingDelete !== null}

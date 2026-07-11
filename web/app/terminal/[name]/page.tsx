@@ -19,10 +19,14 @@ export default function TerminalWindow() {
   // Chromeless pop-out: no ModuleHeader (and no pageHeader provider), so set the tab title directly.
   useEffect(() => { document.title = `${t.common.appName} — ${agentDisplayName(name)}`; }, [t.common.appName, name]);
   return (
-    <div className="flex h-dvh flex-col bg-bg">
-      <div className="flex h-9 shrink-0 items-center gap-2 border-b border-border bg-surface px-3">
-        <SquareTerminal size={14} className="text-text-muted" aria-hidden />
-        <span className="truncate text-sm font-medium">{agentDisplayName(name)}</span>
+    <div className="flex h-dvh flex-col bg-[#020202]">
+      <div className="flex h-12 shrink-0 items-center gap-3 border-b border-border/80 bg-black px-4">
+        <span className="grid h-8 w-8 place-items-center rounded-full border border-accent/25 bg-accent/[0.035] text-accent"><SquareTerminal size={14} aria-hidden /></span>
+        <div className="min-w-0 flex-1">
+          <div className="font-mono text-[8px] font-semibold uppercase tracking-[.18em] text-accent/70">Terminal</div>
+          <span className="block truncate text-sm font-medium text-text">{agentDisplayName(name)}</span>
+        </div>
+        <span className="workspace-status">{t.sessions.online}</span>
       </div>
       <div className="min-h-0 flex-1">
         <StreamTerminal name={name} />
