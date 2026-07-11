@@ -493,6 +493,12 @@ export interface SystemInfo {
   autoUpdate: boolean;
   /** When this build was last installed (package.json mtime, ISO); null if unreadable. */
   lastUpdatedAt: string | null;
+  diagnostics: {
+    cpuPercent: number;
+    memoryUsedBytes: number;
+    memoryTotalBytes: number;
+    uptimeSeconds: number;
+  };
 }
 
 /** One first-run readiness row from GET /system/readiness — a subsystem the onboarding UI reports on

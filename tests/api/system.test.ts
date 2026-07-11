@@ -58,6 +58,18 @@ describe('GET /system', () => {
     const body = await (await app.request('/system')).json();
     expect('lastUpdatedAt' in body).toBe(true); // ISO string from package.json mtime (or null if unreadable)
   });
+  it('includes finite host diagnostics for the control deck', async () => {
+    const { app } = makeApp({ latestVersion: async () => null });
+    const body = await (await app.request('/system')).json();
+    expect(body.diagnostics).toEqual({
+      cpuPercent: expect.any(Number),
+      memoryUsedBytes: expect.any(Number),
+      memoryTotalBytes: expect.any(Number),
+      uptimeSeconds: expect.any(Number),
+    });
+    expect(body.diagnostics.cpuPercent).toBeGreaterThanOrEqual(0);
+    expect(body.diagnostics.cpuPercent).toBeLessThanOrEqual(100);
+  });
 });
 
 describe('/system/skills', () => {

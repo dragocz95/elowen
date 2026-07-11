@@ -12,6 +12,7 @@ import { DEFAULT_BINS, BARE_PLAIN_PROGRAM, parseElowenExec } from '../../shared/
 import type { ElowenEvent } from '../sse.js';
 import type { ConfigPatch } from '../../store/configStore.js';
 import type { ElowenApp, RouteContext } from '../context.js';
+import { readSystemDiagnostics } from '../systemDiagnostics.js';
 
 /** True when `bin` resolves to an executable on the daemon's PATH — the readiness check for a task exec
  *  that names an external agent CLI (the embedded `elowen:` engine skips this, it's always runnable). */
@@ -99,6 +100,7 @@ export function registerConfigRoutes(app: ElowenApp, ctx: RouteContext): void {
       updateAvailable: latest ? isNewer(latest, ELOWEN_VERSION) : false,
       autoUpdate: d.config.get().autoUpdate,
       lastUpdatedAt: ELOWEN_INSTALLED_AT,
+      diagnostics: readSystemDiagnostics(),
     });
   });
 
