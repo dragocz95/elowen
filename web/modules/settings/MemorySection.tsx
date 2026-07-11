@@ -6,7 +6,6 @@ import { Input } from '../../components/ui/Input';
 import { ProviderPicker } from '../../components/ui/ProviderPicker';
 import { ModelCatalogField } from '../../components/ui/ModelCatalogField';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
-import { SpatialGroup, SpatialRow } from '../../components/ui/SpatialPrimitives';
 import { LoadingState } from '../../components/ui/states';
 import { useToast } from '../../components/ui/Toast';
 import { useTranslation } from '../../lib/i18n';
@@ -15,6 +14,7 @@ import { useSaveEmbeddingSettings, useReindexMemories, useSaveCategorizationSett
 import { useAutoSaveStatus, type SaveStatus } from '../../lib/useAutoSaveStatus';
 import { elowenClient, ElowenApiError } from '../../lib/elowenClient';
 import type { BrainModelOption } from '../../lib/types';
+import { SettingsGroup, SettingsRow } from './SettingsSurface';
 
 /** Deduped model ids from the brain catalog, scoped to the chosen provider (or all when none picked).
  *  The catalog only ever holds real API/chat/embedding models from configured brain providers — CLI
@@ -138,26 +138,30 @@ export function MemorySection({ onSaveState }: { onSaveState?: (section: string,
 
   return (
     <div className="@container flex flex-col gap-4">
-      <SpatialGroup title={t.memory.embeddingHeading} description={t.help.embeddingIntro} icon={FlaskConical}>
-        <div className="flex flex-wrap items-center justify-between gap-3 py-3">
+      <SettingsGroup
+        title={t.memory.embeddingHeading}
+        description={t.help.embeddingIntro}
+        icon={FlaskConical}
+        actions={<div className="flex flex-wrap items-center justify-end gap-3">
           {embedding.configured ? <Badge tone="accent">{t.memory.embeddingConfigured}</Badge> : <Badge>{t.memory.embeddingUnconfigured}</Badge>}
           <button type="button" className="spatial-inline-action" disabled={testing} onClick={onTest}>
             <FlaskConical size={14} aria-hidden />{testing ? t.memory.embeddingTesting : t.memory.embeddingTest}
           </button>
-        </div>
-        <SpatialRow title={t.memory.embeddingProvider} description={t.help.embeddingProvider}>
+        </div>}
+      >
+        <SettingsRow label={t.memory.embeddingProvider} description={t.help.embeddingProvider}>
           <ProviderPicker providers={embeddingProviders} value={embProvider} onChange={setEmbProvider} label={t.memory.embeddingProvider} emptyText={t.memory.embeddingProviderPlaceholder} variant="line" />
-        </SpatialRow>
+        </SettingsRow>
 
-        <SpatialRow title={t.memory.embeddingModel} description={t.help.embeddingIntro}>
+        <SettingsRow label={t.memory.embeddingModel} description={t.help.embeddingIntro}>
           <ModelCatalogField value={embModel} onChange={setEmbModel} catalog={embCatalog} title={t.memory.embeddingModel} subtitle={t.help.embeddingIntro} variant="line" />
-        </SpatialRow>
+        </SettingsRow>
 
-        <SpatialRow title={t.memory.embeddingModelCustom} description={t.help.embeddingModelCustom}>
+        <SettingsRow label={t.memory.embeddingModelCustom} description={t.help.embeddingModelCustom}>
           <Input value={embModel} onChange={(e) => setEmbModel(e.target.value)} placeholder={t.memory.embeddingModelPlaceholder} className="font-mono" variant="line" />
-        </SpatialRow>
+        </SettingsRow>
 
-        <SpatialRow title={t.memory.embeddingDimensions} description={t.help.embeddingDimensions}>
+        <SettingsRow label={t.memory.embeddingDimensions} description={t.help.embeddingDimensions}>
           <Input
             type="number"
             inputMode="numeric"
@@ -167,9 +171,9 @@ export function MemorySection({ onSaveState }: { onSaveState?: (section: string,
             className="max-w-40 font-mono"
             variant="line"
           />
-        </SpatialRow>
+        </SettingsRow>
 
-        <SpatialRow title={t.memory.reindex} description={embedding.configured ? t.memory.reindexConfirmBody : t.memory.reindexUnconfigured} icon={RefreshCw}>
+        <SettingsRow label={t.memory.reindex} description={embedding.configured ? t.memory.reindexConfirmBody : t.memory.reindexUnconfigured} icon={RefreshCw}>
           <button
             type="button"
             className="spatial-inline-action"
@@ -178,23 +182,25 @@ export function MemorySection({ onSaveState }: { onSaveState?: (section: string,
           >
             <RefreshCw size={14} aria-hidden />{t.memory.reindex}
           </button>
-        </SpatialRow>
-      </SpatialGroup>
+        </SettingsRow>
+      </SettingsGroup>
 
-      <SpatialGroup title={t.categorization.title} description={t.help.categorizationIntro} icon={RefreshCw}>
-        <div className="flex items-center py-3">
-          {categorization.configured ? <Badge tone="accent">{t.categorization.configured}</Badge> : <Badge>{t.categorization.notConfigured}</Badge>}
-        </div>
+      <SettingsGroup
+        title={t.categorization.title}
+        description={t.help.categorizationIntro}
+        icon={RefreshCw}
+        actions={categorization.configured ? <Badge tone="accent">{t.categorization.configured}</Badge> : <Badge>{t.categorization.notConfigured}</Badge>}
+      >
 
-        <SpatialRow title={t.categorization.providerLabel}>
+        <SettingsRow label={t.categorization.providerLabel}>
           <ProviderPicker providers={providers} value={catProvider} onChange={setCatProvider} label={t.categorization.providerLabel} emptyText={t.memory.embeddingProviderPlaceholder} variant="line" />
-        </SpatialRow>
+        </SettingsRow>
 
-        <SpatialRow title={t.categorization.modelLabel} description={t.help.categorizationIntro}>
+        <SettingsRow label={t.categorization.modelLabel} description={t.help.categorizationIntro}>
           <ModelCatalogField value={catModel ?? ''} onChange={(v) => setCatModel(v || null)} catalog={catCatalog} title={t.categorization.modelLabel} subtitle={t.help.categorizationIntro} variant="line" />
-        </SpatialRow>
+        </SettingsRow>
 
-        <SpatialRow title={t.categorization.reclassify} description={t.categorization.reclassifyHint} icon={RefreshCw}>
+        <SettingsRow label={t.categorization.reclassify} description={t.categorization.reclassifyHint} icon={RefreshCw}>
           <button
             type="button"
             className="spatial-inline-action"
@@ -203,8 +209,8 @@ export function MemorySection({ onSaveState }: { onSaveState?: (section: string,
           >
             <RefreshCw size={14} aria-hidden />{t.categorization.reclassify}
           </button>
-        </SpatialRow>
-      </SpatialGroup>
+        </SettingsRow>
+      </SettingsGroup>
 
       <ConfirmDialog
         open={reindexOpen}

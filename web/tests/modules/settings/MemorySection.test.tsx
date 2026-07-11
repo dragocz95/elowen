@@ -36,6 +36,14 @@ const renderSection = () => render(<ToastProvider><MemorySection /></ToastProvid
 beforeEach(() => { saveCategorization.mockClear(); saveEmbedding.mockClear(); });
 
 describe('MemorySection — categorization model picker', () => {
+  it('uses the shared settings group and row pattern for both memory model areas', () => {
+    const { container } = renderSection();
+
+    expect(container.querySelectorAll('[data-settings-group]')).toHaveLength(2);
+    expect(container.querySelectorAll('.settings-row')).toHaveLength(8);
+    expect(container.querySelector('.spatial-group')).toBeNull();
+  });
+
   it('picks a provider-scoped model in the modal (rows carry icons) and autosaves it', async () => {
     renderSection();
     // Two catalog fields render a Manage button each (embedding, categorization) — the categorization
