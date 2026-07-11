@@ -23,7 +23,8 @@ import { allModels } from '../../lib/execPresets';
 import { elowenClient } from '../../lib/elowenClient';
 import type { CliStatus as CliStatusType } from '../../lib/types';
 import type { LocaleDict } from '../../lib/i18n/types';
-import { ElowenPresence } from '../../modules/dashboard/ElowenPresence';
+import { SpatialMascot } from '../../components/ui/SpatialMascot';
+import { ControlSurfaceDocument, ControlSurfaceState, ControlSurfaceToolbar } from '../../components/ui/ControlSurface';
 import { MotionItem, MotionStagger } from '../../components/ui/Motion';
 
 const STATUS_TONES = {
@@ -58,14 +59,14 @@ function CliRow({ tool, dict }: { tool: CliStatusType; dict: LocaleDict }) {
 
 function SectionCard({ title, icon: Icon, step, children }: { title: string; icon?: LucideIcon; step: number; children: React.ReactNode }) {
   return (
-    <section className="onboarding-step border-t border-border/80">
-      <div className="flex items-center gap-3 px-1 py-5 sm:px-3">
+    <ControlSurfaceDocument className="onboarding-step">
+      <ControlSurfaceToolbar className="gap-3">
         <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-accent/25 bg-accent/10 font-mono text-xs font-semibold text-accent">{String(step).padStart(2, '0')}</span>
         {Icon ? <Icon size={16} className="text-text-muted" aria-hidden /> : null}
         <h2 className="text-sm font-semibold tracking-tight text-text">{title}</h2>
-      </div>
-      <div className="border-t border-border/60 px-1 py-5 sm:px-3 sm:py-6">{children}</div>
-    </section>
+      </ControlSurfaceToolbar>
+      <div className="px-4 py-5 sm:px-6 sm:py-6">{children}</div>
+    </ControlSurfaceDocument>
   );
 }
 
@@ -194,7 +195,7 @@ export default function OnboardingPage() {
         <aside className="onboarding-intro relative isolate overflow-hidden px-3 py-7 lg:sticky lg:top-4 lg:border-r lg:border-border/80 lg:pr-8">
           <div className="pointer-events-none absolute inset-0 -z-10 bg-[radial-gradient(circle_at_50%_18%,rgb(255_82_54_/_0.16),transparent_34%),linear-gradient(145deg,rgb(255_82_54_/_0.04),transparent_52%)]" aria-hidden />
           <div className="mx-auto w-full max-w-[14rem]">
-            <ElowenPresence state={allStepsDone ? 'success' : 'idle'} label={t.common.appName} />
+            <SpatialMascot state={allStepsDone ? 'success' : 'idle'} />
           </div>
           <div className="-mt-5 flex flex-col gap-3 text-center lg:text-left">
             <span className="text-[11px] font-semibold uppercase tracking-[.15em] text-accent">{t.common.appName}</span>
@@ -221,7 +222,7 @@ export default function OnboardingPage() {
 
         <div className="flex min-w-0 flex-col gap-4 py-1">
           {isLoading ? (
-            <div className="border-y border-border/80 p-10"><LoadingState label={t.common.loading} /></div>
+            <ControlSurfaceDocument><ControlSurfaceState><LoadingState label={t.common.loading} /></ControlSurfaceState></ControlSurfaceDocument>
           ) : (
             <>
             {/* System Dependencies */}
