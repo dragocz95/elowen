@@ -843,7 +843,7 @@ export default function SettingsPage() {
 
         <SettingsPanel id="system" active={category} visited={visitedCategories}>
           <div className="settings-system-content">
-            <section className="settings-control-region">
+            <section className="settings-control-region" data-settings-surface="services">
               <h2>{t.settings.servicesAndUpdates}</h2>
               {[
                 { name: t.settings.serviceDaemon, port: ':4400', up: !system.isError, target: 'daemon' as const, restartLabel: t.settings.restartDaemon },
@@ -869,7 +869,7 @@ export default function SettingsPage() {
               </div>
             </section>
 
-            <section className="settings-control-region settings-control-region--security">
+            <section className="settings-control-region settings-control-region--security" data-settings-surface="security">
               <h2>{t.settings.sessionsAndSecurity}</h2>
               <div className="settings-security-control">
                 <span className="settings-control-row__icon"><KeyRound size={18} strokeWidth={1.45} aria-hidden /></span>
@@ -878,7 +878,7 @@ export default function SettingsPage() {
               </div>
             </section>
 
-            <section className="settings-diagnostics" aria-busy={!diagnostics}>
+            <section className="settings-diagnostics" data-settings-surface="diagnostics" aria-busy={!diagnostics}>
               <h2><Gauge size={23} strokeWidth={1.45} aria-hidden />{t.settings.systemDiagnostics}<HelpTip align="left">{t.settings.systemSectionHint}</HelpTip></h2>
               {[
                 { label: t.settings.diagnosticCpu, value: diagnostics ? `${diagnostics.cpuPercent}%` : '—', level: diagnostics?.cpuPercent ?? 0 },

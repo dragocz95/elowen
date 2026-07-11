@@ -39,6 +39,10 @@ describe('SettingsPage', () => {
     expect(screen.getByText('System diagnostics')).toBeInTheDocument();
     expect(screen.getByText('12%')).toBeInTheDocument();
     expect(screen.getAllByRole('img', { name: 'Elowen' })).toHaveLength(1);
+
+    const systemPanel = screen.getByText('System diagnostics').closest('[data-settings-panel="system"]');
+    expect(systemPanel?.querySelectorAll('[data-settings-surface]')).toHaveLength(3);
+    expect(systemPanel?.querySelector('[data-settings-surface="diagnostics"]')).toHaveClass('settings-diagnostics');
   });
 
   it('auto-saves a changed model allowlist on toggle (no manual save button)', async () => {
