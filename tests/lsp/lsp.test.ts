@@ -95,6 +95,20 @@ describe('LSP server registry', () => {
 });
 
 describe('parsePublishDiagnostics', () => {
+  it.each([
+    ['raw space', 'file:///proj/a b.ts', 'file:///proj/a%20b.ts'],
+    ['encoded space', 'file:///proj/a%20b.ts', 'file:///proj/a%20b.ts'],
+    ['raw Unicode', 'file:///proj/café.ts', 'file:///proj/caf%C3%A9.ts'],
+    ['encoded Unicode', 'file:///proj/caf%C3%A9.ts', 'file:///proj/caf%C3%A9.ts'],
+    ['encoded percent character', 'file:///proj/100%25.ts', 'file:///proj/100%25.ts'],
+    ['non-file scheme', 'https://example.test/a%20b.ts', 'https://example.test/a%20b.ts'],
+    ['bare percent fallback', 'file:///proj/100%.ts', 'file:///proj/100%.ts'],
+    ['short escape fallback', 'file:///proj/bad%2.ts', 'file:///proj/bad%2.ts'],
+    ['non-hex escape fallback', 'file:///proj/bad%ZZ.ts', 'file:///proj/bad%ZZ.ts'],
+  ])('canonicalizes %s without corrupting unsupported URI input', (_case, input, expected) => {
+    expect(parsePublishDiagnostics({ uri: input, diagnostics: [] }).uri).toBe(expected);
+  });
+
   it('flattens, 1-bases positions, and sorts errors first', () => {
     const { uri, diagnostics } = parsePublishDiagnostics({
       uri: 'file:///a.ts',
