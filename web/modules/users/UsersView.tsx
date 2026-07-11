@@ -86,7 +86,7 @@ export function UsersView() {
     void impersonateUser(user.id).catch(() => toast(t.users.impersonateError, 'error'));
   }
 
-  const data = users.data ?? [];
+  const data = useMemo(() => users.data ?? [], [users.data]);
   const isAdmin = me.data?.user?.is_admin ?? false;
   const globalExecs = config.data?.allowedExecs ?? [];
   const customModels = config.data?.customModels ?? [];
