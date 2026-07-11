@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach, afterAll, afterEach, vi } from 'vitest';
 vi.mock('next/navigation', () => ({ usePathname: () => '/settings', useSearchParams: () => new URLSearchParams(), useRouter: () => ({ replace: vi.fn(), push: vi.fn(), refresh: vi.fn() }) }));
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { setupServer } from 'msw/node';
@@ -11,8 +11,14 @@ import { createWrapper } from '../test-utils';
 let putBody: unknown = null;
 const server = setupServer(
   http.get('*/api/config', () => HttpResponse.json({ allowedExecs: ['sonnet', 'codex:gpt-5.4'], customModels: [], autopilot: { model: 'mimo-v2.5', apiUrl: 'https://relay.example/v1', apiKeySet: false, notes: '' }, providers: { 'claude-code': { bin: 'claude', args: '' }, opencode: { bin: 'opencode', args: '' }, codex: { bin: 'codex', args: '' } }, defaults: { exec: 'sonnet', autonomy: 'L1', maxSessions: 1 }, security: { tokenTtlDays: 30 } })),
+  http.get('*/api/system', () => HttpResponse.json({
+    version: '0.26.0', latest: '0.26.0', updateAvailable: false, autoUpdate: false, lastUpdatedAt: '2026-07-11T12:00:00.000Z',
+    diagnostics: { cpuPercent: 12, memoryUsedBytes: 3_200_000_000, memoryTotalBytes: 16_000_000_000, uptimeSeconds: 1_098_000 },
+  })),
+  http.get('*/api/system/skills', () => HttpResponse.json({ skills: [] })),
   http.put('*/api/config', async ({ request }) => { putBody = await request.json(); return HttpResponse.json({ allowedExecs: ['sonnet'], customModels: [], autopilot: { model: 'mimo-v2.5', apiUrl: 'https://relay.example/v1', apiKeySet: false, notes: '' }, defaults: { exec: 'sonnet', autonomy: 'L1', maxSessions: 1 }, security: { tokenTtlDays: 30 } }); }),
 );
+beforeEach(() => localStorage.setItem('elowen.settings.category', 'models'));
 beforeAll(() => server.listen({ onUnhandledRequest })); afterEach(() => {
   server.resetHandlers();
   localStorage.clear();
@@ -20,6 +26,21 @@ beforeAll(() => server.listen({ onUnhandledRequest })); afterEach(() => {
 }); afterAll(() => server.close());
 
 describe('SettingsPage', () => {
+  it('matches the reference section order and renders real System diagnostics in one control deck', async () => {
+    localStorage.setItem('elowen.settings.category', 'system');
+    const { wrapper: Wrapper } = createWrapper();
+    render(<Wrapper><ToastProvider><SettingsPage /></ToastProvider></Wrapper>);
+
+    expect(await screen.findByRole('heading', { level: 1, name: 'System' })).toBeInTheDocument();
+    const rail = screen.getByRole('radiogroup', { name: 'Settings sections' });
+    expect(Array.from(rail.querySelectorAll('[role="radio"]')).map((node) => node.textContent)).toEqual([
+      'System', 'Models', 'CLI Agents', 'Data', 'GitHub', 'Autopilot', 'Plugins', 'Memory', 'Elowen AI',
+    ]);
+    expect(screen.getByText('System diagnostics')).toBeInTheDocument();
+    expect(screen.getByText('12%')).toBeInTheDocument();
+    expect(screen.getAllByRole('img', { name: 'Elowen' })).toHaveLength(1);
+  });
+
   it('auto-saves a changed model allowlist on toggle (no manual save button)', async () => {
     putBody = null;
     const { wrapper: Wrapper } = createWrapper();

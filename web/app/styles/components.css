@@ -74,13 +74,23 @@ html[data-effects='full'] .card-interactive:hover { transform: translateY(-1px);
 .spatial-section-rail__track::before { content: ''; position: absolute; top: 2.95rem; right: 3.4rem; left: 3.4rem; height: 1px; background: linear-gradient(90deg, transparent, rgb(255 82 54 / 0.34) 4%, rgb(255 82 54 / 0.2) 96%, transparent); }
 .spatial-section-node { position: relative; z-index: 1; display: flex; min-width: 7rem; flex: 1 0 7rem; flex-direction: column; align-items: center; gap: 0.72rem; color: var(--color-text-muted); font-size: 0.78rem; transition: color var(--motion-base) var(--ease-out), transform var(--motion-base) var(--ease-out); }
 .spatial-section-node:hover { color: var(--color-text); transform: translateY(-2px); }
-.spatial-section-node__icon { display: grid; width: 3.45rem; height: 3.45rem; place-items: center; border: 1px solid var(--color-border-strong); border-radius: 50%; background: #050505; box-shadow: 0 0 0 6px #000, inset 0 1px rgb(255 255 255 / 0.025); transition: border-color var(--motion-base) var(--ease-out), box-shadow var(--motion-base) var(--ease-out), transform var(--motion-base) var(--ease-out); }
+.spatial-section-node__icon { position: relative; display: grid; width: 3.45rem; height: 3.45rem; place-items: center; border: 1px solid var(--color-border-strong); border-radius: 50%; background: #050505; box-shadow: 0 0 0 6px #000, inset 0 1px rgb(255 255 255 / 0.025); transition: border-color var(--motion-base) var(--ease-out), box-shadow var(--motion-base) var(--ease-out), transform var(--motion-base) var(--ease-out); }
+.spatial-section-node__icon > svg { position: relative; z-index: 2; }
 .spatial-section-node--active { color: var(--color-accent); font-weight: 570; }
 .spatial-section-node--active .spatial-section-node__icon { border-color: var(--color-accent); background: radial-gradient(circle, rgb(255 82 54 / 0.14), #050505 68%); box-shadow: 0 0 0 6px #000, var(--glow-active), inset 0 0 20px rgb(255 82 54 / 0.09); transform: scale(1.1); }
+.spatial-section-node--active .spatial-section-node__icon::before { content: ''; position: absolute; inset: -1.35rem; z-index: -1; border-radius: 50%; background: radial-gradient(ellipse at 50% 66%, rgb(255 82 54 / 0.28), rgb(255 82 54 / 0.08) 34%, transparent 69%); filter: blur(5px); opacity: 0.78; }
+.spatial-section-node--active .spatial-section-node__icon::after { content: ''; position: absolute; z-index: -1; width: 0.16rem; height: 0.16rem; border-radius: 50%; background: var(--color-ember); box-shadow: -1.15rem -0.15rem 0 rgb(255 82 54 / 0.58), 1.25rem 0.35rem 0 rgb(255 154 98 / 0.48), -0.45rem -1.22rem 0 rgb(255 82 54 / 0.5), 0.65rem -1.05rem 0 rgb(255 154 98 / 0.42); opacity: 0.7; }
+html[data-effects='full'] .spatial-section-node--active .spatial-section-node__icon::before { animation: ember-breathe 2.8s ease-in-out infinite; }
+html[data-effects='full'] .spatial-section-node--active .spatial-section-node__icon::after { animation: spatial-ember-flicker 2.2s ease-in-out infinite alternate; }
 .spatial-section-node:focus-visible { outline: none; }
 .spatial-section-node:focus-visible .spatial-section-node__icon { outline: 2px solid var(--color-text); outline-offset: 5px; }
 .spatial-section-node__label { white-space: nowrap; }
 .spatial-content-surface { min-width: 0; border-block: var(--hairline); background: linear-gradient(180deg, rgb(255 255 255 / 0.012), transparent 11rem); padding: 0.25rem 0 2rem; }
+
+@keyframes spatial-ember-flicker {
+  from { opacity: 0.38; transform: translateY(0) scale(0.86); }
+  to { opacity: 0.82; transform: translateY(-0.38rem) scale(1.08); }
+}
 
 /* Legacy orbital control surface; removed after Account and Settings migrate. */
 .spatial-control-surface {

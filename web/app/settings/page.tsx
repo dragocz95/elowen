@@ -14,6 +14,7 @@ import { GithubStatusBanner } from '../../modules/settings/GithubStatusBanner';
 import { PluginsSection } from '../../modules/settings/PluginsSection';
 import { BrainSection } from '../../modules/settings/BrainSection';
 import { MemorySection } from '../../modules/settings/MemorySection';
+import { SettingsDeckHero } from '../../modules/settings/SettingsDeckHero';
 import { execProvider, execModel, type ProviderId } from '../../lib/modelProvider';
 import { formatTokens } from '../../lib/format';
 import { useBrainModels, useConfig, useMe, useSystem, useSystemSkills } from '../../lib/queries';
@@ -32,7 +33,7 @@ import { Field } from '../../components/ui/Field';
 import { Badge } from '../../components/ui/Badge';
 import { Toggle } from '../../components/ui/Toggle';
 import { Segmented } from '../../components/ui/Segmented';
-import { SpatialControlSurface } from '../../components/ui/SpatialControlSurface';
+import { SpatialControlDeck } from '../../components/ui/SpatialControlDeck';
 import { SpatialGroup, SpatialRow } from '../../components/ui/SpatialPrimitives';
 import { MotionReveal } from '../../components/ui/Motion';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
@@ -43,6 +44,18 @@ import '../../modules/settings/theme.css';
 import { useTranslation } from '../../lib/i18n';
 
 const inputClass = 'w-full rounded-md border border-border bg-bg px-3 py-2 text-sm text-text placeholder:text-text-muted transition-colors focus:border-accent';
+
+function formatMemory(used: number, total: number): string {
+  const gb = (value: number) => `${(value / 1_000_000_000).toFixed(1)} GB`;
+  return `${gb(used)} / ${gb(total)}`;
+}
+
+function formatUptime(totalSeconds: number): string {
+  const days = Math.floor(totalSeconds / 86_400);
+  const hours = Math.floor((totalSeconds % 86_400) / 3_600);
+  const minutes = Math.floor((totalSeconds % 3_600) / 60);
+  return `${days}d ${hours}h ${minutes}m`;
+}
 
 /** Relay-mode model field: a free-text model name with a live brand badge, mirroring
  *  BackendPicker's icon affordance so both autopilot modes look consistent. */
@@ -107,7 +120,7 @@ export default function SettingsPage() {
   // `?cat=<section>`. Switching flips the state directly (so the view changes instantly) AND rewrites
   // the URL (so F5 / share / the sidebar highlight agree).
   const searchParams = useSearchParams();
-  const [category, setCategoryState] = usePersistentState<Category>('elowen.settings.category', 'models', CATEGORY_VALUES);
+  const [category, setCategoryState] = usePersistentState<Category>('elowen.settings.category', 'system', CATEGORY_VALUES);
   const [visitedCategories, setVisitedCategories] = useState<Set<Category>>(() => new Set([category]));
   const [sectionFeedback, setSectionFeedback] = useState<Partial<Record<Category, SaveFeedback>>>({});
   const reportSaveState = useCallback((id: string, status: SaveStatus, retry?: () => void) => {
@@ -393,23 +406,47 @@ export default function SettingsPage() {
     data: t.settings.dataSectionHint,
     system: t.settings.systemSectionHint,
   };
+  const deckSections = SETTINGS_SECTIONS.map(({ id, icon }) => ({ id, icon, label: t.settings[id], description: sectionHints[id] }));
+  const activeSection = deckSections.find((section) => section.id === category) ?? deckSections[0]!;
+  const diagnostics = system.data?.diagnostics;
 
   return (
     <ModuleShell moduleId="settings">
       <ModuleHeader title={t.page.settings} icon={SlidersHorizontal} />
 
-      <div className="flex w-full min-w-0 flex-col gap-6">
-      <SpatialControlSurface
+      <div className="flex w-full min-w-0 flex-col">
+      <SpatialControlDeck
+        eyebrow={t.page.settings}
         ariaLabel={t.settings.sectionsNav}
-        sections={SETTINGS_SECTIONS.map(({ id, icon }) => ({ id, icon, label: t.settings[id], description: sectionHints[id] }))}
+        sections={deckSections}
         value={category}
         onChange={(value) => setCategory(value as Category)}
         status={activeFeedback.status}
         onRetry={activeFeedback.retry}
+        hero={(
+          <SettingsDeckHero
+            section={activeSection}
+            system={system.data}
+            labels={{
+              appName: t.common.appName,
+              upToDate: t.settings.upToDate,
+              updateAvailable: t.settings.updateAvailable,
+              lastUpdated: t.settings.lastUpdated,
+              checkUpdates: t.settings.checkUpdates,
+              daemon: t.settings.serviceDaemon,
+              web: t.settings.serviceWeb,
+              running: t.settings.serviceUp,
+              restartDaemon: t.settings.restartDaemon,
+              restartWeb: t.settings.restartWeb,
+            }}
+            onCheckUpdates={() => { void system.refetch(); }}
+            onRestart={setRestartTarget}
+          />
+        )}
       >
         <SettingsPanel id="models" active={category} visited={visitedCategories}>
-          <>
-            <div className="flex flex-col gap-2.5 pb-2">
+          <div className="settings-model-catalog">
+            <div className="settings-model-catalog__tools">
               <div className="relative w-full">
                 <Search size={15} aria-hidden className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" />
                 <Input
@@ -443,18 +480,18 @@ export default function SettingsPage() {
               const groupExecs = [...allCliItems.map((m) => m.exec), ...allElowenItems.map((m) => m.exec)];
               const enabledCount = groupExecs.filter((e) => allowed.includes(e)).length;
               return (
-                <div key={prov.id} className="flex flex-col gap-3">
-                  <div className="flex items-center gap-2.5">
+                <section key={prov.id} className="settings-provider-rack">
+                  <header className="settings-provider-rack__header">
                     <ProviderLogo meta={prov} size={28} />
                     <span className="text-sm font-semibold text-text">{prov.label}</span>
                     <span className="font-mono text-tiny text-text-muted">{enabledCount}/{groupExecs.length}</span>
                     {prov.embedded ? <HelpTip align="left">{t.help.elowenModels}</HelpTip> : null}
-                  </div>
-                  <div className="@container divide-y divide-border/70 border-y border-border/80">
+                  </header>
+                  <div className="settings-provider-rack__rows @container">
                     {cliItems.map((p) => {
                       const isCustom = !isPresetExec(p.exec);
                       return (
-                        <div data-testid="model-row" key={p.exec} className="group flex min-w-0 items-center gap-3 px-1 py-3.5 transition-colors hover:bg-elevated/30">
+                        <div data-testid="model-row" key={p.exec} className="settings-provider-rack__row group flex min-w-0 items-center gap-3 transition-colors">
                           <span className="flex h-9 w-9 shrink-0 items-center justify-center text-text-muted">
                             <ModelIcon name={p.exec} size={20} />
                           </span>
@@ -505,7 +542,7 @@ export default function SettingsPage() {
                       const override = modelWindows[winKey];
                       const overridden = override != null;
                       return (
-                      <div data-testid="model-row" key={m.exec} className="flex min-w-0 items-center gap-3 px-1 py-3.5 transition-colors hover:bg-elevated/30">
+                      <div data-testid="model-row" key={m.exec} className="settings-provider-rack__row flex min-w-0 items-center gap-3 transition-colors">
                           <span className="flex h-9 w-9 shrink-0 items-center justify-center text-text-muted"><ModelIcon name={m.model} size={20} /></span>
                           <div className="min-w-0 flex-1">
                             <span className="truncate text-sm font-medium text-text">{m.model}</span>
@@ -529,7 +566,7 @@ export default function SettingsPage() {
                       );
                     })}
                   </div>
-                </div>
+                </section>
               );
             })}
 
@@ -545,7 +582,7 @@ export default function SettingsPage() {
                 {t.settings.addModel}
               </Button>
             </div>
-          </>
+          </div>
         </SettingsPanel>
 
         {showAddForm && (
@@ -805,72 +842,55 @@ export default function SettingsPage() {
 
 
         <SettingsPanel id="system" active={category} visited={visitedCategories}>
-          <div className="flex flex-col gap-5">
-            <SpatialGroup title={t.settings.version} icon={RefreshCw} description={t.settings.versionDesc}>
-              <div className="spatial-identity">
-                <img src="/elowen-logo.png" alt={t.common.appName} className="h-9 w-auto shrink-0" />
-                <div className="flex min-w-0 flex-1 flex-col gap-1">
-                  <span className="font-mono text-xl font-semibold tracking-tight text-text">{system.data?.version ?? '—'}</span>
-                  <span className="flex flex-wrap items-center gap-2">
-                    {system.data?.updateAvailable
-                      ? <Badge tone="warning">{t.settings.updateAvailable.replace('{v}', system.data.latest ?? '')}</Badge>
-                      : system.data?.latest ? <Badge tone="success">{t.settings.upToDate}</Badge> : null}
-                    {system.data?.lastUpdatedAt ? (
-                      <span className="text-xs text-text-muted">{t.settings.lastUpdated.replace('{date}', new Date(system.data.lastUpdatedAt).toLocaleString())}</span>
-                    ) : null}
-                  </span>
-                </div>
-                {system.data?.updateAvailable ? (
-                  <button
-                    type="button"
-                    onClick={() => systemUpdate.mutate(undefined, {
-                      onSuccess: () => toast(t.settings.updateStarted),
-                      onError: (e) => toast(e instanceof ElowenApiError && e.code === 'mission_running' ? t.settings.updateBlockedMission : String(e), 'error'),
-                    })}
-                    disabled={systemUpdate.isPending}
-                    className="inline-flex h-9 items-center gap-1.5 rounded-md bg-accent px-4 text-xs font-medium text-bg transition-opacity hover:opacity-90 disabled:opacity-60"
-                  >
-                    <RefreshCw size={14} className={systemUpdate.isPending ? 'animate-spin' : ''} />
-                    {systemUpdate.isPending ? t.settings.updating : t.settings.updateNow}
-                  </button>
-                ) : null}
-              </div>
-            </SpatialGroup>
-
-            <SpatialGroup title={t.settings.services} icon={Server}>
+          <div className="settings-system-content">
+            <section className="settings-control-region">
+              <h2>{t.settings.servicesAndUpdates}</h2>
               {[
                 { name: t.settings.serviceDaemon, port: ':4400', up: !system.isError, target: 'daemon' as const, restartLabel: t.settings.restartDaemon },
                 { name: t.settings.serviceWeb, port: ':4500', up: true, target: 'web' as const, restartLabel: t.settings.restartWeb },
               ].map((service) => (
-                <SpatialRow key={service.port} title={`${service.name} ${service.port}`} icon={Server}>
-                  <span className="flex items-center justify-end gap-3">
-                    <span className={`inline-flex items-center gap-2 text-xs font-medium ${service.up ? 'text-success' : 'text-danger'}`}>
-                      <span className={`h-2 w-2 rounded-full ${service.up ? 'live-dot bg-success' : 'bg-danger'}`} aria-hidden />
-                      {service.up ? t.settings.serviceUp : t.settings.serviceDown}
-                    </span>
-                    <button type="button" className="spatial-inline-action" disabled={systemRestart.isPending} onClick={() => setRestartTarget(service.target)}>
-                      <RotateCcw size={13} aria-hidden />{service.restartLabel}
-                    </button>
-                  </span>
-                </SpatialRow>
+                <div key={service.port} className="settings-control-row">
+                  <span className="settings-control-row__icon"><Server size={18} strokeWidth={1.45} aria-hidden /></span>
+                  <strong>{service.name} <span>{service.port}</span></strong>
+                  <span className={`settings-control-row__status ${service.up ? '' : 'settings-control-row__status--down'}`}><i aria-hidden />{service.up ? t.settings.serviceUp : t.settings.serviceDown}</span>
+                  <button type="button" className="spatial-inline-action" disabled={systemRestart.isPending} onClick={() => setRestartTarget(service.target)}>{service.restartLabel}<RotateCcw size={13} aria-hidden /></button>
+                </div>
               ))}
-            </SpatialGroup>
+              <div className="settings-control-row">
+                <span className="settings-control-row__icon"><RefreshCw size={18} strokeWidth={1.45} aria-hidden /></span>
+                <strong>{t.settings.autoUpdate}</strong>
+                <span className="settings-control-row__control"><Toggle checked={autoUpdate} onChange={setAutoUpdate} label={t.settings.autoUpdate} /><span>{autoUpdate ? t.settings.on : t.settings.off}</span></span>
+                {system.data?.updateAvailable ? (
+                  <button type="button" className="spatial-inline-action text-accent" disabled={systemUpdate.isPending} onClick={() => systemUpdate.mutate(undefined, {
+                    onSuccess: () => toast(t.settings.updateStarted),
+                    onError: (e) => toast(e instanceof ElowenApiError && e.code === 'mission_running' ? t.settings.updateBlockedMission : String(e), 'error'),
+                  })}>{systemUpdate.isPending ? t.settings.updating : t.settings.updateNow}<RefreshCw size={13} className={systemUpdate.isPending ? 'animate-spin' : ''} aria-hidden /></button>
+                ) : <span />}
+              </div>
+            </section>
 
-            <SpatialGroup>
-                {/* Auto-update — a full-size pill switch, no fine print. */}
-                <SpatialRow title={t.settings.autoUpdate} icon={RefreshCw}>
-                  <div className="flex items-center gap-3">
-                  <Toggle checked={autoUpdate} onChange={setAutoUpdate} label={t.settings.autoUpdate} />
-                  <span className={`text-sm font-medium ${autoUpdate ? 'text-text' : 'text-text-muted'}`}>{autoUpdate ? t.settings.on : t.settings.off}</span>
-                  </div>
-                </SpatialRow>
+            <section className="settings-control-region settings-control-region--security">
+              <h2>{t.settings.sessionsAndSecurity}</h2>
+              <div className="settings-security-control">
+                <span className="settings-control-row__icon"><KeyRound size={18} strokeWidth={1.45} aria-hidden /></span>
+                <div><strong>{t.settings.tokenTtl}</strong><p>{t.help.tokenTtl}</p></div>
+                <input type="number" min={1} value={defTokenTtl} onChange={(e) => setDefTokenTtl(Number(e.target.value))} className={inputClass} />
+              </div>
+            </section>
 
-                {/* Session token TTL — a server-wide security setting, so it lives with the other
-                    server controls rather than among the per-task defaults. Same autosave as defaults. */}
-                <SpatialRow title={t.settings.tokenTtl} description={t.help.tokenTtl} icon={KeyRound}>
-                  <input type="number" min={1} value={defTokenTtl} onChange={(e) => setDefTokenTtl(Number(e.target.value))} className={inputClass} />
-                </SpatialRow>
-            </SpatialGroup>
+            <section className="settings-diagnostics" aria-busy={!diagnostics}>
+              <h2><Gauge size={23} strokeWidth={1.45} aria-hidden />{t.settings.systemDiagnostics}<HelpTip align="left">{t.settings.systemSectionHint}</HelpTip></h2>
+              {[
+                { label: t.settings.diagnosticCpu, value: diagnostics ? `${diagnostics.cpuPercent}%` : '—', level: diagnostics?.cpuPercent ?? 0 },
+                { label: t.settings.diagnosticMemory, value: diagnostics ? formatMemory(diagnostics.memoryUsedBytes, diagnostics.memoryTotalBytes) : '—', level: diagnostics?.memoryTotalBytes ? (diagnostics.memoryUsedBytes / diagnostics.memoryTotalBytes) * 100 : 0 },
+                { label: t.settings.diagnosticUptime, value: diagnostics ? formatUptime(diagnostics.uptimeSeconds) : '—', level: diagnostics ? 72 : 0 },
+              ].map((metric) => (
+                <div key={metric.label} className={`settings-diagnostic-metric ${diagnostics ? '' : 'settings-diagnostic-metric--loading'}`}>
+                  <span>{metric.label}</span><strong>{metric.value}</strong>
+                  <i aria-hidden><b style={{ width: `${diagnostics ? Math.min(100, Math.max(4, metric.level)) : 28}%` }} /></i>
+                </div>
+              ))}
+            </section>
           </div>
         </SettingsPanel>
 
@@ -904,7 +924,7 @@ export default function SettingsPage() {
           </div>
         </SettingsPanel>
 
-      </SpatialControlSurface>
+      </SpatialControlDeck>
       </div>
 
       <ConfirmDialog
