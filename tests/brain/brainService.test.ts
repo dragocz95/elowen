@@ -297,6 +297,7 @@ describe('BrainService', () => {
     await expect(operation.completed).rejects.toThrow('prompt preflight rejected');
     expect(d.store.getMessages('brain-1').filter((row) => row.role === 'user')).toHaveLength(0);
     expect(seen.some((event) => event.type === 'user')).toBe(false);
+    expect(d.store.getSession('brain-1')?.title).toBe('');
   });
 
   it('startSend admits a mid-turn steer only after PI accepts it', async () => {
@@ -338,6 +339,20 @@ describe('BrainService', () => {
     expect(d.store.getMessages('brain-1').filter((row) => row.role === 'user')).toHaveLength(0);
     expect(seen.some((event) => event.type === 'user')).toBe(false);
     expect(svc.queueList(1)).toEqual([]);
+  });
+
+  it('does not call PI when steer preprojection fails in the durable store', async () => {
+    const d = fakeDeps();
+    const svc = new BrainService(d as never);
+    await svc.start(1);
+    d.session.isStreaming = true;
+    vi.spyOn(d.store, 'appendMessage').mockImplementationOnce(() => { throw new Error('store unavailable'); });
+
+    const operation = svc.startSend(1, 'never reaches PI');
+    await expect(operation.admitted).rejects.toThrow('store unavailable');
+    await expect(operation.completed).rejects.toThrow('store unavailable');
+    expect(d.session.steer).not.toHaveBeenCalled();
+    expect(d.store.getMessages('brain-1')).toHaveLength(0);
   });
 
   it('two mid-turn messages are each STEERED into the running turn (no follow-up turn)', async () => {

@@ -133,11 +133,19 @@ export class BrainTurnRunner {
     // kickoff/continuation is never steered — it drives the loop itself and must run its own turn.
     if (active.session.isStreaming && !internal?.goalKickoff && !internal?.goalContinue) {
       const persistText = images?.length ? `${text}\n[📎 ${images.length}× image]` : text;
+      // Pre-project the clean row before touching PI. It remains hidden from replay until PI accepts;
+      // if SQLite fails, steer is never called, and if PI rejects, both this row and the speculative queue
+      // mirror are rolled back so retry cannot duplicate or silently execute a prompt.
+      const durableId = projectUserTurn(this.d.store, active.sessionId, persistText);
       // Route through the mirror so the image attachments survive a later positional queue-remove (PI's
       // clearQueue drops them). PI's queue_update then reconciles the mirror. PI admission comes first:
       // a rejected steer must not leave a visible/durable prompt that the caller was told to retry.
-      await enqueueMirrored(active, 'steer', text, images?.map((i) => ({ type: 'image' as const, data: i.data, mimeType: i.mimeType })));
-      const durableId = projectUserTurn(this.d.store, active.sessionId, persistText);
+      try {
+        await enqueueMirrored(active, 'steer', text, images?.map((i) => ({ type: 'image' as const, data: i.data, mimeType: i.mimeType })));
+      } catch (error) {
+        this.d.store.deleteMessage(active.sessionId, durableId);
+        throw error;
+      }
       active.replay.publish({ type: 'user', text: display ?? persistText, durableId });
       admit(active.sessionId);
       return;
@@ -154,15 +162,6 @@ export class BrainTurnRunner {
       // Serialized per conversation: concurrent prompt() calls on one PI session corrupt turn state.
       await this.serial(live.sessionId, async () => {
       assertClientCurrent(live.sessionId);
-      // First user message names the conversation (once). A provisional slice fills the session list
-      // immediately (never blank); a cheap background inference then replaces it with a proper
-      // agent-generated title — no prompt injected into the turn, and a no-op if that model isn't wired.
-      const row = this.d.store.getSession(live.sessionId);
-      if (row && !row.title) {
-        const provisionalTitle = turnText.slice(0, 60);
-        this.d.store.setTitle(live.sessionId, provisionalTitle);
-        void this.d.titler.run(live.sessionId, turnText, provisionalTitle);
-      }
       // History stores the text plus an attachment marker; the image bytes live only in the live
       // context (a rehydrated conversation keeps the marker, not the pixels).
       const persistText = turnImages?.length ? `${turnText}\n[📎 ${turnImages.length}× image]` : turnText;
@@ -179,6 +178,14 @@ export class BrainTurnRunner {
         preflightResult: (success: boolean): void => {
           if (!success || !isUserTurn || userEchoPublished) return;
           userEchoPublished = true;
+          // Name the conversation only once the first prompt is genuinely admitted. A rejected initial
+          // prompt must leave an empty untitled session so a later retry can establish the real title.
+          const row = this.d.store.getSession(live.sessionId);
+          if (row && !row.title) {
+            const provisionalTitle = turnText.slice(0, 60);
+            this.d.store.setTitle(live.sessionId, provisionalTitle);
+            void this.d.titler.run(live.sessionId, turnText, provisionalTitle);
+          }
           live.replay.publish({ type: 'user', text: echoDisplay ?? persistText, durableId });
           admit(live.sessionId);
         },
