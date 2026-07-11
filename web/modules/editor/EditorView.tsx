@@ -10,7 +10,7 @@ import { EmptyState } from '../../components/ui/states';
 import { useTranslation } from '../../lib/i18n';
 import { ProjectEditor } from '../projects/editor/ProjectEditor';
 import { MotionLayoutItem, MotionPresence } from '../../components/ui/Motion';
-import { WorkspaceHeader, WorkspacePage } from '../../components/ui/WorkspacePrimitives';
+import { CompactWorkspaceHeader, WorkspacePage } from '../../components/ui/WorkspacePrimitives';
 import { ControlSurfaceDocument } from '../../components/ui/ControlSurface';
 
 /** Standalone code-editor page: the very same ProjectEditor that Projects opens as an overlay, here
@@ -37,7 +37,7 @@ export function EditorView() {
     <>
       <ModuleHeader title={t.page.editor} icon={Code2} />
       <WorkspacePage>
-        <WorkspaceHeader
+        <CompactWorkspaceHeader
           eyebrow={t.editor.workspaceEyebrow}
           title={t.page.editor}
           description={t.editor.workspaceIntro}

@@ -7,7 +7,7 @@ export function WorkspacePage({ children, className = '' }: { children: ReactNod
   return <div className={`workspace-page ${className}`}>{children}</div>;
 }
 
-export function WorkspaceHeader({ eyebrow, title, count, description, status, action, icon: Icon }: {
+export function CompactWorkspaceHeader({ eyebrow, title, count, description, status, action, icon: Icon }: {
   eyebrow?: string;
   title: string;
   count?: number;
