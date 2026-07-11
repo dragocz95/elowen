@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { reduce, pushUser, beginAssistant, emptyView, fromHistory, groupToolItems } from '../../src/brain/transcript.js';
+import { reduce, pushUser, beginAssistant, emptyView, fromHistory, getChatViewChange, groupToolItems } from '../../src/brain/transcript.js';
 import type { ChatView, ToolItem } from '../../src/brain/transcript.js';
 
 describe('groupToolItems: collapse consecutive same-tool rows', () => {
@@ -225,5 +225,26 @@ describe('transcript fold: subagent progress', () => {
     const after = reduce(before, { type: 'subagent', id: 'other', sessionId: 's', status: 'running', task: 't', tools: 0, seconds: 0 });
     expect(after).toBe(before);
     expect(after.thinking).toBe(false);
+  });
+
+  it('retains compact coalesced revisions without retaining predecessor views', () => {
+    const base = reduce(delegateCall(), { type: 'idle' });
+    let next = base;
+    for (let index = 0; index < 100; index += 1) {
+      next = reduce(next, { type: 'notice', kind: 'retry', message: `retry ${index}` });
+    }
+    next = reduce(next, {
+      type: 'subagent', id: 'call-1', sessionId: 's', status: 'running', task: 't', tools: 2, seconds: 3,
+    });
+    expect(getChatViewChange(next, base)).toEqual({ kind: 'turns', indices: [1] });
+  });
+
+  it('keeps isolated dirty turns separate from an appended suffix', () => {
+    const base = reduce(delegateCall(), { type: 'idle' });
+    let next = pushUser(base, 'new question');
+    next = reduce(next, {
+      type: 'subagent', id: 'call-1', sessionId: 's', status: 'done', task: 't', tools: 4, seconds: 5,
+    });
+    expect(getChatViewChange(next, base)).toEqual({ kind: 'patch', from: 2, indices: [1] });
   });
 });

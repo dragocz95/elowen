@@ -909,4 +909,31 @@ describe('progressive history layout', () => {
     expect(viewport.metrics().layoutVisits).toBeLessThan(20);
     expect(viewport.metrics().renderedTurns).toBeLessThanOrEqual(1);
   });
+
+  it('patches old sub-agent progress without rebuilding the later 5k-turn suffix', () => {
+    const history = [
+      { role: 'assistant', text: '', segments: [{ kind: 'tool' as const, id: 'delegate-old', name: 'delegate', detail: 'old child' }] },
+      ...Array.from({ length: 4_999 }, (_, index) => ({ role: 'assistant', text: `settled answer ${index}` })),
+    ];
+    let view = fromHistory(history);
+    const viewport = new ChatViewport(
+      { view, notice: '', modelName: 'kimi', thinkingSeconds: 0 },
+      getMarkdownTheme(), () => 18, () => 1, () => 80,
+    );
+    viewport.render(80);
+    viewport.scroll(1_000_000);
+    viewport.render(80);
+    expect(viewport.isHistoryIndexComplete()).toBe(true);
+
+    view = reduce(view, {
+      type: 'subagent', id: 'delegate-old', sessionId: 'child-old', status: 'running',
+      task: 'old child', detail: 'still checking', tools: 3, seconds: 9,
+    });
+    viewport.setState({ view, notice: '', modelName: 'kimi', thinkingSeconds: 0 });
+    viewport.render(80);
+
+    expect(viewport.metrics().reconciledTurns).toBeLessThanOrEqual(1);
+    expect(viewport.metrics().renderedTurns).toBeLessThanOrEqual(1);
+    expect(viewport.metrics().layoutVisits).toBeLessThanOrEqual(1);
+  });
 });

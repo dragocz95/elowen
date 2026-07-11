@@ -86,20 +86,42 @@ export type ChatViewChange =
 export type AccumulatedChatViewChange =
   | { kind: 'reset' }
   | { kind: 'suffix'; from: number }
+  | { kind: 'turns'; indices: number[] }
+  | { kind: 'patch'; from: number; indices: number[] }
   | { kind: 'none' };
 
-interface ChatViewChangeLink {
+interface ChatViewChangeNode {
   change: ChatViewChange;
-  /** Weak by design: the currently displayed view must not retain every immutable streaming snapshot.
-   * If GC collects a predecessor before the next frame, the renderer safely falls back to reference
-   * reconciliation; within one event-loop job WeakRef targets remain available for burst coalescing. */
-  previous?: WeakRef<ChatView>;
+  parent: number | null;
 }
 
-const chatViewChanges = new WeakMap<ChatView, ChatViewChangeLink>();
+interface ChatViewChangeHistory {
+  nextRevision: number;
+  nodes: Map<number, ChatViewChangeNode>;
+}
+
+interface ChatViewChangeRevision {
+  history: ChatViewChangeHistory;
+  revision: number;
+}
+
+// More than a full frame's realistic SSE burst, while still a tiny bounded journal. Nodes contain only
+// integers/change descriptors — never ChatView/turn arrays — so the visible snapshot cannot retain its
+// immutable predecessors and GC cannot erase metadata before a throttled render consumes it.
+const MAX_CHAT_VIEW_CHANGE_NODES = 4_096;
+const chatViewChanges = new WeakMap<ChatView, ChatViewChangeRevision>();
 
 function withChange(view: ChatView, change: ChatViewChange, previous?: ChatView): ChatView {
-  chatViewChanges.set(view, { change, ...(previous ? { previous: new WeakRef(previous) } : {}) });
+  const prior = previous ? chatViewChanges.get(previous) : undefined;
+  const history: ChatViewChangeHistory = prior?.history ?? { nextRevision: 0, nodes: new Map() };
+  const revision = history.nextRevision++;
+  history.nodes.set(revision, { change, parent: prior?.revision ?? null });
+  while (history.nodes.size > MAX_CHAT_VIEW_CHANGE_NODES) {
+    const oldest = history.nodes.keys().next().value as number | undefined;
+    if (oldest == null) break;
+    history.nodes.delete(oldest);
+  }
+  chatViewChanges.set(view, { history, revision });
   return view;
 }
 
@@ -109,23 +131,32 @@ function withChange(view: ChatView, change: ChatViewChange, previous?: ChatView)
 export function getChatViewChange(view: ChatView): ChatViewChange | undefined;
 export function getChatViewChange(view: ChatView, since: ChatView): AccumulatedChatViewChange | undefined;
 export function getChatViewChange(view: ChatView, since?: ChatView): ChatViewChange | AccumulatedChatViewChange | undefined {
-  if (!since) return chatViewChanges.get(view)?.change;
+  const current = chatViewChanges.get(view);
+  if (!since) return current ? current.history.nodes.get(current.revision)?.change : undefined;
   if (view === since) return { kind: 'none' };
+  const previous = chatViewChanges.get(since);
+  if (!current || !previous || current.history !== previous.history) return undefined;
 
-  let cursor = view;
+  let cursor = current.revision;
   let suffixFrom = Number.POSITIVE_INFINITY;
-  while (cursor !== since) {
-    const link = chatViewChanges.get(cursor);
-    if (!link) return undefined;
-    if (link.change.kind === 'reset') return { kind: 'reset' };
-    if (link.change.kind === 'append' || link.change.kind === 'turn') {
-      suffixFrom = Math.min(suffixFrom, link.change.index);
+  const dirtyTurns = new Set<number>();
+  while (cursor !== previous.revision) {
+    const node = current.history.nodes.get(cursor);
+    if (!node) return undefined; // consumer fell behind the bounded journal
+    if (node.change.kind === 'reset') return { kind: 'reset' };
+    if (node.change.kind === 'append') {
+      suffixFrom = Math.min(suffixFrom, node.change.index);
+    } else if (node.change.kind === 'turn') {
+      dirtyTurns.add(node.change.index);
     }
-    const previous = link.previous?.deref();
-    if (!previous) return undefined;
-    cursor = previous;
+    if (node.parent == null) return undefined;
+    cursor = node.parent;
   }
-  return Number.isFinite(suffixFrom) ? { kind: 'suffix', from: suffixFrom } : { kind: 'none' };
+  const indices = [...dirtyTurns].filter((index) => index < suffixFrom).sort((a, b) => a - b);
+  if (Number.isFinite(suffixFrom)) {
+    return indices.length ? { kind: 'patch', from: suffixFrom, indices } : { kind: 'suffix', from: suffixFrom };
+  }
+  return indices.length ? { kind: 'turns', indices } : { kind: 'none' };
 }
 
 /** One stored turn as `fromHistory` consumes it. Structurally the `BrainMessageView` the daemon serves

@@ -326,6 +326,10 @@ export class ChatViewport implements Component {
   private knownSuffixRows = 0;
   private suffixReconnect: { boundary: number; start: number; rows: number } | null = null;
   private prefixHeights: number[] | null = null;
+  /** Sparse height corrections after the last full prefix build. An old sub-agent row can change height;
+   *  recording one point delta keeps prefix queries O(number of dirty turns), instead of rewriting every
+   *  later prefix cell (O(history)) for a single background progress event. */
+  private prefixHeightDeltas = new Map<number, number>();
   private layoutWidth = 0;
   private layoutTheme: unknown = null;
   private layoutShowsThoughts = true;
@@ -614,6 +618,7 @@ export class ChatViewport implements Component {
       this.knownSuffixRows = 0;
       this.suffixReconnect = null;
       this.prefixHeights = null;
+      this.prefixHeightDeltas.clear();
       this.layoutWidth = width;
       this.layoutTheme = theme;
       this.layoutShowsThoughts = showThoughts;
@@ -625,27 +630,49 @@ export class ChatViewport implements Component {
         ? getChatViewChange(this.state.view, this.layoutViewRef)
         : undefined;
       let handled = false;
+      const dirtyIndices = change?.kind === 'turns' || change?.kind === 'patch' ? change.indices : [];
+      const sparseValid = dirtyIndices.every((index) => index >= 0 && index < this.layout.length && index < turns.length);
+      if (sparseValid && dirtyIndices.length) {
+        this.clearSelection();
+        for (const index of dirtyIndices) {
+          const entry = this.layout[index]!;
+          const nextTurn = turns[index]!;
+          if (entry.turn === nextTurn) continue;
+          const retain = entry.rows != null;
+          entry.turn = nextTurn;
+          this.frameReconciledTurns++;
+          // The volatile streaming tail is invalidated once by the dedicated block below; eagerly
+          // rendering it here would immediately discard and render it a second time in the same frame.
+          if (entry.height != null && !(nextTurn.role === 'elowen' && nextTurn.streaming)) {
+            this.renderAndRecord(index, retain);
+          }
+        }
+      }
+      const suffixFrom = change?.kind === 'suffix' || change?.kind === 'patch' ? change.from : null;
       if (change?.kind === 'none' && this.layout.length === turns.length) {
         handled = true;
-      } else if (change?.kind === 'suffix'
-        && change.from >= 0
-        && change.from <= this.layout.length
-        && change.from <= turns.length) {
-        if (change.from < this.layout.length) this.clearSelection();
+      } else if (change?.kind === 'turns' && sparseValid) {
+        handled = true;
+      } else if (suffixFrom != null
+        && sparseValid
+        && suffixFrom >= 0
+        && suffixFrom <= this.layout.length
+        && suffixFrom <= turns.length) {
+        if (suffixFrom < this.layout.length) this.clearSelection();
         const oldKnownStart = this.knownStart;
         const oldKnownRows = this.knownSuffixRows;
         let removedKnownRows = 0;
-        for (const entry of this.layout.slice(change.from)) {
+        for (const entry of this.layout.slice(suffixFrom)) {
           if (entry.height != null) this.indexedTurnCount--;
           removedKnownRows += entry.height ?? 0;
           this.discardRows(entry);
         }
-        this.layout.length = change.from;
-        for (let i = change.from; i < turns.length; i++) {
+        this.layout.length = suffixFrom;
+        for (let i = suffixFrom; i < turns.length; i++) {
           this.layout.push({ turn: turns[i]!, height: null, rows: null });
         }
-        this.frameReconciledTurns += turns.length - change.from;
-        this.resetKnownSuffixAfterReplacement(change.from, oldKnownStart, oldKnownRows, removedKnownRows);
+        this.frameReconciledTurns += turns.length - suffixFrom;
+        this.resetKnownSuffixAfterReplacement(suffixFrom, oldKnownStart, oldKnownRows, removedKnownRows);
         handled = true;
       } else if (change?.kind === 'reset') {
         this.clearSelection();
@@ -656,6 +683,7 @@ export class ChatViewport implements Component {
         this.knownSuffixRows = 0;
         this.suffixReconnect = null;
         this.prefixHeights = null;
+        this.prefixHeightDeltas.clear();
         this.expandedThoughts.clear();
         this.expandedTools.clear();
         this.frameReconciledTurns += turns.length;
@@ -759,7 +787,9 @@ export class ChatViewport implements Component {
       const delta = rows.length - oldHeight;
       if (index >= this.knownStart) this.knownSuffixRows += delta;
       if (this.prefixHeights) {
-        for (let i = index + 1; i < this.prefixHeights.length; i++) this.prefixHeights[i]! += delta;
+        const adjusted = (this.prefixHeightDeltas.get(index) ?? 0) + delta;
+        if (adjusted === 0) this.prefixHeightDeltas.delete(index);
+        else this.prefixHeightDeltas.set(index, adjusted);
       }
     }
     return rows;
@@ -779,6 +809,7 @@ export class ChatViewport implements Component {
 
   private resetKnownSuffixAfterReplacement(from: number, oldStart: number, oldRows: number, removedRows: number): void {
     if (this.prefixHeights) this.prefixHeights.length = Math.min(this.prefixHeights.length, from + 1);
+    for (const index of this.prefixHeightDeltas.keys()) if (index >= from) this.prefixHeightDeltas.delete(index);
     this.knownStart = this.layout.length;
     this.knownSuffixRows = 0;
     this.suffixReconnect = from >= oldStart
@@ -836,7 +867,9 @@ export class ChatViewport implements Component {
   }
 
   private buildPrefixHeights(): void {
+    const fresh = this.prefixHeights == null;
     const prefix = this.prefixHeights ?? [0];
+    if (fresh) this.prefixHeightDeltas.clear();
     const start = Math.max(0, prefix.length - 1);
     prefix.length = this.layout.length + 1;
     for (let i = start; i < this.layout.length; i++) prefix[i + 1] = prefix[i]! + (this.layout[i]!.height ?? 0);
@@ -845,11 +878,16 @@ export class ChatViewport implements Component {
 
   private firstTurnEndingAfter(offset: number): number {
     const prefix = this.prefixHeights!;
+    const at = (index: number): number => {
+      let value = prefix[index] ?? 0;
+      for (const [turnIndex, delta] of this.prefixHeightDeltas) if (turnIndex < index) value += delta;
+      return value;
+    };
     let lo = 0;
     let hi = this.layout.length;
     while (lo < hi) {
       const mid = Math.floor((lo + hi) / 2);
-      if (prefix[mid + 1]! <= offset) lo = mid + 1;
+      if (at(mid + 1) <= offset) lo = mid + 1;
       else hi = mid;
     }
     return lo;
