@@ -108,6 +108,10 @@ function sendHex(...bytes) {
   tmux(['send-keys', '-H', '-t', session, ...bytes]);
 }
 
+function sendRaw(value) {
+  sendHex(...Array.from(Buffer.from(value), (byte) => byte.toString(16).padStart(2, '0')));
+}
+
 function resize(columns, rows) {
   tmux(['resize-window', '-t', session, '-x', String(columns), '-y', String(rows)]);
 }
@@ -265,7 +269,28 @@ try {
   resize(120, 30);
   await waitFor('Todo and telemetry panels after stream', () => capture().includes('Todos')
     && capture().includes('Context') && capture().includes('E2E FINAL REPLY'));
-  saveCapture('08-panels-after-stream');
+  const panelCapture = saveCapture('08-panels-after-stream');
+
+  // Grab the actual red transcript thumb immediately beside the right panel and drag it upward using
+  // raw SGR mouse press/motion/release events. This exercises the production mouse parser and shell
+  // routing, not just ChatViewport methods.
+  const scrollbarX = 120 - 46 - 3;
+  const panelLines = panelCapture.endsWith('\n') ? panelCapture.slice(0, -1).split('\n') : panelCapture.split('\n');
+  const thumbRow = panelLines.findIndex((line) => line.indexOf('█') === scrollbarX - 1) + 1;
+  assert.ok(thumbRow > 0, '120x30 panel frame must expose the transcript thumb at the chat boundary');
+  sendRaw(`\x1b[<0;${scrollbarX};${thumbRow}M`);
+  sendRaw(`\x1b[<32;${scrollbarX};2M`);
+  sendRaw(`\x1b[<0;${scrollbarX};2m`);
+  await waitFor('mouse scrollbar drag history chip', () => capture().includes('History +'));
+  const draggedCapture = saveCapture('09-scrollbar-drag-with-panel');
+  assert.match(draggedCapture, /History \+\d+ lines/, 'dragging the visible thumb must move into history');
+  const draggedLines = draggedCapture.endsWith('\n') ? draggedCapture.slice(0, -1).split('\n') : draggedCapture.split('\n');
+  const draggedThumbRow = draggedLines.findIndex((line) => line.indexOf('█') === scrollbarX - 1) + 1;
+  assert.ok(draggedThumbRow > 0, 'scrolled 120x30 frame must keep a draggable transcript thumb');
+  sendRaw(`\x1b[<0;${scrollbarX};${draggedThumbRow}M`);
+  sendRaw(`\x1b[<32;${scrollbarX};${thumbRow}M`);
+  sendRaw(`\x1b[<0;${scrollbarX};${thumbRow}m`);
+  await waitFor('scrollbar drag returns to tail', () => !capture().includes('History +'));
 
   sendLiteral('/editor');
   sendKey('Enter');
@@ -349,13 +374,14 @@ try {
   const report = {
     passed: true,
     session,
-    captures: 12,
+    captures: 13,
     requests: entries().filter((entry) => entry.kind === 'request').length,
     frames: perfFrames.length,
     frameMs: { p95, max: frameTimes.at(-1) ?? 0 },
     terminalStateRestored: true,
     alternateScreenRestored: true,
     mouseReportingDisabled: true,
+    scrollbarDragWithPanel: true,
   };
   writeFileSync(reportPath, `${JSON.stringify(report, null, 2)}\n`);
 
