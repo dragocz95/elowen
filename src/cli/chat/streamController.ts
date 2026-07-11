@@ -9,6 +9,7 @@ import type { BrainStreamFrame } from './brainClient.js';
 import type { SubagentPanelEntry } from './components.js';
 import type { ChatRuntime } from './runtime.js';
 import type { Flows } from './flows.js';
+import { HydrationNoticeOwner } from './hydrationNoticeOwner.js';
 
 export interface StreamController {
   subagentStates(): readonly SubagentPanelEntry[];
@@ -34,21 +35,18 @@ export function createStreamController(
   rt: ChatRuntime,
   flows: Flows,
   hydrator = new SnapshotHydrator<BrainEvent>(),
+  hydrationNotices = new HydrationNoticeOwner({ external: rt.notice }),
 ): StreamController {
   const { client } = rt;
   let childGeneration = 0;
   let switchGeneration = 0;
   let stopped = false;
   const childFallbacks = new Set<ReturnType<typeof setTimeout>>();
-  const ownedHydrationNotices: Record<'parent' | 'child', string> = { parent: '', child: '' };
   const publishHydrationNotice = (lane: 'parent' | 'child', scope: 'conversation' | 'sub-agent', error: unknown): void => {
-    ownedHydrationNotices[lane] = historyNotice(scope, error);
-    rt.notice = ownedHydrationNotices[lane];
+    rt.notice = hydrationNotices.publish(lane, historyNotice(scope, error), rt.notice);
   };
   const clearHydrationNotice = (lane: 'parent' | 'child'): void => {
-    const owned = ownedHydrationNotices[lane];
-    if (owned && rt.notice === owned) rt.notice = '';
-    ownedHydrationNotices[lane] = '';
+    rt.notice = hydrationNotices.clear(lane, rt.notice);
   };
 
   const subagentStates = (): readonly SubagentPanelEntry[] => rt.transcript.subagents();
@@ -57,9 +55,9 @@ export function createStreamController(
 
   const replayParent = (
     events: readonly BrainEvent[],
-    apply: (event: BrainEvent, fromSnapshot?: boolean, bypassHydration?: boolean) => void,
+    apply: (event: BrainEvent, fromSnapshot?: boolean, bypassHydration?: boolean, sessionSideEffectApplied?: boolean) => void,
   ): void => {
-    for (const event of events) apply(event, false, true);
+    for (const event of events) apply(event, false, true, true);
   };
 
   const openStream = (ac: AbortController): void => {
@@ -67,6 +65,7 @@ export function createStreamController(
     if (!current()) return;
     const streamSessionAtOpen = client.boundSession;
     let truncatedSnapshotPending = false;
+    let pendingSessionReset: string | null = null;
     let lease!: SnapshotLaneLease<BrainEvent>;
 
     const reconnectForSnapshot = (): void => {
@@ -79,7 +78,12 @@ export function createStreamController(
     lease = hydrator.openLane('parent', ac.signal, { onOverflow: reconnectForSnapshot });
 
     let refetchHistory = (): void => {};
-    const onEvent = (event: BrainEvent, fromSnapshot = false, bypassHydration = false): void => {
+    const onEvent = (
+      event: BrainEvent,
+      fromSnapshot = false,
+      bypassHydration = false,
+      sessionSideEffectApplied = false,
+    ): void => {
       if (!current() || !lease.isCurrent()) return;
 
       // Control snapshots are state outside the transcript and must remain responsive while history is
@@ -88,6 +92,17 @@ export function createStreamController(
       if (event.type === 'queue') { rt.queued = event.items; rt.render('stream:queue'); return; }
       if (event.type === 'process') { rt.processes = event.processes; rt.render('stream:process'); return; }
       if (event.type === 'compacted') { if (!fromSnapshot) refetchHistory(); return; }
+
+      // Binding is control state, not transcript state. Commit it before any hydration buffer can defer
+      // or discard the visual reset; replay later applies only TranscriptModel's session semantics.
+      if (event.type === 'session' && !sessionSideEffectApplied) {
+        rt.invalidateAsyncState?.();
+        client.rebind(event.sessionId);
+        pendingSessionReset = event.sessionId;
+        rt.notice = color.dim('previous conversation was idle — continuing in a fresh one');
+        void rt.refreshMeta().then(() => { if (current() && lease.isCurrent()) rt.render('metadata:session-rollover'); });
+        rt.render('stream:session-binding');
+      }
 
       if (!bypassHydration) {
         const buffered = lease.buffer(event);
@@ -110,12 +125,8 @@ export function createStreamController(
       if (event.type === 'subagent' && event.status !== 'running') {
         void rt.refreshMeta().then(() => { if (current() && lease.isCurrent()) rt.render('metadata:subagent-settled'); });
       }
-      if (event.type === 'session') {
-        client.rebind(event.sessionId);
-        rt.notice = color.dim('previous conversation was idle — continuing in a fresh one');
-        void rt.refreshMeta().then(() => { if (current() && lease.isCurrent()) rt.render('metadata:session-rollover'); });
-      }
       rt.transcript.apply(event);
+      if (event.type === 'session') pendingSessionReset = null;
       rt.render(`stream:${event.type}`);
       if (repairTruncatedAtIdle) {
         truncatedSnapshotPending = false;
@@ -125,19 +136,30 @@ export function createStreamController(
 
     refetchHistory = (): void => {
       if (!current() || !lease.isCurrent()) return;
+      const requestedSession = client.boundSession;
       void lease.hydrate(
-        (signal) => client.history(undefined, signal),
+        (signal) => client.history(requestedSession, signal),
         {
           commit: (history, replay) => {
             if (!current() || !lease.isCurrent()) return;
             rt.transcript.replaceHistory(history);
+            if (pendingSessionReset
+              && requestedSession !== pendingSessionReset
+              && !replay.some((event) => event.type === 'session')) {
+              rt.transcript.apply({ type: 'session', sessionId: pendingSessionReset });
+            }
             replayParent(replay, onEvent);
+            pendingSessionReset = null;
             clearHydrationNotice('parent');
             rt.render('history:committed');
           },
           retain: (replay, error) => {
             if (!current() || !lease.isCurrent()) return;
+            if (pendingSessionReset && !replay.some((event) => event.type === 'session')) {
+              rt.transcript.apply({ type: 'session', sessionId: pendingSessionReset });
+            }
             replayParent(replay, onEvent);
+            pendingSessionReset = null;
             publishHydrationNotice('parent', 'conversation', error);
             rt.render('history:retained');
           },
@@ -149,10 +171,12 @@ export function createStreamController(
       if (!current() || !lease.isCurrent()) return;
       lease.applySnapshot(() => {
         clearHydrationNotice('parent');
+        pendingSessionReset = null;
         const terminal = snapshot.events.some((event) => event.type === 'idle' || event.type === 'error');
         if (terminal) truncatedSnapshotPending = false;
         else if (snapshot.truncated) truncatedSnapshotPending = true;
         if (snapshot.sessionId && snapshot.sessionId !== streamSessionAtOpen) {
+          rt.invalidateAsyncState?.();
           rt.notice = color.dim('previous conversation was idle — continuing in a fresh one');
           void rt.refreshMeta().then(() => { if (current() && lease.isCurrent()) rt.render('metadata:snapshot-session'); });
         }

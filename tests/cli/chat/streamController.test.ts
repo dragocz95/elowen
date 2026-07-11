@@ -6,6 +6,9 @@ import type { Flows } from '../../../src/cli/chat/flows.js';
 import { BrainClient } from '../../../src/cli/chat/brainClient.js';
 import type { BrainEvent } from '../../../src/brain/events.js';
 import { TranscriptModel } from '../../../src/brain/transcriptModel.js';
+import { SnapshotHydrator } from '../../../src/cli/chat/snapshotHydrator.js';
+import { HydrationNoticeOwner } from '../../../src/cli/chat/hydrationNoticeOwner.js';
+import { loadInitialTranscript } from '../../../src/cli/chat/app.js';
 
 function deferred<T>(): { promise: Promise<T>; resolve: (v: T) => void } {
   let resolve!: (v: T) => void;
@@ -421,6 +424,101 @@ describe('streamController — bounded hydration lifecycle', () => {
     expect(historySignal?.aborted).toBe(true);
     expect(rt.view.turns).toEqual([]);
     stream.stop();
+  });
+
+  it('rebinds a rollover immediately during hydration and preserves it across a newer compaction boundary', async () => {
+    const firstHistory = deferred<Response>();
+    const secondHistory = deferred<Response>();
+    const historyUrls: string[] = [];
+    const sent: Record<string, unknown>[] = [];
+    const fetchImpl = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.endsWith('/brain/start')) return new Response(JSON.stringify({ sessionId: 'old' }), { status: 201 });
+      if (url.includes('/brain/messages')) {
+        historyUrls.push(url);
+        return historyUrls.length === 1 ? firstHistory.promise : secondHistory.promise;
+      }
+      if (url.endsWith('/brain/send')) {
+        sent.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+        return new Response(JSON.stringify({ ok: true }), { status: 202 });
+      }
+      return new Response(JSON.stringify([]), { status: 200 });
+    }) as unknown as typeof fetch;
+    const client = new BrainClient({ base: 'http://x', token: 't', fetchImpl, clientId: 'cli-rollover' });
+    await client.start({ session: 'old' });
+    let onFrame!: (event: BrainEvent) => void;
+    (client as unknown as { stream(callback: (event: BrainEvent) => void, signal: AbortSignal): Promise<void> }).stream =
+      async (callback) => { onFrame = callback; };
+    const rebind = vi.spyOn(client, 'rebind');
+    const rt = runtime(client);
+    const invalidateAsyncState = vi.fn();
+    rt.invalidateAsyncState = invalidateAsyncState;
+    const stream = createStreamController(rt, flows);
+    stream.openStream(rt.streamAc);
+
+    onFrame({ type: 'compacted' });
+    onFrame({ type: 'session', sessionId: 'fresh' });
+    expect(client.boundSession).toBe('fresh');
+    expect(rebind).toHaveBeenCalledTimes(1);
+    expect(rebind).toHaveBeenCalledWith('fresh');
+    expect(invalidateAsyncState).toHaveBeenCalledTimes(1);
+    onFrame({ type: 'compacted' });
+    secondHistory.resolve(new Response(JSON.stringify([{ role: 'assistant', text: 'fresh durable history' }]), { status: 200 }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(historyUrls).toEqual([
+      'http://x/brain/messages?session=old',
+      'http://x/brain/messages?session=fresh',
+    ]);
+    expect(JSON.stringify(rt.view)).toContain('fresh durable history');
+    await client.send('future turn');
+    expect(sent.at(-1)).toMatchObject({ session: 'fresh', text: 'future turn' });
+
+    firstHistory.resolve(new Response(JSON.stringify([{ role: 'assistant', text: 'stale old history' }]), { status: 200 }));
+    await Promise.resolve();
+    expect(JSON.stringify(rt.view)).not.toContain('stale old history');
+    expect(rebind).toHaveBeenCalledTimes(1);
+    stream.stop();
+  });
+
+  it('clears an owned boot timeout after a successful snapshot without removing a keymap warning', async () => {
+    vi.useFakeTimers();
+    try {
+      let onFrame!: (event: BrainEvent | { type: 'snapshot'; cursor: number; history: { role: string; text: string }[]; events: BrainEvent[] }) => void;
+      const client = {
+        history: () => new Promise<never>(() => {}),
+        stream: (callback: typeof onFrame, signal: AbortSignal) => {
+          onFrame = callback;
+          return new Promise<void>((resolve) => signal.addEventListener('abort', () => resolve(), { once: true }));
+        },
+        rebind: () => {},
+      } as unknown as BrainClient;
+      const hydrator = new SnapshotHydrator<BrainEvent>();
+      const bootLifecycle = new AbortController();
+      const bootLoading = loadInitialTranscript(client, hydrator, bootLifecycle.signal);
+      await vi.advanceTimersByTimeAsync(10_000);
+      const boot = await bootLoading;
+      const keymapWarning = '\u001b[33mkeybinds: invalid ctrl+x\u001b[39m';
+      const notices = new HydrationNoticeOwner({ base: keymapWarning, parent: boot.notice });
+      const rt = runtime(client);
+      rt.notice = notices.render();
+      const stream = createStreamController(rt, flows, hydrator, notices);
+      stream.openStream(rt.streamAc);
+
+      expect(rt.notice).toContain('timed out');
+      expect(rt.notice).toContain(keymapWarning);
+      onFrame({
+        type: 'snapshot', cursor: 1,
+        history: [{ role: 'assistant', text: 'recovered transcript' }], events: [],
+      });
+
+      expect(rt.notice).toBe(keymapWarning);
+      expect(rt.notice).not.toContain('timed out');
+      expect(JSON.stringify(rt.view)).toContain('recovered transcript');
+      stream.stop();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

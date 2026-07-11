@@ -25,6 +25,8 @@ import { TerminalLifecycle } from './terminalLifecycle.js';
 import { SnapshotHydrator, SnapshotTimeoutError } from './snapshotHydrator.js';
 import type { BrainEvent } from '../../brain/events.js';
 import type { BrainMessageView } from '../../brain/messageView.js';
+import { HydrationNoticeOwner } from './hydrationNoticeOwner.js';
+import { AsyncPublicationFence } from './asyncPublicationFence.js';
 
 /** Boot history uses the same bounded hydrator instance as reconnect/compaction/child drill-in. A dead
  * daemon cannot keep first paint pending forever, and a transport that ignores abort is fenced by the
@@ -250,9 +252,10 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
   inputStack.addChild(queuedMessages);
   inputStack.addChild(attachmentChips);
   inputStack.addChild(editorSlot);
-  let rateLimitRefreshGeneration = 0;
-  let metadataRefreshGeneration = 0;
-  let asyncStateActive = true;
+  const publicationFence = new AsyncPublicationFence<'metadata' | 'rate-limits'>();
+  const keymapNotice = keymap.warnings.length
+    ? color.warning(`keybinds: ${keymap.warnings.join(' · ')} (see /keybinds)`) : '';
+  const hydrationNotices = new HydrationNoticeOwner({ base: keymapNotice, parent: initialTranscript.notice });
 
   /** The shared runtime: all mutable chat state + the render/refreshMeta/quit callbacks, threaded
    *  through every module factory below (see ChatRuntime). */
@@ -269,10 +272,7 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
     childAc: null,
     streamAc: new AbortController(),
     // Warn ONCE about broken keybind overrides — the binds themselves fell back to their defaults.
-    notice: [
-      keymap.warnings.length ? color.warning(`keybinds: ${keymap.warnings.join(' · ')} (see /keybinds)`) : '',
-      initialTranscript.notice,
-    ].filter(Boolean).join(' · '),
+    notice: hydrationNotices.render(),
     modelName: boot?.model || opts.model || '',
     conversationTitle: boot?.title ?? '',
     lineCfg: boot?.statusline ?? null,
@@ -299,23 +299,23 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
     renderForced: () => { /* wired to the shell below */ },
     quit: () => { /* wired below, after the shell exists */ },
     refreshRateLimits: async (): Promise<void> => {
-      const generation = ++rateLimitRefreshGeneration;
+      const publication = publicationFence.begin('rate-limits');
       try {
         const limits = await client.rateLimits();
         // A rapid session/model switch can finish requests out of order. Only the latest refresh may
         // replace the rail, otherwise an old OpenAI session can flash over a newer provider's null state.
-        if (asyncStateActive && generation === rateLimitRefreshGeneration) {
+        publicationFence.commit(publication, () => {
           rt.rateLimits = limits;
           rt.render();
-        }
+        });
       } catch {
         // The API itself marks a cached provider snapshot `stale`; an arbitrary client-side snapshot from
         // the previous session/model is not safe to retain when the current request failed.
-        if (asyncStateActive && generation === rateLimitRefreshGeneration) { rt.rateLimits = null; rt.render(); }
+        publicationFence.commit(publication, () => { rt.rateLimits = null; rt.render(); });
       }
     },
     refreshMeta: async (): Promise<void> => {
-      const generation = ++metadataRefreshGeneration;
+      const publication = publicationFence.begin('metadata');
       // Deliberately not awaited: a slow provider usage request must never hold up status, model switches,
       // or the first TUI paint. Its own completion schedules a render when a snapshot is available.
       void rt.refreshRateLimits();
@@ -323,19 +323,17 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
         client.status().catch(() => null),
         client.mcpServers().catch(() => null),
       ]);
-      if (!asyncStateActive || generation !== metadataRefreshGeneration) return;
-      if (st) { rt.modelName = st.model || rt.modelName; rt.conversationTitle = st.title ?? rt.conversationTitle; rt.lineCfg = st.statusline; rt.usage = st.usage; rt.thinkingLevel = st.thinkingLevel ?? ''; rt.thinkingLevels = st.thinkingLevels ?? []; rt.thinkingLevelLabels = st.thinkingLevelLabels ?? {}; rt.fastOn = st.fast ?? false; rt.fastAvailable = st.fastAvailable ?? false; rt.cards = st.cards ?? []; rt.queued = st.queued ?? []; rt.lspEnabled = st.lspEnabled ?? null; rt.yoloOn = st.yolo ?? rt.yoloOn; }
-      rt.mcpList = mcp;
+      publicationFence.commit(publication, () => {
+        if (st) { rt.modelName = st.model || rt.modelName; rt.conversationTitle = st.title ?? rt.conversationTitle; rt.lineCfg = st.statusline; rt.usage = st.usage; rt.thinkingLevel = st.thinkingLevel ?? ''; rt.thinkingLevels = st.thinkingLevels ?? []; rt.thinkingLevelLabels = st.thinkingLevelLabels ?? {}; rt.fastOn = st.fast ?? false; rt.fastAvailable = st.fastAvailable ?? false; rt.cards = st.cards ?? []; rt.queued = st.queued ?? []; rt.lspEnabled = st.lspEnabled ?? null; rt.yoloOn = st.yolo ?? rt.yoloOn; }
+        rt.mcpList = mcp;
+      });
     },
-    invalidateAsyncState: (): void => {
-      metadataRefreshGeneration += 1;
-      rateLimitRefreshGeneration += 1;
-    },
+    invalidateAsyncState: (): void => publicationFence.invalidate(),
   };
   await rt.refreshMeta();
 
   const flows = createFlows(rt);
-  const stream = createStreamController(rt, flows, hydrator);
+  const stream = createStreamController(rt, flows, hydrator, hydrationNotices);
   const shell = createShell(rt, stream, mdTheme, diagnostics);
   rt.render = shell.render;
   rt.renderForced = shell.renderForced;
@@ -362,8 +360,7 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
   const teardown = (): void => {
     if (tornDown) return;
     tornDown = true;
-    asyncStateActive = false;
-    rt.invalidateAsyncState();
+    publicationFence.stop();
     stream.stop();
     diagnostics.record({ type: 'lifecycle', action: 'stop' });
     terminalLifecycle.stop();

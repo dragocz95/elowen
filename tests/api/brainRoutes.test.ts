@@ -310,6 +310,7 @@ describe('brain routes', () => {
     await reader.cancel().catch(() => {});
     expect(brain.tapSnapshotCalls).toEqual([{ id: 2, session: 'brain-ch-subagent-a' }]);
     expect(body).toContain('event: snapshot');
+    expect(body).toContain('id: 7');
     expect(body).toContain('stored child turn');
     expect(body).toContain('running child output');
     expect(body).toContain('post-snapshot event');
@@ -330,7 +331,8 @@ describe('brain routes', () => {
     await Promise.resolve();
     expect(brain.snapshotOffCalls).toBe(1);
     const body = await res.text();
-    expect(body).not.toContain('overflow-2048');
+    expect(body).not.toContain('overflow-');
+    expect(body.match(/overflow-/g) ?? []).toHaveLength(0);
     ac.abort();
   });
 
