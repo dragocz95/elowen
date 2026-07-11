@@ -19,7 +19,8 @@ import { wireSubmit } from './commands.js';
 import type { ChatRuntime } from './runtime.js';
 import { fromHistory, groupToolItems, type ChatView } from '../../brain/transcript.js';
 import { commandsFor } from '../../brain/slashCommands.js';
-import { ALT_SCREEN_OFF, ALT_SCREEN_ON, DISABLE_MOUSE, ENABLE_MOUSE } from './layout.js';
+import { createTuiDiagnostics } from './tuiDiagnostics.js';
+import { TerminalLifecycle } from './terminalLifecycle.js';
 
 /** Plain-text rendering of the view — used for the non-TTY fallback and unit tests (no ANSI, so it's
  *  deterministic to assert on). The rich terminal path uses pi-tui components instead. */
@@ -78,13 +79,18 @@ export function installExitGuards(teardown: () => void, disableMouse: () => void
   const onSignal = (code: number) => (): void => { teardown(); disableMouse(); process.exit(code); };
   const onSigTerm = onSignal(143);
   const onSigHup = onSignal(129);
+  // Monitor runs before Node's default uncaught-exception report. Restore the active alternate screen
+  // first, then let Node keep its normal fatal-error semantics and print into the primary buffer.
+  const onFatal = (): void => { teardown(); disableMouse(); };
   process.once('exit', disableMouse);
   process.once('SIGTERM', onSigTerm);
   process.once('SIGHUP', onSigHup);
+  process.once('uncaughtExceptionMonitor', onFatal);
   return (): void => {
     process.off('exit', disableMouse);
     process.off('SIGTERM', onSigTerm);
     process.off('SIGHUP', onSigHup);
+    process.off('uncaughtExceptionMonitor', onFatal);
   };
 }
 
@@ -190,6 +196,7 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
 
   const term = new ProcessTerminal();
   const tui = new TUI(term);
+  const diagnostics = createTuiDiagnostics(process.env);
   // The shell now keeps a strict row budget, but a forced/modal structural shrink should still clear the
   // dependency renderer's historical working area instead of ever exposing a stale status row.
   tui.setClearOnShrink(true);
@@ -247,7 +254,9 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
     showThoughts,
     pendingImages: [],
     mentionFrecency: loadMentionFrecency(process.cwd()),
+    terminalLifecycle: null,
     render: () => { /* wired to the shell below */ },
+    renderForced: () => { /* wired to the shell below */ },
     quit: () => { /* wired below, after the shell exists */ },
     refreshRateLimits: async (): Promise<void> => {
       const generation = ++rateLimitRefreshGeneration;
@@ -281,18 +290,26 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
 
   const flows = createFlows(rt);
   const stream = createStreamController(rt, flows);
-  const shell = createShell(rt, stream, mdTheme);
+  const shell = createShell(rt, stream, mdTheme, diagnostics);
   rt.render = shell.render;
+  rt.renderForced = shell.renderForced;
+  const terminalLifecycle = new TerminalLifecycle({
+    term,
+    tui,
+    scheduler: {
+      pause: shell.pauseRendering,
+      resume: shell.resumeRendering,
+      stop: shell.stopRendering,
+    },
+    forceRender: shell.renderForced,
+    beforeStop: shell.hideOverlays,
+  });
+  rt.terminalLifecycle = terminalLifecycle;
   const pickers = createPickers(rt, stream, { reshowPanel: shell.reshowPanel, reloadKeymap: shell.reloadKeymap });
   wireSubmit(rt, { stream, pickers });
 
   let done!: () => void;
   const finished = new Promise<void>((r) => { done = r; });
-  // 250ms: fast enough to animate the generating spinner in the prompt meta line, cheap enough to
-  // leave idle sessions alone (renders fire only while a turn streams).
-  const thinkingTimer = setInterval(() => {
-    if (rt.view.thinking) rt.render();
-  }, 250);
   // Terminal teardown shared by the normal quit path and the signal handlers, guarded so a SIGTERM
   // that races quit() (or vice-versa) never double-stops the TUI or leaves raw-mode/alt-screen up.
   let tornDown = false;
@@ -300,16 +317,14 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
     if (tornDown) return;
     tornDown = true;
     rt.streamAc.abort();
-    clearInterval(thinkingTimer);
-    term.write(DISABLE_MOUSE);
-    shell.hideOverlays();
-    tui.stop();
-    term.write(ALT_SCREEN_OFF); // restore the primary buffer (shell + scrollback) AFTER pi-tui's final paint
+    diagnostics.record({ type: 'lifecycle', action: 'stop' });
+    terminalLifecycle.stop();
+    void diagnostics.close();
   };
   // Mouse-reporting hygiene: quit() disables it on the normal path, but an uncaught throw or a
   // SIGTERM/SIGHUP would otherwise leave the user's shell spewing `[<35;…M` on every mouse move — and
   // strand them on a blank alternate screen. Leave both here so the crash/signal path recovers cleanly.
-  const disableMouse = (): void => { try { process.stdout.write(DISABLE_MOUSE + ALT_SCREEN_OFF); } catch { /* tty gone */ } };
+  const disableMouse = (): void => terminalLifecycle.stop();
   // Registered per-run and detached in quit(): menu.ts relaunches runChat in a loop, so leaving these
   // on `process` would stack listeners (MaxListenersExceededWarning bleeding into the menu, plus each
   // dead handler pinning the previous session's closure) on every chat open/close.
@@ -330,14 +345,16 @@ export async function runChat(opts: RunChatOpts): Promise<void> {
 
   // Enter the alternate screen BEFORE the first paint: pi-tui's first render assumes a clean buffer, and
   // `?1049h` gives it exactly that (cleared, cursor home), fully isolated from the shell's scrollback.
-  term.write(ALT_SCREEN_ON);
-  tui.start();
-  term.write(ENABLE_MOUSE);
-  rt.render();
-  stream.openStream(rt.streamAc);
-  // Reconnect restore: if a question was already parked when this client attached (daemon restart, second
-  // client), re-render its picker instead of leaving the turn silently hanging until the timeout.
-  if (boot?.pendingAsk) flows.launchAsk(boot.pendingAsk.id, boot.pendingAsk.questions, boot.pendingAsk.kind);
-
-  await finished;
+  try {
+    diagnostics.record({ type: 'lifecycle', action: 'start' });
+    terminalLifecycle.start();
+    stream.openStream(rt.streamAc);
+    // Reconnect restore: if a question was already parked when this client attached (daemon restart, second
+    // client), re-render its picker instead of leaving the turn silently hanging until the timeout.
+    if (boot?.pendingAsk) flows.launchAsk(boot.pendingAsk.id, boot.pendingAsk.questions, boot.pendingAsk.kind);
+    await finished;
+  } finally {
+    teardown();
+    removeExitGuards();
+  }
 }

@@ -30,7 +30,7 @@ export function createStreamController(rt: ChatRuntime, flows: Flows): StreamCon
   // can overlap; a late A response must never overwrite the later B selection's bound view or stream.
   let switchGeneration = 0;
 
-  const subagentStates = (): SubagentPanelEntry[] => {
+  const collectSubagentStates = (): SubagentPanelEntry[] => {
     const seen = new Map<string, SubagentPanelEntry>();
     for (const turn of rt.view.turns) {
       if (turn.role !== 'elowen') continue;
@@ -45,6 +45,27 @@ export function createStreamController(rt: ChatRuntime, flows: Flows): StreamCon
     }
     return [...seen.values()];
   };
+  let subagentProjection = collectSubagentStates();
+  const rebuildSubagentProjection = (): void => { subagentProjection = collectSubagentStates(); };
+  const updateSubagentProjection = (event: Extract<BrainEvent, { type: 'subagent' }>): void => {
+    const next: SubagentPanelEntry = {
+      sessionId: event.sessionId,
+      task: event.task,
+      status: event.status,
+      detail: event.detail,
+      tools: event.tools,
+      tokens: event.tokens,
+      seconds: event.seconds,
+      model: event.model,
+    };
+    const index = subagentProjection.findIndex((entry) => entry.sessionId === event.sessionId);
+    if (index < 0) subagentProjection = [...subagentProjection, next];
+    else {
+      subagentProjection = subagentProjection.slice();
+      subagentProjection[index] = next;
+    }
+  };
+  const subagentStates = (): SubagentPanelEntry[] => subagentProjection;
   const subagentSessions = (): { sessionId: string; running: boolean }[] =>
     subagentStates().map((s) => ({ sessionId: s.sessionId, running: s.status === 'running' }));
 
@@ -66,10 +87,13 @@ export function createStreamController(rt: ChatRuntime, flows: Flows): StreamCon
     const buffered: BrainEvent[] = [];
     let truncatedSnapshotPending = false;
     let durableRefreshBuffer: BrainEvent[] | null = null;
+    let fallback: ReturnType<typeof setTimeout> | null = null;
     let resolveHydrated!: () => void;
     const hydrated = new Promise<void>((resolve) => { resolveHydrated = resolve; });
-    ac.signal.addEventListener('abort', () => resolveHydrated(), { once: true });
-    let fallback: ReturnType<typeof setTimeout> | null = null;
+    ac.signal.addEventListener('abort', () => {
+      if (fallback) { clearTimeout(fallback); fallback = null; }
+      resolveHydrated();
+    }, { once: true });
 
     const current = (): boolean => !ac.signal.aborted
       && generation === childGeneration
@@ -233,7 +257,12 @@ export function createStreamController(rt: ChatRuntime, flows: Flows): StreamCon
       const epoch = ++historyEpoch;
       buffer = [];
       void client.history()
-        .then((h) => { if (current() && epoch === historyEpoch) rt.view = fromHistory(h); })
+        .then((h) => {
+          if (current() && epoch === historyEpoch) {
+            rt.view = fromHistory(h);
+            rebuildSubagentProjection();
+          }
+        })
         .catch(() => { /* best-effort: keep the stale view */ })
         .finally(() => {
           if (!current() || epoch !== historyEpoch) return;
@@ -274,7 +303,7 @@ export function createStreamController(rt: ChatRuntime, flows: Flows): StreamCon
         // A finished turn may have just auto-titled a fresh conversation — pull the new title (and usage)
         // so the header stops showing "new conversation". Best-effort; a dropped daemon just leaves it.
         // refreshMeta starts the independent rate-limit refresh too; otherwise update only those windows.
-        if (!rt.conversationTitle) void rt.refreshMeta().then(rt.render);
+        if (!rt.conversationTitle) void rt.refreshMeta().then(() => rt.render('metadata:idle-title'));
         else void rt.refreshRateLimits();
         // Plan mode: the agent just delivered a <proposed_plan> — offer to implement it right away
         // instead of leaving the user to flip modes and phrase the follow-up themselves.
@@ -289,7 +318,7 @@ export function createStreamController(rt: ChatRuntime, flows: Flows): StreamCon
       // Sub-agent progress folds into the delegate tool row below; the open child view has its own
       // live tap stream. Once a child settles, refresh status so its now-persisted token cost rolls into
       // the parent's session meter immediately instead of waiting for the next parent turn.
-      if (e.type === 'subagent' && e.status !== 'running') void rt.refreshMeta().then(rt.render);
+      if (e.type === 'subagent' && e.status !== 'running') void rt.refreshMeta().then(() => rt.render('metadata:subagent-settled'));
       // Idle rollover: the server continued this message in a FRESH conversation. Rebind to the id the
       // event carries so every later call targets the replacement — the OPEN stream needs no reopen (the
       // server carries both the listener and the session tap onto the new session, so events keep flowing
@@ -300,10 +329,13 @@ export function createStreamController(rt: ChatRuntime, flows: Flows): StreamCon
       if (e.type === 'session') {
         client.rebind(e.sessionId);
         rt.notice = color.dim('previous conversation was idle — continuing in a fresh one');
-        void rt.refreshMeta().then(rt.render);
+        void rt.refreshMeta().then(() => rt.render('metadata:session-rollover'));
       }
+      const previousView = rt.view;
       rt.view = reduce(rt.view, e);
-      rt.render();
+      if (e.type === 'subagent' && rt.view !== previousView) updateSubagentProjection(e);
+      else if (e.type === 'session') rebuildSubagentProjection();
+      rt.render(`stream:${e.type}`);
       if (repairTruncatedAtIdle) {
         truncatedSnapshotPending = false;
         refetchHistory();
@@ -327,11 +359,12 @@ export function createStreamController(rt: ChatRuntime, flows: Flows): StreamCon
       else if (snapshot.truncated) truncatedSnapshotPending = true;
       if (snapshot.sessionId && snapshot.sessionId !== streamSessionAtOpen) {
         rt.notice = color.dim('previous conversation was idle — continuing in a fresh one');
-        void rt.refreshMeta().then(rt.render);
+        void rt.refreshMeta().then(() => rt.render('metadata:snapshot-session'));
       }
       rt.view = fromHistory(snapshot.history);
+      rebuildSubagentProjection();
       for (const event of snapshot.events) onEvent(event, true);
-      rt.render();
+      rt.render('stream:snapshot');
     };
     const onFrame = (frame: BrainStreamFrame): void => {
       if (frame.type === 'snapshot') applySnapshot(frame);
@@ -367,6 +400,7 @@ export function createStreamController(rt: ChatRuntime, flows: Flows): StreamCon
     const hist = await client.history(started.sessionId).catch(() => []);
     if (!current()) return;
     rt.view = fromHistory(hist);
+    rebuildSubagentProjection();
     await rt.refreshMeta(); // also refreshes the card panel from the new conversation's status
     if (!current()) return;
     openStream(ac);

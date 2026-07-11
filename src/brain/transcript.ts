@@ -77,6 +77,26 @@ export type ChatTurn = YouTurn | ElowenTurn | DividerTurn;
  *  is a transient runtime line (retry/compaction) cleared when the turn goes idle. */
 export interface ChatView { turns: ChatTurn[]; thinking: boolean; notice?: string }
 
+export type ChatViewChange =
+  | { kind: 'reset' }
+  | { kind: 'append'; index: number }
+  | { kind: 'turn'; index: number }
+  | { kind: 'none' };
+
+const chatViewChanges = new WeakMap<ChatView, ChatViewChange>();
+
+function withChange(view: ChatView, change: ChatViewChange): ChatView {
+  chatViewChanges.set(view, change);
+  return view;
+}
+
+/** Renderer-facing immutable change hint. It stays in a WeakMap so the shared/public ChatView data shape
+ * remains unchanged and serialized history never leaks UI bookkeeping. Unknown externally-built views
+ * return undefined and renderers fall back to conservative reference reconciliation. */
+export function getChatViewChange(view: ChatView): ChatViewChange | undefined {
+  return chatViewChanges.get(view);
+}
+
 /** One stored turn as `fromHistory` consumes it. Structurally the `BrainMessageView` the daemon serves
  *  (`GET /brain/messages`) and the web's `BrainMessage` — a flat `text` plus optional ordered `segments`. */
 export interface HistoryMessage {
@@ -85,7 +105,7 @@ export interface HistoryMessage {
   segments?: ({ kind: 'text'; text: string } | { kind: 'tool'; name: string; id?: string; detail?: string; diff?: string; output?: ToolOutputView; command?: string; sub?: SubagentState })[];
 }
 
-export const emptyView = (): ChatView => ({ turns: [], thinking: false });
+export const emptyView = (): ChatView => withChange({ turns: [], thinking: false }, { kind: 'reset' });
 
 /** Build the initial view from stored history. Assistant turns keep their server-built segments
  *  (ordered text + tool calls with diffs), so a resumed conversation looks exactly like a live one. */
@@ -111,17 +131,20 @@ export function fromHistory(msgs: HistoryMessage[]): ChatView {
     }
     if (segments.length > 0) turns.push({ role: 'elowen', segments, streaming: false });
   }
-  return { turns, thinking: false };
+  return withChange({ turns, thinking: false }, { kind: 'reset' });
 }
 
 /** Append the user's turn (finalized) — called optimistically when they hit enter. */
 export function pushUser(view: ChatView, text: string): ChatView {
-  return { ...view, turns: [...view.turns, { role: 'you', text }] };
+  return withChange({ ...view, turns: [...view.turns, { role: 'you', text }] }, { kind: 'append', index: view.turns.length });
 }
 
 /** Open a fresh streaming assistant turn and switch on the thinking indicator. */
 export function beginAssistant(view: ChatView): ChatView {
-  return { thinking: true, turns: [...view.turns, { role: 'elowen', segments: [], streaming: true }] };
+  return withChange(
+    { thinking: true, turns: [...view.turns, { role: 'elowen', segments: [], streaming: true }] },
+    { kind: 'append', index: view.turns.length },
+  );
 }
 
 /** Fold one brain event into the view. Pure: returns a new ChatView, never mutates the input. Handles
@@ -154,15 +177,15 @@ export function reduce(view: ChatView, e: BrainEvent): ChatView {
   switch (e.type) {
     case 'text': {
       addText(ensureElowen(), e.delta);
-      return { turns, thinking: true, notice: undefined }; // first answer text clears any transient notice
+      return withChange({ turns, thinking: true, notice: undefined }, { kind: 'turn', index: turns.length - 1 }); // first answer text clears any transient notice
     }
     case 'reasoning': {
       addReasoning(ensureElowen(), e.delta);
-      return { turns, thinking: true, notice: view.notice };
+      return withChange({ turns, thinking: true, notice: view.notice }, { kind: 'turn', index: turns.length - 1 });
     }
     case 'notice': {
       // Transient runtime line (retry/compaction); `done` clears it, otherwise it shows until the next.
-      return { turns, thinking: view.thinking, notice: e.done ? undefined : e.message };
+      return withChange({ turns, thinking: view.thinking, notice: e.done ? undefined : e.message }, { kind: 'none' });
     }
     case 'tool': {
       const t = ensureElowen();
@@ -170,14 +193,14 @@ export function reduce(view: ChatView, e: BrainEvent): ChatView {
       const tail = t.segments[t.segments.length - 1];
       if (tail?.kind === 'tools') t.segments[t.segments.length - 1] = { kind: 'tools', items: [...tail.items, item] };
       else t.segments.push({ kind: 'tools', items: [item] });
-      return { turns, thinking: true, notice: view.notice };
+      return withChange({ turns, thinking: true, notice: view.notice }, { kind: 'turn', index: turns.length - 1 });
     }
     case 'tool_progress': {
       // Live rolling tail of a running run_command — attach to its in-progress tool row by id so the
       // renderer shows output as it streams. Superseded by the final `tool_output`/`diff` below.
       const t = ensureElowen();
       attachToTool(t, e.id, (item) => ({ ...item, progress: e.text }));
-      return { turns, thinking: true, notice: view.notice };
+      return withChange({ turns, thinking: true, notice: view.notice }, { kind: 'turn', index: turns.length - 1 });
     }
     case 'diff': {
       // An edit finished — attach its diff to the matching tool when PI gives an id; fall back to the
@@ -185,7 +208,7 @@ export function reduce(view: ChatView, e: BrainEvent): ChatView {
       // The final block supersedes any live `progress` tail (reconcile → no doubled dump).
       const t = ensureElowen();
       attachToTool(t, e.id, ({ progress: _drop, ...item }) => ({ ...item, diff: e.diff, ...(e.output ? { output: e.output } : {}) }));
-      return { turns, thinking: true, notice: view.notice };
+      return withChange({ turns, thinking: true, notice: view.notice }, { kind: 'turn', index: turns.length - 1 });
     }
     case 'tool_output': {
       const t = ensureElowen();
@@ -196,7 +219,7 @@ export function reduce(view: ChatView, e: BrainEvent): ChatView {
         ...item,
         output: item.command && !e.output.command ? { ...e.output, command: item.command } : e.output,
       }));
-      return { turns, thinking: true, notice: view.notice };
+      return withChange({ turns, thinking: true, notice: view.notice }, { kind: 'turn', index: turns.length - 1 });
     }
     case 'subagent': {
       // A background child may outlive its parent's turn. Search ALL assistant turns backwards by the
@@ -206,31 +229,34 @@ export function reduce(view: ChatView, e: BrainEvent): ChatView {
         ...item,
         sub: { sessionId: e.sessionId, status: e.status, task: e.task, detail: e.detail, tools: e.tools, tokens: e.tokens, seconds: e.seconds, model: e.model },
       }));
-      return patched ? { ...view, turns } : view;
+      return patched >= 0 ? withChange({ ...view, turns }, { kind: 'turn', index: patched }) : view;
     }
     case 'session': {
       // Idle rollover mid-send: the server moved this message into a FRESH conversation. Reset the
       // transcript — the daemon re-emits the triggering message as a `user` event and streams its reply,
       // so the fresh conversation rebuilds purely from the stream. (The daemon is the single authority for
       // the user turn now, so there is no optimistic local 'you' to preserve.)
-      return { turns: [], thinking: view.thinking, notice: view.notice };
+      return withChange({ turns: [], thinking: view.thinking, notice: view.notice }, { kind: 'reset' });
     }
     case 'user': {
       // The daemon's authoritative render of the user's turn (every real user send — normal or queued
       // delivery — see the `user` BrainEvent). Append the 'you' turn and switch on thinking: a reply is
       // now streaming, and the client no longer echoes optimistically, so this is what shows the bubble.
-      return { turns: [...turns, { role: 'you', text: e.text }], thinking: true, notice: view.notice };
+      return withChange(
+        { turns: [...turns, { role: 'you', text: e.text }], thinking: true, notice: view.notice },
+        { kind: 'append', index: turns.length },
+      );
     }
     case 'idle': {
       const last = turns[turns.length - 1];
       if (last && last.role === 'elowen') turns[turns.length - 1] = { ...last, streaming: false };
-      return { turns, thinking: false, notice: undefined }; // turn settled → drop any transient notice
+      return withChange({ turns, thinking: false, notice: undefined }, last?.role === 'elowen' ? { kind: 'turn', index: turns.length - 1 } : { kind: 'none' }); // turn settled → drop any transient notice
     }
     case 'error': {
       const t = ensureElowen();
       addText(t, `\n[error: ${e.message}]`);
       t.streaming = false;
-      return { turns, thinking: false, notice: undefined };
+      return withChange({ turns, thinking: false, notice: undefined }, { kind: 'turn', index: turns.length - 1 });
     }
     default:
       return view;
@@ -252,7 +278,7 @@ function attachToTool(t: ElowenTurn, id: string | undefined, patch: (item: ToolI
 
 /** Immutable backward lookup across settled + streaming turns, used by background delegate progress.
  *  Tool ids are stable and globally unique enough within one transcript; newest match wins defensively. */
-function attachToToolInTurns(turns: ChatTurn[], id: string, patch: (item: ToolItem) => ToolItem): boolean {
+function attachToToolInTurns(turns: ChatTurn[], id: string, patch: (item: ToolItem) => ToolItem): number {
   for (let ti = turns.length - 1; ti >= 0; ti--) {
     const turn = turns[ti]!;
     if (turn.role !== 'elowen') continue;
@@ -266,10 +292,10 @@ function attachToToolInTurns(turns: ChatTurn[], id: string, patch: (item: ToolIt
       const segments = turn.segments.slice();
       segments[si] = { kind: 'tools', items };
       turns[ti] = { ...turn, segments };
-      return true;
+      return ti;
     }
   }
-  return false;
+  return -1;
 }
 
 /** Fold a live `card` event into a card list: replace by id, append when new, or drop when the card came

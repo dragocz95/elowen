@@ -9,6 +9,7 @@ import type { ChatView } from '../../brain/transcript.js';
 import type { BrainCard } from '../../brain/events.js';
 import type { ProcessInfo } from '../../brain/processRegistry.js';
 import type { SlashCommandDef } from '../../brain/slashCommands.js';
+import type { TerminalLifecycle } from './terminalLifecycle.js';
 
 /** The shared chat-session context: fixed wiring (client, TUI, editor…), the mutable per-session
  *  state every module reads and writes, and the few cross-module callbacks (render/refreshMeta/quit)
@@ -87,9 +88,11 @@ export interface ChatRuntime {
   pendingImages: PendingImage[];
   /** The persisted per-project `@` mention frecency. */
   mentionFrecency: FrecencyMap;
+  terminalLifecycle: TerminalLifecycle | null;
 
   // ── callbacks wired in runChat ──
-  render(): void;
+  render(reason?: string): void;
+  renderForced(reason?: string): void;
   /** Slow, best-effort metadata refresh kept outside refreshMeta's blocking status/MCP path. */
   refreshRateLimits(): Promise<void>;
   refreshMeta(): Promise<void>;

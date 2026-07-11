@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import { visibleWidth } from '@earendil-works/pi-tui';
 import { initTheme } from '@earendil-works/pi-coding-agent';
-import { UserBlock, StatusBar, CardPanel, SubagentPanel, ProcessPanel, QueuedMessages, diffBlock, cardBlock } from '../../../src/cli/chat/components.js';
+import { UserBlock, StatusBar, CardPanel, SubagentPanel, ProcessPanel, QueuedMessages, diffBlock, cardBlock, toolOutputBlock } from '../../../src/cli/chat/components.js';
 
 describe('chat components', () => {
   beforeAll(() => { initTheme(); }); // renderDiff needs the pi theme
@@ -78,6 +78,25 @@ describe('chat components', () => {
     const out = diffBlock(diff);
     expect(out).toHaveLength(61);
     expect(out[60]).toContain('+10 more lines');
+  });
+
+  it('encodes persisted tool output as terminal-safe printable rows', () => {
+    const lines = toolOutputBlock({
+      title: 'console output',
+      kind: 'console',
+      command: 'du\t-xhd2',
+      status: 'exit 0',
+      text: '984M\t/var/www/.local\rupdated\x1b[31mRED\x1b[0m\x1b]52;c;bad\x07\nnext\b!',
+    }, 60);
+    const rendered = lines.join('\n');
+    const plain = rendered.replace(/\x1b\[[0-9;]*m/g, '');
+
+    expect(rendered).not.toContain('\t');
+    expect(rendered).not.toContain('\r');
+    expect(rendered).not.toContain('\x1b]52;');
+    expect(plain).toContain('984M');
+    expect(plain).toContain('/var/www/.local');
+    expect(lines.every((line) => visibleWidth(line) <= 60)).toBe(true);
   });
 
   it('CardPanel renders pinned cards as real rows and collapses an all-done checklist / non-pinned cards', () => {

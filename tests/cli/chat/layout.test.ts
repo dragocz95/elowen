@@ -36,6 +36,25 @@ describe('chat layout components', () => {
     expect(viewport.render(60).join('\n')).toContain('History');
   });
 
+  it('does not reverse-video the first padding row when no drag selection exists', () => {
+    const viewport = new ChatViewport(
+      {
+        view: fromHistory([
+          { role: 'user', text: 'short question' },
+          { role: 'assistant', text: 'short answer' },
+        ]),
+        notice: '', modelName: 'kimi', thinkingSeconds: 0,
+      },
+      getMarkdownTheme(),
+      () => 20,
+      () => 1,
+      () => 60,
+    );
+
+    const rendered = viewport.render(60).join('\n');
+    expect(rendered).not.toContain('\x1b[7m');
+  });
+
   it('keeps settled reasoning clickable and does not add a model footer under answers', () => {
     let view = beginAssistant(pushUser(emptyView(), 'think?'));
     view = reduce(view, { type: 'reasoning', delta: 'inspect the code path' });
@@ -72,6 +91,22 @@ describe('chat layout components', () => {
     const thought = lines.findIndex((line) => line.includes('Thought'));
     expect(thought).toBeGreaterThan(0);
     expect(lines[thought - 1]!.replace(/[│\s]/g, '')).toBe(''); // blank spacer row above
+  });
+
+  it('encodes live tool progress before it reaches terminal layout', () => {
+    let view = beginAssistant(pushUser(emptyView(), 'run it'));
+    view = reduce(view, { type: 'tool', id: 'cmd-1', name: 'run_command', detail: 'du -xhd2', command: 'du -xhd2' });
+    view = reduce(view, { type: 'tool_progress', id: 'cmd-1', text: '984M\t/var/www/.local\x1b[2J\rupdated' });
+    const viewport = new ChatViewport(
+      { view, notice: '', modelName: 'kimi', thinkingSeconds: 0 },
+      getMarkdownTheme(), () => 20, () => 1, () => 72,
+    );
+
+    const rendered = viewport.render(72).join('\n');
+    expect(rendered).not.toContain('\t');
+    expect(rendered).not.toContain('\r');
+    expect(rendered).not.toContain('\x1b[2J');
+    expect(rendered).toContain('/var/www/.local');
   });
 
   it('renders framed tool output blocks', () => {
@@ -335,12 +370,15 @@ describe('chat layout components', () => {
     expect(cells(68)).toBe(64);
   });
 
-  it('uses heavier bar glyphs on a wide panel', () => {
+  it('uses the same block meter glyphs for Context and OAuth limits at every panel width', () => {
     const panel = new TelemetryPanel(() => telemetryState({ usage: { tokens: 50, contextWindow: 100, percent: 50, totalTokens: 50, cost: 0 } }));
-    expect(panel.render(40).join('\n')).toContain('▰');
-    const wide = panel.render(60).join('\n');
-    expect(wide).toContain('█');
-    expect(wide).not.toContain('▰');
+    for (const width of [36, 40, 60]) {
+      const rendered = panel.render(width).join('\n');
+      expect(rendered).toContain('█');
+      expect(rendered).toContain('░');
+      expect(rendered).not.toContain('▰');
+      expect(rendered).not.toContain('▱');
+    }
   });
 
   it('shows compact 5h and weekly subscription meters, and hides them when unavailable', () => {
@@ -564,6 +602,7 @@ describe('progressive history layout', () => {
     expect(viewport.indexedHistoryTurns()).toBeLessThan(view.turns.length);
     expect(viewport.isHistoryIndexComplete()).toBe(false);
     expect(viewport.isScrollbarHit(60, 3)).toBe(false); // no approximate thumb/hit target
+    expect(first).toContain('█'); // approximate visual thumb stays visible while exact drag remains disabled
 
     const afterFirstPaint = viewport.indexedHistoryTurns();
     await vi.runAllTimersAsync();
@@ -632,5 +671,40 @@ describe('progressive history layout', () => {
     expect(resized).toContain('Newest marker 99');
     expect(viewport.isHistoryIndexComplete()).toBe(false);
     expect(viewport.indexedHistoryTurns()).toBeLessThan(20);
+  });
+
+  it('reports viewport-sized work and renders no settled Markdown again during cached scroll', () => {
+    const viewport = new ChatViewport(
+      { view: largeHistory(1_000), notice: '', modelName: 'kimi', thinkingSeconds: 0 },
+      getMarkdownTheme(), () => 18, () => 1, () => 80,
+    );
+    viewport.render(80);
+    const first = viewport.metrics();
+    expect(first.visibleRows).toBe(18);
+    expect(first.renderedTurns).toBeLessThan(20);
+
+    viewport.scroll(3);
+    viewport.render(80);
+    const scrolled = viewport.metrics();
+    expect(scrolled.visibleRows).toBe(18);
+    expect(scrolled.renderedTurns).toBe(0);
+    expect(scrolled.cachedRows).toBeLessThanOrEqual(CHAT_VIEWPORT_ROW_CACHE_LIMIT);
+  });
+
+  it('reconciles only the streaming tail instead of comparing every settled turn', () => {
+    let view = largeHistory(1_000);
+    const viewport = new ChatViewport(
+      { view, notice: '', modelName: 'kimi', thinkingSeconds: 0 },
+      getMarkdownTheme(), () => 18, () => 1, () => 80,
+    );
+    viewport.render(80);
+    view = beginAssistant(view);
+    viewport.setState({ view, notice: '', modelName: 'kimi', thinkingSeconds: 0 });
+    viewport.render(80);
+    view = reduce(view, { type: 'text', delta: 'one streaming token' });
+    viewport.setState({ view, notice: '', modelName: 'kimi', thinkingSeconds: 0 });
+    viewport.render(80);
+    expect(viewport.metrics().reconciledTurns).toBeLessThanOrEqual(1);
+    expect(viewport.metrics().renderedTurns).toBeLessThanOrEqual(1);
   });
 });

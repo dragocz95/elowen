@@ -1,4 +1,4 @@
-import { Container } from '@earendil-works/pi-tui';
+import { Container, visibleWidth } from '@earendil-works/pi-tui';
 import type { Component, MarkdownTheme, TUI } from '@earendil-works/pi-tui';
 import { color } from './theme.js';
 import { StatusBar, CardPanel, SubagentPanel, spinnerFrame } from './components.js';
@@ -10,8 +10,12 @@ import {
   isPageDownKey, isPageUpKey, isTabByte, isUpKey,
 } from './keys.js';
 import type { Keymap, KeybindAction } from './keys.js';
-import { formatDuration, formatK } from '../ui/text.js';
+import { formatDuration, formatK, padAnsi } from '../ui/text.js';
 import { ELOWEN_CLI_VERSION } from '../version.js';
+import { computeLayoutBudget, constrainFrame } from './layoutBudget.js';
+import type { LayoutBudget } from './layoutBudget.js';
+import { FrameScheduler } from './frameScheduler.js';
+import type { TuiDiagnostics } from './tuiDiagnostics.js';
 import {
   ChatViewport,
   MainColumn,
@@ -161,7 +165,11 @@ interface ShellInputDeps {
 }
 
 export interface Shell {
-  render(): void;
+  render(reason?: string): void;
+  renderForced(reason?: string): void;
+  pauseRendering(): void;
+  resumeRendering(): void;
+  stopRendering(): void;
   showPanel(hidden?: boolean): void;
   /** Re-open the telemetry panel so it picks up freshly applied theme colors, keeping its hidden state. */
   reshowPanel(): void;
@@ -176,8 +184,8 @@ export interface Shell {
 
 /** The render shell: layout composition (chat stack vs start screen, telemetry panel), the render()
  *  pass, the slash/mention suggestion overlays, and the global mouse/key input routing. */
-export function createShell(rt: ChatRuntime, stream: StreamController, mdTheme: MarkdownTheme): Shell {
-  const { client, tui, term, editor, inputStack, attachmentChips, cwdLabel, branchLabel } = rt;
+export function createShell(rt: ChatRuntime, stream: StreamController, mdTheme: MarkdownTheme, diagnostics: TuiDiagnostics): Shell {
+  const { client, tui, term, editor, editorSlot, inputStack, attachmentChips, cwdLabel, branchLabel } = rt;
 
   // `let`, not `const`: the /keybinds editor swaps the live keymap (and its leader window) in place via
   // reloadKeymap below. Every closure here — the input dispatcher, the hint lines, the leader chip —
@@ -217,6 +225,7 @@ export function createShell(rt: ChatRuntime, stream: StreamController, mdTheme: 
   let draggingHistoryScroll = false;
   // Screen row of the last scrollbar-drag sample — its delta gives the drag direction for the mascot float.
   let lastScrollDragRow = 0;
+  let removeInputListener: (() => void) | null = null;
 
   // The right-panel flame's eased drift-on-scroll. A pure spring-damper (mascotFloat) is nudged on each
   // scroll and integrated by a self-canceling ~30fps ticker that stops the moment the motion settles, so
@@ -225,22 +234,28 @@ export function createShell(rt: ChatRuntime, stream: StreamController, mdTheme: 
   // while cutting the old 30fps full-TUI repaint loop by two thirds.
   const FLOAT_TICK_MS = 100;
   const mascotFloat = new MascotFloat();
-  let floatTimer: ReturnType<typeof setInterval> | null = null;
+  let floatTimer: ReturnType<typeof setTimeout> | null = null;
+  const cancelFloat = (): void => {
+    if (floatTimer) clearTimeout(floatTimer);
+    floatTimer = null;
+    mascotFloat.reset();
+  };
   const armFloat = (): void => {
-    if (floatTimer) return;
-    floatTimer = setInterval(() => {
+    // Debounce rapid wheel/drag bursts: transcript interaction gets the frame budget; decorative easing
+    // starts only after the input quiets down.
+    if (floatTimer) clearTimeout(floatTimer);
+    floatTimer = setTimeout(() => {
+      floatTimer = null;
+      if (!panelVisible() || rt.view.thinking || rt.childView?.view.thinking) { cancelFloat(); return; }
       mascotFloat.tick(FLOAT_TICK_MS);
-      tui.requestRender();
-      if (mascotFloat.settled()) {
-        if (floatTimer) { clearInterval(floatTimer); floatTimer = null; }
-        tui.requestRender(); // one final paint at the rest position
-      }
+      render('animation:mascot');
+      if (!mascotFloat.settled()) armFloat();
     }, FLOAT_TICK_MS);
   };
   // Nudge the flame in a scroll direction, but only when the panel is actually on screen (≥104 cols +
   // a conversation) — on a narrow terminal there is no flame to float, so the spring stays at rest.
   const nudgeFloat = (dir: number): void => {
-    if (!panelVisible()) return;
+    if (!panelVisible() || rt.view.thinking || rt.childView?.view.thinking) { cancelFloat(); return; }
     mascotFloat.impulse(dir);
     armFloat();
   };
@@ -248,39 +263,65 @@ export function createShell(rt: ChatRuntime, stream: StreamController, mdTheme: 
   const hasMessages = (): boolean => rt.view.turns.length > 0;
   const panelVisible = (): boolean => term.columns >= 104 && hasMessages() && !panelHandle?.isHidden();
   const panelReserve = (): number => panelVisible() ? panelWidth + PANEL_GUTTER_COLUMNS : 0;
-  const chatWidth = (): number => Math.max(24, term.columns - panelReserve());
+  const chatWidth = (): number => Math.max(1, term.columns - panelReserve());
   const panelLeftEdge = (): number => term.columns - panelWidth;
-  let inputRowLimit = Number.POSITIVE_INFINITY;
-  const boundedInput: Component = {
-    invalidate: () => inputStack.invalidate?.(),
+  let currentBudget: LayoutBudget | null = null;
+  let preparedInput: { width: number; queue: string[]; attachments: string[]; editor: string[] } | null = null;
+  const budgetedInput: Component = {
+    invalidate: () => { inputStack.invalidate?.(); preparedInput = null; },
     render: (width: number): string[] => {
-      const rows = inputStack.render(width);
-      if (rows.length <= inputRowLimit) return rows;
-      if (inputRowLimit <= 0) return [];
-      // Queue/attachment rows are above the editor, so keeping the bottom preserves the focused composer
-      // and its cursor on exceptionally short terminals.
-      return rows.slice(-inputRowLimit);
+      const budget = currentBudget;
+      if (!budget) return [];
+      const cached = preparedInput?.width === width ? preparedInput : {
+        width,
+        queue: rt.queuedMessages.render(width),
+        attachments: attachmentChips.render(width),
+        editor: editorSlot.render(width),
+      };
+      rt.queuedMessages.setMaxRows(budget.sections.queue);
+      const queue = budget.sections.queue > 0 ? rt.queuedMessages.render(width) : [];
+      const attachments = cached.attachments.slice(0, budget.sections.attachments);
+      const editorRows = budget.sections.editor > 0 ? cached.editor.slice(-budget.sections.editor) : [];
+      return [...queue, ...attachments, ...editorRows];
     },
   };
-  const rowBudget = (): ShellRowBudget => {
-    const width = Math.max(24, chatWidth());
-    const budget = allocateShellRows({
-      terminalRows: term.rows,
-      inputRows: inputStack.render(width).length,
-      cardRows: cardPanel.desiredRows(width),
-      subagentRows: subPanel.desiredRows(),
+  const refreshLayoutBudget = (): LayoutBudget => {
+    const width = chatWidth();
+    // Reset the queue's presentation cap before measuring its desired compact height; a previous short
+    // frame must not permanently pin it after the terminal grows again.
+    rt.queuedMessages.setMaxRows(4);
+    preparedInput = {
+      width,
+      queue: rt.queuedMessages.render(width),
+      attachments: attachmentChips.render(width),
+      editor: editorSlot.render(width),
+    };
+    const budget = computeLayoutBudget({
+      columns: term.columns,
+      rows: term.rows,
+      hasTranscript: hasMessages(),
+      telemetryRequested: panelVisible(),
+      telemetryColumns: panelWidth,
+      desired: {
+        editor: preparedInput.editor.length,
+        queue: preparedInput.queue.length,
+        attachments: preparedInput.attachments.length,
+        cards: cardPanel.desiredRows(width),
+        subagents: subPanel.desiredRows(),
+      },
     });
-    inputRowLimit = budget.inputRows;
-    cardPanel.setMaxRows(budget.cardRows);
-    subPanel.setMaxRows(budget.subagentRows);
+    currentBudget = budget;
+    cardPanel.setMaxRows(budget.sections.cards);
+    subPanel.setMaxRows(budget.sections.subagents);
     return budget;
   };
-  const fixedRows = (): number => term.rows - rowBudget().viewportRows;
+  const rowBudget = (): LayoutBudget => currentBudget ?? refreshLayoutBudget();
+  const fixedRows = (): number => term.rows - rowBudget().sections.transcript;
 
   const parentViewport = new ChatViewport(
     { view: rt.view, notice: rt.notice, modelName: rt.modelName, thinkingSeconds: 0 },
     mdTheme,
-    () => rowBudget().viewportRows,
+    () => rowBudget().sections.transcript,
     () => TOP_RULE_ROWS + 1,
     chatWidth,
   );
@@ -289,7 +330,7 @@ export function createShell(rt: ChatRuntime, stream: StreamController, mdTheme: 
   const newChildViewport = (): ChatViewport => new ChatViewport(
     { view: rt.childView?.view ?? rt.view, notice: '', modelName: rt.modelName, thinkingSeconds: 0 },
     mdTheme,
-    () => rowBudget().viewportRows,
+    () => rowBudget().sections.transcript,
     () => TOP_RULE_ROWS + 1,
     chatWidth,
   );
@@ -317,6 +358,24 @@ export function createShell(rt: ChatRuntime, stream: StreamController, mdTheme: 
       version: ELOWEN_CLI_VERSION,
     }),
   );
+  const compactNotice: Component = {
+    invalidate: () => {},
+    render: (width: number): string[] => {
+      const count = rowBudget().sections.transcript;
+      if (count <= 0) return [];
+      const size = `${term.columns}×${term.rows}`;
+      const lines = [
+        color.warning('Terminal too small for the full chat UI'),
+        color.faint(`${size} · recommended at least 32×12`),
+      ].slice(0, count).map((line) => padAnsi(line, width));
+      while (lines.length < count) lines.push(' '.repeat(width));
+      return lines;
+    },
+  };
+  const optionalHints: Component = {
+    invalidate: () => bottomBar.invalidate(),
+    render: (width: number): string[] => rowBudget().sections.hints > 0 ? bottomBar.render(width) : [],
+  };
 
   const showPanel = (hidden = false): void => {
     panelHandle?.hide();
@@ -346,21 +405,31 @@ export function createShell(rt: ChatRuntime, stream: StreamController, mdTheme: 
   };
 
   let thinkStart = 0;
+  let thinkingAnimationTimer: ReturnType<typeof setTimeout> | null = null;
   let interruptArmedUntil = 0;
   let interruptTimer: ReturnType<typeof setTimeout> | null = null;
-  let renderTimer: ReturnType<typeof setTimeout> | null = null;
+  let copyNoticeTimer: ReturnType<typeof setTimeout> | null = null;
   const clearInterruptArm = (): void => {
     interruptArmedUntil = 0;
     if (interruptTimer) { clearTimeout(interruptTimer); interruptTimer = null; }
   };
-  const flushRender = (): void => {
-    if (renderTimer) clearTimeout(renderTimer);
-    renderTimer = null;
+  const prepareFrame = (): void => {
+    if (!panelVisible() && floatTimer) cancelFloat();
     if (rt.view.thinking) {
       if (!thinkStart) thinkStart = Date.now();
     } else {
       thinkStart = 0;
       clearInterruptArm();
+    }
+    const animateThinking = rt.view.thinking || !!rt.childView?.view.thinking;
+    if (animateThinking && !thinkingAnimationTimer) {
+      thinkingAnimationTimer = setTimeout(() => {
+        thinkingAnimationTimer = null;
+        render('animation:thinking');
+      }, 250);
+    } else if (!animateThinking && thinkingAnimationTimer) {
+      clearTimeout(thinkingAnimationTimer);
+      thinkingAnimationTimer = null;
     }
     currentRunSeconds = thinkStart ? Math.max(0, Math.round((Date.now() - thinkStart) / 1000)) : 0;
     parentViewport.setState({
@@ -407,16 +476,56 @@ export function createShell(rt: ChatRuntime, stream: StreamController, mdTheme: 
     // Pending mid-turn queue strip above the composer (with the remove-last keybind hint when bound).
     const removeChord = keymap.chordLabel('queue_remove');
     rt.queuedMessages.set(rt.queued, rt.queued.length && removeChord ? `${removeChord} removes the last queued message` : null);
-    tui.requestRender();
   };
-  const render = (): void => {
-    const streaming = rt.view.thinking || !!rt.childView?.view.thinking;
-    if (!streaming) { flushRender(); return; }
-    if (renderTimer) return;
-    // Coalesce token/tool bursts into one terminal frame. Twenty fps stays fluid but avoids repeatedly
-    // parsing a growing Markdown turn at the dependency renderer's 60fps ceiling.
-    renderTimer = setTimeout(flushRender, 50);
+  const nativeRequestRender = tui.requestRender.bind(tui);
+  let previousDimensions: { columns: number; rows: number } | null = null;
+  let pendingFrame: { reasons: Set<string>; forced: boolean; requestedAt: number; prepareMs: number } | null = null;
+  const scheduler = new FrameScheduler((frame) => {
+    const prepareStartedAt = performance.now();
+    const dimensions = { columns: term.columns, rows: term.rows };
+    if (previousDimensions && (previousDimensions.columns !== dimensions.columns || previousDimensions.rows !== dimensions.rows)) {
+      frame.forced = true;
+      if (!frame.reasons.includes('resize')) frame.reasons.push('resize');
+    }
+    previousDimensions = dimensions;
+    currentBudget = null;
+    preparedInput = null;
+    prepareFrame();
+    const prepareMs = performance.now() - prepareStartedAt;
+    if (pendingFrame) {
+      for (const reason of frame.reasons) pendingFrame.reasons.add(reason);
+      pendingFrame.forced ||= frame.forced;
+      pendingFrame.prepareMs += prepareMs;
+    } else {
+      pendingFrame = { reasons: new Set(frame.reasons), forced: frame.forced, requestedAt: prepareStartedAt, prepareMs };
+    }
+    diagnostics.record({ type: 'scheduler', action: 'flush', reasons: frame.reasons, forced: frame.forced });
+    nativeRequestRender(frame.forced);
+  });
+  // pi-tui components call requestRender directly. Route those requests through the same coordinator too,
+  // while retaining the original bound method as the scheduler's only terminal-render sink.
+  tui.requestRender = (force = false): void => {
+    if (force) scheduler.scheduleForced('pi-tui:forced-request');
+    else scheduler.schedule('pi-tui:request', 'interactive');
   };
+  const nativeShowOverlay = tui.showOverlay.bind(tui);
+  tui.showOverlay = ((component, options) => {
+    const handle = nativeShowOverlay(component, options);
+    scheduler.scheduleForced('overlay:open');
+    return {
+      ...handle,
+      hide: () => { handle.hide(); scheduler.scheduleForced('overlay:close'); },
+      setHidden: (hidden: boolean) => {
+        const changed = handle.isHidden() !== hidden;
+        handle.setHidden(hidden);
+        if (changed) scheduler.scheduleForced(hidden ? 'overlay:hide' : 'overlay:show');
+      },
+    };
+  }) as TUI['showOverlay'];
+  const render = (reason = 'state'): void => {
+    scheduler.schedule(reason, reason.startsWith('scroll:') || reason.startsWith('input:') ? 'interactive' : 'normal');
+  };
+  const renderForced = (reason = 'geometry'): void => scheduler.scheduleForced(reason);
 
   // Live-apply a rebind from the /keybinds editor: point `keymap` at the freshly-built active map and
   // rebuild the leader window around it (the old one may hold a stale keymap + pending timer). The
@@ -425,7 +534,7 @@ export function createShell(rt: ChatRuntime, stream: StreamController, mdTheme: 
   const reloadKeymap = (): void => {
     keymap = activeKeymap();
     leader.cancel();
-    leader = createLeaderState(keymap, { onExpire: () => render() });
+    leader = createLeaderState(keymap, { onExpire: () => render('input:leader-expired') });
     const q = quitHint(keymap);
     bottomBar.setRight(q ? color.faint(`${q}  `) : '');
     render();
@@ -577,7 +686,7 @@ export function createShell(rt: ChatRuntime, stream: StreamController, mdTheme: 
           if (interruptArmedUntil === armed) { clearInterruptArm(); render(); }
         }, INTERRUPT_CONFIRM_MS);
       }
-      flushRender(); // confirmation feedback must appear immediately, not after the streaming frame gate
+      render('input:interrupt-arm');
       return true;
     }
     if (rt.pendingImages.length > 0) {
@@ -594,15 +703,66 @@ export function createShell(rt: ChatRuntime, stream: StreamController, mdTheme: 
   root.addChild(new TopRule(() => rt.conversationTitle));
   root.addChild(new MainColumn(panelReserve, () => {
     if (!hasMessages()) return [startScreen];
-    rowBudget(); // applies caps before any child renders
+    const budget = refreshLayoutBudget(); // one authoritative geometry/state preparation per root frame
+    if (budget.compactFallback) return [compactNotice, budgetedInput, promptMeta];
     // Todos stay immediately above the composer; background Processes moved into the right telemetry rail.
-    return [activeViewport(), subPanel, cardPanel, boundedInput, promptMeta, bottomBar];
+    return [activeViewport(), subPanel, cardPanel, budgetedInput, promptMeta, optionalHints];
   }));
-  tui.addChild(root);
+  const measuredRoot: Component = {
+    invalidate: () => root.invalidate(),
+    render: (width: number): string[] => {
+      const renderStartedAt = performance.now();
+      const rawLines = root.render(width);
+      // Final defense at the single root boundary. A custom child must never make pi-tui write a wrapping
+      // line or a frame taller than the alternate screen, even if its own local sizing regresses later.
+      const lines = constrainFrame(rawLines, width, term.rows);
+      const reverseSpans = diagnostics.enabled
+        ? (['raw', 'constrained'] as const).flatMap((stage) => {
+          const source = stage === 'raw' ? rawLines : lines;
+          return source.flatMap((line, row) => {
+            const start = line.indexOf('\x1b[7m');
+            if (start < 0) return [];
+            const reset = line.indexOf('\x1b[0m', start + 4);
+            const end = reset < 0 ? line.length : reset;
+            return [{ stage, row, from: visibleWidth(line.slice(0, start)), to: visibleWidth(line.slice(0, end)) }];
+          });
+        })
+        : undefined;
+      const transcript = hasMessages() ? activeViewport().metrics() : null;
+      const frame = pendingFrame;
+      pendingFrame = null;
+      const sections = currentBudget?.sections ?? {
+        header: TOP_RULE_ROWS,
+        transcript: Math.max(0, term.rows - TOP_RULE_ROWS),
+        cards: 0, subagents: 0, queue: 0, attachments: 0, editor: 0, status: 1, hints: 0,
+      };
+      diagnostics.record({
+        type: 'frame',
+        reasons: frame ? [...frame.reasons] : ['pi-tui:unscheduled'],
+        forced: frame?.forced ?? false,
+        prepareMs: frame?.prepareMs ?? 0,
+        transcriptMs: transcript?.renderMs ?? 0,
+        totalMs: performance.now() - (frame?.requestedAt ?? renderStartedAt),
+        transcriptRows: transcript?.transcriptRows ?? 0,
+        transcriptRowsExact: transcript?.transcriptRowsExact ?? true,
+        visibleRows: transcript?.visibleRows ?? 0,
+        renderedTurns: transcript?.renderedTurns ?? 0,
+        indexedTurns: transcript?.indexedTurns ?? 0,
+        cachedRows: transcript?.cachedRows ?? 0,
+        terminal: { columns: term.columns, rows: term.rows },
+        sections: { ...sections },
+        rootRows: lines.length,
+        reverseSpans,
+      });
+      return lines;
+    },
+  };
+  tui.addChild(measuredRoot);
   tui.setFocus(editor);
   showPanel(false);
 
   const attachInput = (deps: ShellInputDeps): void => {
+    if (removeInputListener) return;
     /** Run one keybind action. Fired by its direct chord (while the main editor is focused) or as a
      *  resolved leader sequence — one dispatcher so both paths share guards and behavior. */
     const dispatchAction = (action: KeybindAction): void => {
@@ -613,6 +773,7 @@ export function createShell(rt: ChatRuntime, stream: StreamController, mdTheme: 
         case 'telemetry_toggle': {
           if (!hasMessages()) return;
           panelHandle?.setHidden(!panelHandle.isHidden());
+          if (panelHandle?.isHidden()) cancelFloat();
           resizingPanel = false;
           render();
           return;
@@ -660,7 +821,7 @@ export function createShell(rt: ChatRuntime, stream: StreamController, mdTheme: 
         case 'sessions_picker': deps.openSessionsModal(); return;
       }
     };
-    tui.addInputListener((data) => {
+    removeInputListener = tui.addInputListener((data) => {
       const ev = mouseEvent(data);
       if (ev) {
         const isRelease = !ev.down || ev.code === 3;
@@ -673,14 +834,14 @@ export function createShell(rt: ChatRuntime, stream: StreamController, mdTheme: 
           nudgeFloat(lastScrollDragRow - ev.y); // drag up (y falls) scrolls into history → flame lifts
           lastScrollDragRow = ev.y;
           activeViewport().setScrollFromRow(ev.y);
-          tui.requestRender();
+          render('scroll:drag');
           return { consume: true };
         }
         if (isPrimaryDrag && hasMessages() && activeViewport().isScrollbarHit(ev.x, ev.y)) {
           draggingHistoryScroll = true;
           lastScrollDragRow = ev.y;
           activeViewport().setScrollFromRow(ev.y);
-          tui.requestRender();
+          render('scroll:drag-start');
           return { consume: true };
         }
         if (panelVisible()) {
@@ -737,9 +898,9 @@ export function createShell(rt: ChatRuntime, stream: StreamController, mdTheme: 
       // row budget and capped renders used by layout, so a short terminal never drifts from what is visible.
       if (click && noModal) {
         const budget = rowBudget();
-        const panelsTop = TOP_RULE_ROWS + budget.viewportRows + 1;
+        const panelsTop = TOP_RULE_ROWS + budget.sections.transcript + 1;
         const subRel = click.y - panelsTop;
-        const chatW = Math.max(24, chatWidth());
+        const chatW = chatWidth();
         const renderedSubRows = subPanel.render(chatW).length;
         if (subRel >= 0 && subPanel.isHeaderRow(subRel)) {
           subPanel.toggleCollapsed();
@@ -759,7 +920,7 @@ export function createShell(rt: ChatRuntime, stream: StreamController, mdTheme: 
       if (wheel && noModal) {
         activeViewport().scroll(wheel);
         nudgeFloat(Math.sign(wheel)); // flame follows the content, then eases back
-        tui.requestRender();
+        render('scroll:wheel');
         return { consume: true };
       }
       // Drag-to-copy: a press on plain transcript text anchors a line selection (interactive rows above
@@ -780,7 +941,11 @@ export function createShell(rt: ChatRuntime, stream: StreamController, mdTheme: 
             const n = text.split('\n').length;
             rt.notice = color.success(`✓ Copied ${n} line${n === 1 ? '' : 's'}`);
             render();
-            setTimeout(() => { if (rt.notice.includes('Copied')) { rt.notice = ''; render(); } }, 1800);
+            if (copyNoticeTimer) clearTimeout(copyNoticeTimer);
+            copyNoticeTimer = setTimeout(() => {
+              copyNoticeTimer = null;
+              if (rt.notice.includes('Copied')) { rt.notice = ''; render(); }
+            }, 1800);
           }
           return { consume: true };
         }
@@ -867,13 +1032,13 @@ export function createShell(rt: ChatRuntime, stream: StreamController, mdTheme: 
       if (noModal && isPageUpKey(data)) {
         activeViewport().scroll(4);
         nudgeFloat(1);
-        tui.requestRender();
+        render('scroll:page-up');
         return { consume: true };
       }
       if (noModal && isPageDownKey(data)) {
         activeViewport().scroll(-4);
         nudgeFloat(-1);
-        tui.requestRender();
+        render('scroll:page-down');
         return { consume: true };
       }
       return undefined;
@@ -881,13 +1046,27 @@ export function createShell(rt: ChatRuntime, stream: StreamController, mdTheme: 
   };
 
   const hideOverlays = (): void => {
-    if (floatTimer) { clearInterval(floatTimer); floatTimer = null; } // no dangling ticker on quit
-    if (renderTimer) { clearTimeout(renderTimer); renderTimer = null; }
+    cancelFloat();
+    if (thinkingAnimationTimer) { clearTimeout(thinkingAnimationTimer); thinkingAnimationTimer = null; }
+    if (copyNoticeTimer) { clearTimeout(copyNoticeTimer); copyNoticeTimer = null; }
     clearInterruptArm();
     panelHandle?.hide();
     slashHandle?.hide();
     mentionHandle?.hide();
+    removeInputListener?.();
+    removeInputListener = null;
   };
 
-  return { render, showPanel, reshowPanel, attachInput, hideOverlays, reloadKeymap };
+  return {
+    render,
+    renderForced,
+    pauseRendering: () => scheduler.pause(),
+    resumeRendering: () => scheduler.resume(),
+    stopRendering: () => scheduler.stop(),
+    showPanel,
+    reshowPanel,
+    attachInput,
+    hideOverlays,
+    reloadKeymap,
+  };
 }

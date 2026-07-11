@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { createStreamController } from '../../../src/cli/chat/streamController.js';
-import { fromHistory } from '../../../src/brain/transcript.js';
+import { beginAssistant, emptyView, fromHistory, reduce } from '../../../src/brain/transcript.js';
 import type { ChatRuntime } from '../../../src/cli/chat/runtime.js';
 import type { Flows } from '../../../src/cli/chat/flows.js';
 import { BrainClient } from '../../../src/cli/chat/brainClient.js';
@@ -376,6 +376,30 @@ describe('streamController — concurrent parent switches', () => {
   });
 });
 
+describe('streamController — cached sub-agent projection', () => {
+  it('reuses the same projection across repeated frames instead of rescanning the transcript', () => {
+    let view = beginAssistant(emptyView());
+    view = reduce(view, { type: 'tool', id: 'delegate-1', name: 'delegate', detail: 'inspect tests' });
+    view = reduce(view, {
+      type: 'subagent', id: 'delegate-1', sessionId: 'child-1', status: 'running',
+      task: 'inspect tests', detail: 'reading', tools: 2, seconds: 3,
+    });
+    const rt = {
+      client: {} as BrainClient,
+      view, childView: null, childAc: null, streamAc: new AbortController(),
+      notice: '', conversationTitle: '', workMode: 'build', render: () => {},
+      refreshMeta: async () => {}, refreshRateLimits: async () => {},
+    } as unknown as ChatRuntime;
+    const controller = createStreamController(rt, { launchAsk: () => {}, openPlanDecision: () => {} } as unknown as Flows);
+    const first = controller.subagentStates();
+    expect(first).toHaveLength(1);
+    expect(controller.subagentStates()).toBe(first);
+
+    rt.view = reduce(rt.view, { type: 'text', delta: 'unrelated parent token' });
+    expect(controller.subagentStates()).toBe(first);
+  });
+});
+
 describe('streamController — sub-agent drill-in hydration', () => {
   const runtime = (client: BrainClient): ChatRuntime => ({
     client,
@@ -391,6 +415,31 @@ describe('streamController — sub-agent drill-in hydration', () => {
     refreshRateLimits: async () => {},
   } as unknown as ChatRuntime);
   const flows = { launchAsk: () => {}, openPlanDecision: () => {} } as unknown as Flows;
+
+  it('cancels the fallback timer when a pending child drill-in is closed', async () => {
+    vi.useFakeTimers();
+    try {
+      const history = vi.fn(() => Promise.resolve([]));
+      const client = {
+        stream: (_cb: (event: BrainEvent) => void, signal: AbortSignal) =>
+          new Promise<void>((resolve) => signal.addEventListener('abort', () => resolve(), { once: true })),
+        history,
+      } as unknown as BrainClient;
+      const rt = runtime(client);
+      const stream = createStreamController(rt, flows);
+
+      const opening = stream.openSubagent('child-pending');
+      expect(vi.getTimerCount()).toBe(1);
+      stream.closeSubagent();
+      await opening;
+
+      expect(vi.getTimerCount()).toBe(0);
+      await vi.runAllTimersAsync();
+      expect(history).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 
   it('hydrates from the atomic durable + pre-tap live snapshot', async () => {
     const order: string[] = [];

@@ -8,16 +8,19 @@ describe('installExitGuards — process listener lifecycle', () => {
       exit: process.listenerCount('exit'),
       term: process.listenerCount('SIGTERM'),
       hup: process.listenerCount('SIGHUP'),
+      fatal: process.listenerCount('uncaughtExceptionMonitor'),
     };
     const dispose = installExitGuards(() => {}, () => {});
     expect(process.listenerCount('exit')).toBe(before.exit + 1);
     expect(process.listenerCount('SIGTERM')).toBe(before.term + 1);
     expect(process.listenerCount('SIGHUP')).toBe(before.hup + 1);
+    expect(process.listenerCount('uncaughtExceptionMonitor')).toBe(before.fatal + 1);
     // Menu return: quit() calls the disposer, which must drop the count back so a relaunch doesn't stack.
     dispose();
     expect(process.listenerCount('exit')).toBe(before.exit);
     expect(process.listenerCount('SIGTERM')).toBe(before.term);
     expect(process.listenerCount('SIGHUP')).toBe(before.hup);
+    expect(process.listenerCount('uncaughtExceptionMonitor')).toBe(before.fatal);
   });
 
   it('a signal restores the terminal (teardown) and the mouse before exiting', () => {
@@ -29,6 +32,15 @@ describe('installExitGuards — process listener lifecycle', () => {
     sigterm();
     expect(calls).toEqual(['teardown', 'mouse', 'exit:143']);
     exitSpy.mockRestore();
+    dispose();
+  });
+
+  it('restores the terminal before Node reports an uncaught render exception', () => {
+    const calls: string[] = [];
+    const dispose = installExitGuards(() => calls.push('teardown'), () => calls.push('terminal-fallback'));
+    const fatal = process.listeners('uncaughtExceptionMonitor').at(-1) as (error: Error) => void;
+    fatal(new Error('render overflow'));
+    expect(calls).toEqual(['teardown', 'terminal-fallback']);
     dispose();
   });
 });

@@ -5,7 +5,7 @@ import type { AskQuestion, BrainCard } from '../../brain/events.js';
 import type { ProcessInfo } from '../../brain/processRegistry.js';
 import { ansi, chatTheme, color } from './theme.js';
 import type { ToolOutputView } from '../../brain/messageView.js';
-import { formatDuration, formatK, padAnsi } from '../ui/text.js';
+import { formatDuration, formatK, padAnsi, terminalPlainText } from '../ui/text.js';
 
 /** opencode-style visual building blocks, hand-rolled on pi-tui's Component contract (render(width)
  *  → lines). Kept separate from app.ts so the layout logic stays readable and these are unit-testable. */
@@ -412,7 +412,7 @@ function diffLine(line: string, width?: number): string {
 /** Render a display diff with stable line numbers and git-style add/delete colors. Indented under the
  *  file-action label and capped so a huge edit can't flood the conversation. */
 export function diffBlock(diff: string, maxLines = 60, rowWidth?: number): string[] {
-  const raw = diff.replace(/\n+$/, '');
+  const raw = terminalPlainText(diff).replace(/\n+$/, '');
   const rendered = raw.split('\n').map((l) => {
     const s = PI_ROW.exec(l)?.[1] ?? LEGACY_SIGN.exec(l)?.[1];
     return s === '+' || s === '-' || s === ' ' ? diffLine(l, rowWidth) : CODE_ROW(rowWidth ? padAnsi(color.dim(l), rowWidth) : color.dim(l));
@@ -451,14 +451,14 @@ export function toolOutputBlock(output: ToolOutputView, width: number, expanded 
   const theme = chatTheme();
   const lines: string[] = [];
   // Muted, not full-bright: the command echo is context, not content (matches the dim tool rows).
-  if (output.command) lines.push(` ${ansi.open(theme.faint, '$')} ${ansi.open(theme.muted, output.command)}`);
+  if (output.command) lines.push(` ${ansi.open(theme.faint, '$')} ${ansi.open(theme.muted, terminalPlainText(output.command).replace(/\s+/g, ' ').trim())}`);
   if (output.status) {
     const statusColor = output.tone === 'warning' || output.tone === 'danger' ? theme.warning : theme.success;
-    lines.push(` ${ansi.open(statusColor, output.status)}`);
+    lines.push(` ${ansi.open(statusColor, terminalPlainText(output.status).replace(/\s+/g, ' ').trim())}`);
   }
   if (lines.length > 0) lines.push('');
   const expandable = Boolean(output.fullText && output.fullText !== output.text);
-  const body = expanded && output.fullText ? output.fullText : output.text;
+  const body = terminalPlainText(expanded && output.fullText ? output.fullText : output.text);
   // A notes-only view (e.g. a formatter annotation under an edit diff) has an empty body — skip the
   // stray blank row it would otherwise render.
   for (const raw of body ? body.split('\n') : []) {
@@ -475,12 +475,13 @@ export function toolOutputBlock(output: ToolOutputView, width: number, expanded 
     lines.push(` ${ansi.open(toneColor, raw)}`);
   }
   // Hook-appended notes ("formatted a.ts with prettier") — faint suffix lines: context, not content.
-  for (const note of output.notes ?? []) lines.push(` ${ansi.open(theme.faint, `· ${note}`)}`);
+  for (const note of output.notes ?? []) lines.push(` ${ansi.open(theme.faint, `· ${terminalPlainText(note).replace(/\s+/g, ' ').trim()}`)}`);
   if (expandable) {
     lines.push('');
     lines.push(` ${color.faint(expanded ? 'Click to collapse' : 'Click to expand')}`);
   }
   // Console output drops its title (bare `<` connector) — the `$ command` echo already identifies it;
   // other kinds (search result, browser observation, tool result) keep the label.
-  return simpleBlock(output.kind === 'console' ? '' : output.title, lines.map((line) => CODE_ROW(padAnsi(line, Math.max(1, width - 12)))), width);
+  const title = output.kind === 'console' ? '' : terminalPlainText(output.title).replace(/\s+/g, ' ').trim();
+  return simpleBlock(title, lines.map((line) => CODE_ROW(padAnsi(line, Math.max(1, width - 12)))), width);
 }

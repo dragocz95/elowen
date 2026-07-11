@@ -5,7 +5,6 @@ import { localShellTurn, parseBangCommand, runLocalShell } from './localShell.js
 import { editTextExternally } from './externalEditor.js';
 import { composeWithAttachments, expandMentions, MAX_IMAGES_PER_MESSAGE, readClipboardImage, type PendingImage } from './mentions.js';
 import { sessionItems, openPicker, openTextInput } from './picker.js';
-import { ALT_SCREEN_OFF, ALT_SCREEN_ON, DISABLE_MOUSE, ENABLE_MOUSE } from './layout.js';
 import { reduce } from '../../brain/transcript.js';
 import type { BrainClient } from './brainClient.js';
 import type { ChatRuntime } from './runtime.js';
@@ -130,7 +129,7 @@ export function compactNotice(result: { compacted: boolean; message?: string }):
 }
 
 export function wireSubmit(rt: ChatRuntime, deps: { stream: StreamController; pickers: Pickers }): void {
-  const { client, tui, term, editor, attachmentChips, shellContext } = rt;
+  const { client, tui, editor, attachmentChips, shellContext } = rt;
   const { stream, pickers } = deps;
 
   editor.onSubmit = (text: string): void => {
@@ -270,16 +269,12 @@ export function wireSubmit(rt: ChatRuntime, deps: { stream: StreamController; pi
           const initial = editor.getExpandedText();
           // Hand the primary buffer to $EDITOR: leave our alternate screen too, or the editor opens
           // nested inside it and its own screen handling fights ours. Re-enter it when we resume.
-          term.write(DISABLE_MOUSE + ALT_SCREEN_OFF);
-          tui.stop();
+          rt.terminalLifecycle?.suspend();
           void editTextExternally({ text: initial }).then((edited) => {
-            term.write(ALT_SCREEN_ON);
-            tui.start();
-            term.write(ENABLE_MOUSE);
+            rt.terminalLifecycle?.resume();
             editor.setText(edited ?? initial);
             if (edited == null) rt.notice = color.dim('editor exited without saving — draft kept');
-            tui.requestRender(true);
-            rt.render();
+            rt.renderForced('external-editor:return');
           });
           return;
         }
