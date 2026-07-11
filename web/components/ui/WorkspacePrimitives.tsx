@@ -95,15 +95,6 @@ export function SpatialWorkspaceLayout({ hero, navigation, children, className =
   );
 }
 
-export function WorkspaceMetrics({ visual, children, ariaLabel, className = '', testId }: { visual?: ReactNode; children: ReactNode; ariaLabel: string; className?: string; testId?: string }) {
-  return (
-    <section className={`workspace-metrics ${className}`} aria-label={ariaLabel} data-testid={testId}>
-      {visual ? <div className="workspace-metrics__visual" aria-hidden>{visual}</div> : null}
-      <div className="workspace-metrics__items">{children}</div>
-    </section>
-  );
-}
-
 export function WorkspaceMetric({ label, value, icon: Icon }: { label: string; value: ReactNode; icon?: LucideIcon }) {
   return (
     <div className="workspace-metric">
