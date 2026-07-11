@@ -43,6 +43,7 @@ describe('TasksPage', () => {
     expect(screen.getByRole('radio', { name: /Autopilot 1/ })).toBeInTheDocument();
     expect(screen.getByRole('radio', { name: /All 5/ })).toBeInTheDocument();
     expect(screen.getAllByRole('img', { name: 'Elowen' })).toHaveLength(1);
+    expect(screen.getByTestId('spatial-workspace-layout')).toBeInTheDocument();
     expect(container.querySelector('.workspace-tabs')).toBeNull();
     expect(screen.getByRole('button', { name: 'New task' })).toBeInTheDocument();
   });

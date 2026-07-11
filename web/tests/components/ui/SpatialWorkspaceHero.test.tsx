@@ -1,6 +1,6 @@
 import { render, screen } from '@testing-library/react';
 import { Plus } from 'lucide-react';
-import { SpatialWorkspaceHero, WorkspaceMetric } from '../../../components/ui/WorkspacePrimitives';
+import { SpatialWorkspaceHero, SpatialWorkspaceLayout, WorkspaceMetric } from '../../../components/ui/WorkspacePrimitives';
 import { ControlSurfaceDocument, ControlSurfaceState, ControlSurfaceToolbar } from '../../../components/ui/ControlSurface';
 
 describe('SpatialWorkspaceHero', () => {
@@ -36,5 +36,27 @@ describe('SpatialWorkspaceHero', () => {
     expect(container.querySelectorAll('[data-control-surface]')).toHaveLength(1);
     expect(screen.getByText('Filters')).toHaveClass('control-surface-toolbar');
     expect(screen.getByText('Empty')).toHaveClass('control-surface-state');
+  });
+
+  it('composes the canonical workspace frame with an optional primary rail', () => {
+    render(
+      <SpatialWorkspaceLayout
+        hero={{ eyebrow: 'Work', title: 'Sessions', description: 'Live work', metrics: <WorkspaceMetric label="Live" value={3} /> }}
+        navigation={{
+          ariaLabel: 'Session view',
+          value: 'live',
+          onChange: () => undefined,
+          sections: [{ id: 'live', label: 'Live', icon: Plus }, { id: 'brain', label: 'Brain', icon: Plus }],
+        }}
+      >
+        <ControlSurfaceDocument>Register</ControlSurfaceDocument>
+      </SpatialWorkspaceLayout>,
+    );
+
+    expect(screen.getByRole('heading', { name: 'Sessions' })).toBeInTheDocument();
+    expect(screen.getAllByRole('img', { name: 'Elowen' })).toHaveLength(1);
+    expect(screen.getByRole('radiogroup', { name: 'Session view' })).toBeInTheDocument();
+    expect(screen.getByText('Register')).toHaveAttribute('data-control-surface');
+    expect(screen.getByTestId('spatial-workspace-layout')).toContainElement(screen.getByText('Register'));
   });
 });

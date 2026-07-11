@@ -29,8 +29,8 @@ import { DEFAULT_RANGE, serializeRange, parseRange, isStoredRange, inRange } fro
 import { taskDayMs } from './dateRange';
 import { dayKey } from '../kanban/calendar';
 import { MotionLayout, MotionLayoutItem, MotionPresence } from '../../components/ui/Motion';
-import { WorkspaceDetailRail, WorkspaceMetric, WorkspacePage, SpatialWorkspaceHero } from '../../components/ui/WorkspacePrimitives';
-import { SpatialSectionRail, type SpatialDeckSection } from '../../components/ui/SpatialControlDeck';
+import { WorkspaceDetailRail, WorkspaceMetric, SpatialWorkspaceLayout } from '../../components/ui/WorkspacePrimitives';
+import { type SpatialDeckSection } from '../../components/ui/SpatialControlDeck';
 import { ControlSurfaceDocument, ControlSurfaceState, ControlSurfaceToolbar } from '../../components/ui/ControlSurface';
 import { taskFilterCounts, type TaskWorkspaceFilter } from './taskFilters';
 
@@ -201,24 +201,24 @@ export function TasksView() {
   return (
     <>
       <ModuleHeader title={t.page.tasks} count={filtered.length} icon={ListChecks} />
-      <WorkspacePage>
-        <SpatialWorkspaceHero
-          eyebrow={t.tasks.workspaceEyebrow}
-          title={t.page.tasks}
-          count={counts.all}
-          description={t.tasks.workspaceIntro}
-          mascotState={tasks.isLoading ? 'saving' : tasks.isError ? 'error' : 'idle'}
-          status={!tasks.isLoading && !tasks.isError ? <span className="workspace-status">{t.tasks.workspaceReady}</span> : undefined}
-          action={<Button variant="accent" icon={Plus} onClick={() => setCreating(true)}>{t.tasks.newTask}</Button>}
-        >
-          <WorkspaceMetric label={t.tasks.metricActive} value={counts.in_progress} icon={Activity} />
-          <WorkspaceMetric label={t.tasks.metricBlocked} value={counts.blocked} icon={Ban} />
-          <WorkspaceMetric label={t.tasks.metricAutopilot} value={counts.autopilot} icon={Rocket} />
-          <WorkspaceMetric label={t.tasks.metricClosed} value={counts.closed} icon={Archive} />
-        </SpatialWorkspaceHero>
-        <SpatialSectionRail sections={filterSections} value={filter} onChange={(value) => setFilter(value as TaskWorkspaceFilter)} ariaLabel={t.tasks.filterLabel} />
-
-        <div className="workspace-content">
+      <SpatialWorkspaceLayout
+        hero={{
+          eyebrow: t.tasks.workspaceEyebrow,
+          title: t.page.tasks,
+          count: counts.all,
+          description: t.tasks.workspaceIntro,
+          mascotState: tasks.isLoading ? 'saving' : tasks.isError ? 'error' : 'idle',
+          status: !tasks.isLoading && !tasks.isError ? <span className="workspace-status">{t.tasks.workspaceReady}</span> : undefined,
+          action: <Button variant="accent" icon={Plus} onClick={() => setCreating(true)}>{t.tasks.newTask}</Button>,
+          metrics: <>
+            <WorkspaceMetric label={t.tasks.metricActive} value={counts.in_progress} icon={Activity} />
+            <WorkspaceMetric label={t.tasks.metricBlocked} value={counts.blocked} icon={Ban} />
+            <WorkspaceMetric label={t.tasks.metricAutopilot} value={counts.autopilot} icon={Rocket} />
+            <WorkspaceMetric label={t.tasks.metricClosed} value={counts.closed} icon={Archive} />
+          </>,
+        }}
+        navigation={{ sections: filterSections, value: filter, onChange: (value) => setFilter(value as TaskWorkspaceFilter), ariaLabel: t.tasks.filterLabel }}
+      >
           <ControlSurfaceDocument className="tasks-control-surface">
           <ControlSurfaceToolbar className="flex-wrap">
             <div className="relative min-w-[15rem] flex-1">
@@ -289,8 +289,7 @@ export function TasksView() {
               </div>
             )}
           </ControlSurfaceDocument>
-        </div>
-      </WorkspacePage>
+      </SpatialWorkspaceLayout>
 
       {selected.size > 0 && (
         <div className="fixed bottom-6 left-1/2 z-40 flex -translate-x-1/2 items-center gap-2 rounded-xl border border-border bg-elevated px-3 py-2 shadow-[var(--shadow-raised)] animate-fade-up">

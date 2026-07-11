@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import type { LucideIcon } from 'lucide-react';
 import { SpatialMascot, type SpatialMascotState } from './SpatialMascot';
+import { SpatialSectionRail, type SpatialDeckSection } from './SpatialControlDeck';
 
 export function WorkspacePage({ children, className = '' }: { children: ReactNode; className?: string }) {
   return <div className={`workspace-page ${className}`}>{children}</div>;
@@ -36,7 +37,7 @@ export function WorkspaceHeader({ eyebrow, title, count, description, status, ac
   );
 }
 
-export function SpatialWorkspaceHero({ eyebrow, title, count, description, status, action, mascotState = 'idle', children }: {
+export interface SpatialWorkspaceHeroProps {
   eyebrow?: string;
   title: string;
   count?: number;
@@ -45,7 +46,9 @@ export function SpatialWorkspaceHero({ eyebrow, title, count, description, statu
   action?: ReactNode;
   mascotState?: SpatialMascotState;
   children: ReactNode;
-}) {
+}
+
+export function SpatialWorkspaceHero({ eyebrow, title, count, description, status, action, mascotState = 'idle', children }: SpatialWorkspaceHeroProps) {
   return (
     <section className="spatial-workspace-hero">
       <header className="spatial-workspace-hero__header">
@@ -64,6 +67,31 @@ export function SpatialWorkspaceHero({ eyebrow, title, count, description, statu
         <div className="spatial-workspace-hero__metrics">{children}</div>
       </div>
     </section>
+  );
+}
+
+export interface SpatialWorkspaceLayoutProps {
+  hero: Omit<SpatialWorkspaceHeroProps, 'children'> & { metrics: ReactNode };
+  navigation?: {
+    sections: SpatialDeckSection[];
+    value: string;
+    onChange: (id: string) => void;
+    ariaLabel: string;
+  };
+  children: ReactNode;
+  className?: string;
+}
+
+export function SpatialWorkspaceLayout({ hero, navigation, children, className = '' }: SpatialWorkspaceLayoutProps) {
+  const { metrics, ...heroProps } = hero;
+  return (
+    <WorkspacePage className={`spatial-workspace-layout ${className}`}>
+      <div className="spatial-workspace-layout__hero">
+        <SpatialWorkspaceHero {...heroProps}>{metrics}</SpatialWorkspaceHero>
+      </div>
+      {navigation ? <SpatialSectionRail {...navigation} /> : null}
+      <div className="workspace-content" data-testid="spatial-workspace-layout">{children}</div>
+    </WorkspacePage>
   );
 }
 

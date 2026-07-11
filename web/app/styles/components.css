@@ -212,6 +212,8 @@ html[data-effects='full'] .spatial-section-node--active .spatial-section-node__i
 .spatial-workspace-hero__mascot .spatial-mascot { width: min(100%, 20rem); margin-inline: auto; transform: scale(0.82); transform-origin: center; }
 .spatial-workspace-hero__metrics { display: grid; min-width: 0; grid-template-columns: repeat(4, minmax(8rem, 1fr)); align-items: stretch; }
 .spatial-workspace-hero__metrics .workspace-metric { display: flex; min-width: 0; flex-direction: column; justify-content: center; }
+.spatial-workspace-layout__hero { overflow: clip; border: 1px solid rgb(255 255 255 / 0.085); border-radius: var(--radius-xl); background: linear-gradient(135deg, rgb(255 255 255 / 0.018), transparent 42%), var(--color-surface); box-shadow: var(--shadow-card); }
+.spatial-workspace-layout > .spatial-section-rail { margin-top: 1rem; border: 1px solid rgb(255 255 255 / 0.075); border-radius: var(--radius-lg); background: var(--color-surface); }
 .workspace-metrics { display: flex; min-height: 8.8rem; align-items: stretch; border-bottom: var(--hairline); }
 .workspace-metrics__visual { display: grid; width: 13rem; flex: none; place-items: center; border-right: var(--hairline); }
 .workspace-metrics__items { display: flex; min-width: 0; flex: 1; align-items: center; }
