@@ -467,9 +467,10 @@ export function toolOutputBlock(output: ToolOutputView, width: number, expanded 
   const lines: string[] = [];
   // Muted, not full-bright: the command echo is context, not content (matches the dim tool rows).
   if (output.command) lines.push(` ${ansi.open(theme.faint, '$')} ${ansi.open(theme.muted, terminalPlainText(output.command).replace(/\s+/g, ' ').trim())}`);
-  if (output.status) {
+  const status = output.status ? terminalPlainText(output.status).replace(/\s+/g, ' ').trim() : '';
+  if (status && !/^\[?exit\s+0\]?$/i.test(status)) {
     const statusColor = output.tone === 'warning' || output.tone === 'danger' ? theme.warning : theme.success;
-    lines.push(` ${ansi.open(statusColor, terminalPlainText(output.status).replace(/\s+/g, ' ').trim())}`);
+    lines.push(` ${ansi.open(statusColor, status)}`);
   }
   if (lines.length > 0) lines.push('');
   const expandable = Boolean(output.fullText && output.fullText !== output.text);
@@ -478,6 +479,7 @@ export function toolOutputBlock(output: ToolOutputView, width: number, expanded 
   // stray blank row it would otherwise render.
   for (const raw of body ? body.split('\n') : []) {
     if (!raw) { lines.push(''); continue; }
+    if (/^\s*\[?exit\s+0\]?\s*$/i.test(raw)) continue;
     // Bookkeeping lines ((cwd: …), [exit N], repeated $ command echoes) drop to faint — they are
     // context, not content, and at full muted they competed with the agent's actual reply.
     const toneColor = /^\s*(\(cwd: |\[exit \d+\]|\$ )/.test(raw)

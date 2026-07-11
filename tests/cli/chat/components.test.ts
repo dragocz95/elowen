@@ -117,7 +117,15 @@ describe('chat components', () => {
     expect(rendered).not.toContain('\x1b]52;');
     expect(plain).toContain('984M');
     expect(plain).toContain('/var/www/.local');
+    expect(plain).not.toContain('exit 0');
     expect(lines.every((line) => visibleWidth(line) <= 60)).toBe(true);
+  });
+
+  it('keeps a non-zero tool exit visible', () => {
+    const rendered = toolOutputBlock({
+      title: 'console output', kind: 'console', text: 'failed', status: '[exit 2]', tone: 'danger',
+    }, 60).join('\n');
+    expect(rendered).toContain('[exit 2]');
   });
 
   it('CardPanel renders pinned cards as real rows and collapses an all-done checklist / non-pinned cards', () => {
