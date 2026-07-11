@@ -14,6 +14,7 @@ export interface RenderShellOptions {
   tui: TUI;
   term: { columns: number; rows: number };
   prepare(): void;
+  onResize?(dimensions: { columns: number; rows: number }): void;
   onFlush?(frame: { reasons: string[]; forced: boolean }): void;
 }
 
@@ -24,23 +25,37 @@ export class RenderShell {
   private readonly nativeRequestRender: TUI['requestRender'];
   private previousDimensions: { columns: number; rows: number } | null = null;
   private pendingFrame: RenderFrame | null = null;
+  private activeFrame: { reasons: Set<string>; forced: boolean } | null = null;
   private stopped = false;
 
   constructor(private readonly options: RenderShellOptions) {
     this.nativeRequestRender = options.tui.requestRender.bind(options.tui);
     this.scheduler = new FrameScheduler((frame) => this.flush(frame));
     options.tui.requestRender = (force = false): void => {
+      if (this.activeFrame) {
+        this.activeFrame.reasons.add(force ? 'pi-tui:forced-request-during-frame' : 'pi-tui:request-during-frame');
+        this.activeFrame.forced ||= force;
+        return;
+      }
       if (force) this.scheduleForcedRender('pi-tui:forced-request');
       else this.scheduleRender('pi-tui:request', 'interactive');
     };
   }
 
   scheduleRender(reason = 'state', priority?: 'interactive' | 'normal'): void {
+    if (this.activeFrame) { this.activeFrame.reasons.add(reason); return; }
     const chosen = priority ?? (reason.startsWith('scroll:') || reason.startsWith('input:') ? 'interactive' : 'normal');
     this.scheduler.schedule(reason, chosen);
   }
 
-  scheduleForcedRender(reason = 'geometry'): void { this.scheduler.scheduleForced(reason); }
+  scheduleForcedRender(reason = 'geometry'): void {
+    if (this.activeFrame) {
+      this.activeFrame.reasons.add(reason);
+      this.activeFrame.forced = true;
+      return;
+    }
+    this.scheduler.scheduleForced(reason);
+  }
   allocateLayout(input: LayoutBudgetInput): LayoutBudget { return computeLayoutBudget(input); }
   composeRoot(lines: string[], columns: number, rows: number): string[] {
     return constrainFrame(lines, columns, rows);
@@ -64,13 +79,22 @@ export class RenderShell {
   private flush(frame: { reasons: string[]; forced: boolean }): void {
     const startedAt = performance.now();
     const dimensions = { columns: this.options.term.columns, rows: this.options.term.rows };
-    if (this.previousDimensions
-      && (this.previousDimensions.columns !== dimensions.columns || this.previousDimensions.rows !== dimensions.rows)) {
-      frame.forced = true;
-      if (!frame.reasons.includes('resize')) frame.reasons.push('resize');
+    const resized = !!this.previousDimensions
+      && (this.previousDimensions.columns !== dimensions.columns || this.previousDimensions.rows !== dimensions.rows);
+    const active = { reasons: new Set(frame.reasons), forced: frame.forced || resized };
+    this.activeFrame = active;
+    if (resized) {
+      active.reasons.add('resize');
     }
     this.previousDimensions = dimensions;
-    this.options.prepare();
+    try {
+      if (resized) this.options.onResize?.(dimensions);
+      this.options.prepare();
+    } finally {
+      // Keep the collected object below, but stop folding requests once preparation has returned.
+      frame = { reasons: [...active.reasons], forced: active.forced };
+      this.activeFrame = null;
+    }
     const prepareMs = performance.now() - startedAt;
     if (this.pendingFrame) {
       for (const reason of frame.reasons) this.pendingFrame.reasons.add(reason);

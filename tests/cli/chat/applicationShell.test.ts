@@ -1,14 +1,32 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { visibleWidth } from '@earendil-works/pi-tui';
-import type { Component, TUI } from '@earendil-works/pi-tui';
+import type { Component, OverlayHandle, OverlayOptions, TUI } from '@earendil-works/pi-tui';
+import { initTheme } from '@earendil-works/pi-coding-agent';
 import { AnimationController } from '../../../src/cli/chat/animationController.js';
 import { InputRouter } from '../../../src/cli/chat/inputRouter.js';
 import type { ChatInputContext } from '../../../src/cli/chat/inputRouter.js';
 import { OverlayController } from '../../../src/cli/chat/overlayController.js';
 import { RenderShell } from '../../../src/cli/chat/renderShell.js';
 import { ChatApplication } from '../../../src/cli/chat/chatApplication.js';
+import { createShell } from '../../../src/cli/chat/shell.js';
+import { terminalPlainText } from '../../../src/cli/ui/text.js';
+import { applicationHarness } from './chatApplicationHarness.js';
+
+function nativeOverlayHandle(hide = vi.fn()): OverlayHandle {
+  let hidden = false;
+  let focused = false;
+  return {
+    hide,
+    setHidden: (next) => { hidden = next; },
+    isHidden: () => hidden,
+    focus: () => { focused = true; },
+    unfocus: () => { focused = false; },
+    isFocused: () => focused,
+  };
+}
 
 describe('chat application shell ownership', () => {
+  beforeAll(() => initTheme());
   beforeEach(() => { vi.useFakeTimers(); vi.setSystemTime(1_000); });
   afterEach(() => vi.useRealTimers());
 
@@ -38,7 +56,7 @@ describe('chat application shell ownership', () => {
     const hide = vi.fn();
     const nativeShow = vi.fn((component: Component) => {
       rendered = component;
-      return { hide, focus: vi.fn(), isHidden: () => false, setHidden: vi.fn() };
+      return nativeOverlayHandle(hide);
     });
     const force = vi.fn();
     const tui = { showOverlay: nativeShow } as unknown as TUI;
@@ -59,13 +77,13 @@ describe('chat application shell ownership', () => {
     const tui = {
       showOverlay: vi.fn((_component: Component, next) => {
         options = next;
-        return { hide: vi.fn(), focus: vi.fn(), isHidden: () => false, setHidden: vi.fn() };
+        return nativeOverlayHandle();
       }),
     } as unknown as TUI;
     const setMaxRows = vi.fn();
     const overlay = { invalidate: () => {}, render: () => [], setMaxRows };
     const controller = new OverlayController(tui, vi.fn());
-    controller.showSuggestion('slash', overlay, {
+    controller.showSuggestion('slash', overlay, () => ({
       columns: 40, rows: 12, hasMessages: true, panelReserve: 0,
       input: { invalidate: () => {}, render: () => [] }, notice: '',
       budget: {
@@ -73,9 +91,49 @@ describe('chat application shell ownership', () => {
         telemetryColumns: 0, telemetryGutter: 0, rootRows: 12,
         sections: { header: 1, transcript: 5, cards: 0, subagents: 0, queue: 0, attachments: 0, editor: 3, status: 1, hints: 1 },
       },
-    });
+    }));
     expect(setMaxRows).toHaveBeenCalledWith(6);
     expect(options?.maxHeight).toBe(6);
+    controller.stop();
+  });
+
+  it('OverlayController tracks intercepted generic overlays and closes them on stop', () => {
+    const hide = vi.fn();
+    const tui = {
+      terminal: { columns: 80, rows: 24 },
+      showOverlay: vi.fn(() => nativeOverlayHandle(hide)),
+    } as unknown as TUI;
+    const controller = new OverlayController(tui, vi.fn());
+    tui.showOverlay({ invalidate: () => {}, render: () => ['generic'] }, { anchor: 'center', width: 60 });
+    controller.stop();
+    expect(hide).toHaveBeenCalledOnce();
+  });
+
+  it('OverlayController reopens every active overlay with geometry constrained to the resized terminal', () => {
+    const terminal = { columns: 80, rows: 24 };
+    const native: { options?: OverlayOptions; handle: OverlayHandle }[] = [];
+    const tui = {
+      terminal,
+      showOverlay: vi.fn((_component: Component, options?: OverlayOptions) => {
+        const record = { options, handle: nativeOverlayHandle() };
+        native.push(record);
+        return record.handle;
+      }),
+    } as unknown as TUI;
+    const controller = new OverlayController(tui, vi.fn());
+    const stable = tui.showOverlay({ invalidate: () => {}, render: () => ['generic'] }, {
+      anchor: 'center', width: 70, maxHeight: 20, margin: 2,
+    });
+    terminal.columns = 30;
+    terminal.rows = 9;
+    (controller as OverlayController & { reflow(): void }).reflow();
+
+    expect(native).toHaveLength(2);
+    expect(native[0]!.handle.isFocused()).toBe(false);
+    expect(native[1]!.options?.width).toBeLessThanOrEqual(30);
+    expect(native[1]!.options?.maxHeight).toBeLessThanOrEqual(9);
+    stable.hide();
+    expect(native[1]!.handle.isFocused()).toBe(false);
     controller.stop();
   });
 
@@ -99,6 +157,38 @@ describe('chat application shell ownership', () => {
     expect(nativeRequest).toHaveBeenLastCalledWith(true);
     render.stop();
     expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('RenderShell reports a real dimension transition once before preparing the resized frame', async () => {
+    const tui = { requestRender: vi.fn() } as unknown as TUI;
+    const term = { columns: 80, rows: 24 };
+    const onResize = vi.fn();
+    const render = new RenderShell({ tui, term, prepare: vi.fn(), onResize });
+    render.scheduleForcedRender('initial');
+    await vi.runOnlyPendingTimersAsync();
+    term.columns = 44;
+    term.rows = 13;
+    render.scheduleRender('pi-tui:resize');
+    await vi.runOnlyPendingTimersAsync();
+    expect(onResize).toHaveBeenCalledOnce();
+    expect(onResize).toHaveBeenCalledWith({ columns: 44, rows: 13 });
+    render.stop();
+  });
+
+  it('RenderShell absorbs PI component requests raised during preparation into the current frame', async () => {
+    const nativeRequest = vi.fn();
+    const tui = { requestRender: nativeRequest } as unknown as TUI;
+    const render = new RenderShell({
+      tui,
+      term: { columns: 80, rows: 24 },
+      prepare: () => tui.requestRender(),
+    });
+    render.scheduleForcedRender('test:prepare');
+    await vi.runOnlyPendingTimersAsync();
+    expect(nativeRequest).toHaveBeenCalledOnce();
+    expect(vi.getTimerCount()).toBe(0);
+    expect(render.takeFrame()?.reasons).toContain('pi-tui:request-during-frame');
+    render.stop();
   });
 
   it('RenderShell owns the sole layout allocation and final root bounds', () => {
@@ -162,37 +252,144 @@ describe('chat application shell ownership', () => {
     router.stop();
   });
 
-  it('ChatApplication composes one terminal lifecycle and tears every owned controller down', () => {
-    const writes: string[] = [];
-    const renderOwner = { pause: vi.fn(), resume: vi.fn(), stop: vi.fn() };
-    const animations = { pause: vi.fn(), stop: vi.fn() };
-    const overlays = { stop: vi.fn() };
-    const input = { stop: vi.fn() };
-    const cleanup = vi.fn();
-    const force = vi.fn();
-    const app = new ChatApplication({
-      term: { write: (data: string) => writes.push(data) },
-      tui: { start: vi.fn(), stop: vi.fn() },
-      renderOwner,
-      animations,
-      overlays,
-      inputRouter: () => input,
-      render: vi.fn(),
-      renderForced: force,
-      attachInput: vi.fn(),
-      showPanel: vi.fn(),
-      reshowPanel: vi.fn(),
-      reloadKeymap: vi.fn(),
-      cleanup,
-    });
-    app.terminalLifecycle.start();
-    expect(force).toHaveBeenCalledWith('lifecycle:start');
+  it('ChatApplication itself constructs and mounts the production composition graph', () => {
+    const h = applicationHarness({ turns: 4 });
+    const app = new ChatApplication({ rt: h.rt, stream: h.stream, mdTheme: h.mdTheme, diagnostics: h.diagnostics });
+    expect(h.tui.children).toHaveLength(1);
+    expect(h.rt.terminalLifecycle).toBe(app.terminalLifecycle);
     app.terminalLifecycle.stop();
-    expect(cleanup).toHaveBeenCalledOnce();
-    expect(animations.stop).toHaveBeenCalled();
-    expect(overlays.stop).toHaveBeenCalled();
-    expect(input.stop).toHaveBeenCalled();
-    expect(renderOwner.stop).toHaveBeenCalled();
-    expect(writes.length).toBeGreaterThan(0);
+  });
+
+  it('real createShell mounts one bounded root with exactly one footer and one input listener', async () => {
+    const h = applicationHarness({ columns: 80, rows: 24, turns: 40 });
+    const app = createShell(h.rt, h.stream, h.mdTheme, h.diagnostics);
+    h.rt.render = app.render;
+    h.rt.renderForced = app.renderForced;
+    app.attachInput({
+      cycleThinkingLevel: vi.fn(), openHelpModal: vi.fn(), openThemePicker: vi.fn(),
+      openModelPicker: vi.fn(), openSessionsModal: vi.fn(),
+    });
+    app.renderForced('test:initial');
+    await vi.runOnlyPendingTimersAsync();
+
+    expect(h.tui.children).toHaveLength(1);
+    expect(h.tui.listeners.size).toBe(1);
+    const frame = h.tui.children[0]!.render(h.term.columns);
+    expect(frame).toHaveLength(h.term.rows);
+    expect(frame.every((line) => visibleWidth(line) === h.term.columns)).toBe(true);
+    const plain = frame.map(terminalPlainText);
+    expect(plain.filter((line) => line.includes('Build')).length).toBe(1);
+    app.terminalLifecycle.start();
+    app.terminalLifecycle.stop();
+    expect(h.tui.listeners.size).toBe(0);
+    expect(h.tui.children).toHaveLength(1);
+  });
+
+  it('resets a prior chat allocation before rendering the same editor on the roomy start screen', async () => {
+    const h = applicationHarness({ columns: 80, rows: 24, turns: 0 });
+    h.rt.editor.setMaxRows(3);
+    h.rt.editor.setText(Array.from({ length: 6 }, (_, index) => `session-draft-${index + 1}`).join('\n'));
+    const app = createShell(h.rt, h.stream, h.mdTheme, h.diagnostics);
+    app.renderForced('test:start-screen');
+    await vi.runOnlyPendingTimersAsync();
+    const frame = h.tui.children[0]!.render(h.term.columns).map(terminalPlainText).join('\n');
+    expect(frame).toContain('session-draft-1');
+    expect(frame).toContain('session-draft-6');
+    app.terminalLifecycle.stop();
+  });
+
+  it('real createShell routes a mouse drag through the rendered transcript scrollbar', async () => {
+    const h = applicationHarness({ columns: 80, rows: 24, turns: 80 });
+    const app = createShell(h.rt, h.stream, h.mdTheme, h.diagnostics);
+    app.attachInput({
+      cycleThinkingLevel: vi.fn(), openHelpModal: vi.fn(), openThemePicker: vi.fn(),
+      openModelPicker: vi.fn(), openSessionsModal: vi.fn(),
+    });
+    app.renderForced('test:initial');
+    await vi.runOnlyPendingTimersAsync();
+    const frame = h.tui.children[0]!.render(h.term.columns).map(terminalPlainText);
+    const thumbRow = frame.findIndex((line) => line.includes('█'));
+    expect(thumbRow).toBeGreaterThan(0);
+    const x = frame[thumbRow]!.lastIndexOf('█') + 1;
+    const y = thumbRow + 1;
+    expect(h.tui.emit(`\x1b[<0;${x};${y}M`)?.consume).toBe(true);
+    expect(h.tui.emit(`\x1b[<32;${x};${Math.max(2, y - 5)}M`)?.consume).toBe(true);
+    expect(h.tui.emit(`\x1b[<0;${x};${Math.max(2, y - 5)}m`)?.consume).toBe(true);
+    await vi.runOnlyPendingTimersAsync();
+    expect(h.tui.children[0]!.render(h.term.columns).map(terminalPlainText).join('\n')).toContain('History');
+    app.terminalLifecycle.stop();
+  });
+
+  it('real createShell reflows generic and named overlays on resize and hides every native handle on stop', async () => {
+    const h = applicationHarness({ columns: 120, rows: 30, turns: 8 });
+    const app = createShell(h.rt, h.stream, h.mdTheme, h.diagnostics);
+    app.renderForced('test:initial');
+    await vi.runOnlyPendingTimersAsync();
+    h.tui.children[0]!.render(h.term.columns);
+    h.rt.tui.showOverlay({ invalidate: () => {}, render: () => ['generic modal'] }, {
+      anchor: 'center', width: 90, maxHeight: 24, margin: 2,
+    });
+    await vi.runOnlyPendingTimersAsync();
+    const beforeResize = [...h.tui.overlays];
+    h.term.columns = 42;
+    h.term.rows = 12;
+    app.renderForced('test:resize');
+    await vi.runOnlyPendingTimersAsync();
+
+    expect(h.tui.overlays.length).toBeGreaterThan(beforeResize.length);
+    expect(beforeResize.every((overlay) => overlay.removed)).toBe(true);
+    const current = h.tui.overlays.filter((overlay) => !overlay.removed);
+    expect(current.length).toBeGreaterThanOrEqual(2);
+    expect(current.every((overlay) => typeof overlay.options?.width !== 'number' || overlay.options.width <= 42)).toBe(true);
+    app.terminalLifecycle.stop();
+    expect(h.tui.overlays.every((overlay) => overlay.removed)).toBe(true);
+  });
+
+  it.each([
+    ['slash', '/'],
+    ['mention', '@'],
+  ] as const)('reflows the active %s suggestion overlay from live geometry', async (_name, input) => {
+    const h = applicationHarness({ columns: 120, rows: 30, turns: 8 });
+    const app = createShell(h.rt, h.stream, h.mdTheme, h.diagnostics);
+    app.attachInput({
+      cycleThinkingLevel: vi.fn(), openHelpModal: vi.fn(), openThemePicker: vi.fn(),
+      openModelPicker: vi.fn(), openSessionsModal: vi.fn(),
+    });
+    app.renderForced('test:initial');
+    await vi.runOnlyPendingTimersAsync();
+    h.tui.children[0]!.render(h.term.columns);
+    h.tui.emit(input);
+    await vi.runOnlyPendingTimersAsync();
+    const before = h.tui.overlays.filter((overlay) => !overlay.removed);
+    const suggestion = before.find((overlay) => overlay.options?.anchor === 'bottom-left');
+    expect(suggestion).toBeDefined();
+
+    h.term.columns = 50;
+    h.term.rows = 14;
+    app.renderForced('test:resize');
+    await vi.runOnlyPendingTimersAsync();
+    expect(before.every((overlay) => overlay.removed)).toBe(true);
+    const reflowed = h.tui.overlays.filter((overlay) => !overlay.removed)
+      .find((overlay) => overlay.options?.anchor === 'bottom-left');
+    expect(reflowed).toBeDefined();
+    expect(reflowed?.options?.width).toBeLessThanOrEqual(50);
+    expect(reflowed?.options?.maxHeight).toBeLessThanOrEqual(14);
+    app.terminalLifecycle.stop();
+  });
+
+  it('cancels an armed leader and every scheduler/controller timer through rapid application cycles', () => {
+    for (let cycle = 0; cycle < 3; cycle++) {
+      const h = applicationHarness({ turns: 2 });
+      const app = createShell(h.rt, h.stream, h.mdTheme, h.diagnostics);
+      app.attachInput({
+        cycleThinkingLevel: vi.fn(), openHelpModal: vi.fn(), openThemePicker: vi.fn(),
+        openModelPicker: vi.fn(), openSessionsModal: vi.fn(),
+      });
+      h.tui.emit('\x18'); // ctrl+x — arm the default two-second leader window
+      expect(vi.getTimerCount()).toBeGreaterThan(0);
+      app.terminalLifecycle.stop();
+      expect(vi.getTimerCount()).toBe(0);
+      expect(h.tui.listeners.size).toBe(0);
+    }
   });
 });
