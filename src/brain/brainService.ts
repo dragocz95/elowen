@@ -25,7 +25,7 @@ import { GoalLoopService } from './service/goalLoop.js';
 import { LiveSessionSpawner } from './service/spawner.js';
 import { ConversationLifecycle } from './service/lifecycle.js';
 import { BrainTurnRunner } from './service/turnRunner.js';
-import type { BoundClientRequest } from './service/turnRunner.js';
+import type { BoundClientRequest, TurnRequest } from './service/turnRequest.js';
 import { BrainStatusService } from './service/statusService.js';
 import { exportBrainSession } from './session/exportSession.js';
 import type { ExportFormat, SessionExport } from './session/exportSession.js';
@@ -132,7 +132,7 @@ export class BrainService {
       attachedCount: (sessionId) => this.attachments.attachedCount(sessionId),
       ensureLive: (userId, sessionId, o) => this.lifecycle.ensureLive(userId, sessionId, o),
       start: (userId) => this.start(userId),
-      send: (userId, text, images, mode, internal, clientCwd, session) => this.send(userId, text, images, mode, internal, clientCwd, session),
+      send: (request) => this.send(request),
       defaultTurnBudget: () => this.limits().goalTurnBudget,
       goalMaxTurns: () => this.limits().goalMaxTurns,
       isYolo: (userId, sessionId) => this.permissionSvc.effectiveYolo(userId, this.sessions.get(sessionId)),
@@ -218,7 +218,7 @@ export class BrainService {
       originSend: async (userId, sessionId, text, onEvent) => {
         const row = this.d.store.getSession(sessionId);
         if (!row || row.user_id !== userId || isNonUserSession(sessionId)) return null;
-        await this.send(userId, text, undefined, 'build', undefined, undefined, sessionId);
+        await this.send({ userId, text, mode: 'build', session: sessionId });
         onEvent?.({ type: 'session', sessionId });
         return lastAssistantText(this.d.store, sessionId);
       },
@@ -625,14 +625,14 @@ export class BrainService {
     }
   }
 
-  async send(userId: number, text: string, images?: { data: string; mimeType: string }[], mode: 'build' | 'plan' = 'build', internal?: { goalKickoff?: boolean; goalContinue?: boolean; systemNudge?: boolean }, clientCwd?: string, session?: string, display?: string, client?: BoundClientRequest): Promise<void> {
-    return this.turnRunner.send(userId, text, images, mode, internal, clientCwd, session, display, client);
+  async send(request: TurnRequest): Promise<void> {
+    return this.turnRunner.send(request);
   }
 
   /** Start a user turn and expose its two real lifecycle boundaries. `admitted` resolves only after the
    * prompt is durable and its authoritative user event has been published; `completed` covers the full
    * model/tool turn. This lets HTTP acknowledge safely without holding the request for a long turn. */
-  startSend(userId: number, text: string, images?: { data: string; mimeType: string }[], mode: 'build' | 'plan' = 'build', internal?: { goalKickoff?: boolean; goalContinue?: boolean; systemNudge?: boolean }, clientCwd?: string, session?: string, display?: string, client?: BoundClientRequest): { admitted: Promise<string>; completed: Promise<void> } {
+  startSend(request: TurnRequest): { admitted: Promise<string>; completed: Promise<void> } {
     let resolveAdmitted!: (sessionId: string) => void;
     let rejectAdmitted!: (error: unknown) => void;
     let admissionSettled = false;
@@ -640,14 +640,14 @@ export class BrainService {
       resolveAdmitted = resolve;
       rejectAdmitted = reject;
     });
-    const completed = this.turnRunner.send(
-      userId, text, images, mode, internal, clientCwd, session, display, client,
-      (sessionId) => {
+    const completed = this.turnRunner.send({
+      ...request,
+      onAdmitted: (sessionId) => {
         if (admissionSettled) return;
         admissionSettled = true;
         resolveAdmitted(sessionId);
       },
-    ).then(
+    }).then(
       () => {
         if (admissionSettled) return;
         admissionSettled = true;

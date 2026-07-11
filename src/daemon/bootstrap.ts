@@ -549,7 +549,13 @@ export function buildApp(opts: BuildOpts) {
     // `systemNudge`: no 'you' bubble, dropped if the target session is already streaming, and it never
     // drives the goal loop (so a wake can't spend a goal-budget turn or mis-judge an active goal). Bound to
     // the session the command was started in — not whatever conversation is currently active.
-    void brain.send(userId, text, undefined, 'build', { systemNudge: true }, undefined, sessionId ?? undefined)
+    void brain.send({
+      userId,
+      text,
+      mode: 'build',
+      internal: { systemNudge: true },
+      session: sessionId ?? undefined,
+    })
       .catch(() => { /* best-effort wake */ });
   });
   // The elowen exec engine: tasks with an `elowen:` exec run on an embedded PI session instead of a

@@ -1,5 +1,6 @@
 import type { BrainStore, BrainGoalRow } from '../../store/brainStore.js';
 import { allSubgoalsDone, applySubgoalDone, goalContinuePrompt, goalDraft, goalPrompt, judgeGoalBlocked, judgeGoalCompletion, lastAssistantText, parseProgress, parseSubgoalDone, parseSubgoals } from '../goal.js';
+import type { TurnRequest } from './turnRequest.js';
 
 interface GoalLoopDeps {
   store: BrainStore;
@@ -14,7 +15,7 @@ interface GoalLoopDeps {
   /** BrainService.start — an unbound setGoal opens/moves to the active conversation first. */
   start(userId: number): Promise<{ sessionId: string }>;
   /** BrainService.send — goal kickoff and continuation turns run through the normal turn pipeline. */
-  send(userId: number, text: string, images: undefined, mode: 'build' | 'plan', internal: { goalKickoff?: boolean; goalContinue?: boolean }, clientCwd: undefined, session?: string): Promise<void>;
+  send(request: TurnRequest): Promise<void>;
   /** Operator default for a new goal's per-window turn budget (Elowen AI → Limits). */
   defaultTurnBudget(): number;
   /** Absolute safety ceiling on autonomous turns: even in YOLO the loop pauses here so a runaway goal
@@ -94,7 +95,13 @@ export class GoalLoopService {
           // to the goal's own session — never into whatever conversation happens to be active.
           const now = this.d.store.getGoal(sessionId);
           if (!now || now.status !== 'active' || !this.goalDriven(userId, sessionId)) return;
-          return this.d.send(userId, goalContinuePrompt(now), undefined, mode, { goalContinue: true }, undefined, sessionId);
+          return this.d.send({
+            userId,
+            text: goalContinuePrompt(now),
+            mode,
+            internal: { goalContinue: true },
+            session: sessionId,
+          });
         })
         .catch((e) => {
           this.d.store.updateGoal(sessionId, {
@@ -138,7 +145,13 @@ export class GoalLoopService {
     });
     if (!opts?.draft) {
       try {
-        await this.d.send(userId, goalPrompt(row), undefined, 'build', { goalKickoff: true }, undefined, session);
+        await this.d.send({
+          userId,
+          text: goalPrompt(row),
+          mode: 'build',
+          internal: { goalKickoff: true },
+          session,
+        });
       } catch (e) {
         this.d.store.updateGoal(sessionId, {
           status: 'paused',

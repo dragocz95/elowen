@@ -417,7 +417,16 @@ export function registerBrainRoutes(app: ElowenApp, ctx: RouteContext): void {
     // already flowing over SSE. Wait only until the user row + stream echo are durable, then return 202.
     // A failure before that boundary is an HTTP error; a later failure is an ordered SSE error so an
     // attached TUI/headless client cannot silently lose an accepted prompt.
-    const operation = d.brain.startSend(c.get('user').id, text, images, mode, undefined, cwd, session, display, boundClient);
+    const operation = d.brain.startSend({
+      userId: c.get('user').id,
+      text,
+      images,
+      mode,
+      clientCwd: cwd,
+      session,
+      display,
+      client: boundClient,
+    });
     void operation.completed.catch(async (error) => {
       try {
         const admittedSession = await operation.admitted;
