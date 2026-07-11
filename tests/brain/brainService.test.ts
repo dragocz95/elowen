@@ -56,6 +56,8 @@ function fakeDeps() {
     getActiveToolNames(this: { __active: string[] }) { return this.__active; },
     setActiveToolsByName: vi.fn(function (this: { __active: string[] }, names: string[]) { this.__active = names; }),
     model: undefined as unknown,
+    // BrainSessionFactory installs the compaction-only model route on PI's public Agent stream seam.
+    agent: { streamFn: vi.fn() },
     thinkingLevel: '' as string,
     supportsThinking: () => true,
     getAvailableThinkingLevels: () => ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'],
@@ -1179,29 +1181,22 @@ describe('BrainService', () => {
       id: 'codex', label: 'ChatGPT', type: 'oauth-openai-codex' as const, baseUrl: '',
       models: ['gpt-5.5', 'gpt-5.6-luna', 'gpt-5.6-sol'], apiKey: null,
     }] };
-    const loaderRoutes: { fallback?: string; thinking?: () => string | undefined }[] = [];
+    const loaderRoutes: { hasRoute: boolean }[] = [];
     d.resourceLoaderFactory = ((o: {
-      compactionFallbackModel?: { id: string };
-      compactionThinkingLevel?: () => string | undefined;
+      compactionModelRouteExtension?: (pi: unknown) => void;
     }) => {
-      loaderRoutes.push({
-        fallback: o.compactionFallbackModel?.id,
-        thinking: o.compactionThinkingLevel,
-      });
+      loaderRoutes.push({ hasRoute: typeof o.compactionModelRouteExtension === 'function' });
       return undefined;
     }) as never;
     const svc = new BrainService(d as never);
+    const nativeStream = d.session.agent.streamFn;
 
     await svc.start(1, { provider: 'codex', model: 'gpt-5.6-luna' });
     expect((d.createSession.mock.calls[0]![0] as { model: { id: string } }).model.id).toBe('gpt-5.6-luna');
-    expect(loaderRoutes[0]?.thinking?.()).toBe('');
-    await svc.setThinkingLevel(1, 'high');
-    expect(loaderRoutes[0]?.thinking?.()).toBe('high');
+    expect(d.session.agent.streamFn).not.toBe(nativeStream);
     await svc.switchModel(1, { provider: 'codex', model: 'gpt-5.6-sol' });
     expect((d.createSession.mock.calls[1]![0] as { model: { id: string } }).model.id).toBe('gpt-5.6-sol');
-    expect(loaderRoutes.map((route) => route.fallback)).toEqual(['gpt-5.5', 'gpt-5.5']);
-    await svc.setThinkingLevel(1, 'xhigh');
-    expect(loaderRoutes[1]?.thinking?.()).toBe('xhigh');
+    expect(loaderRoutes).toEqual([{ hasRoute: true }, { hasRoute: true }]);
   });
 
   it('fresh start opens a new conversation; session param resumes; list shows both', async () => {

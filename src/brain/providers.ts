@@ -186,8 +186,8 @@ export interface BrainModelSelection { provider?: string; model?: string }
 
 /** One authoritative provider/model route for a live PI session. `model` is always the user's exact
  * selection (or the provider default). `compactionFallback`, when present, is the same configured
- * provider's distinct default model and is used only after ChatGPT reports that its internal deployment
- * alias for the selected model no longer exists. It never replaces the chat/session model. */
+ * provider's distinct default model and is used for ChatGPT OAuth compaction only. It never replaces
+ * the chat/session model or causes a reactive retry. */
 export interface BrainModelRoute {
   providerId: string;
   model: Model<Api>;
@@ -246,14 +246,14 @@ export function resolveBrainModelRoute(
   if (!modelId) throw new Error(`brain provider '${entry.id}' has no models configured`);
   const model = resolveEntryModel(registry, cfg, entry, modelId);
 
-  // The only provider known to hand a public model id to an ephemeral internal deployment alias is
-  // ChatGPT OAuth. Its configured provider default is the existing recovery policy; custom proxies and
-  // every other provider keep PI's exact selected model and surface their own errors unchanged.
+  // ChatGPT OAuth's configured provider default is the stable model for context summarization. Resolve
+  // that route before the session starts so compaction never depends on parsing a provider error or
+  // issuing a second request; custom proxies and every other provider keep PI's selected model.
   let compactionFallback: Model<Api> | undefined;
   if (model.provider === 'openai-codex' && defaultId && defaultId !== model.id) {
-    // Recovery is optional: a stale configured default must never make a valid explicit chat selection
-    // unstartable. If it is absent from the live OAuth catalog, compaction later reports that no distinct
-    // configured fallback exists while normal chat keeps the selected descriptor.
+    // Routing is optional: a stale configured default must never make a valid explicit chat selection
+    // unstartable. If it is absent from the live OAuth catalog, native PI compaction uses the selected
+    // descriptor and surfaces its own provider result.
     const candidate = registry.find(providerName, defaultId);
     if (candidate?.provider === model.provider) compactionFallback = candidate;
   }

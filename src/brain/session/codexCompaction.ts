@@ -1,78 +1,54 @@
-import { compact } from '@earendil-works/pi-coding-agent';
-import type { ExtensionAPI, ModelRegistry } from '@earendil-works/pi-coding-agent';
+import type { AgentSession, ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import type { Api, Model } from '@earendil-works/pi-ai';
 
-interface CodexCompactionFallbackOptions {
-  model: Model<Api>;
-  /** Distinct same-provider default resolved from the live BrainRuntimeConfig before PI is created. */
-  fallbackModel?: Model<Api>;
-  registry: Pick<ModelRegistry, 'getApiKeyAndHeaders'>;
-  preparation: Parameters<typeof compact>[0];
-  customInstructions?: string;
-  signal?: AbortSignal;
-  /** Current PI session effort, read at compaction time so live reasoning changes stay intact. */
-  thinkingLevel?: Parameters<typeof compact>[6];
-  compactFn?: typeof compact;
+/** PI-native compaction route for one live Codex session. The extension only identifies PI's own
+ * compaction AbortSignal; the Agent's existing stream function remains the sole request executor. */
+export interface CodexCompactionModelRoute {
+  extension: (pi: ExtensionAPI) => void;
+  install(session: AgentSession): void;
 }
 
-const errorText = (error: unknown): string => error instanceof Error ? error.message : String(error);
-
-async function runCompaction(
-  o: CodexCompactionFallbackOptions,
-  model: Model<Api>,
-): Promise<Awaited<ReturnType<typeof compact>>> {
-  const auth = await o.registry.getApiKeyAndHeaders(model);
-  if (!auth.ok) throw new Error(auth.error);
-  if (!auth.apiKey) throw new Error(`No API key for provider: ${model.provider}`);
-  return (o.compactFn ?? compact)(
-    o.preparation, model, auth.apiKey, auth.headers, o.customInstructions, o.signal,
-    o.thinkingLevel, undefined, auth.env,
-  );
-}
-
-/** ChatGPT can occasionally resolve a public Codex model to an internal deployment slug that is no
- * longer registered for standalone summary requests. Keep the chosen model for normal chat and try it
- * first for compaction; only the provider's explicit Model-not-found response retries the exact same PI
- * compaction through the already-resolved configured provider default. Other failures remain visible. */
-export async function compactCodexWithModelFallback(
-  o: CodexCompactionFallbackOptions,
-): Promise<Awaited<ReturnType<typeof compact>>> {
-  try {
-    return await runCompaction(o, o.model);
-  } catch (error) {
-    if (!/\bmodel not found\b/i.test(errorText(error))) throw error;
-    const fallback = o.fallbackModel;
-    if (!fallback || fallback.provider !== o.model.provider || fallback.id === o.model.id) {
-      throw new Error(
-        `Compaction model '${o.model.provider}/${o.model.id}' is unavailable and no distinct configured fallback model is available`,
-        { cause: error },
-      );
-    }
-    try {
-      return await runCompaction(o, fallback);
-    } catch (fallbackError) {
-      throw new Error(`Codex compaction fallback failed after ${errorText(error)}: ${errorText(fallbackError)}`, { cause: fallbackError });
-    }
-  }
-}
-
-/** Inline PI extension used only for Codex models. Returning a CompactionResult keeps PI's own cut-point,
- * persistence and overflow-retry lifecycle intact; the captured fallback is a route decision made from
- * live config, while `ctx.model` remains authoritative after every resume/model-switch respawn. */
-export function codexCompactionModelFallback(
+/**
+ * Route PI's own compaction request through a distinct, already-resolved same-provider model.
+ *
+ * `session_before_compact` cannot safely perform the request itself: ExtensionRunner deliberately catches
+ * handler errors, after which AgentSession falls through to its native `compact()` and issues a second
+ * request. Instead, this marker returns no custom result. AgentSession therefore retains its complete
+ * native flow (`fromExtension=false`, file-operation details, persistence, overflow retry), while the
+ * wrapper substitutes the model only for stream calls carrying that exact compaction signal.
+ */
+export function createCodexCompactionModelRoute(
   fallbackModel?: Model<Api>,
-  thinkingLevel?: () => Parameters<typeof compact>[6],
-): (pi: ExtensionAPI) => void {
-  return (pi) => {
-    pi.on('session_before_compact', async (event, ctx) => {
-      const model = ctx.model;
-      if (!model || model.provider !== 'openai-codex') return undefined;
-      const compaction = await compactCodexWithModelFallback({
-        model, fallbackModel, registry: ctx.modelRegistry, preparation: event.preparation,
-        customInstructions: event.customInstructions, signal: event.signal,
-        thinkingLevel: thinkingLevel?.(),
+): CodexCompactionModelRoute | undefined {
+  if (!fallbackModel) return undefined;
+
+  const compactionSignals = new WeakSet<AbortSignal>();
+  const installed = new WeakSet<AgentSession['agent']>();
+
+  return {
+    extension(pi) {
+      pi.on('session_before_compact', (event) => {
+        compactionSignals.add(event.signal);
+        // Undefined is intentional: PI must execute and persist the compaction itself.
+        return undefined;
       });
-      return { compaction };
-    });
+    },
+
+    install(session) {
+      const agent = session.agent;
+      if (installed.has(agent)) return;
+      installed.add(agent);
+      const nativeStream = agent.streamFn;
+      agent.streamFn = (model, context, options) => {
+        const signal = options?.signal;
+        const isNativeCompaction = signal !== undefined && compactionSignals.has(signal);
+        const routed = isNativeCompaction && model.provider === fallbackModel.provider
+          ? fallbackModel
+          : model;
+        // Preserve the native SDK stream pipeline and the exact PI-owned context/options object. It
+        // continues to resolve auth, headers, env, retry limits, timeout and transport for `routed`.
+        return nativeStream(routed, context, options);
+      };
+    },
   };
 }
