@@ -1,4 +1,4 @@
-import { truncateToWidth, visibleWidth } from '@earendil-works/pi-tui';
+import { CURSOR_MARKER, truncateToWidth, visibleWidth } from '@earendil-works/pi-tui';
 
 export function padAnsi(text: string, width: number): string {
   const w = visibleWidth(text);
@@ -6,6 +6,83 @@ export function padAnsi(text: string, width: number): string {
 }
 
 const isCsiFinal = (code: number): boolean => code >= 0x40 && code <= 0x7e;
+
+const readStringControl = (input: string, start: number): { end: number; terminator: string } => {
+  let i = start;
+  while (i < input.length) {
+    if (input.charCodeAt(i) === 0x07) return { end: i, terminator: '\x07' };
+    if (input.charCodeAt(i) === 0x1b && input[i + 1] === '\\') return { end: i, terminator: '\x1b\\' };
+    if (input.charCodeAt(i) === 0x9c) return { end: i, terminator: '\x9c' };
+    i++;
+  }
+  return { end: input.length, terminator: '' };
+};
+
+/** Final defense for a fully styled frame. Only terminal sequences Elowen/pi-tui intentionally own are
+ * allowed through: SGR colors/styles, OSC 8 hyperlinks produced by Markdown, and PI's cursor marker.
+ * Every cursor movement, erase command, title/clipboard OSC, DCS, APC, PM and C0/C1 control is removed. */
+export function terminalSafeAnsi(input: string): string {
+  let out = '';
+  for (let i = 0; i < input.length;) {
+    if (input.startsWith(CURSOR_MARKER, i)) {
+      out += CURSOR_MARKER;
+      i += CURSOR_MARKER.length;
+      continue;
+    }
+    const code = input.charCodeAt(i);
+    if (code === 0x1b && input[i + 1] === '[') {
+      const start = i;
+      i += 2;
+      while (i < input.length && !isCsiFinal(input.charCodeAt(i))) i++;
+      if (i < input.length) {
+        const final = input[i]!;
+        const params = input.slice(start + 2, i);
+        i++;
+        if (final === 'm' && /^[0-9:;]*$/.test(params)) out += input.slice(start, i);
+      }
+      continue;
+    }
+    if (code === 0x1b && input[i + 1] === ']') {
+      const bodyStart = i + 2;
+      const control = readStringControl(input, bodyStart);
+      const body = input.slice(bodyStart, control.end);
+      if (control.terminator && /^8;[^;]*;[^\x00-\x1f\x7f-\x9f]*$/.test(body)) {
+        out += `\x1b]${body}${control.terminator}`;
+      }
+      i = control.end + control.terminator.length;
+      continue;
+    }
+    if (code === 0x1b && ['P', '^', '_'].includes(input[i + 1] ?? '')) {
+      const control = readStringControl(input, i + 2);
+      i = control.end + control.terminator.length;
+      continue;
+    }
+    if (code === 0x1b) { i += Math.min(2, input.length - i); continue; }
+    if (code === 0x9b) {
+      i++;
+      while (i < input.length && !isCsiFinal(input.charCodeAt(i))) i++;
+      if (i < input.length) i++;
+      continue;
+    }
+    if ([0x90, 0x9d, 0x9e, 0x9f].includes(code)) {
+      const control = readStringControl(input, i + 1);
+      i = control.end + control.terminator.length;
+      continue;
+    }
+    if (code === 0x0a) { out += '\n'; i++; continue; }
+    if (code === 0x09) {
+      const line = out.slice(out.lastIndexOf('\n') + 1);
+      out += ' '.repeat(8 - (visibleWidth(line) % 8));
+      i++;
+      continue;
+    }
+    if (code < 0x20 || (code >= 0x7f && code <= 0x9f)) { i++; continue; }
+    const point = input.codePointAt(i)!;
+    out += String.fromCodePoint(point);
+    i += point > 0xffff ? 2 : 1;
+  }
+  return out;
+}
 
 /** Encode untrusted/user-controlled text into printable terminal cells. Stored transcripts remain byte-for-
  * byte intact; only the TUI projection crosses this boundary. Elowen owns every ANSI sequence that reaches

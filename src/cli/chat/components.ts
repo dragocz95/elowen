@@ -26,6 +26,7 @@ const WHITE = color.text;
 const DIM = color.dim;
 const FAINTC = color.faint;
 const GREENC = color.success;
+const inlineText = (value: string): string => terminalPlainText(value).replace(/\s+/g, ' ').trim();
 
 /** A full-width user message: a blue left rail and a raised gray background (opencode backgroundElement),
  *  padded to width. The rows are wrapped in one blank raised row top and bottom for breathing room. */
@@ -37,7 +38,7 @@ export class UserBlock implements Component {
       const pad = Math.max(0, width - 1 - visibleWidth(body));
       return `${color.accent('▌')}${color.inputBg(`${body}${' '.repeat(pad)}`)}`;
     };
-    const wrapped = wrapTextWithAnsi(this.text, Math.max(1, width - 3));
+    const wrapped = wrapTextWithAnsi(terminalPlainText(this.text), Math.max(1, width - 3));
     const rows = wrapped.map((l) => railed(` ${l}`));
     return [railed(''), ...rows, railed('')];
   }
@@ -126,9 +127,10 @@ export class SubagentPanel implements Component {
     if (this.collapsed) return lines;
     const shownEntries = this.entries.slice(0, Math.max(0, this.maxRows - 1));
     for (const e of shownEntries) {
-      const meta = [e.detail, e.model, formatDuration(e.seconds), e.tokens ? `${formatK(e.tokens)} tok` : ''].filter(Boolean).join(' · ');
+      const meta = [e.detail, e.model, formatDuration(e.seconds), e.tokens ? `${formatK(e.tokens)} tok` : '']
+        .filter(Boolean).map((value) => inlineText(String(value))).join(' · ');
       const metaText = FAINTC(truncateToWidth(meta, Math.max(10, Math.floor(width * 0.5)), '…'));
-      const task = DIM(truncateToWidth(e.task.replace(/\s+/g, ' ').trim(), Math.max(10, width - visibleWidth(metaText) - 12), '…'));
+      const task = DIM(truncateToWidth(inlineText(e.task), Math.max(10, width - visibleWidth(metaText) - 12), '…'));
       const row = `    ${color.accent(spinnerFrame())} ${task} ${FAINTC('click')}`;
       const gap = Math.max(1, width - visibleWidth(row) - visibleWidth(metaText) - 2);
       this.rowTargets.set(lines.length, e.sessionId);
@@ -177,7 +179,7 @@ export class ProcessPanel implements Component {
       const secs = Math.max(0, Math.round((now - new Date(p.startedAt).getTime()) / 1000));
       const meta = FAINTC(formatDuration(secs));
       const kill = color.error('✕');
-      const cmd = DIM(truncateToWidth(p.command.replace(/\s+/g, ' ').trim(), Math.max(10, width - visibleWidth(meta) - 12), '…'));
+      const cmd = DIM(truncateToWidth(inlineText(p.command), Math.max(10, width - visibleWidth(meta) - 12), '…'));
       const row = `    ${GREENC('●')} ${cmd}`;
       const gap = Math.max(1, width - visibleWidth(row) - visibleWidth(meta) - 3);
       const full = `${row}${' '.repeat(gap)}${meta} ${kill}`;
@@ -252,16 +254,17 @@ export class ApprovalDock implements Component, Focusable {
     const row = (content: string): string => `${border('│')}${fill(content)}${border('│')}`;
     const rows = this.options().map((op, i) => {
       const key = `${i + 1}.`;
-      const label = padAnsi(`${key} ${op.label}`, 20);
-      const desc = truncateToWidth(op.description ?? '', Math.max(1, innerWidth - 20 - 5), '');
-      if (i === this.selectedIndex) return `${border('│')}${color.selected(padAnsi(`  ${key} ${op.label}  ${desc}`, innerWidth))}${border('│')}`;
+      const safeLabel = inlineText(op.label);
+      const label = padAnsi(`${key} ${safeLabel}`, 20);
+      const desc = truncateToWidth(inlineText(op.description ?? ''), Math.max(1, innerWidth - 20 - 5), '');
+      if (i === this.selectedIndex) return `${border('│')}${color.selected(padAnsi(`  ${key} ${safeLabel}  ${desc}`, innerWidth))}${border('│')}`;
       return row(`  ${ansi.open(theme.text, label)} ${ansi.open(theme.muted, desc)}`);
     });
     return [
       `${border('╭')}${color.faint('─'.repeat(innerWidth))}${border('╮')}`,
-      row(`  ${color.warning('⚠')} ${ansi.open(theme.text, 'Approval needed')}  ${ansi.open(theme.faint, this.opts.question.header || 'permission')}`),
+      row(`  ${color.warning('⚠')} ${ansi.open(theme.text, 'Approval needed')}  ${ansi.open(theme.faint, inlineText(this.opts.question.header || 'permission'))}`),
       // The question carries the tool name / verbatim command — wrap, never truncate, so it stays auditable.
-      ...wrapTextWithAnsi(this.opts.question.question, Math.max(1, innerWidth - 4)).map((line) => row(`  ${ansi.open(theme.text, line)}`)),
+      ...wrapTextWithAnsi(terminalPlainText(this.opts.question.question), Math.max(1, innerWidth - 4)).map((line) => row(`  ${ansi.open(theme.text, line)}`)),
       row(''),
       ...rows,
       row(''),
@@ -309,7 +312,7 @@ export class AttachmentChips implements Component {
   set(images: { name: string; bytes: number }[]): void { this.images = images; }
   render(width: number): string[] {
     if (this.images.length === 0) return [];
-    const chips = this.images.map((i) => `${color.accent('[img]')} ${color.text(i.name)} ${color.faint(`· ${Math.max(1, Math.round(i.bytes / 1024))} KB`)}`);
+    const chips = this.images.map((i) => `${color.accent('[img]')} ${color.text(inlineText(i.name))} ${color.faint(`· ${Math.max(1, Math.round(i.bytes / 1024))} KB`)}`);
     return [truncateToWidth(`  ${chips.join('   ')} ${color.faint('· esc to drop')}`, width, '…')];
   }
 }
@@ -335,9 +338,9 @@ export class QueuedMessages implements Component {
     const pill = color.selected(' QUEUED ');
     const room = Math.max(8, width - 2 - visibleWidth(pill) - 2);
     const shown = this.items.slice(0, QueuedMessages.MAX_ROWS);
-    const lines = shown.map((it) => `  ${pill} ${DIM(truncateToWidth(it.text.replace(/\s+/g, ' ').trim(), room, '…'))}`);
+    const lines = shown.map((it) => `  ${pill} ${DIM(truncateToWidth(inlineText(it.text), room, '…'))}`);
     if (this.items.length > shown.length) lines.push(`  ${FAINTC(`… +${this.items.length - shown.length} more queued`)}`);
-    if (this.removeHint) lines.push(`  ${FAINTC(this.removeHint)}`);
+    if (this.removeHint) lines.push(`  ${FAINTC(inlineText(this.removeHint))}`);
     if (lines.length <= this.maxRows) return lines;
     const clipped = lines.slice(0, this.maxRows);
     clipped[this.maxRows - 1] = `  ${FAINTC(`… +${Math.max(1, this.items.length - Math.max(0, this.maxRows - 1))} more queued`)}`;
@@ -370,15 +373,16 @@ export function cardBlock(card: BrainCard, maxRows = 12, collapsed = false): str
   const items = card.items ?? [];
   const done = items.filter((i) => i.status === 'completed').length;
   const counter = items.length ? FAINTC(`  ${done}/${items.length}`) : '';
-  const header = `  ${FAINTC(collapsed ? '▸' : '▾')} ${bold(WHITE(card.title ?? 'Todos'))}${counter} ${FAINTC('click')}`;
+  const header = `  ${FAINTC(collapsed ? '▸' : '▾')} ${bold(WHITE(inlineText(card.title ?? 'Todos')))}${counter} ${FAINTC('click')}`;
   if (collapsed) return [header];
   const lines = [header];
-  const bodyLines = card.body ? card.body.split('\n') : [];
+  const bodyLines = card.body ? terminalPlainText(card.body).split('\n') : [];
   const shownItems = Math.min(items.length, Math.max(0, maxRows - bodyLines.length));
   for (const it of items.slice(0, shownItems)) {
-    if (it.status === 'completed') lines.push(`    ${GREENC('[x]')} ${DIM(it.text)}`);
-    else if (it.status === 'in_progress') lines.push(`    ${color.warning('[•]')} ${color.warning(it.text)}`);
-    else lines.push(`    ${FAINTC('[ ]')} ${DIM(it.text)}`);
+    const text = inlineText(it.text);
+    if (it.status === 'completed') lines.push(`    ${GREENC('[x]')} ${DIM(text)}`);
+    else if (it.status === 'in_progress') lines.push(`    ${color.warning('[•]')} ${color.warning(text)}`);
+    else lines.push(`    ${FAINTC('[ ]')} ${DIM(text)}`);
   }
   if (items.length > shownItems) lines.push(`    ${FAINTC(`… +${items.length - shownItems} more`)}`);
   for (const l of bodyLines.slice(0, maxRows)) lines.push(`    ${DIM(l)}`);

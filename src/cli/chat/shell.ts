@@ -10,7 +10,7 @@ import {
   isPageDownKey, isPageUpKey, isTabByte, isUpKey,
 } from './keys.js';
 import type { Keymap, KeybindAction } from './keys.js';
-import { formatDuration, formatK, padAnsi } from '../ui/text.js';
+import { formatDuration, formatK, padAnsi, terminalSafeAnsi } from '../ui/text.js';
 import { ELOWEN_CLI_VERSION } from '../version.js';
 import { computeLayoutBudget, constrainFrame } from './layoutBudget.js';
 import type { LayoutBudget } from './layoutBudget.js';
@@ -712,7 +712,7 @@ export function createShell(rt: ChatRuntime, stream: StreamController, mdTheme: 
     invalidate: () => root.invalidate(),
     render: (width: number): string[] => {
       const renderStartedAt = performance.now();
-      const rawLines = root.render(width);
+      const rawLines = root.render(width).map(terminalSafeAnsi);
       // Final defense at the single root boundary. A custom child must never make pi-tui write a wrapping
       // line or a frame taller than the alternate screen, even if its own local sizing regresses later.
       const lines = constrainFrame(rawLines, width, term.rows);

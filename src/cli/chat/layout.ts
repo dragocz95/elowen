@@ -10,6 +10,8 @@ import type { ChatView, ToolItem } from '../../brain/transcript.js';
 import { getChatViewChange, groupToolItems } from '../../brain/transcript.js';
 import { formatDuration, formatK, padAnsi, terminalPlainText } from '../ui/text.js';
 
+const inlineText = (value: string): string => terminalPlainText(value).replace(/\s+/g, ' ').trim();
+
 export const TOP_RULE_ROWS = 1;
 /** Left indent for a tool row (glyph line, silent-command line). Deeper than the 2-space assistant prose
  *  so tool traffic sits visually SET APART from the answer (opencode-style). The nested blocks a tool
@@ -69,16 +71,18 @@ const BANNER_ROWS = MASCOT_ART.length;
  *  and resumed-history rows render identically (`item.icon` exists only on live events). The glyph set
  *  mirrors opencode: `→` reads, `←` writes/edits, `✱` searches, `%` fetches, `⚙` everything else. */
 function toolRowSpec(name: string, detail?: string): { glyph: string; title: string } {
-  const t = (label: string): string => (detail ? `${label} ${detail}` : label);
-  if (/(search|grep|glob)/i.test(name)) return { glyph: '✱', title: detail ? `Search "${detail}"` : 'Search' };
-  if (/(edit|patch|update|modify|replace)/i.test(name)) return { glyph: '←', title: t('Edit') };
-  if (/(write|create)/i.test(name)) return { glyph: '←', title: t('Write') };
-  if (/(read|open|cat)/i.test(name)) return { glyph: '→', title: t('Read') };
-  if (/list_dir/i.test(name)) return { glyph: '→', title: t('List') };
-  if (/diff/i.test(name)) return { glyph: '←', title: t('Diff') };
-  if (/(lsp|diagnostic)/i.test(name)) return { glyph: '✱', title: t('Diagnostics') };
-  if (/(fetch|web|http|url)/i.test(name)) return { glyph: '%', title: t('Fetch') };
-  return { glyph: '⚙', title: t(name.replace(/[_-]+/g, ' ')) };
+  const safeName = inlineText(name);
+  const safeDetail = detail ? inlineText(detail) : '';
+  const t = (label: string): string => (safeDetail ? `${label} ${safeDetail}` : label);
+  if (/(search|grep|glob)/i.test(safeName)) return { glyph: '✱', title: safeDetail ? `Search "${safeDetail}"` : 'Search' };
+  if (/(edit|patch|update|modify|replace)/i.test(safeName)) return { glyph: '←', title: t('Edit') };
+  if (/(write|create)/i.test(safeName)) return { glyph: '←', title: t('Write') };
+  if (/(read|open|cat)/i.test(safeName)) return { glyph: '→', title: t('Read') };
+  if (/list_dir/i.test(safeName)) return { glyph: '→', title: t('List') };
+  if (/diff/i.test(safeName)) return { glyph: '←', title: t('Diff') };
+  if (/(lsp|diagnostic)/i.test(safeName)) return { glyph: '✱', title: t('Diagnostics') };
+  if (/(fetch|web|http|url)/i.test(safeName)) return { glyph: '%', title: t('Fetch') };
+  return { glyph: '⚙', title: t(safeName.replace(/[_-]+/g, ' ')) };
 }
 
 function toolTitle(name: string, detail?: string): string {
@@ -112,7 +116,7 @@ export class TopRule implements Component {
   constructor(private readonly getTitle: () => string = () => '') {}
   invalidate(): void { /* stateless */ }
   render(width: number): string[] {
-    const title = this.getTitle().trim();
+    const title = inlineText(this.getTitle());
     const label = title
       ? ` ${color.accent(glyph.whale)} ${color.text(truncateToWidth(title, Math.max(8, width - 12), '…'))} `
       // The brand fallback is 28 visible chars — on a narrower terminal it MUST clip too, or pi-tui's
@@ -490,7 +494,7 @@ export class ChatViewport implements Component {
     const visible = this.collectWindow(start, start + height);
     while (visible.length < height) visible.push({ line: '' });
     this.lastRows = visible.map((r) => r.line);
-    this.lastPlainRows = this.lastRows.map((line) => line.replace(/\x1b\[[0-9;]*m/g, ''));
+    this.lastPlainRows = this.lastRows.map((line) => terminalPlainText(line));
     this.lastTotal = totalRows;
     const rendered = visible.map((entry, i) => {
       if ((entry.kind === 'thought' || entry.kind === 'expandable') && entry.key && entry.turnIndex != null) {
@@ -616,8 +620,8 @@ export class ChatViewport implements Component {
 
   private extraRows(): TranscriptRow[] {
     const rows: TranscriptRow[] = [];
-    if (this.state.notice) rows.push(...this.state.notice.split('\n').map((line) => ({ line: `  ${line}` })));
-    if (this.state.view.notice) rows.push({ line: `  ${color.faint(`· ${this.state.view.notice}`)}` });
+    if (this.state.notice) rows.push(...terminalPlainText(this.state.notice).split('\n').map((line) => ({ line: `  ${line}` })));
+    if (this.state.view.notice) rows.push({ line: `  ${color.faint(`· ${inlineText(this.state.view.notice)}`)}` });
     return rows;
   }
 
@@ -862,7 +866,8 @@ export class ChatViewport implements Component {
         } else if (seg.kind === 'reasoning') {
           if (this.state.showThoughts === false) continue; // `/reasoning show` hid Thought rows
           const liveTail = turn.streaming && seg === turn.segments[turn.segments.length - 1];
-          const first = seg.text.replace(/\s+/g, ' ').trim() || 'thinking';
+          const reasoning = terminalPlainText(seg.text);
+          const first = reasoning.replace(/\s+/g, ' ').trim() || 'thinking';
           const label = liveTail ? `Thought: ${formatDuration(this.state.thinkingSeconds)}` : 'Thought';
           const key = `${turnIndex}:${segIndex}`;
           const expanded = this.expandedThoughts.has(key);
@@ -871,7 +876,7 @@ export class ChatViewport implements Component {
           if (rows.length > 0 && rows[rows.length - 1]!.line !== '') addBlank();
           add(`  ${color.warning(expanded ? '▾' : '▸')} ${color.warning(label)} ${color.faint('click')} ${color.dim(truncateToWidth(first, Math.max(12, width - 32), '…'))}`, 'thought', key);
           if (expanded) {
-            for (const line of wrapTextWithAnsi(seg.text, Math.max(1, width - 6))) add(`    ${color.faint(line)}`);
+            for (const line of wrapTextWithAnsi(reasoning, Math.max(1, width - 6))) add(`    ${color.faint(line)}`);
           }
           addBlank();
         } else {
@@ -895,7 +900,7 @@ export class ChatViewport implements Component {
     const out: TranscriptRow[] = [];
     const glyphFor = sub.status === 'running' ? color.accent(spinnerFrame())
       : sub.status === 'done' ? color.success('✓') : color.error('✗');
-    const task = truncateToWidth(sub.task.replace(/\s+/g, ' ').trim(), Math.max(12, width - 26), '…');
+    const task = truncateToWidth(inlineText(sub.task), Math.max(12, width - 26), '…');
     out.push({ line: '' });
     out.push({
       line: `  ${glyphFor} ${color.text('Sub-agent')} ${color.faint('click')} ${color.dim(task)}`,
@@ -905,8 +910,9 @@ export class ChatViewport implements Component {
     const parts = sub.status === 'running'
       ? [sub.detail ?? 'starting…', sub.model, formatDuration(sub.seconds), tok]
       : [`${sub.tools} tool${sub.tools === 1 ? '' : 's'}`, sub.model, formatDuration(sub.seconds), tok];
+    const safeParts = parts.filter(Boolean).map((value) => inlineText(String(value)));
     out.push({
-      line: `    ${color.faint(truncateToWidth(`↳ ${parts.filter(Boolean).join(' · ')}`, Math.max(12, width - 6), '…'))}`,
+      line: `    ${color.faint(truncateToWidth(`↳ ${safeParts.join(' · ')}`, Math.max(12, width - 6), '…'))}`,
       kind: 'subagent', key: sub.sessionId,
     });
     return out;
@@ -944,6 +950,7 @@ export class ChatViewport implements Component {
   }
 
   private renderTextWithPlans(text: string, width: number): string[] {
+    text = terminalPlainText(text);
     const rows: string[] = [];
     const re = /<proposed_plan>\s*([\s\S]*?)\s*<\/proposed_plan>/gi;
     let last = 0;
@@ -1042,8 +1049,8 @@ export class TelemetryPanel implements Component {
     rows.push(
       '',
       `  ${color.bold(color.text('Project'))}`,
-      `  ${color.text(truncateToWidth(st.cwd, Math.max(1, width - 4), '…'))}`,
-      `  ${color.faint('branch')} ${color.accent(st.branch || 'unknown')}`,
+      `  ${color.text(truncateToWidth(inlineText(st.cwd), Math.max(1, width - 4), '…'))}`,
+      `  ${color.faint('branch')} ${color.accent(inlineText(st.branch || 'unknown'))}`,
       ...this.mcpRows(st.mcp, width),
       ...this.lspRows(st.lspEnabled),
     );
@@ -1054,7 +1061,7 @@ export class TelemetryPanel implements Component {
    *  without turning the telemetry rail into a dashboard. Missing windows disappear independently. */
   private rateLimitRows(limits: BrainRateLimits | null, width: number): string[] {
     if (!limits) return [];
-    const meta = [limits.planType, limits.stale ? 'stale' : ''].filter(Boolean).join(' · ');
+    const meta = [limits.planType, limits.stale ? 'stale' : ''].filter(Boolean).map((value) => inlineText(String(value))).join(' · ');
     const rows = [`  ${color.bold(color.text('Limits'))}${meta ? ` ${color.faint(meta)}` : ''}`];
     if (limits.primary) rows.push(this.rateLimitWindowRow(limits.primary, width));
     if (limits.secondary) rows.push(this.rateLimitWindowRow(limits.secondary, width));
@@ -1112,7 +1119,7 @@ export class TelemetryPanel implements Component {
     if (connected.length === 0) return [];
     const rows = ['', `  ${color.bold(color.text('MCP'))} ${color.faint(`${connected.length}/${mcp.length} active`)}`];
     for (const server of connected.slice(0, MCP_NAMES_SHOWN)) {
-      rows.push(`  ${color.success('●')} ${color.text(truncateToWidth(server.name, Math.max(1, width - 6), '…'))}`);
+      rows.push(`  ${color.success('●')} ${color.text(truncateToWidth(inlineText(server.name), Math.max(1, width - 6), '…'))}`);
     }
     if (connected.length > MCP_NAMES_SHOWN) rows.push(`  ${color.faint(`… +${connected.length - MCP_NAMES_SHOWN} more`)}`);
     return rows;

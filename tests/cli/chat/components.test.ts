@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import { visibleWidth } from '@earendil-works/pi-tui';
 import { initTheme } from '@earendil-works/pi-coding-agent';
-import { UserBlock, StatusBar, CardPanel, SubagentPanel, ProcessPanel, QueuedMessages, diffBlock, cardBlock, toolOutputBlock } from '../../../src/cli/chat/components.js';
+import { UserBlock, StatusBar, CardPanel, SubagentPanel, ProcessPanel, QueuedMessages, ApprovalDock, diffBlock, cardBlock, toolOutputBlock } from '../../../src/cli/chat/components.js';
 
 describe('chat components', () => {
   beforeAll(() => { initTheme(); }); // renderDiff needs the pi theme
@@ -11,6 +11,27 @@ describe('chat components', () => {
     expect(lines).toHaveLength(3);
     for (const l of lines) expect(visibleWidth(l)).toBe(20); // every row fills the width
     expect(lines[1]).toContain('ahoj');
+  });
+
+  it('projects untrusted user, queue, card, sub-agent, and approval text', () => {
+    const dangerous = 'visible\ttext\x1b[2J\x1b]52;c;Zm9yZ2Vk\x07';
+    const user = new UserBlock(dangerous).render(40).join('\n');
+    const queue = new QueuedMessages();
+    queue.set([{ id: 'q', text: dangerous }], dangerous);
+    const card = cardBlock({ id: 'c', title: dangerous, pinned: true, items: [{ text: dangerous, status: 'pending' }] }).join('\n');
+    const agents = new SubagentPanel();
+    agents.set([{ sessionId: 's', task: dangerous, detail: dangerous, status: 'running', tools: 1, seconds: 1 }]);
+    const approval = new ApprovalDock({
+      tui: { requestRender: (): void => {} } as never,
+      question: { header: dangerous, question: dangerous, options: [{ label: dangerous, description: dangerous }] },
+      onPick: (): void => {},
+    }).render(72).join('\n');
+    const rendered = [user, queue.render(72).join('\n'), card, agents.render(72).join('\n'), approval].join('\n');
+
+    expect(rendered).toContain('visible');
+    expect(rendered).not.toContain('\t');
+    expect(rendered).not.toContain('\x1b[2J');
+    expect(rendered).not.toContain('\x1b]52;');
   });
 
   it('QueuedMessages renders nothing while empty, then a QUEUED pill line per pending item + a hint', () => {

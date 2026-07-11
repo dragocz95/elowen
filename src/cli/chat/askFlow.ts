@@ -5,13 +5,14 @@ import { getSelectListTheme } from '@earendil-works/pi-coding-agent';
 import type { AskAnswer, AskQuestion } from '../../brain/events.js';
 import { ChatEditor } from './picker.js';
 import { ansi, chatTheme, color } from './theme.js';
-import { padAnsi } from '../ui/text.js';
+import { padAnsi, terminalPlainText } from '../ui/text.js';
 
 const OTHER = '\u0000other';
 
 const fillInputBg = (text: string, width: number): string => `\x1b[${chatTheme().inputBg}m${padAnsi(text, width)}\x1b[0m`;
 const open = (code: string, text: string): string => ansi.open(code, text);
 const selectedGlyph = (active: boolean): string => active ? '☑' : '☐';
+const inlineText = (value: string): string => terminalPlainText(value).replace(/\s+/g, ' ').trim();
 
 export interface AskChoiceDockOpts {
   tui: TUI;
@@ -43,7 +44,11 @@ export class AskChoiceDock implements Component, Focusable {
 
   private rows(): { value: string; label: string; description?: string; other?: boolean }[] {
     const rows: { value: string; label: string; description?: string; other?: boolean }[] =
-      this.opts.question.options.map((op) => ({ value: op.label, label: op.label, description: op.description }));
+      this.opts.question.options.map((op) => ({
+        value: op.label,
+        label: inlineText(op.label),
+        description: op.description ? inlineText(op.description) : undefined,
+      }));
     // Free-text "Other" is offered unless the question explicitly forbids it (`custom: false`);
     // an absent flag means true — older events predate it.
     if (this.opts.question.custom !== false) rows.push({ value: OTHER, label: 'Other...', description: 'type your own answer', other: true });
@@ -104,7 +109,7 @@ export class AskChoiceDock implements Component, Focusable {
     const row = (content: string): string => `${border('│')}${fillInputBg(content, innerWidth)}${border('│')}`;
     const plainSelected = [...this.selected];
     const selectedText = plainSelected.length
-      ? plainSelected.map((item) => `✓ ${item}`).join('  ')
+      ? plainSelected.map((item) => `✓ ${inlineText(item)}`).join('  ')
       : 'No answers selected';
     // Labels and descriptions WRAP across as many rows as they need — a fixed label column truncated
     // long options (the actual answer text) into an unreadable "…", the same trap the question itself
@@ -130,9 +135,9 @@ export class AskChoiceDock implements Component, Focusable {
     const progress = `${this.opts.index + 1}/${this.opts.total}`;
     return [
       top,
-      row(`  ${open(theme.text, 'Elowen needs a decision')}  ${open(theme.faint, this.opts.question.header || 'ask_user_question')}  ${open(theme.faint, progress)}`),
+      row(`  ${open(theme.text, 'Elowen needs a decision')}  ${open(theme.faint, inlineText(this.opts.question.header || 'ask_user_question'))}  ${open(theme.faint, progress)}`),
       // The question wraps across as many rows as it needs — truncating it made long questions unanswerable.
-      ...wrapTextWithAnsi(this.opts.question.question, Math.max(1, innerWidth - 4)).map((line) => row(`  ${open(theme.text, line)}`)),
+      ...wrapTextWithAnsi(terminalPlainText(this.opts.question.question), Math.max(1, innerWidth - 4)).map((line) => row(`  ${open(theme.text, line)}`)),
       row(''),
       ...choiceRows,
       row(''),
@@ -197,7 +202,7 @@ export function runAskFlow(o: AskFlowOpts): void {
       invalidate: () => { input.invalidate?.(); },
       handleInput: (data: string) => { input.handleInput?.(data); },
       render: (width: number) => [
-        color.inputBg(padAnsi(`  ${color.bold('Other answer')} ${color.faint(q.header)}`, width)),
+        color.inputBg(padAnsi(`  ${color.bold('Other answer')} ${color.faint(inlineText(q.header))}`, width)),
         color.inputBg(padAnsi(`  ${color.faint('type your own answer · enter send · esc back')}`, width)),
         ...input.render(width),
       ],

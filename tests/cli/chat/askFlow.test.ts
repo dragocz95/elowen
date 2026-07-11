@@ -69,6 +69,28 @@ describe('AskChoiceDock', () => {
     expect(text).toContain('systémových adresářů'); // the tail survives wrapping, not truncated to "…"
   });
 
+  it('projects question headers, prompts, option labels, and descriptions', () => {
+    const dangerous = 'visible\ttext\x1b[2J\x1b]0;forged\x07';
+    const dock = new AskChoiceDock({
+      tui: fakeTui(),
+      question: {
+        header: dangerous,
+        question: dangerous,
+        options: [{ label: dangerous, description: dangerous }],
+      },
+      index: 0,
+      total: 1,
+      onSubmit: vi.fn(),
+      onOther: vi.fn(),
+      onCancel: vi.fn(),
+    });
+    const rendered = dock.render(72).join('\n');
+    expect(rendered).toContain('visible');
+    expect(rendered).not.toContain('\t');
+    expect(rendered).not.toContain('\x1b[2J');
+    expect(rendered).not.toContain('\x1b]0;');
+  });
+
   it('uses space to toggle multiple answers and enter to submit them', () => {
     const onSubmit = vi.fn();
     const dock = new AskChoiceDock({

@@ -1,6 +1,6 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { getMarkdownTheme, initTheme } from '@earendil-works/pi-coding-agent';
-import { visibleWidth } from '@earendil-works/pi-tui';
+import { getCapabilities, setCapabilities, visibleWidth } from '@earendil-works/pi-tui';
 import { beginAssistant, emptyView, fromHistory, pushUser, reduce } from '../../../src/brain/transcript.js';
 import { CHAT_VIEWPORT_ROW_CACHE_LIMIT, ChatViewport, mouseWheel, SlashOverlay, StartScreen, TelemetryPanel, TOOL_INDENT, type TelemetryState } from '../../../src/cli/chat/layout.js';
 
@@ -107,6 +107,28 @@ describe('chat layout components', () => {
     expect(rendered).not.toContain('\r');
     expect(rendered).not.toContain('\x1b[2J');
     expect(rendered).toContain('/var/www/.local');
+  });
+
+  it('projects user, assistant, reasoning, and notice text before terminal rendering', () => {
+    let view = pushUser(emptyView(), 'hello\x1b[2J user\tcolumn');
+    view = beginAssistant(view);
+    view = reduce(view, { type: 'reasoning', delta: 'reason\x1b]0;forged\x07 text' });
+    view = reduce(view, { type: 'text', delta: '**bold answer**\x1b]52;c;Zm9yZ2Vk\x07' });
+    const viewport = new ChatViewport(
+      { view, notice: 'notice\x1b[3J', modelName: 'kimi', thinkingSeconds: 0 },
+      getMarkdownTheme(), () => 24, () => 1, () => 72,
+    );
+
+    const rendered = viewport.render(72).join('\n');
+    expect(rendered).toContain('hello');
+    expect(rendered).toContain('bold answer');
+    expect(rendered).toContain('Thought');
+    expect(rendered).not.toContain('**bold answer**'); // Markdown syntax is still parsed, not escaped verbatim.
+    expect(rendered).not.toContain('\x1b[2J');
+    expect(rendered).not.toContain('\x1b[3J');
+    expect(rendered).not.toContain('\x1b]0;');
+    expect(rendered).not.toContain('\x1b]52;');
+    expect(rendered).not.toContain('\t');
   });
 
   it('renders framed tool output blocks', () => {
@@ -503,6 +525,7 @@ describe('chat layout components', () => {
 });
 
 describe('drag-to-copy selection', () => {
+  beforeAll(() => { initTheme(); });
   const mkViewport = () => {
     const view = fromHistory([
       { role: 'user', text: 'hello there' },
@@ -541,6 +564,28 @@ describe('drag-to-copy selection', () => {
   it('a press on the scrollbar column does not start a selection', () => {
     const viewport = mkViewport();
     expect(viewport.beginSelect(60, 3)).toBe(false);
+  });
+
+  it('copies Markdown hyperlinks without OSC 8 metadata', () => {
+    const previous = { ...getCapabilities() };
+    setCapabilities({ ...previous, hyperlinks: true });
+    try {
+      const viewport = new ChatViewport(
+        { view: fromHistory([{ role: 'assistant', text: '[example](https://example.com)\nsecond line' }]), notice: '', modelName: 'kimi', thinkingSeconds: 0 },
+        getMarkdownTheme(), () => 6, () => 1, () => 60,
+      );
+      const rendered = viewport.render(60);
+      const linkRow = rendered.findIndex((line) => line.includes('example'));
+      expect(linkRow).toBeGreaterThanOrEqual(0);
+      expect(viewport.beginSelect(5, linkRow + 1)).toBe(true);
+      viewport.dragSelect(linkRow + 2);
+      const copied = viewport.takeSelection();
+      expect(copied).toContain('example');
+      expect(copied).not.toContain('\x1b]8;');
+      expect(copied).not.toContain('\x07');
+    } finally {
+      setCapabilities(previous);
+    }
   });
 
   it('reasoning segments disappear when showThoughts is false', () => {
