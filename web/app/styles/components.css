@@ -156,7 +156,7 @@ html[data-effects='full'] .spatial-section-node--active .spatial-section-node__i
   background: radial-gradient(circle, rgb(255 82 54 / 0.2), rgb(255 82 54 / 0.045) 44%, transparent 72%);
   filter: blur(10px);
 }
-.spatial-mascot-fallback img { position: relative; z-index: 1; width: 58%; height: auto; filter: drop-shadow(0 1rem 2rem rgb(255 65 35 / 0.2)); }
+.spatial-mascot-fallback img { position: relative; z-index: 1; width: min(58%, 11.25rem); height: auto; filter: drop-shadow(0 1rem 2rem rgb(255 65 35 / 0.2)); }
 .spatial-mascot-fallback__ring { position: absolute; border: 1px solid rgb(255 82 54 / 0.18); border-radius: 50%; }
 .spatial-mascot-fallback__ring--outer { inset: 3% 0; transform: rotate(-12deg); }
 .spatial-mascot-fallback__ring--inner { inset: 19% 13%; transform: rotate(17deg); }
