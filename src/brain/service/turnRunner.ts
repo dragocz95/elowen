@@ -133,11 +133,12 @@ export class BrainTurnRunner {
     // kickoff/continuation is never steered — it drives the loop itself and must run its own turn.
     if (active.session.isStreaming && !internal?.goalKickoff && !internal?.goalContinue) {
       const persistText = images?.length ? `${text}\n[📎 ${images.length}× image]` : text;
+      // Route through the mirror so the image attachments survive a later positional queue-remove (PI's
+      // clearQueue drops them). PI's queue_update then reconciles the mirror. PI admission comes first:
+      // a rejected steer must not leave a visible/durable prompt that the caller was told to retry.
+      await enqueueMirrored(active, 'steer', text, images?.map((i) => ({ type: 'image' as const, data: i.data, mimeType: i.mimeType })));
       const durableId = projectUserTurn(this.d.store, active.sessionId, persistText);
       active.replay.publish({ type: 'user', text: display ?? persistText, durableId });
-      // Route through the mirror so the image attachments survive a later positional queue-remove (PI's
-      // clearQueue drops them). PI's queue_update then reconciles the mirror.
-      await enqueueMirrored(active, 'steer', text, images?.map((i) => ({ type: 'image' as const, data: i.data, mimeType: i.mimeType })));
       admit(active.sessionId);
       return;
     }
@@ -166,21 +167,22 @@ export class BrainTurnRunner {
       // context (a rehydrated conversation keeps the marker, not the pixels).
       const persistText = turnImages?.length ? `${turnText}\n[📎 ${turnImages.length}× image]` : turnText;
       const durableId = projectUserTurn(this.d.store, live.sessionId, persistText);
-      // The DAEMON is the single authority for rendering the user's turn: every real user turn (a normal
-      // send AND a drained queued delivery) streams a `user` event so the sender renders the 'you' bubble
-      // from the stream — no client-side optimistic echo / busy heuristic that could drop or duplicate it.
-      // Internal goal kickoff/continuation turns aren't user messages, so they emit nothing. `echoDisplay`
-      // is the client's clean rendering (before @mention/prompt expansion); it falls back to persistText.
-      if (isUserTurn) {
-        const shown = echoDisplay ?? persistText;
-        live.replay.publish({ type: 'user', text: shown, durableId });
-        // HTTP callers may acknowledge now: the prompt is durable and attached streams have its
-        // authoritative user event. Everything below is model/tool execution and may run for minutes.
-        admit(live.sessionId);
-      }
-      const options = turnImages?.length
-        ? { images: turnImages.map((i) => ({ type: 'image' as const, data: i.data, mimeType: i.mimeType })) }
-        : undefined;
+      let userEchoPublished = false;
+      try {
+      // PI's preflightResult fires after extension/input/template/auth/compaction preparation and directly
+      // before _runAgentPrompt. Publishing + admitting there closes the 202→isStreaming=false window: the
+      // prompt run becomes active in the same call stack before an HTTP follow-up can resume and steer it.
+      const options = {
+        images: turnImages?.length
+          ? turnImages.map((i) => ({ type: 'image' as const, data: i.data, mimeType: i.mimeType }))
+          : undefined,
+        preflightResult: (success: boolean): void => {
+          if (!success || !isUserTurn || userEchoPublished) return;
+          userEchoPublished = true;
+          live.replay.publish({ type: 'user', text: echoDisplay ?? persistText, durableId });
+          admit(live.sessionId);
+        },
+      };
       const text = turnText;
       const mode = turnMode;
       // Establish the user's repo Policy for any plugin tool this turn invokes (read via currentPolicy()).
@@ -275,7 +277,7 @@ export class BrainTurnRunner {
         // gets the ephemeral context blocks prepended as usual.
         const prompted = isPromptCommand(text, live.session) ? text
           : memoryBlock + hookBlock + permissionsBlock + live.turnContext() + modeInstruction + text;
-        await (options ? live.session.prompt(prompted, options) : live.session.prompt(prompted));
+        await live.session.prompt(prompted, options);
         // Thinking-only guard (#115): reasoning models sometimes end a 'stop' turn with ONLY a thinking
         // block — no text, no tool call — so the user sees nothing. ONE automatic nudge re-prompts the
         // same session; the nudge itself is never persisted as a user message (agent_end persists only
@@ -299,6 +301,13 @@ export class BrainTurnRunner {
       // PI summarizes the context on its own once it fills past the user's %, right after this agent_end.
       // The factory's subscription mirrors that compaction into the store and the spawner fans `compacted`
       // to clients — so there is nothing to trigger or persist here.
+      } catch (error) {
+        // projectUserTurn intentionally precedes PI prompt() so pre-prompt compaction can see it. Until
+        // PI's native preflight succeeds the row stays hidden; rejection rolls it back atomically from the
+        // caller's perspective, avoiding a visible ghost prompt and duplicate row on retry.
+        if (isUserTurn && !userEchoPublished) this.d.store.deleteMessage(live.sessionId, durableId);
+        throw error;
+      }
       });
     };
     // Serialized per CONVERSATION for the whole turn (outer `send-<id>` key): the idle rollover and the

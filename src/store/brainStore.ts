@@ -395,6 +395,14 @@ export class BrainStore {
     return this.db.prepare('SELECT * FROM brain_messages WHERE id = ?').get(input.id) as BrainMessageRow;
   }
 
+  /** Remove one message only from its expected session. Used to roll back a pre-projected user row when
+   * PI rejects a prompt before its native preflight boundary; the session condition prevents a stale
+   * caller from deleting a row that compaction/session migration moved elsewhere. */
+  deleteMessage(sessionId: string, messageId: string): boolean {
+    return this.db.prepare('DELETE FROM brain_messages WHERE id = ? AND session_id = ?')
+      .run(messageId, sessionId).changes > 0;
+  }
+
   /**
    * Persist one settled agent run in the order PI actually executed it. User prompts are intentionally
    * projected before `prompt()` so compaction can see them, but a mid-turn steer can arrive after the

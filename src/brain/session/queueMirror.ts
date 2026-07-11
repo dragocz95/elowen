@@ -8,9 +8,18 @@ import type { LiveBrain, QueuedMsg, QueuedImage } from './liveBrain.js';
  *  `followUp` waits for it. */
 export async function enqueueMirrored(live: LiveBrain, kind: 'steer' | 'followUp', text: string, images?: QueuedImage[]): Promise<void> {
   const arr = kind === 'steer' ? (live.queuedSteer ??= []) : (live.queuedFollowUp ??= []);
-  arr.push({ text, images });
-  if (kind === 'steer') await live.session.steer(text, images);
-  else await live.session.followUp(text, images);
+  const item = { text, images };
+  arr.push(item);
+  try {
+    if (kind === 'steer') await live.session.steer(text, images);
+    else await live.session.followUp(text, images);
+  } catch (error) {
+    // The mirror is speculative until PI accepts the message. A rejected steer must not survive as a
+    // phantom queued item (or be re-persisted by queue-remove) when HTTP correctly reports no admission.
+    const index = arr.indexOf(item);
+    if (index >= 0) arr.splice(index, 1);
+    throw error;
+  }
 }
 
 /** Reconcile the image-carrying mirrors against PI's authoritative text queues after a `queue_update`.

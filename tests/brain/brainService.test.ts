@@ -24,7 +24,8 @@ function fakeDeps() {
   const messages: { role: string; content: string }[] = [];
   const session = {
     sessionId: 'sess-1',
-    prompt: vi.fn(async (t: string) => {
+    prompt: vi.fn(async (t: string, options?: { preflightResult?: (success: boolean) => void }) => {
+      options?.preflightResult?.(true);
       messages.push({ role: 'user', content: t }, { role: 'assistant', content: `echo:${t}` });
       listeners.forEach((l) => l({ type: 'agent_end', willRetry: false, messages: [{ role: 'assistant', content: `echo:${t}` }] }));
     }),
@@ -223,7 +224,11 @@ describe('BrainService', () => {
     const prompt = d.session.prompt.getMockImplementation()!;
     let release!: () => void;
     const gate = new Promise<void>((resolve) => { release = resolve; });
-    d.session.prompt.mockImplementationOnce(async (...args) => { await gate; return prompt(...args); });
+    d.session.prompt.mockImplementationOnce(async (...args) => {
+      args[1]?.preflightResult?.(true);
+      await gate;
+      return prompt(...args);
+    });
 
     const operation = svc.startSend(1, 'durable before 202');
     let completed = false;
@@ -235,6 +240,63 @@ describe('BrainService', () => {
 
     release();
     await operation.completed;
+  });
+
+  it('classifies a follow-up after admission as a steer while the first prompt is entering PI', async () => {
+    const d = fakeDeps();
+    const svc = new BrainService(d as never);
+    await svc.start(1);
+    let prepStarted!: () => void;
+    const started = new Promise<void>((resolve) => { prepStarted = resolve; });
+    let releasePrep!: () => void;
+    const prepGate = new Promise<void>((resolve) => { releasePrep = resolve; });
+    let releaseTurn!: () => void;
+    const turnGate = new Promise<void>((resolve) => { releaseTurn = resolve; });
+    d.session.prompt.mockImplementationOnce(async (_text: string, options?: { preflightResult?: (success: boolean) => void }) => {
+      prepStarted();
+      await prepGate;
+      // PI invokes preflightResult immediately before _runAgentPrompt; that run is active before the
+      // resolved admission promise can resume its HTTP caller on the next microtask.
+      d.session.isStreaming = true;
+      options?.preflightResult?.(true);
+      await turnGate;
+      d.session.isStreaming = false;
+    });
+
+    const first = svc.startSend(1, 'first');
+    await started;
+    let admitted = false;
+    void first.admitted.then(() => { admitted = true; });
+    await Promise.resolve();
+    expect(admitted).toBe(false);
+    releasePrep();
+    await expect(first.admitted).resolves.toBe('brain-1');
+
+    const second = svc.startSend(1, 'follow-up');
+    await expect(second.admitted).resolves.toBe('brain-1');
+    await second.completed;
+    expect(d.session.steer).toHaveBeenCalledWith('follow-up', undefined);
+    expect(d.session.prompt).toHaveBeenCalledTimes(1);
+    releaseTurn();
+    await first.completed;
+  });
+
+  it('rolls back the hidden durable row when PI rejects a normal turn before admission', async () => {
+    const d = fakeDeps();
+    const svc = new BrainService(d as never);
+    await svc.start(1);
+    const seen: { type: string }[] = [];
+    svc.subscribe(1, (event) => seen.push(event as { type: string }));
+    d.session.prompt.mockImplementationOnce(async (_text: string, options?: { preflightResult?: (success: boolean) => void }) => {
+      options?.preflightResult?.(false);
+      throw new Error('prompt preflight rejected');
+    });
+
+    const operation = svc.startSend(1, 'must roll back');
+    await expect(operation.admitted).rejects.toThrow('prompt preflight rejected');
+    await expect(operation.completed).rejects.toThrow('prompt preflight rejected');
+    expect(d.store.getMessages('brain-1').filter((row) => row.role === 'user')).toHaveLength(0);
+    expect(seen.some((event) => event.type === 'user')).toBe(false);
   });
 
   it('startSend admits a mid-turn steer only after PI accepts it', async () => {
@@ -259,6 +321,23 @@ describe('BrainService', () => {
     await expect(operation.admitted).resolves.toBe('brain-1');
     await operation.completed;
     expect(d.session.steer).toHaveBeenCalledWith('queued steer', undefined);
+  });
+
+  it('does not persist or echo a steer that PI rejects before admission', async () => {
+    const d = fakeDeps();
+    const svc = new BrainService(d as never);
+    await svc.start(1);
+    d.session.isStreaming = true;
+    d.session.steer.mockRejectedValueOnce(new Error('steer rejected'));
+    const seen: { type: string }[] = [];
+    svc.subscribe(1, (event) => seen.push(event as { type: string }));
+
+    const operation = svc.startSend(1, 'must not become durable');
+    await expect(operation.admitted).rejects.toThrow('steer rejected');
+    await expect(operation.completed).rejects.toThrow('steer rejected');
+    expect(d.store.getMessages('brain-1').filter((row) => row.role === 'user')).toHaveLength(0);
+    expect(seen.some((event) => event.type === 'user')).toBe(false);
+    expect(svc.queueList(1)).toEqual([]);
   });
 
   it('two mid-turn messages are each STEERED into the running turn (no follow-up turn)', async () => {
@@ -638,7 +717,7 @@ describe('BrainService', () => {
     const seen: { type: string }[] = [];
     svc.subscribe(1, (e) => seen.push(e));
     await svc.send(1, 'hi');
-    expect(d.session.prompt).toHaveBeenCalledWith('hi');
+    expect(d.session.prompt.mock.calls.at(-1)?.[0]).toBe('hi');
     expect(seen.some((e) => e.type === 'idle')).toBe(true);
     const roles = d.store.getMessages('brain-1').map((m) => m.role);
     expect(roles).toContain('user');
@@ -787,7 +866,7 @@ describe('BrainService', () => {
     await svc.send(1, 'Continue the active persistent goal.', undefined, 'build', { goalContinue: true });
     expect(d.session.steer).not.toHaveBeenCalled();
     expect(svc.queueList(1)).toEqual([]); // an internal continuation is NEVER steered — it drives the loop
-    expect(d.session.prompt).toHaveBeenCalledWith('Continue the active persistent goal.');
+    expect(d.session.prompt.mock.calls.at(-1)?.[0]).toBe('Continue the active persistent goal.');
   });
 
   it('plan mode injects the CLI plan prompt into the live prompt but keeps history clean', async () => {
@@ -798,7 +877,7 @@ describe('BrainService', () => {
     const svc = new BrainService(d as never);
     await svc.start(1);
     await svc.send(1, 'outline the migration', undefined, 'plan');
-    expect(d.session.prompt).toHaveBeenCalledWith('PLAN MODE PROMPT\n\noutline the migration');
+    expect(d.session.prompt.mock.calls.at(-1)?.[0]).toBe('PLAN MODE PROMPT\n\noutline the migration');
     const stored = d.store.getMessages('brain-1')
       .filter((m) => m.role === 'user')
       .map((m) => JSON.parse(m.content).content);
@@ -1740,9 +1819,9 @@ describe('sub-agent session tap + owner steering', () => {
     // position. This also prevents the two text streams from coalescing across the user boundary.
     expect(attached.snapshot.history).toEqual([{ id: 'snapshot-user', role: 'user', text: 'stored before opening' }]);
     const ordered = attached.snapshot.events.map((event) => event.type);
-    expect(ordered).toEqual(['text', 'tool', 'user', 'queue', 'text']);
+    expect(ordered).toEqual(['text', 'tool', 'queue', 'user', 'text']);
     expect(attached.snapshot.events[0]).toEqual({ type: 'text', delta: 'partial answer' });
-    expect(attached.snapshot.events[2]).toMatchObject({ type: 'user', text: 'steer now' });
+    expect(attached.snapshot.events[3]).toMatchObject({ type: 'user', text: 'steer now' });
     expect(attached.snapshot.events[4]).toEqual({ type: 'text', delta: 'continued after steer' });
     // Installing the tap does not re-deliver the snapshot through the live callback.
     expect(afterSnapshot).toEqual([]);
