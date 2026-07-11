@@ -1275,8 +1275,13 @@ export interface SlashOverlayItem {
 export class MentionOverlay implements Component {
   private items: SlashOverlayItem[] = [];
   private selectedIndex = 0;
+  private maxRows: number | null = null;
 
   invalidate(): void { /* state driven */ }
+
+  setMaxRows(rows: number | null): void {
+    this.maxRows = rows == null ? null : Math.max(1, Math.floor(rows));
+  }
 
   /** Replace the (already ranked) matches for the current query; the highlight resets to the top. */
   setItems(items: SlashOverlayItem[]): void {
@@ -1301,8 +1306,18 @@ export class MentionOverlay implements Component {
     const bottom = `${color.accent('╰')}${color.faint('─'.repeat(innerWidth))}${color.accent('╯')}`;
     const row = (content: string): string => `${color.accent('│')}${bgFill(content, innerWidth)}${color.accent('│')}`;
     if (this.selectedIndex >= this.items.length) this.selectedIndex = Math.max(0, this.items.length - 1);
-    const start = Math.max(0, Math.min(this.selectedIndex - 5, Math.max(0, this.items.length - 10)));
-    const shown = this.items.slice(start, start + 10);
+    const cap = this.maxRows ?? Number.POSITIVE_INFINITY;
+    const compact = innerWidth < 55;
+    const hint = row(`  ${ansi.open(chatTheme().faint, compact ? 'files · ↑↓ · tab/enter · esc' : 'files · ↑↓ select · tab/enter attach · esc dismiss')}`);
+    if (cap <= 3) return cap === 1 ? [bottom] : cap === 2 ? [top, bottom] : [top, hint, bottom];
+    const includeBlank = !Number.isFinite(cap) || cap >= 6;
+    let itemLimit = 10;
+    if (Number.isFinite(cap)) {
+      itemLimit = Math.max(1, cap - 3 - (includeBlank ? 1 : 0));
+      if (this.items.length > itemLimit && itemLimit > 1) itemLimit--;
+    }
+    const start = Math.max(0, Math.min(this.selectedIndex - Math.floor(itemLimit / 2), Math.max(0, this.items.length - itemLimit)));
+    const shown = this.items.slice(start, start + itemLimit);
     const itemRows = shown.length
       ? shown.map((item, i) => {
           const descWidth = item.description ? Math.min(visibleWidth(item.description), Math.max(0, innerWidth - 4 - visibleWidth(item.label) - 2)) : 0;
@@ -1315,14 +1330,15 @@ export class MentionOverlay implements Component {
         })
       : [row(ansi.open(chatTheme().muted, '  No matching files'))];
     const counter = this.items.length > shown.length ? [row(ansi.open(chatTheme().faint, `  (${Math.min(this.selectedIndex + 1, this.items.length)}/${this.items.length})`))] : [];
-    return [
+    const full = [
       top,
-      row(`  ${ansi.open(chatTheme().faint, 'files · ↑↓ select · tab/enter attach · esc dismiss')}`),
-      row(''),
+      hint,
+      ...(includeBlank ? [row('')] : []),
       ...itemRows,
       ...counter,
       bottom,
     ];
+    return Number.isFinite(cap) ? full.slice(0, cap) : full;
   }
 }
 
@@ -1331,8 +1347,13 @@ export class MentionOverlay implements Component {
 export class SlashOverlay implements Component {
   private filter = '';
   private selectedIndex = 0;
+  private maxRows: number | null = null;
 
   constructor(private readonly items: SlashOverlayItem[]) {}
+
+  setMaxRows(rows: number | null): void {
+    this.maxRows = rows == null ? null : Math.max(1, Math.floor(rows));
+  }
 
   invalidate(): void { /* state driven */ }
 
@@ -1389,8 +1410,18 @@ export class SlashOverlay implements Component {
     const row = (content: string): string => `${color.accent('│')}${bgFill(content, innerWidth)}${color.accent('│')}`;
     const items = this.filteredItems();
     if (this.selectedIndex >= items.length) this.selectedIndex = Math.max(0, items.length - 1);
-    const start = Math.max(0, Math.min(this.selectedIndex - 5, Math.max(0, items.length - 10)));
-    const shown = items.slice(start, start + 10);
+    const cap = this.maxRows ?? Number.POSITIVE_INFINITY;
+    const compact = innerWidth < 55;
+    const hint = row(`  ${ansi.open(chatTheme().faint, compact ? 'commands · ↑↓ · tab/enter · esc' : 'commands · ↑↓ select · tab/enter run · esc dismiss')}`);
+    if (cap <= 3) return cap === 1 ? [bottom] : cap === 2 ? [top, bottom] : [top, hint, bottom];
+    const includeBlank = !Number.isFinite(cap) || cap >= 6;
+    let itemLimit = 10;
+    if (Number.isFinite(cap)) {
+      itemLimit = Math.max(1, cap - 3 - (includeBlank ? 1 : 0));
+      if (items.length > itemLimit && itemLimit > 1) itemLimit--;
+    }
+    const start = Math.max(0, Math.min(this.selectedIndex - Math.floor(itemLimit / 2), Math.max(0, items.length - itemLimit)));
+    const shown = items.slice(start, start + itemLimit);
     const itemRows = shown.length
       ? shown.map((item, i) => {
           const absoluteIndex = start + i;
@@ -1403,13 +1434,14 @@ export class SlashOverlay implements Component {
         })
       : [row(ansi.open(chatTheme().muted, '  No matching commands'))];
     const counter = items.length > shown.length ? [row(ansi.open(chatTheme().faint, `  (${Math.min(this.selectedIndex + 1, items.length)}/${items.length})`))] : [];
-    return [
+    const full = [
       top,
-      row(`  ${ansi.open(chatTheme().faint, 'commands · ↑↓ select · tab/enter run · esc dismiss')}`),
-      row(''),
+      hint,
+      ...(includeBlank ? [row('')] : []),
       ...itemRows,
       ...counter,
       bottom,
     ];
+    return Number.isFinite(cap) ? full.slice(0, cap) : full;
   }
 }

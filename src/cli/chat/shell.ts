@@ -585,6 +585,11 @@ export function createShell(rt: ChatRuntime, stream: StreamController, mdTheme: 
    *  centered box on the start screen, at the bottom-of-screen slot otherwise. Shared geometry so the
    *  two overlays can never drift apart. */
   const showSuggestions = (overlay: Component): ReturnType<TUI['showOverlay']> => {
+    const constrain = (rows: number): number => {
+      const maxRows = Math.max(1, Math.floor(rows));
+      (overlay as Component & { setMaxRows?: (value: number) => void }).setMaxRows?.(maxRows);
+      return maxRows;
+    };
     // Tallest render: top + hint + blank + 10 items + counter + bottom = 15 rows. One less would clip
     // the bottom border whenever the counter row shows (which, with 20+ commands, is always).
     if (!hasMessages()) {
@@ -596,10 +601,11 @@ export function createShell(rt: ChatRuntime, stream: StreamController, mdTheme: 
       const screenRows = Math.max(1, term.rows - TOP_RULE_ROWS);
       const shownInputRows = Math.min(inputRows, Math.max(0, screenRows - 1));
       const top = TOP_RULE_ROWS + startScreenInputTop(screenRows, inputRows, noticeRows) + shownInputRows;
+      const maxHeight = constrain(Math.min(15, Math.max(1, term.rows - top)));
       return tui.showOverlay(overlay, {
         anchor: 'top-left',
         width: boxWidth,
-        maxHeight: 15,
+        maxHeight,
         margin: { top, left: leftPad, right: 0, bottom: 0 },
         nonCapturing: true,
       });
@@ -612,10 +618,11 @@ export function createShell(rt: ChatRuntime, stream: StreamController, mdTheme: 
     const bottom = budget.sections.queue + budget.sections.attachments + budget.sections.editor
       + budget.sections.status + budget.sections.hints;
     const available = Math.max(1, term.rows - TOP_RULE_ROWS - bottom);
+    const maxHeight = constrain(Math.min(15, available));
     return tui.showOverlay(overlay, {
       anchor: 'bottom-left',
       width: Math.max(1, term.columns - reserve - 1),
-      maxHeight: Math.min(15, available),
+      maxHeight,
       margin: { top: TOP_RULE_ROWS, left: 0, right: reserve, bottom },
       nonCapturing: true,
     });

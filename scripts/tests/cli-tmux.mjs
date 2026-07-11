@@ -125,7 +125,7 @@ function blankBetween(lines, fromPattern, toPattern) {
   const to = lines.findIndex((line, index) => index > from && toPattern.test(line));
   return from >= 0 && to > from && lines
     .slice(from + 1, to)
-    .some((line) => line.replace(/[│█]\s*$/, '').trim() === '');
+    .some((line) => (line.split(/[│█]/u, 1)[0] ?? line).trim() === '');
 }
 
 async function startMock() {
@@ -271,18 +271,30 @@ try {
     && capture().includes('Context') && capture().includes('E2E FINAL REPLY'));
   const panelCapture = saveCapture('08-panels-after-stream');
 
+  // The clipped Todo summary is a real mouse target. Its ANSI underline communicates affordance; one
+  // click must expand the card through the same shell hit-testing used in production.
+  const todoLines = panelCapture.endsWith('\n') ? panelCapture.slice(0, -1).split('\n') : panelCapture.split('\n');
+  const moreRow = todoLines.findIndex((line) => /\+\d+ more/.test(line)) + 1;
+  assert.ok(moreRow > 0, 'clipped Todos must expose a +N more row');
+  const moreAnsiLine = captureAnsi().split('\n')[moreRow - 1] ?? '';
+  assert.match(moreAnsiLine, /\x1b\[4m/, 'the +N more affordance must be underlined');
+  sendRaw(`\x1b[<0;24;${moreRow}M`);
+  sendRaw(`\x1b[<0;24;${moreRow}m`);
+  await waitFor('expanded Todo tail', () => capture().includes('verify terminal cleanup'));
+  const expandedTodoCapture = saveCapture('09-expanded-todos');
+
   // Grab the actual red transcript thumb immediately beside the right panel and drag it upward using
   // raw SGR mouse press/motion/release events. This exercises the production mouse parser and shell
   // routing, not just ChatViewport methods.
   const scrollbarX = 120 - 46 - 3;
-  const panelLines = panelCapture.endsWith('\n') ? panelCapture.slice(0, -1).split('\n') : panelCapture.split('\n');
+  const panelLines = expandedTodoCapture.endsWith('\n') ? expandedTodoCapture.slice(0, -1).split('\n') : expandedTodoCapture.split('\n');
   const thumbRow = panelLines.findIndex((line) => line.indexOf('█') === scrollbarX - 1) + 1;
   assert.ok(thumbRow > 0, '120x30 panel frame must expose the transcript thumb at the chat boundary');
   sendRaw(`\x1b[<0;${scrollbarX};${thumbRow}M`);
   sendRaw(`\x1b[<32;${scrollbarX};2M`);
   sendRaw(`\x1b[<0;${scrollbarX};2m`);
   await waitFor('mouse scrollbar drag history chip', () => capture().includes('History +'));
-  const draggedCapture = saveCapture('09-scrollbar-drag-with-panel');
+  const draggedCapture = saveCapture('10-scrollbar-drag-with-panel');
   assert.match(draggedCapture, /History \+\d+ lines/, 'dragging the visible thumb must move into history');
   const draggedLines = draggedCapture.endsWith('\n') ? draggedCapture.slice(0, -1).split('\n') : draggedCapture.split('\n');
   const draggedThumbRow = draggedLines.findIndex((line) => line.indexOf('█') === scrollbarX - 1) + 1;
@@ -296,14 +308,14 @@ try {
   sendKey('Enter');
   await waitFor('external editor resume', () => capture().includes('E2E EDITOR DRAFT')
     && capture().includes('E2E FINAL REPLY'));
-  const editorCapture = saveCapture('09-external-editor-return');
+  const editorCapture = saveCapture('11-external-editor-return');
   assert.equal((editorCapture.match(/\bBuild\b/g) ?? []).length, 1, 'external-editor repaint must not duplicate status');
   sendKey('C-u');
 
   sendLiteral('/help');
   sendKey('Enter');
   await waitFor('commands modal', () => capture().includes('Commands') && capture().includes('enter run'));
-  saveCapture('10-help-modal');
+  saveCapture('12-help-modal');
   sendKey('Escape');
   await waitFor('commands modal closed', () => !capture().includes('enter run'));
 
@@ -311,6 +323,37 @@ try {
   await waitFor('post-stream telemetry hidden', () => !capture().includes('Context'));
   sendKey('C-p');
   await waitFor('post-stream telemetry shown', () => capture().includes('Context'));
+
+  // Suggestion chrome must fit completely on a short terminal: both the header/hints and bottom border
+  // are present in the same physical 40x15 pane, while keyboard navigation keeps working.
+  resize(40, 15);
+  await waitFor('short settled frame', () => capture().includes('Build') && capture().split('\n').length >= 15);
+  sendLiteral('/');
+  await waitFor('short slash menu', () => capture().includes('commands ·') && capture().includes('esc'));
+  const slashCapture = saveCapture('13-short-slash-menu');
+  assert.match(slashCapture, /╭/u, 'short slash menu must retain its top border');
+  assert.match(slashCapture, /╰/u, 'short slash menu must retain its bottom border');
+  assert.equal((slashCapture.endsWith('\n') ? slashCapture.slice(0, -1).split('\n') : slashCapture.split('\n')).length, 15,
+    'short slash menu must not overflow the pane');
+  sendKey('C-u');
+  await waitFor('short slash menu closed', () => !capture().includes('commands ·'));
+
+  // A production SSE ask event replaces the editor. Move to the final option on the constrained dock;
+  // its moving window must reveal that option without clipping action hints or either border.
+  sendLiteral('E2E ASK MENU');
+  sendKey('Enter');
+  await waitFor('short ask dock', () => capture().includes('Elowen needs a decision'));
+  for (let index = 0; index < 11; index += 1) sendKey('Down');
+  await waitFor('ask final option', () => capture().includes('Option 12'));
+  const askCapture = saveCapture('14-short-ask-dock');
+  assert.match(askCapture, /space toggle.*enter send.*esc cancel/, 'short ask dock must retain its action row');
+  assert.match(askCapture, /╭/u, 'short ask dock must retain its top border');
+  assert.match(askCapture, /╰/u, 'short ask dock must retain its bottom border');
+  assert.equal((askCapture.endsWith('\n') ? askCapture.slice(0, -1).split('\n') : askCapture.split('\n')).length, 15,
+    'short ask dock must not overflow the pane');
+  sendKey('Enter');
+  await waitFor('ask answer request', () => requests('/brain/answer').length === 1);
+  await waitFor('ask turn resumes', () => capture().includes('E2E ASK ANSWER ACCEPTED'));
 
   sendKey('PageUp');
   await waitFor('post-stream PageUp', () => capture().includes('History +'));
@@ -320,20 +363,22 @@ try {
   resize(size.columns, size.rows);
   await waitFor('final 96x24 frame', () => capture().includes('E2E FINAL REPLY') && capture().split('\n').length >= size.rows);
 
-  const finalCapture = saveCapture('11-final-96x24');
+  const finalCapture = saveCapture('15-final-96x24');
   const finalLines = finalCapture.endsWith('\n') ? finalCapture.slice(0, -1).split('\n') : finalCapture.split('\n');
   assert.equal(finalLines.length, size.rows, `tmux pane must remain exactly ${size.rows} rows tall`);
   assert.equal((finalCapture.match(/\bBuild\b/g) ?? []).length, 1, 'status metadata must contain exactly one Build row');
-  assert.match(finalCapture, /E2E SECOND USER/, 'second user turn must render');
-  assert.match(finalCapture, /E2E TOOL OUTPUT/, 'final tool output must render');
-  assert.match(finalCapture, /E2E FINAL REPLY/, 'final assistant text must render');
-  assert.ok(blankBetween(finalLines, /E2E SECOND USER/, /npm run e2e-demo/), 'user turn and tool block need a blank separator');
-  assert.ok(blankBetween(finalLines, /E2E TOOL OUTPUT/, /E2E FINAL REPLY/), 'tool output and final answer need a blank separator');
+  assert.match(panelCapture, /E2E SECOND USER/, 'second user turn must render in its settled capture');
+  assert.match(panelCapture, /E2E TOOL OUTPUT/, 'final tool output must render in its settled capture');
+  assert.match(panelCapture, /E2E FINAL REPLY/, 'final assistant text must render in its settled capture');
+  assert.doesNotMatch(panelCapture, /\[?exit 0\]?/i, 'successful tool status must not render exit 0');
+  assert.ok(blankBetween(todoLines, /E2E SECOND USER/, /npm run e2e-demo/), 'user turn and tool block need a blank separator');
+  assert.ok(blankBetween(todoLines, /E2E TOOL OUTPUT/, /E2E FINAL REPLY/), 'tool output and final answer need a blank separator');
+  assert.match(finalCapture, /E2E ASK ANSWER ACCEPTED/, 'the resumed ask turn must remain at the final tail');
 
   sendKey('C-c');
   await waitFor('one session stop request', () => requests('/brain/session/stop').length === 1);
   await waitFor('restored shell marker', () => capture().includes('E2E SHELL RESTORED'), 5_000);
-  saveCapture('12-restored-shell');
+  saveCapture('16-restored-shell');
 
   const ttyStates = readFileSync(ttyStatePath, 'utf8').trim().split('\n');
   assert.equal(ttyStates.length, 2, 'the harness must capture tty state before and after chat');
@@ -350,7 +395,8 @@ try {
   assert.equal(streamRequests.length, 1, 'the bound SSE must not duplicate or reconnect during the scenario');
   assert.equal(stopRequests.length, 1, 'Ctrl+C must send exactly one session stop');
   assert.equal(requests('/brain/abort').length, 1, 'only the confirmed double-Esc may abort');
-  assert.equal(requests('/brain/send').length, 3, 'normal, queued multiline, and final prompts must all reach the daemon');
+  assert.equal(requests('/brain/send').length, 4, 'normal, queued multiline, final, and ask prompts must all reach the daemon');
+  assert.equal(requests('/brain/answer').length, 1, 'the constrained ask dock must submit exactly one answer');
   assert.match(requests('/brain/send')[1].body.text, /E2E QUEUED LINE 1\nE2E QUEUED LINE 2/, 'queued prompt must preserve its newline');
 
   const startBody = startRequests[0].body;
@@ -374,7 +420,7 @@ try {
   const report = {
     passed: true,
     session,
-    captures: 13,
+    captures: 16,
     requests: entries().filter((entry) => entry.kind === 'request').length,
     frames: perfFrames.length,
     frameMs: { p95, max: frameTimes.at(-1) ?? 0 },
@@ -382,6 +428,10 @@ try {
     alternateScreenRestored: true,
     mouseReportingDisabled: true,
     scrollbarDragWithPanel: true,
+    todoMoreExpandedByMouse: true,
+    shortSlashMenuFit: true,
+    shortAskDockFit: true,
+    successfulExitStatusHidden: true,
   };
   writeFileSync(reportPath, `${JSON.stringify(report, null, 2)}\n`);
 

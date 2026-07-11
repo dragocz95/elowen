@@ -95,6 +95,11 @@ function runSecondTurn(text) {
         { text: 'stream response', status: 'completed' },
         { text: 'survive resize', status: 'in_progress' },
         { text: 'accept another input', status: 'pending' },
+        { text: 'keep the footer unique', status: 'pending' },
+        { text: 'preserve the editor', status: 'pending' },
+        { text: 'drag the transcript scrollbar', status: 'pending' },
+        { text: 'fit short terminal menus', status: 'pending' },
+        { text: 'verify terminal cleanup', status: 'pending' },
       ],
     },
   }));
@@ -114,6 +119,23 @@ function runSecondTurn(text) {
   later(520, () => emit({
     type: 'idle', model: 'mock/e2e-model',
     usage: { tokens: 1234, contextWindow: 100000, percent: 1.2, totalTokens: 2345, cost: 0.0123 },
+  }));
+}
+
+function runAskTurn(text) {
+  later(30, () => emit({ type: 'user', text }));
+  later(70, () => emit({
+    type: 'ask', id: 'e2e-ask',
+    questions: [{
+      header: 'Deployment',
+      question: 'Which deterministic rollout option should the terminal harness choose on this short screen?',
+      multiSelect: false,
+      custom: false,
+      options: Array.from({ length: 12 }, (_, index) => ({
+        label: index === 11 ? 'Option 12 — final visible choice' : `Option ${index + 1}`,
+        description: `Deterministic choice ${index + 1} used to exercise the constrained ask viewport`,
+      })),
+    }],
   }));
 }
 
@@ -217,7 +239,22 @@ const server = createServer(async (req, res) => {
     return;
   }
   if (req.method === 'GET' && url.pathname === '/brain/commands') {
-    json(res, 200, { commands: [] });
+    json(res, 200, { commands: [
+      { name: 'help', description: 'Show commands and keyboard shortcuts', kind: 'info', surfaces: ['cli'] },
+      { name: 'editor', description: 'Open the external editor', kind: 'info', surfaces: ['cli'] },
+      { name: 'sessions', description: 'Switch conversations', kind: 'picker', surfaces: ['cli'] },
+      { name: 'model', description: 'Choose a model', kind: 'picker', surfaces: ['cli'] },
+      { name: 'theme', description: 'Choose a terminal theme', kind: 'picker', surfaces: ['cli'] },
+      { name: 'think', description: 'Choose reasoning effort', kind: 'picker', surfaces: ['cli'] },
+      { name: 'compact', description: 'Compact conversation context', kind: 'action', surfaces: ['cli'] },
+      { name: 'status', description: 'Show daemon status', kind: 'info', surfaces: ['cli'] },
+      { name: 'tools', description: 'Inspect runtime tools', kind: 'info', surfaces: ['cli'] },
+      { name: 'skills', description: 'Inspect installed skills', kind: 'info', surfaces: ['cli'] },
+      { name: 'plan', description: 'Switch to plan mode', kind: 'mode', surfaces: ['cli'] },
+      { name: 'build', description: 'Switch to build mode', kind: 'mode', surfaces: ['cli'] },
+      { name: 'new', description: 'Start a new conversation', kind: 'action', surfaces: ['cli'] },
+      { name: 'stop', description: 'Stop the active conversation', kind: 'action', surfaces: ['cli'] },
+    ] });
     return;
   }
   if (req.method === 'GET' && url.pathname === '/brain/rate-limits') {
@@ -252,6 +289,16 @@ const server = createServer(async (req, res) => {
     else if (sendCount === 2) {
       later(25, () => emit({ type: 'queue', items: [{ id: 'queued-e2e', text }] }));
     } else if (sendCount === 3) runSecondTurn(text);
+    else if (sendCount === 4) runAskTurn(text);
+    return;
+  }
+  if (req.method === 'POST' && url.pathname === '/brain/answer') {
+    json(res, 200, { ok: true, matched: true });
+    later(30, () => emit({ type: 'text', delta: 'E2E ASK ANSWER ACCEPTED' }));
+    later(60, () => emit({
+      type: 'idle', model: 'mock/e2e-model',
+      usage: { tokens: 1300, contextWindow: 100000, percent: 1.3, totalTokens: 2400, cost: 0.013 },
+    }));
     return;
   }
   if (req.method === 'POST' && url.pathname === '/brain/abort') {

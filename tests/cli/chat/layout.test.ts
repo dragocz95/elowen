@@ -2,7 +2,7 @@ import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { getMarkdownTheme, initTheme } from '@earendil-works/pi-coding-agent';
 import { getCapabilities, setCapabilities, visibleWidth } from '@earendil-works/pi-tui';
 import { beginAssistant, emptyView, fromHistory, pushUser, reduce } from '../../../src/brain/transcript.js';
-import { CHAT_VIEWPORT_ROW_CACHE_LIMIT, ChatViewport, mouseWheel, SlashOverlay, StartScreen, TelemetryPanel, TOOL_INDENT, type TelemetryState } from '../../../src/cli/chat/layout.js';
+import { CHAT_VIEWPORT_ROW_CACHE_LIMIT, ChatViewport, MentionOverlay, mouseWheel, SlashOverlay, StartScreen, TelemetryPanel, TOOL_INDENT, type TelemetryState } from '../../../src/cli/chat/layout.js';
 
 afterEach(() => { vi.useRealTimers(); });
 
@@ -328,6 +328,37 @@ describe('chat layout components', () => {
     overlay.setFilter('/xyzq');
     expect(overlay.selectedValue()).toBeNull();
     expect(overlay.render(48).join('\n')).toContain('No matching commands');
+  });
+
+  it('fits slash chrome and the active window inside a short-terminal row budget', () => {
+    const overlay = new SlashOverlay(Array.from({ length: 20 }, (_, index) => ({
+      value: `/command-${String(index + 1).padStart(2, '0')}`,
+      label: `/command-${String(index + 1).padStart(2, '0')}`,
+      description: `description ${index + 1}`,
+    })));
+    overlay.setMaxRows(10);
+    for (let index = 0; index < 19; index += 1) overlay.moveSelection(1);
+
+    const rows = overlay.render(40);
+    expect(rows).toHaveLength(10);
+    expect(rows[0]).toContain('╭');
+    expect(rows.at(-1)).toContain('╰');
+    expect(rows.join('\n')).toContain('esc');
+    expect(rows.join('\n')).toContain('/command-20');
+  });
+
+  it('applies the same short-terminal budget to file mention suggestions', () => {
+    const overlay = new MentionOverlay();
+    overlay.setItems(Array.from({ length: 20 }, (_, index) => ({
+      value: `src/file-${index + 1}.ts`, label: `src/file-${index + 1}.ts`,
+    })));
+    overlay.setMaxRows(8);
+    for (let index = 0; index < 19; index += 1) overlay.moveSelection(1);
+    const rows = overlay.render(40);
+    expect(rows).toHaveLength(8);
+    expect(rows[0]).toContain('╭');
+    expect(rows.at(-1)).toContain('╰');
+    expect(rows.join('\n')).toContain('src/file-20.ts');
   });
 
   const telemetryState = (over: Partial<TelemetryState> = {}): TelemetryState => ({
