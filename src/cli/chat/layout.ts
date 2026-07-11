@@ -309,6 +309,7 @@ export class ChatViewport implements Component {
   // LRU. `knownStart` means every entry from it through the tail has an exact height.
   private layout: TurnLayoutEntry[] = [];
   private layoutTurnsRef: ChatView['turns'] | null = null;
+  private layoutViewRef: ChatView | null = null;
   private knownStart = 0;
   private knownSuffixRows = 0;
   private prefixHeights: number[] | null = null;
@@ -531,6 +532,7 @@ export class ChatViewport implements Component {
       this.clearAllCachedRows();
       this.layout = turns.map((turn) => ({ turn, height: null, rows: null }));
       this.layoutTurnsRef = turns;
+      this.layoutViewRef = this.state.view;
       this.indexedTurnCount = 0;
       this.knownStart = this.layout.length;
       this.knownSuffixRows = 0;
@@ -542,28 +544,26 @@ export class ChatViewport implements Component {
     }
 
     if (this.layoutTurnsRef !== turns || this.layout.length !== turns.length) {
-      const change = getChatViewChange(this.state.view);
+      const change = this.layoutViewRef
+        ? getChatViewChange(this.state.view, this.layoutViewRef)
+        : undefined;
       let handled = false;
       if (change?.kind === 'none' && this.layout.length === turns.length) {
         handled = true;
-      } else if (change?.kind === 'append'
-        && change.index === this.layout.length
-        && turns.length >= this.layout.length) {
-        for (let i = this.layout.length; i < turns.length; i++) this.layout.push({ turn: turns[i]!, height: null, rows: null });
-        this.frameReconciledTurns += turns.length - change.index;
-        this.prefixHeights = null;
-        this.recomputeKnownSuffix();
-        handled = true;
-      } else if (change?.kind === 'turn'
-        && change.index >= 0
-        && change.index < turns.length
-        && this.layout.length === turns.length) {
-        this.clearSelection();
-        const previous = this.layout[change.index]!;
-        if (previous.height != null) this.indexedTurnCount--;
-        this.discardRows(previous);
-        this.layout[change.index] = { turn: turns[change.index]!, height: null, rows: null };
-        this.frameReconciledTurns++;
+      } else if (change?.kind === 'suffix'
+        && change.from >= 0
+        && change.from <= this.layout.length
+        && change.from <= turns.length) {
+        if (change.from < this.layout.length) this.clearSelection();
+        for (const entry of this.layout.slice(change.from)) {
+          if (entry.height != null) this.indexedTurnCount--;
+          this.discardRows(entry);
+        }
+        this.layout.length = change.from;
+        for (let i = change.from; i < turns.length; i++) {
+          this.layout.push({ turn: turns[i]!, height: null, rows: null });
+        }
+        this.frameReconciledTurns += turns.length - change.from;
         this.prefixHeights = null;
         this.recomputeKnownSuffix();
         handled = true;
@@ -603,6 +603,7 @@ export class ChatViewport implements Component {
         }
       }
       this.layoutTurnsRef = turns;
+      this.layoutViewRef = this.state.view;
     }
 
     // The live tail can mutate its elapsed label/output between object replacements. It alone is volatile;

@@ -628,6 +628,8 @@ describe('per-turn render cache', () => {
 });
 
 describe('progressive history layout', () => {
+  beforeAll(() => initTheme());
+
   const largeHistory = (pairs = 100) => fromHistory(Array.from({ length: pairs }, (_, i) => [
     { role: 'user', text: `question ${i}` },
     { role: 'assistant', text: `## answer ${i}\n\n- evidence one\n- evidence two\n\nNewest marker ${i}` },
@@ -751,5 +753,25 @@ describe('progressive history layout', () => {
     viewport.render(80);
     expect(viewport.metrics().reconciledTurns).toBeLessThanOrEqual(1);
     expect(viewport.metrics().renderedTurns).toBeLessThanOrEqual(1);
+  });
+
+  it('accumulates a coalesced user and assistant burst without scanning settled history', () => {
+    let view = largeHistory(5_000);
+    const viewport = new ChatViewport(
+      { view, notice: '', modelName: 'kimi', thinkingSeconds: 0 },
+      getMarkdownTheme(), () => 18, () => 1, () => 80,
+    );
+    viewport.render(80);
+
+    // The frame scheduler may fold this whole event sequence into one paint. Change metadata must retain
+    // the append even though the final event itself only mutates the new assistant tail.
+    view = reduce(view, { type: 'user', text: 'coalesced question' });
+    view = reduce(view, { type: 'text', delta: 'first token' });
+    view = reduce(view, { type: 'tool', id: 't-coalesced', name: 'read_file', detail: 'src/index.ts' });
+    viewport.setState({ view, notice: '', modelName: 'kimi', thinkingSeconds: 0 });
+    viewport.render(80);
+
+    expect(viewport.metrics().reconciledTurns).toBeLessThanOrEqual(2);
+    expect(viewport.metrics().renderedTurns).toBeLessThanOrEqual(2);
   });
 });
