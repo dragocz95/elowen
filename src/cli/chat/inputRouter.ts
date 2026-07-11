@@ -1,6 +1,7 @@
 import type { TUI } from '@earendil-works/pi-tui';
-import type { ChatRuntime } from './runtime.js';
-import type { StreamController } from './streamController.js';
+import type { ChatState } from './chatState.js';
+import type { ChatEditor } from './picker.js';
+import type { StreamCoordinatorPort } from './streamCoordinator.js';
 import type { KeybindAction, Keymap } from './keys.js';
 import {
   isDownKey, isEnterKey, isEscapeKey, isPageDownKey, isPageUpKey, isTabByte, isUpKey,
@@ -24,8 +25,12 @@ interface LeaderInputState {
 }
 
 export interface ChatInputContext {
-  rt: ChatRuntime;
-  stream: StreamController;
+  state: ChatState;
+  term: { columns: number; write(data: string): void };
+  editor: ChatEditor;
+  stream: StreamCoordinatorPort;
+  quit(): void;
+  renderForced(reason?: string): void;
   keymap(): Keymap;
   leader(): LeaderInputState;
   dispatchAction(action: KeybindAction): void;
@@ -87,8 +92,7 @@ export class InputRouter {
   private route(data: string): InputRouteResult {
     const context = this.context;
     if (!context) return undefined;
-    const { rt, stream } = context;
-    const { editor, term } = rt;
+    const { state: rt, stream, editor, term } = context;
     const keymap = context.keymap();
     const event = mouseEvent(data);
     if (event) {
@@ -116,7 +120,7 @@ export class InputRouter {
         if (this.resizingPanel && release) { this.resizingPanel = false; return { consume: true }; }
         if (this.resizingPanel && event.down) {
           context.setPanelWidth(Math.max(36, Math.min(68, term.columns - event.x + 1)));
-          rt.renderForced('geometry:telemetry-resize');
+          context.renderForced('geometry:telemetry-resize');
           return { consume: true };
         }
         if (event.down && event.code === 0 && Math.abs(event.x - edge) <= 1) {
@@ -133,7 +137,7 @@ export class InputRouter {
       const localX = click.x - context.panelLeftEdge();
       if (context.telemetry.isProcessHeaderRow(localRow)) {
         context.telemetry.toggleProcesses();
-        rt.render('input:process-toggle');
+        context.render('input:process-toggle');
         return { consume: true };
       }
       const killId = context.telemetry.processKillAt(localRow, localX);
@@ -145,7 +149,7 @@ export class InputRouter {
     }
     if (click && noModal && context.activeViewport().isThoughtRow(click.x, click.y)) {
       context.activeViewport().toggleThought(click.y);
-      rt.render('input:thought-toggle');
+      context.render('input:thought-toggle');
       return { consume: true };
     }
     if (click && noModal) {
@@ -155,7 +159,7 @@ export class InputRouter {
       const renderedSubRows = context.subPanel.render(context.chatWidth()).length;
       if (subRelative >= 0 && context.subPanel.isHeaderRow(subRelative)) {
         context.subPanel.toggleCollapsed();
-        rt.render('input:subagents-toggle');
+        context.render('input:subagents-toggle');
         return { consume: true };
       }
       const target = subRelative >= 0 ? context.subPanel.targetAt(subRelative) : null;
@@ -163,12 +167,12 @@ export class InputRouter {
       const cardRelative = subRelative - renderedSubRows;
       if (cardRelative >= 0 && context.cardPanel.isMoreRow(cardRelative)) {
         context.cardPanel.toggleExpanded();
-        rt.renderForced('geometry:todos-expand');
+        context.renderForced('geometry:todos-expand');
         return { consume: true };
       }
       if (cardRelative >= 0 && context.cardPanel.isHeaderRow(cardRelative)) {
         context.cardPanel.toggleCollapsed();
-        rt.render('input:todos-toggle');
+        context.render('input:todos-toggle');
         return { consume: true };
       }
     }
@@ -183,12 +187,12 @@ export class InputRouter {
       if (event.down && event.code === 0 && context.activeViewport().beginSelect(event.x, event.y)) return { consume: true };
       if (event.down && event.code === 32 && context.activeViewport().hasSelection()) {
         context.activeViewport().dragSelect(event.y);
-        rt.render('input:copy-drag');
+        context.render('input:copy-drag');
         return { consume: true };
       }
       if ((!event.down || event.code === 3) && context.activeViewport().hasSelection()) {
         const text = context.activeViewport().takeSelection();
-        rt.render('input:copy-release');
+        context.render('input:copy-release');
         if (text) {
           term.write(`\x1b]52;c;${Buffer.from(text.slice(0, 100_000)).toString('base64')}\x07`);
           const count = text.split('\n').length;
@@ -202,7 +206,7 @@ export class InputRouter {
       }
     }
 
-    if (keymap.matches('quit', data)) { rt.quit(); return { consume: true }; }
+    if (keymap.matches('quit', data)) { context.quit(); return { consume: true }; }
     const leader = context.leader();
     if (leader.pending() && !event) {
       const action = leader.resolve(data);
@@ -213,8 +217,8 @@ export class InputRouter {
     const mention = context.mentionOverlay();
     if (editor.focused && mention) {
       if (isEscapeKey(data)) { context.closeMention(); return { consume: true }; }
-      if (isUpKey(data)) { mention.moveSelection(-1); rt.render('input:mention-up'); return { consume: true }; }
-      if (isDownKey(data)) { mention.moveSelection(1); rt.render('input:mention-down'); return { consume: true }; }
+      if (isUpKey(data)) { mention.moveSelection(-1); context.render('input:mention-up'); return { consume: true }; }
+      if (isDownKey(data)) { mention.moveSelection(1); context.render('input:mention-down'); return { consume: true }; }
       if (isTabByte(data) || isEnterKey(data)) {
         const value = mention.selectedValue();
         if (value) { context.insertMention(value); return { consume: true }; }
@@ -225,12 +229,12 @@ export class InputRouter {
     const slash = context.slashOverlay();
     if (editor.focused && slash) {
       if (isEscapeKey(data)) { context.closeSlash(); return { consume: true }; }
-      if (isUpKey(data)) { slash.moveSelection(-1); rt.render('input:slash-up'); return { consume: true }; }
-      if (isDownKey(data)) { slash.moveSelection(1); rt.render('input:slash-down'); return { consume: true }; }
+      if (isUpKey(data)) { slash.moveSelection(-1); context.render('input:slash-up'); return { consume: true }; }
+      if (isDownKey(data)) { slash.moveSelection(1); context.render('input:slash-down'); return { consume: true }; }
       if (isTabByte(data)) {
         const value = slash.selectedValue();
         context.closeSlash();
-        if (value) { editor.setText(`${value} `); rt.render('input:slash-complete'); }
+        if (value) { editor.setText(`${value} `); context.render('input:slash-complete'); }
         return { consume: true };
       }
       if (isEnterKey(data)) {

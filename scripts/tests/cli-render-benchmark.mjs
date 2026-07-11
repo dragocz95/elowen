@@ -4,12 +4,11 @@ import { pathToFileURL } from 'node:url';
 
 const rootArg = process.argv.indexOf('--root');
 const root = resolve(rootArg >= 0 ? process.argv[rootArg + 1] : process.cwd());
-const [{ initTheme, getMarkdownTheme }, { ChatViewport }, transcript] = await Promise.all([
+const [{ initTheme, getMarkdownTheme }, { ChatViewport }, { TranscriptModel }] = await Promise.all([
   import('@earendil-works/pi-coding-agent'),
-  import(pathToFileURL(resolve(root, 'dist/cli/chat/layout.js')).href),
-  import(pathToFileURL(resolve(root, 'dist/brain/transcript.js')).href),
+  import(pathToFileURL(resolve(root, 'dist/cli/chat/chatViewport.js')).href),
+  import(pathToFileURL(resolve(root, 'dist/brain/transcriptModel.js')).href),
 ]);
-const { fromHistory, beginAssistant, reduce } = transcript;
 initTheme();
 
 function percentile(values, fraction) {
@@ -18,17 +17,17 @@ function percentile(values, fraction) {
 }
 
 function history(pairs) {
-  return fromHistory(Array.from({ length: pairs }, (_, index) => [
+  return Array.from({ length: pairs }, (_, index) => [
     { role: 'user', text: `question ${index}` },
     { role: 'assistant', text: `## answer ${index}\n\n- evidence one\n- evidence two\n\nmarker ${index}` },
-  ]).flat());
+  ]).flat();
 }
 
 const results = [];
 for (const pairs of [100, 1_000, 5_000]) {
-  const view = history(pairs);
+  const transcript = new TranscriptModel(history(pairs));
   const viewport = new ChatViewport(
-    { view, notice: '', modelName: 'benchmark', thinkingSeconds: 0 },
+    { transcript, transcriptNotice: transcript.notice, notice: '', modelName: 'benchmark', thinkingSeconds: 0 },
     getMarkdownTheme(), () => 18, () => 1, () => 80,
   );
   const initialStarted = performance.now();
@@ -41,20 +40,20 @@ for (const pairs of [100, 1_000, 5_000]) {
     viewport.render(80);
     frameMs.push(performance.now() - started);
   }
-  let streamingView = beginAssistant(view);
-  viewport.setState({ view: streamingView, notice: '', modelName: 'benchmark', thinkingSeconds: 0 });
+  transcript.apply({ type: 'text', delta: '' });
+  viewport.setState({ transcript, transcriptNotice: transcript.notice, notice: '', modelName: 'benchmark', thinkingSeconds: 0 });
   viewport.render(80);
   const streamMs = [];
   for (let index = 0; index < 40; index += 1) {
-    streamingView = reduce(streamingView, { type: 'text', delta: ` token-${index}` });
-    viewport.setState({ view: streamingView, notice: '', modelName: 'benchmark', thinkingSeconds: 0 });
+    transcript.apply({ type: 'text', delta: ` token-${index}` });
+    viewport.setState({ transcript, transcriptNotice: transcript.notice, notice: '', modelName: 'benchmark', thinkingSeconds: 0 });
     const started = performance.now();
     viewport.render(80);
     streamMs.push(performance.now() - started);
   }
   results.push({
     pairs,
-    turns: view.turns.length,
+    turns: transcript.turnCount,
     initialMs: Number(initialMs.toFixed(3)),
     scrollAvgMs: Number((frameMs.reduce((sum, value) => sum + value, 0) / frameMs.length).toFixed(3)),
     scrollP95Ms: Number(percentile(frameMs, 0.95).toFixed(3)),

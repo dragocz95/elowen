@@ -1,14 +1,15 @@
 import { describe, it, expect, vi } from 'vitest';
-import { createStreamController } from '../../../src/cli/chat/streamController.js';
-import { beginAssistant, emptyView, fromHistory, reduce } from '../../../src/brain/transcript.js';
-import type { ChatRuntime } from '../../../src/cli/chat/runtime.js';
+import { StreamCoordinator } from '../../../src/cli/chat/streamCoordinator.js';
 import type { Flows } from '../../../src/cli/chat/flows.js';
 import { BrainClient } from '../../../src/cli/chat/brainClient.js';
 import type { BrainEvent } from '../../../src/brain/events.js';
 import { TranscriptModel } from '../../../src/brain/transcriptModel.js';
+import { ChatState } from '../../../src/cli/chat/chatState.js';
+import type { ChatStateSeed } from '../../../src/cli/chat/chatState.js';
+import type { ChatApplicationActions } from '../../../src/cli/chat/chatCapabilities.js';
 import { SnapshotHydrator } from '../../../src/cli/chat/snapshotHydrator.js';
 import { HydrationNoticeOwner } from '../../../src/cli/chat/hydrationNoticeOwner.js';
-import { loadInitialTranscript } from '../../../src/cli/chat/app.js';
+import { loadInitialTranscript } from '../../../src/cli/chat/chatApplication.js';
 
 function deferred<T>(): { promise: Promise<T>; resolve: (v: T) => void } {
   let resolve!: (v: T) => void;
@@ -16,15 +17,37 @@ function deferred<T>(): { promise: Promise<T>; resolve: (v: T) => void } {
   return { promise, resolve };
 }
 
-/** Task-2 bridge for legacy pure-view fixtures; production runtimes construct the model directly. */
-function attachTranscript(rt: ChatRuntime): ChatRuntime {
-  const transcript = TranscriptModel.fromView(rt.view);
-  Object.defineProperty(rt, 'transcript', { value: transcript });
-  Object.defineProperty(rt, 'view', { configurable: true, get: () => transcript.view });
-  return rt;
+function state(
+  history: ConstructorParameters<typeof TranscriptModel>[0] = [],
+  seed: Omit<ChatStateSeed, 'transcript'> = {},
+): ChatState {
+  return new ChatState({ transcript: new TranscriptModel(history), ...seed });
 }
 
-describe('streamController — idle rollover', () => {
+function turns(transcript: TranscriptModel): NonNullable<ReturnType<TranscriptModel['turnAt']>>[] {
+  return Array.from({ length: transcript.turnCount }, (_, index) => transcript.turnAt(index))
+    .filter((turn): turn is NonNullable<typeof turn> => turn != null);
+}
+
+function serialized(transcript: TranscriptModel | undefined): string {
+  return JSON.stringify(transcript ? turns(transcript) : []);
+}
+
+function actions(overrides: Partial<ChatApplicationActions> = {}): ChatApplicationActions {
+  return {
+    render: () => {},
+    renderForced: () => {},
+    refreshRateLimits: async () => {},
+    refreshMeta: async () => {},
+    invalidateAsyncState: () => {},
+    quit: () => {},
+    suspendTerminal: () => {},
+    resumeTerminal: () => {},
+    ...overrides,
+  };
+}
+
+describe('StreamCoordinator — idle rollover', () => {
   it('resets to the fresh conversation on `session` and rebuilds from the daemon stream (no refetch)', () => {
     let onEvent!: (e: BrainEvent) => void;
     let historyCalls = 0;
@@ -35,33 +58,28 @@ describe('streamController — idle rollover', () => {
     } as unknown as BrainClient;
 
     const ac = new AbortController();
-    const rt = {
-      client,
-      // Prior conversation on screen — no optimistic local 'you' (the daemon is the echo authority now).
-      view: fromHistory([{ role: 'user', text: 'yesterday' }, { role: 'assistant', text: 'old answer' }]),
-      childView: null,
-      streamAc: ac,
-      notice: '',
-      conversationTitle: 'seeded',
-      workMode: 'build',
-      render: () => {},
-      refreshMeta: async () => {},
-    } as unknown as ChatRuntime;
-    attachTranscript(rt);
+    // Prior conversation on screen — no optimistic local 'you' (the daemon is the echo authority now).
+    const rt = state(
+      [{ role: 'user', text: 'yesterday' }, { role: 'assistant', text: 'old answer' }],
+      { conversationTitle: 'seeded', workMode: 'build' },
+    );
+    rt.streamAc = ac;
     const flows = { launchAsk: () => {}, openPlanDecision: () => {} } as unknown as Flows;
-
-    const stream = createStreamController(rt, flows);
+    const stream = new StreamCoordinator(
+      rt, { client }, actions(), flows,
+      new SnapshotHydrator<BrainEvent>(), new HydrationNoticeOwner(),
+    );
     stream.openStream(ac);
 
     // Idle rollover: the server continued this message in a FRESH conversation, then re-emits the
     // triggering message as a `user` event and streams its reply — all in order, no history refetch.
     onEvent({ type: 'session', sessionId: 'fresh-1' });
-    expect(rt.view.turns).toEqual([]); // the prior conversation is cleared
+    expect(turns(rt.transcript)).toEqual([]); // the prior conversation is cleared
     onEvent({ type: 'user', text: 'today' });
     onEvent({ type: 'text', delta: 'streamed after rollover' });
 
-    expect(rt.view.turns[0]).toEqual({ role: 'you', text: 'today' });
-    expect(rt.view.turns.some((t) => t.role === 'elowen' && t.segments.some((s) => s.kind === 'text' && s.text.includes('streamed')))).toBe(true);
+    expect(turns(rt.transcript)[0]).toEqual({ role: 'you', text: 'today' });
+    expect(turns(rt.transcript).some((t) => t.role === 'elowen' && t.segments.some((s) => s.kind === 'text' && s.text.includes('streamed')))).toBe(true);
     expect(historyCalls).toBe(0); // a rollover never refetches — the fresh session has nothing stored yet
   });
 
@@ -75,21 +93,16 @@ describe('streamController — idle rollover', () => {
     } as unknown as BrainClient;
 
     const ac = new AbortController();
-    const rt = {
-      client,
-      view: fromHistory([{ role: 'user', text: 'q1' }, { role: 'assistant', text: 'long answer' }]),
-      childView: null,
-      streamAc: ac,
-      notice: '',
-      conversationTitle: 'seeded',
-      workMode: 'build',
-      render: () => {},
-      refreshMeta: async () => {},
-    } as unknown as ChatRuntime;
-    attachTranscript(rt);
+    const rt = state(
+      [{ role: 'user', text: 'q1' }, { role: 'assistant', text: 'long answer' }],
+      { conversationTitle: 'seeded', workMode: 'build' },
+    );
+    rt.streamAc = ac;
     const flows = { launchAsk: () => {}, openPlanDecision: () => {} } as unknown as Flows;
-
-    const stream = createStreamController(rt, flows);
+    const stream = new StreamCoordinator(
+      rt, { client }, actions(), flows,
+      new SnapshotHydrator<BrainEvent>(), new HydrationNoticeOwner(),
+    );
     stream.openStream(ac);
 
     // Auto-compact persisted server-side → `compacted`; the queued-flush turn immediately streams its
@@ -97,7 +110,7 @@ describe('streamController — idle rollover', () => {
     onEvent({ type: 'compacted' });
     onEvent({ type: 'text', delta: 'flush-turn reply' });
 
-    const hasFlushReply = (): boolean => rt.view.turns.some(
+    const hasFlushReply = (): boolean => turns(rt.transcript).some(
       (t) => t.role === 'elowen' && t.segments.some((s) => s.kind === 'text' && s.text.includes('flush-turn')));
     // Not folded into the stale pre-compaction view (it would be discarded when history lands).
     expect(hasFlushReply()).toBe(false);
@@ -106,7 +119,7 @@ describe('streamController — idle rollover', () => {
     hist.resolve([{ role: 'compaction', text: '' }, { role: 'user', text: 'q1' }]);
     await new Promise((r) => setTimeout(r, 0));
 
-    expect(rt.view.turns.some((t) => t.role === 'divider')).toBe(true);
+    expect(turns(rt.transcript).some((t) => t.role === 'divider')).toBe(true);
     expect(hasFlushReply()).toBe(true);
   });
 
@@ -118,33 +131,26 @@ describe('streamController — idle rollover', () => {
       rebind: () => {},
     } as unknown as BrainClient;
     const ac = new AbortController();
-    const rt = {
-      client,
-      view: fromHistory([{ role: 'assistant', text: 'hi' }]),
-      childView: null,
-      streamAc: ac,
-      notice: '',
-      conversationTitle: 'x',
-      workMode: 'build',
-      queued: [] as { id: string; text: string }[],
-      render: () => {},
-      refreshMeta: async () => {},
-    } as unknown as ChatRuntime;
-    attachTranscript(rt);
+    const rt = state([{ role: 'assistant', text: 'hi' }], {
+      conversationTitle: 'x', workMode: 'build', queued: [],
+    });
+    rt.streamAc = ac;
     const flows = { launchAsk: () => {}, openPlanDecision: () => {} } as unknown as Flows;
-
-    const stream = createStreamController(rt, flows);
+    const stream = new StreamCoordinator(
+      rt, { client }, actions(), flows,
+      new SnapshotHydrator<BrainEvent>(), new HydrationNoticeOwner(),
+    );
     stream.openStream(ac);
-    const before = rt.view;
+    const before = rt.transcript.revision;
 
     onEvent({ type: 'queue', items: [{ id: 'q1', text: 'one' }, { id: 'q2', text: 'two' }] });
     expect(rt.queued).toEqual([{ id: 'q1', text: 'one' }, { id: 'q2', text: 'two' }]);
-    expect(rt.view).toBe(before); // the ChatView is untouched — the queue is separate client state
+    expect(rt.transcript.revision).toBe(before); // queue state does not mutate the transcript model
 
     // A later snapshot (e.g. a removal or a drain) replaces wholesale — never a merge.
     onEvent({ type: 'queue', items: [] });
     expect(rt.queued).toEqual([]);
-    expect(rt.view).toBe(before);
+    expect(rt.transcript.revision).toBe(before);
   });
 
   it('a `process` event replaces rt.processes (full snapshot) without touching the transcript view', () => {
@@ -155,34 +161,27 @@ describe('streamController — idle rollover', () => {
       rebind: () => {},
     } as unknown as BrainClient;
     const ac = new AbortController();
-    const rt = {
-      client,
-      view: fromHistory([{ role: 'assistant', text: 'hi' }]),
-      childView: null,
-      streamAc: ac,
-      notice: '',
-      conversationTitle: 'x',
-      workMode: 'build',
-      processes: [] as { id: string; command: string; cwd: string; startedAt: string; running: boolean; exitCode: number | null }[],
-      render: () => {},
-      refreshMeta: async () => {},
-    } as unknown as ChatRuntime;
-    attachTranscript(rt);
+    const rt = state([{ role: 'assistant', text: 'hi' }], {
+      conversationTitle: 'x', workMode: 'build', processes: [],
+    });
+    rt.streamAc = ac;
     const flows = { launchAsk: () => {}, openPlanDecision: () => {} } as unknown as Flows;
-
-    const stream = createStreamController(rt, flows);
+    const stream = new StreamCoordinator(
+      rt, { client }, actions(), flows,
+      new SnapshotHydrator<BrainEvent>(), new HydrationNoticeOwner(),
+    );
     stream.openStream(ac);
-    const before = rt.view;
+    const before = rt.transcript.revision;
 
     const proc = { id: 'p1', command: 'npm run dev', cwd: '/x', startedAt: '2026-01-01T00:00:00.000Z', running: true, exitCode: null };
     onEvent({ type: 'process', processes: [proc] });
     expect(rt.processes).toEqual([proc]);
-    expect(rt.view).toBe(before); // the ChatView is untouched — the process list is separate client state
+    expect(rt.transcript.revision).toBe(before); // process state does not mutate the transcript model
 
     // A later snapshot (a kill/exit) replaces wholesale — the killed process just drops off.
     onEvent({ type: 'process', processes: [] });
     expect(rt.processes).toEqual([]);
-    expect(rt.view).toBe(before);
+    expect(rt.transcript.revision).toBe(before);
   });
 
   it('a `user` delivery event folds a you-turn into the transcript (the drained queued message)', () => {
@@ -193,26 +192,19 @@ describe('streamController — idle rollover', () => {
       rebind: () => {},
     } as unknown as BrainClient;
     const ac = new AbortController();
-    const rt = {
-      client,
-      view: fromHistory([{ role: 'assistant', text: 'previous reply' }]),
-      childView: null,
-      streamAc: ac,
-      notice: '',
-      conversationTitle: 'x',
-      workMode: 'build',
-      queued: [] as { id: string; text: string }[],
-      render: () => {},
-      refreshMeta: async () => {},
-    } as unknown as ChatRuntime;
-    attachTranscript(rt);
+    const rt = state([{ role: 'assistant', text: 'previous reply' }], {
+      conversationTitle: 'x', workMode: 'build', queued: [],
+    });
+    rt.streamAc = ac;
     const flows = { launchAsk: () => {}, openPlanDecision: () => {} } as unknown as Flows;
-
-    const stream = createStreamController(rt, flows);
+    const stream = new StreamCoordinator(
+      rt, { client }, actions(), flows,
+      new SnapshotHydrator<BrainEvent>(), new HydrationNoticeOwner(),
+    );
     stream.openStream(ac);
 
     onEvent({ type: 'user', text: 'combined queued delivery' });
-    expect(rt.view.turns.at(-1)).toEqual({ role: 'you', text: 'combined queued delivery' });
+    expect(turns(rt.transcript).at(-1)).toEqual({ role: 'you', text: 'combined queued delivery' });
   });
 
   it('drops buffered frames delivered by an aborted stale parent stream after a switch', () => {
@@ -224,20 +216,15 @@ describe('streamController — idle rollover', () => {
       rebind: (sessionId: string) => { rebinds.push(sessionId); },
     } as unknown as BrainClient;
     const oldAc = new AbortController();
-    const rt = {
-      client,
-      view: fromHistory([{ role: 'assistant', text: 'new selection stays' }]),
-      childView: null,
-      streamAc: oldAc,
-      notice: '',
-      conversationTitle: 'new',
-      workMode: 'build',
-      render: () => {},
-      refreshMeta: async () => {},
-      refreshRateLimits: async () => {},
-    } as unknown as ChatRuntime;
-    attachTranscript(rt);
-    const stream = createStreamController(rt, { launchAsk: () => {}, openPlanDecision: () => {} } as unknown as Flows);
+    const rt = state([{ role: 'assistant', text: 'new selection stays' }], {
+      conversationTitle: 'new', workMode: 'build',
+    });
+    rt.streamAc = oldAc;
+    const stream = new StreamCoordinator(
+      rt, { client }, actions(),
+      { launchAsk: () => {}, openPlanDecision: () => {} } as unknown as Flows,
+      new SnapshotHydrator<BrainEvent>(), new HydrationNoticeOwner(),
+    );
     stream.openStream(oldAc);
     rt.streamAc = new AbortController();
     oldAc.abort();
@@ -245,27 +232,15 @@ describe('streamController — idle rollover', () => {
     staleEvent({ type: 'session', sessionId: 'stale-rollover' });
     staleEvent({ type: 'text', delta: 'stale bytes' });
     expect(rebinds).toEqual([]);
-    expect(JSON.stringify(rt.view)).toContain('new selection stays');
-    expect(JSON.stringify(rt.view)).not.toContain('stale bytes');
+    expect(serialized(rt.transcript)).toContain('new selection stays');
+    expect(serialized(rt.transcript)).not.toContain('stale bytes');
   });
 });
 
-describe('streamController — bounded hydration lifecycle', () => {
-  const runtime = (client: BrainClient): ChatRuntime => attachTranscript({
-    client,
-    view: fromHistory([]),
-    childView: null,
-    childAc: null,
-    streamAc: new AbortController(),
-    notice: '',
-    conversationTitle: 'parent',
-    workMode: 'build',
-    queued: [],
-    processes: [],
-    render: () => {},
-    refreshMeta: async () => {},
-    refreshRateLimits: async () => {},
-  } as unknown as ChatRuntime);
+describe('StreamCoordinator — bounded hydration lifecycle', () => {
+  const runtime = (): ChatState => state([], {
+    conversationTitle: 'parent', workMode: 'build', queued: [], processes: [],
+  });
   const flows = { launchAsk: () => {}, openPlanDecision: () => {} } as unknown as Flows;
 
   it('times out a never-settling parent compaction read, retains live events and ignores the late result', async () => {
@@ -284,26 +259,28 @@ describe('streamController — bounded hydration lifecycle', () => {
         },
         rebind: () => {},
       } as unknown as BrainClient;
-      const rt = runtime(client);
+      const rt = runtime();
       rt.transcript.replaceHistory([{ role: 'assistant', text: 'last valid parent' }]);
       const renders = vi.fn();
-      rt.render = renders;
-      const stream = createStreamController(rt, flows);
+      const stream = new StreamCoordinator(
+        rt, { client }, actions({ render: renders }), flows,
+        new SnapshotHydrator<BrainEvent>(), new HydrationNoticeOwner(),
+      );
       stream.openStream(rt.streamAc);
 
       onFrame({ type: 'compacted' });
       onFrame({ type: 'text', delta: 'live while waiting' });
       await vi.advanceTimersByTimeAsync(10_000);
 
-      expect(JSON.stringify(rt.view)).toContain('last valid parent');
-      expect(JSON.stringify(rt.view)).toContain('live while waiting');
+      expect(serialized(rt.transcript)).toContain('last valid parent');
+      expect(serialized(rt.transcript)).toContain('live while waiting');
       expect(rt.notice).toMatch(/timed out/i);
       const renderCount = renders.mock.calls.length;
 
       history.resolve([{ role: 'assistant', text: 'late stale parent' }]);
       await Promise.resolve();
       await Promise.resolve();
-      expect(JSON.stringify(rt.view)).not.toContain('late stale parent');
+      expect(serialized(rt.transcript)).not.toContain('late stale parent');
       expect(renders).toHaveBeenCalledTimes(renderCount);
       stream.stop();
       expect(vi.getTimerCount()).toBe(0);
@@ -323,8 +300,11 @@ describe('streamController — bounded hydration lifecycle', () => {
           return history.promise;
         },
       } as unknown as BrainClient;
-      const rt = runtime(client);
-      const stream = createStreamController(rt, flows);
+      const rt = runtime();
+      const stream = new StreamCoordinator(
+        rt, { client }, actions(), flows,
+        new SnapshotHydrator<BrainEvent>(), new HydrationNoticeOwner(),
+      );
       const opening = stream.openSubagent('child-timeout');
       await Promise.resolve();
       await vi.advanceTimersByTimeAsync(10_000);
@@ -335,7 +315,7 @@ describe('streamController — bounded hydration lifecycle', () => {
       history.resolve([{ role: 'assistant', text: 'late child' }]);
       await Promise.resolve();
       await Promise.resolve();
-      expect(JSON.stringify(rt.childView?.view)).not.toContain('late child');
+      expect(serialized(rt.childView?.transcript)).not.toContain('late child');
       stream.stop();
       expect(vi.getTimerCount()).toBe(0);
     } finally {
@@ -350,13 +330,16 @@ describe('streamController — bounded hydration lifecycle', () => {
       stream: async () => {},
       rebind: () => {},
     } as unknown as BrainClient;
-    const rt = runtime(client);
+    const rt = runtime();
     rt.transcript.replaceHistory([{ role: 'assistant', text: 'last valid A' }]);
-    const stream = createStreamController(rt, flows);
+    const stream = new StreamCoordinator(
+      rt, { client }, actions(), flows,
+      new SnapshotHydrator<BrainEvent>(), new HydrationNoticeOwner(),
+    );
 
     await stream.switchTo({ session: 'B' });
 
-    expect(JSON.stringify(rt.view)).toContain('last valid A');
+    expect(serialized(rt.transcript)).toContain('last valid A');
     expect(rt.notice).toMatch(/could not load/i);
     stream.stop();
   });
@@ -379,13 +362,16 @@ describe('streamController — bounded hydration lifecycle', () => {
       parent: parentTimeout,
       child: childTimeout,
     });
-    const rt = runtime(client);
+    const rt = runtime();
     rt.notice = notices.render();
-    const stream = createStreamController(rt, flows, new SnapshotHydrator<BrainEvent>(), notices);
+    const stream = new StreamCoordinator(
+      rt, { client }, actions(), flows,
+      new SnapshotHydrator<BrainEvent>(), notices,
+    );
 
     await stream.switchTo({ session: 'B' });
 
-    expect(JSON.stringify(rt.view)).toContain('new session B history');
+    expect(serialized(rt.transcript)).toContain('new session B history');
     expect(rt.notice).toBe(`${keymapWarning} · ${externalNotice} · ${childTimeout}`);
     expect(rt.notice).not.toContain(parentTimeout);
     stream.stop();
@@ -408,8 +394,11 @@ describe('streamController — bounded hydration lifecycle', () => {
         },
         rebind: () => {},
       } as unknown as BrainClient;
-      const rt = runtime(client);
-      const stream = createStreamController(rt, flows);
+      const rt = runtime();
+      const stream = new StreamCoordinator(
+        rt, { client }, actions(), flows,
+        new SnapshotHydrator<BrainEvent>(), new HydrationNoticeOwner(),
+      );
       stream.openStream(rt.streamAc);
       parentFrame({ type: 'compacted' });
       const childOpening = stream.openSubagent('child-stop');
@@ -441,8 +430,11 @@ describe('streamController — bounded hydration lifecycle', () => {
       },
       rebind: () => {},
     } as unknown as BrainClient;
-    const rt = runtime(client);
-    const stream = createStreamController(rt, flows);
+    const rt = runtime();
+    const stream = new StreamCoordinator(
+      rt, { client }, actions(), flows,
+      new SnapshotHydrator<BrainEvent>(), new HydrationNoticeOwner(),
+    );
     stream.openStream(rt.streamAc);
     callbacks[0]!({ type: 'compacted' });
     for (let index = 0; index < 2_049; index += 1) {
@@ -452,7 +444,7 @@ describe('streamController — bounded hydration lifecycle', () => {
     expect(callbacks).toHaveLength(2);
     expect(streamSignals[0]?.aborted).toBe(true);
     expect(historySignal?.aborted).toBe(true);
-    expect(rt.view.turns).toEqual([]);
+    expect(turns(rt.transcript)).toEqual([]);
     stream.stop();
   });
 
@@ -479,10 +471,12 @@ describe('streamController — bounded hydration lifecycle', () => {
     (client as unknown as { stream(callback: (event: BrainEvent) => void, signal: AbortSignal): Promise<void> }).stream =
       async (callback) => { onFrame = callback; };
     const rebind = vi.spyOn(client, 'rebind');
-    const rt = runtime(client);
+    const rt = runtime();
     const invalidateAsyncState = vi.fn();
-    rt.invalidateAsyncState = invalidateAsyncState;
-    const stream = createStreamController(rt, flows);
+    const stream = new StreamCoordinator(
+      rt, { client }, actions({ invalidateAsyncState }), flows,
+      new SnapshotHydrator<BrainEvent>(), new HydrationNoticeOwner(),
+    );
     stream.openStream(rt.streamAc);
 
     onFrame({ type: 'compacted' });
@@ -499,13 +493,13 @@ describe('streamController — bounded hydration lifecycle', () => {
       'http://x/brain/messages?session=old',
       'http://x/brain/messages?session=fresh',
     ]);
-    expect(JSON.stringify(rt.view)).toContain('fresh durable history');
+    expect(serialized(rt.transcript)).toContain('fresh durable history');
     await client.send('future turn');
     expect(sent.at(-1)).toMatchObject({ session: 'fresh', text: 'future turn' });
 
     firstHistory.resolve(new Response(JSON.stringify([{ role: 'assistant', text: 'stale old history' }]), { status: 200 }));
     await Promise.resolve();
-    expect(JSON.stringify(rt.view)).not.toContain('stale old history');
+    expect(serialized(rt.transcript)).not.toContain('stale old history');
     expect(rebind).toHaveBeenCalledTimes(1);
     stream.stop();
   });
@@ -529,9 +523,9 @@ describe('streamController — bounded hydration lifecycle', () => {
       const boot = await bootLoading;
       const keymapWarning = '\u001b[33mkeybinds: invalid ctrl+x\u001b[39m';
       const notices = new HydrationNoticeOwner({ base: keymapWarning, parent: boot.notice });
-      const rt = runtime(client);
+      const rt = runtime();
       rt.notice = notices.render();
-      const stream = createStreamController(rt, flows, hydrator, notices);
+      const stream = new StreamCoordinator(rt, { client }, actions(), flows, hydrator, notices);
       stream.openStream(rt.streamAc);
 
       expect(rt.notice).toContain('timed out');
@@ -543,7 +537,7 @@ describe('streamController — bounded hydration lifecycle', () => {
 
       expect(rt.notice).toBe(keymapWarning);
       expect(rt.notice).not.toContain('timed out');
-      expect(JSON.stringify(rt.view)).toContain('recovered transcript');
+      expect(serialized(rt.transcript)).toContain('recovered transcript');
       stream.stop();
       expect(vi.getTimerCount()).toBe(0);
     } finally {
@@ -552,7 +546,7 @@ describe('streamController — bounded hydration lifecycle', () => {
   });
 });
 
-describe('streamController — parent snapshot hydration', () => {
+describe('StreamCoordinator — parent snapshot hydration', () => {
   it('replaces a stale parent view on reconnect and ignores an older history refetch', async () => {
     let onFrame!: (event: BrainEvent | { type: 'snapshot'; cursor: number; history: { role: string; text: string }[]; events: BrainEvent[] }) => void;
     const staleHistory = deferred<{ role: string; text: string }[]>();
@@ -567,20 +561,15 @@ describe('streamController — parent snapshot hydration', () => {
       rebind: () => {},
     } as unknown as BrainClient;
     const ac = new AbortController();
-    const rt = {
-      client,
-      view: fromHistory([{ role: 'assistant', text: 'stale on-screen output' }]),
-      childView: null,
-      streamAc: ac,
-      notice: '',
-      conversationTitle: 'seeded',
-      workMode: 'build',
-      render: () => {},
-      refreshMeta: async () => {},
-      refreshRateLimits: async () => {},
-    } as unknown as ChatRuntime;
-    attachTranscript(rt);
-    const stream = createStreamController(rt, { launchAsk: () => {}, openPlanDecision: () => {} } as unknown as Flows);
+    const rt = state([{ role: 'assistant', text: 'stale on-screen output' }], {
+      conversationTitle: 'seeded', workMode: 'build',
+    });
+    rt.streamAc = ac;
+    const stream = new StreamCoordinator(
+      rt, { client }, actions(),
+      { launchAsk: () => {}, openPlanDecision: () => {} } as unknown as Flows,
+      new SnapshotHydrator<BrainEvent>(), new HydrationNoticeOwner(),
+    );
     stream.openStream(ac);
 
     // Start an ordinary compaction refetch, then let a reconnect snapshot arrive before that GET settles.
@@ -597,17 +586,17 @@ describe('streamController — parent snapshot hydration', () => {
 
     // The sixth argument is the snapshot opt-in; it is present on the parent stream, not only drill-ins.
     expect(streamArgs[0]?.at(-1)).toBe(true);
-    let serialized = JSON.stringify(rt.view);
-    expect(serialized).toContain('stored answer');
-    expect(serialized).toContain('live tail');
-    expect(serialized).not.toContain('stale on-screen output');
-    expect(serialized).not.toContain('old refetch must not win');
+    let transcriptJson = serialized(rt.transcript);
+    expect(transcriptJson).toContain('stored answer');
+    expect(transcriptJson).toContain('live tail');
+    expect(transcriptJson).not.toContain('stale on-screen output');
+    expect(transcriptJson).not.toContain('old refetch must not win');
 
     // A later reconnect sends the same complete replacement, never an append of its final text.
     onFrame(snapshot);
-    serialized = JSON.stringify(rt.view);
-    expect(serialized.match(/stored answer/g)).toHaveLength(1);
-    expect(serialized.match(/live tail/g)).toHaveLength(1);
+    transcriptJson = serialized(rt.transcript);
+    expect(transcriptJson.match(/stored answer/g)).toHaveLength(1);
+    expect(transcriptJson.match(/live tail/g)).toHaveLength(1);
     ac.abort();
   });
 
@@ -626,13 +615,13 @@ describe('streamController — parent snapshot hydration', () => {
       rebind: () => {},
     } as unknown as BrainClient;
     const ac = new AbortController();
-    const rt = {
-      client, view: fromHistory([{ role: 'assistant', text: 'old screen' }]), childView: null,
-      streamAc: ac, notice: '', conversationTitle: '', workMode: 'build', render: () => {},
-      refreshMeta: async () => {}, refreshRateLimits: async () => {},
-    } as unknown as ChatRuntime;
-    attachTranscript(rt);
-    const stream = createStreamController(rt, { launchAsk: () => {}, openPlanDecision: () => {} } as unknown as Flows);
+    const rt = state([{ role: 'assistant', text: 'old screen' }], { workMode: 'build' });
+    rt.streamAc = ac;
+    const stream = new StreamCoordinator(
+      rt, { client }, actions(),
+      { launchAsk: () => {}, openPlanDecision: () => {} } as unknown as Flows,
+      new SnapshotHydrator<BrainEvent>(), new HydrationNoticeOwner(),
+    );
     stream.openStream(ac);
 
     onFrame({
@@ -644,14 +633,14 @@ describe('streamController — parent snapshot hydration', () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(history).toHaveBeenCalledTimes(1);
-    const rendered = JSON.stringify(rt.view);
+    const rendered = serialized(rt.transcript);
     expect(rendered).toContain('complete durable reply');
     expect(rendered).not.toContain('only surviving live suffix');
     ac.abort();
   });
 });
 
-describe('streamController — concurrent parent switches', () => {
+describe('StreamCoordinator — concurrent parent switches', () => {
   it('keeps B bound, rendered and streamed when the older A start response arrives last', async () => {
     const a = deferred<Response>();
     const b = deferred<Response>();
@@ -667,21 +656,12 @@ describe('streamController — concurrent parent switches', () => {
       stream: (onEvent: (event: BrainEvent) => void, signal: AbortSignal) => Promise<void>;
     }).stream = async (_onEvent, signal) => { streamSignals.push(signal); };
 
-    const rt = {
-      client,
-      view: fromHistory([]),
-      childView: null,
-      streamAc: new AbortController(),
-      notice: '',
-      conversationTitle: '',
-      workMode: 'build',
-      render: () => {},
-      refreshMeta: async () => {},
-      refreshRateLimits: async () => {},
-    } as unknown as ChatRuntime;
-    attachTranscript(rt);
+    const rt = state([], { workMode: 'build' });
     const flows = { launchAsk: () => {}, openPlanDecision: () => {} } as unknown as Flows;
-    const stream = createStreamController(rt, flows);
+    const stream = new StreamCoordinator(
+      rt, { client }, actions(), flows,
+      new SnapshotHydrator<BrainEvent>(), new HydrationNoticeOwner(),
+    );
 
     const switchA = stream.switchTo({ session: 'A' });
     const aSignal = rt.streamAc.signal;
@@ -692,29 +672,27 @@ describe('streamController — concurrent parent switches', () => {
     await switchA;
 
     expect(client.boundSession).toBe('B');
-    expect(JSON.stringify(rt.view)).toContain('history-B');
-    expect(JSON.stringify(rt.view)).not.toContain('history-A');
+    expect(serialized(rt.transcript)).toContain('history-B');
+    expect(serialized(rt.transcript)).not.toContain('history-A');
     expect(aSignal.aborted).toBe(true);
     expect(streamSignals).toEqual([rt.streamAc.signal]);
   });
 });
 
-describe('streamController — cached sub-agent projection', () => {
+describe('StreamCoordinator — cached sub-agent projection', () => {
   it('reuses the same projection across repeated frames instead of rescanning the transcript', () => {
-    let view = beginAssistant(emptyView());
-    view = reduce(view, { type: 'tool', id: 'delegate-1', name: 'delegate', detail: 'inspect tests' });
-    view = reduce(view, {
+    const rt = state();
+    rt.transcript.apply({ type: 'tool', id: 'delegate-1', name: 'delegate', detail: 'inspect tests' });
+    rt.transcript.apply({
       type: 'subagent', id: 'delegate-1', sessionId: 'child-1', status: 'running',
       task: 'inspect tests', detail: 'reading', tools: 2, seconds: 3,
     });
-    const rt = {
-      client: {} as BrainClient,
-      view, childView: null, childAc: null, streamAc: new AbortController(),
-      notice: '', conversationTitle: '', workMode: 'build', render: () => {},
-      refreshMeta: async () => {}, refreshRateLimits: async () => {},
-    } as unknown as ChatRuntime;
-    attachTranscript(rt);
-    const controller = createStreamController(rt, { launchAsk: () => {}, openPlanDecision: () => {} } as unknown as Flows);
+    const client = {} as BrainClient;
+    const controller = new StreamCoordinator(
+      rt, { client }, actions(),
+      { launchAsk: () => {}, openPlanDecision: () => {} } as unknown as Flows,
+      new SnapshotHydrator<BrainEvent>(), new HydrationNoticeOwner(),
+    );
     const first = controller.subagentStates();
     expect(first).toHaveLength(1);
     expect(controller.subagentStates()).toBe(first);
@@ -724,10 +702,10 @@ describe('streamController — cached sub-agent projection', () => {
   });
 
   it('cycles parent to each child and back without replacing the parent transcript', () => {
-    let view = beginAssistant(emptyView());
+    const rt = state();
     for (const index of [1, 2]) {
-      view = reduce(view, { type: 'tool', id: `delegate-${index}`, name: 'delegate', detail: `child ${index}` });
-      view = reduce(view, {
+      rt.transcript.apply({ type: 'tool', id: `delegate-${index}`, name: 'delegate', detail: `child ${index}` });
+      rt.transcript.apply({
         type: 'subagent', id: `delegate-${index}`, sessionId: `child-${index}`, status: 'running',
         task: `child ${index}`, tools: index, seconds: index,
       });
@@ -748,41 +726,27 @@ describe('streamController — cached sub-agent projection', () => {
       },
       history: () => Promise.resolve([]),
     } as unknown as BrainClient;
-    const rt = {
-      client, view, childView: null, childAc: null, streamAc: new AbortController(),
-      notice: '', conversationTitle: '', workMode: 'build', render: () => {},
-      refreshMeta: async () => {}, refreshRateLimits: async () => {},
-    } as unknown as ChatRuntime;
-    attachTranscript(rt);
-    const parentView = rt.view;
-    const controller = createStreamController(rt, { launchAsk: () => {}, openPlanDecision: () => {} } as unknown as Flows);
+    const parentTranscript = rt.transcript;
+    const controller = new StreamCoordinator(
+      rt, { client }, actions(),
+      { launchAsk: () => {}, openPlanDecision: () => {} } as unknown as Flows,
+      new SnapshotHydrator<BrainEvent>(), new HydrationNoticeOwner(),
+    );
 
     controller.cycleSubagent();
     expect(rt.childView?.sessionId).toBe('child-1');
-    expect(JSON.stringify(rt.childView?.view)).toContain('transcript child-1');
+    expect(serialized(rt.childView?.transcript)).toContain('transcript child-1');
     controller.cycleSubagent();
     expect(rt.childView?.sessionId).toBe('child-2');
-    expect(JSON.stringify(rt.childView?.view)).toContain('transcript child-2');
+    expect(serialized(rt.childView?.transcript)).toContain('transcript child-2');
     controller.cycleSubagent();
     expect(rt.childView).toBeNull();
-    expect(rt.view).toBe(parentView);
+    expect(rt.transcript).toBe(parentTranscript);
   });
 });
 
-describe('streamController — sub-agent drill-in hydration', () => {
-  const runtime = (client: BrainClient): ChatRuntime => attachTranscript({
-    client,
-    view: fromHistory([]),
-    childView: null,
-    childAc: null,
-    streamAc: new AbortController(),
-    notice: '',
-    conversationTitle: 'parent',
-    workMode: 'build',
-    render: () => {},
-    refreshMeta: async () => {},
-    refreshRateLimits: async () => {},
-  } as unknown as ChatRuntime);
+describe('StreamCoordinator — sub-agent drill-in hydration', () => {
+  const runtime = (): ChatState => state([], { conversationTitle: 'parent', workMode: 'build' });
   const flows = { launchAsk: () => {}, openPlanDecision: () => {} } as unknown as Flows;
 
   it('cancels the fallback timer when a pending child drill-in is closed', async () => {
@@ -794,8 +758,11 @@ describe('streamController — sub-agent drill-in hydration', () => {
           new Promise<void>((resolve) => signal.addEventListener('abort', () => resolve(), { once: true })),
         history,
       } as unknown as BrainClient;
-      const rt = runtime(client);
-      const stream = createStreamController(rt, flows);
+      const rt = runtime();
+      const stream = new StreamCoordinator(
+        rt, { client }, actions(), flows,
+        new SnapshotHydrator<BrainEvent>(), new HydrationNoticeOwner(),
+      );
 
       const opening = stream.openSubagent('child-pending');
       expect(vi.getTimerCount()).toBe(1);
@@ -831,8 +798,11 @@ describe('streamController — sub-agent drill-in hydration', () => {
       },
       history: (session: string) => { order.push(`history:${session}`); return Promise.resolve([]); },
     } as unknown as BrainClient;
-    const rt = runtime(client);
-    const stream = createStreamController(rt, flows);
+    const rt = runtime();
+    const stream = new StreamCoordinator(
+      rt, { client }, actions(), flows,
+      new SnapshotHydrator<BrainEvent>(), new HydrationNoticeOwner(),
+    );
 
     const opening = stream.openSubagent('child-a');
     expect(order).toEqual(['stream:child-a:true']);
@@ -840,8 +810,8 @@ describe('streamController — sub-agent drill-in hydration', () => {
     await opening;
 
     expect(rt.childView?.loading).toBe(false);
-    expect(JSON.stringify(rt.childView?.view)).toContain('stored before tap');
-    expect(JSON.stringify(rt.childView?.view)).toContain('live before tap');
+    expect(serialized(rt.childView?.transcript)).toContain('stored before tap');
+    expect(serialized(rt.childView?.transcript)).toContain('live before tap');
     expect(order.some((entry) => entry.startsWith('history:'))).toBe(false);
     stream.closeSubagent();
   });
@@ -861,8 +831,11 @@ describe('streamController — sub-agent drill-in hydration', () => {
       },
       history: () => Promise.resolve([]),
     } as unknown as BrainClient;
-    const rt = runtime(client);
-    const stream = createStreamController(rt, flows);
+    const rt = runtime();
+    const stream = new StreamCoordinator(
+      rt, { client }, actions(), flows,
+      new SnapshotHydrator<BrainEvent>(), new HydrationNoticeOwner(),
+    );
 
     const openingA = stream.openSubagent('child-a');
     const openingB = stream.openSubagent('child-b');
@@ -872,8 +845,8 @@ describe('streamController — sub-agent drill-in hydration', () => {
     await openingA;
 
     expect(rt.childView?.sessionId).toBe('child-b');
-    expect(JSON.stringify(rt.childView?.view)).toContain('answer B');
-    expect(JSON.stringify(rt.childView?.view)).not.toContain('late answer A');
+    expect(serialized(rt.childView?.transcript)).toContain('answer B');
+    expect(serialized(rt.childView?.transcript)).not.toContain('late answer A');
     stream.closeSubagent();
   });
 
@@ -891,16 +864,19 @@ describe('streamController — sub-agent drill-in hydration', () => {
       },
       history: () => Promise.resolve([]),
     } as unknown as BrainClient;
-    const rt = runtime(client);
-    const stream = createStreamController(rt, flows);
+    const rt = runtime();
+    const stream = new StreamCoordinator(
+      rt, { client }, actions(), flows,
+      new SnapshotHydrator<BrainEvent>(), new HydrationNoticeOwner(),
+    );
 
     const opening = stream.openSubagent('child-settled');
     await opening;
     // The same stream reconnects and receives a fresh replace-in-place snapshot.
     onChildEvent({ type: 'snapshot', cursor: 4, history: [{ role: 'assistant', text: 'persisted final' }], events: [{ type: 'idle' }] });
 
-    const serialized = JSON.stringify(rt.childView?.view);
-    expect(serialized.match(/persisted final/g)).toHaveLength(1);
+    const transcriptJson = serialized(rt.childView?.transcript);
+    expect(transcriptJson.match(/persisted final/g)).toHaveLength(1);
     stream.closeSubagent();
   });
 
@@ -909,10 +885,13 @@ describe('streamController — sub-agent drill-in hydration', () => {
       stream: () => Promise.reject(new Error('offline')),
       history: () => Promise.resolve([{ role: 'assistant', text: 'fallback history' }]),
     } as unknown as BrainClient;
-    const rt = runtime(client);
-    const stream = createStreamController(rt, flows);
+    const rt = runtime();
+    const stream = new StreamCoordinator(
+      rt, { client }, actions(), flows,
+      new SnapshotHydrator<BrainEvent>(), new HydrationNoticeOwner(),
+    );
     await stream.openSubagent('child-fallback');
-    expect(JSON.stringify(rt.childView?.view)).toContain('fallback history');
+    expect(serialized(rt.childView?.transcript)).toContain('fallback history');
     stream.closeSubagent();
   });
 
@@ -926,13 +905,16 @@ describe('streamController — sub-agent drill-in hydration', () => {
       },
       history,
     } as unknown as BrainClient;
-    const rt = runtime(client);
-    const stream = createStreamController(rt, flows);
+    const rt = runtime();
+    const stream = new StreamCoordinator(
+      rt, { client }, actions(), flows,
+      new SnapshotHydrator<BrainEvent>(), new HydrationNoticeOwner(),
+    );
 
     await stream.openSubagent('child-settled-fallback');
 
     expect(history).toHaveBeenCalledTimes(2);
-    expect(JSON.stringify(rt.childView?.view).match(/complete fallback answer/g)).toHaveLength(1);
+    expect(serialized(rt.childView?.transcript).match(/complete fallback answer/g)).toHaveLength(1);
     stream.closeSubagent();
   });
 
@@ -950,16 +932,19 @@ describe('streamController — sub-agent drill-in hydration', () => {
       },
       history,
     } as unknown as BrainClient;
-    const rt = runtime(client);
-    const stream = createStreamController(rt, flows);
+    const rt = runtime();
+    const stream = new StreamCoordinator(
+      rt, { client }, actions(), flows,
+      new SnapshotHydrator<BrainEvent>(), new HydrationNoticeOwner(),
+    );
     await stream.openSubagent('child-truncated');
 
     onFrame({ type: 'idle' });
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(history).toHaveBeenCalledTimes(1);
-    expect(JSON.stringify(rt.childView?.view)).toContain('complete durable child');
-    expect(JSON.stringify(rt.childView?.view)).not.toContain('partial child suffix');
+    expect(serialized(rt.childView?.transcript)).toContain('complete durable child');
+    expect(serialized(rt.childView?.transcript)).not.toContain('partial child suffix');
     stream.closeSubagent();
   });
 });

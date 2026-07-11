@@ -4,7 +4,7 @@ import {
 } from '../../../src/cli/chat/keys.js';
 import {
   bottomHints, INTERRUPT_CONFIRM_MS, interruptPress, startScreenHints, quitHint,
-} from '../../../src/cli/chat/shell.js';
+} from '../../../src/cli/chat/chatComposition.js';
 
 // Raw bytes the terminal sends for the chords under test.
 const CTRL = (letter: string): string => String.fromCharCode(letter.charCodeAt(0) - 96);

@@ -20,8 +20,9 @@ import {
 import { TelemetryPanel } from './telemetryPanel.js';
 import { MentionOverlay, SlashOverlay } from './suggestionOverlay.js';
 import type { BrainWorkMode } from './brainClient.js';
-import type { ChatRuntime } from './runtime.js';
-import type { StreamController } from './streamController.js';
+import type { ChatState } from './chatState.js';
+import type { ChatApplicationActions, ChatApplicationResources } from './chatCapabilities.js';
+import type { StreamCoordinatorPort } from './streamCoordinator.js';
 import { AnimationController } from './animationController.js';
 import { InputRouter } from './inputRouter.js';
 import { OverlayController } from './overlayController.js';
@@ -140,12 +141,17 @@ function modelMetaLine(mode: BrainWorkMode, modelName: string, thinkingLevel: st
 /** The render shell: layout composition (chat stack vs start screen, telemetry panel), the render()
  *  pass, the slash/mention suggestion overlays, and the global mouse/key input routing. */
 export function createChatComposition(
-  rt: ChatRuntime,
-  stream: StreamController,
+  rt: ChatState,
+  resources: ChatApplicationResources,
+  actions: ChatApplicationActions,
+  stream: StreamCoordinatorPort,
   mdTheme: MarkdownTheme,
   diagnostics: TuiDiagnostics,
 ): ChatComposition {
-  const { client, tui, term, editor, editorSlot, inputStack, attachmentChips, cwdLabel, branchLabel } = rt;
+  const {
+    client, tui, term, editor, editorSlot, inputStack, attachmentChips, queuedMessages,
+    promptStash, shellContext, mentionIndex, commandDefs, cwdLabel, branchLabel,
+  } = resources;
   let renderOwner!: RenderShell;
   const render = (reason = 'state'): void => renderOwner.scheduleRender(reason);
   const renderForced = (reason = 'geometry'): void => renderOwner.scheduleForcedRender(reason);
@@ -167,7 +173,7 @@ export function createChatComposition(
   const quitLabel = quitHint(keymap);
   const bottomBar = new StatusBar(color.faint(`  ${bottomHints(keymap, 'idle')}`), quitLabel ? color.faint(`${quitLabel}  `) : '');
 
-  const slashItems = rt.commandDefs.map((cmd) => ({
+  const slashItems = commandDefs.map((cmd) => ({
     value: `/${cmd.name}`,
     label: `/${cmd.name}`,
     description: cmd.description,
@@ -184,14 +190,14 @@ export function createChatComposition(
   let inputRouter: InputRouter | null = null;
   let overlayController!: OverlayController;
   /** An empty conversation renders the centered start screen instead of the chat stack + panel. */
-  const hasMessages = (): boolean => rt.view.turns.length > 0;
+  const hasMessages = (): boolean => rt.transcript.turnCount > 0;
   const panelVisible = (): boolean => term.columns >= 104 && hasMessages() && !panelHandle?.isHidden();
   const panelReserve = (): number => panelVisible() ? panelWidth + PANEL_GUTTER_COLUMNS : 0;
   const chatWidth = (): number => Math.max(1, term.columns - panelReserve());
   const panelLeftEdge = (): number => term.columns - panelWidth;
   const animations = new AnimationController({
     render,
-    canAnimateMascot: () => panelVisible() && !rt.view.thinking && !rt.childView?.view.thinking,
+    canAnimateMascot: () => panelVisible() && !rt.transcript.thinking && !rt.childView?.transcript.thinking,
   });
   const cancelFloat = (): void => animations.cancelMascot();
   let currentBudget: LayoutBudget | null = null;
@@ -213,12 +219,12 @@ export function createChatComposition(
       if (!budget) return [];
       const cached = preparedInput?.width === width ? preparedInput : {
         width,
-        queue: rt.queuedMessages.render(width),
+        queue: queuedMessages.render(width),
         attachments: attachmentChips.render(width),
         editor: editorSlot.render(width),
       };
-      rt.queuedMessages.setMaxRows(budget.sections.queue);
-      const queue = budget.sections.queue > 0 ? rt.queuedMessages.render(width) : [];
+      queuedMessages.setMaxRows(budget.sections.queue);
+      const queue = budget.sections.queue > 0 ? queuedMessages.render(width) : [];
       const attachments = cached.attachments.slice(0, budget.sections.attachments);
       const editorRows = budget.sections.editor > 0 ? cached.editor.slice(-budget.sections.editor) : [];
       return [...queue, ...attachments, ...editorRows];
@@ -227,11 +233,11 @@ export function createChatComposition(
   const refreshLayoutBudget = (): LayoutBudget => {
     const width = chatWidth();
     // Desired queue height is uncapped; computeLayoutBudget is the sole presentation cap.
-    rt.queuedMessages.setMaxRows(null);
+    queuedMessages.setMaxRows(null);
     activeInputComponent()?.setMaxRows?.(null);
     preparedInput = {
       width,
-      queue: rt.queuedMessages.render(width),
+      queue: queuedMessages.render(width),
       attachments: attachmentChips.render(width),
       editor: editorSlot.render(width),
     };
@@ -290,7 +296,7 @@ export function createChatComposition(
   };
 
   const parentViewport = new ChatViewport(
-    { transcript: rt.transcript, transcriptNotice: rt.view.notice, notice: rt.notice, modelName: rt.modelName, thinkingSeconds: 0 },
+    { transcript: rt.transcript, transcriptNotice: rt.transcript.notice, notice: rt.notice, modelName: rt.modelName, thinkingSeconds: 0 },
     mdTheme,
     () => rowBudget().sections.transcript,
     () => TOP_RULE_ROWS + 1,
@@ -301,7 +307,7 @@ export function createChatComposition(
   const newChildViewport = (): ChatViewport => new ChatViewport(
     {
       transcript: rt.childView?.transcript ?? rt.transcript,
-      transcriptNotice: (rt.childView?.view ?? rt.view).notice,
+      transcriptNotice: rt.childView?.transcript.notice ?? rt.transcript.notice,
       notice: '', modelName: rt.modelName, thinkingSeconds: 0,
     },
     mdTheme,
@@ -387,18 +393,18 @@ export function createChatComposition(
   };
   const prepareFrame = (): void => {
     if (!panelVisible()) cancelFloat();
-    if (rt.view.thinking) {
+    if (rt.transcript.thinking) {
       if (!thinkStart) thinkStart = Date.now();
     } else {
       thinkStart = 0;
       clearInterruptArm();
     }
-    const animateThinking = rt.view.thinking || !!rt.childView?.view.thinking;
+    const animateThinking = rt.transcript.thinking || !!rt.childView?.transcript.thinking;
     animations.updateThinking(animateThinking);
     currentRunSeconds = thinkStart ? Math.max(0, Math.round((Date.now() - thinkStart) / 1000)) : 0;
     parentViewport.setState({
       transcript: rt.transcript,
-      transcriptNotice: rt.view.notice,
+      transcriptNotice: rt.transcript.notice,
       notice: rt.notice,
       modelName: rt.modelName,
       thinkingSeconds: currentRunSeconds,
@@ -411,7 +417,7 @@ export function createChatComposition(
       }
       childViewport.setState({
         transcript: rt.childView.transcript,
-        transcriptNotice: rt.childView.view.notice,
+        transcriptNotice: rt.childView.transcript.notice,
         notice: rt.childView.loading
           ? color.dim('· loading sub-agent transcript…')
           : (rt.notice || color.dim('· sub-agent session — your messages go to this agent')),
@@ -426,13 +432,13 @@ export function createChatComposition(
       childViewportSession = '';
     }
     // Contextual footer: while streaming, Esc interrupts; inside a sub-agent view, input steers the child.
-    const footerState = rt.childView ? 'child' : rt.view.thinking ? 'thinking' : 'idle';
+    const footerState = rt.childView ? 'child' : rt.transcript.thinking ? 'thinking' : 'idle';
     const agents = stream.subagentStates(); // one transcript scan per frame (formerly two)
     bottomBar.setLeft(color.faint(`  ${bottomHints(keymap, footerState, agents.length > 0, interruptArmedUntil > Date.now())}`)
-      + (footerState === 'idle' && rt.shellContext.pending ? `   ${color.warning('· ! output → next message')}` : ''));
+      + (footerState === 'idle' && shellContext.pending ? `   ${color.warning('· ! output → next message')}` : ''));
     const projectLine = `${color.dim(cwdLabel)}${branchLabel ? color.faint(` · ${branchLabel}`) : ''}`;
     const line = statusline(rt.lineCfg ? { ...rt.lineCfg, showModel: false } : null, rt.usage, rt.modelName);
-    promptMeta.setLeft(modelMetaLine(rt.workMode, rt.modelName, rt.thinkingLevelLabels[rt.thinkingLevel] ?? rt.thinkingLevel, rt.view.thinking ? generatingChip(currentRunSeconds) : undefined, rt.yoloOn, rt.fastOn) + leaderChip());
+    promptMeta.setLeft(modelMetaLine(rt.workMode, rt.modelName, rt.thinkingLevelLabels[rt.thinkingLevel] ?? rt.thinkingLevel, rt.transcript.thinking ? generatingChip(currentRunSeconds) : undefined, rt.yoloOn, rt.fastOn) + leaderChip());
     promptMeta.setRight(panelVisible() || !line ? projectLine : `${color.faint(line)} ${color.faint('·')} ${projectLine}`);
     // Drop the terminal plugin's pinned `bg-processes` card only while the dedicated right rail is
     // actually visible. Narrow terminals cannot fit that rail; retaining the compact card there avoids
@@ -441,7 +447,7 @@ export function createChatComposition(
     subPanel.set(agents);
     // Pending mid-turn queue strip above the composer (with the remove-last keybind hint when bound).
     const removeChord = keymap.chordLabel('queue_remove');
-    rt.queuedMessages.set(rt.queued, rt.queued.length && removeChord ? `${removeChord} removes the last queued message` : null);
+    queuedMessages.set(rt.queued, rt.queued.length && removeChord ? `${removeChord} removes the last queued message` : null);
   };
   renderOwner = new RenderShell({
     tui,
@@ -462,6 +468,9 @@ export function createChatComposition(
       type: 'scheduler', action: 'flush', reasons: frame.reasons, forced: frame.forced,
     }),
   });
+  // TerminalLifecycle is the only owner allowed to resume rendering. Keep the scheduler paused while
+  // composition mounts overlays/focus so a zero-delay PI request can never paint the primary buffer.
+  renderOwner.pause();
   overlayController = new OverlayController(tui, renderForced);
 
   // Live-apply a rebind from the /keybinds editor: point `keymap` at the freshly-built active map and
@@ -528,7 +537,7 @@ export function createChatComposition(
   /** Ranked suggestions for a mention query: fuzzy + frecency over the project index, with the
    *  `@clipboard` pseudo-file pinned on top while the query still matches it. */
   const mentionItems = (query: string): { value: string; label: string; description?: string }[] => {
-    const items = rankMentionFiles(rt.mentionIndex.files(), query, rt.mentionFrecency)
+    const items = rankMentionFiles(mentionIndex.files(), query, rt.mentionFrecency)
       .map((path) => ({ value: path, label: path, description: imageMimeFor(path) ? 'image' : undefined }));
     if (CLIPBOARD_MENTION.startsWith(query.toLowerCase())) {
       items.unshift({ value: CLIPBOARD_MENTION, label: CLIPBOARD_MENTION, description: 'attach the clipboard image' });
@@ -548,7 +557,7 @@ export function createChatComposition(
   /** Open the file-mention suggestions (same non-capturing pattern as the slash overlay). */
   const openMention = (): void => {
     closeMention();
-    rt.mentionIndex.refreshIfStale(); // a new mention re-lists a stale index; keystrokes stay cached
+    mentionIndex.refreshIfStale(); // a new mention re-lists a stale index; keystrokes stay cached
     const overlay = new MentionOverlay();
     overlay.setItems(mentionItems(''));
     mentionOverlay = overlay;
@@ -593,7 +602,7 @@ export function createChatComposition(
   // an accidental Esc harmless without changing one-Esc dismissal for overlays/attachments/child drill-in.
   editor.onEscape = (): boolean => {
     if (rt.childView) { stream.closeSubagent(); return true; }
-    if (rt.view.thinking) {
+    if (rt.transcript.thinking) {
       const next = interruptPress(interruptArmedUntil, Date.now());
       interruptArmedUntil = next.armedUntil;
       animations.cancelVisual('interrupt-arm');
@@ -687,7 +696,7 @@ export function createChatComposition(
     const dispatchAction = (action: KeybindAction): void => {
       switch (action) {
         case 'leader': return; // the leader only prefixes — it is never an action of its own
-        case 'quit': rt.quit(); return;
+        case 'quit': actions.quit(); return;
         // No telemetry panel on the start screen — a toggle there would silently pre-hide it for later.
         case 'telemetry_toggle': {
           if (!hasMessages()) return;
@@ -703,11 +712,11 @@ export function createChatComposition(
           const draft = editor.getText();
           const stashChord = keymap.chordLabel('stash') ?? '/keybinds';
           if (draft.trim()) {
-            rt.promptStash.push(draft);
+            promptStash.push(draft);
             editor.setText('');
-            rt.notice = color.dim(`Draft stashed — ${stashChord} to restore${rt.promptStash.size > 1 ? ` (${rt.promptStash.size} stashed)` : ''}`);
+            rt.notice = color.dim(`Draft stashed — ${stashChord} to restore${promptStash.size > 1 ? ` (${promptStash.size} stashed)` : ''}`);
           } else {
-            const restored = rt.promptStash.pop();
+            const restored = promptStash.pop();
             if (restored != null) { editor.setText(restored); rt.notice = color.dim('Stashed draft restored'); }
             else rt.notice = color.dim(`no stashed draft — ${stashChord} with text stashes it`);
           }
@@ -741,8 +750,12 @@ export function createChatComposition(
       }
     };
     inputRouter = new InputRouter(tui, {
-      rt,
+      state: rt,
+      term,
+      editor,
       stream,
+      quit: actions.quit,
+      renderForced: actions.renderForced,
       keymap: () => keymap,
       leader: () => leader,
       dispatchAction,

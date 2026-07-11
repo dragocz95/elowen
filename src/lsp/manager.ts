@@ -166,32 +166,32 @@ export class LspManager {
     try { text = this.readFile(path); }
     catch { return { path, language, diagnostics: [], skipped: 'unreadable' }; }
     const root = projectRootForFile(path, boundary ?? this.root);
-    const found = this.clientFor(spec, root);
-    if (!found) return { path, language, server: spec.label, diagnostics: [], skipped: 'no-server-installed' };
-    found.entry.activeChecks++;
+    const entry = this.clientFor(spec, root);
+    if (!entry) return { path, language, server: spec.label, diagnostics: [], skipped: 'no-server-installed' };
+    entry.activeChecks++;
     try {
       // A fresh server gets the generous first-check window (it's loading the project); warm re-checks
       // use the short one so a broken edit surfaces fast.
-      const timeoutMs = found.entry.warmed ? this.recheckTimeoutMs : this.firstCheckTimeoutMs;
-      const { diagnostics, published } = await found.entry.client.diagnose(path, text, language, timeoutMs, this.settleMs);
+      const timeoutMs = entry.warmed ? this.recheckTimeoutMs : this.firstCheckTimeoutMs;
+      const { diagnostics, published } = await entry.client.diagnose(path, text, language, timeoutMs, this.settleMs);
       // No verdict within the window: say so instead of a false "no problems" — the worst possible
       // answer for an agent probe is a wrong all-clear.
       if (!published) {
         // publishDiagnostics is often unversioned. After a timeout, a delayed verdict for text A could
         // otherwise satisfy the next check for text B on the same URI. Quarantine the whole client;
         // the next probe starts with a fresh server and cannot consume that stale publish.
-        this.retire(found.entry);
+        this.retire(entry);
         return { path, language, server: spec.label, diagnostics: [], skipped: 'no-response' };
       }
-      found.entry.warmed = true;
+      entry.warmed = true;
       return { path, language, server: spec.label, diagnostics };
     } catch {
       // The server crashed/timed out — drop the client so the next check re-spawns, and say so honestly
       // (NOT "no server installed", which would send the agent chasing an install it already has).
-      this.retire(found.entry);
+      this.retire(entry);
       return { path, language, server: spec.label, diagnostics: [], skipped: 'server-error' };
     } finally {
-      this.release(found.entry);
+      this.release(entry);
     }
   }
 
@@ -205,14 +205,14 @@ export class LspManager {
     return [...this.clients.values(), ...this.retiredClients];
   }
 
-  private clientFor(spec: LanguageServerSpec, root: string): { entry: ManagedClient; fresh: boolean } | null {
+  private clientFor(spec: LanguageServerSpec, root: string): ManagedClient | null {
     const key = this.keyFor(spec, root);
     const existing = this.clients.get(key);
     if (existing && !existing.client.isDisposed()) {
       // Map insertion order is the LRU queue. A hit becomes newest.
       this.clients.delete(key);
       this.clients.set(key, existing);
-      return { entry: existing, fresh: false };
+      return existing;
     }
     if (existing) this.retire(existing); // a crashed/exited server client — evict and respawn below
     const transport = this.spawnFn(spec, root);
@@ -221,7 +221,7 @@ export class LspManager {
     const client = new LspClient(transport, root);
     const entry: ManagedClient = { key, command: spec.command, client, activeChecks: 0, retired: false, warmed: false };
     this.clients.set(key, entry);
-    return { entry, fresh: true };
+    return entry;
   }
 
   /** Evict the oldest reusable client which is not serving a diagnostics call. When every client is busy,

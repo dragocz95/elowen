@@ -6,8 +6,9 @@ import { editTextExternally } from './externalEditor.js';
 import { composeWithAttachments, expandMentions, MAX_IMAGES_PER_MESSAGE, readClipboardImage, type PendingImage } from './mentions.js';
 import { sessionItems, openPicker, openTextInput } from './picker.js';
 import type { BrainClient } from './brainClient.js';
-import type { ChatRuntime } from './runtime.js';
-import type { StreamController } from './streamController.js';
+import type { ChatState } from './chatState.js';
+import type { ChatApplicationActions, ChatApplicationResources } from './chatCapabilities.js';
+import type { StreamCoordinatorPort } from './streamCoordinator.js';
 import type { Pickers } from './pickers.js';
 
 /** Resolve either PI's canonical reasoning id or its provider-facing label (`ultra` → `xhigh`). */
@@ -74,45 +75,43 @@ function goalSummary(g: Awaited<ReturnType<BrainClient['goal']>>): string {
   return bits.join(' · ');
 }
 
-function handleGoalCommand(rt: ChatRuntime, arg?: string): void {
-  const { client } = rt;
+function handleGoalCommand(rt: ChatState, client: BrainClient, render: (reason?: string) => void, arg?: string): void {
   const raw = (arg ?? '').trim();
   if (!raw || raw === 'status' || raw === 'show') {
-    void client.goal().then((g) => { rt.notice = color.dim(goalSummary(g)); rt.render(); })
-      .catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); rt.render(); });
+    void client.goal().then((g) => { rt.notice = color.dim(goalSummary(g)); render(); })
+      .catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); render(); });
     return;
   }
   if (raw === 'pause' || raw === 'resume' || raw === 'clear') {
-    void client.goalAction(raw).then((g) => { rt.notice = color.dim(raw === 'clear' ? 'goal cleared' : goalSummary(g)); rt.render(); })
-      .catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); rt.render(); });
+    void client.goalAction(raw).then((g) => { rt.notice = color.dim(raw === 'clear' ? 'goal cleared' : goalSummary(g)); render(); })
+      .catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); render(); });
     return;
   }
   const draft = raw.startsWith('draft ');
   const text = draft ? raw.slice('draft '.length).trim() : raw;
   rt.notice = color.dim(draft ? 'drafting goal…' : 'starting persistent goal…');
-  rt.render();
-  void client.setGoal(text, draft).then((g) => { rt.notice = color.dim(draft ? `goal draft:\n${g.draft}` : goalSummary(g)); rt.render(); })
-    .catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); rt.render(); });
+  render();
+  void client.setGoal(text, draft).then((g) => { rt.notice = color.dim(draft ? `goal draft:\n${g.draft}` : goalSummary(g)); render(); })
+    .catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); render(); });
 }
 
-function handleSubgoalCommand(rt: ChatRuntime, arg?: string): void {
-  const { client } = rt;
+function handleSubgoalCommand(rt: ChatState, client: BrainClient, render: (reason?: string) => void, arg?: string): void {
   const raw = (arg ?? '').trim();
-  if (!raw) { rt.notice = color.dim('usage: /subgoal <text> · /subgoal remove <N> · /subgoal clear'); rt.render(); return; }
+  if (!raw) { rt.notice = color.dim('usage: /subgoal <text> · /subgoal remove <N> · /subgoal clear'); render(); return; }
   const remove = /^remove\s+(\d+)$/i.exec(raw);
   const action = raw === 'clear' ? ['clear', undefined] as const : remove ? ['remove', Number(remove[1])] as const : ['add', raw] as const;
-  void client.subgoal(action[0], action[1]).then((g) => { rt.notice = color.dim(goalSummary(g)); rt.render(); })
-    .catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); rt.render(); });
+  void client.subgoal(action[0], action[1]).then((g) => { rt.notice = color.dim(goalSummary(g)); render(); })
+    .catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); render(); });
 }
 
 /** Park an image for the next send and surface it in the chip row. */
-function attachImage(rt: ChatRuntime, img: PendingImage): void {
+function attachImage(rt: ChatState, attachmentChips: ChatApplicationResources['attachmentChips'], img: PendingImage): void {
   if (rt.pendingImages.length >= MAX_IMAGES_PER_MESSAGE) {
     rt.notice = color.error(`max ${MAX_IMAGES_PER_MESSAGE} images per message — send or esc-drop first`);
     return;
   }
   rt.pendingImages = [...rt.pendingImages, img];
-  rt.attachmentChips.set(rt.pendingImages);
+  attachmentChips.set(rt.pendingImages);
   rt.notice = color.dim(`${img.name} attached (${Math.max(1, Math.round(img.bytes / 1024))} KB) — sends with your next message`);
 }
 
@@ -127,8 +126,14 @@ export function compactNotice(result: { compacted: boolean; message?: string }):
   return result.compacted ? null : (result.message ?? 'Nothing to compact yet.');
 }
 
-export function wireSubmit(rt: ChatRuntime, deps: { stream: StreamController; pickers: Pickers }): void {
-  const { client, tui, editor, attachmentChips, shellContext } = rt;
+export function wireSubmit(
+  rt: ChatState,
+  resources: Pick<ChatApplicationResources, 'client' | 'tui' | 'editor' | 'attachmentChips' | 'shellContext' | 'commandDefs'>,
+  actions: ChatApplicationActions,
+  deps: { stream: StreamCoordinatorPort; pickers: Pickers },
+): void {
+  const { client, tui, editor, attachmentChips, shellContext, commandDefs } = resources;
+  const { render, renderForced, refreshMeta, quit, suspendTerminal, resumeTerminal } = actions;
   const { stream, pickers } = deps;
 
   editor.onSubmit = (text: string): void => {
@@ -143,12 +148,12 @@ export function wireSubmit(rt: ChatRuntime, deps: { stream: StreamController; pi
     const localCmd = parseBangCommand(trimmed);
     if (localCmd) {
       rt.notice = color.dim(`$ ${localCmd} · running locally…`);
-      rt.render();
+      render();
       void runLocalShell(localCmd, process.cwd()).then((result) => {
         shellContext.add(result);
         rt.transcript.appendLocalTurn(localShellTurn(result));
         if (rt.notice.includes('running locally')) rt.notice = '';
-        rt.render();
+        render();
       });
       return;
     }
@@ -160,17 +165,17 @@ export function wireSubmit(rt: ChatRuntime, deps: { stream: StreamController; pi
       const target = rt.childView.sessionId;
       // The child daemon stream emits the authoritative `user` event for both a running steer and an
       // idle fresh turn. Do not echo locally: on a running child that produced two identical bubbles.
-      rt.render(); // flush the cleared editor while the request reaches the daemon
-      void client.subagentSend(target, trimmed).catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); rt.render(); });
+      render(); // flush the cleared editor while the request reaches the daemon
+      void client.subagentSend(target, trimmed).catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); render(); });
       return;
     }
     if (rt.childView && command) stream.closeSubagent();
     if (command) {
       switch (command.cmd) {
-        case 'quit': rt.quit(); return;
+        case 'quit': quit(); return;
         case 'help': pickers.openHelpModal(); return;
         case 'new':
-          void stream.switchTo({ fresh: true }).catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); rt.render(); });
+          void stream.switchTo({ fresh: true }).catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); render(); });
           return;
         case 'sessions':
         case 'resume': {
@@ -180,23 +185,23 @@ export function wireSubmit(rt: ChatRuntime, deps: { stream: StreamController; pi
           }
           const n = Number(command.arg);
           const target = Number.isInteger(n) && n >= 1 ? rt.listed[n - 1]?.id : command.arg;
-          if (!target) { rt.notice = color.dim('use /resume and pick with the arrows'); rt.render(); return; }
-          void stream.switchTo({ session: target }).catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); rt.render(); });
+          if (!target) { rt.notice = color.dim('use /resume and pick with the arrows'); render(); return; }
+          void stream.switchTo({ session: target }).catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); render(); });
           return;
         }
         case 'rename': {
           const sessionId = client.boundSession;
-          if (!sessionId) { rt.notice = color.error('no active conversation to rename'); rt.render(); return; }
+          if (!sessionId) { rt.notice = color.error('no active conversation to rename'); render(); return; }
           const apply = (raw: string): void => {
             const title = raw.trim();
-            if (!title) { rt.notice = color.error('conversation title cannot be empty'); rt.render(); return; }
+            if (!title) { rt.notice = color.error('conversation title cannot be empty'); render(); return; }
             void client.renameSession(sessionId, title)
               .then((renamed) => {
                 rt.conversationTitle = renamed.title;
                 rt.notice = color.dim('conversation renamed');
-                rt.render();
+                render();
               })
-              .catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); rt.render(); });
+              .catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); render(); });
           };
           if (command.arg) apply(command.arg);
           else openTextInput({ tui, editor, title: 'Rename conversation', initial: rt.conversationTitle, onSubmit: apply });
@@ -214,16 +219,16 @@ export function wireSubmit(rt: ChatRuntime, deps: { stream: StreamController; pi
             savePrefs({ showThoughts: rt.showThoughts });
             void client.saveTerminalSettings({ showThoughtsCli: rt.showThoughts }).catch(() => { /* offline → local pref still applies */ });
             rt.notice = color.dim(rt.showThoughts ? 'Thought rows shown' : 'Thought rows hidden — /reasoning show brings them back');
-            rt.render();
+            render();
             return;
           }
-          if (rt.thinkingLevels.length === 0) { rt.notice = color.dim('this model has no reasoning-effort levels'); rt.render(); return; }
+          if (rt.thinkingLevels.length === 0) { rt.notice = color.dim('this model has no reasoning-effort levels'); render(); return; }
           const apply = (level: string): void => {
             void client.setThinkingLevel(level).then((r) => {
               rt.thinkingLevel = r.thinkingLevel;
               rt.notice = '';
-              rt.render();
-            }).catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); rt.render(); });
+              render();
+            }).catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); render(); });
           };
           // A bare "/reasoning high" applies directly; "/reasoning" opens the picker over the model's levels.
           const direct = command.arg ? resolveThinkingLevel(command.arg, rt.thinkingLevels, rt.thinkingLevelLabels) : null;
@@ -237,25 +242,25 @@ export function wireSubmit(rt: ChatRuntime, deps: { stream: StreamController; pi
             rt.notice = rt.fastAvailable
               ? color.dim(`fast mode ${rt.fastOn ? 'on' : 'off'}`)
               : color.dim('fast mode is not available for this model/account');
-            rt.render();
+            render();
             return;
           }
-          if (arg && arg !== 'on' && arg !== 'off') { rt.notice = color.dim('usage: /fast · /fast on · /fast off · /fast status'); rt.render(); return; }
-          if (!rt.fastAvailable) { rt.notice = color.dim('fast mode is not available for this model/account'); rt.render(); return; }
+          if (arg && arg !== 'on' && arg !== 'off') { rt.notice = color.dim('usage: /fast · /fast on · /fast off · /fast status'); render(); return; }
+          if (!rt.fastAvailable) { rt.notice = color.dim('fast mode is not available for this model/account'); render(); return; }
           void client.setFast(arg === 'on' ? true : arg === 'off' ? false : undefined)
             .then((r) => {
               rt.fastOn = r.fast;
               rt.fastAvailable = r.fastAvailable;
               rt.notice = color.dim(`fast mode ${r.fast ? 'on' : 'off'}`);
-              rt.render();
+              render();
             })
-            .catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); rt.render(); });
+            .catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); render(); });
           return;
         }
         case 'theme': {
           const wanted = command.arg?.trim();
           if (wanted) {
-            if (!pickers.applyTheme(wanted)) { rt.notice = color.error(`unknown theme: ${wanted}`); rt.render(); }
+            if (!pickers.applyTheme(wanted)) { rt.notice = color.error(`unknown theme: ${wanted}`); render(); }
             return;
           }
           pickers.openThemePicker();
@@ -268,12 +273,12 @@ export function wireSubmit(rt: ChatRuntime, deps: { stream: StreamController; pi
           const initial = editor.getExpandedText();
           // Hand the primary buffer to $EDITOR: leave our alternate screen too, or the editor opens
           // nested inside it and its own screen handling fights ours. Re-enter it when we resume.
-          rt.terminalLifecycle?.suspend();
+          suspendTerminal();
           void editTextExternally({ text: initial }).then((edited) => {
-            rt.terminalLifecycle?.resume();
+            resumeTerminal();
             editor.setText(edited ?? initial);
             if (edited == null) rt.notice = color.dim('editor exited without saving — draft kept');
-            rt.renderForced('external-editor:return');
+            renderForced('external-editor:return');
           });
           return;
         }
@@ -285,9 +290,9 @@ export function wireSubmit(rt: ChatRuntime, deps: { stream: StreamController; pi
                 rt.notice = color.dim('conversation deleted');
                 // Rebind only when this client's OWN conversation was deleted — see openSessionsModal.
                 if (target === client.boundSession) await stream.switchTo({});
-                rt.render();
+                render();
               })
-              .catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); rt.render(); });
+              .catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); render(); });
           };
           // Deleting is destructive → always a two-step picker: choose the conversation, then confirm.
           const confirmDelete = (id: string, title: string): void => {
@@ -303,17 +308,17 @@ export function wireSubmit(rt: ChatRuntime, deps: { stream: StreamController; pi
           if (!command.arg) {
             void client.sessions().then((list) => {
               rt.listed = list.map((s) => ({ id: s.id, title: s.title }));
-              if (list.length === 0) { rt.notice = color.dim('no conversations'); rt.render(); return; }
+              if (list.length === 0) { rt.notice = color.dim('no conversations'); render(); return; }
               openPicker({
                 tui, editor, title: 'Delete conversation', items: sessionItems(list, client.boundSession),
                 onPick: (id) => confirmDelete(id, list.find((s) => s.id === id)?.title ?? ''),
               });
-            }).catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); rt.render(); });
+            }).catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); render(); });
             return;
           }
           const n = Number(command.arg);
           const target = Number.isInteger(n) && n >= 1 ? rt.listed[n - 1]?.id : command.arg;
-          if (!target) { rt.notice = color.dim('use /delete and pick with the arrows'); rt.render(); return; }
+          if (!target) { rt.notice = color.dim('use /delete and pick with the arrows'); render(); return; }
           confirmDelete(target, rt.listed.find((s) => s.id === target)?.title ?? '');
           return;
         }
@@ -327,21 +332,21 @@ export function wireSubmit(rt: ChatRuntime, deps: { stream: StreamController; pi
           // Global (daemon-wide) TDD mission mode: bare "/tdd" reports the current state, "/tdd on|off"
           // flips it. Admin-gated server-side — a non-admin's PUT /config 403s, surfaced clearly.
           const arg = command.arg?.trim().toLowerCase();
-          if (arg && arg !== 'on' && arg !== 'off') { rt.notice = color.dim('usage: /tdd · /tdd on · /tdd off'); rt.render(); return; }
+          if (arg && arg !== 'on' && arg !== 'off') { rt.notice = color.dim('usage: /tdd · /tdd on · /tdd off'); render(); return; }
           const report = (on: boolean): void => {
             rt.notice = on
               ? color.warning('TDD mission mode on — autopilot workers write a failing test first, then implement, then verify')
               : color.dim('TDD mission mode off');
-            rt.render();
+            render();
           };
           if (!arg) {
             void client.getTddMode().then(report)
-              .catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); rt.render(); });
+              .catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); render(); });
             return;
           }
           const on = arg === 'on';
           void client.setTddMode(on).then(() => report(on))
-            .catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); rt.render(); });
+            .catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); render(); });
           return;
         }
         case 'mcp':
@@ -354,15 +359,15 @@ export function wireSubmit(rt: ChatRuntime, deps: { stream: StreamController; pi
           pickers.openToolsModal();
           return;
         case 'goal':
-          handleGoalCommand(rt, command.arg);
+          handleGoalCommand(rt, client, render, command.arg);
           return;
         case 'subgoal':
-          handleSubgoalCommand(rt, command.arg);
+          handleSubgoalCommand(rt, client, render, command.arg);
           return;
         case 'compact': {
           // The daemon's BrainEvent stream is the SINGLE source of status for a REAL compaction: the
           // compaction `notice` ('compacting context…' → cleared) drives the one status line and the
-          // `compacted` event rebuilds the transcript (both handled in streamController) — identical to
+          // `compacted` event rebuilds the transcript (both handled by StreamCoordinator) — identical to
           // auto-compact and to the web dock. So on a real compaction this handler only refreshes the
           // local usage/meta and paints no line of its own (that used to double up with the stream's).
           // A benign no-op (`compacted:false` — nothing to compact yet) emits NO stream event, so surface
@@ -372,70 +377,70 @@ export function wireSubmit(rt: ChatRuntime, deps: { stream: StreamController; pi
               if (r.usage) rt.usage = r.usage;
               const notice = compactNotice(r);
               if (notice) rt.notice = notice;
-              await rt.refreshMeta();
-              rt.render();
+              await refreshMeta();
+              render();
             })
-            .catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); rt.render(); });
+            .catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); render(); });
           return;
         }
         case 'export': {
           // Download the CURRENT conversation to the launch directory as a self-contained HTML
           // transcript (default) or a JSONL session file — the CLI mirror of the web Sessions download.
           const arg = command.arg?.trim().toLowerCase();
-          if (arg && arg !== 'html' && arg !== 'jsonl') { rt.notice = color.dim('usage: /export · /export html · /export jsonl'); rt.render(); return; }
+          if (arg && arg !== 'html' && arg !== 'jsonl') { rt.notice = color.dim('usage: /export · /export html · /export jsonl'); render(); return; }
           const format = arg === 'jsonl' ? 'jsonl' : 'html';
           rt.notice = color.dim(`exporting conversation as ${format}…`);
-          rt.render();
+          render();
           void client.exportSession(format)
-            .then((path) => { rt.notice = color.success(`saved ${path}`); rt.render(); })
-            .catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); rt.render(); });
+            .then((path) => { rt.notice = color.success(`saved ${path}`); render(); })
+            .catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); render(); });
           return;
         }
         case 'plan':
           rt.workMode = 'plan';
           rt.notice = '';
-          rt.render();
+          render();
           return;
         case 'build':
           rt.workMode = 'build';
           rt.notice = '';
-          rt.render();
+          render();
           return;
         case 'yolo': {
           // Session-scoped: "/yolo on|off" forces, bare "/yolo" toggles. The persisted default lives in
           // web Account → Elowen AI; this override never outlives the live session.
           const arg = command.arg?.trim().toLowerCase();
-          if (arg && arg !== 'on' && arg !== 'off') { rt.notice = color.dim('usage: /yolo · /yolo on · /yolo off'); rt.render(); return; }
+          if (arg && arg !== 'on' && arg !== 'off') { rt.notice = color.dim('usage: /yolo · /yolo on · /yolo off'); render(); return; }
           void client.setYolo(arg === 'on' ? true : arg === 'off' ? false : undefined)
             .then((r) => {
               rt.yoloOn = r.yolo;
               rt.notice = r.yolo
                 ? color.warning('YOLO on — tool asks auto-approve for this session (deny rules still apply)')
                 : color.dim('YOLO off — tool asks prompt for approval again');
-              rt.render();
+              render();
             })
-            .catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); rt.render(); });
+            .catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); render(); });
           return;
         }
         case 'paste': {
           // CLI-local: reads THIS machine's clipboard. The image parks as a pending attachment
           // (chip row above the input) and rides along with the next message.
           rt.notice = color.dim('reading the clipboard image…');
-          rt.render();
+          render();
           void readClipboardImage().then((r) => {
-            if (r.image) attachImage(rt, r.image);
+            if (r.image) attachImage(rt, attachmentChips, r.image);
             else rt.notice = color.error(r.error ?? 'no image on the clipboard');
-            rt.render();
+            render();
           });
           return;
         }
         case 'stop': {
-          if (!rt.view.thinking) { rt.notice = color.dim('nothing is running'); rt.render(); return; }
+          if (!rt.transcript.thinking) { rt.notice = color.dim('nothing is running'); render(); return; }
           rt.notice = color.dim('stopping…');
-          rt.render();
+          render();
           void client.abort()
-            .then(() => { rt.notice = color.dim('agent stopped'); rt.render(); })
-            .catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); rt.render(); });
+            .then(() => { rt.notice = color.dim('agent stopped'); render(); })
+            .catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); render(); });
           return;
         }
         case 'status':
@@ -443,10 +448,10 @@ export function wireSubmit(rt: ChatRuntime, deps: { stream: StreamController; pi
           return;
         case 'restart': {
           rt.notice = color.dim('restarting daemon…');
-          rt.render();
+          render();
           void client.command('restart')
-            .then((r) => { rt.notice = color.dim(r?.message ?? 'restarting…'); rt.render(); })
-            .catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); rt.render(); });
+            .then((r) => { rt.notice = color.dim(r?.message ?? 'restarting…'); render(); })
+            .catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); render(); });
           return;
         }
       }
@@ -457,10 +462,10 @@ export function wireSubmit(rt: ChatRuntime, deps: { stream: StreamController; pi
     // DAEMON renders the user's turn authoritatively (the `user` stream event), so `/name args` is exactly
     // what the transcript shows. Render now to flush the cleared input.
     const pm = /^\/(\S+)(?:\s+([\s\S]+))?$/.exec(trimmed);
-    const promptCmd = pm ? rt.commandDefs.find((c) => c.name === pm[1] && c.kind === 'prompt' && c.prompt) : undefined;
+    const promptCmd = pm ? commandDefs.find((c) => c.name === pm[1] && c.kind === 'prompt' && c.prompt) : undefined;
     if (pm && promptCmd) {
-      rt.render();
-      void client.send(trimmed, rt.workMode).catch((e: Error) => { rt.transcript.apply({ type: 'error', message: e.message }); rt.render(); });
+      render();
+      void client.send(trimmed, rt.workMode).catch((e: Error) => { rt.transcript.apply({ type: 'error', message: e.message }); render(); });
       return;
     }
     // `@path` mentions expand HERE, not in the visible transcript: text files ride inside the prompt
@@ -478,7 +483,7 @@ export function wireSubmit(rt: ChatRuntime, deps: { stream: StreamController; pi
       // so a mid-turn send that queues server-side can't drop or double-render it. `echo` rides as the
       // clean display (the sent text carries the expanded @mention/attachment blocks). Render now to flush
       // the cleared input line + attachment chips (the 'you' bubble follows from the daemon's `user` event).
-      rt.render();
+      render();
       // ONE composition path for everything that rides along: buffered `!` shell context first, then
       // the mention attachments, then the user's own words (see composeWithAttachments).
       void client.send(
@@ -486,7 +491,7 @@ export function wireSubmit(rt: ChatRuntime, deps: { stream: StreamController; pi
         rt.workMode,
         images.map((i) => ({ data: i.data, mimeType: i.mimeType })),
         echo,
-      ).catch((e: Error) => { rt.transcript.apply({ type: 'error', message: e.message }); rt.render(); });
+      ).catch((e: Error) => { rt.transcript.apply({ type: 'error', message: e.message }); render(); });
     };
     if (mentions.wantsClipboard) {
       void readClipboardImage().then((r) => {

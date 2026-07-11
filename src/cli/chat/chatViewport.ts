@@ -126,17 +126,14 @@ export class ChatViewport implements Component {
 
   invalidate(): void { /* computed from current state */ }
 
-  /** Introspection used by focused tests/benchmarks and by no UI decisions: true only when totalLines is
-   *  exact for every turn at the current layout context. */
-  isHistoryIndexComplete(): boolean {
+  /** True only when totalLines is exact for every turn at the current layout context. */
+  private isHistoryIndexComplete(): boolean {
     return this.currentContentWidth > 0
       && this.knownStart === 0
       && this.layout.length === this.state.transcript.turnCount
       && this.indexedTurnCount === this.layout.length;
   }
 
-  indexedHistoryTurns(): number { return this.indexedTurnCount; }
-  cachedHistoryRows(): number { return this.cachedRowCount; }
   metrics(): ChatViewportMetrics {
     return {
       renderMs: this.lastRenderMs,
@@ -153,8 +150,6 @@ export class ChatViewport implements Component {
       heightIndexOperations: this.heightIndex.operationCount(),
     };
   }
-
-  resetHeightIndexOperationCount(): void { this.heightIndex.resetOperationCount(); }
 
   scroll(delta: number): void {
     if (delta > 0) this.ensureScrollCapacity(this.scrollOffset + delta);
@@ -274,17 +269,6 @@ export class ChatViewport implements Component {
 
   endScrollbarDrag(): void {
     this.scrollbarDrag = null;
-  }
-
-  setScrollFromRow(absRow: number): void {
-    if (this.viewportHeight <= 0) return;
-    const metrics = this.visualScrollMetrics(this.viewportHeight);
-    this.scrollbarDrag = {
-      localRow: Math.max(0, Math.min(this.viewportHeight - 1, absRow - this.getTopRow())),
-      grabOffset: Math.floor(metrics.thumbSize / 2),
-    };
-    this.advanceScrollbarDrag();
-    this.endScrollbarDrag();
   }
 
   private advanceScrollbarDrag(): boolean {

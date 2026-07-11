@@ -2,8 +2,8 @@ import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { getMarkdownTheme, getSelectListTheme, initTheme } from '@earendil-works/pi-coding-agent';
 import { CURSOR_MARKER, getCapabilities, setCapabilities, visibleWidth } from '@earendil-works/pi-tui';
 import type { TUI } from '@earendil-works/pi-tui';
-import { beginAssistant, emptyView, fromHistory, pushUser, reduce, type ChatView } from '../../../src/brain/transcript.js';
-import { TranscriptModel } from '../../../src/brain/transcriptModel.js';
+import type { HistoryMessage } from '../../../src/brain/transcript.js';
+import { TranscriptModel, type TranscriptModelOptions } from '../../../src/brain/transcriptModel.js';
 import type { BrainEvent } from '../../../src/brain/events.js';
 import { CHAT_VIEWPORT_ROW_CACHE_LIMIT, ChatViewport, type ChatViewportState } from '../../../src/cli/chat/chatViewport.js';
 import { TOOL_INDENT, TurnRenderer } from '../../../src/cli/chat/turnRenderer.js';
@@ -18,7 +18,7 @@ const transcriptState = (
   overrides: Partial<Omit<ChatViewportState, 'transcript' | 'transcriptNotice'>> = {},
 ): ChatViewportState => ({
   transcript,
-  transcriptNotice: transcript.view.notice,
+  transcriptNotice: transcript.notice,
   notice: '',
   modelName: 'kimi',
   thinkingSeconds: 0,
@@ -26,9 +26,19 @@ const transcriptState = (
 });
 
 const viewportState = (
-  view: ChatView,
+  transcript: TranscriptModel,
   overrides: Partial<Omit<ChatViewportState, 'transcript' | 'transcriptNotice'>> = {},
-): ChatViewportState => transcriptState(TranscriptModel.fromView(view), overrides);
+): ChatViewportState => transcriptState(transcript, overrides);
+
+const transcriptWith = (
+  history: HistoryMessage[] = [],
+  events: BrainEvent[] = [],
+  options: TranscriptModelOptions = {},
+): TranscriptModel => {
+  const transcript = new TranscriptModel(history, options);
+  for (const event of events) transcript.apply(event);
+  return transcript;
+};
 
 afterEach(() => { vi.useRealTimers(); });
 
@@ -50,11 +60,11 @@ describe('chat layout components', () => {
   });
 
   it('renders a scrollable chat viewport with a history chip', () => {
-    let view = emptyView();
+    const view = new TranscriptModel();
     for (let i = 0; i < 8; i++) {
-      view = pushUser(view, `message ${i}`);
-      view = reduce(beginAssistant(view), { type: 'text', delta: `answer ${i}` });
-      view = reduce(view, { type: 'idle' });
+      view.apply({ type: 'user', text: `message ${i}` });
+      view.apply({ type: 'text', delta: `answer ${i}` });
+      view.apply({ type: 'idle' });
     }
     const viewport = new ChatViewport(
       viewportState(view),
@@ -72,7 +82,7 @@ describe('chat layout components', () => {
 
   it('does not reverse-video the first padding row when no drag selection exists', () => {
     const viewport = new ChatViewport(
-      viewportState(fromHistory([
+      viewportState(new TranscriptModel([
           { role: 'user', text: 'short question' },
           { role: 'assistant', text: 'short answer' },
         ])),
@@ -87,10 +97,12 @@ describe('chat layout components', () => {
   });
 
   it('keeps settled reasoning clickable and does not add a model footer under answers', () => {
-    let view = beginAssistant(pushUser(emptyView(), 'think?'));
-    view = reduce(view, { type: 'reasoning', delta: 'inspect the code path' });
-    view = reduce(view, { type: 'text', delta: 'done' });
-    view = reduce(view, { type: 'idle' });
+    const view = transcriptWith([], [
+      { type: 'user', text: 'think?' },
+      { type: 'reasoning', delta: 'inspect the code path' },
+      { type: 'text', delta: 'done' },
+      { type: 'idle' },
+    ]);
     const viewport = new ChatViewport(
       viewportState(view),
       getMarkdownTheme(),
@@ -106,11 +118,13 @@ describe('chat layout components', () => {
   });
 
   it('separates a Thought row from the preceding tool block with a blank line', () => {
-    let view = beginAssistant(pushUser(emptyView(), 'go'));
-    view = reduce(view, { type: 'tool', name: 'run_command', detail: 'npm test' });
-    view = reduce(view, { type: 'tool_output', output: { title: 'console output', kind: 'console', text: 'Tests 4 passed', command: 'npm test', status: 'exit 0', tone: 'success' } });
-    view = reduce(view, { type: 'reasoning', delta: 'now decide the next step' });
-    view = reduce(view, { type: 'idle' });
+    const view = transcriptWith([], [
+      { type: 'user', text: 'go' },
+      { type: 'tool', name: 'run_command', detail: 'npm test' },
+      { type: 'tool_output', output: { title: 'console output', kind: 'console', text: 'Tests 4 passed', command: 'npm test', status: 'exit 0', tone: 'success' } },
+      { type: 'reasoning', delta: 'now decide the next step' },
+      { type: 'idle' },
+    ]);
     const viewport = new ChatViewport(
       viewportState(view),
       getMarkdownTheme(),
@@ -125,9 +139,11 @@ describe('chat layout components', () => {
   });
 
   it('encodes live tool progress before it reaches terminal layout', () => {
-    let view = beginAssistant(pushUser(emptyView(), 'run it'));
-    view = reduce(view, { type: 'tool', id: 'cmd-1', name: 'run_command', detail: 'du -xhd2', command: 'du -xhd2' });
-    view = reduce(view, { type: 'tool_progress', id: 'cmd-1', text: '984M\t/var/www/.local\x1b[2J\rupdated' });
+    const view = transcriptWith([], [
+      { type: 'user', text: 'run it' },
+      { type: 'tool', id: 'cmd-1', name: 'run_command', detail: 'du -xhd2', command: 'du -xhd2' },
+      { type: 'tool_progress', id: 'cmd-1', text: '984M\t/var/www/.local\x1b[2J\rupdated' },
+    ]);
     const viewport = new ChatViewport(
       viewportState(view),
       getMarkdownTheme(), () => 20, () => 1, () => 72,
@@ -141,10 +157,11 @@ describe('chat layout components', () => {
   });
 
   it('projects user, assistant, reasoning, and notice text before terminal rendering', () => {
-    let view = pushUser(emptyView(), 'hello\x1b[2J user\tcolumn');
-    view = beginAssistant(view);
-    view = reduce(view, { type: 'reasoning', delta: 'reason\x1b]0;forged\x07 text' });
-    view = reduce(view, { type: 'text', delta: '**bold answer**\x1b]52;c;Zm9yZ2Vk\x07' });
+    const view = transcriptWith([], [
+      { type: 'user', text: 'hello\x1b[2J user\tcolumn' },
+      { type: 'reasoning', delta: 'reason\x1b]0;forged\x07 text' },
+      { type: 'text', delta: '**bold answer**\x1b]52;c;Zm9yZ2Vk\x07' },
+    ]);
     const viewport = new ChatViewport(
       viewportState(view, { notice: 'notice\x1b[3J' }),
       getMarkdownTheme(), () => 24, () => 1, () => 72,
@@ -163,9 +180,10 @@ describe('chat layout components', () => {
   });
 
   it('renders framed tool output blocks', () => {
-    let view = beginAssistant(emptyView());
-    view = reduce(view, { type: 'tool', name: 'run_command', detail: 'npm test' });
-    view = reduce(view, { type: 'tool_output', output: { title: 'console output', kind: 'console', text: 'Tests 4 passed', command: 'npm test', status: 'exit 0', tone: 'success' } });
+    const view = transcriptWith([], [
+      { type: 'tool', name: 'run_command', detail: 'npm test' },
+      { type: 'tool_output', output: { title: 'console output', kind: 'console', text: 'Tests 4 passed', command: 'npm test', status: 'exit 0', tone: 'success' } },
+    ]);
     const viewport = new ChatViewport(
       viewportState(view),
       getMarkdownTheme(),
@@ -183,11 +201,13 @@ describe('chat layout components', () => {
   });
 
   it('marks the last silent command row · running… while streaming and · done once settled', () => {
-    let view = beginAssistant(pushUser(emptyView(), 'go'));
-    view = reduce(view, { type: 'tool', name: 'run_command', command: 'echo one' });
-    view = reduce(view, { type: 'tool', name: 'run_command', command: 'sleep 5' });
-    const render = (v: typeof view): string => new ChatViewport(
-      viewportState(v),
+    const view = transcriptWith([], [
+      { type: 'user', text: 'go' },
+      { type: 'tool', name: 'run_command', command: 'echo one' },
+      { type: 'tool', name: 'run_command', command: 'sleep 5' },
+    ]);
+    const render = (transcript: TranscriptModel): string => new ChatViewport(
+      viewportState(transcript),
       getMarkdownTheme(),
       () => 14,
       () => 1,
@@ -197,19 +217,21 @@ describe('chat layout components', () => {
     expect(streaming).toContain('$ echo one · done'); // an earlier tool has settled
     expect(streaming).toContain('$ sleep 5 · running…'); // the newest one is still awaiting approval/output
     expect(streaming).not.toContain('$ sleep 5 · done');
-    const settled = render(reduce(view, { type: 'idle' }));
+    view.apply({ type: 'idle' });
+    const settled = render(view);
     expect(settled).toContain('$ sleep 5 · done');
     expect(settled).not.toContain('running…');
   });
 
   it('renders expandable tool output previews without a tool-name chip', () => {
-    let view = beginAssistant(emptyView());
-    view = reduce(view, { type: 'tool', id: 'cmd-1', name: 'run_command', detail: 'npm test' });
-    view = reduce(view, {
+    const view = transcriptWith([], [
+      { type: 'tool', id: 'cmd-1', name: 'run_command', detail: 'npm test' },
+      {
       type: 'tool_output',
       id: 'cmd-1',
       output: { title: 'console output', kind: 'console', text: 'line 9\nline 10', fullText: 'line 1\nline 2\nline 9\nline 10', command: 'npm test' },
-    });
+      },
+    ]);
     const viewport = new ChatViewport(
       viewportState(view),
       getMarkdownTheme(),
@@ -225,11 +247,13 @@ describe('chat layout components', () => {
   });
 
   it('collapses a run of the same bare tool into one indented row with a ×N counter', () => {
-    let view = beginAssistant(pushUser(emptyView(), 'read them'));
-    view = reduce(view, { type: 'tool', name: 'read_file', detail: 'a.ts' });
-    view = reduce(view, { type: 'tool', name: 'read_file', detail: 'a.ts' });
-    view = reduce(view, { type: 'tool', name: 'read_file', detail: 'b.ts' });
-    view = reduce(view, { type: 'idle' });
+    const view = transcriptWith([], [
+      { type: 'user', text: 'read them' },
+      { type: 'tool', name: 'read_file', detail: 'a.ts' },
+      { type: 'tool', name: 'read_file', detail: 'a.ts' },
+      { type: 'tool', name: 'read_file', detail: 'b.ts' },
+      { type: 'idle' },
+    ]);
     const viewport = new ChatViewport(
       viewportState(view),
       getMarkdownTheme(),
@@ -249,11 +273,12 @@ describe('chat layout components', () => {
   });
 
   it('does not collapse a tool that carries an output block (it renders its own block, not a ×N row)', () => {
-    let view = beginAssistant(emptyView());
-    view = reduce(view, { type: 'tool', id: 't1', name: 'read_file', detail: 'a.ts' });
-    view = reduce(view, { type: 'tool_output', id: 't1', output: { title: 'tool result', kind: 'result', text: 'file body', tone: 'normal' } });
-    view = reduce(view, { type: 'tool', name: 'read_file', detail: 'b.ts' });
-    view = reduce(view, { type: 'idle' });
+    const view = transcriptWith([], [
+      { type: 'tool', id: 't1', name: 'read_file', detail: 'a.ts' },
+      { type: 'tool_output', id: 't1', output: { title: 'tool result', kind: 'result', text: 'file body', tone: 'normal' } },
+      { type: 'tool', name: 'read_file', detail: 'b.ts' },
+      { type: 'idle' },
+    ]);
     const rendered = new ChatViewport(
       viewportState(view),
       getMarkdownTheme(),
@@ -266,9 +291,10 @@ describe('chat layout components', () => {
   });
 
   it('labels edit diffs by action and target instead of rendering the tool name', () => {
-    let view = beginAssistant(emptyView());
-    view = reduce(view, { type: 'tool', name: 'edit_file', detail: 'test.php' });
-    view = reduce(view, { type: 'diff', diff: '-  1 old\n+  1 new' });
+    const view = transcriptWith([], [
+      { type: 'tool', name: 'edit_file', detail: 'test.php' },
+      { type: 'diff', diff: '-  1 old\n+  1 new' },
+    ]);
     const viewport = new ChatViewport(
       viewportState(view),
       getMarkdownTheme(),
@@ -282,9 +308,10 @@ describe('chat layout components', () => {
   });
 
   it('renders proposed plan tags as a nested plan block', () => {
-    let view = beginAssistant(emptyView());
-    view = reduce(view, { type: 'text', delta: '<proposed_plan>\n# Migration\n- Move prompt into CLI prompts.\n</proposed_plan>' });
-    view = reduce(view, { type: 'idle' });
+    const view = transcriptWith([], [
+      { type: 'text', delta: '<proposed_plan>\n# Migration\n- Move prompt into CLI prompts.\n</proposed_plan>' },
+      { type: 'idle' },
+    ]);
     const viewport = new ChatViewport(
       viewportState(view),
       getMarkdownTheme(),
@@ -299,8 +326,9 @@ describe('chat layout components', () => {
   });
 
   it('renders a streaming proposed plan block before the closing tag arrives', () => {
-    let view = beginAssistant(emptyView());
-    view = reduce(view, { type: 'text', delta: '<proposed_plan>\n# Draft\n- Check tests' });
+    const view = transcriptWith([], [
+      { type: 'text', delta: '<proposed_plan>\n# Draft\n- Check tests' },
+    ]);
     const viewport = new ChatViewport(
       viewportState(view),
       getMarkdownTheme(),
@@ -653,7 +681,7 @@ describe('chat layout components', () => {
 describe('drag-to-copy selection', () => {
   beforeAll(() => { initTheme(); });
   const mkViewport = () => {
-    const view = fromHistory([
+    const view = new TranscriptModel([
       { role: 'user', text: 'hello there' },
       { role: 'assistant', text: 'line one answer\nline two answer' },
     ]);
@@ -697,7 +725,7 @@ describe('drag-to-copy selection', () => {
     setCapabilities({ ...previous, hyperlinks: true });
     try {
       const viewport = new ChatViewport(
-        viewportState(fromHistory([{ role: 'assistant', text: '[example](https://example.com)\nsecond line' }])),
+        viewportState(new TranscriptModel([{ role: 'assistant', text: '[example](https://example.com)\nsecond line' }])),
         getMarkdownTheme(), () => 6, () => 1, () => 60,
       );
       const rendered = viewport.render(60);
@@ -715,8 +743,11 @@ describe('drag-to-copy selection', () => {
   });
 
   it('reasoning segments disappear when showThoughts is false', () => {
-    const view = fromHistory([{ role: 'assistant', text: 'answer' }]);
-    view.turns = [{ role: 'elowen', segments: [{ kind: 'reasoning', text: 'secret chain' }, { kind: 'text', text: 'answer' }], streaming: false }];
+    const view = transcriptWith([], [
+      { type: 'reasoning', delta: 'secret chain' },
+      { type: 'text', delta: 'answer' },
+      { type: 'idle' },
+    ]);
     const viewport = new ChatViewport(
       viewportState(view, { showThoughts: false }),
       getMarkdownTheme(),
@@ -732,7 +763,7 @@ describe('drag-to-copy selection', () => {
 
 describe('per-turn render cache', () => {
   it('reuses settled turn rows while no owning turn is invalidated', () => {
-    const view = fromHistory([
+    const view = new TranscriptModel([
       { role: 'user', text: 'question' },
       { role: 'assistant', text: 'settled answer' },
     ]);
@@ -745,7 +776,7 @@ describe('per-turn render cache', () => {
     );
     const first = viewport.render(60).join('\n');
     // Sneakily mutate the settled turn IN PLACE — a cached render must not see it...
-    const turn = view.turns[1]!;
+    const turn = view.turnAt(1)!;
     if (turn.role === 'elowen' && turn.segments[0]?.kind === 'text') turn.segments[0].text = 'MUTATED answer';
     expect(viewport.render(60).join('\n')).toBe(first);
     viewport.toggleThought(-999); // no interactive row → no invalidation
@@ -756,11 +787,11 @@ describe('per-turn render cache', () => {
 describe('progressive history layout', () => {
   beforeAll(() => initTheme());
 
-  const largeMessages = (pairs = 100) => Array.from({ length: pairs }, (_, i) => [
+  const largeMessages = (pairs = 100): HistoryMessage[] => Array.from({ length: pairs }, (_, i) => [
     { role: 'user', text: `question ${i}` },
     { role: 'assistant', text: `## answer ${i}\n\n- evidence one\n- evidence two\n\nNewest marker ${i}` },
   ]).flat();
-  const largeHistory = (pairs = 100) => fromHistory(largeMessages(pairs));
+  const largeHistory = (pairs = 100, options: TranscriptModelOptions = {}) => new TranscriptModel(largeMessages(pairs), options);
 
   it.each([
     ['text', { type: 'text', delta: 'first fresh answer' } satisfies BrainEvent, 'first fresh answer'],
@@ -768,14 +799,14 @@ describe('progressive history layout', () => {
     ['tool', { type: 'tool', id: 'first-tool', name: 'read_file', detail: 'src/fresh.ts' } satisfies BrainEvent, 'fresh.ts'],
   ])('journals the first fresh %s turn as a bounded append frame', (_name, event, visibleText) => {
     let visits = 0;
-    const transcript = TranscriptModel.fromView(largeHistory(2_000), { onTurnVisit: () => { visits++; } });
+    const transcript = largeHistory(2_000, { onTurnVisit: () => { visits++; } });
     const viewport = new ChatViewport(
       transcriptState(transcript),
       getMarkdownTheme(), () => 18, () => 1, () => 80,
     );
     viewport.render(80);
     visits = 0;
-    viewport.resetHeightIndexOperationCount();
+    const heightOperationsBefore = viewport.metrics().heightIndexOperations;
 
     transcript.apply(event);
     viewport.setState(transcriptState(transcript));
@@ -785,7 +816,7 @@ describe('progressive history layout', () => {
     expect(viewport.metrics().reconciledTurns).toBeLessThanOrEqual(1);
     expect(viewport.metrics().renderedTurns).toBeLessThanOrEqual(1);
     expect(viewport.metrics().layoutVisits).toBeLessThanOrEqual(1);
-    expect(viewport.metrics().heightIndexOperations).toBeLessThanOrEqual(512);
+    expect(viewport.metrics().heightIndexOperations - heightOperationsBefore).toBeLessThanOrEqual(512);
     expect(visits).toBeLessThanOrEqual(3);
   });
 
@@ -795,14 +826,14 @@ describe('progressive history layout', () => {
     ['tool_output', { type: 'tool_output', id: 'missing', output: { title: 'late result', kind: 'console', text: 'late output' } } satisfies BrainEvent],
   ])('keeps the first unmatched %s lifecycle append frame bounded', (_name, event) => {
     let visits = 0;
-    const transcript = TranscriptModel.fromView(largeHistory(2_000), { onTurnVisit: () => { visits++; } });
+    const transcript = largeHistory(2_000, { onTurnVisit: () => { visits++; } });
     const viewport = new ChatViewport(
       transcriptState(transcript),
       getMarkdownTheme(), () => 18, () => 1, () => 80,
     );
     viewport.render(80);
     visits = 0;
-    viewport.resetHeightIndexOperationCount();
+    const heightOperationsBefore = viewport.metrics().heightIndexOperations;
 
     transcript.apply(event);
     viewport.setState(transcriptState(transcript));
@@ -811,13 +842,13 @@ describe('progressive history layout', () => {
     expect(viewport.metrics().reconciledTurns).toBeLessThanOrEqual(1);
     expect(viewport.metrics().renderedTurns).toBeLessThanOrEqual(1);
     expect(viewport.metrics().layoutVisits).toBeLessThanOrEqual(1);
-    expect(viewport.metrics().heightIndexOperations).toBeLessThanOrEqual(512);
+    expect(viewport.metrics().heightIndexOperations - heightOperationsBefore).toBeLessThanOrEqual(512);
     expect(visits).toBeLessThanOrEqual(3);
   });
 
   it('restores a deep logical anchor after resize without rendering Markdown to the old row depth', () => {
     let visits = 0;
-    const transcript = TranscriptModel.fromView(largeHistory(4_000), { onTurnVisit: () => { visits++; } });
+    const transcript = largeHistory(4_000, { onTurnVisit: () => { visits++; } });
     let width = 80;
     const viewport = new ChatViewport(
       transcriptState(transcript),
@@ -1032,9 +1063,9 @@ describe('progressive history layout', () => {
   });
 
   it('reads turns and sparse revisions directly from TranscriptModel', () => {
-    const transcript = TranscriptModel.fromView(largeHistory(20));
+    const transcript = largeHistory(20);
     const viewport = new ChatViewport(
-      { transcript, transcriptNotice: transcript.view.notice, notice: '', modelName: 'kimi', thinkingSeconds: 0 },
+      { transcript, transcriptNotice: transcript.notice, notice: '', modelName: 'kimi', thinkingSeconds: 0 },
       getMarkdownTheme(), () => 8, () => 1, () => 60,
     );
 
@@ -1042,7 +1073,7 @@ describe('progressive history layout', () => {
     transcript.apply({ type: 'user', text: 'revision handoff' });
     viewport.setState({
       transcript,
-      transcriptNotice: transcript.view.notice,
+      transcriptNotice: transcript.notice,
       notice: '', modelName: 'kimi', thinkingSeconds: 0,
     });
     expect(viewport.render(60).join('\n')).toContain('revision handoff');
@@ -1059,21 +1090,21 @@ describe('progressive history layout', () => {
 
     const first = viewport.render(60).join('\n');
     expect(first).toContain('Newest marker 99');
-    expect(viewport.indexedHistoryTurns()).toBeLessThan(20);
-    expect(viewport.indexedHistoryTurns()).toBeLessThan(view.turns.length);
-    expect(viewport.isHistoryIndexComplete()).toBe(false);
+    expect(viewport.metrics().indexedTurns).toBeLessThan(20);
+    expect(viewport.metrics().indexedTurns).toBeLessThan(view.turnCount);
+    expect(viewport.metrics().transcriptRowsExact).toBe(false);
     const thumbRow = viewport.render(60).findIndex((line) => line.includes('█')) + 1;
     expect(thumbRow).toBeGreaterThan(0);
     expect(viewport.isScrollbarHit(60, thumbRow)).toBe(true);
     expect(first).toContain('█');
 
-    const afterFirstPaint = viewport.indexedHistoryTurns();
+    const afterFirstPaint = viewport.metrics().indexedTurns;
     await vi.runAllTimersAsync();
-    expect(viewport.indexedHistoryTurns()).toBe(afterFirstPaint); // no idle full-history CPU pass
-    expect(viewport.isHistoryIndexComplete()).toBe(false);
+    expect(viewport.metrics().indexedTurns).toBe(afterFirstPaint); // no idle full-history CPU pass
+    expect(viewport.metrics().transcriptRowsExact).toBe(false);
     viewport.scroll(30);
-    expect(viewport.indexedHistoryTurns()).toBeGreaterThan(afterFirstPaint);
-    expect(viewport.cachedHistoryRows()).toBeLessThanOrEqual(CHAT_VIEWPORT_ROW_CACHE_LIMIT);
+    expect(viewport.metrics().indexedTurns).toBeGreaterThan(afterFirstPaint);
+    expect(viewport.metrics().cachedRows).toBeLessThanOrEqual(CHAT_VIEWPORT_ROW_CACHE_LIMIT);
   });
 
   it('PageUp indexes just enough older turns and keeps an exact bottom-relative offset', () => {
@@ -1083,16 +1114,19 @@ describe('progressive history layout', () => {
       getMarkdownTheme(), () => 6, () => 1, () => 60,
     );
     viewport.render(60);
-    const initiallyIndexed = viewport.indexedHistoryTurns();
+    const initiallyIndexed = viewport.metrics().indexedTurns;
     viewport.scroll(30);
-    expect(viewport.indexedHistoryTurns()).toBeGreaterThan(initiallyIndexed);
-    expect(viewport.isHistoryIndexComplete()).toBe(false);
+    expect(viewport.metrics().indexedTurns).toBeGreaterThan(initiallyIndexed);
+    expect(viewport.metrics().transcriptRowsExact).toBe(false);
     const beforeDrag = viewport.render(60).map((line) => line.replace(/\x1b\[[0-9;]*m/g, '')).join('\n');
     expect(beforeDrag).toContain('History +30 lines');
-    const beforeDragIndexed = viewport.indexedHistoryTurns();
-    viewport.setScrollFromRow(1);
+    const beforeDragIndexed = viewport.metrics().indexedTurns;
+    const thumbRow = viewport.render(60).findIndex((line) => line.includes('█')) + 1;
+    viewport.beginScrollbarDrag(thumbRow);
+    viewport.updateScrollbarDrag(1);
+    viewport.endScrollbarDrag();
     const afterDrag = viewport.render(60).map((line) => line.replace(/\x1b\[[0-9;]*m/g, '')).join('\n');
-    expect(viewport.indexedHistoryTurns()).toBeGreaterThan(beforeDragIndexed);
+    expect(viewport.metrics().indexedTurns).toBeGreaterThan(beforeDragIndexed);
     expect(afterDrag).toMatch(/History \+([3-9]\d|\d{3,}) lines/);
   });
 
@@ -1102,9 +1136,12 @@ describe('progressive history layout', () => {
       getMarkdownTheme(), () => 6, () => 1, () => 60,
     );
     viewport.render(60);
-    expect(viewport.isHistoryIndexComplete()).toBe(false);
-    viewport.setScrollFromRow(1);
-    expect(viewport.isHistoryIndexComplete()).toBe(true);
+    expect(viewport.metrics().transcriptRowsExact).toBe(false);
+    const thumbRow = viewport.render(60).findIndex((line) => line.includes('█')) + 1;
+    viewport.beginScrollbarDrag(thumbRow);
+    viewport.updateScrollbarDrag(1);
+    viewport.endScrollbarDrag();
+    expect(viewport.metrics().transcriptRowsExact).toBe(true);
     expect(viewport.render(60).join('\n')).toMatch(/History.*\+\d+ lines/);
   });
 
@@ -1115,10 +1152,13 @@ describe('progressive history layout', () => {
       getMarkdownTheme(), () => 12, () => 1, () => 80,
     );
     viewport.render(80);
-    const before = viewport.indexedHistoryTurns();
-    viewport.setScrollFromRow(1);
-    expect(viewport.indexedHistoryTurns()).toBeGreaterThan(before);
-    expect(viewport.indexedHistoryTurns()).toBeLessThan(view.turns.length);
+    const before = viewport.metrics().indexedTurns;
+    const thumbRow = viewport.render(80).findIndex((line) => line.includes('█')) + 1;
+    viewport.beginScrollbarDrag(thumbRow);
+    viewport.updateScrollbarDrag(1);
+    viewport.endScrollbarDrag();
+    expect(viewport.metrics().indexedTurns).toBeGreaterThan(before);
+    expect(viewport.metrics().indexedTurns).toBeLessThan(view.turnCount);
     expect(viewport.render(80).join('\n')).toMatch(/History.*\+\d+ lines/);
   });
 
@@ -1157,9 +1197,9 @@ describe('progressive history layout', () => {
     expect(thumbRow).toBeGreaterThan(0);
     expect(viewport.beginScrollbarDrag(thumbRow)).toBe(false);
     let pending = viewport.updateScrollbarDrag(1);
-    const afterPointerEvent = viewport.indexedHistoryTurns();
+    const afterPointerEvent = viewport.metrics().indexedTurns;
     expect(pending).toBe(true);
-    expect(afterPointerEvent).toBeLessThan(view.turns.length);
+    expect(afterPointerEvent).toBeLessThan(view.turnCount);
 
     let continuations = 0;
     while (pending && continuations < 200) {
@@ -1169,20 +1209,19 @@ describe('progressive history layout', () => {
 
     expect(pending).toBe(false);
     expect(continuations).toBeGreaterThan(1);
-    expect(viewport.isHistoryIndexComplete()).toBe(true);
+    expect(viewport.metrics().transcriptRowsExact).toBe(true);
     expect(viewport.metrics().scrollOffset).toBe(viewport.metrics().maxScrollOffset);
     viewport.endScrollbarDrag();
   });
 
   it('invalidates only the turn that owns an expanded Thought', () => {
-    const view = fromHistory([
-      { role: 'assistant', text: 'ORIGINAL settled answer' },
-      { role: 'assistant', text: 'placeholder' },
-    ]);
-    view.turns[1] = {
-      role: 'elowen', streaming: false,
-      segments: [{ kind: 'reasoning', text: 'summary words followed by the hidden expanded detail' }],
-    };
+    const view = transcriptWith(
+      [{ role: 'assistant', text: 'ORIGINAL settled answer' }],
+      [
+        { type: 'reasoning', delta: 'summary words followed by the hidden expanded detail' },
+        { type: 'idle' },
+      ],
+    );
     const viewport = new ChatViewport(
       viewportState(view),
       getMarkdownTheme(), () => 20, () => 1, () => 72,
@@ -1190,7 +1229,7 @@ describe('progressive history layout', () => {
     const first = viewport.render(72);
     const thoughtRow = first.findIndex((line) => line.includes('Thought'));
     expect(thoughtRow).toBeGreaterThanOrEqual(0);
-    const oldTurn = view.turns[0]!;
+    const oldTurn = view.turnAt(0)!;
     if (oldTurn.role === 'elowen' && oldTurn.segments[0]?.kind === 'text') oldTurn.segments[0].text = 'MUTATED off-screen cache';
 
     viewport.toggleThought(thoughtRow + 1);
@@ -1212,8 +1251,8 @@ describe('progressive history layout', () => {
     width = 72;
     const resized = viewport.render(width).join('\n');
     expect(resized).toContain('Newest marker 99');
-    expect(viewport.isHistoryIndexComplete()).toBe(false);
-    expect(viewport.indexedHistoryTurns()).toBeLessThan(20);
+    expect(viewport.metrics().transcriptRowsExact).toBe(false);
+    expect(viewport.metrics().indexedTurns).toBeLessThan(20);
   });
 
   it('reports viewport-sized work and renders no settled Markdown again during cached scroll', () => {
@@ -1235,7 +1274,7 @@ describe('progressive history layout', () => {
   });
 
   it('reconciles only the streaming tail instead of comparing every settled turn', () => {
-    const transcript = TranscriptModel.fromView(largeHistory(1_000));
+    const transcript = largeHistory(1_000);
     const viewport = new ChatViewport(
       transcriptState(transcript),
       getMarkdownTheme(), () => 18, () => 1, () => 80,
@@ -1252,7 +1291,7 @@ describe('progressive history layout', () => {
   });
 
   it('accumulates a coalesced user and assistant burst without scanning settled history', () => {
-    const transcript = TranscriptModel.fromView(largeHistory(5_000));
+    const transcript = largeHistory(5_000);
     const viewport = new ChatViewport(
       transcriptState(transcript),
       getMarkdownTheme(), () => 18, () => 1, () => 80,
@@ -1272,7 +1311,7 @@ describe('progressive history layout', () => {
   });
 
   it('updates a fully indexed 10k-turn streaming tail without walking settled heights', () => {
-    const transcript = TranscriptModel.fromView(largeHistory(5_000));
+    const transcript = largeHistory(5_000);
     const viewport = new ChatViewport(
       transcriptState(transcript),
       getMarkdownTheme(), () => 18, () => 1, () => 80,
@@ -1280,7 +1319,7 @@ describe('progressive history layout', () => {
     viewport.render(80);
     viewport.scroll(1_000_000);
     viewport.render(80);
-    expect(viewport.isHistoryIndexComplete()).toBe(true);
+    expect(viewport.metrics().transcriptRowsExact).toBe(true);
 
     transcript.apply({ type: 'text', delta: '' });
     viewport.setState(transcriptState(transcript));
@@ -1298,7 +1337,7 @@ describe('progressive history layout', () => {
       { role: 'assistant', text: '', segments: [{ kind: 'tool' as const, id: 'delegate-old', name: 'delegate', detail: 'old child' }] },
       ...Array.from({ length: 4_999 }, (_, index) => ({ role: 'assistant', text: `settled answer ${index}` })),
     ];
-    const transcript = TranscriptModel.fromView(fromHistory(history));
+    const transcript = new TranscriptModel(history);
     const viewport = new ChatViewport(
       transcriptState(transcript),
       getMarkdownTheme(), () => 18, () => 1, () => 80,
@@ -1306,7 +1345,7 @@ describe('progressive history layout', () => {
     viewport.render(80);
     viewport.scroll(1_000_000);
     viewport.render(80);
-    expect(viewport.isHistoryIndexComplete()).toBe(true);
+    expect(viewport.metrics().transcriptRowsExact).toBe(true);
     viewport.scroll(-1_000_000);
     viewport.render(80);
     const bottomBefore = [...(viewport as unknown as { lastPlainRows: string[] }).lastPlainRows];
@@ -1335,7 +1374,7 @@ describe('progressive history layout', () => {
       })),
       ...Array.from({ length: 200 }, (_, index) => ({ role: 'assistant' as const, text: `tail ${index}` })),
     ];
-    const transcript = TranscriptModel.fromView(fromHistory(history));
+    const transcript = new TranscriptModel(history);
     const viewport = new ChatViewport(
       transcriptState(transcript),
       getMarkdownTheme(), () => 18, () => 1, () => 80,
@@ -1343,10 +1382,10 @@ describe('progressive history layout', () => {
     viewport.render(80);
     viewport.scroll(1_000_000);
     viewport.render(80);
-    expect(viewport.isHistoryIndexComplete()).toBe(true);
+    expect(viewport.metrics().transcriptRowsExact).toBe(true);
     viewport.scroll(-1_000_000);
     viewport.render(80);
-    viewport.resetHeightIndexOperationCount();
+    const heightOperationsBefore = viewport.metrics().heightIndexOperations;
 
     for (let index = 0; index < updates; index += 1) {
       transcript.apply({
@@ -1358,7 +1397,8 @@ describe('progressive history layout', () => {
     }
 
     const logarithmicFrameBound = updates * 12 * (Math.ceil(Math.log2(transcript.turnCount)) + 1);
-    expect(viewport.metrics().heightIndexOperations).toBeGreaterThan(updates);
-    expect(viewport.metrics().heightIndexOperations).toBeLessThanOrEqual(logarithmicFrameBound);
+    const heightOperations = viewport.metrics().heightIndexOperations - heightOperationsBefore;
+    expect(heightOperations).toBeGreaterThan(updates);
+    expect(heightOperations).toBeLessThanOrEqual(logarithmicFrameBound);
   });
 });

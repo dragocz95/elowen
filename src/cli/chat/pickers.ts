@@ -6,8 +6,9 @@ import { openKeybindsEditor } from './keybindsEditor.js';
 import { API_KEY_PROVIDERS } from '../setup/constants.js';
 import { formatK } from '../ui/text.js';
 import type { BrainProviderView } from './brainClient.js';
-import type { ChatRuntime } from './runtime.js';
-import type { StreamController } from './streamController.js';
+import type { ChatState } from './chatState.js';
+import type { ChatApplicationActions, ChatApplicationResources } from './chatCapabilities.js';
+import type { StreamCoordinatorPort } from './streamCoordinator.js';
 
 export interface Pickers {
   openThinkingPicker(): void;
@@ -28,8 +29,10 @@ export interface Pickers {
 /** Everything the picker/modal surface of the chat offers: model + provider management, reasoning
  *  effort, themes, and the /sessions /mcp /skills /lsp /tools /status /help modals. */
 export function createPickers(
-  rt: ChatRuntime,
-  stream: StreamController,
+  rt: ChatState,
+  resources: Pick<ChatApplicationResources, 'client' | 'tui' | 'editor' | 'termSettings' | 'cwdLabel' | 'branchLabel' | 'commandDefs'>,
+  actions: Pick<ChatApplicationActions, 'render' | 'refreshMeta'>,
+  stream: StreamCoordinatorPort,
   shell: {
     /** Re-open the telemetry panel so a theme switch recolors it, keeping its hidden state. */
     reshowPanel(): void;
@@ -37,18 +40,19 @@ export function createPickers(
     reloadKeymap(): void;
   },
 ): Pickers {
-  const { client, tui, editor, termSettings, cwdLabel, branchLabel } = rt;
+  const { client, tui, editor, termSettings, cwdLabel, branchLabel, commandDefs } = resources;
+  const { render, refreshMeta } = actions;
 
   const applyThinkingLevel = (level: string): void => {
     void client.setThinkingLevel(level).then((r) => {
       rt.thinkingLevel = r.thinkingLevel;
       rt.notice = color.dim(`reasoning effort: ${rt.thinkingLevelLabels[r.thinkingLevel] ?? r.thinkingLevel}`);
-      rt.render();
-    }).catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); rt.render(); });
+      render();
+    }).catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); render(); });
   };
 
   const openThinkingPicker = (): void => {
-    if (rt.thinkingLevels.length === 0) { rt.notice = color.dim('this model has no reasoning-effort levels'); rt.render(); return; }
+    if (rt.thinkingLevels.length === 0) { rt.notice = color.dim('this model has no reasoning-effort levels'); render(); return; }
     openPicker({
       tui, editor, title: 'Reasoning effort',
       items: rt.thinkingLevels.map((lv) => {
@@ -65,15 +69,15 @@ export function createPickers(
   // OPTIMISTICALLY so rapid presses step through the levels instead of re-sending the same target
   // (the server reply is authoritative; an error rolls back).
   const cycleThinkingLevel = (): void => {
-    if (rt.thinkingLevels.length === 0) { rt.notice = color.dim('this model has no reasoning-effort levels'); rt.render(); return; }
+    if (rt.thinkingLevels.length === 0) { rt.notice = color.dim('this model has no reasoning-effort levels'); render(); return; }
     const previous = rt.thinkingLevel;
     const next = rt.thinkingLevels[(rt.thinkingLevels.indexOf(rt.thinkingLevel) + 1) % rt.thinkingLevels.length]!;
     rt.thinkingLevel = next;
     rt.notice = color.dim(`reasoning effort: ${rt.thinkingLevelLabels[next] ?? next}`);
-    rt.render();
+    render();
     void client.setThinkingLevel(next)
-      .then((r) => { rt.thinkingLevel = r.thinkingLevel; rt.notice = color.dim(`reasoning effort: ${rt.thinkingLevelLabels[r.thinkingLevel] ?? r.thinkingLevel}`); rt.render(); })
-      .catch((e: Error) => { rt.thinkingLevel = previous; rt.notice = color.error(`error: ${e.message}`); rt.render(); });
+      .then((r) => { rt.thinkingLevel = r.thinkingLevel; rt.notice = color.dim(`reasoning effort: ${rt.thinkingLevelLabels[r.thinkingLevel] ?? r.thinkingLevel}`); render(); })
+      .catch((e: Error) => { rt.thinkingLevel = previous; rt.notice = color.error(`error: ${e.message}`); render(); });
   };
 
   // /model → ctrl+p: manage brain providers right from the CLI. Presets come from the setup wizard's
@@ -84,8 +88,8 @@ export function createPickers(
       const apiLabel = (p: BrainProviderView): string => p.type !== 'openai' ? '' : ` · ${p.api ?? 'auto'} API`;
       const saveAll = (next: BrainProviderView[], done: string): void => {
         void client.saveBrainProviders(next)
-          .then(() => { rt.notice = color.dim(done); rt.render(); })
-          .catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); rt.render(); });
+          .then(() => { rt.notice = color.dim(done); render(); })
+          .catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); render(); });
       };
       // Per-entry API mode picker (openai-type only): auto / responses / completions.
       const openApiPicker = (p: BrainProviderView, all: BrainProviderView[]): void => {
@@ -112,7 +116,7 @@ export function createPickers(
           tui, editor, title: `${label} · API key`,
           onSubmit: (key) => {
             const apiKey = key.trim();
-            if (!apiKey) { rt.notice = color.dim('cancelled — no API key entered'); rt.render(); return; }
+            if (!apiKey) { rt.notice = color.dim('cancelled — no API key entered'); render(); return; }
             const idBase = label.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'provider';
             let id = idBase;
             for (let i = 2; providers.some((x) => x.id === id); i++) id = `${idBase}-${i}`;
@@ -148,7 +152,7 @@ export function createPickers(
                     tui, editor, title: 'Custom endpoint · base URL (…/v1)',
                     onSubmit: (url) => {
                       const baseUrl = url.trim().replace(/\/$/, '');
-                      if (!/^https?:\/\//.test(baseUrl)) { rt.notice = color.error('a base URL must start with http(s)://'); rt.render(); return; }
+                      if (!/^https?:\/\//.test(baseUrl)) { rt.notice = color.error('a base URL must start with http(s)://'); render(); return; }
                       addEntry(new URL(baseUrl).hostname, 'openai', baseUrl);
                     },
                   });
@@ -162,16 +166,16 @@ export function createPickers(
           }
           const p = providers.find((x) => x.id === v);
           if (!p) return;
-          if (p.type !== 'openai') { rt.notice = color.dim(`${p.label}: nothing to configure here (manage models via the web settings)`); rt.render(); return; }
+          if (p.type !== 'openai') { rt.notice = color.dim(`${p.label}: nothing to configure here (manage models via the web settings)`); render(); return; }
           openApiPicker(p, providers);
         },
       });
-    }).catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); rt.render(); });
+    }).catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); render(); });
   };
 
   const openModelPicker = (): void => {
     void client.models().then((models) => {
-      if (models.length === 0) { rt.notice = color.dim('no models configured — ctrl+p in /model adds a provider'); rt.render(); return; }
+      if (models.length === 0) { rt.notice = color.dim('no models configured — ctrl+p in /model adds a provider'); render(); return; }
       const paid = models.filter((m) => !m.free);
       const free = models.filter((m) => m.free);
       const items = [
@@ -190,7 +194,7 @@ export function createPickers(
         onPick: (value) => {
           if (value === '__free') { openModelPicker(); return; }
           rt.notice = color.dim('switching model…');
-          rt.render();
+          render();
           void client.setModel(parseModelValue(value)).then(async (r) => {
             rt.modelName = r.model;
             // The server rebuilt the session — the old event stream is dead, reopen it.
@@ -198,13 +202,13 @@ export function createPickers(
             const ac = new AbortController();
             rt.streamAc = ac;
             stream.openStream(ac);
-            await rt.refreshMeta();
+            await refreshMeta();
             rt.notice = '';
-            rt.render();
-          }).catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); rt.render(); });
+            render();
+          }).catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); render(); });
         },
       });
-    }).catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); rt.render(); });
+    }).catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); render(); });
   };
 
   const applyTheme = (name: string): boolean => {
@@ -216,7 +220,7 @@ export function createPickers(
       editor.borderColor = color.faint;
       rt.notice = color.dim('theme: Custom (web palette)');
       shell.reshowPanel();
-      rt.render();
+      render();
       return true;
     }
     if (!isChatThemeName(name)) return false;
@@ -225,7 +229,7 @@ export function createPickers(
     editor.borderColor = color.faint;
     rt.notice = color.dim(`theme: ${theme.label}`);
     shell.reshowPanel();
-    rt.render();
+    render();
     return true;
   };
 
@@ -245,7 +249,7 @@ export function createPickers(
   const openHelpModal = (): void => {
     openPicker({
       tui, editor, title: 'Commands',
-      items: rt.commandDefs.map((c) => ({ value: c.name, label: `/${c.name}`, description: c.description })),
+      items: commandDefs.map((c) => ({ value: c.name, label: `/${c.name}`, description: c.description })),
       footer: 'enter run · type to filter · esc close',
       onPick: (name) => { editor.onSubmit?.(`/${name}`); },
     });
@@ -277,13 +281,13 @@ export function createPickers(
         if (g.paused_reason) kv('  paused', g.paused_reason);
       }
       openInfoModal({ tui, editor, title: 'Session status', lines });
-    }).catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); rt.render(); });
+    }).catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); render(); });
   };
 
   const openSessionsModal = (): void => {
     void client.sessions().then((list) => {
       rt.listed = list.map((s) => ({ id: s.id, title: s.title }));
-      if (list.length === 0) { rt.notice = color.dim('no conversations'); rt.render(); return; }
+      if (list.length === 0) { rt.notice = color.dim('no conversations'); render(); return; }
       const refresh = () => openSessionsModal();
       const confirmDelete = (id: string, title: string, current: boolean): void => {
         openPicker({
@@ -300,16 +304,16 @@ export function createPickers(
               // not yank the CLI off what it is working on.
               if (current) await stream.switchTo({});
               refresh();
-              rt.render();
+              render();
             })
-              .catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); rt.render(); });
+              .catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); render(); });
           },
         });
       };
       openPicker({
         tui, editor, title: 'Conversations', items: sessionItems(list, client.boundSession),
         footer: 'enter resume · ctrl+r rename · ctrl+d delete · esc close',
-        onPick: (id) => void stream.switchTo({ session: id }).catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); rt.render(); }),
+        onPick: (id) => void stream.switchTo({ session: id }).catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); render(); }),
         onInput: (data, item, close) => {
           if (!item) return false;
           const row = list.find((s) => s.id === item.value);
@@ -322,9 +326,9 @@ export function createPickers(
               onSubmit: (title) => {
                 void client.renameSession(row.id, title).then((renamed) => {
                   if (row.id === client.boundSession) rt.conversationTitle = renamed.title;
-                  rt.notice = color.dim('conversation renamed'); refresh(); rt.render();
+                  rt.notice = color.dim('conversation renamed'); refresh(); render();
                 })
-                  .catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); rt.render(); });
+                  .catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); render(); });
               },
             });
             return true;
@@ -332,7 +336,7 @@ export function createPickers(
           return false;
         },
       });
-    }).catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); rt.render(); });
+    }).catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); render(); });
   };
 
   const openMcpModal = (): void => {
@@ -342,12 +346,12 @@ export function createPickers(
         label: `${s.status === 'connected' ? color.success('●') : s.status === 'connecting' ? color.warning('●') : color.faint('○')} ${s.name}`,
         description: `${s.transport} · ${s.toolCount} tools${s.lastError ? ` · ${s.lastError}` : ''}`,
       }));
-      if (items.length === 0) { rt.notice = color.dim('no MCP servers configured'); rt.render(); return; }
+      if (items.length === 0) { rt.notice = color.dim('no MCP servers configured'); render(); return; }
       const refresh = () => openMcpModal();
       const reconnect = (name: string): void => {
-        rt.notice = color.dim(`reconnecting ${name}…`); rt.render();
-        void client.reconnectMcp(name).then(() => { rt.notice = color.dim(`MCP ${name} connected`); refresh(); rt.render(); })
-          .catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); rt.render(); });
+        rt.notice = color.dim(`reconnecting ${name}…`); render();
+        void client.reconnectMcp(name).then(() => { rt.notice = color.dim(`MCP ${name} connected`); refresh(); render(); })
+          .catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); render(); });
       };
       const detail = (name: string): void => {
         const server = servers.find((s) => s.name === name);
@@ -364,7 +368,7 @@ export function createPickers(
         openPicker({ tui, editor, title: `MCP ${server.name}`, items: rows, onPick: (v) => {
           if (v === '__back') refresh();
           else if (v === '__reconnect') reconnect(server.name);
-          else { rt.notice = color.dim(`tool: ${v}`); rt.render(); }
+          else { rt.notice = color.dim(`tool: ${v}`); render(); }
         } });
       };
       openPicker({
@@ -373,27 +377,27 @@ export function createPickers(
         onPick: detail,
         onInput: (data, item) => {
           if (data === 'R') {
-            rt.notice = color.dim('reconnecting disconnected/error MCP servers…'); rt.render();
-            void client.reconnectMcpAll().then(() => { rt.notice = color.dim('MCP reconnect complete'); refresh(); rt.render(); })
-              .catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); rt.render(); });
+            rt.notice = color.dim('reconnecting disconnected/error MCP servers…'); render();
+            void client.reconnectMcpAll().then(() => { rt.notice = color.dim('MCP reconnect complete'); refresh(); render(); })
+              .catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); render(); });
             return true;
           }
           if (data === 'r' && item) { reconnect(item.value); return true; }
           return false;
         },
       });
-    }).catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); rt.render(); });
+    }).catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); render(); });
   };
 
   const openSkillsModal = (): void => {
     void client.skills().then((skills) => {
-      if (skills.length === 0) { rt.notice = color.dim('no skills found'); rt.render(); return; }
+      if (skills.length === 0) { rt.notice = color.dim('no skills found'); render(); return; }
       const refresh = () => openSkillsModal();
       // Push a skill into the CURRENT conversation with PI's native `/skill:name` command — the daemon's
       // prompt path expands it to the skill's full instructions (progressive disclosure keeps only
       // name+description in the system prompt). Nothing to load if the skills plugin is off.
       const loadSkill = (name: string, active: boolean): void => {
-        if (!active) { rt.notice = color.dim('the skills plugin is disabled — enable it in Settings → Plugins first'); rt.render(); return; }
+        if (!active) { rt.notice = color.dim('the skills plugin is disabled — enable it in Settings → Plugins first'); render(); return; }
         // onSubmit clears any notice and shows the sent turn itself, so a "loading…" notice here would be
         // wiped before it ever renders — just submit the /skill command.
         editor.onSubmit?.(`/skill:${name}`);
@@ -407,8 +411,8 @@ export function createPickers(
           ],
           onPick: (v) => {
             if (v !== 'yes') { refresh(); return; }
-            void client.deleteSkill(name).then(() => { rt.notice = color.dim('skill deleted'); refresh(); rt.render(); })
-              .catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); rt.render(); });
+            void client.deleteSkill(name).then(() => { rt.notice = color.dim('skill deleted'); refresh(); render(); })
+              .catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); render(); });
           },
         });
       };
@@ -441,7 +445,7 @@ export function createPickers(
           if (!s) return false;
           if (isCtrlL(data)) { close(); loadSkill(s.name, s.active === true); return true; }
           if (isCtrlD(data)) {
-            if (!s.canDelete) { rt.notice = color.dim('bundled/system skills are protected'); rt.render(); return true; }
+            if (!s.canDelete) { rt.notice = color.dim('bundled/system skills are protected'); render(); return true; }
             close();
             confirmDelete(s.name);
             return true;
@@ -449,7 +453,7 @@ export function createPickers(
           return false;
         },
       });
-    }).catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); rt.render(); });
+    }).catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); render(); });
   };
 
   // /lsp as a status modal (mirrors /mcp): whether diagnostics are enabled and running, one row per
@@ -475,13 +479,13 @@ export function createPickers(
       // Tab (\t) — same byte — so Tab doubles as the install key here.
       const runManage = (srv: { label: string; command: string }, install: boolean): void => {
         rt.notice = color.dim(install ? `installing ${srv.label} (npm, this can take a minute)…` : `uninstalling ${srv.label}…`);
-        rt.render();
+        render();
         // Deliberately NO modal reopen when npm finishes: the user may be typing (or inside another
         // picker) minutes later — a surprise overlay would steal focus and strand the one beneath it.
         // The outcome lands as a notice; /lsp shows the fresh state on demand.
         void (install ? client.lspInstall(srv.command) : client.lspUninstall(srv.command))
-          .then(async (message) => { rt.notice = color.dim(`${message} · /lsp shows the current state`); await rt.refreshMeta(); rt.render(); })
-          .catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); rt.render(); });
+          .then(async (message) => { rt.notice = color.dim(`${message} · /lsp shows the current state`); await refreshMeta(); render(); })
+          .catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); render(); });
       };
       const manageKey = (data: string, selected: { value: string } | null, close: () => void): boolean => {
         const install = isTabKey(data);
@@ -491,7 +495,7 @@ export function createPickers(
         if (!srv || (install && srv.installed) || (uninstall && !srv.installed)) return true; // nothing to do
         if (!srv.installable) {
           rt.notice = color.dim(`${srv.label} ships with its toolchain — ${install ? 'install' : 'remove'} it with your package manager (${srv.installHint})`);
-          rt.render();
+          render();
           return true;
         }
         close();
@@ -517,23 +521,23 @@ export function createPickers(
           if (v !== '__toggle') { refresh(); return; }
           void client.command('lsp')
             // refreshMeta keeps the right-panel LSP Active/Inactive line in step with the flip.
-            .then(async (r) => { rt.notice = color.dim(r?.message ?? 'toggled LSP'); await rt.refreshMeta(); refresh(); rt.render(); })
-            .catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); rt.render(); });
+            .then(async (r) => { rt.notice = color.dim(r?.message ?? 'toggled LSP'); await refreshMeta(); refresh(); render(); })
+            .catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); render(); });
         },
       });
-    }).catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); rt.render(); });
+    }).catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); render(); });
   };
 
   const openToolsModal = (): void => {
     void client.tools().then((tools) => {
-      if (tools.length === 0) { rt.notice = color.dim('no active plugin tools'); rt.render(); return; }
+      if (tools.length === 0) { rt.notice = color.dim('no active plugin tools'); render(); return; }
       const refresh = () => openToolsModal();
       openPicker({
         tui, editor, title: 'Tools',
         items: tools.map((t) => ({ value: t.name, label: t.name, description: `${t.plugin}${t.schema ? ` · ${t.schema}` : ''}` })),
         onPick: (name) => {
           const t = tools.find((tool) => tool.name === name);
-          if (!t) { rt.notice = color.dim(name); rt.render(); return; }
+          if (!t) { rt.notice = color.dim(name); render(); return; }
           openPicker({
             tui, editor, title: `Tool ${t.name}`,
             items: [
@@ -546,7 +550,7 @@ export function createPickers(
           });
         },
       });
-    }).catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); rt.render(); });
+    }).catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); render(); });
   };
 
   // /keybinds as an interactive, live-applied editor: arrow-key list of every action, Enter captures the

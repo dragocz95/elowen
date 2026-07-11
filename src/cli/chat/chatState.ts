@@ -1,6 +1,5 @@
 import type { BrainCard } from '../../brain/events.js';
 import type { ProcessInfo } from '../../brain/processRegistry.js';
-import type { ChatView } from '../../brain/transcript.js';
 import type { TranscriptModel } from '../../brain/transcriptModel.js';
 import type { BrainRateLimits, BrainStatus, BrainWorkMode, McpServerView } from './brainClient.js';
 import type { FrecencyMap, PendingImage } from './mentions.js';
@@ -31,7 +30,7 @@ export interface ChatStateSeed {
  * always a live projection from TranscriptModel rather than a separately assigned snapshot. */
 export class ChatState {
   readonly transcript: TranscriptModel;
-  childView: { sessionId: string; transcript: TranscriptModel; readonly view: ChatView; loading: boolean } | null = null;
+  childView: { sessionId: string; transcript: TranscriptModel; loading: boolean } | null = null;
   childAc: AbortController | null = null;
   streamAc = new AbortController();
   notice: string;
@@ -78,6 +77,4 @@ export class ChatState {
     this.showThoughts = seed.showThoughts ?? true;
     this.mentionFrecency = seed.mentionFrecency ?? {};
   }
-
-  get view(): ChatView { return this.transcript.view; }
 }

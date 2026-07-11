@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
-import { viewToPlainText, installExitGuards, createQuitCoordinator, loadInitialTranscript } from '../../../src/cli/chat/app.js';
-import { beginAssistant, pushUser, reduce, emptyView } from '../../../src/brain/transcript.js';
+import { loadInitialTranscript } from '../../../src/cli/chat/chatApplication.js';
+import { installExitGuards, createQuitCoordinator } from '../../../src/cli/chat/terminalLifecycle.js';
 import { SnapshotHydrator } from '../../../src/cli/chat/snapshotHydrator.js';
 import type { BrainClient } from '../../../src/cli/chat/brainClient.js';
 
@@ -117,57 +117,6 @@ describe('createQuitCoordinator', () => {
   });
 });
 
-describe('viewToPlainText', () => {
-  it('renders user and elowen turns with labels, tools and text', () => {
-    let v = beginAssistant(pushUser(emptyView(), 'ahoj'));
-    v = reduce(v, { type: 'tool', name: 'elowen_create_task' });
-    v = reduce(v, { type: 'text', delta: 'hotovo' });
-    const lines = viewToPlainText(v);
-    expect(lines).toContain('you');
-    expect(lines.some((l) => l.includes('ahoj'))).toBe(true);
-    expect(lines.some((l) => l.includes('* elowen_create_task'))).toBe(true);
-    expect(lines.some((l) => l.includes('hotovo'))).toBe(true);
-  });
-
-  it('renders a reasoning segment prefixed and distinct from the answer', () => {
-    let v = beginAssistant(pushUser(emptyView(), 'ahoj'));
-    v = reduce(v, { type: 'reasoning', delta: 'let me think' });
-    v = reduce(v, { type: 'text', delta: 'answer' });
-    const lines = viewToPlainText(v);
-    expect(lines.some((l) => l.includes('thought let me think'))).toBe(true);
-    expect(lines.some((l) => l.includes('answer') && !l.includes('thought'))).toBe(true);
-  });
-});
-
-describe('reduce — reasoning + notice', () => {
-  it('accumulates reasoning into its own segment, separate from text', () => {
-    let v = beginAssistant(pushUser(emptyView(), 'x'));
-    v = reduce(v, { type: 'reasoning', delta: 'think ' });
-    v = reduce(v, { type: 'reasoning', delta: 'more' });
-    const turn = v.turns[v.turns.length - 1];
-    expect(turn.role === 'elowen' && turn.segments).toEqual([{ kind: 'reasoning', text: 'think more' }]);
-  });
-
-  it('shows a transient notice and clears it on done + on idle', () => {
-    let v = beginAssistant(pushUser(emptyView(), 'x'));
-    v = reduce(v, { type: 'notice', kind: 'retry', message: 'retrying — attempt 1/5…' });
-    expect(v.notice).toBe('retrying — attempt 1/5…');
-    v = reduce(v, { type: 'notice', kind: 'retry', message: 'retry succeeded', done: true });
-    expect(v.notice).toBeUndefined();
-    v = reduce(v, { type: 'notice', kind: 'compaction', message: 'compacting conversation…' });
-    expect(v.notice).toBe('compacting conversation…');
-    v = reduce(v, { type: 'idle' });
-    expect(v.notice).toBeUndefined(); // settled turn drops the transient line
-  });
-
-  it('first answer text clears a pending notice', () => {
-    let v = beginAssistant(pushUser(emptyView(), 'x'));
-    v = reduce(v, { type: 'notice', kind: 'compaction', message: 'compacting conversation…' });
-    v = reduce(v, { type: 'text', delta: 'done' });
-    expect(v.notice).toBeUndefined();
-  });
-});
-
 describe('parseCommand', () => {
   it('routes slash commands and passes the resume argument through', async () => {
     const { parseCommand } = await import('../../../src/cli/chat/commands.js');
@@ -228,7 +177,7 @@ describe('mode toggle key', () => {
 
 describe('statusline', () => {
   it('renders only the toggled parts and hides entirely when the plugin is off', async () => {
-    const { statusline } = await import('../../../src/cli/chat/shell.js');
+    const { statusline } = await import('../../../src/cli/chat/chatComposition.js');
     const usage = { tokens: 34_500, contextWindow: 200_000, percent: 17.25, totalTokens: 1_234_567, cost: 0.4218 };
     expect(statusline(null, usage, 'opus')).toBe('');
     expect(statusline({}, usage, 'opus')).toBe('');

@@ -3,7 +3,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { compactNotice, resolveThinkingLevel, wireSubmit } from '../../../src/cli/chat/commands.js';
-import { emptyView } from '../../../src/brain/transcript.js';
+import { TranscriptModel } from '../../../src/brain/transcriptModel.js';
+import { ChatState } from '../../../src/cli/chat/chatState.js';
 
 describe('resolveThinkingLevel', () => {
   it('accepts canonical ids and provider-facing labels without leaking the label to PI', () => {
@@ -43,20 +44,23 @@ describe('sub-agent child submit echo', () => {
         set onSubmit(fn: (text: string) => void) { onSubmit = fn; },
       };
       const subagentSend = vi.fn(async () => {});
-      const childView = { sessionId: 'brain-ch-subagent-child', view: emptyView(), loading: false };
+      const childTranscript = new TranscriptModel();
       const render = vi.fn();
-      const rt = {
-        client: { subagentSend }, editor, childView, notice: '', render,
-        shellContext: {}, attachmentChips: {},
-      };
-      wireSubmit(rt as never, { stream: {}, pickers: {} } as never);
-      const before = childView.view;
+      const state = new ChatState({ transcript: new TranscriptModel() });
+      state.childView = { sessionId: 'brain-ch-subagent-child', transcript: childTranscript, loading: false };
+      wireSubmit(
+        state,
+        { client: { subagentSend }, editor, shellContext: {}, attachmentChips: {}, commandDefs: [], tui: {} } as never,
+        { render } as never,
+        { stream: {}, pickers: {} } as never,
+      );
+      const before = childTranscript.revision;
       onSubmit?.('guide the child');
       await Promise.resolve();
 
       expect(subagentSend).toHaveBeenCalledWith('brain-ch-subagent-child', 'guide the child');
-      expect(childView.view).toBe(before);
-      expect(childView.view.turns).toEqual([]);
+      expect(childTranscript.revision).toBe(before);
+      expect(childTranscript.turnCount).toBe(0);
       expect(render).toHaveBeenCalledOnce(); // only flushes the cleared editor
     } finally {
       if (priorHome === undefined) delete process.env.HOME;

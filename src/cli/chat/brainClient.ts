@@ -147,7 +147,7 @@ export class BrainClient {
     const res = await this.post('/brain/start', { ...opts, cwd: process.cwd(), client: this.clientId, generation });
     const body = (await res.json()) as { sessionId: string };
     // Concurrent A/B switches may resolve out of order. Only the latest request is allowed to commit the
-    // shared bound session; streamController independently guards its view/history/stream side effects.
+    // shared bound session; StreamCoordinator independently guards its view/history/stream side effects.
     if (generation === this.startGeneration) {
       this.bound = body.sessionId;
       this.boundGeneration = generation;

@@ -60,7 +60,7 @@ function history(turns) {
 async function loadRuntime(root) {
   const [{ initTheme, getMarkdownTheme }, { ChatViewport }, { TranscriptModel }] = await Promise.all([
     import('@earendil-works/pi-coding-agent'),
-    import(pathToFileURL(resolve(root, 'dist/cli/chat/layout.js')).href),
+    import(pathToFileURL(resolve(root, 'dist/cli/chat/chatViewport.js')).href),
     import(pathToFileURL(resolve(root, 'dist/brain/transcriptModel.js')).href),
   ]);
   return { initTheme, getMarkdownTheme, ChatViewport, TranscriptModel };
@@ -79,7 +79,7 @@ export async function runPipelineBenchmark({ root = process.cwd(), samples = 20,
     const viewport = new ChatViewport(
       {
         transcript: parentTranscript,
-        transcriptNotice: parentTranscript.view.notice,
+        transcriptNotice: parentTranscript.notice,
         notice: '', modelName: 'benchmark', thinkingSeconds: 0,
       },
       getMarkdownTheme(), () => 18, () => 1, () => 80,
@@ -110,7 +110,7 @@ export async function runPipelineBenchmark({ root = process.cwd(), samples = 20,
       const activeTranscript = state.childTranscript ?? state.parentTranscript;
       viewport.setState({
         transcript: activeTranscript,
-        transcriptNotice: activeTranscript.view.notice,
+        transcriptNotice: activeTranscript.notice,
         notice: '', modelName: 'benchmark', thinkingSeconds: 0,
       });
       viewport.render(80);

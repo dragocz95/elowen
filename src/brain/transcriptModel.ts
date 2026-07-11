@@ -1,10 +1,7 @@
 import type { BrainEvent } from './events.js';
 import {
   turnsFromHistory,
-  withChatViewChange,
   type ChatTurn,
-  type ChatView,
-  type ChatViewChange,
   type ElowenTurn,
   type HistoryMessage,
   type SubagentState,
@@ -12,6 +9,12 @@ import {
 } from './transcript.js';
 
 const TRANSCRIPT_CHANGE_JOURNAL_LIMIT = 4_096;
+
+type TranscriptMutation =
+  | { kind: 'reset' }
+  | { kind: 'append'; index: number }
+  | { kind: 'turn'; index: number }
+  | { kind: 'none' };
 
 export type TranscriptChange =
   | { kind: 'full'; revision: number }
@@ -31,6 +34,8 @@ export interface TranscriptModelOptions {
 export interface TranscriptRead {
   readonly revision: number;
   readonly turnCount: number;
+  readonly thinking: boolean;
+  readonly notice: string | undefined;
   turnAt(index: number): ChatTurn | undefined;
   changesSince(revision: number): TranscriptChange;
 }
@@ -44,14 +49,15 @@ interface ToolLocation {
 
 /**
  * Mutable indexed transcript state for terminal clients. The model owns one turn array and replaces at
- * most one turn for a steady BrainEvent. Cheap ChatView shells preserve the existing renderer contract;
- * they never clone the history. Durable history replacement is the only intentionally O(history) path.
+ * most one turn for a steady BrainEvent. Consumers read the live state directly; no parallel immutable
+ * view graph or history-sized shell is created. Durable history replacement is the only intentionally
+ * O(history) path.
  */
 export class TranscriptModel implements TranscriptRead {
   private readonly turns: ChatTurn[] = [];
   private readonly toolLocations = new Map<string, ToolLocation>();
   private lastToolLocation: ToolLocation | null = null;
-  private readonly changes = new Map<number, ChatViewChange>();
+  private readonly changes = new Map<number, TranscriptMutation>();
   private readonly journalLimit: number;
   private readonly onTurnVisit?: (index: number) => void;
   private subagentProjection: SubagentState[] = [];
@@ -59,9 +65,8 @@ export class TranscriptModel implements TranscriptRead {
   private readonly subagentSources = new Map<string, Set<string>>();
   private readonly sourceSessions = new Map<string, string>();
   private lastAssistant = '';
-  private thinking = false;
-  private notice: string | undefined;
-  private currentView: ChatView;
+  private thinkingState = false;
+  private noticeState: string | undefined;
   private currentRevision = 0;
 
   constructor(history: HistoryMessage[] = [], options: TranscriptModelOptions = {}) {
@@ -72,32 +77,12 @@ export class TranscriptModel implements TranscriptRead {
     this.journalLimit = journalLimit;
     this.onTurnVisit = options.onTurnVisit;
     this.rebuild(history);
-    this.currentView = withChatViewChange({ turns: this.turns, thinking: false }, { kind: 'reset' });
-  }
-
-  /** @internal Test-only compatibility while Task 7 removes pure ChatView fixtures. */
-  static fromView(view: ChatView, options: TranscriptModelOptions = {}): TranscriptModel {
-    const model = new TranscriptModel([], options);
-    for (const turn of view.turns) model.turns.push(turn);
-    model.clearDerived(true);
-    for (let index = 0; index < model.turns.length; index += 1) {
-      const turn = model.turns[index]!;
-      model.indexTurn(index, turn, false);
-    }
-    model.lastAssistant = tailAssistantText(model.turns);
-    model.freezeSubagents();
-    model.thinking = view.thinking;
-    model.notice = view.notice;
-    model.currentView = withChatViewChange(
-      { turns: model.turns, thinking: model.thinking, notice: model.notice },
-      { kind: 'reset' },
-    );
-    return model;
   }
 
   get revision(): number { return this.currentRevision; }
   get turnCount(): number { return this.turns.length; }
-  get view(): ChatView { return this.currentView; }
+  get thinking(): boolean { return this.thinkingState; }
+  get notice(): string | undefined { return this.noticeState; }
 
   turnAt(index: number): ChatTurn | undefined { return this.visit(index); }
   subagents(): readonly SubagentState[] { return this.subagentProjection; }
@@ -123,20 +108,20 @@ export class TranscriptModel implements TranscriptRead {
         const { turn, index, fresh } = this.ensureAssistant();
         appendSegmentText(turn, 'text', event.delta);
         this.lastAssistant = (fresh ? '' : this.lastAssistant) + event.delta;
-        this.thinking = true;
-        this.notice = undefined;
+        this.thinkingState = true;
+        this.noticeState = undefined;
         this.publish(fresh ? { kind: 'append', index } : { kind: 'turn', index });
         return true;
       }
       case 'reasoning': {
         const { turn, index, fresh } = this.ensureAssistant();
         appendSegmentText(turn, 'reasoning', event.delta);
-        this.thinking = true;
+        this.thinkingState = true;
         this.publish(fresh ? { kind: 'append', index } : { kind: 'turn', index });
         return true;
       }
       case 'notice':
-        this.notice = event.done ? undefined : event.message;
+        this.noticeState = event.done ? undefined : event.message;
         this.publish({ kind: 'none' });
         return true;
       case 'tool': {
@@ -165,7 +150,7 @@ export class TranscriptModel implements TranscriptRead {
         const location = { turn: index, segment: segmentIndex, item: itemIndex, source: toolSource(event.id, index, segmentIndex, itemIndex) };
         this.lastToolLocation = location;
         if (event.id) this.toolLocations.set(event.id, location);
-        this.thinking = true;
+        this.thinkingState = true;
         this.publish(fresh ? { kind: 'append', index } : { kind: 'turn', index });
         return true;
       }
@@ -210,7 +195,7 @@ export class TranscriptModel implements TranscriptRead {
         const index = this.turns.length;
         this.turns.push({ role: 'you', text: event.text });
         this.lastAssistant = '';
-        this.thinking = true;
+        this.thinkingState = true;
         this.publish({ kind: 'append', index });
         return true;
       }
@@ -218,8 +203,8 @@ export class TranscriptModel implements TranscriptRead {
         const index = this.turns.length - 1;
         const last = index >= 0 ? this.visit(index) : undefined;
         if (last?.role === 'elowen') this.turns[index] = { ...last, streaming: false };
-        this.thinking = false;
-        this.notice = undefined;
+        this.thinkingState = false;
+        this.noticeState = undefined;
         this.publish(last?.role === 'elowen' ? { kind: 'turn', index } : { kind: 'none' });
         return true;
       }
@@ -229,8 +214,8 @@ export class TranscriptModel implements TranscriptRead {
         appendSegmentText(turn, 'text', text);
         turn.streaming = false;
         this.lastAssistant = (fresh ? '' : this.lastAssistant) + text;
-        this.thinking = false;
-        this.notice = undefined;
+        this.thinkingState = false;
+        this.noticeState = undefined;
         this.publish(fresh ? { kind: 'append', index } : { kind: 'turn', index });
         return true;
       }
@@ -276,8 +261,8 @@ export class TranscriptModel implements TranscriptRead {
     }
     this.lastAssistant = tailAssistantText(this.turns);
     this.freezeSubagents();
-    this.thinking = false;
-    this.notice = undefined;
+    this.thinkingState = false;
+    this.noticeState = undefined;
   }
 
   private clearDerived(mutableProjection = false): void {
@@ -328,14 +313,14 @@ export class TranscriptModel implements TranscriptRead {
     const location = id ? this.toolLocations.get(id) : this.lastToolLocation;
     if (location) {
       if (!this.patchTool(location, patch)) return false;
-      this.thinking = true;
+      this.thinkingState = true;
       this.publish({ kind: 'turn', index: location.turn });
       return true;
     }
     // Preserve the old reducer's handling of malformed lifecycle events: a streaming assistant exists,
     // but no unrelated tool row is patched when an explicit id is unknown.
     const { index, fresh } = this.ensureAssistant();
-    this.thinking = true;
+    this.thinkingState = true;
     this.publish(fresh ? { kind: 'append', index } : { kind: 'turn', index });
     return true;
   }
@@ -398,7 +383,7 @@ export class TranscriptModel implements TranscriptRead {
     Object.freeze(this.subagentProjection);
   }
 
-  private publish(change: ChatViewChange): void {
+  private publish(change: TranscriptMutation): void {
     this.currentRevision += 1;
     this.changes.set(this.currentRevision, change);
     while (this.changes.size > this.journalLimit) {
@@ -406,11 +391,6 @@ export class TranscriptModel implements TranscriptRead {
       if (oldest == null) break;
       this.changes.delete(oldest);
     }
-    this.currentView = withChatViewChange(
-      { turns: this.turns, thinking: this.thinking, notice: this.notice },
-      change,
-      this.currentView,
-    );
   }
 }
 

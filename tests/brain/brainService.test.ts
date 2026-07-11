@@ -2236,7 +2236,7 @@ describe('per-client session binding (multi-instance CLI)', () => {
     const old = await svc.start(1);
     svc.tapSession(1, old.sessionId, () => {}, 'cli-a');
 
-    // Mirrors streamController.switchTo: old SSE abort is in flight, /start has rebound the body, but
+    // Mirrors StreamCoordinator.switchTo: old SSE abort is in flight, /start has rebound the body, but
     // history/meta are still loading and no replacement SSE listener exists yet.
     const fresh = await svc.start(1, { fresh: true, clientId: 'cli-a' });
     expect(fresh.sessionId).not.toBe(old.sessionId);

@@ -83,3 +83,55 @@ export class TerminalLifecycle {
     try { action(); } catch { /* terminal teardown must continue through every remaining cleanup */ }
   }
 }
+
+/** Install process guards for one chat run. The disposer is part of the lifecycle contract: returning
+ * to the menu and opening chat again must not retain listeners from the previous application. */
+export function installExitGuards(teardown: () => void, disableMouse: () => void): () => void {
+  const onSignal = (code: number) => (): void => { teardown(); disableMouse(); process.exit(code); };
+  const onSigTerm = onSignal(143);
+  const onSigHup = onSignal(129);
+  const onFatal = (): void => { teardown(); disableMouse(); };
+  process.once('exit', disableMouse);
+  process.once('SIGTERM', onSigTerm);
+  process.once('SIGHUP', onSigHup);
+  process.once('uncaughtExceptionMonitor', onFatal);
+  return (): void => {
+    process.off('exit', disableMouse);
+    process.off('SIGTERM', onSigTerm);
+    process.off('SIGHUP', onSigHup);
+    process.off('uncaughtExceptionMonitor', onFatal);
+  };
+}
+
+/** Coordinate one idempotent quit. Terminal restoration is synchronous; the bound server session gets
+ * one bounded best-effort stop before the application's run promise resolves. */
+export function createQuitCoordinator(options: {
+  teardown(): void;
+  removeExitGuards(): void;
+  stopBoundSession(signal: AbortSignal): Promise<void>;
+  done(): void;
+  timeoutMs?: number;
+}): () => void {
+  let quitting = false;
+  return (): void => {
+    if (quitting) return;
+    quitting = true;
+    options.teardown();
+    options.removeExitGuards();
+    const stopAc = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const timeout = new Promise<void>((resolve) => {
+      timer = setTimeout(() => {
+        stopAc.abort();
+        resolve();
+      }, options.timeoutMs ?? 750);
+    });
+    void Promise.race([
+      Promise.resolve().then(() => options.stopBoundSession(stopAc.signal)).catch(() => {}),
+      timeout,
+    ]).finally(() => {
+      if (timer) clearTimeout(timer);
+      options.done();
+    });
+  };
+}

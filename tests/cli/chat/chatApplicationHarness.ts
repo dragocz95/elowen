@@ -7,8 +7,9 @@ import { ChatEditor } from '../../../src/cli/chat/picker.js';
 import { ChatState } from '../../../src/cli/chat/chatState.js';
 import { LocalShellBuffer } from '../../../src/cli/chat/localShell.js';
 import { PromptStash } from '../../../src/cli/chat/promptHistory.js';
-import type { ChatRuntime } from '../../../src/cli/chat/runtime.js';
-import type { StreamController } from '../../../src/cli/chat/streamController.js';
+import type { BrainClient } from '../../../src/cli/chat/brainClient.js';
+import type { ChatApplicationResources } from '../../../src/cli/chat/chatCapabilities.js';
+import type { StreamCoordinatorPort } from '../../../src/cli/chat/streamCoordinator.js';
 import type { TuiDiagnostics } from '../../../src/cli/chat/tuiDiagnostics.js';
 
 type InputResult = { consume?: boolean; data?: string } | undefined;
@@ -86,8 +87,9 @@ class HarnessTui {
 interface ApplicationHarness {
   term: HarnessTerminal;
   tui: HarnessTui;
-  rt: ChatRuntime;
-  stream: StreamController;
+  rt: ChatState;
+  resources: ChatApplicationResources;
+  stream: StreamCoordinatorPort;
   diagnostics: TuiDiagnostics;
   mdTheme: ReturnType<typeof getMarkdownTheme>;
 }
@@ -128,10 +130,10 @@ export function applicationHarness(options: {
     abort: async () => {},
     queueRemove: async () => true,
   };
-  const rt = Object.assign(state, {
-    client,
+  const resources = {
+    client: client as unknown as BrainClient,
     tui,
-    term,
+    term: term as unknown as ChatApplicationResources['term'],
     editor,
     editorSlot,
     inputStack,
@@ -144,27 +146,21 @@ export function applicationHarness(options: {
     termSettings: null,
     cwdLabel: '~/elowen',
     branchLabel: 'test',
-    terminalLifecycle: null,
-    render: () => {},
-    renderForced: () => {},
-    refreshRateLimits: async () => {},
-    refreshMeta: async () => {},
-    quit: () => {},
-  }) as unknown as ChatRuntime;
+  } satisfies ChatApplicationResources;
   const stream = {
     subagentStates: () => [],
-    subagentSessions: () => [],
     openSubagent: async () => {},
     closeSubagent: () => {},
     cycleSubagent: () => {},
     openStream: () => {},
     switchTo: async () => {},
-  } as StreamController;
+    stop: () => {},
+  } as StreamCoordinatorPort;
   const diagnostics: TuiDiagnostics = {
     enabled: false,
     path: null,
     record: () => {},
     close: async () => {},
   };
-  return { term, tui: tuiImpl, rt, stream, diagnostics, mdTheme: getMarkdownTheme() };
+  return { term, tui: tuiImpl, rt: state, resources, stream, diagnostics, mdTheme: getMarkdownTheme() };
 }

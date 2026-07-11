@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { TranscriptModel } from '../../src/brain/transcriptModel.js';
+import { TranscriptModel, type TranscriptRead } from '../../src/brain/transcriptModel.js';
 import type { HistoryMessage } from '../../src/brain/transcript.js';
 
 const toolItem = (model: TranscriptModel, turnIndex: number, id: string) => {
@@ -77,8 +77,9 @@ describe('TranscriptModel', () => {
       output: { title: 'tool result', kind: 'console', text: 'PASS a' },
     });
 
-    expect(model.view.notice).toBeUndefined();
-    expect(model.view.thinking).toBe(true);
+    const readable: TranscriptRead = model;
+    expect(readable.notice).toBeUndefined();
+    expect(readable.thinking).toBe(true);
     expect(model.lastAssistantText()).toBe('hello');
     expect(toolItem(model, 1, 'run-1')).toMatchObject({
       command: 'npm test', output: { command: 'npm test', text: 'PASS a' },
@@ -86,11 +87,11 @@ describe('TranscriptModel', () => {
     expect(toolItem(model, 1, 'run-1').progress).toBeUndefined();
 
     model.apply({ type: 'idle' });
-    expect(model.view).toMatchObject({ thinking: false, notice: undefined });
+    expect(readable).toMatchObject({ thinking: false, notice: undefined });
     expect(model.turnAt(1)).toMatchObject({ role: 'elowen', streaming: false });
 
     model.apply({ type: 'error', message: 'fetch failed' });
-    expect(model.view.thinking).toBe(false);
+    expect(readable.thinking).toBe(false);
     expect(model.lastAssistantText()).toBe('\n[error: fetch failed]');
   });
 
@@ -148,13 +149,13 @@ describe('TranscriptModel', () => {
   it('treats an unknown old tool patch as a true no-op', () => {
     const model = new TranscriptModel([{ role: 'assistant', text: 'settled' }]);
     const revision = model.revision;
-    const view = model.view;
+    const turn = model.turnAt(0);
 
     expect(model.apply({
       type: 'subagent', id: 'missing', sessionId: 'child', status: 'running', task: 'x', tools: 0, seconds: 0,
     })).toBe(false);
     expect(model.revision).toBe(revision);
-    expect(model.view).toBe(view);
+    expect(model.turnAt(0)).toBe(turn);
     expect(model.subagents()).toEqual([]);
   });
 
