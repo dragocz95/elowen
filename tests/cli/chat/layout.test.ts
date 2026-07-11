@@ -760,6 +760,64 @@ describe('progressive history layout', () => {
     expect(visits).toBeLessThanOrEqual(96);
   });
 
+  it('stabilizes estimated heterogeneous rows before freezing frame and pointer geometry', () => {
+    const shortHistory = Array.from({ length: 1_000 }, (_, index) => ({
+      role: 'assistant' as const, text: `marker ${index}`,
+    }));
+    const transcript = new TranscriptModel(shortHistory);
+    let width = 80;
+    const viewport = new ChatViewport(
+      transcriptState(transcript),
+      getMarkdownTheme(), () => 18, () => 1, () => width,
+    );
+    viewport.render(width);
+    viewport.scroll(200);
+    viewport.render(width);
+
+    width = 72;
+    viewport.render(width); // enter estimated recovery around the current deep anchor
+    transcript.replaceHistory(shortHistory.map((message, index) => index === 200 ? {
+      ...message,
+      text: [`marker ${index}`, ...Array.from({ length: 150 }, (_, line) => `detail ${line}`)].join('\n'),
+    } : message));
+    viewport.setState(transcriptState(transcript));
+    viewport.render(width); // retain estimated mode, with the heterogeneous old turn still cold
+
+    viewport.scroll(1_000_000);
+    viewport.scroll(-400); // estimated two-row turns place turn 200 at the top of the viewport
+    const first = viewport.render(width);
+    const firstMetrics = viewport.metrics();
+    const firstThumb = first.map((line, index) => line.includes('█') ? index : -1).filter((index) => index >= 0);
+    const firstHits = firstThumb.map((index) => viewport.isScrollbarHit(width, index + 1));
+    const firstMarkerRow = first.findIndex((line) => line.includes('marker 200'));
+    expect(firstMarkerRow).toBeGreaterThanOrEqual(0);
+    expect(viewport.beginSelect(5, firstMarkerRow + 1)).toBe(true);
+    viewport.dragSelect(firstMarkerRow + 2);
+    const firstCopy = viewport.takeSelection();
+
+    const second = viewport.render(width);
+    const secondMetrics = viewport.metrics();
+    const secondThumb = second.map((line, index) => line.includes('█') ? index : -1).filter((index) => index >= 0);
+    const secondHits = secondThumb.map((index) => viewport.isScrollbarHit(width, index + 1));
+    const secondMarkerRow = second.findIndex((line) => line.includes('marker 200'));
+    expect(secondMarkerRow).toBe(firstMarkerRow);
+    expect(viewport.beginSelect(5, secondMarkerRow + 1)).toBe(true);
+    viewport.dragSelect(secondMarkerRow + 2);
+    const secondCopy = viewport.takeSelection();
+
+    expect(second).toEqual(first);
+    expect(secondMetrics.transcriptRows).toBe(firstMetrics.transcriptRows);
+    expect(secondMetrics.scrollOffset).toBe(firstMetrics.scrollOffset);
+    expect(secondMetrics.maxScrollOffset).toBe(firstMetrics.maxScrollOffset);
+    expect(firstMetrics.renderedTurns).toBeLessThanOrEqual(64);
+    expect(secondMetrics.renderedTurns).toBe(0);
+    expect(secondThumb).toEqual(firstThumb);
+    expect(firstHits.every(Boolean)).toBe(true);
+    expect(secondHits).toEqual(firstHits);
+    expect(secondCopy).toBe(firstCopy);
+    expect(firstCopy).toContain('marker 200');
+  });
+
   it('reads turns and sparse revisions directly from TranscriptModel', () => {
     const transcript = TranscriptModel.fromView(largeHistory(20));
     const viewport = new ChatViewport(

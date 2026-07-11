@@ -570,8 +570,9 @@ export class ChatViewport implements Component {
     this.currentExtraRows = this.extraRows();
     this.viewportHeight = height;
     this.scrollbarColumn = chatWidth;
-    if (this.pendingResetAnchor) {
-      const anchor = this.pendingResetAnchor;
+    const estimatedAnchor = this.pendingResetAnchor ?? (this.estimatedLayout ? this.captureViewportAnchor(false) : null);
+    if (estimatedAnchor) {
+      const anchor = estimatedAnchor;
       this.restoreResetAnchor(anchor);
       this.materializeEstimatedWindow(height + HISTORY_OVERSCAN_ROWS);
       this.restoreResetAnchor(anchor);
@@ -628,7 +629,7 @@ export class ChatViewport implements Component {
       || this.layoutShowsThoughts !== showThoughts;
 
     if (transcriptChanged || contextChanged) {
-      const anchor = !transcriptChanged && contextChanged ? this.captureResetAnchor() : null;
+      const anchor = !transcriptChanged && contextChanged ? this.captureViewportAnchor(true) : null;
       this.resetLayout(transcript.turnCount, transcriptChanged, anchor);
       this.layoutTranscript = transcript;
       this.layoutRevision = transcript.revision;
@@ -640,23 +641,23 @@ export class ChatViewport implements Component {
 
     const change = transcript.changesSince(this.layoutRevision);
     if (change.kind === 'full' || this.layout.length > transcript.turnCount) {
-      this.resetLayout(transcript.turnCount, true, this.captureResetAnchor());
+      this.resetLayout(transcript.turnCount, true, this.captureViewportAnchor(true));
     } else {
       const dirtyIndices = change.kind === 'turns' || change.kind === 'patch' ? change.indices : [];
       const sparseValid = dirtyIndices.every((index) => index >= 0 && index < this.layout.length && index < transcript.turnCount);
       if (!sparseValid) {
-        this.resetLayout(transcript.turnCount, true, this.captureResetAnchor());
+        this.resetLayout(transcript.turnCount, true, this.captureViewportAnchor(true));
       } else {
         for (const index of dirtyIndices) this.reconcileTurn(index);
         const suffixFrom = change.kind === 'suffix' || change.kind === 'patch' ? change.from : null;
         if (suffixFrom != null) {
           if (suffixFrom < 0 || suffixFrom > this.layout.length || suffixFrom > transcript.turnCount) {
-            this.resetLayout(transcript.turnCount, true, this.captureResetAnchor());
+            this.resetLayout(transcript.turnCount, true, this.captureViewportAnchor(true));
           } else {
             this.replaceSuffix(suffixFrom, transcript.turnCount);
           }
         } else if (this.layout.length !== transcript.turnCount) {
-          this.resetLayout(transcript.turnCount, true, this.captureResetAnchor());
+          this.resetLayout(transcript.turnCount, true, this.captureViewportAnchor(true));
         }
       }
     }
@@ -693,14 +694,15 @@ export class ChatViewport implements Component {
     }
   }
 
-  private captureResetAnchor(): ViewportResetAnchor | null {
+  private captureViewportAnchor(deepOnly: boolean): ViewportResetAnchor | null {
     const turnCount = this.layout.length;
-    if (turnCount === 0 || this.viewportHeight <= 0
-      || this.scrollOffset <= Math.max(this.viewportHeight * 2, HISTORY_OVERSCAN_ROWS)) return null;
+    if (turnCount === 0 || this.viewportHeight <= 0) return null;
+    if (deepOnly && this.scrollOffset <= Math.max(this.viewportHeight * 2, HISTORY_OVERSCAN_ROWS)) return null;
     const turnRows = this.heightIndex.prefixSum(turnCount);
     if (turnRows <= 0) return null;
     const leadingBlank = this.knownStart === 0 ? 1 : 0;
-    const topRow = Math.max(0, this.totalLines - this.viewportHeight - this.scrollOffset);
+    const liveTotal = leadingBlank + turnRows + this.currentExtraRows.length;
+    const topRow = Math.max(0, liveTotal - this.viewportHeight - this.scrollOffset);
     const turnOffset = Math.max(0, Math.min(turnRows - 1, topRow - leadingBlank));
     const turnIndex = Math.min(turnCount - 1, this.heightIndex.lowerBoundOffset(turnOffset));
     const turnStart = this.heightIndex.prefixSum(turnIndex);
@@ -741,7 +743,7 @@ export class ChatViewport implements Component {
     const first = Math.min(this.layout.length - 1, this.heightIndex.lowerBoundOffset(turnOffset));
     let rows = 0;
     let visits = 0;
-    for (let index = Math.max(0, first - 2);
+    for (let index = first;
       index < this.layout.length && rows < requiredRows && visits < 64; index += 1) {
       this.frameLayoutVisits++;
       visits++;
