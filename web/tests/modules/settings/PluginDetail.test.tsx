@@ -195,7 +195,9 @@ describe('PluginDetail config density', () => {
 
   it('keeps section and field explanations out of the layout until the shared HelpTip is focused', () => {
     usePluginDetail.mockReturnValue({ data: detail(schema, { enabled: true }), isLoading: false });
-    renderDetail();
+    const { container } = renderDetail();
+    expect(container.querySelector('.spatial-form-group, .spatial-form-row')).not.toBeInTheDocument();
+    expect(container.querySelector('.settings-row')).toBeInTheDocument();
     expect(screen.getAllByText('Behavior')).toHaveLength(2); // workspace tab + manifest section heading
     expect(screen.queryByText('How this plugin behaves.')).toBeNull();
     expect(screen.queryByText('A longer explanation that should stay behind the help affordance.')).toBeNull();

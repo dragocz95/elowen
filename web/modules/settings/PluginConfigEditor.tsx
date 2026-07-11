@@ -20,13 +20,13 @@ import { Checkbox } from '../../components/ui/Checkbox';
 import { BrainModelField } from '../../components/ui/BrainModelField';
 import { Segmented } from '../../components/ui/Segmented';
 import { ChoiceField } from '../../components/ui/ChoiceField';
-import { SpatialGroup, SpatialRow } from '../../components/ui/SpatialPrimitives';
 import { ProviderPicker } from '../../components/ui/ProviderPicker';
 import { useTranslation } from '../../lib/i18n';
 import { usePlugins, useProjects, useConfig, useBrainModels } from '../../lib/queries';
 import type { PluginConfigField, PluginDetail, RolePolicy, McpServerSpec } from '../../lib/types';
 import { RISK_TONE, CONNECTION_KEYS } from './pluginDetail.shared';
 import type { PluginConfigDraft } from './usePluginConfigDraft';
+import { SettingsGroup, SettingsRow } from './SettingsSurface';
 
 const textareaClass = 'w-full rounded-md border border-border bg-bg px-3 py-2 font-mono text-sm text-text placeholder:text-text-muted focus:border-accent';
 
@@ -470,7 +470,7 @@ export function PluginConfigEditor({ detail, fieldLabel, fieldHint, fieldOptions
         if (f.type === 'rolePolicies' || f.type === 'mcpServers') return <div key={f.key} className="animate-fade-up @lg:col-span-2">{renderField(f)}</div>;
         if ((f.type === 'boolean' || (f.type === 'enum' && (f.options?.length ?? 0) <= 3)) && !f.risk) {
           const description = [...new Set([fieldHint(f), f.help].filter((value): value is string => Boolean(value?.trim())))].join('\n\n');
-          return <SpatialRow key={f.key} title={fieldLabel(f)} description={description || undefined} className="animate-fade-up @lg:col-span-2">{renderField(f)}</SpatialRow>;
+          return <SettingsRow key={f.key} label={fieldLabel(f)} description={description || undefined} className="animate-fade-up @lg:col-span-2">{renderField(f)}</SettingsRow>;
         }
         return (
           <div key={f.key} className="animate-fade-up">
@@ -515,9 +515,9 @@ export function PluginConfigEditor({ detail, fieldLabel, fieldHint, fieldOptions
   const behaviorFields = visibleSchema.filter((f) => !isConnection(f) && !isComplex(f));
   const complexFields = visibleSchema.filter(isComplex);
   const group = (key: string, Icon: LucideIcon, title: string, hint: string | undefined, fields: PluginConfigField[]) => (
-    <SpatialGroup key={key} title={title} description={hint} icon={Icon}>
+    <SettingsGroup key={key} title={title} description={hint} icon={Icon}>
       <div className="py-4">{fieldList(fields)}</div>
-    </SpatialGroup>
+    </SettingsGroup>
   );
 
   const hasConnectionSection = visibleSchema.some((f) => f.type === 'section' && f.key === 'sec_connection');
@@ -529,13 +529,13 @@ export function PluginConfigEditor({ detail, fieldLabel, fieldHint, fieldOptions
           <p className="text-sm text-text-muted">{t.pluginDetail.configEmpty}</p>
         </Collapsible>
       ) : hasExplicitSections ? (
-        <SpatialGroup>
+        <SettingsGroup>
           <div className="py-5">
           {/* WhatsApp: the "Pair device" button (QR/code modal) lives at the top of the Connection section. */}
           {detail.name === 'whatsapp' && hasConnectionSection ? <WhatsAppPairSection /> : null}
           {fieldList(visibleSchema)}
           </div>
-        </SpatialGroup>
+        </SettingsGroup>
       ) : (
         <div className="flex flex-col gap-4">
             {connectionFields.length ? group('connection', Link2, t.pluginCfg.sectionConnection, t.pluginCfg.sectionConnectionHint, connectionFields) : null}
