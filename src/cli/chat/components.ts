@@ -50,27 +50,36 @@ export class UserBlock implements Component {
 export class CardPanel implements Component {
   private cards: BrainCard[] = [];
   private collapsed = false;
+  private expanded = false;
   /** Hard layout budget supplied by the shell. A pinned card must never be allowed to grow the
    *  full-screen TUI beyond the terminal height; the transcript gets whatever rows remain. */
   private maxRows = Number.POSITIVE_INFINITY;
   /** Row indices (0-based, within this panel's own output) that are clickable card headers — so the app
    *  can hit-test a mouse click against them and toggle the checklist open/closed. */
   private headerRows = new Set<number>();
+  private moreRows = new Set<number>();
   invalidate(): void { /* re-rendered on the next frame */ }
   set(cards: BrainCard[]): void { this.cards = cards; }
   setMaxRows(rows: number): void { this.maxRows = Math.max(0, Math.floor(rows)); }
   toggleCollapsed(): void { this.collapsed = !this.collapsed; }
+  toggleExpanded(): void { this.expanded = !this.expanded; }
+  isExpanded(): boolean { return this.expanded; }
   isHeaderRow(index: number): boolean { return this.headerRows.has(index); }
+  isMoreRow(index: number): boolean { return this.moreRows.has(index); }
   /** Uncapped row count for the shell's row allocator. */
   desiredRows(_width = 80): number { return this.buildRows().length; }
   render(_width?: number): string[] {
     const lines = this.buildRows();
+    this.moreRows = new Set();
     if (lines.length <= this.maxRows) return lines;
     if (this.maxRows <= 0) { this.headerRows = new Set(); return []; }
     const shown = lines.slice(0, this.maxRows);
     if (this.maxRows > 1) {
-      shown[this.maxRows - 1] = `    ${FAINTC(`… +${lines.length - this.maxRows + 1} more`)}`;
-      this.headerRows.delete(this.maxRows - 1); // the replacement summary is not a clickable card header
+      const moreRow = this.maxRows - 1;
+      const label = `… +${lines.length - this.maxRows + 1} more`;
+      shown[moreRow] = `    ${color.accent(`\x1b[4m${label}\x1b[24m`)}`;
+      this.headerRows.delete(moreRow);
+      this.moreRows.add(moreRow);
     }
     this.headerRows = new Set([...this.headerRows].filter((row) => row < this.maxRows));
     return shown;
@@ -84,7 +93,9 @@ export class CardPanel implements Component {
     const lines: string[] = [];
     for (const c of visible) {
       this.headerRows.add(lines.length); // a card's first row is its clickable header
-      lines.push(...cardBlock(c, 12, this.collapsed));
+      // The central budget owns physical clipping. Keep every Todo row available here so an explicit
+      // "+N more" expansion can borrow transcript space instead of hitting a second hidden 12-row cap.
+      lines.push(...cardBlock(c, Number.POSITIVE_INFINITY, this.collapsed));
     }
     return lines;
   }

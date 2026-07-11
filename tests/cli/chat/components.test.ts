@@ -145,7 +145,13 @@ describe('chat components', () => {
     const lines = panel.render(80);
     expect(lines).toHaveLength(3);
     expect(lines[2]).toContain('more');
+    expect(lines[2]).toContain('\x1b[4m');
     expect(panel.isHeaderRow(0)).toBe(true);
+    expect(panel.isMoreRow(2)).toBe(true);
+    panel.toggleExpanded();
+    expect(panel.isExpanded()).toBe(true);
+    panel.setMaxRows(30);
+    expect(panel.render(80).join('\n')).toContain('Task 19');
   });
 
   it('cardBlock renders a compact todo checklist plus optional body', () => {

@@ -306,6 +306,7 @@ export function createShell(rt: ChatRuntime, stream: StreamController, mdTheme: 
       hasTranscript: hasMessages(),
       telemetryRequested: panelVisible(),
       editorPriority: hasPriorityInput(),
+      cardsPriority: cardPanel.isExpanded(),
       telemetryColumns: panelWidth,
       desired: {
         editor: preparedInput.editor.length,
@@ -926,6 +927,11 @@ export function createShell(rt: ChatRuntime, stream: StreamController, mdTheme: 
         const target = subRel >= 0 ? subPanel.targetAt(subRel) : null;
         if (target) { void stream.openSubagent(target); return { consume: true }; }
         const cardRel = subRel - renderedSubRows;
+        if (cardRel >= 0 && cardPanel.isMoreRow(cardRel)) {
+          cardPanel.toggleExpanded();
+          tui.requestRender(true);
+          return { consume: true };
+        }
         if (cardRel >= 0 && cardPanel.isHeaderRow(cardRel)) {
           cardPanel.toggleCollapsed();
           tui.requestRender();

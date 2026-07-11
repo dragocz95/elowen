@@ -76,6 +76,19 @@ describe('central chat layout budget', () => {
     expect(budget.rootRows).toBe(24);
   });
 
+  it('lets an explicitly expanded Todo borrow transcript rows without displacing the editor', () => {
+    const budget = computeLayoutBudget({
+      columns: 80, rows: 24, hasTranscript: true, telemetryRequested: false,
+      cardsPriority: true,
+      desired: { editor: 3, queue: 0, attachments: 0, cards: 14, subagents: 4 },
+    });
+    expect(budget.sections.cards).toBe(14);
+    expect(budget.sections.editor).toBe(3);
+    expect(budget.sections.transcript).toBeGreaterThanOrEqual(1);
+    expect(budget.sections.subagents).toBe(0);
+    expect(budget.rootRows).toBe(24);
+  });
+
   it('only reserves telemetry when the panel fits beside a usable chat column', () => {
     const narrow = computeLayoutBudget({
       columns: 80, rows: 24, hasTranscript: true, telemetryRequested: true,

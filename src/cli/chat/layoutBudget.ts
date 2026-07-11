@@ -26,6 +26,9 @@ export interface LayoutBudgetInput {
   /** A blocking ask/approval dock owns the composer. It may borrow transcript/panel rows and must not be
    * clipped to the ordinary multiline-editor cap. */
   editorPriority?: boolean;
+  /** User explicitly opened a clipped Todo "+N more" link. The card may borrow transcript rows while
+   * the editor/status remain protected. */
+  cardsPriority?: boolean;
   desired: {
     editor: number;
     queue: number;
@@ -123,13 +126,13 @@ export function computeLayoutBudget(input: LayoutBudgetInput): LayoutBudget {
   const sections: LayoutSectionRows = {
     header: terminalRows > 0 ? 1 : 0,
     transcript: 0,
-    cards: input.editorPriority ? 0 : rows(input.desired.cards, 6),
-    subagents: input.editorPriority ? 0 : rows(input.desired.subagents, 4),
+    cards: input.editorPriority ? 0 : rows(input.desired.cards, input.cardsPriority ? terminalRows : 6),
+    subagents: input.editorPriority || input.cardsPriority ? 0 : rows(input.desired.subagents, 4),
     queue: input.editorPriority ? 0 : rows(input.desired.queue, 4),
     attachments: input.editorPriority ? 0 : (input.desired.attachments > 0 ? 1 : 0),
     editor: rows(input.desired.editor, input.editorPriority ? Math.max(1, terminalRows - 3) : 7),
     status: terminalRows > 1 ? 1 : 0,
-    hints: input.editorPriority ? 0 : (terminalRows >= RECOMMENDED_TUI_ROWS ? 1 : 0),
+    hints: input.editorPriority || input.cardsPriority ? 0 : (terminalRows >= RECOMMENDED_TUI_ROWS ? 1 : 0),
   };
   const targetTranscript = input.hasTranscript ? Math.min(4, Math.max(1, terminalRows - sections.header - sections.status - 1)) : 0;
   const fixed = (): number => Object.entries(sections)
@@ -146,7 +149,7 @@ export function computeLayoutBudget(input: LayoutBudgetInput): LayoutBudget {
 
   if (!input.editorPriority) reduce('editor', Math.min(sections.editor, 3));
   reduce('queue', Math.min(sections.queue, 1));
-  if (overflow > 0) {
+  if (overflow > 0 && !input.cardsPriority) {
     // Cards and sub-agents are one visual tier. Collapse both together so one expanded panel cannot use
     // the rows freed by collapsing its sibling and leave the bottom stack visually lopsided.
     sections.cards = Math.min(sections.cards, 1);
@@ -155,9 +158,10 @@ export function computeLayoutBudget(input: LayoutBudgetInput): LayoutBudget {
   }
   reduce('hints', 0);
   reduce('queue', 0);
-  reduce('cards', 0);
+  if (!input.cardsPriority) reduce('cards', 0);
   reduce('subagents', 0);
   reduce('attachments', 0);
+  reduce('cards', input.cardsPriority ? Math.min(sections.cards, 1) : 0);
   reduce('editor', Math.min(sections.editor, 1));
 
   sections.transcript = Math.max(0, terminalRows - fixed());
