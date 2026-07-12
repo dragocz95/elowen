@@ -42,6 +42,17 @@ describe('terminal text trust boundary', () => {
     expect(terminalPhysicalRow('first\r\nsecond\nthird\rfourth')).toBe('first second third fourth');
   });
 
+  it('preserves owned ANSI and the cursor marker while folding an embedded physical newline', () => {
+    const source = {
+      invalidate: () => {},
+      render: () => [`\x1b[31mleft${CURSOR_MARKER}\nright\x1b[0m`],
+    };
+    const [row] = terminalSafeComponent(source).render(80);
+
+    expect(row).toBe(`\x1b[31mleft${CURSOR_MARKER} right\x1b[0m`);
+    expect(row).not.toMatch(/[\r\n]/);
+  });
+
   it('projects overlay rows while preserving focus and input delegation', () => {
     let focused = false;
     let input = '';

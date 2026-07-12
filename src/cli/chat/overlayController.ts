@@ -82,11 +82,17 @@ export class OverlayController {
   pause(): void {
     if (this.state !== 'active') return;
     this.state = 'inactive';
-    for (const record of this.records) {
+    const snapshots = [...this.records].flatMap((record) => {
       const native = record.native;
-      if (!native) continue;
-      record.hidden ||= native.isHidden();
-      record.focus = native.isFocused() ? 'focused' : 'unfocused';
+      return native ? [{ record, native, hidden: native.isHidden(), focused: native.isFocused() }] : [];
+    });
+    // PI transfers focus as soon as one native handle is hidden. Commit every observation first so that
+    // teardown side effects cannot make a later record appear focused when it was not focused at pause.
+    for (const snapshot of snapshots) {
+      snapshot.record.hidden ||= snapshot.hidden;
+      snapshot.record.focus = snapshot.focused ? 'focused' : 'unfocused';
+    }
+    for (const { record, native } of snapshots) {
       native.hide();
       record.native = null;
     }
@@ -139,7 +145,13 @@ export class OverlayController {
       isHidden: () => record.hidden || (record.native?.isHidden() ?? false),
       focus: () => {
         if (record.closed || record.hidden) return;
+        for (const other of this.records) {
+          if (other === record || other.closed) continue;
+          other.focus = 'unfocused';
+          other.unfocusOptions = undefined;
+        }
         record.focus = 'focused';
+        record.unfocusOptions = undefined;
         record.native?.focus();
       },
       unfocus: (unfocusOptions) => {

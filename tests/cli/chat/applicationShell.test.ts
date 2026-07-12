@@ -1,6 +1,6 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { visibleWidth } from '@earendil-works/pi-tui';
-import type { Component, OverlayHandle, OverlayOptions, TUI } from '@earendil-works/pi-tui';
+import { TUI, visibleWidth } from '@earendil-works/pi-tui';
+import type { Component, OverlayHandle, OverlayOptions } from '@earendil-works/pi-tui';
 import { initTheme } from '@earendil-works/pi-coding-agent';
 import { AnimationController } from '../../../src/cli/chat/animationController.js';
 import { InputRouter } from '../../../src/cli/chat/inputRouter.js';
@@ -45,6 +45,34 @@ function nativeOverlayHandle(hide = vi.fn()): OverlayHandle {
     unfocus: () => { focused = false; },
     isFocused: () => focused,
   };
+}
+
+/** Exercise PI's real overlay stack/focus transfer while replacing only terminal I/O and frame delivery. */
+function realOverlayTui(): TUI {
+  const terminal = {
+    columns: 80,
+    rows: 24,
+    kittyProtocolActive: false,
+    start: () => {},
+    stop: () => {},
+    drainInput: async () => {},
+    write: () => {},
+    moveBy: () => {},
+    hideCursor: () => {},
+    showCursor: () => {},
+    clearLine: () => {},
+    clearFromCursor: () => {},
+    clearScreen: () => {},
+    setTitle: () => {},
+    setProgress: () => {},
+  } as unknown as ConstructorParameters<typeof TUI>[0];
+  const tui = new TUI(terminal);
+  tui.requestRender = vi.fn();
+  return tui;
+}
+
+function focusableOverlay(label: string): Component & { focused: boolean } {
+  return { focused: false, invalidate: () => {}, render: () => [label] };
 }
 
 describe('chat application shell ownership', () => {
@@ -126,6 +154,44 @@ describe('chat application shell ownership', () => {
     overlays.resume();
     expect(nativeShow).toHaveBeenCalledTimes(2);
     expect(second.isFocused()).toBe(true);
+    overlays.stop();
+  });
+
+  it('snapshots every PI overlay before hide transfers focus to another record', () => {
+    const tui = realOverlayTui();
+    const overlays = new OverlayController(tui, vi.fn());
+    const a = overlays.show('a', focusableOverlay('a'), { anchor: 'center' });
+    const b = overlays.show('b', focusableOverlay('b'), { anchor: 'center' });
+    overlays.resume();
+    a.focus();
+    expect(a.isFocused()).toBe(true);
+    expect(b.isFocused()).toBe(false);
+
+    overlays.pause();
+    expect(a.isFocused()).toBe(true);
+    expect(b.isFocused()).toBe(false);
+    overlays.resume();
+    expect(a.isFocused()).toBe(true);
+    expect(b.isFocused()).toBe(false);
+    overlays.stop();
+  });
+
+  it('restores the exact older overlay focused while the terminal is suspended', () => {
+    const tui = realOverlayTui();
+    const overlays = new OverlayController(tui, vi.fn());
+    const a = overlays.show('a', focusableOverlay('a'), { anchor: 'center' });
+    const b = overlays.show('b', focusableOverlay('b'), { anchor: 'center' });
+    overlays.resume();
+    overlays.pause();
+    expect(a.isFocused()).toBe(false);
+    expect(b.isFocused()).toBe(true);
+
+    a.focus();
+    expect(a.isFocused()).toBe(true);
+    expect(b.isFocused()).toBe(false);
+    overlays.resume();
+    expect(a.isFocused()).toBe(true);
+    expect(b.isFocused()).toBe(false);
     overlays.stop();
   });
 
@@ -272,6 +338,17 @@ describe('chat application shell ownership', () => {
     expect(vi.getTimerCount()).toBe(0);
     expect(render.takeFrame()?.reasons).toContain('pi-tui:request-during-frame');
     render.stop();
+  });
+
+  it('keeps direct PI requestRender calls inert after RenderShell permanently stops', () => {
+    const nativeRequest = vi.fn();
+    const tui = { requestRender: nativeRequest } as unknown as TUI;
+    const render = new RenderShell({ tui, term: { columns: 80, rows: 24 }, prepare: vi.fn() });
+    render.stop();
+
+    tui.requestRender(true);
+    expect(nativeRequest).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it('RenderShell owns the sole layout allocation and final root bounds', () => {
