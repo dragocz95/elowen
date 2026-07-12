@@ -655,7 +655,11 @@ export function createChatComposition(
           });
         })
         : undefined;
-      const transcript = hasMessages() ? activeViewport().metrics() : null;
+      // Compact fallback deliberately omits ChatViewport. Do not attribute the last normal viewport
+      // snapshot to this frame: machine analysis must see zero transcript work when no viewport ran.
+      const transcript = hasMessages() && currentBudget && !currentBudget.compactFallback
+        ? activeViewport().metrics()
+        : null;
       const frame = renderOwner.takeFrame();
       const startHeaderRows = Math.min(TOP_RULE_ROWS, lines.length);
       const startStatusRows = Math.min(1, Math.max(0, lines.length - startHeaderRows));
@@ -683,7 +687,7 @@ export function createChatComposition(
         layoutVisits: transcript?.layoutVisits ?? 0,
         scrollOffset: transcript?.scrollOffset ?? 0,
         maxScrollOffset: transcript?.maxScrollOffset ?? 0,
-        heightIndexOperations: transcript?.heightIndexOperations ?? 0,
+        heightIndexOperations: transcript?.frameHeightIndexOperations ?? 0,
         terminal: { columns: term.columns, rows: term.rows },
         sections: { ...sections },
         rootRows: lines.length,

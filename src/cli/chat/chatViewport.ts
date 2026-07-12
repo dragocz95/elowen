@@ -45,7 +45,10 @@ export interface ChatViewportMetrics {
   layoutVisits: number;
   scrollOffset: number;
   maxScrollOffset: number;
+  /** Monotonic lifetime total, including indexes retired by a width/history reset. */
   heightIndexOperations: number;
+  /** Work charged to the most recently completed render frame. */
+  frameHeightIndexOperations: number;
 }
 
 interface VisualScrollMetrics {
@@ -90,6 +93,8 @@ export class ChatViewport implements Component {
   private knownStart = 0;
   private suffixReconnect: { boundary: number; start: number } | null = null;
   private heightIndex = new DynamicHeightIndex();
+  private retiredHeightIndexOperations = 0;
+  private lastFrameHeightIndexOperations = 0;
   private estimatedLayout = false;
   private estimatedTurnHeight = 0;
   private pendingResetAnchor: ViewportResetAnchor | null = null;
@@ -147,7 +152,8 @@ export class ChatViewport implements Component {
       layoutVisits: this.frameLayoutVisits,
       scrollOffset: this.scrollOffset,
       maxScrollOffset: this.maxOffset,
-      heightIndexOperations: this.heightIndex.operationCount(),
+      heightIndexOperations: this.heightIndexOperationCount(),
+      frameHeightIndexOperations: this.lastFrameHeightIndexOperations,
     };
   }
 
@@ -300,6 +306,7 @@ export class ChatViewport implements Component {
 
   render(width: number): string[] {
     const startedAt = performance.now();
+    const heightIndexOperationsBefore = this.heightIndexOperationCount();
     this.frameRenderedTurns = 0;
     this.frameReconciledTurns = 0;
     this.frameLayoutVisits = 0;
@@ -355,7 +362,12 @@ export class ChatViewport implements Component {
       return padAnsi(`${cell} ${this.scrollbar(i, scrollMetrics)}`, width);
     });
     this.lastRenderMs = performance.now() - startedAt;
+    this.lastFrameHeightIndexOperations = this.heightIndexOperationCount() - heightIndexOperationsBefore;
     return rendered;
+  }
+
+  private heightIndexOperationCount(): number {
+    return this.retiredHeightIndexOperations + this.heightIndex.operationCount();
   }
 
   private prepareLayout(width: number): void {
@@ -420,6 +432,7 @@ export class ChatViewport implements Component {
     this.clearSelection();
     this.clearAllCachedRows();
     this.layout = Array.from({ length: turnCount }, () => ({ turn: null, height: null, rows: null }));
+    this.retiredHeightIndexOperations += this.heightIndex.operationCount();
     this.heightIndex = new DynamicHeightIndex();
     this.estimatedTurnHeight = anchor ? Math.max(1, Math.round(anchor.averageTurnRows)) : 0;
     this.heightIndex.resize(turnCount, this.estimatedTurnHeight);

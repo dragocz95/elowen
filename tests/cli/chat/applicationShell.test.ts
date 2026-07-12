@@ -371,6 +371,52 @@ describe('chat application shell ownership', () => {
     composition.renderShell.stop();
   });
 
+  it('records zero transcript work when a normal chat frame shrinks into compact fallback', async () => {
+    const h = compositionHarness({ columns: 80, rows: 24, turns: 80 });
+    const events: Record<string, unknown>[] = [];
+    const diagnostics: TuiDiagnostics = {
+      enabled: true,
+      path: '/tmp/unused-compact-diagnostics.jsonl',
+      record: (event) => events.push(event as unknown as Record<string, unknown>),
+      close: async () => {},
+    };
+    const composition = createChatComposition(
+      h.rt, h.resources, { quit: vi.fn() }, h.stream, h.mdTheme, diagnostics,
+    );
+    composition.attachInput(noopInput);
+    composition.renderShell.resume();
+    composition.renderForced('test:normal');
+    await vi.runOnlyPendingTimersAsync();
+    composition.root.render(h.term.columns);
+
+    h.term.columns = 20;
+    h.term.rows = 10;
+    composition.renderForced('test:compact');
+    await vi.runOnlyPendingTimersAsync();
+    composition.root.render(h.term.columns);
+
+    const frames = events.filter((event) => event.type === 'frame');
+    expect(frames.at(-2)?.renderedTurns).toBeGreaterThan(0);
+    expect(frames.at(-1)).toMatchObject({
+      transcriptMs: 0,
+      transcriptRows: 0,
+      visibleRows: 0,
+      renderedTurns: 0,
+      reconciledTurns: 0,
+      indexedTurns: 0,
+      cachedRows: 0,
+      layoutVisits: 0,
+      scrollOffset: 0,
+      maxScrollOffset: 0,
+      heightIndexOperations: 0,
+      terminal: { columns: 20, rows: 10 },
+      rootRows: 10,
+      maxVisibleWidth: 20,
+    });
+    composition.dispose();
+    composition.renderShell.stop();
+  });
+
   it('resets a prior chat allocation before rendering the same editor on the roomy start screen', async () => {
     const h = compositionHarness({ columns: 80, rows: 24, turns: 0 });
     h.resources.editor.setMaxRows(3);

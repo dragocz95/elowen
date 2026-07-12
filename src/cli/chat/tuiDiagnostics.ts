@@ -20,6 +20,7 @@ interface TuiFrameDiagnostic {
   layoutVisits: number;
   scrollOffset: number;
   maxScrollOffset: number;
+  /** Height-index work charged to this frame, not the viewport's lifetime counter. */
   heightIndexOperations: number;
   terminal: { columns: number; rows: number };
   sections: Record<string, number>;

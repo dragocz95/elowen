@@ -7,38 +7,62 @@ import { ChatViewport } from '../../../src/cli/chat/chatViewport.js';
 import {
   PIPELINE_HISTORY_TURNS,
   PIPELINE_SAMPLE_COUNT,
+  PIPELINE_FRAME_LIMIT_MS,
   runPipelineBenchmark,
   summarizeTimings,
   validatePipelineBenchmarkReport,
 } from '../../../scripts/tests/cli-pipeline-benchmark.mjs';
 
-const boundedOperations = () => ({
-  reducerTurnVisits: { total: 2, maxPerEvent: 1 },
-  viewportTurnVisits: { total: 2, maxPerFrame: 1 },
-  renderedTurns: { total: 0, maxPerFrame: 0 },
-  reconciledTurns: { total: 2, maxPerFrame: 1 },
-  indexedTurns: { initial: 13, final: 13, max: 13, maxDeltaPerFrame: 0 },
-  cachedRows: { initial: 26, final: 26, max: 26 },
-  layoutVisits: { total: 0, maxPerFrame: 0 },
-  heightIndexOperations: { totalDelta: 160, maxDeltaPerFrame: 80 },
-  scrollOffset: { initial: 0, final: 0, min: 0, max: 0 },
-  maxScrollOffset: { initial: 8, final: 8, min: 8, max: 8 },
+const timing = (sampleCount: number, value: number) => ({
+  average: value,
+  p95: value,
+  max: value,
+  samples: Array.from({ length: sampleCount }, () => value),
+});
+
+const sampledCounter = (sampleCount: number, value: number, maximumKey: string, totalKey = 'total') => ({
+  [totalKey]: value * sampleCount,
+  [maximumKey]: value,
+  samples: Array.from({ length: sampleCount }, () => value),
+});
+
+const sampledState = (sampleCount: number, value: number) => ({
+  initial: value,
+  final: value,
+  min: value,
+  max: value,
+  maxDeltaPerFrame: 0,
+  samples: Array.from({ length: sampleCount }, () => value),
+});
+
+const boundedOperations = (sampleCount: number) => ({
+  reducerTurnVisits: sampledCounter(sampleCount, 1, 'maxPerEvent'),
+  viewportTurnVisits: sampledCounter(sampleCount, 1, 'maxPerFrame'),
+  renderedTurns: sampledCounter(sampleCount, 0, 'maxPerFrame'),
+  reconciledTurns: sampledCounter(sampleCount, 1, 'maxPerFrame'),
+  indexedTurns: sampledState(sampleCount, 13),
+  cachedRows: sampledState(sampleCount, 26),
+  layoutVisits: sampledCounter(sampleCount, 0, 'maxPerFrame'),
+  heightIndexOperations: sampledCounter(sampleCount, 80, 'maxDeltaPerFrame', 'totalDelta'),
+  scrollOffset: sampledState(sampleCount, 0),
+  maxScrollOffset: sampledState(sampleCount, 8),
 });
 
 describe('CLI whole-pipeline benchmark contract', () => {
   it('reports reducer and complete event-to-frame timings for every required history size', () => {
     expect(PIPELINE_HISTORY_TURNS).toEqual([200, 10_000, 40_000]);
     expect(PIPELINE_SAMPLE_COUNT).toBe(20);
+    expect(PIPELINE_FRAME_LIMIT_MS).toBe(50);
 
     const report = {
       benchmark: 'cli-brain-event-to-frame',
-      samples: 2,
+      samples: 20,
       results: PIPELINE_HISTORY_TURNS.map((historyTurns: number) => ({
         historyTurns,
         eventType: 'subagent',
-        reducerMs: { average: 1, p95: 2 },
-        eventToFrameMs: { average: 3, p95: 4 },
-        operations: boundedOperations(),
+        reducerMs: timing(20, 1),
+        eventToFrameMs: timing(20, 3),
+        operations: boundedOperations(20),
       })),
     };
 
@@ -52,12 +76,30 @@ describe('CLI whole-pipeline benchmark contract', () => {
       results: PIPELINE_HISTORY_TURNS.map((historyTurns: number) => ({
         historyTurns,
         eventType: 'subagent',
-        eventToFrameMs: { average: 1, p95: 1 },
-        operations: boundedOperations(),
+        eventToFrameMs: timing(1, 1),
+        operations: boundedOperations(1),
       })),
     };
 
     expect(() => validatePipelineBenchmarkReport(renderOnly)).toThrow(/reducerMs/);
+  });
+
+  it('retains the slowest sample and rejects any ordinary frame above fifty milliseconds', () => {
+    const reducerSamples = Array.from({ length: 20 }, () => 1);
+    const eventSamples = [...Array.from({ length: 19 }, () => 2), 500];
+    const report = {
+      benchmark: 'cli-brain-event-to-frame',
+      samples: 20,
+      results: PIPELINE_HISTORY_TURNS.map((historyTurns: number) => ({
+        historyTurns,
+        eventType: 'subagent',
+        reducerMs: summarizeTimings(reducerSamples),
+        eventToFrameMs: summarizeTimings(eventSamples),
+        operations: boundedOperations(20),
+      })),
+    };
+    expect(report.results[0]?.eventToFrameMs.max).toBe(500);
+    expect(() => validatePipelineBenchmarkReport(report)).toThrow(/50ms|eventToFrameMs/);
   });
 
   it('rejects timing-only evidence and any steady event that visits more than one turn', () => {
@@ -67,8 +109,8 @@ describe('CLI whole-pipeline benchmark contract', () => {
       results: PIPELINE_HISTORY_TURNS.map((historyTurns: number) => ({
         historyTurns,
         eventType: 'subagent',
-        reducerMs: { average: 1, p95: 2 },
-        eventToFrameMs: { average: 3, p95: 4 },
+        reducerMs: timing(20, 1),
+        eventToFrameMs: timing(20, 3),
       })),
     };
     expect(() => validatePipelineBenchmarkReport(timingOnly)).toThrow(/operations/);
@@ -77,14 +119,44 @@ describe('CLI whole-pipeline benchmark contract', () => {
     unbounded.results = PIPELINE_HISTORY_TURNS.map((historyTurns: number) => ({
       historyTurns,
       eventType: 'subagent',
-      reducerMs: { average: 1, p95: 2 },
-      eventToFrameMs: { average: 3, p95: 4 },
+      reducerMs: timing(20, 1),
+      eventToFrameMs: timing(20, 3),
       operations: {
-        ...boundedOperations(),
-        reducerTurnVisits: { total: 40, maxPerEvent: 2 },
+        ...boundedOperations(20),
+        reducerTurnVisits: sampledCounter(20, 2, 'maxPerEvent'),
       },
     }));
     expect(() => validatePipelineBenchmarkReport(unbounded)).toThrow(/reducerTurnVisits/);
+  });
+
+  it('rejects zero, fractional and underreported structural samples', () => {
+    const base = {
+      benchmark: 'cli-brain-event-to-frame',
+      samples: 20,
+      results: PIPELINE_HISTORY_TURNS.map((historyTurns: number) => ({
+        historyTurns,
+        eventType: 'subagent',
+        reducerMs: timing(20, 1),
+        eventToFrameMs: timing(20, 3),
+        operations: boundedOperations(20),
+      })),
+    };
+
+    const zeroVisits = structuredClone(base);
+    zeroVisits.results[0]!.operations.reducerTurnVisits = sampledCounter(20, 0, 'maxPerEvent');
+    expect(() => validatePipelineBenchmarkReport(zeroVisits)).toThrow(/reducerTurnVisits/);
+
+    const fractional = structuredClone(base);
+    fractional.results[0]!.operations.viewportTurnVisits.samples[0] = 0.5;
+    expect(() => validatePipelineBenchmarkReport(fractional)).toThrow(/viewportTurnVisits/);
+
+    const underreported = structuredClone(base);
+    underreported.results[0]!.operations.reconciledTurns.total = 19;
+    expect(() => validatePipelineBenchmarkReport(underreported)).toThrow(/reconciledTurns/);
+
+    const hiddenIndexDrop = structuredClone(base);
+    hiddenIndexDrop.results[0]!.operations.indexedTurns.samples[0] = 0;
+    expect(() => validatePipelineBenchmarkReport(hiddenIndexDrop)).toThrow(/indexedTurns/);
   });
 
   it('hard-gates viewport work independently of history depth', () => {
@@ -94,11 +166,11 @@ describe('CLI whole-pipeline benchmark contract', () => {
       results: PIPELINE_HISTORY_TURNS.map((historyTurns: number) => ({
         historyTurns,
         eventType: 'subagent',
-        reducerMs: { average: 1, p95: 2 },
-        eventToFrameMs: { average: 3, p95: 4 },
+        reducerMs: timing(20, 1),
+        eventToFrameMs: timing(20, 3),
         operations: {
-          ...boundedOperations(),
-          layoutVisits: { total: 40_000, maxPerFrame: historyTurns },
+          ...boundedOperations(20),
+          layoutVisits: sampledCounter(20, historyTurns, 'maxPerFrame'),
         },
       })),
     };
@@ -155,6 +227,8 @@ describe('CLI whole-pipeline benchmark contract', () => {
     expect(summarizeTimings(Array.from({ length: 20 }, (_, index) => index + 1))).toEqual({
       average: 10.5,
       p95: 19,
+      max: 20,
+      samples: Array.from({ length: 20 }, (_, index) => index + 1),
     });
   });
 });

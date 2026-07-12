@@ -1401,4 +1401,33 @@ describe('progressive history layout', () => {
     expect(heightOperations).toBeGreaterThan(updates);
     expect(heightOperations).toBeLessThanOrEqual(logarithmicFrameBound);
   });
+
+  it('keeps height-index operation evidence monotonic across a full layout replacement', () => {
+    const turnCount = 2_500;
+    const messages = Array.from({ length: turnCount }, (_, index) => ({
+      role: 'assistant' as const,
+      text: `before replacement ${index}`,
+    }));
+    const transcript = new TranscriptModel(messages);
+    const viewport = new ChatViewport(
+      transcriptState(transcript),
+      getMarkdownTheme(), () => 18, () => 1, () => 80,
+    );
+    viewport.render(80);
+    viewport.scroll(1_000_000);
+    viewport.render(80);
+    const before = viewport.metrics();
+
+    transcript.replaceHistory(messages.map((message, index) => ({
+      ...message,
+      text: `after replacement ${index}`,
+    })));
+    viewport.setState(transcriptState(transcript));
+    viewport.render(80);
+    const after = viewport.metrics();
+
+    expect(after.heightIndexOperations).toBeGreaterThan(before.heightIndexOperations);
+    expect(after.heightIndexOperations - before.heightIndexOperations).toBeGreaterThanOrEqual(turnCount);
+    expect(after.frameHeightIndexOperations).toBeGreaterThanOrEqual(turnCount);
+  });
 });
