@@ -16,6 +16,7 @@ import {
   latestFrame,
   paneLines,
   readFrames,
+  resolveTmuxRunId,
   writeReport,
 } from './cli-tmux-support.mjs';
 
@@ -46,7 +47,11 @@ const reportPath = join(artifactDir, 'report.json');
 const startGatePath = join(temp, 'start-gate');
 const session = 'goal';
 const tmuxServer = createTmuxServer('goal');
-const startedMetadata = collectMetadata(repo, cli, tmuxServer.name);
+const runId = resolveTmuxRunId(process.env);
+const startedMetadata = collectMetadata(repo, cli, tmuxServer.name, {
+  ...process.env,
+  ELOWEN_TMUX_RUN_ID: runId,
+});
 mkdirSync(project, { recursive: true });
 mkdirSync(home, { recursive: true });
 mkdirSync(config, { recursive: true });
