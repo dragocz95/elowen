@@ -112,6 +112,7 @@ describe('createKeymap — defaults and overrides', () => {
     expect(keymap.matches('quit', CTRL('c'))).toBe(true);
     expect(keymap.matches('stash', CTRL('s'))).toBe(true);
     expect(keymap.matches('subagent_cycle', CTRL('o'))).toBe(true);
+    expect(keymap.matches('subagent_background', CTRL('b'))).toBe(true);
     expect(keymap.matches('telemetry_toggle', CTRL('p'))).toBe(true);
     expect(keymap.isLeader(CTRL('x'))).toBe(true);
     expect(keymap.warnings).toEqual([]);

@@ -436,6 +436,13 @@ try {
 
   sendLiteral('E2E SECOND USER');
   sendKey('Enter');
+  await waitFor('foreground sub-agents running', () => entries().some((entry) => entry.kind === 'event'
+    && entry.event?.type === 'subagent' && entry.event?.status === 'running' && entry.event?.background !== true));
+  sendKey('C-b');
+  await waitFor('Ctrl+B foreground detach request', () => requests('/brain/subagents/background').length === 1);
+  assert.equal(requests('/brain/abort').length, 1,
+    'Ctrl+B must not add a parent abort request while detaching foreground sub-agents');
+  await waitFor('detached sub-agent completion delivery', () => capture().includes('E2E DETACHED SUBAGENT RESULT DELIVERED'));
   await waitFor('second turn final reply', () => capture().includes('E2E FINAL REPLY'));
   await waitFor('second turn idle', () => entries().some((entry) => entry.kind === 'event'
     && entry.event?.type === 'idle' && entry.event?.usage?.totalTokens === 2345));
@@ -796,6 +803,7 @@ try {
     compactionBusyVisible: true,
     queuedEchoDelayed: true,
     queuedEscapeInjected: true,
+    foregroundSubagentDetached: true,
     hiddenIdleFramesAfter800Ms: 0,
     narrowIdleFramesAfter800Ms: 0,
     terminalStateRestored: true,

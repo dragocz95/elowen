@@ -40,6 +40,29 @@ import { CANONICAL_THINKING_LEVELS, canonicalThinkingLevel } from './modelCapabi
 
 export type { BrainDeps } from './brainDeps.js';
 
+interface SubagentCompletion {
+  sessionId: string;
+  task: string;
+  status: 'done' | 'error';
+  result?: string;
+  error?: string;
+  tools?: number;
+  tokens?: number;
+  seconds?: number;
+  model?: string;
+}
+
+interface SubagentControl {
+  detachForeground(
+    input: { sessionId: string; principal: string },
+    completed: (result: SubagentCompletion) => void,
+  ): { detached: number };
+}
+
+const xmlEscape = (value: string): string => value
+  .replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
+  .replaceAll('"', '&quot;').replaceAll("'", '&apos;');
+
 
 
 /** Per-user embedded brain lifecycle. Mirrors AdvisorService's shape so daemon wiring is familiar,
@@ -697,6 +720,35 @@ export class BrainService {
 
   async send(request: TurnRequest): Promise<void> {
     return this.turnRunner.send(request);
+  }
+
+  /** Convert every authenticated foreground delegate currently blocking this parent into a detached
+   * background job. The plugin owns child state; core owns session authorization and result delivery. */
+  async detachForegroundSubagents(
+    userId: number,
+    session?: string,
+    client?: BoundClientRequest,
+  ): Promise<{ detached: number }> {
+    const target = this.preflightSend(userId, session, client);
+    const registry = await this.d.plugins?.get();
+    const raw = registry?.controls.get('subagent');
+    const control = raw && typeof raw === 'object' ? raw as unknown as SubagentControl : undefined;
+    if (!control || typeof control.detachForeground !== 'function') return { detached: 0 };
+    return control.detachForeground(
+      { sessionId: target, principal: `elowen:${userId}` },
+      (completion) => {
+        const body = completion.status === 'done'
+          ? `<result>${xmlEscape(completion.result ?? '(the sub-agent returned nothing)')}</result>`
+          : `<error>${xmlEscape(completion.error ?? 'unknown sub-agent error')}</error>`;
+        const content = '<system-reminder>\n'
+          + `<subagent-result session="${xmlEscape(completion.sessionId)}" status="${completion.status}">\n`
+          + `<task>${xmlEscape(completion.task)}</task>\n${body}\n</subagent-result>\n`
+          + '<instruction>A detached sub-agent finished. Incorporate this result into your work and inform the user when relevant.</instruction>\n'
+          + '</system-reminder>';
+        void this.turnRunner.sendCustomSystem(userId, target, 'subagent-result', content)
+          .catch((error) => logger('brain-subagent').error(`completion delivery failed for ${target}`, error));
+      },
+    );
   }
 
   /** Start a user turn and expose its two real lifecycle boundaries. `admitted` resolves only after the

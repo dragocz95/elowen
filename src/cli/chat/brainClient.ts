@@ -214,6 +214,15 @@ export class BrainClient {
     return await res.json() as { interrupted: boolean; injected: boolean };
   }
 
+  /** Release foreground delegate waits while leaving their child sessions running. */
+  async backgroundSubagents(): Promise<{ detached: number }> {
+    const binding = this.bound && this.boundGeneration !== undefined
+      ? { session: this.bound, client: this.clientId, generation: this.boundGeneration }
+      : this.bound ? { session: this.bound } : {};
+    const res = await this.post('/brain/subagents/background', binding);
+    return await res.json() as { detached: number };
+  }
+
   /** Leave the bound interactive session. The daemon aborts/cascades the active turn and disposes the
    *  live session only when this CLI is its final attachment; persisted conversation history remains. */
   async stopSession(signal?: AbortSignal): Promise<void> {

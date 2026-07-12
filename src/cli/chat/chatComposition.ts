@@ -103,6 +103,7 @@ export function bottomHints(
   hasSubagents = false,
   interruptArmed = false,
   hasQueued = false,
+  hasForegroundSubagent = false,
 ): string {
   const k = (action: KeybindAction, label: string): string => {
     const chord = keymap.chordLabel(action);
@@ -111,7 +112,7 @@ export function bottomHints(
   const parts = state === 'child'
     ? ['⏎ message the sub-agent', 'esc back', k('subagent_cycle', 'next session')]
     : state === 'thinking'
-      ? [hasQueued ? 'esc inject queued' : interruptArmed ? 'esc again to interrupt' : 'esc interrupt', '/help commands', k('reasoning_cycle', 'reasoning'), hasSubagents ? k('subagent_cycle', 'subagents') : '']
+      ? [hasQueued ? 'esc inject queued' : interruptArmed ? 'esc again to interrupt' : 'esc interrupt', hasForegroundSubagent ? k('subagent_background', 'background sub-agent') : '', '/help commands', k('reasoning_cycle', 'reasoning'), hasSubagents ? k('subagent_cycle', 'subagents') : '']
       : ['⏎ send', '/ slash', '@ files', '! shell', k('stash', 'stash'), k('mode_toggle', 'mode'), k('reasoning_cycle', 'reasoning'), k('telemetry_toggle', 'telemetry')];
   return parts.filter(Boolean).join('   ·   ');
 }
@@ -527,7 +528,7 @@ export function createChatComposition(
     const footerState = rt.childView ? 'child' : rt.transcript.thinking ? 'thinking' : 'idle';
     currentAgents = stream.subagentStates(); // one transcript scan per frame, shared by rail + fallback
     const agents = currentAgents;
-    bottomBar.setLeft(color.faint(`  ${bottomHints(keymap, footerState, agents.length > 0, interruptArmedUntil > Date.now(), rt.queued.length > 0)}`)
+    bottomBar.setLeft(color.faint(`  ${bottomHints(keymap, footerState, agents.length > 0, interruptArmedUntil > Date.now(), rt.queued.length > 0, agents.some((agent) => agent.status === 'running' && agent.background !== true))}`)
       + (footerState === 'idle' && shellContext.pending ? `   ${color.warning('· ! output → next message')}` : ''));
     const projectLine = `${color.dim(cwdLabel)}${branchLabel ? color.faint(` · ${branchLabel}`) : ''}`;
     const line = statusline(rt.lineCfg ? { ...rt.lineCfg, showModel: false } : null, rt.usage, rt.modelName);
@@ -892,6 +893,30 @@ export function createChatComposition(
         }
         // Cycle main conversation → each sub-agent session → back to main (opencode-style).
         case 'subagent_cycle': stream.cycleSubagent(); return;
+        // A foreground delegate blocks the parent tool result. Ctrl+B resolves only that wait; the child
+        // channel stays alive and its completion is delivered back to the parent asynchronously.
+        case 'subagent_background': {
+          const foreground = stream.subagentStates()
+            .filter((agent) => agent.status === 'running' && agent.background !== true).length;
+          if (foreground === 0) {
+            rt.notice = color.dim('no foreground sub-agent is waiting');
+            render('input:subagent-background-empty');
+            return;
+          }
+          rt.notice = color.dim('moving sub-agent to background…');
+          lifetime.runSession(
+            () => client.backgroundSubagents(),
+            ({ detached }) => {
+              rt.notice = detached > 0
+                ? color.success(`moved ${detached} sub-agent${detached === 1 ? '' : 's'} to background`)
+                : color.dim('sub-agent already finished or moved to background');
+              render('state:subagent-background-complete');
+            },
+            (error) => { rt.notice = color.error(error.message); render('state:subagent-background-error'); },
+          );
+          render('input:subagent-background');
+          return;
+        }
         // Drop the most recent pending mid-turn queued message. Optimistic local pop; the server's `queue`
         // snapshot reconciles (and is authoritative if the item was already delivered in the meantime).
         case 'queue_remove': {

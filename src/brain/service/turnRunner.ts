@@ -60,6 +60,31 @@ export class BrainTurnRunner {
     return this.d.sessions.withLock(key, fn);
   }
 
+  /** Deliver host-owned lifecycle information through PI's native hidden custom-message seam. The
+   * conversation lock places it after the current owner turn; `display:false` keeps it out of the user
+   * transcript, while `triggerTurn` lets the main agent react when idle. */
+  async sendCustomSystem(userId: number, session: string, customType: string, content: string): Promise<void> {
+    const target = this.d.lifecycle.ownedUserSession(userId, session);
+    if (!this.d.sessions.get(target)) await this.d.lifecycle.ensureLive(userId, target);
+    await this.serial(`send-${target}`, async () => {
+      const live = this.d.sessions.get(target);
+      if (!live) throw new Error('brain not started for user');
+      const context = await this.contextBuilder.build({
+        userId,
+        text: content,
+        mode: 'build',
+        session: target,
+        internal: { systemNudge: true },
+      }, live);
+      await context.run(() => live.session.sendCustomMessage({
+        customType,
+        content,
+        display: false,
+        details: { source: 'elowen' },
+      }, { triggerTurn: true, deliverAs: 'followUp' }));
+    });
+  }
+
   /** Run one user turn. Without `session` it targets the ACTIVE conversation (web dock — today's
    *  behavior, unchanged); with `session` (a bound CLI) it targets exactly that conversation, wherever
    *  the active pointer points, and never moves the pointer. A bound target that is not live (daemon

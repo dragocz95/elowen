@@ -41,6 +41,7 @@ interface BrainSubagentRunState {
   tokens?: number;
   seconds: number;
   model?: string;
+  background?: boolean;
 }
 /** Store-neutral display shape consumed by shapeBrainMessages. */
 export interface BrainSubagentRun extends BrainSubagentRunState {
@@ -70,6 +71,7 @@ function normalizeSubagentState(raw: unknown): BrainSubagentRunState | undefined
   if (o.tokens !== undefined && (typeof o.tokens !== 'number' || !Number.isSafeInteger(o.tokens) || o.tokens < 0)) return undefined;
   if (o.detail !== undefined && typeof o.detail !== 'string') return undefined;
   if (o.model !== undefined && typeof o.model !== 'string') return undefined;
+  if (o.background !== undefined && typeof o.background !== 'boolean') return undefined;
   return {
     status: o.status,
     task: bounded(o.task, 8_000),
@@ -78,6 +80,7 @@ function normalizeSubagentState(raw: unknown): BrainSubagentRunState | undefined
     ...(typeof o.tokens === 'number' ? { tokens: o.tokens } : {}),
     seconds: o.seconds,
     ...(typeof o.model === 'string' ? { model: bounded(o.model, 512) } : {}),
+    ...(typeof o.background === 'boolean' ? { background: o.background } : {}),
   };
 }
 

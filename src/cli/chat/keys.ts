@@ -43,6 +43,7 @@ export type KeybindAction =
   | 'reasoning_cycle'
   | 'stash'
   | 'subagent_cycle'
+  | 'subagent_background'
   | 'telemetry_toggle'
   | 'queue_remove'
   | 'help'
@@ -52,7 +53,7 @@ export type KeybindAction =
 
 /** Display/listing order for /keybinds. */
 export const KEYBIND_ACTIONS: readonly KeybindAction[] = [
-  'leader', 'quit', 'mode_toggle', 'reasoning_cycle', 'stash', 'subagent_cycle', 'telemetry_toggle',
+  'leader', 'quit', 'mode_toggle', 'reasoning_cycle', 'stash', 'subagent_cycle', 'subagent_background', 'telemetry_toggle',
   'queue_remove', 'help', 'theme_picker', 'model_picker', 'sessions_picker',
 ];
 
@@ -68,6 +69,7 @@ const DEFAULT_KEYBINDS: Readonly<Record<KeybindAction, string>> = {
   reasoning_cycle: 'ctrl+r',
   stash: 'ctrl+s',
   subagent_cycle: 'ctrl+o',
+  subagent_background: 'ctrl+b',
   telemetry_toggle: 'ctrl+p',
   queue_remove: 'leader x',
   help: 'leader h',

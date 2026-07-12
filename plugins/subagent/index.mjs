@@ -81,6 +81,46 @@ export function register(ctx) {
     return lines.join('\n');
   };
 
+  // Foreground and background delegations share ONE job lifecycle. Detaching only resolves the parent
+  // tool wait; it never aborts the child channel. The daemon supplies a completion sink at detach time,
+  // so the eventual result can re-enter the originating conversation through its normal turn pipeline.
+  ctx.registerControl('subagent', {
+    detachForeground: ({ sessionId, principal }, onCompleted) => {
+      let detached = 0;
+      for (const job of jobs.values()) {
+        if (job.status !== 'running' || job.background
+          || job.originSessionId !== sessionId || job.originPrincipal !== principal) continue;
+        job.background = true;
+        job.onCompleted = onCompleted;
+        job.resolveDetached?.();
+        job.resolveDetached = undefined;
+        pushJob(job, 'running');
+        detached += 1;
+      }
+      return { detached };
+    },
+  });
+
+  const pushJob = (job, status) => {
+    if (!job.emit || !job.sessionId) return;
+    try {
+      job.emit({
+        id: job.toolCallId,
+        sessionId: job.sessionId,
+        status,
+        task: job.task,
+        detail: job.detail,
+        tools: job.tools,
+        tokens: job.tokens,
+        seconds: Math.round((Date.now() - job.startedAt) / 1000),
+        model: job.model,
+        background: job.background,
+      });
+    } catch (e) {
+      ctx.logger.warn(`subagent progress fan-out failed: ${errorText(e)}`);
+    }
+  };
+
   ctx.registerPlatform({
     name: 'subagent',
     listen: (onMessage) => { run = onMessage; },
@@ -150,6 +190,7 @@ export function register(ctx) {
       const startedAt = Date.now();
       const state = {
         id: jobId,
+        toolCallId: id,
         status: 'running',
         task: clip(p.task, MAX_STORED_TASK_CHARS),
         sessionId: '',
@@ -159,32 +200,16 @@ export function register(ctx) {
         model: model?.model,
         originSessionId,
         originPrincipal,
+        emit,
+        background: p.background === true,
+        onCompleted: undefined,
+        resolveDetached: undefined,
         startedAt,
         finishedAt: undefined,
         result: undefined,
         error: undefined,
       };
-      const push = (status) => {
-        if (!emit || !state.sessionId) return;
-        // Progress fan-out is observational: the child result remains usable even if its parent was
-        // disposed, a replay listener failed, or the parent store has already been torn down. Never let
-        // that best-effort edge reject a detached background promise (which Node would treat as fatal).
-        try {
-          emit({
-            id,
-            sessionId: state.sessionId,
-            status,
-            task: state.task,
-            detail: state.detail,
-            tools: state.tools,
-            tokens: state.tokens,
-            seconds: Math.round((Date.now() - startedAt) / 1000),
-            model: state.model,
-          });
-        } catch (e) {
-          ctx.logger.warn(`subagent progress fan-out failed: ${errorText(e)}`);
-        }
-      };
+      const push = (status) => pushJob(state, status);
       // Distil the child's live stream into progress updates: which tool it runs, how many so far, its
       // token spend. Low-frequency events only (tool starts + step boundaries) — text deltas are ignored.
       const onEvent = (e) => {
@@ -209,10 +234,49 @@ export function register(ctx) {
         }
         state.finishedAt = Date.now();
         push(state.status);
+        if (state.onCompleted) {
+          try {
+            state.onCompleted({
+              jobId: state.id,
+              sessionId: state.sessionId,
+              task: state.task,
+              status: state.status,
+              result: state.result,
+              error: state.error,
+              tools: state.tools,
+              tokens: state.tokens,
+              seconds: elapsedSeconds(state),
+              model: state.model,
+            });
+          } catch (e) {
+            ctx.logger.warn(`subagent completion delivery failed: ${errorText(e)}`);
+          }
+        }
         return state.status === 'done' ? state.result : `Error: ${state.error}`;
       };
 
-      if (!p.background) return ok(await runChild());
+      if (!p.background) {
+        // Unauthenticated/platform-less foreground calls retain their old blocking behavior; there is no
+        // safe conversation identity an out-of-band Ctrl+B request could target.
+        if (!originSessionId || !originPrincipal) return ok(await runChild());
+        pruneJobs(Date.now(), true);
+        jobs.set(jobId, state);
+        const detached = new Promise((resolve) => { state.resolveDetached = resolve; });
+        const child = runChild();
+        const winner = await Promise.race([
+          child.then((result) => ({ kind: 'result', result })),
+          detached.then(() => ({ kind: 'detached' })),
+        ]);
+        if (winner.kind === 'result') {
+          jobs.delete(jobId);
+          return ok(winner.result);
+        }
+        return ok(
+          `The user moved this sub-agent to the background. It is still running as ${jobId}; `
+            + 'continue helping the user now. Its result will be delivered automatically when it finishes.',
+          { jobId, status: 'running', detached: true },
+        );
+      }
 
       if (!originSessionId || !originPrincipal) {
         return ok('Error: background delegation is available only inside an authenticated conversation.');

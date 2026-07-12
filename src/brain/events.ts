@@ -89,7 +89,7 @@ export type BrainEvent =
    *  `detail` mirrors the child's current tool, `tools`/`tokens`/`seconds` accumulate, and `sessionId`
    *  lets a client drill into the child's transcript (`GET /brain/messages?session=…`). Synthetic —
    *  fanned out to the PARENT conversation's listeners; ignoring it is always safe. */
-  | { type: 'subagent'; id: string; sessionId: string; status: 'running' | 'done' | 'error'; task: string; detail?: string; tools: number; tokens?: number; seconds: number; model?: string }
+  | { type: 'subagent'; id: string; sessionId: string; status: 'running' | 'done' | 'error'; task: string; detail?: string; tools: number; tokens?: number; seconds: number; model?: string; background?: boolean }
   /** The pending message queue for this session — a FULL snapshot (an empty array clears it). Mapped
    *  from PI's native `queue_update` event: a message a user sends while a turn is already streaming is
    *  STEERED into the running turn (delivered between steps, before the next model call), and PI reports

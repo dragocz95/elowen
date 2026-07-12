@@ -33,6 +33,7 @@ function fakeDeps() {
     }),
     subscribe: (l: (e: unknown) => void) => { listeners.push(l); return () => {}; },
     setModel: vi.fn(), dispose: vi.fn(), abort: vi.fn(async () => {}),
+    sendCustomMessage: vi.fn(async () => {}),
     abortCompaction: vi.fn(), abortBranchSummary: vi.fn(), messages, isStreaming: false,
     _checkCompaction: nativeCheck,
     // PI's native mid-turn queue: steer() parks a message in the pending backlog (in a real session PI
@@ -223,6 +224,51 @@ describe('BrainService', () => {
     const tpl = seenPrompts?.find((p) => p.name === 'review');
     expect(tpl?.content).toBe('Review this diff. Scope: $ARGUMENTS');
     expect(tpl?.filePath).toBe('db://prompts/review'); // synthetic, in-memory
+  });
+
+  it('detaches foreground sub-agents and delivers completion as a hidden PI custom message', async () => {
+    const d = fakeDeps();
+    const reg = new PluginRegistry();
+    let complete!: (result: { sessionId: string; task: string; status: 'done'; result: string }) => void;
+    const detachForeground = vi.fn((_input, sink) => { complete = sink; return { detached: 1 }; });
+    reg.contextFor('subagent', {}, { info() {}, warn() {}, error() {} })
+      .registerControl('subagent', { detachForeground });
+    (d as unknown as { plugins: unknown }).plugins = new PluginRegistryProvider(async () => reg);
+    const svc = new BrainService(d as never);
+    const { sessionId } = await svc.start(1);
+
+    await expect(svc.detachForegroundSubagents(1, sessionId)).resolves.toEqual({ detached: 1 });
+    expect(detachForeground).toHaveBeenCalledWith(
+      { sessionId, principal: 'elowen:1' },
+      expect.any(Function),
+    );
+    complete({ sessionId: 'brain-ch-subagent-child', task: 'inspect', status: 'done', result: 'all clear' });
+    await vi.waitFor(() => expect(d.session.sendCustomMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        customType: 'subagent-result',
+        display: false,
+        content: expect.stringContaining('<subagent-result'),
+      }),
+      { triggerTurn: true, deliverAs: 'followUp' },
+    ));
+  });
+
+  it('places running sub-agent state after the user request in a dedicated XML reminder', async () => {
+    const d = fakeDeps();
+    const svc = new BrainService(d as never);
+    const { sessionId } = await svc.start(1);
+    d.store.createSession({ id: 'brain-ch-subagent-child', userId: 1, model: 'm', parentSessionId: sessionId });
+    d.store.upsertSubagentRun(sessionId, {
+      id: 'delegate-1', sessionId: 'brain-ch-subagent-child', status: 'running',
+      task: 'inspect <unsafe>', detail: 'read_file src/a.ts', tools: 2, seconds: 4, background: true,
+    });
+
+    await svc.send({ userId: 1, text: 'What is next?', session: sessionId });
+    const prompted = d.session.prompt.mock.calls.at(-1)?.[0] as string;
+    expect(prompted).toContain('<system-reminder>\n<running-subagents>');
+    expect(prompted).toContain('background="true"');
+    expect(prompted).toContain('inspect &lt;unsafe&gt;');
+    expect(prompted.indexOf('What is next?')).toBeLessThan(prompted.indexOf('<running-subagents>'));
   });
 
   it('applies a per-user model override', async () => {

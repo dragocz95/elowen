@@ -83,11 +83,11 @@ describe('BrainStore', () => {
 
     expect(store.upsertSubagentRun('root', {
       id: 'delegate-1', sessionId: 'child', status: 'running', task: 'inspect',
-      detail: 'read_file src/a.ts', tools: 2, tokens: 1234, seconds: 2, model: 'm',
+      detail: 'read_file src/a.ts', tools: 2, tokens: 1234, seconds: 2, model: 'm', background: true,
     })).toBe(true);
     expect(store.getSubagentRuns('root')).toEqual([{
       toolCallId: 'delegate-1', sessionId: 'child', status: 'running', task: 'inspect',
-      detail: 'read_file src/a.ts', tools: 2, tokens: 1234, seconds: 2, model: 'm',
+      detail: 'read_file src/a.ts', tools: 2, tokens: 1234, seconds: 2, model: 'm', background: true,
     }]);
     expect(store.upsertSubagentRun('root', {
       id: 'unrelated', sessionId: 'same-owner-unrelated', status: 'running', task: 'x', tools: 0, seconds: 0,

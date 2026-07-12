@@ -75,6 +75,7 @@ export class TurnContextBuilder {
     const modeInstruction = mode === 'plan'
       ? `${this.d.prompts.render('cli/plan-mode', {}, request.userId)}\n\n`
       : '';
+    const runningSubagents = this.runningSubagentsBlock(live.sessionId);
 
     return {
       autoSaveMemory: memSettings?.autoSave !== false,
@@ -83,7 +84,9 @@ export class TurnContextBuilder {
         if (!isPromptCommand(request.text, live.session)) {
           const turnContext = live.turnContext();
           prompt = memoryBlock + hookBlock + permissionsBlock + turnContext.beforeUser + modeInstruction
-            + request.text + (turnContext.afterUser ? `\n\n${turnContext.afterUser}` : '');
+            + request.text
+            + (turnContext.afterUser ? `\n\n${turnContext.afterUser}` : '')
+            + (runningSubagents ? `\n\n${runningSubagents}` : '');
         }
         return operation(prompt);
       }, {
@@ -98,6 +101,24 @@ export class TurnContextBuilder {
         model: { provider: live.providerId, model: live.model },
       }),
     };
+  }
+
+  private runningSubagentsBlock(sessionId: string): string {
+    const running = this.d.store.getSubagentRuns(sessionId).filter((run) => run.status === 'running');
+    if (running.length === 0) return '';
+    const esc = (value: string): string => value
+      .replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
+      .replaceAll('"', '&quot;').replaceAll("'", '&apos;');
+    const rows = running.slice(0, 32).map((run) => {
+      const attrs = `session="${esc(run.sessionId)}" background="${run.background === true}" tools="${run.tools}" seconds="${run.seconds}"`;
+      const detail = run.detail ? `\n<progress>${esc(run.detail)}</progress>` : '';
+      return `<subagent ${attrs}>\n<task>${esc(run.task)}</task>${detail}\n</subagent>`;
+    }).join('\n');
+    return '<system-reminder>\n<running-subagents>\n'
+      + `${rows}\n</running-subagents>\n`
+      + '<instruction>These delegated jobs are already running. Do not duplicate or abort them; '
+      + 'a background job result will be delivered automatically when it finishes.</instruction>\n'
+      + '</system-reminder>';
   }
 
   private async memoryBlock(userId: number, text: string, enabled: boolean): Promise<string> {

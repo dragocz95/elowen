@@ -28,6 +28,7 @@ export interface BrainSubagentView {
   tokens?: number;
   seconds: number;
   model?: string;
+  background?: boolean;
 }
 
 /** One display piece of an assistant turn, in the order it happened: a text block, or a tool call

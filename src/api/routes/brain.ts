@@ -256,6 +256,17 @@ export function registerBrainRoutes(app: ElowenApp, ctx: RouteContext): void {
     catch (e) { return c.json({ error: (e as Error).message }, 409); }
   });
 
+  // Ctrl+B: release foreground delegate tool waits without cancelling their child channels. The plugin
+  // keeps the jobs alive; BrainService routes their eventual results back into this exact conversation.
+  app.post('/brain/subagents/background', async c => {
+    if (!d.brain) return c.json({ error: 'brain unavailable' }, 503);
+    if (forbidden(c)) return c.json({ error: 'forbidden' }, 403);
+    const { session, client, generation } = await parseBody(c, brainStopSchema);
+    const boundClient = session && client && generation ? { id: client, generation } : undefined;
+    try { return c.json(await d.brain.detachForegroundSubagents(c.get('user').id, session, boundClient)); }
+    catch (e) { return c.json({ error: (e as Error).message }, 409); }
+  });
+
   // Closing a session-bound client: abort its active run and dispose the live PI session only when no
   // other client is attached. Persisted history remains resumable.
   app.post('/brain/session/stop', async c => {

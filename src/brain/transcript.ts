@@ -28,6 +28,8 @@ export interface SubagentState {
   seconds: number;
   /** The model the sub-agent runs on (its own, or the delegating conversation's) — shown in the table. */
   model?: string;
+  /** True once the user detached this job from the parent tool wait with Ctrl+B. */
+  background?: boolean;
 }
 export type Segment =
   | { kind: 'text'; text: string }

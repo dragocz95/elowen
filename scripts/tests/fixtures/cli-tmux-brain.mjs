@@ -500,6 +500,20 @@ const server = createServer(async (req, res) => {
     json(res, 200, { interrupted: true, injected: Boolean(text) });
     return;
   }
+  if (req.method === 'POST' && url.pathname === '/brain/subagents/background') {
+    for (let index = 0; index < 8; index += 1) {
+      emit({
+        type: 'subagent', id: index === 0 ? 'delegate-e2e' : `delegate-e2e-${index}`,
+        sessionId: index === 0 ? 'e2e-child' : `e2e-child-${index}`,
+        status: 'running', task: `agent-${index} verify the CLI panels`,
+        detail: `checking panel ${index}`, tools: index + 1, tokens: 321 + index, seconds: 5 + index,
+        model: 'deepseek-v4-flash', background: true,
+      });
+    }
+    later(170, () => emit({ type: 'text', delta: 'E2E DETACHED SUBAGENT RESULT DELIVERED' }));
+    json(res, 200, { detached: 8 });
+    return;
+  }
   if (req.method === 'POST' && url.pathname === '/brain/abort') {
     stopFirstTurn();
     emit({ type: 'queue', items: [] });

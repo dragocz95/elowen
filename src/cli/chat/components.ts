@@ -166,6 +166,7 @@ export interface SubagentPanelEntry {
   tokens?: number;
   seconds: number;
   model?: string;
+  background?: boolean;
 }
 
 /** A bounded live list shared by the telemetry rail and its narrow-terminal chat fallback — a spinner

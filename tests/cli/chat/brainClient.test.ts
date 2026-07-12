@@ -101,6 +101,20 @@ describe('BrainClient', () => {
     }));
   });
 
+  it('backgrounds foreground sub-agents with the current CLI generation', async () => {
+    const f = vi.fn(async (url: string) => url.endsWith('/brain/start')
+      ? j(201, { sessionId: 'brain-1' })
+      : j(200, { detached: 1 })) as unknown as typeof fetch;
+    const c = new BrainClient({ base: 'http://x', token: 't', fetchImpl: f, clientId: 'cli-a' });
+    await c.start({ session: 'brain-1' });
+
+    await expect(c.backgroundSubagents()).resolves.toEqual({ detached: 1 });
+    expect(f).toHaveBeenLastCalledWith('http://x/brain/subagents/background', expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify({ session: 'brain-1', client: 'cli-a', generation: 1 }),
+    }));
+  });
+
   it('history GETs /brain/messages', async () => {
     const f = vi.fn(async () => j(200, [{ role: 'user', text: 'hi' }])) as unknown as typeof fetch;
     const c = new BrainClient({ base: 'http://x', token: 't', fetchImpl: f });

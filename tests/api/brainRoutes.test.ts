@@ -23,6 +23,7 @@ function fakeBrain() {
   const fastCalls: { id: number; on?: boolean; session?: string }[] = [];
   const stopSessionCalls: { id: number; session?: string; client?: string; generation?: number }[] = [];
   const interruptQueuedCalls: { id: number; session?: string; client?: { id: string; generation: number } }[] = [];
+  const detachSubagentCalls: { id: number; session?: string; client?: { id: string; generation: number } }[] = [];
   const startCalls: { id: number; opts?: { fresh?: boolean; clientId?: string; clientGeneration?: number } }[] = [];
   const tapSnapshotCalls: { id: number; session: string }[] = [];
   const subagentSends: { id: number; session: string; text: string }[] = [];
@@ -54,6 +55,7 @@ function fakeBrain() {
     fastCalls,
     stopSessionCalls,
     interruptQueuedCalls,
+    detachSubagentCalls,
     startCalls,
     tapSnapshotCalls,
     subagentSends,
@@ -150,6 +152,10 @@ function fakeBrain() {
     interruptQueued: async (id: number, session?: string, client?: { id: string; generation: number }) => {
       interruptQueuedCalls.push({ id, session, client });
       return { interrupted: true, injected: true };
+    },
+    detachForegroundSubagents: async (id: number, session?: string, client?: { id: string; generation: number }) => {
+      detachSubagentCalls.push({ id, session, client });
+      return { detached: 2 };
     },
     history: (_id: number) => [{ role: 'user', text: 'hi' }, { role: 'assistant', text: 'yo' }],
     messagesOf: () => [],
@@ -380,6 +386,7 @@ describe('brain routes', () => {
     expect((await app.request('/brain/fast', post(agentTok, { on: true }))).status).toBe(403);
     expect((await app.request('/brain/session/stop', post(agentTok, {}))).status).toBe(403);
     expect((await app.request('/brain/interrupt-queued', post(agentTok, {}))).status).toBe(403);
+    expect((await app.request('/brain/subagents/background', post(agentTok, {}))).status).toBe(403);
   });
 
   it('toggles Fast for the bound session through both action routes', async () => {
@@ -411,6 +418,18 @@ describe('brain routes', () => {
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ interrupted: true, injected: true });
     expect(brain.interruptQueuedCalls).toEqual([{
+      id: 2, session: 'brain-child', client: { id: 'cli-a', generation: 3 },
+    }]);
+  });
+
+  it('moves foreground sub-agents to background with the bound CLI generation intact', async () => {
+    const { app, amyTok, brain } = setup();
+    const res = await app.request('/brain/subagents/background', post(amyTok, {
+      session: 'brain-child', client: 'cli-a', generation: 3,
+    }));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ detached: 2 });
+    expect(brain.detachSubagentCalls).toEqual([{
       id: 2, session: 'brain-child', client: { id: 'cli-a', generation: 3 },
     }]);
   });

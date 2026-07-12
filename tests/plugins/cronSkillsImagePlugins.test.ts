@@ -198,6 +198,45 @@ describe('subagent plugin', () => {
     expect(seen!.access).toMatchObject({ admin: true, owner: true });
   });
 
+  it('detaches a foreground delegation without cancelling the child and reports its eventual result', async () => {
+    const dataRoot = freshDataRoot();
+    const reg = await loadPlugins({ dirs: [pluginsDir], enabled: ['subagent'], dataRoot, logger: log });
+    const delegate = reg.tools.find((t) => t.name === 'delegate')!;
+    const control = reg.controls.get('subagent') as {
+      detachForeground(input: { sessionId: string; principal: string }, completed: (result: unknown) => void): { detached: number };
+    };
+    expect(control).toBeTruthy();
+
+    let resolveChild!: (reply: string) => void;
+    const child = new Promise<string>((resolve) => { resolveChild = resolve; });
+    reg.platforms[0]!.listen(async (_src, _text, onEvent) => {
+      onEvent?.({ type: 'session', sessionId: 'brain-ch-subagent-detached' });
+      return child;
+    });
+    const completed: unknown[] = [];
+    const foreground = runWithPolicy(ADMIN, () =>
+      delegate.execute('call-fg', { task: 'inspect slowly' }, undefined as never, undefined as never), {
+      sessionId: 'brain-parent-detach', identity: OWNER,
+    });
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+    expect(control.detachForeground(
+      { sessionId: 'brain-parent-detach', principal: 'elowen:1' },
+      (result) => completed.push(result),
+    )).toEqual({ detached: 1 });
+    expect(asText(await foreground)).toContain('moved this sub-agent to the background');
+
+    resolveChild('detached child result');
+    await vi.waitFor(() => expect(completed).toEqual([
+      expect.objectContaining({
+        sessionId: 'brain-ch-subagent-detached',
+        task: 'inspect slowly',
+        status: 'done',
+        result: 'detached child result',
+      }),
+    ]));
+  });
+
   it('returns a background handle immediately, exposes progress/result, and keeps emitting the child session', async () => {
     const dataRoot = freshDataRoot();
     const reg = await loadPlugins({ dirs: [pluginsDir], enabled: ['subagent'], dataRoot, logger: log });
