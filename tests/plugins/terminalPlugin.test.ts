@@ -160,11 +160,12 @@ describe('terminal plugin — configurable outputCap', () => {
       dirs: [join(repoRoot, 'plugins')], enabled: ['terminal'], logger: log,
       config: { terminal: { outputCap: 10_000 } },
     });
-    const started = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'run_command', { command: bigOutput(15_000), background: true }), { identity: owner });
+    const scope = { identity: owner, sessionId: 'brain-terminal-output-cap' };
+    const started = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'run_command', { command: bigOutput(15_000), background: true }), scope);
     const id = /Started background process (\S+):/.exec(started.content[0].text)?.[1];
     expect(id).toBeTruthy();
     await new Promise((r) => setTimeout(r, 500)); // let the short-lived child finish and flush its output
-    const out = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'read_process_output', { id, all: true }), { identity: owner });
+    const out = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'read_process_output', { id, all: true }), scope);
     expect(out.content[0].text.length).toBeLessThanOrEqual(10_000 + '\n[exited 0]'.length);
   });
 });
