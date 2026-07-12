@@ -28,7 +28,7 @@ import { loadPromptHistory, PromptStash } from './promptHistory.js';
 import { SnapshotHydrator } from './snapshotHydrator.js';
 import { StreamCoordinator } from './streamCoordinator.js';
 import type { StreamCoordinatorPort } from './streamCoordinator.js';
-import { TerminalLifecycle, createQuitCoordinator, installExitGuards } from './terminalLifecycle.js';
+import { TerminalLifecycle, createShutdownCoordinator, installExitGuards } from './terminalLifecycle.js';
 import { color, isChatThemeName, setChatTheme, setCustomChatTheme } from './theme.js';
 import { createTuiDiagnostics } from './tuiDiagnostics.js';
 import type { TuiDiagnostics } from './tuiDiagnostics.js';
@@ -75,13 +75,16 @@ export class ChatApplication {
   private lifecycle: TerminalLifecycle | null = null;
   private diagnostics: TuiDiagnostics | null = null;
   private readonly lifetime = new ChatApplicationLifetime<'metadata' | 'rate-limits'>();
+  private readonly client: BrainClient;
   private removeExitGuards: (() => void) | null = null;
-  private quitImpl: () => void = () => { this.stop(); };
+  private quitImpl: () => void = () => {};
   private launchPendingAsk: (() => void) | null = null;
   private stopped = false;
 
   constructor(options: ChatLaunchOptions) {
     this.launch = options;
+    this.client = options.client ?? new BrainClient({ base: options.base, token: options.token });
+    this.client.bindLifetime(this.lifetime.signal);
     this.actions = {
       render: (reason) => this.composition?.render(reason),
       renderForced: (reason) => this.composition?.renderForced(reason),
@@ -97,26 +100,24 @@ export class ChatApplication {
   /** Boot, start the terminal/stream and resolve only after the user quits. */
   async run(): Promise<void> {
     if (this.stopped) throw new Error('stopped ChatApplication cannot be restarted');
+    let done!: () => void;
+    const finished = new Promise<void>((resolve) => { done = resolve; });
+    const shutdown = createShutdownCoordinator({
+      teardown: () => this.stopLocal(),
+      stopBoundSession: (signal) => this.client.stopSession(signal),
+    });
+    this.quitImpl = () => { void shutdown().then(done); };
+    this.removeExitGuards = installExitGuards({ shutdown });
     try {
       await this.bootstrap(this.launch);
-      const client = this.resources.client;
-      let done!: () => void;
-      const finished = new Promise<void>((resolve) => { done = resolve; });
-      const teardown = (): void => this.stop();
-      this.removeExitGuards = installExitGuards(teardown, teardown);
-      this.quitImpl = createQuitCoordinator({
-        teardown,
-        removeExitGuards: () => this.detachExitGuards(),
-        stopBoundSession: (signal) => client.stopSession(signal),
-        done,
-      });
+      if (this.stopped) return;
       this.start();
       this.coordinator!.openStream(this.state.streamAc);
       this.launchPendingAsk?.();
       this.launchPendingAsk = null;
       await finished;
     } finally {
-      this.stop();
+      await shutdown();
       this.detachExitGuards();
     }
   }
@@ -131,7 +132,7 @@ export class ChatApplication {
   private resume(): void { this.lifecycle?.resume(); }
 
   /** Idempotently stop every child owner before restoring the primary terminal buffer. */
-  private stop(): void {
+  private stopLocal(): void {
     if (this.stopped) return;
     this.stopped = true;
     this.lifetime.stop();
@@ -151,8 +152,7 @@ export class ChatApplication {
     if (prefs.theme && isChatThemeName(prefs.theme)) setChatTheme(prefs.theme);
     const keymap = initKeymap(prefs.keybinds);
     let showThoughts = prefs.showThoughts !== false;
-    const client = options.client ?? new BrainClient({ base: options.base, token: options.token });
-    client.bindLifetime(this.lifetime.signal);
+    const client = this.client;
     await client.start({ provider: options.model, session: options.session, fresh: options.fresh });
     const bootHydration = new AbortController();
     const [boot, processes, termSettings, initialTranscript, serverCommands] = await Promise.all([

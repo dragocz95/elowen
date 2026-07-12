@@ -1,8 +1,9 @@
 import { spawn } from 'node:child_process';
-import { readFileSync, readdirSync } from 'node:fs';
 import type { ChildProcess } from 'node:child_process';
 import type { ElowenTurn } from '../../brain/transcript.js';
 import type { ToolOutputView } from '../../brain/messageView.js';
+import { isSameLinuxProcess, snapshotLinuxProcessGroup } from './processTermination.js';
+import type { ProcessIdentity } from './processTermination.js';
 
 /** `!cmd` local shell escape for the chat TUI (opencode-style): the command runs on THIS machine
  *  (the CLI's cwd), renders as a console block in the transcript, and its output is buffered as
@@ -61,43 +62,6 @@ function terminateProcessTree(child: Pick<ChildProcess, 'pid' | 'kill'>, signal:
   try { return child.kill(signal); } catch { return false; }
 }
 
-interface ProcessIdentity { pid: number; startTime: string }
-
-/** Read the identities currently belonging to one Linux process group. `startTime` is the kernel's
- * immutable birth tick, so escalation never sends SIGKILL to a PID recycled after the owned command
- * exited. Other POSIX platforms fall back to their process-group primitive below. */
-function linuxProcessGroup(pgid: number): ProcessIdentity[] | null {
-  if (process.platform !== 'linux') return null;
-  const members: ProcessIdentity[] = [];
-  let names: string[];
-  try { names = readdirSync('/proc'); } catch { return null; }
-  for (const name of names) {
-    if (!/^\d+$/.test(name)) continue;
-    try {
-      const stat = readFileSync(`/proc/${name}/stat`, 'utf8');
-      const commEnd = stat.lastIndexOf(')');
-      if (commEnd < 0) continue;
-      // Fields after comm start at field 3 (state): pgrp is index 2, starttime is index 19.
-      const fields = stat.slice(commEnd + 2).trim().split(/\s+/);
-      if (Number(fields[2]) !== pgid || !fields[19]) continue;
-      members.push({ pid: Number(name), startTime: fields[19] });
-    } catch { /* process exited while /proc was being scanned */ }
-  }
-  return members;
-}
-
-function sameLinuxProcess(identity: ProcessIdentity, pgid: number): boolean {
-  try {
-    const stat = readFileSync(`/proc/${identity.pid}/stat`, 'utf8');
-    const commEnd = stat.lastIndexOf(')');
-    if (commEnd < 0) return false;
-    const fields = stat.slice(commEnd + 2).trim().split(/\s+/);
-    return Number(fields[2]) === pgid && fields[19] === identity.startTime;
-  } catch {
-    return false;
-  }
-}
-
 /** Sole owner of TERM→KILL for one spawned shell group. Timeout, output overflow and application abort
  * all converge here. Escalation deliberately survives the leader's `close`: grandchildren can close the
  * inherited pipes and outlive that event. Linux kills only birth-identity-matched members, avoiding a
@@ -112,13 +76,13 @@ class OwnedProcessGroup {
     if (this.requested) return;
     this.requested = true;
     const pgid = this.child.pid;
-    if (pgid && process.platform !== 'win32') this.identities = linuxProcessGroup(pgid);
+    if (pgid && process.platform !== 'win32') this.identities = snapshotLinuxProcessGroup(pgid);
     terminateProcessTree(this.child, 'SIGTERM');
     // Include descendants that became observable at the TERM boundary without ever discarding the
     // pre-signal identities. A trapped command may react synchronously by closing its stdio/leader.
     if (pgid && this.identities) {
       const known = new Map(this.identities.map((identity) => [identity.pid, identity]));
-      for (const identity of linuxProcessGroup(pgid) ?? []) known.set(identity.pid, identity);
+      for (const identity of snapshotLinuxProcessGroup(pgid) ?? []) known.set(identity.pid, identity);
       this.identities = [...known.values()];
     }
     setTimeout(() => this.force(), this.graceMs);
@@ -128,7 +92,7 @@ class OwnedProcessGroup {
     const pgid = this.child.pid;
     if (pgid && this.identities) {
       for (const identity of this.identities) {
-        if (!sameLinuxProcess(identity, pgid)) continue;
+        if (!isSameLinuxProcess(identity, pgid)) continue;
         try { process.kill(identity.pid, 'SIGKILL'); } catch { /* already gone */ }
       }
       return;

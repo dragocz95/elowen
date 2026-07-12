@@ -316,6 +316,10 @@ export class BrainService {
     // A delayed stop from generation N must not abort a newer N+1 selection owned by the same CLI id.
     if (!released.accepted) return { stopped: false, disposed: false };
     const bound = released.sessionId;
+    // A bootstrap/start failure can issue a generation stop before the daemon ever created a binding.
+    // `release()` has still tombstoned that generation (so a delayed start cannot resurrect it), but with
+    // no stable target and no explicit session body it must not guess the user's unrelated active session.
+    if (clientId && !bound && !session) return { stopped: false, disposed: false };
     const cleanUp = async (sessionId: string): Promise<{ stopped: boolean; disposed: boolean }> => {
       const live = this.sessions.get(sessionId);
       if (!live) return { stopped: false, disposed: false };
