@@ -144,7 +144,10 @@ function ManageSelectionModalBody({
 
   const save = async () => {
     try {
-      await onSave(new Set(local));
+      const result = onSave(new Set(local));
+      // Synchronous pickers should close in the same interaction frame. Async persistence still
+      // keeps the modal open until it resolves so failures remain retryable.
+      if (result) await result;
       onClose();
     } catch {
       // The caller surfaces the failure (toast); keep the modal open so the user can retry.

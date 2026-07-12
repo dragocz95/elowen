@@ -244,7 +244,8 @@ export function MemoryView() {
             : direction === 'end' ? pageItems.at(-1)
               : pageItems[index + (direction === 'next' ? 1 : -1)];
           if (!next) return;
-          setSelectedId(next.id);
+          // Arrow/Home/End move the row focus only. Opening the modal detail drawer here would
+          // inert the register underneath it and interrupt keyboard traversal after one step.
           requestAnimationFrame(() => document.querySelector<HTMLButtonElement>(`[data-memory-open="${next.id}"]`)?.focus());
         }}
       />
