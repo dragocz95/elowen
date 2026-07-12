@@ -8,6 +8,10 @@ interface TuiFrameDiagnostic {
   reasons: string[];
   forced: boolean;
   prepareMs: number;
+  /** Dirty request to physical-root preparation, excluding preparation itself. */
+  queueMs: number;
+  /** Complete constrained root composition and opt-in diagnostic traversal. */
+  rootRenderMs: number;
   transcriptMs: number;
   totalMs: number;
   transcriptRows: number;

@@ -637,6 +637,7 @@ export function createChatComposition(
   const measuredRoot: Component = {
     invalidate: () => root.invalidate(),
     render: (width: number): string[] => {
+      renderOwner.beginRender();
       const renderStartedAt = performance.now();
       const rawLines = root.render(width).map(terminalSafeAnsi);
       synchronizeOverlayGeometry();
@@ -670,13 +671,23 @@ export function createChatComposition(
         status: startStatusRows,
         hints: 0,
       };
+      // Compute every diagnostics-only traversal before closing the timing window: perf mode must report
+      // the full event-to-frame work it caused rather than quietly excluding its own width validation.
+      const maxVisibleWidth = diagnostics.enabled
+        ? lines.reduce((maximum, line) => Math.max(maximum, visibleWidth(line)), 0)
+        : 0;
+      const completedAt = performance.now();
+      const totalMs = completedAt - (frame?.requestedAt ?? renderStartedAt);
+      const rootRenderMs = completedAt - renderStartedAt;
       diagnostics.record({
         type: 'frame',
         reasons: frame ? [...frame.reasons] : ['pi-tui:unscheduled'],
         forced: frame?.forced ?? false,
         prepareMs: frame?.prepareMs ?? 0,
+        queueMs: Math.max(0, totalMs - rootRenderMs - (frame?.prepareMs ?? 0)),
+        rootRenderMs,
         transcriptMs: transcript?.renderMs ?? 0,
-        totalMs: performance.now() - (frame?.requestedAt ?? renderStartedAt),
+        totalMs,
         transcriptRows: transcript?.transcriptRows ?? 0,
         transcriptRowsExact: transcript?.transcriptRowsExact ?? true,
         visibleRows: transcript?.visibleRows ?? 0,
@@ -693,9 +704,7 @@ export function createChatComposition(
         rootRows: lines.length,
         // Width traversal is diagnostics-only: the disabled sink remains a constant-time no-op in the
         // normal CLI, while perf/debug logs can machine-check the final root column invariant.
-        maxVisibleWidth: diagnostics.enabled
-          ? lines.reduce((maximum, line) => Math.max(maximum, visibleWidth(line)), 0)
-          : 0,
+        maxVisibleWidth,
         reverseSpans,
       });
       return lines;

@@ -169,6 +169,7 @@ describe('chat application shell ownership', () => {
     render.scheduleRender('state:queue');
     expect(vi.getTimerCount()).toBe(1);
     await vi.runOnlyPendingTimersAsync();
+    render.beginRender();
     expect(prepare).toHaveBeenCalledOnce();
     expect(nativeRequest).toHaveBeenCalledOnce();
     expect(render.takeFrame()?.reasons).toEqual(new Set(['stream:text', 'state:queue']));
@@ -180,6 +181,149 @@ describe('chat application shell ownership', () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
+  it('RenderShell delegates the physical 60fps clock to PI and prepares at most once for its pending frame', async () => {
+    const nativeRequest = vi.fn();
+    let state = 'old';
+    const preparedState: string[] = [];
+    const prepare = vi.fn(() => preparedState.push(state));
+    const onFlush = vi.fn();
+    const tui = { requestRender: nativeRequest } as unknown as TUI;
+    const render = new RenderShell({ tui, term: { columns: 80, rows: 24 }, prepare, onFlush });
+
+    render.scheduleRender('stream:tool');
+    await vi.advanceTimersByTimeAsync(0);
+    expect(prepare).not.toHaveBeenCalled();
+    expect(nativeRequest).toHaveBeenCalledOnce();
+
+    // PI has accepted the request but has not called the root yet. Later SSE events must join that same
+    // physical frame, whose one preparation pass reads the newest mutable state (not the stale first one).
+    state = 'new';
+    render.scheduleRender('stream:tool-output');
+    expect(vi.getTimerCount()).toBe(0);
+    expect(prepare).not.toHaveBeenCalled();
+    render.beginRender();
+    expect(prepare).toHaveBeenCalledOnce();
+    expect(preparedState).toEqual(['new']);
+    expect(nativeRequest).toHaveBeenCalledOnce();
+    expect(render.takeFrame()?.reasons).toEqual(new Set(['stream:tool', 'stream:tool-output']));
+    expect(onFlush).toHaveBeenLastCalledWith({
+      reasons: ['stream:tool', 'stream:tool-output'], forced: false,
+    });
+    render.stop();
+  });
+
+  it('RenderShell upgrades one pending frame to forced exactly once without losing its earliest reasons', async () => {
+    const nativeRequest = vi.fn();
+    const tui = { requestRender: nativeRequest } as unknown as TUI;
+    const render = new RenderShell({ tui, term: { columns: 80, rows: 24 }, prepare: vi.fn() });
+    render.scheduleRender('stream:text');
+    await vi.advanceTimersByTimeAsync(0);
+    render.scheduleForcedRender('resize');
+    render.scheduleForcedRender('overlay:reflow');
+    expect(nativeRequest.mock.calls).toEqual([[false], [true]]);
+    render.beginRender();
+    expect(render.takeFrame()).toMatchObject({
+      reasons: new Set(['stream:text', 'resize', 'overlay:reflow']), forced: true,
+    });
+    render.stop();
+  });
+
+  it('RenderShell upgrades an ordinary pending frame when geometry changes before PI renders it', async () => {
+    const nativeRequest = vi.fn();
+    const term = { columns: 80, rows: 24 };
+    const tui = { requestRender: nativeRequest } as unknown as TUI;
+    const render = new RenderShell({ tui, term, prepare: vi.fn() });
+    render.scheduleForcedRender('initial');
+    await vi.advanceTimersByTimeAsync(0);
+    render.beginRender();
+    render.takeFrame();
+    nativeRequest.mockClear();
+
+    render.scheduleRender('stream:text');
+    await vi.advanceTimersByTimeAsync(0);
+    term.columns = 40;
+    term.rows = 15;
+    render.scheduleRender('pi-tui:request');
+    expect(nativeRequest.mock.calls).toEqual([[false], [true]]);
+    render.beginRender();
+    expect(render.takeFrame()).toMatchObject({
+      reasons: new Set(['stream:text', 'pi-tui:request', 'resize']), forced: true,
+    });
+    render.stop();
+  });
+
+  it('RenderShell drops a canceled pending request across terminal suspend and issues a fresh forced resume', async () => {
+    const nativeRequest = vi.fn();
+    const tui = { requestRender: nativeRequest } as unknown as TUI;
+    const render = new RenderShell({ tui, term: { columns: 80, rows: 24 }, prepare: vi.fn() });
+    render.scheduleForcedRender('lifecycle:start');
+    await vi.advanceTimersByTimeAsync(0);
+    expect(nativeRequest.mock.calls).toEqual([[true]]);
+
+    // TerminalLifecycle calls pause before TUI.stop; that stop cancels PI's native pending request.
+    render.pause();
+    render.resume();
+    render.scheduleForcedRender('lifecycle:resume');
+    await vi.advanceTimersByTimeAsync(0);
+    expect(nativeRequest.mock.calls).toEqual([[true], [true]]);
+    render.beginRender();
+    expect(render.takeFrame()?.reasons).toEqual(new Set(['lifecycle:resume']));
+    render.stop();
+  });
+
+  it('RenderShell turns a forced request raised during ordinary preparation into a real forced follow-up', async () => {
+    const nativeRequest = vi.fn();
+    let tui!: TUI;
+    tui = { requestRender: nativeRequest } as unknown as TUI;
+    const render = new RenderShell({
+      tui, term: { columns: 80, rows: 24 }, prepare: () => tui.requestRender(true),
+    });
+    render.scheduleRender('stream:text');
+    await vi.advanceTimersByTimeAsync(0);
+    expect(nativeRequest.mock.calls).toEqual([[false]]);
+    render.beginRender();
+    const ordinary = render.takeFrame();
+    expect(ordinary).toMatchObject({ forced: false });
+    expect(ordinary?.reasons).toContain('pi-tui:forced-request-during-frame');
+    expect(nativeRequest.mock.calls).toEqual([[false]]);
+
+    await vi.runAllTicks();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(nativeRequest.mock.calls).toEqual([[false], [true]]);
+    render.beginRender();
+    expect(render.takeFrame()).toMatchObject({ forced: true });
+    render.stop();
+  });
+
+  it('RenderShell schedules a real forced follow-up when resize first becomes visible inside beginRender', async () => {
+    const nativeRequest = vi.fn();
+    const term = { columns: 80, rows: 24 };
+    const tui = { requestRender: nativeRequest } as unknown as TUI;
+    const render = new RenderShell({ tui, term, prepare: vi.fn() });
+    render.scheduleForcedRender('initial');
+    await vi.advanceTimersByTimeAsync(0);
+    render.beginRender();
+    render.takeFrame();
+    nativeRequest.mockClear();
+
+    render.scheduleRender('stream:text');
+    await vi.advanceTimersByTimeAsync(0);
+    expect(nativeRequest.mock.calls).toEqual([[false]]);
+    term.columns = 40;
+    term.rows = 15;
+    render.beginRender();
+    const ordinaryResize = render.takeFrame();
+    expect(ordinaryResize).toMatchObject({ forced: false });
+    expect(ordinaryResize?.reasons).toContain('resize');
+
+    await vi.runAllTicks();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(nativeRequest.mock.calls).toEqual([[false], [true]]);
+    render.beginRender();
+    expect(render.takeFrame()).toMatchObject({ forced: true });
+    render.stop();
+  });
+
   it('RenderShell reports a real dimension transition once before preparing the resized frame', async () => {
     const tui = { requestRender: vi.fn() } as unknown as TUI;
     const term = { columns: 80, rows: 24 };
@@ -187,10 +331,13 @@ describe('chat application shell ownership', () => {
     const render = new RenderShell({ tui, term, prepare: vi.fn(), onResize });
     render.scheduleForcedRender('initial');
     await vi.runOnlyPendingTimersAsync();
+    render.beginRender();
+    render.takeFrame();
     term.columns = 44;
     term.rows = 13;
     render.scheduleRender('pi-tui:resize');
     await vi.runOnlyPendingTimersAsync();
+    render.beginRender();
     expect(onResize).toHaveBeenCalledOnce();
     expect(onResize).toHaveBeenCalledWith({ columns: 44, rows: 13 });
     render.stop();
@@ -206,6 +353,7 @@ describe('chat application shell ownership', () => {
     });
     render.scheduleForcedRender('test:prepare');
     await vi.runOnlyPendingTimersAsync();
+    render.beginRender();
     expect(nativeRequest).toHaveBeenCalledOnce();
     expect(vi.getTimerCount()).toBe(0);
     expect(render.takeFrame()?.reasons).toContain('pi-tui:request-during-frame');
@@ -387,6 +535,8 @@ describe('chat application shell ownership', () => {
     const frame = events.find((event) => event.type === 'frame');
 
     expect(frame).toMatchObject({
+      queueMs: expect.any(Number),
+      rootRenderMs: expect.any(Number),
       maxVisibleWidth: Math.max(...rendered.map(visibleWidth)),
       reconciledTurns: expect.any(Number),
       layoutVisits: expect.any(Number),
