@@ -2,6 +2,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 import type { ChildProcess } from 'node:child_process';
 
 export interface ProcessIdentity { pid: number; startTime: string }
+export interface LinuxProcessOwner { name: string; value: string }
 
 function linuxProcess(pid: number): { identity: ProcessIdentity; pgid: number } | null {
   if (process.platform !== 'linux') return null;
@@ -16,6 +17,11 @@ function linuxProcess(pid: number): { identity: ProcessIdentity; pgid: number } 
   } catch {
     return null;
   }
+}
+
+/** Capture one Linux PID at its current birth identity without scanning the whole process table. */
+export function snapshotLinuxProcess(pid: number): { identity: ProcessIdentity; pgid: number } | null {
+  return linuxProcess(pid);
 }
 
 /** Identities currently belonging to a Linux process group. `null` means the platform/procfs cannot
@@ -36,6 +42,32 @@ export function snapshotLinuxProcessGroup(pgid: number): ProcessIdentity[] | nul
 export function isSameLinuxProcess(identity: ProcessIdentity, pgid?: number): boolean {
   const row = linuxProcess(identity.pid);
   return row?.identity.startTime === identity.startTime && (pgid === undefined || row.pgid === pgid);
+}
+
+/** Verify that one birth-identity-matched Linux process still carries an application-owned environment
+ * marker. Descendants inherit this marker, letting a TERM-grace resnapshot distinguish a late fork from
+ * an unrelated process group that happens to reuse the numeric pgid. */
+export function isOwnedLinuxProcess(identity: ProcessIdentity, owner: LinuxProcessOwner): boolean {
+  const before = linuxProcess(identity.pid);
+  if (before?.identity.startTime !== identity.startTime) return false;
+  try {
+    const environment = readFileSync(`/proc/${identity.pid}/environ`);
+    const entry = Buffer.from(`${owner.name}=${owner.value}`);
+    let offset = 0;
+    let found = false;
+    while (offset <= environment.length) {
+      const end = environment.indexOf(0, offset);
+      const boundary = end < 0 ? environment.length : end;
+      if (environment.subarray(offset, boundary).equals(entry)) { found = true; break; }
+      if (end < 0) break;
+      offset = end + 1;
+    }
+    // Reading /proc and acting are separate syscalls. Re-check the birth identity so a PID recycled
+    // during the read is never accepted as one of our descendants.
+    return found && isSameLinuxProcess(identity);
+  } catch {
+    return false;
+  }
 }
 
 /** TERM→KILL owner for one direct child (the inherited-TTY external editor). A normal `close` cancels
