@@ -82,4 +82,40 @@ describe('TUI diagnostics', () => {
     expect(summary).toMatchObject({ renders: 1 });
     expect(Number(summary?.rendersPerSecond)).toBeGreaterThan(0);
   });
+
+  it('degrades to a no-op when the configured parent path cannot be created', async () => {
+    const diagnostics = createTuiDiagnostics({
+      ELOWEN_TUI_DEBUG: '1',
+      ELOWEN_TUI_LOG: '/dev/null/elowen-tui.jsonl',
+    });
+
+    expect(diagnostics.enabled).toBe(false);
+    expect(diagnostics.path).toBeNull();
+    diagnostics.record({ type: 'lifecycle', action: 'start' });
+    await expect(diagnostics.close()).resolves.toBeUndefined();
+  });
+
+  it('contains asynchronous stream errors and closes safely without touching stdout or stderr', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'elowen-tui-diagnostics-error-'));
+    dirs.push(dir);
+    // Opening a directory as an append-only file fails asynchronously with EISDIR on Linux.
+    const stdout = vi.spyOn(process.stdout, 'write');
+    const stderr = vi.spyOn(process.stderr, 'write');
+    stdout.mockClear();
+    stderr.mockClear();
+    const diagnostics = createTuiDiagnostics({ ELOWEN_TUI_PERF: '1', ELOWEN_TUI_LOG: dir });
+
+    diagnostics.record({ type: 'lifecycle', action: 'start' });
+    for (let attempt = 0; diagnostics.enabled && attempt < 20; attempt++) {
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+    expect(diagnostics.enabled).toBe(false);
+    diagnostics.record({ type: 'lifecycle', action: 'after-error' });
+    await expect(diagnostics.close()).resolves.toBeUndefined();
+    await expect(diagnostics.close()).resolves.toBeUndefined();
+    expect(stdout).not.toHaveBeenCalled();
+    expect(stderr).not.toHaveBeenCalled();
+    stdout.mockRestore();
+    stderr.mockRestore();
+  });
 });
