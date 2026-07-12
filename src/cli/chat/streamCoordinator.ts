@@ -59,6 +59,16 @@ export class StreamCoordinator implements StreamCoordinatorPort {
     const clearHydrationNotice = (lane: 'parent' | 'child'): void => {
       rt.notice = hydrationNotices.clear(lane, rt.notice);
     };
+    const teardownChild = (): void => {
+      childGeneration += 1;
+      rt.childAc?.abort();
+      rt.childAc = null;
+      hydrator.stopLane('child');
+      for (const timer of [...childFallbacks]) clearTimeout(timer);
+      childFallbacks.clear();
+      rt.childView = null;
+      clearHydrationNotice('child');
+    };
 
     const subagentStates = (): readonly SubagentPanelEntry[] => rt.transcript.subagents();
     const subagentSessions = (): { sessionId: string; running: boolean }[] =>
@@ -213,8 +223,8 @@ export class StreamCoordinator implements StreamCoordinatorPort {
 
     const openSubagent = async (sessionId: string): Promise<void> => {
       if (stopped) return;
-      const generation = ++childGeneration;
-      rt.childAc?.abort();
+      teardownChild();
+      const generation = childGeneration;
       const ac = new AbortController();
       rt.childAc = ac;
       const transcript = new TranscriptModel();
@@ -339,11 +349,7 @@ export class StreamCoordinator implements StreamCoordinatorPort {
     };
 
     const closeSubagent = (): void => {
-      childGeneration += 1;
-      rt.childAc?.abort();
-      rt.childAc = null;
-      hydrator.stopLane('child');
-      rt.childView = null;
+      teardownChild();
       if (!stopped) render('child:closed');
     };
 
@@ -359,6 +365,7 @@ export class StreamCoordinator implements StreamCoordinatorPort {
     const switchTo = async (target: { session?: string; fresh?: boolean }): Promise<void> => {
       if (stopped) return;
       const generation = ++switchGeneration;
+      teardownChild();
       invalidateAsyncState();
       rt.streamAc.abort();
       const ac = new AbortController();
@@ -405,13 +412,8 @@ export class StreamCoordinator implements StreamCoordinatorPort {
       if (stopped) return;
       stopped = true;
       switchGeneration += 1;
-      childGeneration += 1;
+      teardownChild();
       rt.streamAc.abort();
-      rt.childAc?.abort();
-      rt.childAc = null;
-      rt.childView = null;
-      for (const timer of childFallbacks) clearTimeout(timer);
-      childFallbacks.clear();
       hydrator.stop();
     };
 
