@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   AuthStorage,
   createAgentSession,
@@ -37,6 +37,8 @@ interface FixtureOptions {
   keepRecentTokens?: number;
   multiTurn?: boolean;
   reserveTokens?: number;
+  toolResultText?: string;
+  historyPadding?: string;
 }
 
 let apiSequence = 0;
@@ -78,8 +80,8 @@ function responseStream(model: Model<Api>, response: string | AssistantMessage['
   return stream;
 }
 
-function appendToolHistory(sm: SessionManager, model: Model<Api>, suffix = 'one'): void {
-  sm.appendMessage({ role: 'user', content: `inspect ${suffix}`, timestamp: Date.now() });
+function appendToolHistory(sm: SessionManager, model: Model<Api>, suffix = 'one', padding = ''): void {
+  sm.appendMessage({ role: 'user', content: `inspect ${suffix}${padding ? `\n${padding}` : ''}`, timestamp: Date.now() });
   sm.appendMessage(assistantMessage(model, [
     { type: 'toolCall', id: `read-${suffix}`, name: 'read', arguments: { path: `/read-${suffix}.ts` } },
     { type: 'toolCall', id: `edit-${suffix}`, name: 'edit', arguments: { path: `/edit-${suffix}.ts` } },
@@ -155,7 +157,7 @@ async function fixture(o: FixtureOptions = {}): Promise<{
   }, { projectTrusted: true });
   const cwd = process.cwd();
   const sessionManager = SessionManager.inMemory(cwd);
-  appendToolHistory(sessionManager, selected);
+  appendToolHistory(sessionManager, selected, 'one', o.historyPadding);
   const resourceLoader = new DefaultResourceLoader({
     cwd, agentDir: cwd, settingsManager,
     noExtensions: true, noSkills: true, noPromptTemplates: true, noThemes: true, noContextFiles: true,
@@ -168,7 +170,7 @@ async function fixture(o: FixtureOptions = {}): Promise<{
     customTools: [defineTool({
       name: 'context_probe', label: 'Context probe', description: 'Continue one deterministic tool turn',
       parameters: Type.Object({}),
-      execute: async () => ({ content: [{ type: 'text', text: 'probe complete' }], details: {} }),
+      execute: async () => ({ content: [{ type: 'text', text: o.toolResultText ?? 'probe complete' }], details: {} }),
     })],
     tools: ['context_probe'], noTools: 'builtin', thinkingLevel: 'high',
   });
@@ -229,19 +231,56 @@ describe('Codex compaction model routing', () => {
 
   it('compacts at the safe turn boundary before a tool loop starts its next provider call', async () => {
     const f = await fixture({
-      fallbackId: 'gpt-5.5', autoUsage: 850, reserveTokens: 200, keepRecentTokens: 30, multiTurn: true,
+      fallbackId: 'gpt-5.5', autoUsage: 750, reserveTokens: 200, keepRecentTokens: 150, multiTurn: true,
+      // The assistant response itself is below the 800-token threshold. Only the completed tool result
+      // pushes the real next-request context above it — the boundary check must account for that tail.
+      toolResultText: 'large diagnostic result '.repeat(24),
+      historyPadding: 'older context detail '.repeat(100),
     });
 
     await f.session.prompt('compact before the second model step');
 
-    expect(f.calls.map((call) => call.model.id)).toEqual([
-      'gpt-5.6-luna', // assistant requests a tool above the configured 80% threshold
-      'gpt-5.5', // threshold compaction runs after the tool batch
-      'gpt-5.6-luna', // the next agent step sees the compacted context
+    expect(f.session.messages.at(-1)).toMatchObject({ role: 'assistant', stopReason: 'stop' });
+    expect(JSON.stringify(f.session.messages.findLast((message) => message.role === 'toolResult')?.content).length).toBeGreaterThan(300);
+    expect(f.calls.map((call) => [
+      call.model.id,
+      call.context.systemPrompt?.includes('context summarization assistant') === true ? 'summary' : 'chat',
+    ])).toEqual([
+      ['gpt-5.6-luna', 'chat'], // assistant requests a tool below the configured 80% threshold
+      ['gpt-5.5', 'summary'], // trailing tool output crosses it; PI summarizes older history
+      ['gpt-5.5', 'summary'], // PI's native split-turn prefix summary stays on the same fallback route
+      ['gpt-5.6-luna', 'chat'], // the next agent step sees the compacted context on the selected model
     ]);
     expect(f.compactions).toEqual([{ fromExtension: false, reason: 'threshold' }]);
-    expect(f.calls[2]?.context.messages.some((message) => message.role === 'user'
+    expect(f.calls.at(-1)?.context.messages.some((message) => message.role === 'user'
       && JSON.stringify(message.content).includes('conversation history before this point was compacted'))).toBe(true);
+  });
+
+  it('links the agent abort signal to PI\'s independent auto-compaction controller', async () => {
+    const controller = new AbortController();
+    let release!: () => void;
+    const compacting = new Promise<void>((resolve) => { release = resolve; });
+    const session = {
+      _checkCompaction: vi.fn(async () => compacting.then(() => false)),
+      abortCompaction: vi.fn(() => release()),
+      agent: {
+        state: { messages: [], model: {}, thinkingLevel: 'high' },
+        prepareNextTurnWithContext: undefined as unknown,
+      },
+    };
+    const manager = { getBranch: () => [] };
+    expect(installTurnBoundaryAutoCompaction(session as never, manager as never, true)).toBe(true);
+
+    const pending = (session.agent.prepareNextTurnWithContext as unknown as (
+      turn: unknown, signal: AbortSignal,
+    ) => Promise<unknown>)({
+      message: assistantMessage({} as never, [], 'toolUse', 750), context: {}, toolResults: [],
+    }, controller.signal);
+    await Promise.resolve();
+    controller.abort();
+    await pending;
+
+    expect(session.abortCompaction).toHaveBeenCalledOnce();
   });
 
   it.each(['quota exceeded', 'authentication failed'])('surfaces %s after one native summary request', async (error) => {

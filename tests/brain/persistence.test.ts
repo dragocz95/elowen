@@ -240,6 +240,52 @@ describe('brain persistence', () => {
     expect(JSON.stringify(ctx.messages[1])).not.toContain('user_memories');
   });
 
+  it('defers a between-tool-turn compaction until agent_end persists the current run', () => {
+    projectUserTurn(store, 's1', 'q1');
+    projectEvent(store, 's1', { type: 'agent_end', willRetry: false, messages: [{ role: 'assistant', content: 'a1' }] } as never);
+    projectUserTurn(store, 's1', 'q2');
+    projectEvent(store, 's1', { type: 'agent_end', willRetry: false, messages: [{ role: 'assistant', content: 'a2' }] } as never);
+    projectUserTurn(store, 's1', 'q3');
+
+    const firstAssistant = { role: 'assistant', content: 'inspect with a tool' };
+    const toolResult = { role: 'toolResult', content: 'large tool output' };
+    const finalAssistant = { role: 'assistant', content: 'final answer' };
+    const session = {
+      messages: [
+        { role: 'compactionSummary', summary: 'q1 through q3 summarized', tokensBefore: 850 },
+        firstAssistant,
+        toolResult,
+      ],
+    } as unknown as AgentSession;
+    const project = createSessionPersistenceProjector(store, session, 's1', 1_000);
+
+    project({ type: 'agent_start' } as never);
+    project({
+      type: 'compaction_end', reason: 'threshold', result: { summary: 'q1 through q3 summarized' },
+      aborted: false, willRetry: false,
+    } as never);
+
+    // The current assistant/tool rows do not exist in BrainStore yet. Compacting now would align the
+    // PI tail against unrelated old rows and permanently corrupt this conversation on rehydrate.
+    expect(store.getMessages('s1').map((row) => row.role)).toEqual(['user', 'assistant', 'user', 'assistant', 'user']);
+
+    (session.messages as unknown[]) = [
+      { role: 'compactionSummary', summary: 'q1 through q3 summarized', tokensBefore: 850 },
+      firstAssistant,
+      toolResult,
+      finalAssistant,
+    ];
+    project({
+      type: 'agent_end', willRetry: false,
+      messages: [{ role: 'user', content: 'q3 framed' }, firstAssistant, toolResult, finalAssistant],
+    } as never);
+
+    const rows = store.getMessages('s1');
+    expect(rows.map((row) => row.role)).toEqual(['compaction', 'assistant', 'toolResult', 'assistant']);
+    const rehydrated = rehydrate(store, 's1', process.cwd()).buildSessionContext().messages;
+    expect(rehydrated.map((message) => message.role)).toEqual(['compactionSummary', 'assistant', 'toolResult', 'assistant']);
+  });
+
   it('persistCompaction maps NO_REPLY_NUDGE tails correctly — a nudge user message has no store row, so it is not counted', () => {
     // Turn A (kept), then a thinking-only turn B whose nudge produced the real reply. The store has NO
     // row for the NO_REPLY_NUDGE user prompt (projectUserTurn is never called for it), only its reply.

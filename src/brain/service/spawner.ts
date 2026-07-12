@@ -26,6 +26,7 @@ import { turnWorkDir } from './workDir.js';
 import { modelCapabilities } from '../modelCapabilities.js';
 import { LiveEventReplay } from '../session/liveEventReplay.js';
 import { extractText } from '../messageView.js';
+import { abortSessionWork } from '../session/abortSessionWork.js';
 
 /** PI already classifies and retries transient provider failures. Reuse that same classifier after its
  * retry budget is exhausted so the final transcript never leaks a provider-specific transport or stream
@@ -194,15 +195,27 @@ export class LiveSessionSpawner {
     let deferredOverflowError: string | null = null;
     let terminalIdleDeferred = false;
     let steps = 0; // model round-trips in the current run — reset on agent_start, one per turn_start
+    let agentRunOpen = false;
+    let deferredCompacted = false;
     session.subscribe((e: AgentSessionEvent) => {
       const raw = (e as { type?: string }).type;
       let suppressAgentEndIdle = raw === 'agent_end' && (e as { willRetry?: boolean }).willRetry === true;
       let emitFailedRecoveryIdle = false;
+      const agentEndMessages = raw === 'agent_end'
+        ? ((e as { messages?: { role?: string; stopReason?: string; errorMessage?: string; content?: unknown; usage?: unknown }[] }).messages ?? [])
+        : [];
+      const agentEndLastAssistant = [...agentEndMessages].reverse().find((message) => message.role === 'assistant');
+      const agentEndOverflow = !!agentEndLastAssistant && isErroredContextOverflow(agentEndLastAssistant, model.contextWindow);
       // Canonical fallback: PI can settle without a second agent_end when retry backoff is cancelled, or
       // without compaction_end when an overflow has nothing summarizable. Flush the deferred terminal
       // state here so no client remains spinning and a genuine overflow failure is still visible.
       if (raw === 'agent_settled') {
         clearDeliveredUserEchoes(live);
+        agentRunOpen = false;
+        if (deferredCompacted && deferredOverflowError) {
+          replay.publish({ type: 'compacted' });
+          deferredCompacted = false;
+        }
         if (deferredOverflowError) {
           replay.publish({ type: 'error', message: deferredOverflowError });
           deferredOverflowError = null;
@@ -221,11 +234,11 @@ export class LiveSessionSpawner {
       // limit is read fresh per turn (a config change applies without a session restart). Past the
       // ceiling the run is aborted so a wedged agent can't loop forever — it settles into agent_end/idle
       // like a normal stop. `maxSteps ≤ 0` means unlimited (no counter emitted, no enforcement).
-      if (raw === 'agent_start') { replay.beginRun(); steps = 0; }
+      if (raw === 'agent_start') { replay.beginRun(); steps = 0; agentRunOpen = true; }
       else if (raw === 'turn_start') {
         steps += 1;
         const maxSteps = this.d.maxSteps?.() ?? 0;
-        if (maxSteps > 0 && steps > maxSteps) void session.abort().catch(() => { /* already settling */ });
+        if (maxSteps > 0 && steps > maxSteps) void abortSessionWork(session).catch(() => { /* already settling */ });
         else {
           const usage = withDescendantUsage(usageOf(session), this.d.store.descendantUsage(sessionId));
           replay.publish({ type: 'step', step: steps, maxSteps, usage });
@@ -234,15 +247,23 @@ export class LiveSessionSpawner {
       if (suppressAgentEndIdle) terminalIdleDeferred = true;
       // BrainSessionFactory subscribed before this spawner and persists `agent_end` synchronously. At
       // this exact boundary the journal is redundant with SQLite, so clear it before terminal events.
-      if (raw === 'agent_end') replay.settleRun();
+      if (raw === 'agent_end') {
+        agentRunOpen = false;
+        replay.settleRun();
+        // The factory listener runs first: a between-tool-turn compaction is persisted only after this
+        // agent_end made its current assistant/tool rows durable. Notify/refetch after that atomic rewrite.
+        if (deferredCompacted && !agentEndOverflow) {
+          replay.publish({ type: 'compacted' });
+          deferredCompacted = false;
+        }
+      }
       // A turn that settled on a provider error (stopReason 'error', no text) would otherwise wind down
       // as a bare idle — the web/CLI client shows NOTHING and the failure is invisible (the silent-reply
       // bug). Surface the provider's message as an error event ahead of the terminal idle. NOT when PI is
       // about to auto-retry (`willRetry`): a transient 429/5xx emits an errored agent_end per attempt, and
       // a premature error event would fail a headless run (exit 1) that the retry was about to rescue.
       if (raw === 'agent_end' && !(e as { willRetry?: boolean }).willRetry) {
-        const msgs = (e as { messages?: { role?: string; stopReason?: string; errorMessage?: string; content?: unknown }[] }).messages ?? [];
-        const last = [...msgs].reverse().find((m) => m.role === 'assistant');
+        const last = agentEndLastAssistant;
         const text = Array.isArray(last?.content)
           ? (last.content as { type?: string; text?: string }[]).filter((b) => b.type === 'text').map((b) => b.text ?? '').join('')
           : '';
@@ -262,7 +283,8 @@ export class LiveSessionSpawner {
       // subscribed during create()), so tell attached clients to refetch history and collapse. Only a REAL
       // compaction (result present, not aborted) — a no-op/failed run leaves the transcript as-is.
       if (raw === 'compaction_end' && (e as { result?: unknown }).result != null && (e as { aborted?: boolean }).aborted !== true) {
-        replay.publish({ type: 'compacted' });
+        if (agentRunOpen || deferredCompacted) deferredCompacted = true;
+        else replay.publish({ type: 'compacted' });
       }
       if (raw === 'compaction_end' && (e as { reason?: string }).reason === 'overflow') {
         const ce = e as { result?: unknown; aborted?: boolean; willRetry?: boolean; errorMessage?: string };
@@ -272,6 +294,12 @@ export class LiveSessionSpawner {
           replay.publish({ type: 'error', message: ce.errorMessage?.trim() || deferredOverflowError });
           deferredOverflowError = null;
           emitFailedRecoveryIdle = true;
+        }
+        // A previous successful between-turn compaction waited for this overflow outcome. On failure the
+        // factory just persisted the deferred run and applied that pending rewrite; refetch only now.
+        if (!recovering && deferredCompacted) {
+          replay.publish({ type: 'compacted' });
+          deferredCompacted = false;
         }
       }
       // Keep the image-carrying queue mirror aligned with PI's native queue on every enqueue/delivery/clear.

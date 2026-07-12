@@ -13,6 +13,7 @@ import { taskSessionId } from '../sessionId.js';
 import { BrainSessionFactory } from '../session/factory.js';
 import type { BrainResourceLoaderOptions } from '../session/factory.js';
 import { DEFAULT_AUTO_COMPACT_PCT } from '../session/liveBrain.js';
+import { abortSessionWork } from '../session/abortSessionWork.js';
 import { composeSessionTools } from '../session/capabilities.js';
 import { PluginHookBus } from '../../plugins/hookBus.js';
 import { runWithPolicy } from '../../plugins/policyContext.js';
@@ -265,7 +266,7 @@ export class BrainWorkerService {
     if (!w) return;
     this.live.delete(sessionName);
     this.recordUsage(w);
-    try { await w.session.abort(); } catch { /* already settled */ }
+    try { await abortSessionWork(w.session); } catch { /* already settled */ }
     w.session.dispose();
     log.info(`aborted brain worker ${sessionName}`);
   }

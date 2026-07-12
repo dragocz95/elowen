@@ -69,8 +69,20 @@ export function createSessionPersistenceProjector(
   contextWindow: number,
 ): (event: AgentSessionEvent) => void {
   let deferredOverflow: AgentSessionEvent | null = null;
+  let agentRunOpen = false;
+  let pendingRunCompaction = false;
+  const persistPendingRunCompaction = (): void => {
+    if (!pendingRunCompaction) return;
+    persistCompaction(store, session, sessionId);
+    pendingRunCompaction = false;
+  };
   return (event): void => {
+    if ((event as { type?: string }).type === 'agent_start') {
+      agentRunOpen = true;
+      return;
+    }
     if (event.type === 'agent_end') {
+      agentRunOpen = false;
       const assistants = event.messages.filter((message) => (message as { role?: string }).role === 'assistant');
       const last = assistants.at(-1);
       if (last && isErroredContextOverflow(last, contextWindow)) {
@@ -81,12 +93,20 @@ export function createSessionPersistenceProjector(
       // Generic retry errors remain in PI's SessionManager branch even when removed from live agent
       // state. Persist them too so a later compaction can align the same clean row sequence.
       projectEvent(store, sessionId, event);
+      // A threshold compaction can run between an assistant/tool batch and the next provider step. Its
+      // kept PI tail contains rows that BrainStore receives only here at terminal agent_end. Rewriting the
+      // store earlier aligns against unrelated old rows; rewrite now, after the complete run is durable.
+      persistPendingRunCompaction();
       return;
     }
 
     if ((event as { type?: string }).type === 'agent_settled') {
-      if (deferredOverflow) projectEvent(store, sessionId, deferredOverflow);
+      if (deferredOverflow) {
+        projectEvent(store, sessionId, deferredOverflow);
+        persistPendingRunCompaction();
+      }
       deferredOverflow = null;
+      agentRunOpen = false;
       return;
     }
 
@@ -97,15 +117,20 @@ export function createSessionPersistenceProjector(
     const overflow = compact.reason === 'overflow';
     const succeeded = compact.result != null && compact.aborted !== true;
     if (succeeded) {
-      persistCompaction(store, session, sessionId, {
-        omitTrailingOverflowError: overflow && compact.willRetry === true && deferredOverflow !== null,
-      });
+      if (agentRunOpen || pendingRunCompaction) {
+        pendingRunCompaction = true;
+      } else {
+        persistCompaction(store, session, sessionId, {
+          omitTrailingOverflowError: overflow && compact.willRetry === true && deferredOverflow !== null,
+        });
+      }
       if (overflow) deferredOverflow = null;
       return;
     }
     if (overflow && deferredOverflow) {
       projectEvent(store, sessionId, deferredOverflow);
       deferredOverflow = null;
+      persistPendingRunCompaction();
     }
   };
 }

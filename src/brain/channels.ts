@@ -27,6 +27,7 @@ import type { LiveSessionRegistry } from './session/liveRegistry.js';
 import type { LiveBrain, SpawnOpts } from './session/liveBrain.js';
 import { DEFAULT_AUTO_COMPACT_PCT } from './session/liveBrain.js';
 import { clearDeliveredUserEchoes, enqueueMirrored } from './session/queueMirror.js';
+import { abortSessionWork } from './session/abortSessionWork.js';
 
 export interface ChannelSendOpts {
   channelId: string;
@@ -501,7 +502,7 @@ export class ChannelSessionService {
       ch.session.clearQueue();
       clearDeliveredUserEchoes(ch);
       this.d.elicitation?.cancelForSession(ch.sessionId, 'aborted');
-      await ch.session.abort().catch(() => { /* nothing in flight / already settling */ });
+      await abortSessionWork(ch.session).catch(() => { /* nothing in flight / already settling */ });
     } finally {
       this.d.registry.endParentAbort(sessionId);
     }

@@ -16,6 +16,7 @@ import type { ClientAttachments } from './attachments.js';
 import type { ConversationLifecycle } from './lifecycle.js';
 import type { PermissionApprovalService } from './permissionApproval.js';
 import type { BrainStreamSnapshot } from '../session/liveEventReplay.js';
+import { abortSessionWork } from '../session/abortSessionWork.js';
 
 interface StatusServiceDeps {
   store: BrainStore;
@@ -98,7 +99,7 @@ export class BrainStatusService {
     } catch (e) {
       return { ok: false, error: (e as Error).message };
     } finally {
-      if (session) { try { await session.abort(); } catch { /* already settled */ } session.dispose(); }
+      if (session) { try { await abortSessionWork(session); } catch { /* already settled */ } session.dispose(); }
     }
   }
 

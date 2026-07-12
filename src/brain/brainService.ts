@@ -7,6 +7,7 @@ import { MemoryCurator } from './memoryCurator.js';
 import { ConversationTitler } from './conversationTitler.js';
 import { logger } from '../shared/logger.js';
 import { BrainSessionFactory } from './session/factory.js';
+import { abortSessionWork } from './session/abortSessionWork.js';
 import { IdentityResolver } from './identity.js';
 import { LiveSessionRegistry } from './session/liveRegistry.js';
 import type { LiveBrain } from './session/liveBrain.js';
@@ -303,7 +304,7 @@ export class BrainService {
         .filter((child) => child.startsWith('brain-ch-'))
         .map((child) => this.channelService.abort(child.slice('brain-ch-'.length))));
       this.sessions.clearChildren(b.sessionId);
-      await b.session.abort();
+      await abortSessionWork(b.session);
     } finally {
       this.sessions.endParentAbort(b.sessionId);
     }
