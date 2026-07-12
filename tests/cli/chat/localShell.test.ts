@@ -1,4 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { describe, expect, it, vi } from 'vitest';
 import {
   composeWithShellContext,
   LOCAL_SHELL_MAX_CHARS,
@@ -68,6 +71,56 @@ describe('runLocalShell', () => {
     const r = await runLocalShell('sleep 99', process.cwd(), execFn);
     expect(r.exitCode).toBeNull();
     expect(r.output).toBe('partial\n[timed out after 30s]');
+  });
+
+  it('kills an outstanding local command when the application signal aborts', async () => {
+    let finish!: Parameters<Parameters<typeof runLocalShell>[2]>[2];
+    const kill = vi.fn(() => true);
+    const execFn: Parameters<typeof runLocalShell>[2] = (_cmd, _options, callback) => {
+      finish = callback;
+      return { kill };
+    };
+    const lifecycle = new AbortController();
+
+    const pending = runLocalShell('sleep 30', process.cwd(), execFn, lifecycle.signal);
+    lifecycle.abort();
+    finish(Object.assign(new Error('aborted'), { killed: true }), '', '');
+
+    expect(kill).toHaveBeenCalledOnce();
+    await expect(pending).resolves.toMatchObject({ command: 'sleep 30', exitCode: null });
+  });
+
+  it.skipIf(process.platform === 'win32')('terminates the real POSIX process group, including a sleeping grandchild', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'elowen-shell-group-'));
+    const pidFile = join(dir, 'sleep.pid');
+    const lifecycle = new AbortController();
+    let childPid = 0;
+    try {
+      const pending = runLocalShell(`sleep 30 & child=$!; printf '%s' "$child" > "${pidFile}"; wait "$child"`, process.cwd(), undefined, lifecycle.signal);
+      const deadline = Date.now() + 1_000;
+      while (!existsSync(pidFile) && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(existsSync(pidFile)).toBe(true);
+      childPid = Number(readFileSync(pidFile, 'utf8'));
+      expect(childPid).toBeGreaterThan(0);
+
+      const abortedAt = Date.now();
+      lifecycle.abort();
+      let timeout: ReturnType<typeof setTimeout> | null = null;
+      const result = await Promise.race([
+        pending,
+        new Promise<never>((_resolve, reject) => {
+          timeout = setTimeout(() => reject(new Error('local shell did not stop within 1s')), 1_000);
+        }),
+      ]).finally(() => { if (timeout) clearTimeout(timeout); });
+      expect(Date.now() - abortedAt).toBeLessThan(1_000);
+      expect(result.exitCode).toBeNull();
+      expect(() => process.kill(childPid, 0)).toThrow();
+    } finally {
+      if (childPid > 0) {
+        try { process.kill(childPid, 'SIGKILL'); } catch { /* already gone */ }
+      }
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 

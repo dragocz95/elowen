@@ -7,7 +7,7 @@ import { API_KEY_PROVIDERS } from '../setup/constants.js';
 import { formatK } from '../ui/text.js';
 import type { BrainProviderView } from './brainClient.js';
 import type { ChatState } from './chatState.js';
-import type { ChatApplicationActions, ChatApplicationResources } from './chatCapabilities.js';
+import type { ChatApplicationActions, ChatApplicationResources, ChatTaskScope } from './chatCapabilities.js';
 import type { StreamCoordinatorPort } from './streamCoordinator.js';
 
 export interface Pickers {
@@ -30,7 +30,7 @@ export interface Pickers {
  *  effort, themes, and the /sessions /mcp /skills /lsp /tools /status /help modals. */
 export function createPickers(
   rt: ChatState,
-  resources: Pick<ChatApplicationResources, 'client' | 'tui' | 'editor' | 'termSettings' | 'cwdLabel' | 'branchLabel' | 'commandDefs'>,
+  resources: Pick<ChatApplicationResources, 'client' | 'tui' | 'editor' | 'termSettings' | 'cwdLabel' | 'branchLabel' | 'commandDefs' | 'lifetime'>,
   actions: Pick<ChatApplicationActions, 'render' | 'refreshMeta'>,
   stream: StreamCoordinatorPort,
   shell: {
@@ -40,15 +40,18 @@ export function createPickers(
     reloadKeymap(): void;
   },
 ): Pickers {
-  const { client, tui, editor, termSettings, cwdLabel, branchLabel, commandDefs } = resources;
+  const { client, tui, editor, termSettings, cwdLabel, branchLabel, commandDefs, lifetime } = resources;
   const { render, refreshMeta } = actions;
+  const runTask: ChatTaskScope['run'] = (operation, onFulfilled, onRejected) =>
+    lifetime.run(operation, onFulfilled, onRejected);
+  const fail = (e: Error): void => { rt.notice = color.error(`error: ${e.message}`); render(); };
 
   const applyThinkingLevel = (level: string): void => {
-    void client.setThinkingLevel(level).then((r) => {
+    runTask(() => client.setThinkingLevel(level), (r) => {
       rt.thinkingLevel = r.thinkingLevel;
       rt.notice = color.dim(`reasoning effort: ${rt.thinkingLevelLabels[r.thinkingLevel] ?? r.thinkingLevel}`);
       render();
-    }).catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); render(); });
+    }, fail);
   };
 
   const openThinkingPicker = (): void => {
@@ -75,21 +78,21 @@ export function createPickers(
     rt.thinkingLevel = next;
     rt.notice = color.dim(`reasoning effort: ${rt.thinkingLevelLabels[next] ?? next}`);
     render();
-    void client.setThinkingLevel(next)
-      .then((r) => { rt.thinkingLevel = r.thinkingLevel; rt.notice = color.dim(`reasoning effort: ${rt.thinkingLevelLabels[r.thinkingLevel] ?? r.thinkingLevel}`); render(); })
-      .catch((e: Error) => { rt.thinkingLevel = previous; rt.notice = color.error(`error: ${e.message}`); render(); });
+    runTask(
+      () => client.setThinkingLevel(next),
+      (r) => { rt.thinkingLevel = r.thinkingLevel; rt.notice = color.dim(`reasoning effort: ${rt.thinkingLevelLabels[r.thinkingLevel] ?? r.thinkingLevel}`); render(); },
+      (e) => { rt.thinkingLevel = previous; fail(e); },
+    );
   };
 
   // /model → ctrl+p: manage brain providers right from the CLI. Presets come from the setup wizard's
   // curated endpoint catalog; a custom OpenAI-compatible URL, the API key and (for openai-type entries)
   // the wire API (Responses vs Chat Completions) are collected step by step through the same modals.
   const openProviderModal = (): void => {
-    void client.brainProviders().then((providers) => {
+    runTask(() => client.brainProviders(), (providers) => {
       const apiLabel = (p: BrainProviderView): string => p.type !== 'openai' ? '' : ` · ${p.api ?? 'auto'} API`;
       const saveAll = (next: BrainProviderView[], done: string): void => {
-        void client.saveBrainProviders(next)
-          .then(() => { rt.notice = color.dim(done); render(); })
-          .catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); render(); });
+        runTask(() => client.saveBrainProviders(next), () => { rt.notice = color.dim(done); render(); }, fail);
       };
       // Per-entry API mode picker (openai-type only): auto / responses / completions.
       const openApiPicker = (p: BrainProviderView, all: BrainProviderView[]): void => {
@@ -170,11 +173,11 @@ export function createPickers(
           openApiPicker(p, providers);
         },
       });
-    }).catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); render(); });
+    }, fail);
   };
 
   const openModelPicker = (): void => {
-    void client.models().then((models) => {
+    lifetime.run(() => client.models(), (models) => {
       if (models.length === 0) { rt.notice = color.dim('no models configured — ctrl+p in /model adds a provider'); render(); return; }
       const paid = models.filter((m) => !m.free);
       const free = models.filter((m) => m.free);
@@ -195,20 +198,18 @@ export function createPickers(
           if (value === '__free') { openModelPicker(); return; }
           rt.notice = color.dim('switching model…');
           render();
-          void client.setModel(parseModelValue(value)).then(async (r) => {
+          runTask(() => client.setModel(parseModelValue(value)), (r) => {
             rt.modelName = r.model;
             // The server rebuilt the session — the old event stream is dead, reopen it.
             rt.streamAc.abort();
             const ac = new AbortController();
             rt.streamAc = ac;
             stream.openStream(ac);
-            await refreshMeta();
-            rt.notice = '';
-            render();
-          }).catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); render(); });
+            runTask(() => refreshMeta(), () => { rt.notice = ''; render(); }, fail);
+          }, fail);
         },
       });
-    }).catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); render(); });
+    }, (e) => { rt.notice = color.error(`error: ${e.message}`); render(); });
   };
 
   const applyTheme = (name: string): boolean => {
@@ -257,7 +258,7 @@ export function createPickers(
 
   // /status as a read-only modal: model, reasoning, context/usage, project and any active goal at a glance.
   const openStatusModal = (): void => {
-    void Promise.all([client.status().catch(() => null), client.goal().catch(() => null)]).then(([s, g]) => {
+    runTask(() => Promise.all([client.status().catch(() => null), client.goal().catch(() => null)]), ([s, g]) => {
       const lines: string[] = [];
       const kv = (k: string, v: string): void => { lines.push(`${color.faint(k.padEnd(12))} ${color.text(v)}`); };
       if (s?.title) kv('conversation', s.title);
@@ -281,11 +282,11 @@ export function createPickers(
         if (g.paused_reason) kv('  paused', g.paused_reason);
       }
       openInfoModal({ tui, editor, title: 'Session status', lines });
-    }).catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); render(); });
+    }, fail);
   };
 
   const openSessionsModal = (): void => {
-    void client.sessions().then((list) => {
+    runTask(() => client.sessions(), (list) => {
       rt.listed = list.map((s) => ({ id: s.id, title: s.title }));
       if (list.length === 0) { rt.notice = color.dim('no conversations'); render(); return; }
       const refresh = () => openSessionsModal();
@@ -298,22 +299,21 @@ export function createPickers(
           ],
           onPick: (v) => {
             if (v !== 'yes') { refresh(); return; }
-            void client.deleteSession(id).then(async () => {
-              rt.notice = color.dim('conversation deleted');
-              // Rebind only when THIS client's own conversation was deleted — deleting another one must
-              // not yank the CLI off what it is working on.
+            runTask(async () => {
+              await client.deleteSession(id);
               if (current) await stream.switchTo({});
+            }, () => {
+              rt.notice = color.dim('conversation deleted');
               refresh();
               render();
-            })
-              .catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); render(); });
+            }, fail);
           },
         });
       };
       openPicker({
         tui, editor, title: 'Conversations', items: sessionItems(list, client.boundSession),
         footer: 'enter resume · ctrl+r rename · ctrl+d delete · esc close',
-        onPick: (id) => void stream.switchTo({ session: id }).catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); render(); }),
+        onPick: (id) => runTask(() => stream.switchTo({ session: id }), () => {}, fail),
         onInput: (data, item, close) => {
           if (!item) return false;
           const row = list.find((s) => s.id === item.value);
@@ -324,11 +324,10 @@ export function createPickers(
             openTextInput({
               tui, editor, title: 'Rename conversation', initial: row.title,
               onSubmit: (title) => {
-                void client.renameSession(row.id, title).then((renamed) => {
+                runTask(() => client.renameSession(row.id, title), (renamed) => {
                   if (row.id === client.boundSession) rt.conversationTitle = renamed.title;
                   rt.notice = color.dim('conversation renamed'); refresh(); render();
-                })
-                  .catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); render(); });
+                }, fail);
               },
             });
             return true;
@@ -336,11 +335,11 @@ export function createPickers(
           return false;
         },
       });
-    }).catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); render(); });
+    }, fail);
   };
 
   const openMcpModal = (): void => {
-    void client.mcpServers().then((servers) => {
+    runTask(() => client.mcpServers(), (servers) => {
       const items = servers.map((s) => ({
         value: s.name,
         label: `${s.status === 'connected' ? color.success('●') : s.status === 'connecting' ? color.warning('●') : color.faint('○')} ${s.name}`,
@@ -350,8 +349,7 @@ export function createPickers(
       const refresh = () => openMcpModal();
       const reconnect = (name: string): void => {
         rt.notice = color.dim(`reconnecting ${name}…`); render();
-        void client.reconnectMcp(name).then(() => { rt.notice = color.dim(`MCP ${name} connected`); refresh(); render(); })
-          .catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); render(); });
+        runTask(() => client.reconnectMcp(name), () => { rt.notice = color.dim(`MCP ${name} connected`); refresh(); render(); }, fail);
       };
       const detail = (name: string): void => {
         const server = servers.find((s) => s.name === name);
@@ -378,19 +376,18 @@ export function createPickers(
         onInput: (data, item) => {
           if (data === 'R') {
             rt.notice = color.dim('reconnecting disconnected/error MCP servers…'); render();
-            void client.reconnectMcpAll().then(() => { rt.notice = color.dim('MCP reconnect complete'); refresh(); render(); })
-              .catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); render(); });
+            runTask(() => client.reconnectMcpAll(), () => { rt.notice = color.dim('MCP reconnect complete'); refresh(); render(); }, fail);
             return true;
           }
           if (data === 'r' && item) { reconnect(item.value); return true; }
           return false;
         },
       });
-    }).catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); render(); });
+    }, fail);
   };
 
   const openSkillsModal = (): void => {
-    void client.skills().then((skills) => {
+    runTask(() => client.skills(), (skills) => {
       if (skills.length === 0) { rt.notice = color.dim('no skills found'); render(); return; }
       const refresh = () => openSkillsModal();
       // Push a skill into the CURRENT conversation with PI's native `/skill:name` command — the daemon's
@@ -411,8 +408,7 @@ export function createPickers(
           ],
           onPick: (v) => {
             if (v !== 'yes') { refresh(); return; }
-            void client.deleteSkill(name).then(() => { rt.notice = color.dim('skill deleted'); refresh(); render(); })
-              .catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); render(); });
+            runTask(() => client.deleteSkill(name), () => { rt.notice = color.dim('skill deleted'); refresh(); render(); }, fail);
           },
         });
       };
@@ -453,14 +449,14 @@ export function createPickers(
           return false;
         },
       });
-    }).catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); render(); });
+    }, fail);
   };
 
   // /lsp as a status modal (mirrors /mcp): whether diagnostics are enabled and running, one row per
   // language server (● running · ○ installed · ✗ missing), and the on/off toggle as the first row —
   // replaces the old blind flip, so the operator SEES the state before (and after) changing it.
   const openLspModal = (): void => {
-    void client.lspStatus().then((s) => {
+    runTask(() => client.lspStatus(), (s) => {
       const refresh = () => openLspModal();
       const items = [
         {
@@ -483,9 +479,11 @@ export function createPickers(
         // Deliberately NO modal reopen when npm finishes: the user may be typing (or inside another
         // picker) minutes later — a surprise overlay would steal focus and strand the one beneath it.
         // The outcome lands as a notice; /lsp shows the fresh state on demand.
-        void (install ? client.lspInstall(srv.command) : client.lspUninstall(srv.command))
-          .then(async (message) => { rt.notice = color.dim(`${message} · /lsp shows the current state`); await refreshMeta(); render(); })
-          .catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); render(); });
+        runTask(async () => {
+          const message = await (install ? client.lspInstall(srv.command) : client.lspUninstall(srv.command));
+          await refreshMeta();
+          return message;
+        }, (message) => { rt.notice = color.dim(`${message} · /lsp shows the current state`); render(); }, fail);
       };
       const manageKey = (data: string, selected: { value: string } | null, close: () => void): boolean => {
         const install = isTabKey(data);
@@ -519,17 +517,19 @@ export function createPickers(
         onInput: manageKey,
         onPick: (v) => {
           if (v !== '__toggle') { refresh(); return; }
-          void client.command('lsp')
+          runTask(async () => {
+            const result = await client.command('lsp');
             // refreshMeta keeps the right-panel LSP Active/Inactive line in step with the flip.
-            .then(async (r) => { rt.notice = color.dim(r?.message ?? 'toggled LSP'); await refreshMeta(); refresh(); render(); })
-            .catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); render(); });
+            await refreshMeta();
+            return result;
+          }, (r) => { rt.notice = color.dim(r?.message ?? 'toggled LSP'); refresh(); render(); }, fail);
         },
       });
-    }).catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); render(); });
+    }, fail);
   };
 
   const openToolsModal = (): void => {
-    void client.tools().then((tools) => {
+    runTask(() => client.tools(), (tools) => {
       if (tools.length === 0) { rt.notice = color.dim('no active plugin tools'); render(); return; }
       const refresh = () => openToolsModal();
       openPicker({
@@ -550,7 +550,7 @@ export function createPickers(
           });
         },
       });
-    }).catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); render(); });
+    }, fail);
   };
 
   // /keybinds as an interactive, live-applied editor: arrow-key list of every action, Enter captures the

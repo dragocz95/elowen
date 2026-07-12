@@ -11,6 +11,7 @@ import type { BrainClient } from '../../../src/cli/chat/brainClient.js';
 import type { ChatApplicationResources } from '../../../src/cli/chat/chatCapabilities.js';
 import type { StreamCoordinatorPort } from '../../../src/cli/chat/streamCoordinator.js';
 import type { TuiDiagnostics } from '../../../src/cli/chat/tuiDiagnostics.js';
+import { ChatApplicationLifetime } from '../../../src/cli/chat/applicationLifetime.js';
 
 type InputResult = { consume?: boolean; data?: string } | undefined;
 type InputListener = (data: string) => InputResult;
@@ -146,6 +147,7 @@ export function compositionHarness(options: {
     termSettings: null,
     cwdLabel: '~/elowen',
     branchLabel: 'test',
+    lifetime: new ChatApplicationLifetime<'metadata'>(),
   } satisfies ChatApplicationResources;
   const stream = {
     subagentStates: () => [],

@@ -96,6 +96,7 @@ function reconnectDelay(ms: number, signal: AbortSignal): Promise<void> {
  *  CLI (or the web dock) working another conversation can't interleave into this one. */
 export class BrainClient {
   private f: typeof fetch;
+  private lifetimeSignal?: AbortSignal;
   private readonly clientId: string;
   private startGeneration = 0;
   /** Generation that actually committed `bound`; preserved across server-driven idle rollover rebinds. */
@@ -103,9 +104,17 @@ export class BrainClient {
   /** The conversation this client is bound to — set by start(), updated by rebind() (idle rollover). */
   private bound?: string;
   constructor(private o: BrainClientOpts) {
-    this.f = o.fetchImpl ?? fetch;
+    const fetchImpl = o.fetchImpl ?? fetch;
+    this.f = (input, init) => {
+      const signal = init?.signal ?? this.lifetimeSignal;
+      return fetchImpl(input, signal ? { ...init, signal } : init);
+    };
     this.clientId = o.clientId ?? randomUUID();
   }
+
+  /** Bind ordinary requests to the owning chat application. Explicit operation signals (SSE/history
+   * lanes and the bounded detached quit stop) take precedence over this default. */
+  bindLifetime(signal: AbortSignal): void { this.lifetimeSignal = signal; }
 
   /** The bound conversation id (undefined before the first start()). */
   get boundSession(): string | undefined { return this.bound; }

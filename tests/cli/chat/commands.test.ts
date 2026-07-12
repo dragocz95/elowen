@@ -5,6 +5,13 @@ import { describe, expect, it, vi } from 'vitest';
 import { compactNotice, resolveThinkingLevel, wireSubmit } from '../../../src/cli/chat/commands.js';
 import { TranscriptModel } from '../../../src/brain/transcriptModel.js';
 import { ChatState } from '../../../src/cli/chat/chatState.js';
+import { ChatApplicationLifetime } from '../../../src/cli/chat/applicationLifetime.js';
+import { LocalShellBuffer } from '../../../src/cli/chat/localShell.js';
+
+function deferred<T>(): { promise: Promise<T>; resolve(value: T): void } {
+  let resolve!: (value: T) => void;
+  return { promise: new Promise<T>((done) => { resolve = done; }), resolve };
+}
 
 describe('resolveThinkingLevel', () => {
   it('accepts canonical ids and provider-facing labels without leaking the label to PI', () => {
@@ -50,7 +57,10 @@ describe('sub-agent child submit echo', () => {
       state.childView = { sessionId: 'brain-ch-subagent-child', transcript: childTranscript, loading: false };
       wireSubmit(
         state,
-        { client: { subagentSend }, editor, shellContext: {}, attachmentChips: {}, commandDefs: [], tui: {} } as never,
+        {
+          client: { subagentSend }, editor, shellContext: {}, attachmentChips: {}, commandDefs: [], tui: {},
+          lifetime: new ChatApplicationLifetime<'metadata'>(),
+        } as never,
         { render } as never,
         { stream: {}, pickers: {} } as never,
       );
@@ -62,6 +72,91 @@ describe('sub-agent child submit echo', () => {
       expect(childTranscript.revision).toBe(before);
       expect(childTranscript.turnCount).toBe(0);
       expect(render).toHaveBeenCalledOnce(); // only flushes the cleared editor
+    } finally {
+      if (priorHome === undefined) delete process.env.HOME;
+      else process.env.HOME = priorHome;
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('application lifetime for local input work', () => {
+  it('kills publication from an unfinished !cmd after the chat stops', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'elowen-local-lifetime-'));
+    const priorHome = process.env.HOME;
+    process.env.HOME = home;
+    try {
+      let onSubmit: ((text: string) => void) | undefined;
+      const editor = {
+        addToHistory: vi.fn(), setText: vi.fn(),
+        set onSubmit(fn: (text: string) => void) { onSubmit = fn; },
+      };
+      const pending = deferred<{ command: string; output: string; exitCode: number; truncated: boolean }>();
+      const runLocal = vi.fn((_command: string, _cwd: string, _signal: AbortSignal) => pending.promise);
+      const lifetime = new ChatApplicationLifetime<'metadata'>();
+      const transcript = new TranscriptModel();
+      const shellContext = new LocalShellBuffer();
+      const render = vi.fn();
+      const state = new ChatState({ transcript });
+      wireSubmit(
+        state,
+        { client: {}, editor, shellContext, attachmentChips: {}, commandDefs: [], tui: {}, lifetime } as never,
+        { render } as never,
+        { stream: {}, pickers: {}, runLocalShell: runLocal } as never,
+      );
+
+      onSubmit?.('!printf pending');
+      expect(runLocal).toHaveBeenCalledWith('printf pending', process.cwd(), lifetime.signal);
+      const revision = transcript.revision;
+      lifetime.stop();
+      pending.resolve({ command: 'printf pending', output: 'late', exitCode: 0, truncated: false });
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(transcript.revision).toBe(revision);
+      expect(shellContext.pending).toBe(false);
+      expect(render).toHaveBeenCalledOnce();
+    } finally {
+      if (priorHome === undefined) delete process.env.HOME;
+      else process.env.HOME = priorHome;
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it('does not attach a clipboard result that arrives after the chat stops', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'elowen-clipboard-lifetime-'));
+    const priorHome = process.env.HOME;
+    process.env.HOME = home;
+    try {
+      let onSubmit: ((text: string) => void) | undefined;
+      const editor = {
+        addToHistory: vi.fn(), setText: vi.fn(),
+        set onSubmit(fn: (text: string) => void) { onSubmit = fn; },
+      };
+      const pending = deferred<{ image?: { name: string; data: string; mimeType: string; bytes: number }; error?: string }>();
+      const readClipboard = vi.fn((_signal: AbortSignal) => pending.promise);
+      const lifetime = new ChatApplicationLifetime<'metadata'>();
+      const render = vi.fn();
+      const state = new ChatState({ transcript: new TranscriptModel() });
+      wireSubmit(
+        state,
+        {
+          client: {}, editor, shellContext: new LocalShellBuffer(),
+          attachmentChips: { set: vi.fn() }, commandDefs: [], tui: {}, lifetime,
+        } as never,
+        { render } as never,
+        { stream: {}, pickers: {}, readClipboardImage: readClipboard } as never,
+      );
+
+      onSubmit?.('/paste');
+      expect(readClipboard).toHaveBeenCalledWith(lifetime.signal);
+      lifetime.stop();
+      pending.resolve({ image: { name: 'late.png', data: 'iVBORw0KGgo=', mimeType: 'image/png', bytes: 8 } });
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(state.pendingImages).toEqual([]);
+      expect(render).toHaveBeenCalledOnce();
     } finally {
       if (priorHome === undefined) delete process.env.HOME;
       else process.env.HOME = priorHome;

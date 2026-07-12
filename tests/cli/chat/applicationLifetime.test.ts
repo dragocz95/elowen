@@ -1,14 +1,40 @@
 import { describe, expect, it } from 'vitest';
-import { AsyncPublicationFence } from '../../../src/cli/chat/asyncPublicationFence.js';
+import { ChatApplicationLifetime } from '../../../src/cli/chat/applicationLifetime.js';
 
 function deferred<T>(): { promise: Promise<T>; resolve(value: T): void } {
   let resolve!: (value: T) => void;
   return { promise: new Promise<T>((done) => { resolve = done; }), resolve };
 }
 
-describe('AsyncPublicationFence', () => {
+describe('ChatApplicationLifetime', () => {
+  it('owns one abort signal and suppresses every task callback after stop', async () => {
+    const fence = new ChatApplicationLifetime<'metadata' | 'rate-limits'>();
+    const pending = deferred<string>();
+    const publications: string[] = [];
+    let taskSignal: AbortSignal | null = null;
+
+    fence.run(
+      (signal) => {
+        taskSignal = signal;
+        return pending.promise;
+      },
+      (value) => publications.push(`ok:${value}`),
+      (error) => publications.push(`error:${error.message}`),
+    );
+
+    expect(taskSignal).toBe(fence.signal);
+    expect(taskSignal?.aborted).toBe(false);
+    fence.stop();
+    expect(taskSignal?.aborted).toBe(true);
+
+    pending.resolve('late');
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(publications).toEqual([]);
+  });
+
   it('prevents stale metadata and rate-limit promises from mutating after a session switch', async () => {
-    const fence = new AsyncPublicationFence<'metadata' | 'rate-limits'>();
+    const fence = new ChatApplicationLifetime<'metadata' | 'rate-limits'>();
     const metadata = deferred<string>();
     const limits = deferred<string>();
     const state = { metadata: 'A', limits: 'A' };
@@ -30,7 +56,7 @@ describe('AsyncPublicationFence', () => {
   });
 
   it('prevents every late publication after teardown', () => {
-    const fence = new AsyncPublicationFence<'metadata' | 'rate-limits'>();
+    const fence = new ChatApplicationLifetime<'metadata' | 'rate-limits'>();
     const metadata = fence.begin('metadata');
     const limits = fence.begin('rate-limits');
     let mutations = 0;

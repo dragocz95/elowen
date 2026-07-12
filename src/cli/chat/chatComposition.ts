@@ -151,7 +151,7 @@ export function createChatComposition(
 ): ChatComposition {
   const {
     client, tui, term, editor, editorSlot, inputStack, attachmentChips, queuedMessages,
-    promptStash, shellContext, mentionIndex, commandDefs, cwdLabel, branchLabel,
+    promptStash, shellContext, mentionIndex, commandDefs, cwdLabel, branchLabel, lifetime,
   } = resources;
   let renderOwner!: RenderShell;
   const render = (reason = 'state'): void => {
@@ -383,13 +383,17 @@ export function createChatComposition(
   // Kill a background process from the panel's ✕. Fire-and-forget: no optimistic local removal — the
   // daemon's `process` snapshot event is the single source of truth and drops it once the kill lands.
   const killProcess = (id: string): void => {
-    void client.killProcess(id).then((killed) => {
+    lifetime.run(() => client.killProcess(id), (killed) => {
       // Already gone → no `process` snapshot will fire, so refetch to drop the stale row the user clicked.
       if (!killed) {
         rt.notice = color.dim('process already finished');
-        void client.processes().then((p) => { rt.processes = p; render('process:refresh-after-kill'); }).catch(() => { /* offline */ });
+        lifetime.run(
+          () => client.processes(),
+          (p) => { rt.processes = p; render('process:refresh-after-kill'); },
+          () => { /* offline */ },
+        );
       }
-    }).catch((e: Error) => { rt.notice = color.error(`could not kill process: ${e.message}`); render('process:kill-error'); });
+    }, (e) => { rt.notice = color.error(`could not kill process: ${e.message}`); render('process:kill-error'); });
   };
 
   let thinkStart = 0;
@@ -614,7 +618,7 @@ export function createChatComposition(
       interruptArmedUntil = next.armedUntil;
       animations.cancelVisual('interrupt-arm');
       if (next.abort) {
-        void client.abort().catch(() => { /* already idle */ });
+        lifetime.run(() => client.abort(), () => {}, () => { /* already idle */ });
       } else {
         const armed = interruptArmedUntil;
         animations.scheduleVisual('interrupt-arm', INTERRUPT_CONFIRM_MS, () => {
@@ -765,7 +769,11 @@ export function createChatComposition(
           const last = rt.queued.at(-1);
           if (!last) { rt.notice = color.dim('no queued messages'); render('input:queue-remove-empty'); return; }
           rt.queued = rt.queued.slice(0, -1); // optimistic; the queue_update snapshot reconciles
-          void client.queueRemove(last.id).catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); render('input:queue-remove-error'); });
+          lifetime.run(
+            () => client.queueRemove(last.id),
+            () => {},
+            (e) => { rt.notice = color.error(`error: ${e.message}`); render('input:queue-remove-error'); },
+          );
           render('input:queue-remove');
           return;
         }

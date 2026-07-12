@@ -166,6 +166,30 @@ describe('BrainClient', () => {
     }));
   });
 
+  it('uses the application lifetime for ordinary fetches but keeps the detached quit stop signal', async () => {
+    const calls: Array<{ url: string; signal?: AbortSignal | null }> = [];
+    const f = vi.fn(async (url: string, init?: RequestInit) => {
+      calls.push({ url, signal: init?.signal });
+      if (url.endsWith('/brain/session/stop')) return j(200, { stopped: true });
+      return await new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => reject(init.signal?.reason ?? new Error('aborted')), { once: true });
+      });
+    }) as unknown as typeof fetch;
+    const client = new BrainClient({ base: 'http://x', token: 't', fetchImpl: f, clientId: 'cli-life' });
+    const application = new AbortController();
+    client.bindLifetime(application.signal);
+
+    const pending = client.models();
+    application.abort(new Error('application stopped'));
+    await expect(pending).rejects.toThrow('application stopped');
+    expect(calls[0]).toEqual({ url: 'http://x/brain/models', signal: application.signal });
+
+    const detachedStop = new AbortController();
+    await client.stopSession(detachedStop.signal);
+    expect(calls.at(-1)).toEqual({ url: 'http://x/brain/session/stop', signal: detachedStop.signal });
+    expect(detachedStop.signal.aborted).toBe(false);
+  });
+
   it('reads optional rate-limit windows for the bound conversation', async () => {
     const f = vi.fn(async () => j(201, { sessionId: 'brain-9' })) as unknown as typeof fetch;
     const c = new BrainClient({ base: 'http://x', token: 't', fetchImpl: f });

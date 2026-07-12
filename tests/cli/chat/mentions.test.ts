@@ -258,6 +258,22 @@ describe('clipboard image reading', () => {
     const nothing = (): Promise<Buffer | null> => Promise.resolve(null);
     expect((await readClipboardImage(nothing, 'darwin', {})).error).toContain('no image on the clipboard');
   });
+
+  it('passes the application abort signal to clipboard commands and stops fallback attempts', async () => {
+    const lifecycle = new AbortController();
+    const seen: Array<AbortSignal | undefined> = [];
+    const run = async (_cmd: ClipboardCommand, signal?: AbortSignal): Promise<Buffer | null> => {
+      seen.push(signal);
+      await Promise.resolve();
+      return null;
+    };
+
+    const pending = readClipboardImage(run, 'linux', {}, lifecycle.signal);
+    lifecycle.abort();
+    await pending;
+
+    expect(seen).toEqual([lifecycle.signal]);
+  });
 });
 
 describe('file index', () => {

@@ -6,7 +6,7 @@ import { getMarkdownTheme, getSelectListTheme, initTheme } from '@earendil-works
 import type { BrainEvent } from '../../brain/events.js';
 import { commandsFor } from '../../brain/slashCommands.js';
 import { TranscriptModel } from '../../brain/transcriptModel.js';
-import { AsyncPublicationFence } from './asyncPublicationFence.js';
+import { ChatApplicationLifetime } from './applicationLifetime.js';
 import { BrainClient } from './brainClient.js';
 import type { BrainStatus } from './brainClient.js';
 import type { ChatApplicationActions, ChatApplicationResources } from './chatCapabilities.js';
@@ -74,7 +74,7 @@ export class ChatApplication {
   private composition: ChatComposition | null = null;
   private lifecycle: TerminalLifecycle | null = null;
   private diagnostics: TuiDiagnostics | null = null;
-  private publicationFence = new AsyncPublicationFence<'metadata' | 'rate-limits'>();
+  private readonly lifetime = new ChatApplicationLifetime<'metadata' | 'rate-limits'>();
   private removeExitGuards: (() => void) | null = null;
   private quitImpl: () => void = () => { this.stop(); };
   private launchPendingAsk: (() => void) | null = null;
@@ -87,7 +87,7 @@ export class ChatApplication {
       renderForced: (reason) => this.composition?.renderForced(reason),
       refreshRateLimits: () => this.refreshRateLimits(),
       refreshMeta: () => this.refreshMeta(),
-      invalidateAsyncState: () => this.publicationFence.invalidate(),
+      invalidateAsyncState: () => this.lifetime.invalidate(),
       quit: () => this.quitImpl(),
       suspendTerminal: () => this.suspend(),
       resumeTerminal: () => this.resume(),
@@ -134,7 +134,7 @@ export class ChatApplication {
   private stop(): void {
     if (this.stopped) return;
     this.stopped = true;
-    this.publicationFence.stop();
+    this.lifetime.stop();
     this.coordinator?.stop();
     this.hydrator?.stop();
     this.diagnostics?.record({ type: 'lifecycle', action: 'stop' });
@@ -152,6 +152,7 @@ export class ChatApplication {
     const keymap = initKeymap(prefs.keybinds);
     let showThoughts = prefs.showThoughts !== false;
     const client = options.client ?? new BrainClient({ base: options.base, token: options.token });
+    client.bindLifetime(this.lifetime.signal);
     await client.start({ provider: options.model, session: options.session, fresh: options.fresh });
     const bootHydration = new AbortController();
     const [boot, processes, termSettings, initialTranscript, serverCommands] = await Promise.all([
@@ -219,6 +220,7 @@ export class ChatApplication {
       commandDefs, termSettings,
       cwdLabel: prettyCwd(),
       branchLabel: gitBranch(),
+      lifetime: this.lifetime,
     };
     this.state = state;
     this.resources = resources;
@@ -268,15 +270,15 @@ export class ChatApplication {
 
   private async refreshRateLimits(): Promise<void> {
     if (!this.resources) return;
-    const publication = this.publicationFence.begin('rate-limits');
+    const publication = this.lifetime.begin('rate-limits');
     try {
       const limits = await this.resources.client.rateLimits();
-      this.publicationFence.commit(publication, () => {
+      this.lifetime.commit(publication, () => {
         this.state.rateLimits = limits;
         this.actions.render('metadata:rate-limits');
       });
     } catch {
-      this.publicationFence.commit(publication, () => {
+      this.lifetime.commit(publication, () => {
         this.state.rateLimits = null;
         this.actions.render('metadata:rate-limits-error');
       });
@@ -285,13 +287,13 @@ export class ChatApplication {
 
   private async refreshMeta(): Promise<void> {
     if (!this.resources) return;
-    const publication = this.publicationFence.begin('metadata');
+    const publication = this.lifetime.begin('metadata');
     void this.refreshRateLimits();
     const [status, mcp] = await Promise.all([
       this.resources.client.status().catch(() => null),
       this.resources.client.mcpServers().catch(() => null),
     ]);
-    this.publicationFence.commit(publication, () => {
+    this.lifetime.commit(publication, () => {
       if (status) this.applyStatus(status);
       this.state.mcpList = mcp;
     });

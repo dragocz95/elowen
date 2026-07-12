@@ -53,6 +53,7 @@ describe('chat production architecture boundaries', () => {
     expect(filesContaining(/constrainFrame\s*\(/, { excludeDefinition: true })).toEqual(['renderShell.ts']);
     expect(filesContaining(/new TerminalLifecycle\s*\(/)).toEqual(['chatApplication.ts']);
     expect(filesContaining(/new SnapshotHydrator(?:<[^>]+>)?\s*\(/)).toEqual(['chatApplication.ts']);
+    expect(filesContaining(/new ChatApplicationLifetime(?:<[^>]+>)?\s*\(/)).toEqual(['chatApplication.ts']);
   });
 
   it('keeps ChatApplication on one production-only construction and lifecycle path', () => {
@@ -125,6 +126,14 @@ describe('chat production architecture boundaries', () => {
     expect(source('frameScheduler.ts')).not.toMatch(/background(?:IntervalMs)?/);
     expect(sourceFromRoot('src/lsp/manager.ts')).not.toMatch(/fresh:\s*(?:true|false)|fresh:\s*boolean/);
     expect(source('chatViewport.ts')).not.toMatch(/\b(indexedHistoryTurns|cachedHistoryRows|setScrollFromRow)\s*\(/);
+  });
+
+  it('routes every detached UI/client operation through the application lifetime', () => {
+    for (const file of ['commands.ts', 'pickers.ts', 'flows.ts', 'chatComposition.ts']) {
+      expect(source(file), file).not.toMatch(/\bvoid\s+(?:client|readClipboardImage|runLocalShell)\b/);
+    }
+    expect(source('chatApplication.ts')).toMatch(/client\.bindLifetime\(this\.lifetime\.signal\)/);
+    expect(source('chatApplication.ts')).toMatch(/this\.lifetime\.stop\(\)/);
   });
 });
 

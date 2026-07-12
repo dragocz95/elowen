@@ -7,7 +7,7 @@ import { composeWithAttachments, expandMentions, MAX_IMAGES_PER_MESSAGE, readCli
 import { sessionItems, openPicker, openTextInput } from './picker.js';
 import type { BrainClient } from './brainClient.js';
 import type { ChatState } from './chatState.js';
-import type { ChatApplicationActions, ChatApplicationResources } from './chatCapabilities.js';
+import type { ChatApplicationActions, ChatApplicationResources, ChatTaskScope } from './chatCapabilities.js';
 import type { StreamCoordinatorPort } from './streamCoordinator.js';
 import type { Pickers } from './pickers.js';
 
@@ -75,33 +75,48 @@ function goalSummary(g: Awaited<ReturnType<BrainClient['goal']>>): string {
   return bits.join(' · ');
 }
 
-function handleGoalCommand(rt: ChatState, client: BrainClient, render: (reason?: string) => void, arg?: string): void {
+function handleGoalCommand(
+  rt: ChatState,
+  client: BrainClient,
+  render: (reason?: string) => void,
+  run: ChatTaskScope['run'],
+  arg?: string,
+): void {
+  const fail = (e: Error): void => { rt.notice = color.error(`error: ${e.message}`); render(); };
   const raw = (arg ?? '').trim();
   if (!raw || raw === 'status' || raw === 'show') {
-    void client.goal().then((g) => { rt.notice = color.dim(goalSummary(g)); render(); })
-      .catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); render(); });
+    run(() => client.goal(), (g) => { rt.notice = color.dim(goalSummary(g)); render(); }, fail);
     return;
   }
   if (raw === 'pause' || raw === 'resume' || raw === 'clear') {
-    void client.goalAction(raw).then((g) => { rt.notice = color.dim(raw === 'clear' ? 'goal cleared' : goalSummary(g)); render(); })
-      .catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); render(); });
+    run(() => client.goalAction(raw), (g) => {
+      rt.notice = color.dim(raw === 'clear' ? 'goal cleared' : goalSummary(g)); render();
+    }, fail);
     return;
   }
   const draft = raw.startsWith('draft ');
   const text = draft ? raw.slice('draft '.length).trim() : raw;
   rt.notice = color.dim(draft ? 'drafting goal…' : 'starting persistent goal…');
   render();
-  void client.setGoal(text, draft).then((g) => { rt.notice = color.dim(draft ? `goal draft:\n${g.draft}` : goalSummary(g)); render(); })
-    .catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); render(); });
+  run(() => client.setGoal(text, draft), (g) => {
+    rt.notice = color.dim(draft ? `goal draft:\n${g.draft}` : goalSummary(g)); render();
+  }, fail);
 }
 
-function handleSubgoalCommand(rt: ChatState, client: BrainClient, render: (reason?: string) => void, arg?: string): void {
+function handleSubgoalCommand(
+  rt: ChatState,
+  client: BrainClient,
+  render: (reason?: string) => void,
+  run: ChatTaskScope['run'],
+  arg?: string,
+): void {
   const raw = (arg ?? '').trim();
   if (!raw) { rt.notice = color.dim('usage: /subgoal <text> · /subgoal remove <N> · /subgoal clear'); render(); return; }
   const remove = /^remove\s+(\d+)$/i.exec(raw);
   const action = raw === 'clear' ? ['clear', undefined] as const : remove ? ['remove', Number(remove[1])] as const : ['add', raw] as const;
-  void client.subgoal(action[0], action[1]).then((g) => { rt.notice = color.dim(goalSummary(g)); render(); })
-    .catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); render(); });
+  run(() => client.subgoal(action[0], action[1]), (g) => { rt.notice = color.dim(goalSummary(g)); render(); }, (e) => {
+    rt.notice = color.error(`error: ${e.message}`); render();
+  });
 }
 
 /** Park an image for the next send and surface it in the chip row. */
@@ -128,13 +143,23 @@ export function compactNotice(result: { compacted: boolean; message?: string }):
 
 export function wireSubmit(
   rt: ChatState,
-  resources: Pick<ChatApplicationResources, 'client' | 'tui' | 'editor' | 'attachmentChips' | 'shellContext' | 'commandDefs'>,
+  resources: Pick<ChatApplicationResources, 'client' | 'tui' | 'editor' | 'attachmentChips' | 'shellContext' | 'commandDefs' | 'lifetime'>,
   actions: ChatApplicationActions,
-  deps: { stream: StreamCoordinatorPort; pickers: Pickers },
+  deps: {
+    stream: StreamCoordinatorPort;
+    pickers: Pickers;
+    runLocalShell?: (command: string, cwd: string, signal: AbortSignal) => ReturnType<typeof runLocalShell>;
+    readClipboardImage?: (signal: AbortSignal) => ReturnType<typeof readClipboardImage>;
+  },
 ): void {
-  const { client, tui, editor, attachmentChips, shellContext, commandDefs } = resources;
+  const { client, tui, editor, attachmentChips, shellContext, commandDefs, lifetime } = resources;
   const { render, renderForced, refreshMeta, quit, suspendTerminal, resumeTerminal } = actions;
   const { stream, pickers } = deps;
+  const runShell = deps.runLocalShell ?? ((command, cwd, signal) => runLocalShell(command, cwd, undefined, signal));
+  const readClipboard = deps.readClipboardImage ?? ((signal) => readClipboardImage(undefined, undefined, undefined, signal));
+  const runTask: ChatTaskScope['run'] = (operation, onFulfilled, onRejected) =>
+    lifetime.run(operation, onFulfilled, onRejected);
+  const fail = (e: Error): void => { rt.notice = color.error(`error: ${e.message}`); render(); };
 
   editor.onSubmit = (text: string): void => {
     const trimmed = text.trim();
@@ -149,7 +174,7 @@ export function wireSubmit(
     if (localCmd) {
       rt.notice = color.dim(`$ ${localCmd} · running locally…`);
       render();
-      void runLocalShell(localCmd, process.cwd()).then((result) => {
+      lifetime.run((signal) => runShell(localCmd, process.cwd(), signal), (result) => {
         shellContext.add(result);
         rt.transcript.appendLocalTurn(localShellTurn(result));
         if (rt.notice.includes('running locally')) rt.notice = '';
@@ -166,7 +191,7 @@ export function wireSubmit(
       // The child daemon stream emits the authoritative `user` event for both a running steer and an
       // idle fresh turn. Do not echo locally: on a running child that produced two identical bubbles.
       render(); // flush the cleared editor while the request reaches the daemon
-      void client.subagentSend(target, trimmed).catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); render(); });
+      runTask(() => client.subagentSend(target, trimmed), () => {}, fail);
       return;
     }
     if (rt.childView && command) stream.closeSubagent();
@@ -175,7 +200,7 @@ export function wireSubmit(
         case 'quit': quit(); return;
         case 'help': pickers.openHelpModal(); return;
         case 'new':
-          void stream.switchTo({ fresh: true }).catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); render(); });
+          runTask(() => stream.switchTo({ fresh: true }), () => {}, fail);
           return;
         case 'sessions':
         case 'resume': {
@@ -186,7 +211,7 @@ export function wireSubmit(
           const n = Number(command.arg);
           const target = Number.isInteger(n) && n >= 1 ? rt.listed[n - 1]?.id : command.arg;
           if (!target) { rt.notice = color.dim('use /resume and pick with the arrows'); render(); return; }
-          void stream.switchTo({ session: target }).catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); render(); });
+          runTask(() => stream.switchTo({ session: target }), () => {}, fail);
           return;
         }
         case 'rename': {
@@ -195,13 +220,11 @@ export function wireSubmit(
           const apply = (raw: string): void => {
             const title = raw.trim();
             if (!title) { rt.notice = color.error('conversation title cannot be empty'); render(); return; }
-            void client.renameSession(sessionId, title)
-              .then((renamed) => {
+            runTask(() => client.renameSession(sessionId, title), (renamed) => {
                 rt.conversationTitle = renamed.title;
                 rt.notice = color.dim('conversation renamed');
                 render();
-              })
-              .catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); render(); });
+              }, fail);
           };
           if (command.arg) apply(command.arg);
           else openTextInput({ tui, editor, title: 'Rename conversation', initial: rt.conversationTitle, onSubmit: apply });
@@ -217,18 +240,18 @@ export function wireSubmit(
           if (command.arg?.trim() === 'show') {
             rt.showThoughts = !rt.showThoughts;
             savePrefs({ showThoughts: rt.showThoughts });
-            void client.saveTerminalSettings({ showThoughtsCli: rt.showThoughts }).catch(() => { /* offline → local pref still applies */ });
+            runTask(() => client.saveTerminalSettings({ showThoughtsCli: rt.showThoughts }), () => {}, () => { /* offline → local pref still applies */ });
             rt.notice = color.dim(rt.showThoughts ? 'Thought rows shown' : 'Thought rows hidden — /reasoning show brings them back');
             render();
             return;
           }
           if (rt.thinkingLevels.length === 0) { rt.notice = color.dim('this model has no reasoning-effort levels'); render(); return; }
           const apply = (level: string): void => {
-            void client.setThinkingLevel(level).then((r) => {
+            runTask(() => client.setThinkingLevel(level), (r) => {
               rt.thinkingLevel = r.thinkingLevel;
               rt.notice = '';
               render();
-            }).catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); render(); });
+            }, fail);
           };
           // A bare "/reasoning high" applies directly; "/reasoning" opens the picker over the model's levels.
           const direct = command.arg ? resolveThinkingLevel(command.arg, rt.thinkingLevels, rt.thinkingLevelLabels) : null;
@@ -247,14 +270,12 @@ export function wireSubmit(
           }
           if (arg && arg !== 'on' && arg !== 'off') { rt.notice = color.dim('usage: /fast · /fast on · /fast off · /fast status'); render(); return; }
           if (!rt.fastAvailable) { rt.notice = color.dim('fast mode is not available for this model/account'); render(); return; }
-          void client.setFast(arg === 'on' ? true : arg === 'off' ? false : undefined)
-            .then((r) => {
+          runTask(() => client.setFast(arg === 'on' ? true : arg === 'off' ? false : undefined), (r) => {
               rt.fastOn = r.fast;
               rt.fastAvailable = r.fastAvailable;
               rt.notice = color.dim(`fast mode ${r.fast ? 'on' : 'off'}`);
               render();
-            })
-            .catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); render(); });
+            }, fail);
           return;
         }
         case 'theme': {
@@ -284,15 +305,14 @@ export function wireSubmit(
         }
         case 'delete': {
           const doDelete = (target: string): void => {
-            void client.deleteSession(target)
-              .then(async () => {
+            runTask(async () => {
+              await client.deleteSession(target);
+              if (target === client.boundSession) await stream.switchTo({});
+            }, () => {
                 rt.listed = rt.listed.filter((s) => s.id !== target);
                 rt.notice = color.dim('conversation deleted');
-                // Rebind only when this client's OWN conversation was deleted — see openSessionsModal.
-                if (target === client.boundSession) await stream.switchTo({});
                 render();
-              })
-              .catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); render(); });
+              }, fail);
           };
           // Deleting is destructive → always a two-step picker: choose the conversation, then confirm.
           const confirmDelete = (id: string, title: string): void => {
@@ -306,14 +326,14 @@ export function wireSubmit(
             });
           };
           if (!command.arg) {
-            void client.sessions().then((list) => {
+            runTask(() => client.sessions(), (list) => {
               rt.listed = list.map((s) => ({ id: s.id, title: s.title }));
               if (list.length === 0) { rt.notice = color.dim('no conversations'); render(); return; }
               openPicker({
                 tui, editor, title: 'Delete conversation', items: sessionItems(list, client.boundSession),
                 onPick: (id) => confirmDelete(id, list.find((s) => s.id === id)?.title ?? ''),
               });
-            }).catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); render(); });
+            }, fail);
             return;
           }
           const n = Number(command.arg);
@@ -340,13 +360,11 @@ export function wireSubmit(
             render();
           };
           if (!arg) {
-            void client.getTddMode().then(report)
-              .catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); render(); });
+            runTask(() => client.getTddMode(), report, fail);
             return;
           }
           const on = arg === 'on';
-          void client.setTddMode(on).then(() => report(on))
-            .catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); render(); });
+          runTask(() => client.setTddMode(on), () => report(on), fail);
           return;
         }
         case 'mcp':
@@ -359,10 +377,10 @@ export function wireSubmit(
           pickers.openToolsModal();
           return;
         case 'goal':
-          handleGoalCommand(rt, client, render, command.arg);
+          handleGoalCommand(rt, client, render, runTask, command.arg);
           return;
         case 'subgoal':
-          handleSubgoalCommand(rt, client, render, command.arg);
+          handleSubgoalCommand(rt, client, render, runTask, command.arg);
           return;
         case 'compact': {
           // The daemon's BrainEvent stream is the SINGLE source of status for a REAL compaction: the
@@ -372,15 +390,16 @@ export function wireSubmit(
           // local usage/meta and paints no line of its own (that used to double up with the stream's).
           // A benign no-op (`compacted:false` — nothing to compact yet) emits NO stream event, so surface
           // the server's message here; a hard failure has no stream event either, so keep the .catch.
-          void client.compact()
-            .then(async (r) => {
+          runTask(async () => {
+            const result = await client.compact();
+            await refreshMeta();
+            return result;
+          }, (r) => {
               if (r.usage) rt.usage = r.usage;
               const notice = compactNotice(r);
               if (notice) rt.notice = notice;
-              await refreshMeta();
               render();
-            })
-            .catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); render(); });
+            }, fail);
           return;
         }
         case 'export': {
@@ -391,9 +410,7 @@ export function wireSubmit(
           const format = arg === 'jsonl' ? 'jsonl' : 'html';
           rt.notice = color.dim(`exporting conversation as ${format}…`);
           render();
-          void client.exportSession(format)
-            .then((path) => { rt.notice = color.success(`saved ${path}`); render(); })
-            .catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); render(); });
+          runTask(() => client.exportSession(format), (path) => { rt.notice = color.success(`saved ${path}`); render(); }, fail);
           return;
         }
         case 'plan':
@@ -411,15 +428,13 @@ export function wireSubmit(
           // web Account → Elowen AI; this override never outlives the live session.
           const arg = command.arg?.trim().toLowerCase();
           if (arg && arg !== 'on' && arg !== 'off') { rt.notice = color.dim('usage: /yolo · /yolo on · /yolo off'); render(); return; }
-          void client.setYolo(arg === 'on' ? true : arg === 'off' ? false : undefined)
-            .then((r) => {
+          runTask(() => client.setYolo(arg === 'on' ? true : arg === 'off' ? false : undefined), (r) => {
               rt.yoloOn = r.yolo;
               rt.notice = r.yolo
                 ? color.warning('YOLO on — tool asks auto-approve for this session (deny rules still apply)')
                 : color.dim('YOLO off — tool asks prompt for approval again');
               render();
-            })
-            .catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); render(); });
+            }, fail);
           return;
         }
         case 'paste': {
@@ -427,7 +442,7 @@ export function wireSubmit(
           // (chip row above the input) and rides along with the next message.
           rt.notice = color.dim('reading the clipboard image…');
           render();
-          void readClipboardImage().then((r) => {
+          lifetime.run((signal) => readClipboard(signal), (r) => {
             if (r.image) attachImage(rt, attachmentChips, r.image);
             else rt.notice = color.error(r.error ?? 'no image on the clipboard');
             render();
@@ -438,9 +453,7 @@ export function wireSubmit(
           if (!rt.transcript.thinking) { rt.notice = color.dim('nothing is running'); render(); return; }
           rt.notice = color.dim('stopping…');
           render();
-          void client.abort()
-            .then(() => { rt.notice = color.dim('agent stopped'); render(); })
-            .catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); render(); });
+          runTask(() => client.abort(), () => { rt.notice = color.dim('agent stopped'); render(); }, fail);
           return;
         }
         case 'status':
@@ -449,9 +462,7 @@ export function wireSubmit(
         case 'restart': {
           rt.notice = color.dim('restarting daemon…');
           render();
-          void client.command('restart')
-            .then((r) => { rt.notice = color.dim(r?.message ?? 'restarting…'); render(); })
-            .catch((e: Error) => { rt.notice = color.error(`error: ${e.message}`); render(); });
+          runTask(() => client.command('restart'), (r) => { rt.notice = color.dim(r?.message ?? 'restarting…'); render(); }, fail);
           return;
         }
       }
@@ -465,7 +476,7 @@ export function wireSubmit(
     const promptCmd = pm ? commandDefs.find((c) => c.name === pm[1] && c.kind === 'prompt' && c.prompt) : undefined;
     if (pm && promptCmd) {
       render();
-      void client.send(trimmed, rt.workMode).catch((e: Error) => { rt.transcript.apply({ type: 'error', message: e.message }); render(); });
+      runTask(() => client.send(trimmed, rt.workMode), () => {}, (e) => { rt.transcript.apply({ type: 'error', message: e.message }); render(); });
       return;
     }
     // `@path` mentions expand HERE, not in the visible transcript: text files ride inside the prompt
@@ -486,15 +497,15 @@ export function wireSubmit(
       render();
       // ONE composition path for everything that rides along: buffered `!` shell context first, then
       // the mention attachments, then the user's own words (see composeWithAttachments).
-      void client.send(
+      runTask(() => client.send(
         shellContext.take(composeWithAttachments(trimmed, mentions.block)),
         rt.workMode,
         images.map((i) => ({ data: i.data, mimeType: i.mimeType })),
         echo,
-      ).catch((e: Error) => { rt.transcript.apply({ type: 'error', message: e.message }); render(); });
+      ), () => {}, (e) => { rt.transcript.apply({ type: 'error', message: e.message }); render(); });
     };
     if (mentions.wantsClipboard) {
-      void readClipboardImage().then((r) => {
+      lifetime.run((signal) => readClipboard(signal), (r) => {
         if (!r.image) rt.notice = color.error(r.error ?? 'no image on the clipboard');
         sendWith(r.image ? [r.image] : []);
       });
