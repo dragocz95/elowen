@@ -232,7 +232,7 @@ both halves of that under your control as per-user toggles (both on by default):
 
 They're read fresh each turn, so flipping one applies to your very next message, and
 they cover web chat, `elowen chat` and your own verified Discord messages. See the
-[Brain](brain) guide for how recall and the curator work under the hood.
+[Brain & Chat](brain-chat) guide for how recall and the curator work under the hood.
 
 ![Memory — the assistant's durable, per-user memory store](images/brain-memory.png)
 

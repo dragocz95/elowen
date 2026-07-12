@@ -9,7 +9,7 @@ eyebrow: Terminal agent
 
 `elowen` is the terminal home for the same agent you use in the Web UI. A bare command in an interactive terminal opens chat; the CLI also exposes setup, service control, non-interactive runs, task helpers, and a deliberately small agent-facing control interface.
 
-![Elowen terminal chat with streamed work](../screenshots/cli/05-diff.png)
+![Elowen terminal chat using GPT-5.5 with a live context and subscription-limit rail](../screenshots/cli/16-gpt-limits.png)
 
 ## Everyday commands
 
@@ -27,7 +27,7 @@ elowen status                # daemon and Web UI health
 
 ## Chat
 
-The terminal chat streams assistant text, tool calls, diffs, approvals, todos, and sub-agent state. Its telemetry rail shows the current conversation's model, context, project, branch, language-server state, and usage. This is live state from the daemon, not a terminal-only copy.
+The terminal chat streams assistant text, tool calls, diffs, approvals, todos, and sub-agent state. Its telemetry rail shows the current conversation's model, context, project, branch, language-server state, usage, and—when the provider exposes them—subscription limits. This is live state from the daemon, not a terminal-only copy.
 
 - Use **`@`** to attach a file through the picker. Text is attached as context; supported images remain image attachments.
 - Use **`@clipboard`** to attach supported clipboard content.
@@ -60,6 +60,10 @@ Approvals remain explicit for actions the policy requires. `/yolo` can enable se
 `/goal` gives a conversation a persistent objective so it can continue through multiple turns until it completes, pauses, or needs help. The daemon applies the configured turn budget and hard ceiling to prevent an unattended loop from running indefinitely.
 
 The sub-agent plugin can delegate a focused, bounded task. The parent transcript shows a live child row; open it to review the child conversation or steer it directly. Delegation inherits the caller's allowed scope rather than granting a broader set of tools.
+
+![Elowen terminal chat showing a live todo list](../screenshots/cli/09-todos.png)
+
+![Elowen terminal chat showing a delegated sub-agent](../screenshots/cli/11-subagent.png)
 
 ## Non-interactive runs
 

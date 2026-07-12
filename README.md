@@ -40,7 +40,7 @@ elowen up | down                    # manage local services
 
 <div align="center">
 
-![Elowen terminal chat with tool calls, a diff, and a telemetry rail](docs/screenshots/cli/05-diff.png)
+![Elowen terminal chat using GPT-5.5 with a live context and subscription-limit rail](docs/screenshots/cli/16-gpt-limits.png)
 
 </div>
 

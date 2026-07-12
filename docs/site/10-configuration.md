@@ -65,6 +65,8 @@ The same section contains guarded runtime limits for tool-output display, elicit
 
 **Models** is the workspace catalog for task executors. It controls which known presets are visible, custom model entries, and notes that help planning select a suitable executor. Per-user allowed executors only narrow this workspace-wide ceiling.
 
+![Model catalog](images/settings-models.png)
+
 **CLI Agents** configures the external programs Elowen can spawn. For each configured program, adjust the executable, arguments, permission behavior, and whether a restarted task should resume the prior external session. The embedded Elowen brain is configured in **Elowen AI**, not as an external binary.
 
 ## Autopilot and GitHub
