@@ -73,8 +73,6 @@
 
 :root {
   color-scheme: dark;
-  --ambient-accent: rgb(255 82 54 / 0.1);
-  --ambient-warm: rgb(255 82 54 / 0.025);
   --shell-gutter: clamp(1rem, 1.9vw, 2.25rem);
   /* Spatial and data workspaces must keep filling ultrawide screens even when the user applies a
      compact UI zoom. Individual reading surfaces constrain their own prose where needed. */

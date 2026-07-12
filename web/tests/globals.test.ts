@@ -5,6 +5,7 @@ import { dirname, join } from 'node:path';
 
 const css = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'app', 'styles', 'tokens.css'), 'utf-8');
 const components = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'app', 'styles', 'components.css'), 'utf-8');
+const animations = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'app', 'styles', 'animations.css'), 'utf-8');
 
 describe('design tokens', () => {
   it('defines the OLED Ember depth and motion tokens', () => {
@@ -31,6 +32,19 @@ describe('design tokens', () => {
   it('uses component width for spatial deck layout changes', () => {
     expect(components).toMatch(/@container \(max-width: 56\.25rem\)[\s\S]*\.spatial-deck-hero/);
     expect(components).toMatch(/@container \(max-width: 38\.75rem\)[\s\S]*\.spatial-form-row/);
+  });
+
+  it('contains no orphaned redesign visuals, undefined motion token or obsolete detail grid overrides', () => {
+    for (const legacy of ['.living-surface', '.ember-wash', '.hero-clock', '.status-orb', '.orbit-scroll-arrow', '.scrollbar-none']) {
+      expect(components).not.toContain(legacy);
+    }
+    expect(components).not.toContain('--motion-normal');
+    expect(components).not.toContain("[data-detail='true']");
+    expect(css).not.toContain('--ambient-accent');
+    expect(css).not.toContain('--ambient-warm');
+    for (const legacy of ['.animate-route', '.animate-ambient', '@keyframes ambient-drift', '@keyframes ember-breathe', '@keyframes orbit-scroll-cue']) {
+      expect(animations).not.toContain(legacy);
+    }
   });
 
   it('caps the static mascot at the WebGL scene art size', () => {

@@ -30,22 +30,8 @@
   50% { box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-accent) 42%, transparent); }
 }
 
-@keyframes ember-breathe {
-  0%, 100% { opacity: 0.09; transform: scale(0.94); }
-  50% { opacity: 0.18; transform: scale(1.06); }
-}
-
-@keyframes ambient-drift {
-  0%, 100% { transform: translate3d(0, 0, 0); }
-  50% { transform: translate3d(0, calc(0px - var(--motion-distance-md)), 0); }
-}
-
 .animate-fade-up { animation: fade-up var(--motion-slow) var(--ease-out) both; }
 .animate-pop-in { animation: pop-in var(--motion-base) var(--ease-out) both; }
-
-/* Opacity only: transforms would make fixed descendants anchor to the route container. */
-.animate-route { animation: route-fade var(--motion-base) var(--ease-out) both; }
-.animate-ambient { animation: ambient-drift var(--motion-ambient) ease-in-out infinite; }
 
 /* The spatial route rail needs a little more time than ordinary micro-interactions. */
 html[data-effects='reduced'] [data-testid='future-navigation'] [role='listitem'],
@@ -62,14 +48,11 @@ html[data-effects='reduced'] {
 }
 
 html[data-effects='reduced'] .animate-fade-up,
-html[data-effects='reduced'] .animate-pop-in,
-html[data-effects='reduced'] .animate-route { animation-name: route-fade; }
+html[data-effects='reduced'] .animate-pop-in { animation-name: route-fade; }
 
 html[data-effects='reduced'] .skeleton,
 html[data-effects='reduced'] .live-dot::after,
 html[data-effects='reduced'] .flow-active,
-html[data-effects='reduced'] .status-orb::before,
-html[data-effects='reduced'] .animate-ambient,
 html[data-effects='reduced'] .ambient-pulse { animation: none !important; }
 
 @media (prefers-reduced-motion: reduce) {
@@ -104,12 +87,4 @@ html[data-effects='off'] *::after {
     scroll-behavior: auto !important;
     transition-duration: 0ms !important;
   }
-}
-@keyframes orbit-scroll-cue {
-  0%, 100% { opacity: 0.35; transform: translateY(-2px); }
-  48% { opacity: 1; transform: translateY(3px); }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .orbit-scroll-arrow { animation: none; }
 }
