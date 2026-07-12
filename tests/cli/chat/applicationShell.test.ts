@@ -612,6 +612,39 @@ describe('chat application shell ownership', () => {
     router.stop();
   });
 
+  it('forces a geometry repaint when an expandable transcript row changes height', () => {
+    let listener!: (data: string) => { consume: boolean } | undefined;
+    const tui = { addInputListener: vi.fn((next) => { listener = next; return vi.fn(); }) } as unknown as TUI;
+    const viewport = {
+      isScrollbarHit: vi.fn(() => false),
+      subagentAt: vi.fn(() => null),
+      isExpandableRow: vi.fn(() => true),
+      toggleExpandable: vi.fn(),
+    };
+    const render = vi.fn();
+    const renderForced = vi.fn();
+    const context = {
+      state: { childView: null },
+      term: { columns: 120, write: vi.fn() },
+      editor: { focused: true, getText: () => '' },
+      stream: {}, quit: vi.fn(), renderForced,
+      keymap: () => ({ matches: () => false, isLeader: () => false, directAction: () => null }),
+      leader: () => ({ pending: () => false }), dispatchAction: vi.fn(), render,
+      animations: { nudgeMascot: vi.fn() }, hasMessages: () => true,
+      activeViewport: () => viewport,
+      panelVisible: () => false, panelLeftEdge: () => 80,
+      slashOverlay: () => null, mentionOverlay: () => null,
+    } as unknown as ChatInputContext;
+    const router = new InputRouter(tui, context);
+    router.attach();
+
+    expect(listener('\x1b[<0;10;10M')).toEqual({ consume: true });
+    expect(viewport.toggleExpandable).toHaveBeenCalledWith(10);
+    expect(renderForced).toHaveBeenCalledWith('geometry:transcript-expand');
+    expect(render).not.toHaveBeenCalled();
+    router.stop();
+  });
+
   it('requests every wheel, page and scrollbar-drag frame before synchronous viewport work', async () => {
     let listener!: (data: string) => { consume: boolean } | undefined;
     const tui = { addInputListener: vi.fn((next) => { listener = next; return vi.fn(); }) } as unknown as TUI;

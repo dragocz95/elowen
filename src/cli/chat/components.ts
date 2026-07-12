@@ -530,9 +530,24 @@ function simpleBlock(title: string, lines: string[], width: number, footer?: str
 }
 
 /** File diff preview for the chat transcript: quiet left label + code rows, no decorative frame. */
-export function framedDiffBlock(diff: string, width: number, title = 'diff'): string[] {
+export function hasHiddenDiffLines(diff: string, maxLines = 18): boolean {
+  const raw = terminalPlainText(diff).replace(/\n+$/, '');
+  return raw ? raw.split('\n').length > maxLines : false;
+}
+
+export function framedDiffBlock(diff: string, width: number, title = 'diff', expanded = false): string[] {
   const inner = Math.max(24, width - 12);
-  return simpleBlock(title, diffBlock(diff, 18, inner), width);
+  const previewLines = 18;
+  const expandable = hasHiddenDiffLines(diff, previewLines);
+  const total = terminalPlainText(diff).replace(/\n+$/, '').split('\n').length;
+  const lines = diffBlock(diff, expanded ? Number.POSITIVE_INFINITY : previewLines, inner);
+  if (expandable) {
+    const label = expanded ? '▴ Click to collapse' : `… +${total - previewLines} more lines`;
+    const toggle = `    ${color.accent(`\x1b[4m${label}\x1b[24m`)}`;
+    if (expanded) lines.push(toggle);
+    else lines[lines.length - 1] = toggle;
+  }
+  return simpleBlock(title, lines, width);
 }
 
 /** Console/tool output preview. The daemon already decides which tool results are worth showing;

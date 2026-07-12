@@ -433,7 +433,7 @@ try {
     && entry.event?.type === 'idle' && entry.event?.usage?.totalTokens === 2345));
   await sleep(120);
 
-  await resizeDiagnosed(180, 50, 'settled multi-agent turn', (plain) => plain.includes('E2E SECOND USER')
+  await resizeDiagnosed(180, 70, 'settled multi-agent turn', (plain) => plain.includes('E2E SECOND USER')
     && plain.includes('E2E TOOL OUTPUT') && plain.includes('E2E FINAL REPLY'));
   const settledTurnCapture = saveCapture('07b-settled-multi-agent-turn');
   const settledTurnLines = settledTurnCapture.endsWith('\n')
@@ -443,6 +443,29 @@ try {
     'user turn and tool block need a blank separator');
   assert.ok(blankBetween(settledTurnLines, /E2E TOOL OUTPUT/, /E2E FINAL REPLY/),
     'tool output and final answer need a blank separator');
+
+  // A truncated diff uses the viewport's stable tool expansion registry. Its explicit underlined tail
+  // expands the complete diff, then the replacement collapse row restores the compact preview.
+  const diffMoreRow = settledTurnLines.findIndex((line) => line.includes('+12 more lines')) + 1;
+  assert.ok(diffMoreRow > 1, '30-row diff must expose a +12 more lines target');
+  assert.match(captureAnsi().split('\n')[diffMoreRow - 1] ?? '', /\x1b\[4m/,
+    'diff more-lines target must be underlined');
+  sendRaw(`\x1b[<0;30;${diffMoreRow}M`);
+  sendRaw(`\x1b[<0;30;${diffMoreRow}m`);
+  await waitFor('expanded complete diff', () => capture().includes('E2E DIFF LINE 30'));
+  const expandedDiffCapture = saveCapture('07c-expanded-complete-diff');
+  const expandedDiffLines = expandedDiffCapture.split('\n');
+  const finalDiffBodyRow = expandedDiffLines.findIndex((line) => line.includes('E2E DIFF LINE 30')) + 1;
+  const collapseDiffRow = expandedDiffLines.findIndex((line) => line.includes('Click to collapse')) + 1;
+  // The viewport preserves the tail anchor while twelve rows are inserted, so the toggle can remain at
+  // the same terminal row as the old preview target. Compare within the expanded frame, not across frames.
+  assert.ok(finalDiffBodyRow > 0 && collapseDiffRow > finalDiffBodyRow,
+    'expanded diff must expose a collapse target below its full body');
+  sendRaw(`\x1b[<0;30;${collapseDiffRow}M`);
+  sendRaw(`\x1b[<0;30;${collapseDiffRow}m`);
+  await waitFor('collapsed diff preview', () => capture().includes('+12 more lines')
+    && !capture().includes('E2E DIFF LINE 30'));
+  saveCapture('07d-collapsed-diff-preview');
 
   resize(120, 30);
   await waitFor('Todo and telemetry panels after stream', () => capture().includes('Todos')
@@ -515,7 +538,7 @@ try {
   // The clipped Todo summary is a real mouse target. Its ANSI underline communicates affordance; one
   // click must expand the card through the same shell hit-testing used in production.
   const todoLines = panelCapture.endsWith('\n') ? panelCapture.slice(0, -1).split('\n') : panelCapture.split('\n');
-  const moreRow = todoLines.findIndex((line) => /\+\d+ more/.test(line)) + 1;
+  const moreRow = todoLines.findIndex((line) => /\+\d+ more(?! lines)/.test(line)) + 1;
   assert.ok(moreRow > 0, 'clipped Todos must expose a +N more row');
   const moreAnsiLine = captureAnsi().split('\n')[moreRow - 1] ?? '';
   assert.match(moreAnsiLine, /\x1b\[4m/, 'the +N more affordance must be underlined');

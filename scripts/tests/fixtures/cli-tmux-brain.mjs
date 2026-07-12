@@ -213,6 +213,10 @@ function runSecondTurn(text) {
       ],
     },
   }));
+  later(280, () => emit({
+    type: 'diff', id: 'final-tool',
+    diff: Array.from({ length: 30 }, (_, index) => `+    ${index + 1} E2E DIFF LINE ${index + 1}`).join('\n'),
+  }));
   later(320, () => emit({
     type: 'tool_output', id: 'final-tool',
     output: {

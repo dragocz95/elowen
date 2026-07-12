@@ -30,6 +30,7 @@ export const EXPECTED_TMUX_CAPTURE_LABELS = Object.freeze({
     '04-streaming-32x12', '04-streaming-40x15', '04-streaming-80x24', '04-streaming-103x24',
     '04-streaming-104x24', '04-streaming-120x30', '04-streaming-180x50',
     '04b-streaming-telemetry-hidden', '07-streaming-restored', '07b-settled-multi-agent-turn',
+    '07c-expanded-complete-diff', '07d-collapsed-diff-preview',
     '08-panels-after-stream', '08d-subagents-scrolled', '08e-subagent-rail-drill-in',
     '08f-subagents-narrow-fallback', '08a-subagent-drill-in', '08b-subagent-return-parent',
     '08c-telemetry-36-columns',

@@ -146,9 +146,11 @@ export class InputRouter {
       const subagent = context.activeViewport().subagentAt(click.x, click.y);
       if (subagent) { void stream.openSubagent(subagent); return { consume: true }; }
     }
-    if (click && noModal && context.activeViewport().isThoughtRow(click.x, click.y)) {
-      context.activeViewport().toggleThought(click.y);
-      context.render('input:thought-toggle');
+    if (click && noModal && context.activeViewport().isExpandableRow(click.x, click.y)) {
+      context.activeViewport().toggleExpandable(click.y);
+      // Thoughts, tool output and diff toggles all change transcript height. Treat them as geometry
+      // transitions so PI drops its old diff surface instead of reconciling rows at stale positions.
+      context.renderForced('geometry:transcript-expand');
       return { consume: true };
     }
     if (click && noModal) {

@@ -178,7 +178,7 @@ export class ChatViewport implements Component {
     this.scrollOffset = Math.max(0, this.scrollOffset + delta);
   }
 
-  isThoughtRow(x: number, absRow: number): boolean {
+  isExpandableRow(x: number, absRow: number): boolean {
     const localRow = absRow - this.getTopRow() + 1;
     return x >= 1 && x <= this.scrollbarColumn - 2 && this.expandableRows.has(localRow);
   }
@@ -239,7 +239,7 @@ export class ChatViewport implements Component {
     return this.subagentRows.get(localRow) ?? null;
   }
 
-  toggleThought(absRow: number): void {
+  toggleExpandable(absRow: number): void {
     const target = this.expandableRows.get(absRow - this.getTopRow() + 1);
     if (!target) return;
     const store = target.key.startsWith('tool:') ? this.expandedTools : this.expandedThoughts;

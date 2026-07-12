@@ -838,7 +838,7 @@ describe('per-turn render cache', () => {
     const turn = view.turnAt(1)!;
     if (turn.role === 'elowen' && turn.segments[0]?.kind === 'text') turn.segments[0].text = 'MUTATED answer';
     expect(viewport.render(60).join('\n')).toBe(first);
-    viewport.toggleThought(-999); // no interactive row → no invalidation
+    viewport.toggleExpandable(-999); // no interactive row → no invalidation
     expect(viewport.render(60).join('\n')).toBe(first);
   });
 });
@@ -1324,11 +1324,42 @@ describe('progressive history layout', () => {
     const oldTurn = view.turnAt(0)!;
     if (oldTurn.role === 'elowen' && oldTurn.segments[0]?.kind === 'text') oldTurn.segments[0].text = 'MUTATED off-screen cache';
 
-    viewport.toggleThought(thoughtRow + 1);
+    viewport.toggleExpandable(thoughtRow + 1);
     const expanded = viewport.render(72).join('\n');
     expect(expanded).toContain('ORIGINAL settled answer');
     expect(expanded).not.toContain('MUTATED off-screen cache');
     expect(expanded).toContain('hidden expanded detail');
+  });
+
+  it('expands and collapses a truncated diff from its clickable more-lines row', () => {
+    const diff = Array.from({ length: 25 }, (_, index) => `+    ${index + 1} diff line ${index + 1}`).join('\n');
+    const view = new TranscriptModel([{
+      role: 'assistant', text: '',
+      segments: [{ kind: 'tool', id: 'edit-diff-1', name: 'edit', detail: 'src/a.ts', diff }],
+    }]);
+    const viewport = new ChatViewport(
+      viewportState(view),
+      getMarkdownTheme(), () => 35, () => 1, () => 80,
+    );
+
+    const collapsed = viewport.render(80);
+    const moreRow = collapsed.findIndex((line) => line.includes('+7 more lines'));
+    expect(moreRow).toBeGreaterThan(0);
+    expect(collapsed[moreRow]).toContain('\x1b[4m');
+    expect(collapsed.join('\n')).not.toContain('diff line 25');
+    expect(viewport.isExpandableRow(10, moreRow + 1)).toBe(true);
+
+    viewport.toggleExpandable(moreRow + 1);
+    const expanded = viewport.render(80);
+    const collapseRow = expanded.findIndex((line) => line.includes('Click to collapse'));
+    expect(expanded.join('\n')).toContain('diff line 25');
+    expect(collapseRow).toBeGreaterThan(moreRow);
+    expect(viewport.isExpandableRow(10, collapseRow + 1)).toBe(true);
+
+    viewport.toggleExpandable(collapseRow + 1);
+    const collapsedAgain = viewport.render(80).join('\n');
+    expect(collapsedAgain).toContain('+7 more lines');
+    expect(collapsedAgain).not.toContain('diff line 25');
   });
 
   it('a width change discards exact heights but still re-paints only the newest tail', () => {
