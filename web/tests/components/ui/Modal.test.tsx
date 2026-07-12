@@ -32,6 +32,17 @@ describe('Modal', () => {
     expect(dialog).toHaveAccessibleDescription('Dialog context');
   });
 
+  it('keeps large code and diff dialogs inside a visible desktop frame', () => {
+    render(
+      <Modal title="Code diff" size="lg" onClose={vi.fn()}>
+        <span>diff</span>
+      </Modal>,
+      { wrapper: W },
+    );
+
+    expect(screen.getByRole('dialog', { name: 'Code diff' })).toHaveClass('max-w-[90rem]');
+  });
+
   it('calls onClose when close button is clicked', () => {
     const onClose = vi.fn();
     render(

@@ -22,7 +22,7 @@
 .settings-row__title { display: flex; min-width: 0; align-items: center; gap: 0.4rem; color: var(--color-text); font-size: 0.78rem; font-weight: 570; }
 .settings-row__status { margin-top: 0.25rem; color: var(--color-text-muted); font-size: 0.68rem; line-height: 1.45; }
 .settings-row__control { min-width: 0; }
-.settings-toolbar { position: sticky; top: 0; z-index: 8; background: linear-gradient(180deg, var(--color-surface) 88%, transparent); }
+.settings-toolbar { position: sticky; top: 0; z-index: 8; background: linear-gradient(180deg, var(--color-document) 88%, transparent); }
 
 @media (max-width: 800px) {
   .settings-group__header, .settings-row, .settings-toolbar { padding-inline: 1rem; }

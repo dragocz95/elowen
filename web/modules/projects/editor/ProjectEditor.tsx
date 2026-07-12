@@ -231,7 +231,7 @@ export function ProjectEditor({ projectId, onClose, initialCommit, initialWorkin
       className={fullscreen
         ? 'fixed inset-0 z-50 flex h-screen flex-col overflow-hidden bg-surface'
         : 'flex flex-col overflow-hidden border-y border-border bg-[#030303]'}
-      style={fullscreen ? undefined : { height: fill ? 'calc(100dvh - 13rem)' : editorH }}
+      style={fullscreen ? undefined : { height: fill ? '100%' : editorH }}
     >
       {/* toolbar */}
       <div className="flex items-center gap-2 border-b border-border px-3 py-2">

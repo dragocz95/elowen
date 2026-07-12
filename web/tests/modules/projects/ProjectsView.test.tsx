@@ -9,6 +9,9 @@ import { createWrapper } from '../../test-utils';
 const server = setupServer(
   http.get('*/api/projects', () => HttpResponse.json([{ id: 1, slug: 'elowen', path: '/var/www/elowen', notes: '', icon: '', pr_enabled: null }])),
   http.get('*/api/projects/1/git', () => HttpResponse.json({ isRepo: true, status: { branch: 'master', ahead: 0, behind: 0, dirty: 3, clean: false }, branches: [{ name: 'master', current: true }], commits: [{ hash: 'deadbee', subject: 'feat: x', author: 'me', relative: '2 hours ago' }] })),
+  http.get('*/api/projects/1/files', () => HttpResponse.json([])),
+  http.get('*/api/projects/1/commit/deadbee', () => HttpResponse.json({ diff: '', files: [] })),
+  http.get('*/api/projects/1/changed', () => HttpResponse.json({ changed: [] })),
 );
 beforeAll(() => server.listen()); afterEach(() => server.resetHandlers()); afterAll(() => server.close());
 
@@ -33,6 +36,18 @@ describe('ProjectsView', () => {
     const card = (await screen.findByText('elowen')).closest('[role="row"]')!;
     fireEvent.keyDown(card, { key: ' ' });
     expect(await screen.findByText('master')).toBeTruthy();
+  });
+
+  it('opens a selected commit in a modal instead of appending the editor below the workspace', async () => {
+    const { wrapper: Wrapper } = createWrapper();
+    render(<Wrapper><ToastProvider><ProjectsView /></ToastProvider></Wrapper>);
+
+    fireEvent.click(await screen.findByText('elowen'));
+    fireEvent.click(await screen.findByText('feat: x'));
+
+    expect(await screen.findByRole('dialog', { name: 'Code editor' })).toBeInTheDocument();
+    expect(screen.queryByRole('dialog', { name: 'Project detail' })).not.toBeInTheDocument();
+    expect(screen.getByTestId('spatial-workspace-layout')).not.toContainElement(screen.getByRole('dialog', { name: 'Code editor' }));
   });
 
   it('filters the project register without losing the workspace layout', async () => {

@@ -19,6 +19,11 @@ describe('design tokens', () => {
     expect(css).not.toContain("data-theme='light'");
   });
 
+  it('uses one account-dark token for shared document surfaces', () => {
+    expect(css).toContain('--color-document: #030303');
+    expect(components).toMatch(/\.control-surface-document\s*\{[^}]*background:[^;}]*var\(--color-document\)/);
+  });
+
   it('stacks spatial hero metrics into a readable mobile grid', () => {
     expect(components).toMatch(/@media \(max-width: 620px\)[\s\S]*\.spatial-workspace-hero__metrics\s*\{[^}]*grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\)/);
   });

@@ -16,7 +16,7 @@ interface ModalProps {
 }
 
 const SIZES = {
-  lg: 'h-[88vh] w-[92vw]',
+  lg: 'h-[88vh] w-[92vw] max-w-[90rem]',
   xl: 'max-h-[90vh] w-full max-w-2xl',
   md: 'max-h-[88vh] w-full max-w-lg',
   sm: 'max-h-[80vh] w-full max-w-md',

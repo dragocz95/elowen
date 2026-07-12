@@ -1,6 +1,7 @@
 @theme {
   /* OLED Ember: true black canvas, warm near-black surfaces, one unmistakable Elowen accent. */
   --color-bg: #000000;
+  --color-document: #030303;
   --color-surface: #070707;
   --color-elevated: #0d0d0d;
   --color-overlay: #151515;

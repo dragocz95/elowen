@@ -39,8 +39,15 @@ export function ProjectsView() {
   const [filter, setFilter] = useState<ProjectFilter>('all');
   const deferredQuery = useDeferredValue(query);
 
-  const openEditor = (commit: string | null) => { setEditingId(selectedId); setEditingCommit(commit); setEditingWorking(false); };
-  const openWorking = () => { setEditingId(selectedId); setEditingCommit(null); setEditingWorking(true); };
+  const openProjectEditor = (projectId: number | null, commit: string | null, working = false) => {
+    if (projectId == null) return;
+    setEditingId(projectId);
+    setEditingCommit(commit);
+    setEditingWorking(working);
+    setSelectedId(null);
+  };
+  const openEditor = (commit: string | null) => openProjectEditor(selectedId, commit);
+  const openWorking = () => openProjectEditor(selectedId, null, true);
   const closeEditor = () => { setEditingId(null); setEditingCommit(null); setEditingWorking(false); };
   const git = useProjectGit(selectedId);
 
@@ -61,7 +68,7 @@ export function ProjectsView() {
       x: e.clientX,
       y: e.clientY,
       items: [
-        { label: t.projects.ctxOpenEditor, icon: Code2, onClick: () => { setSelectedId(p.id); setEditingId(p.id); setEditingCommit(null); setEditingWorking(false); } },
+        { label: t.projects.ctxOpenEditor, icon: Code2, onClick: () => openProjectEditor(p.id, null) },
         { label: t.projects.ctxEditProject, icon: Pencil, onClick: () => { setSelectedId(p.id); openEdit(p); } },
         DIVIDER,
         { label: t.projects.ctxCopyPath, icon: Copy, onClick: () => { navigator.clipboard.writeText(p.path); toast(t.projects.ctxPathCopied); } },
@@ -88,7 +95,7 @@ export function ProjectsView() {
     {
       label: t.projects.ctxOpenEditor,
       icon: Code2,
-      onSelect: () => { setSelectedId(p.id); setEditingId(p.id); setEditingCommit(null); setEditingWorking(false); },
+      onSelect: () => openProjectEditor(p.id, null),
     },
     { label: t.projects.ctxEditProject, icon: Pencil, onSelect: () => { setSelectedId(p.id); openEdit(p); } },
     { label: t.projects.ctxCopyPath, icon: Copy, onSelect: () => { void navigator.clipboard.writeText(p.path); toast(t.projects.ctxPathCopied); } },
@@ -334,7 +341,17 @@ export function ProjectsView() {
         </ControlSurfaceDocument>
       </SpatialWorkspaceLayout>
 
-      {editingId ? <ProjectEditor key={editingWorking ? 'working' : (editingCommit ?? 'files')} projectId={editingId} initialCommit={editingCommit} initialWorking={editingWorking} onClose={closeEditor} /> : null}
+      {editingId ? (
+        <Modal title={t.projects.editorTitle} size="lg" icon={Code2} onClose={closeEditor}>
+          <ProjectEditor
+            key={editingWorking ? 'working' : (editingCommit ?? 'files')}
+            projectId={editingId}
+            initialCommit={editingCommit}
+            initialWorking={editingWorking}
+            fill
+          />
+        </Modal>
+      ) : null}
 
       {creating && (
         <Modal title={t.projects.newProject} onClose={() => setCreating(false)} size="md" icon={FolderGit2}>
