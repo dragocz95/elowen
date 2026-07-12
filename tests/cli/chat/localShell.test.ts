@@ -122,6 +122,106 @@ describe('runLocalShell', () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  it.skipIf(process.platform === 'win32')('enforces the timeout when the process group ignores SIGTERM', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'elowen-shell-timeout-'));
+    const pidFile = join(dir, 'shell.pid');
+    const lifecycle = new AbortController();
+    let groupPid = 0;
+    try {
+      const pending = runLocalShell(
+        `printf '%s' "$$" > "${pidFile}"; trap '' TERM; while :; do sleep 1; done`,
+        process.cwd(), undefined, lifecycle.signal,
+        { timeoutMs: 40, killGraceMs: 40 },
+      );
+      const deadline = Date.now() + 1_000;
+      while (!existsSync(pidFile) && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 10));
+      groupPid = Number(readFileSync(pidFile, 'utf8'));
+
+      const result = await Promise.race([
+        pending,
+        new Promise<never>((_resolve, reject) => setTimeout(() => reject(new Error('timeout did not escalate')), 1_000)),
+      ]);
+      expect(result.exitCode).toBeNull();
+      expect(result.output).toContain('timed out');
+      expect(() => process.kill(groupPid, 0)).toThrow();
+    } finally {
+      lifecycle.abort();
+      if (groupPid > 0) {
+        try { process.kill(-groupPid, 'SIGKILL'); } catch { /* already gone */ }
+      }
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it.skipIf(process.platform === 'win32')('enforces the output limit when the process group ignores SIGTERM', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'elowen-shell-overflow-'));
+    const pidFile = join(dir, 'shell.pid');
+    const lifecycle = new AbortController();
+    let groupPid = 0;
+    try {
+      const pending = runLocalShell(
+        `printf '%s' "$$" > "${pidFile}"; trap '' TERM; printf '%02048d' 0; while :; do sleep 1; done`,
+        process.cwd(), undefined, lifecycle.signal,
+        { timeoutMs: 5_000, killGraceMs: 40, maxBufferBytes: 64 },
+      );
+      const deadline = Date.now() + 1_000;
+      while (!existsSync(pidFile) && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 10));
+      groupPid = Number(readFileSync(pidFile, 'utf8'));
+
+      const result = await Promise.race([
+        pending,
+        new Promise<never>((_resolve, reject) => setTimeout(() => reject(new Error('overflow did not escalate')), 1_000)),
+      ]);
+      expect(result.exitCode).toBeNull();
+      expect(() => process.kill(groupPid, 0)).toThrow();
+    } finally {
+      lifecycle.abort();
+      if (groupPid > 0) {
+        try { process.kill(-groupPid, 'SIGKILL'); } catch { /* already gone */ }
+      }
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it.skipIf(process.platform === 'win32')('keeps escalation alive after the shell leader closes', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'elowen-shell-orphan-'));
+    const pidFile = join(dir, 'pids');
+    const lifecycle = new AbortController();
+    let groupPid = 0;
+    let grandchildPid = 0;
+    try {
+      const pending = runLocalShell(
+        `(trap '' TERM; exec >/dev/null 2>&1; while :; do sleep 1; done) & child=$!; printf '%s %s' "$$" "$child" > "${pidFile}"; wait "$child"`,
+        process.cwd(), undefined, lifecycle.signal,
+        { killGraceMs: 40 },
+      );
+      const deadline = Date.now() + 1_000;
+      while (!existsSync(pidFile) && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 10));
+      [groupPid, grandchildPid] = readFileSync(pidFile, 'utf8').trim().split(/\s+/).map(Number);
+
+      lifecycle.abort();
+      await Promise.race([
+        pending,
+        new Promise<never>((_resolve, reject) => setTimeout(() => reject(new Error('aborted shell did not settle')), 1_000)),
+      ]);
+      const goneBy = Date.now() + 1_000;
+      while (Date.now() < goneBy) {
+        try { process.kill(grandchildPid, 0); } catch { break; }
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      expect(() => process.kill(grandchildPid, 0)).toThrow();
+    } finally {
+      lifecycle.abort();
+      if (groupPid > 0) {
+        try { process.kill(-groupPid, 'SIGKILL'); } catch { /* already gone */ }
+      }
+      if (grandchildPid > 0) {
+        try { process.kill(grandchildPid, 'SIGKILL'); } catch { /* already gone */ }
+      }
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('localShellTurn (transcript console block)', () => {
