@@ -2,7 +2,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
-import { ChatApplicationLifetime } from '../../../src/cli/chat/applicationLifetime.js';
+import { APPLICATION_TASK_SHUTDOWN_MS, ChatApplicationLifetime } from '../../../src/cli/chat/applicationLifetime.js';
 import { createShutdownCoordinator, installExitGuards } from '../../../src/cli/chat/terminalLifecycle.js';
 import {
   composeWithShellContext,
@@ -15,17 +15,43 @@ import {
   runLocalShell,
 } from '../../../src/cli/chat/localShell.js';
 
-async function expectProcessGone(pid: number, timeoutMs = 1_000): Promise<void> {
+function isProcessRunning(pid: number): boolean {
+  try { process.kill(pid, 0); }
+  catch { return false; }
+  if (process.platform !== 'linux') return true;
+  try {
+    const stat = readFileSync(`/proc/${pid}/stat`, 'utf8');
+    const commEnd = stat.lastIndexOf(')');
+    if (commEnd < 0) return true;
+    const state = stat.slice(commEnd + 2).trimStart()[0];
+    return state !== 'Z' && state !== 'X';
+  } catch {
+    return false;
+  }
+}
+
+async function expectProcessStopped(pid: number, timeoutMs = 1_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    try { process.kill(pid, 0); }
-    catch { return; }
-    // SIGKILL is synchronous, but the kernel/libuv can expose the dead leader as a zombie until the
-    // close callback is reaped. Under the full parallel suite that can outlive the bounded settlement
-    // promise by a scheduler tick, so assert eventual disappearance rather than one exact tick.
+    if (!isProcessRunning(pid)) return;
+    // Reaping may lag the signal under parallel load. A Linux zombie is already stopped; a live or
+    // recycled PID remains a failure until it exits or reaches a terminal process state.
     await new Promise((resolve) => setTimeout(resolve, 5));
   }
-  expect(() => process.kill(pid, 0)).toThrow();
+  expect(isProcessRunning(pid)).toBe(false);
+}
+
+async function waitForPids(file: string, count: number, timeoutMs = 1_000): Promise<number[]> {
+  const deadline = Date.now() + timeoutMs;
+  let pids: number[] = [];
+  while (Date.now() < deadline) {
+    try {
+      pids = readFileSync(file, 'utf8').trim().split(/\s+/).map(Number);
+      if (pids.length === count && pids.every((pid) => Number.isSafeInteger(pid) && pid > 0)) return pids;
+    } catch { /* The shell has not created the file yet. */ }
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  return pids;
 }
 
 describe('parseBangCommand', () => {
@@ -112,10 +138,7 @@ describe('runLocalShell', () => {
     let childPid = 0;
     try {
       const pending = runLocalShell(`sleep 30 & child=$!; printf '%s' "$child" > "${pidFile}"; wait "$child"`, process.cwd(), undefined, lifecycle.signal);
-      const deadline = Date.now() + 1_000;
-      while (!existsSync(pidFile) && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 10));
-      expect(existsSync(pidFile)).toBe(true);
-      childPid = Number(readFileSync(pidFile, 'utf8'));
+      [childPid] = await waitForPids(pidFile, 1);
       expect(childPid).toBeGreaterThan(0);
 
       const abortedAt = Date.now();
@@ -129,7 +152,7 @@ describe('runLocalShell', () => {
       ]).finally(() => { if (timeout) clearTimeout(timeout); });
       expect(Date.now() - abortedAt).toBeLessThan(1_000);
       expect(result.exitCode).toBeNull();
-      await expectProcessGone(childPid);
+      await expectProcessStopped(childPid);
     } finally {
       if (childPid > 0) {
         try { process.kill(childPid, 'SIGKILL'); } catch { /* already gone */ }
@@ -149,9 +172,8 @@ describe('runLocalShell', () => {
         process.cwd(), undefined, lifecycle.signal,
         { timeoutMs: 40, killGraceMs: 40 },
       );
-      const deadline = Date.now() + 1_000;
-      while (!existsSync(pidFile) && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 10));
-      groupPid = Number(readFileSync(pidFile, 'utf8'));
+      [groupPid] = await waitForPids(pidFile, 1);
+      expect(groupPid).toBeGreaterThan(0);
 
       const result = await Promise.race([
         pending,
@@ -159,7 +181,7 @@ describe('runLocalShell', () => {
       ]);
       expect(result.exitCode).toBeNull();
       expect(result.output).toContain('timed out');
-      await expectProcessGone(groupPid);
+      await expectProcessStopped(groupPid);
     } finally {
       lifecycle.abort();
       if (groupPid > 0) {
@@ -180,16 +202,15 @@ describe('runLocalShell', () => {
         process.cwd(), undefined, lifecycle.signal,
         { timeoutMs: 5_000, killGraceMs: 40, maxBufferBytes: 64 },
       );
-      const deadline = Date.now() + 1_000;
-      while (!existsSync(pidFile) && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 10));
-      groupPid = Number(readFileSync(pidFile, 'utf8'));
+      [groupPid] = await waitForPids(pidFile, 1);
+      expect(groupPid).toBeGreaterThan(0);
 
       const result = await Promise.race([
         pending,
         new Promise<never>((_resolve, reject) => setTimeout(() => reject(new Error('overflow did not escalate')), 1_000)),
       ]);
       expect(result.exitCode).toBeNull();
-      await expectProcessGone(groupPid);
+      await expectProcessStopped(groupPid);
     } finally {
       lifecycle.abort();
       if (groupPid > 0) {
@@ -211,16 +232,16 @@ describe('runLocalShell', () => {
         process.cwd(), undefined, lifecycle.signal,
         { killGraceMs: 40 },
       );
-      const deadline = Date.now() + 1_000;
-      while (!existsSync(pidFile) && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 10));
-      [groupPid, grandchildPid] = readFileSync(pidFile, 'utf8').trim().split(/\s+/).map(Number);
+      [groupPid, grandchildPid] = await waitForPids(pidFile, 2);
+      expect(groupPid).toBeGreaterThan(0);
+      expect(grandchildPid).toBeGreaterThan(0);
 
       lifecycle.abort();
       await Promise.race([
         pending,
         new Promise<never>((_resolve, reject) => setTimeout(() => reject(new Error('aborted shell did not settle')), 1_000)),
       ]);
-      await expectProcessGone(grandchildPid);
+      await expectProcessStopped(grandchildPid);
     } finally {
       lifecycle.abort();
       if (groupPid > 0) {
@@ -247,10 +268,9 @@ describe('runLocalShell', () => {
         ),
         () => {},
       );
-      const deadline = Date.now() + 1_000;
-      while (!existsSync(pidFile) && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 10));
-      expect(existsSync(pidFile)).toBe(true);
-      [groupPid, grandchildPid] = readFileSync(pidFile, 'utf8').trim().split(/\s+/).map(Number);
+      [groupPid, grandchildPid] = await waitForPids(pidFile, 2);
+      expect(groupPid).toBeGreaterThan(0);
+      expect(grandchildPid).toBeGreaterThan(0);
 
       // This is the production signal boundary: installExitGuards calls process.exit immediately after
       // this promise settles. No extra wait after stop() may be required for a detached force timer.
@@ -272,7 +292,7 @@ describe('runLocalShell', () => {
         killSpy.mockRestore();
       }
 
-      await expectProcessGone(grandchildPid);
+      await expectProcessStopped(grandchildPid);
     } finally {
       if (groupPid > 0) {
         try { process.kill(-groupPid, 'SIGKILL'); } catch { /* already gone */ }
@@ -301,12 +321,10 @@ describe('runLocalShell', () => {
       );
       // Timeout owns the polite TERM grace. Wait until its trap has really forked the late child, then
       // simulate fatal/application teardown; abort must resnapshot and force synchronously.
-      const startedBy = Date.now() + 1_000;
-      while (!existsSync(lateFile) && Date.now() < startedBy) await new Promise((resolve) => setTimeout(resolve, 5));
-      expect(existsSync(groupFile)).toBe(true);
-      expect(existsSync(lateFile)).toBe(true);
-      groupPid = Number(readFileSync(groupFile, 'utf8'));
-      latePid = Number(readFileSync(lateFile, 'utf8'));
+      [groupPid] = await waitForPids(groupFile, 1);
+      [latePid] = await waitForPids(lateFile, 1);
+      expect(groupPid).toBeGreaterThan(0);
+      expect(latePid).toBeGreaterThan(0);
 
       const shutdown = createShutdownCoordinator({
         teardown: () => lifetime.stop(),
@@ -326,7 +344,7 @@ describe('runLocalShell', () => {
       }
 
       expect(latePid).toBeGreaterThan(0);
-      await expectProcessGone(latePid);
+      await expectProcessStopped(latePid);
     } finally {
       if (groupPid > 0) {
         try { process.kill(-groupPid, 'SIGKILL'); } catch { /* already gone */ }
@@ -360,8 +378,8 @@ describe('runLocalShell', () => {
       const abortedAt = Date.now();
       await lifetime.stop();
 
-      expect(Date.now() - abortedAt).toBeLessThan(150);
-      await expectProcessGone(groupPid);
+      expect(Date.now() - abortedAt).toBeLessThan(APPLICATION_TASK_SHUTDOWN_MS);
+      await expectProcessStopped(groupPid);
     } finally {
       if (groupPid > 0) {
         try { process.kill(-groupPid, 'SIGKILL'); } catch { /* already gone */ }
