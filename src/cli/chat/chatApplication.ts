@@ -303,6 +303,7 @@ export class ChatApplication {
   private async refreshMeta(): Promise<void> {
     if (!this.resources) return;
     const publication = this.lifetime.begin('metadata');
+    const goalAtRequest = this.state.goal;
     void this.refreshRateLimits();
     const [status, mcp, goal] = await Promise.all([
       this.resources.client.status().catch(() => null),
@@ -312,7 +313,9 @@ export class ChatApplication {
     this.lifetime.commit(publication, () => {
       if (status) this.applyStatus(status);
       this.state.mcpList = mcp;
-      if (goal !== undefined) this.state.goal = goal;
+      // Goal lifecycle events are newer than a GET that was already in flight. Every writer replaces the
+      // whole snapshot, so reference identity is a cheap monotonic fence without another global counter.
+      if (goal !== undefined && this.state.goal === goalAtRequest) this.state.goal = goal;
     });
   }
 
