@@ -172,6 +172,44 @@ describe('createShutdownCoordinator', () => {
 });
 
 describe('ChatApplication shutdown ownership', () => {
+  it('does not construct terminal owners after shutdown cancels an in-flight bootstrap', async () => {
+    let enteredHistory!: () => void;
+    let resolveHistory!: (history: []) => void;
+    const historyStarted = new Promise<void>((resolve) => { enteredHistory = resolve; });
+    const delayedHistory = new Promise<[]>((resolve) => { resolveHistory = resolve; });
+    const client = {
+      bindLifetime: vi.fn(),
+      start: vi.fn(async () => ({ sessionId: 'booting' })),
+      status: vi.fn(async () => null),
+      processes: vi.fn(async () => []),
+      terminalSettings: vi.fn(async () => null),
+      commands: vi.fn(async () => []),
+      history: vi.fn(() => { enteredHistory(); return delayedHistory; }),
+      rateLimits: vi.fn(async () => null),
+      mcpServers: vi.fn(async () => []),
+      stopSession: vi.fn(async () => {}),
+    } as unknown as BrainClient;
+    const application = new ChatApplication({ base: 'http://unused', token: 'unused', client });
+    const internals = application as unknown as {
+      stopLocal(): Promise<void>;
+      coordinator: unknown;
+      composition: unknown;
+      lifecycle: unknown;
+      diagnostics: unknown;
+    };
+
+    const running = application.run();
+    await historyStarted;
+    await internals.stopLocal();
+    await running;
+    resolveHistory([]);
+
+    expect(internals.coordinator).toBeNull();
+    expect(internals.composition).toBeNull();
+    expect(internals.lifecycle).toBeNull();
+    expect(internals.diagnostics).toBeNull();
+  });
+
   it('bounded-stops the issued client generation when bootstrap fails', async () => {
     const stopSession = vi.fn(async (_signal?: AbortSignal) => {});
     const client = {

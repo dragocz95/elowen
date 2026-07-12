@@ -166,6 +166,7 @@ export class ChatApplication {
     let showThoughts = prefs.showThoughts !== false;
     const client = this.client;
     await client.start({ provider: options.model, session: options.session, fresh: options.fresh });
+    if (this.stopped) return;
     const bootHydration = new AbortController();
     const [boot, processes, termSettings, initialTranscript, serverCommands] = await Promise.all([
       client.status().catch(() => null),
@@ -175,6 +176,7 @@ export class ChatApplication {
       client.commands().catch(() => commandsFor('cli', true)),
     ]);
     bootHydration.abort();
+    if (this.stopped) return;
     const localPick = !!(prefs.theme && isChatThemeName(prefs.theme));
     if (!localPick && termSettings?.theme === 'custom' && termSettings.palette) setCustomChatTheme(termSettings.palette);
     if (typeof termSettings?.showThoughtsCli === 'boolean') showThoughts = termSettings.showThoughtsCli;
@@ -240,6 +242,7 @@ export class ChatApplication {
     // overlay and schedules a zero-delay frame; with no await after that point, run() enters the alternate
     // screen synchronously before the scheduler can flush into the user's primary buffer.
     await this.refreshMeta();
+    if (this.stopped) return;
     const flows = createFlows(state, resources, this.actions);
     const pendingAsk = boot?.pendingAsk;
     if (pendingAsk) {
