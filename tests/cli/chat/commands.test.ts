@@ -8,9 +8,10 @@ import { ChatState } from '../../../src/cli/chat/chatState.js';
 import { ChatApplicationLifetime } from '../../../src/cli/chat/applicationLifetime.js';
 import { LocalShellBuffer } from '../../../src/cli/chat/localShell.js';
 
-function deferred<T>(): { promise: Promise<T>; resolve(value: T): void } {
+function deferred<T>(): { promise: Promise<T>; resolve(value: T): void; reject(error: unknown): void } {
   let resolve!: (value: T) => void;
-  return { promise: new Promise<T>((done) => { resolve = done; }), resolve };
+  let reject!: (error: unknown) => void;
+  return { promise: new Promise<T>((done, fail) => { resolve = done; reject = fail; }), resolve, reject };
 }
 
 describe('resolveThinkingLevel', () => {
@@ -211,6 +212,138 @@ describe('application lifetime for local input work', () => {
       expect(client.goal).toHaveBeenCalledOnce();
       expect(state.goal).toEqual(paused);
       expect(state.notice).toMatch(/provider failed/i);
+    } finally {
+      if (priorHome === undefined) delete process.env.HOME;
+      else process.env.HOME = priorHome;
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it('applies a post-failure goal refetch over an earlier streamed active state', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'elowen-goal-failure-stream-race-'));
+    const priorHome = process.env.HOME;
+    process.env.HOME = home;
+    try {
+      let onSubmit: ((text: string) => void) | undefined;
+      const editor = {
+        addToHistory: vi.fn(), setText: vi.fn(),
+        set onSubmit(fn: (text: string) => void) { onSubmit = fn; },
+      };
+      const refetch = deferred<NonNullable<ChatState['goal']>>();
+      const state = new ChatState({ transcript: new TranscriptModel() });
+      wireSubmit(
+        state,
+        {
+          client: {
+            setGoal: vi.fn(async () => { throw new Error('kickoff failed'); }),
+            goal: vi.fn(() => refetch.promise),
+          },
+          editor, shellContext: new LocalShellBuffer(), attachmentChips: {}, commandDefs: [], tui: {},
+          lifetime: new ChatApplicationLifetime<'metadata'>(),
+        } as never,
+        { render: vi.fn() } as never,
+        { stream: {}, pickers: {} } as never,
+      );
+
+      onSubmit?.('/goal Reconcile the failure');
+      await Promise.resolve();
+      const streamedActive = { ...state.goal!, user_id: 1, status: 'active' as const, turns_used: 1 };
+      state.setGoal(streamedActive); // SSE admission landed while the failed POST was being reconciled
+      const paused = {
+        ...streamedActive, status: 'paused' as const, last_verdict: 'error', paused_reason: 'kickoff failed',
+      };
+      refetch.resolve(paused); // this GET completed after that SSE and is therefore the newer authority
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(state.goal).toEqual(paused);
+      expect(state.notice).toMatch(/kickoff failed/i);
+    } finally {
+      if (priorHome === undefined) delete process.env.HOME;
+      else process.env.HOME = priorHome;
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it('clears an unverified optimistic goal when both kickoff and authoritative refetch fail', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'elowen-goal-double-failure-'));
+    const priorHome = process.env.HOME;
+    process.env.HOME = home;
+    try {
+      let onSubmit: ((text: string) => void) | undefined;
+      const editor = {
+        addToHistory: vi.fn(), setText: vi.fn(),
+        set onSubmit(fn: (text: string) => void) { onSubmit = fn; },
+      };
+      const state = new ChatState({ transcript: new TranscriptModel() });
+      wireSubmit(
+        state,
+        {
+          client: {
+            setGoal: vi.fn(async () => { throw new Error('kickoff offline'); }),
+            goal: vi.fn(async () => { throw new Error('status offline'); }),
+          },
+          editor, shellContext: new LocalShellBuffer(), attachmentChips: {}, commandDefs: [], tui: {},
+          lifetime: new ChatApplicationLifetime<'metadata'>(),
+        } as never,
+        { render: vi.fn() } as never,
+        { stream: {}, pickers: {} } as never,
+      );
+
+      onSubmit?.('/goal Do not leave a fake timer');
+      expect(state.goal?.status).toBe('active');
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(state.goal).toBeNull();
+      expect(state.notice).toMatch(/kickoff offline/i);
+    } finally {
+      if (priorHome === undefined) delete process.env.HOME;
+      else process.env.HOME = priorHome;
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it('ignores a stale goal failure after a newer goal command took ownership', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'elowen-goal-stale-failure-'));
+    const priorHome = process.env.HOME;
+    process.env.HOME = home;
+    try {
+      let onSubmit: ((text: string) => void) | undefined;
+      const editor = {
+        addToHistory: vi.fn(), setText: vi.fn(),
+        set onSubmit(fn: (text: string) => void) { onSubmit = fn; },
+      };
+      const first = deferred<NonNullable<ChatState['goal']>>();
+      const state = new ChatState({ transcript: new TranscriptModel() });
+      const replacement = {
+        session_id: 'brain-1', user_id: 1, status: 'done' as const, goal: 'New command wins',
+        draft: '', subgoals: '[]', turns_used: 1, turn_budget: 8, last_verdict: 'done',
+        last_evidence: 'verified', paused_reason: '',
+        created_at: '2026-07-12 10:00:00', updated_at: '2026-07-12 10:00:01',
+      };
+      const setGoal = vi.fn()
+        .mockImplementationOnce(() => first.promise)
+        .mockResolvedValueOnce(replacement);
+      wireSubmit(
+        state,
+        {
+          client: { setGoal, goal: vi.fn(async () => { throw new Error('stale status failure'); }) },
+          editor, shellContext: new LocalShellBuffer(), attachmentChips: {}, commandDefs: [], tui: {},
+          lifetime: new ChatApplicationLifetime<'metadata'>(),
+        } as never,
+        { render: vi.fn() } as never,
+        { stream: {}, pickers: {} } as never,
+      );
+
+      onSubmit?.('/goal Old command');
+      onSubmit?.('/goal New command wins');
+      await Promise.resolve();
+      await Promise.resolve();
+      first.reject(new Error('old kickoff failed'));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(state.goal).toEqual(replacement);
+      expect(state.notice).not.toMatch(/old kickoff|stale status/i);
     } finally {
       if (priorHome === undefined) delete process.env.HOME;
       else process.env.HOME = priorHome;

@@ -83,9 +83,13 @@ function handleGoalCommand(
   run: ChatTaskScope['runSession'],
   arg?: string,
 ): void {
-  const fail = (e: Error): void => { rt.notice = color.error(`error: ${e.message}`); render(); };
   const raw = (arg ?? '').trim();
   const commandRevision = rt.beginGoalCommand();
+  const fail = (e: Error): void => {
+    if (!rt.isCurrentGoalCommand(commandRevision)) return;
+    rt.notice = color.error(`error: ${e.message}`);
+    render();
+  };
   const publish = (stateRevision: number, goal: Awaited<ReturnType<BrainClient['goal']>>): boolean => {
     if (!rt.isCurrentGoalCommand(commandRevision) || rt.goalRevision !== stateRevision) return false;
     rt.setGoal(goal);
@@ -137,21 +141,35 @@ function handleGoalCommand(
   render('goal:optimistic');
   run(async () => {
     try {
-      return { goal: await client.setGoal(text, false), error: null };
+      return { kind: 'confirmed' as const, goal: await client.setGoal(text, false) };
     } catch (cause) {
       const error = cause instanceof Error ? cause : new Error(String(cause));
       // setGoal can fail only after the daemon has durably admitted and then paused the replacement.
-      // Re-read that authority instead of resurrecting the previous row from local memory.
-      const goal = await client.goal().catch(() => undefined);
-      return { goal, error };
+      // Re-read that authority instead of resurrecting the previous row from local memory. Record the
+      // revision AFTER the GET settles: it may legitimately supersede an active SSE that arrived while
+      // the POST was failing, but must not overwrite an SSE that arrives after this snapshot.
+      try {
+        const goal = await client.goal();
+        return { kind: 'failed' as const, goal, observedRevision: rt.goalRevision, error };
+      } catch {
+        return { kind: 'failed' as const, goal: undefined, observedRevision: rt.goalRevision, error };
+      }
     }
   }, (result) => {
-    const published = result.goal !== undefined && publish(stateRevision, result.goal);
-    if (result.error) {
+    if (!rt.isCurrentGoalCommand(commandRevision)) return;
+    if (result.kind === 'failed') {
+      if (result.goal !== undefined) {
+        if (rt.goalRevision === result.observedRevision) rt.setGoal(result.goal);
+      } else if (rt.goalRevision === stateRevision) {
+        // Neither POST nor reconciliation proved a durable active goal. Clear only our still-current
+        // optimistic object so the elapsed timer can never claim work that may not exist server-side.
+        rt.setGoal(null);
+      }
       rt.notice = color.error(`error: ${result.error.message}`);
       render('goal:failed');
       return;
     }
+    const published = publish(stateRevision, result.goal);
     if (!published) return; // a newer stream event or command already owns the visible state
     rt.notice = '';
     render('goal:confirmed');
@@ -177,6 +195,7 @@ function handleSubgoalCommand(
     rt.notice = color.dim(goalSummary(rt.goal));
     render();
   }, (e) => {
+    if (!rt.isCurrentGoalCommand(commandRevision)) return;
     rt.notice = color.error(`error: ${e.message}`); render();
   });
 }
