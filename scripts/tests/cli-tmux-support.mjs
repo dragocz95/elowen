@@ -1,8 +1,11 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import {
+  mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, realpathSync, statSync, writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
-import { basename, dirname, join, relative, resolve } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 
 import { visibleWidth } from '@earendil-works/pi-tui';
 
@@ -15,6 +18,38 @@ export function paneLines(value) {
 
 export function resolveArtifactDir(root, scenario) {
   return resolve(root, scenario);
+}
+
+/** Deterministic identity for the complete compiled tree, including relative paths and empty directories. */
+export function distContentHash(root) {
+  const hash = createHash('sha256');
+  const visit = (dir, prefix = '') => {
+    const entries = readdirSync(dir, { withFileTypes: true }).sort((left, right) => left.name.localeCompare(right.name));
+    if (entries.length === 0) hash.update(`directory\0${prefix}\0`);
+    for (const entry of entries) {
+      const relativePath = prefix ? `${prefix}/${entry.name}` : entry.name;
+      const path = join(dir, entry.name);
+      if (entry.isDirectory()) {
+        hash.update(`directory\0${relativePath}\0`);
+        visit(path, relativePath);
+      } else if (entry.isFile()) {
+        const content = readFileSync(path);
+        hash.update(`file\0${relativePath}\0${content.length}\0`);
+        hash.update(content);
+        hash.update('\0');
+      } else if (entry.isSymbolicLink()) {
+        hash.update(`symlink\0${relativePath}\0${readlinkSync(path)}\0`);
+      } else {
+        throw new Error(`unsupported dist entry: ${path}`);
+      }
+    }
+  };
+  visit(resolve(root));
+  return hash.digest('hex');
+}
+
+export function buildContentIdentity(commit, distSha256) {
+  return `git:${commit}:dist-sha256:${distSha256}`;
 }
 
 export function createArtifactDir(scenario) {
@@ -341,16 +376,23 @@ export function decodeLastOsc52(terminalWrites) {
   return payload ? Buffer.from(payload, 'base64').toString('utf8') : null;
 }
 
-export function collectMetadata(repo, cli, tmuxName) {
+export function collectMetadata(repo, cli, tmuxName, env = process.env) {
   const command = (file, args) => execFileSync(file, args, { cwd: repo, encoding: 'utf8' }).trim();
+  const commit = command('git', ['rev-parse', 'HEAD']);
+  const distSha256 = distContentHash(join(repo, 'dist'));
+  const runId = env.ELOWEN_TMUX_RUN_ID?.trim();
+  assert.ok(runId, 'ELOWEN_TMUX_RUN_ID is required for reproducible tmux evidence');
   return {
     generatedAt: new Date().toISOString(),
-    commit: command('git', ['rev-parse', 'HEAD']),
+    commit,
     branch: command('git', ['branch', '--show-current']),
     node: process.version,
     tmux: command('tmux', ['-V']),
     tmuxServer: tmuxName,
     cli: resolve(cli),
+    runId,
+    distSha256,
+    buildIdentity: buildContentIdentity(commit, distSha256),
   };
 }
 
@@ -379,9 +421,15 @@ function nonEmptyString(value, label) {
 function metadataIdentity(value, label) {
   assert.ok(value && typeof value === 'object' && !Array.isArray(value), `${label} must be an object`);
   const identity = {};
-  for (const field of ['commit', 'branch', 'node', 'tmux', 'cli']) {
+  for (const field of [
+    'generatedAt', 'commit', 'branch', 'node', 'tmux', 'tmuxServer', 'cli', 'runId', 'distSha256', 'buildIdentity',
+  ]) {
     identity[field] = nonEmptyString(value[field], `${label}.${field}`);
   }
+  assert.ok(Number.isFinite(Date.parse(identity.generatedAt)), `${label}.generatedAt must be an ISO timestamp`);
+  assert.match(identity.distSha256, /^[a-f0-9]{64}$/u, `${label}.distSha256 must be a SHA-256 digest`);
+  assert.equal(identity.buildIdentity, buildContentIdentity(identity.commit, identity.distSha256),
+    `${label}.buildIdentity must bind the Git commit to the complete dist hash`);
   return identity;
 }
 
@@ -401,23 +449,49 @@ function performanceSummary(value, label) {
   return { ordinaryMs, forcedMs };
 }
 
-function captureEvidence(value, label) {
+function evidenceFile(value, label, scenarioDir) {
+  const input = nonEmptyString(value, label);
+  const path = isAbsolute(input) ? resolve(input) : resolve(scenarioDir, input);
+  const lexical = relative(scenarioDir, path);
+  assert.ok(lexical && !lexical.startsWith(`..${process.platform === 'win32' ? '\\' : '/'}`)
+    && lexical !== '..' && !isAbsolute(lexical), `${label} must be contained inside ${scenarioDir}`);
+  let size = 0;
+  let realPath = null;
+  try {
+    size = statSync(path).size;
+    realPath = realpathSync(path);
+  } catch { /* asserted below */ }
+  assert.ok(size > 0 && realPath, `${label} evidence must exist and be non-empty: ${path}`);
+  const realRoot = realpathSync(scenarioDir);
+  const realRelative = relative(realRoot, realPath);
+  assert.ok(realRelative && !realRelative.startsWith(`..${process.platform === 'win32' ? '\\' : '/'}`)
+    && realRelative !== '..' && !isAbsolute(realRelative), `${label} must not escape its scenario via symlink`);
+  return path;
+}
+
+function captureEvidence(value, label, scenarioDir) {
   assert.ok(Array.isArray(value) && value.length > 0, `${label} must contain capture evidence`);
   for (const [index, capture] of value.entries()) {
     nonEmptyString(capture?.label, `${label}[${index}].label`);
     for (const field of ['plain', 'ansi', 'state']) {
-      const path = nonEmptyString(capture?.[field], `${label}[${index}].${field}`);
-      let size = 0;
-      try { size = statSync(path).size; } catch { /* asserted below */ }
-      assert.ok(size > 0, `${label}[${index}].${field} capture evidence must exist and be non-empty: ${path}`);
+      evidenceFile(capture?.[field], `${label}[${index}].${field}`, scenarioDir);
     }
   }
   return value.length;
 }
 
 /** Aggregate consecutive deterministic rounds and fail closed unless every scenario and artifact agrees. */
-export function aggregateTmuxReports(root, { expectedRounds = 2 } = {}) {
+export function aggregateTmuxReports(root, {
+  expectedRounds = 2,
+  repo = process.cwd(),
+  expectedCommit = null,
+  expectedDistHash = null,
+} = {}) {
   const absolute = resolve(root);
+  const command = (file, args) => execFileSync(file, args, { cwd: repo, encoding: 'utf8' }).trim();
+  const requiredCommit = nonEmptyString(expectedCommit ?? command('git', ['rev-parse', 'HEAD']), 'expected commit');
+  const requiredDistHash = nonEmptyString(expectedDistHash ?? distContentHash(join(repo, 'dist')), 'expected dist hash');
+  assert.match(requiredDistHash, /^[a-f0-9]{64}$/u, 'expected dist hash must be a SHA-256 digest');
   const reports = reportPaths(absolute).map((path) => ({
     path,
     round: relative(absolute, path).split(/[\\/]/u)[0],
@@ -432,12 +506,30 @@ export function aggregateTmuxReports(root, { expectedRounds = 2 } = {}) {
     assert.deepEqual(scenarios, ['long', 'short', 'signals'],
       `${round}: short, long and signals reports are required exactly once`);
   }
-  const identities = [];
+  const stableIdentities = [];
+  const runIdsByRound = new Map(rounds.map((round) => [round, new Set()]));
+  const executionServers = [];
   const performance = [];
   let captures = 0;
+  const recordMetadata = (value, label, round, execution = false) => {
+    const identity = metadataIdentity(value, label);
+    assert.equal(identity.commit, requiredCommit, `${label}.commit must match expected HEAD ${requiredCommit}`);
+    assert.equal(identity.distSha256, requiredDistHash, `${label}.distSha256 must match the current dist build`);
+    assert.equal(identity.buildIdentity, buildContentIdentity(requiredCommit, requiredDistHash),
+      `${label}.buildIdentity must match the expected build`);
+    runIdsByRound.get(round).add(identity.runId);
+    if (execution) executionServers.push(identity.tmuxServer);
+    stableIdentities.push({
+      commit: identity.commit, branch: identity.branch, node: identity.node, tmux: identity.tmux,
+      cli: identity.cli, distSha256: identity.distSha256, buildIdentity: identity.buildIdentity,
+    });
+    return identity;
+  };
   for (const entry of reports) {
     assert.equal(entry.value.passed, true, `${entry.path}: scenario did not pass`);
-    identities.push(metadataIdentity(entry.value.metadata, `${entry.path}.metadata`));
+    assert.equal(entry.value.scenario, entry.scenario,
+      `${entry.path}: report scenario must match its ${entry.scenario} directory`);
+    recordMetadata(entry.value.metadata, `${entry.path}.metadata`, entry.round, entry.scenario !== 'signals');
     if (entry.scenario === 'signals') {
       assert.ok(Array.isArray(entry.value.cases), `${entry.path}.cases must be an array`);
       assert.deepEqual(entry.value.cases.map((item) => item.signal).sort(), ['SIGHUP', 'SIGTERM'],
@@ -447,24 +539,33 @@ export function aggregateTmuxReports(root, { expectedRounds = 2 } = {}) {
         assert.equal(signalCase.terminalStateRestored, true,
           `${entry.path}.cases[${index}] did not restore terminal state`);
         assert.equal(signalCase.shellReadable, true, `${entry.path}.cases[${index}] did not restore a readable shell`);
-        identities.push(metadataIdentity(signalCase.metadata, `${entry.path}.cases[${index}].metadata`));
+        recordMetadata(signalCase.metadata, `${entry.path}.cases[${index}].metadata`, entry.round, true);
         performance.push(performanceSummary(signalCase.performance, `${entry.path}.cases[${index}].performance`));
       }
     } else {
-      captures += captureEvidence(entry.value.captures, `${entry.path}.captures`);
+      captures += captureEvidence(entry.value.captures, `${entry.path}.captures`, dirname(entry.path));
       performance.push(performanceSummary(entry.value.performance, `${entry.path}.performance`));
     }
   }
-  const identityKeys = [...new Set(identities.map((identity) => JSON.stringify(identity)))];
+  const identityKeys = [...new Set(stableIdentities.map((identity) => JSON.stringify(identity)))];
   assert.equal(identityKeys.length, 1, 'all tmux reports must have one identical commit/build identity');
-  const commit = identities[0].commit;
+  const roundRunIds = rounds.map((round) => {
+    const ids = [...runIdsByRound.get(round)];
+    assert.equal(ids.length, 1, `${round}: every scenario must share exactly one ELOWEN_TMUX_RUN_ID`);
+    return ids[0];
+  });
+  assert.equal(new Set(roundRunIds).size, roundRunIds.length, 'every tmux round must use a unique run id');
+  assert.equal(new Set(executionServers).size, executionServers.length,
+    'every tmux scenario execution must use a unique tmux server');
   return {
     passed: true,
     root: absolute,
     rounds: rounds.length,
     scenarios: reports.length,
     captures,
-    commits: [commit],
+    commits: [requiredCommit],
+    distSha256: requiredDistHash,
+    runIds: roundRunIds,
     ordinaryMs: {
       p95: Math.max(0, ...performance.map((entry) => entry.ordinaryMs.p95)),
       max: Math.max(0, ...performance.map((entry) => entry.ordinaryMs.max)),

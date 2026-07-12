@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -11,6 +11,7 @@ import {
   captureState,
   createArtifactDir,
   decodeLastOsc52,
+  distContentHash,
   historyOffset,
   readFrames,
   readJsonLines,
@@ -153,6 +154,23 @@ test('artifact root is stable and scenario-scoped', () => {
   assert.equal(resolveArtifactDir('/tmp/elowen-e2e', 'short'), '/tmp/elowen-e2e/short');
 });
 
+test('dist content hash covers sorted relative paths and every file byte', () => {
+  const root = mkdtempSync(join(tmpdir(), 'elowen-tmux-dist-hash-'));
+  try {
+    mkdirSync(join(root, 'nested'));
+    writeFileSync(join(root, 'entry.js'), 'one\n');
+    writeFileSync(join(root, 'nested', 'worker.js'), 'two\n');
+    const first = distContentHash(root);
+    assert.match(first, /^[a-f0-9]{64}$/u);
+    assert.equal(distContentHash(root), first);
+
+    writeFileSync(join(root, 'nested', 'worker.js'), 'changed\n');
+    assert.notEqual(distContentHash(root), first);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('strict JSONL reads reject malformed complete and truncated final records', () => {
   const root = mkdtempSync(join(tmpdir(), 'elowen-tmux-jsonl-strict-'));
   const path = join(root, 'perf.jsonl');
@@ -265,11 +283,23 @@ test('capture gives up after six unstable completed frame sequences', () => {
   }
 });
 
-const metadata = (commit = 'abc') => ({
-  commit, branch: 'refactor/test', node: 'v22.23.1', tmux: 'tmux 3.4', cli: '/x/dist/cli/bin.js',
+const DIST_HASH = 'a'.repeat(64);
+const OTHER_DIST_HASH = 'b'.repeat(64);
+const buildIdentity = (commit, distSha256) => `git:${commit}:dist-sha256:${distSha256}`;
+const metadata = (commit = 'abc', {
+  runId = 'run-1', tmuxServer = 'tmux-1-short', distSha256 = DIST_HASH,
+} = {}) => ({
+  generatedAt: '2026-07-12T00:00:00.000Z',
+  commit, branch: 'refactor/test', node: 'v22.23.1', tmux: 'tmux 3.4',
+  tmuxServer, cli: '/x/dist/cli/bin.js', runId, distSha256,
+  buildIdentity: buildIdentity(commit, distSha256),
 });
 
-function writeRound(root, round, { omitSignals = false, mixedCommit = false, ordinaryMax = 37, nullTiming = false } = {}) {
+function writeRound(root, round, {
+  omitSignals = false, mixedCommit = false, mixedDistHash = false, mixedRunId = false,
+  duplicateServer = false, wrongScenario = false, runId = `run-${round}`,
+  ordinaryMax = 37, nullTiming = false,
+} = {}) {
   for (const scenario of ['short', 'long']) {
     const dir = join(root, `round-${round}`, scenario);
     mkdirSync(dir, { recursive: true });
@@ -279,9 +309,14 @@ function writeRound(root, round, { omitSignals = false, mixedCommit = false, ord
       paths[kind] = path;
       return paths;
     }, {});
+    const commit = mixedCommit && scenario === 'long' ? 'def' : 'abc';
+    const distSha256 = mixedDistHash && scenario === 'long' ? OTHER_DIST_HASH : DIST_HASH;
+    const scenarioRunId = mixedRunId && scenario === 'long' ? `${runId}-other` : runId;
+    const tmuxServer = duplicateServer ? `tmux-${round}-shared` : `tmux-${round}-${scenario}`;
     writeFileSync(join(dir, 'report.json'), JSON.stringify({
-      passed: true, scenario, captures: [{ label: 'capture', ...captures }],
-      metadata: metadata(mixedCommit && scenario === 'long' ? 'def' : 'abc'),
+      passed: true, scenario: wrongScenario && scenario === 'long' ? 'short' : scenario,
+      captures: [{ label: 'capture', ...captures }],
+      metadata: metadata(commit, { runId: scenarioRunId, tmuxServer, distSha256 }),
       performance: {
         ordinaryMs: { p95: nullTiming ? null : ordinaryMax - 1, max: ordinaryMax },
         forcedMs: { p95: 50, max: 60 },
@@ -292,19 +327,28 @@ function writeRound(root, round, { omitSignals = false, mixedCommit = false, ord
     const dir = join(root, `round-${round}`, 'signals');
     mkdirSync(dir, { recursive: true });
     const cases = ['SIGTERM', 'SIGHUP'].map((signal) => ({
-      passed: true, signal, metadata: metadata(), terminalStateRestored: true, shellReadable: true,
+      passed: true, signal,
+      metadata: metadata('abc', { runId, tmuxServer: `tmux-${round}-${signal.toLowerCase()}` }),
+      terminalStateRestored: true, shellReadable: true,
       performance: { ordinaryMs: { p95: 0, max: 0 }, forcedMs: { p95: 10, max: 10 } },
     }));
-    writeFileSync(join(dir, 'report.json'), JSON.stringify({ passed: true, metadata: metadata(), cases }));
+    writeFileSync(join(dir, 'report.json'), JSON.stringify({
+      passed: true, scenario: 'signals',
+      metadata: metadata('abc', { runId, tmuxServer: `tmux-${round}-sigterm` }), cases,
+    }));
   }
 }
+
+const aggregateOptions = (expectedRounds = 1, overrides = {}) => ({
+  expectedRounds, expectedCommit: 'abc', expectedDistHash: DIST_HASH, ...overrides,
+});
 
 test('aggregate analyzer requires two complete short+long+signals rounds with one build identity', () => {
   const root = mkdtempSync(join(tmpdir(), 'elowen-tmux-analyzer-'));
   try {
     writeRound(root, 1, { ordinaryMax: 31 });
     writeRound(root, 2, { ordinaryMax: 37 });
-    const summary = aggregateTmuxReports(root, { expectedRounds: 2 });
+    const summary = aggregateTmuxReports(root, aggregateOptions(2));
     assert.equal(summary.rounds, 2);
     assert.equal(summary.scenarios, 6);
     assert.equal(summary.captures, 4);
@@ -326,7 +370,7 @@ test('aggregate analyzer rejects absent signals, mixed builds, over-budget frame
     const root = mkdtempSync(join(tmpdir(), 'elowen-tmux-analyzer-negative-'));
     try {
       writeRound(root, 1, options);
-      assert.throws(() => aggregateTmuxReports(root, { expectedRounds: 1 }), pattern);
+      assert.throws(() => aggregateTmuxReports(root, aggregateOptions()), pattern);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -342,13 +386,85 @@ test('aggregate analyzer rejects missing or empty capture evidence', () => {
     const realPlain = report.captures[0].plain;
     report.captures[0].plain = join(root, 'does-not-exist.txt');
     writeFileSync(reportPath, JSON.stringify(report));
-    assert.throws(() => aggregateTmuxReports(root, { expectedRounds: 1 }), /capture|exist|evidence/iu);
+    assert.throws(() => aggregateTmuxReports(root, aggregateOptions()), /capture|exist|evidence/iu);
 
     report.captures[0].plain = realPlain;
     writeFileSync(report.captures[0].state, '');
     writeFileSync(reportPath, JSON.stringify(report));
-    assert.throws(() => aggregateTmuxReports(root, { expectedRounds: 1 }), /capture|non-empty|evidence/iu);
+    assert.throws(() => aggregateTmuxReports(root, aggregateOptions()), /capture|non-empty|evidence/iu);
   } finally {
     rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('aggregate analyzer binds every report to the expected HEAD and complete dist hash', () => {
+  const cases = [
+    [{}, aggregateOptions(1, { expectedCommit: 'expected-head' }), /commit|HEAD|expected/iu],
+    [{}, aggregateOptions(1, { expectedDistHash: OTHER_DIST_HASH }), /dist|hash|build/iu],
+    [{ mixedDistHash: true }, aggregateOptions(), /dist|hash|build|identity/iu],
+  ];
+  for (const [roundOptions, options, pattern] of cases) {
+    const root = mkdtempSync(join(tmpdir(), 'elowen-tmux-analyzer-build-'));
+    try {
+      writeRound(root, 1, roundOptions);
+      assert.throws(() => aggregateTmuxReports(root, options), pattern);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  }
+});
+
+test('aggregate analyzer requires one run id per round, unique rounds, unique tmux servers and matching scenario', () => {
+  const oneRoundCases = [
+    [{ mixedRunId: true }, /run.?id|round/iu],
+    [{ duplicateServer: true }, /tmux|server|unique/iu],
+    [{ wrongScenario: true }, /scenario|long|short/iu],
+  ];
+  for (const [roundOptions, pattern] of oneRoundCases) {
+    const root = mkdtempSync(join(tmpdir(), 'elowen-tmux-analyzer-run-'));
+    try {
+      writeRound(root, 1, roundOptions);
+      assert.throws(() => aggregateTmuxReports(root, aggregateOptions()), pattern);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  }
+
+  const root = mkdtempSync(join(tmpdir(), 'elowen-tmux-analyzer-duplicate-run-'));
+  try {
+    writeRound(root, 1, { runId: 'same-run' });
+    writeRound(root, 2, { runId: 'same-run' });
+    assert.throws(() => aggregateTmuxReports(root, aggregateOptions(2)), /run.?id|unique|round/iu);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('aggregate analyzer rejects copied stale rounds and capture paths outside their scenario', () => {
+  const copied = mkdtempSync(join(tmpdir(), 'elowen-tmux-analyzer-copied-'));
+  try {
+    writeRound(copied, 1);
+    writeRound(copied, 2);
+    for (const scenario of ['short', 'long', 'signals']) {
+      copyFileSync(join(copied, 'round-1', scenario, 'report.json'),
+        join(copied, 'round-2', scenario, 'report.json'));
+    }
+    assert.throws(() => aggregateTmuxReports(copied, aggregateOptions(2)), /contain|scenario|run.?id|round/iu);
+  } finally {
+    rmSync(copied, { recursive: true, force: true });
+  }
+
+  const outside = mkdtempSync(join(tmpdir(), 'elowen-tmux-analyzer-outside-'));
+  try {
+    writeRound(outside, 1);
+    const outsideCapture = join(outside, 'outside.txt');
+    writeFileSync(outsideCapture, 'stale capture\n');
+    const reportPath = join(outside, 'round-1', 'short', 'report.json');
+    const report = JSON.parse(readFileSync(reportPath, 'utf8'));
+    report.captures[0].plain = outsideCapture;
+    writeFileSync(reportPath, JSON.stringify(report));
+    assert.throws(() => aggregateTmuxReports(outside, aggregateOptions()), /contain|scenario|capture/iu);
+  } finally {
+    rmSync(outside, { recursive: true, force: true });
   }
 });

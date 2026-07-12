@@ -268,7 +268,8 @@ try {
   const scrollFrames = frames.filter((frame) => frame.reasons?.some((reason) => reason.includes('scroll')));
   const report = {
     passed: true,
-    scenario: 'short-controls-reopen',
+    scenario: 'short',
+    case: 'short-controls-reopen',
     metadata: collectMetadata(repo, cli, tmuxServer.name),
     captures: activeCaptures.map((captureEntry) => ({ label: captureEntry.label, ...captureEntry.paths })),
     frames: frames.length,

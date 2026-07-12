@@ -137,7 +137,9 @@ async function runSignal(signal) {
 try {
   const reports = [];
   for (const signal of ['SIGTERM', 'SIGHUP']) reports.push(await runSignal(signal));
-  writeReport(join(root, 'report.json'), { passed: true, metadata: reports[0].metadata, cases: reports });
+  writeReport(join(root, 'report.json'), {
+    passed: true, scenario: 'signals', metadata: reports[0].metadata, cases: reports,
+  });
   console.log(`PASS test:cli-tmux-signals — SIGTERM and SIGHUP restored tty, mouse, alt screen and shell. Report: ${join(root, 'report.json')}`);
 } catch (error) {
   process.stderr.write(`FAIL test:cli-tmux-signals — ${error.stack ?? error}\n`);

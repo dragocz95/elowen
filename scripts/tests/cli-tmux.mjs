@@ -643,7 +643,8 @@ try {
   assert.ok(perfFrames.every((frame) => frame.at <= lifecycleStop.at), 'no frame may render after terminal stop');
   const report = {
     passed: true,
-    scenario: 'long-history-complete',
+    scenario: 'long',
+    case: 'long-history-complete',
     metadata: collectMetadata(repo, cli, tmuxServer.name),
     session,
     captures: activeCaptures.map((captureEntry) => ({ label: captureEntry.label, ...captureEntry.paths })),
