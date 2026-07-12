@@ -40,6 +40,11 @@ html[data-effects='full'] .card-interactive:hover { transform: translateY(-1px);
 }
 .interactive-row:hover { background: rgb(255 255 255 / 0.025); }
 
+/* One overlay stack shared by drawers, dialogs and their portalled menus. */
+.overlay-layer-drawer { z-index: 90; }
+.overlay-layer-modal { z-index: 100; }
+.overlay-layer-menu { z-index: 120; }
+
 /* Shared responsive data-register grammar. Individual tables only define their column templates. */
 .data-table-grid {
   display: grid;
@@ -227,7 +232,7 @@ html[data-effects='full'] .spatial-section-node--active .spatial-section-node__i
 @media (prefers-reduced-motion: reduce) { .spatial-scroll-cue svg { animation: none; } }
 .workspace-master-detail { display: grid; grid-template-columns: minmax(0, 1fr); align-items: start; gap: 1rem; }
 .workspace-master-detail[data-detail='true'] { grid-template-columns: minmax(0, 1fr); }
-.workspace-detail-layer { position: fixed; inset: 0; z-index: 90; }
+.workspace-detail-layer { position: fixed; inset: 0; }
 .workspace-detail-backdrop { position: absolute; inset: 0; background: rgb(0 0 0 / 0.58); animation: workspace-backdrop-in var(--motion-normal) var(--ease-out) both; }
 .workspace-detail-rail { position: absolute; inset: 0 0 0 auto; width: min(30rem, calc(100vw - 3rem)); max-height: none; overflow: hidden; border-block: 0; border-right: 0; border-left: var(--hairline); border-radius: var(--radius-lg) 0 0 var(--radius-lg); background: var(--color-document); box-shadow: -2rem 0 5rem rgb(0 0 0 / 0.72); }
 .workspace-detail-drawer { animation: workspace-drawer-in var(--motion-slow) var(--ease-out) both; }

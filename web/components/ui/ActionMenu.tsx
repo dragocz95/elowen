@@ -4,6 +4,7 @@ import { createPortal } from 'react-dom';
 import { Trash2, type LucideIcon } from 'lucide-react';
 import { useTranslation } from '../../lib/i18n';
 import { uiZoom } from '../../lib/uiZoom';
+import { MenuSurface } from './MenuSurface';
 
 export interface ActionMenuItem {
   label: string;
@@ -27,6 +28,7 @@ export function ActionMenu({ items, label, trigger, triggerClassName, align = 'r
   align?: 'left' | 'right';
 }) {
   const [open, setOpen] = useState(false);
+  const [focusOnOpen, setFocusOnOpen] = useState<'first' | 'last' | false>(false);
   const ref = useRef<HTMLDivElement>(null);
   const btnRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -56,7 +58,12 @@ export function ActionMenu({ items, label, trigger, triggerClassName, align = 'r
 
   const cancelClose = () => { if (closeTimer.current) { clearTimeout(closeTimer.current); closeTimer.current = null; } };
   const scheduleClose = () => { cancelClose(); closeTimer.current = setTimeout(() => setOpen(false), 160); };
-  const openMenu = () => { cancelClose(); place(); setOpen(true); };
+  const openMenu = (focus: 'first' | 'last' | false = false) => { cancelClose(); place(); setFocusOnOpen(focus); setOpen(true); };
+  const closeMenu = (restoreFocus = false) => {
+    setOpen(false);
+    setFocusOnOpen(false);
+    if (restoreFocus) btnRef.current?.focus({ preventScroll: true });
+  };
 
   useEffect(() => {
     if (!open) return;
@@ -65,7 +72,7 @@ export function ActionMenu({ items, label, trigger, triggerClassName, align = 'r
       if (menuRef.current?.contains(e.target as Node)) return;
       setOpen(false);
     };
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape' && !e.defaultPrevented) closeMenu(true); };
     const reposition = () => place();
     document.addEventListener('mousedown', onDown);
     document.addEventListener('keydown', onKey);
@@ -85,7 +92,7 @@ export function ActionMenu({ items, label, trigger, triggerClassName, align = 'r
     <div
       ref={ref}
       className="relative"
-      onMouseEnter={openMenu}
+      onMouseEnter={() => openMenu(false)}
       onMouseLeave={scheduleClose}
     >
       <button
@@ -95,19 +102,26 @@ export function ActionMenu({ items, label, trigger, triggerClassName, align = 'r
         aria-haspopup="menu"
         aria-expanded={open}
         title={resolvedLabel}
-        onClick={() => (open ? setOpen(false) : openMenu())}
+        onClick={() => (open ? closeMenu() : openMenu('first'))}
+        onKeyDown={(event) => {
+          if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+            event.preventDefault();
+            openMenu(event.key === 'ArrowUp' ? 'last' : 'first');
+          }
+        }}
         className={triggerClassName ?? 'inline-flex h-8 w-8 items-center justify-center rounded-md bg-danger text-bg transition-colors hover:bg-danger/85'}
         style={{ transitionDuration: 'var(--motion-fast)' }}
       >
         {trigger ?? <Trash2 size={15} aria-hidden />}
       </button>
       {mounted && open && pos && createPortal(
-        <div
+        <MenuSurface
           ref={menuRef}
-          role="menu"
+          autoFocus={focusOnOpen}
+          onDismiss={(reason) => closeMenu(reason === 'escape')}
           onMouseEnter={cancelClose}
           onMouseLeave={scheduleClose}
-          className="fixed z-[61] min-w-[12rem] overflow-hidden rounded-lg border border-border bg-surface py-1.5"
+          className="overlay-layer-menu fixed min-w-[12rem] overflow-hidden rounded-lg border border-border bg-surface py-1.5"
           style={{ top: pos.top, left: pos.left, right: pos.right, boxShadow: 'var(--shadow-raised)' }}
         >
           {items.map((it) => {
@@ -118,7 +132,7 @@ export function ActionMenu({ items, label, trigger, triggerClassName, align = 'r
                 key={it.label}
                 type="button"
                 role="menuitem"
-                onClick={() => { setOpen(false); it.onSelect(); }}
+                onClick={() => { closeMenu(true); it.onSelect(); }}
                 className={`flex w-full items-center gap-2.5 px-3.5 py-2.5 text-left text-sm transition-colors ${danger ? 'text-danger hover:bg-danger hover:text-bg' : 'text-text hover:bg-elevated'}`}
                 style={{ transitionDuration: 'var(--motion-fast)' }}
               >
@@ -127,7 +141,7 @@ export function ActionMenu({ items, label, trigger, triggerClassName, align = 'r
               </button>
             );
           })}
-        </div>,
+        </MenuSurface>,
         document.body,
       )}
     </div>

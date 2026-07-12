@@ -3,6 +3,7 @@ import { type ReactNode, useEffect, useId, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { LucideIcon } from 'lucide-react';
 import { useTranslation } from '../../lib/i18n';
+import { useDialogOverlay } from './overlayStack';
 
 interface ModalProps {
   title: string;
@@ -22,134 +23,31 @@ const SIZES = {
   sm: 'max-h-[80vh] w-full max-w-md',
 };
 
-const FOCUSABLE_SELECTOR = [
-  'a[href]',
-  'area[href]',
-  'button',
-  'input:not([type="hidden"])',
-  'select',
-  'textarea',
-  'iframe',
-  'object',
-  'embed',
-  'audio[controls]',
-  'video[controls]',
-  'summary',
-  '[contenteditable]:not([contenteditable="false"])',
-  '[tabindex]',
-].join(',');
-
-function isTabbable(element: HTMLElement) {
-  if (element.tabIndex < 0 || element.closest('[hidden], [inert], [aria-hidden="true"]')) return false;
-  if ('disabled' in element && element.disabled) return false;
-  const style = window.getComputedStyle(element);
-  return style.display !== 'none' && style.visibility !== 'hidden';
-}
-
-function tabbableElements(dialog: HTMLElement) {
-  return Array.from(dialog.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR))
-    .filter(isTabbable)
-    .map((element, domIndex) => ({ element, domIndex }))
-    .sort((a, b) => {
-      const aIndex = a.element.tabIndex;
-      const bIndex = b.element.tabIndex;
-      if (aIndex > 0 && bIndex <= 0) return -1;
-      if (bIndex > 0 && aIndex <= 0) return 1;
-      if (aIndex > 0 && bIndex > 0 && aIndex !== bIndex) return aIndex - bIndex;
-      return a.domIndex - b.domIndex;
-    })
-    .map(({ element }) => element);
-}
-
-function topmostModal() {
-  const modals = document.querySelectorAll<HTMLElement>('[data-elowen-modal]');
-  return modals.item(modals.length - 1);
-}
-
 export function Modal({ title, onClose, children, size = 'lg', icon: Icon, description }: ModalProps) {
   const { t } = useTranslation();
   const titleId = useId();
   const descriptionId = useId();
   const dialogRef = useRef<HTMLDivElement>(null);
-  const returnFocusRef = useRef<HTMLElement | null>(null);
+  const overlayRef = useRef<HTMLDivElement>(null);
   // Portal to <body> so the fixed overlay is positioned against the viewport, not trapped inside a
   // transformed/clipping ancestor (a card with a transform turns `position: fixed` into "fixed to the
   // card" → the modal renders inside the card and flickers with the card's hover state). Mounted-gated
   // because createPortal needs `document`, which isn't there during SSR.
   const [mounted, setMounted] = useState(false);
-  useEffect(() => {
-    const activeElement = document.activeElement;
-    returnFocusRef.current = activeElement instanceof HTMLElement && activeElement !== document.body
-      ? activeElement
-      : null;
-    setMounted(true);
-
-    return () => {
-      const returnTarget = returnFocusRef.current;
-      if (returnTarget?.isConnected) returnTarget.focus({ preventScroll: true });
-    };
-  }, []);
-
-  useEffect(() => {
-    if (!mounted) return;
-    const dialog = dialogRef.current;
-    if (!dialog || dialog.contains(document.activeElement)) return;
-
-    const requestedFocus = dialog.querySelector<HTMLElement>('[data-autofocus], [autofocus]');
-    if (requestedFocus && isTabbable(requestedFocus)) {
-      requestedFocus.focus({ preventScroll: true });
-      return;
-    }
-    dialog.focus({ preventScroll: true });
-  }, [mounted]);
-
-  useEffect(() => {
-    if (!mounted) return;
-
-    const handler = (e: KeyboardEvent) => {
-      const dialog = dialogRef.current;
-      if (!dialog || topmostModal() !== dialog) return;
-
-      if (e.key === 'Escape') {
-        e.preventDefault();
-        onClose();
-        return;
-      }
-      if (e.key !== 'Tab') return;
-
-      const tabbables = tabbableElements(dialog);
-      if (tabbables.length === 0) {
-        e.preventDefault();
-        dialog.focus({ preventScroll: true });
-        return;
-      }
-
-      const first = tabbables[0];
-      const last = tabbables[tabbables.length - 1];
-      const activeElement = document.activeElement;
-
-      if (e.shiftKey && (activeElement === first || !dialog.contains(activeElement))) {
-        e.preventDefault();
-        last.focus({ preventScroll: true });
-      } else if (!e.shiftKey && (activeElement === last || !dialog.contains(activeElement) || activeElement === dialog)) {
-        e.preventDefault();
-        first.focus({ preventScroll: true });
-      }
-    };
-    window.addEventListener('keydown', handler);
-    return () => window.removeEventListener('keydown', handler);
-  }, [mounted, onClose]);
+  useEffect(() => setMounted(true), []);
+  useDialogOverlay({ enabled: mounted, rootRef: overlayRef, dialogRef, onClose });
 
   if (!mounted) return null;
   return createPortal(
     <div
-      className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 p-4"
+      ref={overlayRef}
+      className="overlay-layer-modal fixed inset-0 flex items-center justify-center bg-black/70 p-4"
       onClick={(event) => {
         if (event.target !== event.currentTarget) return;
         // Portal events still bubble through their React tree. Stop at this backdrop so clicking a
         // nested modal's backdrop cannot also reach and close its parent modal.
         event.stopPropagation();
-        if (topmostModal() === dialogRef.current) onClose();
+        onClose();
       }}
     >
       <div

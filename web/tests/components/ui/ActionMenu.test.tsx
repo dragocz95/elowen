@@ -21,4 +21,29 @@ describe('ActionMenu', () => {
 
     expect(screen.getByRole('menu')).toHaveStyle({ right: '160px' });
   });
+
+  it('supports the menu-button keyboard pattern and restores trigger focus', () => {
+    const onOpen = vi.fn();
+    render(
+      <LanguageProvider>
+        <ActionMenu label="Row actions" items={[
+          { label: 'Open', onSelect: onOpen },
+          { label: 'Edit', onSelect: vi.fn() },
+          { label: 'Delete', onSelect: vi.fn(), tone: 'danger' },
+        ]} />
+      </LanguageProvider>,
+    );
+    const trigger = screen.getByRole('button', { name: 'Row actions' });
+    trigger.focus();
+
+    fireEvent.keyDown(trigger, { key: 'ArrowDown' });
+    expect(screen.getByRole('menuitem', { name: 'Open' })).toHaveFocus();
+    fireEvent.keyDown(screen.getByRole('menu'), { key: 'End' });
+    expect(screen.getByRole('menuitem', { name: 'Delete' })).toHaveFocus();
+    fireEvent.keyDown(screen.getByRole('menu'), { key: 'ArrowDown' });
+    expect(screen.getByRole('menuitem', { name: 'Open' })).toHaveFocus();
+    fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' });
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+    expect(trigger).toHaveFocus();
+  });
 });

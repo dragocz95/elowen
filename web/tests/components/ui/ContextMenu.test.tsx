@@ -56,4 +56,16 @@ describe('ContextMenu', () => {
     fireEvent.keyDown(window, { key: 'Escape' });
     expect(onClose).toHaveBeenCalledOnce();
   });
+
+  it('renders in the shared menu layer and supports arrow navigation', () => {
+    render(<ContextMenu state={state([
+      { label: 'Edit', onClick: () => {} },
+      { label: 'Delete', onClick: () => {}, danger: true },
+    ])} onClose={() => {}} />);
+    const menu = screen.getByRole('menu');
+    expect(menu).toHaveClass('overlay-layer-menu');
+    expect(screen.getByRole('menuitem', { name: 'Edit' })).toHaveFocus();
+    fireEvent.keyDown(menu, { key: 'ArrowDown' });
+    expect(screen.getByRole('menuitem', { name: 'Delete' })).toHaveFocus();
+  });
 });

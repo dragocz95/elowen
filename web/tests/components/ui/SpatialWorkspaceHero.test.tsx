@@ -84,4 +84,22 @@ describe('SpatialWorkspaceHero', () => {
     fireEvent.mouseDown(screen.getByTestId('workspace-detail-backdrop'));
     expect(onClose).toHaveBeenCalledTimes(1);
   });
+
+  it('moves focus into the drawer, isolates the app root and restores focus on unmount', () => {
+    const opener = document.createElement('button');
+    opener.textContent = 'Open detail';
+    document.body.append(opener);
+    opener.focus();
+    const { container, unmount } = render(
+      <WorkspaceDetailRail label="Task detail" closeLabel="Close" onClose={() => {}}>
+        <button type="button">Drawer action</button>
+      </WorkspaceDetailRail>,
+    );
+
+    expect(screen.getByRole('dialog', { name: 'Task detail' })).toHaveFocus();
+    expect(container).toHaveAttribute('inert');
+    unmount();
+    expect(opener).toHaveFocus();
+    opener.remove();
+  });
 });

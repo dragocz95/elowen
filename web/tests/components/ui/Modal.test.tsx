@@ -57,7 +57,7 @@ describe('Modal', () => {
     }
     render(<Harness />, { wrapper: W });
     const modal = screen.getByRole('dialog', { name: 'Manage tools' });
-    expect(modal.parentElement).toHaveClass('z-[100]');
+    expect(modal.parentElement).toHaveClass('overlay-layer-modal');
 
     fireEvent.keyDown(modal, { key: 'Escape' });
 

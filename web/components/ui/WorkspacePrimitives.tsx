@@ -5,6 +5,7 @@ import { createPortal } from 'react-dom';
 import type { LucideIcon } from 'lucide-react';
 import { SpatialMascot, type SpatialMascotState } from './SpatialMascot';
 import { SpatialSectionRail, type SpatialDeckSection } from './SpatialControlDeck';
+import { useDialogOverlay } from './overlayStack';
 
 export function WorkspacePage({ children, className = '' }: { children: ReactNode; className?: string }) {
   return <div className={`workspace-page ${className}`}>{children}</div>;
@@ -109,40 +110,14 @@ export function WorkspaceMetric({ label, value, icon: Icon }: { label: string; v
 
 export function WorkspaceDetailRail({ label, closeLabel, onClose, children }: { label: string; closeLabel: string; onClose: () => void; children: ReactNode }) {
   const drawer = useRef<HTMLElement>(null);
-  const onCloseRef = useRef(onClose);
-  onCloseRef.current = onClose;
+  const layer = useRef<HTMLDivElement>(null);
   const [portal, setPortal] = useState<HTMLElement | null>(null);
 
-  useEffect(() => {
-    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    const priorOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    setPortal(document.body);
-    const keydown = (event: KeyboardEvent) => {
-      // A picker/modal can be opened from inside this drawer. That newer modal owns Escape and the
-      // focus trap until it closes; letting the drawer react too would close both layers or pull
-      // keyboard focus back behind the modal.
-      if (document.querySelector('[data-elowen-modal]')) return;
-      if (event.key === 'Escape') { event.preventDefault(); onCloseRef.current(); return; }
-      if (event.key !== 'Tab' || !drawer.current) return;
-      const focusable = [...drawer.current.querySelectorAll<HTMLElement>('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])')].filter((node) => !node.hasAttribute('disabled'));
-      if (focusable.length === 0) { event.preventDefault(); drawer.current.focus(); return; }
-      const first = focusable[0]!;
-      const last = focusable[focusable.length - 1]!;
-      if (!drawer.current.contains(document.activeElement)) { event.preventDefault(); (event.shiftKey ? last : first).focus(); }
-      else if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
-      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
-    };
-    document.addEventListener('keydown', keydown);
-    return () => {
-      document.removeEventListener('keydown', keydown);
-      document.body.style.overflow = priorOverflow;
-      previous?.focus();
-    };
-  }, []);
+  useEffect(() => setPortal(document.body), []);
+  useDialogOverlay({ enabled: portal != null, rootRef: layer, dialogRef: drawer, onClose });
 
   const content = (
-    <div className="workspace-detail-layer">
+    <div ref={layer} className="overlay-layer-drawer workspace-detail-layer">
       <div data-testid="workspace-detail-backdrop" className="workspace-detail-backdrop" aria-hidden onMouseDown={onClose} />
       <aside ref={drawer} role="dialog" aria-modal="true" tabIndex={-1} className="workspace-detail-rail workspace-detail-drawer" aria-label={label}>
       <header className="workspace-detail-rail__header">

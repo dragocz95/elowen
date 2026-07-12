@@ -3,6 +3,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { ChevronRight, type LucideIcon } from 'lucide-react';
 import { uiZoom } from '../../lib/uiZoom';
+import { MenuSurface } from './MenuSurface';
 
 /** A clickable action row. */
 interface MenuAction { label: string; icon?: LucideIcon; onClick: () => void; danger?: boolean; disabled?: boolean }
@@ -39,7 +40,7 @@ export function ContextMenu({ state, onClose }: { state: ContextMenuState; onClo
 
   useEffect(() => {
     const close = () => onClose();
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape' && !e.defaultPrevented) onClose(); };
     // Defer the outside-click listener a tick so the opening right-click doesn't instantly close it.
     const id = window.setTimeout(() => window.addEventListener('mousedown', close), 0);
     window.addEventListener('keydown', onKey);
@@ -48,15 +49,15 @@ export function ContextMenu({ state, onClose }: { state: ContextMenuState; onClo
   }, [onClose]);
 
   return createPortal(
-    <div
+    <MenuSurface
       ref={ref}
-      role="menu"
+      onDismiss={() => onClose()}
       onMouseDown={(e) => e.stopPropagation()}
-      className="fixed z-50 min-w-44 rounded-lg border border-border bg-elevated py-1 text-xs text-text"
+      className="overlay-layer-menu fixed min-w-44 rounded-lg border border-border bg-elevated py-1 text-xs text-text"
       style={{ left: pos.x, top: pos.y, boxShadow: 'var(--shadow-card)' }}
     >
       {state.items.map((item, i) => <MenuRow key={i} entry={item} index={i} onClose={onClose} />)}
-    </div>,
+    </MenuSurface>,
     document.body,
   );
 }
