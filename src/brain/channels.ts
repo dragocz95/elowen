@@ -220,7 +220,7 @@ export class ChannelSessionService {
       // Owner steering a delegated SUB-AGENT (BrainService.sendToSubagent sets ownerSteer): inject the
       // guidance mid-run — the owner owns the child, so redirecting it immediately is the point. Now the
       // SAME primitive as the Discord same-sender path below.
-      if (opts.ownerSteer) {
+      if (opts.ownerSteer && !opts.internalSystem) {
         // This path intentionally does not take the channel lock (it must steer the current PI turn), so
         // fence it on both sides of the await. If stop clears PI's queue while steer() is pending, the
         // second check clears it again before rejecting; no late instruction survives the aborted tree.
@@ -378,9 +378,11 @@ export class ChannelSessionService {
           this.d.registry.setChildRunning(ch.sessionId, u.sessionId, u.status === 'running');
           ch.replay.publish({ type: 'subagent', ...u });
         };
-        const emitSubagentCompletion = (completion: SubagentCompletion) => {
-          this.d.completeSubagent?.(ch.sessionId, opts.ownerUserId, completion);
-        };
+        const emitSubagentCompletion = parentSessionId && this.d.completeSubagent
+          ? (completion: SubagentCompletion) => { this.d.completeSubagent!(ch.sessionId, opts.ownerUserId, completion); }
+          : undefined;
+        const assistantBefore = [...(ch.session.messages as { role?: string }[])].reverse()
+          .find((message) => message.role === 'assistant');
         try {
           applyToolVisibility(ch.session, ch.pluginToolNames, effectiveToolPolicy);
           // Granular permissions without an approval channel: ordinary platform turns read the verified
@@ -435,6 +437,9 @@ export class ChannelSessionService {
         const msgs = ch.session.messages as { role?: string; stopReason?: string; errorMessage?: string }[];
         const last = [...msgs].reverse().find((m) => m.role === 'assistant');
         const assistantText = last ? extractText(last) : '';
+        if (opts.internalSystem && (!last || last === assistantBefore || last.stopReason === 'error' || last.stopReason === 'aborted')) {
+          throw new Error(last?.errorMessage?.trim() || 'sub-agent result was not processed by the delegated parent');
+        }
         if (last?.stopReason === 'error' && !assistantText.trim()) {
           throw new Error(last.errorMessage?.trim() || 'the model returned no reply (provider error)');
         }

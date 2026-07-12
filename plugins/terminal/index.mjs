@@ -136,8 +136,9 @@ export function register(ctx) {
   // Mirror each background child into the daemon-level registry so the CLI + web can list/read/kill them
   // from a panel next to the todos (ctx.processes is the shared ProcessRegistry). The plugin still owns
   // the BgProcess (spawn/output/kill); the registry gets a thin handle.
-  const handleFor = (id, bg, userId, sessionId) => ({
+  const handleFor = (id, bg, userId, sessionId, completionMode) => ({
     id, command: bg.command, cwd: bg.cwd, startedAt: bg.startedAt, userId, sessionId,
+    completionMode,
     running: () => bg.running, exitCode: () => bg.exitCode,
     readAll: () => bg.output, kill: () => bg.kill(),
   });
@@ -178,6 +179,9 @@ export function register(ctx) {
       command: Type.String({ description: 'The shell command to run' }),
       cwd: Type.Optional(Type.String({ description: 'Working directory (must be within your repositories)' })),
       background: Type.Optional(Type.Boolean({ description: 'Run detached and return a process id' })),
+      backgroundMode: Type.Optional(Type.Union([Type.Literal('job'), Type.Literal('service')], {
+        description: 'job (default) keeps a delegated agent active until the finite command is collected; service is for long-lived servers/watchers.',
+      })),
     }),
     execute: async (_id, p, _signal, onUpdate) => {
       const denied = denyNonOwner();
@@ -205,7 +209,7 @@ export function register(ctx) {
         const bg = new BgProcess(id, p.command, cwd, outputCap, () => { emitProcCard(sessionId); ctx.processes.markExited(id); });
         bg.sessionId = sessionId;
         processes.set(id, bg);
-        ctx.processes.register(handleFor(id, bg, userId, sessionId));
+        ctx.processes.register(handleFor(id, bg, userId, sessionId, p.backgroundMode === 'service' ? 'service' : 'job'));
         emitProcCard();
         return ok(`Started background process ${id}: ${p.command}\n(cwd: ${cwd})\nUse read_process_output("${id}") to check on it.`);
       } catch (e) { return fail(e); }

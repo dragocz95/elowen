@@ -531,6 +531,7 @@ export class BrainService {
   deleteSession(userId: number, sessionId: string): void {
     const row = this.d.store.getSession(sessionId);
     if (!row || row.user_id !== userId || isNonUserSession(sessionId)) throw new Error('unknown session');
+    this.cleanupProcessesForTree(sessionId);
     this.elicitation.cancelForSession(sessionId, 'conversation deleted'); // release a parked turn before dropping its session
     this.goals.cancelGoalContinuation(sessionId);
     this.cards.clearSession(sessionId);
@@ -585,18 +586,22 @@ export class BrainService {
   deleteManagedSession(userId: number, id: string): number {
     const row = this.d.store.getSession(id);
     if (!row || row.user_id !== userId) return 0;
-    const stack = [id];
-    for (let index = 0; index < stack.length; index += 1) {
-      const sessionId = stack[index]!;
-      processRegistry.killSession(sessionId);
-      for (const child of this.d.store.getSubagentRuns(sessionId)) stack.push(child.sessionId);
-    }
+    this.cleanupProcessesForTree(id);
     this.elicitation.cancelForSession(id, 'session deleted');
     this.goals.cancelGoalContinuation(id);
     if (id.startsWith('brain-ch-')) this.sessions.channelDispose(id.slice('brain-ch-'.length));
     else if (this.sessions.has(id)) this.sessions.dispose(id);
     this.d.store.deleteSession(id);
     return 1;
+  }
+
+  private cleanupProcessesForTree(id: string): void {
+    const stack = [id];
+    for (let index = 0; index < stack.length; index += 1) {
+      const sessionId = stack[index]!;
+      processRegistry.killSession(sessionId);
+      for (const child of this.d.store.getSubagentRuns(sessionId)) stack.push(child.sessionId);
+    }
   }
 
   /** Delete ALL of the owner's brain sessions (the panel's "delete everything" — the client confirms).

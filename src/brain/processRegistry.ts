@@ -18,6 +18,7 @@ export interface ProcessHandle {
   userId?: number | null;
   /** The brain session it was started in (e.g. `brain-<uid>`) — the wake is bound to THIS conversation. */
   sessionId?: string | null;
+  completionMode?: 'job' | 'service';
   running: () => boolean;
   exitCode: () => number | null;
   readAll: () => string;
@@ -32,11 +33,13 @@ export interface ProcessInfo {
   startedAt: string;
   running: boolean;
   exitCode: number | null;
+  completionMode?: 'job' | 'service';
 }
 
 const toInfo = (h: ProcessHandle): ProcessInfo => ({
   id: h.id, command: h.command, cwd: h.cwd, startedAt: h.startedAt,
   running: h.running(), exitCode: h.exitCode(),
+  completionMode: h.completionMode,
 });
 
 export class ProcessRegistry {
@@ -45,13 +48,21 @@ export class ProcessRegistry {
   private onExitFn?: (info: ProcessInfo, userId: number | null, sessionId: string | null) => void;
   private exited = new Set<string>();
   private idleWaiters = new Map<string, Set<() => void>>();
+  private jobIdleWaiters = new Map<string, Set<() => void>>();
 
   private notifySession(sessionId: string | null | undefined): void {
     this.onChange?.(sessionId ?? null);
-    if (!sessionId || this.runningCountForSession(sessionId) > 0) return;
-    const waiters = this.idleWaiters.get(sessionId);
-    this.idleWaiters.delete(sessionId);
-    for (const resolve of waiters ?? []) resolve();
+    if (!sessionId) return;
+    if (this.runningCountForSession(sessionId) === 0) {
+      const waiters = this.idleWaiters.get(sessionId);
+      this.idleWaiters.delete(sessionId);
+      for (const resolve of waiters ?? []) resolve();
+    }
+    if (this.runningJobCountForSession(sessionId) === 0) {
+      const waiters = this.jobIdleWaiters.get(sessionId);
+      this.jobIdleWaiters.delete(sessionId);
+      for (const resolve of waiters ?? []) resolve();
+    }
   }
 
   /** Register a callback fired whenever the set of processes changes (spawn/exit/kill/remove). Optional —
@@ -121,9 +132,12 @@ export class ProcessRegistry {
   }
 
   killSession(sessionId: string): number {
-    const ids = [...this.handles.values()].filter((handle) => handle.sessionId === sessionId).map((handle) => handle.id);
-    for (const id of ids) this.kill(id);
-    return ids.length;
+    const handles = [...this.handles.values()].filter((handle) => handle.sessionId === sessionId);
+    for (const handle of handles) {
+      if (handle.running()) this.kill(handle.id);
+      else this.remove(handle.id);
+    }
+    return handles.length;
   }
 
   /** Drop an entry without killing (e.g. an already-exited process cleared from the panel). */
@@ -148,12 +162,29 @@ export class ProcessRegistry {
     return count;
   }
 
+  runningJobCountForSession(sessionId: string): number {
+    let count = 0;
+    for (const handle of this.handles.values()) {
+      if (handle.sessionId === sessionId && handle.completionMode !== 'service' && handle.running()) count++;
+    }
+    return count;
+  }
+
   waitForSessionIdle(sessionId: string): Promise<void> {
     if (this.runningCountForSession(sessionId) === 0) return Promise.resolve();
     return new Promise((resolve) => {
       const waiters = this.idleWaiters.get(sessionId) ?? new Set<() => void>();
       waiters.add(resolve);
       this.idleWaiters.set(sessionId, waiters);
+    });
+  }
+
+  waitForSessionJobsIdle(sessionId: string): Promise<void> {
+    if (this.runningJobCountForSession(sessionId) === 0) return Promise.resolve();
+    return new Promise((resolve) => {
+      const waiters = this.jobIdleWaiters.get(sessionId) ?? new Set<() => void>();
+      waiters.add(resolve);
+      this.jobIdleWaiters.set(sessionId, waiters);
     });
   }
 }

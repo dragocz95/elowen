@@ -88,7 +88,7 @@ export class BrainTurnRunner {
     await this.serial(`send-${target}`, async () => {
       const live = this.d.sessions.get(target);
       if (!live) throw new Error('brain not started for user');
-      const before = live.session.messages.length;
+      const before = [...(live.session.messages as { role?: string }[])].reverse().find((message) => message.role === 'assistant');
       const context = await this.contextBuilder.build({
         userId,
         text: content,
@@ -102,9 +102,9 @@ export class BrainTurnRunner {
         display: false,
         details: { source: 'elowen', ...(resultId ? { resultId } : {}) },
       }, { triggerTurn: true, deliverAs: 'followUp' }));
-      const settled = (live.session.messages.slice(before) as { role?: string; stopReason?: string; errorMessage?: string }[])
-        .findLast((message) => message.role === 'assistant');
-      if (!settled || settled.stopReason === 'error' || settled.stopReason === 'aborted') {
+      const settled = [...(live.session.messages as { role?: string; stopReason?: string; errorMessage?: string }[])]
+        .reverse().find((message) => message.role === 'assistant');
+      if (!settled || settled === before || settled.stopReason === 'error' || settled.stopReason === 'aborted') {
         throw new Error(settled?.errorMessage?.trim() || 'sub-agent result was not processed by the parent model');
       }
     });

@@ -21,6 +21,8 @@ const principalOf = (identity) => {
   const userId = typeof identity.userId === 'string' ? identity.userId.trim() : '';
   return platform && userId ? `${platform}:${userId}` : null;
 };
+const xmlEscape = (value) => String(value).replaceAll('&', '&amp;').replaceAll('<', '&lt;')
+  .replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&apos;');
 
 export function register(ctx) {
   let run = null; // the host's channel handler, captured on connect
@@ -205,7 +207,7 @@ export function register(ctx) {
         originPrincipal,
         emit,
         background: p.background === true,
-        autoDeliver: p.background === true,
+        autoDeliver: p.background === true && !!emitCompletion,
         emitCompletion,
         resolveDetached: undefined,
         startedAt,
@@ -227,10 +229,10 @@ export function register(ctx) {
           // A child that starts terminal background work is still working. Keep the delegate lifecycle
           // open, wait without polling, then give the SAME child a turn to collect output and produce the
           // real conclusion. This is what prevents the parent receiving only "process started".
-          for (let round = 0; state.sessionId && ctx.processes.runningCountForSession(state.sessionId) > 0 && round < 8; round += 1) {
-            await ctx.processes.waitForSessionIdle(state.sessionId);
-            const finished = ctx.processes.listForSession(state.sessionId).filter((proc) => !proc.running);
-            const rows = finished.map((proc) => `- ${proc.id}: ${proc.command} (exit ${proc.exitCode})`).join('\n');
+          for (let round = 0; state.sessionId && ctx.processes.runningJobCountForSession(state.sessionId) > 0 && round < 8; round += 1) {
+            await ctx.processes.waitForSessionJobsIdle(state.sessionId);
+            const finished = ctx.processes.listForSession(state.sessionId).filter((proc) => !proc.running && proc.completionMode !== 'service');
+            const rows = finished.map((proc) => `- ${xmlEscape(proc.id)}: ${xmlEscape(proc.command)} (exit ${proc.exitCode})`).join('\n');
             raw = await run(
               { platform: 'subagent', userId: 'subagent', roleIds: [], channelId, access },
               `<system-reminder>\n<background-processes-finished>\n${rows}\n</background-processes-finished>\n`
@@ -318,7 +320,9 @@ export function register(ctx) {
       });
       return ok(
         `Started background delegation ${jobId}.\n`
-          + 'Its result will be delivered automatically. Do not busy-wait; continue other work.',
+          + (state.autoDeliver
+            ? 'Its result will be delivered automatically. Do not busy-wait; continue other work.'
+            : `Use delegate_result({"id":"${jobId}"}) later; automatic delivery is unavailable on this surface.`),
         { jobId, status: 'running' },
       );
     },
