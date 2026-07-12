@@ -436,6 +436,18 @@ describe('chat application shell ownership', () => {
     render.stop();
   });
 
+  it('folds embedded newlines at the final root physical-row boundary', () => {
+    const tui = { requestRender: vi.fn() } as unknown as TUI;
+    const render = new RenderShell({ tui, term: { columns: 40, rows: 2 }, prepare: vi.fn() });
+    const frame = render.composeRoot(['root row\r\nforged physical row'], 40, 2);
+
+    expect(frame).toHaveLength(2);
+    expect(frame.every((line) => !/[\r\n]/.test(line))).toBe(true);
+    expect(terminalPlainText(frame[0]!).trim()).toBe('root row forged physical row');
+    expect(terminalPlainText(frame[1]!).trim()).toBe('');
+    render.stop();
+  });
+
   it('InputRouter registers one listener, routes input once, and detaches idempotently', () => {
     let listener!: (data: string) => { consume: true } | undefined;
     const remove = vi.fn();

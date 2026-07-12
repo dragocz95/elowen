@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { CURSOR_MARKER } from '@earendil-works/pi-tui';
-import { terminalInlineText, terminalPlainText, terminalSafeAnsi, terminalSafeComponent } from '../../../src/cli/ui/text.js';
+import {
+  terminalInlineText,
+  terminalPhysicalRow,
+  terminalPlainText,
+  terminalSafeAnsi,
+  terminalSafeComponent,
+} from '../../../src/cli/ui/text.js';
 
 describe('terminal text trust boundary', () => {
   it('normalizes untrusted labels through one shared printable inline projection', () => {
@@ -31,6 +37,11 @@ describe('terminal text trust boundary', () => {
     expect(terminalPlainText(safe).replace(/\s+/g, ' ')).toContain('red link clear title clipboard dcs apc');
   });
 
+  it('keeps ANSI sanitization multiline while folding a final physical row boundary', () => {
+    expect(terminalSafeAnsi('first\nsecond')).toBe('first\nsecond');
+    expect(terminalPhysicalRow('first\r\nsecond\nthird\rfourth')).toBe('first second third fourth');
+  });
+
   it('projects overlay rows while preserving focus and input delegation', () => {
     let focused = false;
     let input = '';
@@ -39,7 +50,7 @@ describe('terminal text trust boundary', () => {
       set focused(value: boolean) { focused = value; },
       invalidate: () => {},
       handleInput: (value: string) => { input = value; },
-      render: () => ['hostile session\x1b]52;c;Zm9yZ2Vk\x07\x1b[2J'],
+      render: () => ['hostile session\x1b]52;c;Zm9yZ2Vk\x07\x1b[2J\nforged physical row'],
     };
     const safe = terminalSafeComponent(source) as typeof source;
     safe.focused = true;
@@ -50,5 +61,7 @@ describe('terminal text trust boundary', () => {
     expect(rendered).toContain('hostile session');
     expect(rendered).not.toContain('\x1b]52;');
     expect(rendered).not.toContain('\x1b[2J');
+    expect(rendered).not.toMatch(/[\r\n]/);
+    expect(rendered).toContain('hostile session forged physical row');
   });
 });

@@ -1,4 +1,5 @@
 import type { TUI } from '@earendil-works/pi-tui';
+import { terminalPhysicalRow } from '../ui/text.js';
 import { FrameScheduler } from './frameScheduler.js';
 import { computeLayoutBudget, constrainFrame } from './layoutBudget.js';
 import type { LayoutBudget, LayoutBudgetInput } from './layoutBudget.js';
@@ -94,7 +95,7 @@ export class RenderShell {
   }
   allocateLayout(input: LayoutBudgetInput): LayoutBudget { return computeLayoutBudget(input); }
   composeRoot(lines: string[], columns: number, rows: number): string[] {
-    return constrainFrame(lines, columns, rows);
+    return constrainFrame(lines.map(terminalPhysicalRow), columns, rows);
   }
   pause(): void {
     this.paused = true;

@@ -85,13 +85,20 @@ export function terminalSafeAnsi(input: string): string {
   return out;
 }
 
+/** One array entry handed to pi-tui must always represent exactly one physical terminal row. Keep this
+ * separate from terminalSafeAnsi(): transcript/tool renderers intentionally sanitize multiline text before
+ * splitting it, while the final root/overlay boundary folds an accidental embedded line break into a cell. */
+export function terminalPhysicalRow(input: string): string {
+  return input.replace(/[\r\n]+/g, ' ');
+}
+
 /** Wrap a PI overlay at its final render boundary. Overlays are composited after the root frame, so
  * source-level sanitization alone cannot protect pickers supplied by API/plugin metadata. Delegating
  * input/focus keeps the wrapper transparent to PI while every produced row crosses the same invariant. */
 export function terminalSafeComponent(component: Component): Component {
   const safe: Component = {
     invalidate: () => component.invalidate(),
-    render: (width) => component.render(width).map(terminalSafeAnsi),
+    render: (width) => component.render(width).map((row) => terminalPhysicalRow(terminalSafeAnsi(row))),
     ...(component.handleInput ? { handleInput: (data: string) => component.handleInput?.(data) } : {}),
     ...(component.wantsKeyRelease != null ? { wantsKeyRelease: component.wantsKeyRelease } : {}),
   };
