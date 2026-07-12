@@ -143,11 +143,11 @@ export class CardPanel implements Component {
       if (isTodoPreview) {
         const moreRow = lines.length + 1 + TODO_PREVIEW_ITEMS;
         const hidden = (c.items?.length ?? 0) - TODO_PREVIEW_ITEMS;
-        block[1 + TODO_PREVIEW_ITEMS] = `    ${color.accent(`\x1b[4m… +${hidden} more\x1b[24m`)}`;
+        block[1 + TODO_PREVIEW_ITEMS] = `    ${color.faint(`… +${hidden} more`)}`;
         this.moreRows.add(moreRow);
       } else if (isTodoExpanded) {
         const lessRow = lines.length + block.length;
-        block.push(`    ${color.accent('\x1b[4m▴ Show less\x1b[24m')}`);
+        block.push(`    ${color.faint('▴ Show less')}`);
         this.moreRows.add(lessRow);
       }
       lines.push(...block);

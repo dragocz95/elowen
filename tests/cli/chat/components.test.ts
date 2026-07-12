@@ -214,7 +214,7 @@ describe('chat components', () => {
     expect(plain).not.toContain('Old completed B');
     expect(plain).not.toContain('Later pending');
     expect(preview[5]).toContain('+4 more');
-    expect(preview[5]).toContain('\x1b[4m');
+    expect(preview[5]).not.toContain('\x1b[4m');
     expect(panel.isMoreRow(5)).toBe(true);
 
     panel.toggleExpanded();
@@ -224,7 +224,7 @@ describe('chat components', () => {
     expect(expandedText).toContain('Last pending');
     expect(expandedText).not.toContain('+4 more');
     expect(expanded.at(-1)).toContain('Show less');
-    expect(expanded.at(-1)).toContain('\x1b[4m');
+    expect(expanded.at(-1)).not.toContain('\x1b[4m');
     expect(panel.isMoreRow(expanded.length - 1)).toBe(true);
 
     panel.toggleExpanded();
