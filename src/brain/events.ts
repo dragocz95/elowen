@@ -298,7 +298,7 @@ export function toBrainEvent(e: AgentSessionEvent, now: number = Date.now()): Br
   if (anyE.type === 'tool_execution_start' && typeof anyE.toolName === 'string') {
     // The start event carries the arguments (the end event does not), so the verbatim shell command is
     // captured HERE and threaded to the output on the matching end event by the transcript reducer.
-    return { type: 'tool', name: anyE.toolName, detail: toolDetail(anyE.args), command: toolCommand(anyE.args), id: anyE.toolCallId };
+    return { type: 'tool', name: anyE.toolName, detail: toolDetail(anyE.args, anyE.toolName), command: toolCommand(anyE.args), id: anyE.toolCallId };
   }
   // Edits carry a display diff in their result details — that's the one tool output worth showing.
   if (anyE.type === 'tool_execution_end') {

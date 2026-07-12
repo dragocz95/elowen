@@ -1,6 +1,28 @@
 import { describe, it, expect, afterEach } from 'vitest';
-import { stripInlineReasoning, extractText, toolOutputView, isThinkingOnlyReply, shapeBrainMessages, setToolOutputPolicy } from '../../src/brain/messageView.js';
+import { stripInlineReasoning, extractText, toolDetail, toolOutputView, isThinkingOnlyReply, shapeBrainMessages, setToolOutputPolicy } from '../../src/brain/messageView.js';
 import { makeToolOutputPolicy } from '../../src/brain/toolOutput.js';
+
+describe('toolDetail: read ranges', () => {
+  it('shows the requested line range for paginated read_file calls', () => {
+    expect(toolDetail({ path: 'src/brain/messageView.ts', offset: 120, limit: 80 }, 'read_file'))
+      .toBe('src/brain/messageView.ts · lines 120–199');
+    expect(toolDetail({ path: 'src/brain/messageView.ts', limit: 40 }, 'read_file'))
+      .toBe('src/brain/messageView.ts · lines 1–40');
+    expect(toolDetail({ path: 'src/brain/messageView.ts', offset: 120 }, 'read_file'))
+      .toBe('src/brain/messageView.ts · from line 120');
+  });
+
+  it('keeps read pagination visible when a long path must be shortened', () => {
+    const detail = toolDetail({ path: `/very/${'long/'.repeat(12)}file.ts`, offset: 20, limit: 10 }, 'read_file');
+    expect(detail).toHaveLength(60);
+    expect(detail).toMatch(/… · lines 20–29$/);
+  });
+
+  it('leaves unpaginated reads and other tools unchanged', () => {
+    expect(toolDetail({ path: 'src/a.ts' }, 'read_file')).toBe('src/a.ts');
+    expect(toolDetail({ path: 'src', offset: 2, limit: 3 }, 'list_dir')).toBe('src');
+  });
+});
 
 describe('shapeBrainMessages: compaction divider', () => {
   it('surfaces a persisted compaction row as an empty "compaction" view before the kept tail', () => {

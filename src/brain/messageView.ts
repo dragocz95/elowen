@@ -45,15 +45,39 @@ type BrainSegment =
  * progress can mutate one row's rendered segments without turning it into a new terminal line. */
 export interface BrainMessageView { id?: string; role: string; text: string; segments?: BrainSegment[] }
 
+const TOOL_DETAIL_MAX = 60;
+
+function truncateToolDetail(value: string, max = TOOL_DETAIL_MAX): string {
+  return value.length > max ? `${value.slice(0, Math.max(0, max - 1))}…` : value;
+}
+
+/** Requested 1-indexed line window for read_file. This mirrors the plugin's offset/limit normalization,
+ *  but deliberately describes the request rather than claiming how many lines the file actually had. */
+function readRange(args: Record<string, unknown>): string | undefined {
+  const rawOffset = args.offset;
+  const rawLimit = args.limit;
+  const hasOffset = typeof rawOffset === 'number' && Number.isFinite(rawOffset);
+  const hasLimit = typeof rawLimit === 'number' && Number.isFinite(rawLimit);
+  if (!hasOffset && !hasLimit) return undefined;
+  const start = hasOffset ? Math.max(1, Math.floor(rawOffset)) : 1;
+  if (!hasLimit) return `from line ${start}`;
+  const count = Math.max(0, Math.floor(rawLimit));
+  return count > 0 ? `lines ${start}–${start + count - 1}` : `0 lines from ${start}`;
+}
+
 /** A short, human-scannable summary of a tool call's most salient argument (the file path, command,
- *  query…), opencode-style: `read src/foo.ts`, `bash "npm test"`. */
-export function toolDetail(args: unknown): string | undefined {
+ *  query…), opencode-style: `read src/foo.ts`, `bash "npm test"`. `read_file` keeps its requested line
+ *  window visible at the end, even when a long path needs truncating. */
+export function toolDetail(args: unknown, toolName?: string): string | undefined {
   if (!args || typeof args !== 'object') return undefined;
   const a = args as Record<string, unknown>;
   const raw = a.path ?? a.file_path ?? a.filename ?? a.command ?? a.pattern ?? a.query ?? a.url ?? a.name ?? a.text;
   if (typeof raw !== 'string' || !raw.trim()) return undefined;
   const s = raw.replace(/\s+/g, ' ').trim();
-  return s.length > 60 ? `${s.slice(0, 59)}…` : s;
+  const range = toolName === 'read_file' ? readRange(a) : undefined;
+  if (!range) return truncateToolDetail(s);
+  const suffix = ` · ${range}`;
+  return `${truncateToolDetail(s, TOOL_DETAIL_MAX - suffix.length)}${suffix}`;
 }
 
 function textParts(content: unknown): string {
@@ -347,7 +371,7 @@ export function shapeBrainMessages(
         // only place the verbatim shell command survives — reaches the console renderer.
         const res = p.id ? results.get(p.id) : undefined;
         const output = res ? toolOutputView(p.name, p.arguments, res.result, res.isError) : undefined;
-        const detail = toolDetail(p.arguments);
+        const detail = toolDetail(p.arguments, p.name);
         const diff = p.id ? diffs.get(p.id) : undefined;
         const command = toolCommand(p.arguments);
         segments.push({
