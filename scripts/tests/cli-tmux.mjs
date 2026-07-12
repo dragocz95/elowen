@@ -359,7 +359,7 @@ try {
   sendKey('Enter');
   await waitFor('queued message strip + compaction status', () => {
     const pane = capture();
-    return pane.includes('QUEUED') && pane.includes('E2E QUEUED LINE') && pane.includes('compacting');
+    return /^\s+QUEUED\s/mu.test(pane) && pane.includes('E2E QUEUED LINE') && pane.includes('compacting');
   });
   const queuedCompacting = saveCapture('03-streaming-queued');
   assert.equal((queuedCompacting.match(/E2E QUEUED LINE 1/gu) ?? []).length, 1,
@@ -368,7 +368,7 @@ try {
 
   await waitFor('queued delivery after compaction', () => {
     const pane = capture();
-    return !pane.includes('QUEUED') && !pane.includes('compacting') && pane.includes('E2E QUEUED LINE 1');
+    return !/^\s+QUEUED\s/mu.test(pane) && !pane.includes('compacting') && pane.includes('E2E QUEUED LINE 1');
   });
   const deliveredQueue = saveCapture('03b-queued-delivered');
   assert.equal((deliveredQueue.match(/E2E QUEUED LINE 1/gu) ?? []).length, 1,
@@ -423,7 +423,7 @@ try {
 
   sendKey('Escape');
   await waitFor('exactly one abort request', () => requests('/brain/abort').length === 1);
-  await waitFor('queued strip cleared by abort', () => !capture().includes('QUEUED'));
+  await waitFor('queued strip cleared by abort', () => !/^\s+QUEUED\s/mu.test(capture()));
   assert.equal(requests('/brain/abort').length, 1, 'the second Esc must send exactly one abort');
 
   sendLiteral('E2E SECOND USER');
