@@ -344,7 +344,7 @@ describe('StreamCoordinator — bounded hydration lifecycle', () => {
     stream.stop();
   });
 
-  it('clears only the parent hydration notice after a successful session history switch', async () => {
+  it('clears parent and child hydration notices after a successful session history switch', async () => {
     const client = {
       start: async () => ({ sessionId: 'B' }),
       history: async () => [{ role: 'assistant', text: 'new session B history' }],
@@ -372,9 +372,136 @@ describe('StreamCoordinator — bounded hydration lifecycle', () => {
     await stream.switchTo({ session: 'B' });
 
     expect(serialized(rt.transcript)).toContain('new session B history');
-    expect(rt.notice).toBe(`${keymapWarning} · ${externalNotice} · ${childTimeout}`);
+    expect(rt.notice).toBe(`${keymapWarning} · ${externalNotice}`);
     expect(rt.notice).not.toContain(parentTimeout);
+    expect(rt.notice).not.toContain(childTimeout);
     stream.stop();
+  });
+
+  it('tears down an active child stream and hydration before committing a new parent session', async () => {
+    vi.useFakeTimers();
+    const childHistory = deferred<{ role: string; text: string }[]>();
+    let stream: StreamCoordinator | null = null;
+    let opening: Promise<void> | null = null;
+    try {
+      let childFrame!: (event: BrainEvent) => void;
+      let childStreamSignal: AbortSignal | undefined;
+      let childHistorySignal: AbortSignal | undefined;
+      const parentStreamSignals: AbortSignal[] = [];
+      const client = {
+        start: async () => ({ sessionId: 'new-parent' }),
+        history: (session?: string, signal?: AbortSignal) => {
+          if (session === 'old-child') {
+            childHistorySignal = signal;
+            return childHistory.promise;
+          }
+          return Promise.resolve([{ role: 'assistant', text: `history for ${session}` }]);
+        },
+        stream: (callback: (event: BrainEvent) => void, signal: AbortSignal, _backoff: number, _open?: () => void, session?: string) => {
+          if (session === 'old-child') {
+            childFrame = callback;
+            childStreamSignal = signal;
+          } else {
+            parentStreamSignals.push(signal);
+          }
+          return new Promise<void>((resolve) => signal.addEventListener('abort', () => resolve(), { once: true }));
+        },
+        rebind: () => {},
+      } as unknown as BrainClient;
+      const baseNotice = '\u001b[33mkeybind warning\u001b[39m';
+      const childNotice = '\u001b[31mstale child hydration failure\u001b[39m';
+      const notices = new HydrationNoticeOwner({ base: baseNotice, child: childNotice });
+      const rt = runtime();
+      rt.transcript.replaceHistory([{ role: 'assistant', text: 'old parent history' }]);
+      rt.notice = notices.render();
+      stream = new StreamCoordinator(
+        rt, { client }, actions(), flows,
+        new SnapshotHydrator<BrainEvent>(), notices,
+      );
+
+      opening = stream.openSubagent('old-child');
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(childHistorySignal).toBeDefined();
+      expect(vi.getTimerCount()).toBeGreaterThan(0);
+
+      await stream.switchTo({ session: 'new-parent' });
+
+      expect(childStreamSignal?.aborted).toBe(true);
+      expect(childHistorySignal?.aborted).toBe(true);
+      expect(rt.childAc).toBeNull();
+      expect(rt.childView).toBeNull();
+      expect(parentStreamSignals).toEqual([rt.streamAc.signal]);
+      expect(serialized(rt.transcript)).toContain('history for new-parent');
+      expect(serialized(rt.transcript)).not.toContain('old parent history');
+      expect(rt.notice).toBe(baseNotice);
+      expect(vi.getTimerCount()).toBe(0);
+
+      childFrame({ type: 'text', delta: 'late child output' });
+      childHistory.resolve([{ role: 'assistant', text: 'late child history' }]);
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(serialized(rt.transcript)).not.toContain('late child');
+      expect(rt.childView).toBeNull();
+      await opening;
+    } finally {
+      stream?.stop();
+      childHistory.resolve([]);
+      if (opening) await opening;
+      vi.useRealTimers();
+    }
+  });
+
+  it('reconnects the old parent without reviving its child when a session switch fails', async () => {
+    vi.useFakeTimers();
+    let stream: StreamCoordinator | null = null;
+    let opening: Promise<void> | null = null;
+    try {
+      const parentStreamSignals: AbortSignal[] = [];
+      let childStreamSignal: AbortSignal | undefined;
+      const client = {
+        start: async () => { throw new Error('new parent unavailable'); },
+        history: async () => [],
+        stream: (_callback: (event: BrainEvent) => void, signal: AbortSignal, _backoff: number, _open?: () => void, session?: string) => {
+          if (session === 'old-child') childStreamSignal = signal;
+          else parentStreamSignals.push(signal);
+          return new Promise<void>((resolve) => signal.addEventListener('abort', () => resolve(), { once: true }));
+        },
+        rebind: () => {},
+      } as unknown as BrainClient;
+      const baseNotice = '\u001b[33mkeybind warning\u001b[39m';
+      const childNotice = '\u001b[31mstale child hydration failure\u001b[39m';
+      const notices = new HydrationNoticeOwner({ base: baseNotice, child: childNotice });
+      const rt = runtime();
+      rt.transcript.replaceHistory([{ role: 'assistant', text: 'still-valid old parent' }]);
+      rt.notice = notices.render();
+      stream = new StreamCoordinator(
+        rt, { client }, actions(), flows,
+        new SnapshotHydrator<BrainEvent>(), notices,
+      );
+      stream.openStream(rt.streamAc);
+      const originalParentSignal = rt.streamAc.signal;
+      opening = stream.openSubagent('old-child');
+      const childControllerSignal = rt.childAc?.signal;
+      expect(vi.getTimerCount()).toBeGreaterThan(0);
+
+      await expect(stream.switchTo({ session: 'new-parent' })).rejects.toThrow('new parent unavailable');
+
+      expect(originalParentSignal.aborted).toBe(true);
+      expect(parentStreamSignals).toEqual([originalParentSignal, rt.streamAc.signal]);
+      expect(rt.streamAc.signal.aborted).toBe(false);
+      expect(childControllerSignal?.aborted).toBe(true);
+      expect(childStreamSignal?.aborted).toBe(true);
+      expect(rt.childAc).toBeNull();
+      expect(rt.childView).toBeNull();
+      expect(serialized(rt.transcript)).toContain('still-valid old parent');
+      expect(rt.notice).toBe(baseNotice);
+      expect(vi.getTimerCount()).toBe(0);
+      await opening;
+    } finally {
+      stream?.stop();
+      if (opening) await opening;
+      vi.useRealTimers();
+    }
   });
 
   it('stops parent history, child fallback, streams and all hydration timers together', async () => {
