@@ -26,12 +26,14 @@ function WorkerGroupIcon({ provider }: { provider: ProviderId }) {
  *  A saved-but-unknown exec (e.g. a removed preset) stays visible as a pinned, selectable row so a
  *  save can never silently drop it. Keeps the { value, onChange, models, relayLabel, allowRelay }
  *  signature its settings call sites already use. */
-export function BackendPicker({ value, onChange, models, relayLabel, allowRelay = true }: {
+export function BackendPicker({ value, onChange, models, relayLabel, allowRelay = true, kind = 'all', title }: {
   value: string;
   onChange: (v: string) => void;
   models: { label: string; exec: string }[];
   relayLabel: string;
   allowRelay?: boolean;
+  kind?: 'all' | 'brain';
+  title?: string;
 }) {
   const { t } = useTranslation();
   const config = useConfig();
@@ -41,11 +43,11 @@ export function BackendPicker({ value, onChange, models, relayLabel, allowRelay 
   // Elowen AI models gated by the global allow-list (what may run as an executor), grouped by their real
   // provider — same rule as ExecutorPicker's `kind='all'` Elowen AI section.
   const allowed = config.data?.allowedExecs;
-  const brainList = (brain.data ?? []).filter((m) => !allowed || allowed.includes(m.exec));
+  const brainList = (brain.data ?? []).filter((m) => kind === 'brain' || !allowed || allowed.includes(m.exec));
 
   // Worker CLI models (from the preset catalog), grouped by engine; elowen execs live in the brain
   // section, never as workers — mirrors ExecutorPicker.
-  const workerModels = [...models]
+  const workerModels = (kind === 'brain' ? [] : [...models])
     .filter((m) => execProvider(m.exec) !== 'elowen')
     .sort((a, b) => a.label.localeCompare(b.label));
 
@@ -92,7 +94,7 @@ export function BackendPicker({ value, onChange, models, relayLabel, allowRelay 
         manageLabel={t.managePicker.manage}
       />
       <ManageSelectionModal
-        title={t.settings.executor}
+        title={title ?? t.settings.executor}
         open={open}
         onClose={() => setOpen(false)}
         items={items}
