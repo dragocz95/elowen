@@ -79,7 +79,7 @@ function handleGoalCommand(
   rt: ChatState,
   client: BrainClient,
   render: (reason?: string) => void,
-  run: ChatTaskScope['run'],
+  run: ChatTaskScope['runSession'],
   arg?: string,
 ): void {
   const fail = (e: Error): void => { rt.notice = color.error(`error: ${e.message}`); render(); };
@@ -107,7 +107,7 @@ function handleSubgoalCommand(
   rt: ChatState,
   client: BrainClient,
   render: (reason?: string) => void,
-  run: ChatTaskScope['run'],
+  run: ChatTaskScope['runSession'],
   arg?: string,
 ): void {
   const raw = (arg ?? '').trim();
@@ -159,8 +159,10 @@ export function wireSubmit(
   const runShell = deps.runLocalShell ?? ((command, cwd, signal) => runLocalShell(command, cwd, undefined, signal));
   const readClipboard = deps.readClipboardImage ?? ((signal) => readClipboardImage(undefined, undefined, undefined, signal));
   const editExternal = deps.editTextExternally ?? editTextExternally;
-  const runTask: ChatTaskScope['run'] = (operation, onFulfilled, onRejected) =>
-    lifetime.run(operation, onFulfilled, onRejected);
+  const runApplication: ChatTaskScope['runApplication'] = (operation, onFulfilled, onRejected) =>
+    lifetime.runApplication(operation, onFulfilled, onRejected);
+  const runSession: ChatTaskScope['runSession'] = (operation, onFulfilled, onRejected) =>
+    lifetime.runSession(operation, onFulfilled, onRejected);
   const fail = (e: Error): void => { rt.notice = color.error(`error: ${e.message}`); render(); };
 
   editor.onSubmit = (text: string): void => {
@@ -176,7 +178,7 @@ export function wireSubmit(
     if (localCmd) {
       rt.notice = color.dim(`$ ${localCmd} · running locally…`);
       render();
-      lifetime.run((signal) => runShell(localCmd, process.cwd(), signal), (result) => {
+      runSession((signal) => runShell(localCmd, process.cwd(), signal), (result) => {
         shellContext.add(result);
         rt.transcript.appendLocalTurn(localShellTurn(result));
         if (rt.notice.includes('running locally')) rt.notice = '';
@@ -193,7 +195,7 @@ export function wireSubmit(
       // The child daemon stream emits the authoritative `user` event for both a running steer and an
       // idle fresh turn. Do not echo locally: on a running child that produced two identical bubbles.
       render(); // flush the cleared editor while the request reaches the daemon
-      runTask(() => client.subagentSend(target, trimmed), () => {}, fail);
+      runSession(() => client.subagentSend(target, trimmed), () => {}, fail);
       return;
     }
     if (rt.childView && command) stream.closeSubagent();
@@ -202,7 +204,7 @@ export function wireSubmit(
         case 'quit': quit(); return;
         case 'help': pickers.openHelpModal(); return;
         case 'new':
-          runTask(() => stream.switchTo({ fresh: true }), () => {}, fail);
+          runApplication(() => stream.switchTo({ fresh: true }), () => {}, fail);
           return;
         case 'sessions':
         case 'resume': {
@@ -213,7 +215,7 @@ export function wireSubmit(
           const n = Number(command.arg);
           const target = Number.isInteger(n) && n >= 1 ? rt.listed[n - 1]?.id : command.arg;
           if (!target) { rt.notice = color.dim('use /resume and pick with the arrows'); render(); return; }
-          runTask(() => stream.switchTo({ session: target }), () => {}, fail);
+          runApplication(() => stream.switchTo({ session: target }), () => {}, fail);
           return;
         }
         case 'rename': {
@@ -222,7 +224,7 @@ export function wireSubmit(
           const apply = (raw: string): void => {
             const title = raw.trim();
             if (!title) { rt.notice = color.error('conversation title cannot be empty'); render(); return; }
-            runTask(() => client.renameSession(sessionId, title), (renamed) => {
+            runSession(() => client.renameSession(sessionId, title), (renamed) => {
                 rt.conversationTitle = renamed.title;
                 rt.notice = color.dim('conversation renamed');
                 render();
@@ -242,14 +244,14 @@ export function wireSubmit(
           if (command.arg?.trim() === 'show') {
             rt.showThoughts = !rt.showThoughts;
             savePrefs({ showThoughts: rt.showThoughts });
-            runTask(() => client.saveTerminalSettings({ showThoughtsCli: rt.showThoughts }), () => {}, () => { /* offline → local pref still applies */ });
+            runApplication(() => client.saveTerminalSettings({ showThoughtsCli: rt.showThoughts }), () => {}, () => { /* offline → local pref still applies */ });
             rt.notice = color.dim(rt.showThoughts ? 'Thought rows shown' : 'Thought rows hidden — /reasoning show brings them back');
             render();
             return;
           }
           if (rt.thinkingLevels.length === 0) { rt.notice = color.dim('this model has no reasoning-effort levels'); render(); return; }
           const apply = (level: string): void => {
-            runTask(() => client.setThinkingLevel(level), (r) => {
+            runSession(() => client.setThinkingLevel(level), (r) => {
               rt.thinkingLevel = r.thinkingLevel;
               rt.notice = '';
               render();
@@ -272,7 +274,7 @@ export function wireSubmit(
           }
           if (arg && arg !== 'on' && arg !== 'off') { rt.notice = color.dim('usage: /fast · /fast on · /fast off · /fast status'); render(); return; }
           if (!rt.fastAvailable) { rt.notice = color.dim('fast mode is not available for this model/account'); render(); return; }
-          runTask(() => client.setFast(arg === 'on' ? true : arg === 'off' ? false : undefined), (r) => {
+          runSession(() => client.setFast(arg === 'on' ? true : arg === 'off' ? false : undefined), (r) => {
               rt.fastOn = r.fast;
               rt.fastAvailable = r.fastAvailable;
               rt.notice = color.dim(`fast mode ${r.fast ? 'on' : 'off'}`);
@@ -297,7 +299,7 @@ export function wireSubmit(
           // Hand the primary buffer to $EDITOR: leave our alternate screen too, or the editor opens
           // nested inside it and its own screen handling fights ours. Re-enter it when we resume.
           suspendTerminal();
-          runTask(async (signal) => {
+          runApplication(async (signal) => {
             try {
               return await editExternal({ text: initial });
             } finally {
@@ -318,7 +320,7 @@ export function wireSubmit(
         }
         case 'delete': {
           const doDelete = (target: string): void => {
-            runTask(async () => {
+            runApplication(async () => {
               await client.deleteSession(target);
               if (target === client.boundSession) await stream.switchTo({});
             }, () => {
@@ -339,7 +341,7 @@ export function wireSubmit(
             });
           };
           if (!command.arg) {
-            runTask(() => client.sessions(), (list) => {
+            runApplication(() => client.sessions(), (list) => {
               rt.listed = list.map((s) => ({ id: s.id, title: s.title }));
               if (list.length === 0) { rt.notice = color.dim('no conversations'); render(); return; }
               openPicker({
@@ -373,11 +375,11 @@ export function wireSubmit(
             render();
           };
           if (!arg) {
-            runTask(() => client.getTddMode(), report, fail);
+            runApplication(() => client.getTddMode(), report, fail);
             return;
           }
           const on = arg === 'on';
-          runTask(() => client.setTddMode(on), () => report(on), fail);
+          runApplication(() => client.setTddMode(on), () => report(on), fail);
           return;
         }
         case 'mcp':
@@ -390,10 +392,10 @@ export function wireSubmit(
           pickers.openToolsModal();
           return;
         case 'goal':
-          handleGoalCommand(rt, client, render, runTask, command.arg);
+          handleGoalCommand(rt, client, render, runSession, command.arg);
           return;
         case 'subgoal':
-          handleSubgoalCommand(rt, client, render, runTask, command.arg);
+          handleSubgoalCommand(rt, client, render, runSession, command.arg);
           return;
         case 'compact': {
           // The daemon's BrainEvent stream is the SINGLE source of status for a REAL compaction: the
@@ -403,7 +405,7 @@ export function wireSubmit(
           // local usage/meta and paints no line of its own (that used to double up with the stream's).
           // A benign no-op (`compacted:false` — nothing to compact yet) emits NO stream event, so surface
           // the server's message here; a hard failure has no stream event either, so keep the .catch.
-          runTask(async () => {
+          runSession(async () => {
             const result = await client.compact();
             await refreshMeta();
             return result;
@@ -423,7 +425,7 @@ export function wireSubmit(
           const format = arg === 'jsonl' ? 'jsonl' : 'html';
           rt.notice = color.dim(`exporting conversation as ${format}…`);
           render();
-          runTask(() => client.exportSession(format), (path) => { rt.notice = color.success(`saved ${path}`); render(); }, fail);
+          runSession(() => client.exportSession(format), (path) => { rt.notice = color.success(`saved ${path}`); render(); }, fail);
           return;
         }
         case 'plan':
@@ -441,7 +443,7 @@ export function wireSubmit(
           // web Account → Elowen AI; this override never outlives the live session.
           const arg = command.arg?.trim().toLowerCase();
           if (arg && arg !== 'on' && arg !== 'off') { rt.notice = color.dim('usage: /yolo · /yolo on · /yolo off'); render(); return; }
-          runTask(() => client.setYolo(arg === 'on' ? true : arg === 'off' ? false : undefined), (r) => {
+          runSession(() => client.setYolo(arg === 'on' ? true : arg === 'off' ? false : undefined), (r) => {
               rt.yoloOn = r.yolo;
               rt.notice = r.yolo
                 ? color.warning('YOLO on — tool asks auto-approve for this session (deny rules still apply)')
@@ -455,7 +457,7 @@ export function wireSubmit(
           // (chip row above the input) and rides along with the next message.
           rt.notice = color.dim('reading the clipboard image…');
           render();
-          lifetime.run((signal) => readClipboard(signal), (r) => {
+          runSession((signal) => readClipboard(signal), (r) => {
             if (r.image) attachImage(rt, attachmentChips, r.image);
             else rt.notice = color.error(r.error ?? 'no image on the clipboard');
             render();
@@ -466,7 +468,7 @@ export function wireSubmit(
           if (!rt.transcript.thinking) { rt.notice = color.dim('nothing is running'); render(); return; }
           rt.notice = color.dim('stopping…');
           render();
-          runTask(() => client.abort(), () => { rt.notice = color.dim('agent stopped'); render(); }, fail);
+          runSession(() => client.abort(), () => { rt.notice = color.dim('agent stopped'); render(); }, fail);
           return;
         }
         case 'status':
@@ -475,7 +477,7 @@ export function wireSubmit(
         case 'restart': {
           rt.notice = color.dim('restarting daemon…');
           render();
-          runTask(() => client.command('restart'), (r) => { rt.notice = color.dim(r?.message ?? 'restarting…'); render(); }, fail);
+          runApplication(() => client.command('restart'), (r) => { rt.notice = color.dim(r?.message ?? 'restarting…'); render(); }, fail);
           return;
         }
       }
@@ -489,7 +491,7 @@ export function wireSubmit(
     const promptCmd = pm ? commandDefs.find((c) => c.name === pm[1] && c.kind === 'prompt' && c.prompt) : undefined;
     if (pm && promptCmd) {
       render();
-      runTask(() => client.send(trimmed, rt.workMode), () => {}, (e) => { rt.transcript.apply({ type: 'error', message: e.message }); render(); });
+      runSession(() => client.send(trimmed, rt.workMode), () => {}, (e) => { rt.transcript.apply({ type: 'error', message: e.message }); render(); });
       return;
     }
     // `@path` mentions expand HERE, not in the visible transcript: text files ride inside the prompt
@@ -510,7 +512,7 @@ export function wireSubmit(
       render();
       // ONE composition path for everything that rides along: buffered `!` shell context first, then
       // the mention attachments, then the user's own words (see composeWithAttachments).
-      runTask(() => client.send(
+      runSession(() => client.send(
         shellContext.take(composeWithAttachments(trimmed, mentions.block)),
         rt.workMode,
         images.map((i) => ({ data: i.data, mimeType: i.mimeType })),
@@ -518,7 +520,7 @@ export function wireSubmit(
       ), () => {}, (e) => { rt.transcript.apply({ type: 'error', message: e.message }); render(); });
     };
     if (mentions.wantsClipboard) {
-      lifetime.run((signal) => readClipboard(signal), (r) => {
+      runSession((signal) => readClipboard(signal), (r) => {
         if (!r.image) rt.notice = color.error(r.error ?? 'no image on the clipboard');
         sendWith(r.image ? [r.image] : []);
       });

@@ -373,11 +373,11 @@ export function createChatComposition(
   // Kill a background process from the panel's ✕. Fire-and-forget: no optimistic local removal — the
   // daemon's `process` snapshot event is the single source of truth and drops it once the kill lands.
   const killProcess = (id: string): void => {
-    lifetime.run(() => client.killProcess(id), (killed) => {
+    lifetime.runApplication(() => client.killProcess(id), (killed) => {
       // Already gone → no `process` snapshot will fire, so refetch to drop the stale row the user clicked.
       if (!killed) {
         rt.notice = color.dim('process already finished');
-        lifetime.run(
+        lifetime.runApplication(
           () => client.processes(),
           (p) => { rt.processes = p; render('process:refresh-after-kill'); },
           () => { /* offline */ },
@@ -608,7 +608,7 @@ export function createChatComposition(
       interruptArmedUntil = next.armedUntil;
       animations.cancelVisual('interrupt-arm');
       if (next.abort) {
-        lifetime.run(() => client.abort(), () => {}, () => { /* already idle */ });
+        lifetime.runSession(() => client.abort(), () => {}, () => { /* already idle */ });
       } else {
         const armed = interruptArmedUntil;
         animations.scheduleVisual('interrupt-arm', INTERRUPT_CONFIRM_MS, () => {
@@ -750,7 +750,7 @@ export function createChatComposition(
           const last = rt.queued.at(-1);
           if (!last) { rt.notice = color.dim('no queued messages'); render('input:queue-remove-empty'); return; }
           rt.queued = rt.queued.slice(0, -1); // optimistic; the queue_update snapshot reconciles
-          lifetime.run(
+          lifetime.runSession(
             () => client.queueRemove(last.id),
             () => {},
             (e) => { rt.notice = color.error(`error: ${e.message}`); render('input:queue-remove-error'); },

@@ -13,7 +13,7 @@ describe('ChatApplicationLifetime', () => {
     const publications: string[] = [];
     let taskSignal: AbortSignal | null = null;
 
-    fence.run(
+    fence.runApplication(
       (signal) => {
         taskSignal = signal;
         return pending.promise;
@@ -65,5 +65,40 @@ describe('ChatApplicationLifetime', () => {
     expect(fence.commit(metadata, () => { mutations += 1; })).toBe(false);
     expect(fence.commit(limits, () => { mutations += 1; })).toBe(false);
     expect(mutations).toBe(0);
+  });
+
+  it('suppresses session-scoped task publications after the session epoch changes', async () => {
+    const lifetime = new ChatApplicationLifetime<'metadata'>();
+    const pending = deferred<string>();
+    const publications: string[] = [];
+
+    lifetime.runSession(
+      () => pending.promise,
+      (value) => publications.push(`ok:${value}`),
+      (error) => publications.push(`error:${error.message}`),
+    );
+    lifetime.invalidate();
+    pending.resolve('stale-session-A');
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(publications).toEqual([]);
+  });
+
+  it('keeps application-scoped task publications alive across a session switch', async () => {
+    const lifetime = new ChatApplicationLifetime<'metadata'>();
+    const pending = deferred<string>();
+    const publications: string[] = [];
+
+    lifetime.runApplication(
+      () => pending.promise,
+      (value) => publications.push(value),
+    );
+    lifetime.invalidate();
+    pending.resolve('global-provider-refresh');
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(publications).toEqual(['global-provider-refresh']);
   });
 });

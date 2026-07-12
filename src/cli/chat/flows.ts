@@ -30,7 +30,7 @@ export function createFlows(
     if (kind === 'approval' && q) {
       runApprovalFlow({
         tui, slot: editorSlot, editor, question: q,
-        onDecision: (label) => lifetime.run(
+        onDecision: (label) => lifetime.runSession(
           () => client.answer(id, [{ header: q.header, selected: [label] }]),
           () => {},
           () => { /* turn may have gone */ },
@@ -40,8 +40,8 @@ export function createFlows(
     }
     runAskFlow({
       tui, slot: editorSlot, editor, questions,
-      onComplete: (answers) => lifetime.run(() => client.answer(id, answers), () => {}, () => { /* turn may have gone */ }),
-      onCancel: () => lifetime.run(() => client.abort(), () => {}, () => { /* already settled */ }),
+      onComplete: (answers) => lifetime.runSession(() => client.answer(id, answers), () => {}, () => { /* turn may have gone */ }),
+      onCancel: () => lifetime.runSession(() => client.abort(), () => {}, () => { /* already settled */ }),
     });
   };
 

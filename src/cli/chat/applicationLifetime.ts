@@ -15,26 +15,45 @@ export class ChatApplicationLifetime<K extends string> {
   /** One application-owned cancellation signal for local processes, clipboard readers and daemon I/O. */
   get signal(): AbortSignal { return this.controller.signal; }
 
-  /** Start asynchronous work inside this application's lifetime and publish only while it is still
-   * active. Callers never need their own `stopped` flags, and an abort rejection cannot paint an error
-   * into an already-restored terminal. */
-  run<T>(
+  /** Start asynchronous work whose result remains relevant across conversation switches (for example,
+   * provider management). It may publish until the application itself stops. */
+  runApplication<T>(
+    operation: (signal: AbortSignal) => Promise<T>,
+    onFulfilled: (value: T) => void,
+    onRejected?: (error: Error) => void,
+  ): void {
+    this.runTask(undefined, operation, onFulfilled, onRejected);
+  }
+
+  /** Start work owned by the currently selected conversation. A session switch advances `epoch`, so a
+   * response from the old conversation can never repaint or restart resources in the new one. */
+  runSession<T>(
+    operation: (signal: AbortSignal) => Promise<T>,
+    onFulfilled: (value: T) => void,
+    onRejected?: (error: Error) => void,
+  ): void {
+    this.runTask(this.epoch, operation, onFulfilled, onRejected);
+  }
+
+  private runTask<T>(
+    epoch: number | undefined,
     operation: (signal: AbortSignal) => Promise<T>,
     onFulfilled: (value: T) => void,
     onRejected?: (error: Error) => void,
   ): void {
     if (!this.active) return;
+    const current = (): boolean => this.active && (epoch === undefined || epoch === this.epoch);
     let pending: Promise<T>;
     try {
       pending = operation(this.signal);
     } catch (error) {
-      if (this.active) onRejected?.(error instanceof Error ? error : new Error(String(error)));
+      if (current()) onRejected?.(error instanceof Error ? error : new Error(String(error)));
       return;
     }
     void pending.then(
-      (value) => { if (this.active) onFulfilled(value); },
+      (value) => { if (current()) onFulfilled(value); },
       (error: unknown) => {
-        if (this.active) onRejected?.(error instanceof Error ? error : new Error(String(error)));
+        if (current()) onRejected?.(error instanceof Error ? error : new Error(String(error)));
       },
     );
   }

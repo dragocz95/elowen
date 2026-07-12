@@ -42,12 +42,14 @@ export function createPickers(
 ): Pickers {
   const { client, tui, editor, termSettings, cwdLabel, branchLabel, commandDefs, lifetime } = resources;
   const { render, refreshMeta } = actions;
-  const runTask: ChatTaskScope['run'] = (operation, onFulfilled, onRejected) =>
-    lifetime.run(operation, onFulfilled, onRejected);
+  const runApplication: ChatTaskScope['runApplication'] = (operation, onFulfilled, onRejected) =>
+    lifetime.runApplication(operation, onFulfilled, onRejected);
+  const runSession: ChatTaskScope['runSession'] = (operation, onFulfilled, onRejected) =>
+    lifetime.runSession(operation, onFulfilled, onRejected);
   const fail = (e: Error): void => { rt.notice = color.error(`error: ${e.message}`); render(); };
 
   const applyThinkingLevel = (level: string): void => {
-    runTask(() => client.setThinkingLevel(level), (r) => {
+    runSession(() => client.setThinkingLevel(level), (r) => {
       rt.thinkingLevel = r.thinkingLevel;
       rt.notice = color.dim(`reasoning effort: ${rt.thinkingLevelLabels[r.thinkingLevel] ?? r.thinkingLevel}`);
       render();
@@ -78,7 +80,7 @@ export function createPickers(
     rt.thinkingLevel = next;
     rt.notice = color.dim(`reasoning effort: ${rt.thinkingLevelLabels[next] ?? next}`);
     render();
-    runTask(
+    runSession(
       () => client.setThinkingLevel(next),
       (r) => { rt.thinkingLevel = r.thinkingLevel; rt.notice = color.dim(`reasoning effort: ${rt.thinkingLevelLabels[r.thinkingLevel] ?? r.thinkingLevel}`); render(); },
       (e) => { rt.thinkingLevel = previous; fail(e); },
@@ -89,10 +91,10 @@ export function createPickers(
   // curated endpoint catalog; a custom OpenAI-compatible URL, the API key and (for openai-type entries)
   // the wire API (Responses vs Chat Completions) are collected step by step through the same modals.
   const openProviderModal = (): void => {
-    runTask(() => client.brainProviders(), (providers) => {
+    runApplication(() => client.brainProviders(), (providers) => {
       const apiLabel = (p: BrainProviderView): string => p.type !== 'openai' ? '' : ` · ${p.api ?? 'auto'} API`;
       const saveAll = (next: BrainProviderView[], done: string): void => {
-        runTask(() => client.saveBrainProviders(next), () => { rt.notice = color.dim(done); render(); }, fail);
+        runApplication(() => client.saveBrainProviders(next), () => { rt.notice = color.dim(done); render(); }, fail);
       };
       // Per-entry API mode picker (openai-type only): auto / responses / completions.
       const openApiPicker = (p: BrainProviderView, all: BrainProviderView[]): void => {
@@ -177,7 +179,7 @@ export function createPickers(
   };
 
   const openModelPicker = (): void => {
-    lifetime.run(() => client.models(), (models) => {
+    runApplication(() => client.models(), (models) => {
       if (models.length === 0) { rt.notice = color.dim('no models configured — ctrl+p in /model adds a provider'); render(); return; }
       const paid = models.filter((m) => !m.free);
       const free = models.filter((m) => m.free);
@@ -198,14 +200,14 @@ export function createPickers(
           if (value === '__free') { openModelPicker(); return; }
           rt.notice = color.dim('switching model…');
           render();
-          runTask(() => client.setModel(parseModelValue(value)), (r) => {
+          runSession(() => client.setModel(parseModelValue(value)), (r) => {
             rt.modelName = r.model;
             // The server rebuilt the session — the old event stream is dead, reopen it.
             rt.streamAc.abort();
             const ac = new AbortController();
             rt.streamAc = ac;
             stream.openStream(ac);
-            runTask(() => refreshMeta(), () => { rt.notice = ''; render(); }, fail);
+            runSession(() => refreshMeta(), () => { rt.notice = ''; render(); }, fail);
           }, fail);
         },
       });
@@ -258,7 +260,7 @@ export function createPickers(
 
   // /status as a read-only modal: model, reasoning, context/usage, project and any active goal at a glance.
   const openStatusModal = (): void => {
-    runTask(() => Promise.all([client.status().catch(() => null), client.goal().catch(() => null)]), ([s, g]) => {
+    runSession(() => Promise.all([client.status().catch(() => null), client.goal().catch(() => null)]), ([s, g]) => {
       const lines: string[] = [];
       const kv = (k: string, v: string): void => { lines.push(`${color.faint(k.padEnd(12))} ${color.text(v)}`); };
       if (s?.title) kv('conversation', s.title);
@@ -286,7 +288,7 @@ export function createPickers(
   };
 
   const openSessionsModal = (): void => {
-    runTask(() => client.sessions(), (list) => {
+    runApplication(() => client.sessions(), (list) => {
       rt.listed = list.map((s) => ({ id: s.id, title: s.title }));
       if (list.length === 0) { rt.notice = color.dim('no conversations'); render(); return; }
       const refresh = () => openSessionsModal();
@@ -299,7 +301,7 @@ export function createPickers(
           ],
           onPick: (v) => {
             if (v !== 'yes') { refresh(); return; }
-            runTask(async () => {
+            runApplication(async () => {
               await client.deleteSession(id);
               if (current) await stream.switchTo({});
             }, () => {
@@ -313,7 +315,7 @@ export function createPickers(
       openPicker({
         tui, editor, title: 'Conversations', items: sessionItems(list, client.boundSession),
         footer: 'enter resume · ctrl+r rename · ctrl+d delete · esc close',
-        onPick: (id) => runTask(() => stream.switchTo({ session: id }), () => {}, fail),
+        onPick: (id) => runApplication(() => stream.switchTo({ session: id }), () => {}, fail),
         onInput: (data, item, close) => {
           if (!item) return false;
           const row = list.find((s) => s.id === item.value);
@@ -324,7 +326,7 @@ export function createPickers(
             openTextInput({
               tui, editor, title: 'Rename conversation', initial: row.title,
               onSubmit: (title) => {
-                runTask(() => client.renameSession(row.id, title), (renamed) => {
+                runSession(() => client.renameSession(row.id, title), (renamed) => {
                   if (row.id === client.boundSession) rt.conversationTitle = renamed.title;
                   rt.notice = color.dim('conversation renamed'); refresh(); render();
                 }, fail);
@@ -339,7 +341,7 @@ export function createPickers(
   };
 
   const openMcpModal = (): void => {
-    runTask(() => client.mcpServers(), (servers) => {
+    runApplication(() => client.mcpServers(), (servers) => {
       const items = servers.map((s) => ({
         value: s.name,
         label: `${s.status === 'connected' ? color.success('●') : s.status === 'connecting' ? color.warning('●') : color.faint('○')} ${s.name}`,
@@ -349,7 +351,7 @@ export function createPickers(
       const refresh = () => openMcpModal();
       const reconnect = (name: string): void => {
         rt.notice = color.dim(`reconnecting ${name}…`); render();
-        runTask(() => client.reconnectMcp(name), () => { rt.notice = color.dim(`MCP ${name} connected`); refresh(); render(); }, fail);
+        runApplication(() => client.reconnectMcp(name), () => { rt.notice = color.dim(`MCP ${name} connected`); refresh(); render(); }, fail);
       };
       const detail = (name: string): void => {
         const server = servers.find((s) => s.name === name);
@@ -376,7 +378,7 @@ export function createPickers(
         onInput: (data, item) => {
           if (data === 'R') {
             rt.notice = color.dim('reconnecting disconnected/error MCP servers…'); render();
-            runTask(() => client.reconnectMcpAll(), () => { rt.notice = color.dim('MCP reconnect complete'); refresh(); render(); }, fail);
+            runApplication(() => client.reconnectMcpAll(), () => { rt.notice = color.dim('MCP reconnect complete'); refresh(); render(); }, fail);
             return true;
           }
           if (data === 'r' && item) { reconnect(item.value); return true; }
@@ -387,7 +389,7 @@ export function createPickers(
   };
 
   const openSkillsModal = (): void => {
-    runTask(() => client.skills(), (skills) => {
+    runApplication(() => client.skills(), (skills) => {
       if (skills.length === 0) { rt.notice = color.dim('no skills found'); render(); return; }
       const refresh = () => openSkillsModal();
       // Push a skill into the CURRENT conversation with PI's native `/skill:name` command — the daemon's
@@ -408,7 +410,7 @@ export function createPickers(
           ],
           onPick: (v) => {
             if (v !== 'yes') { refresh(); return; }
-            runTask(() => client.deleteSkill(name), () => { rt.notice = color.dim('skill deleted'); refresh(); render(); }, fail);
+            runApplication(() => client.deleteSkill(name), () => { rt.notice = color.dim('skill deleted'); refresh(); render(); }, fail);
           },
         });
       };
@@ -456,7 +458,7 @@ export function createPickers(
   // language server (● running · ○ installed · ✗ missing), and the on/off toggle as the first row —
   // replaces the old blind flip, so the operator SEES the state before (and after) changing it.
   const openLspModal = (): void => {
-    runTask(() => client.lspStatus(), (s) => {
+    runApplication(() => client.lspStatus(), (s) => {
       const refresh = () => openLspModal();
       const items = [
         {
@@ -479,7 +481,7 @@ export function createPickers(
         // Deliberately NO modal reopen when npm finishes: the user may be typing (or inside another
         // picker) minutes later — a surprise overlay would steal focus and strand the one beneath it.
         // The outcome lands as a notice; /lsp shows the fresh state on demand.
-        runTask(async () => {
+        runApplication(async () => {
           const message = await (install ? client.lspInstall(srv.command) : client.lspUninstall(srv.command));
           await refreshMeta();
           return message;
@@ -517,7 +519,7 @@ export function createPickers(
         onInput: manageKey,
         onPick: (v) => {
           if (v !== '__toggle') { refresh(); return; }
-          runTask(async () => {
+          runApplication(async () => {
             const result = await client.command('lsp');
             // refreshMeta keeps the right-panel LSP Active/Inactive line in step with the flip.
             await refreshMeta();
@@ -529,7 +531,7 @@ export function createPickers(
   };
 
   const openToolsModal = (): void => {
-    runTask(() => client.tools(), (tools) => {
+    runApplication(() => client.tools(), (tools) => {
       if (tools.length === 0) { rt.notice = color.dim('no active plugin tools'); render(); return; }
       const refresh = () => openToolsModal();
       openPicker({

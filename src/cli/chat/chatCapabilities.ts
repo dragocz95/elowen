@@ -11,7 +11,12 @@ import type { PromptStash } from './promptHistory.js';
  * this chat still owns the terminal, and operating-system work receives the same abort signal. */
 export interface ChatTaskScope {
   readonly signal: AbortSignal;
-  run<T>(
+  runApplication<T>(
+    operation: (signal: AbortSignal) => Promise<T>,
+    onFulfilled: (value: T) => void,
+    onRejected?: (error: Error) => void,
+  ): void;
+  runSession<T>(
     operation: (signal: AbortSignal) => Promise<T>,
     onFulfilled: (value: T) => void,
     onRejected?: (error: Error) => void,

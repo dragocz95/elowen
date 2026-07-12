@@ -163,6 +163,49 @@ describe('application lifetime for local input work', () => {
       rmSync(home, { recursive: true, force: true });
     }
   });
+
+  it('does not publish a session command response into the next conversation', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'elowen-session-epoch-'));
+    const priorHome = process.env.HOME;
+    process.env.HOME = home;
+    try {
+      let onSubmit: ((text: string) => void) | undefined;
+      const editor = {
+        addToHistory: vi.fn(), setText: vi.fn(),
+        set onSubmit(fn: (text: string) => void) { onSubmit = fn; },
+      };
+      const response = deferred<{ thinkingLevel: string }>();
+      const lifetime = new ChatApplicationLifetime<'metadata'>();
+      const render = vi.fn();
+      const state = new ChatState({
+        transcript: new TranscriptModel(),
+        thinkingLevel: 'low',
+        thinkingLevels: ['low', 'high'],
+      });
+      wireSubmit(
+        state,
+        {
+          client: { setThinkingLevel: () => response.promise }, editor,
+          shellContext: new LocalShellBuffer(), attachmentChips: {}, commandDefs: [], tui: {}, lifetime,
+        } as never,
+        { render } as never,
+        { stream: {}, pickers: {} } as never,
+      );
+
+      onSubmit?.('/reasoning high');
+      lifetime.invalidate();
+      response.resolve({ thinkingLevel: 'high' });
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(state.thinkingLevel).toBe('low');
+      expect(state.notice).toBe('');
+    } finally {
+      if (priorHome === undefined) delete process.env.HOME;
+      else process.env.HOME = priorHome;
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('/editor terminal handoff', () => {
