@@ -4,6 +4,7 @@ import { ShieldCheck } from 'lucide-react';
 import type { SpatialDeckSection } from '../../components/ui/SpatialControlDeck';
 import { Avatar } from '../../components/ui/Avatar';
 import type { User } from '../../lib/types';
+import { SectionHeroSummary } from '../../components/ui/SectionHeroSummary';
 
 export function AccountDeckHero({ section, user, adminLabel }: {
   section: SpatialDeckSection;
@@ -11,16 +12,7 @@ export function AccountDeckHero({ section, user, adminLabel }: {
   adminLabel: string;
 }) {
   if (section.id !== 'profile') {
-    const Icon = section.icon;
-    return (
-      <div className="account-hero-summary">
-        <span className="account-hero-summary__icon"><Icon size={28} strokeWidth={1.45} aria-hidden /></span>
-        <div>
-          <strong>{section.label}</strong>
-          {section.description ? <p>{section.description}</p> : null}
-        </div>
-      </div>
-    );
+    return <SectionHeroSummary icon={section.icon} title={section.label} description={section.description} />;
   }
 
   return (

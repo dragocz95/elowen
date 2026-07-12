@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { LanguageProvider } from '../../../lib/i18n';
-import { Modal } from '../../../components/ui/Modal';
+import { Modal, ModalFooter } from '../../../components/ui/Modal';
 import { WorkspaceDetailRail } from '../../../components/ui/WorkspacePrimitives';
 
 function W({ children }: { children: React.ReactNode }) { return <LanguageProvider>{children}</LanguageProvider>; }
@@ -63,6 +63,18 @@ describe('Modal', () => {
 
     expect(screen.queryByRole('dialog', { name: 'Manage tools' })).not.toBeInTheDocument();
     expect(screen.getByRole('dialog', { name: 'User detail' })).toBeInTheDocument();
+  });
+
+  it('stacks status and wraps actions on narrow modal widths', () => {
+    render(
+      <ModalFooter status={<span>Saved</span>}>
+        <button type="button">Delete project</button>
+        <button type="button">Cancel</button>
+        <button type="button">Save changes</button>
+      </ModalFooter>,
+    );
+    expect(screen.getByText('Saved').parentElement).toHaveClass('min-w-0', 'w-full', 'sm:w-auto');
+    expect(screen.getByRole('button', { name: 'Delete project' }).parentElement).toHaveClass('flex-wrap');
   });
 
   it('calls onClose when close button is clicked', () => {

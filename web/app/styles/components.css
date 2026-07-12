@@ -45,6 +45,11 @@ html[data-effects='full'] .card-interactive:hover { transform: translateY(-1px);
 .overlay-layer-modal { z-index: 100; }
 .overlay-layer-menu { z-index: 120; }
 
+.section-hero-summary { display: flex; width: 100%; align-items: center; gap: 1.25rem; }
+.section-hero-summary__icon { display: grid; width: 4.8rem; height: 4.8rem; flex: none; place-items: center; border: 1px solid rgb(255 82 54 / 0.2); border-radius: 50%; color: var(--color-accent); background: radial-gradient(circle, rgb(255 82 54 / 0.1), transparent 68%); box-shadow: var(--glow-soft); }
+.section-hero-summary__label { display: block; color: var(--color-text); font-size: clamp(1.45rem, 1.2rem + 0.5vw, 1.9rem); font-weight: 610; letter-spacing: -0.035em; }
+.section-hero-summary p { max-width: 38rem; margin-top: 0.45rem; color: var(--color-text-muted); font-size: 0.8rem; line-height: 1.55; }
+
 /* Shared responsive data-register grammar. Individual tables only define their column templates. */
 .data-table-grid {
   display: grid;
@@ -263,7 +268,7 @@ html[data-effects='full'] .spatial-section-node--active .spatial-section-node__i
   .spatial-workspace-hero__metrics { overflow-x: auto; grid-template-columns: repeat(4, minmax(7rem, 1fr)); scrollbar-width: none; }
 }
 
-@media (max-width: 620px) {
+@container (max-width: 38.75rem) {
   .control-surface-toolbar { padding-inline: 1rem; }
   .control-surface-register { padding-inline: 1rem; }
   .spatial-workspace-hero__header { min-height: 0; padding: 1.25rem 1rem; }
@@ -288,13 +293,12 @@ html[data-effects='full'] .spatial-section-node--active .spatial-section-node__i
 
 @media (max-width: 720px) {
   .workspace-page { padding-inline: 0.75rem; }
-  .workspace-header { align-items: flex-start; flex-direction: column; gap: 1rem; }
-  .workspace-header__actions { width: 100%; justify-content: space-between; }
-  .workspace-metric { min-width: 7rem; padding: 1rem; }
 }
 
 @media (max-width: 900px) {
   .spatial-control-deck { padding-inline: 1rem; }
+}
+@container (max-width: 56.25rem) {
   .spatial-deck-heading { min-height: 7rem; }
   .spatial-deck-hero { grid-template-columns: minmax(15rem, 0.72fr) minmax(22rem, 1.28fr); min-height: 17rem; }
   .spatial-deck-hero__content { padding-inline: 1rem; }
@@ -304,6 +308,8 @@ html[data-effects='full'] .spatial-section-node--active .spatial-section-node__i
 
 @media (max-width: 620px) {
   .spatial-control-deck { padding-inline: 0.65rem; }
+}
+@container (max-width: 38.75rem) {
   .spatial-deck-heading { min-height: 6.4rem; padding-inline: 0.35rem; }
   .spatial-deck-heading h1 { font-size: 2rem; }
   .spatial-deck-hero { display: block; min-height: 15rem; }

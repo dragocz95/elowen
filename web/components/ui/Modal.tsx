@@ -101,9 +101,9 @@ export function ModalBody({ children, gap = 5 }: { children: ReactNode; gap?: 4 
  *  node (e.g. the auto-save indicator) sits on the left while actions stay right-aligned. */
 export function ModalFooter({ children, status }: { children?: ReactNode; status?: ReactNode }) {
   return (
-    <div className={`flex shrink-0 items-center gap-2 border-t border-border px-5 py-3 ${status ? 'justify-between' : 'justify-end'}`}>
-      {status ? <div className="min-w-0">{status}</div> : null}
-      <div className="flex items-center gap-2">{children}</div>
+    <div className={`flex shrink-0 flex-col items-stretch gap-2 border-t border-border px-5 py-3 sm:flex-row sm:items-center ${status ? 'sm:justify-between' : 'sm:justify-end'}`}>
+      {status ? <div className="min-w-0 w-full sm:w-auto">{status}</div> : null}
+      <div className="flex max-w-full flex-wrap items-center justify-end gap-2">{children}</div>
     </div>
   );
 }

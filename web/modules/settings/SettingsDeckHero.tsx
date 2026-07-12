@@ -3,6 +3,7 @@
 import { ArrowRight, Globe2, RefreshCw, Server } from 'lucide-react';
 import type { SpatialDeckSection } from '../../components/ui/SpatialControlDeck';
 import type { SystemInfo } from '../../lib/types';
+import { SectionHeroSummary } from '../../components/ui/SectionHeroSummary';
 
 interface HeroLabels {
   appName: string;
@@ -25,16 +26,7 @@ export function SettingsDeckHero({ section, system, labels, onCheckUpdates, onRe
   onRestart: (target: 'daemon' | 'web') => void;
 }) {
   if (section.id !== 'system') {
-    const Icon = section.icon;
-    return (
-      <div className="settings-hero-summary">
-        <span className="settings-hero-summary__icon"><Icon size={28} strokeWidth={1.45} aria-hidden /></span>
-        <div>
-          <span className="settings-hero-summary__label">{section.label}</span>
-          {section.description ? <p>{section.description}</p> : null}
-        </div>
-      </div>
-    );
+    return <SectionHeroSummary icon={section.icon} title={section.label} description={section.description} />;
   }
 
   const updateLabel = system?.updateAvailable

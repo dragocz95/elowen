@@ -25,7 +25,12 @@ describe('design tokens', () => {
   });
 
   it('stacks spatial hero metrics into a readable mobile grid', () => {
-    expect(components).toMatch(/@media \(max-width: 620px\)[\s\S]*\.spatial-workspace-hero__metrics\s*\{[^}]*grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\)/);
+    expect(components).toMatch(/@container \(max-width: 38\.75rem\)[\s\S]*\.spatial-workspace-hero__metrics\s*\{[^}]*grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\)/);
+  });
+
+  it('uses component width for spatial deck layout changes', () => {
+    expect(components).toMatch(/@container \(max-width: 56\.25rem\)[\s\S]*\.spatial-deck-hero/);
+    expect(components).toMatch(/@container \(max-width: 38\.75rem\)[\s\S]*\.spatial-form-row/);
   });
 
   it('caps the static mascot at the WebGL scene art size', () => {
