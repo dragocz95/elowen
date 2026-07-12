@@ -809,6 +809,39 @@ describe('BrainService', () => {
     expect(seen.at(-1)?.type).toBe('idle');
   });
 
+  it('publishes one compacted refresh when threshold compaction is superseded by overflow recovery', async () => {
+    const d = fakeDeps();
+    const svc = new BrainService(d as never);
+    await svc.start(1);
+    const seen: { type: string }[] = [];
+    svc.subscribe(1, (event) => seen.push(event as { type: string }));
+    const overflow = {
+      role: 'assistant', content: [], stopReason: 'error', provider: 'relay', model: 'm',
+      errorMessage: 'context length exceeded', timestamp: 10,
+      usage: { input: 1_100, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 1_100, cost: { total: 0 } },
+    };
+
+    d.emit({ type: 'agent_start' });
+    d.emit({
+      type: 'compaction_end', reason: 'threshold', result: { summary: 'first summary' },
+      aborted: false, willRetry: false,
+    });
+    d.emit({ type: 'agent_end', willRetry: true, messages: [overflow] });
+    expect(seen.filter((event) => event.type === 'compacted')).toHaveLength(0);
+
+    d.emit({
+      type: 'compaction_end', reason: 'overflow', result: { summary: 'replacement summary' },
+      aborted: false, willRetry: true,
+    });
+    expect(seen.filter((event) => event.type === 'compacted')).toHaveLength(1);
+
+    d.emit({
+      type: 'agent_end', willRetry: false,
+      messages: [{ role: 'assistant', content: 'recovered', stopReason: 'stop' }],
+    });
+    expect(seen.filter((event) => event.type === 'compacted')).toHaveLength(1);
+  });
+
   it('turns every exhausted PI-retryable provider failure into an actionable final error', async () => {
     const d = fakeDeps();
     const svc = new BrainService(d as never);

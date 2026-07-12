@@ -286,6 +286,65 @@ describe('brain persistence', () => {
     expect(rehydrated.map((message) => message.role)).toEqual(['compactionSummary', 'assistant', 'toolResult', 'assistant']);
   });
 
+  it('keeps the current tool tail across threshold compaction followed by overflow retry', () => {
+    projectUserTurn(store, 's1', 'q1');
+    projectEvent(store, 's1', { type: 'agent_end', willRetry: false, messages: [{ role: 'assistant', content: 'a1' }] } as never);
+    projectUserTurn(store, 's1', 'q2');
+    projectEvent(store, 's1', { type: 'agent_end', willRetry: false, messages: [{ role: 'assistant', content: 'a2' }] } as never);
+    projectUserTurn(store, 's1', 'q3');
+
+    const firstAssistant = { role: 'assistant', content: 'inspect with a tool', stopReason: 'toolUse' };
+    const toolResult = { role: 'toolResult', content: 'current tool output' };
+    const overflow = {
+      role: 'assistant', content: [], stopReason: 'error', provider: 'relay', model: 'm',
+      errorMessage: 'context length exceeded', timestamp: 10,
+      usage: { input: 1_100, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 1_100, cost: { total: 0 } },
+    };
+    const session = { messages: [
+      { role: 'compactionSummary', summary: 'first threshold summary', tokensBefore: 850 },
+      firstAssistant,
+      toolResult,
+    ] } as unknown as AgentSession;
+    const project = createSessionPersistenceProjector(store, session, 's1', 1_000);
+
+    project({ type: 'agent_start' } as never);
+    project({
+      type: 'compaction_end', reason: 'threshold', result: { summary: 'first threshold summary' },
+      aborted: false, willRetry: false,
+    } as never);
+    project({
+      type: 'agent_end', willRetry: true,
+      messages: [{ role: 'user', content: 'q3 framed' }, firstAssistant, toolResult, overflow],
+    } as never);
+
+    // PI compacts the already-compacted context again for overflow recovery. Its listener snapshot still
+    // contains the transient overflow assistant; the successful retry will arrive in a fresh agent_end.
+    session.messages = [
+      { role: 'compactionSummary', summary: 'second overflow summary', tokensBefore: 1_100 },
+      firstAssistant,
+      toolResult,
+      overflow,
+    ] as never;
+    project({
+      type: 'compaction_end', reason: 'overflow', result: { summary: 'second overflow summary' },
+      aborted: false, willRetry: true,
+    } as never);
+    session.messages = session.messages.slice(0, -1) as never;
+    project({
+      type: 'agent_end', willRetry: false,
+      messages: [{ role: 'assistant', content: 'recovered answer', stopReason: 'stop' }],
+    } as never);
+
+    const rows = store.getMessages('s1');
+    expect(rows.map((row) => row.role)).toEqual(['compaction', 'assistant', 'toolResult', 'assistant']);
+    expect(rows.map((row) => JSON.parse(row.content))).toEqual([
+      expect.objectContaining({ role: 'compactionSummary', summary: 'second overflow summary' }),
+      expect.objectContaining({ content: 'inspect with a tool' }),
+      expect.objectContaining({ content: 'current tool output' }),
+      expect.objectContaining({ content: 'recovered answer' }),
+    ]);
+  });
+
   it('persistCompaction maps NO_REPLY_NUDGE tails correctly — a nudge user message has no store row, so it is not counted', () => {
     // Turn A (kept), then a thinking-only turn B whose nudge produced the real reply. The store has NO
     // row for the NO_REPLY_NUDGE user prompt (projectUserTurn is never called for it), only its reply.

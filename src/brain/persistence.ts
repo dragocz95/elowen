@@ -56,6 +56,20 @@ export function projectEvent(store: BrainStore, sessionId: string, event: AgentS
   store.touchSession(sessionId);
 }
 
+/** Remove only PI's transient terminal overflow assistant from a deferred agent_end. The preceding
+ * assistant/tool rows are real completed work and must become durable before a replacement overflow
+ * compaction aligns its kept tail against BrainStore. */
+function withoutTrailingOverflowAssistant(
+  event: AgentSessionEvent,
+  contextWindow: number,
+): AgentSessionEvent {
+  if (event.type !== 'agent_end') return event;
+  const overflowIndex = event.messages.findLastIndex((message) =>
+    (message as { role?: string }).role === 'assistant' && isErroredContextOverflow(message, contextWindow));
+  if (overflowIndex < 0) return event;
+  return { ...event, messages: event.messages.filter((_message, index) => index !== overflowIndex) };
+}
+
 /** PI decides overflow compact-and-retry only after its first errored `agent_end` has been emitted. This
  * projector mirrors that event order without ever making the transient overflow assistant durable:
  * defer it, persist the compacted clean context (omitting PI's still-present trailing error), then let
@@ -117,6 +131,18 @@ export function createSessionPersistenceProjector(
     const overflow = compact.reason === 'overflow';
     const succeeded = compact.result != null && compact.aborted !== true;
     if (succeeded) {
+      // Combined race: a threshold compact already deferred its store rewrite until this run's
+      // agent_end, but that agent_end itself overflowed and PI immediately compacted + retried. The
+      // retry emits only its fresh assistant row, so waiting for it would permanently lose the current
+      // assistant/tool prefix. Persist that clean prefix now, then apply the NEW overflow summary over
+      // the aligned store. PI's transient overflow assistant is omitted from both operations.
+      if (overflow && compact.willRetry === true && deferredOverflow && pendingRunCompaction && !agentRunOpen) {
+        projectEvent(store, sessionId, withoutTrailingOverflowAssistant(deferredOverflow, contextWindow));
+        pendingRunCompaction = false;
+        persistCompaction(store, session, sessionId, { omitTrailingOverflowError: true });
+        deferredOverflow = null;
+        return;
+      }
       if (agentRunOpen || pendingRunCompaction) {
         pendingRunCompaction = true;
       } else {
