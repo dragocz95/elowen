@@ -304,13 +304,15 @@ export class ChatApplication {
     if (!this.resources) return;
     const publication = this.lifetime.begin('metadata');
     void this.refreshRateLimits();
-    const [status, mcp] = await Promise.all([
+    const [status, mcp, goal] = await Promise.all([
       this.resources.client.status().catch(() => null),
       this.resources.client.mcpServers().catch(() => null),
+      this.resources.client.goal().catch(() => undefined),
     ]);
     this.lifetime.commit(publication, () => {
       if (status) this.applyStatus(status);
       this.state.mcpList = mcp;
+      if (goal !== undefined) this.state.goal = goal;
     });
   }
 

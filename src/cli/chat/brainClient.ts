@@ -1,7 +1,7 @@
 import { writeFileSync, existsSync } from 'node:fs';
 import { join, basename } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import type { AskAnswer, AskQuestion, BrainCard, BrainEvent } from '../../brain/events.js';
+import type { AskAnswer, AskQuestion, BrainCard, BrainEvent, BrainGoalState } from '../../brain/events.js';
 import type { ProcessInfo } from '../../brain/processRegistry.js';
 import type { BrainMessageView } from '../../brain/messageView.js';
 import type { SlashCommandDef } from '../../brain/slashCommands.js';
@@ -42,7 +42,7 @@ export interface BrainRateLimits {
 export interface BrainStatus { running: boolean; sessionId: string | null; title?: string; model: string; usage: BrainUsageView | null; statusline: StatuslineConfig | null; thinkingLevel?: string; thinkingLevels?: string[]; thinkingLevelLabels?: Record<string, string>; fast?: boolean; fastAvailable?: boolean; pendingAsk?: { id: string; questions: AskQuestion[]; kind?: 'approval' } | null; cards?: BrainCard[]; queued?: { id: string; text: string }[]; lspEnabled?: boolean; yolo?: boolean }
 export interface McpServerView { name: string; transport: string; status: 'connected' | 'connecting' | 'disconnected' | 'error' | 'disabled'; toolCount: number; tools: { name: string; title?: string; description?: string; schema?: unknown }[]; lastError: string | null; reconnecting?: boolean }
 export interface SkillView { name: string; description: string; source: 'bundled' | 'user'; scope?: string; location?: string; active?: boolean; canDelete?: boolean; missingRequirement?: string }
-export interface GoalView { session_id: string; user_id: number; status: 'active' | 'draft' | 'paused' | 'done'; goal: string; draft: string; subgoals: string; turns_used: number; turn_budget: number; last_verdict: string; last_evidence: string; paused_reason: string }
+export type GoalView = BrainGoalState;
 export interface RuntimeToolView { name: string; plugin: string; description?: string; schema?: string }
 /** One configured brain provider from the public config (API key stripped to `apiKeySet`). */
 export interface BrainProviderView { id: string; label: string; type: string; baseUrl: string; models: string[]; api?: 'openai-completions' | 'openai-responses'; apiKeySet?: boolean; apiKey?: string }

@@ -93,6 +93,11 @@ describe('StreamCoordinator — idle rollover', () => {
       [{ role: 'user', text: 'yesterday' }, { role: 'assistant', text: 'old answer' }],
       { conversationTitle: 'seeded', workMode: 'build' },
     );
+    rt.goal = {
+      session_id: 'old-session', user_id: 1, status: 'active', goal: 'Old conversation goal',
+      draft: '', subgoals: '[]', turns_used: 1, turn_budget: 8, last_verdict: '',
+      last_evidence: '', paused_reason: '', created_at: '2026-07-12 10:00:00', updated_at: '2026-07-12 10:00:00',
+    };
     rt.streamAc = ac;
     const flows = { launchAsk: () => {}, openPlanDecision: () => {} } as unknown as Flows;
     const stream = new StreamCoordinator(
@@ -105,6 +110,7 @@ describe('StreamCoordinator — idle rollover', () => {
     // triggering message as a `user` event and streams its reply — all in order, no history refetch.
     onEvent({ type: 'session', sessionId: 'fresh-1' });
     expect(turns(rt.transcript)).toEqual([]); // the prior conversation is cleared
+    expect(rt.goal).toBeNull(); // old conversation state must never bleed into the fresh composer
     onEvent({ type: 'user', text: 'today' });
     onEvent({ type: 'text', delta: 'streamed after rollover' });
 
@@ -211,6 +217,43 @@ describe('StreamCoordinator — idle rollover', () => {
     // A later snapshot (a kill/exit) replaces wholesale — the killed process just drops off.
     onEvent({ type: 'process', processes: [] });
     expect(rt.processes).toEqual([]);
+    expect(rt.transcript.revision).toBe(before);
+  });
+
+  it('a `goal` event replaces the authoritative goal state without touching the transcript view', () => {
+    let onEvent!: (e: BrainEvent) => void;
+    const client = {
+      stream: (cb: (e: BrainEvent) => void) => { onEvent = cb; return Promise.resolve(); },
+      history: () => Promise.resolve([]),
+      rebind: () => {},
+    } as unknown as BrainClient;
+    const rt = state([{ role: 'assistant', text: 'hi' }], {
+      conversationTitle: 'x', workMode: 'build',
+    });
+    const ac = new AbortController();
+    rt.streamAc = ac;
+    const render = vi.fn();
+    const stream = new StreamCoordinator(
+      rt, { client }, actions({ render }),
+      { launchAsk: () => {}, openPlanDecision: () => {} } as unknown as Flows,
+      new SnapshotHydrator<BrainEvent>(), new HydrationNoticeOwner(),
+    );
+    stream.openStream(ac);
+    const before = rt.transcript.revision;
+    const active = {
+      session_id: 'brain-1', user_id: 1, status: 'active' as const,
+      goal: 'Ship the goal indicator', draft: '', subgoals: '[]', turns_used: 0, turn_budget: 8,
+      last_verdict: '', last_evidence: '', paused_reason: '',
+      created_at: '2026-07-12 10:00:00', updated_at: '2026-07-12 10:00:00',
+    };
+
+    onEvent({ type: 'goal', goal: active });
+    expect(rt.goal).toEqual(active);
+    expect(rt.transcript.revision).toBe(before);
+    expect(render).toHaveBeenLastCalledWith('stream:goal');
+
+    onEvent({ type: 'goal', goal: { ...active, status: 'done', turns_used: 1, last_verdict: 'done' } });
+    expect(rt.goal?.status).toBe('done');
     expect(rt.transcript.revision).toBe(before);
   });
 

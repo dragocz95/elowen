@@ -109,6 +109,25 @@ describe('chat application shell ownership', () => {
     expect(animation.timerCount).toBe(0);
   });
 
+  it('ticks active-goal elapsed time only while a goal is visible and leaves no idle timer', async () => {
+    const render = vi.fn();
+    const animation = new AnimationController({ render, canAnimateMascot: () => false });
+    const updateGoal = (animation as unknown as { updateGoal?: (active: boolean) => void }).updateGoal;
+    expect(typeof updateGoal).toBe('function');
+    if (!updateGoal) return;
+
+    updateGoal.call(animation, true);
+    expect(animation.timerCount).toBe(1);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(render).toHaveBeenCalledWith('animation:goal');
+    expect(animation.timerCount).toBe(0);
+
+    updateGoal.call(animation, true);
+    updateGoal.call(animation, false);
+    expect(animation.timerCount).toBe(0);
+    animation.stop();
+  });
+
   it('OverlayController sanitizes one overlay boundary and forces structural open/close frames', () => {
     let rendered!: Component;
     const hide = vi.fn();
@@ -764,6 +783,37 @@ describe('chat application shell ownership', () => {
     composition.stop();
     expect(h.tui.listeners.size).toBe(0);
     expect(h.tui.children).toHaveLength(1);
+  });
+
+  it('renders one compact active-goal chip in the existing prompt row and removes it on completion', async () => {
+    vi.setSystemTime(new Date('2026-07-12T10:00:12.000Z'));
+    const h = compositionHarness({ columns: 160, rows: 30, turns: 4 });
+    h.rt.goal = {
+      session_id: 'brain-1', user_id: 1, status: 'active', goal: 'Ship the clean goal indicator',
+      draft: '', subgoals: '[]', turns_used: 0, turn_budget: 8, last_verdict: '',
+      last_evidence: '', paused_reason: '',
+      created_at: '2026-07-12 10:00:00', updated_at: '2026-07-12 10:00:00',
+    };
+    const composition = makeComposition(h);
+    composition.resume();
+    composition.renderForced('test:active-goal');
+    await vi.runOnlyPendingTimersAsync();
+
+    const active = renderMountedRoot(h).map(terminalPlainText);
+    const goalRows = active.filter((line) => line.includes('Goal'));
+    expect(goalRows).toHaveLength(1);
+    expect(goalRows[0]).toContain('0/8');
+    expect(goalRows[0]).toContain('12s');
+    expect(goalRows[0]).toContain('Ship the clean goal indicator');
+    expect(active).toHaveLength(h.term.rows);
+
+    h.rt.goal = { ...h.rt.goal, status: 'done', turns_used: 1, last_verdict: 'done' };
+    composition.render('test:goal-done');
+    await vi.runOnlyPendingTimersAsync();
+    const done = renderMountedRoot(h).map(terminalPlainText);
+    expect(done.some((line) => line.includes('Goal'))).toBe(false);
+    expect(composition.animations.timerCount).toBe(0);
+    composition.dispose();
   });
 
   it.each([[104, 12], [104, 24]] as const)(

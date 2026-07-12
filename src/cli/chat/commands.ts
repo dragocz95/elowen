@@ -10,6 +10,7 @@ import type { ChatState } from './chatState.js';
 import type { ChatApplicationActions, ChatApplicationResources, ChatTaskScope } from './chatCapabilities.js';
 import type { StreamCoordinatorPort } from './streamCoordinator.js';
 import type { Pickers } from './pickers.js';
+import { createOptimisticGoal } from './goalState.js';
 
 /** Resolve either PI's canonical reasoning id or its provider-facing label (`ultra` → `xhigh`). */
 export function resolveThinkingLevel(value: string, levels: string[], labels: Record<string, string>): string | null {
@@ -85,22 +86,49 @@ function handleGoalCommand(
   const fail = (e: Error): void => { rt.notice = color.error(`error: ${e.message}`); render(); };
   const raw = (arg ?? '').trim();
   if (!raw || raw === 'status' || raw === 'show') {
-    run(() => client.goal(), (g) => { rt.notice = color.dim(goalSummary(g)); render(); }, fail);
+    run(() => client.goal(), (g) => { rt.goal = g; rt.notice = color.dim(goalSummary(g)); render(); }, fail);
     return;
   }
   if (raw === 'pause' || raw === 'resume' || raw === 'clear') {
     run(() => client.goalAction(raw), (g) => {
-      rt.notice = color.dim(raw === 'clear' ? 'goal cleared' : goalSummary(g)); render();
+      rt.goal = g;
+      rt.notice = raw === 'clear'
+        ? color.dim('goal cleared')
+        : (g?.status === 'active' ? '' : color.dim(goalSummary(g)));
+      render();
     }, fail);
     return;
   }
   const draft = raw.startsWith('draft ');
   const text = draft ? raw.slice('draft '.length).trim() : raw;
-  rt.notice = color.dim(draft ? 'drafting goal…' : 'starting persistent goal…');
-  render();
-  run(() => client.setGoal(text, draft), (g) => {
-    rt.notice = color.dim(draft ? `goal draft:\n${g.draft}` : goalSummary(g)); render();
-  }, fail);
+  if (draft) {
+    rt.notice = color.dim('drafting goal…');
+    render();
+    run(() => client.setGoal(text, true), (g) => {
+      rt.goal = g;
+      rt.notice = color.dim(`goal draft:\n${g.draft}`);
+      render();
+    }, fail);
+    return;
+  }
+
+  // Goal admission and goal execution are intentionally different clocks. The daemon persists and emits
+  // `active` before the kickoff model turn, while this HTTP request resolves only after that turn. Show the
+  // admitted state immediately; the stream replaces this provisional object with the durable snapshot.
+  const previous = rt.goal;
+  const optimistic = createOptimisticGoal(text, client.boundSession);
+  rt.goal = optimistic;
+  rt.notice = '';
+  render('goal:optimistic');
+  run(() => client.setGoal(text, false), (g) => {
+    rt.goal = g;
+    rt.notice = '';
+    render('goal:confirmed');
+  }, (e) => {
+    // Do not overwrite an authoritative streamed error/paused state that arrived before the HTTP failure.
+    if (rt.goal === optimistic) rt.goal = previous;
+    fail(e);
+  });
 }
 
 function handleSubgoalCommand(
@@ -114,7 +142,7 @@ function handleSubgoalCommand(
   if (!raw) { rt.notice = color.dim('usage: /subgoal <text> · /subgoal remove <N> · /subgoal clear'); render(); return; }
   const remove = /^remove\s+(\d+)$/i.exec(raw);
   const action = raw === 'clear' ? ['clear', undefined] as const : remove ? ['remove', Number(remove[1])] as const : ['add', raw] as const;
-  run(() => client.subgoal(action[0], action[1]), (g) => { rt.notice = color.dim(goalSummary(g)); render(); }, (e) => {
+  run(() => client.subgoal(action[0], action[1]), (g) => { rt.goal = g; rt.notice = color.dim(goalSummary(g)); render(); }, (e) => {
     rt.notice = color.error(`error: ${e.message}`); render();
   });
 }

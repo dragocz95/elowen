@@ -1,7 +1,7 @@
 import type { BrainCard } from '../../brain/events.js';
 import type { ProcessInfo } from '../../brain/processRegistry.js';
 import type { TranscriptModel } from '../../brain/transcriptModel.js';
-import type { BrainRateLimits, BrainStatus, BrainWorkMode, McpServerView } from './brainClient.js';
+import type { BrainRateLimits, BrainStatus, BrainWorkMode, GoalView, McpServerView } from './brainClient.js';
 import type { FrecencyMap, PendingImage } from './mentions.js';
 
 export interface ChatStateSeed {
@@ -22,6 +22,7 @@ export interface ChatStateSeed {
   cards?: BrainCard[];
   queued?: { id: string; text: string }[];
   processes?: ProcessInfo[];
+  goal?: GoalView | null;
   showThoughts?: boolean;
   mentionFrecency?: FrecencyMap;
 }
@@ -51,6 +52,7 @@ export class ChatState {
   cards: BrainCard[];
   queued: { id: string; text: string }[];
   processes: ProcessInfo[];
+  goal: GoalView | null;
   listed: { id: string; title: string }[] = [];
   showThoughts: boolean;
   pendingImages: PendingImage[] = [];
@@ -74,6 +76,7 @@ export class ChatState {
     this.cards = seed.cards ?? [];
     this.queued = seed.queued ?? [];
     this.processes = seed.processes ?? [];
+    this.goal = seed.goal ?? null;
     this.showThoughts = seed.showThoughts ?? true;
     this.mentionFrecency = seed.mentionFrecency ?? {};
   }
