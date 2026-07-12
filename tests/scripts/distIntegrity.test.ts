@@ -1,6 +1,8 @@
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 
 interface DistIntegrity {
@@ -10,6 +12,7 @@ interface DistIntegrity {
 }
 
 const roots: string[] = [];
+const repositoryRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
 const write = (root: string, relative: string, body = ''): void => {
   const file = join(root, relative);
@@ -89,5 +92,22 @@ describe('dist integrity', () => {
     const api = await integrity();
     expect(() => api.cleanDist(root)).toThrow('expected package name "elowen"');
     expect(existsSync(join(root, 'dist/legacy.js'))).toBe(true);
+  });
+
+  it('removes a stale emitted module during the normal build', () => {
+    const stale = join(repositoryRoot, 'dist/cli/chat/legacy-build-output.js');
+    mkdirSync(dirname(stale), { recursive: true });
+    writeFileSync(stale, 'export {};');
+
+    try {
+      const result = spawnSync('npm', ['run', 'build', '--silent'], {
+        cwd: repositoryRoot,
+        encoding: 'utf8',
+      });
+      expect(result.status, result.stderr).toBe(0);
+      expect(existsSync(stale)).toBe(false);
+    } finally {
+      rmSync(stale, { force: true });
+    }
   });
 });

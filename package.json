@@ -39,7 +39,10 @@
     "README.md"
   ],
   "scripts": {
+    "prebuild": "node scripts/dist-integrity.mjs clean",
     "build": "tsc -p tsconfig.json && cp src/store/schema.sql dist/store/ && cp -r prompts dist/ && cp -r plugins dist/",
+    "postbuild": "node scripts/dist-integrity.mjs verify",
+    "check:dist": "node scripts/dist-integrity.mjs verify",
     "build:web": "node scripts/build-web-bundle.mjs",
     "prepublishOnly": "npm run build && npm run build:web",
     "test": "vitest run",
