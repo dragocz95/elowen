@@ -204,6 +204,42 @@ describe('ChatApplication shutdown ownership', () => {
     expect(state.goal).toEqual(activeGoal);
   });
 
+  it('does not let an older metadata response overwrite a newer streamed goal transition', async () => {
+    const activeGoal = {
+      session_id: 'brain-1', user_id: 1, status: 'active' as const, goal: 'Finish safely',
+      draft: '', subgoals: '[]', turns_used: 0, turn_budget: 8, last_verdict: '',
+      last_evidence: '', paused_reason: '',
+      created_at: '2026-07-12 10:00:00', updated_at: '2026-07-12 10:00:00',
+    };
+    let resolveGoal!: (goal: typeof activeGoal) => void;
+    const delayedGoal = new Promise<typeof activeGoal>((resolve) => { resolveGoal = resolve; });
+    const client = {
+      bindLifetime: vi.fn(),
+      status: vi.fn(async () => null),
+      mcpServers: vi.fn(async () => []),
+      rateLimits: vi.fn(async () => null),
+      goal: vi.fn(() => delayedGoal),
+    } as unknown as BrainClient;
+    const application = new ChatApplication({ base: 'http://unused', token: 'unused', client });
+    const state = new ChatState({ transcript: new TranscriptModel(), goal: activeGoal });
+    const internals = application as unknown as {
+      state: ChatState;
+      resources: { client: BrainClient };
+      refreshMeta(): Promise<void>;
+    };
+    internals.state = state;
+    internals.resources = { client };
+
+    const refreshing = internals.refreshMeta();
+    await Promise.resolve();
+    const completed = { ...activeGoal, status: 'done' as const, turns_used: 1, last_verdict: 'done' };
+    state.goal = completed; // same replacement performed by StreamCoordinator's authoritative goal event
+    resolveGoal(activeGoal); // stale GET that started before the completion event
+    await refreshing;
+
+    expect(state.goal).toEqual(completed);
+  });
+
   it('does not construct terminal owners after shutdown cancels an in-flight bootstrap', async () => {
     let enteredHistory!: () => void;
     let resolveHistory!: (history: []) => void;
