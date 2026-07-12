@@ -38,7 +38,7 @@ describe('installExitGuards — process listener lifecycle', () => {
       hup: process.listenerCount('SIGHUP'),
       fatal: process.listenerCount('uncaughtExceptionMonitor'),
     };
-    const dispose = installExitGuards({ shutdown: async () => {}, exit: () => {} });
+    const dispose = installExitGuards({ shutdown: async () => {}, teardownNow: () => {}, exit: () => {} });
     expect(process.listenerCount('exit')).toBe(before.exit + 1);
     expect(process.listenerCount('SIGTERM')).toBe(before.term + 1);
     expect(process.listenerCount('SIGHUP')).toBe(before.hup + 1);
@@ -58,15 +58,15 @@ describe('installExitGuards — process listener lifecycle', () => {
       calls.push('shutdown');
       return new Promise<void>((resolve) => { finishShutdown = resolve; });
     });
-    const dispose = installExitGuards({ shutdown, exit: (code) => { calls.push(`exit:${code}`); } });
+    const dispose = installExitGuards({ shutdown, teardownNow: () => { calls.push('teardown-now'); }, exit: (code) => { calls.push(`exit:${code}`); } });
     // Call our just-added SIGTERM handler directly (not process.emit) so no other listeners fire.
     const sigterm = process.listeners('SIGTERM').at(-1) as () => void;
     sigterm();
-    expect(calls).toEqual(['shutdown']);
+    expect(calls).toEqual(['teardown-now', 'shutdown']);
     finishShutdown();
     await Promise.resolve();
     await Promise.resolve();
-    expect(calls).toEqual(['shutdown', 'exit:143']);
+    expect(calls).toEqual(['teardown-now', 'shutdown', 'exit:143']);
     dispose();
   });
 
@@ -78,7 +78,7 @@ describe('installExitGuards — process listener lifecycle', () => {
       stopBoundSession: () => new Promise<void>((resolve) => { calls.push('stop'); finishStop = resolve; }),
       timeoutMs: 5_000,
     });
-    const dispose = installExitGuards({ shutdown, exit: () => {} });
+    const dispose = installExitGuards({ shutdown, teardownNow: shutdown.teardownNow, exit: () => {} });
     const fatal = process.listeners('uncaughtExceptionMonitor').at(-1) as (error: Error) => void;
     fatal(new Error('render overflow'));
     expect(calls).toEqual(['teardown']);
@@ -97,7 +97,7 @@ describe('installExitGuards — process listener lifecycle', () => {
       stopBoundSession: () => new Promise<void>((resolve) => { calls.push('stop'); finishStop = resolve; }),
       timeoutMs: 5_000,
     });
-    const dispose = installExitGuards({ shutdown, exit: () => {} });
+    const dispose = installExitGuards({ shutdown, teardownNow: shutdown.teardownNow, exit: () => {} });
     const exiting = process.listeners('exit').at(-1) as () => void;
     exiting();
     expect(calls).toEqual(['teardown']);
@@ -115,6 +115,8 @@ describe('createShutdownCoordinator', () => {
     const stopBoundSession = vi.fn(() => new Promise<void>((resolve) => { resolveStop = resolve; }));
     const teardown = vi.fn();
     const shutdown = createShutdownCoordinator({ teardown, stopBoundSession, timeoutMs: 5_000 });
+
+    expect(typeof shutdown.teardownNow).toBe('function');
 
     const first = shutdown();
     // Raw mode / alternate-screen cleanup cannot wait on the daemon request.

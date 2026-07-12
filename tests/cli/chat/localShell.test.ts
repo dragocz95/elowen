@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { ChatApplicationLifetime } from '../../../src/cli/chat/applicationLifetime.js';
-import { createShutdownCoordinator } from '../../../src/cli/chat/terminalLifecycle.js';
+import { createShutdownCoordinator, installExitGuards } from '../../../src/cli/chat/terminalLifecycle.js';
 import {
   composeWithShellContext,
   LOCAL_SHELL_MAX_CHARS,
@@ -251,12 +251,16 @@ describe('runLocalShell', () => {
         stopBoundSession: async () => {},
       });
       const killSpy = vi.spyOn(process, 'kill');
+      let dispose: (() => void) | null = null;
       try {
-        const stopping = shutdown();
-        // Fatal hooks cannot await `stopping`: the force signal itself must be issued in this call stack.
+        dispose = installExitGuards({ shutdown, teardownNow: shutdown.teardownNow, exit: () => {} });
+        const fatal = process.listeners('uncaughtExceptionMonitor').at(-1) as (error: Error) => void;
+        fatal(new Error('fatal render failure'));
+        // The monitor cannot await anything: resnapshot + force must have completed before it returns.
         expect(killSpy.mock.calls.some(([pid, signal]) => pid === grandchildPid && signal === 'SIGKILL')).toBe(true);
-        await stopping;
+        await shutdown();
       } finally {
+        dispose?.();
         killSpy.mockRestore();
       }
 
@@ -296,7 +300,22 @@ describe('runLocalShell', () => {
       groupPid = Number(readFileSync(groupFile, 'utf8'));
       latePid = Number(readFileSync(lateFile, 'utf8'));
 
-      await lifetime.stop();
+      const shutdown = createShutdownCoordinator({
+        teardown: () => lifetime.stop(),
+        stopBoundSession: async () => {},
+      });
+      const killSpy = vi.spyOn(process, 'kill');
+      let dispose: (() => void) | null = null;
+      try {
+        dispose = installExitGuards({ shutdown, teardownNow: shutdown.teardownNow, exit: () => {} });
+        const fatal = process.listeners('uncaughtExceptionMonitor').at(-1) as (error: Error) => void;
+        fatal(new Error('fatal during TERM grace'));
+        expect(killSpy.mock.calls.some(([pid, signal]) => pid === latePid && signal === 'SIGKILL')).toBe(true);
+        await shutdown();
+      } finally {
+        dispose?.();
+        killSpy.mockRestore();
+      }
 
       expect(latePid).toBeGreaterThan(0);
       expect(() => process.kill(latePid, 0)).toThrow();

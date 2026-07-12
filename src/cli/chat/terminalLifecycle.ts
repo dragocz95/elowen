@@ -92,16 +92,28 @@ export interface ShutdownCoordinatorOptions {
   timeoutMs?: number;
 }
 
+export interface ShutdownCoordinator {
+  (): Promise<void>;
+  /** Execute the complete synchronous local boundary (terminal restoration + application abort) now. */
+  teardownNow(): void;
+}
+
 /** One idempotent shutdown transaction for every exit path. Local terminal restoration starts
  * synchronously; completion waits only for a bounded best-effort daemon stop. */
-export function createShutdownCoordinator(options: ShutdownCoordinatorOptions): () => Promise<void> {
+export function createShutdownCoordinator(options: ShutdownCoordinatorOptions): ShutdownCoordinator {
   let pending: Promise<void> | null = null;
-  return (): Promise<void> => {
+  let localStarted = false;
+  let localCleanup: void | Promise<void> = undefined;
+  const teardownNow = (): void => {
+    if (localStarted) return;
+    localStarted = true;
+    try { localCleanup = options.teardown(); } catch { /* server stop must still be attempted */ }
+  };
+  const shutdown = (): Promise<void> => {
     if (pending) return pending;
     let finish!: () => void;
     pending = new Promise<void>((resolve) => { finish = resolve; });
-    let localCleanup: void | Promise<void> = undefined;
-    try { localCleanup = options.teardown(); } catch { /* server stop must still be attempted */ }
+    teardownNow();
     const stopAc = new AbortController();
     let timer: ReturnType<typeof setTimeout> | null = null;
     const timeout = new Promise<void>((resolve) => {
@@ -124,6 +136,7 @@ export function createShutdownCoordinator(options: ShutdownCoordinatorOptions): 
     });
     return pending;
   };
+  return Object.assign(shutdown, { teardownNow });
 }
 
 /** Install process guards for one chat run. Signal handlers enter the same bounded shutdown transaction
@@ -131,6 +144,8 @@ export function createShutdownCoordinator(options: ShutdownCoordinatorOptions): 
  * already happened synchronously inside `shutdown()`. */
 export function installExitGuards(options: {
   shutdown(): Promise<void>;
+  /** Explicit last-chance boundary: must not rely on a Promise continuation or timer. */
+  teardownNow(): void;
   exit?(code: number): void;
 }): () => void {
   const exit = options.exit ?? ((code: number): void => { process.exit(code); });
@@ -138,6 +153,7 @@ export function installExitGuards(options: {
   const onSignal = (code: number) => (): void => {
     if (exiting) return;
     exiting = true;
+    options.teardownNow();
     void options.shutdown().finally(() => exit(code));
   };
   const onSigTerm = onSignal(143);
@@ -145,8 +161,8 @@ export function installExitGuards(options: {
   // Node does not wait for asynchronous work from `exit` or an uncaught-exception monitor. Entering the
   // coordinator still guarantees its synchronous terminal teardown; the detached daemon stop is strictly
   // best-effort on these last-chance hooks. SIGTERM/SIGHUP above explicitly await the bounded promise.
-  const onExit = (): void => { void options.shutdown(); };
-  const onFatal = (): void => { void options.shutdown(); };
+  const onExit = (): void => { options.teardownNow(); void options.shutdown(); };
+  const onFatal = (): void => { options.teardownNow(); void options.shutdown(); };
   process.once('exit', onExit);
   process.once('SIGTERM', onSigTerm);
   process.once('SIGHUP', onSigHup);

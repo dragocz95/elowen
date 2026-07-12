@@ -1,10 +1,9 @@
 import { spawn } from 'node:child_process';
-import type { ChildProcess } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import type { ElowenTurn } from '../../brain/transcript.js';
 import type { ToolOutputView } from '../../brain/messageView.js';
-import { isOwnedLinuxProcess, isSameLinuxProcess, snapshotLinuxProcess, snapshotLinuxProcessGroup } from './processTermination.js';
-import type { LinuxProcessOwner, ProcessIdentity } from './processTermination.js';
+import { BoundedProcessGroupTermination } from './processTermination.js';
+import type { LinuxProcessOwner } from './processTermination.js';
 
 /** `!cmd` local shell escape for the chat TUI (opencode-style): the command runs on THIS machine
  *  (the CLI's cwd), renders as a console block in the transcript, and its output is buffered as
@@ -55,196 +54,7 @@ export interface LocalShellLimits {
   killGraceMs?: number;
 }
 
-function terminateProcessTree(child: Pick<ChildProcess, 'pid' | 'kill'>, signal: NodeJS.Signals = 'SIGTERM'): boolean {
-  // A shell escape commonly launches grandchildren (`sh -c 'sleep …'`). Killing only the shell leaves
-  // those descendants holding stdout/stderr pipes, so the exec callback — and therefore CLI teardown —
-  // remains stuck. A detached POSIX child becomes a process-group leader; a negative pid terminates the
-  // complete command tree. Windows has no equivalent negative-pid contract, so use ChildProcess.kill().
-  if (process.platform !== 'win32' && child.pid) {
-    try {
-      process.kill(-child.pid, signal);
-      return true;
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ESRCH') return false;
-    }
-  }
-  try { return child.kill(signal); } catch { return false; }
-}
-
-/** Sole owner of TERM→KILL for one spawned shell group. Timeout, output overflow and application abort
- * all converge here. Escalation deliberately survives the leader's `close`: grandchildren can close the
- * inherited pipes and outlive that event. Linux kills only birth-identity-matched members, avoiding a
- * recycled-PID/group kill; other platforms use the strongest native fallback available. */
-const PROCESS_GROUP_POLL_MS = 5;
 const LOCAL_SHELL_OWNER_ENV = 'ELOWEN_LOCAL_SHELL_OWNER';
-
-class OwnedProcessGroup {
-  private requested = false;
-  private firstReason: TerminationReason | null = null;
-  private readonly pgid: number | undefined;
-  private readonly identities = new Map<number, ProcessIdentity>();
-  private readonly termSignalled = new Set<string>();
-  private linuxTracking: boolean;
-  private forced = false;
-  private forceTimer: ReturnType<typeof setTimeout> | null = null;
-  private pollTimer: ReturnType<typeof setTimeout> | null = null;
-  private settlement: Promise<void> | null = null;
-  private settle: (() => void) | null = null;
-
-  constructor(
-    private readonly child: ChildProcess,
-    private readonly graceMs: number,
-    private readonly owner: LinuxProcessOwner,
-  ) {
-    this.pgid = child.pid;
-    const leader = this.pgid ? snapshotLinuxProcess(this.pgid) : null;
-    this.linuxTracking = process.platform === 'linux';
-    if (leader && leader.pgid === this.pgid) this.identities.set(leader.identity.pid, leader.identity);
-  }
-
-  terminate(reason: TerminationReason): Promise<void> {
-    if (this.requested) {
-      // A timeout/output-overflow already gave the command its polite TERM grace. Application teardown
-      // cannot spend that grace again: force immediately so the lifetime promise remains a true exit fence.
-      if (reason === 'abort' && this.firstReason !== 'abort') this.force();
-      return this.settlement!;
-    }
-    this.requested = true;
-    this.firstReason = reason;
-    this.settlement = new Promise<void>((resolve) => { this.settle = resolve; });
-    if (this.linuxTracking) {
-      this.captureLinuxGroup();
-      const live = this.liveIdentities();
-      if (reason !== 'abort' && live.length > 0) this.signalIdentities(live, 'SIGTERM');
-      else if (reason !== 'abort') {
-        // An empty first /proc snapshot must not declare success: the child can still be between spawn
-        // and exec, or a TERM handler can fork after this observation. Keep the grace/force boundary.
-        try { this.child.kill('SIGTERM'); } catch { /* already gone */ }
-      }
-    } else if (reason !== 'abort') {
-      terminateProcessTree(this.child, 'SIGTERM');
-    }
-    if (this.settle && reason === 'abort') {
-      // `uncaughtExceptionMonitor` can run only synchronous teardown before Node exits. Do not open a
-      // TERM-trap fork race here: application abort goes straight to a birth-safe resnapshot + SIGKILL.
-      this.force();
-    } else if (this.settle) {
-      this.forceTimer = setTimeout(() => this.force(), Math.max(0, this.graceMs));
-    }
-    return this.settlement;
-  }
-
-  waitForSettlement(): Promise<void> | null { return this.settlement; }
-
-  private force(): void {
-    if (!this.settle || this.forced) return;
-    this.forced = true;
-    if (this.forceTimer) clearTimeout(this.forceTimer);
-    this.forceTimer = null;
-    if (this.linuxTracking) {
-      // Resnapshot at the escalation boundary. A TERM trap may have forked after the first snapshot;
-      // inherited owner markers plus birth identities make those late members safe to include.
-      this.captureLinuxGroup();
-      const live = this.liveIdentities();
-      if (live.length > 0) this.signalIdentities(live, 'SIGKILL');
-      else {
-        // Do not let a transiently empty /proc snapshot turn fatal teardown into a no-op. ChildProcess.kill
-        // is the narrow direct-child fallback; settlement still waits for the post-force verification.
-        try { this.child.kill('SIGKILL'); } catch { /* already gone */ }
-      }
-      this.verifyForcedGroup();
-      return;
-    }
-    // `/proc` is unavailable (macOS/Windows): retain the previous native group/child behavior. On POSIX
-    // the grace is intentionally short, limiting the unavoidable process-group reuse window.
-    terminateProcessTree(this.child, 'SIGKILL');
-    this.finishSettlement();
-  }
-
-  private captureLinuxGroup(): void {
-    if (!this.settle || !this.pgid) return;
-    const snapshot = snapshotLinuxProcessGroup(this.pgid);
-    if (snapshot === null) {
-      this.linuxTracking = false;
-      if (this.forced) {
-        terminateProcessTree(this.child, 'SIGKILL');
-        this.finishSettlement();
-      }
-      return;
-    }
-    // A birth-identity-matched member proves the original group still exists, so every process in this
-    // atomic /proc snapshot belongs to it. The environment marker remains the fallback after the leader
-    // exits, when a TERM-trap child can be the only member left.
-    const continuous = snapshot.some((identity) => {
-      const known = this.identities.get(identity.pid);
-      return known?.startTime === identity.startTime && isSameLinuxProcess(known, this.pgid);
-    });
-    for (const identity of snapshot) {
-      const known = this.identities.get(identity.pid);
-      if (continuous || known?.startTime === identity.startTime || isOwnedLinuxProcess(identity, this.owner)) {
-        this.identities.set(identity.pid, identity);
-      }
-    }
-  }
-
-  private liveIdentities(): ProcessIdentity[] {
-    if (!this.pgid) return [];
-    const live: ProcessIdentity[] = [];
-    for (const [pid, identity] of this.identities) {
-      if (isSameLinuxProcess(identity, this.pgid)) live.push(identity);
-      else this.identities.delete(pid);
-    }
-    return live;
-  }
-
-  private signalIdentities(identities: readonly ProcessIdentity[], signal: 'SIGTERM' | 'SIGKILL'): void {
-    if (!this.pgid) return;
-    for (const identity of identities) {
-      const key = `${identity.pid}:${identity.startTime}`;
-      if (signal === 'SIGTERM' && this.termSignalled.has(key)) continue;
-      // Signal birth-validated members individually. A recycled numeric process group can therefore
-      // never turn a delayed escalation into a signal for unrelated processes.
-      if (!isSameLinuxProcess(identity, this.pgid)) continue;
-      try { process.kill(identity.pid, signal); } catch { /* already gone */ }
-      if (signal === 'SIGTERM') this.termSignalled.add(key);
-    }
-  }
-
-  private verifyForcedGroup(): void {
-    if (!this.settle || this.pollTimer) return;
-    this.pollTimer = setTimeout(() => {
-      this.pollTimer = null;
-      const live = this.liveIdentities();
-      if (live.length > 0) {
-        this.signalIdentities(live, 'SIGKILL');
-        this.verifyForcedGroup();
-        return;
-      }
-      // Known members are gone. One final owner-marker resnapshot closes the race where a TERM trap
-      // forked between the force-boundary snapshot and its parent's SIGKILL. Only if that finds another
-      // birth-owned member do we continue polling; the common path performs no repeated /proc-wide scan.
-      this.captureLinuxGroup();
-      const late = this.liveIdentities();
-      if (late.length > 0) {
-        this.signalIdentities(late, 'SIGKILL');
-        this.verifyForcedGroup();
-      } else {
-        this.finishSettlement();
-      }
-    }, PROCESS_GROUP_POLL_MS);
-  }
-
-  private finishSettlement(): void {
-    const settle = this.settle;
-    if (!settle) return;
-    this.settle = null;
-    if (this.forceTimer) clearTimeout(this.forceTimer);
-    if (this.pollTimer) clearTimeout(this.pollTimer);
-    this.forceTimer = null;
-    this.pollTimer = null;
-    settle();
-  }
-}
 
 /** `exec` does not pass its undocumented `detached` option through to the underlying spawn. Own the
  * shell process explicitly so every local command has a real POSIX process group and bounded buffers. */
@@ -263,19 +73,33 @@ const spawnLocalShell: ExecFn = (command, options, callback) => {
   let overflow = false;
   let timedOut = false;
   let settled = false;
-  const processGroup = new OwnedProcessGroup(child, options.killGraceMs, owner);
+  const processGroup = new BoundedProcessGroupTermination(child, options.killGraceMs, owner);
   const finish = (error: (Error & { code?: number | string; killed?: boolean }) | null): void => {
     if (settled) return;
     settled = true;
     clearTimeout(timer);
     callback(error, stdout, stderr);
   };
+  const terminate = (reason: TerminationReason): Promise<void> => {
+    const settlement = processGroup.terminate(reason);
+    void settlement.then(() => {
+      if (settled) return;
+      // A process can be unkillable or a platform tree-kill can fail. Once the bounded transaction has
+      // exhausted every safe kill attempt, detach every libuv handle so application shutdown cannot be
+      // kept alive by a descendant that still owns the inherited pipes.
+      child.stdout?.destroy();
+      child.stderr?.destroy();
+      child.unref();
+      finish(Object.assign(new Error(`local shell ${reason}`), { killed: true }));
+    });
+    return settlement;
+  };
   const append = (target: 'stdout' | 'stderr', chunk: Buffer): void => {
     if (overflow) return;
     bufferedBytes += chunk.length;
     if (bufferedBytes > options.maxBuffer) {
       overflow = true;
-      void processGroup.terminate('overflow');
+      void terminate('overflow');
       return;
     }
     if (target === 'stdout') stdout += chunk.toString('utf8');
@@ -297,12 +121,12 @@ const spawnLocalShell: ExecFn = (command, options, callback) => {
   });
   const timer = setTimeout(() => {
     timedOut = true;
-    void processGroup.terminate('timeout');
+    void terminate('timeout');
   }, options.timeout);
   return {
     pid: child.pid,
     kill: (signal?: NodeJS.Signals) => child.kill(signal),
-    terminate: (reason: TerminationReason) => processGroup.terminate(reason),
+    terminate,
     waitForTermination: () => processGroup.waitForSettlement(),
   };
 };

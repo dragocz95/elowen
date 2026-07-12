@@ -108,7 +108,7 @@ export class ChatApplication {
       stopBoundSession: (signal) => this.client.stopSession(signal),
     });
     this.quitImpl = () => { void shutdown().then(done); };
-    this.removeExitGuards = installExitGuards({ shutdown });
+    this.removeExitGuards = installExitGuards({ shutdown, teardownNow: shutdown.teardownNow });
     try {
       await this.bootstrap(this.launch);
       if (this.stopped) return;
