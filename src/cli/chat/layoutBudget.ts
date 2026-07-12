@@ -135,7 +135,12 @@ export function computeLayoutBudget(input: LayoutBudgetInput): LayoutBudget {
     status: terminalRows > 1 ? 1 : 0,
     hints: input.editorPriority || input.cardsPriority ? 0 : (terminalRows >= RECOMMENDED_TUI_ROWS ? 1 : 0),
   };
-  const targetTranscript = input.hasTranscript ? Math.min(4, Math.max(1, terminalRows - sections.header - sections.status - 1)) : 0;
+  // A blocking ask is the active interaction surface. Preserve only one transcript row so its dock can
+  // keep the full question/choice/actions visible at the documented 32x12 minimum. Ordinary editors
+  // retain the four-row transcript target used while composing a message.
+  const targetTranscript = input.hasTranscript
+    ? (input.editorPriority ? 1 : Math.min(4, Math.max(1, terminalRows - sections.header - sections.status - 1)))
+    : 0;
   const fixed = (): number => Object.entries(sections)
     .filter(([name]) => name !== 'transcript')
     .reduce((sum, [, value]) => sum + value, 0);

@@ -136,6 +136,35 @@ describe('AskChoiceDock', () => {
     expect(rendered).toContain('╰');
   });
 
+  it('keeps every action readable in the 32-column priority-editor budget', () => {
+    const dock = new AskChoiceDock({
+      tui: fakeTui(),
+      question: {
+        ...question(),
+        options: Array.from({ length: 12 }, (_, i) => ({
+          label: `Choice ${i + 1}`,
+          description: `Detailed explanation ${i + 1}`,
+        })),
+      },
+      index: 0,
+      total: 1,
+      onSubmit: vi.fn(),
+      onOther: vi.fn(),
+      onCancel: vi.fn(),
+    });
+    dock.setMaxRows(9);
+    for (let i = 0; i < 10; i++) dock.handleInput('\x1b[B');
+
+    const lines = dock.render(32);
+    const rendered = stripAnsi(lines.join('\n'));
+    expect(lines.length).toBeLessThanOrEqual(9);
+    expect(lines.every((line) => visibleWidth(line) <= 32)).toBe(true);
+    expect(rendered).toContain('Choice 11');
+    expect(rendered).toMatch(/space toggle[\s\S]*enter send[\s\S]*esc cancel/u);
+    expect(rendered).toContain('╭');
+    expect(rendered).toContain('╰');
+  });
+
   it('submits the highlighted row on enter for single-select questions', () => {
     const onSubmit = vi.fn();
     const dock = new AskChoiceDock({

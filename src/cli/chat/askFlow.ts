@@ -1,4 +1,4 @@
-import { truncateToWidth, wrapTextWithAnsi } from '@earendil-works/pi-tui';
+import { truncateToWidth, visibleWidth, wrapTextWithAnsi } from '@earendil-works/pi-tui';
 import { isDownKey, isEnterKey, isEscapeKey, isUpKey } from './keys.js';
 import type { Component, Focusable, TUI, Container, Editor } from '@earendil-works/pi-tui';
 import { getSelectListTheme } from '@earendil-works/pi-coding-agent';
@@ -142,7 +142,24 @@ export class AskChoiceDock implements Component, Focusable {
     const titleRow = row(`  ${open(theme.text, 'Elowen needs a decision')}  ${open(theme.faint, inlineText(this.opts.question.header || 'ask_user_question'))}  ${open(theme.faint, progress)}`);
     const questionRows = wrapTextWithAnsi(terminalPlainText(this.opts.question.question), Math.max(1, innerWidth - 4))
       .map((line) => row(`  ${open(theme.text, line)}`));
-    const actionRow = row(`  ${open(theme.text, 'space')} ${open(theme.muted, 'toggle')}  ${open(theme.text, 'enter')} ${open(theme.muted, 'send')}  ${open(theme.text, 'esc')} ${open(theme.muted, 'cancel')}`);
+    const actionSegments = [
+      `${open(theme.text, 'space')} ${open(theme.muted, 'toggle')}`,
+      `${open(theme.text, 'enter')} ${open(theme.muted, 'send')}`,
+      `${open(theme.text, 'esc')} ${open(theme.muted, 'cancel')}`,
+    ];
+    const packedActions: string[] = [];
+    let actionLine = '  ';
+    for (const segment of actionSegments) {
+      const candidate = `${actionLine}${actionLine === '  ' ? '' : '  '}${segment}`;
+      if (actionLine !== '  ' && visibleWidth(candidate) > innerWidth) {
+        packedActions.push(actionLine);
+        actionLine = `  ${segment}`;
+      } else {
+        actionLine = candidate;
+      }
+    }
+    packedActions.push(actionLine);
+    const actionRows = packedActions.map((line) => row(truncateToWidth(line, innerWidth, '')));
     const full = [
       top,
       titleRow,
@@ -152,7 +169,7 @@ export class AskChoiceDock implements Component, Focusable {
       ...choiceRows,
       row(''),
       row(open(theme.accent, truncateToWidth(`  ${selectedText}`, innerWidth, ''))),
-      actionRow,
+      ...actionRows,
       bottom,
     ];
     if (this.maxRows == null || full.length <= this.maxRows) return full;
@@ -161,8 +178,9 @@ export class AskChoiceDock implements Component, Focusable {
     // complete question still cannot fit, keep stable chrome plus the active option and move a bounded
     // choice window with keyboard selection. Nothing important disappears permanently below a slice.
     const cap = Math.max(1, this.maxRows);
-    if (cap <= 4) return [top, titleRow, actionRow, bottom].slice(0, cap);
-    const contentRows = Math.max(0, cap - 4); // top + title + actions + bottom
+    const chromeRows = 3 + actionRows.length; // top + title + actions + bottom
+    if (cap <= chromeRows) return [top, titleRow, ...actionRows, bottom].slice(0, cap);
+    const contentRows = Math.max(0, cap - chromeRows);
     const questionBudget = Math.min(questionRows.length, Math.max(questionRows.length > 0 ? 1 : 0, Math.floor(contentRows / 3)));
     let choiceBudget = Math.max(0, contentRows - questionBudget);
     const selectedGroup = choiceGroups[this.selectedIndex] ?? [];
@@ -179,7 +197,7 @@ export class AskChoiceDock implements Component, Focusable {
       }
     }
     const visibleChoices = [...visibleGroups.entries()].sort(([a], [b]) => a - b).flatMap(([, rows]) => rows);
-    return [top, titleRow, ...questionRows.slice(0, questionBudget), ...visibleChoices, actionRow, bottom].slice(0, cap);
+    return [top, titleRow, ...questionRows.slice(0, questionBudget), ...visibleChoices, ...actionRows, bottom].slice(0, cap);
   }
 }
 

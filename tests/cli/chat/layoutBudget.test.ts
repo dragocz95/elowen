@@ -76,6 +76,19 @@ describe('central chat layout budget', () => {
     expect(budget.rootRows).toBe(24);
   });
 
+  it('lets a blocking ask dock borrow all but one transcript row at 32x12', () => {
+    const budget = computeLayoutBudget({
+      columns: 32, rows: 12, hasTranscript: true, telemetryRequested: false,
+      editorPriority: true,
+      desired: { editor: 14, queue: 4, attachments: 1, cards: 6, subagents: 4 },
+    });
+    expect(budget.compactFallback).toBe(false);
+    expect(budget.sections.editor).toBe(9);
+    expect(budget.sections.transcript).toBe(1);
+    expect(budget.sections.status).toBe(1);
+    expect(budget.rootRows).toBe(12);
+  });
+
   it('lets an explicitly expanded Todo borrow transcript rows without displacing the editor', () => {
     const budget = computeLayoutBudget({
       columns: 80, rows: 24, hasTranscript: true, telemetryRequested: false,
