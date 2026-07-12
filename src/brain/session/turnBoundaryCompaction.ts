@@ -1,4 +1,10 @@
-import type { AgentSession, AgentSessionEvent, SessionManager } from '@earendil-works/pi-coding-agent';
+import {
+  calculateContextTokens,
+  estimateTokens,
+  type AgentSession,
+  type AgentSessionEvent,
+  type SessionManager,
+} from '@earendil-works/pi-coding-agent';
 
 type PiAssistantMessage = Extract<AgentSessionEvent, { type: 'message_end' }>['message'];
 type PiCompactionSession = {
@@ -37,7 +43,31 @@ export function installTurnBoundaryAutoCompaction(
     if (signal?.aborted) return snapshot;
 
     const before = latestCompactionId(sessionManager);
-    await checkCompaction(turn.message);
+    // A successful assistant usage snapshot ends BEFORE its tool results. Passing it directly makes PI
+    // trust the smaller number and miss a threshold crossed by the completed tool batch. Preserve the
+    // provider's authoritative context count and add PI's own conservative estimate for that exact tail.
+    const assistantUsage = (turn.message as { usage?: Parameters<typeof calculateContextTokens>[0] }).usage;
+    const directTokens = assistantUsage ? calculateContextTokens(assistantUsage) : 0;
+    const boundaryTokens = directTokens > 0
+      ? directTokens + turn.toolResults.reduce((total, message) => total + estimateTokens(message), 0)
+      : 0;
+    const fullBoundaryMessage = {
+      ...turn.message,
+      usage: {
+        input: boundaryTokens, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: boundaryTokens,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      },
+    } as PiAssistantMessage;
+    // AgentSession.abort() owns the Agent controller, while PI auto-compaction owns a separate controller.
+    // Bridge the public Agent signal to public abortCompaction() for exactly this awaited boundary check.
+    const abortCompaction = (): void => session.abortCompaction();
+    signal?.addEventListener('abort', abortCompaction, { once: true });
+    if (signal?.aborted) abortCompaction();
+    try {
+      await checkCompaction(fullBoundaryMessage);
+    } finally {
+      signal?.removeEventListener('abort', abortCompaction);
+    }
     if (signal?.aborted) return snapshot;
     const after = latestCompactionId(sessionManager);
     if (!after || after === before) return snapshot;

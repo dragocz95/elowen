@@ -31,7 +31,8 @@ function fakeDeps() {
       listeners.forEach((l) => l({ type: 'agent_end', willRetry: false, messages: [{ role: 'assistant', content: `echo:${t}` }] }));
     }),
     subscribe: (l: (e: unknown) => void) => { listeners.push(l); return () => {}; },
-    setModel: vi.fn(), dispose: vi.fn(), abort: vi.fn(async () => {}), messages, isStreaming: false,
+    setModel: vi.fn(), dispose: vi.fn(), abort: vi.fn(async () => {}),
+    abortCompaction: vi.fn(), abortBranchSummary: vi.fn(), messages, isStreaming: false,
     // PI's native mid-turn queue: steer() parks a message in the pending backlog (in a real session PI
     // delivers it between steps; the fake just records it so tests can assert it landed), and the
     // getters/clearQueue mirror what status()/queueList/abort read.
@@ -500,6 +501,8 @@ describe('BrainService', () => {
     await svc.send({ userId: 1, text: 'gamma' });
     await svc.abort(1);
     expect(svc.queueList(1)).toEqual([]);
+    expect(d.session.abortCompaction).toHaveBeenCalledOnce();
+    expect(d.session.abortBranchSummary).toHaveBeenCalledOnce();
   });
 
   it('queueRemove drops the pending echo so a removed prompt can never appear later', async () => {
@@ -685,6 +688,39 @@ describe('BrainService', () => {
     expect(seen.some((e) => e.type === 'compacted')).toBe(true);
     // The store mirrors the shrunk context (divider + kept tail), not the full log.
     expect(d.store.getMessages(sessionId).map((m) => m.role)).toEqual(['compaction', 'assistant']);
+  });
+
+  it('publishes a between-tool-turn `compacted` event only after its durable store rewrite', async () => {
+    const d = fakeDeps();
+    const svc = new BrainService(d as never);
+    const { sessionId } = await svc.start(1);
+    await svc.send({ userId: 1, text: 'old context' });
+    const seen: { type: string }[] = [];
+    svc.subscribe(1, (event) => seen.push(event as { type: string }));
+    const firstAssistant = { role: 'assistant', content: 'call a tool' };
+    const toolResult = { role: 'toolResult', content: 'large result' };
+    const finalAssistant = { role: 'assistant', content: 'done' };
+
+    d.emit({ type: 'agent_start' });
+    d.session.messages.length = 0;
+    d.session.messages.push(
+      { role: 'compactionSummary', summary: 'old context summarized', tokensBefore: 850 } as never,
+      firstAssistant as never,
+      toolResult as never,
+    );
+    d.emit({
+      type: 'compaction_end', reason: 'threshold', result: { summary: 'old context summarized' },
+      aborted: false, willRetry: false,
+    });
+    expect(seen.some((event) => event.type === 'compacted')).toBe(false);
+
+    d.session.messages.push(finalAssistant as never);
+    d.emit({ type: 'agent_end', willRetry: false, messages: [firstAssistant, toolResult, finalAssistant] });
+
+    expect(seen.map((event) => event.type).slice(-2)).toEqual(['compacted', 'idle']);
+    expect(d.store.getMessages(sessionId).map((row) => row.role)).toEqual([
+      'compaction', 'assistant', 'toolResult', 'assistant',
+    ]);
   });
 
   it('a no-op / aborted compaction_end leaves the store and clients untouched', async () => {
