@@ -166,6 +166,30 @@ describe('BrainClient', () => {
     }));
   });
 
+  it('uses the application lifetime for ordinary fetches but keeps the detached quit stop signal', async () => {
+    const calls: Array<{ url: string; signal?: AbortSignal | null }> = [];
+    const f = vi.fn(async (url: string, init?: RequestInit) => {
+      calls.push({ url, signal: init?.signal });
+      if (url.endsWith('/brain/session/stop')) return j(200, { stopped: true });
+      return await new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => reject(init.signal?.reason ?? new Error('aborted')), { once: true });
+      });
+    }) as unknown as typeof fetch;
+    const client = new BrainClient({ base: 'http://x', token: 't', fetchImpl: f, clientId: 'cli-life' });
+    const application = new AbortController();
+    client.bindLifetime(application.signal);
+
+    const pending = client.models();
+    application.abort(new Error('application stopped'));
+    await expect(pending).rejects.toThrow('application stopped');
+    expect(calls[0]).toEqual({ url: 'http://x/brain/models', signal: application.signal });
+
+    const detachedStop = new AbortController();
+    await client.stopSession(detachedStop.signal);
+    expect(calls.at(-1)).toEqual({ url: 'http://x/brain/session/stop', signal: detachedStop.signal });
+    expect(detachedStop.signal.aborted).toBe(false);
+  });
+
   it('reads optional rate-limit windows for the bound conversation', async () => {
     const f = vi.fn(async () => j(201, { sessionId: 'brain-9' })) as unknown as typeof fetch;
     const c = new BrainClient({ base: 'http://x', token: 't', fetchImpl: f });
@@ -323,6 +347,26 @@ describe('BrainClient', () => {
       'http://x/brain/stream?session=brain-fresh&client=cli-a&generation=1&snapshot=1',
     ]);
     expect(c.boundSession).toBe('brain-fresh');
+  });
+
+  it('cancels reconnect backoff immediately on lifecycle abort without leaving a timer', async () => {
+    vi.useFakeTimers();
+    try {
+      const f = vi.fn(async () => new Response(new ReadableStream<Uint8Array>({ start(controller) { controller.close(); } }), { status: 200 })) as unknown as typeof fetch;
+      const client = new BrainClient({ base: 'http://x', token: 't', fetchImpl: f });
+      const lifecycle = new AbortController();
+      const streaming = client.stream(() => {}, lifecycle.signal, 30_000);
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(vi.getTimerCount()).toBe(1);
+
+      lifecycle.abort();
+      await streaming;
+      expect(vi.getTimerCount()).toBe(0);
+      expect(f).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('getTddMode reads autopilot.tddMode from the public config', async () => {

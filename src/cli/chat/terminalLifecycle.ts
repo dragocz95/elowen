@@ -1,4 +1,4 @@
-import { ALT_SCREEN_OFF, ALT_SCREEN_ON, DISABLE_MOUSE, ENABLE_MOUSE } from './layout.js';
+import { ALT_SCREEN_OFF, ALT_SCREEN_ON, DISABLE_MOUSE, ENABLE_MOUSE } from './terminalProtocol.js';
 
 export type TerminalLifecycleState = 'new' | 'active' | 'suspended' | 'stopped';
 
@@ -82,4 +82,95 @@ export class TerminalLifecycle {
   private attempt(action: () => void): void {
     try { action(); } catch { /* terminal teardown must continue through every remaining cleanup */ }
   }
+}
+
+export interface ShutdownCoordinatorOptions {
+  /** Synchronous local teardown: restore terminal modes and abort application-owned work immediately. */
+  teardown(): void | Promise<void>;
+  /** Detached from the aborted application signal; bounded independently below. */
+  stopBoundSession(signal: AbortSignal): Promise<void>;
+  timeoutMs?: number;
+}
+
+export interface ShutdownCoordinator {
+  (): Promise<void>;
+  /** Execute the complete synchronous local boundary (terminal restoration + application abort) now. */
+  teardownNow(): void;
+}
+
+/** One idempotent shutdown transaction for every exit path. Local terminal restoration starts
+ * synchronously; completion waits only for a bounded best-effort daemon stop. */
+export function createShutdownCoordinator(options: ShutdownCoordinatorOptions): ShutdownCoordinator {
+  let pending: Promise<void> | null = null;
+  let localStarted = false;
+  let localCleanup: void | Promise<void> = undefined;
+  const teardownNow = (): void => {
+    if (localStarted) return;
+    localStarted = true;
+    try { localCleanup = options.teardown(); } catch { /* server stop must still be attempted */ }
+  };
+  const shutdown = (): Promise<void> => {
+    if (pending) return pending;
+    let finish!: () => void;
+    pending = new Promise<void>((resolve) => { finish = resolve; });
+    teardownNow();
+    const stopAc = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const timeout = new Promise<void>((resolve) => {
+      timer = setTimeout(() => {
+        stopAc.abort(new Error('chat shutdown timed out'));
+        resolve();
+      }, options.timeoutMs ?? 750);
+    });
+    const serverCleanup = Promise.race([
+      Promise.resolve().then(() => options.stopBoundSession(stopAc.signal)).catch(() => {}),
+      timeout,
+    ]).finally(() => {
+      if (timer) clearTimeout(timer);
+    });
+    void Promise.all([
+      Promise.resolve(localCleanup).catch(() => {}),
+      serverCleanup,
+    ]).finally(() => {
+      finish();
+    });
+    return pending;
+  };
+  return Object.assign(shutdown, { teardownNow });
+}
+
+/** Install process guards for one chat run. Signal handlers enter the same bounded shutdown transaction
+ * as `/quit`; process exit is delayed until the daemon stop settles/times out, while terminal restoration
+ * already happened synchronously inside `shutdown()`. */
+export function installExitGuards(options: {
+  shutdown(): Promise<void>;
+  /** Explicit last-chance boundary: must not rely on a Promise continuation or timer. */
+  teardownNow(): void;
+  exit?(code: number): void;
+}): () => void {
+  const exit = options.exit ?? ((code: number): void => { process.exit(code); });
+  let exiting = false;
+  const onSignal = (code: number) => (): void => {
+    if (exiting) return;
+    exiting = true;
+    options.teardownNow();
+    void options.shutdown().finally(() => exit(code));
+  };
+  const onSigTerm = onSignal(143);
+  const onSigHup = onSignal(129);
+  // Node does not wait for asynchronous work from `exit` or an uncaught-exception monitor. Entering the
+  // coordinator still guarantees its synchronous terminal teardown; the detached daemon stop is strictly
+  // best-effort on these last-chance hooks. SIGTERM/SIGHUP above explicitly await the bounded promise.
+  const onExit = (): void => { options.teardownNow(); void options.shutdown(); };
+  const onFatal = (): void => { options.teardownNow(); void options.shutdown(); };
+  process.once('exit', onExit);
+  process.once('SIGTERM', onSigTerm);
+  process.once('SIGHUP', onSigHup);
+  process.once('uncaughtExceptionMonitor', onFatal);
+  return (): void => {
+    process.off('exit', onExit);
+    process.off('SIGTERM', onSigTerm);
+    process.off('SIGHUP', onSigHup);
+    process.off('uncaughtExceptionMonitor', onFatal);
+  };
 }

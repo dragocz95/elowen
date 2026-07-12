@@ -3,7 +3,7 @@ import type { Component } from '@earendil-works/pi-tui';
 
 export function padAnsi(text: string, width: number): string {
   const w = visibleWidth(text);
-  return w >= width ? truncateToWidth(text, width) : text + ' '.repeat(width - w);
+  return w > width ? truncateToWidth(text, width) : text + ' '.repeat(width - w);
 }
 
 const isCsiFinal = (code: number): boolean => code >= 0x40 && code <= 0x7e;
@@ -85,13 +85,20 @@ export function terminalSafeAnsi(input: string): string {
   return out;
 }
 
+/** One array entry handed to pi-tui must always represent exactly one physical terminal row. Keep this
+ * separate from terminalSafeAnsi(): transcript/tool renderers intentionally sanitize multiline text before
+ * splitting it, while the final root/overlay boundary folds an accidental embedded line break into a cell. */
+export function terminalPhysicalRow(input: string): string {
+  return input.replace(/[\r\n]+/g, ' ');
+}
+
 /** Wrap a PI overlay at its final render boundary. Overlays are composited after the root frame, so
  * source-level sanitization alone cannot protect pickers supplied by API/plugin metadata. Delegating
  * input/focus keeps the wrapper transparent to PI while every produced row crosses the same invariant. */
 export function terminalSafeComponent(component: Component): Component {
   const safe: Component = {
     invalidate: () => component.invalidate(),
-    render: (width) => component.render(width).map(terminalSafeAnsi),
+    render: (width) => component.render(width).map((row) => terminalPhysicalRow(terminalSafeAnsi(row))),
     ...(component.handleInput ? { handleInput: (data: string) => component.handleInput?.(data) } : {}),
     ...(component.wantsKeyRelease != null ? { wantsKeyRelease: component.wantsKeyRelease } : {}),
   };
@@ -168,6 +175,12 @@ export function terminalPlainText(input: string): string {
     i += point > 0xffff ? 2 : 1;
   }
   return lines.join('\n');
+}
+
+/** Printable one-line projection for labels, counters and metadata. Keep this centralized so every chat
+ * surface applies identical control stripping and whitespace folding to untrusted text. */
+export function terminalInlineText(input: string): string {
+  return terminalPlainText(input).replace(/\s+/g, ' ').trim();
 }
 
 export function formatK(n: number): string {

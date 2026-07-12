@@ -1,10 +1,10 @@
 import { truncateToWidth, visibleWidth } from '@earendil-works/pi-tui';
+import { PANEL_GUTTER_COLUMNS, TOP_RULE_ROWS } from './startScreen.js';
 
 const RECOMMENDED_TUI_COLUMNS = 32;
 const RECOMMENDED_TUI_ROWS = 12;
 const TELEMETRY_MIN_COLUMNS = 36;
 const TELEMETRY_DEFAULT_COLUMNS = 46;
-const TELEMETRY_GUTTER_COLUMNS = 3;
 
 interface LayoutSectionRows {
   header: number;
@@ -46,8 +46,24 @@ export interface LayoutBudget {
   chatColumns: number;
   telemetryColumns: number;
   telemetryGutter: number;
+  /** Exact number of physical rows available to the top-right telemetry overlay below the root rule. */
+  telemetryRows: number;
   sections: LayoutSectionRows;
   rootRows: number;
+}
+
+export interface TelemetryRailBudgetInput {
+  columns: number;
+  rows: number;
+  hasTranscript: boolean;
+  requested: boolean;
+  preferredColumns?: number;
+}
+
+export interface TelemetryRailBudget {
+  columns: number;
+  gutter: number;
+  rows: number;
 }
 
 /** Final root invariant: truncate ANSI-aware lines, discard overflow rows, and pad the working area to a
@@ -57,6 +73,11 @@ export function constrainFrame(lines: string[], columns: number, terminalRows: n
   const width = Math.max(0, Math.floor(columns));
   const height = Math.max(0, Math.floor(terminalRows));
   const frame = lines.slice(0, height).map((line) => {
+    const lineWidth = visibleWidth(line);
+    // Every production child normally arrives at the exact allocated width. Calling ANSI-aware
+    // truncateToWidth anyway reparses and rebuilds every styled cell; on a 180x50 frame that consumed
+    // ~15 ms by itself. Keep truncation as the defensive overflow path only.
+    if (lineWidth <= width) return line + ' '.repeat(width - lineWidth);
     const clipped = truncateToWidth(line, width, '');
     return clipped + ' '.repeat(Math.max(0, width - visibleWidth(clipped)));
   });
@@ -67,17 +88,23 @@ export function constrainFrame(lines: string[], columns: number, terminalRows: n
 const rows = (value: number, cap = Number.POSITIVE_INFINITY): number =>
   Math.min(cap, Math.max(0, Math.floor(Number.isFinite(value) ? value : 0)));
 
-function horizontalBudget(input: LayoutBudgetInput, columns: number): Pick<LayoutBudget, 'chatColumns' | 'telemetryColumns' | 'telemetryGutter'> {
-  if (!input.telemetryRequested || !input.hasTranscript || columns < 104) {
-    return { chatColumns: columns, telemetryColumns: 0, telemetryGutter: 0 };
+/** One source of truth for whether the right rail physically exists. Width and height are decided
+ * together: a compact-height terminal must not lose chat width to an overlay that cannot show its
+ * minimum functional Context + Project presentation. */
+export function computeTelemetryRailBudget(input: TelemetryRailBudgetInput): TelemetryRailBudget {
+  const columns = rows(input.columns);
+  const terminalRows = rows(input.rows);
+  if (!input.requested || !input.hasTranscript || columns < 104 || terminalRows < RECOMMENDED_TUI_ROWS) {
+    return { columns: 0, gutter: 0, rows: 0 };
   }
-  const wanted = rows(input.telemetryColumns ?? TELEMETRY_DEFAULT_COLUMNS, 68);
-  const panel = Math.min(Math.max(TELEMETRY_MIN_COLUMNS, wanted), Math.max(0, columns - RECOMMENDED_TUI_COLUMNS - TELEMETRY_GUTTER_COLUMNS));
-  if (panel < TELEMETRY_MIN_COLUMNS) return { chatColumns: columns, telemetryColumns: 0, telemetryGutter: 0 };
+  const wanted = rows(input.preferredColumns ?? TELEMETRY_DEFAULT_COLUMNS, 68);
+  const panel = Math.min(Math.max(TELEMETRY_MIN_COLUMNS, wanted), Math.max(0, columns - RECOMMENDED_TUI_COLUMNS - PANEL_GUTTER_COLUMNS));
+  if (panel < TELEMETRY_MIN_COLUMNS) return { columns: 0, gutter: 0, rows: 0 };
   return {
-    chatColumns: columns - panel - TELEMETRY_GUTTER_COLUMNS,
-    telemetryColumns: panel,
-    telemetryGutter: TELEMETRY_GUTTER_COLUMNS,
+    columns: panel,
+    gutter: PANEL_GUTTER_COLUMNS,
+    // The root rule owns row zero. The overlay is anchored immediately below it.
+    rows: Math.max(0, terminalRows - TOP_RULE_ROWS),
   };
 }
 
@@ -87,8 +114,20 @@ function horizontalBudget(input: LayoutBudgetInput, columns: number): Pick<Layou
 export function computeLayoutBudget(input: LayoutBudgetInput): LayoutBudget {
   const terminalColumns = rows(input.columns);
   const terminalRows = rows(input.rows);
-  const horizontal = horizontalBudget(input, terminalColumns);
   const compactFallback = terminalColumns < RECOMMENDED_TUI_COLUMNS || terminalRows < RECOMMENDED_TUI_ROWS;
+  const rail = computeTelemetryRailBudget({
+    columns: terminalColumns,
+    rows: terminalRows,
+    hasTranscript: input.hasTranscript,
+    requested: input.telemetryRequested,
+    preferredColumns: input.telemetryColumns,
+  });
+  const horizontal = {
+    chatColumns: terminalColumns - rail.columns - rail.gutter,
+    telemetryColumns: rail.columns,
+    telemetryGutter: rail.gutter,
+    telemetryRows: rail.rows,
+  };
 
   if (terminalRows === 0) {
     return {
@@ -118,6 +157,7 @@ export function computeLayoutBudget(input: LayoutBudgetInput): LayoutBudget {
       chatColumns: terminalColumns,
       telemetryColumns: 0,
       telemetryGutter: 0,
+      telemetryRows: 0,
       sections,
       rootRows: Object.values(sections).reduce((sum, value) => sum + value, 0),
     };
@@ -130,11 +170,17 @@ export function computeLayoutBudget(input: LayoutBudgetInput): LayoutBudget {
     subagents: input.editorPriority || input.cardsPriority ? 0 : rows(input.desired.subagents, 4),
     queue: input.editorPriority ? 0 : rows(input.desired.queue, 4),
     attachments: input.editorPriority ? 0 : (input.desired.attachments > 0 ? 1 : 0),
-    editor: rows(input.desired.editor, input.editorPriority ? Math.max(1, terminalRows - 3) : 7),
+    // Ordinary composer: at most six content rows plus PI Editor's two horizontal rules.
+    editor: rows(input.desired.editor, input.editorPriority ? Math.max(1, terminalRows - 3) : 8),
     status: terminalRows > 1 ? 1 : 0,
     hints: input.editorPriority || input.cardsPriority ? 0 : (terminalRows >= RECOMMENDED_TUI_ROWS ? 1 : 0),
   };
-  const targetTranscript = input.hasTranscript ? Math.min(4, Math.max(1, terminalRows - sections.header - sections.status - 1)) : 0;
+  // A blocking ask is the active interaction surface. Preserve only one transcript row so its dock can
+  // keep the full question/choice/actions visible at the documented 32x12 minimum. Ordinary editors
+  // retain the four-row transcript target used while composing a message.
+  const targetTranscript = input.hasTranscript
+    ? (input.editorPriority ? 1 : Math.min(4, Math.max(1, terminalRows - sections.header - sections.status - 1)))
+    : 0;
   const fixed = (): number => Object.entries(sections)
     .filter(([name]) => name !== 'transcript')
     .reduce((sum, [, value]) => sum + value, 0);

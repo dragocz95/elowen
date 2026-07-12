@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { encodeMessage, MessageDecoder, type JsonRpcMessage } from './protocol.js';
 import { resolveServerCommand, type LanguageServerSpec } from './servers.js';
 
@@ -17,12 +17,20 @@ export interface Diagnostic {
 
 const SEVERITY: Record<number, Diagnostic['severity']> = { 1: 'error', 2: 'warning', 3: 'info', 4: 'hint' };
 
+/** File URIs are identifiers, but servers do not agree on which optional path characters to percent-
+ * encode (typescript-language-server encodes parentheses while Node's pathToFileURL leaves them literal).
+ * Round-trip through the filesystem path so equivalent spellings share one document/waiter key. */
+function canonicalDocumentUri(uri: string): string {
+  try { return pathToFileURL(fileURLToPath(uri)).href; }
+  catch { return uri; }
+}
+
 /** Interpret an LSP `textDocument/publishDiagnostics` params object into { uri, diagnostics }. Pure and
  *  defensive (servers vary): unknown severities default to 'warning', missing ranges to line 1. This is
  *  the single place raw protocol becomes Elowen's Diagnostic — so it carries the unit tests. */
 export function parsePublishDiagnostics(params: unknown): { uri: string; diagnostics: Diagnostic[] } {
   const p = (params && typeof params === 'object') ? params as { uri?: unknown; diagnostics?: unknown } : {};
-  const uri = typeof p.uri === 'string' ? p.uri : '';
+  const uri = typeof p.uri === 'string' ? canonicalDocumentUri(p.uri) : '';
   const raw = Array.isArray(p.diagnostics) ? p.diagnostics : [];
   const diagnostics: Diagnostic[] = [];
   for (const d of raw) {

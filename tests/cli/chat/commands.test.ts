@@ -3,7 +3,15 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { compactNotice, resolveThinkingLevel, wireSubmit } from '../../../src/cli/chat/commands.js';
-import { emptyView } from '../../../src/brain/transcript.js';
+import { TranscriptModel } from '../../../src/brain/transcriptModel.js';
+import { ChatState } from '../../../src/cli/chat/chatState.js';
+import { ChatApplicationLifetime } from '../../../src/cli/chat/applicationLifetime.js';
+import { LocalShellBuffer } from '../../../src/cli/chat/localShell.js';
+
+function deferred<T>(): { promise: Promise<T>; resolve(value: T): void } {
+  let resolve!: (value: T) => void;
+  return { promise: new Promise<T>((done) => { resolve = done; }), resolve };
+}
 
 describe('resolveThinkingLevel', () => {
   it('accepts canonical ids and provider-facing labels without leaking the label to PI', () => {
@@ -43,24 +51,208 @@ describe('sub-agent child submit echo', () => {
         set onSubmit(fn: (text: string) => void) { onSubmit = fn; },
       };
       const subagentSend = vi.fn(async () => {});
-      const childView = { sessionId: 'brain-ch-subagent-child', view: emptyView(), loading: false };
+      const childTranscript = new TranscriptModel();
       const render = vi.fn();
-      const rt = {
-        client: { subagentSend }, editor, childView, notice: '', render,
-        shellContext: {}, attachmentChips: {},
-      };
-      wireSubmit(rt as never, { stream: {}, pickers: {} } as never);
-      const before = childView.view;
+      const state = new ChatState({ transcript: new TranscriptModel() });
+      state.childView = { sessionId: 'brain-ch-subagent-child', transcript: childTranscript, loading: false };
+      wireSubmit(
+        state,
+        {
+          client: { subagentSend }, editor, shellContext: {}, attachmentChips: {}, commandDefs: [], tui: {},
+          lifetime: new ChatApplicationLifetime<'metadata'>(),
+        } as never,
+        { render } as never,
+        { stream: {}, pickers: {} } as never,
+      );
+      const before = childTranscript.revision;
       onSubmit?.('guide the child');
       await Promise.resolve();
 
       expect(subagentSend).toHaveBeenCalledWith('brain-ch-subagent-child', 'guide the child');
-      expect(childView.view).toBe(before);
-      expect(childView.view.turns).toEqual([]);
+      expect(childTranscript.revision).toBe(before);
+      expect(childTranscript.turnCount).toBe(0);
       expect(render).toHaveBeenCalledOnce(); // only flushes the cleared editor
     } finally {
       if (priorHome === undefined) delete process.env.HOME;
       else process.env.HOME = priorHome;
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('application lifetime for local input work', () => {
+  it('kills publication from an unfinished !cmd after the chat stops', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'elowen-local-lifetime-'));
+    const priorHome = process.env.HOME;
+    process.env.HOME = home;
+    try {
+      let onSubmit: ((text: string) => void) | undefined;
+      const editor = {
+        addToHistory: vi.fn(), setText: vi.fn(),
+        set onSubmit(fn: (text: string) => void) { onSubmit = fn; },
+      };
+      const pending = deferred<{ command: string; output: string; exitCode: number; truncated: boolean }>();
+      const runLocal = vi.fn((_command: string, _cwd: string, _signal: AbortSignal) => pending.promise);
+      const lifetime = new ChatApplicationLifetime<'metadata'>();
+      const transcript = new TranscriptModel();
+      const shellContext = new LocalShellBuffer();
+      const render = vi.fn();
+      const state = new ChatState({ transcript });
+      wireSubmit(
+        state,
+        { client: {}, editor, shellContext, attachmentChips: {}, commandDefs: [], tui: {}, lifetime } as never,
+        { render } as never,
+        { stream: {}, pickers: {}, runLocalShell: runLocal } as never,
+      );
+
+      onSubmit?.('!printf pending');
+      expect(runLocal).toHaveBeenCalledWith('printf pending', process.cwd(), lifetime.signal);
+      const revision = transcript.revision;
+      lifetime.stop();
+      pending.resolve({ command: 'printf pending', output: 'late', exitCode: 0, truncated: false });
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(transcript.revision).toBe(revision);
+      expect(shellContext.pending).toBe(false);
+      expect(render).toHaveBeenCalledOnce();
+    } finally {
+      if (priorHome === undefined) delete process.env.HOME;
+      else process.env.HOME = priorHome;
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it('does not attach a clipboard result that arrives after the chat stops', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'elowen-clipboard-lifetime-'));
+    const priorHome = process.env.HOME;
+    process.env.HOME = home;
+    try {
+      let onSubmit: ((text: string) => void) | undefined;
+      const editor = {
+        addToHistory: vi.fn(), setText: vi.fn(),
+        set onSubmit(fn: (text: string) => void) { onSubmit = fn; },
+      };
+      const pending = deferred<{ image?: { name: string; data: string; mimeType: string; bytes: number }; error?: string }>();
+      const readClipboard = vi.fn((_signal: AbortSignal) => pending.promise);
+      const lifetime = new ChatApplicationLifetime<'metadata'>();
+      const render = vi.fn();
+      const state = new ChatState({ transcript: new TranscriptModel() });
+      wireSubmit(
+        state,
+        {
+          client: {}, editor, shellContext: new LocalShellBuffer(),
+          attachmentChips: { set: vi.fn() }, commandDefs: [], tui: {}, lifetime,
+        } as never,
+        { render } as never,
+        { stream: {}, pickers: {}, readClipboardImage: readClipboard } as never,
+      );
+
+      onSubmit?.('/paste');
+      expect(readClipboard).toHaveBeenCalledWith(lifetime.signal);
+      lifetime.stop();
+      pending.resolve({ image: { name: 'late.png', data: 'iVBORw0KGgo=', mimeType: 'image/png', bytes: 8 } });
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(state.pendingImages).toEqual([]);
+      expect(render).toHaveBeenCalledOnce();
+    } finally {
+      if (priorHome === undefined) delete process.env.HOME;
+      else process.env.HOME = priorHome;
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it('does not publish a session command response into the next conversation', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'elowen-session-epoch-'));
+    const priorHome = process.env.HOME;
+    process.env.HOME = home;
+    try {
+      let onSubmit: ((text: string) => void) | undefined;
+      const editor = {
+        addToHistory: vi.fn(), setText: vi.fn(),
+        set onSubmit(fn: (text: string) => void) { onSubmit = fn; },
+      };
+      const response = deferred<{ thinkingLevel: string }>();
+      const lifetime = new ChatApplicationLifetime<'metadata'>();
+      const render = vi.fn();
+      const state = new ChatState({
+        transcript: new TranscriptModel(),
+        thinkingLevel: 'low',
+        thinkingLevels: ['low', 'high'],
+      });
+      wireSubmit(
+        state,
+        {
+          client: { setThinkingLevel: () => response.promise }, editor,
+          shellContext: new LocalShellBuffer(), attachmentChips: {}, commandDefs: [], tui: {}, lifetime,
+        } as never,
+        { render } as never,
+        { stream: {}, pickers: {} } as never,
+      );
+
+      onSubmit?.('/reasoning high');
+      lifetime.invalidate();
+      response.resolve({ thinkingLevel: 'high' });
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(state.thinkingLevel).toBe('low');
+      expect(state.notice).toBe('');
+    } finally {
+      if (priorHome === undefined) delete process.env.HOME;
+      else process.env.HOME = priorHome;
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('/editor terminal handoff', () => {
+  it('always resumes the terminal and keeps the draft when editor setup rejects', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'elowen-editor-resume-'));
+    const priorHome = process.env.HOME;
+    const priorEditor = process.env.EDITOR;
+    process.env.HOME = home;
+    process.env.EDITOR = 'elowen-test-editor-that-does-not-exist';
+    try {
+      let onSubmit: ((text: string) => void) | undefined;
+      const editor = {
+        addToHistory: vi.fn(), setText: vi.fn(), getExpandedText: () => 'draft survives',
+        set onSubmit(fn: (text: string) => void) { onSubmit = fn; },
+      };
+      const edit = vi.fn(async () => { throw new Error('temp directory unavailable'); });
+      const lifetime = new ChatApplicationLifetime<'metadata'>();
+      const suspendTerminal = vi.fn();
+      const resumeTerminal = vi.fn();
+      const renderForced = vi.fn();
+      const state = new ChatState({ transcript: new TranscriptModel() });
+      wireSubmit(
+        state,
+        {
+          client: {}, editor, shellContext: new LocalShellBuffer(), attachmentChips: {},
+          commandDefs: [], tui: {}, lifetime,
+        } as never,
+        { render: vi.fn(), renderForced, suspendTerminal, resumeTerminal } as never,
+        { stream: {}, pickers: {}, editTextExternally: edit } as never,
+      );
+
+      onSubmit?.('/editor');
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(edit).toHaveBeenCalledWith({ text: 'draft survives', signal: lifetime.signal });
+      expect(suspendTerminal).toHaveBeenCalledOnce();
+      expect(resumeTerminal).toHaveBeenCalledOnce();
+      expect(editor.setText).toHaveBeenLastCalledWith('draft survives');
+      expect(state.notice).toContain('draft kept');
+      expect(renderForced).toHaveBeenCalledWith('external-editor:return');
+    } finally {
+      if (priorHome === undefined) delete process.env.HOME;
+      else process.env.HOME = priorHome;
+      if (priorEditor === undefined) delete process.env.EDITOR;
+      else process.env.EDITOR = priorEditor;
       rmSync(home, { recursive: true, force: true });
     }
   });

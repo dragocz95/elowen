@@ -55,12 +55,12 @@ describe('chat components', () => {
     expect(lines[0]).toContain('…'); // truncated
   });
 
-  it('QueuedMessages caps the visible list and rolls the rest into a "+N more" row', () => {
+  it('QueuedMessages reports its uncapped desired rows until the central layout assigns a cap', () => {
     const q = new QueuedMessages();
     q.set(Array.from({ length: 9 }, (_, i) => ({ id: String(i), text: `msg ${i}` })));
     const lines = q.render(40);
-    expect(lines).toHaveLength(7); // 6 shown + the overflow row
-    expect(lines[6]).toContain('+3 more queued');
+    expect(lines).toHaveLength(9);
+    expect(lines.at(-1)).toContain('msg 8');
   });
 
   it('QueuedMessages obeys the shell hard cap even when the queue and hint are large', () => {
@@ -126,6 +126,26 @@ describe('chat components', () => {
       title: 'console output', kind: 'console', text: 'failed', status: '[exit 2]', tone: 'danger',
     }, 60).join('\n');
     expect(rendered).toContain('[exit 2]');
+  });
+
+  it('keeps already fitted styled tool rows on the nested-block fast path', () => {
+    const output = {
+      title: 'console output',
+      kind: 'console' as const,
+      text: Array.from({ length: 7 }, (_, index) => `result ${index} ${'x'.repeat(130)}`).join('\n'),
+    };
+    toolOutputBlock(output, 180); // warm theme/segmenter/JIT
+    const startedAt = performance.now();
+    for (let index = 0; index < 20; index++) toolOutputBlock(output, 180);
+    expect(performance.now() - startedAt).toBeLessThan(40);
+  });
+
+  it('still truncates an overflowing nested tool row inside the terminal width', () => {
+    const lines = toolOutputBlock({
+      title: 'tool result', kind: 'text', text: `prefix-${'界'.repeat(200)}-unsafe-tail`,
+    }, 40);
+    expect(lines.every((line) => visibleWidth(line) <= 40)).toBe(true);
+    expect(lines.join('\n')).not.toContain('unsafe-tail');
   });
 
   it('CardPanel renders pinned cards as real rows and collapses an all-done checklist / non-pinned cards', () => {

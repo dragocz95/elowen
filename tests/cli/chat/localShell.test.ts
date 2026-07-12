@@ -1,4 +1,9 @@
-import { describe, expect, it } from 'vitest';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { describe, expect, it, vi } from 'vitest';
+import { ChatApplicationLifetime } from '../../../src/cli/chat/applicationLifetime.js';
+import { createShutdownCoordinator, installExitGuards } from '../../../src/cli/chat/terminalLifecycle.js';
 import {
   composeWithShellContext,
   LOCAL_SHELL_MAX_CHARS,
@@ -68,6 +73,293 @@ describe('runLocalShell', () => {
     const r = await runLocalShell('sleep 99', process.cwd(), execFn);
     expect(r.exitCode).toBeNull();
     expect(r.output).toBe('partial\n[timed out after 30s]');
+  });
+
+  it('kills an outstanding local command when the application signal aborts', async () => {
+    let finish!: Parameters<Parameters<typeof runLocalShell>[2]>[2];
+    const kill = vi.fn(() => true);
+    const execFn: Parameters<typeof runLocalShell>[2] = (_cmd, _options, callback) => {
+      finish = callback;
+      return { kill };
+    };
+    const lifecycle = new AbortController();
+
+    const pending = runLocalShell('sleep 30', process.cwd(), execFn, lifecycle.signal);
+    lifecycle.abort();
+    finish(Object.assign(new Error('aborted'), { killed: true }), '', '');
+
+    expect(kill).toHaveBeenCalledOnce();
+    await expect(pending).resolves.toMatchObject({ command: 'sleep 30', exitCode: null });
+  });
+
+  it.skipIf(process.platform === 'win32')('terminates the real POSIX process group, including a sleeping grandchild', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'elowen-shell-group-'));
+    const pidFile = join(dir, 'sleep.pid');
+    const lifecycle = new AbortController();
+    let childPid = 0;
+    try {
+      const pending = runLocalShell(`sleep 30 & child=$!; printf '%s' "$child" > "${pidFile}"; wait "$child"`, process.cwd(), undefined, lifecycle.signal);
+      const deadline = Date.now() + 1_000;
+      while (!existsSync(pidFile) && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(existsSync(pidFile)).toBe(true);
+      childPid = Number(readFileSync(pidFile, 'utf8'));
+      expect(childPid).toBeGreaterThan(0);
+
+      const abortedAt = Date.now();
+      lifecycle.abort();
+      let timeout: ReturnType<typeof setTimeout> | null = null;
+      const result = await Promise.race([
+        pending,
+        new Promise<never>((_resolve, reject) => {
+          timeout = setTimeout(() => reject(new Error('local shell did not stop within 1s')), 1_000);
+        }),
+      ]).finally(() => { if (timeout) clearTimeout(timeout); });
+      expect(Date.now() - abortedAt).toBeLessThan(1_000);
+      expect(result.exitCode).toBeNull();
+      expect(() => process.kill(childPid, 0)).toThrow();
+    } finally {
+      if (childPid > 0) {
+        try { process.kill(childPid, 'SIGKILL'); } catch { /* already gone */ }
+      }
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it.skipIf(process.platform === 'win32')('enforces the timeout when the process group ignores SIGTERM', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'elowen-shell-timeout-'));
+    const pidFile = join(dir, 'shell.pid');
+    const lifecycle = new AbortController();
+    let groupPid = 0;
+    try {
+      const pending = runLocalShell(
+        `printf '%s' "$$" > "${pidFile}"; trap '' TERM; while :; do sleep 1; done`,
+        process.cwd(), undefined, lifecycle.signal,
+        { timeoutMs: 40, killGraceMs: 40 },
+      );
+      const deadline = Date.now() + 1_000;
+      while (!existsSync(pidFile) && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 10));
+      groupPid = Number(readFileSync(pidFile, 'utf8'));
+
+      const result = await Promise.race([
+        pending,
+        new Promise<never>((_resolve, reject) => setTimeout(() => reject(new Error('timeout did not escalate')), 1_000)),
+      ]);
+      expect(result.exitCode).toBeNull();
+      expect(result.output).toContain('timed out');
+      expect(() => process.kill(groupPid, 0)).toThrow();
+    } finally {
+      lifecycle.abort();
+      if (groupPid > 0) {
+        try { process.kill(-groupPid, 'SIGKILL'); } catch { /* already gone */ }
+      }
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it.skipIf(process.platform === 'win32')('enforces the output limit when the process group ignores SIGTERM', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'elowen-shell-overflow-'));
+    const pidFile = join(dir, 'shell.pid');
+    const lifecycle = new AbortController();
+    let groupPid = 0;
+    try {
+      const pending = runLocalShell(
+        `printf '%s' "$$" > "${pidFile}"; trap '' TERM; printf '%02048d' 0; while :; do sleep 1; done`,
+        process.cwd(), undefined, lifecycle.signal,
+        { timeoutMs: 5_000, killGraceMs: 40, maxBufferBytes: 64 },
+      );
+      const deadline = Date.now() + 1_000;
+      while (!existsSync(pidFile) && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 10));
+      groupPid = Number(readFileSync(pidFile, 'utf8'));
+
+      const result = await Promise.race([
+        pending,
+        new Promise<never>((_resolve, reject) => setTimeout(() => reject(new Error('overflow did not escalate')), 1_000)),
+      ]);
+      expect(result.exitCode).toBeNull();
+      expect(() => process.kill(groupPid, 0)).toThrow();
+    } finally {
+      lifecycle.abort();
+      if (groupPid > 0) {
+        try { process.kill(-groupPid, 'SIGKILL'); } catch { /* already gone */ }
+      }
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it.skipIf(process.platform === 'win32')('keeps escalation alive after the shell leader closes', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'elowen-shell-orphan-'));
+    const pidFile = join(dir, 'pids');
+    const lifecycle = new AbortController();
+    let groupPid = 0;
+    let grandchildPid = 0;
+    try {
+      const pending = runLocalShell(
+        `(trap '' TERM; exec >/dev/null 2>&1; while :; do sleep 1; done) & child=$!; printf '%s %s' "$$" "$child" > "${pidFile}"; wait "$child"`,
+        process.cwd(), undefined, lifecycle.signal,
+        { killGraceMs: 40 },
+      );
+      const deadline = Date.now() + 1_000;
+      while (!existsSync(pidFile) && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 10));
+      [groupPid, grandchildPid] = readFileSync(pidFile, 'utf8').trim().split(/\s+/).map(Number);
+
+      lifecycle.abort();
+      await Promise.race([
+        pending,
+        new Promise<never>((_resolve, reject) => setTimeout(() => reject(new Error('aborted shell did not settle')), 1_000)),
+      ]);
+      const goneBy = Date.now() + 1_000;
+      while (Date.now() < goneBy) {
+        try { process.kill(grandchildPid, 0); } catch { break; }
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      expect(() => process.kill(grandchildPid, 0)).toThrow();
+    } finally {
+      lifecycle.abort();
+      if (groupPid > 0) {
+        try { process.kill(-groupPid, 'SIGKILL'); } catch { /* already gone */ }
+      }
+      if (grandchildPid > 0) {
+        try { process.kill(grandchildPid, 'SIGKILL'); } catch { /* already gone */ }
+      }
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it.skipIf(process.platform !== 'linux')('keeps application shutdown pending until a TERM-ignoring grandchild is gone', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'elowen-shell-shutdown-'));
+    const pidFile = join(dir, 'pids');
+    const lifetime = new ChatApplicationLifetime<'metadata'>();
+    let groupPid = 0;
+    let grandchildPid = 0;
+    try {
+      lifetime.runApplication(
+        (signal) => runLocalShell(
+          `(trap '' TERM; exec >/dev/null 2>&1; while :; do sleep 1; done) & child=$!; printf '%s %s' "$$" "$child" > "${pidFile}"; wait "$child"`,
+          process.cwd(), undefined, signal, { killGraceMs: 40 },
+        ),
+        () => {},
+      );
+      const deadline = Date.now() + 1_000;
+      while (!existsSync(pidFile) && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(existsSync(pidFile)).toBe(true);
+      [groupPid, grandchildPid] = readFileSync(pidFile, 'utf8').trim().split(/\s+/).map(Number);
+
+      // This is the production signal boundary: installExitGuards calls process.exit immediately after
+      // this promise settles. No extra wait after stop() may be required for a detached force timer.
+      const shutdown = createShutdownCoordinator({
+        teardown: () => lifetime.stop(),
+        stopBoundSession: async () => {},
+      });
+      const killSpy = vi.spyOn(process, 'kill');
+      let dispose: (() => void) | null = null;
+      try {
+        dispose = installExitGuards({ shutdown, teardownNow: shutdown.teardownNow, exit: () => {} });
+        const fatal = process.listeners('uncaughtExceptionMonitor').at(-1) as (error: Error) => void;
+        fatal(new Error('fatal render failure'));
+        // The monitor cannot await anything: resnapshot + force must have completed before it returns.
+        expect(killSpy.mock.calls.some(([pid, signal]) => pid === grandchildPid && signal === 'SIGKILL')).toBe(true);
+        await shutdown();
+      } finally {
+        dispose?.();
+        killSpy.mockRestore();
+      }
+
+      expect(() => process.kill(grandchildPid, 0)).toThrow();
+    } finally {
+      if (groupPid > 0) {
+        try { process.kill(-groupPid, 'SIGKILL'); } catch { /* already gone */ }
+      }
+      if (grandchildPid > 0) {
+        try { process.kill(grandchildPid, 'SIGKILL'); } catch { /* already gone */ }
+      }
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it.skipIf(process.platform !== 'linux')('captures and kills a process forked by the TERM trap during grace', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'elowen-shell-late-fork-'));
+    const groupFile = join(dir, 'group.pid');
+    const lateFile = join(dir, 'late.pid');
+    const lifetime = new ChatApplicationLifetime<'metadata'>();
+    let groupPid = 0;
+    let latePid = 0;
+    try {
+      lifetime.runApplication(
+        (signal) => runLocalShell(
+          `printf '%s' "$$" > "${groupFile}"; trap '(trap "" TERM HUP; exec >/dev/null 2>&1; while :; do sleep 1; done) & printf "%s" "$!" > "${lateFile}"' TERM; while :; do sleep 1; done`,
+          process.cwd(), undefined, signal, { timeoutMs: 20, killGraceMs: 280 },
+        ),
+        () => {},
+      );
+      // Timeout owns the polite TERM grace. Wait until its trap has really forked the late child, then
+      // simulate fatal/application teardown; abort must resnapshot and force synchronously.
+      const startedBy = Date.now() + 1_000;
+      while (!existsSync(lateFile) && Date.now() < startedBy) await new Promise((resolve) => setTimeout(resolve, 5));
+      expect(existsSync(groupFile)).toBe(true);
+      expect(existsSync(lateFile)).toBe(true);
+      groupPid = Number(readFileSync(groupFile, 'utf8'));
+      latePid = Number(readFileSync(lateFile, 'utf8'));
+
+      const shutdown = createShutdownCoordinator({
+        teardown: () => lifetime.stop(),
+        stopBoundSession: async () => {},
+      });
+      const killSpy = vi.spyOn(process, 'kill');
+      let dispose: (() => void) | null = null;
+      try {
+        dispose = installExitGuards({ shutdown, teardownNow: shutdown.teardownNow, exit: () => {} });
+        const fatal = process.listeners('uncaughtExceptionMonitor').at(-1) as (error: Error) => void;
+        fatal(new Error('fatal during TERM grace'));
+        expect(killSpy.mock.calls.some(([pid, signal]) => pid === latePid && signal === 'SIGKILL')).toBe(true);
+        await shutdown();
+      } finally {
+        dispose?.();
+        killSpy.mockRestore();
+      }
+
+      expect(latePid).toBeGreaterThan(0);
+      expect(() => process.kill(latePid, 0)).toThrow();
+    } finally {
+      if (groupPid > 0) {
+        try { process.kill(-groupPid, 'SIGKILL'); } catch { /* already gone */ }
+      }
+      if (latePid > 0) {
+        try { process.kill(latePid, 'SIGKILL'); } catch { /* already gone */ }
+      }
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it.skipIf(process.platform !== 'linux')('escalates immediately when application abort arrives during timeout grace', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'elowen-shell-timeout-abort-'));
+    const groupFile = join(dir, 'group.pid');
+    const termFile = join(dir, 'term.seen');
+    const lifetime = new ChatApplicationLifetime<'metadata'>();
+    let groupPid = 0;
+    try {
+      lifetime.runApplication(
+        (signal) => runLocalShell(
+          `printf '%s' "$$" > "${groupFile}"; trap 'printf x > "${termFile}"; trap "" TERM' TERM; while :; do sleep 1; done`,
+          process.cwd(), undefined, signal, { timeoutMs: 20, killGraceMs: 280 },
+        ),
+        () => {},
+      );
+      const timedOutBy = Date.now() + 1_000;
+      while (!existsSync(termFile) && Date.now() < timedOutBy) await new Promise((resolve) => setTimeout(resolve, 5));
+      expect(existsSync(termFile)).toBe(true);
+      groupPid = Number(readFileSync(groupFile, 'utf8'));
+
+      const abortedAt = Date.now();
+      await lifetime.stop();
+
+      expect(Date.now() - abortedAt).toBeLessThan(150);
+      expect(() => process.kill(groupPid, 0)).toThrow();
+    } finally {
+      if (groupPid > 0) {
+        try { process.kill(-groupPid, 'SIGKILL'); } catch { /* already gone */ }
+      }
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 

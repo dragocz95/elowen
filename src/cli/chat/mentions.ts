@@ -340,12 +340,26 @@ export function sniffImageMime(buf: Buffer): string | null {
   return null;
 }
 
-export type RunClipboardFn = (cmd: ClipboardCommand) => Promise<Buffer | null>;
+export type RunClipboardFn = (cmd: ClipboardCommand, signal?: AbortSignal) => Promise<Buffer | null>;
 
-const runClipboardCommand: RunClipboardFn = (cmd) => new Promise((resolvePromise) => {
-  execFile(cmd.command, cmd.args, { encoding: 'buffer', maxBuffer: 32 * 1024 * 1024, timeout: 5000 }, (error, stdout) => {
-    resolvePromise(error || stdout.length === 0 ? null : stdout);
+const runClipboardCommand: RunClipboardFn = (cmd, signal) => new Promise((resolvePromise) => {
+  let settled = false;
+  let child: ReturnType<typeof execFile> | null = null;
+  const finish = (value: Buffer | null): void => {
+    if (settled) return;
+    settled = true;
+    signal?.removeEventListener('abort', onAbort);
+    resolvePromise(value);
+  };
+  const onAbort = (): void => {
+    child?.kill();
+    finish(null);
+  };
+  child = execFile(cmd.command, cmd.args, { encoding: 'buffer', maxBuffer: 32 * 1024 * 1024, timeout: 5000 }, (error, stdout) => {
+    finish(error || stdout.length === 0 ? null : stdout);
   });
+  signal?.addEventListener('abort', onAbort, { once: true });
+  if (signal?.aborted) onAbort();
 });
 
 /** Read an image off the system clipboard: try each platform command in order and take the first
@@ -354,9 +368,12 @@ export async function readClipboardImage(
   run: RunClipboardFn = runClipboardCommand,
   platform: NodeJS.Platform = process.platform,
   env: NodeJS.ProcessEnv = process.env,
+  signal?: AbortSignal,
 ): Promise<{ image?: PendingImage; error?: string }> {
   for (const cmd of clipboardImageCommands(platform, env)) {
-    const buf = await run(cmd);
+    if (signal?.aborted) return { error: 'clipboard read cancelled' };
+    const buf = await run(cmd, signal);
+    if (signal?.aborted) return { error: 'clipboard read cancelled' };
     if (!buf || buf.length === 0) continue;
     const mimeType = sniffImageMime(buf);
     if (!mimeType) continue;

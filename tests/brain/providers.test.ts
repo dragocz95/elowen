@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildBrainRegistry, resolveBrainModel, openAiApiFor } from '../../src/brain/providers.js';
+import { buildBrainRegistry, resolveBrainModel, resolveBrainModelRoute, openAiApiFor } from '../../src/brain/providers.js';
 import { applyProviderRequestProfile, modelCapabilities } from '../../src/brain/modelCapabilities.js';
 import type { BrainRuntimeConfig } from '../../src/brain/providers.js';
 
@@ -22,6 +22,51 @@ describe('brain providers', () => {
     const reg = buildBrainRegistry(cfg);
     expect(resolveBrainModel(reg, cfg, { provider: 'ant', model: 'claude-x' }).id).toBe('claude-x');
     expect(resolveBrainModel(reg, cfg, { provider: 'relay', model: 'kimi' }).id).toBe('kimi');
+  });
+
+  it('resolves a distinct configured OAuth default only for compaction recovery', () => {
+    const oauth: BrainRuntimeConfig = { providers: [{
+      id: 'codex', label: 'ChatGPT', type: 'oauth-openai-codex', baseUrl: '',
+      models: ['gpt-5.5', 'gpt-5.6-luna', 'gpt-5.6-sol'], apiKey: null,
+    }] };
+    const registry = buildBrainRegistry(oauth);
+
+    const luna = resolveBrainModelRoute(registry, oauth, { provider: 'codex', model: 'gpt-5.6-luna' });
+    expect(luna.providerId).toBe('codex');
+    expect(luna.model.id).toBe('gpt-5.6-luna');
+    expect(luna.compactionFallback?.id).toBe('gpt-5.5');
+
+    const resumedOnDefault = resolveBrainModelRoute(registry, oauth, { provider: 'codex', model: 'gpt-5.5' });
+    expect(resumedOnDefault.model.id).toBe('gpt-5.5');
+    expect(resumedOnDefault.compactionFallback).toBeUndefined();
+
+    const switched = resolveBrainModelRoute(registry, oauth, { provider: 'codex', model: 'gpt-5.6-sol' });
+    expect(switched.model.id).toBe('gpt-5.6-sol');
+    expect(switched.compactionFallback?.id).toBe('gpt-5.5');
+  });
+
+  it('keeps a valid selected OAuth chat model when the configured default is unavailable', () => {
+    const oauth: BrainRuntimeConfig = { providers: [{
+      id: 'codex', label: 'ChatGPT', type: 'oauth-openai-codex', baseUrl: '',
+      models: ['removed-default-model'], apiKey: null,
+    }] };
+    const route = resolveBrainModelRoute(buildBrainRegistry(oauth), oauth, {
+      provider: 'codex', model: 'gpt-5.6-luna',
+    });
+    expect(route.model.id).toBe('gpt-5.6-luna');
+    expect(route.compactionFallback).toBeUndefined();
+  });
+
+  it('does not apply the Codex compaction route to a custom OpenAI-compatible proxy', () => {
+    const proxy: BrainRuntimeConfig = { providers: [{
+      id: 'proxy', label: 'Proxy', type: 'openai', baseUrl: 'https://proxy.example/v1',
+      models: ['stable-summary-model', 'preview-chat-model'], apiKey: 'k',
+    }] };
+    const route = resolveBrainModelRoute(buildBrainRegistry(proxy), proxy, {
+      provider: 'proxy', model: 'preview-chat-model',
+    });
+    expect(route.model.id).toBe('preview-chat-model');
+    expect(route.compactionFallback).toBeUndefined();
   });
 
   it('does not advertise speculative reasoning controls for an unknown custom model', () => {

@@ -12,6 +12,11 @@ const firstTimers = new Set();
 let firstProgress = null;
 let sendCount = 0;
 let currentCards = [];
+const shortHistory = [];
+const childHistory = [
+  { id: 'child-u1', role: 'user', text: 'E2E CHILD TASK INPUT' },
+  { id: 'child-a1', role: 'assistant', text: 'E2E CHILD UNIQUE HISTORY — drill-in loaded' },
+];
 const longHistory = Array.from({ length: 90 }, (_, index) => [
   { role: 'user', text: `E2E HISTORY QUESTION ${index}` },
   { role: 'assistant', text: `## E2E HISTORY ANSWER ${index}\n\n- stable row one\n- stable row two\n\nE2E HISTORY MARKER ${index}` },
@@ -140,6 +145,10 @@ function runAskTurn(text) {
 }
 
 function runShortTurn(text) {
+  shortHistory.push(
+    { id: 'short-u1', role: 'user', text },
+    { id: 'short-a1', role: 'assistant', text: 'E2E SHORT REPLY' },
+  );
   later(20, () => emit({ type: 'user', text }));
   later(35, () => emit({ type: 'text', delta: 'E2E SHORT REPLY' }));
   later(55, () => emit({
@@ -149,6 +158,22 @@ function runShortTurn(text) {
 }
 
 function runControlBurst(text) {
+  shortHistory.push({ id: 'short-u2', role: 'user', text });
+  shortHistory.push({
+    id: 'short-a2', role: 'assistant', text: 'E2E CONTROL BURST COMPLETE',
+    segments: [
+      ...Array.from({ length: 14 }, (_, index) => ({
+        kind: 'tool', id: `unsafe-tool-${index}`, name: 'run_command',
+        command: `printf column-${index}`, detail: `printf column-${index}`,
+        output: {
+          title: 'console output', kind: 'console',
+          text: `name value-${index}\nsecond row-${index}\nrewritten-${index}`,
+          status: 'exit 0', tone: 'success',
+        },
+      })),
+      { kind: 'text', text: 'E2E CONTROL BURST COMPLETE' },
+    ],
+  });
   later(20, () => emit({ type: 'user', text }));
   for (let index = 0; index < 14; index += 1) {
     const id = `unsafe-tool-${index}`;
@@ -175,6 +200,19 @@ function runControlBurst(text) {
   later(125, () => emit({
     type: 'idle', model: 'mock/e2e-model',
     usage: { tokens: 3456, contextWindow: 100000, percent: 3.4, totalTokens: 3456, cost: 0.02 },
+  }));
+}
+
+function runReopenTurn(text) {
+  shortHistory.push(
+    { id: 'short-u3', role: 'user', text },
+    { id: 'short-a3', role: 'assistant', text: 'E2E REOPEN HEALTHY' },
+  );
+  later(20, () => emit({ type: 'user', text }));
+  later(40, () => emit({ type: 'text', delta: 'E2E REOPEN HEALTHY' }));
+  later(60, () => emit({
+    type: 'idle', model: 'mock/e2e-model',
+    usage: { tokens: 4567, contextWindow: 100000, percent: 4.5, totalTokens: 4567, cost: 0.03 },
   }));
 }
 
@@ -235,7 +273,11 @@ const server = createServer(async (req, res) => {
     return;
   }
   if (req.method === 'GET' && url.pathname === '/brain/messages') {
-    json(res, 200, process.env.ELOWEN_TMUX_LONG === '1' ? longHistory : []);
+    const requestedSession = url.searchParams.get('session');
+    const history = requestedSession === 'e2e-child'
+      ? childHistory
+      : process.env.ELOWEN_TMUX_LONG === '1' ? longHistory : shortHistory;
+    json(res, 200, history);
     return;
   }
   if (req.method === 'GET' && url.pathname === '/brain/commands') {
@@ -258,7 +300,11 @@ const server = createServer(async (req, res) => {
     return;
   }
   if (req.method === 'GET' && url.pathname === '/brain/rate-limits') {
-    json(res, 200, null);
+    json(res, 200, {
+      provider: 'openai-codex', planType: 'pro', fetchedAt: 1_900_000_000_000, stale: false,
+      primary: { usedPercent: 23, windowMinutes: 300, resetsAt: 1_900_000_000 },
+      secondary: { usedPercent: 14, windowMinutes: 10_080, resetsAt: 1_900_500_000 },
+    });
     return;
   }
   if (req.method === 'GET' && url.pathname === '/plugins/mcp/servers') {
@@ -283,6 +329,7 @@ const server = createServer(async (req, res) => {
     if (SCENARIO === 'short-controls') {
       if (sendCount === 1) runShortTurn(text);
       else if (sendCount === 2) runControlBurst(text);
+      else if (sendCount === 3) runReopenTurn(text);
       return;
     }
     if (sendCount === 1) runFirstTurn(text);

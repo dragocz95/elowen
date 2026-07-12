@@ -1,4 +1,4 @@
-import { SelectList, Editor, visibleWidth } from '@earendil-works/pi-tui';
+import { CURSOR_MARKER, SelectList, Editor, truncateToWidth, visibleWidth } from '@earendil-works/pi-tui';
 import { isBackspaceKey, isDownKey, isEnterKey, isEscapeKey, isUpKey } from './keys.js';
 import type { SelectItem, TUI } from '@earendil-works/pi-tui';
 import { getSelectListTheme } from '@earendil-works/pi-coding-agent';
@@ -9,9 +9,57 @@ import { printableInput } from '../ui/prompts.js';
 /** The Editor with an Esc hook: Esc aborts the streaming turn (unless the autocomplete popup is open —
  *  then Esc closes it, handled by the base class). */
 export class ChatEditor extends Editor {
+  static readonly MAX_CONTENT_ROWS = 6;
+  private maxRows: number | null = null;
+
   /** Esc handler that returns whether it actually consumed the key. Returning false (e.g. nothing is
    *  streaming to interrupt) lets Esc fall through to the base Editor instead of being silently swallowed. */
   onEscape?: () => boolean;
+
+  /** The shell owns the physical row budget. `null` restores the normal six-content-row composer cap;
+   *  smaller terminal allocations reduce it without cropping blindly from the bottom. */
+  setMaxRows(rows: number | null): void {
+    this.maxRows = rows == null ? null : Math.max(0, Math.floor(rows));
+  }
+
+  override render(width: number): string[] {
+    const rendered = super.render(width);
+    const normalRows = ChatEditor.MAX_CONTENT_ROWS + 2; // PI editor's top and bottom rules
+    const totalRows = Math.min(normalRows, this.maxRows ?? normalRows);
+    if (totalRows <= 0 || rendered.length === 0) return [];
+    if (rendered.length <= totalRows) return rendered;
+
+    const topRule = rendered[0] ?? '';
+    const bottomRule = rendered.at(-1) ?? '';
+    const content = rendered.slice(1, -1);
+    const cursorIndex = Math.max(0, content.findIndex((line) =>
+      line.includes(CURSOR_MARKER) || line.includes('\x1b[7m')));
+
+    // On extremely short terminals retain the actual cursor row before decorative rules.
+    if (totalRows === 1) return [content[cursorIndex] ?? topRule];
+    if (totalRows === 2) return [content[cursorIndex] ?? '', bottomRule];
+
+    const capacity = totalRows - 2;
+    const start = Math.max(0, Math.min(cursorIndex - capacity + 1, content.length - capacity));
+    const shown = content.slice(start, start + capacity);
+    const priorUp = Number(/↑\s+(\d+)\s+more/.exec(topRule)?.[1] ?? 0);
+    const priorDown = Number(/↓\s+(\d+)\s+more/.exec(bottomRule)?.[1] ?? 0);
+    const rule = (direction: '↑' | '↓', hidden: number, fallback: string): string => {
+      if (hidden <= 0) return fallback;
+      const indicator = `─── ${direction} ${hidden} more `;
+      return this.borderColor(truncateToWidth(
+        indicator + '─'.repeat(Math.max(0, width - visibleWidth(indicator))),
+        width,
+        '',
+      ));
+    };
+    return [
+      rule('↑', priorUp + start, topRule),
+      ...shown,
+      rule('↓', priorDown + Math.max(0, content.length - start - shown.length), bottomRule),
+    ];
+  }
+
   override handleInput(data: string): void {
     if (isEscapeKey(data) && !this.isShowingAutocomplete() && this.onEscape?.()) {
       return;

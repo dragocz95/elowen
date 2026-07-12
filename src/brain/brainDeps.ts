@@ -11,6 +11,7 @@ import type { MemoryService } from './memoryService.js';
 import type { InferenceClient } from '../inference/types.js';
 import type { PermissionScope, PermissionSettings } from './toolPermissions.js';
 import type { BrainLimits } from '../store/configStore.js';
+import type { BrainResourceLoaderOptions } from './session/factory.js';
 
 // The daemon-wiring seam of the brain, in its own module so the service/* units can depend on it
 // without importing the BrainService facade back (keeps the dependency graph acyclic — depcruise
@@ -96,5 +97,5 @@ export interface BrainDeps {
   createSession?: typeof createAgentSession;
   /** Injected for tests; builds the resource loader that carries the Elowen system prompt. A test passes
    *  `() => undefined` so no disk-touching loader is constructed. */
-  resourceLoaderFactory?: (o: { cwd: string; systemPrompt: string; appendSystemPrompt?: string[] }) => ResourceLoader | undefined;
+  resourceLoaderFactory?: (o: BrainResourceLoaderOptions) => ResourceLoader | undefined;
 }

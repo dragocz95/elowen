@@ -5,7 +5,7 @@ import type { BrainStore } from '../../store/brainStore.js';
 import { createSessionPersistenceProjector, rehydrate } from '../persistence.js';
 import { applyProviderRequestProfile, isCanonicalThinkingLevel, type ProviderRequestProfile } from '../modelCapabilities.js';
 import type { DelegatedExecutionScope } from '../delegatedScope.js';
-import { codexCompactionModelFallback } from './codexCompaction.js';
+import { createCodexCompactionModelRoute, type CodexCompactionModelRoute } from './codexCompaction.js';
 
 /** Everything one PI brain session needs, composed by the caller: the chat brain renders the Elowen
  *  persona and gates elowen_* tools by session kind; the task worker bakes in its close tool and the
@@ -20,6 +20,8 @@ export interface SessionSpec {
   delegatedAccess?: DelegatedExecutionScope;
   registry: ModelRegistry;
   model: Model<Api>;
+  /** Same-provider configured default used deterministically for PI-owned Codex compaction requests. */
+  compactionFallbackModel?: Model<Api>;
   cwd: string;
   systemPrompt: string;
   /** Chunks appended after the system prompt (plugin fragments, role prompts). */
@@ -59,7 +61,23 @@ export interface SessionFactoryDeps {
   createSession?: typeof createAgentSession;
   /** Injected for tests; builds the resource loader that carries the system prompt. A test passes
    *  `() => undefined` so no disk-touching loader is constructed. */
-  resourceLoaderFactory?: (o: { cwd: string; systemPrompt: string; appendSystemPrompt?: string[]; skills?: Skill[]; prompts?: PromptTemplate[]; contextFiles?: boolean; codexReasoningFix?: boolean; requestProfile?: ProviderRequestProfile; settingsManager: SettingsManager }) => ResourceLoader | undefined;
+  resourceLoaderFactory?: (o: BrainResourceLoaderOptions) => ResourceLoader | undefined;
+}
+
+/** Shared construction seam used by chat and embedded task-worker tests. Keeping this shape beside the
+ * factory prevents either caller from silently dropping new session-level routing inputs. */
+export interface BrainResourceLoaderOptions {
+  cwd: string;
+  systemPrompt: string;
+  appendSystemPrompt?: string[];
+  skills?: Skill[];
+  prompts?: PromptTemplate[];
+  contextFiles?: boolean;
+  codexReasoningFix?: boolean;
+  /** Marker hook for PI-owned compaction requests. The actual stream route is installed on AgentSession. */
+  compactionModelRouteExtension?: CodexCompactionModelRoute['extension'];
+  requestProfile?: ProviderRequestProfile;
+  settingsManager: SettingsManager;
 }
 
 /** PI uses the same reserve both as the proactive threshold and as the summary-output budget during
@@ -104,7 +122,7 @@ function codexRequestProfile(profile: ProviderRequestProfile): (pi: ExtensionAPI
  *  surfaces — a channel session whose cwd falls back to the daemon's project path would inhale internal
  *  instruction files into a prompt foreign senders talk to — so channels and task workers keep it off.
  *  It sits in a separate prompt block from the Elowen persona/appends, so there is no duplication. */
-function defaultResourceLoaderFactory(o: { cwd: string; systemPrompt: string; appendSystemPrompt?: string[]; skills?: Skill[]; prompts?: PromptTemplate[]; contextFiles?: boolean; codexReasoningFix?: boolean; requestProfile?: ProviderRequestProfile; settingsManager: SettingsManager }): ResourceLoader {
+function defaultResourceLoaderFactory(o: BrainResourceLoaderOptions): ResourceLoader {
   const skills = o.skills ?? [];
   const prompts = o.prompts ?? [];
   return new DefaultResourceLoader({
@@ -119,10 +137,10 @@ function defaultResourceLoaderFactory(o: { cwd: string; systemPrompt: string; ap
     // feeds PI our in-memory plugin templates, which it exposes as `/name` slash commands and expands
     // ($1/$@/$ARGUMENTS/${N:-default}) itself in prompt()/steer()/followUp() — no daemon-side expansion.
     promptsOverride: () => ({ prompts, diagnostics: [] }),
-    ...(o.codexReasoningFix ? {
+    ...(o.codexReasoningFix || o.compactionModelRouteExtension || o.requestProfile ? {
       extensionFactories: [
-        codexReasoningSummary,
-        codexCompactionModelFallback,
+        ...(o.codexReasoningFix ? [codexReasoningSummary] : []),
+        ...(o.compactionModelRouteExtension ? [o.compactionModelRouteExtension] : []),
         ...(o.requestProfile ? [codexRequestProfile(o.requestProfile)] : []),
       ],
     } : {}),
@@ -171,10 +189,13 @@ export class BrainSessionFactory {
     // compaction override below (and any session-local PI setting) lives here, dying with the session.
     // `projectTrusted` lets those session-local writes land in the in-memory store instead of erroring.
     const settingsManager = SettingsManager.inMemory(undefined, { projectTrusted: true });
+    const compactionModelRoute = createCodexCompactionModelRoute(spec.compactionFallbackModel);
     const resourceLoader = (this.d.resourceLoaderFactory ?? defaultResourceLoaderFactory)({
       cwd: spec.cwd, systemPrompt: spec.systemPrompt, appendSystemPrompt: spec.appendSystemPrompt,
       skills: spec.skills, prompts: spec.promptTemplates, contextFiles: spec.contextFiles,
-      codexReasoningFix: spec.model.provider === 'openai-codex', requestProfile: spec.requestProfile, settingsManager,
+      codexReasoningFix: spec.model.provider === 'openai-codex',
+      compactionModelRouteExtension: compactionModelRoute?.extension,
+      requestProfile: spec.requestProfile, settingsManager,
     });
     // A resource loader passed to createAgentSession is NOT auto-reloaded (only one it builds itself
     // is), so its system prompt stays empty unless we reload it here. Without this the brain falls
@@ -197,6 +218,10 @@ export class BrainSessionFactory {
       noTools: 'builtin',
       ...(thinkingLevel ? { thinkingLevel } : {}),
     });
+    // Install after PI has built the Agent so the wrapper delegates to the exact SDK-native stream
+    // pipeline created for this session. The extension above has already been loaded and only marks
+    // PI's own compaction signal; it never executes or returns a custom compaction.
+    compactionModelRoute?.install(session);
     // Compaction is PI-native: our per-user % maps to PI's absolute reserveTokens (shouldCompact fires
     // once contextTokens > contextWindow − reserveTokens). Applied AFTER create — createAgentSession reads
     // compaction lazily (getCompactionSettings at each check), so an in-memory override here takes effect;

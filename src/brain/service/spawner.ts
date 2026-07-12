@@ -4,7 +4,7 @@ import type { PluginRegistry } from '../../plugins/registry.js';
 import { PluginHookBus } from '../../plugins/hookBus.js';
 import { logger } from '../../shared/logger.js';
 import type { BrainRuntimeConfig } from '../providers.js';
-import { buildBrainRegistry, resolveBrainModel } from '../providers.js';
+import { buildBrainRegistry, resolveBrainModelRoute } from '../providers.js';
 import { buildElowenTools, buildMemoryTools, BUILTIN_TOOL_ICONS } from '../tools/index.js';
 import { makeToolIconResolver } from '../toolIcons.js';
 import { composeSessionTools } from '../session/capabilities.js';
@@ -75,13 +75,13 @@ export class LiveSessionSpawner {
 
     const cfg = this.runtimeConfig();
     const registry = buildBrainRegistry(cfg, this.d.authStorage);
-    const model = resolveBrainModel(registry, cfg, opts.selection);
+    const route = resolveBrainModelRoute(registry, cfg, opts.selection);
+    const { model } = route;
     const capabilities = modelCapabilities(model);
     const requestProfile = { fast: capabilities.fast && opts.fast === true };
-    // The CONFIG entry id this session runs on (mirror of resolveBrainModel's entry pick) — stored so a
-    // turn can tell delegation "run the child on my provider+model" without re-deriving the default.
-    const providerId = (opts.selection.provider && cfg.providers.some((p) => p.id === opts.selection.provider))
-      ? opts.selection.provider : cfg.providers[0]?.id;
+    // The CONFIG entry id this session runs on comes from the same authoritative route as the descriptor,
+    // so delegation never has to re-derive which provider won default/explicit selection.
+    const providerId = route.providerId;
     // The session cwd is what pi advertises to the model ("Current working directory: …") and what
     // relative paths resolve against — it must be the USER'S project, never the brain's data dir
     // (the model would otherwise claim/act on that path). Same resolution as the per-turn workDir.
@@ -152,7 +152,8 @@ export class LiveSessionSpawner {
       : this.d.prompts.render('advisor', { userName, personality, agentName }, ownerUserId);
 
     const { session } = await this.d.factory.create({
-      sessionId, ownerUserId, parentSessionId: opts.parentSessionId, delegatedAccess: opts.delegatedAccess, registry, model, cwd,
+      sessionId, ownerUserId, parentSessionId: opts.parentSessionId, delegatedAccess: opts.delegatedAccess,
+      registry, model, compactionFallbackModel: route.compactionFallback, cwd,
       systemPrompt: persona, appendSystemPrompt: append, skills, promptTemplates,
       tools: allTools, thinkingLevel: opts.thinkingLevel, requestProfile,
       autoCompact: opts.autoCompact, autoCompactAtPct: opts.autoCompactAtPct,

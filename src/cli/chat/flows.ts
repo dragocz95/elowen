@@ -2,7 +2,8 @@ import { runApprovalFlow } from './components.js';
 import { runAskFlow } from './askFlow.js';
 import { openPicker } from './picker.js';
 import type { AskQuestion } from '../../brain/events.js';
-import type { ChatRuntime } from './runtime.js';
+import type { ChatState } from './chatState.js';
+import type { ChatApplicationActions, ChatApplicationResources } from './chatCapabilities.js';
 
 export interface Flows {
   launchAsk(id: string, questions: AskQuestion[], kind?: 'approval'): void;
@@ -11,8 +12,13 @@ export interface Flows {
 
 /** Modal/approval flows that park the running turn: ask_user_question pickers, blocked tool-permission
  *  approvals, and the plan-mode "implement it?" follow-up. */
-export function createFlows(rt: ChatRuntime): Flows {
-  const { client, tui, editor, editorSlot } = rt;
+export function createFlows(
+  rt: ChatState,
+  resources: Pick<ChatApplicationResources, 'client' | 'tui' | 'editor' | 'editorSlot' | 'lifetime'>,
+  actions: Pick<ChatApplicationActions, 'render'>,
+): Flows {
+  const { client, tui, editor, editorSlot, lifetime } = resources;
+  const { render } = actions;
 
   // Drive the interactive picker flow for a parked ask_user_question, POST the answer (Esc aborts the
   // turn). Shared by the live `ask` event and the reconnect restore (boot.pendingAsk). An `approval`
@@ -24,14 +30,18 @@ export function createFlows(rt: ChatRuntime): Flows {
     if (kind === 'approval' && q) {
       runApprovalFlow({
         tui, slot: editorSlot, editor, question: q,
-        onDecision: (label) => { void client.answer(id, [{ header: q.header, selected: [label] }]).catch(() => { /* turn may have gone */ }); },
+        onDecision: (label) => lifetime.runSession(
+          () => client.answer(id, [{ header: q.header, selected: [label] }]),
+          () => {},
+          () => { /* turn may have gone */ },
+        ),
       });
       return;
     }
     runAskFlow({
       tui, slot: editorSlot, editor, questions,
-      onComplete: (answers) => { void client.answer(id, answers).catch(() => { /* turn may have gone */ }); },
-      onCancel: () => { void client.abort().catch(() => { /* already settled */ }); },
+      onComplete: (answers) => lifetime.runSession(() => client.answer(id, answers), () => {}, () => { /* turn may have gone */ }),
+      onCancel: () => lifetime.runSession(() => client.abort(), () => {}, () => { /* already settled */ }),
     });
   };
 
@@ -49,7 +59,7 @@ export function createFlows(rt: ChatRuntime): Flows {
       onPick: (v) => {
         if (v !== 'implement') return;
         rt.workMode = 'build';
-        rt.render();
+        render();
         editor.onSubmit?.('Implement the plan you proposed above.');
       },
     });

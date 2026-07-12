@@ -1,6 +1,34 @@
 import { describe, it, expect, vi } from 'vitest';
-import { viewToPlainText, installExitGuards, createQuitCoordinator } from '../../../src/cli/chat/app.js';
-import { beginAssistant, pushUser, reduce, emptyView } from '../../../src/brain/transcript.js';
+import { loadInitialTranscript } from '../../../src/cli/chat/initialTranscriptHydration.js';
+import { ChatApplication } from '../../../src/cli/chat/chatApplication.js';
+import { installExitGuards, createShutdownCoordinator } from '../../../src/cli/chat/terminalLifecycle.js';
+import { SnapshotHydrator } from '../../../src/cli/chat/snapshotHydrator.js';
+import type { BrainClient } from '../../../src/cli/chat/brainClient.js';
+
+describe('initial transcript hydration', () => {
+  it('settles after 10 seconds when boot history ignores abort and fences a late response', async () => {
+    vi.useFakeTimers();
+    try {
+      let resolveHistory!: (history: { role: string; text: string }[]) => void;
+      const history = new Promise<{ role: string; text: string }[]>((resolve) => { resolveHistory = resolve; });
+      const client = { history: (_session?: string, signal?: AbortSignal) => {
+        signal?.addEventListener('abort', () => { /* ignored by transport */ });
+        return history;
+      } } as unknown as BrainClient;
+      const hydrator = new SnapshotHydrator<never>();
+      const lifecycle = new AbortController();
+      const loading = loadInitialTranscript(client, hydrator, lifecycle.signal);
+
+      await vi.advanceTimersByTimeAsync(10_000);
+      await expect(loading).resolves.toEqual({ history: [], notice: expect.stringMatching(/timed out/i) });
+      resolveHistory([{ role: 'assistant', text: 'too late' }]);
+      await Promise.resolve();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
 
 describe('installExitGuards — process listener lifecycle', () => {
   it('registers exit/SIGTERM/SIGHUP guards and the disposer removes exactly those', () => {
@@ -10,7 +38,7 @@ describe('installExitGuards — process listener lifecycle', () => {
       hup: process.listenerCount('SIGHUP'),
       fatal: process.listenerCount('uncaughtExceptionMonitor'),
     };
-    const dispose = installExitGuards(() => {}, () => {});
+    const dispose = installExitGuards({ shutdown: async () => {}, teardownNow: () => {}, exit: () => {} });
     expect(process.listenerCount('exit')).toBe(before.exit + 1);
     expect(process.listenerCount('SIGTERM')).toBe(before.term + 1);
     expect(process.listenerCount('SIGHUP')).toBe(before.hup + 1);
@@ -23,121 +51,191 @@ describe('installExitGuards — process listener lifecycle', () => {
     expect(process.listenerCount('uncaughtExceptionMonitor')).toBe(before.fatal);
   });
 
-  it('a signal restores the terminal (teardown) and the mouse before exiting', () => {
+  it('a signal waits for bounded shutdown before exiting', async () => {
     const calls: string[] = [];
-    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((code) => { calls.push(`exit:${code}`); return undefined as never; });
-    const dispose = installExitGuards(() => calls.push('teardown'), () => calls.push('mouse'));
+    let finishShutdown!: () => void;
+    const shutdown = vi.fn(() => {
+      calls.push('shutdown');
+      return new Promise<void>((resolve) => { finishShutdown = resolve; });
+    });
+    const dispose = installExitGuards({ shutdown, teardownNow: () => { calls.push('teardown-now'); }, exit: (code) => { calls.push(`exit:${code}`); } });
     // Call our just-added SIGTERM handler directly (not process.emit) so no other listeners fire.
     const sigterm = process.listeners('SIGTERM').at(-1) as () => void;
     sigterm();
-    expect(calls).toEqual(['teardown', 'mouse', 'exit:143']);
-    exitSpy.mockRestore();
+    expect(calls).toEqual(['teardown-now', 'shutdown']);
+    finishShutdown();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(calls).toEqual(['teardown-now', 'shutdown', 'exit:143']);
     dispose();
   });
 
-  it('restores the terminal before Node reports an uncaught render exception', () => {
+  it('uncaught monitoring synchronously tears down locally and starts only a best-effort daemon stop', async () => {
     const calls: string[] = [];
-    const dispose = installExitGuards(() => calls.push('teardown'), () => calls.push('terminal-fallback'));
+    let finishStop!: () => void;
+    const shutdown = createShutdownCoordinator({
+      teardown: () => { calls.push('teardown'); },
+      stopBoundSession: () => new Promise<void>((resolve) => { calls.push('stop'); finishStop = resolve; }),
+      timeoutMs: 5_000,
+    });
+    const dispose = installExitGuards({ shutdown, teardownNow: shutdown.teardownNow, exit: () => {} });
     const fatal = process.listeners('uncaughtExceptionMonitor').at(-1) as (error: Error) => void;
     fatal(new Error('render overflow'));
-    expect(calls).toEqual(['teardown', 'terminal-fallback']);
+    expect(calls).toEqual(['teardown']);
+    await Promise.resolve();
+    expect(calls).toEqual(['teardown', 'stop']);
+    finishStop();
+    await shutdown();
+    dispose();
+  });
+
+  it('process exit guarantees synchronous local teardown while daemon stop remains best-effort', async () => {
+    const calls: string[] = [];
+    let finishStop!: () => void;
+    const shutdown = createShutdownCoordinator({
+      teardown: () => { calls.push('teardown'); },
+      stopBoundSession: () => new Promise<void>((resolve) => { calls.push('stop'); finishStop = resolve; }),
+      timeoutMs: 5_000,
+    });
+    const dispose = installExitGuards({ shutdown, teardownNow: shutdown.teardownNow, exit: () => {} });
+    const exiting = process.listeners('exit').at(-1) as () => void;
+    exiting();
+    expect(calls).toEqual(['teardown']);
+    await Promise.resolve();
+    expect(calls).toEqual(['teardown', 'stop']);
+    finishStop();
+    await shutdown();
     dispose();
   });
 });
 
-describe('createQuitCoordinator', () => {
+describe('createShutdownCoordinator', () => {
   it('restores the terminal synchronously, stops the bound session once, and waits before completing', async () => {
     let resolveStop!: () => void;
     const stopBoundSession = vi.fn(() => new Promise<void>((resolve) => { resolveStop = resolve; }));
     const teardown = vi.fn();
-    const removeExitGuards = vi.fn();
-    const done = vi.fn();
-    const quit = createQuitCoordinator({ teardown, removeExitGuards, stopBoundSession, done, timeoutMs: 5_000 });
+    const shutdown = createShutdownCoordinator({ teardown, stopBoundSession, timeoutMs: 5_000 });
 
-    quit();
+    expect(typeof shutdown.teardownNow).toBe('function');
+
+    const first = shutdown();
     // Raw mode / alternate-screen cleanup cannot wait on the daemon request.
     expect(teardown).toHaveBeenCalledTimes(1);
-    expect(removeExitGuards).toHaveBeenCalledTimes(1);
-    expect(done).not.toHaveBeenCalled();
-    quit(); // a second Ctrl+C must not send another stop or tear down twice
+    const second = shutdown();
+    expect(second).toBe(first);
     await Promise.resolve();
     expect(stopBoundSession).toHaveBeenCalledTimes(1);
 
     resolveStop();
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(done).toHaveBeenCalledTimes(1);
+    await first;
+    expect(teardown).toHaveBeenCalledTimes(1);
   });
 
   it('completes after the bounded timeout when the daemon never answers', async () => {
     vi.useFakeTimers();
-    const done = vi.fn();
     let stopSignal: AbortSignal | undefined;
-    const quit = createQuitCoordinator({
-      teardown: vi.fn(), removeExitGuards: vi.fn(),
+    const shutdown = createShutdownCoordinator({
+      teardown: vi.fn(),
       stopBoundSession: vi.fn((signal) => {
         stopSignal = signal;
         return new Promise<void>(() => {});
       }),
-      done, timeoutMs: 25,
+      timeoutMs: 25,
     });
-    quit();
+    const finished = shutdown();
     await Promise.resolve();
     expect(stopSignal?.aborted).toBe(false);
     await vi.advanceTimersByTimeAsync(25);
     expect(stopSignal?.aborted).toBe(true);
-    expect(done).toHaveBeenCalledTimes(1);
+    await expect(finished).resolves.toBeUndefined();
     vi.useRealTimers();
   });
-});
 
-describe('viewToPlainText', () => {
-  it('renders user and elowen turns with labels, tools and text', () => {
-    let v = beginAssistant(pushUser(emptyView(), 'ahoj'));
-    v = reduce(v, { type: 'tool', name: 'elowen_create_task' });
-    v = reduce(v, { type: 'text', delta: 'hotovo' });
-    const lines = viewToPlainText(v);
-    expect(lines).toContain('you');
-    expect(lines.some((l) => l.includes('ahoj'))).toBe(true);
-    expect(lines.some((l) => l.includes('* elowen_create_task'))).toBe(true);
-    expect(lines.some((l) => l.includes('hotovo'))).toBe(true);
-  });
+  it('does not finish a signal shutdown before bounded local child cleanup settles', async () => {
+    let finishLocal!: () => void;
+    const local = new Promise<void>((resolve) => { finishLocal = resolve; });
+    const shutdown = createShutdownCoordinator({
+      teardown: () => local,
+      stopBoundSession: async () => {},
+      timeoutMs: 25,
+    });
 
-  it('renders a reasoning segment prefixed and distinct from the answer', () => {
-    let v = beginAssistant(pushUser(emptyView(), 'ahoj'));
-    v = reduce(v, { type: 'reasoning', delta: 'let me think' });
-    v = reduce(v, { type: 'text', delta: 'answer' });
-    const lines = viewToPlainText(v);
-    expect(lines.some((l) => l.includes('thought let me think'))).toBe(true);
-    expect(lines.some((l) => l.includes('answer') && !l.includes('thought'))).toBe(true);
+    const finished = shutdown();
+    let complete = false;
+    void finished.then(() => { complete = true; });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(complete).toBe(false);
+    finishLocal();
+    await finished;
+    expect(complete).toBe(true);
   });
 });
 
-describe('reduce — reasoning + notice', () => {
-  it('accumulates reasoning into its own segment, separate from text', () => {
-    let v = beginAssistant(pushUser(emptyView(), 'x'));
-    v = reduce(v, { type: 'reasoning', delta: 'think ' });
-    v = reduce(v, { type: 'reasoning', delta: 'more' });
-    const turn = v.turns[v.turns.length - 1];
-    expect(turn.role === 'elowen' && turn.segments).toEqual([{ kind: 'reasoning', text: 'think more' }]);
+describe('ChatApplication shutdown ownership', () => {
+  it('does not construct terminal owners after shutdown cancels an in-flight bootstrap', async () => {
+    let enteredHistory!: () => void;
+    let resolveHistory!: (history: []) => void;
+    const historyStarted = new Promise<void>((resolve) => { enteredHistory = resolve; });
+    const delayedHistory = new Promise<[]>((resolve) => { resolveHistory = resolve; });
+    const client = {
+      bindLifetime: vi.fn(),
+      start: vi.fn(async () => ({ sessionId: 'booting' })),
+      status: vi.fn(async () => null),
+      processes: vi.fn(async () => []),
+      terminalSettings: vi.fn(async () => null),
+      commands: vi.fn(async () => []),
+      history: vi.fn(() => { enteredHistory(); return delayedHistory; }),
+      rateLimits: vi.fn(async () => null),
+      mcpServers: vi.fn(async () => []),
+      stopSession: vi.fn(async () => {}),
+    } as unknown as BrainClient;
+    const application = new ChatApplication({ base: 'http://unused', token: 'unused', client });
+    const internals = application as unknown as {
+      stopLocal(): Promise<void>;
+      coordinator: unknown;
+      composition: unknown;
+      lifecycle: unknown;
+      diagnostics: unknown;
+    };
+
+    const running = application.run();
+    await historyStarted;
+    await internals.stopLocal();
+    await running;
+    resolveHistory([]);
+
+    expect(internals.coordinator).toBeNull();
+    expect(internals.composition).toBeNull();
+    expect(internals.lifecycle).toBeNull();
+    expect(internals.diagnostics).toBeNull();
   });
 
-  it('shows a transient notice and clears it on done + on idle', () => {
-    let v = beginAssistant(pushUser(emptyView(), 'x'));
-    v = reduce(v, { type: 'notice', kind: 'retry', message: 'retrying — attempt 1/5…' });
-    expect(v.notice).toBe('retrying — attempt 1/5…');
-    v = reduce(v, { type: 'notice', kind: 'retry', message: 'retry succeeded', done: true });
-    expect(v.notice).toBeUndefined();
-    v = reduce(v, { type: 'notice', kind: 'compaction', message: 'compacting conversation…' });
-    expect(v.notice).toBe('compacting conversation…');
-    v = reduce(v, { type: 'idle' });
-    expect(v.notice).toBeUndefined(); // settled turn drops the transient line
+  it('bounded-stops the issued client generation when bootstrap fails', async () => {
+    const stopSession = vi.fn(async (_signal?: AbortSignal) => {});
+    const client = {
+      bindLifetime: vi.fn(),
+      start: vi.fn(async () => { throw new Error('start failed after claim'); }),
+      stopSession,
+    } as unknown as BrainClient;
+    const application = new ChatApplication({ base: 'http://unused', token: 'unused', client });
+
+    await expect(application.run()).rejects.toThrow('start failed after claim');
+    expect(stopSession).toHaveBeenCalledOnce();
+    expect(stopSession.mock.calls[0]?.[0]).toBeInstanceOf(AbortSignal);
   });
 
-  it('first answer text clears a pending notice', () => {
-    let v = beginAssistant(pushUser(emptyView(), 'x'));
-    v = reduce(v, { type: 'notice', kind: 'compaction', message: 'compacting conversation…' });
-    v = reduce(v, { type: 'text', delta: 'done' });
-    expect(v.notice).toBeUndefined();
+  it('enters the shared shutdown transaction when terminal resume fails', () => {
+    const client = { bindLifetime: vi.fn() } as unknown as BrainClient;
+    const application = new ChatApplication({ base: 'http://unused', token: 'unused', client });
+    const quit = vi.fn();
+    Object.assign(application, {
+      lifecycle: { resume: () => { throw new Error('raw mode unavailable after editor'); } },
+      quitImpl: quit,
+    });
+
+    expect(() => (application as unknown as { resume(): void }).resume())
+      .toThrow('raw mode unavailable after editor');
+    expect(quit).toHaveBeenCalledOnce();
   });
 });
 
@@ -201,7 +299,7 @@ describe('mode toggle key', () => {
 
 describe('statusline', () => {
   it('renders only the toggled parts and hides entirely when the plugin is off', async () => {
-    const { statusline } = await import('../../../src/cli/chat/shell.js');
+    const { statusline } = await import('../../../src/cli/chat/chatComposition.js');
     const usage = { tokens: 34_500, contextWindow: 200_000, percent: 17.25, totalTokens: 1_234_567, cost: 0.4218 };
     expect(statusline(null, usage, 'opus')).toBe('');
     expect(statusline({}, usage, 'opus')).toBe('');

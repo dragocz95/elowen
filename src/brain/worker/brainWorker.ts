@@ -6,11 +6,12 @@ import type { TaskStore } from '../../store/taskStore.js';
 import type { TaskUsageStore } from '../../store/taskUsageStore.js';
 import type { EventBus } from '../../api/sse.js';
 import type { BrainRuntimeConfig } from '../providers.js';
-import { buildBrainRegistry, resolveBrainModel } from '../providers.js';
+import { buildBrainRegistry, resolveBrainModelRoute } from '../providers.js';
 import { newCostMeter, runWithMeter, type CostMeter } from '../openrouterMeter.js';
 import { projectUserTurn } from '../persistence.js';
 import { taskSessionId } from '../sessionId.js';
 import { BrainSessionFactory } from '../session/factory.js';
+import type { BrainResourceLoaderOptions } from '../session/factory.js';
 import { DEFAULT_AUTO_COMPACT_PCT } from '../session/liveBrain.js';
 import { composeSessionTools } from '../session/capabilities.js';
 import { PluginHookBus } from '../../plugins/hookBus.js';
@@ -49,7 +50,7 @@ export interface BrainWorkerDeps {
   createSession?: typeof createAgentSession;
   fetchImpl?: typeof fetch;
   /** Injected for tests; production builds the disk-free DefaultResourceLoader below. */
-  resourceLoaderFactory?: (o: { cwd: string; systemPrompt: string; appendSystemPrompt?: string[] }) => ResourceLoader | undefined;
+  resourceLoaderFactory?: (o: BrainResourceLoaderOptions) => ResourceLoader | undefined;
 }
 
 export interface BrainWorkerLaunchInput {
@@ -142,7 +143,8 @@ export class BrainWorkerService {
     if (this.live.has(sessionName)) return { session: sessionName }; // idempotent re-launch
 
     const registry = buildBrainRegistry(cfg, this.d.authStorage);
-    const model = resolveBrainModel(registry, cfg, selectionFor(cfg, input.spec.model));
+    const route = resolveBrainModelRoute(registry, cfg, selectionFor(cfg, input.spec.model));
+    const { model } = route;
     const sessionId = taskSessionId(input.taskId);
     const resumed = !!this.d.store.getSession(sessionId);
 
@@ -199,7 +201,8 @@ export class BrainWorkerService {
     // The shared assembly (store row + rehydrate + resource loader + PI session + persistence
     // subscription) — identical to the chat brain's, so the two can never drift.
     const { session } = await this.factory.create({
-      sessionId, ownerUserId: input.ownerId ?? 0, registry, model, cwd,
+      sessionId, ownerUserId: input.ownerId ?? 0, registry, model,
+      compactionFallbackModel: route.compactionFallback, cwd,
       systemPrompt, appendSystemPrompt: append, skills,
       tools: [closeTool, ...pluginTools],
       // Task workers run long and unattended — keep their context bounded with PI-native compaction (the

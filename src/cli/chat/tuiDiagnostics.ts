@@ -5,20 +5,35 @@ import type { WriteStream } from 'node:fs';
 
 interface TuiFrameDiagnostic {
   type: 'frame';
+  /** Monotonic physical-frame completion sequence within this mounted chat composition. */
+  sequence: number;
   reasons: string[];
   forced: boolean;
   prepareMs: number;
+  /** Dirty request to physical-root preparation, excluding preparation itself. */
+  queueMs: number;
+  /** Complete constrained root composition and opt-in diagnostic traversal. */
+  rootRenderMs: number;
+  /** Synchronous PI work after the root returns: overlays, diff, terminal write and cursor placement. */
+  piTailMs: number;
   transcriptMs: number;
   totalMs: number;
   transcriptRows: number;
   transcriptRowsExact?: boolean;
   visibleRows: number;
   renderedTurns: number;
-  indexedTurns?: number;
-  cachedRows?: number;
+  reconciledTurns: number;
+  indexedTurns: number;
+  cachedRows: number;
+  layoutVisits: number;
+  scrollOffset: number;
+  maxScrollOffset: number;
+  /** Height-index work charged to this frame, not the viewport's lifetime counter. */
+  heightIndexOperations: number;
   terminal: { columns: number; rows: number };
   sections: Record<string, number>;
   rootRows: number;
+  maxVisibleWidth: number;
   /** ANSI reverse-video spans by row/column, without transcript text. Useful for distinguishing a real
    * component cursor/selection from a stale terminal cell while keeping diagnostics content-free. */
   reverseSpans?: { stage: 'raw' | 'constrained'; row: number; from: number; to: number }[];
@@ -55,23 +70,28 @@ class DisabledTuiDiagnostics implements TuiDiagnostics {
 }
 
 class FileTuiDiagnostics implements TuiDiagnostics {
-  readonly enabled = true;
   private readonly stream: WriteStream;
   private readonly now: () => number;
   private readonly pid: number;
   private frameBucketStartedAt: number | null = null;
   private framesInBucket = 0;
   private closed = false;
+  private failed = false;
+
+  get enabled(): boolean { return !this.failed; }
 
   constructor(readonly path: string, deps: TuiDiagnosticsDeps) {
     mkdirSync(dirname(path), { recursive: true });
     this.stream = createWriteStream(path, { flags: 'a', encoding: 'utf8' });
+    // WriteStream reports open/write failures asynchronously. A missing listener becomes an uncaught
+    // exception that can strand the TUI in raw/alternate-screen mode, so diagnostics always fail closed.
+    this.stream.on('error', () => { this.failed = true; });
     this.now = deps.now ?? Date.now;
     this.pid = deps.pid ?? process.pid;
   }
 
   record(event: TuiDiagnosticEvent): void {
-    if (this.closed) return;
+    if (this.closed || this.failed) return;
     const at = this.now();
     if (event.type === 'frame') this.recordFrameRate(at);
     this.write({ at, pid: this.pid, ...event });
@@ -101,13 +121,34 @@ class FileTuiDiagnostics implements TuiDiagnostics {
   }
 
   private write(value: Record<string, unknown>): void {
-    this.stream.write(`${JSON.stringify(value)}\n`);
+    if (this.closed || this.failed) return;
+    try {
+      this.stream.write(`${JSON.stringify(value)}\n`);
+    } catch {
+      this.failed = true;
+    }
   }
 
   async close(): Promise<void> {
     if (this.closed) return;
     this.closed = true;
-    await new Promise<void>((resolve) => this.stream.end(resolve));
+    if (this.failed || this.stream.destroyed) {
+      this.stream.destroy();
+      return;
+    }
+    await new Promise<void>((resolve) => {
+      let settled = false;
+      const finish = (): void => {
+        if (settled) return;
+        settled = true;
+        this.stream.off('close', finish);
+        this.stream.off('error', finish);
+        resolve();
+      };
+      this.stream.once('close', finish);
+      this.stream.once('error', finish);
+      try { this.stream.end(finish); } catch { finish(); }
+    });
   }
 }
 
@@ -120,5 +161,10 @@ export function createTuiDiagnostics(
   if (env.ELOWEN_TUI_DEBUG !== '1' && env.ELOWEN_TUI_PERF !== '1') return new DisabledTuiDiagnostics();
   const pid = deps.pid ?? process.pid;
   const path = env.ELOWEN_TUI_LOG?.trim() || join(tmpdir(), `elowen-tui-${pid}.jsonl`);
-  return new FileTuiDiagnostics(path, { ...deps, pid });
+  try {
+    return new FileTuiDiagnostics(path, { ...deps, pid });
+  } catch {
+    // An invalid opt-in log path must never prevent chat startup or write the failure into the TUI.
+    return new DisabledTuiDiagnostics();
+  }
 }

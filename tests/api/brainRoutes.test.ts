@@ -13,6 +13,8 @@ import { ConfigStore } from '../../src/store/configStore.js';
 import { UserStore } from '../../src/store/userStore.js';
 import { ProjectStore } from '../../src/store/projectStore.js';
 import { UserProjectStore } from '../../src/store/userProjectStore.js';
+import type { TurnRequest } from '../../src/brain/service/turnRequest.js';
+import type { BrainEvent } from '../../src/brain/events.js';
 
 function fakeBrain() {
   const started = new Set<number>();
@@ -24,16 +26,23 @@ function fakeBrain() {
   const tapSnapshotCalls: { id: number; session: string }[] = [];
   const subagentSends: { id: number; session: string; text: string }[] = [];
   const acceptedSendFailures: { session: string; message: string }[] = [];
+  const turnRequests: Omit<TurnRequest, 'onAdmitted'>[] = [];
   let subagentPreflightError: Error | null = null;
   let sendBeforeAdmissionError: Error | null = null;
   let sendAfterAdmissionError: Error | null = null;
   let blockSends = false;
+  let snapshotPending: BrainEvent[] = [{ type: 'text', delta: 'post-snapshot event' }];
+  let snapshotPendingSync = false;
+  let snapshotOffCalls = 0;
   const queues = new Map<number, { id: string; text: string }[]>();
-  const send = async (id: number, text: string, _images?: unknown, mode?: string, _internal?: unknown, _cwd?: string, session?: string, _display?: string, client?: { id: string; generation: number }, onAdmitted?: (sessionId: string) => void) => {
+  const send = async (request: TurnRequest) => {
+    const { userId: id, text, mode, session, client, onAdmitted } = request;
     if (!started.has(id)) throw new Error('brain not started for user');
     if (sendBeforeAdmissionError) throw sendBeforeAdmissionError;
     sends.push({ id, text, mode });
     boundSendCalls.push({ session, client });
+    const { onAdmitted: _onAdmitted, ...recorded } = request;
+    turnRequests.push(recorded);
     onAdmitted?.(session ?? `brain-${id}`);
     if (sendAfterAdmissionError) throw sendAfterAdmissionError;
     if (blockSends) await new Promise(() => {});
@@ -47,6 +56,12 @@ function fakeBrain() {
     tapSnapshotCalls,
     subagentSends,
     acceptedSendFailures,
+    turnRequests,
+    get snapshotOffCalls() { return snapshotOffCalls; },
+    __setSnapshotPending: (events: BrainEvent[], synchronous = false) => {
+      snapshotPending = events;
+      snapshotPendingSync = synchronous;
+    },
     __failSubagentPreflight: (message: string | null) => { subagentPreflightError = message ? new Error(message) : null; },
     __failSendBeforeAdmission: (message: string | null) => { sendBeforeAdmissionError = message ? new Error(message) : null; },
     __failSendAfterAdmission: (message: string | null) => { sendAfterAdmissionError = message ? new Error(message) : null; },
@@ -61,14 +76,17 @@ function fakeBrain() {
     },
     preflightSend: (id: number) => { if (!started.has(id)) throw new Error('brain not started for user'); },
     send,
-    startSend: (id: number, text: string, images?: unknown, mode?: string, internal?: unknown, cwd?: string, session?: string, display?: string, client?: { id: string; generation: number }) => {
+    startSend: (request: TurnRequest) => {
       let resolveAdmitted!: (sessionId: string) => void;
       let rejectAdmitted!: (error: unknown) => void;
       let settled = false;
       const admitted = new Promise<string>((resolve, reject) => { resolveAdmitted = resolve; rejectAdmitted = reject; });
-      const completed = send(id, text, images, mode, internal, cwd, session, display, client, (sessionId) => {
-        settled = true;
-        resolveAdmitted(sessionId);
+      const completed = send({
+        ...request,
+        onAdmitted: (sessionId) => {
+          settled = true;
+          resolveAdmitted(sessionId);
+        },
       }).then(
         () => { if (!settled) rejectAdmitted(new Error('turn completed before admission')); },
         (error) => { if (!settled) rejectAdmitted(error); throw error; },
@@ -87,12 +105,14 @@ function fakeBrain() {
     },
     subscribe: () => () => {},
     tapSession: () => () => {},
-    tapSessionSnapshot: (id: number, session: string, listener: (event: { type: 'text'; delta: string }) => void) => {
+    tapSessionSnapshot: (id: number, session: string, listener: (event: BrainEvent) => void) => {
       tapSnapshotCalls.push({ id, session });
       // Arrives after the atomic snapshot was captured but while its first SSE frame is flushing.
-      queueMicrotask(() => listener({ type: 'text', delta: 'post-snapshot event' }));
+      const publishPending = () => { for (const event of snapshotPending) listener(event); };
+      if (snapshotPendingSync) publishPending();
+      else queueMicrotask(publishPending);
       return {
-        off: () => {},
+        off: () => { snapshotOffCalls += 1; },
         snapshot: {
           type: 'snapshot' as const,
           cursor: 7,
@@ -222,6 +242,33 @@ describe('brain routes', () => {
     });
   });
 
+  it('maps the unchanged REST send schema into one complete TurnRequest', async () => {
+    const { app, amyTok, brain } = setup();
+    await app.request('/brain/start', post(amyTok, {}));
+    const response = await app.request('/brain/send', post(amyTok, {
+      text: 'expanded prompt',
+      images: [{ data: 'aGVsbG8=', mimeType: 'image/png' }],
+      mode: 'plan',
+      cwd: '/o',
+      session: 'brain-2',
+      display: 'clean prompt',
+      client: 'cli-a',
+      generation: 7,
+    }));
+
+    expect(response.status).toBe(202);
+    expect(brain.turnRequests.at(-1)).toEqual({
+      userId: 2,
+      text: 'expanded prompt',
+      images: [{ data: 'aGVsbG8=', mimeType: 'image/png' }],
+      mode: 'plan',
+      clientCwd: '/o',
+      session: 'brain-2',
+      display: 'clean prompt',
+      client: { id: 'cli-a', generation: 7 },
+    });
+  });
+
   it('messages returns the display history', async () => {
     const { app, amyTok } = setup();
     const res = await app.request('/brain/messages', auth(amyTok));
@@ -263,10 +310,44 @@ describe('brain routes', () => {
     await reader.cancel().catch(() => {});
     expect(brain.tapSnapshotCalls).toEqual([{ id: 2, session: 'brain-ch-subagent-a' }]);
     expect(body).toContain('event: snapshot');
+    expect(body).toContain('id: 7');
     expect(body).toContain('stored child turn');
     expect(body).toContain('running child output');
     expect(body).toContain('post-snapshot event');
     expect(body.indexOf('running child output')).toBeLessThan(body.indexOf('post-snapshot event'));
+  });
+
+  it('unsubscribes and closes an opt-in snapshot stream when the raw pre-snapshot queue overflows', async () => {
+    const { app, amyTok, brain } = setup();
+    brain.__setSnapshotPending(Array.from({ length: 2_049 }, (_, index) => ({
+      type: 'tool' as const, id: `overflow-${index}`, name: 'read_file',
+    })), true);
+    const ac = new AbortController();
+    const res = await app.request('/brain/stream?session=brain-ch-subagent-overflow&snapshot=1', {
+      headers: { authorization: `Bearer ${amyTok}` }, signal: ac.signal,
+    });
+    expect(res.status).toBe(200);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(brain.snapshotOffCalls).toBe(1);
+    const body = await res.text();
+    expect(body).not.toContain('overflow-');
+    expect(body.match(/overflow-/g) ?? []).toHaveLength(0);
+    ac.abort();
+  });
+
+  it('unsubscribes a pre-snapshot stream when one serialized UTF-8 event exceeds four MiB', async () => {
+    const { app, amyTok, brain } = setup();
+    brain.__setSnapshotPending([{ type: 'text', delta: '🐉'.repeat(1_100_000) }], true);
+    const ac = new AbortController();
+    const res = await app.request('/brain/stream?session=brain-ch-subagent-byte-overflow&snapshot=1', {
+      headers: { authorization: `Bearer ${amyTok}` }, signal: ac.signal,
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(brain.snapshotOffCalls).toBe(1);
+    await res.body?.cancel();
+    ac.abort();
   });
 
   it('send before start returns 409', async () => {

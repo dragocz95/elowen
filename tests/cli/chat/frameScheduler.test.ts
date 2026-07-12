@@ -6,12 +6,12 @@ describe('FrameScheduler', () => {
   afterEach(() => vi.useRealTimers());
 
   it('coalesces a burst into one frame and preserves every reason', async () => {
-    const frames: { reasons: string[]; forced: boolean }[] = [];
+    const frames: { reasons: string[]; forced: boolean; requestedAt: number }[] = [];
     const scheduler = new FrameScheduler((frame) => frames.push(frame));
     for (let i = 0; i < 100; i++) scheduler.schedule(`stream:${i % 3}`, 'normal');
     expect(vi.getTimerCount()).toBe(1);
     await vi.runOnlyPendingTimersAsync();
-    expect(frames).toEqual([{ reasons: ['stream:0', 'stream:1', 'stream:2'], forced: false }]);
+    expect(frames).toEqual([{ reasons: ['stream:0', 'stream:1', 'stream:2'], forced: false, requestedAt: 1_000 }]);
     expect(vi.getTimerCount()).toBe(0);
   });
 
@@ -37,13 +37,27 @@ describe('FrameScheduler', () => {
   });
 
   it('escalates a pending ordinary frame to one immediate forced repaint', async () => {
-    const frames: { reasons: string[]; forced: boolean }[] = [];
+    const frames: { reasons: string[]; forced: boolean; requestedAt: number }[] = [];
     const scheduler = new FrameScheduler((frame) => frames.push(frame));
     scheduler.schedule('stream:text', 'normal');
     scheduler.scheduleForced('resize');
     expect(vi.getTimerCount()).toBe(1);
     await vi.runOnlyPendingTimersAsync();
-    expect(frames).toEqual([{ reasons: ['stream:text', 'resize'], forced: true }]);
+    expect(frames).toEqual([{ reasons: ['stream:text', 'resize'], forced: true, requestedAt: 1_000 }]);
+  });
+
+  it('keeps the earliest request timestamp when later work coalesces into the frame', async () => {
+    const frames: { requestedAt: number; reasons: string[] }[] = [];
+    let now = 1_000;
+    const scheduler = new FrameScheduler((frame) => frames.push({
+      requestedAt: frame.requestedAt,
+      reasons: frame.reasons,
+    }), { now: () => now });
+    scheduler.schedule('scroll:wheel', 'interactive');
+    now = 1_005;
+    scheduler.schedule('scroll:drag', 'interactive');
+    await vi.runOnlyPendingTimersAsync();
+    expect(frames).toEqual([{ requestedAt: 1_000, reasons: ['scroll:wheel', 'scroll:drag'] }]);
   });
 
   it('pulls a pending normal frame forward when interactive input arrives', async () => {

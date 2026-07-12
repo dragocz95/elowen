@@ -1,14 +1,15 @@
-export type FramePriority = 'interactive' | 'normal' | 'background';
+export type FramePriority = 'interactive' | 'normal';
 
 export interface ScheduledFrame {
   reasons: string[];
   forced: boolean;
+  /** Earliest dirty request folded into this frame. */
+  requestedAt: number;
 }
 
 export interface FrameSchedulerOptions {
   interactiveIntervalMs?: number;
   normalIntervalMs?: number;
-  backgroundIntervalMs?: number;
   now?: () => number;
 }
 
@@ -20,8 +21,9 @@ export class FrameScheduler {
   private readonly intervals: Record<FramePriority, number>;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private timerDueAt = Number.POSITIVE_INFINITY;
-  private priority: FramePriority = 'background';
+  private priority: FramePriority = 'normal';
   private forced = false;
+  private requestedAt: number | null = null;
   private paused = false;
   private stopped = false;
   private lastFrameAt = Number.NEGATIVE_INFINITY;
@@ -34,12 +36,12 @@ export class FrameScheduler {
     this.intervals = {
       interactive: options.interactiveIntervalMs ?? 16,
       normal: options.normalIntervalMs ?? 33,
-      background: options.backgroundIntervalMs ?? 100,
     };
   }
 
   schedule(reason: string, priority: FramePriority = 'normal'): void {
     if (this.paused || this.stopped) return;
+    if (this.reasons.size === 0) this.requestedAt = this.now();
     this.reasons.add(reason);
     if (this.rank(priority) > this.rank(this.priority)) this.priority = priority;
     this.arm(false);
@@ -47,6 +49,7 @@ export class FrameScheduler {
 
   scheduleForced(reason: string): void {
     if (this.paused || this.stopped) return;
+    if (this.reasons.size === 0) this.requestedAt = this.now();
     this.reasons.add(reason);
     this.forced = true;
     this.priority = 'interactive';
@@ -86,10 +89,15 @@ export class FrameScheduler {
     this.timer = null;
     this.timerDueAt = Number.POSITIVE_INFINITY;
     if (this.paused || this.stopped || this.reasons.size === 0) return;
-    const frame = { reasons: [...this.reasons], forced: this.forced };
+    const frame = {
+      reasons: [...this.reasons],
+      forced: this.forced,
+      requestedAt: this.requestedAt ?? this.now(),
+    };
     this.reasons.clear();
     this.forced = false;
-    this.priority = 'background';
+    this.requestedAt = null;
+    this.priority = 'normal';
     this.lastFrameAt = this.now();
     this.render(frame);
   }
@@ -100,10 +108,11 @@ export class FrameScheduler {
     this.timerDueAt = Number.POSITIVE_INFINITY;
     this.reasons.clear();
     this.forced = false;
-    this.priority = 'background';
+    this.requestedAt = null;
+    this.priority = 'normal';
   }
 
   private rank(priority: FramePriority): number {
-    return priority === 'interactive' ? 3 : priority === 'normal' ? 2 : 1;
+    return priority === 'interactive' ? 2 : 1;
   }
 }

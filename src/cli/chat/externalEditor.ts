@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { BoundedChildTermination } from './processTermination.js';
 
 /** `/editor` — compose the prompt in the user's own editor. The TUI caller suspends the terminal
  *  (tui.stop()) around this round-trip and re-inits afterwards; this module only owns the temp-file
@@ -19,6 +20,10 @@ export interface ExternalEditOpts {
   env?: NodeJS.ProcessEnv;
   /** Injected for tests; defaults to node's spawn (stdio inherited — the editor owns the TTY). */
   spawnFn?: typeof spawn;
+  /** Application lifetime; shutdown terminates the inherited-TTY editor child before process exit. */
+  signal?: AbortSignal;
+  /** TERM grace before SIGKILL; configurable for deterministic process tests. */
+  killGraceMs?: number;
 }
 
 /** Round-trip the draft through the external editor. Resolves to the edited content (a saved empty
@@ -34,9 +39,24 @@ export async function editTextExternally(o: ExternalEditOpts): Promise<string | 
     // Async spawn, not spawnSync: a synchronous child keeps libuv's console read active on some
     // platforms after the TUI paused stdin, racing vi for the input buffer (same fix as pi's).
     const code = await new Promise<number | null>((resolve) => {
+      if (o.signal?.aborted) { resolve(null); return; }
       const child = spawnFn(cmd, [...args, file], { stdio: 'inherit' });
-      child.on('error', () => resolve(null));
-      child.on('close', (exitCode) => resolve(exitCode));
+      const termination = new BoundedChildTermination(child, o.killGraceMs ?? 250);
+      let settled = false;
+      const finish = (exitCode: number | null): void => {
+        if (settled) return;
+        settled = true;
+        o.signal?.removeEventListener('abort', onAbort);
+        termination.complete();
+        resolve(exitCode);
+      };
+      const onAbort = (): void => {
+        if (!termination.terminate()) finish(null);
+      };
+      child.on('error', () => finish(null));
+      child.on('close', (exitCode) => finish(exitCode));
+      o.signal?.addEventListener('abort', onAbort, { once: true });
+      if (o.signal?.aborted) onAbort();
     });
     if (code !== 0) return null;
     return readFileSync(file, 'utf-8').replace(/\n$/, '');

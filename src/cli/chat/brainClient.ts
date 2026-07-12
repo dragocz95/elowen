@@ -69,6 +69,24 @@ export function parseSse(buffer: string): { frames: { event?: string; id?: strin
   return { frames, rest: buffer };
 }
 
+/** Abort-aware reconnect delay. The listener and timer are disposed regardless of which side wins, so
+ * stopping a TUI never waits for (or leaks) a backoff timer. */
+function reconnectDelay(ms: number, signal: AbortSignal): Promise<void> {
+  if (signal.aborted) return Promise.resolve();
+  return new Promise<void>((resolve) => {
+    let settled = false;
+    const finish = (): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      signal.removeEventListener('abort', finish);
+      resolve();
+    };
+    const timer = setTimeout(finish, ms);
+    signal.addEventListener('abort', finish, { once: true });
+  });
+}
+
 /** Thin client over the daemon's /brain/* surface. Runs no agent loop — it only starts the session,
  *  posts user turns, reads history, and streams the brain's events.
  *
@@ -78,6 +96,7 @@ export function parseSse(buffer: string): { frames: { event?: string; id?: strin
  *  CLI (or the web dock) working another conversation can't interleave into this one. */
 export class BrainClient {
   private f: typeof fetch;
+  private lifetimeSignal?: AbortSignal;
   private readonly clientId: string;
   private startGeneration = 0;
   /** Generation that actually committed `bound`; preserved across server-driven idle rollover rebinds. */
@@ -85,9 +104,17 @@ export class BrainClient {
   /** The conversation this client is bound to — set by start(), updated by rebind() (idle rollover). */
   private bound?: string;
   constructor(private o: BrainClientOpts) {
-    this.f = o.fetchImpl ?? fetch;
+    const fetchImpl = o.fetchImpl ?? fetch;
+    this.f = (input, init) => {
+      const signal = init?.signal ?? this.lifetimeSignal;
+      return fetchImpl(input, signal ? { ...init, signal } : init);
+    };
     this.clientId = o.clientId ?? randomUUID();
   }
+
+  /** Bind ordinary requests to the owning chat application. Explicit operation signals (SSE/history
+   * lanes and the bounded detached quit stop) take precedence over this default. */
+  bindLifetime(signal: AbortSignal): void { this.lifetimeSignal = signal; }
 
   /** The bound conversation id (undefined before the first start()). */
   get boundSession(): string | undefined { return this.bound; }
@@ -129,7 +156,7 @@ export class BrainClient {
     const res = await this.post('/brain/start', { ...opts, cwd: process.cwd(), client: this.clientId, generation });
     const body = (await res.json()) as { sessionId: string };
     // Concurrent A/B switches may resolve out of order. Only the latest request is allowed to commit the
-    // shared bound session; streamController independently guards its view/history/stream side effects.
+    // shared bound session; StreamCoordinator independently guards its view/history/stream side effects.
     if (generation === this.startGeneration) {
       this.bound = body.sessionId;
       this.boundGeneration = generation;
@@ -562,7 +589,7 @@ export class BrainClient {
         // otherwise fall through to reconnect
       }
       if (signal.aborted) break;
-      await new Promise((r) => setTimeout(r, backoffMs));
+      await reconnectDelay(backoffMs, signal);
     }
   }
 }
