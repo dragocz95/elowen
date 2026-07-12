@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import {
   mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, realpathSync, statSync, writeFileSync,
 } from 'node:fs';
@@ -24,7 +24,9 @@ export function resolveArtifactDir(root, scenario) {
 export function distContentHash(root) {
   const hash = createHash('sha256');
   const visit = (dir, prefix = '') => {
-    const entries = readdirSync(dir, { withFileTypes: true }).sort((left, right) => left.name.localeCompare(right.name));
+    const entries = readdirSync(dir, { withFileTypes: true }).sort((left, right) => (
+      left.name < right.name ? -1 : left.name > right.name ? 1 : 0
+    ));
     if (entries.length === 0) hash.update(`directory\0${prefix}\0`);
     for (const entry of entries) {
       const relativePath = prefix ? `${prefix}/${entry.name}` : entry.name;
@@ -50,6 +52,12 @@ export function distContentHash(root) {
 
 export function buildContentIdentity(commit, distSha256) {
   return `git:${commit}:dist-sha256:${distSha256}`;
+}
+
+/** One ID shared by every scenario in a built run. Final evidence supplies it explicitly; the convenience
+ * npm command generates one fallback once in its parent runner and propagates it to all child scenarios. */
+export function resolveTmuxRunId(env = process.env, generate = randomUUID) {
+  return env.ELOWEN_TMUX_RUN_ID?.trim() || `local-${generate()}`;
 }
 
 export function createArtifactDir(scenario) {
@@ -480,6 +488,56 @@ function captureEvidence(value, label, scenarioDir) {
   return value.length;
 }
 
+function signalEvidence(signalCase, label, signalsDir) {
+  const signal = nonEmptyString(signalCase.signal, `${label}.signal`);
+  const caseDir = join(signalsDir, signal.toLowerCase());
+  const realSignalsDir = realpathSync(signalsDir);
+  const realCaseDir = realpathSync(caseDir);
+  const caseRelative = relative(realSignalsDir, realCaseDir);
+  assert.ok(caseRelative && !caseRelative.startsWith(`..${process.platform === 'win32' ? '\\' : '/'}`)
+    && caseRelative !== '..' && !isAbsolute(caseRelative), `${label} evidence directory must stay inside signals`);
+  const evidence = signalCase.evidence;
+  assert.ok(evidence && typeof evidence === 'object' && !Array.isArray(evidence), `${label}.evidence must be an object`);
+  const captures = captureEvidence([evidence.before], `${label}.evidence.before`, caseDir);
+  const shellPath = evidenceFile(evidence.restoredShell, `${label}.evidence.restoredShell`, caseDir);
+  const ttyPath = evidenceFile(evidence.ttyState, `${label}.evidence.ttyState`, caseDir);
+  const writesPath = evidenceFile(evidence.terminalWrites, `${label}.evidence.terminalWrites`, caseDir);
+  const perfPath = evidenceFile(evidence.perf, `${label}.evidence.perf`, caseDir);
+
+  const shell = readFileSync(shellPath, 'utf8');
+  assert.match(shell, new RegExp(`E2E ${signal} SHELL RESTORED`, 'u'), `${label}: restored shell marker is missing`);
+  assert.doesNotMatch(shell, /MaxListenersExceededWarning|\bat\s+\S+\s+\([^)]*\.js:\d+/u,
+    `${label}: restored shell contains a warning or stack trace`);
+
+  const tty = readFileSync(ttyPath, 'utf8').trim().split('\n');
+  assert.equal(tty.length, 2, `${label}: tty evidence must contain before and after states`);
+  assert.ok(tty[0] && tty[1], `${label}: tty states must be non-empty`);
+  assert.equal(tty[1], tty[0], `${label}: tty state was not restored exactly`);
+
+  const writes = readFileSync(writesPath, 'utf8');
+  for (const [name, enabled, disabled] of [
+    ['alternate screen', '\x1b[?1049h', '\x1b[?1049l'],
+    ['mouse reporting', '\x1b[?1006h', '\x1b[?1006l'],
+  ]) {
+    const enabledAt = writes.lastIndexOf(enabled);
+    const disabledAt = writes.lastIndexOf(disabled);
+    assert.ok(enabledAt >= 0 && disabledAt > enabledAt, `${label}: ${name} must be disabled after it was enabled`);
+  }
+
+  const perfEntries = readJsonLines(perfPath);
+  const starts = perfEntries.filter((entry) => entry.type === 'lifecycle' && entry.action === 'start');
+  const stops = perfEntries.filter((entry) => entry.type === 'lifecycle' && entry.action === 'stop');
+  assert.equal(starts.length, 1, `${label}: perf evidence must contain exactly one lifecycle start`);
+  assert.equal(stops.length, 1, `${label}: perf evidence must contain exactly one lifecycle stop`);
+  const frames = perfEntries.filter((entry) => entry.type === 'frame');
+  const performance = analyzeFrameDiagnostics(frames);
+  assert.ok(frames.every((frame) => frame.at <= stops[0].at), `${label}: a frame rendered after lifecycle stop`);
+  const reported = performanceSummary(signalCase.performance, `${label}.performance`);
+  assert.deepEqual(reported.ordinaryMs, performance.ordinaryMs, `${label}: reported ordinary timing differs from raw perf`);
+  assert.deepEqual(reported.forcedMs, performance.forcedMs, `${label}: reported forced timing differs from raw perf`);
+  return { captures, performance };
+}
+
 /** Aggregate consecutive deterministic rounds and fail closed unless every scenario and artifact agrees. */
 export function aggregateTmuxReports(root, {
   expectedRounds = 2,
@@ -540,7 +598,9 @@ export function aggregateTmuxReports(root, {
           `${entry.path}.cases[${index}] did not restore terminal state`);
         assert.equal(signalCase.shellReadable, true, `${entry.path}.cases[${index}] did not restore a readable shell`);
         recordMetadata(signalCase.metadata, `${entry.path}.cases[${index}].metadata`, entry.round, true);
-        performance.push(performanceSummary(signalCase.performance, `${entry.path}.cases[${index}].performance`));
+        const raw = signalEvidence(signalCase, `${entry.path}.cases[${index}]`, dirname(entry.path));
+        captures += raw.captures;
+        performance.push(raw.performance);
       }
     } else {
       captures += captureEvidence(entry.value.captures, `${entry.path}.captures`, dirname(entry.path));

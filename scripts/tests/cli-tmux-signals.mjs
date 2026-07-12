@@ -48,7 +48,7 @@ async function runSignal(signal) {
   const home = join(temp, 'home');
   const config = join(temp, 'config');
   const logPath = join(temp, 'requests.jsonl');
-  const ttyPath = join(temp, 'tty.txt');
+  const ttyPath = join(artifactDir, 'tty-state.txt');
   const startGatePath = join(temp, 'start-gate');
   const perfLog = join(artifactDir, 'perf.jsonl');
   const writeLog = join(artifactDir, 'terminal-writes.log');
@@ -94,7 +94,9 @@ async function runSignal(signal) {
     };
     await waitFor(`${signal} active chat`, () => entries().some((entry) => entry.path === '/brain/stream')
       && tmux.run(['capture-pane', '-p', '-t', session]).includes('E2E Harness'));
-    captureState({ tmux, session, artifactDir, label: '01-before-signal', perfLog, expectCursor: true });
+    const before = captureState({
+      tmux, session, artifactDir, label: '01-before-signal', perfLog, expectCursor: true,
+    });
     const panePid = Number(tmux.run(['display-message', '-p', '-t', session, '#{pane_pid}']).trim());
     const childPid = await waitFor(`${signal} CLI pid`, () => {
       try {
@@ -105,7 +107,8 @@ async function runSignal(signal) {
     const marker = `E2E ${signal} SHELL RESTORED`;
     await waitFor(`${signal} restored shell`, () => tmux.run(['capture-pane', '-p', '-t', session]).includes(marker));
     const shell = tmux.run(['capture-pane', '-p', '-t', session]);
-    writeFileSync(join(artifactDir, '02-restored-shell.txt'), shell);
+    const restoredShellPath = join(artifactDir, '02-restored-shell.txt');
+    writeFileSync(restoredShellPath, shell);
     assert.match(shell, new RegExp(marker), `${signal}: shell marker must be readable`);
     assert.doesNotMatch(shell, /MaxListenersExceededWarning|\bat\s+\S+\s+\([^)]*\.js:\d+/u);
     const tty = readFileSync(ttyPath, 'utf8').trim().split('\n');
@@ -117,6 +120,13 @@ async function runSignal(signal) {
     const report = {
       passed: true, signal, metadata: collectMetadata(repo, cli, tmux.name), performance,
       terminalStateRestored: true, shellReadable: true,
+      evidence: {
+        before: { label: before.label, ...before.paths },
+        restoredShell: restoredShellPath,
+        ttyState: ttyPath,
+        terminalWrites: writeLog,
+        perf: perfLog,
+      },
     };
     writeReport(join(artifactDir, 'report.json'), report);
     return report;
