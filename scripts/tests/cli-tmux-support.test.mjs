@@ -416,7 +416,7 @@ function writeRound(root, round, {
         goalStartingNoticeAbsent: true, goalElapsedAdvanced: true, goalVisibleAt40x15: true,
         reconnectSnapshotApplied: true, staleKickoffResponseIgnored: true, goalRemovedAtCompletion: true,
         postGoalInputAccepted: true, idleFramesAfter1100Ms: 0, terminalStateRestored: true,
-      } : {}),
+      } : scenario === 'long' ? { compactionBusyVisible: true, queuedEchoDelayed: true } : {}),
     }));
   }
   if (!omitSignals) {
@@ -502,7 +502,7 @@ test('aggregate analyzer requires two complete goal+short+long+signals rounds wi
     const summary = aggregateTmuxReports(root, aggregateOptions(2));
     assert.equal(summary.rounds, 2);
     assert.equal(summary.scenarios, 8);
-    assert.equal(summary.captures, 104);
+    assert.equal(summary.captures, 108);
     assert.equal(summary.ordinaryMs.max, 37);
     assert.deepEqual(summary.commits, ['abc']);
   } finally {

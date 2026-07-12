@@ -449,7 +449,17 @@ const server = createServer(async (req, res) => {
     }
     if (sendCount === 1) runFirstTurn(text);
     else if (sendCount === 2) {
-      later(25, () => emit({ type: 'queue', items: [{ id: 'queued-e2e', text }] }));
+      // Deterministic production-shaped lifecycle: admission creates only queue state; compaction keeps
+      // the composer busy; PI then removes the queue item BEFORE the delivered user event appears.
+      later(25, () => emit({ type: 'queue', items: [{ id: 'queued-e2e', text }] }), firstTimers);
+      later(60, () => emit({
+        type: 'notice', kind: 'compaction', message: 'compacting conversation…',
+      }), firstTimers);
+      later(900, () => emit({
+        type: 'notice', kind: 'compaction', message: 'conversation compacted', done: true,
+      }), firstTimers);
+      later(920, () => emit({ type: 'queue', items: [] }), firstTimers);
+      later(940, () => emit({ type: 'user', text }), firstTimers);
     } else if (sendCount === 3) runSecondTurn(text);
     else if (sendCount === 4) runAskTurn(text);
     return;

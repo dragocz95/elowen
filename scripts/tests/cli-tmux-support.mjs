@@ -25,7 +25,8 @@ export const EXPECTED_TMUX_CAPTURE_LABELS = Object.freeze({
     '01-initial-long-history', '01b-multiline-1-rows', '01b-multiline-6-rows',
     '01b-multiline-8-rows', '01c-multiline-up-reveals-head', '01d-multiline-down-returns-tail',
     '01e-wrapped-cursor-40x15', '01f-wrapped-cursor-after-resize', '02-page-up',
-    '02b-drag-copy-complete', '03-streaming-queued', '04-streaming-20x10',
+    '02b-drag-copy-complete', '03-streaming-queued', '03a-compacting-queued',
+    '03b-queued-delivered', '04-streaming-20x10',
     '04-streaming-32x12', '04-streaming-40x15', '04-streaming-80x24', '04-streaming-103x24',
     '04-streaming-104x24', '04-streaming-120x30', '04-streaming-180x50',
     '04b-streaming-telemetry-hidden', '07-streaming-restored', '08-panels-after-stream',
@@ -695,6 +696,8 @@ function normalScenarioEvidence(report, label, scenarioDir) {
   assert.deepEqual(reported.forcedMs, performance.forcedMs, `${label}: reported forced timing differs from raw perf`);
   assert.deepEqual(report.performance, performance, `${label}: reported performance differs from raw perf evidence`);
   if (report.scenario === 'long') {
+    assert.equal(report.compactionBusyVisible, true, `${label}.compactionBusyVisible must be true`);
+    assert.equal(report.queuedEchoDelayed, true, `${label}.queuedEchoDelayed must be true`);
     assert.ok(performance.scroll.maxRenderedTurns <= 12,
       `${label}: long scroll rendered too many turns (${performance.scroll.maxRenderedTurns})`);
     assert.ok(performance.scroll.maxReconciledTurns <= 12,

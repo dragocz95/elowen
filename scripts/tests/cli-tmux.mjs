@@ -357,8 +357,33 @@ try {
   sendKey('C-j');
   sendLiteral('E2E QUEUED LINE 2');
   sendKey('Enter');
-  await waitFor('queued message strip', () => capture().includes('QUEUED') && capture().includes('E2E QUEUED LINE'));
-  saveCapture('03-streaming-queued');
+  await waitFor('queued message strip + compaction status', () => {
+    const pane = capture();
+    return pane.includes('QUEUED') && pane.includes('E2E QUEUED LINE') && pane.includes('compacting');
+  });
+  const queuedCompacting = saveCapture('03-streaming-queued');
+  assert.equal((queuedCompacting.match(/E2E QUEUED LINE 1/gu) ?? []).length, 1,
+    'a pending queued prompt must exist only in the queue strip, not prematurely in chat history');
+  saveCapture('03a-compacting-queued');
+
+  await waitFor('queued delivery after compaction', () => {
+    const pane = capture();
+    return !pane.includes('QUEUED') && !pane.includes('compacting') && pane.includes('E2E QUEUED LINE 1');
+  });
+  const deliveredQueue = saveCapture('03b-queued-delivered');
+  assert.equal((deliveredQueue.match(/E2E QUEUED LINE 1/gu) ?? []).length, 1,
+    'a delivered queued prompt must appear exactly once after its queue chip disappears');
+  const lifecycleEvents = entries().filter((entry) => entry.kind === 'event').map((entry) => entry.event);
+  const queueAddedAt = lifecycleEvents.findIndex((event) => event?.type === 'queue' && event.items?.length === 1);
+  const compactStartedAt = lifecycleEvents.findIndex((event) => event?.type === 'notice'
+    && event.kind === 'compaction' && !event.done);
+  const queueClearedAt = lifecycleEvents.findIndex((event, index) => index > queueAddedAt
+    && event?.type === 'queue' && event.items?.length === 0);
+  const userDeliveredAt = lifecycleEvents.findIndex((event, index) => index > queueClearedAt
+    && event?.type === 'user' && event.text?.includes('E2E QUEUED LINE 1'));
+  assert.ok(queueAddedAt >= 0 && compactStartedAt > queueAddedAt && queueClearedAt > compactStartedAt
+    && userDeliveredAt > queueClearedAt,
+    'event evidence must prove queue admission → compaction busy → queue removal → user delivery');
 
   // A rapid geometry sweep crosses every reported small/fallback/panel threshold while SSE keeps
   // mutating the tail. Each step waits for a post-resize diagnosed frame, then runs the common analyzer.
@@ -683,6 +708,8 @@ try {
     composerGrowth,
     copiedText: copiedText.slice(0, 200),
     rapidResizeDimensions: resizeSweep.map(([columns, rows]) => `${columns}x${rows}`),
+    compactionBusyVisible: true,
+    queuedEchoDelayed: true,
     hiddenIdleFramesAfter800Ms: 0,
     narrowIdleFramesAfter800Ms: 0,
     terminalStateRestored: true,
