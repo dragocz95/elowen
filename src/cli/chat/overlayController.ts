@@ -20,8 +20,10 @@ interface ManagedOverlay {
   readonly component: Component;
   readonly options: () => OverlayOptions | undefined;
   readonly handle: OverlayHandle;
-  native: OverlayHandle;
+  native: OverlayHandle | null;
   hidden: boolean;
+  focus: 'focused' | 'unfocused' | null;
+  unfocusOptions?: Parameters<OverlayHandle['unfocus']>[0];
   closed: boolean;
 }
 
@@ -32,7 +34,7 @@ export class OverlayController {
   private readonly nativeShowOverlay: TUI['showOverlay'];
   private readonly records = new Set<ManagedOverlay>();
   private readonly named = new Map<string, ManagedOverlay>();
-  private stopped = false;
+  private state: 'inactive' | 'active' | 'stopped' = 'inactive';
 
   constructor(private readonly tui: TUI, private readonly forceRender: (reason: string) => void) {
     this.nativeShowOverlay = tui.showOverlay.bind(tui);
@@ -56,19 +58,55 @@ export class OverlayController {
 
   hide(name: string): void { this.named.get(name)?.handle.hide(); }
 
-  /** Reopen every live overlay against fresh terminal dimensions/options. Stable public handles remain
-   * valid, hidden state survives, and the previously focused overlay is restored after the full stack. */
-  reflow(): void {
-    if (this.stopped || this.records.size === 0) return;
-    const records = [...this.records];
-    const focused = [...records].reverse().find((record) => record.native.isFocused());
+  /** Activate every overlay accumulated while the terminal was outside the alternate screen. Native PI
+   * overlays are created only here (or by an already-active open), so showOverlay can never move the
+   * hardware cursor or queue a frame in the primary buffer. */
+  resume(): void {
+    if (this.state !== 'inactive') return;
+    this.state = 'active';
+    const records = [...this.records].filter((record) => !record.closed);
     for (const record of records) {
-      record.hidden = record.hidden || record.native.isHidden();
-      record.native.hide();
       record.native = this.openNative(record);
       if (record.hidden) record.native.setHidden(true);
     }
-    if (focused && !focused.hidden && !focused.closed) focused.native.focus();
+    for (const record of records) {
+      if (record.focus === 'unfocused') record.native?.unfocus(record.unfocusOptions);
+    }
+    const focused = [...records].reverse().find((record) => record.focus === 'focused' && !record.hidden);
+    focused?.native?.focus();
+    if (records.length > 0) this.forceRender('overlay:resume');
+  }
+
+  /** Detach native overlays while the alternate screen is still owned. Stable public records remain, so
+   * async opens/closes/focus changes during an external editor are state-only until resume(). */
+  pause(): void {
+    if (this.state !== 'active') return;
+    this.state = 'inactive';
+    for (const record of this.records) {
+      const native = record.native;
+      if (!native) continue;
+      record.hidden ||= native.isHidden();
+      record.focus = native.isFocused() ? 'focused' : 'unfocused';
+      native.hide();
+      record.native = null;
+    }
+  }
+
+  /** Reopen every live overlay against fresh terminal dimensions/options. Stable public handles remain
+   * valid, hidden state survives, and the previously focused overlay is restored after the full stack. */
+  reflow(): void {
+    if (this.state !== 'active' || this.records.size === 0) return;
+    const records = [...this.records];
+    const focused = [...records].reverse().find((record) => record.native?.isFocused());
+    for (const record of records) {
+      const native = record.native;
+      if (!native) continue;
+      record.hidden ||= native.isHidden();
+      native.hide();
+      record.native = this.openNative(record);
+      if (record.hidden) record.native.setHidden(true);
+    }
+    if (focused && !focused.hidden && !focused.closed) focused.native?.focus();
     this.forceRender('overlay:reflow');
   }
 
@@ -78,13 +116,16 @@ export class OverlayController {
   }
 
   stop(): void {
-    if (this.stopped) return;
-    this.stopped = true;
-    this.hideAll();
-    this.tui.showOverlay = this.nativeShowOverlay;
+    if (this.state === 'stopped') return;
+    this.pause();
+    this.state = 'stopped';
+    for (const record of this.records) record.closed = true;
+    this.records.clear();
+    this.named.clear();
   }
 
   private open(component: Component, source?: OverlayOptionsSource, name?: string): OverlayHandle {
+    if (this.state === 'stopped') return this.inertHandle();
     const options = typeof source === 'function' ? source : () => source;
     let record!: ManagedOverlay;
     const handle: OverlayHandle = {
@@ -92,24 +133,36 @@ export class OverlayController {
       setHidden: (hidden) => {
         if (record.closed || record.hidden === hidden) return;
         record.hidden = hidden;
-        record.native.setHidden(hidden);
-        this.forceRender(hidden ? 'overlay:hide' : 'overlay:show');
+        record.native?.setHidden(hidden);
+        if (this.state === 'active') this.forceRender(hidden ? 'overlay:hide' : 'overlay:show');
       },
-      isHidden: () => record.hidden || record.native.isHidden(),
-      focus: () => { if (!record.closed && !record.hidden) record.native.focus(); },
-      unfocus: (unfocusOptions) => { if (!record.closed) record.native.unfocus(unfocusOptions); },
-      isFocused: () => !record.closed && record.native.isFocused(),
+      isHidden: () => record.hidden || (record.native?.isHidden() ?? false),
+      focus: () => {
+        if (record.closed || record.hidden) return;
+        record.focus = 'focused';
+        record.native?.focus();
+      },
+      unfocus: (unfocusOptions) => {
+        if (record.closed) return;
+        record.focus = 'unfocused';
+        record.unfocusOptions = unfocusOptions;
+        record.native?.unfocus(unfocusOptions);
+      },
+      isFocused: () => !record.closed && (record.native?.isFocused() ?? record.focus === 'focused'),
     };
     record = {
       ...(name ? { name } : {}), component, options, handle,
-      native: null as unknown as OverlayHandle,
+      native: null,
       hidden: false,
+      focus: null,
       closed: false,
     };
-    record.native = this.openNative(record);
     this.records.add(record);
     if (name) this.named.set(name, record);
-    this.forceRender('overlay:open');
+    if (this.state === 'active') {
+      record.native = this.openNative(record);
+      this.forceRender('overlay:open');
+    }
     return handle;
   }
 
@@ -118,8 +171,21 @@ export class OverlayController {
     record.closed = true;
     this.records.delete(record);
     if (record.name && this.named.get(record.name) === record) this.named.delete(record.name);
-    record.native.hide();
-    this.forceRender('overlay:close');
+    record.native?.hide();
+    record.native = null;
+    if (this.state === 'active') this.forceRender('overlay:close');
+  }
+
+  private inertHandle(): OverlayHandle {
+    let hidden = false;
+    return {
+      hide: () => { hidden = true; },
+      setHidden: (next) => { hidden = next; },
+      isHidden: () => hidden,
+      focus: () => {},
+      unfocus: () => {},
+      isFocused: () => false,
+    };
   }
 
   private openNative(record: ManagedOverlay): OverlayHandle {

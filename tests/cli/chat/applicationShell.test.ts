@@ -9,6 +9,7 @@ import { OverlayController } from '../../../src/cli/chat/overlayController.js';
 import { RenderShell } from '../../../src/cli/chat/renderShell.js';
 import { createChatComposition } from '../../../src/cli/chat/chatComposition.js';
 import type { ChatComposition, ShellInputDeps } from '../../../src/cli/chat/chatComposition.js';
+import { openPicker } from '../../../src/cli/chat/picker.js';
 import type { TuiDiagnostics } from '../../../src/cli/chat/tuiDiagnostics.js';
 import { startScreenBox, startScreenInputTop, TOP_RULE_ROWS } from '../../../src/cli/chat/startScreen.js';
 import { TerminalLifecycle } from '../../../src/cli/chat/terminalLifecycle.js';
@@ -82,6 +83,7 @@ describe('chat application shell ownership', () => {
     const force = vi.fn();
     const tui = { showOverlay: nativeShow } as unknown as TUI;
     const overlays = new OverlayController(tui, force);
+    overlays.resume();
     const handle = overlays.show('suggestions', {
       invalidate: () => {}, render: () => ['safe\x1b[2J row'],
     }, { anchor: 'top-left' });
@@ -91,6 +93,63 @@ describe('chat application shell ownership', () => {
     expect(hide).toHaveBeenCalledOnce();
     expect(force).toHaveBeenCalledWith('overlay:close');
     overlays.stop();
+  });
+
+  it('OverlayController defers native overlay state until the alternate-screen lifecycle is active', () => {
+    const first = nativeOverlayHandle();
+    const second = nativeOverlayHandle();
+    const nativeShow = vi.fn()
+      .mockReturnValueOnce(first)
+      .mockReturnValueOnce(second);
+    const force = vi.fn();
+    const tui = { showOverlay: nativeShow } as unknown as TUI;
+    const overlays = new OverlayController(tui, force);
+
+    const handle = overlays.show('picker', {
+      invalidate: () => {}, render: () => ['picker'],
+    }, { anchor: 'center' });
+    handle.focus();
+    expect(nativeShow).not.toHaveBeenCalled();
+    expect(force).not.toHaveBeenCalled();
+
+    overlays.resume();
+    expect(nativeShow).toHaveBeenCalledOnce();
+    expect(first.isFocused()).toBe(true);
+
+    overlays.pause();
+    handle.hide();
+    const late = overlays.show('plan', {
+      invalidate: () => {}, render: () => ['plan'],
+    }, { anchor: 'center' });
+    late.focus();
+    expect(nativeShow).toHaveBeenCalledOnce();
+    overlays.resume();
+    expect(nativeShow).toHaveBeenCalledTimes(2);
+    expect(second.isFocused()).toBe(true);
+    overlays.stop();
+  });
+
+  it('OverlayController keeps the intercepted TUI boundary inert after permanent stop', () => {
+    const native = nativeOverlayHandle();
+    const nativeShow = vi.fn(() => native);
+    const force = vi.fn();
+    const tui = { showOverlay: nativeShow } as unknown as TUI;
+    const overlays = new OverlayController(tui, force);
+    overlays.resume();
+    overlays.stop();
+    nativeShow.mockClear();
+    force.mockClear();
+
+    const delayed = tui.showOverlay({ invalidate: () => {}, render: () => ['late'] });
+    delayed.focus();
+    delayed.unfocus();
+    delayed.setHidden(true);
+    delayed.hide();
+
+    expect(nativeShow).not.toHaveBeenCalled();
+    expect(force).not.toHaveBeenCalled();
+    expect(delayed.isHidden()).toBe(true);
+    expect(delayed.isFocused()).toBe(false);
   });
 
   it('OverlayController gives suggestions all small-screen space above the protected composer', () => {
@@ -104,6 +163,7 @@ describe('chat application shell ownership', () => {
     const setMaxRows = vi.fn();
     const overlay = { invalidate: () => {}, render: () => [], setMaxRows };
     const controller = new OverlayController(tui, vi.fn());
+    controller.resume();
     controller.showSuggestion('slash', overlay, () => ({
       columns: 40, rows: 12, hasMessages: true, panelReserve: 0,
       input: { invalidate: () => {}, render: () => [] }, notice: '',
@@ -125,6 +185,7 @@ describe('chat application shell ownership', () => {
       showOverlay: vi.fn(() => nativeOverlayHandle(hide)),
     } as unknown as TUI;
     const controller = new OverlayController(tui, vi.fn());
+    controller.resume();
     tui.showOverlay({ invalidate: () => {}, render: () => ['generic'] }, { anchor: 'center', width: 60 });
     controller.stop();
     expect(hide).toHaveBeenCalledOnce();
@@ -142,6 +203,7 @@ describe('chat application shell ownership', () => {
       }),
     } as unknown as TUI;
     const controller = new OverlayController(tui, vi.fn());
+    controller.resume();
     const stable = tui.showOverlay({ invalidate: () => {}, render: () => ['generic'] }, {
       anchor: 'center', width: 70, maxHeight: 20, margin: 2,
     });
@@ -483,25 +545,104 @@ describe('chat application shell ownership', () => {
     const lifecycle = new TerminalLifecycle({
       term: h.resources.term,
       tui: h.resources.tui,
-      scheduler: composition.renderShell,
+      scheduler: {
+        pause: () => composition.pause(),
+        resume: () => composition.resume(),
+        stop: () => composition.stop(),
+      },
       forceRender: (reason) => composition.renderForced(reason),
       beforeStop: () => composition.dispose(),
     });
     expect(h.tui.children).toHaveLength(1);
+    expect(h.tui.overlays).toHaveLength(0);
+    expect(h.term.writes).toEqual([]);
     expect(h.tui.renderRequests).toEqual([]);
     expect(vi.getTimerCount()).toBe(0);
     lifecycle.start();
     expect(h.tui.starts).toBe(1);
+    expect(h.term.writes[0]).toBe('\x1b[?1049h');
+    expect(h.tui.overlays).toHaveLength(1);
     await vi.runOnlyPendingTimersAsync();
     expect(h.tui.renderRequests).toEqual([true]);
     lifecycle.stop();
     expect(h.tui.stops).toBe(1);
   });
 
+  it('defers a picker opened while suspended and activates it only after alternate-screen resume', () => {
+    const h = compositionHarness({ turns: 4 });
+    const composition = makeComposition(h);
+    const lifecycle = new TerminalLifecycle({
+      term: h.resources.term,
+      tui: h.resources.tui,
+      scheduler: {
+        pause: () => composition.pause(),
+        resume: () => composition.resume(),
+        stop: () => composition.stop(),
+      },
+      forceRender: (reason) => composition.renderForced(reason),
+      beforeStop: () => composition.dispose(),
+    });
+    lifecycle.start();
+    lifecycle.suspend();
+    const nativeCount = h.tui.overlays.length;
+    const writes = [...h.term.writes];
+    const renders = [...h.tui.renderRequests];
+
+    openPicker({
+      tui: h.resources.tui,
+      editor: h.resources.editor,
+      title: 'Late plan picker',
+      items: [{ value: 'plan', label: 'Plan' }],
+      onPick: () => {},
+    });
+    expect(h.tui.overlays).toHaveLength(nativeCount);
+    expect(h.term.writes).toEqual(writes);
+    expect(h.tui.renderRequests).toEqual(renders);
+
+    lifecycle.resume();
+    expect(h.tui.overlays).toHaveLength(nativeCount + 2); // telemetry + suspended picker reopen
+    lifecycle.stop();
+  });
+
+  it('keeps delayed picker work inert after quit without native overlay, focus or render effects', () => {
+    const h = compositionHarness({ turns: 4 });
+    const composition = makeComposition(h);
+    const lifecycle = new TerminalLifecycle({
+      term: h.resources.term,
+      tui: h.resources.tui,
+      scheduler: {
+        pause: () => composition.pause(),
+        resume: () => composition.resume(),
+        stop: () => composition.stop(),
+      },
+      forceRender: (reason) => composition.renderForced(reason),
+      beforeStop: () => composition.dispose(),
+    });
+    lifecycle.start();
+    lifecycle.stop();
+    const nativeCount = h.tui.overlays.length;
+    const writes = [...h.term.writes];
+    const renders = [...h.tui.renderRequests];
+    const focused = h.tui.focused;
+
+    openPicker({
+      tui: h.resources.tui,
+      editor: h.resources.editor,
+      title: 'Delayed picker',
+      items: [{ value: 'late', label: 'Late' }],
+      onPick: () => {},
+    });
+
+    expect(h.tui.overlays).toHaveLength(nativeCount);
+    expect(h.term.writes).toEqual(writes);
+    expect(h.tui.renderRequests).toEqual(renders);
+    expect(h.tui.focused).toBe(focused);
+  });
+
   it('real composition mounts one bounded root with exactly one footer and one input listener', async () => {
     const h = compositionHarness({ columns: 80, rows: 24, turns: 40 });
     const composition = makeComposition(h);
-    composition.renderShell.resume();
+    composition.resume();
     composition.renderForced('test:initial');
     await vi.runOnlyPendingTimersAsync();
 
@@ -513,7 +654,7 @@ describe('chat application shell ownership', () => {
     const plain = frame.map(terminalPlainText);
     expect(plain.filter((line) => line.includes('Build')).length).toBe(1);
     composition.dispose();
-    composition.renderShell.stop();
+    composition.stop();
     expect(h.tui.listeners.size).toBe(0);
     expect(h.tui.children).toHaveLength(1);
   });
@@ -583,7 +724,7 @@ describe('chat application shell ownership', () => {
     expect(JSON.stringify(frame)).not.toContain('question 0');
     expect(JSON.stringify(frame)).not.toContain('answer 0');
     composition.dispose();
-    composition.renderShell.stop();
+    composition.stop();
   });
 
   it('reports a section total equal to the constrained root on the start screen too', () => {
@@ -604,7 +745,7 @@ describe('chat application shell ownership', () => {
     expect(Object.values(frame?.sections as Record<string, number>)
       .reduce((sum, value) => sum + value, 0)).toBe(frame?.rootRows);
     composition.dispose();
-    composition.renderShell.stop();
+    composition.stop();
   });
 
   it('records zero transcript work when a normal chat frame shrinks into compact fallback', async () => {
@@ -620,7 +761,7 @@ describe('chat application shell ownership', () => {
       h.rt, h.resources, { quit: vi.fn() }, h.stream, h.mdTheme, diagnostics,
     );
     composition.attachInput(noopInput);
-    composition.renderShell.resume();
+    composition.resume();
     composition.renderForced('test:normal');
     await vi.runOnlyPendingTimersAsync();
     composition.root.render(h.term.columns);
@@ -650,7 +791,7 @@ describe('chat application shell ownership', () => {
       maxVisibleWidth: 20,
     });
     composition.dispose();
-    composition.renderShell.stop();
+    composition.stop();
   });
 
   it('resets a prior chat allocation before rendering the same editor on the roomy start screen', async () => {
@@ -658,20 +799,20 @@ describe('chat application shell ownership', () => {
     h.resources.editor.setMaxRows(3);
     h.resources.editor.setText(Array.from({ length: 6 }, (_, index) => `session-draft-${index + 1}`).join('\n'));
     const composition = makeComposition(h);
-    composition.renderShell.resume();
+    composition.resume();
     composition.renderForced('test:start-screen');
     await vi.runOnlyPendingTimersAsync();
     const frame = composition.root.render(h.term.columns).map(terminalPlainText).join('\n');
     expect(frame).toContain('session-draft-1');
     expect(frame).toContain('session-draft-6');
     composition.dispose();
-    composition.renderShell.stop();
+    composition.stop();
   });
 
   it('real composition routes a mouse drag through the rendered transcript scrollbar', async () => {
     const h = compositionHarness({ columns: 80, rows: 24, turns: 80 });
     const composition = makeComposition(h);
-    composition.renderShell.resume();
+    composition.resume();
     composition.renderForced('test:initial');
     await vi.runOnlyPendingTimersAsync();
     const frame = composition.root.render(h.term.columns).map(terminalPlainText);
@@ -685,13 +826,13 @@ describe('chat application shell ownership', () => {
     await vi.runOnlyPendingTimersAsync();
     expect(composition.root.render(h.term.columns).map(terminalPlainText).join('\n')).toContain('History');
     composition.dispose();
-    composition.renderShell.stop();
+    composition.stop();
   });
 
   it('real composition reflows generic and named overlays on resize and disposal hides every handle', async () => {
     const h = compositionHarness({ columns: 120, rows: 30, turns: 8 });
     const composition = makeComposition(h);
-    composition.renderShell.resume();
+    composition.resume();
     composition.renderForced('test:initial');
     await vi.runOnlyPendingTimersAsync();
     composition.root.render(h.term.columns);
@@ -712,7 +853,7 @@ describe('chat application shell ownership', () => {
     expect(current.length).toBeGreaterThanOrEqual(2);
     expect(current.every((overlay) => typeof overlay.options?.width !== 'number' || overlay.options.width <= 42)).toBe(true);
     composition.dispose();
-    composition.renderShell.stop();
+    composition.stop();
     expect(h.tui.overlays.every((overlay) => overlay.removed)).toBe(true);
   });
 
@@ -722,7 +863,7 @@ describe('chat application shell ownership', () => {
   ] as const)('reflows the active %s suggestion overlay from live geometry', async (_name, input) => {
     const h = compositionHarness({ columns: 120, rows: 30, turns: 8 });
     const composition = makeComposition(h);
-    composition.renderShell.resume();
+    composition.resume();
     composition.renderForced('test:initial');
     await vi.runOnlyPendingTimersAsync();
     composition.root.render(h.term.columns);
@@ -744,13 +885,13 @@ describe('chat application shell ownership', () => {
     expect(reflowed?.options?.width).toBeLessThanOrEqual(50);
     expect(reflowed?.options?.maxHeight).toBeLessThanOrEqual(14);
     composition.dispose();
-    composition.renderShell.stop();
+    composition.stop();
   });
 
   it('reflows an active suggestion from the prepared editor, queue, attachment, and panel budget exactly once', async () => {
     const h = compositionHarness({ columns: 120, rows: 30, turns: 8 });
     const composition = makeComposition(h);
-    composition.renderShell.resume();
+    composition.resume();
     composition.renderForced('test:initial');
     await vi.runOnlyPendingTimersAsync();
     composition.root.render(h.term.columns);
@@ -792,13 +933,13 @@ describe('chat application shell ownership', () => {
     expect(h.tui.overlays.filter((overlay) => overlay.options?.anchor === 'bottom-left')).toHaveLength(suggestionRecords);
     expect(vi.getTimerCount()).toBe(0);
     composition.dispose();
-    composition.renderShell.stop();
+    composition.stop();
   });
 
   it('reflows a start-screen suggestion only after a grow-resize allocates the editor', async () => {
     const h = compositionHarness({ columns: 60, rows: 8, turns: 0 });
     const composition = makeComposition(h);
-    composition.renderShell.resume();
+    composition.resume();
     composition.renderForced('test:initial-small');
     await vi.runOnlyPendingTimersAsync();
     composition.root.render(h.term.columns);
@@ -822,18 +963,18 @@ describe('chat application shell ownership', () => {
     expect((active?.options?.margin as { top?: number }).top).toBe(expectedTop);
     expect(active?.options?.maxHeight).toBe(Math.min(15, h.term.rows - expectedTop));
     composition.dispose();
-    composition.renderShell.stop();
+    composition.stop();
   });
 
   it('cancels an armed leader and every scheduler/controller timer through rapid composition cycles', () => {
     for (let cycle = 0; cycle < 3; cycle++) {
       const h = compositionHarness({ turns: 2 });
       const composition = makeComposition(h);
-      composition.renderShell.resume();
+      composition.resume();
       h.tui.emit('\x18'); // ctrl+x — arm the default two-second leader window
       expect(vi.getTimerCount()).toBeGreaterThan(0);
       composition.dispose();
-      composition.renderShell.stop();
+      composition.stop();
       expect(vi.getTimerCount()).toBe(0);
       expect(h.tui.listeners.size).toBe(0);
     }

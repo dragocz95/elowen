@@ -315,16 +315,12 @@ export class ChatApplication {
   }
 
   private pauseRendering(): void {
-    this.composition?.animations.pause();
-    this.composition?.renderShell.pause();
+    this.composition?.pause();
   }
 
-  private resumeRendering(): void { this.composition?.renderShell.resume(); }
+  private resumeRendering(): void { this.composition?.resume(); }
 
-  private stopRendering(): void {
-    this.composition?.dispose();
-    this.composition?.renderShell.stop();
-  }
+  private stopRendering(): void { this.composition?.stop(); }
 
   private detachExitGuards(): void {
     this.removeExitGuards?.();

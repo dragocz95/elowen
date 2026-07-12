@@ -151,7 +151,9 @@ export class RenderShell {
     this.pendingFrame = null;
     this.activeFrame = null;
     this.postRenderForceReasons.clear();
-    this.options.tui.requestRender = this.nativeRequestRender;
+    // This TUI belongs to one ChatApplication lifetime. Keep the stopped gate installed permanently:
+    // a late async picker/component must not recover the native render sink after terminal ownership ended.
+    this.options.tui.requestRender = () => {};
   }
 
   private flush(frame: { reasons: string[]; forced: boolean; requestedAt: number }): void {
