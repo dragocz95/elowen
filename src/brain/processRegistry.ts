@@ -44,6 +44,15 @@ export class ProcessRegistry {
   private onChange?: (sessionId: string | null) => void;
   private onExitFn?: (info: ProcessInfo, userId: number | null, sessionId: string | null) => void;
   private exited = new Set<string>();
+  private idleWaiters = new Map<string, Set<() => void>>();
+
+  private notifySession(sessionId: string | null | undefined): void {
+    this.onChange?.(sessionId ?? null);
+    if (!sessionId || this.runningCountForSession(sessionId) > 0) return;
+    const waiters = this.idleWaiters.get(sessionId);
+    this.idleWaiters.delete(sessionId);
+    for (const resolve of waiters ?? []) resolve();
+  }
 
   /** Register a callback fired whenever the set of processes changes (spawn/exit/kill/remove). Optional —
    *  the web ProcessPanel polls the list, so out-of-turn updates surface there regardless; a consumer that
@@ -58,7 +67,7 @@ export class ProcessRegistry {
   register(handle: ProcessHandle): void {
     this.handles.set(handle.id, handle);
     this.exited.delete(handle.id);
-    this.onChange?.(handle.sessionId ?? null);
+    this.notifySession(handle.sessionId);
   }
 
   /** The terminal plugin calls this from a child's close handler. Fires the exit listener exactly once for
@@ -68,7 +77,7 @@ export class ProcessRegistry {
     const h = this.handles.get(id);
     if (!h || this.exited.has(id)) return;
     this.exited.add(id);
-    this.onChange?.(h.sessionId ?? null);
+    this.notifySession(h.sessionId);
     this.onExitFn?.(toInfo(h), h.userId ?? null, h.sessionId ?? null);
   }
 
@@ -102,7 +111,7 @@ export class ProcessRegistry {
     h.kill();
     this.handles.delete(id);
     this.exited.delete(id);
-    this.onChange?.(h.sessionId ?? null);
+    this.notifySession(h.sessionId);
     return true;
   }
 
@@ -111,12 +120,18 @@ export class ProcessRegistry {
     return handle?.sessionId === sessionId ? this.kill(id) : false;
   }
 
+  killSession(sessionId: string): number {
+    const ids = [...this.handles.values()].filter((handle) => handle.sessionId === sessionId).map((handle) => handle.id);
+    for (const id of ids) this.kill(id);
+    return ids.length;
+  }
+
   /** Drop an entry without killing (e.g. an already-exited process cleared from the panel). */
   remove(id: string): boolean {
     const sessionId = this.handles.get(id)?.sessionId ?? null;
     const existed = this.handles.delete(id);
     this.exited.delete(id);
-    if (existed) this.onChange?.(sessionId);
+    if (existed) this.notifySession(sessionId);
     return existed;
   }
 
@@ -125,6 +140,21 @@ export class ProcessRegistry {
     let n = 0;
     for (const h of this.handles.values()) if (h.running()) n++;
     return n;
+  }
+
+  runningCountForSession(sessionId: string): number {
+    let count = 0;
+    for (const handle of this.handles.values()) if (handle.sessionId === sessionId && handle.running()) count++;
+    return count;
+  }
+
+  waitForSessionIdle(sessionId: string): Promise<void> {
+    if (this.runningCountForSession(sessionId) === 0) return Promise.resolve();
+    return new Promise((resolve) => {
+      const waiters = this.idleWaiters.get(sessionId) ?? new Set<() => void>();
+      waiters.add(resolve);
+      this.idleWaiters.set(sessionId, waiters);
+    });
   }
 }
 

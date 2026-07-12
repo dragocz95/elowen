@@ -111,7 +111,7 @@ function normalizeSubagentResult(raw: unknown): Omit<BrainSubagentResult, 'paren
   const o = raw as Record<string, unknown>;
   if (typeof o.id !== 'string' || !o.id || o.id.length > 512) return undefined;
   if (typeof o.toolCallId !== 'string' || !o.toolCallId || o.toolCallId.length > 512) return undefined;
-  if (typeof o.sessionId !== 'string' || !o.sessionId) return undefined;
+  if (typeof o.sessionId !== 'string' || (o.sessionId.length === 0 && o.status !== 'error')) return undefined;
   if (o.status !== 'done' && o.status !== 'error') return undefined;
   if (typeof o.task !== 'string') return undefined;
   if (typeof o.tools !== 'number' || !Number.isSafeInteger(o.tools) || o.tools < 0) return undefined;
@@ -584,14 +584,16 @@ export class BrainStore {
     const result = normalizeSubagentResult(raw);
     if (!parentSessionId || !result) return false;
     return this.db.transaction(() => {
-      const linked = this.db.prepare(
+      const linked = result.sessionId ? this.db.prepare(
         `SELECT 1 FROM brain_subagent_runs r
           JOIN brain_sessions p ON p.id = r.parent_session_id
           JOIN brain_sessions c ON c.id = r.child_session_id
          WHERE r.parent_session_id = ? AND r.tool_call_id = ? AND r.child_session_id = ?
            AND c.parent_session_id = p.id AND c.user_id = p.user_id`
-      ).get(parentSessionId, result.toolCallId, result.sessionId);
-      if (!linked) return false;
+      ).get(parentSessionId, result.toolCallId, result.sessionId) : this.db.prepare(
+        'SELECT 1 FROM brain_sessions WHERE id = ?'
+      ).get(parentSessionId);
+      if (!linked || (!result.sessionId && result.status !== 'error')) return false;
       const payload = JSON.stringify({
         result: result.result, error: result.error, tools: result.tools, tokens: result.tokens,
         seconds: result.seconds, model: result.model,

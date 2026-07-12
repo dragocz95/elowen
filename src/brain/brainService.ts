@@ -188,6 +188,8 @@ export class BrainService {
       plugins: () => this.resolvePlugins(),
       get hookAudit() { return d.hookAudit; },
       get projectPath() { return d.projectPath; },
+      sendDelegatedCustom: (userId, sessionId, customType, content, resultId) =>
+        this.sendCustomToSubagent(userId, sessionId, customType, content, resultId),
     });
     this.statusView = new BrainStatusService({
       store: d.store, sessions: this.sessions, attachments: this.attachments,
@@ -207,6 +209,8 @@ export class BrainService {
       elicitation: this.elicitation, // one registry so Discord interactions resolve channel questions
       titler: this.titler, // name a brand-new channel conversation, same as owner chat
       permissions: d.permissions, // deny rules apply to channel turns too (asks follow unattendedAsks there)
+      completeSubagent: (parentSessionId, userId, completion) =>
+        this.turnRunner.acceptSubagentCompletion(parentSessionId, userId, completion),
     });
     this.platforms = new PlatformOrchestrator({
       plugins: () => this.resolvePlugins(),
@@ -581,6 +585,12 @@ export class BrainService {
   deleteManagedSession(userId: number, id: string): number {
     const row = this.d.store.getSession(id);
     if (!row || row.user_id !== userId) return 0;
+    const stack = [id];
+    for (let index = 0; index < stack.length; index += 1) {
+      const sessionId = stack[index]!;
+      processRegistry.killSession(sessionId);
+      for (const child of this.d.store.getSubagentRuns(sessionId)) stack.push(child.sessionId);
+    }
     this.elicitation.cancelForSession(id, 'session deleted');
     this.goals.cancelGoalContinuation(id);
     if (id.startsWith('brain-ch-')) this.sessions.channelDispose(id.slice('brain-ch-'.length));
@@ -600,6 +610,22 @@ export class BrainService {
   /** Start (or resume) a conversation — see ConversationLifecycle.start. */
   async start(userId: number, opts?: { provider?: string; model?: string; session?: string; fresh?: boolean; cwd?: string; clientId?: string; clientGeneration?: number }): Promise<{ sessionId: string }> {
     const started = await this.lifecycle.start(userId, opts);
+    const activeChildren = new Set(this.sessions.childrenOf(started.sessionId));
+    for (const run of this.d.store.getSubagentRuns(started.sessionId)) {
+      if (run.status !== 'running' || activeChildren.has(run.sessionId) || (run.background !== true && run.autoDeliver !== true)) continue;
+      const terminal = {
+        id: run.toolCallId, sessionId: run.sessionId, status: 'error' as const, task: run.task,
+        tools: run.tools, tokens: run.tokens, seconds: run.seconds, model: run.model,
+        background: true, autoDeliver: true,
+      };
+      if (!this.d.store.upsertSubagentRun(started.sessionId, terminal)) continue;
+      this.turnRunner.acceptSubagentCompletion(started.sessionId, userId, {
+        id: `restart-${started.sessionId}-${run.toolCallId}`, toolCallId: run.toolCallId,
+        sessionId: run.sessionId, status: 'error', task: run.task,
+        error: 'sub-agent interrupted by daemon restart', tools: run.tools, tokens: run.tokens,
+        seconds: run.seconds, model: run.model,
+      });
+    }
     void this.turnRunner.drainPendingSubagentResults(userId, started.sessionId);
     return started;
   }
@@ -681,6 +707,23 @@ export class BrainService {
       identity: this.identity.forDelegatedTurn(scope, row.user_id),
       ownerSteer: true,
     }, text);
+  }
+
+  private async sendCustomToSubagent(
+    userId: number, sessionId: string, customType: string, content: string, resultId: string,
+  ): Promise<void> {
+    const { row, parentSessionId, scope } = this.delegatedContinuation(userId, sessionId);
+    const policy = scope.admin
+      ? { allowedProjectIds: 'all' as const, allowedPaths: () => [] }
+      : this.d.policyForProjects?.(scope.projectIds)
+        ?? { allowedProjectIds: new Set(scope.projectIds), allowedPaths: () => [] };
+    const deniedTools = this.d.users.get(userId)?.disabled_tools ?? [];
+    await this.channelService.send({
+      channelId: sessionId.slice('brain-ch-'.length), ownerUserId: row.user_id, parentSessionId,
+      policy, delegatedAccess: scope, promptAppend: scope.promptAppend, trusted: scope.admin,
+      toolPolicy: delegatedToolPolicy(scope, deniedTools), identity: this.identity.forDelegatedTurn(scope, row.user_id),
+      ownerSteer: true, internalSystem: { customType, resultId },
+    }, content);
   }
 
   /** Run one user turn — see BrainTurnRunner.send. `display` is the client's clean rendering of the

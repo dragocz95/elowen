@@ -7,6 +7,7 @@ import { loadPlugins } from '../../src/plugins/loader.js';
 import { runWithPolicy } from '../../src/plugins/policyContext.js';
 import type { TurnIdentity } from '../../src/plugins/policyContext.js';
 import type { Policy } from '../../src/plugins/policy.js';
+import { processRegistry } from '../../src/brain/processRegistry.js';
 
 const log = { info() {}, warn() {}, error() {} };
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
@@ -178,6 +179,36 @@ describe('terminal plugin background processes', () => {
 });
 
 describe('subagent plugin', () => {
+  it('keeps a background delegate open until its child background process is collected', async () => {
+    const dataRoot = freshDataRoot();
+    const reg = await loadPlugins({ dirs: [pluginsDir], enabled: ['subagent'], dataRoot, logger: log });
+    const delegate = reg.tools.find((t) => t.name === 'delegate')!;
+    const sessionId = 'brain-ch-subagent-bgwait';
+    let calls = 0;
+    reg.platforms[0]!.listen(async (_src, _text, onEvent) => {
+      calls += 1;
+      onEvent?.({ type: 'session', sessionId });
+      if (calls === 1) {
+        let running = true;
+        processRegistry.register({
+          id: 'child-proc', command: 'build', cwd: '/tmp', startedAt: new Date().toISOString(), sessionId,
+          running: () => running, exitCode: () => running ? null : 0, readAll: () => 'build passed', kill: () => { running = false; },
+        });
+        setTimeout(() => { running = false; processRegistry.markExited('child-proc'); }, 10);
+        return 'I started the build';
+      }
+      processRegistry.remove('child-proc');
+      return 'final verified result';
+    });
+    const completions: Record<string, unknown>[] = [];
+    await runWithPolicy(ADMIN, async () => {
+      await delegate.execute('bg-wait', { task: 'build and verify', background: true }, undefined as never, undefined as never);
+    }, { identity: OWNER, sessionId: 'brain-parent-bgwait', emitSubagentCompletion: (value) => completions.push(value) });
+    await vi.waitFor(() => expect(completions).toHaveLength(1));
+    expect(calls).toBe(2);
+    expect(completions[0]).toMatchObject({ status: 'done', result: 'final verified result' });
+  });
+
   it('delegate forwards the caller access, parent session + task and blocks by default', async () => {
     const dataRoot = freshDataRoot();
     const reg = await loadPlugins({ dirs: [pluginsDir], enabled: ['subagent'], dataRoot, logger: log });

@@ -7,7 +7,7 @@ import {
   normalizeDelegatedExecutionScope,
   type DelegatedExecutionScope,
 } from './delegatedScope.js';
-import type { AskQuestion, BrainEvent, BrainUsage, CompactResult, SubagentUpdate } from './events.js';
+import type { AskQuestion, BrainEvent, BrainUsage, CompactResult, SubagentCompletion, SubagentUpdate } from './events.js';
 import { usageOf, runCompaction, withDescendantUsage } from './events.js';
 import type { ElicitationRegistry } from './elicitation.js';
 import { normalizeCard } from './cards.js';
@@ -70,6 +70,8 @@ export interface ChannelSendOpts {
    *  owner's own delegation, so the owner steering it can never escalate. Platform adapters (Discord)
    *  must NEVER set this — a shared channel keeps each sender's turn isolated (see the comment below). */
   ownerSteer?: boolean;
+  /** Host-owned hidden custom turn (durable sub-agent result); never projected as a user row. */
+  internalSystem?: { customType: string; resultId: string };
 }
 
 export interface ChannelServiceDeps {
@@ -98,6 +100,7 @@ export interface ChannelServiceDeps {
    *  for the VERIFIED sender (writerUserId), falling back to the channel owner for unlinked senders —
    *  but never wire an approval channel, so only `deny` rules bite here (ask → allow, see send()). */
   permissions?: (userId: number) => PermissionSettings;
+  completeSubagent?: (parentSessionId: string, userId: number, completion: SubagentCompletion) => void;
 }
 
 const sameScopePolicy = (policy: Policy, scope: DelegatedExecutionScope): boolean => {
@@ -330,15 +333,15 @@ export class ChannelSessionService {
       const runOne = async (turnText: string, senderMsg: string, turnImages: { data: string; mimeType: string }[] | undefined, turnOnEvent?: (e: BrainEvent) => void): Promise<string> => {
         // Same image handling as owner chat: history keeps a marker, the pixels ride only the live prompt.
         const displayText = turnImages?.length ? `${turnText}\n[📎 ${turnImages.length}× image]` : turnText;
-        const durableId = projectUserTurn(this.d.store, sessionId, displayText);
+        const durableId = opts.internalSystem ? undefined : projectUserTurn(this.d.store, sessionId, displayText);
         // A child transcript is an owner-facing chat surface, so its daemon stream is the one echo
         // authority just like owner chat. Ordinary Discord/WhatsApp messages remain platform-rendered
         // and do not broadcast this marker back into their room.
-        if (opts.ownerSteer) ch.replay.publish({ type: 'user', text: displayText, durableId });
+        if (opts.ownerSteer && durableId) ch.replay.publish({ type: 'user', text: displayText, durableId });
         // Name a brand-new channel conversation from the sender's own words (pre-backfill, so injected
         // channel history never leaks into the title).
         const titleRow = this.d.store.getSession(sessionId);
-        if (titleRow && !titleRow.title && senderMsg.trim()) {
+        if (!opts.internalSystem && titleRow && !titleRow.title && senderMsg.trim()) {
           const provisionalTitle = senderMsg.slice(0, 60);
           this.d.store.setTitle(sessionId, provisionalTitle);
           if (this.d.titler) void this.d.titler.run(sessionId, senderMsg, provisionalTitle);
@@ -375,6 +378,9 @@ export class ChannelSessionService {
           this.d.registry.setChildRunning(ch.sessionId, u.sessionId, u.status === 'running');
           ch.replay.publish({ type: 'subagent', ...u });
         };
+        const emitSubagentCompletion = (completion: SubagentCompletion) => {
+          this.d.completeSubagent?.(ch.sessionId, opts.ownerUserId, completion);
+        };
         try {
           applyToolVisibility(ch.session, ch.pluginToolNames, effectiveToolPolicy);
           // Granular permissions without an approval channel: ordinary platform turns read the verified
@@ -401,7 +407,12 @@ export class ChannelSessionService {
                 + (turnContext.afterUser ? `\n\n${turnContext.afterUser}` : '');
             }
             if (this.d.registry.consumePendingAbort(sessionId)) throw new Error('delegation aborted');
-            await (options ? ch.session.prompt(prompted, options) : ch.session.prompt(prompted));
+            if (opts.internalSystem) {
+              await ch.session.sendCustomMessage({
+                customType: opts.internalSystem.customType, content: prompted, display: false,
+                details: { source: 'elowen', resultId: opts.internalSystem.resultId },
+              }, { triggerTurn: true, deliverAs: 'followUp' });
+            } else await (options ? ch.session.prompt(prompted, options) : ch.session.prompt(prompted));
             // A parent stop that landed during prompt() must make the child terminally unsuccessful;
             // otherwise an empty aborted assistant is mistaken for a successful "returned nothing" job.
             if (this.d.registry.consumePendingAbort(sessionId)) throw new Error('delegation aborted');
@@ -412,7 +423,7 @@ export class ChannelSessionService {
               await ch.session.prompt(NO_REPLY_NUDGE);
               if (this.d.registry.consumePendingAbort(sessionId)) throw new Error('delegation aborted');
             }
-          }, { identity: opts.identity, elicit, emitCard, emitSubagent, toolPolicy: effectiveToolPolicy, permissions, sessionId, model: { provider: ch.providerId, model: ch.model } }));
+          }, { identity: opts.identity, elicit, emitCard, emitSubagent, emitSubagentCompletion, toolPolicy: effectiveToolPolicy, permissions, sessionId, model: { provider: ch.providerId, model: ch.model } }));
           // Deterministic settled idle (model + context fill) AFTER the turn — proactive footers depend on it.
           turnOnEvent?.({ type: 'idle', model: ch.model, usage: withDescendantUsage(usageOf(ch.session), this.d.store.descendantUsage(ch.sessionId)) });
         } finally { detach?.(); }
@@ -428,7 +439,7 @@ export class ChannelSessionService {
           throw new Error(last.errorMessage?.trim() || 'the model returned no reply (provider error)');
         }
         // Post-turn curator (fire-and-forget) for the verified sender, gated by autoSave.
-        if (opts.writerUserId && this.d.curator && this.d.userSettings?.(opts.writerUserId)?.autoSave !== false) {
+        if (!opts.internalSystem && opts.writerUserId && this.d.curator && this.d.userSettings?.(opts.writerUserId)?.autoSave !== false) {
           void this.d.curator.run(opts.writerUserId, senderMsg, assistantText).catch(() => { /* best-effort */ });
         }
         return assistantText;

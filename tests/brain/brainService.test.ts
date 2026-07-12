@@ -33,7 +33,9 @@ function fakeDeps() {
     }),
     subscribe: (l: (e: unknown) => void) => { listeners.push(l); return () => {}; },
     setModel: vi.fn(), dispose: vi.fn(), abort: vi.fn(async () => {}),
-    sendCustomMessage: vi.fn(async () => {}),
+    sendCustomMessage: vi.fn(async () => {
+      messages.push({ role: 'assistant', content: 'processed sub-agent result', stopReason: 'stop' } as never);
+    }),
     abortCompaction: vi.fn(), abortBranchSummary: vi.fn(), messages, isStreaming: false,
     _checkCompaction: nativeCheck,
     // PI's native mid-turn queue: steer() parks a message in the pending backlog (in a real session PI
@@ -246,7 +248,12 @@ describe('BrainService', () => {
       tools: 1, seconds: 2, background: true, autoDeliver: true,
     });
     let release!: () => void;
-    d.session.sendCustomMessage.mockImplementationOnce(() => new Promise<void>((resolve) => { release = resolve; }));
+    d.session.sendCustomMessage.mockImplementationOnce(() => new Promise<void>((resolve) => {
+      release = () => {
+        d.session.messages.push({ role: 'assistant', content: 'processed', stopReason: 'stop' } as never);
+        resolve();
+      };
+    }));
     const runner = (svc as unknown as { turnRunner: { acceptSubagentCompletion(parent: string, userId: number, result: unknown): void } }).turnRunner;
     runner.acceptSubagentCompletion(sessionId, 1, {
       id: 'dlg-1', toolCallId: 'delegate-1', sessionId: 'brain-ch-subagent-child', task: 'inspect',
@@ -264,6 +271,45 @@ describe('BrainService', () => {
     release();
     await vi.waitFor(() => expect(d.store.pendingSubagentResults(sessionId)).toEqual([]));
     expect(d.store.getSubagentRuns(sessionId)[0]).toMatchObject({ resultDelivery: 'acknowledged' });
+  });
+
+  it('drains a completion that arrives while another result delivery is in flight', async () => {
+    const d = fakeDeps();
+    const svc = new BrainService(d as never);
+    const { sessionId } = await svc.start(1);
+    for (const [call, child] of [['call-a', 'brain-ch-subagent-a'], ['call-b', 'brain-ch-subagent-b']] as const) {
+      d.store.createSession({ id: child, userId: 1, model: 'm', parentSessionId: sessionId });
+      d.store.upsertSubagentRun(sessionId, { id: call, sessionId: child, status: 'done', task: call, tools: 1, seconds: 1, background: true });
+    }
+    let release!: () => void;
+    d.session.sendCustomMessage.mockImplementationOnce(() => new Promise<void>((resolve) => {
+      release = () => { d.session.messages.push({ role: 'assistant', content: 'a', stopReason: 'stop' } as never); resolve(); };
+    }));
+    const runner = (svc as unknown as { turnRunner: { acceptSubagentCompletion(parent: string, userId: number, result: unknown): void } }).turnRunner;
+    runner.acceptSubagentCompletion(sessionId, 1, { id: 'result-a', toolCallId: 'call-a', sessionId: 'brain-ch-subagent-a', status: 'done', task: 'a', result: 'a', tools: 1, seconds: 1 });
+    await vi.waitFor(() => expect(d.session.sendCustomMessage).toHaveBeenCalledTimes(1));
+    runner.acceptSubagentCompletion(sessionId, 1, { id: 'result-b', toolCallId: 'call-b', sessionId: 'brain-ch-subagent-b', status: 'done', task: 'b', result: 'b', tools: 1, seconds: 1 });
+    release();
+    await vi.waitFor(() => expect(d.store.pendingSubagentResults(sessionId)).toEqual([]));
+    expect(d.session.sendCustomMessage).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps a result pending when PI resolves with a provider-error assistant', async () => {
+    const d = fakeDeps();
+    const svc = new BrainService(d as never);
+    const { sessionId } = await svc.start(1);
+    const child = 'brain-ch-subagent-provider-error';
+    d.store.createSession({ id: child, userId: 1, model: 'm', parentSessionId: sessionId });
+    d.store.upsertSubagentRun(sessionId, { id: 'call-error', sessionId: child, status: 'done', task: 'inspect', tools: 1, seconds: 1, background: true });
+    d.session.sendCustomMessage.mockImplementationOnce(async () => {
+      d.session.messages.push({ role: 'assistant', content: '', stopReason: 'error', errorMessage: 'provider unavailable' } as never);
+    });
+    const runner = (svc as unknown as { turnRunner: { acceptSubagentCompletion(parent: string, userId: number, result: unknown): void; drainPendingSubagentResults(userId: number, parent: string): Promise<void> } }).turnRunner;
+    runner.acceptSubagentCompletion(sessionId, 1, { id: 'result-error', toolCallId: 'call-error', sessionId: child, status: 'done', task: 'inspect', result: 'answer', tools: 1, seconds: 1 });
+    await vi.waitFor(() => expect(d.store.pendingSubagentResults(sessionId)[0]?.attempts).toBe(1));
+    expect(d.store.getSubagentRuns(sessionId)[0]).toMatchObject({ resultDelivery: 'pending' });
+    await runner.drainPendingSubagentResults(1, sessionId);
+    expect(d.store.pendingSubagentResults(sessionId)).toEqual([]);
   });
 
   it('places running sub-agent state after the user request in a dedicated XML reminder', async () => {

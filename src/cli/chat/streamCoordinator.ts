@@ -247,13 +247,8 @@ export class StreamCoordinator implements StreamCoordinatorPort {
       rt.childAc = ac;
       const transcript = new TranscriptModel();
       rt.childView = { sessionId, transcript, processes: [], loading: true };
-      const childProcesses = typeof client.processes === 'function' ? client.processes(sessionId) : Promise.resolve([]);
-      void childProcesses.then((processes) => {
-        if (rt.childView?.sessionId !== sessionId) return;
-        rt.childView.processes = processes;
-        render('child:processes');
-      }).catch(() => { /* child transcript still works while process snapshot is unavailable */ });
       render('child:opening');
+      let processRevision = 0;
 
       let resolveHydrated!: () => void;
       let resolved = false;
@@ -294,7 +289,7 @@ export class StreamCoordinator implements StreamCoordinatorPort {
           if (buffered !== 'passthrough') return;
         }
         const repairAtTerminal = truncatedSnapshotPending && (event.type === 'idle' || event.type === 'error');
-        if (event.type === 'process') rt.childView.processes = event.processes;
+        if (event.type === 'process') { processRevision += 1; rt.childView.processes = event.processes; }
         else rt.childView.transcript.apply(event);
         render(`child:${event.type}`);
         if (repairAtTerminal) {
@@ -368,6 +363,16 @@ export class StreamCoordinator implements StreamCoordinatorPort {
       }, ac.signal, 1000, undefined, sessionId, true).catch(() => {
         if (current()) loadHistory();
       });
+
+      // Attach SSE first, then reconcile the REST snapshot. If a live process event wins while REST is
+      // in flight, its newer revision remains authoritative instead of being overwritten by stale data.
+      const requestedAtRevision = processRevision;
+      const childProcesses = typeof client.processes === 'function' ? client.processes(sessionId) : Promise.resolve([]);
+      void childProcesses.then((processes) => {
+        if (!current() || processRevision !== requestedAtRevision || !rt.childView) return;
+        rt.childView.processes = processes;
+        render('child:processes');
+      }).catch(() => { /* child transcript still works while process snapshot is unavailable */ });
 
       fallback = setTimeout(loadHistory, 2_000);
       childFallbacks.add(fallback);

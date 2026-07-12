@@ -223,7 +223,22 @@ export function register(ctx) {
       };
       const runChild = async () => {
         try {
-          const raw = await run({ platform: 'subagent', userId: 'subagent', roleIds: [], channelId, access }, p.task, onEvent);
+          let raw = await run({ platform: 'subagent', userId: 'subagent', roleIds: [], channelId, access }, p.task, onEvent);
+          // A child that starts terminal background work is still working. Keep the delegate lifecycle
+          // open, wait without polling, then give the SAME child a turn to collect output and produce the
+          // real conclusion. This is what prevents the parent receiving only "process started".
+          for (let round = 0; state.sessionId && ctx.processes.runningCountForSession(state.sessionId) > 0 && round < 8; round += 1) {
+            await ctx.processes.waitForSessionIdle(state.sessionId);
+            const finished = ctx.processes.listForSession(state.sessionId).filter((proc) => !proc.running);
+            const rows = finished.map((proc) => `- ${proc.id}: ${proc.command} (exit ${proc.exitCode})`).join('\n');
+            raw = await run(
+              { platform: 'subagent', userId: 'subagent', roleIds: [], channelId, access },
+              `<system-reminder>\n<background-processes-finished>\n${rows}\n</background-processes-finished>\n`
+                + '<instruction>Read the finished process output, finish the delegated task, and return the final result now.</instruction>\n'
+                + '</system-reminder>',
+              onEvent,
+            );
+          }
           const reply = raw || '(the sub-agent returned nothing)';
           if (reply.startsWith('Error:')) {
             state.status = 'error';

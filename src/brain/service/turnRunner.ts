@@ -20,6 +20,7 @@ import { TurnContextBuilder } from './turnContextBuilder.js';
 import type { TurnImage, TurnMode, TurnRequest } from './turnRequest.js';
 import { hasActiveNativeCompactionCheck } from '../session/compactionCheckCoordinator.js';
 import type { SubagentCompletion } from '../events.js';
+import { isNonUserSession } from '../sessionId.js';
 
 const xmlEscape = (value: string): string => value
   .replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
@@ -48,6 +49,7 @@ interface TurnRunnerDeps {
   plugins(): Promise<PluginRegistry | undefined>;
   hookAudit?: HookAuditBuffer;
   projectPath?: () => string | undefined;
+  sendDelegatedCustom?(userId: number, sessionId: string, customType: string, content: string, resultId: string): Promise<void>;
 }
 
 /** The owner-chat turn pipeline: mid-run steering, idle rollover + vision hop (delegated to the
@@ -76,11 +78,17 @@ export class BrainTurnRunner {
    * conversation lock places it after the current owner turn; `display:false` keeps it out of the user
    * transcript, while `triggerTurn` lets the main agent react when idle. */
   async sendCustomSystem(userId: number, session: string, customType: string, content: string, resultId?: string): Promise<void> {
+    if (isNonUserSession(session)) {
+      if (!resultId || !this.d.sendDelegatedCustom) throw new Error('delegated result delivery unavailable');
+      await this.d.sendDelegatedCustom(userId, session, customType, content, resultId);
+      return;
+    }
     const target = this.d.lifecycle.ownedUserSession(userId, session);
     if (!this.d.sessions.get(target)) await this.d.lifecycle.ensureLive(userId, target);
     await this.serial(`send-${target}`, async () => {
       const live = this.d.sessions.get(target);
       if (!live) throw new Error('brain not started for user');
+      const before = live.session.messages.length;
       const context = await this.contextBuilder.build({
         userId,
         text: content,
@@ -94,6 +102,11 @@ export class BrainTurnRunner {
         display: false,
         details: { source: 'elowen', ...(resultId ? { resultId } : {}) },
       }, { triggerTurn: true, deliverAs: 'followUp' }));
+      const settled = (live.session.messages.slice(before) as { role?: string; stopReason?: string; errorMessage?: string }[])
+        .findLast((message) => message.role === 'assistant');
+      if (!settled || settled.stopReason === 'error' || settled.stopReason === 'aborted') {
+        throw new Error(settled?.errorMessage?.trim() || 'sub-agent result was not processed by the parent model');
+      }
     });
   }
 
@@ -112,7 +125,9 @@ export class BrainTurnRunner {
     const oldTimer = this.resultRetryTimers.get(parentSessionId);
     if (oldTimer) { clearTimeout(oldTimer); this.resultRetryTimers.delete(parentSessionId); }
     try {
-      for (const result of this.d.store.pendingSubagentResults(parentSessionId)) {
+      while (true) {
+        const result = this.d.store.pendingSubagentResults(parentSessionId)[0];
+        if (!result) break;
         const body = result.status === 'done'
           ? `<result>${xmlEscape(result.result ?? '(the sub-agent returned nothing)')}</result>`
           : `<error>${xmlEscape(result.error ?? 'unknown sub-agent error')}</error>`;
@@ -130,7 +145,7 @@ export class BrainTurnRunner {
         } catch (error) {
           this.d.store.noteSubagentResultFailure(parentSessionId, result.id, error instanceof Error ? error.message : String(error));
           this.scheduleResultRetry(userId, parentSessionId, result.attempts + 1);
-          break;
+          return;
         }
       }
     } finally {
