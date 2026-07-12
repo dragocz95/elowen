@@ -107,6 +107,45 @@ describe('BrainStore', () => {
     expect(store.getSubagentRuns('root')).toEqual([]); // corrupt state never reaches a renderer
   });
 
+  it('persists sub-agent results as an idempotent pending inbox and acknowledges them explicitly', () => {
+    store.createSession({ id: 'root', userId: 1, model: 'm' });
+    store.createSession({ id: 'child', userId: 1, model: 'm', parentSessionId: 'root' });
+    expect(store.upsertSubagentRun('root', {
+      id: 'delegate-1', sessionId: 'child', status: 'done', task: 'inspect', tools: 3, seconds: 4,
+      background: true, autoDeliver: true,
+    })).toBe(true);
+
+    const completion = {
+      id: 'dlg-stable', toolCallId: 'delegate-1', sessionId: 'child', status: 'done' as const,
+      task: 'inspect', result: 'all clear', tools: 3, seconds: 4,
+    };
+    expect(store.enqueueSubagentResult('root', completion)).toBe(true);
+    expect(store.enqueueSubagentResult('root', completion)).toBe(true); // duplicate completion callback
+    expect(store.pendingSubagentResults('root')).toEqual([
+      expect.objectContaining({ id: 'dlg-stable', parentSessionId: 'root', delivery: 'pending', result: 'all clear' }),
+    ]);
+    expect(store.getSubagentRuns('root')[0]).toMatchObject({ resultDelivery: 'pending' });
+
+    expect(store.acknowledgeSubagentResult('root', 'dlg-stable')).toBe(true);
+    expect(store.pendingSubagentResults('root')).toEqual([]);
+    expect(store.getSubagentRuns('root')[0]).toMatchObject({ resultDelivery: 'acknowledged' });
+  });
+
+  it('rejects inbox results that do not match the durable direct child/tool-call relation', () => {
+    store.createSession({ id: 'root', userId: 1, model: 'm' });
+    store.createSession({ id: 'child', userId: 1, model: 'm', parentSessionId: 'root' });
+    store.createSession({ id: 'other', userId: 1, model: 'm', parentSessionId: 'root' });
+    store.upsertSubagentRun('root', {
+      id: 'delegate-1', sessionId: 'child', status: 'done', task: 'inspect', tools: 1, seconds: 1,
+    });
+    expect(store.enqueueSubagentResult('root', {
+      id: 'wrong-child', toolCallId: 'delegate-1', sessionId: 'other', status: 'done', task: 'x', result: 'x', tools: 1, seconds: 1,
+    })).toBe(false);
+    expect(store.enqueueSubagentResult('root', {
+      id: 'wrong-call', toolCallId: 'missing', sessionId: 'child', status: 'done', task: 'x', result: 'x', tools: 1, seconds: 1,
+    })).toBe(false);
+  });
+
   it('reassigns and deletes sub-agent sidecars with their session tree', () => {
     store.createSession({ id: 'root', userId: 1, model: 'm' });
     store.createSession({ id: 'child', userId: 1, model: 'm', parentSessionId: 'root' });

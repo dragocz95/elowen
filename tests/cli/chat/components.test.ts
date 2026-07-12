@@ -280,10 +280,25 @@ describe('chat components', () => {
 describe('SubagentPanel', () => {
   const running = { sessionId: 'brain-ch-subagent-a', task: 'research the config layer', status: 'running' as const, detail: 'read_file src/a.ts', tools: 2, tokens: 12000, seconds: 8 };
 
-  it('renders nothing when no sub-agent runs (settled entries are dropped)', () => {
+  it('renders active result inbox entries with icon-only lifecycle state', () => {
     const p = new SubagentPanel();
-    p.set([{ ...running, status: 'done' }]);
-    expect(p.render(80)).toEqual([]);
+    p.set([
+      running,
+      { ...running, sessionId: 'done', task: 'finished', status: 'done', resultDelivery: 'pending' },
+      { ...running, sessionId: 'error', task: 'failed', status: 'error', resultDelivery: 'pending' },
+      { ...running, sessionId: 'acked', status: 'done', resultDelivery: 'acknowledged' },
+    ]);
+    const rendered = p.render(80);
+    const plain = rendered.map((l) => l.replace(/\x1b\[[0-9;]*m/g, '')).join('\n');
+    expect(plain).toContain('finished');
+    expect(plain).toContain('failed');
+    expect(plain).not.toContain('acked');
+    expect(plain).not.toMatch(/\b(running|done|error)\b/i);
+    expect(plain).toContain('●');
+    expect(plain).toContain('✓');
+    expect(plain).toContain('✗');
+    expect(p.targetAt(2)).toBe('done');
+    expect(p.targetAt(3)).toBe('error');
   });
 
   it('lists running agents with task + live counters, and maps rows to their session', () => {
@@ -291,7 +306,7 @@ describe('SubagentPanel', () => {
     p.set([running]);
     const lines = p.render(80).map((l) => l.replace(/\x1b\[[0-9;]*m/g, ''));
     expect(lines[0]).toContain('Sub-agents');
-    expect(lines[0]).toContain('1 running');
+    expect(lines[0]).not.toContain('running');
     expect(lines[1]).toContain('research the config layer');
     expect(lines[1]).toContain('8s');
     expect(lines[1]).toContain('12k tok');

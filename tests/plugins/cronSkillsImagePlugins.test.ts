@@ -203,7 +203,7 @@ describe('subagent plugin', () => {
     const reg = await loadPlugins({ dirs: [pluginsDir], enabled: ['subagent'], dataRoot, logger: log });
     const delegate = reg.tools.find((t) => t.name === 'delegate')!;
     const control = reg.controls.get('subagent') as {
-      detachForeground(input: { sessionId: string; principal: string }, completed: (result: unknown) => void): { detached: number };
+      detachForeground(input: { sessionId: string; principal: string }): { detached: number };
     };
     expect(control).toBeTruthy();
 
@@ -217,12 +217,12 @@ describe('subagent plugin', () => {
     const foreground = runWithPolicy(ADMIN, () =>
       delegate.execute('call-fg', { task: 'inspect slowly' }, undefined as never, undefined as never), {
       sessionId: 'brain-parent-detach', identity: OWNER,
+      emitSubagentCompletion: (result) => completed.push(result),
     });
     await new Promise<void>((resolve) => setTimeout(resolve, 0));
 
     expect(control.detachForeground(
       { sessionId: 'brain-parent-detach', principal: 'elowen:1' },
-      (result) => completed.push(result),
     )).toEqual({ detached: 1 });
     expect(asText(await foreground)).toContain('moved this sub-agent to the background');
 
@@ -259,6 +259,7 @@ describe('subagent plugin', () => {
     });
 
     const emitted: { status: string; sessionId: string }[] = [];
+    const completions: Record<string, unknown>[] = [];
     let terminalEmitted!: () => void;
     const terminal = new Promise<void>((resolve) => { terminalEmitted = resolve; });
     const startedText = await runWithPolicy(ADMIN, async () =>
@@ -269,6 +270,7 @@ describe('subagent plugin', () => {
         emitted.push(update);
         if (update.status === 'done' || update.status === 'error') terminalEmitted();
       },
+      emitSubagentCompletion: (completion) => { completions.push(completion); },
     });
     const jobId = /Started background delegation (dlg-[\w-]+)\./.exec(startedText)?.[1];
     expect(jobId).toBeTruthy();
@@ -294,9 +296,12 @@ describe('subagent plugin', () => {
     await terminal;
     expect(await asOwner(async () => asText(await result.execute('result', { id: jobId! }, undefined as never, undefined as never)))).toBe('background result');
     expect(emitted).toEqual(expect.arrayContaining([
-      expect.objectContaining({ status: 'running', sessionId: 'brain-ch-subagent-background', background: true, autoDeliver: false }),
+      expect.objectContaining({ status: 'running', sessionId: 'brain-ch-subagent-background', background: true, autoDeliver: true }),
       expect.objectContaining({ status: 'done', sessionId: 'brain-ch-subagent-background' }),
     ]));
+    expect(completions).toEqual([
+      expect.objectContaining({ id: jobId, toolCallId: 'call-bg', sessionId: 'brain-ch-subagent-background', status: 'done', result: 'background result' }),
+    ]);
   });
 
   it('retains a canceled background child as ERROR (never DONE) and expires the terminal job', async () => {

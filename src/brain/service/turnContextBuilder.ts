@@ -7,7 +7,7 @@ import type { BrainStore } from '../../store/brainStore.js';
 import type { BrainDeps } from '../brainDeps.js';
 import type { CardRegistry } from '../cards.js';
 import type { ElicitationRegistry } from '../elicitation.js';
-import type { AskQuestion, SubagentUpdate } from '../events.js';
+import type { AskQuestion, SubagentCompletion, SubagentUpdate } from '../events.js';
 import type { IdentityResolver } from '../identity.js';
 import type { MemoryService } from '../memoryService.js';
 import { frameUntrusted } from '../messageView.js';
@@ -34,6 +34,7 @@ interface TurnContextBuilderDeps {
   plugins(): Promise<PluginRegistry | undefined>;
   hookAudit?: HookAuditBuffer;
   projectPath?: () => string | undefined;
+  completeSubagent?(parentSessionId: string, userId: number, completion: SubagentCompletion): void;
 }
 
 export interface PreparedTurnContext {
@@ -68,6 +69,9 @@ export class TurnContextBuilder {
       this.d.sessions.setChildRunning(live.sessionId, update.sessionId, update.status === 'running');
       live.replay.publish({ type: 'subagent', ...update });
     };
+    const emitSubagentCompletion = (completion: SubagentCompletion): void => {
+      this.d.completeSubagent?.(live.sessionId, request.userId, completion);
+    };
     const toolPolicy = this.applyOwnerToolPolicy(request.userId, live, mode);
     const workDir = turnWorkDir(live.policy, request.clientCwd ?? live.workDir, this.d.projectPath);
     const permissions = this.d.permissions.turnPermissions(request.userId, live, true);
@@ -94,6 +98,7 @@ export class TurnContextBuilder {
         elicit,
         emitCard,
         emitSubagent,
+        emitSubagentCompletion,
         toolPolicy,
         permissions,
         workDir,

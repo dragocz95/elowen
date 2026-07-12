@@ -40,28 +40,9 @@ import { CANONICAL_THINKING_LEVELS, canonicalThinkingLevel } from './modelCapabi
 
 export type { BrainDeps } from './brainDeps.js';
 
-interface SubagentCompletion {
-  sessionId: string;
-  task: string;
-  status: 'done' | 'error';
-  result?: string;
-  error?: string;
-  tools?: number;
-  tokens?: number;
-  seconds?: number;
-  model?: string;
-}
-
 interface SubagentControl {
-  detachForeground(
-    input: { sessionId: string; principal: string },
-    completed: (result: SubagentCompletion) => void,
-  ): { detached: number };
+  detachForeground(input: { sessionId: string; principal: string }): { detached: number };
 }
-
-const xmlEscape = (value: string): string => value
-  .replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
-  .replaceAll('"', '&quot;').replaceAll("'", '&apos;');
 
 
 
@@ -618,7 +599,9 @@ export class BrainService {
 
   /** Start (or resume) a conversation — see ConversationLifecycle.start. */
   async start(userId: number, opts?: { provider?: string; model?: string; session?: string; fresh?: boolean; cwd?: string; clientId?: string; clientGeneration?: number }): Promise<{ sessionId: string }> {
-    return this.lifecycle.start(userId, opts);
+    const started = await this.lifecycle.start(userId, opts);
+    void this.turnRunner.drainPendingSubagentResults(userId, started.sessionId);
+    return started;
   }
 
   /** Follow the user's ACTIVE conversation live — see ConversationLifecycle.subscribe. */
@@ -737,21 +720,7 @@ export class BrainService {
     const raw = registry?.controls.get('subagent');
     const control = raw && typeof raw === 'object' ? raw as unknown as SubagentControl : undefined;
     if (!control || typeof control.detachForeground !== 'function') return { detached: 0 };
-    return control.detachForeground(
-      { sessionId: target, principal: `elowen:${userId}` },
-      (completion) => {
-        const body = completion.status === 'done'
-          ? `<result>${xmlEscape(completion.result ?? '(the sub-agent returned nothing)')}</result>`
-          : `<error>${xmlEscape(completion.error ?? 'unknown sub-agent error')}</error>`;
-        const content = '<system-reminder>\n'
-          + `<subagent-result session="${xmlEscape(completion.sessionId)}" status="${completion.status}">\n`
-          + `<task>${xmlEscape(completion.task)}</task>\n${body}\n</subagent-result>\n`
-          + '<instruction>A detached sub-agent finished. Incorporate this result into your work and inform the user when relevant.</instruction>\n'
-          + '</system-reminder>';
-        void this.turnRunner.sendCustomSystem(userId, target, 'subagent-result', content)
-          .catch((error) => logger('brain-subagent').error(`completion delivery failed for ${target}`, error));
-      },
-    );
+    return control.detachForeground({ sessionId: target, principal: `elowen:${userId}` });
   }
 
   /** Start a user turn and expose its two real lifecycle boundaries. `admitted` resolves only after the

@@ -1,6 +1,6 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import type { Policy } from './policy.js';
-import type { AskAnswer, AskQuestion, SubagentUpdate } from '../brain/events.js';
+import type { AskAnswer, AskQuestion, SubagentCompletion, SubagentUpdate } from '../brain/events.js';
 import type { TurnPermissions } from '../brain/toolPermissions.js';
 
 /** Ask the current user one or more multiple-choice questions and await their pick(s). Bound per-turn by
@@ -14,6 +14,7 @@ export type CardEmitter = (card: unknown) => void;
 /** Push live sub-agent progress to the current conversation's clients as `subagent` BrainEvents.
  *  Bound per-turn by BrainService (see `ctx.subagentEmitter`). */
 export type SubagentEmitter = (update: SubagentUpdate) => void;
+export type SubagentCompletionEmitter = (completion: SubagentCompletion) => void;
 
 /** The provider entry + model the current turn's session runs on (see `ctx.currentModel`). */
 export interface TurnModel { provider?: string; model: string }
@@ -55,7 +56,7 @@ export function toolPermitted(name: string, tp: ToolPolicy | undefined): boolean
   return true;
 }
 
-interface TurnScope { policy: Policy; workDir?: string; sessionId?: string; identity?: TurnIdentity; elicit?: Elicitor; emitCard?: CardEmitter; emitSubagent?: SubagentEmitter; toolPolicy?: ToolPolicy; permissions?: TurnPermissions; model?: TurnModel }
+interface TurnScope { policy: Policy; workDir?: string; sessionId?: string; identity?: TurnIdentity; elicit?: Elicitor; emitCard?: CardEmitter; emitSubagent?: SubagentEmitter; emitSubagentCompletion?: SubagentCompletionEmitter; toolPolicy?: ToolPolicy; permissions?: TurnPermissions; model?: TurnModel }
 
 /** pi tools have no per-call session context, so a plugin tool can't be told which user's policy applies
  *  through its arguments. We carry the resolved Policy (+ the sender's identity + their effective tool
@@ -67,8 +68,8 @@ const store = new AsyncLocalStorage<TurnScope>();
 /** Run `fn` (a brain prompt turn) with `policy` established for any plugin tool it invokes. `opts`
  *  carries the sender's identity, a turn-bound elicitor/card-emitter, and the effective tool policy —
  *  all read at tool-execute time via the `current*()` accessors. */
-export function runWithPolicy<T>(policy: Policy, fn: () => T, opts?: { workDir?: string; sessionId?: string; identity?: TurnIdentity; elicit?: Elicitor; emitCard?: CardEmitter; emitSubagent?: SubagentEmitter; toolPolicy?: ToolPolicy; permissions?: TurnPermissions; model?: TurnModel }): T {
-  return store.run({ policy, workDir: opts?.workDir, sessionId: opts?.sessionId, identity: opts?.identity, elicit: opts?.elicit, emitCard: opts?.emitCard, emitSubagent: opts?.emitSubagent, toolPolicy: opts?.toolPolicy, permissions: opts?.permissions, model: opts?.model }, fn);
+export function runWithPolicy<T>(policy: Policy, fn: () => T, opts?: { workDir?: string; sessionId?: string; identity?: TurnIdentity; elicit?: Elicitor; emitCard?: CardEmitter; emitSubagent?: SubagentEmitter; emitSubagentCompletion?: SubagentCompletionEmitter; toolPolicy?: ToolPolicy; permissions?: TurnPermissions; model?: TurnModel }): T {
+  return store.run({ policy, workDir: opts?.workDir, sessionId: opts?.sessionId, identity: opts?.identity, elicit: opts?.elicit, emitCard: opts?.emitCard, emitSubagent: opts?.emitSubagent, emitSubagentCompletion: opts?.emitSubagentCompletion, toolPolicy: opts?.toolPolicy, permissions: opts?.permissions, model: opts?.model }, fn);
 }
 
 /** The Policy in effect for the current prompt turn, or undefined outside a `runWithPolicy` scope. */
@@ -120,6 +121,10 @@ export function currentElicitor(): Elicitor | null {
  *  nothing useful. */
 export function currentSubagentEmitter(): SubagentEmitter | null {
   return store.getStore()?.emitSubagent ?? null;
+}
+
+export function currentSubagentCompletionEmitter(): SubagentCompletionEmitter | null {
+  return store.getStore()?.emitSubagentCompletion ?? null;
 }
 
 /** The provider+model the current turn's session runs on, or null outside a prompt turn — lets a

@@ -20,7 +20,7 @@ export type TranscriptEvent =
   | { type: 'tool_output'; output: ToolOutputView; id?: string }
   | { type: 'notice'; kind: 'retry' | 'compaction'; message: string; done?: boolean }
   | { type: 'session'; sessionId: string }
-  | { type: 'subagent'; id: string; sessionId: string; status: 'running' | 'done' | 'error'; task: string; detail?: string; tools: number; tokens?: number; seconds: number; model?: string; background?: boolean; autoDeliver?: boolean }
+  | { type: 'subagent'; id: string; sessionId: string; status: 'running' | 'done' | 'error'; task: string; detail?: string; tools: number; tokens?: number; seconds: number; model?: string; background?: boolean; autoDeliver?: boolean; resultDelivery?: 'pending' | 'acknowledged' }
   /** A server-delivered user message (a steered mid-turn message never optimistically echoed) — folded as
    *  a 'you' turn. The `queue` snapshot event (PI steering queue) is handled outside this fold. */
   | { type: 'user'; text: string }
@@ -48,6 +48,7 @@ export interface SubagentState {
   model?: string;
   background?: boolean;
   autoDeliver?: boolean;
+  resultDelivery?: 'pending' | 'acknowledged';
 }
 type Segment =
   | { kind: 'text'; text: string }
@@ -191,7 +192,7 @@ export function reduce(view: ChatView, e: TranscriptEvent): ChatView {
       // historical delegate row by id; do not fabricate an empty streaming turn or re-enable thinking.
       const patched = attachToToolInTurns(turns, e.id, (item) => ({
         ...item,
-        sub: { sessionId: e.sessionId, status: e.status, task: e.task, detail: e.detail, tools: e.tools, tokens: e.tokens, seconds: e.seconds, model: e.model, background: e.background, autoDeliver: e.autoDeliver },
+        sub: { sessionId: e.sessionId, status: e.status, task: e.task, detail: e.detail, tools: e.tools, tokens: e.tokens, seconds: e.seconds, model: e.model, background: e.background, autoDeliver: e.autoDeliver, resultDelivery: e.resultDelivery },
       }));
       return patched ? { ...view, turns } : view;
     }

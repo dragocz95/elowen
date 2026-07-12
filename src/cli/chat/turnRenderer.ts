@@ -3,7 +3,7 @@ import type { MarkdownTheme } from '@earendil-works/pi-tui';
 import type { ChatTurn, ToolItem } from '../../brain/transcript.js';
 import { groupToolItems } from '../../brain/transcript.js';
 import { formatDuration, formatK, padAnsi, terminalInlineText, terminalPlainText } from '../ui/text.js';
-import { framedDiffBlock, hasHiddenDiffLines, spinnerFrame, toolOutputBlock, UserBlock } from './components.js';
+import { framedDiffBlock, hasHiddenDiffLines, toolOutputBlock, UserBlock } from './components.js';
 import { chatTheme, color } from './theme.js';
 
 export const TOOL_INDENT = '    ';
@@ -145,7 +145,7 @@ export class TurnRenderer {
 
   private subagentBlock(subagent: NonNullable<ToolItem['sub']>, width: number): TranscriptRow[] {
     const glyph = subagent.status === 'running'
-      ? color.accent(spinnerFrame())
+      ? color.warning('●')
       : subagent.status === 'done' ? color.success('✓') : color.error('✗');
     const task = truncateToWidth(terminalInlineText(subagent.task), Math.max(12, width - 26), '…');
     const tokens = subagent.tokens ? `${formatK(subagent.tokens)} tok` : '';

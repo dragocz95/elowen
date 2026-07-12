@@ -89,7 +89,7 @@ export type BrainEvent =
    *  `detail` mirrors the child's current tool, `tools`/`tokens`/`seconds` accumulate, and `sessionId`
    *  lets a client drill into the child's transcript (`GET /brain/messages?session=…`). Synthetic —
    *  fanned out to the PARENT conversation's listeners; ignoring it is always safe. */
-  | { type: 'subagent'; id: string; sessionId: string; status: 'running' | 'done' | 'error'; task: string; detail?: string; tools: number; tokens?: number; seconds: number; model?: string; background?: boolean; autoDeliver?: boolean }
+  | { type: 'subagent'; id: string; sessionId: string; status: 'running' | 'done' | 'error'; task: string; detail?: string; tools: number; tokens?: number; seconds: number; model?: string; background?: boolean; autoDeliver?: boolean; resultDelivery?: 'pending' | 'acknowledged' }
   /** The pending message queue for this session — a FULL snapshot (an empty array clears it). Mapped
    *  from PI's native `queue_update` event: a message a user sends while a turn is already streaming is
    *  STEERED into the running turn (delivered between steps, before the next model call), and PI reports
@@ -120,6 +120,22 @@ export type BrainEvent =
 /** The payload a delegating plugin pushes through `ctx.subagentEmitter()` — everything of the
  *  `subagent` BrainEvent except its `type` tag (the host adds that when fanning out). */
 export type SubagentUpdate = Omit<Extract<BrainEvent, { type: 'subagent' }>, 'type'>;
+
+/** Terminal result emitted once by the delegating plugin. Unlike SubagentUpdate this carries the
+ * bounded result body and is host-only: core persists it before it wakes the parent conversation. */
+export interface SubagentCompletion {
+  id: string;
+  toolCallId: string;
+  sessionId: string;
+  task: string;
+  status: 'done' | 'error';
+  result?: string;
+  error?: string;
+  tools: number;
+  tokens?: number;
+  seconds: number;
+  model?: string;
+}
 
 /** Result of a manual/auto context compaction. `compacted` is false when there was nothing to compact
  *  (session too small / already compacted) — a benign no-op the clients report as a friendly notice

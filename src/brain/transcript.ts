@@ -31,6 +31,7 @@ export interface SubagentState {
   /** True once the user detached this job from the parent tool wait with Ctrl+B. */
   background?: boolean;
   autoDeliver?: boolean;
+  resultDelivery?: 'pending' | 'acknowledged';
 }
 export type Segment =
   | { kind: 'text'; text: string }

@@ -168,11 +168,13 @@ export interface SubagentPanelEntry {
   model?: string;
   background?: boolean;
   autoDeliver?: boolean;
+  resultDelivery?: 'pending' | 'acknowledged';
 }
 
 /** A bounded live list shared by the telemetry rail and its narrow-terminal chat fallback — a spinner
  *  + task per row with the child's current tool and counters, each row clickable to open that session.
- *  Running agents only (settled ones live on as transcript rows); larger sets use a panel-local window. */
+ *  Active agents only: running children plus terminal results awaiting parent acknowledgement. Settled
+ *  transcript rows remain drillable after acknowledged entries leave this bounded rail. */
 export class SubagentPanel implements Component {
   private entries: SubagentPanelEntry[] = [];
   private collapsed = false;
@@ -182,7 +184,7 @@ export class SubagentPanel implements Component {
   private rowTargets = new Map<number, string>();
   invalidate(): void { /* re-rendered on the next frame */ }
   set(entries: readonly SubagentPanelEntry[]): void {
-    this.entries = entries.filter((e) => e.status === 'running');
+    this.entries = entries.filter((e) => e.status === 'running' || e.resultDelivery === 'pending');
     this.clampScroll();
   }
   setMaxRows(rows: number): void {
@@ -208,17 +210,18 @@ export class SubagentPanel implements Component {
     this.clampScroll();
     const range = this.canScroll()
       ? `  ${this.scrollOffset + 1}–${Math.min(this.entries.length, this.scrollOffset + capacity)}/${this.entries.length} ↕`
-      : `  ${this.entries.length} running`;
+      : `  ${this.entries.length}`;
     const header = `  ${FAINTC(this.collapsed ? '▸' : '▾')} ${bold(WHITE('Sub-agents'))}${FAINTC(range)} ${FAINTC('click')}`;
     const lines: string[] = [truncateToWidth(header, Math.max(1, width), '…')];
     if (this.collapsed) return lines;
     const shownEntries = this.entries.slice(this.scrollOffset, this.scrollOffset + capacity);
     for (const e of shownEntries) {
-      const meta = [e.detail, e.model, formatDuration(e.seconds), e.tokens ? `${formatK(e.tokens)} tok` : '']
+      const meta = [e.model, formatDuration(e.seconds), e.tokens ? `${formatK(e.tokens)} tok` : '']
         .filter(Boolean).map((value) => inlineText(String(value))).join(' · ');
       const metaText = FAINTC(truncateToWidth(meta, Math.max(10, Math.floor(width * 0.5)), '…'));
       const task = DIM(truncateToWidth(inlineText(e.task), Math.max(10, width - visibleWidth(metaText) - 12), '…'));
-      const row = `    ${color.accent(spinnerFrame())} ${task} ${FAINTC('click')}`;
+      const icon = e.status === 'running' ? color.warning('●') : e.status === 'done' ? color.success('✓') : color.error('✗');
+      const row = `    ${icon} ${task} ${FAINTC('click')}`;
       const gap = Math.max(1, width - visibleWidth(row) - visibleWidth(metaText) - 2);
       this.rowTargets.set(lines.length, e.sessionId);
       lines.push(`${row}${' '.repeat(gap)}${metaText}`);

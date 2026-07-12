@@ -179,6 +179,25 @@ CREATE TABLE IF NOT EXISTS brain_subagent_runs (
   PRIMARY KEY (parent_session_id, tool_call_id)
 );
 CREATE INDEX IF NOT EXISTS idx_brain_subagent_runs_child ON brain_subagent_runs(child_session_id);
+-- Durable completion inbox for detached/background sub-agents. A result is persisted before the
+-- parent is woken and remains pending until that triggered parent turn settles successfully.
+CREATE TABLE IF NOT EXISTS brain_subagent_results (
+  result_id TEXT PRIMARY KEY,
+  parent_session_id TEXT NOT NULL,
+  tool_call_id TEXT NOT NULL,
+  child_session_id TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('done', 'error')),
+  task TEXT NOT NULL,
+  payload TEXT NOT NULL,
+  delivery_state TEXT NOT NULL DEFAULT 'pending' CHECK (delivery_state IN ('pending', 'acknowledged')),
+  attempts INTEGER NOT NULL DEFAULT 0,
+  last_error TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  acknowledged_at TEXT,
+  UNIQUE (parent_session_id, tool_call_id)
+);
+CREATE INDEX IF NOT EXISTS idx_brain_subagent_results_pending
+  ON brain_subagent_results(delivery_state, parent_session_id, created_at);
 -- Mid-turn messages are STEERED into the running turn via PI's native session queue (no daemon-side
 -- persistence): a message sent while a turn streams lands between steps, so there is no durable queue table.
 CREATE TABLE IF NOT EXISTS brain_goals (

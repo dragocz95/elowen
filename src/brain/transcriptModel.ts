@@ -187,6 +187,7 @@ export class TranscriptModel implements TranscriptRead {
           model: event.model,
           background: event.background,
           autoDeliver: event.autoDeliver,
+          resultDelivery: event.resultDelivery,
         };
         if (!this.patchTool(location, (item) => ({ ...item, sub }))) return false;
         this.upsertSubagent(location.source, sub, true);
@@ -354,6 +355,10 @@ export class TranscriptModel implements TranscriptRead {
   private upsertSubagent(source: string, sub: SubagentState, clone: boolean): void {
     const oldSession = this.sourceSessions.get(source);
     if (oldSession && oldSession !== sub.sessionId) this.removeSubagentSource(source, oldSession, clone);
+    if (sub.status !== 'running' && sub.resultDelivery === 'acknowledged') {
+      if (oldSession === sub.sessionId) this.removeSubagentSource(source, sub.sessionId, clone);
+      return;
+    }
     this.sourceSessions.set(source, sub.sessionId);
     const sources = this.subagentSources.get(sub.sessionId) ?? new Set<string>();
     sources.add(source);

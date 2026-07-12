@@ -226,11 +226,10 @@ describe('BrainService', () => {
     expect(tpl?.filePath).toBe('db://prompts/review'); // synthetic, in-memory
   });
 
-  it('detaches foreground sub-agents and delivers completion as a hidden PI custom message', async () => {
+  it('persists a detached completion before hidden delivery and acknowledges only after it succeeds', async () => {
     const d = fakeDeps();
     const reg = new PluginRegistry();
-    let complete!: (result: { sessionId: string; task: string; status: 'done'; result: string }) => void;
-    const detachForeground = vi.fn((_input, sink) => { complete = sink; return { detached: 1 }; });
+    const detachForeground = vi.fn(() => ({ detached: 1 }));
     reg.contextFor('subagent', {}, { info() {}, warn() {}, error() {} })
       .registerControl('subagent', { detachForeground });
     (d as unknown as { plugins: unknown }).plugins = new PluginRegistryProvider(async () => reg);
@@ -240,9 +239,19 @@ describe('BrainService', () => {
     await expect(svc.detachForegroundSubagents(1, sessionId)).resolves.toEqual({ detached: 1 });
     expect(detachForeground).toHaveBeenCalledWith(
       { sessionId, principal: 'elowen:1' },
-      expect.any(Function),
     );
-    complete({ sessionId: 'brain-ch-subagent-child', task: 'inspect', status: 'done', result: 'all clear' });
+    d.store.createSession({ id: 'brain-ch-subagent-child', userId: 1, model: 'm', parentSessionId: sessionId });
+    d.store.upsertSubagentRun(sessionId, {
+      id: 'delegate-1', sessionId: 'brain-ch-subagent-child', status: 'done', task: 'inspect',
+      tools: 1, seconds: 2, background: true, autoDeliver: true,
+    });
+    let release!: () => void;
+    d.session.sendCustomMessage.mockImplementationOnce(() => new Promise<void>((resolve) => { release = resolve; }));
+    const runner = (svc as unknown as { turnRunner: { acceptSubagentCompletion(parent: string, userId: number, result: unknown): void } }).turnRunner;
+    runner.acceptSubagentCompletion(sessionId, 1, {
+      id: 'dlg-1', toolCallId: 'delegate-1', sessionId: 'brain-ch-subagent-child', task: 'inspect',
+      status: 'done', result: 'all clear', tools: 1, seconds: 2,
+    });
     await vi.waitFor(() => expect(d.session.sendCustomMessage).toHaveBeenCalledWith(
       expect.objectContaining({
         customType: 'subagent-result',
@@ -251,6 +260,10 @@ describe('BrainService', () => {
       }),
       { triggerTurn: true, deliverAs: 'followUp' },
     ));
+    expect(d.store.pendingSubagentResults(sessionId)).toHaveLength(1);
+    release();
+    await vi.waitFor(() => expect(d.store.pendingSubagentResults(sessionId)).toEqual([]));
+    expect(d.store.getSubagentRuns(sessionId)[0]).toMatchObject({ resultDelivery: 'acknowledged' });
   });
 
   it('places running sub-agent state after the user request in a dedicated XML reminder', async () => {

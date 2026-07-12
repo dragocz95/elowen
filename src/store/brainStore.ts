@@ -43,11 +43,28 @@ interface BrainSubagentRunState {
   model?: string;
   background?: boolean;
   autoDeliver?: boolean;
+  resultDelivery?: 'pending' | 'acknowledged';
 }
 /** Store-neutral display shape consumed by shapeBrainMessages. */
 export interface BrainSubagentRun extends BrainSubagentRunState {
   toolCallId: string;
   sessionId: string;
+}
+export interface BrainSubagentResult {
+  id: string;
+  parentSessionId: string;
+  toolCallId: string;
+  sessionId: string;
+  status: 'done' | 'error';
+  task: string;
+  result?: string;
+  error?: string;
+  tools: number;
+  tokens?: number;
+  seconds: number;
+  model?: string;
+  delivery: 'pending' | 'acknowledged';
+  attempts: number;
 }
 /** Persisted usage of a delegated session tree. Unlike live context usage, these are cumulative token
  *  and cost totals only; callers must keep the root session's own context-window fill unchanged. */
@@ -74,6 +91,7 @@ function normalizeSubagentState(raw: unknown): BrainSubagentRunState | undefined
   if (o.model !== undefined && typeof o.model !== 'string') return undefined;
   if (o.background !== undefined && typeof o.background !== 'boolean') return undefined;
   if (o.autoDeliver !== undefined && typeof o.autoDeliver !== 'boolean') return undefined;
+  if (o.resultDelivery !== undefined && o.resultDelivery !== 'pending' && o.resultDelivery !== 'acknowledged') return undefined;
   return {
     status: o.status,
     task: bounded(o.task, 8_000),
@@ -84,6 +102,31 @@ function normalizeSubagentState(raw: unknown): BrainSubagentRunState | undefined
     ...(typeof o.model === 'string' ? { model: bounded(o.model, 512) } : {}),
     ...(typeof o.background === 'boolean' ? { background: o.background } : {}),
     ...(typeof o.autoDeliver === 'boolean' ? { autoDeliver: o.autoDeliver } : {}),
+    ...(o.resultDelivery === 'pending' || o.resultDelivery === 'acknowledged' ? { resultDelivery: o.resultDelivery } : {}),
+  };
+}
+
+function normalizeSubagentResult(raw: unknown): Omit<BrainSubagentResult, 'parentSessionId' | 'delivery' | 'attempts'> | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const o = raw as Record<string, unknown>;
+  if (typeof o.id !== 'string' || !o.id || o.id.length > 512) return undefined;
+  if (typeof o.toolCallId !== 'string' || !o.toolCallId || o.toolCallId.length > 512) return undefined;
+  if (typeof o.sessionId !== 'string' || !o.sessionId) return undefined;
+  if (o.status !== 'done' && o.status !== 'error') return undefined;
+  if (typeof o.task !== 'string') return undefined;
+  if (typeof o.tools !== 'number' || !Number.isSafeInteger(o.tools) || o.tools < 0) return undefined;
+  if (typeof o.seconds !== 'number' || !Number.isSafeInteger(o.seconds) || o.seconds < 0) return undefined;
+  if (o.tokens !== undefined && (typeof o.tokens !== 'number' || !Number.isSafeInteger(o.tokens) || o.tokens < 0)) return undefined;
+  if (o.result !== undefined && typeof o.result !== 'string') return undefined;
+  if (o.error !== undefined && typeof o.error !== 'string') return undefined;
+  if (o.model !== undefined && typeof o.model !== 'string') return undefined;
+  return {
+    id: o.id, toolCallId: o.toolCallId, sessionId: o.sessionId, status: o.status,
+    task: bounded(o.task, 8_000),
+    ...(typeof o.result === 'string' ? { result: bounded(o.result, 100_000) } : {}),
+    ...(typeof o.error === 'string' ? { error: bounded(o.error, 100_000) } : {}),
+    tools: o.tools, ...(typeof o.tokens === 'number' ? { tokens: o.tokens } : {}), seconds: o.seconds,
+    ...(typeof o.model === 'string' ? { model: bounded(o.model, 512) } : {}),
   };
 }
 
@@ -510,23 +553,93 @@ export class BrainStore {
    *  this boundary, so all downstream wire shapes remain trusted and finite. */
   getSubagentRuns(parentSessionId: string): BrainSubagentRun[] {
     const rows = this.db.prepare(
-      `SELECT r.tool_call_id, r.child_session_id, r.state
+      `SELECT r.tool_call_id, r.child_session_id, r.state, x.delivery_state
          FROM brain_subagent_runs r
          JOIN brain_sessions p ON p.id = r.parent_session_id
          JOIN brain_sessions c ON c.id = r.child_session_id
+         LEFT JOIN brain_subagent_results x
+           ON x.parent_session_id = r.parent_session_id AND x.tool_call_id = r.tool_call_id
         WHERE r.parent_session_id = ?
           AND c.parent_session_id = p.id
           AND c.user_id = p.user_id
         ORDER BY r.updated_at ASC, r.rowid ASC`
-    ).all(parentSessionId) as { tool_call_id: string; child_session_id: string; state: string }[];
+    ).all(parentSessionId) as { tool_call_id: string; child_session_id: string; state: string; delivery_state: string | null }[];
     const out: BrainSubagentRun[] = [];
     for (const row of rows) {
       let parsed: unknown;
       try { parsed = JSON.parse(row.state); } catch { continue; }
       const state = normalizeSubagentState(parsed);
-      if (state) out.push({ toolCallId: row.tool_call_id, sessionId: row.child_session_id, ...state });
+      if (state) out.push({
+        toolCallId: row.tool_call_id, sessionId: row.child_session_id, ...state,
+        ...(row.delivery_state === 'pending' || row.delivery_state === 'acknowledged'
+          ? { resultDelivery: row.delivery_state } : {}),
+      });
     }
     return out;
+  }
+
+  /** Persist a terminal child result before any attempt to wake the parent. Stable result/tool ids make
+   * duplicate plugin callbacks idempotent; the durable direct-child relation is revalidated here. */
+  enqueueSubagentResult(parentSessionId: string, raw: unknown): boolean {
+    const result = normalizeSubagentResult(raw);
+    if (!parentSessionId || !result) return false;
+    return this.db.transaction(() => {
+      const linked = this.db.prepare(
+        `SELECT 1 FROM brain_subagent_runs r
+          JOIN brain_sessions p ON p.id = r.parent_session_id
+          JOIN brain_sessions c ON c.id = r.child_session_id
+         WHERE r.parent_session_id = ? AND r.tool_call_id = ? AND r.child_session_id = ?
+           AND c.parent_session_id = p.id AND c.user_id = p.user_id`
+      ).get(parentSessionId, result.toolCallId, result.sessionId);
+      if (!linked) return false;
+      const payload = JSON.stringify({
+        result: result.result, error: result.error, tools: result.tools, tokens: result.tokens,
+        seconds: result.seconds, model: result.model,
+      });
+      this.db.prepare(
+        `INSERT INTO brain_subagent_results
+          (result_id, parent_session_id, tool_call_id, child_session_id, status, task, payload)
+         VALUES (?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(result_id) DO NOTHING`
+      ).run(result.id, parentSessionId, result.toolCallId, result.sessionId, result.status, result.task, payload);
+      const row = this.db.prepare(
+        `SELECT parent_session_id, tool_call_id, child_session_id FROM brain_subagent_results WHERE result_id = ?`
+      ).get(result.id) as { parent_session_id: string; tool_call_id: string; child_session_id: string } | undefined;
+      return row?.parent_session_id === parentSessionId && row.tool_call_id === result.toolCallId && row.child_session_id === result.sessionId;
+    })();
+  }
+
+  pendingSubagentResults(parentSessionId?: string): BrainSubagentResult[] {
+    const rows = this.db.prepare(
+      `SELECT * FROM brain_subagent_results WHERE delivery_state = 'pending'
+       ${parentSessionId ? 'AND parent_session_id = ?' : ''} ORDER BY created_at, rowid`
+    ).all(...(parentSessionId ? [parentSessionId] : [])) as Record<string, unknown>[];
+    return rows.flatMap((row) => {
+      let payload: Record<string, unknown>;
+      try { payload = JSON.parse(String(row.payload)) as Record<string, unknown>; } catch { return []; }
+      const normalized = normalizeSubagentResult({
+        id: row.result_id, toolCallId: row.tool_call_id, sessionId: row.child_session_id,
+        status: row.status, task: row.task, ...payload,
+      });
+      return normalized ? [{
+        ...normalized, parentSessionId: String(row.parent_session_id), delivery: 'pending' as const,
+        attempts: Number(row.attempts) || 0,
+      }] : [];
+    });
+  }
+
+  acknowledgeSubagentResult(parentSessionId: string, resultId: string): boolean {
+    return this.db.prepare(
+      `UPDATE brain_subagent_results SET delivery_state = 'acknowledged', acknowledged_at = datetime('now')
+       WHERE parent_session_id = ? AND result_id = ? AND delivery_state = 'pending'`
+    ).run(parentSessionId, resultId).changes === 1;
+  }
+
+  noteSubagentResultFailure(parentSessionId: string, resultId: string, error: string): void {
+    this.db.prepare(
+      `UPDATE brain_subagent_results SET attempts = attempts + 1, last_error = ?
+       WHERE parent_session_id = ? AND result_id = ? AND delivery_state = 'pending'`
+    ).run(bounded(error, 2_000), parentSessionId, resultId);
   }
 
   /** Case-insensitive fulltext search across the user's OWN chat conversations. Shared platform
@@ -602,6 +715,7 @@ export class BrainStore {
    *  otherwise orphan goal/message rows against a gone session (no FK CASCADE here). */
   deleteSession(id: string): void {
     this.db.transaction(() => {
+      this.db.prepare('DELETE FROM brain_subagent_results WHERE parent_session_id = ? OR child_session_id = ?').run(id, id);
       this.db.prepare('DELETE FROM brain_subagent_runs WHERE parent_session_id = ? OR child_session_id = ?').run(id, id);
       // A child remains a valid standalone transcript if its parent is deleted from history.
       this.db.prepare('UPDATE brain_sessions SET parent_session_id = NULL WHERE parent_session_id = ?').run(id);
@@ -623,6 +737,8 @@ export class BrainStore {
       this.db.prepare('UPDATE brain_sessions SET parent_session_id = ? WHERE parent_session_id = ?').run(newId, oldId);
       this.db.prepare('UPDATE brain_subagent_runs SET parent_session_id = ? WHERE parent_session_id = ?').run(newId, oldId);
       this.db.prepare('UPDATE brain_subagent_runs SET child_session_id = ? WHERE child_session_id = ?').run(newId, oldId);
+      this.db.prepare('UPDATE brain_subagent_results SET parent_session_id = ? WHERE parent_session_id = ?').run(newId, oldId);
+      this.db.prepare('UPDATE brain_subagent_results SET child_session_id = ? WHERE child_session_id = ?').run(newId, oldId);
       this.db.prepare('UPDATE brain_messages SET session_id = ? WHERE session_id = ?').run(newId, oldId);
       this.db.prepare('UPDATE brain_goals SET session_id = ? WHERE session_id = ?').run(newId, oldId);
     })();
@@ -677,6 +793,11 @@ export class BrainStore {
   /** Delete every conversation (+ goals + messages) for a user atomically — same orphan concern. */
   removeForUser(userId: number): void {
     this.db.transaction(() => {
+      this.db.prepare(
+        `DELETE FROM brain_subagent_results
+          WHERE parent_session_id IN (SELECT id FROM brain_sessions WHERE user_id = ?)
+             OR child_session_id IN (SELECT id FROM brain_sessions WHERE user_id = ?)`
+      ).run(userId, userId);
       this.db.prepare(
         `DELETE FROM brain_subagent_runs
           WHERE parent_session_id IN (SELECT id FROM brain_sessions WHERE user_id = ?)

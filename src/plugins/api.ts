@@ -1,5 +1,5 @@
 import type { Skill, ToolDefinition } from '@earendil-works/pi-coding-agent';
-import type { SubagentEmitter, TurnIdentity, TurnModel } from './policyContext.js';
+import type { SubagentCompletionEmitter, SubagentEmitter, TurnIdentity, TurnModel } from './policyContext.js';
 import type { AskAnswer, AskQuestion, BrainCard } from '../brain/events.js';
 import type { ProcessRegistry } from '../brain/processRegistry.js';
 import type { NoninteractivePermissionBoundary } from '../brain/toolPermissions.js';
@@ -306,6 +306,8 @@ export interface PluginContext {
    *  where the accessor no longer resolves to the delegating conversation. Each update fans out to the
    *  parent's clients as a `subagent` BrainEvent (live row in the CLI transcript). */
   subagentEmitter(): SubagentEmitter | null;
+  /** Host-only durable completion sink. Capture it in the parent turn before spawning a child. */
+  subagentCompletionEmitter(): SubagentCompletionEmitter | null;
   /** The provider entry id + model the CURRENT turn's session runs on, or null outside a prompt turn —
    *  a delegating plugin uses it to default the child to "the same model as me". */
   currentModel(): TurnModel | null;

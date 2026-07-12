@@ -19,6 +19,11 @@ import { TurnAdmission } from './turnAdmission.js';
 import { TurnContextBuilder } from './turnContextBuilder.js';
 import type { TurnImage, TurnMode, TurnRequest } from './turnRequest.js';
 import { hasActiveNativeCompactionCheck } from '../session/compactionCheckCoordinator.js';
+import type { SubagentCompletion } from '../events.js';
+
+const xmlEscape = (value: string): string => value
+  .replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
+  .replaceAll('"', '&quot;').replaceAll("'", '&apos;');
 
 interface TurnRunnerDeps {
   store: BrainStore;
@@ -51,9 +56,16 @@ interface TurnRunnerDeps {
  *  kickoff, auto-compact and the goal judge. */
 export class BrainTurnRunner {
   private contextBuilder: TurnContextBuilder;
+  private readonly resultDrains = new Set<string>();
+  private readonly resultRetryTimers = new Map<string, NodeJS.Timeout>();
 
   constructor(private d: TurnRunnerDeps) {
-    this.contextBuilder = new TurnContextBuilder(d);
+    this.contextBuilder = new TurnContextBuilder({
+      ...d,
+      completeSubagent: (parentSessionId, userId, completion) => {
+        this.acceptSubagentCompletion(parentSessionId, userId, completion);
+      },
+    });
   }
 
   private serial<T>(key: string, fn: () => Promise<T>): Promise<T> {
@@ -63,7 +75,7 @@ export class BrainTurnRunner {
   /** Deliver host-owned lifecycle information through PI's native hidden custom-message seam. The
    * conversation lock places it after the current owner turn; `display:false` keeps it out of the user
    * transcript, while `triggerTurn` lets the main agent react when idle. */
-  async sendCustomSystem(userId: number, session: string, customType: string, content: string): Promise<void> {
+  async sendCustomSystem(userId: number, session: string, customType: string, content: string, resultId?: string): Promise<void> {
     const target = this.d.lifecycle.ownedUserSession(userId, session);
     if (!this.d.sessions.get(target)) await this.d.lifecycle.ensureLive(userId, target);
     await this.serial(`send-${target}`, async () => {
@@ -80,9 +92,67 @@ export class BrainTurnRunner {
         customType,
         content,
         display: false,
-        details: { source: 'elowen' },
+        details: { source: 'elowen', ...(resultId ? { resultId } : {}) },
       }, { triggerTurn: true, deliverAs: 'followUp' }));
     });
+  }
+
+  /** Store-first terminal completion ingress shared by explicit background jobs and Ctrl+B detaches. */
+  acceptSubagentCompletion(parentSessionId: string, userId: number, completion: SubagentCompletion): void {
+    if (!this.d.store.enqueueSubagentResult(parentSessionId, completion)) return;
+    this.publishResultDelivery(parentSessionId, completion.toolCallId, 'pending');
+    void this.drainPendingSubagentResults(userId, parentSessionId);
+  }
+
+  /** Deliver every durable pending result serially after any active owner turn. A failed transport or
+   * model turn leaves the row pending and schedules bounded retry; no permanent poller exists. */
+  async drainPendingSubagentResults(userId: number, parentSessionId: string): Promise<void> {
+    if (this.resultDrains.has(parentSessionId)) return;
+    this.resultDrains.add(parentSessionId);
+    const oldTimer = this.resultRetryTimers.get(parentSessionId);
+    if (oldTimer) { clearTimeout(oldTimer); this.resultRetryTimers.delete(parentSessionId); }
+    try {
+      for (const result of this.d.store.pendingSubagentResults(parentSessionId)) {
+        const body = result.status === 'done'
+          ? `<result>${xmlEscape(result.result ?? '(the sub-agent returned nothing)')}</result>`
+          : `<error>${xmlEscape(result.error ?? 'unknown sub-agent error')}</error>`;
+        const content = '<system-reminder>\n'
+          + `<subagent-result id="${xmlEscape(result.id)}" session="${xmlEscape(result.sessionId)}" status="${result.status}">\n`
+          + `<task>${xmlEscape(result.task)}</task>\n${body}\n</subagent-result>\n`
+          + '<instruction>A background sub-agent finished. Incorporate this result into your current work. '
+          + 'The child transcript remains available separately; do not claim its internal tool calls as your own.</instruction>\n'
+          + '</system-reminder>';
+        try {
+          await this.sendCustomSystem(userId, parentSessionId, 'subagent-result', content, result.id);
+          if (this.d.store.acknowledgeSubagentResult(parentSessionId, result.id)) {
+            this.publishResultDelivery(parentSessionId, result.toolCallId, 'acknowledged');
+          }
+        } catch (error) {
+          this.d.store.noteSubagentResultFailure(parentSessionId, result.id, error instanceof Error ? error.message : String(error));
+          this.scheduleResultRetry(userId, parentSessionId, result.attempts + 1);
+          break;
+        }
+      }
+    } finally {
+      this.resultDrains.delete(parentSessionId);
+    }
+  }
+
+  private publishResultDelivery(parentSessionId: string, toolCallId: string, delivery: 'pending' | 'acknowledged'): void {
+    const run = this.d.store.getSubagentRuns(parentSessionId).find((entry) => entry.toolCallId === toolCallId);
+    const live = this.d.sessions.get(parentSessionId);
+    if (run && live) live.replay.publish({ type: 'subagent', id: toolCallId, ...run, resultDelivery: delivery });
+  }
+
+  private scheduleResultRetry(userId: number, parentSessionId: string, attempts: number): void {
+    if (this.resultRetryTimers.has(parentSessionId)) return;
+    const delay = Math.min(30_000, 1_000 * 2 ** Math.min(5, attempts));
+    const timer = setTimeout(() => {
+      this.resultRetryTimers.delete(parentSessionId);
+      void this.drainPendingSubagentResults(userId, parentSessionId);
+    }, delay);
+    timer.unref?.();
+    this.resultRetryTimers.set(parentSessionId, timer);
   }
 
   /** Run one user turn. Without `session` it targets the ACTIVE conversation (web dock — today's

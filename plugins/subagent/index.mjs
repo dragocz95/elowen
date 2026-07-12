@@ -82,16 +82,15 @@ export function register(ctx) {
   };
 
   // Foreground and background delegations share ONE job lifecycle. Detaching only resolves the parent
-  // tool wait; it never aborts the child channel. The daemon supplies a completion sink at detach time,
-  // so the eventual result can re-enter the originating conversation through its normal turn pipeline.
+  // tool wait; it never aborts the child channel. Completion uses the turn-captured durable host sink,
+  // so explicit background and Ctrl+B follow the exact same result path.
   ctx.registerControl('subagent', {
-    detachForeground: ({ sessionId, principal }, onCompleted) => {
+    detachForeground: ({ sessionId, principal }) => {
       let detached = 0;
       for (const job of jobs.values()) {
         if (job.status !== 'running' || job.background
           || job.originSessionId !== sessionId || job.originPrincipal !== principal) continue;
         job.background = true;
-        job.onCompleted = onCompleted;
         job.autoDeliver = true;
         job.resolveDetached?.();
         job.resolveDetached = undefined;
@@ -110,7 +109,8 @@ export function register(ctx) {
         sessionId: job.sessionId,
         status,
         task: job.task,
-        detail: job.detail,
+        // Child tool/process details belong to the isolated child transcript. The parent receives only
+        // lifecycle counters + the final result and can drill into sessionId for the full trace.
         tools: job.tools,
         tokens: job.tokens,
         seconds: Math.round((Date.now() - job.startedAt) / 1000),
@@ -185,6 +185,7 @@ export function register(ctx) {
         prompt: 'You are a focused sub-agent. Complete the task and report the result concisely — no preamble.',
       };
       const emit = ctx.subagentEmitter();
+      const emitCompletion = ctx.subagentCompletionEmitter();
       const originSessionId = ctx.currentSessionId();
       const originPrincipal = principalOf(ctx.currentIdentity());
       const jobId = `dlg-${randomUUID()}`;
@@ -204,8 +205,8 @@ export function register(ctx) {
         originPrincipal,
         emit,
         background: p.background === true,
-        autoDeliver: false,
-        onCompleted: undefined,
+        autoDeliver: p.background === true,
+        emitCompletion,
         resolveDetached: undefined,
         startedAt,
         finishedAt: undefined,
@@ -237,10 +238,11 @@ export function register(ctx) {
         }
         state.finishedAt = Date.now();
         push(state.status);
-        if (state.onCompleted) {
+        if (state.background && state.emitCompletion) {
           try {
-            state.onCompleted({
-              jobId: state.id,
+            state.emitCompletion({
+              id: state.id,
+              toolCallId: state.toolCallId,
               sessionId: state.sessionId,
               task: state.task,
               status: state.status,
@@ -252,7 +254,7 @@ export function register(ctx) {
               model: state.model,
             });
           } catch (e) {
-            ctx.logger.warn(`subagent completion delivery failed: ${errorText(e)}`);
+            ctx.logger.warn(`subagent completion persistence failed: ${errorText(e)}`);
           }
         }
         return state.status === 'done' ? state.result : `Error: ${state.error}`;
@@ -276,7 +278,7 @@ export function register(ctx) {
         }
         return ok(
           `The user moved this sub-agent to the background. It is still running as ${jobId}; `
-            + 'continue helping the user now. Its result will be delivered automatically when it finishes.',
+          + 'continue helping the user now. Its result will be delivered automatically when it finishes.',
           { jobId, status: 'running', detached: true },
         );
       }
@@ -301,8 +303,7 @@ export function register(ctx) {
       });
       return ok(
         `Started background delegation ${jobId}.\n`
-          + `Use delegate_status({"id":"${jobId}"}) for progress and delegate_result({"id":"${jobId}"}) for the result. `
-          + 'Do not busy-wait; continue other work and check later.',
+          + 'Its result will be delivered automatically. Do not busy-wait; continue other work.',
         { jobId, status: 'running' },
       );
     },
