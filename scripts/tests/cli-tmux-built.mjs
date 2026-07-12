@@ -25,6 +25,7 @@ const env = {
 };
 const steps = [
   ['--test', 'scripts/tests/cli-tmux-support.test.mjs'],
+  ['scripts/tests/cli-tmux-goal.mjs'],
   ['scripts/tests/cli-tmux-short.mjs'],
   ['scripts/tests/cli-tmux-signals.mjs'],
   ['scripts/tests/cli-tmux.mjs'],

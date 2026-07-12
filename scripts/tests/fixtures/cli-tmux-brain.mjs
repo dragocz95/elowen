@@ -9,9 +9,11 @@ const SESSION_ID = 'e2e-session';
 const SCENARIO = process.env.ELOWEN_TMUX_SCENARIO ?? 'long';
 const streams = new Set();
 const firstTimers = new Set();
+const goalTimers = new Set();
 let firstProgress = null;
 let sendCount = 0;
 let currentCards = [];
+let currentGoal = null;
 const shortHistory = [];
 const childHistory = [
   { id: 'child-u1', role: 'user', text: 'E2E CHILD TASK INPUT' },
@@ -59,6 +61,83 @@ function stopFirstTurn() {
   firstTimers.clear();
   if (firstProgress) clearInterval(firstProgress);
   firstProgress = null;
+}
+
+function stopGoalTurn() {
+  for (const timer of goalTimers) clearTimeout(timer);
+  goalTimers.clear();
+}
+
+function sqliteUtc(epoch = Date.now()) {
+  return new Date(epoch).toISOString().replace('T', ' ').slice(0, 19);
+}
+
+function runGoalTurn(text) {
+  stopGoalTurn();
+  const createdAt = sqliteUtc();
+  currentGoal = {
+    session_id: SESSION_ID,
+    user_id: 1,
+    status: 'active',
+    goal: text,
+    draft: '',
+    subgoals: '[]',
+    turns_used: 0,
+    turn_budget: 4,
+    last_verdict: '',
+    last_evidence: '',
+    paused_reason: '',
+    created_at: createdAt,
+    updated_at: createdAt,
+  };
+  emit({ type: 'goal', goal: currentGoal });
+  later(60, () => emit({ type: 'step', step: 1, maxSteps: 8 }), goalTimers);
+  later(100, () => emit({
+    type: 'tool', id: 'goal-tool', name: 'run_command',
+    detail: 'verify isolated goal project', command: 'git status --short',
+  }), goalTimers);
+  later(180, () => emit({ type: 'tool_progress', id: 'goal-tool', text: 'E2E GOAL TOOL RUNNING' }), goalTimers);
+  later(420, () => emit({
+    type: 'tool_output', id: 'goal-tool',
+    output: { title: 'console output', kind: 'console', text: 'E2E GOAL TOOL COMPLETE', tone: 'success' },
+  }), goalTimers);
+  later(700, () => emit({ type: 'text', delta: 'E2E GOAL WORKING — deterministic autonomous turn.' }), goalTimers);
+  later(4_800, () => emit({ type: 'text', delta: '\nE2E GOAL COMPLETE — tmux lifecycle verified.' }), goalTimers);
+  later(4_900, () => emit({
+    type: 'idle', model: 'mock/e2e-model',
+    usage: { tokens: 64, contextWindow: 100000, percent: 0.06, totalTokens: 64, cost: 0.001 },
+  }), goalTimers);
+  return new Promise((resolve) => {
+    later(5_000, () => {
+      currentGoal = {
+        ...currentGoal,
+        status: 'done',
+        turns_used: 1,
+        last_verdict: 'done',
+        last_evidence: 'tmux lifecycle verified',
+        updated_at: sqliteUtc(),
+      };
+      shortHistory.push({
+        id: 'goal-a1', role: 'assistant',
+        text: 'E2E GOAL WORKING — deterministic autonomous turn.\nE2E GOAL COMPLETE — tmux lifecycle verified.',
+      });
+      emit({ type: 'goal', goal: currentGoal });
+      resolve(currentGoal);
+    }, goalTimers);
+  });
+}
+
+function runGoalLiveness(text) {
+  shortHistory.push(
+    { id: 'goal-u2', role: 'user', text },
+    { id: 'goal-a2', role: 'assistant', text: 'E2E POST-GOAL INPUT ACCEPTED' },
+  );
+  later(30, () => emit({ type: 'user', text }));
+  later(60, () => emit({ type: 'text', delta: 'E2E POST-GOAL INPUT ACCEPTED' }));
+  later(90, () => emit({
+    type: 'idle', model: 'mock/e2e-model',
+    usage: { tokens: 80, contextWindow: 100000, percent: 0.08, totalTokens: 80, cost: 0.002 },
+  }));
 }
 
 function runFirstTurn(text) {
@@ -268,6 +347,10 @@ const server = createServer(async (req, res) => {
     json(res, 200, []);
     return;
   }
+  if (req.method === 'GET' && url.pathname === '/brain/goal') {
+    json(res, 200, currentGoal);
+    return;
+  }
   if (req.method === 'GET' && url.pathname === '/auth/me/terminal-settings') {
     json(res, 200, { theme: 'default', showThoughtsCli: true });
     return;
@@ -322,10 +405,20 @@ const server = createServer(async (req, res) => {
     req.on('close', () => streams.delete(res));
     return;
   }
+  if (req.method === 'POST' && url.pathname === '/brain/goal' && SCENARIO === 'goal') {
+    const text = typeof body.value?.text === 'string' ? body.value.text : '';
+    const goal = await runGoalTurn(text);
+    json(res, 201, goal);
+    return;
+  }
   if (req.method === 'POST' && url.pathname === '/brain/send') {
     sendCount += 1;
     json(res, 200, { ok: true });
     const text = typeof body.value?.text === 'string' ? body.value.text : '';
+    if (SCENARIO === 'goal') {
+      runGoalLiveness(text);
+      return;
+    }
     if (SCENARIO === 'short-controls') {
       if (sendCount === 1) runShortTurn(text);
       else if (sendCount === 2) runControlBurst(text);
@@ -373,6 +466,7 @@ server.listen(0, '127.0.0.1', () => {
 
 function shutdown() {
   stopFirstTurn();
+  stopGoalTurn();
   for (const stream of streams) stream.end();
   server.close(() => process.exit(0));
   setTimeout(() => process.exit(0), 500).unref();

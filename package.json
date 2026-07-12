@@ -49,6 +49,7 @@
     "test:watch": "vitest",
     "test:cli-tmux": "npm run build --silent && npm run test:cli-tmux:built",
     "test:cli-tmux:built": "node scripts/tests/cli-tmux-built.mjs",
+    "test:cli-tmux:goal": "npm run build --silent && node scripts/tests/cli-tmux-goal.mjs",
     "test:cli-tmux:analyze": "node scripts/tests/cli-tmux-analyze.mjs",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
