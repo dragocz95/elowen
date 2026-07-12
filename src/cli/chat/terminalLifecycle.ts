@@ -84,45 +84,28 @@ export class TerminalLifecycle {
   }
 }
 
-/** Install process guards for one chat run. The disposer is part of the lifecycle contract: returning
- * to the menu and opening chat again must not retain listeners from the previous application. */
-export function installExitGuards(teardown: () => void, disableMouse: () => void): () => void {
-  const onSignal = (code: number) => (): void => { teardown(); disableMouse(); process.exit(code); };
-  const onSigTerm = onSignal(143);
-  const onSigHup = onSignal(129);
-  const onFatal = (): void => { teardown(); disableMouse(); };
-  process.once('exit', disableMouse);
-  process.once('SIGTERM', onSigTerm);
-  process.once('SIGHUP', onSigHup);
-  process.once('uncaughtExceptionMonitor', onFatal);
-  return (): void => {
-    process.off('exit', disableMouse);
-    process.off('SIGTERM', onSigTerm);
-    process.off('SIGHUP', onSigHup);
-    process.off('uncaughtExceptionMonitor', onFatal);
-  };
+export interface ShutdownCoordinatorOptions {
+  /** Synchronous local teardown: restore terminal modes and abort application-owned work immediately. */
+  teardown(): void;
+  /** Detached from the aborted application signal; bounded independently below. */
+  stopBoundSession(signal: AbortSignal): Promise<void>;
+  timeoutMs?: number;
 }
 
-/** Coordinate one idempotent quit. Terminal restoration is synchronous; the bound server session gets
- * one bounded best-effort stop before the application's run promise resolves. */
-export function createQuitCoordinator(options: {
-  teardown(): void;
-  removeExitGuards(): void;
-  stopBoundSession(signal: AbortSignal): Promise<void>;
-  done(): void;
-  timeoutMs?: number;
-}): () => void {
-  let quitting = false;
-  return (): void => {
-    if (quitting) return;
-    quitting = true;
-    options.teardown();
-    options.removeExitGuards();
+/** One idempotent shutdown transaction for every exit path. Local terminal restoration starts
+ * synchronously; completion waits only for a bounded best-effort daemon stop. */
+export function createShutdownCoordinator(options: ShutdownCoordinatorOptions): () => Promise<void> {
+  let pending: Promise<void> | null = null;
+  return (): Promise<void> => {
+    if (pending) return pending;
+    let finish!: () => void;
+    pending = new Promise<void>((resolve) => { finish = resolve; });
+    try { options.teardown(); } catch { /* server stop must still be attempted */ }
     const stopAc = new AbortController();
     let timer: ReturnType<typeof setTimeout> | null = null;
     const timeout = new Promise<void>((resolve) => {
       timer = setTimeout(() => {
-        stopAc.abort();
+        stopAc.abort(new Error('chat shutdown timed out'));
         resolve();
       }, options.timeoutMs ?? 750);
     });
@@ -131,7 +114,41 @@ export function createQuitCoordinator(options: {
       timeout,
     ]).finally(() => {
       if (timer) clearTimeout(timer);
-      options.done();
+      finish();
     });
+    return pending;
+  };
+}
+
+/** Install process guards for one chat run. Signal handlers enter the same bounded shutdown transaction
+ * as `/quit`; process exit is delayed until the daemon stop settles/times out, while terminal restoration
+ * already happened synchronously inside `shutdown()`. */
+export function installExitGuards(options: {
+  shutdown(): Promise<void>;
+  exit?(code: number): void;
+}): () => void {
+  const exit = options.exit ?? ((code: number): void => { process.exit(code); });
+  let exiting = false;
+  const onSignal = (code: number) => (): void => {
+    if (exiting) return;
+    exiting = true;
+    void options.shutdown().finally(() => exit(code));
+  };
+  const onSigTerm = onSignal(143);
+  const onSigHup = onSignal(129);
+  // Node does not wait for asynchronous work from `exit` or an uncaught-exception monitor. Entering the
+  // coordinator still guarantees its synchronous terminal teardown; the detached daemon stop is strictly
+  // best-effort on these last-chance hooks. SIGTERM/SIGHUP above explicitly await the bounded promise.
+  const onExit = (): void => { void options.shutdown(); };
+  const onFatal = (): void => { void options.shutdown(); };
+  process.once('exit', onExit);
+  process.once('SIGTERM', onSigTerm);
+  process.once('SIGHUP', onSigHup);
+  process.once('uncaughtExceptionMonitor', onFatal);
+  return (): void => {
+    process.off('exit', onExit);
+    process.off('SIGTERM', onSigTerm);
+    process.off('SIGHUP', onSigHup);
+    process.off('uncaughtExceptionMonitor', onFatal);
   };
 }

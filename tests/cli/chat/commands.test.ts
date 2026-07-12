@@ -242,7 +242,7 @@ describe('/editor terminal handoff', () => {
       await Promise.resolve();
       await Promise.resolve();
 
-      expect(edit).toHaveBeenCalledWith({ text: 'draft survives' });
+      expect(edit).toHaveBeenCalledWith({ text: 'draft survives', signal: lifetime.signal });
       expect(suspendTerminal).toHaveBeenCalledOnce();
       expect(resumeTerminal).toHaveBeenCalledOnce();
       expect(editor.setText).toHaveBeenLastCalledWith('draft survives');

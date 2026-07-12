@@ -2290,6 +2290,18 @@ describe('per-client session binding (multi-instance CLI)', () => {
     expect(svc.listSessions(1).filter((row) => row.running)).toEqual([]);
   });
 
+  it('a stop for an unbound bootstrap generation never falls back to an unrelated active session', async () => {
+    const d = fakeDeps();
+    const svc = new BrainService(d as never);
+    const active = await svc.start(1);
+
+    expect(await svc.stopSession(1, undefined, 'cli-bootstrap', 1))
+      .toEqual({ stopped: false, disposed: false });
+    expect(svc.status(1, active.sessionId).running).toBe(true);
+    await expect(svc.start(1, { fresh: true, clientId: 'cli-bootstrap', clientGeneration: 1 }))
+      .rejects.toThrow('client request is no longer current');
+  });
+
   it('serializes an old stop before a newer same-session start can recreate the live brain', async () => {
     const d = fakeDeps();
     const svc = new BrainService(d as never);

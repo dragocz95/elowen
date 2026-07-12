@@ -301,7 +301,7 @@ export function wireSubmit(
           suspendTerminal();
           runApplication(async (signal) => {
             try {
-              return await editExternal({ text: initial });
+              return await editExternal({ text: initial, signal });
             } finally {
               // A temp-dir failure rejects before externalEditor reaches its own cleanup block. The
               // application still owns the suspended terminal and must reclaim it on every outcome.
