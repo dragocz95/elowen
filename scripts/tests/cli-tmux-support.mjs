@@ -109,7 +109,10 @@ export function readJsonLines(path, { live = false } = {}) {
   if (terminated) lines.pop();
   const values = [];
   for (const [index, line] of lines.entries()) {
-    if (!line) continue;
+    if (!line.trim()) {
+      if (source.length === 0) continue;
+      throw new SyntaxError(`${path}:${index + 1}: blank JSONL record`);
+    }
     try {
       values.push(JSON.parse(line));
     } catch (error) {
@@ -179,7 +182,12 @@ export function captureState({
   const statePath = join(artifactDir, `${label}.state.json`);
   writeFileSync(plainPath, plain);
   writeFileSync(ansiPath, ansi);
-  writeFileSync(statePath, `${JSON.stringify({ ...state, frame, analysis }, null, 2)}\n`);
+  writeFileSync(statePath, `${JSON.stringify({
+    ...state,
+    frame,
+    analysis,
+    contract: { expectCursor, forbiddenMarkers, expectScrollbar, allowScrollbarOcclusion },
+  }, null, 2)}\n`);
   return { ...input, ...state, analysis, paths: { plain: plainPath, ansi: ansiPath, state: statePath } };
 }
 
@@ -404,20 +412,35 @@ export function collectMetadata(repo, cli, tmuxName, env = process.env) {
   };
 }
 
+/** Close a scenario's identity transaction. Metadata is sampled before the CLI process starts; this
+ * second snapshot rejects a concurrent checkout/rebuild instead of relabelling already-running code. */
+export function completeMetadata(started, repo) {
+  const command = (file, args) => execFileSync(file, args, { cwd: repo, encoding: 'utf8' }).trim();
+  const commit = command('git', ['rev-parse', 'HEAD']);
+  const distSha256 = distContentHash(join(repo, 'dist'));
+  assert.equal(commit, started.commit, 'Git HEAD changed while the tmux scenario was running');
+  assert.equal(distSha256, started.distSha256, 'dist changed while the tmux scenario was running');
+  assert.equal(started.buildIdentity, buildContentIdentity(commit, distSha256),
+    'scenario start metadata does not match its completed build');
+  return { ...started, completedAt: new Date().toISOString() };
+}
+
 export function writeReport(path, report) {
   writeFileSync(path, `${JSON.stringify(report, null, 2)}\n`);
 }
 
 function reportPaths(root) {
+  const realRoot = realpathSync(root);
   const found = [];
   const visit = (dir) => {
-    for (const entry of readdirSync(dir)) {
-      const path = join(dir, entry);
-      if (statSync(path).isDirectory()) visit(path);
-      else if (entry === 'report.json' && ['short', 'long', 'signals'].includes(basename(dirname(path)))) found.push(path);
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const path = join(dir, entry.name);
+      assert.ok(!entry.isSymbolicLink(), `tmux evidence tree must not contain symlinks: ${path}`);
+      if (entry.isDirectory()) visit(path);
+      else if (entry.name === 'report.json' && ['short', 'long', 'signals'].includes(basename(dirname(path)))) found.push(path);
     }
   };
-  visit(root);
+  visit(realRoot);
   return found.sort();
 }
 
@@ -430,11 +453,14 @@ function metadataIdentity(value, label) {
   assert.ok(value && typeof value === 'object' && !Array.isArray(value), `${label} must be an object`);
   const identity = {};
   for (const field of [
-    'generatedAt', 'commit', 'branch', 'node', 'tmux', 'tmuxServer', 'cli', 'runId', 'distSha256', 'buildIdentity',
+    'generatedAt', 'completedAt', 'commit', 'branch', 'node', 'tmux', 'tmuxServer', 'cli', 'runId', 'distSha256', 'buildIdentity',
   ]) {
     identity[field] = nonEmptyString(value[field], `${label}.${field}`);
   }
   assert.ok(Number.isFinite(Date.parse(identity.generatedAt)), `${label}.generatedAt must be an ISO timestamp`);
+  assert.ok(Number.isFinite(Date.parse(identity.completedAt)), `${label}.completedAt must be an ISO timestamp`);
+  assert.ok(Date.parse(identity.completedAt) >= Date.parse(identity.generatedAt),
+    `${label}.completedAt must not precede generatedAt`);
   assert.match(identity.distSha256, /^[a-f0-9]{64}$/u, `${label}.distSha256 must be a SHA-256 digest`);
   assert.equal(identity.buildIdentity, buildContentIdentity(identity.commit, identity.distSha256),
     `${label}.buildIdentity must bind the Git commit to the complete dist hash`);
@@ -480,12 +506,66 @@ function evidenceFile(value, label, scenarioDir) {
 function captureEvidence(value, label, scenarioDir) {
   assert.ok(Array.isArray(value) && value.length > 0, `${label} must contain capture evidence`);
   for (const [index, capture] of value.entries()) {
-    nonEmptyString(capture?.label, `${label}[${index}].label`);
-    for (const field of ['plain', 'ansi', 'state']) {
-      evidenceFile(capture?.[field], `${label}[${index}].${field}`, scenarioDir);
-    }
+    const captureLabel = nonEmptyString(capture?.label, `${label}[${index}].label`);
+    const plainPath = evidenceFile(capture?.plain, `${label}[${index}].plain`, scenarioDir);
+    const ansiPath = evidenceFile(capture?.ansi, `${label}[${index}].ansi`, scenarioDir);
+    const statePath = evidenceFile(capture?.state, `${label}[${index}].state`, scenarioDir);
+    const state = JSON.parse(readFileSync(statePath, 'utf8'));
+    const contract = state.contract ?? {};
+    const analysis = analyzeActiveCapture({
+      label: captureLabel,
+      plain: readFileSync(plainPath, 'utf8'),
+      ansi: readFileSync(ansiPath, 'utf8'),
+      columns: state.columns,
+      rows: state.rows,
+      cursor: state.cursor,
+      frame: state.frame,
+      expectCursor: contract.expectCursor,
+      forbiddenMarkers: contract.forbiddenMarkers ?? [],
+      expectScrollbar: contract.expectScrollbar,
+      allowScrollbarOcclusion: contract.allowScrollbarOcclusion ?? false,
+    });
+    if (state.analysis) assert.deepEqual(analysis, state.analysis,
+      `${label}[${index}]: persisted capture analysis differs from raw evidence`);
   }
   return value.length;
+}
+
+function terminalProtocolEvidence(path, label) {
+  const writes = readFileSync(path, 'utf8');
+  for (const [name, enabled, disabled] of [
+    ['alternate screen', '\x1b[?1049h', '\x1b[?1049l'],
+    ['mouse reporting 1000', '\x1b[?1000h', '\x1b[?1000l'],
+    ['mouse reporting 1002', '\x1b[?1002h', '\x1b[?1002l'],
+    ['mouse reporting 1006', '\x1b[?1006h', '\x1b[?1006l'],
+  ]) {
+    const enabledAt = writes.lastIndexOf(enabled);
+    const disabledAt = writes.lastIndexOf(disabled);
+    assert.ok(enabledAt >= 0 && disabledAt > enabledAt, `${label}: ${name} must be disabled after it was enabled`);
+  }
+}
+
+function normalScenarioEvidence(report, label, scenarioDir) {
+  const evidence = report.evidence;
+  assert.ok(evidence && typeof evidence === 'object' && !Array.isArray(evidence), `${label}.evidence must be an object`);
+  const perfPath = evidenceFile(evidence.perf, `${label}.evidence.perf`, scenarioDir);
+  const ttyPath = evidenceFile(evidence.ttyState, `${label}.evidence.ttyState`, scenarioDir);
+  const writesPath = evidenceFile(evidence.terminalWrites, `${label}.evidence.terminalWrites`, scenarioDir);
+  const shellPath = evidenceFile(evidence.restoredShell, `${label}.evidence.restoredShell`, scenarioDir);
+  const frames = readFrames(perfPath);
+  const performance = analyzeFrameDiagnostics(frames);
+  const reported = performanceSummary(report.performance, `${label}.performance`);
+  assert.deepEqual(reported.ordinaryMs, performance.ordinaryMs, `${label}: reported ordinary timing differs from raw perf`);
+  assert.deepEqual(reported.forcedMs, performance.forcedMs, `${label}: reported forced timing differs from raw perf`);
+  const tty = readFileSync(ttyPath, 'utf8').trim().split('\n');
+  assert.equal(tty.length, 2, `${label}: tty evidence must contain before and after states`);
+  assert.ok(tty[0] && tty[1] && tty[0] === tty[1], `${label}: tty state was not restored exactly`);
+  const shell = readFileSync(shellPath, 'utf8');
+  assert.match(shell, /E2E .*SHELL RESTORED/u, `${label}: restored shell marker is missing`);
+  assert.doesNotMatch(shell, /MaxListenersExceededWarning|\bat\s+\S+\s+\([^)]*\.js:\d+/u,
+    `${label}: restored shell contains a warning or stack trace`);
+  terminalProtocolEvidence(writesPath, label);
+  return performance;
 }
 
 function signalEvidence(signalCase, label, signalsDir) {
@@ -514,17 +594,7 @@ function signalEvidence(signalCase, label, signalsDir) {
   assert.ok(tty[0] && tty[1], `${label}: tty states must be non-empty`);
   assert.equal(tty[1], tty[0], `${label}: tty state was not restored exactly`);
 
-  const writes = readFileSync(writesPath, 'utf8');
-  for (const [name, enabled, disabled] of [
-    ['alternate screen', '\x1b[?1049h', '\x1b[?1049l'],
-    ['mouse reporting 1000', '\x1b[?1000h', '\x1b[?1000l'],
-    ['mouse reporting 1002', '\x1b[?1002h', '\x1b[?1002l'],
-    ['mouse reporting 1006', '\x1b[?1006h', '\x1b[?1006l'],
-  ]) {
-    const enabledAt = writes.lastIndexOf(enabled);
-    const disabledAt = writes.lastIndexOf(disabled);
-    assert.ok(enabledAt >= 0 && disabledAt > enabledAt, `${label}: ${name} must be disabled after it was enabled`);
-  }
+  terminalProtocolEvidence(writesPath, label);
 
   const perfEntries = readJsonLines(perfPath);
   const starts = perfEntries.filter((entry) => entry.type === 'lifecycle' && entry.action === 'start');
@@ -546,18 +616,25 @@ export function aggregateTmuxReports(root, {
   repo = process.cwd(),
   expectedCommit = null,
   expectedDistHash = null,
+  now = Date.now(),
+  maxEvidenceAgeMs = 60 * 60_000,
+  clockSkewMs = 60_000,
 } = {}) {
   const absolute = resolve(root);
   const command = (file, args) => execFileSync(file, args, { cwd: repo, encoding: 'utf8' }).trim();
   const requiredCommit = nonEmptyString(expectedCommit ?? command('git', ['rev-parse', 'HEAD']), 'expected commit');
   const requiredDistHash = nonEmptyString(expectedDistHash ?? distContentHash(join(repo, 'dist')), 'expected dist hash');
   assert.match(requiredDistHash, /^[a-f0-9]{64}$/u, 'expected dist hash must be a SHA-256 digest');
-  const reports = reportPaths(absolute).map((path) => ({
-    path,
-    round: relative(absolute, path).split(/[\\/]/u)[0],
-    scenario: basename(dirname(path)),
-    value: JSON.parse(readFileSync(path, 'utf8')),
-  }));
+  const reports = reportPaths(absolute).map((path) => {
+    const parts = relative(absolute, path).split(/[\\/]/u);
+    const directScenarioRoot = parts.length === 2 && ['short', 'long', 'signals'].includes(parts[0]);
+    return {
+      path,
+      round: directScenarioRoot ? basename(absolute) : parts[0],
+      scenario: basename(dirname(path)),
+      value: JSON.parse(readFileSync(path, 'utf8')),
+    };
+  });
   const rounds = [...new Set(reports.map((entry) => entry.round))].sort();
   assert.equal(rounds.length, expectedRounds,
     `tmux aggregate requires ${expectedRounds} rounds (found ${rounds.length}: ${rounds.join(', ')})`);
@@ -573,6 +650,12 @@ export function aggregateTmuxReports(root, {
   let captures = 0;
   const recordMetadata = (value, label, round, execution = false) => {
     const identity = metadataIdentity(value, label);
+    const startedAt = Date.parse(identity.generatedAt);
+    const completedAt = Date.parse(identity.completedAt);
+    assert.ok(completedAt - startedAt <= maxEvidenceAgeMs,
+      `${label}: scenario duration exceeds the accepted evidence window`);
+    assert.ok(completedAt <= now + clockSkewMs, `${label}: completion timestamp is in the future`);
+    assert.ok(now - completedAt <= maxEvidenceAgeMs, `${label}: stale tmux evidence is not accepted`);
     assert.equal(identity.commit, requiredCommit, `${label}.commit must match expected HEAD ${requiredCommit}`);
     assert.equal(identity.distSha256, requiredDistHash, `${label}.distSha256 must match the current dist build`);
     assert.equal(identity.buildIdentity, buildContentIdentity(requiredCommit, requiredDistHash),
@@ -606,7 +689,7 @@ export function aggregateTmuxReports(root, {
       }
     } else {
       captures += captureEvidence(entry.value.captures, `${entry.path}.captures`, dirname(entry.path));
-      performance.push(performanceSummary(entry.value.performance, `${entry.path}.performance`));
+      performance.push(normalScenarioEvidence(entry.value, entry.path, dirname(entry.path)));
     }
   }
   const identityKeys = [...new Set(stableIdentities.map((identity) => JSON.stringify(identity)))];

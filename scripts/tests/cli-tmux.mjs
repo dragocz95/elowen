@@ -8,6 +8,7 @@ import {
   analyzeFrameDiagnostics,
   captureState,
   collectMetadata,
+  completeMetadata,
   createArtifactDir,
   createTmuxServer,
   decodeLastOsc52,
@@ -36,13 +37,14 @@ const artifactDir = createArtifactDir('long');
 const home = join(temp, 'home');
 const config = join(temp, 'config');
 const logPath = join(temp, 'mock-requests.jsonl');
-const ttyStatePath = join(temp, 'tty-state.txt');
+const ttyStatePath = join(artifactDir, 'tty-state.txt');
 const startGatePath = join(temp, 'start-gate');
 const terminalWriteLog = join(artifactDir, 'terminal-writes.log');
 const perfLog = join(artifactDir, 'perf.jsonl');
 const reportPath = join(artifactDir, 'report.json');
 const session = 'long';
 const tmuxServer = createTmuxServer('long');
+const startedMetadata = collectMetadata(repo, cli, tmuxServer.name);
 mkdirSync(home, { recursive: true });
 mkdirSync(config, { recursive: true });
 
@@ -645,9 +647,15 @@ try {
     passed: true,
     scenario: 'long',
     case: 'long-history-complete',
-    metadata: collectMetadata(repo, cli, tmuxServer.name),
+    metadata: completeMetadata(startedMetadata, repo),
     session,
     captures: activeCaptures.map((captureEntry) => ({ label: captureEntry.label, ...captureEntry.paths })),
+    evidence: {
+      perf: perfLog,
+      ttyState: ttyStatePath,
+      terminalWrites: terminalWriteLog,
+      restoredShell: join(artifactDir, '16-restored-shell.txt'),
+    },
     requests: entries().filter((entry) => entry.kind === 'request').length,
     frames: perfFrames.length,
     performance,

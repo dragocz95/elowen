@@ -8,6 +8,7 @@ import {
   analyzeFrameDiagnostics,
   captureState,
   collectMetadata,
+  completeMetadata,
   createArtifactDir,
   createTmuxServer,
   latestFrame,
@@ -33,13 +34,14 @@ const artifactDir = createArtifactDir('short');
 const home = join(temp, 'home');
 const config = join(temp, 'config');
 const logPath = join(temp, 'mock-requests.jsonl');
-const ttyStatePath = join(temp, 'tty-state.txt');
+const ttyStatePath = join(artifactDir, 'tty-state.txt');
 const startGatePath = join(temp, 'start-gate');
 const terminalWriteLog = join(artifactDir, 'terminal-writes.log');
 const perfLog = join(artifactDir, 'perf.jsonl');
 const reportPath = join(artifactDir, 'report.json');
 const session = 'short';
 const tmuxServer = createTmuxServer('short');
+const startedMetadata = collectMetadata(repo, cli, tmuxServer.name);
 mkdirSync(home, { recursive: true });
 mkdirSync(config, { recursive: true });
 
@@ -270,8 +272,14 @@ try {
     passed: true,
     scenario: 'short',
     case: 'short-controls-reopen',
-    metadata: collectMetadata(repo, cli, tmuxServer.name),
+    metadata: completeMetadata(startedMetadata, repo),
     captures: activeCaptures.map((captureEntry) => ({ label: captureEntry.label, ...captureEntry.paths })),
+    evidence: {
+      perf: perfLog,
+      ttyState: ttyStatePath,
+      terminalWrites: terminalWriteLog,
+      restoredShell: shell.paths.plain,
+    },
     frames: frames.length,
     scrollFrames: scrollFrames.length,
     performance,

@@ -9,6 +9,7 @@ import {
   analyzeFrameDiagnostics,
   captureState,
   collectMetadata,
+  completeMetadata,
   createArtifactDir,
   createTmuxServer,
   readFrames,
@@ -55,6 +56,7 @@ async function runSignal(signal) {
   mkdirSync(home, { recursive: true });
   mkdirSync(config, { recursive: true });
   const tmux = createTmuxServer(slug);
+  const startedMetadata = collectMetadata(repo, cli, tmux.name);
   const session = slug;
   let mock;
   try {
@@ -121,7 +123,7 @@ async function runSignal(signal) {
     }
     const performance = analyzeFrameDiagnostics(readFrames(perfLog));
     const report = {
-      passed: true, signal, metadata: collectMetadata(repo, cli, tmux.name), performance,
+      passed: true, signal, metadata: completeMetadata(startedMetadata, repo), performance,
       terminalStateRestored: true, shellReadable: true,
       evidence: {
         before: { label: before.label, ...before.paths },

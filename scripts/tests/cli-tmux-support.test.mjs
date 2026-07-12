@@ -208,6 +208,17 @@ test('live JSONL reads tolerate only a missing file or the current trailing part
   }
 });
 
+test('strict JSONL rejects interior blank records instead of silently dropping evidence', () => {
+  const root = mkdtempSync(join(tmpdir(), 'elowen-tmux-jsonl-blank-'));
+  const path = join(root, 'perf.jsonl');
+  try {
+    writeFileSync(path, '{"type":"frame","sequence":1}\n\n{"type":"frame","sequence":2}\n');
+    assert.throws(() => readJsonLines(path), /blank|JSONL|record|line 2/iu);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('configured artifact scenarios reject stale non-empty directories', () => {
   const root = mkdtempSync(join(tmpdir(), 'elowen-tmux-artifact-root-'));
   const previous = process.env.ELOWEN_TMUX_ARTIFACT_ROOT;
@@ -294,8 +305,9 @@ const OTHER_DIST_HASH = 'b'.repeat(64);
 const buildIdentity = (commit, distSha256) => `git:${commit}:dist-sha256:${distSha256}`;
 const metadata = (commit = 'abc', {
   runId = 'run-1', tmuxServer = 'tmux-1-short', distSha256 = DIST_HASH,
+  generatedAt = new Date().toISOString(), completedAt = generatedAt,
 } = {}) => ({
-  generatedAt: '2026-07-12T00:00:00.000Z',
+  generatedAt, completedAt,
   commit, branch: 'refactor/test', node: 'v22.23.1', tmux: 'tmux 3.4',
   tmuxServer, cli: '/x/dist/cli/bin.js', runId, distSha256,
   buildIdentity: buildIdentity(commit, distSha256),
@@ -304,17 +316,32 @@ const metadata = (commit = 'abc', {
 function writeRound(root, round, {
   omitSignals = false, mixedCommit = false, mixedDistHash = false, mixedRunId = false,
   duplicateServer = false, wrongScenario = false, runId = `run-${round}`,
-  ordinaryMax = 37, nullTiming = false,
+  ordinaryMax = 37, nullTiming = false, generatedAt,
 } = {}) {
   for (const scenario of ['short', 'long']) {
     const dir = join(root, `round-${round}`, scenario);
     mkdirSync(dir, { recursive: true });
     const captures = ['plain', 'ansi', 'state'].reduce((paths, kind) => {
       const path = join(dir, `capture.${kind === 'state' ? 'json' : `${kind}.txt`}`);
-      writeFileSync(path, kind === 'state' ? '{}\n' : 'capture\n');
+      writeFileSync(path, kind === 'state'
+        ? `${JSON.stringify({
+            columns: 40, rows: 10, cursor: { x: 2, y: 6 }, frame: frame(),
+            contract: { expectCursor: true, forbiddenMarkers: [], expectScrollbar: true, allowScrollbarOcclusion: false },
+          })}\n`
+        : validPane());
       paths[kind] = path;
       return paths;
     }, {});
+    const perf = join(dir, 'perf.jsonl');
+    const ttyState = join(dir, 'tty-state.txt');
+    const terminalWrites = join(dir, 'terminal-writes.log');
+    const restoredShell = join(dir, 'restored-shell.txt');
+    const rawFrame = frame({ totalMs: ordinaryMax, at: 10 });
+    writeFileSync(perf, `${JSON.stringify(rawFrame)}\n`);
+    writeFileSync(ttyState, 'tty-state\ntty-state\n');
+    writeFileSync(terminalWrites,
+      '\x1b[?1049h\x1b[?1000h\x1b[?1002h\x1b[?1006hframe\x1b[?1006l\x1b[?1002l\x1b[?1000l\x1b[?1049l');
+    writeFileSync(restoredShell, `E2E ${scenario.toUpperCase()} SHELL RESTORED\n`);
     const commit = mixedCommit && scenario === 'long' ? 'def' : 'abc';
     const distSha256 = mixedDistHash && scenario === 'long' ? OTHER_DIST_HASH : DIST_HASH;
     const scenarioRunId = mixedRunId && scenario === 'long' ? `${runId}-other` : runId;
@@ -322,10 +349,11 @@ function writeRound(root, round, {
     writeFileSync(join(dir, 'report.json'), JSON.stringify({
       passed: true, scenario: wrongScenario && scenario === 'long' ? 'short' : scenario,
       captures: [{ label: 'capture', ...captures }],
-      metadata: metadata(commit, { runId: scenarioRunId, tmuxServer, distSha256 }),
+      metadata: metadata(commit, { runId: scenarioRunId, tmuxServer, distSha256, ...(generatedAt ? { generatedAt, completedAt: generatedAt } : {}) }),
+      evidence: { perf, ttyState, terminalWrites, restoredShell },
       performance: {
-        ordinaryMs: { p95: nullTiming ? null : ordinaryMax - 1, max: ordinaryMax },
-        forcedMs: { p95: 50, max: 60 },
+        ordinaryMs: { p95: nullTiming ? null : ordinaryMax, max: ordinaryMax },
+        forcedMs: { p95: 0, max: 0 },
       },
     }));
   }
@@ -337,7 +365,12 @@ function writeRound(root, round, {
       mkdirSync(caseDir, { recursive: true });
       const before = ['plain', 'ansi', 'state'].reduce((paths, kind) => {
         const path = join(caseDir, `01-before-signal.${kind === 'state' ? 'json' : `${kind}.txt`}`);
-        writeFileSync(path, kind === 'state' ? '{}\n' : 'active capture\n');
+        writeFileSync(path, kind === 'state'
+          ? `${JSON.stringify({
+              columns: 40, rows: 10, cursor: { x: 2, y: 6 }, frame: frame(),
+              contract: { expectCursor: true, forbiddenMarkers: [], expectScrollbar: true, allowScrollbarOcclusion: false },
+            })}\n`
+          : validPane());
         paths[kind] = path;
         return paths;
       }, { label: '01-before-signal' });
@@ -357,7 +390,10 @@ function writeRound(root, round, {
       ].join('\n'));
       return {
         passed: true, signal,
-        metadata: metadata('abc', { runId, tmuxServer: `tmux-${round}-${signal.toLowerCase()}` }),
+        metadata: metadata('abc', {
+          runId, tmuxServer: `tmux-${round}-${signal.toLowerCase()}`,
+          ...(generatedAt ? { generatedAt, completedAt: generatedAt } : {}),
+        }),
         terminalStateRestored: true, shellReadable: true,
         performance: { ordinaryMs: { p95: 0, max: 0 }, forcedMs: { p95: 10, max: 10 } },
         evidence: { before, restoredShell, ttyState, terminalWrites, perf },
@@ -365,7 +401,10 @@ function writeRound(root, round, {
     });
     writeFileSync(join(dir, 'report.json'), JSON.stringify({
       passed: true, scenario: 'signals',
-      metadata: metadata('abc', { runId, tmuxServer: `tmux-${round}-sigterm` }), cases,
+      metadata: metadata('abc', {
+        runId, tmuxServer: `tmux-${round}-sigterm`,
+        ...(generatedAt ? { generatedAt, completedAt: generatedAt } : {}),
+      }), cases,
     }));
   }
 }
@@ -387,6 +426,50 @@ test('aggregate analyzer requires two complete short+long+signals rounds with on
     assert.deepEqual(summary.commits, ['abc']);
   } finally {
     rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('aggregate analyzer can fail-close one freshly completed runner root directly', () => {
+  const root = mkdtempSync(join(tmpdir(), 'elowen-tmux-analyzer-direct-round-'));
+  try {
+    writeRound(root, 1);
+    const summary = aggregateTmuxReports(join(root, 'round-1'), aggregateOptions(1));
+    assert.equal(summary.rounds, 1);
+    assert.equal(summary.scenarios, 3);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('aggregate analyzer rejects stale evidence and revalidates normal raw captures and perf', () => {
+  const stale = mkdtempSync(join(tmpdir(), 'elowen-tmux-analyzer-stale-'));
+  try {
+    writeRound(stale, 1, { generatedAt: '2000-01-01T00:00:00.000Z' });
+    assert.throws(() => aggregateTmuxReports(stale, aggregateOptions()), /stale|fresh|age|generated/iu);
+  } finally {
+    rmSync(stale, { recursive: true, force: true });
+  }
+
+  const captureRoot = mkdtempSync(join(tmpdir(), 'elowen-tmux-analyzer-raw-capture-'));
+  try {
+    writeRound(captureRoot, 1);
+    const reportPath = join(captureRoot, 'round-1', 'short', 'report.json');
+    const report = JSON.parse(readFileSync(reportPath, 'utf8'));
+    writeFileSync(report.captures[0].plain,
+      `${'x\n'.repeat(6)}  Build · e2e-model mock high\n  Build · e2e-model mock high\nx\nx\n`);
+    assert.throws(() => aggregateTmuxReports(captureRoot, aggregateOptions()), /status|footer|capture|rows/iu);
+  } finally {
+    rmSync(captureRoot, { recursive: true, force: true });
+  }
+
+  const perfRoot = mkdtempSync(join(tmpdir(), 'elowen-tmux-analyzer-raw-perf-'));
+  try {
+    writeRound(perfRoot, 1);
+    const report = JSON.parse(readFileSync(join(perfRoot, 'round-1', 'long', 'report.json'), 'utf8'));
+    writeFileSync(report.evidence.perf, `${JSON.stringify(frame({ totalMs: 55 }))}\n`);
+    assert.throws(() => aggregateTmuxReports(perfRoot, aggregateOptions()), /50|ordinary|timing|perf/iu);
+  } finally {
+    rmSync(perfRoot, { recursive: true, force: true });
   }
 });
 
