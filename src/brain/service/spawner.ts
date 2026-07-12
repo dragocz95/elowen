@@ -13,13 +13,19 @@ import { formatSkillsForPrompt } from '@earendil-works/pi-coding-agent';
 import { personalityText } from '../personality.js';
 import type { BrainSessionFactory } from '../session/factory.js';
 import type { LiveBrain, SpawnOpts, QueuedMsg, TurnContextBlocks } from '../session/liveBrain.js';
-import { reconcileMirrors } from '../session/queueMirror.js';
+import {
+  clearDeliveredUserEchoes,
+  deliverQueuedUserEcho,
+  reconcileMirrors,
+  stageDeliveredUserEchoes,
+} from '../session/queueMirror.js';
 import { isErroredContextOverflow, toBrainEvent, usageOf, withDescendantUsage } from '../events.js';
 import type { BrainEvent } from '../events.js';
 import type { BrainDeps } from '../brainDeps.js';
 import { turnWorkDir } from './workDir.js';
 import { modelCapabilities } from '../modelCapabilities.js';
 import { LiveEventReplay } from '../session/liveEventReplay.js';
+import { extractText } from '../messageView.js';
 
 /** PI already classifies and retries transient provider failures. Reuse that same classifier after its
  * retry budget is exhausted so the final transcript never leaks a provider-specific transport or stream
@@ -181,6 +187,7 @@ export class LiveSessionSpawner {
     // reconciling them here (in place) keeps the live wrapper's queue in sync. PI's public queue is text-only.
     const queuedSteer: QueuedMsg[] = [];
     const queuedFollowUp: QueuedMsg[] = [];
+    let live!: LiveBrain;
     // PI decides overflow compact-and-retry only after emitting the errored agent_end. Hold that error
     // until compaction_end tells us whether recovery really failed; otherwise headless clients would
     // exit 1 while the same turn was already compacting and about to succeed.
@@ -195,6 +202,7 @@ export class LiveSessionSpawner {
       // without compaction_end when an overflow has nothing summarizable. Flush the deferred terminal
       // state here so no client remains spinning and a genuine overflow failure is still visible.
       if (raw === 'agent_settled') {
+        clearDeliveredUserEchoes(live);
         if (deferredOverflowError) {
           replay.publish({ type: 'error', message: deferredOverflowError });
           deferredOverflowError = null;
@@ -269,7 +277,14 @@ export class LiveSessionSpawner {
       // Keep the image-carrying queue mirror aligned with PI's native queue on every enqueue/delivery/clear.
       if (raw === 'queue_update') {
         const qe = e as { steering?: readonly string[]; followUp?: readonly string[] };
-        reconcileMirrors(queuedSteer, queuedFollowUp, qe.steering ?? [], qe.followUp ?? []);
+        const removed = reconcileMirrors(queuedSteer, queuedFollowUp, qe.steering ?? [], qe.followUp ?? []);
+        stageDeliveredUserEchoes(live, removed);
+      }
+      // PI emits queue_update (with the delivered item removed) immediately before this event. Project
+      // the clean durable row and its user bubble at that exact boundary — never while it is still a chip.
+      if (raw === 'message_start' && (e as { message?: { role?: string } }).message?.role === 'user') {
+        const message = (e as unknown as { message: Parameters<typeof extractText>[0] }).message;
+        deliverQueuedUserEcho(this.d.store, live, extractText(message));
       }
       const be = toBrainEvent(e);
       if (!be) return;
@@ -312,13 +327,14 @@ export class LiveSessionSpawner {
         afterUser: frame(afterUser, 'after-user'),
       };
     };
-    return {
+    live = {
       session, sessionId, model: model.id, providerId, thinkingLevel: opts.thinkingLevel,
       requestProfile, fastAvailable: capabilities.fast,
       thinkingLabels: Object.fromEntries(capabilities.levels.map((level) => [level, capabilities.labels[level] ?? level])),
       policy: opts.policy, listeners, replay, turnContext,
       pluginToolNames: new Set(pluginTools.map((t) => t.name)), workDir: cwd,
-      queuedSteer, queuedFollowUp,
+      queuedSteer, queuedFollowUp, deliveringUserEchoes: [],
     };
+    return live;
   }
 }

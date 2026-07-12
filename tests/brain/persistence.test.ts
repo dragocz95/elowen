@@ -31,8 +31,8 @@ describe('brain persistence', () => {
 
   it('reorders pre-projected steering into the settled PI run instead of leaving it before earlier output', () => {
     const initialId = projectUserTurn(store, 's1', 'initial clean prompt');
-    // A steer is durable immediately for reconnect safety, but it arrived after the agent had already
-    // emitted an assistant/tool pair. PI's terminal run carries that true order.
+    // A delivered steer is projected at PI's message_start after the agent already emitted an
+    // assistant/tool pair. PI's terminal run carries that true order.
     const steerId = projectUserTurn(store, 's1', 'steer after the tool');
     // Make the regression deterministic: generated rows are persisted at agent_end (much later), whereas
     // these already-durable users retain when they were actually received. created_at must remain metadata;

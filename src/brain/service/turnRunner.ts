@@ -99,11 +99,10 @@ export class BrainTurnRunner {
     if (internal?.systemNudge && active.session.isStreaming) return;
     // Mid-turn: a message sent while a turn is already streaming is STEERED into the running turn — PI
     // delivers it between steps (after the current tool calls, before the next model call), so the agent
-    // folds it in during the SAME turn instead of waiting for it to end. Persist it now (agent_end never
-    // re-persists user messages, so a steered message would otherwise never reach history) and emit the
-    // authoritative `user` echo so attached clients render the 'you' bubble. PI reports its transient
-    // backlog via the `queue_update` event, which the spawner maps to the `queue` snapshot. Internal goal
-    // kickoff/continuation is never steered — it drives the loop itself and must run its own turn.
+    // folds it in during the SAME turn instead of waiting for it to end. Admission creates only PI queue
+    // state; the spawner persists/emits the authoritative user row at PI's later message_start, after the
+    // matching queue chip disappeared. Internal goal kickoff/continuation is never steered — it drives
+    // the loop itself and must run its own turn.
     if (active.session.isStreaming && !internal?.goalKickoff && !internal?.goalContinue) {
       const admission = new TurnAdmission(
         { store: this.d.store, titler: this.d.titler },

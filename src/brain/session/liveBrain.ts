@@ -7,10 +7,25 @@ import type { DelegatedExecutionScope } from '../delegatedScope.js';
 
 /** A queued mid-turn message's image attachments, in PI's ImageContent shape. */
 export type QueuedImage = { type: 'image'; data: string; mimeType: string };
+/** The durable/user-facing identity of a message that is still only in PI's transient queue. It becomes
+ * a real transcript row at PI's `message_start`, never at HTTP admission time. */
+export interface QueuedUserEcho {
+  persistText: string;
+  displayText: string;
+  /** Owner CLI/web messages broadcast their user row. Platform messages were already rendered by the
+   * platform sink, so they only journal the ordering marker for reconnect/drill-in snapshots. */
+  publish: boolean;
+}
 /** One mirrored queue entry: the text we enqueued plus any image attachments PI's public queue drops.
  *  Defined here (next to the LiveBrain fields that hold them) so queueMirror.ts imports one-directionally
  *  from liveBrain and the two don't form an import cycle. */
-export type QueuedMsg = { text: string; images?: QueuedImage[] };
+export type QueuedMsg = {
+  text: string;
+  images?: QueuedImage[];
+  /** PI may expand skills/templates before queueing. Captured from queue_update for exact delivery match. */
+  queuedText?: string;
+  echo?: QueuedUserEcho;
+};
 
 /** Volatile plugin context sampled once for a user turn and split around the user's own text. */
 export interface TurnContextBlocks {
@@ -73,6 +88,9 @@ export interface LiveBrain {
    *  to match queueItems([...steering, ...followUp]) so a client's positional id maps straight in. */
   queuedSteer?: QueuedMsg[];
   queuedFollowUp?: QueuedMsg[];
+  /** Queue entries removed by PI immediately before their matching user `message_start`. Explicit queue
+   * removal/abort clears this staging area, preventing a late callback from resurrecting a deleted row. */
+  deliveringUserEchoes?: QueuedMsg[];
   /** The session's resolved working directory (validated client cwd → policy root → primary project).
    *  Reused as the per-turn workDir fallback for sends that carry no client cwd (goal kickoff/continue)
    *  and re-passed on respawns (model switch, vision hop, restart) so the session cwd never silently

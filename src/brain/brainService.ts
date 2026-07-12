@@ -10,7 +10,7 @@ import { BrainSessionFactory } from './session/factory.js';
 import { IdentityResolver } from './identity.js';
 import { LiveSessionRegistry } from './session/liveRegistry.js';
 import type { LiveBrain } from './session/liveBrain.js';
-import { enqueueMirrored } from './session/queueMirror.js';
+import { clearDeliveredUserEchoes, enqueueMirrored } from './session/queueMirror.js';
 import { ChannelSessionService } from './channels.js';
 import type { ChannelSendOpts } from './channels.js';
 import { PlatformOrchestrator } from './platforms.js';
@@ -293,6 +293,7 @@ export class BrainService {
       // Esc/stop = the user bails: drop every mid-turn steered message still pending in PI's queue so an
       // interrupted turn doesn't deliver words the user meant for the turn they just killed.
       b.session.clearQueue();
+      clearDeliveredUserEchoes(b);
       // A parked ask_user_question must fail cleanly when the turn is aborted, else the tool Promise
       // (and the awaited prompt()) would hang forever. Reject before aborting the PI session.
       if (b.sessionId) this.elicitation.cancelForSession(b.sessionId, 'aborted');
@@ -438,10 +439,13 @@ export class BrainService {
       ...followUp.map((m) => ({ kind: 'followUp' as const, ...m })),
     ];
     live.session.clearQueue();
+    clearDeliveredUserEchoes(live);
     // Re-queue in the same order, dropping the positional target, preserving each survivor's images.
     // `steer`/`followUp` only enqueue while the turn is streaming (a queue only exists mid-turn), so
     // nothing runs a fresh turn; enqueueMirrored keeps the mirror in step.
-    combined.forEach((m, i) => { if (i !== idx) void enqueueMirrored(live, m.kind, m.text, m.images); });
+    combined.forEach((m, i) => {
+      if (i !== idx) void enqueueMirrored(live, m.kind, m.text, m.images, m.echo);
+    });
     return true;
   }
 

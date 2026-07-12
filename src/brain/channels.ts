@@ -26,7 +26,7 @@ import type { ConversationTitler } from './conversationTitler.js';
 import type { LiveSessionRegistry } from './session/liveRegistry.js';
 import type { LiveBrain, SpawnOpts } from './session/liveBrain.js';
 import { DEFAULT_AUTO_COMPACT_PCT } from './session/liveBrain.js';
-import { enqueueMirrored } from './session/queueMirror.js';
+import { clearDeliveredUserEchoes, enqueueMirrored } from './session/queueMirror.js';
 
 export interface ChannelSendOpts {
   channelId: string;
@@ -221,25 +221,29 @@ export class ChannelSessionService {
         // fence it on both sides of the await. If stop clears PI's queue while steer() is pending, the
         // second check clears it again before rejecting; no late instruction survives the aborted tree.
         if (delegationAborted()) throw new Error('delegation aborted');
-        const durableId = projectUserTurn(this.d.store, sessionId, text);
-        streaming.replay.publish({ type: 'user', text, durableId });
-        await streaming.session.steer(text);
+        await enqueueMirrored(streaming, 'steer', text, undefined, {
+          persistText: text, displayText: text, publish: true,
+        });
         if (delegationAborted()) {
           streaming.session.clearQueue();
+          clearDeliveredUserEchoes(streaming);
           throw new Error('delegation aborted');
         }
         return '';
       }
-      // A platform (Discord) SAME-SENDER follow-up: steer it into the running turn. Persist it (agent_end
-      // never re-persists user messages, so a steered message would otherwise vanish from history) and
-      // deliver the image bytes alongside; the reply rides the ORIGINAL turn's live sink, so no separate
-      // onEvent is stashed.
+      // A platform (Discord) SAME-SENDER follow-up: steer it into the running turn. Its queue item carries
+      // the clean durable identity until PI actually delivers it; the spawner journals/persists that
+      // message_start without rebroadcasting it to the platform sink. Image bytes ride the same queue item.
       if (streaming.turnSender != null && streaming.turnSender === opts.identity?.userId) {
         const persisted = opts.images?.length ? `${text}\n[📎 ${opts.images.length}× image]` : text;
-        const durableId = projectUserTurn(this.d.store, sessionId, persisted);
-        streaming.replay.journal({ type: 'user', text: persisted, durableId });
         // Mirror the enqueue so the image bytes survive a positional queue-remove (PI's clearQueue drops them).
-        await enqueueMirrored(streaming, 'steer', text, opts.images?.map((i) => ({ type: 'image' as const, data: i.data, mimeType: i.mimeType })));
+        await enqueueMirrored(
+          streaming,
+          'steer',
+          text,
+          opts.images?.map((i) => ({ type: 'image' as const, data: i.data, mimeType: i.mimeType })),
+          { persistText: persisted, displayText: persisted, publish: false },
+        );
         return '';
       }
     }
@@ -495,6 +499,7 @@ export class ChannelSessionService {
       // Match owner-chat stop semantics: queued steering belongs to the interrupted turn and a parked
       // ask_user_question must reject before PI aborts, otherwise `/stop` can leave prompt() hanging.
       ch.session.clearQueue();
+      clearDeliveredUserEchoes(ch);
       this.d.elicitation?.cancelForSession(ch.sessionId, 'aborted');
       await ch.session.abort().catch(() => { /* nothing in flight / already settling */ });
     } finally {

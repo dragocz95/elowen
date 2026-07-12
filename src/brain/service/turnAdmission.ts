@@ -35,8 +35,7 @@ export class TurnAdmission {
     if (this.durableId && this.persistText !== undefined) {
       return { durableId: this.durableId, persistText: this.persistText };
     }
-    const marker = this.input.images?.length ? `\n[📎 ${this.input.images.length}× image]` : '';
-    this.persistText = this.input.text + marker;
+    this.persistText = this.durableText();
     this.durableId = projectUserTurn(this.d.store, this.input.live.sessionId, this.persistText);
     return { durableId: this.durableId, persistText: this.persistText };
   }
@@ -48,22 +47,19 @@ export class TurnAdmission {
     this.publishAccepted();
   };
 
-  /** Mid-turn admission uses PI steer instead of prompt preflight, but shares the same projection,
-   * authoritative echo and rollback boundary. */
+  /** Mid-turn admission ends when PI accepts the queue entry, but acceptance is NOT delivery. Keep its
+   * durable/display identity on the mirrored queue item; the spawner projects and echoes it only when PI
+   * removes that item and emits the matching user message_start. */
   async steer(): Promise<void> {
-    this.prepare();
-    try {
-      await enqueueMirrored(
-        this.input.live,
-        'steer',
-        this.input.text,
-        this.input.images?.map((image) => ({ type: 'image' as const, data: image.data, mimeType: image.mimeType })),
-      );
-      this.publishAccepted();
-    } catch (error) {
-      this.rollbackPending();
-      throw error;
-    }
+    const persistText = this.durableText();
+    await enqueueMirrored(
+      this.input.live,
+      'steer',
+      this.input.text,
+      this.input.images?.map((image) => ({ type: 'image' as const, data: image.data, mimeType: image.mimeType })),
+      { persistText, displayText: this.input.display ?? persistText, publish: true },
+    );
+    this.markAdmitted();
   }
 
   /** Remove only a hidden user projection. Internal turns intentionally remain durable on failure,
@@ -88,6 +84,16 @@ export class TurnAdmission {
       text: this.input.display ?? persistText,
       durableId,
     });
+    this.markAdmitted();
+  }
+
+  private durableText(): string {
+    const marker = this.input.images?.length ? `\n[📎 ${this.input.images.length}× image]` : '';
+    return this.input.text + marker;
+  }
+
+  private markAdmitted(): void {
+    if (this.admitted) return;
     this.admitted = true;
     this.input.onAdmitted?.(this.input.live.sessionId);
   }

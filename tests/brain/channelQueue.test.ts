@@ -59,7 +59,7 @@ function setup(maxChannels?: number) {
 }
 
 describe('ChannelSessionService — mid-turn steering (Discord double-message)', () => {
-  it('a SAME-SENDER message arriving mid-turn is STEERED into the running turn (no new turn, persisted)', async () => {
+  it('a SAME-SENDER message arriving mid-turn stays queue-only until PI delivers it', async () => {
     const { store, registry, svc, channelId, sessionId, opts } = setup();
     await svc.send(opts(7), 'first'); // spawns + runs turn 1
     const live = registry.channelGet(channelId)!;
@@ -73,10 +73,13 @@ describe('ChannelSessionService — mid-turn steering (Discord double-message)',
     expect(ret).toBe('');                                               // steered, nothing to return
     expect(live.session.steer).toHaveBeenCalledWith('second', undefined); // injected into the running turn
     expect(live.session.prompt.mock.calls.length).toBe(before);         // no extra turn ran
-    // Persisted immediately (agent_end never re-persists user messages) so it reaches history.
-    expect(store.getMessages(sessionId).length).toBe(beforeMsgs + 1);
-    expect(store.getMessages(sessionId).at(-1)!.content).toContain('second');
-    expect(live.replay.snapshot().events).toContainEqual(expect.objectContaining({ type: 'user', text: 'second' }));
+    // Pending queue state is not conversation history. The spawner projects/journals the user marker only
+    // when PI emits message_start for this queued item.
+    expect(store.getMessages(sessionId).length).toBe(beforeMsgs);
+    expect(live.replay.snapshot().events).not.toContainEqual(expect.objectContaining({ type: 'user', text: 'second' }));
+    expect(live.queuedSteer).toEqual([
+      expect.objectContaining({ text: 'second', echo: expect.objectContaining({ persistText: 'second', publish: false }) }),
+    ]);
   });
 
   it('a DIFFERENT-sender mid-turn message is NOT steered (falls through to its own turn)', async () => {
@@ -314,7 +317,7 @@ describe('ChannelSessionService — mid-turn steering (Discord double-message)',
     const running = svc.send(opts, 'initial');
     await started;
     await svc.send(opts, 'steer while running');
-    expect(child.session.steer).toHaveBeenCalledWith('steer while running');
+    expect(child.session.steer).toHaveBeenCalledWith('steer while running', undefined);
     expect(registry.childrenOf('brain-parent')).toEqual([childId]); // short steer did not release the original run
 
     await svc.abort('subagent-live');

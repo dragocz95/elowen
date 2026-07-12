@@ -73,6 +73,17 @@ function fakeDeps() {
   return {
     /** Push a raw PI session event through everything subscribed via spawnLive (tests event mapping). */
     emit: (e: unknown) => listeners.forEach((l) => l(e)),
+    /** Deliver one queued steer in PI's real order: queue shrinks before the user message starts. */
+    deliverQueued: (text: string) => {
+      const index = session.__queue.indexOf(text);
+      if (index < 0) throw new Error(`queued test message not found: ${text}`);
+      session.__queue.splice(index, 1);
+      session.__emitQueue();
+      listeners.forEach((l) => l({
+        type: 'message_start',
+        message: { role: 'user', content: [{ type: 'text', text }], timestamp: Date.now() },
+      }));
+    },
     /** Raw DB handle so tests can backdate stored rows (the idle-rollover cutoff). */
     db,
     store: new BrainStore(db),
@@ -219,7 +230,7 @@ describe('BrainService', () => {
     expect(svc.status(1).model).toBe('ollama/kimi-k2.7-code');
   });
 
-  it('mid-turn: a message sent while the turn streams is STEERED into the running turn (persisted + echoed)', async () => {
+  it('mid-turn: a queued steer appears in history only when PI actually delivers it', async () => {
     const d = fakeDeps();
     const svc = new BrainService(d as never);
     const { sessionId } = await svc.start(1);
@@ -234,11 +245,23 @@ describe('BrainService', () => {
     // PI's transient steering backlog is reachable via the queue facade and the status boot seed …
     expect(svc.queueList(1).map((q) => q.text)).toEqual(['also check the logs']);
     expect(svc.status(1).queued.map((q) => q.text)).toEqual(['also check the logs']);
-    // … the daemon echoes the 'you' bubble live …
+    // Pending is not delivered: it must exist only in the queue strip, never as a premature chat bubble
+    // or durable history row (a reconnect must preserve that same distinction).
+    expect(seen.some((e) => e.type === 'user' && e.text === 'also check the logs')).toBe(false);
+    expect(d.store.getMessages(sessionId)).toHaveLength(0);
+
+    const order: string[] = [];
+    svc.subscribe(1, (event) => {
+      if (event.type === 'queue') order.push(`queue:${event.items.length}`);
+      if (event.type === 'user') order.push(`user:${event.text}`);
+    });
+    d.deliverQueued('also check the logs');
+
+    // AgentSession removes the chip first, then starts the user message. Elowen mirrors exactly that
+    // lifecycle: only now does the bubble/history row become real.
+    expect(order).toEqual(['queue:0', 'user:also check the logs']);
     expect(seen.some((e) => e.type === 'user' && e.text === 'also check the logs')).toBe(true);
-    // … and persists it immediately (agent_end never re-persists user messages).
-    const stored = d.store.getMessages(sessionId).map((m) => JSON.parse(m.content).content);
-    expect(stored).toContain('also check the logs');
+    expect(d.store.getMessages(sessionId).map((m) => JSON.parse(m.content).content)).toContain('also check the logs');
   });
 
   it('startSend admits a normal turn after the durable user event without waiting for model completion', async () => {
@@ -383,6 +406,10 @@ describe('BrainService', () => {
     await expect(operation.admitted).resolves.toBe('brain-1');
     await operation.completed;
     expect(d.session.steer).toHaveBeenCalledWith('queued steer', undefined);
+    expect(d.store.getMessages('brain-1')).toHaveLength(0);
+
+    d.deliverQueued('queued steer');
+    expect(d.store.getMessages('brain-1').filter((row) => row.role === 'user')).toHaveLength(1);
   });
 
   it('does not persist or echo a steer that PI rejects before admission', async () => {
@@ -402,17 +429,18 @@ describe('BrainService', () => {
     expect(svc.queueList(1)).toEqual([]);
   });
 
-  it('does not call PI when steer preprojection fails in the durable store', async () => {
+  it('does not touch the durable store while a steer is only pending in PI', async () => {
     const d = fakeDeps();
     const svc = new BrainService(d as never);
     await svc.start(1);
     d.session.isStreaming = true;
-    vi.spyOn(d.store, 'appendMessage').mockImplementationOnce(() => { throw new Error('store unavailable'); });
+    const append = vi.spyOn(d.store, 'appendMessage');
 
-    const operation = svc.startSend({ userId: 1, text: 'never reaches PI' });
-    await expect(operation.admitted).rejects.toThrow('store unavailable');
-    await expect(operation.completed).rejects.toThrow('store unavailable');
-    expect(d.session.steer).not.toHaveBeenCalled();
+    const operation = svc.startSend({ userId: 1, text: 'pending only' });
+    await expect(operation.admitted).resolves.toBe('brain-1');
+    await operation.completed;
+    expect(d.session.steer).toHaveBeenCalledWith('pending only', undefined);
+    expect(append).not.toHaveBeenCalled();
     expect(d.store.getMessages('brain-1')).toHaveLength(0);
   });
 
@@ -435,11 +463,15 @@ describe('BrainService', () => {
     await svc.send({ userId: 1, text: 'second' });        // steered into the running turn
     await svc.send({ userId: 1, text: 'third' });         // steered into the running turn
     expect(d.session.steer.mock.calls.map((c) => c[0])).toEqual(['second', 'third']);
+    expect(d.store.getMessages('brain-1').filter((m) => m.role === 'user')).toHaveLength(1); // only 'first'
+    expect(seen.filter((e) => e.type === 'user' && (e.text === 'second' || e.text === 'third'))).toHaveLength(0);
+    d.deliverQueued('second');
+    d.deliverQueued('third');
     release();
     await p1;
     // No follow-up prompt — only the original 'first' turn ran; the steered words rode it.
     expect(d.session.prompt).toHaveBeenCalledTimes(1);
-    // Both steered messages were persisted and surfaced live as their own 'you' echoes.
+    // Both steered messages became durable/surfaced only at their actual PI delivery boundary.
     const stored = d.store.getMessages('brain-1').filter((m) => m.role === 'user').map((m) => JSON.parse(m.content).content);
     expect(stored).toContain('second');
     expect(stored).toContain('third');
@@ -468,6 +500,23 @@ describe('BrainService', () => {
     await svc.send({ userId: 1, text: 'gamma' });
     await svc.abort(1);
     expect(svc.queueList(1)).toEqual([]);
+  });
+
+  it('queueRemove drops the pending echo so a removed prompt can never appear later', async () => {
+    const d = fakeDeps();
+    const svc = new BrainService(d as never);
+    await svc.start(1);
+    d.session.isStreaming = true;
+    const seen: { type: string; text?: string }[] = [];
+    svc.subscribe(1, (event) => seen.push(event as { type: string; text?: string }));
+
+    await svc.send({ userId: 1, text: 'remove me' });
+    expect(svc.queueRemove(1, '0')).toBe(true);
+    // Adversarial late PI callback after the explicit removal must not resurrect the removed prompt.
+    d.emit({ type: 'message_start', message: { role: 'user', content: [{ type: 'text', text: 'remove me' }] } });
+
+    expect(seen.some((event) => event.type === 'user' && event.text === 'remove me')).toBe(false);
+    expect(d.store.getMessages('brain-1')).toHaveLength(0);
   });
 
   it('queueRemove keeps the surviving messages\' image attachments (PI clearQueue would drop them)', async () => {
@@ -1997,10 +2046,13 @@ describe('sub-agent session tap + owner steering', () => {
     d.emit({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: 'partial ' } });
     d.emit({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: 'answer' } });
     d.emit({ type: 'tool_execution_start', toolName: 'read_file', toolCallId: 'read-1', args: { path: 'src/a.ts' } });
-    // A mid-run steer is already durable, but its replay marker must stay BETWEEN the assistant output
-    // emitted before it and the continuation emitted after it.
+    // A pending steer is queue state only. Its durable replay marker is created at PI's delivery boundary
+    // and must stay BETWEEN the assistant output emitted before it and the continuation emitted after it.
     d.session.isStreaming = true;
     await svc.send({ userId: 1, text: 'steer now' });
+    expect(d.store.getMessages('brain-1').some((row) => row.content.includes('steer now'))).toBe(false);
+    expect(d.session.__queue).toEqual(['steer now']);
+    d.deliverQueued('steer now');
     d.emit({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: 'continued after steer' } });
     d.session.isStreaming = false;
 
@@ -2186,9 +2238,12 @@ describe('sub-agent session tap + owner steering', () => {
     expect(d.session.prompt).toHaveBeenCalledTimes(1); // idle child → normal turn
     d.session.isStreaming = true; // the child is mid-turn now
     await svc.sendToSubagent(1, 'brain-ch-subagent-sub1', 'also check X');
-    expect(d.session.steer).toHaveBeenCalledWith('also check X'); // owner steering crosses the sender gate
+    expect(d.session.steer).toHaveBeenCalledWith('also check X', undefined); // owner steering crosses the sender gate
     expect(d.session.prompt).toHaveBeenCalledTimes(1); // no second unlocked turn
-    // Both paths use the daemon as the single user-echo authority. The CLI no longer adds its own copy.
+    expect(userEchoes).toEqual(['do the thing']);
+    expect(d.store.getMessages('brain-ch-subagent-sub1').filter((m) => m.role === 'user')).toHaveLength(1);
+    d.deliverQueued('also check X');
+    // Both paths use the daemon as the single user-echo authority, at their real PI delivery boundary.
     expect(userEchoes).toEqual(['do the thing', 'also check X']);
     expect(d.store.getMessages('brain-ch-subagent-sub1').filter((m) => m.role === 'user')).toHaveLength(2);
     off();
