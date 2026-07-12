@@ -1,4 +1,4 @@
-import { Container, visibleWidth } from '@earendil-works/pi-tui';
+import { Container, truncateToWidth, visibleWidth } from '@earendil-works/pi-tui';
 import type { Component, MarkdownTheme, TUI } from '@earendil-works/pi-tui';
 import { color } from './theme.js';
 import { StatusBar, CardPanel, SubagentPanel, spinnerFrame } from './components.js';
@@ -6,7 +6,7 @@ import { activeMention, CLIPBOARD_MENTION, imageMimeFor, rankMentionFiles, bumpM
 import { isSlashCommandDraft } from './commands.js';
 import { activeKeymap, createLeaderState } from './keys.js';
 import type { Keymap, KeybindAction } from './keys.js';
-import { formatDuration, formatK, padAnsi, terminalSafeAnsi } from '../ui/text.js';
+import { formatDuration, formatK, padAnsi, terminalInlineText, terminalSafeAnsi } from '../ui/text.js';
 import { ELOWEN_CLI_VERSION } from '../version.js';
 import { computeTelemetryRailBudget } from './layoutBudget.js';
 import type { LayoutBudget } from './layoutBudget.js';
@@ -28,6 +28,8 @@ import { AnimationController } from './animationController.js';
 import { InputRouter } from './inputRouter.js';
 import { OverlayController } from './overlayController.js';
 import { RenderShell } from './renderShell.js';
+import { goalElapsedSeconds } from './goalState.js';
+import type { GoalView } from './brainClient.js';
 
 export interface ShellInputDeps {
   cycleThinkingLevel(): void;
@@ -76,6 +78,20 @@ export function statusline(
  *  pushing the conversation around). Time-based frame so every render advances it. */
 function generatingChip(seconds: number): string {
   return `${color.accent(spinnerFrame())} ${color.faint(formatDuration(seconds))}`;
+}
+
+/** Active-goal status lives in the existing composer metadata row, so it consumes no layout height and
+ * remains stable on small terminals. StatusBar owns final width truncation; the title is bounded first so
+ * model/mode and the goal's progress/time remain the high-priority prefix. */
+function goalMetaChip(goal: GoalView | null, now = Date.now()): string {
+  if (goal?.status !== 'active') return '';
+  const title = truncateToWidth(terminalInlineText(goal.goal), 36, '…');
+  const budget = goal.turn_budget > 0 ? `${goal.turns_used}/${goal.turn_budget}` : `${goal.turns_used}`;
+  return [
+    ` ${color.faint('·')} ${color.accent('◆ Goal')}`,
+    color.faint(`${budget} · ${formatDuration(goalElapsedSeconds(goal, now))}`),
+    title ? `${color.faint('·')} ${color.dim(title)}` : '',
+  ].filter(Boolean).join(' ');
 }
 
 /** The bottom-bar hint line for the given chat state, rendered from the ACTIVE keymap — hints must
@@ -363,7 +379,7 @@ export function createChatComposition(
     startInput,
     () => Math.max(1, term.rows - TOP_RULE_ROWS),
     () => ({
-      modelLine: modelMetaLine(rt.workMode, rt.modelName, rt.thinkingLevelLabels[rt.thinkingLevel] ?? rt.thinkingLevel, undefined, rt.yoloOn, rt.fastOn) + leaderChip(),
+      modelLine: modelMetaLine(rt.workMode, rt.modelName, rt.thinkingLevelLabels[rt.thinkingLevel] ?? rt.thinkingLevel, undefined, rt.yoloOn, rt.fastOn) + goalMetaChip(rt.goal) + leaderChip(),
       hints: color.faint(startScreenHints(keymap)),
       tip: `${color.warning('●')} ${color.bold(color.text('Tip'))} ${color.dim('ask anything — try')} ${color.text('"What is the tech stack of this project?"')}`,
       notice: rt.notice,
@@ -443,6 +459,7 @@ export function createChatComposition(
     }
     const animateThinking = rt.transcript.thinking || !!rt.childView?.transcript.thinking;
     animations.updateThinking(animateThinking);
+    animations.updateGoal(rt.goal?.status === 'active' && !animateThinking);
     currentRunSeconds = thinkStart ? Math.max(0, Math.round((Date.now() - thinkStart) / 1000)) : 0;
     parentViewport.setState({
       transcript: rt.transcript,
@@ -482,7 +499,7 @@ export function createChatComposition(
       + (footerState === 'idle' && shellContext.pending ? `   ${color.warning('· ! output → next message')}` : ''));
     const projectLine = `${color.dim(cwdLabel)}${branchLabel ? color.faint(` · ${branchLabel}`) : ''}`;
     const line = statusline(rt.lineCfg ? { ...rt.lineCfg, showModel: false } : null, rt.usage, rt.modelName);
-    promptMeta.setLeft(modelMetaLine(rt.workMode, rt.modelName, rt.thinkingLevelLabels[rt.thinkingLevel] ?? rt.thinkingLevel, rt.transcript.thinking ? generatingChip(currentRunSeconds) : undefined, rt.yoloOn, rt.fastOn) + leaderChip());
+    promptMeta.setLeft(modelMetaLine(rt.workMode, rt.modelName, rt.thinkingLevelLabels[rt.thinkingLevel] ?? rt.thinkingLevel, rt.transcript.thinking ? generatingChip(currentRunSeconds) : undefined, rt.yoloOn, rt.fastOn) + goalMetaChip(rt.goal) + leaderChip());
     promptMeta.setRight(panelVisible() || !line ? projectLine : `${color.faint(line)} ${color.faint('·')} ${projectLine}`);
     // Drop the terminal plugin's pinned `bg-processes` card only while the dedicated right rail is
     // actually visible. Narrow terminals cannot fit that rail; retaining the compact card there avoids

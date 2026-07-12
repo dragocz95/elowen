@@ -4,6 +4,8 @@ import { ChatApplication } from '../../../src/cli/chat/chatApplication.js';
 import { installExitGuards, createShutdownCoordinator } from '../../../src/cli/chat/terminalLifecycle.js';
 import { SnapshotHydrator } from '../../../src/cli/chat/snapshotHydrator.js';
 import type { BrainClient } from '../../../src/cli/chat/brainClient.js';
+import { ChatState } from '../../../src/cli/chat/chatState.js';
+import { TranscriptModel } from '../../../src/brain/transcriptModel.js';
 
 describe('initial transcript hydration', () => {
   it('settles after 10 seconds when boot history ignores abort and fences a late response', async () => {
@@ -172,6 +174,36 @@ describe('createShutdownCoordinator', () => {
 });
 
 describe('ChatApplication shutdown ownership', () => {
+  it('hydrates the selected conversation goal through the fenced metadata path before rendering', async () => {
+    const activeGoal = {
+      session_id: 'brain-1', user_id: 1, status: 'active' as const, goal: 'Keep the goal visible',
+      draft: '', subgoals: '[]', turns_used: 2, turn_budget: 8, last_verdict: 'continue',
+      last_evidence: 'tests added', paused_reason: '',
+      created_at: '2026-07-12 10:00:00', updated_at: '2026-07-12 10:00:02',
+    };
+    const client = {
+      bindLifetime: vi.fn(),
+      status: vi.fn(async () => null),
+      mcpServers: vi.fn(async () => []),
+      rateLimits: vi.fn(async () => null),
+      goal: vi.fn(async () => activeGoal),
+    } as unknown as BrainClient;
+    const application = new ChatApplication({ base: 'http://unused', token: 'unused', client });
+    const state = new ChatState({ transcript: new TranscriptModel() });
+    const internals = application as unknown as {
+      state: ChatState;
+      resources: { client: BrainClient };
+      refreshMeta(): Promise<void>;
+    };
+    internals.state = state;
+    internals.resources = { client };
+
+    await internals.refreshMeta();
+
+    expect(client.goal).toHaveBeenCalledOnce();
+    expect(state.goal).toEqual(activeGoal);
+  });
+
   it('does not construct terminal owners after shutdown cancels an in-flight bootstrap', async () => {
     let enteredHistory!: () => void;
     let resolveHistory!: (history: []) => void;

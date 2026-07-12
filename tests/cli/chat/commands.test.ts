@@ -81,6 +81,56 @@ describe('sub-agent child submit echo', () => {
 });
 
 describe('application lifetime for local input work', () => {
+  it('shows a goal as active while the kickoff request is still running instead of sticking on starting', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'elowen-goal-command-'));
+    const priorHome = process.env.HOME;
+    process.env.HOME = home;
+    try {
+      let onSubmit: ((text: string) => void) | undefined;
+      const editor = {
+        addToHistory: vi.fn(), setText: vi.fn(),
+        set onSubmit(fn: (text: string) => void) { onSubmit = fn; },
+      };
+      const pending = deferred<{
+        session_id: string; user_id: number; status: 'done'; goal: string; draft: string; subgoals: string;
+        turns_used: number; turn_budget: number; last_verdict: string; last_evidence: string;
+        paused_reason: string; created_at: string; updated_at: string;
+      }>();
+      const render = vi.fn();
+      const state = new ChatState({ transcript: new TranscriptModel() });
+      wireSubmit(
+        state,
+        {
+          client: { setGoal: () => pending.promise }, editor,
+          shellContext: new LocalShellBuffer(), attachmentChips: {}, commandDefs: [], tui: {},
+          lifetime: new ChatApplicationLifetime<'metadata'>(),
+        } as never,
+        { render } as never,
+        { stream: {}, pickers: {} } as never,
+      );
+
+      onSubmit?.('/goal Ship the clean goal indicator');
+
+      expect(state.goal).toMatchObject({ status: 'active', goal: 'Ship the clean goal indicator' });
+      expect(state.notice).not.toMatch(/starting persistent goal/i);
+      pending.resolve({
+        session_id: 'brain-1', user_id: 1, status: 'done', goal: 'Ship the clean goal indicator',
+        draft: '', subgoals: '[]', turns_used: 1, turn_budget: 8, last_verdict: 'done',
+        last_evidence: 'verified', paused_reason: '',
+        created_at: '2026-07-12 10:00:00', updated_at: '2026-07-12 10:00:01',
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(state.goal?.status).toBe('done');
+      expect(state.notice).not.toMatch(/starting persistent goal/i);
+    } finally {
+      if (priorHome === undefined) delete process.env.HOME;
+      else process.env.HOME = priorHome;
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   it('kills publication from an unfinished !cmd after the chat stops', async () => {
     const home = mkdtempSync(join(tmpdir(), 'elowen-local-lifetime-'));
     const priorHome = process.env.HOME;

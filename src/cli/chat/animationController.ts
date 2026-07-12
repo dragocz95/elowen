@@ -4,6 +4,7 @@ export interface AnimationControllerOptions {
   render(reason: string): void;
   canAnimateMascot(): boolean;
   thinkingIntervalMs?: number;
+  goalIntervalMs?: number;
   mascotIntervalMs?: number;
 }
 
@@ -12,6 +13,7 @@ export interface AnimationControllerOptions {
 export class AnimationController {
   private readonly mascot = new MascotFloat();
   private thinkingTimer: ReturnType<typeof setTimeout> | null = null;
+  private goalTimer: ReturnType<typeof setTimeout> | null = null;
   private mascotTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly visualTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private stopped = false;
@@ -19,7 +21,8 @@ export class AnimationController {
   constructor(private readonly options: AnimationControllerOptions) {}
 
   get timerCount(): number {
-    return Number(this.thinkingTimer != null) + Number(this.mascotTimer != null) + this.visualTimers.size;
+    return Number(this.thinkingTimer != null) + Number(this.goalTimer != null)
+      + Number(this.mascotTimer != null) + this.visualTimers.size;
   }
 
   get mascotOffset(): number { return this.mascot.value(); }
@@ -35,6 +38,21 @@ export class AnimationController {
       this.thinkingTimer = null;
       if (!this.stopped) this.options.render('animation:thinking');
     }, this.options.thinkingIntervalMs ?? 250);
+  }
+
+  /** One elapsed-time tick per second while an active goal is otherwise visually idle. Thinking already
+   * refreshes the same row four times per second, so the composition disables this redundant lane then. */
+  updateGoal(active: boolean): void {
+    if (this.stopped || !active) {
+      if (this.goalTimer) clearTimeout(this.goalTimer);
+      this.goalTimer = null;
+      return;
+    }
+    if (this.goalTimer) return;
+    this.goalTimer = setTimeout(() => {
+      this.goalTimer = null;
+      if (!this.stopped) this.options.render('animation:goal');
+    }, this.options.goalIntervalMs ?? 1_000);
   }
 
   nudgeMascot(direction: number): void {
@@ -71,6 +89,8 @@ export class AnimationController {
   pause(): void {
     if (this.thinkingTimer) clearTimeout(this.thinkingTimer);
     this.thinkingTimer = null;
+    if (this.goalTimer) clearTimeout(this.goalTimer);
+    this.goalTimer = null;
     this.cancelMascot();
     for (const timer of this.visualTimers.values()) clearTimeout(timer);
     this.visualTimers.clear();
