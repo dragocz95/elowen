@@ -478,12 +478,33 @@ try {
   sendRaw(`\x1b[<0;${draggedThumb.x};${tailThumb.y}m`);
   await waitFor('scrollbar drag returns to tail', () => historyOffset(capture()) === 0);
 
-  await waitFor('mascot frame after visible-panel drag', () => liveFrames()
-    .some((frame) => frame.reasons?.some((reason) => reason.includes('animation:mascot'))), 4_000);
+  // At 120x30 the vertical rail deliberately spends its budget on Context/Limits/Project/LSP and omits
+  // the decorative mascot. The scrollbar drag above must therefore arm no hidden animation timer.
+  const omittedMascotFrames = liveFrames()
+    .filter((frame) => frame.reasons?.some((reason) => reason.includes('animation:mascot'))).length;
+  await sleep(300);
+  assert.equal(liveFrames()
+    .filter((frame) => frame.reasons?.some((reason) => reason.includes('animation:mascot'))).length,
+  omittedMascotFrames, 'a vertically omitted mascot must produce zero animation frames');
+
+  // Give the same rail enough vertical space for its complete mascot band, then nudge it through the
+  // real wheel route. This verifies both sides of the contract: no invisible timer, and cheap visible
+  // animation whose frames reuse settled transcript rows.
+  await resizeDiagnosed(120, 40, 'visible mascot budget', (plain) => plain.includes('Context'));
+  const mascotSequence = liveFrames().at(-1)?.sequence ?? 0;
+  sendHex('1b', '5b', '3c', '36', '34', '3b', '31', '30', '3b', '31', '30', '4d');
+  await waitFor('visible mascot wheel history chip', () => capture().includes('History +'));
+  await waitFor('mascot frame with complete visible rail', () => liveFrames()
+    .some((frame) => frame.sequence > mascotSequence
+      && frame.reasons?.some((reason) => reason.includes('animation:mascot'))), 4_000);
   const mascotFrames = liveFrames()
-    .filter((frame) => frame.reasons?.some((reason) => reason.includes('animation:mascot')));
+    .filter((frame) => frame.sequence > mascotSequence
+      && frame.reasons?.some((reason) => reason.includes('animation:mascot')));
   assert.ok(mascotFrames.every((frame) => frame.renderedTurns === 0),
     'mascot-only frames must reuse the prepared transcript without settled-turn rendering');
+  sendHex('1b', '5b', '3c', '36', '35', '3b', '31', '30', '3b', '31', '30', '4d');
+  await waitFor('visible mascot wheel returns to tail', () => historyOffset(capture()) === 0);
+  await resizeDiagnosed(120, 30, 'restore compact telemetry after mascot check', (plain) => plain.includes('Context'));
 
   sendKey('C-p');
   await waitFor('telemetry hidden before idle check', () => !capture().includes('Context'));
