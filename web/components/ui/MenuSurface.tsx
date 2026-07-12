@@ -2,7 +2,7 @@
 
 import { forwardRef, useEffect, useRef, type CSSProperties, type HTMLAttributes } from 'react';
 
-export const MenuSurface = forwardRef<HTMLDivElement, HTMLAttributes<HTMLDivElement> & {
+export const MenuSurface = forwardRef<HTMLDivElement, Omit<HTMLAttributes<HTMLDivElement>, 'autoFocus'> & {
   autoFocus?: 'first' | 'last' | false;
   onDismiss: (reason: 'escape' | 'tab') => void;
   style?: CSSProperties;
