@@ -8,13 +8,14 @@ import { activeKeymap, createLeaderState } from './keys.js';
 import type { Keymap, KeybindAction } from './keys.js';
 import { formatDuration, formatK, padAnsi, terminalSafeAnsi } from '../ui/text.js';
 import { ELOWEN_CLI_VERSION } from '../version.js';
+import { computeTelemetryRailBudget } from './layoutBudget.js';
 import type { LayoutBudget } from './layoutBudget.js';
 import type { TuiDiagnostics } from './tuiDiagnostics.js';
 import {
   ChatViewport,
 } from './chatViewport.js';
 import {
-  MainColumn, PANEL_GUTTER_COLUMNS, StartScreen, startScreenBox,
+  MainColumn, StartScreen, startScreenBox,
   TOP_RULE_ROWS, TopRule,
 } from './startScreen.js';
 import { TelemetryPanel } from './telemetryPanel.js';
@@ -195,15 +196,30 @@ export function createChatComposition(
   let panelWidth = 46;
   let inputRouter: InputRouter | null = null;
   let overlayController!: OverlayController;
+  let telemetry!: TelemetryPanel;
   /** An empty conversation renders the centered start screen instead of the chat stack + panel. */
   const hasMessages = (): boolean => rt.transcript.turnCount > 0;
-  const panelVisible = (): boolean => term.columns >= 104 && hasMessages() && !panelHandle?.isHidden();
-  const panelReserve = (): number => panelVisible() ? panelWidth + PANEL_GUTTER_COLUMNS : 0;
+  const panelRequested = (): boolean => hasMessages() && !panelHandle?.isHidden();
+  const telemetryGeometry = (requested = panelRequested()) => computeTelemetryRailBudget({
+    columns: term.columns,
+    rows: term.rows,
+    hasTranscript: hasMessages(),
+    requested,
+    preferredColumns: panelWidth,
+  });
+  const panelVisible = (): boolean => telemetryGeometry().columns > 0;
+  const panelReserve = (): number => {
+    const geometry = telemetryGeometry();
+    return geometry.columns + geometry.gutter;
+  };
   const chatWidth = (): number => Math.max(1, term.columns - panelReserve());
-  const panelLeftEdge = (): number => term.columns - panelWidth;
+  const panelLeftEdge = (): number => term.columns - telemetryGeometry().columns;
   const animations = new AnimationController({
     render,
-    canAnimateMascot: () => panelVisible() && !rt.transcript.thinking && !rt.childView?.transcript.thinking,
+    canAnimateMascot: () => panelVisible()
+      && telemetry.canRenderMascot(telemetryGeometry().columns)
+      && !rt.transcript.thinking
+      && !rt.childView?.transcript.thinking,
   });
   const cancelFloat = (): void => animations.cancelMascot();
   let currentBudget: LayoutBudget | null = null;
@@ -265,6 +281,8 @@ export function createChatComposition(
       },
     });
     currentBudget = budget;
+    telemetry.setMaxRows(budget.telemetryRows);
+    if (!telemetry.canRenderMascot(budget.telemetryColumns)) cancelFloat();
     activeInputComponent()?.setMaxRows?.(budget.sections.editor);
     preparedInput.editor = editorSlot.render(width);
     cardPanel.setMaxRows(budget.sections.cards);
@@ -324,7 +342,7 @@ export function createChatComposition(
   );
   const activeViewport = (): ChatViewport => rt.childView ? (childViewport ?? parentViewport) : parentViewport;
   let currentRunSeconds = 0;
-  const telemetry = new TelemetryPanel(() => ({
+  telemetry = new TelemetryPanel(() => ({
     usage: rt.usage,
     cwd: cwdLabel,
     branch: branchLabel,
@@ -367,15 +385,21 @@ export function createChatComposition(
 
   const showPanel = (hidden = false): void => {
     panelHandle?.hide();
-    panelHandle = overlayController.show('telemetry', telemetry, () => ({
-      anchor: 'top-right',
-      width: panelWidth,
-      maxHeight: Math.max(1, term.rows - TOP_RULE_ROWS),
-      margin: { top: TOP_RULE_ROWS, right: 0, bottom: 0, left: 0 },
-      // The panel only exists alongside a running conversation — the start screen hides it entirely.
-      visible: (width) => width >= 104 && hasMessages(),
-      nonCapturing: true,
-    }));
+    panelHandle = overlayController.show('telemetry', telemetry, () => {
+      const geometry = telemetryGeometry(true);
+      return {
+        anchor: 'top-right',
+        width: geometry.columns || panelWidth,
+        maxHeight: Math.max(1, geometry.rows),
+        margin: { top: TOP_RULE_ROWS, right: 0, bottom: 0, left: 0 },
+        // The panel only exists alongside a running conversation and enough vertical room for its core.
+        visible: (width, height) => computeTelemetryRailBudget({
+          columns: width, rows: height, hasTranscript: hasMessages(), requested: true,
+          preferredColumns: panelWidth,
+        }).columns > 0,
+        nonCapturing: true,
+      };
+    });
     panelHandle.setHidden(hidden);
   };
   const reshowPanel = (): void => overlayController.reflow();

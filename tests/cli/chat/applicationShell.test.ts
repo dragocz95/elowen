@@ -56,10 +56,10 @@ function nativeOverlayHandle(hide = vi.fn()): OverlayHandle {
 }
 
 /** Exercise PI's real overlay stack/focus transfer while replacing only terminal I/O and frame delivery. */
-function realOverlayTui(): TUI {
+function realOverlayTui(columns = 80, rows = 24): TUI {
   const terminal = {
-    columns: 80,
-    rows: 24,
+    columns,
+    rows,
     kittyProtocolActive: false,
     start: () => {},
     stop: () => {},
@@ -243,7 +243,7 @@ describe('chat application shell ownership', () => {
       input: { invalidate: () => {}, render: () => [] }, notice: '',
       budget: {
         compactFallback: false, terminalColumns: 40, terminalRows: 12, chatColumns: 40,
-        telemetryColumns: 0, telemetryGutter: 0, rootRows: 12,
+        telemetryColumns: 0, telemetryGutter: 0, telemetryRows: 0, rootRows: 12,
         sections: { header: 1, transcript: 5, cards: 0, subagents: 0, queue: 0, attachments: 0, editor: 3, status: 1, hints: 1 },
       },
     }));
@@ -764,6 +764,97 @@ describe('chat application shell ownership', () => {
     composition.stop();
     expect(h.tui.listeners.size).toBe(0);
     expect(h.tui.children).toHaveLength(1);
+  });
+
+  it.each([[104, 12], [104, 24]] as const)(
+    'prepares telemetry for real PI overlay geometry at %ix%i before PI applies maxHeight',
+    async (columns, rows) => {
+      const h = compositionHarness({ columns, rows, turns: 40 });
+      h.rt.usage = { tokens: 28_000, contextWindow: 372_000, percent: 8, totalTokens: 28_000, cost: 0.09 };
+      h.rt.rateLimits = {
+        provider: 'openai-codex', planType: 'pro', fetchedAt: 123, stale: false,
+        primary: { usedPercent: 23, windowMinutes: 300, resetsAt: 1_900_000_000 },
+        secondary: { usedPercent: 14, windowMinutes: 10_080, resetsAt: 1_900_500_000 },
+      };
+      h.rt.mcpList = [
+        { name: 'chrome-devtools', status: 'connected' },
+        { name: 'github', status: 'connected' },
+      ] as typeof h.rt.mcpList;
+      h.rt.lspEnabled = true;
+      h.rt.processes = [{
+        id: 'telemetry-process', command: 'npm run typecheck', cwd: '/tmp',
+        startedAt: new Date(0).toISOString(), running: true, exitCode: null,
+      }];
+      const composition = makeComposition(h);
+      composition.resume();
+      renderMountedRoot(h);
+
+      const overlay = h.tui.overlays.find((entry) => !entry.removed
+        && entry.options?.anchor === 'top-right');
+      expect(overlay?.options?.maxHeight).toBe(rows - TOP_RULE_ROWS);
+      const prepared = overlay!.component.render(overlay!.options!.width as number);
+      expect.soft(prepared).toHaveLength(rows - TOP_RULE_ROWS);
+
+      // Exercise PI 0.80.6's actual overlay compositor. It slices from the top after component.render(),
+      // so the component itself must prioritize useful rows before handing the frame to PI.
+      const tui = realOverlayTui(columns, rows);
+      tui.showOverlay(overlay!.component, overlay!.options);
+      const composited = (tui as unknown as {
+        compositeOverlays(lines: string[], width: number, height: number): string[];
+      }).compositeOverlays(Array.from({ length: rows }, () => ' '.repeat(columns)), columns, rows);
+      const plain = composited.map(terminalPlainText);
+      expect(composited).toHaveLength(rows);
+      expect(composited.every((line) => visibleWidth(line) <= columns)).toBe(true);
+      expect(plain.join('\n')).toContain('Context');
+      expect(plain.join('\n')).toContain('Project');
+      expect(plain.join('\n')).not.toMatch(/[\u2580\u2584]/); // mascot yields before functional telemetry
+      if (rows === 24) {
+        expect(plain.join('\n')).toContain('Limits');
+        expect(plain.join('\n')).toContain('Processes');
+        expect(plain.join('\n')).toContain('MCP');
+        expect(plain.join('\n')).toContain('LSP');
+      }
+      composition.stop();
+    },
+  );
+
+  it('does not arm mascot frames when the visible telemetry budget omits the mascot', async () => {
+    const h = compositionHarness({ columns: 104, rows: 24, turns: 40 });
+    const composition = makeComposition(h);
+    composition.resume();
+    await vi.runOnlyPendingTimersAsync();
+    renderMountedRoot(h);
+    const requests = h.tui.renderRequests.length;
+
+    composition.animations.nudgeMascot(1);
+
+    expect(composition.animations.timerCount).toBe(0);
+    await vi.advanceTimersByTimeAsync(500);
+    expect(h.tui.renderRequests).toHaveLength(requests);
+    composition.stop();
+  });
+
+  it('cancels an active mascot timer when resize omits the mascot or hides the rail', async () => {
+    const h = compositionHarness({ columns: 104, rows: 40, turns: 40 });
+    const composition = makeComposition(h);
+    composition.resume();
+    await vi.runOnlyPendingTimersAsync();
+    renderMountedRoot(h);
+    composition.animations.nudgeMascot(1);
+    expect(composition.animations.timerCount).toBe(1);
+
+    h.term.rows = 24;
+    renderMountedRoot(h);
+    expect(composition.animations.timerCount).toBe(0);
+
+    h.term.rows = 40;
+    renderMountedRoot(h);
+    composition.animations.nudgeMascot(1);
+    expect(composition.animations.timerCount).toBe(1);
+    h.term.columns = 96;
+    renderMountedRoot(h);
+    expect(composition.animations.timerCount).toBe(0);
+    composition.stop();
   });
 
   it('defers process-only invalidation while telemetry is invisible and shows the stored snapshot after grow', async () => {

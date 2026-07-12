@@ -1,10 +1,10 @@
 import { truncateToWidth, visibleWidth } from '@earendil-works/pi-tui';
+import { PANEL_GUTTER_COLUMNS, TOP_RULE_ROWS } from './startScreen.js';
 
 const RECOMMENDED_TUI_COLUMNS = 32;
 const RECOMMENDED_TUI_ROWS = 12;
 const TELEMETRY_MIN_COLUMNS = 36;
 const TELEMETRY_DEFAULT_COLUMNS = 46;
-const TELEMETRY_GUTTER_COLUMNS = 3;
 
 interface LayoutSectionRows {
   header: number;
@@ -46,8 +46,24 @@ export interface LayoutBudget {
   chatColumns: number;
   telemetryColumns: number;
   telemetryGutter: number;
+  /** Exact number of physical rows available to the top-right telemetry overlay below the root rule. */
+  telemetryRows: number;
   sections: LayoutSectionRows;
   rootRows: number;
+}
+
+export interface TelemetryRailBudgetInput {
+  columns: number;
+  rows: number;
+  hasTranscript: boolean;
+  requested: boolean;
+  preferredColumns?: number;
+}
+
+export interface TelemetryRailBudget {
+  columns: number;
+  gutter: number;
+  rows: number;
 }
 
 /** Final root invariant: truncate ANSI-aware lines, discard overflow rows, and pad the working area to a
@@ -72,17 +88,23 @@ export function constrainFrame(lines: string[], columns: number, terminalRows: n
 const rows = (value: number, cap = Number.POSITIVE_INFINITY): number =>
   Math.min(cap, Math.max(0, Math.floor(Number.isFinite(value) ? value : 0)));
 
-function horizontalBudget(input: LayoutBudgetInput, columns: number): Pick<LayoutBudget, 'chatColumns' | 'telemetryColumns' | 'telemetryGutter'> {
-  if (!input.telemetryRequested || !input.hasTranscript || columns < 104) {
-    return { chatColumns: columns, telemetryColumns: 0, telemetryGutter: 0 };
+/** One source of truth for whether the right rail physically exists. Width and height are decided
+ * together: a compact-height terminal must not lose chat width to an overlay that cannot show its
+ * minimum functional Context + Project presentation. */
+export function computeTelemetryRailBudget(input: TelemetryRailBudgetInput): TelemetryRailBudget {
+  const columns = rows(input.columns);
+  const terminalRows = rows(input.rows);
+  if (!input.requested || !input.hasTranscript || columns < 104 || terminalRows < RECOMMENDED_TUI_ROWS) {
+    return { columns: 0, gutter: 0, rows: 0 };
   }
-  const wanted = rows(input.telemetryColumns ?? TELEMETRY_DEFAULT_COLUMNS, 68);
-  const panel = Math.min(Math.max(TELEMETRY_MIN_COLUMNS, wanted), Math.max(0, columns - RECOMMENDED_TUI_COLUMNS - TELEMETRY_GUTTER_COLUMNS));
-  if (panel < TELEMETRY_MIN_COLUMNS) return { chatColumns: columns, telemetryColumns: 0, telemetryGutter: 0 };
+  const wanted = rows(input.preferredColumns ?? TELEMETRY_DEFAULT_COLUMNS, 68);
+  const panel = Math.min(Math.max(TELEMETRY_MIN_COLUMNS, wanted), Math.max(0, columns - RECOMMENDED_TUI_COLUMNS - PANEL_GUTTER_COLUMNS));
+  if (panel < TELEMETRY_MIN_COLUMNS) return { columns: 0, gutter: 0, rows: 0 };
   return {
-    chatColumns: columns - panel - TELEMETRY_GUTTER_COLUMNS,
-    telemetryColumns: panel,
-    telemetryGutter: TELEMETRY_GUTTER_COLUMNS,
+    columns: panel,
+    gutter: PANEL_GUTTER_COLUMNS,
+    // The root rule owns row zero. The overlay is anchored immediately below it.
+    rows: Math.max(0, terminalRows - TOP_RULE_ROWS),
   };
 }
 
@@ -92,8 +114,20 @@ function horizontalBudget(input: LayoutBudgetInput, columns: number): Pick<Layou
 export function computeLayoutBudget(input: LayoutBudgetInput): LayoutBudget {
   const terminalColumns = rows(input.columns);
   const terminalRows = rows(input.rows);
-  const horizontal = horizontalBudget(input, terminalColumns);
   const compactFallback = terminalColumns < RECOMMENDED_TUI_COLUMNS || terminalRows < RECOMMENDED_TUI_ROWS;
+  const rail = computeTelemetryRailBudget({
+    columns: terminalColumns,
+    rows: terminalRows,
+    hasTranscript: input.hasTranscript,
+    requested: input.telemetryRequested,
+    preferredColumns: input.telemetryColumns,
+  });
+  const horizontal = {
+    chatColumns: terminalColumns - rail.columns - rail.gutter,
+    telemetryColumns: rail.columns,
+    telemetryGutter: rail.gutter,
+    telemetryRows: rail.rows,
+  };
 
   if (terminalRows === 0) {
     return {
@@ -123,6 +157,7 @@ export function computeLayoutBudget(input: LayoutBudgetInput): LayoutBudget {
       chatColumns: terminalColumns,
       telemetryColumns: 0,
       telemetryGutter: 0,
+      telemetryRows: 0,
       sections,
       rootRows: Object.values(sections).reduce((sum, value) => sum + value, 0),
     };

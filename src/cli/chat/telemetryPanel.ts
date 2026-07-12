@@ -29,12 +29,40 @@ export interface TelemetryState {
 
 const PANEL_BAR_MARGIN = 2;
 const MCP_NAMES_SHOWN = 4;
+const PROCESS_ROWS_SHOWN = 5;
+
+type TelemetrySectionId = 'context' | 'limits' | 'processes' | 'project' | 'mcp' | 'lsp';
+
+interface TelemetrySection {
+  id: TelemetrySectionId;
+  rows: string[];
+  /** Smallest useful form of an optional section. Core sections are selected explicitly in full. */
+  minimumRows: number;
+}
+
+interface TelemetryRows {
+  rows: string[];
+  processTop: number;
+}
 
 export class TelemetryPanel implements Component {
   private readonly processPanel = new ProcessPanel();
   private processTop = -1;
+  private maxRows: number | null = null;
   constructor(private getState: () => TelemetryState) {}
   invalidate(): void { /* state driven */ }
+  /** PI's overlay `maxHeight` clips from the top after render. Accept the same central budget here so
+   * functional sections are selected before PI ever sees the frame instead of relying on that clip. */
+  setMaxRows(rows: number | null): void {
+    this.maxRows = rows == null ? null : Math.max(0, Math.floor(Number.isFinite(rows) ? rows : 0));
+  }
+  /** Cheap panel-local capability check used by the animation owner. Decorative movement is allowed
+   * only when the complete current functional rail and the full fixed mascot band both fit. */
+  canRenderMascot(width: number): boolean {
+    if (this.maxRows === 0) return false;
+    const functional = this.composeSections(this.sections(this.getState(), width));
+    return this.maxRows == null || panelLogo(width).length + 2 + functional.rows.length <= this.maxRows;
+  }
   isProcessHeaderRow(row: number): boolean {
     return this.processTop >= 0 && this.processPanel.isHeaderRow(row - this.processTop);
   }
@@ -44,34 +72,117 @@ export class TelemetryPanel implements Component {
   }
   render(width: number): string[] {
     const st = this.getState();
+    const sections = this.sections(st, width);
+    const full = this.composeSections(sections);
+    const mascotRows = ['', ...panelLogo(width, st.floatOffset), ''];
+    const showMascot = this.maxRows == null || mascotRows.length + full.rows.length <= this.maxRows;
+    const functional = showMascot ? full : this.compactSections(sections, this.maxRows ?? full.rows.length);
+    const rows = showMascot ? [...mascotRows, ...functional.rows] : [...functional.rows];
+    this.processTop = functional.processTop < 0
+      ? -1
+      : functional.processTop + (showMascot ? mascotRows.length : 0);
+    if (this.maxRows != null) {
+      rows.splice(this.maxRows);
+      while (rows.length < this.maxRows) rows.push('');
+    }
+    return rows.map((r) => color.panelBg(padAnsi(r, width)));
+  }
+
+  /** Build complete semantic sections with no separator rows. Keeping those boundaries explicit lets
+   * compact rendering preserve Context and Project, then add every enabled useful section before any
+   * extra detail. */
+  private sections(st: TelemetryState, width: number): TelemetrySection[] {
     const usage = st.usage;
     const pct = usage?.percent != null ? `${Math.round(usage.percent)}%` : '—';
     const tokens = usage ? `${formatK(usage.tokens ?? 0)} / ${formatK(usage.contextWindow)}` : '—';
-    const logo = panelLogo(width, st.floatOffset);
-    const rows = [
-      '',
-      ...logo,
-      '',
-      `  ${color.bold(color.text('Context'))}`,
-      `  ${color.text(tokens)} ${color.faint('tokens')} ${color.faint(`· ${pct}`)}${usage ? ` ${color.faint(`· $${usage.cost.toFixed(2)}`)}` : ''}`,
-      `${' '.repeat(PANEL_BAR_MARGIN)}${this.contextBar(usage?.percent ?? 0, width)}`,
+    this.processPanel.set(st.processes ?? []);
+    this.processPanel.setMaxRows(PROCESS_ROWS_SHOWN);
+    const processRows = this.processPanel.render(width);
+    const sections: TelemetrySection[] = [
+      {
+        id: 'context', minimumRows: 3,
+        rows: [
+          `  ${color.bold(color.text('Context'))}`,
+          `  ${color.text(tokens)} ${color.faint('tokens')} ${color.faint(`· ${pct}`)}${usage ? ` ${color.faint(`· $${usage.cost.toFixed(2)}`)}` : ''}`,
+          `${' '.repeat(PANEL_BAR_MARGIN)}${this.contextBar(usage?.percent ?? 0, width)}`,
+        ],
+      },
     ];
     const limitRows = this.rateLimitRows(st.rateLimits ?? null, width);
-    if (limitRows.length > 0) rows.push('', ...limitRows);
-    this.processPanel.set(st.processes ?? []);
-    this.processPanel.setMaxRows(5);
-    const processRows = this.processPanel.render(width);
-    this.processTop = processRows.length > 0 ? rows.length + 1 : -1;
-    if (processRows.length > 0) rows.push('', ...processRows);
-    rows.push(
-      '',
-      `  ${color.bold(color.text('Project'))}`,
-      `  ${color.text(truncateToWidth(inlineText(st.cwd), Math.max(1, width - 4), '…'))}`,
-      `  ${color.faint('branch')} ${color.accent(inlineText(st.branch || 'unknown'))}`,
-      ...this.mcpRows(st.mcp, width),
-      ...this.lspRows(st.lspEnabled),
-    );
-    return rows.map((r) => color.panelBg(padAnsi(r, width)));
+    if (limitRows.length > 0) {
+      sections.push({ id: 'limits', rows: limitRows, minimumRows: limitRows.length });
+    }
+    if (processRows.length > 0) {
+      sections.push({ id: 'processes', rows: processRows, minimumRows: 1 });
+    }
+    sections.push({
+      id: 'project', minimumRows: 3,
+      rows: [
+        `  ${color.bold(color.text('Project'))}`,
+        `  ${color.text(truncateToWidth(inlineText(st.cwd), Math.max(1, width - 4), '…'))}`,
+        `  ${color.faint('branch')} ${color.accent(inlineText(st.branch || 'unknown'))}`,
+      ],
+    });
+    const mcpRows = this.mcpRows(st.mcp, width);
+    if (mcpRows.length > 0) sections.push({ id: 'mcp', rows: mcpRows, minimumRows: 1 });
+    const lspRows = this.lspRows(st.lspEnabled);
+    if (lspRows.length > 0) sections.push({ id: 'lsp', rows: lspRows, minimumRows: lspRows.length });
+    return sections;
+  }
+
+  private composeSections(sections: TelemetrySection[], rowCounts?: Map<TelemetrySectionId, number>): TelemetryRows {
+    const rows: string[] = [];
+    let processTop = -1;
+    for (const section of sections) {
+      const count = rowCounts ? (rowCounts.get(section.id) ?? 0) : section.rows.length;
+      if (count <= 0) continue;
+      if (rows.length > 0) rows.push('');
+      if (section.id === 'processes') processTop = rows.length;
+      rows.push(...section.rows.slice(0, count));
+    }
+    return { rows, processTop };
+  }
+
+  /** Protect the two core sections first. Optional sections then receive a useful minimum in priority
+   * order; remaining rows expand their details. The returned rows already fit, so PI never decides which
+   * semantic tail to discard. */
+  private compactSections(sections: TelemetrySection[], maxRows: number): TelemetryRows {
+    const budget = Math.max(0, Math.floor(maxRows));
+    if (budget === 0) return { rows: [], processTop: -1 };
+    const counts = new Map<TelemetrySectionId, number>();
+    let used = 0;
+    const select = (section: TelemetrySection, count: number): boolean => {
+      const separator = counts.size > 0 ? 1 : 0;
+      if (used + separator + count > budget) return false;
+      counts.set(section.id, count);
+      used += separator + count;
+      return true;
+    };
+
+    for (const id of ['context', 'project'] as const) {
+      const section = sections.find((candidate) => candidate.id === id);
+      if (section) select(section, section.rows.length);
+    }
+    for (const id of ['limits', 'processes', 'mcp', 'lsp'] as const) {
+      const section = sections.find((candidate) => candidate.id === id);
+      if (section) select(section, section.minimumRows);
+    }
+    for (const id of ['limits', 'processes', 'mcp', 'lsp'] as const) {
+      const section = sections.find((candidate) => candidate.id === id);
+      const current = section ? counts.get(id) : undefined;
+      if (!section || current == null || current >= section.rows.length) continue;
+      const extra = Math.min(section.rows.length - current, budget - used);
+      counts.set(id, current + extra);
+      used += extra;
+    }
+
+    // A caller outside the central layout should still get deterministic bounded output at an absurdly
+    // small height. Production hides the rail before this path because both core sections cannot fit.
+    if (counts.size === 0) {
+      const context = sections.find((section) => section.id === 'context');
+      if (context) counts.set('context', Math.min(budget, context.rows.length));
+    }
+    return this.composeSections(sections, counts);
   }
 
   /** Two deliberately one-line subscription meters: enough to spot the 5h/weekly pressure and reset
@@ -134,7 +245,7 @@ export class TelemetryPanel implements Component {
     if (!mcp) return [];
     const connected = mcp.filter((s) => s.status === 'connected');
     if (connected.length === 0) return [];
-    const rows = ['', `  ${color.bold(color.text('MCP'))} ${color.faint(`${connected.length}/${mcp.length} active`)}`];
+    const rows = [`  ${color.bold(color.text('MCP'))} ${color.faint(`${connected.length}/${mcp.length} active`)}`];
     for (const server of connected.slice(0, MCP_NAMES_SHOWN)) {
       rows.push(`  ${color.success('●')} ${color.text(truncateToWidth(inlineText(server.name), Math.max(1, width - 6), '…'))}`);
     }
@@ -145,7 +256,6 @@ export class TelemetryPanel implements Component {
   private lspRows(lspEnabled: boolean | null): string[] {
     if (lspEnabled == null) return [];
     return [
-      '',
       `  ${color.bold(color.text('LSP'))}`,
       `  ${lspEnabled ? color.success('●') : color.faint('○')} ${color.text(lspEnabled ? 'Active' : 'Inactive')} ${color.faint('· /lsp toggles')}`,
     ];

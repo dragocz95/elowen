@@ -116,6 +116,28 @@ describe('central chat layout budget', () => {
     expect(wide.chatColumns).toBeGreaterThanOrEqual(32);
   });
 
+  it.each([[104, 12, 11], [104, 24, 23]] as const)(
+    'allocates one exact telemetry overlay row budget at %ix%i',
+    (columns, terminalRows, telemetryRows) => {
+      const budget = computeLayoutBudget({
+        columns, rows: terminalRows, hasTranscript: true, telemetryRequested: true,
+        desired: { editor: 3, queue: 0, attachments: 0, cards: 0, subagents: 0 },
+      });
+
+      expect(budget).toMatchObject({ telemetryColumns: 46, telemetryRows });
+      expect(budget.rootRows).toBe(terminalRows);
+    },
+  );
+
+  it('does not reserve a decorative rail below the minimum terminal height', () => {
+    const budget = computeLayoutBudget({
+      columns: 104, rows: 11, hasTranscript: true, telemetryRequested: true,
+      desired: { editor: 3, queue: 0, attachments: 0, cards: 0, subagents: 0 },
+    });
+
+    expect(budget).toMatchObject({ telemetryColumns: 0, telemetryGutter: 0, telemetryRows: 0 });
+  });
+
   it('allocates at most six editor content rows plus its two rules on a normal terminal', () => {
     const budget = computeLayoutBudget({
       columns: 120, rows: 40, hasTranscript: true, telemetryRequested: false,

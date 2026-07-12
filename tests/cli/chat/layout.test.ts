@@ -535,7 +535,9 @@ describe('chat layout components', () => {
         startedAt: new Date(Date.now() - 5_000).toISOString(), running: true, exitCode: null,
       }],
     }));
+    panel.setMaxRows(23);
     const rows = panel.render(46);
+    expect(rows).toHaveLength(23);
     const plain = rows.map((line) => line.replace(/\x1b\[[0-9;]*m/g, ''));
     const processRow = plain.findIndex((line) => line.includes('npm run build'));
     expect(processRow).toBeGreaterThan(0);
