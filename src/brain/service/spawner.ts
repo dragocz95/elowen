@@ -311,7 +311,7 @@ export class LiveSessionSpawner {
           // agent_end contains only the recovered assistant and must not emit a duplicate refresh.
           replay.publish({ type: 'compacted' });
           deferredCompacted = false;
-        } else if (!recovering && deferredCompacted) {
+        } else if (!recovering && deferredCompacted && !agentRunOpen) {
           replay.publish({ type: 'compacted' });
           deferredCompacted = false;
         }
