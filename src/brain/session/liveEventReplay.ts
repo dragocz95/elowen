@@ -95,7 +95,7 @@ export function appendReplayBrainEvent(events: BrainEvent[], event: BrainEvent, 
     replace = events.findLastIndex((entry) => entry.type === 'card' && entry.card.id === event.card.id);
   } else if (event.type === 'notice') {
     replace = events.findLastIndex((entry) => entry.type === 'notice' && entry.kind === event.kind);
-  } else if (event.type === 'queue' || event.type === 'step' || event.type === 'process') {
+  } else if (event.type === 'queue' || event.type === 'step' || event.type === 'process' || event.type === 'goal') {
     replace = events.findLastIndex((entry) => entry.type === event.type);
   }
   if (replace >= 0) {
@@ -213,7 +213,7 @@ export class LiveEventReplay {
       replace = this.entries.findLastIndex((entry) => entry.event.type === 'card' && entry.event.card.id === stamped.card.id);
     } else if (stamped.type === 'notice') {
       replace = this.entries.findLastIndex((entry) => entry.event.type === 'notice' && entry.event.kind === stamped.kind);
-    } else if (stamped.type === 'queue' || stamped.type === 'step' || stamped.type === 'process') {
+    } else if (stamped.type === 'queue' || stamped.type === 'step' || stamped.type === 'process' || stamped.type === 'goal') {
       replace = this.entries.findLastIndex((entry) => entry.event.type === stamped.type);
     }
     if (replace >= 0) this.replaceAt(replace, stamped, seq);

@@ -4,6 +4,24 @@ import { toolCommand, toolDetail, toolOutputView } from './messageView.js';
 import type { ToolOutputView } from './messageView.js';
 import type { ProcessInfo } from './processRegistry.js';
 
+/** Durable state of one autonomous goal. This is the shared HTTP/SSE contract; the store row and every
+ * client view use the same shape so lifecycle transitions cannot drift between polling and live streams. */
+export interface BrainGoalState {
+  session_id: string;
+  user_id: number;
+  status: 'active' | 'draft' | 'paused' | 'done';
+  goal: string;
+  draft: string;
+  subgoals: string;
+  turns_used: number;
+  turn_budget: number;
+  last_verdict: string;
+  last_evidence: string;
+  paused_reason: string;
+  created_at: string;
+  updated_at: string;
+}
+
 /** What a channel (web/terminal/Discord) receives from the brain. Stable regardless of the underlying
  *  PI event shape — the mapping lives in one place (`toBrainEvent`). This is the wire contract every
  *  chat client folds: `text`, `idle` and `error` are the minimum a client must handle; everything else
@@ -92,6 +110,10 @@ export type BrainEvent =
    *  admin's). A client renders the running ones as a killable panel; empty snapshot clears it. Safe to
    *  ignore (the panel just stays stale until the next status refresh). */
   | { type: 'process'; processes: ProcessInfo[] }
+  /** Authoritative autonomous-goal snapshot for this conversation. Emitted at every lifecycle mutation,
+   * including the initial active row before the long kickoff turn settles. `null` means the goal was
+   * cleared. Clients should replace their current goal state wholesale and may otherwise ignore it. */
+  | { type: 'goal'; goal: BrainGoalState | null }
   | { type: 'idle'; usage?: BrainUsage; model?: string }
   | { type: 'error'; message: string };
 

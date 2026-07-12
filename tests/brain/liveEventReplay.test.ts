@@ -57,6 +57,21 @@ describe('LiveEventReplay', () => {
     }]);
   });
 
+  it('keeps only the newest authoritative goal snapshot', () => {
+    const replay = new LiveEventReplay(new Set());
+    const active = {
+      session_id: 'brain-1', user_id: 1, status: 'active' as const, goal: 'Ship it', draft: '',
+      subgoals: '[]', turns_used: 0, turn_budget: 8, last_verdict: '', last_evidence: '',
+      paused_reason: '', created_at: '2026-07-12 10:00:00', updated_at: '2026-07-12 10:00:00',
+    };
+    replay.publish({ type: 'goal', goal: active });
+    replay.publish({ type: 'goal', goal: { ...active, status: 'done', turns_used: 1, last_verdict: 'done' } });
+
+    expect(replay.snapshot().events).toEqual([{
+      type: 'goal', goal: { ...active, status: 'done', turns_used: 1, last_verdict: 'done' },
+    }]);
+  });
+
   it('drops transient deltas at the durable agent_end boundary', () => {
     const replay = new LiveEventReplay(new Set());
     replay.beginRun();

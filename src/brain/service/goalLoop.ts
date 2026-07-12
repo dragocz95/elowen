@@ -26,6 +26,8 @@ interface GoalLoopDeps {
    *  goal too. In YOLO the loop keeps going past a spent per-window budget (up to {@link goalMaxTurns});
    *  otherwise it pauses at budget for the operator to confirm via `/goal resume`. */
   isYolo(userId: number, sessionId: string): boolean;
+  /** Publish the newest durable goal snapshot through the owning conversation's live replay stream. */
+  publishGoal(sessionId: string, goal: BrainGoalRow | null): void;
 }
 
 /** The autonomous goal loop: the /goal command surface (set/pause/resume/clear/subgoals/status), the
@@ -34,6 +36,21 @@ interface GoalLoopDeps {
 export class GoalLoopService {
   private goalTimers = new Map<string, ReturnType<typeof setTimeout>>();
   constructor(private d: GoalLoopDeps) {}
+
+  /** Persist and publish through one seam so no lifecycle branch can leave connected clients stale. */
+  private updateGoal(
+    sessionId: string,
+    patch: Parameters<BrainStore['updateGoal']>[1],
+  ): BrainGoalRow | undefined {
+    const goal = this.d.store.updateGoal(sessionId, patch);
+    if (goal) this.d.publishGoal(sessionId, goal);
+    return goal;
+  }
+
+  private clearGoal(sessionId: string): void {
+    this.d.store.clearGoal(sessionId);
+    this.d.publishGoal(sessionId, null);
+  }
 
   cancelGoalContinuation(sessionId: string): void {
     const timer = this.goalTimers.get(sessionId);
@@ -55,7 +72,7 @@ export class GoalLoopService {
     if (this.goalTimers.has(sessionId)) return;
     const row = this.d.store.getGoal(sessionId);
     if (row?.status === 'active') {
-      this.d.store.updateGoal(sessionId, { status: 'paused', last_verdict: 'interrupted', paused_reason: reason });
+      this.updateGoal(sessionId, { status: 'paused', last_verdict: 'interrupted', paused_reason: reason });
     }
   }
 
@@ -64,7 +81,7 @@ export class GoalLoopService {
    *  which is why start()/reconnect no longer has to guess whether a timer-less goal is a zombie. */
   reconcileGoalsOnBoot(): void {
     for (const row of this.d.store.activeGoals()) {
-      this.d.store.updateGoal(row.session_id, { status: 'paused', last_verdict: 'interrupted', paused_reason: 'interrupted (daemon restart)' });
+      this.updateGoal(row.session_id, { status: 'paused', last_verdict: 'interrupted', paused_reason: 'interrupted (daemon restart)' });
     }
   }
 
@@ -104,7 +121,7 @@ export class GoalLoopService {
           });
         })
         .catch((e) => {
-          this.d.store.updateGoal(sessionId, {
+          this.updateGoal(sessionId, {
             status: 'paused',
             last_verdict: 'error',
             paused_reason: e instanceof Error ? e.message : String(e),
@@ -143,6 +160,7 @@ export class GoalLoopService {
       status: opts?.draft ? 'draft' : 'active',
       turnBudget: opts?.turnBudget ?? this.d.defaultTurnBudget(),
     });
+    this.d.publishGoal(sessionId, row);
     if (!opts?.draft) {
       try {
         await this.d.send({
@@ -153,7 +171,7 @@ export class GoalLoopService {
           session,
         });
       } catch (e) {
-        this.d.store.updateGoal(sessionId, {
+        this.updateGoal(sessionId, {
           status: 'paused',
           last_verdict: 'error',
           paused_reason: e instanceof Error ? e.message : String(e),
@@ -168,13 +186,13 @@ export class GoalLoopService {
     const sessionId = session ? this.d.ownedUserSession(userId, session) : this.d.activeSessionId(userId);
     const row = this.d.store.getGoal(sessionId);
     if (!row || row.user_id !== userId) return null;
-    if (action === 'clear') { this.cancelGoalContinuation(sessionId); this.d.store.clearGoal(sessionId); return null; }
-    if (action === 'pause') { this.cancelGoalContinuation(sessionId); return this.d.store.updateGoal(sessionId, { status: 'paused', paused_reason: 'paused by user' }) ?? null; }
+    if (action === 'clear') { this.cancelGoalContinuation(sessionId); this.clearGoal(sessionId); return null; }
+    if (action === 'pause') { this.cancelGoalContinuation(sessionId); return this.updateGoal(sessionId, { status: 'paused', paused_reason: 'paused by user' }) ?? null; }
     // Resume: flipping status alone did nothing — no continuation was ever rescheduled, and a
     // budget-paused goal (turns_used === turn_budget) would re-pause on the very next judge. Give it a
     // fresh budget window when it hit the ceiling, then actually kick the autonomous loop back off.
     const exhausted = row.last_verdict === 'budget_reached' || row.turns_used >= row.turn_budget;
-    const resumed = this.d.store.updateGoal(sessionId, {
+    const resumed = this.updateGoal(sessionId, {
       status: 'active', paused_reason: '', ...(exhausted ? { turns_used: 0 } : {}),
     }) ?? null;
     if (resumed) this.scheduleGoalContinuation(userId, sessionId, 'build', 100);
@@ -196,7 +214,7 @@ export class GoalLoopService {
       if (!Number.isInteger(index) || index < 1 || index > items.length) throw new Error('unknown subgoal');
       items.splice(index - 1, 1);
     }
-    return this.d.store.updateGoal(sessionId, { subgoals: JSON.stringify(items) })!;
+    return this.updateGoal(sessionId, { subgoals: JSON.stringify(items) })!;
   }
 
   afterTurnGoalJudge(userId: number, sessionId: string, mode: 'build' | 'plan', internal?: { goalKickoff?: boolean; goalContinue?: boolean }): void {
@@ -216,7 +234,7 @@ export class GoalLoopService {
     // so by the time this judge runs the question is always resolved/timed-out.)
     const blocked = judgeGoalBlocked(assistantText);
     if (blocked.blocked) {
-      this.d.store.updateGoal(sessionId, { status: 'paused', turns_used: turns, subgoals: subgoalsJson, last_verdict: 'blocked', last_evidence: progress, paused_reason: blocked.reason });
+      this.updateGoal(sessionId, { status: 'paused', turns_used: turns, subgoals: subgoalsJson, last_verdict: 'blocked', last_evidence: progress, paused_reason: blocked.reason });
       return;
     }
 
@@ -224,7 +242,7 @@ export class GoalLoopService {
     // subgoals (an unresolved GOAL_DONE falls through to a normal continuation turn).
     const verdict = judgeGoalCompletion(assistantText);
     if (verdict.done && allSubgoalsDone(subgoals)) {
-      this.d.store.updateGoal(sessionId, { status: 'done', turns_used: turns, subgoals: subgoalsJson, last_verdict: 'done', last_evidence: verdict.evidence, paused_reason: '' });
+      this.updateGoal(sessionId, { status: 'done', turns_used: turns, subgoals: subgoalsJson, last_verdict: 'done', last_evidence: verdict.evidence, paused_reason: '' });
       return;
     }
 
@@ -237,20 +255,20 @@ export class GoalLoopService {
       const yolo = this.d.isYolo(userId, sessionId);
       const ceiling = Math.max(this.d.goalMaxTurns(), row.turn_budget);
       if (yolo && turns < ceiling) {
-        this.d.store.updateGoal(sessionId, { turns_used: turns, subgoals: subgoalsJson, last_verdict: 'continue', last_evidence: progress });
+        this.updateGoal(sessionId, { turns_used: turns, subgoals: subgoalsJson, last_verdict: 'continue', last_evidence: progress });
         if (!this.goalDriven(userId, sessionId)) return;
         this.scheduleGoalContinuation(userId, sessionId, mode, internal?.goalContinue ? 250 : 100);
         return;
       }
       const reason = yolo ? `safety ceiling reached (${turns}/${ceiling})` : `turn budget reached (${turns}/${row.turn_budget})`;
-      this.d.store.updateGoal(sessionId, { status: 'paused', turns_used: turns, subgoals: subgoalsJson, last_verdict: 'budget_reached', last_evidence: progress, paused_reason: reason });
+      this.updateGoal(sessionId, { status: 'paused', turns_used: turns, subgoals: subgoalsJson, last_verdict: 'budget_reached', last_evidence: progress, paused_reason: reason });
       return;
     }
 
     // If GOAL_DONE was emitted but subgoals are still open, tell the model next turn (via this verdict,
     // rendered into goalContinuePrompt) instead of silently looping to budget.
     const doneRejected = verdict.done; // reached here only when NOT allSubgoalsDone
-    this.d.store.updateGoal(sessionId, { turns_used: turns, subgoals: subgoalsJson, last_verdict: doneRejected ? 'done_pending_subgoals' : 'continue', last_evidence: progress });
+    this.updateGoal(sessionId, { turns_used: turns, subgoals: subgoalsJson, last_verdict: doneRejected ? 'done_pending_subgoals' : 'continue', last_evidence: progress });
     if (!this.goalDriven(userId, sessionId)) return;
     this.scheduleGoalContinuation(userId, sessionId, mode, internal?.goalContinue ? 250 : 100);
   }

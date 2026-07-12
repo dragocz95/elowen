@@ -6,6 +6,7 @@ import {
   type DelegatedExecutionScope,
 } from '../brain/delegatedScope.js';
 import type { TokenUsage, CostSource } from '../integrations/usage/types.js';
+import type { BrainGoalState } from '../brain/events.js';
 
 export interface BrainSessionRow {
   id: string; user_id: number; title: string; model: string; work_dir: string; parent_session_id: string | null;
@@ -29,11 +30,7 @@ export interface BrainRunMessage {
 export interface BrainSearchHit {
   sessionId: string; sessionTitle: string; role: string; snippet: string; ts: string;
 }
-export interface BrainGoalRow {
-  session_id: string; user_id: number; status: 'active' | 'draft' | 'paused' | 'done';
-  goal: string; draft: string; subgoals: string; turns_used: number; turn_budget: number;
-  last_verdict: string; last_evidence: string; paused_reason: string; created_at: string; updated_at: string;
-}
+export type BrainGoalRow = BrainGoalState;
 /** Validated latest UI state of one delegated child. The child id is a first-class indexed column in
  *  brain_subagent_runs; this JSON state contains only bounded display data. */
 interface BrainSubagentRunState {
@@ -699,6 +696,7 @@ export class BrainStore {
          last_verdict = '',
          last_evidence = '',
          paused_reason = '',
+         created_at = datetime('now'),
          updated_at = datetime('now')`
     ).run({
       session_id: input.sessionId,

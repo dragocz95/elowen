@@ -36,4 +36,17 @@ describe('BrainStore goals', () => {
     expect(store.getMessages('brain-1')).toHaveLength(1);
     expect(store.getGoal('brain-1')?.goal).toBe('Keep going');
   });
+
+  it('starts a replacement goal with a fresh elapsed-time origin', () => {
+    const db = openDb(':memory:');
+    const store = new BrainStore(db);
+    store.createSession({ id: 'brain-1', userId: 1, title: 'T', model: 'm' });
+    store.upsertGoal({ sessionId: 'brain-1', userId: 1, goal: 'Old goal' });
+    db.prepare("UPDATE brain_goals SET created_at = '2000-01-01 00:00:00' WHERE session_id = ?").run('brain-1');
+
+    const replacement = store.upsertGoal({ sessionId: 'brain-1', userId: 1, goal: 'New goal' });
+
+    expect(replacement.goal).toBe('New goal');
+    expect(replacement.created_at).not.toBe('2000-01-01 00:00:00');
+  });
 });

@@ -136,6 +136,9 @@ export class BrainService {
       defaultTurnBudget: () => this.limits().goalTurnBudget,
       goalMaxTurns: () => this.limits().goalMaxTurns,
       isYolo: (userId, sessionId) => this.permissionSvc.effectiveYolo(userId, this.sessions.get(sessionId)),
+      publishGoal: (sessionId, goal) => {
+        this.sessions.get(sessionId)?.replay.publish({ type: 'goal', goal });
+      },
     });
     this.spawner = new LiveSessionSpawner({
       get config() { return d.config; },

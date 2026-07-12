@@ -2,6 +2,12 @@ import { describe, it, expect, vi } from 'vitest';
 import { openDb } from '../../src/store/db.js';
 import { BrainStore } from '../../src/store/brainStore.js';
 import { GoalLoopService } from '../../src/brain/service/goalLoop.js';
+import type { BrainGoalRow } from '../../src/store/brainStore.js';
+
+function deferred<T = void>(): { promise: Promise<T>; resolve(value: T): void } {
+  let resolve!: (value: T) => void;
+  return { promise: new Promise<T>((done) => { resolve = done; }), resolve };
+}
 
 /** Build a GoalLoopService over a real in-memory store, with the drive/lifecycle deps stubbed. `yolo`
  *  and the budgets are injected so the budget-branch behaviour can be exercised directly. A goal is
@@ -25,11 +31,52 @@ function harness(opts: { yolo: boolean; turnBudget: number; turnsUsed: number; g
     defaultTurnBudget: () => 8,
     goalMaxTurns: () => opts.goalMaxTurns,
     isYolo: () => opts.yolo,
+    publishGoal: () => {},
   });
   return { store, loop };
 }
 
 describe('GoalLoopService — budget + YOLO', () => {
+  it('publishes an active goal before its kickoff turn settles, then publishes completion', async () => {
+    const store = new BrainStore(openDb(':memory:'));
+    store.createSession({ id: 'brain-1', userId: 1, title: 'T', model: 'm' });
+    const kickoff = deferred<void>();
+    const published: Array<BrainGoalRow | null> = [];
+    const loop = new GoalLoopService({
+      store,
+      ownedUserSession: (_userId, sessionId) => sessionId,
+      activeSessionId: () => 'brain-1',
+      attachedCount: () => 1,
+      ensureLive: async () => {},
+      start: async () => ({ sessionId: 'brain-1' }),
+      send: async () => kickoff.promise,
+      defaultTurnBudget: () => 8,
+      goalMaxTurns: () => 64,
+      isYolo: () => false,
+      publishGoal: (_sessionId, goal) => { published.push(goal); },
+    });
+
+    let requestSettled = false;
+    const request = loop.setGoal(1, 'Ship the goal indicator', {}, 'brain-1')
+      .then((goal) => { requestSettled = true; return goal; });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(requestSettled).toBe(false);
+    expect(published).toHaveLength(1);
+    expect(published[0]).toMatchObject({ status: 'active', goal: 'Ship the goal indicator' });
+
+    kickoff.resolve();
+    await request;
+    store.appendMessage({
+      id: 'a1', sessionId: 'brain-1', parentId: null, role: 'assistant',
+      content: { content: 'GOAL_DONE: indicator verified in tmux' },
+    });
+    loop.afterTurnGoalJudge(1, 'brain-1', 'build', { goalKickoff: true });
+
+    expect(published.at(-1)).toMatchObject({ status: 'done', last_verdict: 'done' });
+  });
+
   it('pauses at the turn budget for confirmation when NOT in YOLO', () => {
     const { store, loop } = harness({ yolo: false, turnBudget: 2, turnsUsed: 1, goalMaxTurns: 64 });
     loop.afterTurnGoalJudge(1, 'brain-1', 'build');
