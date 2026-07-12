@@ -342,10 +342,10 @@ export function TaskModal({ task, onClose, initialSchedule, initialMode, initial
             </Field>
             <div className="grid gap-4 md:grid-cols-2">
               <Field label={t.tasks.plannerExecutor} hint={t.help.taskPlannerExecutor}>
-                <BackendPicker value={pilotExec} onChange={setPilotExec} models={models} relayLabel={t.tasks.fromSettings} title={t.tasks.plannerExecutor} />
+                <BackendPicker value={pilotExec} onChange={setPilotExec} models={models} relayLabel={t.tasks.fromSettings} title={t.tasks.plannerExecutor} manageAriaLabel={t.tasks.plannerExecutor} />
               </Field>
               <Field label={t.tasks.overseerExecutor} hint={t.help.taskOverseerExecutor}>
-                <BackendPicker value={overseerExec} onChange={setOverseerExec} models={models} relayLabel={t.tasks.fromSettings} title={t.tasks.overseerExecutor} />
+                <BackendPicker value={overseerExec} onChange={setOverseerExec} models={models} relayLabel={t.tasks.fromSettings} title={t.tasks.overseerExecutor} manageAriaLabel={t.tasks.overseerExecutor} />
               </Field>
             </div>
             <Field label={t.tasks.fieldPrMode} hint={t.help.taskPrMode}>

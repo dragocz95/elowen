@@ -26,7 +26,7 @@ function WorkerGroupIcon({ provider }: { provider: ProviderId }) {
  *  A saved-but-unknown exec (e.g. a removed preset) stays visible as a pinned, selectable row so a
  *  save can never silently drop it. Keeps the { value, onChange, models, relayLabel, allowRelay }
  *  signature its settings call sites already use. */
-export function BackendPicker({ value, onChange, models, relayLabel, allowRelay = true, kind = 'all', title }: {
+export function BackendPicker({ value, onChange, models, relayLabel, allowRelay = true, kind = 'all', title, manageAriaLabel }: {
   value: string;
   onChange: (v: string) => void;
   models: { label: string; exec: string }[];
@@ -34,6 +34,7 @@ export function BackendPicker({ value, onChange, models, relayLabel, allowRelay 
   allowRelay?: boolean;
   kind?: 'all' | 'brain';
   title?: string;
+  manageAriaLabel?: string;
 }) {
   const { t } = useTranslation();
   const config = useConfig();
@@ -92,7 +93,7 @@ export function BackendPicker({ value, onChange, models, relayLabel, allowRelay 
         moreCount={0}
         onManage={() => setOpen(true)}
         manageLabel={t.managePicker.manage}
-        manageAriaLabel={title}
+        manageAriaLabel={manageAriaLabel}
       />
       <ManageSelectionModal
         title={title ?? t.settings.executor}
