@@ -517,7 +517,9 @@ function signalEvidence(signalCase, label, signalsDir) {
   const writes = readFileSync(writesPath, 'utf8');
   for (const [name, enabled, disabled] of [
     ['alternate screen', '\x1b[?1049h', '\x1b[?1049l'],
-    ['mouse reporting', '\x1b[?1006h', '\x1b[?1006l'],
+    ['mouse reporting 1000', '\x1b[?1000h', '\x1b[?1000l'],
+    ['mouse reporting 1002', '\x1b[?1002h', '\x1b[?1002l'],
+    ['mouse reporting 1006', '\x1b[?1006h', '\x1b[?1006l'],
   ]) {
     const enabledAt = writes.lastIndexOf(enabled);
     const disabledAt = writes.lastIndexOf(disabled);

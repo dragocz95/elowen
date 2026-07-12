@@ -115,7 +115,10 @@ async function runSignal(signal) {
     assert.equal(tty[1], tty[0], `${signal}: tty mode must restore exactly`);
     const writes = readFileSync(writeLog, 'utf8');
     assert.ok(writes.lastIndexOf('\x1b[?1049l') > writes.lastIndexOf('\x1b[?1049h'), `${signal}: alternate screen off last`);
-    assert.ok(writes.lastIndexOf('\x1b[?1006l') > writes.lastIndexOf('\x1b[?1006h'), `${signal}: mouse mode off last`);
+    for (const mode of ['1000', '1002', '1006']) {
+      assert.ok(writes.lastIndexOf(`\x1b[?${mode}l`) > writes.lastIndexOf(`\x1b[?${mode}h`),
+        `${signal}: mouse mode ${mode} off last`);
+    }
     const performance = analyzeFrameDiagnostics(readFrames(perfLog));
     const report = {
       passed: true, signal, metadata: collectMetadata(repo, cli, tmux.name), performance,

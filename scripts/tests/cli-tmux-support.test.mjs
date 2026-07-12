@@ -347,7 +347,8 @@ function writeRound(root, round, {
       const perf = join(caseDir, 'perf.jsonl');
       writeFileSync(restoredShell, `E2E ${signal} SHELL RESTORED\n`);
       writeFileSync(ttyState, 'tty-state\ntty-state\n');
-      writeFileSync(terminalWrites, '\x1b[?1049h\x1b[?1006hframe\x1b[?1006l\x1b[?1049l');
+      writeFileSync(terminalWrites,
+        '\x1b[?1049h\x1b[?1000h\x1b[?1002h\x1b[?1006hframe\x1b[?1006l\x1b[?1002l\x1b[?1000l\x1b[?1049l');
       writeFileSync(perf, [
         JSON.stringify({ type: 'lifecycle', action: 'start', at: 1 }),
         JSON.stringify(frame({ forced: true, reasons: ['lifecycle:start'], totalMs: 10 })),
@@ -509,7 +510,11 @@ test('aggregate analyzer revalidates contained signal capture, tty, shell, termi
       report.cases[0].evidence.before.plain = outside;
     }, /contain|capture|scenario|signal/iu],
     [(report) => writeFileSync(report.cases[0].evidence.terminalWrites,
-      '\x1b[?1049l\x1b[?1006l\x1b[?1049h\x1b[?1006h'), /alternate|mouse|terminal|order/iu],
+      '\x1b[?1049l\x1b[?1000l\x1b[?1002l\x1b[?1006l\x1b[?1049h\x1b[?1000h\x1b[?1002h\x1b[?1006h'),
+    /alternate|mouse|terminal|order/iu],
+    [(report) => writeFileSync(report.cases[0].evidence.terminalWrites,
+      '\x1b[?1049h\x1b[?1000h\x1b[?1002h\x1b[?1006hframe\x1b[?1006l\x1b[?1000l\x1b[?1049l'),
+    /1002|mouse|terminal|order/iu],
     [(report) => writeFileSync(report.cases[0].evidence.ttyState, 'before\nafter\n'), /tty|terminal state|restore/iu],
     [(report) => writeFileSync(report.cases[0].evidence.restoredShell, 'wrong shell\n'), /shell|marker|readable/iu],
     [(report) => writeFileSync(report.cases[0].evidence.perf, '{"type":"frame"'), /JSONL|perf|invalid/iu],
