@@ -554,13 +554,13 @@ try {
   assert.match(narrowPanelCapture, /5h[\s█░]+23%/u, '5h OAuth meter must fit at 36 columns');
   assert.match(narrowPanelCapture, /weekly[\s█░]+14%/u, 'weekly OAuth meter must fit at 36 columns');
 
-  // The clipped Todo summary is a real mouse target. Its ANSI underline communicates affordance; one
-  // click must expand the card through the same shell hit-testing used in production.
+  // The clipped Todo summary is a quiet terminal-style mouse target. It stays faint (no red/underline)
+  // while one click expands through the same shell hit-testing used in production.
   const todoLines = panelCapture.endsWith('\n') ? panelCapture.slice(0, -1).split('\n') : panelCapture.split('\n');
   const moreRow = todoLines.findIndex((line) => /\+\d+ more(?! lines)/.test(line)) + 1;
   assert.ok(moreRow > 0, 'clipped Todos must expose a +N more row');
   const moreAnsiLine = captureAnsi().split('\n')[moreRow - 1] ?? '';
-  assert.match(moreAnsiLine, /\x1b\[4m/, 'the +N more affordance must be underlined');
+  assert.doesNotMatch(moreAnsiLine, /\x1b\[4m/, 'the +N more affordance must match quiet terminal styling');
   sendRaw(`\x1b[<0;24;${moreRow}M`);
   sendRaw(`\x1b[<0;24;${moreRow}m`);
   await waitFor('expanded Todo tail', () => capture().includes('verify terminal cleanup'));
