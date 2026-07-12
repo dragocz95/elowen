@@ -247,8 +247,6 @@ export class SnapshotHydrator<E> {
     return 'failed';
   }
 
-  cancel(record: LaneRecord<E>): void { this.disposeRecord(record, 'cancelled'); }
-
   private cancelCurrent(record: LaneRecord<E>, reason: 'cancelled' | 'superseded'): void {
     if (this.records.get(record.lane) === record) this.disposeRecord(record, reason);
   }
@@ -285,7 +283,6 @@ export class SnapshotLaneLease<E> {
   constructor(private readonly owner: SnapshotHydrator<E>, private readonly record: LaneRecord<E>) {}
 
   get generation(): number { return this.record.generation; }
-  get lane(): SnapshotHydrationLane { return this.record.lane; }
   isCurrent(): boolean { return this.owner.current(this.record); }
   status(): SnapshotLaneStatus { return this.owner.status(this.record); }
   buffer(event: E): SnapshotBufferOutcome { return this.owner.buffer(this.record, event); }
@@ -293,5 +290,4 @@ export class SnapshotLaneLease<E> {
   hydrate<H>(fetchHistory: (signal: AbortSignal) => Promise<H>, handlers: SnapshotHydrationHandlers<H, E>): Promise<SnapshotHydrationOutcome> {
     return this.owner.hydrate(this.record, fetchHistory, handlers);
   }
-  cancel(): void { this.owner.cancel(this.record); }
 }

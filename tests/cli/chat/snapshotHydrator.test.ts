@@ -7,6 +7,7 @@ import {
 } from '../../../src/brain/session/serializedEventBuffer.js';
 import {
   SnapshotHydrator,
+  SnapshotLaneLease,
   SnapshotTimeoutError,
 } from '../../../src/cli/chat/snapshotHydrator.js';
 
@@ -75,6 +76,11 @@ describe('SerializedEventBuffer', () => {
 describe('SnapshotHydrator', () => {
   afterEach(() => {
     vi.useRealTimers();
+  });
+
+  it('keeps lease capabilities limited to hydration operations', () => {
+    expect(Object.getOwnPropertyDescriptor(SnapshotLaneLease.prototype, 'lane')).toBeUndefined();
+    expect(SnapshotLaneLease.prototype.cancel).toBeUndefined();
   });
 
   it('times out a transport that ignores abort, retains the last valid state and fences its late result', async () => {

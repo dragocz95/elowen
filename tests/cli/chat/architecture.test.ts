@@ -141,6 +141,10 @@ describe('chat production architecture boundaries', () => {
     expect(source('pickers.ts')).toMatch(/stream\.restartStream\(\)/);
   });
 
+  it('does not compute unused sub-agent status for keyboard navigation', () => {
+    expect(source('streamCoordinator.ts')).not.toMatch(/running:\s*s\.status\s*===\s*['"]running['"]/);
+  });
+
   it('keeps test-only routing and root inspection out of production APIs', () => {
     expect(source('inputRouter.ts')).not.toMatch(/customRoute|routeOrContext|constructor\(tui:\s*TUI,\s*route:/);
     expect(source('chatComposition.ts')).not.toMatch(

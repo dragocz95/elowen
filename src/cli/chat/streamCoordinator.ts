@@ -74,8 +74,8 @@ export class StreamCoordinator implements StreamCoordinatorPort {
     };
 
     const subagentStates = (): readonly SubagentPanelEntry[] => rt.transcript.subagents();
-    const subagentSessions = (): { sessionId: string; running: boolean }[] =>
-      subagentStates().map((s) => ({ sessionId: s.sessionId, running: s.status === 'running' }));
+    const subagentSessions = (): { sessionId: string }[] =>
+      subagentStates().map(({ sessionId }) => ({ sessionId }));
 
     const replayParent = (
       events: readonly BrainEvent[],
