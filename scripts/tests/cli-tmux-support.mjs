@@ -53,18 +53,33 @@ export function createTmuxServer(label = 'e2e') {
   };
 }
 
-export function readJsonLines(path) {
+export function readJsonLines(path, { live = false } = {}) {
+  let source;
   try {
-    return readFileSync(path, 'utf8').split('\n').filter(Boolean).flatMap((line) => {
-      try { return [JSON.parse(line)]; } catch { return []; }
-    });
-  } catch {
-    return [];
+    source = readFileSync(path, 'utf8');
+  } catch (error) {
+    if (live && error?.code === 'ENOENT') return [];
+    throw error;
   }
+  const terminated = source.endsWith('\n');
+  const lines = source.split('\n');
+  if (terminated) lines.pop();
+  const values = [];
+  for (const [index, line] of lines.entries()) {
+    if (!line) continue;
+    try {
+      values.push(JSON.parse(line));
+    } catch (error) {
+      const trailingPartial = live && !terminated && index === lines.length - 1;
+      if (trailingPartial) break;
+      throw new SyntaxError(`${path}:${index + 1}: invalid JSONL record (${error.message})`, { cause: error });
+    }
+  }
+  return values;
 }
 
-export function readFrames(path) {
-  return readJsonLines(path).filter((entry) => entry.type === 'frame');
+export function readFrames(path, options) {
+  return readJsonLines(path, options).filter((entry) => entry.type === 'frame');
 }
 
 export function latestFrame(frames, columns, rows, since = 0) {
@@ -95,12 +110,12 @@ export function captureState({
 }) {
   let stable = null;
   for (let attempt = 1; attempt <= 6; attempt++) {
-    const before = readFrames(perfLog).at(-1) ?? null;
+    const before = readFrames(perfLog, { live: true }).at(-1) ?? null;
     const stateBefore = terminalState(tmux, session);
     const plain = tmux.run(['capture-pane', '-p', '-t', session]);
     const ansi = tmux.run(['capture-pane', '-p', '-e', '-t', session]);
     const stateAfter = terminalState(tmux, session);
-    const after = readFrames(perfLog).at(-1) ?? null;
+    const after = readFrames(perfLog, { live: true }).at(-1) ?? null;
     const sameFrame = before && after && frameIdentity(before) === frameIdentity(after);
     const sameGeometry = stateBefore.columns === stateAfter.columns && stateBefore.rows === stateAfter.rows
       && after?.terminal?.columns === stateAfter.columns && after?.terminal?.rows === stateAfter.rows;

@@ -104,6 +104,10 @@ function requests(path) {
   return entries().filter((entry) => entry.kind === 'request' && entry.path === path);
 }
 
+function liveFrames() {
+  return readFrames(perfLog, { live: true });
+}
+
 async function waitFor(label, predicate, timeoutMs = 10_000) {
   const deadline = Date.now() + timeoutMs;
   let lastError;
@@ -156,7 +160,7 @@ async function resizeDiagnosed(columns, rows, label, predicate = () => true) {
   const requestedAt = Date.now();
   resize(columns, rows);
   await waitFor(`${label} diagnosed ${columns}x${rows}`, () => {
-    const diagnosed = latestFrame(readFrames(perfLog), columns, rows, requestedAt);
+    const diagnosed = latestFrame(liveFrames(), columns, rows, requestedAt);
     const plain = capture();
     return diagnosed && paneLines(plain).length === rows && predicate(plain, diagnosed);
   });
@@ -267,7 +271,7 @@ try {
     sendLiteral(marker);
     const expectedRows = Math.min(line, 6) + 2;
     const diagnosed = await waitFor(`multiline row ${line}`, () => {
-      const current = latestFrame(readFrames(perfLog), size.columns, size.rows);
+      const current = latestFrame(liveFrames(), size.columns, size.rows);
       return capture().includes(marker) && current?.sections?.editor === expectedRows ? current : null;
     });
     composerGrowth.push({ line, editorRows: diagnosed.sections.editor, contentRows: diagnosed.sections.editor - 2 });
@@ -472,9 +476,9 @@ try {
   sendRaw(`\x1b[<0;${draggedThumb.x};${tailThumb.y}m`);
   await waitFor('scrollbar drag returns to tail', () => historyOffset(capture()) === 0);
 
-  await waitFor('mascot frame after visible-panel drag', () => readFrames(perfLog)
+  await waitFor('mascot frame after visible-panel drag', () => liveFrames()
     .some((frame) => frame.reasons?.some((reason) => reason.includes('animation:mascot'))), 4_000);
-  const mascotFrames = readFrames(perfLog)
+  const mascotFrames = liveFrames()
     .filter((frame) => frame.reasons?.some((reason) => reason.includes('animation:mascot')));
   assert.ok(mascotFrames.every((frame) => frame.renderedTurns === 0),
     'mascot-only frames must reuse the prepared transcript without settled-turn rendering');
@@ -482,18 +486,18 @@ try {
   sendKey('C-p');
   await waitFor('telemetry hidden before idle check', () => !capture().includes('Context'));
   await sleep(120);
-  const hiddenIdleStart = readFrames(perfLog).length;
+  const hiddenIdleStart = liveFrames().length;
   await sleep(800);
-  assert.equal(readFrames(perfLog).length, hiddenIdleStart,
+  assert.equal(liveFrames().length, hiddenIdleStart,
     'hidden telemetry must produce zero decorative/idle frames for >=750ms');
   saveCapture('10b-hidden-panel-idle-zero');
   sendKey('C-p');
   await waitFor('telemetry shown after idle check', () => capture().includes('Context'));
   await resizeDiagnosed(103, 24, 'narrow panel cancellation', (plain) => !plain.includes('Context'));
   await sleep(120);
-  const narrowIdleStart = readFrames(perfLog).length;
+  const narrowIdleStart = liveFrames().length;
   await sleep(800);
-  assert.equal(readFrames(perfLog).length, narrowIdleStart,
+  assert.equal(liveFrames().length, narrowIdleStart,
     '103-column hidden-by-threshold panel must own no idle timer');
   saveCapture('10c-narrow-panel-idle-zero');
   await resizeDiagnosed(120, 30, 'restore panel after idle checks', (plain) => plain.includes('Context'));

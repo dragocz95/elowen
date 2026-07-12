@@ -90,6 +90,10 @@ function requests(path) {
   return entries().filter((entry) => entry.kind === 'request' && entry.path === path);
 }
 
+function liveFrames() {
+  return readFrames(perfLog, { live: true });
+}
+
 async function waitFor(label, predicate, timeoutMs = 10_000) {
   const deadline = Date.now() + timeoutMs;
   let lastError;
@@ -186,7 +190,7 @@ try {
   const short = saveActive('01-one-short-message', { expectScrollbar: false });
   assert.equal(short.frame.maxScrollOffset, 0, 'one short exchange must stay below transcript overflow');
 
-  const burstFramesBefore = readFrames(perfLog).length;
+  const burstFramesBefore = liveFrames().length;
   sendLiteral('E2E CONTROL BURST');
   sendKey('Enter');
   await waitFor('rapid tool burst completion', () => capture().includes('E2E CONTROL BURST COMPLETE'));
@@ -196,7 +200,7 @@ try {
   const burst = saveActive('02-rapid-tool-control-burst', { expectScrollbar: true });
   assert.match(burst.plain, /E2E CONTROL BURST COMPLETE/, 'assistant tail must remain visible after rapid tool results');
   assert.doesNotMatch(burst.ansi, /\t|\r|\x1b\]0;unsafe-title|\x1b\[2J/, 'tool payload controls must not escape into the terminal frame');
-  const burstFrames = readFrames(perfLog).slice(burstFramesBefore);
+  const burstFrames = liveFrames().slice(burstFramesBefore);
   assert.ok(burstFrames.length <= 12, `42-event burst must coalesce into <=12 frames (got ${burstFrames.length})`);
   assert.ok(burstFrames.some((frame) => (frame.reasons?.length ?? 0) >= 3),
     'rapid tool events must coalesce multiple render reasons into one frame');
@@ -212,7 +216,7 @@ try {
   await waitFor('compact stable frame', () => capture().includes('Build') && paneLines(capture()).length === 15);
   const restoreRequestedAt = Date.now();
   tmux(['resize-window', '-t', session, '-x', String(size.columns), '-y', String(size.rows)]);
-  await waitFor('restored frame', () => latestFrame(readFrames(perfLog), size.columns, size.rows, restoreRequestedAt)
+  await waitFor('restored frame', () => latestFrame(liveFrames(), size.columns, size.rows, restoreRequestedAt)
     && capture().includes('E2E CONTROL BURST COMPLETE') && paneLines(capture()).length === size.rows);
   saveActive('04-restored-after-resize', {
     expectScrollbar: true, forbiddenMarkers: ['Terminal too small'],
@@ -234,11 +238,11 @@ try {
   const reopenedHealthy = saveActive('06-reopened-send-healthy', { expectScrollbar: true });
   assert.match(reopenedHealthy.plain, /E2E REOPEN HEALTHY/, 'reopened editor must send and render a new response');
 
-  await waitFor('post-idle metadata settled', () => readFrames(perfLog).some((frame) => frame.pid === reopenedHealthy.frame.pid
+  await waitFor('post-idle metadata settled', () => liveFrames().some((frame) => frame.pid === reopenedHealthy.frame.pid
     && frame.reasons?.includes('metadata:rate-limits') && frame.at >= reopenedHealthy.frame.at));
-  const idleFrames = readFrames(perfLog).length;
+  const idleFrames = liveFrames().length;
   await sleep(850);
-  assert.equal(readFrames(perfLog).length, idleFrames, 'hidden-panel idle CLI must render zero frames for >=750ms');
+  assert.equal(liveFrames().length, idleFrames, 'hidden-panel idle CLI must render zero frames for >=750ms');
 
   sendKey('PageUp');
   await waitFor('reopened PageUp', () => capture().includes('History +'));

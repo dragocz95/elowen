@@ -12,6 +12,8 @@ import {
   createArtifactDir,
   decodeLastOsc52,
   historyOffset,
+  readFrames,
+  readJsonLines,
   resolveArtifactDir,
   summarizeFrameDiagnostics,
 } from './cli-tmux-support.mjs';
@@ -149,6 +151,37 @@ test('OSC-52 decoder and history parser expose real terminal evidence', () => {
 
 test('artifact root is stable and scenario-scoped', () => {
   assert.equal(resolveArtifactDir('/tmp/elowen-e2e', 'short'), '/tmp/elowen-e2e/short');
+});
+
+test('strict JSONL reads reject malformed complete and truncated final records', () => {
+  const root = mkdtempSync(join(tmpdir(), 'elowen-tmux-jsonl-strict-'));
+  const path = join(root, 'perf.jsonl');
+  try {
+    writeFileSync(path, '{"type":"frame"}\nnot-json\n');
+    assert.throws(() => readJsonLines(path), /perf\.jsonl:2|line 2|JSONL/iu);
+
+    writeFileSync(path, '{"type":"frame"}\n{"type":"frame"');
+    assert.throws(() => readFrames(path), /perf\.jsonl:2|line 2|JSONL/iu);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('live JSONL reads tolerate only a missing file or the current trailing partial record', () => {
+  const root = mkdtempSync(join(tmpdir(), 'elowen-tmux-jsonl-live-'));
+  const missing = join(root, 'missing.jsonl');
+  const path = join(root, 'perf.jsonl');
+  try {
+    assert.deepEqual(readJsonLines(missing, { live: true }), []);
+
+    writeFileSync(path, '{"type":"frame","sequence":1}\n{"type":"frame"');
+    assert.deepEqual(readFrames(path, { live: true }).map((entry) => entry.sequence), [1]);
+
+    writeFileSync(path, '{"type":"frame","sequence":1}\nnot-json\n{"type":"frame"');
+    assert.throws(() => readJsonLines(path, { live: true }), /perf\.jsonl:2|line 2|JSONL/iu);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test('configured artifact scenarios reject stale non-empty directories', () => {
