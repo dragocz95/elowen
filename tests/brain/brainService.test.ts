@@ -915,6 +915,27 @@ describe('BrainService', () => {
     expect(seen.filter((event) => event.type === 'compacted')).toHaveLength(1);
   });
 
+  it('defers a mid-run overflow-classified compaction refresh until agent_end rewrites the store', async () => {
+    const d = fakeDeps();
+    const svc = new BrainService(d as never);
+    await svc.start(1);
+    const seen: { type: string }[] = [];
+    svc.subscribe(1, (event) => seen.push(event as { type: string }));
+
+    d.emit({ type: 'agent_start' });
+    d.emit({
+      type: 'compaction_end', reason: 'overflow', result: { summary: 'mid-run summary' },
+      aborted: false, willRetry: true,
+    });
+    expect(seen.filter((event) => event.type === 'compacted')).toHaveLength(0);
+
+    d.emit({
+      type: 'agent_end', willRetry: false,
+      messages: [{ role: 'assistant', content: 'turn completed after compaction', stopReason: 'stop' }],
+    });
+    expect(seen.filter((event) => event.type === 'compacted')).toHaveLength(1);
+  });
+
   it('turns every exhausted PI-retryable provider failure into an actionable final error', async () => {
     const d = fakeDeps();
     const svc = new BrainService(d as never);

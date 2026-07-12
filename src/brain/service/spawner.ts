@@ -305,7 +305,7 @@ export class LiveSessionSpawner {
         }
         // A previous successful between-turn compaction waited for this overflow outcome. On failure the
         // factory just persisted the deferred run and applied that pending rewrite; refetch only now.
-        if (recovering && deferredCompacted) {
+        if (recovering && deferredCompacted && !agentRunOpen) {
           // The factory listener just persisted the deferred current-run prefix and atomically replaced
           // its earlier threshold summary with this overflow summary. Refetch now; the retry's later
           // agent_end contains only the recovered assistant and must not emit a duplicate refresh.
