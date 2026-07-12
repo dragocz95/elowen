@@ -587,13 +587,13 @@ try {
   sendRaw(`\x1b[<0;${draggedThumb.x};${tailThumb.y}m`);
   await waitFor('scrollbar drag returns to tail', () => historyOffset(capture()) === 0);
 
-  // Full Todo mode has its own truthful reverse transition. The underlined control must restore the
+  // Full Todo mode has its own truthful reverse transition. The quiet terminal-style control restores the
   // representative four-item preview; clicking the header would hide the entire card instead.
   const expandedTodoLines = capture().split('\n');
   const showLessRow = expandedTodoLines.findIndex((line) => line.includes('Show less')) + 1;
   assert.ok(showLessRow > 0, 'expanded Todos must expose a Show less row');
-  assert.match(captureAnsi().split('\n')[showLessRow - 1] ?? '', /\x1b\[4m/,
-    'the Todo Show less affordance must be underlined');
+  assert.doesNotMatch(captureAnsi().split('\n')[showLessRow - 1] ?? '', /\x1b\[4m/,
+    'the Todo Show less affordance must stay quiet like terminal output');
   sendRaw(`\x1b[<0;24;${showLessRow}M`);
   sendRaw(`\x1b[<0;24;${showLessRow}m`);
   await waitFor('compacted Todo preview', () => /\+\d+ more(?! lines)/u.test(capture())
