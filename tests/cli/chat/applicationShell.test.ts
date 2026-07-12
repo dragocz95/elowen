@@ -816,6 +816,29 @@ describe('chat application shell ownership', () => {
     composition.dispose();
   });
 
+  it('keeps the active-goal marker visible in a bounded 40x15 frame', async () => {
+    vi.setSystemTime(new Date('2026-07-12T10:00:12.000Z'));
+    const h = compositionHarness({ columns: 40, rows: 15, turns: 4 });
+    h.rt.goal = {
+      session_id: 'brain-1', user_id: 1, status: 'active', goal: 'A deliberately long autonomous goal title',
+      draft: '', subgoals: '[]', turns_used: 2, turn_budget: 8, last_verdict: 'continue',
+      last_evidence: '', paused_reason: '',
+      created_at: '2026-07-12 10:00:00', updated_at: '2026-07-12 10:00:00',
+    };
+    const composition = makeComposition(h);
+    composition.resume();
+    composition.renderForced('test:narrow-active-goal');
+    await vi.runOnlyPendingTimersAsync();
+
+    const frame = renderMountedRoot(h);
+    const plain = frame.map(terminalPlainText);
+    expect(frame).toHaveLength(15);
+    expect(frame.every((line) => visibleWidth(line) === 40)).toBe(true);
+    expect(plain.filter((line) => line.includes('Goal'))).toHaveLength(1);
+    expect(plain.join('\n')).toContain('2/8');
+    composition.dispose();
+  });
+
   it.each([[104, 12], [104, 24]] as const)(
     'prepares telemetry for real PI overlay geometry at %ix%i before PI applies maxHeight',
     async (columns, rows) => {

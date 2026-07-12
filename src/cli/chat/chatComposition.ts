@@ -83,15 +83,14 @@ function generatingChip(seconds: number): string {
 /** Active-goal status lives in the existing composer metadata row, so it consumes no layout height and
  * remains stable on small terminals. StatusBar owns final width truncation; the title is bounded first so
  * model/mode and the goal's progress/time remain the high-priority prefix. */
-function goalMetaChip(goal: GoalView | null, now = Date.now()): string {
-  if (goal?.status !== 'active') return '';
+function goalMeta(goal: GoalView | null, now = Date.now()): { primary: string; suffix: string } | null {
+  if (goal?.status !== 'active') return null;
   const title = truncateToWidth(terminalInlineText(goal.goal), 36, '…');
   const budget = goal.turn_budget > 0 ? `${goal.turns_used}/${goal.turn_budget}` : `${goal.turns_used}`;
-  return [
-    ` ${color.faint('·')} ${color.accent('◆ Goal')}`,
-    color.faint(`${budget} · ${formatDuration(goalElapsedSeconds(goal, now))}`),
-    title ? `${color.faint('·')} ${color.dim(title)}` : '',
-  ].filter(Boolean).join(' ');
+  return {
+    primary: `${color.accent('◆ Goal')} ${color.faint(`${budget} · ${formatDuration(goalElapsedSeconds(goal, now))}`)}`,
+    suffix: title ? `${color.faint('·')} ${color.dim(title)}` : '',
+  };
 }
 
 /** The bottom-bar hint line for the given chat state, rendered from the ACTIVE keymap — hints must
@@ -136,7 +135,15 @@ export function interruptPress(armedUntil: number, now: number, windowMs = INTER
     : { armedUntil: now + windowMs, abort: false };
 }
 
-function modelMetaLine(mode: BrainWorkMode, modelName: string, thinkingLevel: string, generating?: string, yolo?: boolean, fast?: boolean): string {
+function modelMetaLine(
+  mode: BrainWorkMode,
+  modelName: string,
+  thinkingLevel: string,
+  generating?: string,
+  yolo?: boolean,
+  fast?: boolean,
+  activeGoal?: { primary: string; suffix: string } | null,
+): string {
   const raw = modelName || '—';
   const slash = raw.indexOf('/');
   const provider = slash > 0 ? raw.slice(0, slash) : '';
@@ -144,6 +151,8 @@ function modelMetaLine(mode: BrainWorkMode, modelName: string, thinkingLevel: st
   return [
     `  ${color.accent(mode === 'plan' ? 'Plan' : 'Build')}`,
     color.faint('·'),
+    activeGoal?.primary ?? '',
+    activeGoal ? color.faint('·') : '',
     color.text(model),
     provider ? color.dim(provider) : '',
     thinkingLevel ? color.warning(thinkingLevel) : '',
@@ -151,6 +160,7 @@ function modelMetaLine(mode: BrainWorkMode, modelName: string, thinkingLevel: st
     // Warning-toned so auto-approved tool asks are never invisible (session /yolo or the persisted default).
     yolo ? color.warning('YOLO') : '',
     generating ?? '',
+    activeGoal?.suffix ?? '',
   ].filter(Boolean).join(' ');
 }
 
@@ -379,7 +389,7 @@ export function createChatComposition(
     startInput,
     () => Math.max(1, term.rows - TOP_RULE_ROWS),
     () => ({
-      modelLine: modelMetaLine(rt.workMode, rt.modelName, rt.thinkingLevelLabels[rt.thinkingLevel] ?? rt.thinkingLevel, undefined, rt.yoloOn, rt.fastOn) + goalMetaChip(rt.goal) + leaderChip(),
+      modelLine: modelMetaLine(rt.workMode, rt.modelName, rt.thinkingLevelLabels[rt.thinkingLevel] ?? rt.thinkingLevel, undefined, rt.yoloOn, rt.fastOn, goalMeta(rt.goal)) + leaderChip(),
       hints: color.faint(startScreenHints(keymap)),
       tip: `${color.warning('●')} ${color.bold(color.text('Tip'))} ${color.dim('ask anything — try')} ${color.text('"What is the tech stack of this project?"')}`,
       notice: rt.notice,
@@ -499,8 +509,13 @@ export function createChatComposition(
       + (footerState === 'idle' && shellContext.pending ? `   ${color.warning('· ! output → next message')}` : ''));
     const projectLine = `${color.dim(cwdLabel)}${branchLabel ? color.faint(` · ${branchLabel}`) : ''}`;
     const line = statusline(rt.lineCfg ? { ...rt.lineCfg, showModel: false } : null, rt.usage, rt.modelName);
-    promptMeta.setLeft(modelMetaLine(rt.workMode, rt.modelName, rt.thinkingLevelLabels[rt.thinkingLevel] ?? rt.thinkingLevel, rt.transcript.thinking ? generatingChip(currentRunSeconds) : undefined, rt.yoloOn, rt.fastOn) + goalMetaChip(rt.goal) + leaderChip());
-    promptMeta.setRight(panelVisible() || !line ? projectLine : `${color.faint(line)} ${color.faint('·')} ${projectLine}`);
+    const activeGoal = goalMeta(rt.goal);
+    const metaLeft = modelMetaLine(rt.workMode, rt.modelName, rt.thinkingLevelLabels[rt.thinkingLevel] ?? rt.thinkingLevel, rt.transcript.thinking ? generatingChip(currentRunSeconds) : undefined, rt.yoloOn, rt.fastOn, activeGoal) + leaderChip();
+    const metaRight = panelVisible() || !line ? projectLine : `${color.faint(line)} ${color.faint('·')} ${projectLine}`;
+    promptMeta.setLeft(metaLeft);
+    // Project context yields only when the active-goal progress would otherwise be truncated. It remains
+    // visible in the telemetry rail or returns automatically as soon as the terminal is wide enough.
+    promptMeta.setRight(activeGoal && visibleWidth(metaLeft) + visibleWidth(metaRight) + 1 > chatWidth() ? '' : metaRight);
     // Drop the terminal plugin's pinned `bg-processes` card only while the dedicated right rail is
     // actually visible. Narrow terminals cannot fit that rail; retaining the compact card there avoids
     // making background work disappear entirely while still preventing duplicates on wide layouts.
