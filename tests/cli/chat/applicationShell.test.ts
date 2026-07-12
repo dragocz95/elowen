@@ -276,6 +276,59 @@ describe('chat application shell ownership', () => {
     router.stop();
   });
 
+  it('requests every wheel, page and scrollbar-drag frame before synchronous viewport work', async () => {
+    let listener!: (data: string) => { consume: boolean } | undefined;
+    const tui = { addInputListener: vi.fn((next) => { listener = next; return vi.fn(); }) } as unknown as TUI;
+    const calls: string[] = [];
+    const viewport = {
+      isScrollbarHit: vi.fn(() => true),
+      beginScrollbarDrag: vi.fn(() => { calls.push('work:drag-start'); return false; }),
+      updateScrollbarDrag: vi.fn(() => { calls.push('work:drag'); return true; }),
+      continueScrollbarDrag: vi.fn(() => { calls.push('work:drag-index'); return false; }),
+      endScrollbarDrag: vi.fn(),
+      scroll: vi.fn((delta: number) => { calls.push(`work:scroll:${delta}`); }),
+    };
+    const context = {
+      state: { childView: null },
+      term: { columns: 120, write: vi.fn() },
+      editor: { focused: true, getText: () => '' },
+      stream: {},
+      quit: vi.fn(), renderForced: vi.fn(),
+      keymap: () => ({ matches: () => false, isLeader: () => false, directAction: () => null }),
+      leader: () => ({ pending: () => false }),
+      dispatchAction: vi.fn(),
+      render: vi.fn((reason: string) => { calls.push(`request:${reason}`); }),
+      animations: { nudgeMascot: vi.fn() },
+      hasMessages: () => true,
+      activeViewport: () => viewport,
+      panelVisible: () => false,
+      panelLeftEdge: () => 80,
+      slashOverlay: () => null,
+      mentionOverlay: () => null,
+    } as unknown as ChatInputContext;
+    const router = new InputRouter(tui, context);
+    router.attach();
+
+    const expectBefore = (input: string, request: string, work: string): void => {
+      calls.length = 0;
+      expect(listener(input)).toEqual({ consume: true });
+      expect(calls.indexOf(request)).toBeGreaterThanOrEqual(0);
+      expect(calls.indexOf(request)).toBeLessThan(calls.indexOf(work));
+    };
+    expectBefore('\x1b[<64;10;10M', 'request:scroll:wheel', 'work:scroll:3');
+    expectBefore('\x1b[5~', 'request:scroll:page-up', 'work:scroll:4');
+    expectBefore('\x1b[6~', 'request:scroll:page-down', 'work:scroll:-4');
+    expectBefore('\x1b[<0;79;5M', 'request:scroll:drag-start', 'work:drag-start');
+    expectBefore('\x1b[<32;79;8M', 'request:scroll:drag', 'work:drag');
+
+    calls.length = 0;
+    await vi.advanceTimersByTimeAsync(16);
+    expect(calls.indexOf('request:scroll:drag-index')).toBeGreaterThanOrEqual(0);
+    expect(calls.indexOf('request:scroll:drag-index')).toBeLessThan(calls.indexOf('work:drag-index'));
+    listener('\x1b[<0;79;8m');
+    router.stop();
+  });
+
   it('chat composition mounts paused and TerminalLifecycle alone enters the renderable alternate screen', async () => {
     const h = compositionHarness({ turns: 4 });
     const composition = makeComposition(h);

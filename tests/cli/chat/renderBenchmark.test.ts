@@ -23,6 +23,12 @@ const timingFields = (prefix: 'scroll' | 'stream', samples: number[]) => {
   };
 };
 
+const sampledOperations = (samples: number[]) => ({
+  total: samples.reduce((sum, value) => sum + value, 0),
+  maxPerFrame: Math.max(...samples),
+  samples,
+});
+
 describe('CLI viewport benchmark contract', () => {
   it('uses the same conventional nearest-rank p95 as the pipeline benchmark', () => {
     expect(summarizeViewportTimings(Array.from({ length: 20 }, (_, index) => index + 1))).toEqual({
@@ -43,6 +49,7 @@ describe('CLI viewport benchmark contract', () => {
         initialMs: 1,
         ...timingFields('scroll', Array.from({ length: 40 }, () => 1)),
         ...timingFields('stream', Array.from({ length: 40 }, () => 2)),
+        scrollHeightIndexOperations: sampledOperations(Array.from({ length: 40 }, () => 20)),
         finalViewport: {
           renderMs: 1,
           transcriptRows: 20,
@@ -108,6 +115,38 @@ describe('CLI viewport benchmark contract', () => {
     expect(report.samples).toEqual({ scroll: 40, stream: 40 });
     expect(report.results.map((result: { pairs: number; turns: number }) => [result.pairs, result.turns]))
       .toEqual([[100, 201], [1_000, 2_001], [5_000, 10_001]]);
+    expect(report.results.every((result: { scrollHeightIndexOperations: { samples: number[]; maxPerFrame: number } }) =>
+      result.scrollHeightIndexOperations.samples.length === 40
+      && result.scrollHeightIndexOperations.maxPerFrame <= 512)).toBe(true);
+  });
+
+  it('times scroll plus render as one frame and includes pre-render index operations', async () => {
+    let clock = 0;
+    class ClockedViewport extends ChatViewport {
+      override scroll(delta: number): void {
+        clock += 7;
+        super.scroll(delta);
+      }
+      override render(width: number): string[] {
+        clock += 3;
+        return super.render(width);
+      }
+    }
+    const report = await runViewportBenchmark({
+      now: () => clock,
+      runtime: { initTheme, getMarkdownTheme, ChatViewport: ClockedViewport, TranscriptModel },
+    });
+    expect(report.results.every((result: {
+      scrollSamplesMs: number[];
+      streamSamplesMs: number[];
+      scrollHeightIndexOperations: { samples: number[]; total: number; maxPerFrame: number };
+    }) => result.scrollSamplesMs.every((sample) => sample === 10)
+      && result.streamSamplesMs.every((sample) => sample === 3)
+      && result.scrollHeightIndexOperations.samples.every((sample) => Number.isSafeInteger(sample) && sample > 0)
+      && result.scrollHeightIndexOperations.total
+        === result.scrollHeightIndexOperations.samples.reduce((sum, value) => sum + value, 0)
+      && result.scrollHeightIndexOperations.maxPerFrame
+        === Math.max(...result.scrollHeightIndexOperations.samples))).toBe(true);
   });
 
   it('loads the built production viewport and transcript module paths', async () => {

@@ -1430,4 +1430,52 @@ describe('progressive history layout', () => {
     expect(after.heightIndexOperations - before.heightIndexOperations).toBeGreaterThanOrEqual(turnCount);
     expect(after.frameHeightIndexOperations).toBeGreaterThanOrEqual(turnCount);
   });
+
+  it('charges pre-render scroll and drag indexing to the next frame exactly once', () => {
+    const transcript = new TranscriptModel(Array.from({ length: 40_000 }, (_, index) => ({
+      role: 'assistant' as const,
+      text: `scroll evidence ${index}`,
+    })));
+    const viewport = new ChatViewport(
+      transcriptState(transcript),
+      getMarkdownTheme(), () => 18, () => 1, () => 80,
+    );
+    const first = viewport.render(80);
+    const beforeScroll = viewport.metrics().heightIndexOperations;
+
+    viewport.scroll(200);
+    const afterSynchronousScroll = viewport.metrics().heightIndexOperations;
+    expect(afterSynchronousScroll).toBeGreaterThan(beforeScroll);
+    viewport.render(80);
+    const afterScrollFrame = viewport.metrics();
+    expect(afterScrollFrame.frameHeightIndexOperations)
+      .toBe(afterScrollFrame.heightIndexOperations - beforeScroll);
+
+    const beforeRepeat = afterScrollFrame.heightIndexOperations;
+    viewport.render(80);
+    const repeated = viewport.metrics();
+    expect(repeated.frameHeightIndexOperations).toBe(repeated.heightIndexOperations - beforeRepeat);
+    expect(repeated.frameHeightIndexOperations).toBeLessThan(afterScrollFrame.frameHeightIndexOperations);
+
+    const thumbRow = first.findIndex((line) => line.includes('█')) + 1;
+    expect(thumbRow).toBeGreaterThan(0);
+    const beforeDrag = repeated.heightIndexOperations;
+    viewport.beginScrollbarDrag(thumbRow);
+    const pending = viewport.updateScrollbarDrag(1);
+    expect(viewport.metrics().heightIndexOperations).toBeGreaterThan(beforeDrag);
+    viewport.render(80);
+    const afterDragFrame = viewport.metrics();
+    expect(afterDragFrame.frameHeightIndexOperations)
+      .toBe(afterDragFrame.heightIndexOperations - beforeDrag);
+
+    if (pending) {
+      const beforeContinuation = afterDragFrame.heightIndexOperations;
+      viewport.continueScrollbarDrag();
+      viewport.render(80);
+      const continued = viewport.metrics();
+      expect(continued.frameHeightIndexOperations)
+        .toBe(continued.heightIndexOperations - beforeContinuation);
+    }
+    viewport.endScrollbarDrag();
+  });
 });

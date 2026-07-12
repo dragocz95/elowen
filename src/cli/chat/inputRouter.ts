@@ -100,19 +100,19 @@ export class InputRouter {
       const primaryDrag = event.down && (event.code === 0 || event.code === 32);
       if (this.draggingHistory && release) { this.cancelHistoryDrag(); return { consume: true }; }
       if (this.draggingHistory && primaryDrag) {
+        context.render('scroll:drag');
         context.animations.nudgeMascot(this.lastScrollDragRow - event.y);
         this.lastScrollDragRow = event.y;
         const pending = this.draggedViewport?.updateScrollbarDrag(event.y) ?? false;
         this.scheduleHistoryContinuation(pending);
-        context.render('scroll:drag');
         return { consume: true };
       }
       if (primaryDrag && context.hasMessages() && context.activeViewport().isScrollbarHit(event.x, event.y)) {
         this.draggingHistory = true;
         this.lastScrollDragRow = event.y;
         this.draggedViewport = context.activeViewport();
-        this.scheduleHistoryContinuation(this.draggedViewport.beginScrollbarDrag(event.y));
         context.render('scroll:drag-start');
+        this.scheduleHistoryContinuation(this.draggedViewport.beginScrollbarDrag(event.y));
         return { consume: true };
       }
       if (context.panelVisible()) {
@@ -178,9 +178,9 @@ export class InputRouter {
     }
     const wheel = mouseWheel(data);
     if (wheel && noModal) {
+      context.render('scroll:wheel');
       context.activeViewport().scroll(wheel);
       context.animations.nudgeMascot(Math.sign(wheel));
-      context.render('scroll:wheel');
       return { consume: true };
     }
     if (event && noModal) {
@@ -261,15 +261,15 @@ export class InputRouter {
       return undefined;
     }
     if (noModal && isPageUpKey(data)) {
+      context.render('scroll:page-up');
       context.activeViewport().scroll(4);
       context.animations.nudgeMascot(1);
-      context.render('scroll:page-up');
       return { consume: true };
     }
     if (noModal && isPageDownKey(data)) {
+      context.render('scroll:page-down');
       context.activeViewport().scroll(-4);
       context.animations.nudgeMascot(-1);
-      context.render('scroll:page-down');
       return { consume: true };
     }
     return undefined;
@@ -293,8 +293,8 @@ export class InputRouter {
     this.historyTimer = setTimeout(() => {
       this.historyTimer = null;
       if (!this.draggingHistory || !this.draggedViewport) return;
-      const pending = this.draggedViewport.continueScrollbarDrag();
       this.context?.render('scroll:drag-index');
+      const pending = this.draggedViewport.continueScrollbarDrag();
       this.scheduleHistoryContinuation(pending);
     }, 16);
   }

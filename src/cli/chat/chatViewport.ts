@@ -95,6 +95,7 @@ export class ChatViewport implements Component {
   private heightIndex = new DynamicHeightIndex();
   private retiredHeightIndexOperations = 0;
   private lastFrameHeightIndexOperations = 0;
+  private heightIndexOperationsAtLastFrameEnd = 0;
   private estimatedLayout = false;
   private estimatedTurnHeight = 0;
   private pendingResetAnchor: ViewportResetAnchor | null = null;
@@ -306,7 +307,6 @@ export class ChatViewport implements Component {
 
   render(width: number): string[] {
     const startedAt = performance.now();
-    const heightIndexOperationsBefore = this.heightIndexOperationCount();
     this.frameRenderedTurns = 0;
     this.frameReconciledTurns = 0;
     this.frameLayoutVisits = 0;
@@ -362,7 +362,11 @@ export class ChatViewport implements Component {
       return padAnsi(`${cell} ${this.scrollbar(i, scrollMetrics)}`, width);
     });
     this.lastRenderMs = performance.now() - startedAt;
-    this.lastFrameHeightIndexOperations = this.heightIndexOperationCount() - heightIndexOperationsBefore;
+    const heightIndexOperations = this.heightIndexOperationCount();
+    // Input routing may synchronously index history before the async scheduler paints. Charge all work
+    // since the previous completed frame to this one, then advance the boundary exactly once.
+    this.lastFrameHeightIndexOperations = heightIndexOperations - this.heightIndexOperationsAtLastFrameEnd;
+    this.heightIndexOperationsAtLastFrameEnd = heightIndexOperations;
     return rendered;
   }
 

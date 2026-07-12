@@ -30,7 +30,9 @@ export class RenderShell {
 
   constructor(private readonly options: RenderShellOptions) {
     this.nativeRequestRender = options.tui.requestRender.bind(options.tui);
-    this.scheduler = new FrameScheduler((frame) => this.flush(frame));
+    // The diagnostic clock and request clock share performance.now(), so totalMs starts at the first
+    // dirty request rather than when the asynchronous scheduler eventually flushes it.
+    this.scheduler = new FrameScheduler((frame) => this.flush(frame), { now: () => performance.now() });
     options.tui.requestRender = (force = false): void => {
       if (this.activeFrame) {
         this.activeFrame.reasons.add(force ? 'pi-tui:forced-request-during-frame' : 'pi-tui:request-during-frame');
@@ -76,7 +78,7 @@ export class RenderShell {
     this.options.tui.requestRender = this.nativeRequestRender;
   }
 
-  private flush(frame: { reasons: string[]; forced: boolean }): void {
+  private flush(frame: { reasons: string[]; forced: boolean; requestedAt: number }): void {
     const startedAt = performance.now();
     const dimensions = { columns: this.options.term.columns, rows: this.options.term.rows };
     const resized = !!this.previousDimensions
@@ -92,7 +94,7 @@ export class RenderShell {
       this.options.prepare();
     } finally {
       // Keep the collected object below, but stop folding requests once preparation has returned.
-      frame = { reasons: [...active.reasons], forced: active.forced };
+      frame = { reasons: [...active.reasons], forced: active.forced, requestedAt: frame.requestedAt };
       this.activeFrame = null;
     }
     const prepareMs = performance.now() - startedAt;
@@ -100,9 +102,10 @@ export class RenderShell {
       for (const reason of frame.reasons) this.pendingFrame.reasons.add(reason);
       this.pendingFrame.forced ||= frame.forced;
       this.pendingFrame.prepareMs += prepareMs;
+      this.pendingFrame.requestedAt = Math.min(this.pendingFrame.requestedAt, frame.requestedAt);
     } else {
       this.pendingFrame = {
-        reasons: new Set(frame.reasons), forced: frame.forced, requestedAt: startedAt, prepareMs,
+        reasons: new Set(frame.reasons), forced: frame.forced, requestedAt: frame.requestedAt, prepareMs,
       };
     }
     this.options.onFlush?.(frame);

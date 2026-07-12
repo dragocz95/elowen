@@ -5,6 +5,7 @@ import { pathToFileURL } from 'node:url';
 export const VIEWPORT_HISTORY_PAIRS = Object.freeze([100, 1_000, 5_000]);
 export const VIEWPORT_FRAME_SAMPLES = 40;
 export const VIEWPORT_FRAME_LIMIT_MS = 50;
+export const VIEWPORT_HEIGHT_INDEX_OPERATION_LIMIT = 512;
 
 function percentile(values, fraction) {
   const sorted = [...values].sort((a, b) => a - b);
@@ -46,6 +47,19 @@ function validateFrameTimings(result, prefix, pairs) {
   }
 }
 
+function validateScrollOperations(value, pairs) {
+  if (!value || !Array.isArray(value.samples) || value.samples.length !== VIEWPORT_FRAME_SAMPLES
+    || value.samples.some((sample) => !Number.isSafeInteger(sample) || sample < 1
+      || sample > VIEWPORT_HEIGHT_INDEX_OPERATION_LIMIT)) {
+    throw new Error(`missing or unbounded scrollHeightIndexOperations for ${pairs}-pair history`);
+  }
+  const total = value.samples.reduce((sum, sample) => sum + sample, 0);
+  const maximum = Math.max(...value.samples);
+  if (value.total !== total || value.maxPerFrame !== maximum) {
+    throw new Error(`inconsistent scrollHeightIndexOperations for ${pairs}-pair history`);
+  }
+}
+
 export function validateViewportBenchmarkReport(report) {
   if (report?.benchmark !== 'cli-viewport-frame') throw new Error('unexpected benchmark name');
   if (report?.samples?.scroll !== VIEWPORT_FRAME_SAMPLES || report?.samples?.stream !== VIEWPORT_FRAME_SAMPLES) {
@@ -60,6 +74,7 @@ export function validateViewportBenchmarkReport(report) {
     if (!finiteNonNegative(result.initialMs)) throw new Error(`missing or invalid initialMs for ${pairs}-pair history`);
     validateFrameTimings(result, 'scroll', pairs);
     validateFrameTimings(result, 'stream', pairs);
+    validateScrollOperations(result.scrollHeightIndexOperations, pairs);
     const metrics = result.finalViewport;
     if (!metrics || typeof metrics !== 'object') throw new Error(`missing finalViewport for ${pairs}-pair history`);
     for (const key of [
@@ -99,7 +114,7 @@ export async function loadViewportRuntime(root, importer = (specifier) => import
   return { initTheme, getMarkdownTheme, ChatViewport, TranscriptModel };
 }
 
-export async function runViewportBenchmark({ root = process.cwd(), runtime } = {}) {
+export async function runViewportBenchmark({ root = process.cwd(), runtime, now = () => performance.now() } = {}) {
   root = resolve(root);
   const { initTheme, getMarkdownTheme, ChatViewport, TranscriptModel } = runtime ?? await loadViewportRuntime(root);
   initTheme();
@@ -111,15 +126,17 @@ export async function runViewportBenchmark({ root = process.cwd(), runtime } = {
       { transcript, transcriptNotice: transcript.notice, notice: '', modelName: 'benchmark', thinkingSeconds: 0 },
       getMarkdownTheme(), () => 18, () => 1, () => 80,
     );
-    const initialStarted = performance.now();
+    const initialStarted = now();
     viewport.render(80);
-    const initialMs = performance.now() - initialStarted;
+    const initialMs = now() - initialStarted;
     const frameMs = [];
+    const scrollHeightIndexOperations = [];
     for (let index = 0; index < VIEWPORT_FRAME_SAMPLES; index += 1) {
+      const started = now();
       viewport.scroll(index % 2 === 0 ? 3 : -3);
-      const started = performance.now();
       viewport.render(80);
-      frameMs.push(performance.now() - started);
+      frameMs.push(now() - started);
+      scrollHeightIndexOperations.push(viewport.metrics().frameHeightIndexOperations);
     }
     transcript.apply({ type: 'text', delta: '' });
     viewport.setState({ transcript, transcriptNotice: transcript.notice, notice: '', modelName: 'benchmark', thinkingSeconds: 0 });
@@ -128,9 +145,9 @@ export async function runViewportBenchmark({ root = process.cwd(), runtime } = {
     for (let index = 0; index < VIEWPORT_FRAME_SAMPLES; index += 1) {
       transcript.apply({ type: 'text', delta: ` token-${index}` });
       viewport.setState({ transcript, transcriptNotice: transcript.notice, notice: '', modelName: 'benchmark', thinkingSeconds: 0 });
-      const started = performance.now();
+      const started = now();
       viewport.render(80);
-      streamMs.push(performance.now() - started);
+      streamMs.push(now() - started);
     }
     const scroll = summarizeViewportTimings(frameMs);
     const stream = summarizeViewportTimings(streamMs);
@@ -142,6 +159,11 @@ export async function runViewportBenchmark({ root = process.cwd(), runtime } = {
       scrollP95Ms: scroll.p95,
       scrollMaxMs: scroll.max,
       scrollSamplesMs: scroll.samples,
+      scrollHeightIndexOperations: {
+        total: scrollHeightIndexOperations.reduce((sum, value) => sum + value, 0),
+        maxPerFrame: Math.max(...scrollHeightIndexOperations),
+        samples: scrollHeightIndexOperations,
+      },
       streamAvgMs: stream.average,
       streamP95Ms: stream.p95,
       streamMaxMs: stream.max,

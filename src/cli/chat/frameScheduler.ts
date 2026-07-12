@@ -3,6 +3,8 @@ export type FramePriority = 'interactive' | 'normal';
 export interface ScheduledFrame {
   reasons: string[];
   forced: boolean;
+  /** Earliest dirty request folded into this frame. */
+  requestedAt: number;
 }
 
 export interface FrameSchedulerOptions {
@@ -21,6 +23,7 @@ export class FrameScheduler {
   private timerDueAt = Number.POSITIVE_INFINITY;
   private priority: FramePriority = 'normal';
   private forced = false;
+  private requestedAt: number | null = null;
   private paused = false;
   private stopped = false;
   private lastFrameAt = Number.NEGATIVE_INFINITY;
@@ -38,6 +41,7 @@ export class FrameScheduler {
 
   schedule(reason: string, priority: FramePriority = 'normal'): void {
     if (this.paused || this.stopped) return;
+    if (this.reasons.size === 0) this.requestedAt = this.now();
     this.reasons.add(reason);
     if (this.rank(priority) > this.rank(this.priority)) this.priority = priority;
     this.arm(false);
@@ -45,6 +49,7 @@ export class FrameScheduler {
 
   scheduleForced(reason: string): void {
     if (this.paused || this.stopped) return;
+    if (this.reasons.size === 0) this.requestedAt = this.now();
     this.reasons.add(reason);
     this.forced = true;
     this.priority = 'interactive';
@@ -84,9 +89,14 @@ export class FrameScheduler {
     this.timer = null;
     this.timerDueAt = Number.POSITIVE_INFINITY;
     if (this.paused || this.stopped || this.reasons.size === 0) return;
-    const frame = { reasons: [...this.reasons], forced: this.forced };
+    const frame = {
+      reasons: [...this.reasons],
+      forced: this.forced,
+      requestedAt: this.requestedAt ?? this.now(),
+    };
     this.reasons.clear();
     this.forced = false;
+    this.requestedAt = null;
     this.priority = 'normal';
     this.lastFrameAt = this.now();
     this.render(frame);
@@ -98,6 +108,7 @@ export class FrameScheduler {
     this.timerDueAt = Number.POSITIVE_INFINITY;
     this.reasons.clear();
     this.forced = false;
+    this.requestedAt = null;
     this.priority = 'normal';
   }
 
