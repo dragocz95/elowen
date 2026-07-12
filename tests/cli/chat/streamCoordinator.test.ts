@@ -93,11 +93,11 @@ describe('StreamCoordinator — idle rollover', () => {
       [{ role: 'user', text: 'yesterday' }, { role: 'assistant', text: 'old answer' }],
       { conversationTitle: 'seeded', workMode: 'build' },
     );
-    rt.goal = {
+    rt.setGoal({
       session_id: 'old-session', user_id: 1, status: 'active', goal: 'Old conversation goal',
       draft: '', subgoals: '[]', turns_used: 1, turn_budget: 8, last_verdict: '',
       last_evidence: '', paused_reason: '', created_at: '2026-07-12 10:00:00', updated_at: '2026-07-12 10:00:00',
-    };
+    });
     rt.streamAc = ac;
     const flows = { launchAsk: () => {}, openPlanDecision: () => {} } as unknown as Flows;
     const stream = new StreamCoordinator(
@@ -873,6 +873,38 @@ describe('StreamCoordinator — bounded hydration lifecycle', () => {
 });
 
 describe('StreamCoordinator — parent snapshot hydration', () => {
+  it('replaces goal state from the authoritative reconnect snapshot, including explicit null', () => {
+    let onFrame!: (frame: BrainEvent | {
+      type: 'snapshot'; cursor: number; history: []; events: BrainEvent[]; goal?: typeof activeGoal | null;
+    }) => void;
+    const activeGoal = {
+      session_id: 'brain-1', user_id: 1, status: 'active' as const, goal: 'Reconnect safely',
+      draft: '', subgoals: '[]', turns_used: 1, turn_budget: 8, last_verdict: 'continue',
+      last_evidence: '', paused_reason: '',
+      created_at: '2026-07-12 10:00:00', updated_at: '2026-07-12 10:00:01',
+    };
+    const client = {
+      stream: (cb: typeof onFrame, signal: AbortSignal) => {
+        onFrame = cb;
+        return new Promise<void>((resolve) => signal.addEventListener('abort', () => resolve(), { once: true }));
+      },
+      rebind: () => {},
+    } as unknown as BrainClient;
+    const rt = state([], { goal: activeGoal, workMode: 'build' });
+    const stream = new StreamCoordinator(
+      rt, { client }, actions(),
+      { launchAsk: () => {}, openPlanDecision: () => {} } as unknown as Flows,
+      new SnapshotHydrator<BrainEvent>(), new HydrationNoticeOwner(),
+    );
+    stream.openStream(rt.streamAc);
+
+    onFrame({ type: 'snapshot', cursor: 1, history: [], events: [], goal: null });
+    expect(rt.goal).toBeNull();
+    onFrame({ type: 'snapshot', cursor: 2, history: [], events: [], goal: activeGoal });
+    expect(rt.goal).toEqual(activeGoal);
+    stream.stop();
+  });
+
   it('replaces a stale parent view on reconnect and ignores an older history refetch', async () => {
     let onFrame!: (event: BrainEvent | { type: 'snapshot'; cursor: number; history: { role: string; text: string }[]; events: BrainEvent[] }) => void;
     const staleHistory = deferred<{ role: string; text: string }[]>();

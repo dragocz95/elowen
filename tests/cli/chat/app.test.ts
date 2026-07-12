@@ -233,11 +233,42 @@ describe('ChatApplication shutdown ownership', () => {
     const refreshing = internals.refreshMeta();
     await Promise.resolve();
     const completed = { ...activeGoal, status: 'done' as const, turns_used: 1, last_verdict: 'done' };
-    state.goal = completed; // same replacement performed by StreamCoordinator's authoritative goal event
+    state.setGoal(completed); // same replacement performed by StreamCoordinator's authoritative goal event
     resolveGoal(activeGoal); // stale GET that started before the completion event
     await refreshing;
 
     expect(state.goal).toEqual(completed);
+  });
+
+  it('fences a stale metadata goal across a null-active-null ABA lifecycle', async () => {
+    const staleActive = {
+      session_id: 'brain-1', user_id: 1, status: 'active' as const, goal: 'Already cleared',
+      draft: '', subgoals: '[]', turns_used: 0, turn_budget: 8, last_verdict: '',
+      last_evidence: '', paused_reason: '',
+      created_at: '2026-07-12 10:00:00', updated_at: '2026-07-12 10:00:00',
+    };
+    let resolveGoal!: (goal: typeof staleActive) => void;
+    const delayedGoal = new Promise<typeof staleActive>((resolve) => { resolveGoal = resolve; });
+    const client = {
+      bindLifetime: vi.fn(), status: vi.fn(async () => null), mcpServers: vi.fn(async () => []),
+      rateLimits: vi.fn(async () => null), goal: vi.fn(() => delayedGoal),
+    } as unknown as BrainClient;
+    const application = new ChatApplication({ base: 'http://unused', token: 'unused', client });
+    const state = new ChatState({ transcript: new TranscriptModel() });
+    const internals = application as unknown as {
+      state: ChatState; resources: { client: BrainClient }; refreshMeta(): Promise<void>;
+    };
+    internals.state = state;
+    internals.resources = { client };
+
+    const refreshing = internals.refreshMeta();
+    await Promise.resolve();
+    state.setGoal(staleActive);
+    state.setGoal(null);
+    resolveGoal(staleActive);
+    await refreshing;
+
+    expect(state.goal).toBeNull();
   });
 
   it('does not construct terminal owners after shutdown cancels an in-flight bootstrap', async () => {

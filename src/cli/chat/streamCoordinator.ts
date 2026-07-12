@@ -115,7 +115,7 @@ export class StreamCoordinator implements StreamCoordinatorPort {
         if (event.type === 'ask') { flows.launchAsk(event.id, event.questions, event.kind); return; }
         if (event.type === 'queue') { rt.queued = event.items; render('stream:queue'); return; }
         if (event.type === 'process') { rt.processes = event.processes; render('stream:process'); return; }
-        if (event.type === 'goal') { rt.goal = event.goal; render('stream:goal'); return; }
+        if (event.type === 'goal') { rt.setGoal(event.goal); render('stream:goal'); return; }
         if (event.type === 'compacted') { if (!fromSnapshot) refetchHistory(); return; }
 
         // Binding is control state, not transcript state. Commit it before any hydration buffer can defer
@@ -124,7 +124,7 @@ export class StreamCoordinator implements StreamCoordinatorPort {
           invalidateAsyncState();
           client.rebind(event.sessionId);
           pendingSessionReset = event.sessionId;
-          rt.goal = null;
+          rt.setGoal(null);
           rt.notice = color.dim('previous conversation was idle — continuing in a fresh one');
           void refreshMeta().then(() => { if (current() && lease.isCurrent()) render('metadata:session-rollover'); });
           render('stream:session-binding');
@@ -203,12 +203,15 @@ export class StreamCoordinator implements StreamCoordinatorPort {
           else if (snapshot.truncated) truncatedSnapshotPending = true;
           if (snapshot.sessionId && snapshot.sessionId !== streamSessionAtOpen) {
             invalidateAsyncState();
-            rt.goal = null;
+            rt.setGoal(null);
             rt.notice = color.dim('previous conversation was idle — continuing in a fresh one');
             void refreshMeta().then(() => { if (current() && lease.isCurrent()) render('metadata:snapshot-session'); });
           }
           rt.transcript.replaceHistory(snapshot.history);
           for (const event of snapshot.events) onEvent(event, true, true);
+          // Replay is the transient run tail; this top-level value is the durable authority and must win
+          // even when the journal was cleared at beginRun()/settleRun(). Absence means an older daemon.
+          if (Object.prototype.hasOwnProperty.call(snapshot, 'goal')) rt.setGoal(snapshot.goal ?? null);
           render('stream:snapshot');
         });
       };
@@ -386,7 +389,7 @@ export class StreamCoordinator implements StreamCoordinatorPort {
       switchingSessionGeneration = generation;
       teardownChild();
       invalidateAsyncState();
-      rt.goal = null;
+      rt.setGoal(null);
       rt.streamAc.abort();
       const ac = new AbortController();
       rt.streamAc = ac;

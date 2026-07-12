@@ -343,6 +343,11 @@ export async function runHeadless(
   const doneP = new Promise<void>((r) => { resolveDone = r; });
   const finish = (code: number): void => { if (settled) return; settled = true; exit = code; resolveDone(); ctrl.abort(); };
   const emit = (e: BrainEvent): void => io.stdout(`${JSON.stringify(e)}\n`);
+  let lastStreamedGoal = '';
+  const goalFingerprint = (goal: GoalView | null): string => goal == null ? 'null' : [
+    goal.session_id, goal.status, goal.goal, goal.turns_used, goal.turn_budget, goal.last_verdict,
+    goal.last_evidence, goal.paused_reason, goal.updated_at,
+  ].join('\0');
   let snapshots!: HeadlessSnapshotReconciler;
   // Every terminal event happens after persistence. Serialise the tiny history repair so a goal that
   // immediately starts its next run cannot race a previous turn's identity bookkeeping, and so a
@@ -362,6 +367,7 @@ export async function runHeadless(
   };
 
   const onEvent = (e: BrainEvent): void => {
+    if (e.type === 'goal') lastStreamedGoal = goalFingerprint(e.goal);
     if (o.json) emit(e);
     switch (e.type) {
       case 'text': if (!o.json) io.stdout(e.delta); activity = true; break;
@@ -419,8 +425,12 @@ export async function runHeadless(
       if (g && g.status !== 'active' && g.status !== 'draft') {
         const code = g.status === 'done' ? 0 : g.last_verdict === 'blocked' ? 4 : 3;
         await idleReconciliation;
-        if (o.json) io.stdout(`${JSON.stringify({ type: 'goal', goal: g })}\n`);
-        else io.stdout(`\n[goal ${g.status}${g.paused_reason ? `: ${g.paused_reason}` : ''}${g.last_evidence ? ` — ${g.last_evidence}` : ''}]\n`);
+        if (o.json) {
+          if (goalFingerprint(g) !== lastStreamedGoal) {
+            io.stdout(`${JSON.stringify({ type: 'goal', goal: g })}\n`);
+            lastStreamedGoal = goalFingerprint(g);
+          }
+        } else io.stdout(`\n[goal ${g.status}${g.paused_reason ? `: ${g.paused_reason}` : ''}${g.last_evidence ? ` — ${g.last_evidence}` : ''}]\n`);
         finish(code);
         return;
       }

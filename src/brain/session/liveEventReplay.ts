@@ -1,4 +1,4 @@
-import type { BrainEvent } from '../events.js';
+import type { BrainEvent, BrainGoalState } from '../events.js';
 import type { BrainMessageView } from '../messageView.js';
 
 /** A bounded snapshot of events emitted during the currently unsettled run. The durable transcript
@@ -30,6 +30,10 @@ export interface LiveEventTransportSnapshot extends LiveEventSnapshot {
 export interface BrainStreamSnapshot extends LiveEventSnapshot {
   type: 'snapshot';
   history: BrainMessageView[];
+  /** Durable control state is independent of the transient current-run journal. Explicit `null` is
+   * required to clear a client that missed the live completion/pause/clear event before reconnecting.
+   * Optional only for rolling compatibility with an older daemon during local upgrades. */
+  goal?: BrainGoalState | null;
   /** The actual tapped session. It can differ from the query after an idle rollover retargeted this
    * stable client while its previous SSE was down. */
   sessionId?: string;

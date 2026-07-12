@@ -131,6 +131,138 @@ describe('application lifetime for local input work', () => {
     }
   });
 
+  it('does not let a delayed kickoff response overwrite a newer streamed terminal goal state', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'elowen-goal-ordering-'));
+    const priorHome = process.env.HOME;
+    process.env.HOME = home;
+    try {
+      let onSubmit: ((text: string) => void) | undefined;
+      const editor = {
+        addToHistory: vi.fn(), setText: vi.fn(),
+        set onSubmit(fn: (text: string) => void) { onSubmit = fn; },
+      };
+      const pending = deferred<NonNullable<ChatState['goal']>>();
+      const state = new ChatState({ transcript: new TranscriptModel() });
+      wireSubmit(
+        state,
+        {
+          client: { setGoal: () => pending.promise }, editor,
+          shellContext: new LocalShellBuffer(), attachmentChips: {}, commandDefs: [], tui: {},
+          lifetime: new ChatApplicationLifetime<'metadata'>(),
+        } as never,
+        { render: vi.fn() } as never,
+        { stream: {}, pickers: {} } as never,
+      );
+
+      onSubmit?.('/goal Preserve the terminal state');
+      const active = state.goal!;
+      const done = { ...active, user_id: 1, status: 'done' as const, turns_used: 2, last_verdict: 'done' };
+      state.setGoal(done); // authoritative SSE arrived before the old HTTP request settled
+      pending.resolve({ ...active, user_id: 1 }); // adversarial stale response
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(state.goal).toEqual(done);
+    } finally {
+      if (priorHome === undefined) delete process.env.HOME;
+      else process.env.HOME = priorHome;
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it('refetches authoritative goal state when kickoff fails instead of restoring the previous goal', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'elowen-goal-failure-'));
+    const priorHome = process.env.HOME;
+    process.env.HOME = home;
+    try {
+      let onSubmit: ((text: string) => void) | undefined;
+      const editor = {
+        addToHistory: vi.fn(), setText: vi.fn(),
+        set onSubmit(fn: (text: string) => void) { onSubmit = fn; },
+      };
+      const previous = {
+        session_id: 'brain-1', user_id: 1, status: 'active' as const, goal: 'Previous goal',
+        draft: '', subgoals: '[]', turns_used: 1, turn_budget: 8, last_verdict: '',
+        last_evidence: '', paused_reason: '',
+        created_at: '2026-07-12 09:00:00', updated_at: '2026-07-12 09:00:01',
+      };
+      const paused = {
+        ...previous, goal: 'Replacement goal', status: 'paused' as const, last_verdict: 'error',
+        paused_reason: 'provider failed', updated_at: '2026-07-12 10:00:01',
+      };
+      const client = {
+        setGoal: vi.fn(async () => { throw new Error('provider failed'); }),
+        goal: vi.fn(async () => paused),
+      };
+      const state = new ChatState({ transcript: new TranscriptModel(), goal: previous });
+      wireSubmit(
+        state,
+        {
+          client, editor, shellContext: new LocalShellBuffer(), attachmentChips: {}, commandDefs: [], tui: {},
+          lifetime: new ChatApplicationLifetime<'metadata'>(),
+        } as never,
+        { render: vi.fn() } as never,
+        { stream: {}, pickers: {} } as never,
+      );
+
+      onSubmit?.('/goal Replacement goal');
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(client.goal).toHaveBeenCalledOnce();
+      expect(state.goal).toEqual(paused);
+      expect(state.notice).toMatch(/provider failed/i);
+    } finally {
+      if (priorHome === undefined) delete process.env.HOME;
+      else process.env.HOME = priorHome;
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps pause feedback when the streamed state arrives before the action response', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'elowen-goal-action-ordering-'));
+    const priorHome = process.env.HOME;
+    process.env.HOME = home;
+    try {
+      let onSubmit: ((text: string) => void) | undefined;
+      const editor = {
+        addToHistory: vi.fn(), setText: vi.fn(),
+        set onSubmit(fn: (text: string) => void) { onSubmit = fn; },
+      };
+      const active = {
+        session_id: 'brain-1', user_id: 1, status: 'active' as const, goal: 'Pause cleanly',
+        draft: '', subgoals: '[]', turns_used: 1, turn_budget: 8, last_verdict: '',
+        last_evidence: '', paused_reason: '',
+        created_at: '2026-07-12 10:00:00', updated_at: '2026-07-12 10:00:01',
+      };
+      const paused = { ...active, status: 'paused' as const, paused_reason: 'paused by user' };
+      const response = deferred<typeof paused>();
+      const state = new ChatState({ transcript: new TranscriptModel(), goal: active });
+      wireSubmit(
+        state,
+        {
+          client: { goalAction: () => response.promise }, editor,
+          shellContext: new LocalShellBuffer(), attachmentChips: {}, commandDefs: [], tui: {},
+          lifetime: new ChatApplicationLifetime<'metadata'>(),
+        } as never,
+        { render: vi.fn() } as never,
+        { stream: {}, pickers: {} } as never,
+      );
+
+      onSubmit?.('/goal pause');
+      state.setGoal(paused);
+      response.resolve(paused);
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(state.goal).toEqual(paused);
+      expect(state.notice).toMatch(/goal paused|paused by user/i);
+    } finally {
+      if (priorHome === undefined) delete process.env.HOME;
+      else process.env.HOME = priorHome;
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   it('kills publication from an unfinished !cmd after the chat stops', async () => {
     const home = mkdtempSync(join(tmpdir(), 'elowen-local-lifetime-'));
     const priorHome = process.env.HOME;

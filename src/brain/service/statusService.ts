@@ -198,6 +198,7 @@ export class BrainStatusService {
     return {
       type: 'snapshot',
       sessionId,
+      goal: this.d.store.getGoal(sessionId) ?? null,
       // Journaled users are already durable, but replaying them is what preserves their position among
       // pre/post-steer deltas. Remove exactly those id-matched rows from the history prefix (no text
       // guessing: display text may differ from persisted image/mention framing).

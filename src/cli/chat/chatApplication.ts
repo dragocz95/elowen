@@ -303,7 +303,7 @@ export class ChatApplication {
   private async refreshMeta(): Promise<void> {
     if (!this.resources) return;
     const publication = this.lifetime.begin('metadata');
-    const goalAtRequest = this.state.goal;
+    const goalRevisionAtRequest = this.state.goalRevision;
     void this.refreshRateLimits();
     const [status, mcp, goal] = await Promise.all([
       this.resources.client.status().catch(() => null),
@@ -313,9 +313,9 @@ export class ChatApplication {
     this.lifetime.commit(publication, () => {
       if (status) this.applyStatus(status);
       this.state.mcpList = mcp;
-      // Goal lifecycle events are newer than a GET that was already in flight. Every writer replaces the
-      // whole snapshot, so reference identity is a cheap monotonic fence without another global counter.
-      if (goal !== undefined && this.state.goal === goalAtRequest) this.state.goal = goal;
+      // Goal lifecycle events are newer than a GET that was already in flight. A monotonic revision is
+      // required here: reference/value comparison cannot detect a null → active → null ABA transition.
+      if (goal !== undefined && this.state.goalRevision === goalRevisionAtRequest) this.state.setGoal(goal);
     });
   }
 

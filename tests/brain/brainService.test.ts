@@ -2028,6 +2028,30 @@ describe('sub-agent session tap + owner steering', () => {
     attached.off();
   });
 
+  it('includes the durable goal in every reconnect snapshot after replay journal boundaries', async () => {
+    const d = fakeDeps();
+    const svc = new BrainService(d as never);
+    await svc.start(1);
+    d.store.upsertGoal({
+      sessionId: 'brain-1', userId: 1, goal: 'Survive reconnects', draft: '', status: 'active', turnBudget: 8,
+    });
+
+    // A new PI run clears the transient replay journal. Durable control state must still be present.
+    d.emit({ type: 'agent_start' });
+    const running = svc.tapSessionSnapshot(1, 'brain-1', () => {}).snapshot;
+    expect(running.events).toEqual([]);
+    expect(running.goal).toMatchObject({ status: 'active', goal: 'Survive reconnects' });
+
+    d.store.updateGoal('brain-1', { status: 'paused', paused_reason: 'waiting for user' });
+    d.emit({ type: 'agent_end', willRetry: false, messages: [] });
+    const settled = svc.tapSessionSnapshot(1, 'brain-1', () => {}).snapshot;
+    expect(settled.events.some((event) => event.type === 'goal')).toBe(false);
+    expect(settled.goal).toMatchObject({ status: 'paused', paused_reason: 'waiting for user' });
+
+    svc.goalAction(1, 'clear', 'brain-1');
+    expect(svc.tapSessionSnapshot(1, 'brain-1', () => {}).snapshot.goal).toBeNull();
+  });
+
   it('persists delegated child state across reconnect and keeps post-parent-idle completion on the original tool row', async () => {
     const d = fakeDeps();
     const svc = new BrainService(d as never);

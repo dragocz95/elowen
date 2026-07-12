@@ -85,16 +85,30 @@ function handleGoalCommand(
 ): void {
   const fail = (e: Error): void => { rt.notice = color.error(`error: ${e.message}`); render(); };
   const raw = (arg ?? '').trim();
+  const commandRevision = rt.beginGoalCommand();
+  const publish = (stateRevision: number, goal: Awaited<ReturnType<BrainClient['goal']>>): boolean => {
+    if (!rt.isCurrentGoalCommand(commandRevision) || rt.goalRevision !== stateRevision) return false;
+    rt.setGoal(goal);
+    return true;
+  };
   if (!raw || raw === 'status' || raw === 'show') {
-    run(() => client.goal(), (g) => { rt.goal = g; rt.notice = color.dim(goalSummary(g)); render(); }, fail);
+    const stateRevision = rt.goalRevision;
+    run(() => client.goal(), (g) => {
+      if (!rt.isCurrentGoalCommand(commandRevision)) return;
+      publish(stateRevision, g);
+      rt.notice = color.dim(goalSummary(rt.goal));
+      render();
+    }, fail);
     return;
   }
   if (raw === 'pause' || raw === 'resume' || raw === 'clear') {
+    const stateRevision = rt.goalRevision;
     run(() => client.goalAction(raw), (g) => {
-      rt.goal = g;
+      if (!rt.isCurrentGoalCommand(commandRevision)) return;
+      publish(stateRevision, g);
       rt.notice = raw === 'clear'
         ? color.dim('goal cleared')
-        : (g?.status === 'active' ? '' : color.dim(goalSummary(g)));
+        : (rt.goal?.status === 'active' ? '' : color.dim(goalSummary(rt.goal)));
       render();
     }, fail);
     return;
@@ -104,8 +118,10 @@ function handleGoalCommand(
   if (draft) {
     rt.notice = color.dim('drafting goal…');
     render();
+    const stateRevision = rt.goalRevision;
     run(() => client.setGoal(text, true), (g) => {
-      rt.goal = g;
+      if (!rt.isCurrentGoalCommand(commandRevision)) return;
+      publish(stateRevision, g);
       rt.notice = color.dim(`goal draft:\n${g.draft}`);
       render();
     }, fail);
@@ -115,19 +131,30 @@ function handleGoalCommand(
   // Goal admission and goal execution are intentionally different clocks. The daemon persists and emits
   // `active` before the kickoff model turn, while this HTTP request resolves only after that turn. Show the
   // admitted state immediately; the stream replaces this provisional object with the durable snapshot.
-  const previous = rt.goal;
   const optimistic = createOptimisticGoal(text, client.boundSession);
-  rt.goal = optimistic;
+  const stateRevision = rt.setGoal(optimistic);
   rt.notice = '';
   render('goal:optimistic');
-  run(() => client.setGoal(text, false), (g) => {
-    rt.goal = g;
+  run(async () => {
+    try {
+      return { goal: await client.setGoal(text, false), error: null };
+    } catch (cause) {
+      const error = cause instanceof Error ? cause : new Error(String(cause));
+      // setGoal can fail only after the daemon has durably admitted and then paused the replacement.
+      // Re-read that authority instead of resurrecting the previous row from local memory.
+      const goal = await client.goal().catch(() => undefined);
+      return { goal, error };
+    }
+  }, (result) => {
+    const published = result.goal !== undefined && publish(stateRevision, result.goal);
+    if (result.error) {
+      rt.notice = color.error(`error: ${result.error.message}`);
+      render('goal:failed');
+      return;
+    }
+    if (!published) return; // a newer stream event or command already owns the visible state
     rt.notice = '';
     render('goal:confirmed');
-  }, (e) => {
-    // Do not overwrite an authoritative streamed error/paused state that arrived before the HTTP failure.
-    if (rt.goal === optimistic) rt.goal = previous;
-    fail(e);
   });
 }
 
@@ -142,7 +169,14 @@ function handleSubgoalCommand(
   if (!raw) { rt.notice = color.dim('usage: /subgoal <text> · /subgoal remove <N> · /subgoal clear'); render(); return; }
   const remove = /^remove\s+(\d+)$/i.exec(raw);
   const action = raw === 'clear' ? ['clear', undefined] as const : remove ? ['remove', Number(remove[1])] as const : ['add', raw] as const;
-  run(() => client.subgoal(action[0], action[1]), (g) => { rt.goal = g; rt.notice = color.dim(goalSummary(g)); render(); }, (e) => {
+  const commandRevision = rt.beginGoalCommand();
+  const stateRevision = rt.goalRevision;
+  run(() => client.subgoal(action[0], action[1]), (g) => {
+    if (!rt.isCurrentGoalCommand(commandRevision)) return;
+    if (rt.goalRevision === stateRevision) rt.setGoal(g);
+    rt.notice = color.dim(goalSummary(rt.goal));
+    render();
+  }, (e) => {
     rt.notice = color.error(`error: ${e.message}`); render();
   });
 }
