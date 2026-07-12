@@ -1,5 +1,8 @@
-import { describe, expect, it } from 'vitest';
-import { ChatApplicationLifetime } from '../../../src/cli/chat/applicationLifetime.js';
+import { describe, expect, it, vi } from 'vitest';
+import {
+  APPLICATION_TASK_SHUTDOWN_MS,
+  ChatApplicationLifetime,
+} from '../../../src/cli/chat/applicationLifetime.js';
 
 function deferred<T>(): { promise: Promise<T>; resolve(value: T): void } {
   let resolve!: (value: T) => void;
@@ -100,5 +103,39 @@ describe('ChatApplicationLifetime', () => {
     await Promise.resolve();
 
     expect(publications).toEqual(['global-provider-refresh']);
+  });
+
+  it('keeps shutdown pending until an aborted application task has settled', async () => {
+    const lifetime = new ChatApplicationLifetime<'metadata'>();
+    const pending = deferred<string>();
+    lifetime.runApplication(() => pending.promise, () => {});
+
+    const stopped = lifetime.stop();
+    let complete = false;
+    void stopped.then(() => { complete = true; });
+    await Promise.resolve();
+    expect(complete).toBe(false);
+
+    pending.resolve('editor closed after SIGKILL');
+    await stopped;
+    expect(complete).toBe(true);
+  });
+
+  it('bounds shutdown when an application task ignores abort forever', async () => {
+    vi.useFakeTimers();
+    try {
+      const lifetime = new ChatApplicationLifetime<'metadata'>();
+      lifetime.runApplication(() => new Promise<string>(() => {}), () => {});
+      const stopped = lifetime.stop();
+      let complete = false;
+      void stopped.then(() => { complete = true; });
+
+      expect(APPLICATION_TASK_SHUTDOWN_MS).toBeGreaterThan(0);
+      await vi.advanceTimersByTimeAsync(APPLICATION_TASK_SHUTDOWN_MS);
+      await stopped;
+      expect(complete).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

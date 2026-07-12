@@ -86,7 +86,7 @@ export class TerminalLifecycle {
 
 export interface ShutdownCoordinatorOptions {
   /** Synchronous local teardown: restore terminal modes and abort application-owned work immediately. */
-  teardown(): void;
+  teardown(): void | Promise<void>;
   /** Detached from the aborted application signal; bounded independently below. */
   stopBoundSession(signal: AbortSignal): Promise<void>;
   timeoutMs?: number;
@@ -100,7 +100,8 @@ export function createShutdownCoordinator(options: ShutdownCoordinatorOptions): 
     if (pending) return pending;
     let finish!: () => void;
     pending = new Promise<void>((resolve) => { finish = resolve; });
-    try { options.teardown(); } catch { /* server stop must still be attempted */ }
+    let localCleanup: void | Promise<void> = undefined;
+    try { localCleanup = options.teardown(); } catch { /* server stop must still be attempted */ }
     const stopAc = new AbortController();
     let timer: ReturnType<typeof setTimeout> | null = null;
     const timeout = new Promise<void>((resolve) => {
@@ -109,11 +110,16 @@ export function createShutdownCoordinator(options: ShutdownCoordinatorOptions): 
         resolve();
       }, options.timeoutMs ?? 750);
     });
-    void Promise.race([
+    const serverCleanup = Promise.race([
       Promise.resolve().then(() => options.stopBoundSession(stopAc.signal)).catch(() => {}),
       timeout,
     ]).finally(() => {
       if (timer) clearTimeout(timer);
+    });
+    void Promise.all([
+      Promise.resolve(localCleanup).catch(() => {}),
+      serverCleanup,
+    ]).finally(() => {
       finish();
     });
     return pending;

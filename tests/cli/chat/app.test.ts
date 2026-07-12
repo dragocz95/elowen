@@ -148,6 +148,25 @@ describe('createShutdownCoordinator', () => {
     await expect(finished).resolves.toBeUndefined();
     vi.useRealTimers();
   });
+
+  it('does not finish a signal shutdown before bounded local child cleanup settles', async () => {
+    let finishLocal!: () => void;
+    const local = new Promise<void>((resolve) => { finishLocal = resolve; });
+    const shutdown = createShutdownCoordinator({
+      teardown: () => local,
+      stopBoundSession: async () => {},
+      timeoutMs: 25,
+    });
+
+    const finished = shutdown();
+    let complete = false;
+    void finished.then(() => { complete = true; });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(complete).toBe(false);
+    finishLocal();
+    await finished;
+    expect(complete).toBe(true);
+  });
 });
 
 describe('ChatApplication shutdown ownership', () => {

@@ -80,6 +80,7 @@ export class ChatApplication {
   private quitImpl: () => void = () => {};
   private launchPendingAsk: (() => void) | null = null;
   private stopped = false;
+  private localStop: Promise<void> | null = null;
 
   constructor(options: ChatLaunchOptions) {
     this.launch = options;
@@ -132,16 +133,17 @@ export class ChatApplication {
   private resume(): void { this.lifecycle?.resume(); }
 
   /** Idempotently stop every child owner before restoring the primary terminal buffer. */
-  private stopLocal(): void {
-    if (this.stopped) return;
+  private stopLocal(): Promise<void> {
+    if (this.localStop) return this.localStop;
     this.stopped = true;
-    this.lifetime.stop();
+    this.localStop = this.lifetime.stop();
     this.coordinator?.stop();
     this.hydrator?.stop();
     this.diagnostics?.record({ type: 'lifecycle', action: 'stop' });
     this.lifecycle?.stop();
     this.detachExitGuards();
     void this.diagnostics?.close();
+    return this.localStop;
   }
 
   private async bootstrap(options: ChatLaunchOptions): Promise<void> {
