@@ -195,9 +195,19 @@ try {
     && paneLines(capture()).length === initialSize.rows && capture().includes('Goal'));
   saveActive('04-goal-active-restored', { expectScrollbar: false });
 
+  await waitFor('goal stream reconnect with active snapshot', () => requests('/brain/stream').length >= 2
+    && entries().some((entry) => entry.kind === 'snapshot' && entry.goalStatus === 'active')
+    && capture().includes('Goal') && capture().includes('E2E GOAL TOOL'));
+  const reconnected = saveActive('05-goal-reconnected', { expectScrollbar: false });
+  assert.match(reconnected.plain, /Goal\s+0\/4/u, 'reconnect snapshot must preserve active goal progress');
+  assert.match(reconnected.plain, /E2E GOAL TOOL/u, 'reconnect snapshot must preserve the live transcript tail');
+  assert.equal(requests('/brain/stream').at(-1)?.query?.snapshot, '1', 'reconnect must request an atomic snapshot');
+
   await waitFor('goal completion state', () => entries().some((entry) => entry.kind === 'event'
-    && entry.event?.type === 'goal' && entry.event.goal?.status === 'done') && !capture().includes('◆ Goal'), 8_000);
-  const completed = saveActive('05-goal-complete', { expectScrollbar: false });
+    && entry.event?.type === 'goal' && entry.event.goal?.status === 'done')
+    && entries().some((entry) => entry.kind === 'goal-http-response' && entry.status === 'active')
+    && !capture().includes('◆ Goal'), 8_000);
+  const completed = saveActive('06-goal-complete', { expectScrollbar: false });
   assert.match(completed.plain, /E2E GOAL COMPLETE/u, 'settled goal transcript must stay visible');
   assert.doesNotMatch(completed.plain, /◆ Goal|starting persistent goal/iu, 'completed goal status must disappear cleanly');
 
@@ -206,7 +216,7 @@ try {
   await waitFor('post-goal input response', () => capture().includes('E2E POST-GOAL INPUT ACCEPTED'));
   await waitFor('post-goal idle metadata', () => entries().some((entry) => entry.kind === 'event'
     && entry.event?.usage?.totalTokens === 80));
-  const afterGoal = saveActive('06-post-goal-input', { expectScrollbar: false });
+  const afterGoal = saveActive('07-post-goal-input', { expectScrollbar: false });
   assert.match(afterGoal.plain, /E2E POST-GOAL INPUT ACCEPTED/u, 'editor must remain usable after goal completion');
   assert.doesNotMatch(afterGoal.plain, /◆ Goal/u);
 
@@ -218,7 +228,7 @@ try {
   sendKey('C-c');
   await waitFor('goal session stop', () => requests('/brain/session/stop').length === 1);
   await waitFor('goal shell restored', () => capture().includes('E2E GOAL SHELL RESTORED'), 5_000);
-  const shell = saveRaw('07-restored-shell');
+  const shell = saveRaw('08-restored-shell');
   const ttyStates = readFileSync(ttyStatePath, 'utf8').trim().split('\n');
   assert.equal(ttyStates[1], ttyStates[0], 'raw/canonical/echo tty state must be restored exactly');
   const terminalWrites = readFileSync(terminalWriteLog, 'utf8');
@@ -230,7 +240,7 @@ try {
   const report = {
     passed: true,
     scenario: 'goal',
-    case: 'active-elapsed-resize-complete-liveness',
+    case: 'active-elapsed-resize-reconnect-ordering-complete-liveness',
     metadata: completeMetadata(startedMetadata, repo),
     isolatedProject: { evidence: projectEvidence, cwdObserved: startRequest.body.cwd },
     captures: captures.map((entry) => ({ label: entry.label, ...entry.paths })),
@@ -246,13 +256,15 @@ try {
     goalStartingNoticeAbsent: true,
     goalElapsedAdvanced: true,
     goalVisibleAt40x15: true,
+    reconnectSnapshotApplied: true,
+    staleKickoffResponseIgnored: true,
     goalRemovedAtCompletion: true,
     postGoalInputAccepted: true,
     idleFramesAfter1100Ms: 0,
     terminalStateRestored: true,
   };
   writeReport(reportPath, report);
-  console.log(`PASS test:cli-tmux-goal — live goal, elapsed time, resize, completion, editor liveness and teardown verified. Report: ${reportPath}`);
+  console.log(`PASS test:cli-tmux-goal — live goal, elapsed time, resize, reconnect snapshot, stale response fencing, completion, editor liveness and teardown verified. Report: ${reportPath}`);
 } catch (error) {
   failed = true;
   process.stderr.write(`FAIL test:cli-tmux-goal — ${error.stack ?? error}\n`);

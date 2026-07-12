@@ -788,12 +788,12 @@ describe('chat application shell ownership', () => {
   it('renders one compact active-goal chip in the existing prompt row and removes it on completion', async () => {
     vi.setSystemTime(new Date('2026-07-12T10:00:12.000Z'));
     const h = compositionHarness({ columns: 160, rows: 30, turns: 4 });
-    h.rt.goal = {
+    h.rt.setGoal({
       session_id: 'brain-1', user_id: 1, status: 'active', goal: 'Ship the clean goal indicator',
       draft: '', subgoals: '[]', turns_used: 0, turn_budget: 8, last_verdict: '',
       last_evidence: '', paused_reason: '',
       created_at: '2026-07-12 10:00:00', updated_at: '2026-07-12 10:00:00',
-    };
+    });
     const composition = makeComposition(h);
     composition.resume();
     composition.renderForced('test:active-goal');
@@ -807,7 +807,7 @@ describe('chat application shell ownership', () => {
     expect(goalRows[0]).toContain('Ship the clean goal indicator');
     expect(active).toHaveLength(h.term.rows);
 
-    h.rt.goal = { ...h.rt.goal, status: 'done', turns_used: 1, last_verdict: 'done' };
+    h.rt.setGoal({ ...h.rt.goal!, status: 'done', turns_used: 1, last_verdict: 'done' });
     composition.render('test:goal-done');
     await vi.runOnlyPendingTimersAsync();
     const done = renderMountedRoot(h).map(terminalPlainText);
@@ -819,12 +819,12 @@ describe('chat application shell ownership', () => {
   it('keeps the active-goal marker visible in a bounded 40x15 frame', async () => {
     vi.setSystemTime(new Date('2026-07-12T10:00:12.000Z'));
     const h = compositionHarness({ columns: 40, rows: 15, turns: 4 });
-    h.rt.goal = {
+    h.rt.setGoal({
       session_id: 'brain-1', user_id: 1, status: 'active', goal: 'A deliberately long autonomous goal title',
       draft: '', subgoals: '[]', turns_used: 2, turn_budget: 8, last_verdict: 'continue',
       last_evidence: '', paused_reason: '',
       created_at: '2026-07-12 10:00:00', updated_at: '2026-07-12 10:00:00',
-    };
+    });
     const composition = makeComposition(h);
     composition.resume();
     composition.renderForced('test:narrow-active-goal');

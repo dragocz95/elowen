@@ -354,6 +354,36 @@ describe('cli/chat/headless.runHeadless', () => {
     expect(calls).toContain('setGoal:ship it:8');
   });
 
+  it('emits one terminal goal JSONL record when SSE and polling observe the same transition', async () => {
+    const done = {
+      session_id: 'sess-1', user_id: 1, status: 'done' as const, goal: 'Ship once', draft: '',
+      subgoals: '[]', turns_used: 1, turn_budget: 8, last_verdict: 'done', last_evidence: 'verified',
+      paused_reason: '', created_at: '2026-07-12 10:00:00', updated_at: '2026-07-12 10:00:01',
+    };
+    let sink!: (event: BrainEvent) => void;
+    const client = {
+      async start() { return { sessionId: 'sess-1' }; },
+      async stream(onFrame: (frame: BrainEvent) => void, signal: AbortSignal, _backoff: number, onOpen?: () => void) {
+        sink = onFrame;
+        onOpen?.();
+        if (!signal.aborted) await new Promise<void>((resolve) => signal.addEventListener('abort', resolve, { once: true }));
+      },
+      async setGoal() { sink({ type: 'goal', goal: done }); return done; },
+      async goal() { return done; },
+      async history() { return []; },
+    };
+    const { io: sinkIo, out } = io();
+
+    const code = await runHeadless('http://x', {}, ['--goal', 'Ship once', '--json'], {
+      client: client as never, io: sinkIo,
+    });
+    const goalLines = out.join('').trim().split('\n').map((line) => JSON.parse(line))
+      .filter((event) => event.type === 'goal' && event.goal?.status === 'done');
+
+    expect(code).toBe(0);
+    expect(goalLines).toHaveLength(1);
+  });
+
   it('maps a blocked goal to exit 4', async () => {
     const { client } = fakeClient({ status: 'paused', last_verdict: 'blocked', paused_reason: 'no key', turns_used: 2, turn_budget: 8, last_evidence: '' } as GoalView);
     const { io: sink } = io();

@@ -14,6 +14,8 @@ let firstProgress = null;
 let sendCount = 0;
 let currentCards = [];
 let currentGoal = null;
+let goalReplay = [];
+let goalSnapshotCursor = 0;
 const shortHistory = [];
 const childHistory = [
   { id: 'child-u1', role: 'user', text: 'E2E CHILD TASK INPUT' },
@@ -41,6 +43,7 @@ function emit(event) {
   if (event.type === 'card') {
     currentCards = [...currentCards.filter((card) => card.id !== event.card.id), event.card];
   }
+  if (SCENARIO === 'goal') goalReplay.push(event);
   log({ kind: 'event', event });
   const frame = `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`;
   for (const stream of streams) stream.write(frame);
@@ -74,6 +77,7 @@ function sqliteUtc(epoch = Date.now()) {
 
 function runGoalTurn(text) {
   stopGoalTurn();
+  goalReplay = [];
   const createdAt = sqliteUtc();
   currentGoal = {
     session_id: SESSION_ID,
@@ -90,6 +94,7 @@ function runGoalTurn(text) {
     created_at: createdAt,
     updated_at: createdAt,
   };
+  const admittedGoal = currentGoal;
   emit({ type: 'goal', goal: currentGoal });
   later(60, () => emit({ type: 'step', step: 1, maxSteps: 8 }), goalTimers);
   later(100, () => emit({
@@ -102,6 +107,12 @@ function runGoalTurn(text) {
     output: { title: 'console output', kind: 'console', text: 'E2E GOAL TOOL COMPLETE', tone: 'success' },
   }), goalTimers);
   later(700, () => emit({ type: 'text', delta: 'E2E GOAL WORKING — deterministic autonomous turn.' }), goalTimers);
+  // Exercise BrainClient's real reconnect loop while the goal is active. The replacement stream must
+  // recover the goal from the atomic snapshot, not from a lucky post-reconnect live mutation.
+  later(1_500, () => {
+    log({ kind: 'control', action: 'disconnect-goal-streams', count: streams.size });
+    for (const stream of [...streams]) stream.end();
+  }, goalTimers);
   later(4_800, () => emit({ type: 'text', delta: '\nE2E GOAL COMPLETE — tmux lifecycle verified.' }), goalTimers);
   later(4_900, () => emit({
     type: 'idle', model: 'mock/e2e-model',
@@ -122,7 +133,9 @@ function runGoalTurn(text) {
         text: 'E2E GOAL WORKING — deterministic autonomous turn.\nE2E GOAL COMPLETE — tmux lifecycle verified.',
       });
       emit({ type: 'goal', goal: currentGoal });
-      resolve(currentGoal);
+      // Deliberately return the older admission snapshot after the streamed `done` event. The TUI must
+      // fence this stale HTTP completion instead of resurrecting the finished indicator.
+      resolve(admittedGoal);
     }, goalTimers);
   });
 }
@@ -401,6 +414,14 @@ const server = createServer(async (req, res) => {
       connection: 'keep-alive',
     });
     streams.add(res);
+    if (SCENARIO === 'goal' && url.searchParams.get('snapshot') === '1') {
+      const snapshot = {
+        type: 'snapshot', cursor: ++goalSnapshotCursor, sessionId: SESSION_ID,
+        history: shortHistory, events: goalReplay, goal: currentGoal,
+      };
+      log({ kind: 'snapshot', cursor: snapshot.cursor, goalStatus: currentGoal?.status ?? null, events: goalReplay.length });
+      res.write(`event: snapshot\nid: ${snapshot.cursor}\ndata: ${JSON.stringify(snapshot)}\n\n`);
+    }
     res.write(': connected\n\n');
     req.on('close', () => streams.delete(res));
     return;
@@ -408,6 +429,7 @@ const server = createServer(async (req, res) => {
   if (req.method === 'POST' && url.pathname === '/brain/goal' && SCENARIO === 'goal') {
     const text = typeof body.value?.text === 'string' ? body.value.text : '';
     const goal = await runGoalTurn(text);
+    log({ kind: 'goal-http-response', status: goal.status });
     json(res, 201, goal);
     return;
   }

@@ -336,11 +336,11 @@ const metadata = (commit = 'abc', {
 });
 
 function writeRound(root, round, {
-  omitSignals = false, mixedCommit = false, mixedDistHash = false, mixedRunId = false,
+  omitSignals = false, omitGoal = false, mixedCommit = false, mixedDistHash = false, mixedRunId = false,
   duplicateServer = false, wrongScenario = false, runId = `run-${round}`,
   ordinaryMax = 37, nullTiming = false, generatedAt,
 } = {}) {
-  for (const scenario of ['short', 'long']) {
+  for (const scenario of ['goal', 'short', 'long'].filter((name) => !(omitGoal && name === 'goal'))) {
     const dir = join(root, `round-${round}`, scenario);
     mkdirSync(dir, { recursive: true });
     const captureFrame = frame({ totalMs: ordinaryMax < 50 ? ordinaryMax : 37, at: 10 });
@@ -349,10 +349,13 @@ function writeRound(root, round, {
       : [captureFrame, frame({ sequence: 2, at: 11, totalMs: ordinaryMax })];
     const captures = EXPECTED_TMUX_CAPTURE_LABELS[scenario].map((label, captureIndex) => {
       const paths = { label };
+      const capturePane = scenario === 'goal' && /^0[1-5]-/u.test(label)
+        ? validPane().replace('Build · e2e-model mock high', 'Build · m · ◆ Goal 0/4')
+        : validPane();
       for (const kind of ['plain', 'ansi', 'state']) {
         const path = join(dir, `capture-${captureIndex}.${kind === 'state' ? 'json' : `${kind}.txt`}`);
         const analysis = analyzeActiveCapture({
-          label, plain: validPane(), ansi: validPane(), columns: 40, rows: 10,
+          label, plain: capturePane, ansi: capturePane, columns: 40, rows: 10,
           cursor: { x: 2, y: 6 }, frame: captureFrame, expectCursor: true,
         });
         writeFileSync(path, kind === 'state'
@@ -360,7 +363,7 @@ function writeRound(root, round, {
               columns: 40, rows: 10, cursor: { x: 2, y: 6 }, frame: captureFrame, analysis,
               contract: { expectCursor: true, forbiddenMarkers: [], expectScrollbar: true, allowScrollbarOcclusion: false },
             })}\n`
-          : validPane());
+          : capturePane);
         paths[kind] = path;
       }
       return paths;
@@ -369,6 +372,7 @@ function writeRound(root, round, {
     const ttyState = join(dir, 'tty-state.txt');
     const terminalWrites = join(dir, 'terminal-writes.log');
     const restoredShell = join(dir, 'restored-shell.txt');
+    const requests = join(dir, 'requests.jsonl');
     writeFileSync(perf, [
       JSON.stringify({ type: 'lifecycle', action: 'start', pid: 123, at: 1 }),
       ...perfFrames.map((entry) => JSON.stringify(entry)),
@@ -384,7 +388,15 @@ function writeRound(root, round, {
       '\x1b[?1049h\x1b[?1000h\x1b[?1002h\x1b[?1006hframe\x1b[?1006l\x1b[?1002l\x1b[?1000l\x1b[?1049l');
     writeFileSync(restoredShell, scenario === 'short'
       ? 'E2E SHORT SHELL RESTORED\n'
-      : 'E2E SHELL RESTORED\n');
+      : scenario === 'goal' ? 'E2E GOAL SHELL RESTORED\n' : 'E2E SHELL RESTORED\n');
+    if (scenario === 'goal') writeFileSync(requests, [
+      JSON.stringify({ kind: 'request', path: '/brain/stream' }),
+      JSON.stringify({ kind: 'request', path: '/brain/stream' }),
+      JSON.stringify({ kind: 'snapshot', goalStatus: 'active' }),
+      JSON.stringify({ kind: 'event', event: { type: 'goal', goal: { status: 'done' } } }),
+      JSON.stringify({ kind: 'goal-http-response', status: 'active' }),
+      '',
+    ].join('\n'));
     const commit = mixedCommit && scenario === 'long' ? 'def' : 'abc';
     const distSha256 = mixedDistHash && scenario === 'long' ? OTHER_DIST_HASH : DIST_HASH;
     const scenarioRunId = mixedRunId && scenario === 'long' ? `${runId}-other` : runId;
@@ -398,8 +410,13 @@ function writeRound(root, round, {
       passed: true, scenario: wrongScenario && scenario === 'long' ? 'short' : scenario,
       captures,
       metadata: metadata(commit, { runId: scenarioRunId, tmuxServer, distSha256, ...(generatedAt ? { generatedAt, completedAt: generatedAt } : {}) }),
-      evidence: { perf, ttyState, terminalWrites, restoredShell },
+      evidence: { perf, ttyState, terminalWrites, restoredShell, ...(scenario === 'goal' ? { requests } : {}) },
       performance,
+      ...(scenario === 'goal' ? {
+        goalStartingNoticeAbsent: true, goalElapsedAdvanced: true, goalVisibleAt40x15: true,
+        reconnectSnapshotApplied: true, staleKickoffResponseIgnored: true, goalRemovedAtCompletion: true,
+        postGoalInputAccepted: true, idleFramesAfter1100Ms: 0, terminalStateRestored: true,
+      } : {}),
     }));
   }
   if (!omitSignals) {
@@ -463,15 +480,29 @@ const aggregateOptions = (expectedRounds = 1, overrides = {}) => ({
   expectedRounds, expectedCommit: 'abc', expectedDistHash: DIST_HASH, ...overrides,
 });
 
-test('aggregate analyzer requires two complete short+long+signals rounds with one build identity', () => {
+test('goal tmux evidence has an explicit capture contract and is mandatory in the aggregate', () => {
+  assert.deepEqual(EXPECTED_TMUX_CAPTURE_LABELS.goal, [
+    '01-goal-active', '02-goal-elapsed', '03-goal-active-40x15', '04-goal-active-restored',
+    '05-goal-reconnected', '06-goal-complete', '07-post-goal-input',
+  ]);
+  const root = mkdtempSync(join(tmpdir(), 'elowen-tmux-analyzer-missing-goal-'));
+  try {
+    writeRound(root, 1, { omitGoal: true });
+    assert.throws(() => aggregateTmuxReports(root, aggregateOptions()), /goal|scenario|required/iu);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('aggregate analyzer requires two complete goal+short+long+signals rounds with one build identity', () => {
   const root = mkdtempSync(join(tmpdir(), 'elowen-tmux-analyzer-'));
   try {
     writeRound(root, 1, { ordinaryMax: 31 });
     writeRound(root, 2, { ordinaryMax: 37 });
     const summary = aggregateTmuxReports(root, aggregateOptions(2));
     assert.equal(summary.rounds, 2);
-    assert.equal(summary.scenarios, 6);
-    assert.equal(summary.captures, 90);
+    assert.equal(summary.scenarios, 8);
+    assert.equal(summary.captures, 104);
     assert.equal(summary.ordinaryMs.max, 37);
     assert.deepEqual(summary.commits, ['abc']);
   } finally {
@@ -485,7 +516,7 @@ test('aggregate analyzer can fail-close one freshly completed runner root direct
     writeRound(root, 1);
     const summary = aggregateTmuxReports(join(root, 'round-1'), aggregateOptions(1));
     assert.equal(summary.rounds, 1);
-    assert.equal(summary.scenarios, 3);
+    assert.equal(summary.scenarios, 4);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -729,7 +760,7 @@ test('aggregate analyzer rejects copied stale rounds and capture paths outside t
   try {
     writeRound(copied, 1);
     writeRound(copied, 2);
-    for (const scenario of ['short', 'long', 'signals']) {
+    for (const scenario of ['goal', 'short', 'long', 'signals']) {
       copyFileSync(join(copied, 'round-1', scenario, 'report.json'),
         join(copied, 'round-2', scenario, 'report.json'));
     }

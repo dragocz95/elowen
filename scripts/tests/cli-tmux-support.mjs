@@ -12,6 +12,10 @@ import { visibleWidth } from '@earendil-works/pi-tui';
 const STATUS_ROW = /^\s+(?:Build|Plan)(?:\s+·\s+\S+|…)/u;
 
 export const EXPECTED_TMUX_CAPTURE_LABELS = Object.freeze({
+  goal: Object.freeze([
+    '01-goal-active', '02-goal-elapsed', '03-goal-active-40x15', '04-goal-active-restored',
+    '05-goal-reconnected', '06-goal-complete', '07-post-goal-input',
+  ]),
   short: Object.freeze([
     '01-one-short-message', '02-rapid-tool-control-burst', '03-page-up-after-burst',
     '04-restored-after-resize', '05-reopened-same-conversation', '06-reopened-send-healthy',
@@ -479,7 +483,7 @@ function reportPaths(root) {
       const path = join(dir, entry.name);
       assert.ok(!entry.isSymbolicLink(), `tmux evidence tree must not contain symlinks: ${path}`);
       if (entry.isDirectory()) visit(path);
-      else if (entry.name === 'report.json' && ['short', 'long', 'signals'].includes(basename(dirname(path)))) found.push(path);
+      else if (entry.name === 'report.json' && ['goal', 'short', 'long', 'signals'].includes(basename(dirname(path)))) found.push(path);
     }
   };
   visit(realRoot);
@@ -581,6 +585,13 @@ function captureEvidence(value, label, scenarioDir, scenario, rawFramesByIdentit
     assert.ok(state.analysis && typeof state.analysis === 'object' && !Array.isArray(state.analysis),
       `${label}[${index}].state must contain the capture-time analysis`);
     const contract = expectedCaptureContract(scenario, captureLabel);
+    const plain = readFileSync(plainPath, 'utf8');
+    if (scenario === 'goal') {
+      if (/^0[1-5]-/u.test(captureLabel)) assert.match(plain, /\bGoal\b/u,
+        `${label}[${index}]: active/reconnected goal capture must show the goal indicator`);
+      else assert.doesNotMatch(plain, /◆\s*Goal/u,
+        `${label}[${index}]: completed goal capture must not retain the active indicator`);
+    }
     const identity = frameIdentity(state.frame);
     const rawFrame = identity ? rawFramesByIdentity.get(identity) : null;
     assert.ok(rawFrame,
@@ -589,7 +600,7 @@ function captureEvidence(value, label, scenarioDir, scenario, rawFramesByIdentit
       `${label}[${index}]: capture frame payload differs from its raw perf frame`);
     const analysis = analyzeActiveCapture({
       label: captureLabel,
-      plain: readFileSync(plainPath, 'utf8'),
+      plain,
       ansi: readFileSync(ansiPath, 'utf8'),
       columns: state.columns,
       rows: state.rows,
@@ -695,13 +706,32 @@ function normalScenarioEvidence(report, label, scenarioDir) {
     assert.equal(performance.mascot.maxRenderedTurns, 0,
       `${label}: mascot frames must not render settled turns`);
   }
+  if (report.scenario === 'goal') {
+    for (const field of [
+      'goalStartingNoticeAbsent', 'goalElapsedAdvanced', 'goalVisibleAt40x15',
+      'reconnectSnapshotApplied', 'staleKickoffResponseIgnored', 'goalRemovedAtCompletion',
+      'postGoalInputAccepted', 'terminalStateRestored',
+    ]) assert.equal(report[field], true, `${label}.${field} must be true`);
+    assert.equal(report.idleFramesAfter1100Ms, 0, `${label}: completed goal must leave no idle render timer`);
+    const requestsPath = evidenceFile(evidence.requests, `${label}.evidence.requests`, scenarioDir);
+    const requests = readJsonLines(requestsPath);
+    assert.ok(requests.filter((entry) => entry.kind === 'request' && entry.path === '/brain/stream').length >= 2,
+      `${label}: goal scenario must prove a stream reconnect`);
+    assert.ok(requests.some((entry) => entry.kind === 'snapshot' && entry.goalStatus === 'active'),
+      `${label}: reconnect must carry an active authoritative goal snapshot`);
+    assert.ok(requests.some((entry) => entry.kind === 'event' && entry.event?.type === 'goal' && entry.event.goal?.status === 'done'),
+      `${label}: goal scenario must contain a streamed done transition`);
+    assert.ok(requests.some((entry) => entry.kind === 'goal-http-response' && entry.status === 'active'),
+      `${label}: goal scenario must exercise an adversarial stale HTTP completion`);
+  }
   const tty = readFileSync(ttyPath, 'utf8').trim().split('\n');
   assert.equal(tty.length, 2, `${label}: tty evidence must contain before and after states`);
   assert.ok(tty[0] && tty[1] && tty[0] === tty[1], `${label}: tty state was not restored exactly`);
   const shell = readFileSync(shellPath, 'utf8');
   const expectedShellMarker = report.scenario === 'short'
     ? 'E2E SHORT SHELL RESTORED'
-    : report.scenario === 'long' ? 'E2E SHELL RESTORED' : null;
+    : report.scenario === 'long' ? 'E2E SHELL RESTORED'
+      : report.scenario === 'goal' ? 'E2E GOAL SHELL RESTORED' : null;
   assert.ok(expectedShellMarker && shell.includes(expectedShellMarker),
     `${label}: exact ${report.scenario} restored shell marker is missing`);
   assert.doesNotMatch(shell, /MaxListenersExceededWarning|\bat\s+\S+\s+\([^)]*\.js:\d+/u,
@@ -772,7 +802,7 @@ export function aggregateTmuxReports(root, {
   assert.match(requiredDistHash, /^[a-f0-9]{64}$/u, 'expected dist hash must be a SHA-256 digest');
   const reports = reportPaths(absolute).map((path) => {
     const parts = relative(absolute, path).split(/[\\/]/u);
-    const directScenarioRoot = parts.length === 2 && ['short', 'long', 'signals'].includes(parts[0]);
+    const directScenarioRoot = parts.length === 2 && ['goal', 'short', 'long', 'signals'].includes(parts[0]);
     return {
       path,
       round: directScenarioRoot ? basename(absolute) : parts[0],
@@ -785,8 +815,8 @@ export function aggregateTmuxReports(root, {
     `tmux aggregate requires ${expectedRounds} rounds (found ${rounds.length}: ${rounds.join(', ')})`);
   for (const round of rounds) {
     const scenarios = reports.filter((entry) => entry.round === round).map((entry) => entry.scenario).sort();
-    assert.deepEqual(scenarios, ['long', 'short', 'signals'],
-      `${round}: short, long and signals reports are required exactly once`);
+    assert.deepEqual(scenarios, ['goal', 'long', 'short', 'signals'],
+      `${round}: goal, short, long and signals reports are required exactly once`);
   }
   const stableIdentities = [];
   const runIdsByRound = new Map(rounds.map((round) => [round, new Set()]));

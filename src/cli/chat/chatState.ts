@@ -52,7 +52,9 @@ export class ChatState {
   cards: BrainCard[];
   queued: { id: string; text: string }[];
   processes: ProcessInfo[];
-  goal: GoalView | null;
+  private currentGoal: GoalView | null;
+  private goalStateRevision = 0;
+  private goalCommandRevision = 0;
   listed: { id: string; title: string }[] = [];
   showThoughts: boolean;
   pendingImages: PendingImage[] = [];
@@ -76,8 +78,25 @@ export class ChatState {
     this.cards = seed.cards ?? [];
     this.queued = seed.queued ?? [];
     this.processes = seed.processes ?? [];
-    this.goal = seed.goal ?? null;
+    this.currentGoal = seed.goal ?? null;
     this.showThoughts = seed.showThoughts ?? true;
     this.mentionFrecency = seed.mentionFrecency ?? {};
   }
+
+  /** Current durable/provisional goal projection. All writes go through `setGoal()` so asynchronous
+   * readers can fence stale results with a monotonic revision (object identity has an ABA hole). */
+  get goal(): GoalView | null { return this.currentGoal; }
+
+  get goalRevision(): number { return this.goalStateRevision; }
+
+  setGoal(goal: GoalView | null): number {
+    this.currentGoal = goal;
+    return ++this.goalStateRevision;
+  }
+
+  /** Goal HTTP commands can overlap. A separate command generation prevents an older mutation from
+   * publishing merely because no SSE state write happened while a newer command was in flight. */
+  beginGoalCommand(): number { return ++this.goalCommandRevision; }
+
+  isCurrentGoalCommand(revision: number): boolean { return revision === this.goalCommandRevision; }
 }
