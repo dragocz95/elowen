@@ -7,18 +7,40 @@ import { TaskModal } from '../../../modules/tasks/TaskModal';
 import { ToastProvider } from '../../../components/ui/Toast';
 import { createWrapper } from '../../test-utils';
 
-interface PlanBody { autoModel?: boolean; exec?: string }
+interface PlanBody { autoModel?: boolean; exec?: string; pilotExec?: string; overseerExec?: string }
 let planBody: PlanBody | null = null;
 const server = setupServer(
   http.get('*/api/config', () => HttpResponse.json({ allowedExecs: ['sonnet'], customModels: [], hiddenPresets: [], modelNotes: { sonnet: 'coder' }, autopilot: { model: 'm', overseerModel: '', apiUrl: 'u', apiKeySet: true, notes: '', prompt: '', pilotExec: '', overseerExec: '', reviewOnDone: false }, providers: {}, defaults: { exec: 'sonnet', autonomy: 'L3', maxSessions: 1 }, security: { tokenTtlDays: 30 } })),
   http.get('*/api/tasks', () => HttpResponse.json([])),
   http.get('*/api/projects', () => HttpResponse.json([])),
+  http.get('*/api/brain/models', () => HttpResponse.json([])),
   http.post('*/api/tasks/plan', async ({ request }) => { planBody = await request.json() as PlanBody; return HttpResponse.json({ jobId: 'pj-1', epicId: 'e1' }, { status: 202 }); }),
   http.get('*/api/plan/pj-1', () => HttpResponse.json({ id: 'pj-1', status: 'done', phases: [], epicId: 'e1', goal: '', projectId: 1 })),
 );
 beforeAll(() => server.listen({ onUnhandledRequest })); afterEach(() => server.resetHandlers()); afterAll(() => server.close());
 
 describe('TaskModal — auto model toggle', () => {
+  it('submits per-mission planner and overseer choices', async () => {
+    planBody = null;
+    const { wrapper: Wrapper } = createWrapper();
+    render(<Wrapper><ToastProvider><TaskModal onClose={() => {}} /></ToastProvider></Wrapper>);
+    await waitFor(() => screen.getByText('Autopilot · Planning'));
+    fireEvent.click(screen.getByText('Autopilot · Planning'));
+    fireEvent.change(screen.getByPlaceholderText('Describe the goal to plan…'), { target: { value: 'build x' } });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Planner' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Claude Sonnet 4.5' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Overseer' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Claude Sonnet 4.5' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Generate plan' }));
+    await waitFor(() => expect(planBody).not.toBeNull());
+    expect(planBody).toMatchObject({ pilotExec: 'sonnet', overseerExec: 'sonnet' });
+  });
+
   it('hides the executor picker and sends autoModel without exec', async () => {
     planBody = null;
     const { wrapper: Wrapper } = createWrapper();

@@ -1,6 +1,6 @@
 'use client';
 import { useEffect, useState } from 'react';
-import { Play, Sparkles, ListChecks, Plus, X, AlertTriangle, Pencil, Loader2, FolderGit2 } from 'lucide-react';
+import { Play, Sparkles, ListChecks, Plus, X, AlertTriangle, Pencil, Loader2 } from 'lucide-react';
 import type { Task, PlanResult } from '../../lib/types';
 import { useConfig, useTasks, usePlanJob, useProjects } from '../../lib/queries';
 import { useCreateTask, useUpdateTask, useSpawn, useSetTaskExec, usePlanTask } from '../../lib/mutations';
@@ -15,6 +15,8 @@ import { Toggle } from '../../components/ui/Toggle';
 import { Field } from '../../components/ui/Field';
 import { Segmented } from '../../components/ui/Segmented';
 import { ExecutorPicker } from '../../components/ui/ExecutorPicker';
+import { BackendPicker } from '../../components/ui/BackendPicker';
+import { ProjectIcon } from '../../components/ui/ProjectIcon';
 import { IconButton } from '../../components/ui/IconButton';
 import { Badge } from '../../components/ui/Badge';
 import { useToast } from '../../components/ui/Toast';
@@ -119,6 +121,10 @@ export function TaskModal({ task, onClose, initialSchedule, initialMode, initial
   // When on, the planner picks a model per phase from the model descriptions; the manual exec picker
   // is hidden and no uniform exec is sent.
   const [autoModel, setAutoModel] = useState(false);
+  // Empty means inherit Settings. These values are submitted only with this new mission and never
+  // mutate the workspace Autopilot configuration.
+  const [pilotExec, setPilotExec] = useState('');
+  const [overseerExec, setOverseerExec] = useState('');
   // Normalized plan outcome shared by the manual (sync) and autopilot (async job) paths.
   const [result, setResult] = useState<PlanOutcome | null>(null);
   const [planJobId, setPlanJobId] = useState<string | null>(null);
@@ -173,7 +179,7 @@ export function TaskModal({ task, onClose, initialSchedule, initialMode, initial
     setPlanError(null);
     try {
       // Autopilot planning is async: the endpoint returns a job; the effect renders it on done.
-      const r = await plan.mutateAsync({ goal: goal.trim(), name: missionName.trim() || undefined, exec: autoModel ? undefined : (exec || undefined), autoModel, autonomy, maxSessions, engage, project_id: projectId, prEnabled });
+      const r = await plan.mutateAsync({ goal: goal.trim(), name: missionName.trim() || undefined, exec: autoModel ? undefined : (exec || undefined), autoModel, pilotExec: pilotExec || undefined, overseerExec: overseerExec || undefined, autonomy, maxSessions, engage, project_id: projectId, prEnabled });
       if ('jobId' in r) setPlanJobId(r.jobId);
       else finishSync(r);
     } catch (e) {
@@ -188,7 +194,7 @@ export function TaskModal({ task, onClose, initialSchedule, initialMode, initial
     const phases = manualPhases.map((p) => ({ title: p.title.trim(), type: p.type })).filter((p) => p.title);
     if (phases.length === 0) { toast(t.tasks.addAtLeastOnePhase, 'error'); return; }
     try {
-      const r = await plan.mutateAsync({ goal: goal.trim(), name: missionName.trim() || undefined, phases, exec: exec || undefined, autonomy, maxSessions, engage, project_id: projectId, prEnabled });
+      const r = await plan.mutateAsync({ goal: goal.trim(), name: missionName.trim() || undefined, phases, exec: exec || undefined, pilotExec: pilotExec || undefined, overseerExec: overseerExec || undefined, autonomy, maxSessions, engage, project_id: projectId, prEnabled });
       if ('jobId' in r) setPlanJobId(r.jobId); else finishSync(r); // manual returns a PlanResult synchronously
     } catch (e) { toast(String(e), 'error'); }
   }
@@ -239,7 +245,7 @@ export function TaskModal({ task, onClose, initialSchedule, initialMode, initial
                     className={`inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs font-medium transition-colors ${on ? 'border-accent/50 bg-accent/15 text-accent' : 'border-border bg-elevated text-text-muted hover:border-border-strong hover:text-text'}`}
                     style={{ transitionDuration: 'var(--motion-fast)' }}
                   >
-                    <FolderGit2 size={13} className="shrink-0" aria-hidden />{p.slug}
+                    <ProjectIcon project={p} size={p.icon ? 18 : 13} />{p.slug}
                   </button>
                 );
               })}
@@ -334,6 +340,14 @@ export function TaskModal({ task, onClose, initialSchedule, initialMode, initial
             <Field label={t.tasks.autoModelLabel} hint={t.help.taskAutoModel}>
               <Toggle checked={autoModel} onChange={setAutoModel} label={t.tasks.autoModelLabel} />
             </Field>
+            <div className="grid gap-4 md:grid-cols-2">
+              <Field label={t.tasks.plannerExecutor} hint={t.help.taskPlannerExecutor}>
+                <BackendPicker value={pilotExec} onChange={setPilotExec} models={models} relayLabel={t.tasks.fromSettings} title={t.tasks.plannerExecutor} />
+              </Field>
+              <Field label={t.tasks.overseerExecutor} hint={t.help.taskOverseerExecutor}>
+                <BackendPicker value={overseerExec} onChange={setOverseerExec} models={models} relayLabel={t.tasks.fromSettings} title={t.tasks.overseerExecutor} />
+              </Field>
+            </div>
             <Field label={t.tasks.fieldPrMode} hint={t.help.taskPrMode}>
               <Segmented
                 value={prMode}

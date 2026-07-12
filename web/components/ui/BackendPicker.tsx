@@ -92,6 +92,7 @@ export function BackendPicker({ value, onChange, models, relayLabel, allowRelay 
         moreCount={0}
         onManage={() => setOpen(true)}
         manageLabel={t.managePicker.manage}
+        manageAriaLabel={title}
       />
       <ManageSelectionModal
         title={title ?? t.settings.executor}

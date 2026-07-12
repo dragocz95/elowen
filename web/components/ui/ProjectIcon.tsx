@@ -27,8 +27,8 @@ export function ProjectIcon({ project, size = 16, className = '' }: { project: {
   if (icon && src) {
     return (
       // eslint-disable-next-line @next/next/no-img-element
-      <img src={src} alt="" aria-hidden className={`shrink-0 rounded-sm object-cover ${className}`} style={{ width: size, height: size }} />
+      <img src={src} alt="" aria-hidden data-project-icon={icon} className={`shrink-0 rounded-sm object-cover ${className}`} style={{ width: size, height: size }} />
     );
   }
-  return <FolderGit2 size={size} className={`shrink-0 ${className}`} aria-hidden />;
+  return <FolderGit2 size={size} data-project-icon={icon || undefined} className={`shrink-0 ${className}`} aria-hidden />;
 }
