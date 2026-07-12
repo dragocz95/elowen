@@ -155,6 +155,7 @@ export function compositionHarness(options: {
     closeSubagent: () => {},
     cycleSubagent: () => {},
     openStream: () => {},
+    restartStream: () => {},
     switchTo: async () => {},
     stop: () => {},
   } as StreamCoordinatorPort;

@@ -24,6 +24,7 @@ export interface StreamCoordinatorPort {
   closeSubagent(): void;
   cycleSubagent(): void;
   openStream(ac: AbortController): void;
+  restartStream(): void;
   switchTo(target: { session?: string; fresh?: boolean }): Promise<void>;
   stop(): void;
 }
@@ -36,6 +37,7 @@ export class StreamCoordinator implements StreamCoordinatorPort {
   readonly closeSubagent: () => void;
   readonly cycleSubagent: () => void;
   readonly openStream: (ac: AbortController) => void;
+  readonly restartStream: () => void;
   readonly switchTo: (target: { session?: string; fresh?: boolean }) => Promise<void>;
   readonly stop: () => void;
 
@@ -220,6 +222,14 @@ export class StreamCoordinator implements StreamCoordinatorPort {
         }).catch(() => { /* offline/403 */ });
       };
       void client.stream(onFrame, ac.signal, 1000, onOpen, undefined, true).catch(() => { /* abort/reconnect owner */ });
+    };
+
+    const restartStream = (): void => {
+      if (stopped) return;
+      rt.streamAc.abort();
+      const ac = new AbortController();
+      rt.streamAc = ac;
+      openStream(ac);
     };
 
     const openSubagent = async (sessionId: string): Promise<void> => {
@@ -438,6 +448,7 @@ export class StreamCoordinator implements StreamCoordinatorPort {
     this.closeSubagent = closeSubagent;
     this.cycleSubagent = cycleSubagent;
     this.openStream = openStream;
+    this.restartStream = restartStream;
     this.switchTo = switchTo;
     this.stop = stop;
   }

@@ -59,6 +59,55 @@ describe('picker theme application', () => {
 });
 
 describe('picker application lifetime', () => {
+  it.each([
+    { outcome: 'success', expectedRestarts: 1 },
+    { outcome: 'failure', expectedRestarts: 0 },
+  ])('restarts the parent stream only after a $outcome model switch', async ({ outcome, expectedRestarts }) => {
+    const lifetime = new ChatApplicationLifetime<'metadata'>();
+    const restartStream = vi.fn();
+    let modal: { handleInput(data: string): void } | null = null;
+    const overlayHandle = {
+      hide: vi.fn(), setHidden: vi.fn(), isHidden: () => false,
+      focus: vi.fn(), unfocus: vi.fn(), isFocused: () => true,
+    };
+    const tui = {
+      terminal: { columns: 80, rows: 24 },
+      showOverlay: vi.fn((component: { handleInput(data: string): void }) => {
+        modal = component;
+        return overlayHandle;
+      }),
+      setFocus: vi.fn(), requestRender: vi.fn(),
+    };
+    const setModel = vi.fn(async () => {
+      if (outcome === 'failure') throw new Error('model switch failed');
+      return { model: 'next-model' };
+    });
+    const state = new ChatState({ transcript: new TranscriptModel(), modelName: 'old-model' });
+    const pickers = createPickers(
+      state,
+      {
+        client: {
+          models: async () => [{ provider: 'mock', providerLabel: 'Mock', model: 'next-model' }],
+          setModel,
+        },
+        tui, editor: {}, termSettings: null, cwdLabel: '', branchLabel: '', commandDefs: [], lifetime,
+      } as never,
+      { render: vi.fn(), refreshMeta: async () => {} },
+      { restartStream } as never,
+      { reshowPanel: vi.fn(), reloadKeymap: vi.fn() },
+    );
+
+    pickers.openModelPicker();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(modal).not.toBeNull();
+    (modal as unknown as { handleInput(data: string): void }).handleInput('\r');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(setModel).toHaveBeenCalledWith({ provider: 'mock', model: 'next-model' });
+    expect(restartStream).toHaveBeenCalledTimes(expectedRestarts);
+    await lifetime.stop();
+  });
+
   it('does not publish a model response after the chat has stopped', async () => {
     const models = deferred<never[]>();
     const lifetime = new ChatApplicationLifetime<'metadata'>();

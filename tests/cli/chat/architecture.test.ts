@@ -136,6 +136,11 @@ describe('chat production architecture boundaries', () => {
     expect(source('chatApplication.ts')).toMatch(/this\.lifetime\.stop\(\)/);
   });
 
+  it('keeps stream controller replacement inside the stream coordinator', () => {
+    expect(source('pickers.ts')).not.toMatch(/\bstreamAc\b|new AbortController\s*\(/);
+    expect(source('pickers.ts')).toMatch(/stream\.restartStream\(\)/);
+  });
+
   it('keeps test-only routing and root inspection out of production APIs', () => {
     expect(source('inputRouter.ts')).not.toMatch(/customRoute|routeOrContext|constructor\(tui:\s*TUI,\s*route:/);
     expect(source('chatComposition.ts')).not.toMatch(

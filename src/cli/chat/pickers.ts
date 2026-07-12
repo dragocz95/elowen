@@ -203,10 +203,7 @@ export function createPickers(
           runSession(() => client.setModel(parseModelValue(value)), (r) => {
             rt.modelName = r.model;
             // The server rebuilt the session — the old event stream is dead, reopen it.
-            rt.streamAc.abort();
-            const ac = new AbortController();
-            rt.streamAc = ac;
-            stream.openStream(ac);
+            stream.restartStream();
             runSession(() => refreshMeta(), () => { rt.notice = ''; render(); }, fail);
           }, fail);
         },

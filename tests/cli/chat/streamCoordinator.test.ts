@@ -47,6 +47,36 @@ function actions(overrides: Partial<ChatApplicationActions> = {}): ChatApplicati
   };
 }
 
+describe('StreamCoordinator — parent stream ownership', () => {
+  it('atomically aborts and replaces the parent controller when a rebuilt session restarts', () => {
+    const streamSignals: AbortSignal[] = [];
+    const client = {
+      stream: (_onEvent: (event: BrainEvent) => void, signal: AbortSignal) => {
+        streamSignals.push(signal);
+        return Promise.resolve();
+      },
+      rebind: () => {},
+    } as unknown as BrainClient;
+    const old = new AbortController();
+    const rt = state();
+    rt.streamAc = old;
+    const coordinator = new StreamCoordinator(
+      rt, { client }, actions(),
+      { launchAsk: () => {}, openPlanDecision: () => {} } as unknown as Flows,
+      new SnapshotHydrator<BrainEvent>(), new HydrationNoticeOwner(),
+    );
+
+    coordinator.restartStream();
+
+    expect(old.signal.aborted).toBe(true);
+    expect(rt.streamAc).not.toBe(old);
+    expect(rt.streamAc.signal.aborted).toBe(false);
+    expect(streamSignals).toEqual([rt.streamAc.signal]);
+    coordinator.stop();
+    expect(rt.streamAc.signal.aborted).toBe(true);
+  });
+});
+
 describe('StreamCoordinator — idle rollover', () => {
   it('resets to the fresh conversation on `session` and rebuilds from the daemon stream (no refetch)', () => {
     let onEvent!: (e: BrainEvent) => void;
