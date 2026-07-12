@@ -1,9 +1,20 @@
 import assert from 'node:assert/strict';
-import { execFileSync, spawn, spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import {
+  analyzeFrameDiagnostics,
+  captureState,
+  collectMetadata,
+  createArtifactDir,
+  createTmuxServer,
+  latestFrame,
+  paneLines,
+  readFrames,
+  writeReport,
+} from './cli-tmux-support.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repo = resolve(here, '../..');
@@ -18,7 +29,7 @@ if (spawnSync('tmux', ['-V'], { stdio: 'ignore' }).status !== 0) {
 }
 
 const temp = mkdtempSync(join(tmpdir(), 'elowen-cli-tmux-short-'));
-const artifactDir = mkdtempSync(join(tmpdir(), 'elowen-tui-short-artifacts-'));
+const artifactDir = createArtifactDir('short');
 const home = join(temp, 'home');
 const config = join(temp, 'config');
 const logPath = join(temp, 'mock-requests.jsonl');
@@ -26,7 +37,8 @@ const ttyStatePath = join(temp, 'tty-state.txt');
 const terminalWriteLog = join(artifactDir, 'terminal-writes.log');
 const perfLog = join(artifactDir, 'perf.jsonl');
 const reportPath = join(artifactDir, 'report.json');
-const session = `elowen-cli-short-${process.pid}-${Math.random().toString(36).slice(2, 8)}`;
+const session = 'short';
+const tmuxServer = createTmuxServer('short');
 mkdirSync(home, { recursive: true });
 mkdirSync(config, { recursive: true });
 
@@ -35,11 +47,11 @@ let failed = false;
 const sleep = (ms) => new Promise((resolveSleep) => setTimeout(resolveSleep, ms));
 
 function tmux(args) {
-  return execFileSync('tmux', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+  return tmuxServer.run(args);
 }
 
 function hasSession() {
-  return spawnSync('tmux', ['has-session', '-t', session], { stdio: 'ignore' }).status === 0;
+  return tmuxServer.hasSession(session);
 }
 
 function capture(ansi = false) {
@@ -47,12 +59,22 @@ function capture(ansi = false) {
   return tmux(['capture-pane', '-p', ...(ansi ? ['-e'] : []), '-t', session]);
 }
 
-function saveCapture(label) {
+const activeCaptures = [];
+function saveActive(label, options = {}) {
+  const saved = captureState({
+    tmux: tmuxServer, session, artifactDir, label, perfLog, expectCursor: true, ...options,
+  });
+  activeCaptures.push(saved);
+  return saved;
+}
+
+function saveRaw(label) {
   const plain = capture();
   const ansi = capture(true);
-  writeFileSync(join(artifactDir, `${label}.txt`), plain);
-  writeFileSync(join(artifactDir, `${label}.ansi.txt`), ansi);
-  return { plain, ansi };
+  const paths = { plain: join(artifactDir, `${label}.txt`), ansi: join(artifactDir, `${label}.ansi.txt`) };
+  writeFileSync(paths.plain, plain);
+  writeFileSync(paths.ansi, ansi);
+  return { plain, ansi, paths };
 }
 
 function entries() {
@@ -94,17 +116,6 @@ function shellQuote(value) {
   return `'${String(value).replaceAll("'", "'\\''")}'`;
 }
 
-function paneLines(value) {
-  return value.endsWith('\n') ? value.slice(0, -1).split('\n') : value.split('\n');
-}
-
-function assertStableFrame(label, plain) {
-  const lines = paneLines(plain);
-  assert.equal(lines.length, size.rows, `${label}: pane must stay exactly ${size.rows} rows tall`);
-  assert.ok(lines.every((line) => line.length <= size.columns), `${label}: no physical row may exceed ${size.columns} columns`);
-  assert.equal((plain.match(/\bBuild\b/g) ?? []).length, 1, `${label}: status row must occur exactly once`);
-}
-
 async function startMock() {
   const child = spawn(process.execPath, [fixture], {
     cwd: repo,
@@ -133,7 +144,7 @@ try {
   const started = await startMock();
   mock = started.child;
   const base = `http://127.0.0.1:${started.port}`;
-  const cliCommand = [
+  const cliPrefix = [
     'env',
     `HOME=${shellQuote(home)}`,
     `XDG_CONFIG_HOME=${shellQuote(config)}`,
@@ -144,10 +155,14 @@ try {
     `ELOWEN_TUI_LOG=${shellQuote(perfLog)}`,
     `PI_TUI_WRITE_LOG=${shellQuote(terminalWriteLog)}`,
     'TERM=xterm-256color',
-    shellQuote(process.execPath), shellQuote(cli), 'chat', '--new',
+    shellQuote(process.execPath), shellQuote(cli), 'chat',
   ].join(' ');
+  const freshCli = `${cliPrefix} --new`;
+  const reopenedCli = `${cliPrefix} --session e2e-session`;
   const command = [
-    'before=$(stty -g)', cliCommand, 'after=$(stty -g)',
+    'before=$(stty -g)', freshCli,
+    `printf '\nE2E SHORT REOPENING\n'`, reopenedCli,
+    'after=$(stty -g)',
     `printf '%s\\n%s\\n' "$before" "$after" > ${shellQuote(ttyStatePath)}`,
     `printf '\\nE2E SHORT SHELL RESTORED\\n'`, 'sleep 2',
   ].join('; ');
@@ -163,40 +178,75 @@ try {
   await waitFor('short idle event', () => entries().some((entry) => entry.kind === 'event' && entry.event?.usage?.totalTokens === 24));
   await sleep(100);
 
-  const short = saveCapture('01-one-short-message');
-  assertStableFrame('one short message', short.plain);
-  assert.doesNotMatch(short.ansi, /\x1b\[7m {2,}/, 'one short message must not create a wide reverse-video padding line');
+  const short = saveActive('01-one-short-message', { expectScrollbar: false });
+  assert.equal(short.frame.maxScrollOffset, 0, 'one short exchange must stay below transcript overflow');
 
+  const burstFramesBefore = readFrames(perfLog).length;
   sendLiteral('E2E CONTROL BURST');
   sendKey('Enter');
   await waitFor('rapid tool burst completion', () => capture().includes('E2E CONTROL BURST COMPLETE'));
   await waitFor('tool burst idle event', () => entries().some((entry) => entry.kind === 'event' && entry.event?.usage?.totalTokens === 3456));
   await sleep(120);
 
-  const burst = saveCapture('02-rapid-tool-control-burst');
-  assertStableFrame('rapid tool burst', burst.plain);
+  const burst = saveActive('02-rapid-tool-control-burst', { expectScrollbar: true });
   assert.match(burst.plain, /E2E CONTROL BURST COMPLETE/, 'assistant tail must remain visible after rapid tool results');
-  assert.ok(paneLines(burst.plain).some((line) => /█\s*$/.test(line)), 'overflowing transcript must expose a scrollbar thumb');
   assert.doesNotMatch(burst.ansi, /\t|\r|\x1b\]0;unsafe-title|\x1b\[2J/, 'tool payload controls must not escape into the terminal frame');
+  const burstFrames = readFrames(perfLog).slice(burstFramesBefore);
+  assert.ok(burstFrames.length <= 12, `42-event burst must coalesce into <=12 frames (got ${burstFrames.length})`);
+  assert.ok(burstFrames.some((frame) => (frame.reasons?.length ?? 0) >= 3),
+    'rapid tool events must coalesce multiple render reasons into one frame');
 
   sendKey('PageUp');
   await waitFor('PageUp history chip', () => capture().includes('History +'));
-  const scrolled = saveCapture('03-page-up-after-burst');
-  assertStableFrame('PageUp after burst', scrolled.plain);
+  const scrolled = saveActive('03-page-up-after-burst', { expectScrollbar: true });
+  assert.ok(scrolled.frame.scrollOffset > 0, 'PageUp must move to an older numeric history offset');
   sendKey('PageDown');
   await waitFor('PageDown tail', () => !capture().includes('History +'));
 
   tmux(['resize-window', '-t', session, '-x', '40', '-y', '15']);
   await waitFor('compact stable frame', () => capture().includes('Build') && paneLines(capture()).length === 15);
+  const restoreRequestedAt = Date.now();
   tmux(['resize-window', '-t', session, '-x', String(size.columns), '-y', String(size.rows)]);
-  await waitFor('restored frame', () => capture().includes('E2E CONTROL BURST COMPLETE') && paneLines(capture()).length === size.rows);
-  const restored = saveCapture('04-restored-after-resize');
-  assertStableFrame('restored after resize', restored.plain);
+  await waitFor('restored frame', () => latestFrame(readFrames(perfLog), size.columns, size.rows, restoreRequestedAt)
+    && capture().includes('E2E CONTROL BURST COMPLETE') && paneLines(capture()).length === size.rows);
+  saveActive('04-restored-after-resize', {
+    expectScrollbar: true, forbiddenMarkers: ['Terminal too small'],
+  });
 
   sendKey('C-c');
   await waitFor('single stop', () => requests('/brain/session/stop').length === 1);
+  await waitFor('reopened stream', () => requests('/brain/stream').length === 2
+    && capture().includes('E2E CONTROL BURST COMPLETE'), 8_000);
+  const reopened = saveActive('05-reopened-same-conversation', { expectScrollbar: true });
+  assert.match(reopened.plain, /E2E CONTROL BURST COMPLETE/, 'reopened session must hydrate the tool-burst history');
+  assert.ok(reopened.frame.maxScrollOffset > 0, 'reopened damaged-looking history must retain a healthy scrollbar');
+
+  sendLiteral('E2E REOPEN LIVENESS');
+  sendKey('Enter');
+  await waitFor('reopened liveness response', () => capture().includes('E2E REOPEN HEALTHY'));
+  await waitFor('reopened idle event', () => entries().some((entry) => entry.kind === 'event'
+    && entry.event?.usage?.totalTokens === 4567));
+  const reopenedHealthy = saveActive('06-reopened-send-healthy', { expectScrollbar: true });
+  assert.match(reopenedHealthy.plain, /E2E REOPEN HEALTHY/, 'reopened editor must send and render a new response');
+
+  await waitFor('post-idle metadata settled', () => readFrames(perfLog).some((frame) => frame.pid === reopenedHealthy.frame.pid
+    && frame.reasons?.includes('metadata:rate-limits') && frame.at >= reopenedHealthy.frame.at));
+  const idleFrames = readFrames(perfLog).length;
+  await sleep(850);
+  assert.equal(readFrames(perfLog).length, idleFrames, 'hidden-panel idle CLI must render zero frames for >=750ms');
+
+  sendKey('PageUp');
+  await waitFor('reopened PageUp', () => capture().includes('History +'));
+  const reopenedScrolled = saveActive('07-reopened-page-up', { expectScrollbar: true });
+  assert.ok(reopenedScrolled.frame.scrollOffset > 0, 'reopened PageUp must retain numeric scroll state');
+  sendKey('PageDown');
+  await waitFor('reopened PageDown tail', () => !capture().includes('History +'));
+
+  sendKey('C-c');
+  await waitFor('second stop', () => requests('/brain/session/stop').length === 2);
   await waitFor('restored shell', () => capture().includes('E2E SHORT SHELL RESTORED'), 5_000);
-  saveCapture('05-restored-shell');
+  const shell = saveRaw('08-restored-shell');
+  assert.match(shell.plain, /E2E SHORT SHELL RESTORED/, 'primary shell must remain readable after both runs');
 
   const ttyStates = readFileSync(ttyStatePath, 'utf8').trim().split('\n');
   assert.equal(ttyStates[1], ttyStates[0], 'raw/canonical/echo tty state must be restored exactly');
@@ -204,33 +254,40 @@ try {
   assert.ok(terminalWrites.lastIndexOf('\x1b[?1049l') > terminalWrites.lastIndexOf('\x1b[?1049h'), 'alternate screen must be left last');
   assert.ok(terminalWrites.lastIndexOf('\x1b[?1006l') > terminalWrites.lastIndexOf('\x1b[?1006h'), 'mouse reporting must be disabled last');
 
-  const frames = readFileSync(perfLog, 'utf8').split('\n').filter(Boolean)
-    .map((line) => JSON.parse(line)).filter((entry) => entry.type === 'frame');
-  assert.ok(frames.length > 0, 'perf diagnostics must contain frames');
-  assert.ok(frames.every((frame) => frame.rootRows <= frame.terminal.rows), 'every diagnosed root frame must fit the terminal');
+  const frames = readFrames(perfLog);
+  const performance = analyzeFrameDiagnostics(frames);
   const scrollFrames = frames.filter((frame) => frame.reasons?.some((reason) => reason.includes('scroll')));
   const report = {
     passed: true,
-    captures: 5,
+    scenario: 'short-controls-reopen',
+    metadata: collectMetadata(repo, cli, tmuxServer.name),
+    captures: activeCaptures.map((captureEntry) => ({ label: captureEntry.label, ...captureEntry.paths })),
     frames: frames.length,
     scrollFrames: scrollFrames.length,
+    performance,
     shortPaddingArtifact: false,
     toolControlsContained: true,
+    oneMessageScrollbarAbsent: true,
     scrollbarVisible: true,
+    reopenedSessionHealthy: true,
+    idleFramesAfter850Ms: 0,
     terminalStateRestored: true,
   };
-  writeFileSync(reportPath, `${JSON.stringify(report, null, 2)}\n`);
-  console.log(`PASS test:cli-tmux-short — one-message white-line regression, rapid control-rich tool stream, scrollbar, resize, and teardown verified. Report: ${reportPath}`);
+  writeReport(reportPath, report);
+  console.log(`PASS test:cli-tmux-short — one-message threshold, coalesced burst, same-session reopen, input/scroll, and teardown verified. Report: ${reportPath}`);
 } catch (error) {
   failed = true;
   process.stderr.write(`FAIL test:cli-tmux-short — ${error.stack ?? error}\n`);
   const pane = capture();
   if (pane) process.stderr.write(`\n--- tmux capture ---\n${pane}\n`);
-  try { writeFileSync(reportPath, `${JSON.stringify({ passed: false, error: error.stack ?? String(error) }, null, 2)}\n`); } catch { /* best effort */ }
+  try { writeReport(reportPath, { passed: false, error: error.stack ?? String(error) }); } catch { /* best effort */ }
   process.stderr.write(`Machine report: ${reportPath}\n`);
   process.exitCode = 1;
 } finally {
-  if (hasSession()) spawnSync('tmux', ['kill-session', '-t', session], { stdio: 'ignore' });
+  if (hasSession()) {
+    try { tmux(['kill-session', '-t', session]); } catch { /* best effort */ }
+  }
+  tmuxServer.killServer();
   if (mock && mock.exitCode === null && mock.signalCode === null) {
     mock.kill('SIGTERM');
     await Promise.race([new Promise((resolveExit) => mock.once('exit', resolveExit)), sleep(1_000)]);
