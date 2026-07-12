@@ -75,7 +75,7 @@ export class TurnContextBuilder {
     const modeInstruction = mode === 'plan'
       ? `${this.d.prompts.render('cli/plan-mode', {}, request.userId)}\n\n`
       : '';
-    const runningSubagents = await this.runningSubagentsBlock(live.sessionId);
+    const runningSubagents = this.runningSubagentsBlock(live.sessionId);
 
     return {
       autoSaveMemory: memSettings?.autoSave !== false,
@@ -103,20 +103,13 @@ export class TurnContextBuilder {
     };
   }
 
-  async withRunningSubagents(text: string, sessionId: string): Promise<string> {
-    const block = await this.runningSubagentsBlock(sessionId);
+  withRunningSubagents(text: string, sessionId: string): string {
+    const block = this.runningSubagentsBlock(sessionId);
     return block ? `${text}\n\n${block}` : text;
   }
 
-  private async runningSubagentsBlock(sessionId: string): Promise<string> {
-    const registry = await this.d.plugins().catch(() => undefined);
-    const raw = registry?.controls.get('subagent');
-    const control = raw && typeof raw === 'object'
-      ? raw as { activeRuns?: (input: { sessionId: string }) => string[] }
-      : undefined;
-    const active = typeof control?.activeRuns === 'function'
-      ? new Set(control.activeRuns({ sessionId }))
-      : new Set<string>();
+  private runningSubagentsBlock(sessionId: string): string {
+    const active = new Set(this.d.sessions.childrenOf(sessionId));
     const running = this.d.store.getSubagentRuns(sessionId)
       .filter((run) => run.status === 'running' && active.has(run.sessionId));
     if (running.length === 0) return '';

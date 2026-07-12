@@ -204,7 +204,6 @@ describe('subagent plugin', () => {
     const delegate = reg.tools.find((t) => t.name === 'delegate')!;
     const control = reg.controls.get('subagent') as {
       detachForeground(input: { sessionId: string; principal: string }, completed: (result: unknown) => void): { detached: number };
-      activeRuns(input: { sessionId: string }): string[];
     };
     expect(control).toBeTruthy();
 
@@ -225,7 +224,6 @@ describe('subagent plugin', () => {
       { sessionId: 'brain-parent-detach', principal: 'elowen:1' },
       (result) => completed.push(result),
     )).toEqual({ detached: 1 });
-    expect(control.activeRuns({ sessionId: 'brain-parent-detach' })).toEqual(['brain-ch-subagent-detached']);
     expect(asText(await foreground)).toContain('moved this sub-agent to the background');
 
     resolveChild('detached child result');

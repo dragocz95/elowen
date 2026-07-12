@@ -85,10 +85,6 @@ export function register(ctx) {
   // tool wait; it never aborts the child channel. The daemon supplies a completion sink at detach time,
   // so the eventual result can re-enter the originating conversation through its normal turn pipeline.
   ctx.registerControl('subagent', {
-    activeRuns: ({ sessionId }) => [...jobs.values()]
-      .filter((job) => job.status === 'running' && job.originSessionId === sessionId)
-      .map((job) => job.sessionId)
-      .filter(Boolean),
     detachForeground: ({ sessionId, principal }, onCompleted) => {
       let detached = 0;
       for (const job of jobs.values()) {

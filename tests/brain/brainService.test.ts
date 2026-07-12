@@ -267,6 +267,8 @@ describe('BrainService', () => {
       id: 'delegate-1', sessionId: 'brain-ch-subagent-child', status: 'running',
       task: 'inspect <unsafe>', detail: 'read_file src/a.ts', tools: 2, seconds: 4, background: true, autoDeliver: true,
     });
+    (svc as unknown as { sessions: { setChildRunning(parent: string, child: string, running: boolean): void } })
+      .sessions.setChildRunning(sessionId, 'brain-ch-subagent-child', true);
 
     await svc.send({ userId: 1, text: 'What is next?', session: sessionId });
     const prompted = d.session.prompt.mock.calls.at(-1)?.[0] as string;
@@ -290,10 +292,17 @@ describe('BrainService', () => {
     const svc = new BrainService(d as never);
     const { sessionId } = await svc.start(1);
     d.store.createSession({ id: 'brain-ch-subagent-stale', userId: 1, model: 'm', parentSessionId: sessionId });
+    d.store.appendMessage({
+      id: 'assistant-stale', sessionId, parentId: null, role: 'assistant',
+      content: { role: 'assistant', content: [{ type: 'toolCall', id: 'delegate-stale', name: 'delegate', arguments: { task: 'stale job' } }] },
+    });
     d.store.upsertSubagentRun(sessionId, {
       id: 'delegate-stale', sessionId: 'brain-ch-subagent-stale', status: 'running',
       task: 'stale job', tools: 1, seconds: 9, background: true,
     });
+
+    expect(svc.history(1).flatMap((turn) => turn.segments ?? [])
+      .some((segment) => segment.kind === 'tool' && segment.sub?.status === 'running')).toBe(false);
 
     await svc.send({ userId: 1, text: 'Continue', session: sessionId });
     expect(d.session.prompt.mock.calls.at(-1)?.[0]).toBe('Continue');

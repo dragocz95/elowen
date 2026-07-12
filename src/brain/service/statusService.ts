@@ -40,6 +40,12 @@ interface StatusServiceDeps {
 export class BrainStatusService {
   constructor(private d: StatusServiceDeps) {}
 
+  private subagentRuns(sessionId: string) {
+    const active = new Set(this.d.sessions.childrenOf(sessionId));
+    return this.d.store.getSubagentRuns(sessionId)
+      .filter((run) => run.status !== 'running' || active.has(run.sessionId));
+  }
+
   /** The current provider config, or null when nothing is configured (never throws). Shared by the
    *  readiness helpers below so they can report "not configured" instead of blowing up. */
   private currentConfig(): BrainRuntimeConfig | null {
@@ -176,7 +182,7 @@ export class BrainStatusService {
    *  sole store; no live session required, so it works before/independently of `start`. */
   history(userId: number): BrainMessageView[] {
     const sessionId = this.d.lifecycle.activeSessionId(userId);
-    return shapeBrainMessages(this.d.store.getMessages(sessionId), this.d.store.getSubagentRuns(sessionId));
+    return shapeBrainMessages(this.d.store.getMessages(sessionId), this.subagentRuns(sessionId));
   }
 
   /** ANY of the owner's stored sessions, shaped for display — including the channel (Discord) and
@@ -185,7 +191,7 @@ export class BrainStatusService {
   messagesOf(userId: number, sessionId: string): BrainMessageView[] {
     const row = this.d.store.getSession(sessionId);
     if (!row || row.user_id !== userId) throw new Error('unknown session');
-    return shapeBrainMessages(this.d.store.getMessages(sessionId), this.d.store.getSubagentRuns(sessionId));
+    return shapeBrainMessages(this.d.store.getMessages(sessionId), this.subagentRuns(sessionId));
   }
 
   /** Atomic, idempotent first frame for an opt-in fixed-session SSE stream. Reads the clean durable
@@ -208,7 +214,7 @@ export class BrainStatusService {
       // guessing: display text may differ from persisted image/mention framing).
       history: shapeBrainMessages(
         this.d.store.getMessages(sessionId).filter((message) => !orderedUserRows.has(message.id)),
-        this.d.store.getSubagentRuns(sessionId),
+        this.subagentRuns(sessionId),
       ),
       ...replay,
     };
