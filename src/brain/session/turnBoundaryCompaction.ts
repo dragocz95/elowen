@@ -5,14 +5,9 @@ import {
   type AgentSessionEvent,
   type SessionManager,
 } from '@earendil-works/pi-coding-agent';
+import { coordinateNativeCompactionChecks } from './compactionCheckCoordinator.js';
 
 type PiAssistantMessage = Extract<AgentSessionEvent, { type: 'message_end' }>['message'];
-type PiCompactionSession = {
-  /** PI 0.80 owns threshold/overflow classification and the native compaction event pipeline, but its
-   * check is not yet declared as public. Keep that one version-sensitive access isolated here. */
-  _checkCompaction?: (assistantMessage: PiAssistantMessage, skipAbortedCheck?: boolean) => Promise<boolean>;
-};
-
 export interface PendingCompactionMessage {
   text: string;
   images?: readonly { type: 'image'; data: string; mimeType: string }[];
@@ -73,12 +68,13 @@ export function installTurnBoundaryAutoCompaction(
   enabled: boolean,
   pendingMessages?: () => readonly PendingCompactionMessage[],
 ): boolean {
-  if (!enabled) return false;
-  const piSession = session as unknown as PiCompactionSession;
-  const checkCompaction = piSession._checkCompaction?.bind(session);
+  const checkCompaction = coordinateNativeCompactionChecks(session);
   // Injected/custom AgentSession implementations may intentionally expose only the public surface.
   // Their ordinary end-of-run PI behavior remains intact; the production 0.80 runtime has this seam.
   if (!checkCompaction) return false;
+  // Even with proactive compaction disabled, keep native pre-prompt/overflow checks coordinated with
+  // abortSessionWork. Only the extra between-tool-turn invocation below is feature-gated.
+  if (!enabled) return false;
 
   const previous = session.agent.prepareNextTurnWithContext;
   session.agent.prepareNextTurnWithContext = async (turn, signal) => {

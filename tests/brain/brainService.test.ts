@@ -23,6 +23,7 @@ import type { TurnRequest } from '../../src/brain/service/turnRequest.js';
 function fakeDeps() {
   const listeners: ((e: unknown) => void)[] = [];
   const messages: { role: string; content: string }[] = [];
+  const nativeCheck = vi.fn(async () => false);
   const session = {
     sessionId: 'sess-1',
     prompt: vi.fn(async (t: string, options?: { preflightResult?: (success: boolean) => void }) => {
@@ -33,6 +34,7 @@ function fakeDeps() {
     subscribe: (l: (e: unknown) => void) => { listeners.push(l); return () => {}; },
     setModel: vi.fn(), dispose: vi.fn(), abort: vi.fn(async () => {}),
     abortCompaction: vi.fn(), abortBranchSummary: vi.fn(), messages, isStreaming: false,
+    _checkCompaction: nativeCheck,
     // PI's native mid-turn queue: steer() parks a message in the pending backlog (in a real session PI
     // delivers it between steps; the fake just records it so tests can assert it landed), and the
     // getters/clearQueue mirror what status()/queueList/abort read.
@@ -95,6 +97,7 @@ function fakeDeps() {
     createSession,
     resourceLoaderFactory: () => undefined,
     session,
+    nativeCheck,
   };
 }
 
@@ -263,6 +266,46 @@ describe('BrainService', () => {
     expect(order).toEqual(['queue:0', 'user:also check the logs']);
     expect(seen.some((e) => e.type === 'user' && e.text === 'also check the logs')).toBe(true);
     expect(d.store.getMessages(sessionId).map((m) => JSON.parse(m.content).content)).toContain('also check the logs');
+  });
+
+  it('queues input throughout native compaction and publishes it only when PI delivers it', async () => {
+    const d = fakeDeps();
+    let checkStarted!: () => void;
+    const started = new Promise<void>((resolve) => { checkStarted = resolve; });
+    let releaseCheck!: () => void;
+    const gate = new Promise<void>((resolve) => { releaseCheck = resolve; });
+    d.nativeCheck.mockImplementationOnce(async () => {
+      checkStarted();
+      await gate;
+      return false;
+    });
+    const svc = new BrainService(d as never);
+    const { sessionId } = await svc.start(1);
+    const seen: { type: string; text?: string }[] = [];
+    svc.subscribe(1, (event) => seen.push(event as { type: string; text?: string }));
+
+    // Invoke the coordinated native seam exactly as PI does. During its auth gap the public PI flags are
+    // still false, but a second user message must already be admitted to the native queue.
+    const checking = d.session._checkCompaction({ role: 'assistant' } as never);
+    await started;
+    expect(d.session.isStreaming).toBe(false);
+    await svc.send({ userId: 1, text: 'queued during compaction' });
+
+    expect(d.session.steer).toHaveBeenCalledWith('queued during compaction', undefined);
+    expect(d.session.prompt).not.toHaveBeenCalled();
+    expect(svc.queueList(1).map((item) => item.text)).toEqual(['queued during compaction']);
+    expect(d.store.getMessages(sessionId)).toHaveLength(0);
+    expect(seen.some((event) => event.type === 'user')).toBe(false);
+
+    releaseCheck();
+    await checking;
+    d.deliverQueued('queued during compaction');
+    expect(svc.queueList(1)).toEqual([]);
+    expect(d.store.getMessages(sessionId).map((row) => JSON.parse(row.content).content))
+      .toEqual(['queued during compaction']);
+    expect(seen.filter((event) => event.type === 'user')).toEqual([
+      expect.objectContaining({ type: 'user', text: 'queued during compaction' }),
+    ]);
   });
 
   it('startSend admits a normal turn after the durable user event without waiting for model completion', async () => {

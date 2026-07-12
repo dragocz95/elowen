@@ -18,6 +18,7 @@ import type { PermissionApprovalService } from './permissionApproval.js';
 import { TurnAdmission } from './turnAdmission.js';
 import { TurnContextBuilder } from './turnContextBuilder.js';
 import type { TurnImage, TurnMode, TurnRequest } from './turnRequest.js';
+import { hasActiveNativeCompactionCheck } from '../session/compactionCheckCoordinator.js';
 
 interface TurnRunnerDeps {
   store: BrainStore;
@@ -91,19 +92,23 @@ export class BrainTurnRunner {
     }
     const active = this.d.sessions.get(targetId);
     if (!active) throw new Error('brain not started for user');
+    // PI reports both isStreaming=false and isCompacting=false while a native auto-compaction check is
+    // awaiting auth. The coordinator spans that gap. Treat it exactly like the running turn it belongs
+    // to: new user input enters PI's native queue and becomes a transcript row only on delivery.
+    const turnBusy = active.session.isStreaming || hasActiveNativeCompactionCheck(active.session);
     if (!internal?.goalKickoff && !internal?.goalContinue && !internal?.systemNudge) this.d.goals.cancelGoalContinuation(active.sessionId);
     // A system nudge (a finished background command waking the operator's session) is best-effort: if the
     // session is already streaming the agent is busy and needs no wake, so drop it rather than enqueue a
     // stray user turn. When idle it runs straight through, and — crucially — never drives the goal loop
     // (see the skipped afterTurnGoalJudge below), so it can't burn a goal-budget turn or mis-judge a goal.
-    if (internal?.systemNudge && active.session.isStreaming) return;
+    if (internal?.systemNudge && turnBusy) return;
     // Mid-turn: a message sent while a turn is already streaming is STEERED into the running turn — PI
     // delivers it between steps (after the current tool calls, before the next model call), so the agent
     // folds it in during the SAME turn instead of waiting for it to end. Admission creates only PI queue
     // state; the spawner persists/emits the authoritative user row at PI's later message_start, after the
     // matching queue chip disappeared. Internal goal kickoff/continuation is never steered — it drives
     // the loop itself and must run its own turn.
-    if (active.session.isStreaming && !internal?.goalKickoff && !internal?.goalContinue) {
+    if (turnBusy && !internal?.goalKickoff && !internal?.goalContinue) {
       const admission = new TurnAdmission(
         { store: this.d.store, titler: this.d.titler },
         { live: active, text, images, display, visible: true, titleOnAdmission: false, onAdmitted: request.onAdmitted },
