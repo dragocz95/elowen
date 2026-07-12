@@ -13,6 +13,7 @@ interface TurnAdmissionDeps {
 interface AdmissionInput {
   live: LiveBrain;
   text: string;
+  persistText?: string;
   images?: TurnImage[];
   display?: string;
   mode?: TurnMode;
@@ -58,7 +59,7 @@ export class TurnAdmission {
       'steer',
       this.input.text,
       this.input.images?.map((image) => ({ type: 'image' as const, data: image.data, mimeType: image.mimeType })),
-      { persistText, displayText: this.input.display ?? persistText, mode: this.input.mode, publish: true },
+      { persistText, displayText: this.input.display ?? this.input.persistText ?? this.input.text, mode: this.input.mode, publish: true },
     );
     this.markAdmitted();
   }
@@ -90,7 +91,7 @@ export class TurnAdmission {
 
   private durableText(): string {
     const marker = this.input.images?.length ? `\n[📎 ${this.input.images.length}× image]` : '';
-    return this.input.text + marker;
+    return (this.input.persistText ?? this.input.text) + marker;
   }
 
   private markAdmitted(): void {

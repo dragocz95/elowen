@@ -204,6 +204,7 @@ describe('subagent plugin', () => {
     const delegate = reg.tools.find((t) => t.name === 'delegate')!;
     const control = reg.controls.get('subagent') as {
       detachForeground(input: { sessionId: string; principal: string }, completed: (result: unknown) => void): { detached: number };
+      activeRuns(input: { sessionId: string }): string[];
     };
     expect(control).toBeTruthy();
 
@@ -224,6 +225,7 @@ describe('subagent plugin', () => {
       { sessionId: 'brain-parent-detach', principal: 'elowen:1' },
       (result) => completed.push(result),
     )).toEqual({ detached: 1 });
+    expect(control.activeRuns({ sessionId: 'brain-parent-detach' })).toEqual(['brain-ch-subagent-detached']);
     expect(asText(await foreground)).toContain('moved this sub-agent to the background');
 
     resolveChild('detached child result');
@@ -294,7 +296,7 @@ describe('subagent plugin', () => {
     await terminal;
     expect(await asOwner(async () => asText(await result.execute('result', { id: jobId! }, undefined as never, undefined as never)))).toBe('background result');
     expect(emitted).toEqual(expect.arrayContaining([
-      expect.objectContaining({ status: 'running', sessionId: 'brain-ch-subagent-background' }),
+      expect.objectContaining({ status: 'running', sessionId: 'brain-ch-subagent-background', background: true, autoDeliver: false }),
       expect.objectContaining({ status: 'done', sessionId: 'brain-ch-subagent-background' }),
     ]));
   });

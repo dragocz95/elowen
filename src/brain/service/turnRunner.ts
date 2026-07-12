@@ -140,9 +140,10 @@ export class BrainTurnRunner {
     // matching queue chip disappeared. Internal goal kickoff/continuation is never steered — it drives
     // the loop itself and must run its own turn.
     if (turnBusy && !internal?.goalKickoff && !internal?.goalContinue) {
+      const queuedText = await this.contextBuilder.withRunningSubagents(text, active.sessionId);
       const admission = new TurnAdmission(
         { store: this.d.store, titler: this.d.titler },
-        { live: active, text, images, display, mode, visible: true, titleOnAdmission: false, onAdmitted: request.onAdmitted },
+        { live: active, text: queuedText, persistText: text, images, display, mode, visible: true, titleOnAdmission: false, onAdmitted: request.onAdmitted },
       );
       await admission.steer();
       return;

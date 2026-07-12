@@ -339,7 +339,7 @@ export class BrainService {
 
       const requestFor = (message: QueuedMsg): TurnRequest => ({
         userId,
-        text: message.text,
+        text: message.echo?.persistText ?? message.text,
         images: message.images?.map(({ data, mimeType }) => ({ data, mimeType })),
         mode: message.echo?.mode ?? 'build',
         session: b.sessionId,
@@ -496,7 +496,10 @@ export class BrainService {
   queueList(userId: number, session?: string): { id: string; text: string }[] {
     const sessionId = session ? this.lifecycle.ownedUserSession(userId, session) : this.sessions.activeIdFor(userId);
     const live = sessionId ? this.sessions.get(sessionId) : undefined;
-    return live ? queueItems(live.session.getSteeringMessages(), live.session.getFollowUpMessages()) : [];
+    return live ? queueItems(
+      live.queuedSteer?.map((item) => item.echo?.displayText ?? item.text) ?? live.session.getSteeringMessages(),
+      live.queuedFollowUp?.map((item) => item.echo?.displayText ?? item.text) ?? live.session.getFollowUpMessages(),
+    ) : [];
   }
 
   /** Remove ONE pending mid-turn message (the CLI ctrl+x / the web × button). PI's steering queue holds

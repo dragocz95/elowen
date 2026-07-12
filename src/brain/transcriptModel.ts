@@ -186,6 +186,7 @@ export class TranscriptModel implements TranscriptRead {
           seconds: event.seconds,
           model: event.model,
           background: event.background,
+          autoDeliver: event.autoDeliver,
         };
         if (!this.patchTool(location, (item) => ({ ...item, sub }))) return false;
         this.upsertSubagent(location.source, sub, true);

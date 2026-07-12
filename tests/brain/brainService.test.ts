@@ -255,20 +255,48 @@ describe('BrainService', () => {
 
   it('places running sub-agent state after the user request in a dedicated XML reminder', async () => {
     const d = fakeDeps();
+    const reg = new PluginRegistry();
+    reg.contextFor('subagent', {}, { info() {}, warn() {}, error() {} }).registerControl('subagent', {
+      activeRuns: () => ['brain-ch-subagent-child'],
+    });
+    (d as unknown as { plugins: unknown }).plugins = new PluginRegistryProvider(async () => reg);
     const svc = new BrainService(d as never);
     const { sessionId } = await svc.start(1);
     d.store.createSession({ id: 'brain-ch-subagent-child', userId: 1, model: 'm', parentSessionId: sessionId });
     d.store.upsertSubagentRun(sessionId, {
       id: 'delegate-1', sessionId: 'brain-ch-subagent-child', status: 'running',
-      task: 'inspect <unsafe>', detail: 'read_file src/a.ts', tools: 2, seconds: 4, background: true,
+      task: 'inspect <unsafe>', detail: 'read_file src/a.ts', tools: 2, seconds: 4, background: true, autoDeliver: true,
     });
 
     await svc.send({ userId: 1, text: 'What is next?', session: sessionId });
     const prompted = d.session.prompt.mock.calls.at(-1)?.[0] as string;
     expect(prompted).toContain('<system-reminder>\n<running-subagents>');
     expect(prompted).toContain('background="true"');
+    expect(prompted).toContain('auto-deliver="true"');
     expect(prompted).toContain('inspect &lt;unsafe&gt;');
     expect(prompted.indexOf('What is next?')).toBeLessThan(prompted.indexOf('<running-subagents>'));
+
+    d.session.isStreaming = true;
+    await svc.send({ userId: 1, text: 'Steer right now', display: 'Steer right now', session: sessionId });
+    expect(d.session.steer.mock.calls.at(-1)?.[0]).toContain('Steer right now\n\n<system-reminder>');
+    expect(svc.queueList(1).at(-1)?.text).toBe('Steer right now');
+  });
+
+  it('does not inject stale durable running sub-agents after the plugin job registry restarted empty', async () => {
+    const d = fakeDeps();
+    const reg = new PluginRegistry();
+    reg.contextFor('subagent', {}, { info() {}, warn() {}, error() {} }).registerControl('subagent', { activeRuns: () => [] });
+    (d as unknown as { plugins: unknown }).plugins = new PluginRegistryProvider(async () => reg);
+    const svc = new BrainService(d as never);
+    const { sessionId } = await svc.start(1);
+    d.store.createSession({ id: 'brain-ch-subagent-stale', userId: 1, model: 'm', parentSessionId: sessionId });
+    d.store.upsertSubagentRun(sessionId, {
+      id: 'delegate-stale', sessionId: 'brain-ch-subagent-stale', status: 'running',
+      task: 'stale job', tools: 1, seconds: 9, background: true,
+    });
+
+    await svc.send({ userId: 1, text: 'Continue', session: sessionId });
+    expect(d.session.prompt.mock.calls.at(-1)?.[0]).toBe('Continue');
   });
 
   it('applies a per-user model override', async () => {

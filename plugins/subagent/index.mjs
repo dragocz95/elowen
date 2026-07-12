@@ -85,6 +85,10 @@ export function register(ctx) {
   // tool wait; it never aborts the child channel. The daemon supplies a completion sink at detach time,
   // so the eventual result can re-enter the originating conversation through its normal turn pipeline.
   ctx.registerControl('subagent', {
+    activeRuns: ({ sessionId }) => [...jobs.values()]
+      .filter((job) => job.status === 'running' && job.originSessionId === sessionId)
+      .map((job) => job.sessionId)
+      .filter(Boolean),
     detachForeground: ({ sessionId, principal }, onCompleted) => {
       let detached = 0;
       for (const job of jobs.values()) {
@@ -92,6 +96,7 @@ export function register(ctx) {
           || job.originSessionId !== sessionId || job.originPrincipal !== principal) continue;
         job.background = true;
         job.onCompleted = onCompleted;
+        job.autoDeliver = true;
         job.resolveDetached?.();
         job.resolveDetached = undefined;
         pushJob(job, 'running');
@@ -115,6 +120,7 @@ export function register(ctx) {
         seconds: Math.round((Date.now() - job.startedAt) / 1000),
         model: job.model,
         background: job.background,
+        autoDeliver: job.autoDeliver,
       });
     } catch (e) {
       ctx.logger.warn(`subagent progress fan-out failed: ${errorText(e)}`);
@@ -202,6 +208,7 @@ export function register(ctx) {
         originPrincipal,
         emit,
         background: p.background === true,
+        autoDeliver: false,
         onCompleted: undefined,
         resolveDetached: undefined,
         startedAt,

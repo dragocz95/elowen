@@ -129,7 +129,10 @@ export class BrainStatusService {
       cards: b ? this.d.cards.forSession(b.sessionId) : [],
       // PI's transient pending backlog (steered + follow-up) so a reconnecting/booting client restores its
       // pending chips — kept in step with the live `queue` event mapped from PI's `queue_update`.
-      queued: b ? queueItems(b.session.getSteeringMessages(), b.session.getFollowUpMessages()) : [],
+      queued: b ? queueItems(
+        b.queuedSteer?.map((item) => item.echo?.displayText ?? item.text) ?? b.session.getSteeringMessages(),
+        b.queuedFollowUp?.map((item) => item.echo?.displayText ?? item.text) ?? b.session.getFollowUpMessages(),
+      ) : [],
       // Effective YOLO for the active conversation (session override, else the persisted default) —
       // drives the CLI's warning-toned indicator.
       yolo: this.d.permissions.effectiveYolo(userId, b),

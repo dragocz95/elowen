@@ -30,6 +30,7 @@ export interface SubagentState {
   model?: string;
   /** True once the user detached this job from the parent tool wait with Ctrl+B. */
   background?: boolean;
+  autoDeliver?: boolean;
 }
 export type Segment =
   | { kind: 'text'; text: string }

@@ -442,20 +442,24 @@ try {
   await waitFor('Ctrl+B foreground detach request', () => requests('/brain/subagents/background').length === 1);
   assert.equal(requests('/brain/abort').length, 1,
     'Ctrl+B must not add a parent abort request while detaching foreground sub-agents');
+  sendLiteral('E2E MAIN AFTER DETACH');
+  sendKey('Enter');
+  await waitFor('main-agent follow-up after detach', () => capture().includes('E2E MAIN AGENT ACCEPTED DETACHED FOLLOW-UP'));
   await waitFor('detached sub-agent completion delivery', () => capture().includes('E2E DETACHED SUBAGENT RESULT DELIVERED'));
-  await waitFor('second turn final reply', () => capture().includes('E2E FINAL REPLY'));
+  await waitFor('second turn final reply', () => entries().some((entry) => entry.kind === 'event'
+    && entry.event?.type === 'text' && entry.event.delta === 'E2E FINAL REPLY'));
   await waitFor('second turn idle', () => entries().some((entry) => entry.kind === 'event'
     && entry.event?.type === 'idle' && entry.event?.usage?.totalTokens === 2345));
   await sleep(120);
 
-  await resizeDiagnosed(180, 70, 'settled multi-agent turn', (plain) => plain.includes('E2E SECOND USER')
+  await resizeDiagnosed(180, 70, 'settled multi-agent turn', (plain) => plain.includes('E2E MAIN AFTER DETACH')
     && plain.includes('E2E TOOL OUTPUT') && plain.includes('E2E FINAL REPLY'));
   const settledTurnCapture = saveCapture('07b-settled-multi-agent-turn');
   const settledTurnLines = settledTurnCapture.endsWith('\n')
     ? settledTurnCapture.slice(0, -1).split('\n')
     : settledTurnCapture.split('\n');
-  assert.ok(blankBetween(settledTurnLines, /E2E SECOND USER/, /npm run e2e-demo/),
-    'user turn and tool block need a blank separator');
+  assert.ok(blankBetween(settledTurnLines, /E2E MAIN AFTER DETACH/, /E2E MAIN AGENT ACCEPTED/),
+    'detached follow-up user turn and assistant continuation need a blank separator');
   assert.ok(blankBetween(settledTurnLines, /E2E TOOL OUTPUT/, /E2E FINAL REPLY/),
     'tool output and final answer need a blank separator');
 
@@ -716,13 +720,13 @@ try {
   await waitFor('post-stream PageDown', () => !capture().includes('History +'));
 
   await resizeDiagnosed(size.columns, size.rows, 'final 96x24 frame',
-    (plain) => plain.includes('E2E FINAL REPLY'));
+    (plain) => plain.includes('E2E ASK ANSWER ACCEPTED'));
 
   const finalCapture = saveCapture('15-final-96x24');
   const finalLines = finalCapture.endsWith('\n') ? finalCapture.slice(0, -1).split('\n') : finalCapture.split('\n');
   assert.equal(finalLines.length, size.rows, `tmux pane must remain exactly ${size.rows} rows tall`);
   assert.equal((finalCapture.match(/\bBuild\b/g) ?? []).length, 1, 'status metadata must contain exactly one Build row');
-  assert.match(settledTurnCapture, /E2E SECOND USER/, 'second user turn must render in its settled capture');
+  assert.match(settledTurnCapture, /E2E MAIN AFTER DETACH/, 'post-detach user turn must render in its settled capture');
   assert.match(settledTurnCapture, /E2E TOOL OUTPUT/, 'final tool output must render in its settled capture');
   assert.match(settledTurnCapture, /E2E FINAL REPLY/, 'final assistant text must render in its settled capture');
   assert.doesNotMatch(settledTurnCapture, /\[?exit 0\]?/i, 'successful tool status must not render exit 0');
@@ -754,7 +758,7 @@ try {
   assert.equal(childStreamRequests.length, 1, 'sub-agent drill-in must open exactly one child SSE');
   assert.equal(stopRequests.length, 1, 'Ctrl+C must send exactly one session stop');
   assert.equal(requests('/brain/abort').length, 1, 'only the confirmed double-Esc may abort');
-  assert.equal(requests('/brain/send').length, 4, 'normal, queued multiline, final, and ask prompts must all reach the daemon');
+  assert.equal(requests('/brain/send').length, 5, 'normal, queued multiline, final, post-detach, and ask prompts must all reach the daemon');
   assert.equal(requests('/brain/answer').length, 1, 'the constrained ask dock must submit exactly one answer');
   assert.match(requests('/brain/send')[1].body.text, /E2E QUEUED LINE 1\nE2E QUEUED LINE 2/, 'queued prompt must preserve its newline');
 

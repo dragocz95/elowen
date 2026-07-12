@@ -249,6 +249,13 @@ function runAskTurn(text) {
   }));
 }
 
+function runDetachedParentSteer(text) {
+  later(10, () => emit({ type: 'queue', items: [{ id: 'detached-steer', text }] }));
+  later(45, () => emit({ type: 'queue', items: [] }));
+  later(50, () => emit({ type: 'user', text }));
+  later(90, () => emit({ type: 'text', delta: 'E2E MAIN AGENT ACCEPTED DETACHED FOLLOW-UP' }));
+}
+
 function runShortTurn(text) {
   shortHistory.push(
     { id: 'short-u1', role: 'user', text },
@@ -476,7 +483,8 @@ const server = createServer(async (req, res) => {
       later(920, () => emit({ type: 'queue', items: [] }), firstTimers);
       later(940, () => emit({ type: 'user', text }), firstTimers);
     } else if (sendCount === 3) runSecondTurn(text);
-    else if (sendCount === 4) runAskTurn(text);
+    else if (text === 'E2E MAIN AFTER DETACH') runDetachedParentSteer(text);
+    else if (text === 'E2E ASK MENU') runAskTurn(text);
     return;
   }
   if (req.method === 'POST' && url.pathname === '/brain/answer') {

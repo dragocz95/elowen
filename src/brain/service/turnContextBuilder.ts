@@ -75,7 +75,7 @@ export class TurnContextBuilder {
     const modeInstruction = mode === 'plan'
       ? `${this.d.prompts.render('cli/plan-mode', {}, request.userId)}\n\n`
       : '';
-    const runningSubagents = this.runningSubagentsBlock(live.sessionId);
+    const runningSubagents = await this.runningSubagentsBlock(live.sessionId);
 
     return {
       autoSaveMemory: memSettings?.autoSave !== false,
@@ -103,21 +103,40 @@ export class TurnContextBuilder {
     };
   }
 
-  private runningSubagentsBlock(sessionId: string): string {
-    const running = this.d.store.getSubagentRuns(sessionId).filter((run) => run.status === 'running');
+  async withRunningSubagents(text: string, sessionId: string): Promise<string> {
+    const block = await this.runningSubagentsBlock(sessionId);
+    return block ? `${text}\n\n${block}` : text;
+  }
+
+  private async runningSubagentsBlock(sessionId: string): Promise<string> {
+    const registry = await this.d.plugins().catch(() => undefined);
+    const raw = registry?.controls.get('subagent');
+    const control = raw && typeof raw === 'object'
+      ? raw as { activeRuns?: (input: { sessionId: string }) => string[] }
+      : undefined;
+    const active = typeof control?.activeRuns === 'function'
+      ? new Set(control.activeRuns({ sessionId }))
+      : new Set<string>();
+    const running = this.d.store.getSubagentRuns(sessionId)
+      .filter((run) => run.status === 'running' && active.has(run.sessionId));
     if (running.length === 0) return '';
     const esc = (value: string): string => value
       .replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
       .replaceAll('"', '&quot;').replaceAll("'", '&apos;');
     const rows = running.slice(0, 32).map((run) => {
-      const attrs = `session="${esc(run.sessionId)}" background="${run.background === true}" tools="${run.tools}" seconds="${run.seconds}"`;
+      const attrs = `session="${esc(run.sessionId)}" background="${run.background === true}" auto-deliver="${run.autoDeliver === true}" tools="${run.tools}" seconds="${run.seconds}"`;
       const detail = run.detail ? `\n<progress>${esc(run.detail)}</progress>` : '';
       return `<subagent ${attrs}>\n<task>${esc(run.task)}</task>${detail}\n</subagent>`;
     }).join('\n');
+    const automatic = running.some((run) => run.autoDeliver === true);
+    const manual = running.some((run) => run.background === true && run.autoDeliver !== true);
+    const delivery = [
+      automatic ? 'Jobs marked auto-deliver report their result automatically.' : '',
+      manual ? 'Other background jobs require delegate_status/delegate_result when useful; do not busy-wait.' : '',
+    ].filter(Boolean).join(' ');
     return '<system-reminder>\n<running-subagents>\n'
       + `${rows}\n</running-subagents>\n`
-      + '<instruction>These delegated jobs are already running. Do not duplicate or abort them; '
-      + 'a background job result will be delivered automatically when it finishes.</instruction>\n'
+      + `<instruction>These delegated jobs are already running. Do not duplicate or abort them. ${delivery}</instruction>\n`
       + '</system-reminder>';
   }
 
