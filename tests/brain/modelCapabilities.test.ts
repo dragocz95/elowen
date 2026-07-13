@@ -30,20 +30,42 @@ describe('descriptorCapabilities — models.dev catalog', () => {
     expect(levels('openrouter', 'deepseek/deepseek-r1')).toEqual([]);
   });
 
-  it('lets the catalog correct the name heuristics rather than the other way round', () => {
-    // `gpt-5-pro` matches the OpenAI family regex, which would offer it minimal…xhigh. It takes `high`
-    // and nothing else.
-    expect(levels('openai', 'gpt-5-pro')).toEqual(['high']);
-    expect(levels('openai', 'o3')).toEqual(['low', 'medium', 'high']);
-    // …and the chat variants match the same regex while not reasoning at all.
+  it('lets the catalog veto a name pattern that recognises a non-reasoning sibling', () => {
+    // The chat, vision and speech variants carry their reasoning sibling's family name, so the OpenAI and
+    // Gemini patterns claim them — and sending `reasoning_effort` to one is a 400. A model the catalog
+    // explicitly reports as non-reasoning overrules every pattern.
     expect(descriptorCapabilities('elowen-openai', 'gpt-5.3-chat-latest').reasoning).toBe(false);
+    expect(descriptorCapabilities('elowen-google', 'gemini-2.5-flash-preview-tts').reasoning).toBe(false);
+    // The families themselves keep their curated ladders — the catalog does not touch them (`minimal` is
+    // deliberately offered and normalised onto the wire's `low`).
+    expect(levels('openai', 'gpt-5.6')).toEqual(['minimal', 'low', 'medium', 'high', 'xhigh', 'max']);
+  });
+
+  it('reads a private relay through the upstream it names', () => {
+    // A relay is in no catalog under its own name, but it says which upstream it proxies by namespacing
+    // the model — the shape OpenRouter publishes. The ladder is the upstream model's.
+    expect(levels('ai-relay', 'ollama/glm-5.2')).toEqual(['high', 'max']);
+    expect(levels('ai-relay', 'z-ai/glm-5.2')).toEqual(['high', 'max']);
+    // …and a namespaced id on a provider the catalog DOES know keeps that provider's own answer, which
+    // differs: the same model accepts xhigh through OpenRouter and max on Z.AI.
+    expect(levels('openrouter', 'z-ai/glm-5.2')).toEqual(['high', 'xhigh']);
+  });
+
+  it('recognises a model by name inside whatever an unknown endpoint calls it', () => {
+    // A relay free to name its own build (`glm-5.2-fp8`) still serves glm-5.2. With the endpoint unknown,
+    // only the efforts EVERY endpoint serving it accepts are safe — high is common to all, while max
+    // (Z.AI) and xhigh (OpenRouter) are not, and offering either would be a 400 on the other.
+    expect(levels('relay', 'glm-5.2-fp8')).toEqual(['high']);
+    expect(levels('relay', 'GLM-5.2')).toEqual(['high']);
+    // The match may not cut a version short: this is gpt-5.3, not gpt-5, and it does not reason at all.
+    expect(descriptorCapabilities('elowen-relay', 'gpt-5.3-chat-latest').reasoning).toBe(false);
   });
 
   it('falls back to the family heuristics for a model the catalog has not published', () => {
-    // A relay's private variant is in no catalog; the OpenAI family ladder (and its `ultra` label) still
-    // applies, so a fresh release is usable before the table is refreshed.
-    expect(levels('relay', 'openai/gpt-5.6-sol')).toEqual(['minimal', 'low', 'medium', 'high', 'xhigh', 'max']);
-    expect(descriptorCapabilities('elowen-relay', 'openai/gpt-5.6-sol').labels).toEqual({ xhigh: 'ultra' });
+    // A version the catalog has never seen still gets the OpenAI family ladder and its `ultra` label, so a
+    // fresh release is usable before the table is refreshed.
+    expect(levels('relay', 'openai/gpt-5.9-sol')).toEqual(['minimal', 'low', 'medium', 'high', 'xhigh']);
+    expect(descriptorCapabilities('elowen-relay', 'openai/gpt-5.9-sol').labels).toEqual({ xhigh: 'ultra' });
   });
 
   it('still refuses to guess for an unknown id', () => {

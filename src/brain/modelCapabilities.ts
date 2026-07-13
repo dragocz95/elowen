@@ -1,6 +1,6 @@
 import type { Model, Api, ModelThinkingLevel, ThinkingLevelMap } from '@earendil-works/pi-ai';
 import { getSupportedThinkingLevels } from '@earendil-works/pi-ai';
-import { MODEL_CAPABILITY_CATALOG } from './modelCapabilityData.js';
+import { MODEL_CAPABILITY_CATALOG, type CatalogCapability } from './modelCapabilityData.js';
 
 /**
  * Elowen's one model-capability vocabulary. PI keeps the canonical values stable while providers are
@@ -44,24 +44,91 @@ const CLAUDE_REASONING = /(?:^|\/)claude-(?:opus|sonnet|haiku)-(?:4|5)(?:[.-]|$)
 const GEMINI_REASONING = /(?:^|\/)gemini-(?:2\.5|3|3\.1|3\.5)(?:-|$)/i;
 const OTHER_REASONING = /(?:deepseek[-_/]?r1|qwq|reasoning)/i;
 
-/** Catalog keys for endpoints whose Elowen id differs from the published one. Ollama Cloud ships as
- *  `ollama-cloud`; a self-hosted Ollama serves the same model families, so it reads the same rows. */
+/** Catalog keys for endpoints whose name differs from the published one. Ollama Cloud ships as
+ *  `ollama-cloud` (a self-hosted Ollama serves the same model families, so it reads the same rows), and
+ *  Z.AI is published unhyphenated while relays namespace it `z-ai/…`. */
 const CATALOG_ALIAS: Readonly<Record<string, string>> = {
   ollama: 'ollama-cloud',
   'ollama-local': 'ollama-cloud',
+  'z-ai': 'zai',
+  zhipuai: 'zai',
 };
+
+const catalogName = (key: string): string => CATALOG_ALIAS[key] ?? key;
+
+/** The row for `<catalog>/<model>`, retried without a tag the catalog does not publish (`glm-5.2:latest`
+ *  is still glm-5.2 — the capability is the model's, not the pull's). */
+function catalogRow(catalog: string, model: string) {
+  const row = MODEL_CAPABILITY_CATALOG[`${catalog}/${model}`];
+  if (row !== undefined) return row;
+  const untagged = model.includes(':') ? model.slice(0, model.indexOf(':')) : undefined;
+  return untagged ? MODEL_CAPABILITY_CATALOG[`${catalog}/${untagged}`] : undefined;
+}
+
+/** Every effort ladder the catalog publishes for one bare model name, keyed by that name. Built once,
+ *  lazily — a private endpoint is the only reader and most sessions never need it. */
+let namedModels: Map<string, CatalogCapability[]> | undefined;
+function catalogByName(): Map<string, CatalogCapability[]> {
+  if (namedModels) return namedModels;
+  namedModels = new Map();
+  for (const [key, capability] of Object.entries(MODEL_CAPABILITY_CATALOG)) {
+    // The name is the last segment (`openrouter/z-ai/glm-5.2` → `glm-5.2`), minus any pull tag.
+    const tail = key.slice(key.lastIndexOf('/') + 1);
+    const name = tail.includes(':') ? tail.slice(0, tail.indexOf(':')) : tail;
+    const rows = namedModels.get(name);
+    if (rows) rows.push(capability); else namedModels.set(name, [capability]);
+  }
+  return namedModels;
+}
+
+/** What every endpoint serving this model agrees on. The same model takes high/max on Z.AI but
+ *  high/xhigh through OpenRouter, so with the endpoint unknown only the efforts common to all of them
+ *  are safe to offer — anything outside that is a 400 somewhere. Endpoints that publish no ladder at all
+ *  cannot narrow one, so they only decide the answer when nobody publishes one. Disagreement about
+ *  whether the model reasons at all yields nothing, and the name heuristics get their say instead. */
+function agreedCapability(rows: CatalogCapability[]): CatalogCapability | undefined {
+  if (rows.some((row) => row === false)) return rows.every((row) => row === false) ? false : undefined;
+  const ladders = rows.filter((row): row is readonly ModelThinkingLevel[] => Array.isArray(row));
+  if (ladders.length === 0) return true; // reasons everywhere, effort settable nowhere
+  return ladders[0]!.filter((level) => ladders.every((ladder) => ladder.includes(level)));
+}
+
+/** Find a catalog model name inside an endpoint's own id (`glm-5.2-fp8`, `custom-glm-5.2`). Longest name
+ *  wins, and the match may not cut a version short: `gpt-5` inside `gpt-5.3-chat` is a different model,
+ *  while a quantisation or vendor suffix is the same one. */
+function nameWithin(model: string): CatalogCapability | undefined {
+  const id = model.toLowerCase();
+  let best: string | undefined;
+  for (const name of catalogByName().keys()) {
+    if (name.length < 4 || (best && name.length <= best.length)) continue;
+    const at = id.indexOf(name);
+    if (at < 0) continue;
+    const before = at === 0 ? '' : id[at - 1]!;
+    const after = id[at + name.length] ?? '';
+    if (/[a-z0-9]/.test(before) || /[0-9.]/.test(after)) continue;
+    best = name;
+  }
+  return best ? agreedCapability(catalogByName().get(best)!) : undefined;
+}
 
 /** The model's row in the models.dev catalog, or undefined when it lists no such model.
  *  Custom endpoints register under `elowen-<id>`, where `<id>` is the operator's provider key. */
 function catalogCapability(provider: string, model: string) {
   const key = provider.startsWith('elowen-') ? provider.slice('elowen-'.length) : provider;
-  const catalog = CATALOG_ALIAS[key] ?? key;
-  const row = MODEL_CAPABILITY_CATALOG[`${catalog}/${model}`];
+  const row = catalogRow(catalogName(key), model);
   if (row !== undefined) return row;
-  // A self-hosted pull carries a tag the catalog does not publish (`glm-5.2:latest`); the capability is
-  // the model's, not the tag's. Only retried when the bare id has no row of its own.
-  const untagged = model.includes(':') ? model.slice(0, model.indexOf(':')) : undefined;
-  return untagged ? MODEL_CAPABILITY_CATALOG[`${catalog}/${untagged}`] : undefined;
+
+  // A private relay is in no catalog under its own name, but it says which upstream it is proxying by
+  // namespacing the model (`ollama/glm-5.2`, `z-ai/glm-5.2`) — the same shape OpenRouter publishes. The
+  // ladder belongs to the upstream model, so read the upstream's row. Only reached when the relay itself
+  // has no row, so a catalog provider (OpenRouter's own `z-ai/glm-5.2`) always keeps its own answer.
+  const slash = model.indexOf('/');
+  const upstream = slash > 0 ? catalogRow(catalogName(model.slice(0, slash)), model.slice(slash + 1)) : undefined;
+  if (upstream !== undefined) return upstream;
+
+  // Neither the endpoint nor an upstream namespace is known: recognise the model by name inside whatever
+  // the endpoint chose to call it, and offer only what every endpoint serving it accepts.
+  return nameWithin(model);
 }
 
 /** Turn an accepted effort ladder into PI's map: a level the endpoint does not accept is `null`
@@ -79,30 +146,22 @@ function ladderToMap(levels: readonly ModelThinkingLevel[]): ThinkingLevelMap {
  * OAuth catalog additions). Built-in PI descriptors remain authoritative; these rules prevent the old
  * blanket "every model supports every effort" declaration for unknown/image models.
  *
- * The models.dev catalog decides whenever it knows the (provider, model) pair: which efforts an endpoint
- * accepts is per-endpoint data, not a property of the name — `glm-5.2` takes high/max on Z.AI but
- * high/xhigh through OpenRouter, and `gpt-5-pro` takes only `high`. A name heuristic cannot express that,
- * and over-advertising an effort the endpoint does not accept is a request-breaking 400. The family
- * regexes below remain the fallback for models the catalog has not published (a fresh release, a private
- * relay), and the conservative default still refuses to guess for an unknown id.
+ * The families below (Codex, OpenAI, Claude, Gemini) keep their hand-written rules: they encode decisions
+ * the catalog does not model, such as normalizing `minimal` onto the wire's `low`, and the endpoints
+ * behind them are the ones we exercise daily. Everything else — GLM, Qwen, MiniMax, Kimi, gpt-oss and the
+ * rest — is answered from the models.dev catalog, because which efforts an endpoint accepts is per-endpoint
+ * data, not a property of the name: `glm-5.2` takes high/max on Z.AI but high/xhigh through OpenRouter, so
+ * a name pattern could only guess, and over-advertising an effort is a request-breaking 400. A model the
+ * catalog explicitly says does not reason (a chat or speech variant whose name apes its reasoning sibling)
+ * overrules every pattern, and an id nobody recognises is still refused rather than guessed.
  */
 export function descriptorCapabilities(provider: string, model: string): DescriptorPatch {
-  if (NON_REASONING.test(model)) return { reasoning: false };
-
-  // Codex OAuth is not a models.dev endpoint (its catalog is ChatGPT's own), so it keeps its own rule.
-  if (provider !== 'openai-codex') {
-    const catalog = catalogCapability(provider, model);
-    if (catalog === false) return { reasoning: false };
-    if (catalog !== undefined) {
-      return {
-        reasoning: true,
-        // `true` means the model reasons but exposes no effort knob (a bare on/off toggle): every level is
-        // unsupported, so no UI offers one and no request carries a `reasoning_effort` it would reject.
-        thinkingLevelMap: ladderToMap(catalog === true ? [] : catalog),
-        ...(OPENAI_REASONING.test(model) ? { labels: { xhigh: 'ultra' } } : {}),
-      };
-    }
-  }
+  // Codex OAuth is not a models.dev endpoint (its catalog is ChatGPT's own), so it never consults it.
+  const catalog = provider === 'openai-codex' ? undefined : catalogCapability(provider, model);
+  if (catalog === false) return { reasoning: false };
+  // The name check only decides what the catalog cannot: a modality in the name is a good guess that the
+  // model does not reason, but it is only a guess — a catalogued vision model that reasons keeps its answer.
+  if (catalog === undefined && NON_REASONING.test(model)) return { reasoning: false };
 
   if (provider === 'openai-codex' || OPENAI_REASONING.test(model)) {
     const supportsMax = /(?:^|\/)gpt-5\.6(?:-|$)/i.test(model);
@@ -135,7 +194,24 @@ export function descriptorCapabilities(provider: string, model: string): Descrip
     };
   }
 
-  if (GEMINI_REASONING.test(model) || OTHER_REASONING.test(model)) {
+  if (GEMINI_REASONING.test(model)) {
+    return {
+      reasoning: true,
+      thinkingLevelMap: { off: null, minimal: null, low: 'low', medium: 'medium', high: 'high', xhigh: null, max: null },
+    };
+  }
+
+  if (catalog !== undefined) {
+    return {
+      reasoning: true,
+      // `true` means the model reasons but exposes no effort knob (a bare on/off toggle): every level is
+      // unsupported, so no UI offers one and no request carries a `reasoning_effort` it would reject.
+      thinkingLevelMap: ladderToMap(catalog === true ? [] : catalog),
+    };
+  }
+
+  // Last resort for an id nothing recognises but whose name still announces a reasoning model.
+  if (OTHER_REASONING.test(model)) {
     return {
       reasoning: true,
       thinkingLevelMap: { off: null, minimal: null, low: 'low', medium: 'medium', high: 'high', xhigh: null, max: null },
