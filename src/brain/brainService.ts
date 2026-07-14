@@ -88,9 +88,10 @@ export class BrainService {
    *  minimal/test wiring omits the accessor. */
   private limits(): typeof DEFAULT_BRAIN_LIMITS { return this.d.brainLimits?.() ?? DEFAULT_BRAIN_LIMITS; }
   private elicitation = new ElicitationRegistry(() => this.limits().elicitationTimeoutMs);
-  /** Live display cards (ctx.emitCard) per conversation — seeded to clients via status, kept current via
-   *  the `card` event. Shared by owner chat and channel sessions. */
-  private cards = new CardRegistry();
+  /** Display cards (ctx.emitCard) per conversation — seeded to clients via status, kept current via the
+   *  `card` event. Shared by owner chat and channel sessions. Store-backed, so a panel (the todo
+   *  checklist) survives closing the conversation and the daemon restarting, not just an SSE reconnect. */
+  private cards = new CardRegistry(() => this.d.store);
   /** Live client streams + long-lived session taps → the session each is attached to. */
   private attachments = new ClientAttachments();
   /** Effective tool permissions per turn + the approval channel + the session YOLO override. */

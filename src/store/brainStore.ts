@@ -6,7 +6,7 @@ import {
   type DelegatedExecutionScope,
 } from '../brain/delegatedScope.js';
 import type { TokenUsage, CostSource } from '../integrations/usage/types.js';
-import type { BrainGoalState } from '../brain/events.js';
+import type { BrainCard, BrainGoalState } from '../brain/events.js';
 
 export interface BrainSessionRow {
   id: string; user_id: number; title: string; model: string; work_dir: string; parent_session_id: string | null;
@@ -523,6 +523,35 @@ export class BrainStore {
       .all(sessionId) as BrainMessageRow[];
   }
 
+  /** Persist a display card (ctx.emitCard) so the panel outlives the live session — closing the chat
+   *  disposes the session, and a memory-only todo list would die with it. An upsert keeps the row's
+   *  rowid, so re-emitting a card updates it in place without jumping to the end of the panel. */
+  upsertCard(sessionId: string, card: BrainCard): void {
+    this.db.prepare(`INSERT INTO brain_cards (session_id, card_id, payload, updated_at)
+      VALUES (?, ?, ?, datetime('now'))
+      ON CONFLICT(session_id, card_id) DO UPDATE SET payload = excluded.payload, updated_at = excluded.updated_at`)
+      .run(sessionId, card.id, JSON.stringify(card));
+  }
+
+  deleteCard(sessionId: string, cardId: string): void {
+    this.db.prepare('DELETE FROM brain_cards WHERE session_id = ? AND card_id = ?').run(sessionId, cardId);
+  }
+
+  /** The conversation's persisted cards, in the order they were first emitted. A row that no longer parses
+   *  (hand-edited DB, a payload written by an older shape) is skipped rather than taking the panel down. */
+  getCards(sessionId: string): BrainCard[] {
+    const rows = this.db.prepare('SELECT payload FROM brain_cards WHERE session_id = ? ORDER BY rowid ASC')
+      .all(sessionId) as { payload: string }[];
+    const cards: BrainCard[] = [];
+    for (const row of rows) {
+      try {
+        const card = JSON.parse(row.payload) as BrainCard;
+        if (card && typeof card.id === 'string' && card.id) cards.push(card);
+      } catch { /* unparseable row — drop this card, keep the rest of the panel */ }
+    }
+    return cards;
+  }
+
   /** Persist the newest progress snapshot for one delegate tool call. This is deliberately synchronous:
    *  a background child may finish after the parent turn has already settled, and the live event must
    *  never race ahead of the durable state a reconnect reads. Both sessions must exist, have the same
@@ -743,6 +772,7 @@ export class BrainStore {
       // A child remains a valid standalone transcript if its parent is deleted from history.
       this.db.prepare('UPDATE brain_sessions SET parent_session_id = NULL WHERE parent_session_id = ?').run(id);
       this.db.prepare('DELETE FROM brain_goals WHERE session_id = ?').run(id);
+      this.db.prepare('DELETE FROM brain_cards WHERE session_id = ?').run(id);
       this.db.prepare('DELETE FROM brain_messages WHERE session_id = ?').run(id);
       this.db.prepare('DELETE FROM brain_sessions WHERE id = ?').run(id);
     })();
@@ -764,6 +794,7 @@ export class BrainStore {
       this.db.prepare('UPDATE brain_subagent_results SET child_session_id = ? WHERE child_session_id = ?').run(newId, oldId);
       this.db.prepare('UPDATE brain_messages SET session_id = ? WHERE session_id = ?').run(newId, oldId);
       this.db.prepare('UPDATE brain_goals SET session_id = ? WHERE session_id = ?').run(newId, oldId);
+      this.db.prepare('UPDATE brain_cards SET session_id = ? WHERE session_id = ?').run(newId, oldId);
     })();
   }
 

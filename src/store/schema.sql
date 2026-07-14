@@ -179,6 +179,18 @@ CREATE TABLE IF NOT EXISTS brain_subagent_runs (
   PRIMARY KEY (parent_session_id, tool_call_id)
 );
 CREATE INDEX IF NOT EXISTS idx_brain_subagent_runs_child ON brain_subagent_runs(child_session_id);
+-- Display panels a plugin pushed via ctx.emitCard (the todo checklist is the canonical one). They are
+-- conversation state, not turn state: closing the chat disposes the live session, so a memory-only panel
+-- would take the user's todo list with it. Persisting them lets a reopened conversation show its
+-- checklist again, exactly as the transcript above it survives. Row order (rowid) is insertion order, so
+-- the panel comes back in the order the cards were first emitted. Same no-foreign-keys rule as above.
+CREATE TABLE IF NOT EXISTS brain_cards (
+  session_id TEXT NOT NULL,
+  card_id TEXT NOT NULL,
+  payload TEXT NOT NULL,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (session_id, card_id)
+);
 -- Durable completion inbox for detached/background sub-agents. A result is persisted before the
 -- parent is woken and remains pending until that triggered parent turn settles successfully.
 CREATE TABLE IF NOT EXISTS brain_subagent_results (

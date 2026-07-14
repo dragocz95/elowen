@@ -730,4 +730,52 @@ describe('BrainStore', () => {
       expect(stats.topModel).toBe('relay/glm'); // but the blank-model one isn't the "top"
     });
   });
+
+  describe('display cards', () => {
+    const card = (id: string, text: string) => ({ id, title: 'Todos', pinned: true, items: [{ text, status: 'pending' as const }] });
+
+    it('stores a card and reads it back whole', () => {
+      store.upsertCard('s1', card('todos', 'Ship it'));
+      expect(store.getCards('s1')).toEqual([card('todos', 'Ship it')]);
+    });
+
+    it('re-emitting a card updates it in place instead of appending a second panel', () => {
+      store.upsertCard('s1', card('todos', 'Ship it'));
+      store.upsertCard('s1', card('todos', 'Shipped'));
+      const cards = store.getCards('s1');
+      expect(cards).toHaveLength(1);
+      expect(cards[0].items![0].text).toBe('Shipped');
+    });
+
+    it('keeps emit order, and an update does not jump the card to the end', () => {
+      store.upsertCard('s1', card('a', '1'));
+      store.upsertCard('s1', card('b', '2'));
+      store.upsertCard('s1', card('a', '1 again'));
+      expect(store.getCards('s1').map((c) => c.id)).toEqual(['a', 'b']);
+    });
+
+    it('scopes cards to their conversation, and deleting one takes only its own', () => {
+      store.createSession({ id: 's1', userId: 7, model: 'm' });
+      store.upsertCard('s1', card('todos', 'mine'));
+      store.upsertCard('s2', card('todos', 'theirs'));
+      store.deleteSession('s1');
+      expect(store.getCards('s1')).toEqual([]);
+      expect(store.getCards('s2')).toHaveLength(1);
+    });
+
+    it('carries the cards along when a conversation is re-keyed (channel rollover)', () => {
+      store.createSession({ id: 'old', userId: 7, model: 'm' });
+      store.upsertCard('old', card('todos', 'Ship it'));
+      store.reassignSession('old', 'archived');
+      expect(store.getCards('old')).toEqual([]);
+      expect(store.getCards('archived')).toHaveLength(1);
+    });
+
+    // The panel is rebuilt from whatever the DB holds, so one bad row must cost one card — not the list.
+    it('skips a payload it cannot parse rather than taking the whole panel down', () => {
+      store.upsertCard('s1', card('good', 'Ship it'));
+      db.prepare("INSERT INTO brain_cards (session_id, card_id, payload) VALUES ('s1', 'broken', '{oops')").run();
+      expect(store.getCards('s1').map((c) => c.id)).toEqual(['good']);
+    });
+  });
 });

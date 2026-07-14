@@ -135,8 +135,10 @@ export class BrainStatusService {
       // A question parked for the active conversation, so a client reconnecting mid-question (refresh, SSE
       // drop) restores the picker instead of hanging until the timeout.
       pendingAsk: b ? this.d.elicitation.pendingForSession(b.sessionId) : null,
-      // The active conversation's live display cards (ctx.emitCard) so a reconnecting client restores them.
-      cards: b ? this.d.cards.forSession(b.sessionId) : [],
+      // The conversation's display cards (ctx.emitCard) so a client restores them on connect. Keyed on the
+      // CONVERSATION, not the live session: reopening a chat the user closed has no live brain yet, and
+      // that is exactly when the todo checklist has to come back rather than show up empty.
+      cards: activeId ? this.d.cards.forSession(activeId) : [],
       // PI's transient pending backlog (steered + follow-up) so a reconnecting/booting client restores its
       // pending chips — kept in step with the live `queue` event mapped from PI's `queue_update`.
       queued: b ? queueDisplayItems(b.queuedSteer, b.queuedFollowUp, b.session) : [],
