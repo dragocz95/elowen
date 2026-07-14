@@ -349,7 +349,13 @@ export function PluginsSection() {
                 <Search size={14} aria-hidden className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" />
                 <Input type="search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder={t.plugins.searchPlaceholder} className="pl-9" />
               </div>
-              <div className="min-w-0 overflow-x-auto">
+              {/* No scroll axis here on purpose. Segmented wraps unless asked not to, so this track never
+                  needs to scroll sideways — but declaring `overflow-x: auto` promoted the OTHER axis out of
+                  `visible` too, and then any sub-pixel row height (routine once the shell's zoom scales the
+                  layout) overflowed by a fraction of a pixel and drew a full vertical scrollbar beside the
+                  filters. It only showed up at some window widths, which is exactly what a rounding artefact
+                  looks like. `flex` keeps the inline-flex track off a line box, so its height stays exact. */}
+              <div className="flex min-w-0">
                 <Segmented variant="line" value={category} onChange={(v) => setCategory(v as Category | 'all')} options={categoryOptions} aria-label={t.plugins.catAll} />
               </div>
             </div>
