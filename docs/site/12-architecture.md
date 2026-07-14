@@ -63,7 +63,7 @@ The embedded brain is an in-process PI-based agent session. It has one live sess
 
 For a normal user message, the turn pipeline assembles the effective identity and permissions, memory, selected tools and skills, hook contributions, dynamic turn context, and the user's message. Dynamic context can be placed before or after that message. It is deliberately ephemeral: it is sampled for the turn, framed as context, and never persisted as a conversation message or changed system prompt.
 
-Messages that arrive during a running turn enter a durable queue. When the current turn settles, the queue is delivered in order. Compaction persists a summarized history tail; idle rollover can begin a fresh session after a configured gap. These mechanics are shared by Web UI, CLI, and platform calls.
+Messages that arrive during a running turn enter a durable queue. When the current turn settles, the queue is delivered in order. Compaction persists a summarized history tail; idle rollover can begin a fresh session after a configured gap — except while a terminal still has the conversation open, which is left alone so a user returning to it does not find it silently replaced. These mechanics are otherwise shared by Web UI, CLI, and platform calls.
 
 ## Tasks, missions, and workers
 

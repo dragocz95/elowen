@@ -14,10 +14,11 @@ eyebrow: Terminal agent
 ## Everyday commands
 
 ```bash
-elowen                       # open terminal chat
+elowen                       # open terminal chat (always a fresh conversation)
 elowen setup                 # local onboarding wizard
 elowen doctor                # diagnose readiness
-elowen chat --new            # start a fresh conversation
+elowen chat -c               # resume this directory's last conversation instead
+elowen chat --session <id>   # reopen a specific conversation
 elowen run "explain this diff"
 elowen -p "/status"         # non-interactive slash command
 elowen status                # daemon and Web UI health

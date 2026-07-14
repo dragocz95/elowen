@@ -3,6 +3,53 @@
 All notable changes to Elowen are documented here. The format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); the daemon version is the root `package.json` version.
 
+## [Unreleased]
+
+### Fixed
+- **Scheduled jobs now run on YOUR clock, not the server's.** "daily 07:30" meant 07:30 wherever the daemon
+  happened to be hosted — so a Prague user on a US server got their morning report in the afternoon. Every
+  schedule (`daily`, `weekly`, cron expressions, active-hours windows, and `at HH:MM` wake-ups) is now read
+  in the timezone configured under Settings → Plugins → runtime-context, which is the single place the
+  assistant's clock is set: the same value that stamps the date and time into every turn. An empty setting
+  means the server's own timezone (previously it silently assumed Europe/Prague).
+- **A job in the repeated hour of the autumn clock change fires once, not twice.** That hour genuinely
+  happens twice, so a job matched on the instant alone ran twice; it is now keyed on the wall-clock minute.
+  (In spring, a time the clock skips is skipped for that day — standard cron behaviour.)
+
+### Changed
+- **`elowen chat` now opens a blank conversation.** Launching the CLI used to silently resume whatever was
+  last said in that directory, which made every launch a guess about your intent. Nothing is lost: `-c` /
+  `--continue` resumes the directory's last conversation, `--session <id>` reopens a specific one, and
+  `/resume` reaches any of them from inside the chat. Blank conversations left behind by a launch you never
+  typed into are swept away, so the resume picker does not fill up with nothing.
+- **An idle conversation a terminal still has open is no longer rolled over.** The idle cutoff exists to
+  avoid re-sending a stale context at full price once the prompt cache has expired — fair for a conversation
+  nobody is watching, wrong for one you are sitting in front of. Step away, come back, type: your thread is
+  still there. Web, Discord and cron are unaffected.
+
+### Added
+- **`read_file` reads PDFs.** Pass `pages` ("3", "1-5", "1,3,5"; max 20 per call). Pages with a text layer
+  come back as text; a scanned page with no text layer is rendered and returned as an image. Requires
+  poppler (`pdftotext`/`pdftoppm`), and says so plainly when it is missing.
+- **`delegate` can hand a sub-agent a narrower toolset.** `read_only: true` gives it look-but-don't-touch
+  tools (no writing, no shell, no further delegation); `tools: [...]` gives it exactly the tools you name.
+  Either way it can only ever narrow your own access, never widen it.
+- **Editing a file you have not read is refused.** `edit_file` / `write_file` now require that the
+  conversation has actually read an existing file, and that it still holds the bytes you saw — writing from
+  assumption, or over content that moved under you, is how work gets silently discarded. Creating a new file
+  is unaffected.
+- **`run_command` takes a `timeout`** (seconds, up to 600), so a slow but finite command — an install, a full
+  build — can finish in the foreground instead of being pushed to the background just to survive the clock.
+- **`read_process_output` can block.** `block: true` waits for a background process to finish (bounded by
+  `timeout`) instead of making the agent poll it in a loop.
+- **`cron_add` accepts standard 5-field cron expressions** (`0 9 * * 1-5`) alongside the plain forms
+  ("every 15m", "daily 07:30"). The format is detected automatically.
+- **`ask_user_question` options can carry a `preview`** — an ASCII mockup, a code snippet, a diagram. The
+  picker then shows the focused option's preview beside the list, in the CLI and the web UI, so a choice
+  between layouts or shapes can be seen rather than described.
+- **`elowen_update_task`** — move a task through its lifecycle, rename it, or revise its description. The
+  brain could open a task but never advance it.
+
 ## [1.8.7] - 2026-07-06
 
 ### Added
