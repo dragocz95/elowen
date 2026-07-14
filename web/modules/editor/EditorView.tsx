@@ -1,7 +1,9 @@
 'use client';
+import { useRef } from 'react';
 import { Code2 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useProjects } from '../../lib/queries';
+import { useFillHeight } from '../../lib/useFillHeight';
 import { useProjectFilter } from '../../lib/useProjectFilter';
 import { useMobile } from '../../lib/useMobile';
 import { ProjectFilterPills } from '../../components/ui/ProjectFilterPills';
@@ -21,6 +23,8 @@ export function EditorView() {
   const router = useRouter();
   const mobile = useMobile();
   const projects = useProjects();
+  const surfaceRef = useRef<HTMLDivElement>(null);
+  const fillHeight = useFillHeight(surfaceRef);
   const { selectedProject, setProject } = useProjectFilter('elowen.editor.project');
   const list = projects.data ?? [];
   const projectId = selectedProject === 'all' ? (list[0]?.id ?? null) : selectedProject;
@@ -45,7 +49,10 @@ export function EditorView() {
           status={project ? <span className="workspace-status">{t.editor.workspaceReady.replace('{project}', project.slug)}</span> : undefined}
           action={<ProjectFilterPills value={projectId ?? 'all'} onChange={setProject} includeAll={false} variant="dropdown" />}
         />
-        <div className="workspace-content">
+        {/* The editor is sized to the window rather than to a fixed 70dvh: on a tall screen that left a
+            band of dead space under it, and on a short one it pushed the page past the fold and wrapped
+            the whole app in a scrollbar — around an editor that already has one of its own. */}
+        <div ref={surfaceRef} className="workspace-content" style={fillHeight ? { height: fillHeight } : undefined}>
           <ControlSurfaceDocument className="editor-control-surface">
             <MotionPresence mode="wait">
               {projectId == null
