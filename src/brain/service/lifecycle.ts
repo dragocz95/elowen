@@ -103,17 +103,34 @@ export class ConversationLifecycle {
    *  An empty conversation has had no turn, so it owns no processes, goals or parked questions to clean up. */
   private pruneEmptyConversations(userId: number, keep: string): void {
     for (const row of this.d.store.listSessions(userId)) {
-      if (row.id === keep || isNonUserSession(row.id)) continue;
-      if (this.d.store.lastMessageAt(row.id) !== undefined) continue;      // it was spoken in — keep it
-      if (!this.d.attachments.availableForDefaultStart(row.id)) continue;   // a client is sitting in it
-      // Never touch a LIVE conversation, even an apparently empty one: "no stored messages" is not "nothing
-      // happening" — a turn can be in flight, parked on an ask_user_question, or driving a goal, none of
-      // which has written a message row yet. The litter this sweep exists for is left by a CLI that already
-      // quit, and quitting disposes its session — so the residue is precisely the rows with nothing live
-      // behind them.
-      if (this.d.sessions.has(row.id)) continue;
-      this.d.store.deleteSession(row.id);
+      if (row.id === keep) continue;
+      this.dropIfUnspoken(row.id);
     }
+  }
+
+  /** Drop ONE conversation that was opened and never spoken in. The row is a live session's identity — the
+   *  delegation parent check, the work-dir binding and every ownership check read it — so it is written the
+   *  moment a session spawns. But a row nobody typed into is not a conversation, and once its session is
+   *  gone there is nothing left for it to be the identity OF. Called when a session is disposed (a CLI
+   *  quit), so the shell goes with it instead of waiting for the next `/new` to sweep it up.
+   *
+   *  Deliberately narrow: a conversation with even one stored message is never touched, and neither is one
+   *  that is still live, that a client stream holds, or that a start has already claimed — an empty
+   *  conversation open in another terminal belongs to that terminal. "No stored messages" is NOT "nothing
+   *  happening": a turn can be in flight, parked on an ask_user_question, or driving a goal without having
+   *  written a row yet, which is exactly why the live check is here. An unspoken conversation has had no
+   *  turn, so it owns no processes, goals or parked questions to clean up. */
+  dropIfUnspoken(sessionId: string): void {
+    if (isNonUserSession(sessionId)) return;
+    const row = this.d.store.getSession(sessionId);
+    if (!row) return;
+    if (this.d.store.lastMessageAt(sessionId) !== undefined) return;       // it was spoken in — keep it
+    if (!this.d.attachments.availableForDefaultStart(sessionId)) return;   // a client is sitting in it
+    if (this.d.sessions.has(sessionId)) return;                            // still live — not ours to remove
+    this.d.store.deleteSession(sessionId);
+    // The in-memory pointer must not survive the row it names, or status/history would keep answering for
+    // a conversation that no longer exists. activeSessionId falls back to the most recent real one.
+    if (this.d.sessions.activeIdFor(row.user_id) === sessionId) this.d.sessions.clearActive(row.user_id);
   }
 
   activeLive(userId: number): LiveBrain | undefined {

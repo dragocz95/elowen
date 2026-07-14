@@ -303,6 +303,18 @@ export class BrainStore {
       .all(userId) as BrainSessionRow[];
   }
 
+  /** The user's sessions that hold no message at all. A live session owns its row from the moment it
+   *  spawns — that is what the delegation parent check, the work-dir binding and every ownership check
+   *  read — but a row nobody has spoken into is not yet a CONVERSATION: it is the empty shell the CLI
+   *  leaves behind simply by launching. One query, so a listing can filter without an N+1. */
+  unspokenSessionIds(userId: number): Set<string> {
+    const rows = this.db.prepare(
+      `SELECT s.id FROM brain_sessions s
+       WHERE s.user_id = ? AND NOT EXISTS (SELECT 1 FROM brain_messages m WHERE m.session_id = s.id)`
+    ).all(userId) as { id: string }[];
+    return new Set(rows.map((row) => row.id));
+  }
+
   /** Per-user overview stats for the users admin panel: total session count and the model used in the
    *  most sessions over the whole history (indexed on user_id). One count + one grouped query, no N+1.
    *  `topModel` is null when the user has no sessions with a recorded model. */

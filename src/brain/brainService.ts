@@ -454,6 +454,9 @@ export class BrainService {
         this.elicitation.cancelForSession(sessionId, 'client closed');
         this.cards.clearSession(sessionId);
         this.sessions.dispose(sessionId);
+        // A conversation nobody ever typed into leaves with the session it was the identity of, rather than
+        // lingering as an untitled shell until some later `/new` sweeps it up.
+        this.lifecycle.dropIfUnspoken(sessionId);
       }
       return { stopped: true, disposed: disposable };
     };

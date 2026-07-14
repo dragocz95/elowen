@@ -153,8 +153,12 @@ export class BrainStatusService {
    *  user sees which conversations another terminal/dock is working in). */
   listSessions(userId: number): { id: string; title: string; model: string; updated_at: string; running: boolean; active: boolean; attached: number }[] {
     const activeId = this.d.lifecycle.activeSessionId(userId);
+    // A conversation begins when the user says something, not when a client opens one. The CLI starts a
+    // session the moment it launches, and listing that row put an empty, untitled conversation in the
+    // picker for a chat nobody had typed into yet.
+    const unspoken = this.d.store.unspokenSessionIds(userId);
     return this.d.store.listSessions(userId)
-      .filter((s) => !isNonUserSession(s.id))
+      .filter((s) => !isNonUserSession(s.id) && !unspoken.has(s.id))
       .map((s) => ({ id: s.id, title: s.title, model: s.model, updated_at: s.updated_at, running: this.d.sessions.has(s.id), active: s.id === activeId, attached: this.d.attachments.attachedCount(s.id) }));
   }
 
@@ -165,12 +169,14 @@ export class BrainStatusService {
   }
 
   /** ADMIN session-management view (the sessions/ panel): EVERY brain session this owner anchors — their
-   *  own conversations PLUS the platform channel sessions (Discord) and task-worker sessions. Nothing is
-   *  filtered out (unlike listSessions); each row is tagged with its `kind` so the UI can group + icon it. */
+   *  own conversations PLUS the platform channel sessions (Discord) and task-worker sessions. Only the
+   *  never-spoken-in shells are withheld (same rule as listSessions — an open CLI is not a conversation
+   *  yet); each surviving row is tagged with its `kind` so the UI can group + icon it. */
   listManagedSessions(userId: number): { id: string; title: string; model: string; updated_at: string; running: boolean; active: boolean; kind: 'conversation' | 'channel' | 'task'; tokens: number }[] {
     const activeId = this.d.lifecycle.activeSessionId(userId);
     const tokens = this.d.store.tokenTotals(userId);
-    return this.d.store.listSessions(userId).map((s) => {
+    const unspoken = this.d.store.unspokenSessionIds(userId);
+    return this.d.store.listSessions(userId).filter((s) => !unspoken.has(s.id)).map((s) => {
       const channel = s.id.startsWith('brain-ch-');
       const running = channel ? !!this.d.sessions.channelGet(s.id.slice('brain-ch-'.length)) : this.d.sessions.has(s.id);
       return {

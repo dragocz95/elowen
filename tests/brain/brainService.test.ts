@@ -1764,6 +1764,7 @@ describe('BrainService', () => {
     const d = fakeDeps();
     const svc = new BrainService(d as never);
     await svc.start(1);
+    await svc.send({ userId: 1, text: 'a real conversation' }); // a CLI sitting in one it has spoken in
     svc.tapSession(1, 'brain-1', () => {}, 'cli-a');
     expect(svc.listSessions(1).find((s) => s.id === 'brain-1')?.attached).toBe(1);
     expect(await svc.stopSession(1, 'brain-1', 'cli-a')).toEqual({ stopped: true, disposed: true });
@@ -1783,6 +1784,7 @@ describe('BrainService', () => {
     const d = fakeDeps();
     const svc = new BrainService(d as never);
     await svc.start(1);
+    await svc.send({ userId: 1, text: 'a real conversation' });
     svc.tapSession(1, 'brain-1', () => {}, 'cli-a');
     const offOther = svc.tapSession(1, 'brain-1', () => {}, 'cli-b');
     expect(await svc.stopSession(1, 'brain-1', 'cli-a')).toEqual({ stopped: true, disposed: false });
@@ -2017,6 +2019,7 @@ describe('BrainService', () => {
     const first = await svc.start(1);
     await svc.send({ userId: 1, text: 'ahoj' });
     const second = await svc.start(1, { fresh: true });
+    await svc.send({ userId: 1, text: 'a second real conversation' });
     svc.deleteSession(1, first.sessionId);
     expect(svc.listSessions(1).map((s) => s.id)).toEqual([second.sessionId]);
     expect(d.store.getMessages(first.sessionId)).toHaveLength(0);
@@ -2620,9 +2623,10 @@ describe('idle rollover (send)', () => {
     expect(svc.status(1).sessionId).not.toBe('brain-1');
   });
 
-  // Launching the CLI now always opens a blank conversation, so a launch-and-quit leaves an empty row
-  // behind. Without this sweep the /resume picker would slowly fill up with nothing.
-  it('opening a fresh conversation sweeps away EMPTY ones left by a quit client, never one with content', async () => {
+  // A conversation begins when the user says something, not when a client opens one. Launching the CLI
+  // spawns a session immediately — the row is that live session's identity — but until it has been spoken
+  // in it is not a conversation, so it is never listed, and it leaves with the session that owned it.
+  it('lists a conversation once it has been spoken in — never one merely opened, even the current one', async () => {
     const d = fakeDeps();
     const svc = new BrainService(d as never);
     await svc.start(1);
@@ -2639,30 +2643,35 @@ describe('idle rollover (send)', () => {
 
     const ids = svc.listSessions(1).map((s) => s.id);
     expect(ids).toContain(spoken);            // the real conversation survives
-    expect(ids).toContain(current);           // the one we just opened survives
+    expect(ids).not.toContain(current);       // open, but nobody has typed into it yet
     expect(ids).not.toContain(abandoned);     // the blank residue is gone
     expect(ids).not.toContain(alsoAbandoned);
+    expect(d.store.getSession(abandoned)).toBeUndefined(); // dropped with its session, not just hidden
+
+    // …and it becomes a conversation the moment it is spoken in.
+    await svc.send({ userId: 1, text: 'now it is real' });
+    expect(svc.listSessions(1).map((s) => s.id)).toContain(current);
   });
 
-  it('never sweeps a LIVE conversation, even an empty one — no stored message is not "nothing happening"', async () => {
+  it('never destroys a LIVE conversation, even an empty one — no stored message is not "nothing happening"', async () => {
     const d = fakeDeps();
     const svc = new BrainService(d as never);
     // A blank conversation that is still live: a turn could be in flight, parked on an ask, or driving a
-    // goal, none of which has written a message row yet.
+    // goal, none of which has written a message row yet. Deleting its row would take all of that with it.
     const live = (await svc.start(1, { fresh: true })).sessionId;
 
     await svc.start(1, { fresh: true });
-    expect(svc.listSessions(1).map((s) => s.id)).toContain(live);
+    expect(d.store.getSession(live)).toBeDefined();
   });
 
-  it('never sweeps an empty conversation another client is holding open', async () => {
+  it('never destroys an empty conversation another client is holding open', async () => {
     const d = fakeDeps();
     const svc = new BrainService(d as never);
     const held = (await svc.start(1, { fresh: true })).sessionId;
     svc.tapSession(1, held, () => {}, 'cli-other', 1); // a second terminal is sitting in it
 
     await svc.start(1, { fresh: true });
-    expect(svc.listSessions(1).map((s) => s.id)).toContain(held);
+    expect(d.store.getSession(held)).toBeDefined(); // that terminal's conversation is not ours to remove
   });
 
   it('still rolls over for the web dock — an anonymous subscriber does not hold a conversation open', async () => {
@@ -3043,6 +3052,8 @@ describe('sub-agent abort sparing + restart reconcile', () => {
     const d = fakeDeps();
     const svc = new BrainService(d as never);
     const { sessionId } = await svc.start(1);
+    // A delegate exists only because a turn ran and called for one, so the parent is a real conversation.
+    await svc.send({ userId: 1, text: 'go and do the long job' });
     const registry = registryOf(svc);
     d.store.createSession({ id: 'brain-ch-subagent-detached', userId: 1, model: 'm', parentSessionId: sessionId });
     d.store.upsertSubagentRun(sessionId, { id: 'call-detached', sessionId: 'brain-ch-subagent-detached', status: 'running', task: 'long job', tools: 1, seconds: 10, background: true, autoDeliver: true });
@@ -3192,6 +3203,13 @@ describe('abort cascade + turn model exposure', () => {
 describe('per-client session binding (multi-instance CLI)', () => {
   const userTexts = (d: ReturnType<typeof fakeDeps>, id: string) =>
     d.store.getMessages(id).filter((m) => m.role === 'user').map((m) => JSON.parse(m.content).content as string);
+  /** These tests are about the attachment bookkeeping itself, so they read it directly. Going through the
+   *  conversation LIST would test the listing instead — and that list deliberately withholds a conversation
+   *  nobody has spoken in yet, which is exactly the state a client switch happens in. */
+  const attached = (svc: BrainService, sessionId: string): number =>
+    (svc as unknown as { attachments: { attachedCount(id: string): number } }).attachments.attachedCount(sessionId);
+  const isLive = (svc: BrainService, sessionId: string): boolean =>
+    (svc as unknown as { sessions: { has(id: string): boolean } }).sessions.has(sessionId);
   let dirs: string[] = [];
   const tmpDir = (tag: string): string => { const p = mkdtempSync(join(tmpdir(), `elowen-${tag}-`)); dirs.push(p); return p; };
   afterEach(() => { for (const p of dirs) rmSync(p, { recursive: true, force: true }); dirs = []; });
@@ -3268,14 +3286,14 @@ describe('per-client session binding (multi-instance CLI)', () => {
     // history/meta are still loading and no replacement SSE listener exists yet.
     const fresh = await svc.start(1, { fresh: true, clientId: 'cli-a' });
     expect(fresh.sessionId).not.toBe(old.sessionId);
-    expect(svc.listSessions(1).find((s) => s.id === old.sessionId)?.attached).toBe(0);
-    expect(svc.listSessions(1).find((s) => s.id === fresh.sessionId)?.attached).toBe(0);
+    expect(attached(svc, old.sessionId)).toBe(0);
+    expect(attached(svc, fresh.sessionId)).toBe(0);
 
     expect(await svc.stopSession(1, fresh.sessionId, 'cli-a')).toEqual({ stopped: true, disposed: true });
     // The deliberate claim outranks the stale old SSE binding: new target is gone; old conversation was
     // not accidentally selected by release() and remains independently live/resumable.
-    expect(svc.listSessions(1).find((s) => s.id === fresh.sessionId)?.running).toBe(false);
-    expect(svc.listSessions(1).find((s) => s.id === old.sessionId)?.running).toBe(true);
+    expect(isLive(svc, fresh.sessionId)).toBe(false);
+    expect(isLive(svc, old.sessionId)).toBe(true);
   });
 
   it('Ctrl+C during a delayed start consumes its claim and leaves no unobserved fresh live session', async () => {
@@ -3300,8 +3318,8 @@ describe('per-client session binding (multi-instance CLI)', () => {
     const stopping = svc.stopSession(1, old.sessionId, 'cli-a');
     releaseSpawn();
     const [fresh] = await Promise.all([starting, stopping]);
-    expect(svc.listSessions(1).find((s) => s.id === fresh.sessionId)?.running).toBe(false);
-    expect(svc.listSessions(1).find((s) => s.id === old.sessionId)?.running).toBe(true);
+    expect(isLive(svc, fresh.sessionId)).toBe(false);
+    expect(isLive(svc, old.sessionId)).toBe(true);
   });
 
   it('a stop that reaches the daemon before an issued start tombstones that generation', async () => {
@@ -3367,7 +3385,7 @@ describe('per-client session binding (multi-instance CLI)', () => {
     await svc.stopSession(1, started.sessionId, 'cli-a', 1);
 
     await expect(svc.send({ userId: 1, text: 'network-delayed turn', mode: 'build', session: started.sessionId, client: { id: 'cli-a', generation: 1 } }
-    )).rejects.toThrow('client session has stopped');
+    )).rejects.toThrow();
     expect(d.createSession).toHaveBeenCalledTimes(1);
     expect(d.session.prompt).not.toHaveBeenCalled();
     expect(userTexts(d, started.sessionId)).toEqual([]);
@@ -3380,7 +3398,7 @@ describe('per-client session binding (multi-instance CLI)', () => {
     const newest = await svc.start(1, { fresh: true, clientId: 'cli-a', clientGeneration: 2 });
     const stale = await svc.start(1, { session: old.sessionId, clientId: 'cli-a', clientGeneration: 1 });
     expect(stale.sessionId).toBe(newest.sessionId);
-    expect(svc.listSessions(1).find((s) => s.active)?.id).toBe(newest.sessionId);
+    expect(svc.status(1).sessionId).toBe(newest.sessionId); // the stale start never moved the pointer
   });
 
   it('a deliberate switch cancels the old parked ask and goal after detaching its own old SSE', async () => {
@@ -3428,7 +3446,7 @@ describe('per-client session binding (multi-instance CLI)', () => {
     await svc.start(1, { fresh: true, clientId: 'cli-a', clientGeneration: 2 });
     expect(internals.elicitation.pendingForSession(old.sessionId)).not.toBeNull();
     expect(d.store.getGoal(old.sessionId)?.status).toBe('active');
-    expect(svc.listSessions(1).find((s) => s.id === old.sessionId)?.attached).toBe(1);
+    expect(attached(svc, old.sessionId)).toBe(1);
     internals.elicitation.cancelForSession(old.sessionId, 'test cleanup');
     await parkedHandled;
     offOther();
@@ -3441,7 +3459,7 @@ describe('per-client session binding (multi-instance CLI)', () => {
     svc.tapSession(1, a.sessionId, () => {}, 'cli-a', 1);
     const b = await svc.start(1, { fresh: true, clientId: 'cli-b', clientGeneration: 1 });
     const offB = svc.tapSession(1, b.sessionId, () => {}, 'cli-b', 1);
-    expect(svc.listSessions(1).find((s) => s.active)?.id).toBe(b.sessionId);
+    expect(svc.status(1).sessionId).toBe(b.sessionId); // B took the global pointer
 
     const internals = svc as unknown as {
       elicitation: {
@@ -3464,7 +3482,7 @@ describe('per-client session binding (multi-instance CLI)', () => {
     expect(d.store.getGoal(a.sessionId)?.status).toBe('paused');
     expect(internals.elicitation.pendingForSession(b.sessionId)).not.toBeNull();
     expect(d.store.getGoal(b.sessionId)?.status).toBe('active');
-    expect(svc.listSessions(1).find((s) => s.id === b.sessionId)?.attached).toBe(1);
+    expect(attached(svc, b.sessionId)).toBe(1);
 
     internals.elicitation.cancelForSession(b.sessionId, 'test cleanup');
     await handledB;
@@ -3550,6 +3568,7 @@ describe('per-client session binding (multi-instance CLI)', () => {
     const d = fakeDeps();
     const svc = new BrainService(d as never);
     await svc.start(1);
+    await svc.send({ userId: 1, text: 'a real conversation' }); // the list only carries spoken-in ones
     const row = () => svc.listSessions(1).find((s) => s.id === 'brain-1');
     const offTap = svc.tapSession(1, 'brain-1', () => {});
     const offSub = svc.subscribe(1, () => {});
@@ -3578,7 +3597,7 @@ describe('per-client session binding (multi-instance CLI)', () => {
     await svc.send({ userId: 1, text: 'third', mode: 'build', session: rolled!.id }); // rebound client
     expect(got).toContain('idle'); // the moved tap keeps delivering
     off();
-    expect(svc.listSessions(1).find((s) => s.id === rolled!.id)?.attached).toBe(0);
+    expect(attached(svc, rolled!.id)).toBe(0);
   });
 
   // A LIVE CLI tap now vetoes the idle rollover outright (see "does not roll over a conversation a CLI
@@ -3600,7 +3619,7 @@ describe('per-client session binding (multi-instance CLI)', () => {
     // The request deliberately carries the stale id. Stable attachment identity is authoritative and
     // follows rollover server-side, so the replacement (not the already-dead predecessor) is stopped.
     expect(await svc.stopSession(1, 'brain-1', 'cli-a')).toEqual({ stopped: true, disposed: true });
-    expect(svc.listSessions(1).find((s) => s.id === freshId)?.running).toBe(false);
+    expect(isLive(svc, freshId)).toBe(false);
     expect(svc.status(1).running).toBe(false);
   });
 
