@@ -93,6 +93,8 @@ export interface LoadPluginsOptions {
   /** Deliver a parked ask_user_question answer, exposed to plugins as ctx.answerQuestion() — for
    *  interactive transports (Discord) that gather the pick out-of-band. */
   answerQuestion?: (id: string, answers: AskAnswer[]) => boolean;
+  /** The operator's configured IANA timezone, exposed to plugins as ctx.timezone(). Read live. */
+  timezone?: () => string;
   logger: PluginLogger;
 }
 
@@ -130,7 +132,10 @@ export async function loadPlugins(opts: LoadPluginsOptions): Promise<PluginRegis
         // Pass the manifest's declared capabilities + provides so the context can enforce them at
         // registration/resolve time (deny-by-default). Absent blocks default to unconstrained tools/
         // platforms and a deny-all provider gate.
-        const ctx = staging.contextFor(name, opts.config?.[name] ?? {}, opts.logger, opts.dataRoot, opts.notify, opts.listModels, opts.resolveProvider, manifest.capabilities ?? {}, manifest.provides, opts.answerQuestion, opts.embeddings, opts.embeddingConfig);
+        // `toolNames` deliberately closes over the MERGED registry, not this plugin's staging one: a plugin
+        // asks it at tool-execute time, long after every plugin has merged, and needs the whole live
+        // toolset (the subagent plugin validates a caller's `tools` allow-list against it).
+        const ctx = staging.contextFor(name, opts.config?.[name] ?? {}, opts.logger, opts.dataRoot, opts.notify, opts.listModels, opts.resolveProvider, manifest.capabilities ?? {}, manifest.provides, opts.answerQuestion, opts.embeddings, opts.embeddingConfig, () => registry.tools.map((t) => t.name), opts.timezone);
         await mod.register(ctx);
         registry.merge(staging, (m) => opts.logger.warn(`[plugin:${name}] ${m}`));
         // Capture the plugin's declared capabilities (deny-by-default `{}` when absent) — the manifest

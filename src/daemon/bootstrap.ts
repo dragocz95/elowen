@@ -451,6 +451,15 @@ export function buildApp(opts: BuildOpts) {
     const pluginConfig = Object.fromEntries(enabled.map((n) => [n, config.pluginConfig(n)]));
     return loadPlugins({
       dirs: pluginDirs, enabled, config: pluginConfig, dataRoot: pluginDataRoot,
+      // ONE answer to "what time is it for this operator", read from the single place they configure it
+      // (Settings → Plugins → runtime-context → Timezone) and shared with every plugin that reasons about
+      // wall-clock time. Without it, cron would silently schedule in whatever zone the SERVER happens to
+      // run in — so "daily 07:30" would fire at 07:30 UTC for a user living in Prague. Read live, and
+      // deliberately independent of whether runtime-context itself is enabled: the field is the setting.
+      timezone: () => {
+        const configured = config.pluginConfig('runtime-context').timezone;
+        return typeof configured === 'string' && configured.trim() ? configured.trim() : '';
+      },
       notify: (t, channelId) => brain?.notify(t, channelId) ?? Promise.resolve(),
       // Interactive transports (Discord) hand a parked ask_user_question's answer straight back in-process.
       answerQuestion: (id, answers) => brain?.answerQuestion(id, answers) ?? false,

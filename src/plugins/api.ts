@@ -252,6 +252,17 @@ export interface PluginContext {
   /** The repo roots the current session may operate in (empty for an admin's all-access). Used to default
    *  a tool's working directory. */
   allowedRoots(): string[];
+  /** Every tool name currently registered across ALL plugins (the live merged registry, read lazily — so
+   *  it is complete by tool-execute time even though plugins register one at a time). A plugin that
+   *  accepts tool names as INPUT validates them against this, so a typo becomes an error the model can fix
+   *  instead of a silently narrower toolset (see the subagent plugin's `tools` allow-list). */
+  toolNames(): string[];
+  /** The operator's configured IANA timezone — the ONE place "what time is it for this user" is answered.
+   *  Everything that reasons about wall-clock time reads it from here (the injected date/time context, and
+   *  every cron schedule), so a job set for "daily 07:30" fires at 07:30 where the USER lives, not wherever
+   *  the server happens to be hosted. Falls back to the host's own zone when unset. Read live, so an
+   *  operator changing it applies on the next call. */
+  timezone(): string;
   /** The working directory an exec/file tool uses when the caller names none: the project path the
    *  current turn's session is bound to (a task worker's checkout), else the first allowed root, else
    *  the daemon's own cwd. Evaluated per tool call against the per-run turn scope, so a directory the
