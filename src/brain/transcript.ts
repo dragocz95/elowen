@@ -47,12 +47,36 @@ export type Segment =
  *  diff/tool_output/subagent attachment still lands on the right item, and resumed
  *  history collapses for free. An item WITH a diff/output/sub/command stays its own group (count 1) —
  *  it renders its own block, and a shell command's verbatim text is meaningful per call. */
-export interface ToolGroup { item: ToolItem; count: number }
+export interface ToolGroup {
+  item: ToolItem;
+  count: number;
+  /** Every item of a folded run of FAILED tool results. A bare-row run needs only its count (the rows are
+   *  identical), but each failure carries its own message — the path it refused — so the renderer keeps
+   *  them all to list on expand. */
+  members?: ToolItem[];
+}
 
 /** True when an item is a bare tool row (no block of its own), the only kind that collapses. A live
  *  `progress` tail is a block of its own, so a streaming command never folds into a collapsed run. */
 function isCollapsibleTool(item: ToolItem): boolean {
   return !item.diff && !item.output && !item.sub && !item.command && !item.progress;
+}
+
+/** The kind of failure a tool result is, or undefined when it is not one. Four refusals that differ only
+ *  by the file they name are ONE failure repeated, and reading them as such is what lets the transcript
+ *  show a single row instead of four identical blocks. So the signature is the message with its varying
+ *  parts — paths and numbers — flattened away, under the tool that produced it.
+ *
+ *  Only `result` outputs fold. A console command's output is the thing you actually want to read when it
+ *  fails (the failing test, the stack trace), and it is different every time; collapsing that would hide
+ *  the one output worth showing. */
+export function failureSignature(item: ToolItem): string | undefined {
+  const output = item.output;
+  if (!output || output.kind !== 'result') return undefined;
+  if (output.tone !== 'warning' && output.tone !== 'danger') return undefined;
+  const firstLine = (output.text ?? '').split('\n').find((line) => line.trim()) ?? '';
+  const shape = firstLine.replace(/\S*\/\S+/g, '§').replace(/\d+/g, '#').replace(/\s+/g, ' ').trim().slice(0, 160);
+  return `${item.name}|${shape}`;
 }
 
 /** Fold a tools segment's items into render groups (see {@link ToolGroup}). Pure — recomputed every
@@ -63,9 +87,18 @@ export function groupToolItems(items: ToolItem[]): ToolGroup[] {
     const last = groups[groups.length - 1];
     if (last && isCollapsibleTool(item) && isCollapsibleTool(last.item) && last.item.name === item.name) {
       groups[groups.length - 1] = { item, count: last.count + 1 }; // latest detail wins, count grows
-    } else {
-      groups.push({ item, count: 1 });
+      continue;
     }
+    const signature = failureSignature(item);
+    if (signature && last && signature === failureSignature(last.item)) {
+      groups[groups.length - 1] = {
+        item,
+        count: last.count + 1,
+        members: [...(last.members ?? [last.item]), item],
+      };
+      continue;
+    }
+    groups.push({ item, count: 1 });
   }
   return groups;
 }

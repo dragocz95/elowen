@@ -1,7 +1,7 @@
 import { Markdown, truncateToWidth, visibleWidth, wrapTextWithAnsi } from '@earendil-works/pi-tui';
 import type { MarkdownTheme } from '@earendil-works/pi-tui';
 import type { ChatTurn, ToolItem } from '../../brain/transcript.js';
-import { groupToolItems } from '../../brain/transcript.js';
+import { groupToolItems, failureSignature } from '../../brain/transcript.js';
 import { formatDuration, formatK, padAnsi, terminalInlineText, terminalPlainText } from '../ui/text.js';
 import { framedDiffBlock, toolOutputBlock, UserBlock } from './components.js';
 import { chatTheme, color } from './theme.js';
@@ -9,6 +9,13 @@ import { chatTheme, color } from './theme.js';
 export const TOOL_INDENT = '    ';
 const TOOL_OUTPUT_INDENT = '      ';
 const PROGRESS_TAIL_ROWS = 8;
+
+/** The one line that identifies a failed tool result. Its own `status` ("needs attention") is dropped: the
+ *  collapsed row already says Error, and repeating it would spend the only line we have on nothing. */
+function errorHeadline(output: NonNullable<ToolItem['output']>): string {
+  const first = terminalInlineText(output.text ?? '').trim().replace(/^Error:\s*/i, '');
+  return first || output.status || 'failed';
+}
 
 export interface TranscriptRow {
   line: string;
@@ -89,7 +96,34 @@ export class TurnRenderer {
               add(line, toggle ? 'expandable' : undefined, toggle ? diffKey : undefined);
             }
           }
-          if (item.output) {
+          if (item.output && failureSignature(item)) {
+            // A failed tool result is a headline, not a document: four framed blocks saying the same thing
+            // about four different files pushed the actual work off the screen. Collapse each to one line —
+            // the same ▸/click affordance a thought already uses — and fold a repeated refusal into a single
+            // counted row. The full text is one click away, which is where a message you have already
+            // understood belongs.
+            const members = group.members ?? [item];
+            const expanded = options.expandedTools.has(key);
+            const label = members.length > 1 ? `${members.length}× Error` : 'Error';
+            const summary = truncateToWidth(errorHeadline(item.output), Math.max(12, width - 34), '…');
+            add(
+              `  ${color.warning(expanded ? '▾' : '▸')} ${color.warning(label)} ${color.faint('click')}`
+                + (expanded ? '' : `  ${color.dim(summary)}`),
+              'expandable', key,
+            );
+            if (expanded && members.length > 1) {
+              for (const member of members) {
+                const line = truncateToWidth(errorHeadline(member.output!), Math.max(12, width - 10), '…');
+                add(`   ${color.faint('·')} ${color.dim(line)}`);
+              }
+            } else if (expanded) {
+              // Wrapped, not framed: the framed block clips a long line at the box edge, so "expand" would
+              // still hide the end of the very sentence the user opened it to read.
+              const full = terminalPlainText(item.output.fullText ?? item.output.text ?? '');
+              for (const line of wrapTextWithAnsi(full, Math.max(12, width - 6))) add(`    ${color.dim(line)}`);
+            }
+            addBlank();
+          } else if (item.output) {
             const before = rows.length;
             for (const line of toolOutputBlock(item.output, width, options.expandedTools.has(key))) add(line);
             if (item.output.fullText && item.output.fullText !== item.output.text) {

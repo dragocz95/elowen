@@ -63,6 +63,45 @@ describe('groupToolItems: collapse consecutive same-tool rows', () => {
   });
 });
 
+// One refusal repeated across four files is ONE thing that went wrong, and it was being told four times in
+// four framed blocks — pushing the actual work off the screen. Folding it is what lets the transcript say
+// it once, with each file still recoverable behind the count.
+describe('groupToolItems: a repeated failure is one failure', () => {
+  const refusal = (path: string): ToolItem => ({
+    name: 'write_file', detail: path,
+    output: { title: 'tool result', kind: 'result', tone: 'warning', status: 'needs attention',
+      text: `Error: ${path} has not been read in this conversation. Read it first.` },
+  });
+
+  it('folds refusals that differ only by the file they name, keeping every one of them', () => {
+    const groups = groupToolItems([refusal('/docs/routes.md'), refusal('/docs/pricing.md'), refusal('/docs/testing.md')]);
+    expect(groups).toHaveLength(1);
+    expect(groups[0]!.count).toBe(3);
+    expect(groups[0]!.members?.map((m) => m.detail)).toEqual(['/docs/routes.md', '/docs/pricing.md', '/docs/testing.md']);
+  });
+
+  it('keeps genuinely different failures apart — they are different things to fix', () => {
+    const denied: ToolItem = { name: 'write_file', detail: '/docs/a.md',
+      output: { title: 'tool result', kind: 'result', tone: 'danger', text: 'Error: permission denied' } };
+    const groups = groupToolItems([refusal('/docs/routes.md'), denied, refusal('/docs/pricing.md')]);
+    expect(groups.map((group) => group.count)).toEqual([1, 1, 1]);
+  });
+
+  it('never folds a successful result — its output is content, not a repeated complaint', () => {
+    const ok = (path: string): ToolItem => ({ name: 'read_file', detail: path,
+      output: { title: 'tool result', kind: 'result', tone: 'success', text: 'ok' } });
+    expect(groupToolItems([ok('a.ts'), ok('b.ts')]).map((g) => g.count)).toEqual([1, 1]);
+  });
+
+  // A failing command's output is the thing you actually want to read — the stack trace, the failing test.
+  // Folding those away would hide the one output worth showing.
+  it('never folds a failed console command', () => {
+    const failed = (command: string): ToolItem => ({ name: 'run_command', command,
+      output: { title: 'console', kind: 'console', tone: 'danger', status: 'exit 1', text: 'boom' } });
+    expect(groupToolItems([failed('npm test'), failed('npm test')]).map((g) => g.count)).toEqual([1, 1]);
+  });
+});
+
 describe('durable transcript parsing', () => {
   it('renders a compaction row as a divider turn, keeping the tail that follows', () => {
     const turns = turnsFromHistory([
