@@ -76,6 +76,36 @@ describe('brain providers', () => {
     expect(m.thinkingLevelMap).toBeUndefined();
   });
 
+  // pi-ai swaps the `system` role for OpenAI's `developer` on any REASONING model whose endpoint its
+  // compat detection doesn't recognise — and a relay, fronting DeepSeek/Anthropic/… under its own URL, is
+  // exactly what it cannot recognise. A relay that implements only the classic roles then 400s
+  // ("unknown variant `developer`") on a healthy request, and ONLY for reasoning models — which is what
+  // made it look random in production. Chat-Completions entries therefore pin the role off.
+  it('never sends the developer role to a relay, not even for a reasoning model', () => {
+    const relay: BrainRuntimeConfig = { providers: [{
+      id: 'relay', label: 'Relay', type: 'openai', baseUrl: 'https://relay.example.test/v1',
+      models: ['oe-deepseek-v4-flash', 'plain-chat-model'], apiKey: 'k',
+    }] };
+    const reg = buildBrainRegistry(relay);
+    const reasoner = resolveBrainModel(reg, relay, { provider: 'relay', model: 'oe-deepseek-v4-flash' });
+    expect(reasoner.reasoning).toBe(true); // the trigger: only reasoning models take the developer path
+    expect(reasoner.compat?.supportsDeveloperRole).toBe(false);
+    // Pinned for every model on the entry, so enabling reasoning on one later can't resurrect the 400.
+    const chat = resolveBrainModel(reg, relay, { provider: 'relay', model: 'plain-chat-model' });
+    expect(chat.compat?.supportsDeveloperRole).toBe(false);
+  });
+
+  it('leaves the official OpenAI endpoint on its native developer-role semantics', () => {
+    const openai: BrainRuntimeConfig = { providers: [{
+      id: 'oai', label: 'OpenAI', type: 'openai', baseUrl: 'https://api.openai.com/v1',
+      models: ['gpt-5.5'], apiKey: 'k',
+    }] };
+    // It registers as openai-responses, where the developer role is correct — the pin must not reach it.
+    expect(openAiApiFor(openai.providers[0]!)).toBe('openai-responses');
+    const m = resolveBrainModel(buildBrainRegistry(openai), openai, { provider: 'oai', model: 'gpt-5.5' });
+    expect(m.compat?.supportsDeveloperRole).toBeUndefined();
+  });
+
   it('declares known OpenAI reasoning levels centrally and labels xhigh as ultra', () => {
     const known: BrainRuntimeConfig = {
       providers: [{ id: 'oa', label: 'OpenAI', type: 'openai', baseUrl: 'https://api.openai.com/v1', models: ['gpt-5.4'], apiKey: 'k' }],

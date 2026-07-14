@@ -124,7 +124,23 @@ export function openAiApiFor(p: Pick<BrainProviderEntry, 'api' | 'baseUrl'>): Br
 /** Default context window when the operator hasn't pinned one and the endpoint doesn't report a reliable
  *  max — a safe placeholder the model list requires. */
 export const DEFAULT_CONTEXT_WINDOW = 200_000;
-function modelEntry(provider: string, id: string, contextWindow?: number) {
+
+/** `developer` is OpenAI's own rename of the `system` role, and pi-ai sends it in place of `system` for
+ *  any REASONING model whose endpoint its compat detection doesn't recognise as non-standard — absent a
+ *  known provider id or baseUrl (deepseek.com, api.z.ai, openrouter.ai, …) it assumes OpenAI semantics.
+ *
+ *  A relay is precisely the endpoint it cannot recognise: it fronts DeepSeek/Anthropic/… under its OWN
+ *  URL, so nothing on the wire reveals the model family behind it. One that implements only the classic
+ *  roles then answers a perfectly healthy request with a 400 — `unknown variant 'developer', expected one
+ *  of system, user, assistant, tool` — and only for reasoning models, which is what makes it look random.
+ *
+ *  `system` is the lowest common denominator every OpenAI-compatible endpoint implements (OpenAI itself
+ *  still accepts it), so Chat-Completions entries pin it rather than gamble. Same conservatism as
+ *  `openAiApiFor` keeping relays on Chat Completions, and `modelCapabilities` withholding a speculative
+ *  `reasoning_effort`. The official OpenAI endpoint is unaffected: it registers as `openai-responses`. */
+const RELAY_SAFE_COMPAT = { supportsDeveloperRole: false } as const;
+
+function modelEntry(provider: string, id: string, contextWindow?: number, compat?: Model<Api>['compat']) {
   const capabilities = descriptorCapabilities(provider, id);
   return {
     id, name: id, reasoning: capabilities.reasoning, input: ['text', 'image'] as ('text' | 'image')[],
@@ -132,6 +148,7 @@ function modelEntry(provider: string, id: string, contextWindow?: number) {
     // custom chat model is not sent a speculative reasoning_effort that would turn a healthy request
     // into a 400; known reasoning families expose only their real canonical levels.
     thinkingLevelMap: capabilities.thinkingLevelMap,
+    ...(compat ? { compat } : {}),
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     contextWindow: contextWindow && contextWindow > 0 ? contextWindow : DEFAULT_CONTEXT_WINDOW, maxTokens: 8_192,
   };
@@ -157,13 +174,15 @@ export function buildBrainRegistry(cfg: BrainRuntimeConfig, authStorage: AuthSto
   extendOpenAiCodexCatalog(registry);
   for (const p of cfg.providers) {
     if (p.type === 'openai') {
+      const api = openAiApiFor(p);
+      const compat = api === 'openai-completions' ? RELAY_SAFE_COMPAT : undefined;
       registry.registerProvider(registryProviderName(p), {
         name: p.label,
-        api: openAiApiFor(p),
+        api,
         baseUrl: normOpenAiBase(p.baseUrl || 'https://api.openai.com/v1'),
         apiKey: p.apiKey ?? undefined,
         headers: { ...APP_IDENTITY_HEADERS },
-        models: p.models.map((m) => modelEntry(registryProviderName(p), m, windowFor(cfg, p.id, m))),
+        models: p.models.map((m) => modelEntry(registryProviderName(p), m, windowFor(cfg, p.id, m), compat)),
       });
     } else if (p.type === 'anthropic') {
       registry.registerProvider(registryProviderName(p), {
