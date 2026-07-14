@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { SessionManager } from '@earendil-works/pi-coding-agent';
-import type { AgentSession, AgentSessionEvent } from '@earendil-works/pi-coding-agent';
+import type { AgentSession, AgentSessionEvent, SessionEntry } from '@earendil-works/pi-coding-agent';
 import type { BrainRunMessage, BrainStore } from '../store/brainStore.js';
 import { extractText, NO_REPLY_NUDGE } from './messageView.js';
 import { currentMeter } from './openrouterMeter.js';
@@ -56,6 +56,64 @@ export function projectEvent(store: BrainStore, sessionId: string, event: AgentS
   store.touchSession(sessionId);
 }
 
+/** Mirror ONE message PI just appended to the live turn. Everything a turn produces used to reach SQLite
+ *  only at `agent_end`, so a daemon restart mid-turn discarded every tool call and every word of a long
+ *  run — the user's prompt was all that survived. These rows close that window; `agent_end` then discards
+ *  and re-persists them, because only IT knows the run's real order once a mid-turn steer is in play.
+ *
+ *  User messages are skipped: `projectUserTurn` already wrote a clean row for the real prompt before
+ *  `prompt()`, and PI's live user entries carry the ephemeral turn framing (memory/permission blocks, raw
+ *  image bytes, NO_REPLY_NUDGE) that must never become durable history. */
+function projectPendingEntry(store: BrainStore, sessionId: string, entry: SessionEntry): void {
+  if (entry.type !== 'message') return;
+  const message = entry.message as { role?: string };
+  const role = message.role ?? 'assistant';
+  if (role === 'user') return;
+  store.appendPendingMessage({ id: entry.id, sessionId, role, content: entry.message });
+}
+
+/** Rows still marked pending when a session is (re)spawned belong to a turn that never settled — the
+ *  daemon went down mid-run. They are the only record that work happened, so they graduate to history.
+ *
+ *  But a half-turn cannot be handed back to a provider as-is: it can end on an assistant message whose
+ *  tool calls never got their results (the crash landed between the call and its result), and every
+ *  provider rejects a context with an unanswered tool call. So the tail is trimmed back to the last point
+ *  where every tool call had been answered — that prefix is real, complete work; what follows is a
+ *  fragment of a step that never happened. Their cost is whatever PI recorded per message: the provider
+ *  cost stamp is an `agent_end` act, and that never came. */
+export function settlePartialTurn(store: BrainStore, sessionId: string): void {
+  const pending = store.pendingMessages(sessionId);
+  if (pending.length === 0) return;
+  const keep = answeredToolCallPrefix(pending.map((row) => row.content));
+  for (const row of pending.slice(keep)) store.deleteMessage(sessionId, row.id);
+  store.settlePendingMessages(sessionId);
+}
+
+/** How many of these serialized messages form a prefix in which every assistant tool call has a matching
+ *  tool result. Unparseable content ends the prefix rather than being trusted — a row we cannot read is a
+ *  row whose tool calls we cannot verify. */
+export function answeredToolCallPrefix(contents: string[]): number {
+  const outstanding = new Set<string>();
+  let answered = 0;
+  let seen = 0;
+  for (const raw of contents) {
+    let message: { role?: string; content?: unknown; toolCallId?: string };
+    try { message = JSON.parse(raw) as typeof message; }
+    catch { break; } // corrupt row — everything from here on is unverifiable
+    seen++;
+    if (message.role === 'toolResult') {
+      if (message.toolCallId) outstanding.delete(message.toolCallId);
+    } else {
+      for (const part of Array.isArray(message.content) ? message.content : []) {
+        const call = part as { type?: string; id?: string };
+        if (call?.type === 'toolCall' && call.id) outstanding.add(call.id);
+      }
+    }
+    if (outstanding.size === 0) answered = seen;
+  }
+  return answered;
+}
+
 /** Remove only PI's transient terminal overflow assistant from a deferred agent_end. The preceding
  * assistant/tool rows are real completed work and must become durable before a replacement overflow
  * compaction aligns its kept tail against BrainStore. */
@@ -93,6 +151,12 @@ export function createSessionPersistenceProjector(
   return (event): void => {
     if ((event as { type?: string }).type === 'agent_start') {
       agentRunOpen = true;
+      return;
+    }
+    // Mid-turn mirror. Deliberately NOT gated on `agentRunOpen`: PI appends the entry as soon as it has
+    // the message, and the point of the row is to exist before the turn is allowed to end.
+    if (event.type === 'entry_appended') {
+      projectPendingEntry(store, sessionId, event.entry);
       return;
     }
     if (event.type === 'agent_end') {

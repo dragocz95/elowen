@@ -2,7 +2,7 @@ import { createAgentSession, DefaultResourceLoader, SettingsManager } from '@ear
 import type { AgentSession, ExtensionAPI, PromptTemplate, ResourceLoader, Skill, ToolDefinition, ModelRegistry } from '@earendil-works/pi-coding-agent';
 import type { Model, Api } from '@earendil-works/pi-ai';
 import type { BrainStore } from '../../store/brainStore.js';
-import { createSessionPersistenceProjector, rehydrate } from '../persistence.js';
+import { createSessionPersistenceProjector, rehydrate, settlePartialTurn } from '../persistence.js';
 import { applyProviderRequestProfile, isCanonicalThinkingLevel, type ProviderRequestProfile } from '../modelCapabilities.js';
 import type { DelegatedExecutionScope } from '../delegatedScope.js';
 import { createCodexCompactionModelRoute, type CodexCompactionModelRoute } from './codexCompaction.js';
@@ -190,6 +190,10 @@ export class BrainSessionFactory {
       this.d.store.setTitle(spec.sessionId, spec.title.slice(0, 60));
     }
 
+    // A session is only ever spawned when none is live for it, so any rows still marked pending are the
+    // remains of a turn the daemon died in the middle of. Settle them into history BEFORE rehydrating, so
+    // the conversation comes back holding the work that turn actually did instead of silently losing it.
+    settlePartialTurn(this.d.store, spec.sessionId);
     const sessionManager = rehydrate(this.d.store, spec.sessionId, spec.cwd);
     // Each session owns its own IN-MEMORY SettingsManager so its compaction threshold is per-conversation
     // (the owner's per-user %, the channel default) — shared by createAgentSession (which reads compaction

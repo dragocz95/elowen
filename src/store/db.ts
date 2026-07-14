@@ -110,6 +110,9 @@ export function openDb(path: string): Db {
   // Immutable, JSON-serialized delegated execution scope. Legacy child rows intentionally remain NULL:
   // a continuation must reject them rather than guessing an owner-wide replacement scope.
   addColumn(db, 'brain_sessions', 'delegated_access', 'TEXT');
+  // Mid-turn (provisional) message rows — see brain_messages in schema.sql. Every existing row was written
+  // by a settled agent_end, so the 0 default correctly reads the whole back catalogue as durable history.
+  addColumn(db, 'brain_messages', 'pending', 'INTEGER NOT NULL DEFAULT 0');
   // Extended usage/cost accounting (see task_usage in schema.sql). All nullable/zero-default so existing
   // rows read as legacy (reasoning 0, no currency, cost_source NULL treated as unknown).
   addColumn(db, 'task_usage', 'reasoning', 'INTEGER NOT NULL DEFAULT 0');
@@ -122,5 +125,8 @@ export function openDb(path: string): Db {
   db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_user_settings_whatsapp_number ON user_settings(value) WHERE key = 'whatsappNumber'");
   // Seed the bootstrap admin on existing DBs: the lowest-id user, if none is flagged yet.
   db.exec("UPDATE users SET is_admin = 1 WHERE id = (SELECT MIN(id) FROM users) AND NOT EXISTS (SELECT 1 FROM users WHERE is_admin = 1)");
+  // Rename prompt template keys to match the elowen/elowen-platform rename (advisor → elowen, advisor-channel → elowen-platform).
+  db.exec("UPDATE user_prompts SET name = 'elowen' WHERE name = 'advisor'");
+  db.exec("UPDATE user_prompts SET name = 'elowen-platform' WHERE name = 'advisor-channel'");
   return db;
 }

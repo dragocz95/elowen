@@ -157,13 +157,20 @@ CREATE TABLE IF NOT EXISTS brain_sessions (
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_brain_sessions_user ON brain_sessions(user_id);
+-- `pending` marks a row written MID-TURN, straight off PI's `entry_appended`, before the turn settled.
+-- Without those rows a daemon restart in the middle of a long turn threw away every tool call and every
+-- word the agent had produced: the settled `agent_end` was the only thing that ever reached SQLite. They
+-- are provisional — the authoritative `agent_end` write discards them and re-persists the run in PI's
+-- real execution order (a mid-turn steer can reorder it). They only become history when a session is
+-- respawned while some are still pending, which means the turn that wrote them never finished.
 CREATE TABLE IF NOT EXISTS brain_messages (
   id TEXT PRIMARY KEY,
   session_id TEXT NOT NULL,
   parent_id TEXT,
   role TEXT NOT NULL,
   content TEXT NOT NULL DEFAULT '',
-  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  pending INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_brain_messages_session ON brain_messages(session_id);
 -- Latest durable UI state for each delegated tool call. The parent assistant message remains the

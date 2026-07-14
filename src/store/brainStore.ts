@@ -456,6 +456,31 @@ export class BrainStore {
       .run(messageId, sessionId).changes > 0;
   }
 
+  /** Mirror ONE message the moment PI appends it to the live turn, so a daemon restart mid-turn no longer
+   *  discards the whole run. Provisional by construction: `agent_end` discards these and re-persists the
+   *  run in PI's real execution order. Keyed on PI's own entry id and idempotent, so a re-delivered event
+   *  (a resubscribe) cannot double-write a row. */
+  appendPendingMessage(input: { id: string; sessionId: string; role: string; content: unknown }): void {
+    this.db.prepare(
+      `INSERT INTO brain_messages (id, session_id, parent_id, role, content, pending)
+       VALUES (@id, @session_id, NULL, @role, @content, 1)
+       ON CONFLICT(id) DO NOTHING`
+    ).run({ id: input.id, session_id: input.sessionId, role: input.role, content: JSON.stringify(input.content) });
+  }
+
+  /** The session's provisional mid-turn rows, oldest first. */
+  pendingMessages(sessionId: string): BrainMessageRow[] {
+    return this.db.prepare('SELECT * FROM brain_messages WHERE session_id = ? AND pending = 1 ORDER BY rowid ASC')
+      .all(sessionId) as BrainMessageRow[];
+  }
+
+  /** Promote the session's surviving mid-turn rows to durable history. Called when a session is respawned
+   *  with rows still pending, which can only mean the turn that wrote them never settled (a restart or a
+   *  crash) — so what it managed to produce is all the history that turn will ever have. */
+  settlePendingMessages(sessionId: string): void {
+    this.db.prepare('UPDATE brain_messages SET pending = 0 WHERE session_id = ? AND pending = 1').run(sessionId);
+  }
+
   /**
    * Persist one settled agent run in the order PI actually executed it. User prompts are intentionally
    * projected before `prompt()` so compaction can see them, but a mid-turn steer can arrive after the
@@ -467,11 +492,17 @@ export class BrainStore {
    *
    * Returns false when the expected pre-projected user suffix is no longer present. Callers then retain
    * the safe legacy append path rather than guessing which historical rows belong to this run.
+   *
+   * EITHER WAY this drops the run's provisional mid-turn rows first, inside the same transaction: the
+   * settled `agent_end` carries the very same messages, so leaving them would duplicate the entire turn.
+   * That is why the drop happens here rather than at the call site — the fallback append path above must
+   * never run against a store that still holds them.
    */
   persistAgentRun(sessionId: string, messages: BrainRunMessage[]): boolean {
-    const userCount = messages.filter((message) => message.reusePreprojectedUser).length;
-    if (userCount === 0) return false;
     return this.db.transaction(() => {
+      this.db.prepare('DELETE FROM brain_messages WHERE session_id = ? AND pending = 1').run(sessionId);
+      const userCount = messages.filter((message) => message.reusePreprojectedUser).length;
+      if (userCount === 0) return false;
       const rows = this.db.prepare(
         'SELECT id, session_id, parent_id, role, content, created_at FROM brain_messages WHERE session_id = ? ORDER BY rowid ASC'
       ).all(sessionId) as BrainMessageRow[];
