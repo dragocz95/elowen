@@ -37,9 +37,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # The real tmux driver test (tests/tmux/driver.test.ts) shells out to tmux.
-      - name: Install tmux
-        run: sudo apt-get update && sudo apt-get install -y tmux
+      # tests/tmux/driver.test.ts shells out to tmux; tests/plugins/filesPdf.test.ts shells out to
+      # poppler (pdftotext/pdftoppm/pdfinfo) to read real PDFs.
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y tmux poppler-utils
 
       - uses: actions/setup-node@v4
         with:

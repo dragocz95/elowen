@@ -16,7 +16,10 @@ const freshDataRoot = () => mkdtempSync(join(tmpdir(), 'elowen-qw-'));
 
 describe('runtime-context plugin', () => {
   it('registers a turn-context provider that emits the current date/time', async () => {
-    const reg = await loadPlugins({ dirs: [pluginsDir], enabled: ['runtime-context'], dataRoot: freshDataRoot(), logger: log, config: { 'runtime-context': { timezone: 'Europe/Prague' } } });
+    // ctx.timezone() reads the shared operator timezone callback (bootstrap derives it from the
+    // runtime-context config), NOT the per-plugin config — so drive it the way production does, or the
+    // assertion silently rides on the host's own zone (green on a Prague dev box, red on a UTC CI runner).
+    const reg = await loadPlugins({ dirs: [pluginsDir], enabled: ['runtime-context'], dataRoot: freshDataRoot(), logger: log, timezone: () => 'Europe/Prague' });
     expect(reg.turnContexts).toHaveLength(1);
     expect(reg.turnContexts[0]!.placement).toBe('before-user');
     const out = reg.turnContexts[0]!.render();
