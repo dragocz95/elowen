@@ -238,11 +238,26 @@ function foldedCalls(calls, display) {
     if (display.toolOutput !== 'hidden' && (call.summary || (display.toolOutput === 'tail' && call.finalTail))) return true;
     return display.toolActivity === 'live' && call.state === 'running' && Boolean(call.progress);
   };
+  // A failed call speaks, so bare-row folding never touches it — but a run of the SAME failure (four
+  // refusals differing only by the path or number they name) is one failure repeated, and reads as such
+  // when collapsed to a count. Mirrors `failureSignature` in src/brain/transcript.ts: key by tool name plus
+  // the summary with its varying parts (paths, digits) flattened away, so only genuinely identical
+  // failures merge. Undefined for anything that is not an errored call, so successes never fold here.
+  const failureSignature = (call) => {
+    if (call.state !== 'error') return undefined;
+    const shape = compactLine(call.summary).replace(/\S*\/\S+/g, '§').replace(/\d+/g, '#').slice(0, 160);
+    return `${call.name}|${shape}`;
+  };
   const rows = [];
   for (const call of calls) {
     const last = rows[rows.length - 1];
     if (last && last.name === call.name && !speaks(last) && !speaks(call)) {
       // The newest call speaks for the run: its detail is the freshest, and the count covers the whole run.
+      rows[rows.length - 1] = { ...call, count: (last.count ?? 1) + 1, detail: call.detail ?? last.detail };
+      continue;
+    }
+    const signature = failureSignature(call);
+    if (signature && last && signature === failureSignature(last)) {
       rows[rows.length - 1] = { ...call, count: (last.count ?? 1) + 1, detail: call.detail ?? last.detail };
       continue;
     }

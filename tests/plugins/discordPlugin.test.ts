@@ -291,6 +291,31 @@ describe('discord LiveMessage (tool progress)', () => {
     expect(trace.split('\n').filter((l) => l.startsWith('📄')).length).toBe(3); // and nothing is folded away
   });
 
+  // The CLI transcript already folds a run of the SAME failure into one counted row; Discord matches it,
+  // so three refusals that differ only by the path they name collapse instead of stacking three lines.
+  it('folds a run of the same failure into one counted row', async () => {
+    const { LiveMessage } = await load();
+    const edits = new Map<string, string>();
+    let nextId = 0;
+    const adapter = {
+      rest: async (method: string, path: string, body: { content: string }) => {
+        const id = method === 'POST' ? `m${++nextId}` : path.split('/').pop()!;
+        edits.set(id, body.content);
+        return { id };
+      },
+    };
+    const lm = new LiveMessage(adapter, 'chan');
+    for (const id of ['a', 'b', 'c']) lm.onEvent({ type: 'tool', id, name: 'read_file', icon: '📄' });
+    for (const [id, path] of [['a', '/x/1.txt'], ['b', '/y/2.txt'], ['c', '/z/3.txt']] as const)
+      lm.onEvent({ type: 'tool_output', id, output: { kind: 'result', tone: 'danger', status: 'needs attention', text: `no such file: ${path}` } });
+    await new Promise((r) => setTimeout(r, 20));
+    await lm.finalize('done');
+    const trace = edits.get('m1')!;
+    expect(trace.split('\n').filter((l) => l.startsWith('📄')).length).toBe(1); // three refusals → one row
+    expect(trace).toContain('×3');
+    expect(trace).toContain('needs attention');
+  });
+
   it('renders a ctx.emitCard card in the progress bubble; an empty card removes it', async () => {
     const { LiveMessage } = await load();
     const mk = () => {
