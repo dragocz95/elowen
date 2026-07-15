@@ -239,6 +239,58 @@ describe('discord LiveMessage (tool progress)', () => {
     expect(edits.get('m1')).toBe('✂️ `sarah_hair`: "list_bookings" ×3\n📄 `read_file`\n✂️ `sarah_hair`');
   });
 
+  // Every real tool call carries a PI toolCallId — and the trace collapsed only calls that had none, so on
+  // Discord a run of nine identical calls printed nine identical lines.
+  it('collapses a run of the same tool even though every call carries its own id', async () => {
+    const { LiveMessage } = await load();
+    const edits = new Map<string, string>();
+    let nextId = 0;
+    const adapter = {
+      rest: async (method: string, path: string, body: { content: string }) => {
+        const id = method === 'POST' ? `m${++nextId}` : path.split('/').pop()!;
+        edits.set(id, body.content);
+        return { id };
+      },
+    };
+    const lm = new LiveMessage(adapter, 'chan');
+    let calls = 0;
+    const call = (name: string, icon: string, detail?: string) =>
+      lm.onEvent({ type: 'tool', id: `call-${++calls}`, name, icon, detail });
+    call('sarah_hair_public', '✂️', 'dlouhá');
+    call('sarah_hair_public', '✂️');
+    call('sarah_hair_public', '✂️');
+    call('todo_write', '📋');
+    call('todo_write', '📋');
+    call('sarah_hair', '✂️'); // a different tool → its own row, no merging back into the first run
+    await new Promise((r) => setTimeout(r, 20));
+    await lm.finalize('done');
+    expect(edits.get('m1')).toBe('✂️ `sarah_hair_public`: "dlouhá" ×3\n📋 `todo_write` ×2\n✂️ `sarah_hair`');
+  });
+
+  // Folding is for rows that say nothing on their own. A result — or a failure — is the row's whole point.
+  it('leaves a call that carries a result (or failed) on its own line', async () => {
+    const { LiveMessage } = await load();
+    const edits = new Map<string, string>();
+    let nextId = 0;
+    const adapter = {
+      rest: async (method: string, path: string, body: { content: string }) => {
+        const id = method === 'POST' ? `m${++nextId}` : path.split('/').pop()!;
+        edits.set(id, body.content);
+        return { id };
+      },
+    };
+    const lm = new LiveMessage(adapter, 'chan');
+    for (const id of ['a', 'b', 'c']) lm.onEvent({ type: 'tool', id, name: 'read_file', icon: '📄' });
+    lm.onEvent({ type: 'tool_output', id: 'b', output: { kind: 'result', tone: 'success', status: 'ok', text: '42 rows' } });
+    lm.onEvent({ type: 'tool_output', id: 'c', output: { kind: 'result', tone: 'danger', status: 'needs attention', text: 'no such file' } });
+    await new Promise((r) => setTimeout(r, 20));
+    await lm.finalize('done');
+    const trace = edits.get('m1')!;
+    expect(trace).toContain('📄 `read_file` — 42 rows');       // the one with a result keeps its line…
+    expect(trace).toContain('📄 `read_file` — needs attention'); // …as does the failure
+    expect(trace.split('\n').filter((l) => l.startsWith('📄')).length).toBe(3); // and nothing is folded away
+  });
+
   it('renders a ctx.emitCard card in the progress bubble; an empty card removes it', async () => {
     const { LiveMessage } = await load();
     const mk = () => {

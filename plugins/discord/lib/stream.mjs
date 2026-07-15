@@ -222,6 +222,35 @@ function toolLinesFor(c, display) {
   return lines;
 }
 
+/** Fold consecutive calls of the SAME tool into one counted row — the rule the CLI transcript already uses
+ *  (`groupToolItems`, src/brain/transcript.ts). A call that has something of its OWN to show — a result
+ *  summary, an output tail, a live progress tail, a failure — keeps its row, because that text is the whole
+ *  point of the row; a bare call is indistinguishable from its neighbours, and nine identical lines say
+ *  nothing nine times.
+ *
+ *  It has to happen at RENDER time. Every real tool call carries a PI toolCallId, and that id is what a
+ *  later output/diff/settle is routed to, so the rows must stay separate in the model — folding them when
+ *  the call ARRIVES would either lose the routing or lose the results. */
+function foldedCalls(calls, display) {
+  // Whether this call renders anything beyond the bare `<icon> `tool`` head row.
+  const speaks = (call) => {
+    if (call.state === 'error') return true;
+    if (display.toolOutput !== 'hidden' && (call.summary || (display.toolOutput === 'tail' && call.finalTail))) return true;
+    return display.toolActivity === 'live' && call.state === 'running' && Boolean(call.progress);
+  };
+  const rows = [];
+  for (const call of calls) {
+    const last = rows[rows.length - 1];
+    if (last && last.name === call.name && !speaks(last) && !speaks(call)) {
+      // The newest call speaks for the run: its detail is the freshest, and the count covers the whole run.
+      rows[rows.length - 1] = { ...call, count: (last.count ?? 1) + 1, detail: call.detail ?? last.detail };
+      continue;
+    }
+    rows.push(call);
+  }
+  return rows;
+}
+
 /** A display card (ctx.emitCard) for the progress bubble — title + checklist (emoji per status, since
  *  Discord has no task-list markdown) + freeform body. Capped so a long card can't blow the ~2k limit. */
 function cardLines(card, max = 15) {
@@ -278,7 +307,7 @@ export class LiveMessage {
     // In per-tool mode each lifecycle row owns a separate editable message; the aggregate progress
     // bubble is reserved for cards/notices/reasoning so those surfaces remain coherent.
     if (this.display.toolMessageMode !== 'per_tool') {
-      for (const call of this.toolCalls) toolLines.push(...toolLinesFor(call, this.display));
+      for (const call of foldedCalls(this.toolCalls, this.display)) toolLines.push(...toolLinesFor(call, this.display));
     }
     for (const notice of this.notices.values()) toolLines.push(`🔄 ${compactLine(notice, 240)}`);
     if (this.a.cfg?.showReasoning && this.reasoning.trim()) {
@@ -341,19 +370,14 @@ export class LiveMessage {
     if (e.type === 'tool' && e.name) {
       if (this.display.toolActivity === 'off') return;
       const existing = e.id ? this.toolById.get(e.id) : null;
-      const last = this.toolCalls[this.toolCalls.length - 1];
       let call;
       if (existing) {
         call = existing;
         call.detail = e.detail ?? call.detail;
         call.icon = e.icon ?? call.icon;
         call.state = 'running';
-      } else if (!e.id && last && last.name === e.name && last.state === 'running') {
-        last.count += 1;
-        if (e.detail) last.detail = e.detail; // latest detail wins on a collapsed line
-        call = last;
       } else {
-        call = { id: e.id, name: e.name, detail: e.detail, icon: e.icon, count: 1, state: 'running', progress: '', summary: '', finalTail: '' };
+        call = { id: e.id, name: e.name, detail: e.detail, icon: e.icon, state: 'running', progress: '', summary: '', finalTail: '' };
         this.toolCalls.push(call);
         if (e.id) this.toolById.set(e.id, call);
       }
