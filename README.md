@@ -1,10 +1,8 @@
 <div align="center">
 
-<img src="docs/brand/elowen-mascot-bounce-wink.gif" width="170" alt="Elowen mascot">
-
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/brand/elowen-logo-white.png">
-  <img alt="Elowen" src="docs/brand/elowen-logo-black.png" width="340">
+  <img alt="Elowen" src="docs/brand/elowen-logo-black.png" width="360">
 </picture>
 
 **A self-hosted AI agent you can talk to, steer, and trust with real work.**
@@ -54,18 +52,18 @@ elowen up | down                    # manage local services
 
 ## ✨ What you get
 
-|  |  |
+| | |
 |---|---|
-| 💬 **Talk anywhere** | One agent across terminal, Web UI, Discord, and WhatsApp — same projects, memory, and permissions on every surface. |
-| 🎯 **Persistent goals** | Give a conversation a concrete outcome, subgoals, a turn budget, and a hard safety ceiling. It pauses when it needs you and resumes with its bearings intact. |
-| 🤝 **Sub-agent delegation** | Hand focused work to a sub-agent on a different model. Its live status, tool activity, and result stay attached to the parent conversation — never a black box. |
-| 🧭 **Missions** | Turn one outcome into ordered phases, with an optional dedicated pilot to plan and an overseer to judge progress and reviews. |
-| 🔒 **Real permissions** | Per-user model ceilings and granular tool rules decide what may run, what must ask, and what is denied. Approval is a real pause in the work, not a best-effort ping. |
-| 🧠 **Durable memory & queue** | Memory that carries across surfaces, and a durable queue that holds your mid-turn follow-up instead of dropping it. |
-| 🌿 **Git worktrees & PRs** | A mission can run in an isolated Git worktree with a pull-request workflow, keeping concurrent work off a shared checkout and gating publication behind verification. |
-| 🧩 **Inspectable plugins** | Files, terminal, MCP, skills, scheduling, codebase search, chat platforms, and more — declared by manifest, scoped by a registry API, deny-by-default. |
-| ⏰ **Scheduling** | Recurring jobs and one-shot wake-ups (`daily 07:30`, `every 15m`, standard cron), read on **your** clock. |
-| 🏠 **Self-hosted** | A Node.js daemon, SQLite, and a Next.js Web UI. Your accounts and data stay yours. |
+| **Talk anywhere** | One agent across terminal, Web UI, Discord, and WhatsApp — same projects, memory, and permissions on every surface. |
+| **Persistent goals** | Give a conversation a concrete outcome, subgoals, a turn budget, and a hard safety ceiling. It pauses when it needs you and resumes with its bearings intact. |
+| **Delegation** | Hand focused work to a sub-agent on a different model. Its live status, tool activity, and result stay attached to the parent conversation — never a black box. |
+| **Missions** | Turn one outcome into ordered phases, with an optional dedicated pilot to plan and an overseer to judge progress and reviews. |
+| **Permissions** | Per-user model ceilings and granular tool rules decide what may run, what must ask, and what is denied. Approval is a real pause in the work, not a best-effort ping. |
+| **Durable memory** | Memory that carries across surfaces, and a durable queue that holds your mid-turn follow-up instead of dropping it. |
+| **Worktrees & PRs** | A mission can run in an isolated Git worktree with a pull-request workflow, keeping concurrent work off a shared checkout and gating publication behind verification. |
+| **Plugins** | Files, terminal, MCP, skills, scheduling, codebase search, chat platforms, and more — declared by manifest, scoped by a registry API, deny-by-default. |
+| **Scheduling** | Recurring jobs and one-shot wake-ups (`daily 07:30`, `every 15m`, standard cron), read on **your** clock. |
+| **Self-hosted** | A Node.js daemon, SQLite, and a Next.js Web UI. Your accounts and data stay yours. |
 
 ## 🖥️ One agent, several useful surfaces
 
