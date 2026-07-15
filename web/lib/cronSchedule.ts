@@ -42,7 +42,7 @@ function validCronField(spec: string, min: number, max: number, names?: readonly
 }
 
 /** A standard 5-field cron expression: minute hour day-of-month month day-of-week ("0 9 * * 1-5"). */
-export function isValidCronExpression(spec: string): boolean {
+function isValidCronExpression(spec: string): boolean {
   const fields = spec.trim().split(/\s+/);
   if (fields.length !== 5) return false;
   return validCronField(fields[0] ?? '', 0, 59)

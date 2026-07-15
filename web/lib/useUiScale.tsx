@@ -24,9 +24,9 @@ export const DEFAULT_SCALE = 1;
  *
  *  Width is read from `window.innerWidth`, which root `zoom` does NOT scale, so the applied zoom cannot
  *  feed back into the measurement that produced it. Measuring `documentElement.clientWidth` would spiral. */
-export const AUTO_REFERENCE_WIDTH = 1900;
+const AUTO_REFERENCE_WIDTH = 1900;
 /** Past this the shrinking stops: below it the app would be small rather than merely dense. */
-export const AUTO_FLOOR_SCALE = 0.7;
+const AUTO_FLOOR_SCALE = 0.7;
 
 const round = (n: number, places: number): number => {
   const f = 10 ** places;
