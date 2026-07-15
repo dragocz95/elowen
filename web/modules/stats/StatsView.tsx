@@ -72,15 +72,15 @@ export function StatsView() {
                 <div data-testid="model-usage-list">
                   <DataTable
                     ariaLabel={t.stats.costByModel}
-                    columns="2rem minmax(0,12rem) minmax(8rem,1fr) 7rem 7rem"
+                    columns="2rem minmax(0,12rem) minmax(6rem,1fr) 7.5rem 9rem"
                     compactColumns="2rem minmax(0,1fr) auto"
                   >
                     <DataTableRow header>
                       <DataTableCell header role="presentation" aria-hidden>{null}</DataTableCell>
-                      <DataTableCell header>{t.stats.cardModelsUsed}</DataTableCell>
-                      <DataTableCell header priority="wide">{t.stats.pulseLabel}</DataTableCell>
-                      <DataTableCell header priority="wide" className="text-right">{t.stats.cardTotalTokens}</DataTableCell>
-                      <DataTableCell header className="text-right">{t.stats.cardTotalCost}</DataTableCell>
+                      <DataTableCell header className="whitespace-nowrap">{t.stats.cardModelsUsed}</DataTableCell>
+                      <DataTableCell header priority="wide" className="whitespace-nowrap">{t.stats.pulseLabel}</DataTableCell>
+                      <DataTableCell header priority="wide" className="whitespace-nowrap text-right">{t.stats.cardTotalTokens}</DataTableCell>
+                      <DataTableCell header className="whitespace-nowrap text-right">{t.stats.cardTotalCost}</DataTableCell>
                     </DataTableRow>
                     <div role="rowgroup">
                       <MotionPresence>
