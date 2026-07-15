@@ -14,6 +14,14 @@ import { brainEventReplayCursor, withoutBrainEventReplayCursor } from '../../bra
 import { SerializedEventBuffer } from '../../brain/session/serializedEventBuffer.js';
 import type { ElowenApp, RouteContext } from '../context.js';
 
+/** Normalize a client-supplied `/compact <text>` instruction: require a string, trim, drop empty, and cap
+ *  the length so a stray large payload can't bloat the summary prompt. Undefined means "default compaction". */
+function compactInstruction(v: unknown): string | undefined {
+  if (typeof v !== 'string') return undefined;
+  const trimmed = v.trim();
+  return trimmed ? trimmed.slice(0, 2000) : undefined;
+}
+
 /** Per-user embedded brain (the new advisor engine): status / start / send / live event stream.
  *  Full-scope callers only — a spawned agent must not drive a human's brain. Each route acts on the
  *  caller's own conversation (`brain-<userId>`). Degrades gracefully when the brain is not wired. */
@@ -327,8 +335,8 @@ export function registerBrainRoutes(app: ElowenApp, ctx: RouteContext): void {
   app.post('/brain/compact', async c => {
     if (!d.brain) return c.json({ error: 'brain unavailable' }, 503);
     if (forbidden(c)) return c.json({ error: 'forbidden' }, 403);
-    const b = (await c.req.json().catch(() => ({}))) as { session?: unknown };
-    try { return c.json(await d.brain.compact(c.get('user').id, typeof b.session === 'string' ? b.session : undefined)); }
+    const b = (await c.req.json().catch(() => ({}))) as { session?: unknown; instruction?: unknown };
+    try { return c.json(await d.brain.compact(c.get('user').id, typeof b.session === 'string' ? b.session : undefined, compactInstruction(b.instruction))); }
     catch (e) { return c.json({ error: (e as Error).message }, 409); }
   });
 
@@ -354,7 +362,7 @@ export function registerBrainRoutes(app: ElowenApp, ctx: RouteContext): void {
     if (!d.brain) return c.json({ error: 'brain unavailable' }, 503);
     if (forbidden(c)) return c.json({ error: 'forbidden' }, 403);
     const user = c.get('user');
-    const body = (await c.req.json().catch(() => ({}))) as { name?: unknown; session?: unknown; on?: unknown };
+    const body = (await c.req.json().catch(() => ({}))) as { name?: unknown; session?: unknown; on?: unknown; instruction?: unknown };
     const cmd = typeof body.name === 'string' ? findCommand(body.name) : undefined;
     if (!cmd || cmd.kind !== 'action') return c.json({ error: 'unknown command' }, 400);
     if (cmd.adminOnly && !user.is_admin) return c.json({ error: 'forbidden' }, 403);
@@ -362,7 +370,7 @@ export function registerBrainRoutes(app: ElowenApp, ctx: RouteContext): void {
       switch (cmd.name) {
         case 'stop': await d.brain.abort(user.id, typeof body.session === 'string' ? body.session : undefined); return c.json({ ok: true, message: 'Agent stopped.' });
         case 'new': return c.json({ ok: true, message: 'Started a fresh conversation.', data: await d.brain.start(user.id, { fresh: true }) });
-        case 'compact': { const r = await d.brain.compact(user.id, typeof body.session === 'string' ? body.session : undefined); return c.json({ ok: true, message: r.compacted ? 'Conversation compacted.' : (r.message ?? 'Nothing to compact yet.'), data: { usage: r.usage } }); }
+        case 'compact': { const r = await d.brain.compact(user.id, typeof body.session === 'string' ? body.session : undefined, compactInstruction(body.instruction)); return c.json({ ok: true, message: r.compacted ? 'Conversation compacted.' : (r.message ?? 'Nothing to compact yet.'), data: { usage: r.usage } }); }
         case 'fast': {
           const r = d.brain.setFast(user.id, typeof body.on === 'boolean' ? body.on : undefined, typeof body.session === 'string' ? body.session : undefined);
           return c.json({ ok: true, message: `Fast mode ${r.fast ? 'enabled' : 'disabled'}.`, data: r });

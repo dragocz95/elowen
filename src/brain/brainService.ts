@@ -274,7 +274,7 @@ export class BrainService {
    *  `session` (a bound CLI). Serialized on the session lock (mirrors the channel variant) so it can't
    *  race an in-flight prompt(). A too-small/already-compacted session is a benign no-op
    *  (compacted:false), not an error. Throws only when nothing is running. */
-  async compact(userId: number, session?: string): Promise<CompactResult> {
+  async compact(userId: number, session?: string, customInstruction?: string): Promise<CompactResult> {
     const sessionId = session ? this.lifecycle.ownedUserSession(userId, session) : this.lifecycle.activeSessionId(userId);
     if (!this.sessions.get(sessionId)) throw new Error('brain not started');
     return this.serial(sessionId, async () => {
@@ -284,7 +284,7 @@ export class BrainService {
       // A real compaction fires PI's `compaction_end`, which the factory's session subscription mirrors
       // into the store and the spawner fans `compacted` to attached clients — persistence + notify ride the
       // event, not this call. A no-op (session too small) emits no result and leaves the store untouched.
-      const result = await runCompaction(live.session);
+      const result = await runCompaction(live.session, customInstruction);
       result.usage = withDescendantUsage(result.usage, this.d.store.descendantUsage(live.sessionId));
       return result;
     });

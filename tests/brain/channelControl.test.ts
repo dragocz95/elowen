@@ -116,6 +116,13 @@ describe('ChannelSessionService — channel-scoped slash control (stop/status/co
     expect(await svc.compact('discord-missing#0')).toBeNull();
   });
 
+  it('compact forwards a caller custom instruction to session.compact', async () => {
+    const ch = fakeChannel();
+    const { svc } = serviceWith(new Map([['discord-c1#0', ch]]));
+    await svc.compact('discord-c1#0', 'keep only the decisions');
+    expect(ch.session.compact as ReturnType<typeof vi.fn>).toHaveBeenCalledWith('keep only the decisions');
+  });
+
   it('compact reports a benign no-op (compacted:false) when there is nothing to compact', async () => {
     const ch = fakeChannel({
       session: { ...fakeChannel().session, compact: vi.fn(async () => { throw new Error('Nothing to compact (session too small)'); }) },

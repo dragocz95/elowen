@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
-import { compactNotice, resolveThinkingLevel, wireSubmit } from '../../../src/cli/chat/commands.js';
+import { compactNotice, parseCommand, resolveThinkingLevel, wireSubmit } from '../../../src/cli/chat/commands.js';
 import { TranscriptModel } from '../../../src/brain/transcriptModel.js';
 import { ChatState } from '../../../src/cli/chat/chatState.js';
 import { ChatApplicationLifetime } from '../../../src/cli/chat/applicationLifetime.js';
@@ -22,6 +22,16 @@ describe('resolveThinkingLevel', () => {
     expect(resolveThinkingLevel('Ultra', levels, labels)).toBe('xhigh');
     expect(resolveThinkingLevel('max', levels, labels)).toBe('max');
     expect(resolveThinkingLevel('minimal', levels, labels)).toBeNull();
+  });
+});
+
+describe('parseCommand — /compact custom instructions', () => {
+  it('captures free-text after /compact as the argument', () => {
+    expect(parseCommand('/compact keep only the decisions')).toEqual({ cmd: 'compact', arg: 'keep only the decisions' });
+  });
+
+  it('a bare /compact carries no argument', () => {
+    expect(parseCommand('/compact')).toEqual({ cmd: 'compact' });
   });
 });
 

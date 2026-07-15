@@ -474,7 +474,7 @@ export async function runHeadless(
         else if (arg) await c.subgoal('add', arg);
         printGoal(await c.goal()); finish(0); break;
       }
-      case 'compact': { const r = await c.compact(); outResult(r.message ?? 'compacted', { compacted: r.compacted, message: r.message }); finish(0); break; }
+      case 'compact': { const r = await c.compact(arg || undefined); outResult(r.message ?? 'compacted', { compacted: r.compacted, message: r.message }); finish(0); break; }
       case 'status': { const s = await c.status(); io.stdout(o.json ? `${JSON.stringify({ type: 'result', status: s })}\n` : `${JSON.stringify(s, null, 2)}\n`); finish(0); break; }
       case 'skills': { const sk = await c.skills(); io.stdout(o.json ? `${JSON.stringify({ type: 'result', skills: sk })}\n` : `${JSON.stringify(sk, null, 2)}\n`); finish(0); break; }
       case 'sessions': { // headless equivalent of the TUI picker: list conversations

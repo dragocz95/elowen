@@ -527,7 +527,7 @@ export class ChannelSessionService {
   /** Compact a channel session's context (a platform `/compact` slash), serialized against its turns so
    *  it can't race an in-flight prompt. Returns the compaction result (usage + whether anything was
    *  compacted), or null if there's no session. A too-small session is a benign no-op, not an error. */
-  async compact(channelId: string): Promise<CompactResult | null> {
+  async compact(channelId: string, customInstruction?: string): Promise<CompactResult | null> {
     const sessionId = channelSessionId(channelId);
     return this.d.registry.withLock(sessionId, async () => {
       const ch = this.d.registry.channelGet(channelId);
@@ -535,7 +535,7 @@ export class ChannelSessionService {
       // A real compaction fires PI's `compaction_end`, which the factory's session subscription mirrors
       // into the store (and the spawner fans `compacted` to clients) — so persistence rides the event, not
       // this call. A no-op (session too small) emits no result and leaves the store untouched.
-      const result = await runCompaction(ch.session);
+      const result = await runCompaction(ch.session, customInstruction);
       result.usage = withDescendantUsage(result.usage, this.d.store.descendantUsage(ch.sessionId));
       return result;
     });

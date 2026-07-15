@@ -151,10 +151,12 @@ function isNoopCompactError(e: unknown): boolean {
 
 /** Run a session compaction and normalize the no-op case into a benign result. `session` needs only the
  *  compact() call and a usage snapshot — shared by owner chat and channel sessions so both report
- *  "nothing to compact" identically. */
-export async function runCompaction(session: AgentSession): Promise<CompactResult> {
+ *  "nothing to compact" identically. `customInstruction` (from `/compact <text>`) is forwarded to PI,
+ *  which appends it to the summary prompt as an "Additional focus" line; empty/undefined runs a default
+ *  compaction. */
+export async function runCompaction(session: AgentSession, customInstruction?: string): Promise<CompactResult> {
   try {
-    await session.compact();
+    await session.compact(customInstruction);
     return { usage: usageOf(session), compacted: true };
   } catch (e) {
     if (isNoopCompactError(e)) return { usage: usageOf(session), compacted: false, message: 'Nothing to compact yet.' };

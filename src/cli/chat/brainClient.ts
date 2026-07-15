@@ -193,9 +193,10 @@ export class BrainClient {
   }
 
   /** Manually compact the bound conversation; resolves with the post-compaction usage plus whether
-   *  anything was compacted (`compacted:false` = benign no-op, nothing to compact yet). */
-  async compact(): Promise<{ usage: BrainUsageView | null; compacted: boolean; message?: string }> {
-    const res = await this.post('/brain/compact', this.bound ? { session: this.bound } : {});
+   *  anything was compacted (`compacted:false` = benign no-op, nothing to compact yet). An optional
+   *  `instruction` (from `/compact <text>`) steers what the summary should keep. */
+  async compact(instruction?: string): Promise<{ usage: BrainUsageView | null; compacted: boolean; message?: string }> {
+    const res = await this.post('/brain/compact', { ...(this.bound ? { session: this.bound } : {}), ...(instruction ? { instruction } : {}) });
     const body = (await res.json()) as { usage?: BrainUsageView; compacted?: boolean; message?: string };
     return { usage: body.usage ?? null, compacted: !!body.compacted, message: body.message };
   }

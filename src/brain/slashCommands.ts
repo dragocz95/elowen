@@ -42,7 +42,7 @@ export const SLASH_COMMANDS: readonly SlashCommandDef[] = [
   { name: 'goal', description: 'Create, inspect, pause, resume or clear a persistent goal', kind: 'action', surfaces: ['cli'] },
   { name: 'subgoal', description: 'Add or remove persistent-goal subgoals', kind: 'action', surfaces: ['cli'] },
   { name: 'tools', description: 'Inspect active plugin tools and ownership', kind: 'picker', surfaces: ['cli'] },
-  { name: 'compact', description: 'Summarize the conversation to free up context', kind: 'action' },
+  { name: 'compact', description: 'Summarize the conversation to free up context (add text to steer what to keep)', kind: 'action' },
   { name: 'plan', description: 'Plan mode — think through the approach before editing', kind: 'mode', surfaces: ['cli'] },
   { name: 'build', description: 'Build mode — implement changes with tools', kind: 'mode', surfaces: ['cli'] },
   // CLI-local like /goal: the TUI calls POST /brain/yolo itself. Session-scoped — the persisted

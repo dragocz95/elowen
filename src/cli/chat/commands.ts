@@ -46,7 +46,7 @@ export function parseCommand(text: string): { cmd: 'quit' | 'new' | 'stop' | 'st
     case 'tools': return { cmd: 'tools' };
     case 'goal': return { cmd: 'goal', arg: m[2] };
     case 'subgoal': return { cmd: 'subgoal', arg: m[2] };
-    case 'compact': return { cmd: 'compact' };
+    case 'compact': return { cmd: 'compact', arg: m[2] };
     case 'plan': return { cmd: 'plan', arg: m[2] };
     case 'build': return { cmd: 'build', arg: m[2] };
     case 'yolo': return { cmd: 'yolo', arg: m[2] };
@@ -487,7 +487,7 @@ export function wireSubmit(
           // A benign no-op (`compacted:false` — nothing to compact yet) emits NO stream event, so surface
           // the server's message here; a hard failure has no stream event either, so keep the .catch.
           runSession(async () => {
-            const result = await client.compact();
+            const result = await client.compact(command.arg);
             await refreshMeta();
             return result;
           }, (r) => {
