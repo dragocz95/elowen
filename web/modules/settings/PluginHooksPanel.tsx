@@ -1,7 +1,7 @@
 'use client';
 import { Webhook } from 'lucide-react';
 import { Badge } from '../../components/ui/Badge';
-import { Collapsible } from '../../components/ui/Collapsible';
+import { SettingsGroup } from './SettingsSurface';
 import { EmptyState } from '../../components/ui/states';
 import type { Tone } from '../../components/ui/tone';
 import { useTranslation } from '../../lib/i18n';
@@ -21,10 +21,9 @@ export function PluginHooksPanel({ contributions, hookExecutions }: { contributi
         : o === 'timeout' ? t.pluginDetail.outcomeTimeout
           : t.pluginDetail.outcomeRejected;
   return (
-    <Collapsible icon={Webhook} title={t.pluginDetail.hooks}>
-      <div className="flex flex-col gap-5">
+    <SettingsGroup className="plugin-card" icon={Webhook} title={t.pluginDetail.hooks} description={t.pluginDetail.hooksHint}>
+      <div className="settings-group__panel flex flex-col gap-5">
         <div className="flex flex-col gap-3">
-          <p className="text-xs text-text-muted">{t.pluginDetail.hooksHint}</p>
           {(contributions?.hooks.length ?? 0) === 0 ? (
             <EmptyState title={t.pluginDetail.hooksEmpty} icon={Webhook} />
           ) : (
@@ -53,6 +52,6 @@ export function PluginHooksPanel({ contributions, hookExecutions }: { contributi
           </div>
         ) : null}
       </div>
-    </Collapsible>
+    </SettingsGroup>
   );
 }

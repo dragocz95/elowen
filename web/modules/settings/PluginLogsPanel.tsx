@@ -1,6 +1,6 @@
 'use client';
 import { ScrollText } from 'lucide-react';
-import { Collapsible } from '../../components/ui/Collapsible';
+import { SettingsGroup } from './SettingsSurface';
 import { EmptyState } from '../../components/ui/states';
 import { useTranslation } from '../../lib/i18n';
 import type { PluginLogs } from '../../lib/types';
@@ -17,9 +17,8 @@ const LOG_LEVEL_CLASS: Record<'debug' | 'info' | 'warn' | 'error', string> = {
 export function PluginLogsPanel({ logs }: { logs?: PluginLogs }) {
   const { t, locale } = useTranslation();
   return (
-    <Collapsible icon={ScrollText} title={t.pluginDetail.logs}>
-      <div className="flex flex-col gap-3">
-        <p className="text-xs text-text-muted">{t.pluginDetail.logsHint}</p>
+    <SettingsGroup className="plugin-card" icon={ScrollText} title={t.pluginDetail.logs} description={t.pluginDetail.logsHint}>
+      <div className="settings-group__panel flex flex-col gap-3">
         {!logs || logs.entries.length === 0 ? (
           <EmptyState title={t.pluginDetail.logsEmpty} icon={ScrollText} />
         ) : (
@@ -34,6 +33,6 @@ export function PluginLogsPanel({ logs }: { logs?: PluginLogs }) {
           </div>
         )}
       </div>
-    </Collapsible>
+    </SettingsGroup>
   );
 }

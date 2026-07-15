@@ -43,7 +43,7 @@ function WorkspacePanel({ id, active, visited, children }: {
 function PluginEditorLayout({ preview, children }: { preview: ReactNode; children: ReactNode }) {
   return (
     <div data-testid="plugin-editor-layout" className="@container grid min-w-0 gap-6 @4xl:grid-cols-[minmax(0,1fr)_19rem] @5xl:grid-cols-[minmax(0,1fr)_21rem]">
-      <div className="min-w-0">{children}</div>
+      <div className="flex min-w-0 flex-col gap-4">{children}</div>
       <aside data-testid="plugin-preview-rail" className="min-w-0 self-start @4xl:sticky @4xl:top-20">{preview}</aside>
     </div>
   );
@@ -114,26 +114,32 @@ function PluginWorkspace({ name, detail, contributions, logs, hookExecutions, on
       <SettingsGroup>
         <SettingsToolbar>
           <div className="flex min-w-0 flex-1 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div className="min-w-0 overflow-x-auto"><Segmented variant="line" value={tab} onChange={changeTab} options={tabs} aria-label={t.pluginDetail.workspaceNav} /></div>
+            {/* `flex`, not `overflow-x-auto`: the Segmented track wraps on its own, so it never needs a
+                scroll axis — and declaring `overflow-x: auto` promotes the Y axis out of `visible`, so a
+                sub-pixel row height (routine once the shell zoom scales the layout) overflows by a fraction
+                and draws a stray vertical scrollbar beside the tabs at some widths. Same fix as PluginsSection. */}
+            <div className="flex min-w-0"><Segmented variant="line" value={tab} onChange={changeTab} options={tabs} aria-label={t.pluginDetail.workspaceNav} /></div>
             <AutoSaveStatus status={draft.status} onRetry={draft.retry} />
           </div>
         </SettingsToolbar>
         <div className="p-5 sm:p-6">
           <WorkspacePanel id="setup" active={tab} visited={visitedTabs}>
         <PluginEditorLayout preview={preview}>
-          <section className="border-y border-border/80 py-5">
-            <div className="mb-3 flex items-center justify-between gap-3">
-              <div><h2 className="text-sm font-semibold text-text">{t.pluginDetail.setupChecklist}</h2><p className="mt-0.5 text-xs text-text-muted">{t.pluginDetail.setupChecklistHint}</p></div>
-              <span className={`text-xs font-medium ${missingRequired.length ? 'text-warning' : 'text-success'}`}>{missingRequired.length ? t.pluginDetail.setupMissing.replace('{n}', String(missingRequired.length)) : t.pluginDetail.setupComplete}</span>
-            </div>
-            <div className="flex flex-wrap gap-2">
+          <SettingsGroup
+            className="plugin-card"
+            icon={Check}
+            title={t.pluginDetail.setupChecklist}
+            description={t.pluginDetail.setupChecklistHint}
+            actions={<span className={`text-xs font-medium ${missingRequired.length ? 'text-warning' : 'text-success'}`}>{missingRequired.length ? t.pluginDetail.setupMissing.replace('{n}', String(missingRequired.length)) : t.pluginDetail.setupComplete}</span>}
+          >
+            <div className="settings-group__panel flex flex-wrap gap-2">
               {detail.configSchema.filter((field) => field.required).map((field) => {
                 const missing = missingRequired.includes(field);
                 return <span key={field.key} className="inline-flex items-center gap-1.5 rounded-full border border-border px-2.5 py-1 text-xs text-text-muted">{missing ? <Circle size={10} className="text-warning" aria-hidden /> : <Check size={11} className="text-success" aria-hidden />}{fieldLabel(field)}</span>;
               })}
               {detail.configSchema.every((field) => !field.required) ? <span className="text-xs text-text-muted">{t.pluginDetail.setupNoRequired}</span> : null}
             </div>
-          </section>
+          </SettingsGroup>
           <PluginConfigEditor {...editorProps} mode="setup" />
         </PluginEditorLayout>
           </WorkspacePanel>

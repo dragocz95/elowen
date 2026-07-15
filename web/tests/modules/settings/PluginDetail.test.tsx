@@ -42,6 +42,9 @@ const renderDetail = () => {
 };
 
 beforeEach(() => {
+  // A workspace tab switch stamps the tab into window.location.hash, which PluginDetail reads back on
+  // mount — clear it so a test that ends on a non-default tab can't pin the next test's initial tab.
+  window.history.replaceState(null, '', window.location.pathname);
   usePluginDetail.mockReset(); usePlugins.mockReset();
   usePluginContributions.mockReturnValue({ data: undefined });
   usePluginLogs.mockReturnValue({ data: undefined });
@@ -73,6 +76,19 @@ describe('PluginDetail workspace', () => {
     expect(container.querySelectorAll('[data-settings-document]')).toHaveLength(1);
     expect(container.querySelectorAll('[data-settings-group]').length).toBeGreaterThan(0);
     expect(container.querySelector('.settings-toolbar')).toBeInTheDocument();
+  });
+
+  it('shows the capability panels inline as settings-group cards (no accordion to expand)', () => {
+    usePluginContributions.mockReturnValue({ data: { tools: [{ name: 'discord_api' }], skills: [], platforms: [{ name: 'discord' }], hooks: [] } });
+    usePluginDetail.mockReturnValue({ data: detail([], {}, 'discord'), isLoading: false });
+    renderDetail();
+    fireEvent.click(screen.getByRole('radio', { name: en.pluginDetail.tabCapabilities }));
+    // The Tools / Hooks / Permissions panels render their content immediately — each is a settings-group
+    // card with an icon-chip header, not a collapsed accordion the user must click open first.
+    expect(screen.getByText('discord_api')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: en.pluginDetail.tools })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: en.pluginDetail.hooks })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: en.pluginDetail.permissions })).toBeInTheDocument();
   });
 
   it('exposes the five focused workspace tabs and a live preview', () => {

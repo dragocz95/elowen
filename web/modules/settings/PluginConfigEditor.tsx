@@ -1,6 +1,6 @@
 'use client';
 import { useState, type ReactNode } from 'react';
-import { Plus, Trash2, ChevronDown, ChevronRight, Clock, Users, SlidersHorizontal, Link2, GraduationCap, Info, Wrench, type LucideIcon } from 'lucide-react';
+import { Plus, Trash2, ChevronDown, ChevronRight, Clock, Users, SlidersHorizontal, Link2, GraduationCap, Info, Wrench, MessagesSquare, Mic, Image as ImageIcon, type LucideIcon } from 'lucide-react';
 import { CronJobsEditor } from './CronJobsEditor';
 import { SkillsEditor } from './SkillsEditor';
 import { WhatsAppPairSection } from './WhatsAppPairSection';
@@ -8,7 +8,6 @@ import { MonacoEditor } from '../projects/editor/monacoLoader';
 import { defineEditorThemes } from '../projects/editor/oledTheme';
 import { Badge } from '../../components/ui/Badge';
 import { Button } from '../../components/ui/Button';
-import { Collapsible } from '../../components/ui/Collapsible';
 import { Input } from '../../components/ui/Input';
 import { Field } from '../../components/ui/Field';
 import { HelpTip } from '../../components/ui/HelpTip';
@@ -29,6 +28,21 @@ import type { PluginConfigDraft } from './usePluginConfigDraft';
 import { SettingsGroup, SettingsRow } from './SettingsSurface';
 
 const textareaClass = 'w-full rounded-md border border-border bg-bg px-3 py-2 font-mono text-sm text-text placeholder:text-text-muted focus:border-accent';
+
+// A settings-group icon for an author-declared config section, inferred from its key/label. Falls back to
+// the generic behavior glyph so every section card carries an icon-chip header like the rest of settings.
+const SECTION_ICONS: { test: RegExp; icon: LucideIcon }[] = [
+  { test: /connection|auth|credential|token|connect/, icon: Link2 },
+  { test: /voice|audio|speech|tts|stt/, icon: Mic },
+  { test: /conversation|context|history|memory/, icon: MessagesSquare },
+  { test: /media|image|photo|file/, icon: ImageIcon },
+  { test: /role|policies|policy|permission|access/, icon: Users },
+];
+function sectionIcon(field?: PluginConfigField): LucideIcon {
+  if (!field) return SlidersHorizontal;
+  const key = `${field.key} ${field.label}`.toLowerCase();
+  return SECTION_ICONS.find((s) => s.test.test(key))?.icon ?? SlidersHorizontal;
+}
 
 /** Per-role tool allowlist: a compact summary (n selected / all) + a manage modal grouped by the
  *  owning plugin. Empty selection keeps the "no restriction — all tools allowed" semantics. A saved
@@ -457,15 +471,6 @@ export function PluginConfigEditor({ detail, fieldLabel, fieldHint, fieldOptions
   const fieldList = (fields: PluginConfigField[]) => (
     <div className="@container grid grid-cols-1 gap-x-5 gap-y-4 @lg:grid-cols-2">
       {fields.filter(isVisible).map((f) => {
-        // A `section` field is a group heading carrying no input.
-        if (f.type === 'section') {
-          return (
-            <div key={f.key} className="animate-fade-up @lg:col-span-2 flex items-center gap-2 border-t border-border pt-4 first:border-0 first:pt-0">
-              <span className="text-xs font-semibold uppercase tracking-wide text-text">{fieldLabel(f)}</span>
-              {fieldHint(f) ? <HelpTip align="left">{fieldHint(f)}</HelpTip> : null}
-            </div>
-          );
-        }
         // Complex editors carry their own row headers, so they render bare (no outer label/hint).
         if (f.type === 'rolePolicies' || f.type === 'mcpServers') return <div key={f.key} className="animate-fade-up @lg:col-span-2">{renderField(f)}</div>;
         if ((f.type === 'boolean' || (f.type === 'enum' && (f.options?.length ?? 0) <= 3)) && !f.risk) {
@@ -515,48 +520,75 @@ export function PluginConfigEditor({ detail, fieldLabel, fieldHint, fieldOptions
   const behaviorFields = visibleSchema.filter((f) => !isConnection(f) && !isComplex(f));
   const complexFields = visibleSchema.filter(isComplex);
   const group = (key: string, Icon: LucideIcon, title: string, hint: string | undefined, fields: PluginConfigField[]) => (
-    <SettingsGroup key={key} title={title} description={hint} icon={Icon}>
-      <div className="py-4">{fieldList(fields)}</div>
+    <SettingsGroup key={key} className="plugin-card" title={title} description={hint} icon={Icon}>
+      <div className="settings-group__panel">{fieldList(fields)}</div>
     </SettingsGroup>
   );
 
-  const hasConnectionSection = visibleSchema.some((f) => f.type === 'section' && f.key === 'sec_connection');
+  // Split the schema into author-declared sections so each becomes its own settings-group card (icon-chip
+  // header) instead of one long form separated by naked divider lines. Fields before the first section
+  // (rare) fall into a leading headerless card. The section's manifest hint stays behind a `?` affordance
+  // in the header — never a visible description — matching the compact per-field help convention.
+  const sectionCards: { section?: PluginConfigField; fields: PluginConfigField[] }[] = [];
+  for (const f of visibleSchema) {
+    if (f.type === 'section') sectionCards.push({ section: f, fields: [] });
+    else {
+      if (sectionCards.length === 0) sectionCards.push({ fields: [] });
+      sectionCards[sectionCards.length - 1]!.fields.push(f);
+    }
+  }
 
   return (
-    <>
+    <div className="flex flex-col gap-4">
       {visibleSchema.length === 0 && (detail.configSchema.length > 0 || mode !== 'behavior') ? null : visibleSchema.length === 0 ? (
-        <Collapsible icon={SlidersHorizontal} title={t.pluginDetail.config} defaultOpen>
-          <p className="text-sm text-text-muted">{t.pluginDetail.configEmpty}</p>
-        </Collapsible>
-      ) : hasExplicitSections ? (
-        <SettingsGroup>
-          <div className="py-5">
-          {/* WhatsApp: the "Pair device" button (QR/code modal) lives at the top of the Connection section. */}
-          {detail.name === 'whatsapp' && hasConnectionSection ? <WhatsAppPairSection /> : null}
-          {fieldList(visibleSchema)}
-          </div>
+        <SettingsGroup className="plugin-card" icon={SlidersHorizontal} title={t.pluginDetail.config}>
+          <div className="settings-group__panel"><p className="text-sm text-text-muted">{t.pluginDetail.configEmpty}</p></div>
         </SettingsGroup>
+      ) : hasExplicitSections ? (
+        // One settings-group card per author-declared section: an icon-chip header (label + `?` hint),
+        // the section's fields in the padded body. WhatsApp's pairing control leads the Connection card.
+        sectionCards.map((card, i) => {
+          const hint = card.section ? fieldHint(card.section) : undefined;
+          const isConnCard = card.section?.key === 'sec_connection';
+          const showPair = detail.name === 'whatsapp' && isConnCard;
+          return (
+            <SettingsGroup
+              key={card.section?.key ?? `lead-${i}`}
+              className="plugin-card"
+              icon={sectionIcon(card.section)}
+              title={card.section ? fieldLabel(card.section) : undefined}
+              actions={hint ? <HelpTip align="left">{hint}</HelpTip> : undefined}
+            >
+              {showPair || card.fields.length > 0 ? (
+                <div className="settings-group__panel flex flex-col gap-4">
+                  {showPair ? <WhatsAppPairSection /> : null}
+                  {card.fields.length > 0 ? fieldList(card.fields) : null}
+                </div>
+              ) : null}
+            </SettingsGroup>
+          );
+        })
       ) : (
-        <div className="flex flex-col gap-4">
-            {connectionFields.length ? group('connection', Link2, t.pluginCfg.sectionConnection, t.pluginCfg.sectionConnectionHint, connectionFields) : null}
-            {behaviorFields.length ? group('behavior', SlidersHorizontal, t.pluginCfg.sectionBehavior, undefined, behaviorFields) : null}
-            {complexFields.map((cf) => group(cf.key, Users, fieldLabel(cf), fieldHint(cf), [cf]))}
-        </div>
+        <>
+          {connectionFields.length ? group('connection', Link2, t.pluginCfg.sectionConnection, t.pluginCfg.sectionConnectionHint, connectionFields) : null}
+          {behaviorFields.length ? group('behavior', SlidersHorizontal, t.pluginCfg.sectionBehavior, undefined, behaviorFields) : null}
+          {complexFields.map((cf) => group(cf.key, Users, fieldLabel(cf), fieldHint(cf), [cf]))}
+        </>
       )}
 
-      {/* The cronjob plugin's jobs are data, not config schema — a dedicated editor section. */}
+      {/* The cronjob plugin's jobs are data, not config schema — a dedicated editor card. */}
       {mode === 'behavior' && detail.name === 'cronjob' ? (
-        <Collapsible icon={Clock} title={t.cron.title} subtitle={t.cron.sectionHint} defaultOpen>
-          <CronJobsEditor />
-        </Collapsible>
+        <SettingsGroup className="plugin-card" icon={Clock} title={t.cron.title} description={t.cron.sectionHint}>
+          <div className="settings-group__panel"><CronJobsEditor /></div>
+        </SettingsGroup>
       ) : null}
 
       {/* Same story for the skills plugin: its skills are .md files, not config schema. */}
       {mode === 'behavior' && detail.name === 'skills' ? (
-        <Collapsible icon={GraduationCap} title={t.skills.title} subtitle={t.skills.sectionHint} defaultOpen>
-          <SkillsEditor />
-        </Collapsible>
+        <SettingsGroup className="plugin-card" icon={GraduationCap} title={t.skills.title} description={t.skills.sectionHint}>
+          <div className="settings-group__panel"><SkillsEditor /></div>
+        </SettingsGroup>
       ) : null}
-    </>
+    </div>
   );
 }

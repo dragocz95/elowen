@@ -1,7 +1,7 @@
 'use client';
 import { useState, type ReactNode } from 'react';
 import { Wrench, Search } from 'lucide-react';
-import { Collapsible } from '../../components/ui/Collapsible';
+import { SettingsGroup } from './SettingsSurface';
 import { Input } from '../../components/ui/Input';
 import { MorePill } from '../../components/ui/MorePill';
 import { EmptyState } from '../../components/ui/states';
@@ -43,7 +43,6 @@ function ContributionsList({ contributions }: { contributions?: PluginContributi
     .filter((g) => g.items.length > 0);
   return (
     <div className="flex flex-col gap-3">
-      <p className="text-xs text-text-muted">{t.pluginDetail.toolsHint}</p>
       <div className="relative">
         <Search size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" aria-hidden />
         <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={t.plugins.searchPlaceholder} className="pl-9" />
@@ -58,12 +57,12 @@ function ContributionsList({ contributions }: { contributions?: PluginContributi
   );
 }
 
-/** Tools panel: the plugin's live tools / skills / platforms in a collapsible section. */
+/** Tools panel: the plugin's live tools / skills / platforms as a settings-group card. */
 export function PluginToolsPanel({ contributions }: { contributions?: PluginContributions }) {
   const { t } = useTranslation();
   return (
-    <Collapsible icon={Wrench} title={t.pluginDetail.tools}>
-      <ContributionsList contributions={contributions} />
-    </Collapsible>
+    <SettingsGroup className="plugin-card" icon={Wrench} title={t.pluginDetail.tools} description={t.pluginDetail.toolsHint}>
+      <div className="settings-group__panel"><ContributionsList contributions={contributions} /></div>
+    </SettingsGroup>
   );
 }

@@ -1,7 +1,7 @@
 'use client';
 import { KeyRound, ShieldCheck, Globe } from 'lucide-react';
 import { Badge } from '../../components/ui/Badge';
-import { Collapsible } from '../../components/ui/Collapsible';
+import { SettingsGroup } from './SettingsSurface';
 import type { Tone } from '../../components/ui/tone';
 import { useTranslation } from '../../lib/i18n';
 import type { PluginConfigField, PluginDetail } from '../../lib/types';
@@ -41,9 +41,8 @@ export function PluginPermissionsPanel({ detail, fieldLabel, riskText, toolCount
   const hasCapabilities = mutates.length > 0 || reads.length > 0 || capabilities.network === true;
 
   return (
-    <Collapsible icon={ShieldCheck} title={t.pluginDetail.permissions}>
-      <div className="flex flex-col gap-4">
-        <p className="text-xs text-text-muted">{t.pluginDetail.permissionsHint}</p>
+    <SettingsGroup className="plugin-card" icon={ShieldCheck} title={t.pluginDetail.permissions} description={t.pluginDetail.permissionsHint}>
+      <div className="settings-group__panel flex flex-col gap-4">
         <div className="flex flex-wrap items-center gap-1.5">
           <Badge tone={RISK_TONE[riskLevel]}>{riskText(riskLevel)}</Badge>
           {hasSecrets ? <Badge tone="accent"><KeyRound size={10} className="mr-1" aria-hidden />{t.brain.keySet}</Badge> : null}
@@ -98,6 +97,6 @@ export function PluginPermissionsPanel({ detail, fieldLabel, riskText, toolCount
           </div>
         )}
       </div>
-    </Collapsible>
+    </SettingsGroup>
   );
 }

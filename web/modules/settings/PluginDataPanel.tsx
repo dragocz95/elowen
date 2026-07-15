@@ -2,7 +2,7 @@
 import { useState, type ReactNode } from 'react';
 import { Trash2, HardDrive } from 'lucide-react';
 import { Button } from '../../components/ui/Button';
-import { Collapsible } from '../../components/ui/Collapsible';
+import { SettingsGroup } from './SettingsSurface';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { EmptyState } from '../../components/ui/states';
 import { useToast } from '../../components/ui/Toast';
@@ -65,12 +65,12 @@ function DataSection({ name, summary }: { name: string; summary: { path: string;
   );
 }
 
-/** Data panel: on-disk footprint + destructive clear, in a collapsible section. */
+/** Data panel: on-disk footprint + destructive clear, as a settings-group card. */
 export function PluginDataPanel({ name, summary }: { name: string; summary: PluginDetail['data'] }) {
   const { t } = useTranslation();
   return (
-    <Collapsible icon={HardDrive} title={t.pluginDetail.data}>
-      <DataSection name={name} summary={summary} />
-    </Collapsible>
+    <SettingsGroup className="plugin-card" icon={HardDrive} title={t.pluginDetail.data}>
+      <div className="settings-group__panel"><DataSection name={name} summary={summary} /></div>
+    </SettingsGroup>
   );
 }

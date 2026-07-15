@@ -14,6 +14,20 @@
 .settings-group__heading p { margin-top: 0.2rem; color: var(--color-text-muted); font-size: 0.7rem; line-height: 1.45; }
 .settings-group__actions, .settings-row__actions { display: flex; flex: none; align-items: center; gap: 0.6rem; }
 .settings-group__body { min-width: 0; }
+/* A padded body for grouped content that is a free block (pill lists, log tails, config field grids)
+   rather than a stack of .settings-row records — inset matched to the group header. */
+.settings-group__panel { padding: 1.15rem clamp(1.25rem, 2vw, 2rem) 1.45rem; }
+@media (max-width: 800px) { .settings-group__panel { padding-inline: 1rem; } }
+/* A .settings-row nested inside a padded panel (config field grids) must not double its inset — the
+   panel already provides the horizontal padding, so the row only keeps its vertical rhythm. */
+.settings-group__panel .settings-row { padding-inline: 0; }
+
+/* Plugin-detail cards read as discrete soft surfaces (rounded, faint fill, full border) separated by
+   whitespace — NOT full-bleed sections divided by a stray floating hairline. Mirrors the account
+   module's .spatial-form-group card token so it stays in the house design system. */
+.settings-group.plugin-card { border: var(--hairline); border-radius: var(--radius-lg); background: rgb(255 255 255 / 0.012); }
+.settings-group.plugin-card:last-child { border-bottom: var(--hairline); }
+.settings-group.plugin-card > .settings-group__header { background: transparent; border-top-left-radius: var(--radius-lg); border-top-right-radius: var(--radius-lg); }
 .settings-row { display: grid; min-height: 5rem; grid-template-columns: minmax(13rem, 0.9fr) minmax(14rem, 1.1fr) auto; align-items: center; gap: 1rem; padding: 0.8rem clamp(1.25rem, 2vw, 2rem); border-bottom: var(--hairline); }
 .settings-row:last-child { border-bottom: 0; }
 .settings-group[data-density="compact"] .settings-row { min-height: 4.35rem; }
