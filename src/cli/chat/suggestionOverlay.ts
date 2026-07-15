@@ -1,7 +1,7 @@
 import { truncateToWidth, visibleWidth } from '@earendil-works/pi-tui';
 import type { Component } from '@earendil-works/pi-tui';
 import { padAnsi } from '../ui/text.js';
-import { ansi, chatTheme, color } from './theme.js';
+import { ansi, chatTheme, color, paintRow } from './theme.js';
 
 export interface SuggestionItem {
   value: string;
@@ -11,8 +11,7 @@ export interface SuggestionItem {
 
 export type SuggestionKind = 'commands' | 'files';
 
-const bgFill = (text: string, width: number): string =>
-  `\x1b[${chatTheme().inputBg}m${padAnsi(text, width)}\x1b[0m`;
+const bgFill = (text: string, width: number): string => paintRow(chatTheme().inputBg, text, width);
 
 /** Shared non-capturing suggestion viewport used by both slash commands and file mentions. Filtering and
  * row formatting vary by kind; selection, clipping, scroll window and chrome have one implementation. */

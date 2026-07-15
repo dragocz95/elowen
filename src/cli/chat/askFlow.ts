@@ -4,7 +4,7 @@ import type { Component, Focusable, TUI, Container, Editor } from '@earendil-wor
 import { getSelectListTheme } from '@earendil-works/pi-coding-agent';
 import type { AskAnswer, AskQuestion } from '../../brain/events.js';
 import { ChatEditor } from './picker.js';
-import { ansi, chatTheme, color } from './theme.js';
+import { ansi, chatTheme, color, paintRow } from './theme.js';
 import { padAnsi, terminalInlineText, terminalPlainText } from '../ui/text.js';
 
 const OTHER = '\u0000other';
@@ -17,7 +17,7 @@ const MIN_PREVIEW_WIDTH = 20;
 const SPLIT_GUTTER = 3;   // ' │ ' — the divider between the columns
 const MAX_PREVIEW_LINES = 40;
 
-const fillInputBg = (text: string, width: number): string => `\x1b[${chatTheme().inputBg}m${padAnsi(text, width)}\x1b[0m`;
+const fillInputBg = (text: string, width: number): string => paintRow(chatTheme().inputBg, text, width);
 const open = (code: string, text: string): string => ansi.open(code, text);
 const selectedGlyph = (active: boolean): string => active ? '☑' : '☐';
 const inlineText = terminalInlineText;
@@ -340,8 +340,8 @@ export function runAskFlow(o: AskFlowOpts): void {
       invalidate: () => { input.invalidate?.(); },
       handleInput: (data: string) => { input.handleInput?.(data); },
       render: (width: number) => [
-        color.inputBg(padAnsi(`  ${color.bold('Other answer')} ${color.faint(inlineText(q.header))}`, width)),
-        color.inputBg(padAnsi(`  ${color.faint('type your own answer · enter send · esc back')}`, width)),
+        fillInputBg(`  ${color.bold('Other answer')} ${color.faint(inlineText(q.header))}`, width),
+        fillInputBg(`  ${color.faint('type your own answer · enter send · esc back')}`, width),
         ...input.render(width),
       ],
     }, input);

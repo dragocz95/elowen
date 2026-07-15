@@ -4,7 +4,7 @@ import type { ChatTurn, ToolItem } from '../../brain/transcript.js';
 import { groupToolItems, failureSignature } from '../../brain/transcript.js';
 import { formatDuration, formatK, padAnsi, terminalInlineText, terminalPlainText } from '../ui/text.js';
 import { framedDiffBlock, toolOutputBlock, UserBlock } from './components.js';
-import { chatTheme, color } from './theme.js';
+import { chatTheme, color, paintRow } from './theme.js';
 
 export const TOOL_INDENT = '    ';
 const TOOL_OUTPUT_INDENT = '      ';
@@ -46,8 +46,7 @@ function toolRowSpec(name: string, detail?: string): { glyph: string; title: str
   return { glyph: '⚙', title: title(safeName.replace(/[_-]+/g, ' ')) };
 }
 
-const blockFill = (text: string, width: number): string =>
-  `\x1b[${chatTheme().modalBg}m${padAnsi(text, width)}\x1b[0m`;
+const blockFill = (text: string, width: number): string => paintRow(chatTheme().modalBg, text, width);
 
 /** Stateless renderer for one transcript turn. Expansion sets remain viewport interaction state and are
  * supplied per call, keeping Markdown/tool projection independent from height indexing and scrolling. */

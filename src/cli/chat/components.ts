@@ -3,7 +3,7 @@ import { isDownKey, isEnterKey, isEscapeKey, isUpKey } from './keys.js';
 import type { Component, Container, Editor, Focusable, TUI } from '@earendil-works/pi-tui';
 import type { AskQuestion, BrainCard, BrainCardItem } from '../../brain/events.js';
 import type { ProcessInfo } from '../../brain/processRegistry.js';
-import { ansi, chatTheme, color } from './theme.js';
+import { ansi, chatTheme, color, paintRow } from './theme.js';
 import type { ToolOutputView } from '../../brain/messageView.js';
 import { formatDuration, formatK, padAnsi, terminalInlineText, terminalPlainText } from '../ui/text.js';
 
@@ -68,10 +68,8 @@ export class UserBlock implements Component {
   constructor(private text: string) {}
   invalidate(): void { /* stateless — rebuilt fresh each render */ }
   render(width: number): string[] {
-    const railed = (body: string): string => {
-      const pad = Math.max(0, width - 1 - visibleWidth(body));
-      return `${color.accent('▌')}${color.inputBg(`${body}${' '.repeat(pad)}`)}`;
-    };
+    const railed = (body: string): string =>
+      `${color.accent('▌')}${paintRow(chatTheme().inputBg, body, Math.max(0, width - 1))}`;
     const wrapped = wrapTextWithAnsi(terminalPlainText(this.text), Math.max(1, width - 3));
     const rows = wrapped.map((l) => railed(` ${l}`));
     return [railed(''), ...rows, railed('')];
@@ -342,7 +340,7 @@ export class ApprovalDock implements Component, Focusable {
     const innerWidth = Math.max(1, w - 2);
     const theme = chatTheme();
     const border = color.warning;
-    const fill = (text: string): string => `\x1b[${theme.inputBg}m${padAnsi(text, innerWidth)}\x1b[0m`;
+    const fill = (text: string): string => paintRow(theme.inputBg, text, innerWidth);
     const row = (content: string): string => `${border('│')}${fill(content)}${border('│')}`;
     const rows = this.options().map((op, i) => {
       const key = `${i + 1}.`;
@@ -487,7 +485,9 @@ const GIT_DEL = `${ansi.bg(103, 6, 12)};${ansi.fg(248, 81, 73)}`;
 const CODE_BG = ansi.bg(13, 13, 16);
 const DIFF_ADD = (t: string): string => ansi.sgr(GIT_ADD, t);
 const DIFF_DEL = (t: string): string => ansi.sgr(GIT_DEL, t);
-const CODE_ROW = (t: string): string => ansi.sgr(CODE_BG, t);
+/** A code/diff row on the block background. Painted, not merely opened: the row's own text resets its
+ *  colour (the faint gutter, the dim source), and a bare background would end at the first of those. */
+const CODE_ROW = (t: string, width?: number): string => paintRow(CODE_BG, t, width ?? visibleWidth(t));
 const LEGACY_SIGN = /^\s*\d+ ([-+ ]) /;
 const PI_ROW = /^([-+ ])\s*(\d+) (.*)$/;
 const LEGACY_ROW = /^\s*(\d+) ([-+ ]) (.*)$/;
@@ -503,7 +503,7 @@ function diffLine(line: string, width?: number): string {
   const padded = width ? padAnsi(plainRow, width) : plainRow;
   if (sign === '+') return DIFF_ADD(padded);
   if (sign === '-') return DIFF_DEL(padded);
-  return CODE_ROW(width ? padAnsi(`${color.faint(gutter)} ${color.dim(text)}`, width) : `${color.faint(gutter)} ${color.dim(text)}`);
+  return CODE_ROW(`${color.faint(gutter)} ${color.dim(text)}`, width);
 }
 
 /** Sanitize a display diff into terminal-safe raw rows. This is the single expensive parse pass; both
@@ -517,7 +517,7 @@ function parseDiffRows(diff: string): string[] {
 function renderDiffRows(rows: readonly string[], maxLines = 60, rowWidth?: number): string[] {
   const rendered = rows.map((l) => {
     const s = PI_ROW.exec(l)?.[1] ?? LEGACY_SIGN.exec(l)?.[1];
-    return s === '+' || s === '-' || s === ' ' ? diffLine(l, rowWidth) : CODE_ROW(rowWidth ? padAnsi(color.dim(l), rowWidth) : color.dim(l));
+    return s === '+' || s === '-' || s === ' ' ? diffLine(l, rowWidth) : CODE_ROW(color.dim(l), rowWidth);
   });
   const shown = rendered.slice(0, maxLines).map((l) => `    ${l}`);
   if (rendered.length > maxLines) shown.push(`    ${FAINTC(`… +${rendered.length - maxLines} more lines`)}`);
@@ -610,5 +610,5 @@ export function toolOutputBlock(output: ToolOutputView, width: number, expanded 
   // Console output drops its title (bare `<` connector) — the `$ command` echo already identifies it;
   // other kinds (search result, browser observation, tool result) keep the label.
   const title = output.kind === 'console' ? '' : terminalPlainText(output.title).replace(/\s+/g, ' ').trim();
-  return simpleBlock(title, lines.map((line) => CODE_ROW(padAnsi(line, Math.max(1, width - 12)))), width);
+  return simpleBlock(title, lines.map((line) => CODE_ROW(line, Math.max(1, width - 12))), width);
 }

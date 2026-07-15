@@ -1,7 +1,6 @@
 import { CURSOR_MARKER, ProcessTerminal, SelectList, TUI, decodeKittyPrintable, matchesKey, sliceByColumn, truncateToWidth, visibleWidth, wrapTextWithAnsi } from '@earendil-works/pi-tui';
 import type { Component, Focusable, SelectItem } from '@earendil-works/pi-tui';
-import { color, chatTheme } from '../chat/theme.js';
-import { padAnsi } from './text.js';
+import { color, chatTheme, paintRow } from '../chat/theme.js';
 import { MASCOT_ART } from '../chat/mascot.js';
 
 const CANCEL: symbol = Symbol('elowen-prompt-cancel');
@@ -71,7 +70,7 @@ export function mascotHeaderLines(width: number): string[] {
 }
 
 function bg(text: string, width: number, bgCode = chatTheme().modalBg): string {
-  return `\x1b[${bgCode}m${padAnsi(text, width)}\x1b[0m`;
+  return paintRow(bgCode, text, width);
 }
 
 function isMouseInput(data: string): boolean {

@@ -1,3 +1,5 @@
+import { padAnsi } from '../ui/text.js';
+
 /** Elowen's terminal theme registry. The exported `color.*` helpers intentionally stay stable while
  *  their palette can switch at runtime (`/theme`) without rebuilding every component import. */
 
@@ -355,6 +357,20 @@ export const ansi = {
   sgr,
 };
 
+/** Paint `text` across `width` columns on the background `bgCode`.
+ *
+ *  SGR has no stack. Every reset inside the text — the `\x1b[0m` a colour helper closes with, or a cell
+ *  of the mascot art carrying its own background — clears the ROW's background as well, so everything
+ *  after it, padding included, falls back to the terminal's default. That is what drew the black stripes
+ *  down the telemetry rail and the black patch beside the flame. Re-arming the background after each
+ *  such reset keeps the row one colour whatever it contains, which is the only thing a caller ever meant
+ *  by "paint this row". */
+export function paintRow(bgCode: string, text: string, width: number): string {
+  const open = `\x1b[${bgCode}m`;
+  const body = padAnsi(text, width).replace(/\x1b\[(?:0|49)?m/g, (reset) => `${reset}${open}`);
+  return `${open}${body}\x1b[0m`;
+}
+
 export const color = {
   accent: (s: string): string => sgr(activeTheme.accent, s),
   accentDim: (s: string): string => sgr(activeTheme.accentDim, s),
@@ -366,9 +382,8 @@ export const color = {
   error: (s: string): string => sgr(activeTheme.error, s),
   success: (s: string): string => sgr(activeTheme.success, s),
   warning: (s: string): string => sgr(activeTheme.warning, s),
-  panelBg: (s: string): string => sgr(activeTheme.panelBg, s),
-  inputBg: (s: string): string => sgr(activeTheme.inputBg, s),
-  modalBg: (s: string): string => sgr(activeTheme.modalBg, s),
+  // No panelBg/inputBg/modalBg helpers: a background belongs to a whole ROW, and wrapping text in one
+  // here would end at the first reset the text itself carries. Paint rows with `paintRow`.
   selected: (s: string): string => sgr(`${activeTheme.selectedBg};30;1`, s),
 };
 

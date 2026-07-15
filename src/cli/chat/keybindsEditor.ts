@@ -6,7 +6,7 @@ import {
 } from './keys.js';
 import type { KeybindAction, KeybindRow, Keymap } from './keys.js';
 import { loadPrefs, savePrefs } from './prefs.js';
-import { color } from './theme.js';
+import { chatTheme, color, paintRow } from './theme.js';
 import { padAnsi } from '../ui/text.js';
 
 /** The editor's state machine: browsing the list, or waiting to capture the next keypress as a chord
@@ -129,7 +129,7 @@ export class KeybindsEditor implements Component, Focusable {
   render(width: number): string[] {
     const bodyWidth = Math.max(1, width - 4);
     const pad = Math.max(...KEYBIND_ACTIONS.map((a) => a.length)) + 2;
-    const line = (s: string): string => color.modalBg(padAnsi(s, width));
+    const line = (s: string): string => paintRow(chatTheme().modalBg, s, width);
     const out: string[] = [];
     out.push(line(`  ${color.bold(color.text('Keybinds'))}${color.faint(`${' '.repeat(Math.max(1, bodyWidth - 12))}esc`)}`));
     out.push(line(''));
@@ -139,7 +139,7 @@ export class KeybindsEditor implements Component, Focusable {
       const markerText = r.chord === null ? 'unbound' : r.custom ? 'custom' : 'default';
       if (i === this.selectedIndex) {
         const plain = `${r.action.padEnd(pad)}${chordText}${markerText}`;
-        out.push(color.modalBg(`  ${color.selected(padAnsi(plain, bodyWidth))}  `));
+        out.push(paintRow(chatTheme().modalBg, `  ${color.selected(padAnsi(plain, bodyWidth))}  `, width));
       } else {
         const chord = r.chord ? color.accent(chordText) : color.faint(chordText);
         const marker = r.chord === null ? color.faint('unbound') : r.custom ? color.warning('custom') : color.faint('default');

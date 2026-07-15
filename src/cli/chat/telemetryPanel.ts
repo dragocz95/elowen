@@ -4,10 +4,10 @@ import { MASCOT_ART } from './mascot.js';
 import { FLOAT_BAND } from './mascotFloat.js';
 import { ProcessPanel, SubagentPanel } from './components.js';
 import type { SubagentPanelEntry } from './components.js';
-import { color } from './theme.js';
+import { chatTheme, color, paintRow } from './theme.js';
 import type { BrainRateLimits, BrainRateLimitWindow, BrainUsageView, GoalView, McpServerView } from './brainClient.js';
 import type { ProcessInfo } from '../../brain/processRegistry.js';
-import { formatDuration, formatK, padAnsi, terminalInlineText } from '../ui/text.js';
+import { formatDuration, formatK, terminalInlineText } from '../ui/text.js';
 import { goalElapsedSeconds } from './goalState.js';
 
 const inlineText = terminalInlineText;
@@ -107,7 +107,7 @@ export class TelemetryPanel implements Component {
       rows.splice(this.maxRows);
       while (rows.length < this.maxRows) rows.push('');
     }
-    return rows.map((r) => color.panelBg(padAnsi(r, width)));
+    return rows.map((r) => paintRow(chatTheme().panelBg, r, width));
   }
 
   /** Build complete semantic sections with no separator rows. Keeping those boundaries explicit lets

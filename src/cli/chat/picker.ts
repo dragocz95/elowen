@@ -2,9 +2,12 @@ import { CURSOR_MARKER, SelectList, Editor, truncateToWidth, visibleWidth } from
 import { isBackspaceKey, isDownKey, isEnterKey, isEscapeKey, isUpKey } from './keys.js';
 import type { SelectItem, TUI } from '@earendil-works/pi-tui';
 import { getSelectListTheme } from '@earendil-works/pi-coding-agent';
-import { color } from './theme.js';
+import { chatTheme, color, paintRow } from './theme.js';
 import { padAnsi } from '../ui/text.js';
 import { printableInput } from '../ui/prompts.js';
+
+/** One row of a modal, painted edge to edge on the modal background. */
+const modalRow = (text: string, width: number): string => paintRow(chatTheme().modalBg, text, width);
 
 /** The Editor with an Esc hook: Esc aborts the streaming turn (unless the autocomplete popup is open —
  *  then Esc closes it, handled by the base class). */
@@ -174,11 +177,11 @@ class PickerModal {
       ? `  ${color.bold(color.text(this.title))}  ${color.faint('filter')} ${color.accent(this.filter)}`
       : `  ${color.bold(color.text(this.title))}${color.faint(' '.repeat(Math.max(1, bodyWidth - visibleTitle(this.title))) + 'esc')}`;
     return [
-      color.modalBg(padAnsi(titleBar, width)),
-      color.modalBg(padAnsi('', width)),
-      ...this.list.render(bodyWidth).map((line) => color.modalBg(`  ${padAnsi(line, bodyWidth)}  `)),
-      color.modalBg(padAnsi('', width)),
-      color.modalBg(padAnsi(`  ${color.text(this.footer)}`, width)),
+      modalRow(titleBar, width),
+      modalRow('', width),
+      ...this.list.render(bodyWidth).map((line) => modalRow(`  ${padAnsi(line, bodyWidth)}  `, width)),
+      modalRow('', width),
+      modalRow(`  ${color.text(this.footer)}`, width),
     ];
   }
 }
@@ -250,11 +253,11 @@ class TextInputModal {
     const bodyWidth = Math.max(1, width - 4);
     const shown = this.value || color.faint('(empty)');
     return [
-      color.modalBg(padAnsi(`  ${color.bold(color.text(this.title))}${color.faint(' '.repeat(Math.max(1, bodyWidth - visibleTitle(this.title))) + 'esc')}`, width)),
-      color.modalBg(padAnsi('', width)),
-      color.modalBg(`  ${padAnsi(color.text(shown), bodyWidth)}  `),
-      color.modalBg(padAnsi('', width)),
-      color.modalBg(padAnsi(`  ${color.text('enter save')} ${color.faint('·')} ${color.text('esc cancel')}`, width)),
+      modalRow(`  ${color.bold(color.text(this.title))}${color.faint(' '.repeat(Math.max(1, bodyWidth - visibleTitle(this.title))) + 'esc')}`, width),
+      modalRow('', width),
+      modalRow(`  ${padAnsi(color.text(shown), bodyWidth)}  `, width),
+      modalRow('', width),
+      modalRow(`  ${color.text('enter save')} ${color.faint('·')} ${color.text('esc cancel')}`, width),
     ];
   }
 }
@@ -292,11 +295,11 @@ class InfoModal {
     const shown = this.lines.slice(this.scroll, this.scroll + this.viewport);
     const more = this.lines.length > this.viewport ? ` ${this.scroll + shown.length}/${this.lines.length}` : '';
     return [
-      color.modalBg(padAnsi(`  ${color.bold(color.text(this.title))}${color.faint(' '.repeat(Math.max(1, bodyWidth - visibleTitle(this.title))) + 'esc')}`, width)),
-      color.modalBg(padAnsi('', width)),
-      ...shown.map((line) => color.modalBg(`  ${padAnsi(line, bodyWidth)}  `)),
-      color.modalBg(padAnsi('', width)),
-      color.modalBg(padAnsi(`  ${color.text(this.footer)}${color.faint(more)}`, width)),
+      modalRow(`  ${color.bold(color.text(this.title))}${color.faint(' '.repeat(Math.max(1, bodyWidth - visibleTitle(this.title))) + 'esc')}`, width),
+      modalRow('', width),
+      ...shown.map((line) => modalRow(`  ${padAnsi(line, bodyWidth)}  `, width)),
+      modalRow('', width),
+      modalRow(`  ${color.text(this.footer)}${color.faint(more)}`, width),
     ];
   }
 }
