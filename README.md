@@ -25,7 +25,7 @@ Elowen is a personal AI agent that runs on **your** machine. Chat with it in the
 
 It is deliberately self-hosted: a Node.js daemon, SQLite, a Next.js Web UI, and plugins you can inspect, enable, or remove. Your provider accounts and project data stay under your control.
 
-## 🚀 Start here
+## Start here
 
 ```bash
 npm install -g elowen
@@ -50,7 +50,7 @@ elowen up | down                    # manage local services
 
 </div>
 
-## ✨ What you get
+## What you get
 
 | | |
 |---|---|
@@ -65,7 +65,7 @@ elowen up | down                    # manage local services
 | **Scheduling** | Recurring jobs and one-shot wake-ups (`daily 07:30`, `every 15m`, standard cron), read on **your** clock. |
 | **Self-hosted** | A Node.js daemon, SQLite, and a Next.js Web UI. Your accounts and data stay yours. |
 
-## 🖥️ One agent, several useful surfaces
+## One agent, several useful surfaces
 
 | Surface | What it gives you |
 |---|---|
@@ -73,7 +73,7 @@ elowen up | down                    # manage local services
 | **Web UI** | A calm operational view — Tasks, Kanban, Sessions, Timeline, Projects, Editor, Memory, Stats, Settings, Users — sharing the same server-side conversation model as the terminal. |
 | **Discord & WhatsApp** | Reach the same agent from your phone. Same projects, memory, permissions, and conversation state — changing surfaces never means starting your agent over. |
 
-## 📸 A look at Elowen
+## A look at Elowen
 
 <table>
 <tr>
@@ -106,7 +106,7 @@ elowen up | down                    # manage local services
 
 </details>
 
-## 🧠 Built for work that lasts longer than a prompt
+## Built for work that lasts longer than a prompt
 
 Elowen does more than answer the next message. A **persistent goal** gives a conversation a concrete outcome, subgoals, a turn budget, and a hard safety ceiling; it can pause when it needs you and resume with its bearings intact. While one turn is working, a **durable message queue** keeps your follow-up instead of losing it, and context compaction preserves the useful thread rather than resetting the conversation.
 
@@ -118,7 +118,7 @@ That autonomy stays deliberate. **Per-user model ceilings and granular tool rule
 
 Elowen's embedded brain is an in-process, provider-agnostic agent. It exposes a per-user model catalog, configurable limits, optional reasoning, permission gates, goals, and a durable queue for mid-turn messages. Before a normal user turn, Elowen assembles the relevant policy, memory, skills, and plugin context. Dynamic plugin context can be placed before or after the user's text, remains ephemeral, and is never written into the conversation history — so time, runtime state, and other live signals stay fresh without being treated as durable instructions.
 
-## 🏗️ Architecture in one view
+## Architecture in one view
 
 ```text
 Browser ──> Next.js Web UI ──> Elowen daemon ──> SQLite
@@ -130,7 +130,7 @@ Chat-platform plugins ────────────────┤
 
 The daemon owns state, scheduling, agent sessions, plugins, and the API. The Web UI talks through a same-origin backend-for-frontend proxy; the CLI is a client of the same daemon. See [Architecture](./docs/site/12-architecture.md) for the precise boundaries.
 
-## 📚 Documentation
+## Documentation
 
 The full user guide lives at **[elowen.dragocz.dev](https://elowen.dragocz.dev)** and in [`docs/site`](./docs/site/):
 
@@ -151,7 +151,7 @@ The full user guide lives at **[elowen.dragocz.dev](https://elowen.dragocz.dev)*
 
 Contributor references: [development](./docs/DEVELOPMENT.md) · [plugin development](./docs/PLUGIN_DEV.md) · [API](./docs/API.md) · [testing](./docs/TESTING.md).
 
-## 🛠️ Development
+## Development
 
 ```bash
 npm test              # backend test suite
@@ -163,6 +163,6 @@ cd web && npm run dev # run the Web UI in dev mode
 
 See [CONTRIBUTING](./CONTRIBUTING.md) before opening a pull request.
 
-## 📄 License
+## License
 
 [MIT](./LICENSE) © the Elowen authors
