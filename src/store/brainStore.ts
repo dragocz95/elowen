@@ -7,7 +7,7 @@ import {
   type DelegatedExecutionScope,
 } from '../brain/delegatedScope.js';
 import type { TokenUsage, CostSource } from '../integrations/usage/types.js';
-import type { BrainCard, BrainGoalState } from '../brain/events.js';
+import type { BrainCard, BrainGoalState, WorkflowNode, WorkflowUpdate } from '../brain/events.js';
 
 export interface BrainSessionRow {
   id: string; user_id: number; title: string; model: string; work_dir: string; parent_session_id: string | null;
@@ -51,6 +51,10 @@ export interface BrainSubagentRun extends BrainSubagentRunState {
   toolCallId: string;
   sessionId: string;
 }
+/** The validated latest snapshot of one workflow DAG (see brain_workflows). Aliases the wire payload on
+ *  purpose: a `workflow` event carries the WHOLE DAG, so the durable row IS the snapshot and the row,
+ *  the event and the state attached to the tool item cannot drift apart. Bounded display data only. */
+export type BrainWorkflowRun = WorkflowUpdate;
 /** A visible, display-only marker of an owner-driven session-state change (see brain_session_events). */
 export type SessionEventKind = 'model' | 'mode' | 'rename' | 'reasoning';
 export interface BrainSessionEvent {
@@ -93,6 +97,72 @@ export interface BrainDescendantUsage {
 const SNIPPET_RADIUS = 60;
 
 const bounded = (value: string, max: number): string => value.length <= max ? value : value.slice(0, max);
+
+// Bounds for a persisted workflow snapshot, mirroring the engine's own limits (dag.mjs MAX_NODES /
+// MAX_ID_CHARS, workflow.mjs SNAPSHOT_TASK_PREVIEW). The whole DAG re-fans on every tool event of every
+// node, so an unbounded blob would be a write amplifier as much as a DoS: 64 nodes x ~1.2k caps a row
+// near 77k. `task` allows the preview plus its ellipsis; `detail` is one "tool + arg" line, so it gets
+// far less room than a sub-agent's 2k -- 64 of those at that size would be 128k per snapshot.
+const MAX_WORKFLOW_NODES = 64;
+const MAX_WORKFLOW_ID_CHARS = 64;
+const MAX_WORKFLOW_TASK_CHARS = 600;
+const MAX_WORKFLOW_DETAIL_CHARS = 500;
+
+/** One node of a persisted DAG. Rejects rather than coerces: a malformed node means the snapshot came
+ *  from something other than the engine, and guessing its intent would put fiction on the user's screen. */
+function normalizeWorkflowNode(raw: unknown): WorkflowNode | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const o = raw as Record<string, unknown>;
+  if (typeof o.id !== 'string' || !o.id || o.id.length > MAX_WORKFLOW_ID_CHARS) return undefined;
+  if (typeof o.task !== 'string') return undefined;
+  if (o.status !== 'pending' && o.status !== 'running' && o.status !== 'done' && o.status !== 'error') return undefined;
+  if (!Array.isArray(o.deps) || o.deps.length > MAX_WORKFLOW_NODES) return undefined;
+  if (!o.deps.every((d): d is string => typeof d === 'string' && !!d && d.length <= MAX_WORKFLOW_ID_CHARS)) return undefined;
+  if (o.sessionId !== undefined && (typeof o.sessionId !== 'string' || !o.sessionId || o.sessionId.length > 512)) return undefined;
+  if (o.detail !== undefined && typeof o.detail !== 'string') return undefined;
+  if (o.model !== undefined && typeof o.model !== 'string') return undefined;
+  if (o.tokens !== undefined && (typeof o.tokens !== 'number' || !Number.isSafeInteger(o.tokens) || o.tokens < 0)) return undefined;
+  if (o.seconds !== undefined && (typeof o.seconds !== 'number' || !Number.isSafeInteger(o.seconds) || o.seconds < 0)) return undefined;
+  return {
+    id: o.id,
+    task: bounded(o.task, MAX_WORKFLOW_TASK_CHARS),
+    status: o.status,
+    deps: o.deps,
+    ...(typeof o.sessionId === 'string' ? { sessionId: o.sessionId } : {}),
+    ...(typeof o.detail === 'string' ? { detail: bounded(o.detail, MAX_WORKFLOW_DETAIL_CHARS) } : {}),
+    ...(typeof o.tokens === 'number' ? { tokens: o.tokens } : {}),
+    ...(typeof o.seconds === 'number' ? { seconds: o.seconds } : {}),
+    ...(typeof o.model === 'string' ? { model: bounded(o.model, 512) } : {}),
+  };
+}
+
+/** Runtime validation for an engine-produced or DB-loaded workflow snapshot. Same reject-don't-coerce
+ *  contract as normalizeSubagentState, plus the DAG's own rule that node ids are unique — a duplicate
+ *  would make the modal's per-node keying ambiguous. */
+function normalizeWorkflowState(raw: unknown): BrainWorkflowRun | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const o = raw as Record<string, unknown>;
+  if (typeof o.id !== 'string' || !o.id || o.id.length > 512) return undefined;
+  if (typeof o.toolCallId !== 'string' || !o.toolCallId || o.toolCallId.length > 512) return undefined;
+  if (o.status !== 'running' && o.status !== 'done' && o.status !== 'error' && o.status !== 'cancelled') return undefined;
+  if (o.title !== undefined && typeof o.title !== 'string') return undefined;
+  if (!Array.isArray(o.nodes) || o.nodes.length > MAX_WORKFLOW_NODES) return undefined;
+  const nodes: WorkflowNode[] = [];
+  const seen = new Set<string>();
+  for (const raw of o.nodes) {
+    const node = normalizeWorkflowNode(raw);
+    if (!node || seen.has(node.id)) return undefined;
+    seen.add(node.id);
+    nodes.push(node);
+  }
+  return {
+    id: o.id,
+    toolCallId: o.toolCallId,
+    ...(typeof o.title === 'string' ? { title: bounded(o.title, 200) } : {}),
+    status: o.status,
+    nodes,
+  };
+}
 
 /** Runtime validation for plugin-produced progress and DB JSON. Reject malformed numeric/status fields
  *  rather than letting NaN, negative counters, or arbitrary objects reach every connected renderer. */
@@ -667,6 +737,70 @@ export class BrainStore {
     return out;
   }
 
+  /** Persist the newest whole-DAG snapshot for one `workflow_start` tool call. Synchronous for the same
+   *  reason as upsertSubagentRun: the live event must never race ahead of the durable state a reconnect
+   *  reads. The origin session must exist, and a tool call is permanently bound to its first workflow id.
+   *
+   *  Node child sessions are deliberately NOT validated here. A node's `session` event can outrun its
+   *  store row, and rejecting the whole DAG over one not-yet-verifiable node would lose the workflow —
+   *  worse, stripping the id at write time would lose the drill-in permanently. getWorkflowRuns re-derives
+   *  each node's target from the live relation instead, which is also correct for children deleted later. */
+  upsertWorkflowRun(parentSessionId: string, raw: unknown): boolean {
+    if (!parentSessionId) return false;
+    const state = normalizeWorkflowState(raw);
+    if (!state) return false;
+    return this.db.transaction(() => {
+      const parent = this.db.prepare('SELECT id FROM brain_sessions WHERE id = ?').get(parentSessionId) as { id: string } | undefined;
+      if (!parent) return false;
+      const prior = this.db.prepare(
+        'SELECT workflow_id FROM brain_workflows WHERE parent_session_id = ? AND tool_call_id = ?'
+      ).get(parentSessionId, state.toolCallId) as { workflow_id: string } | undefined;
+      if (prior && prior.workflow_id !== state.id) return false;
+      this.db.prepare(
+        `INSERT INTO brain_workflows (parent_session_id, tool_call_id, workflow_id, state)
+         VALUES (?, ?, ?, ?)
+         ON CONFLICT(parent_session_id, tool_call_id) DO UPDATE SET
+           state = excluded.state, updated_at = datetime('now')`
+      ).run(parentSessionId, state.toolCallId, state.id, JSON.stringify(state));
+      return true;
+    })();
+  }
+
+  /** Read the durable DAGs of one conversation, with each node's drill-in target re-derived from the
+   *  LIVE parent/child relation: a node whose session is gone, foreign-owned, or not a direct child of
+   *  this conversation keeps its row but loses `sessionId`, so a stored id can never point the drill-in
+   *  UI at a transcript this conversation does not own.
+   *
+   *  Note the deliberate difference from getSubagentRuns, which JOINs the child and so hides the whole
+   *  run when it disappears: a workflow must not vanish because ONE of its nodes did. Per-node
+   *  degradation is the right granularity — the DAG is still the record of what ran. */
+  getWorkflowRuns(parentSessionId: string): BrainWorkflowRun[] {
+    const rows = this.db.prepare(
+      `SELECT w.state FROM brain_workflows w
+         JOIN brain_sessions p ON p.id = w.parent_session_id
+        WHERE w.parent_session_id = ?
+        ORDER BY w.updated_at ASC, w.rowid ASC`
+    ).all(parentSessionId) as { state: string }[];
+    if (rows.length === 0) return [];
+    const children = new Set((this.db.prepare(
+      `SELECT c.id FROM brain_sessions c JOIN brain_sessions p ON p.id = c.parent_session_id
+        WHERE c.parent_session_id = ? AND c.user_id = p.user_id`
+    ).all(parentSessionId) as { id: string }[]).map((r) => r.id));
+    const out: BrainWorkflowRun[] = [];
+    for (const row of rows) {
+      let parsed: unknown;
+      try { parsed = JSON.parse(row.state); } catch { continue; }
+      const state = normalizeWorkflowState(parsed);
+      if (!state) continue;
+      out.push({
+        ...state,
+        nodes: state.nodes.map(({ sessionId, ...node }) =>
+          (sessionId && children.has(sessionId) ? { ...node, sessionId } : node)),
+      });
+    }
+    return out;
+  }
+
   /** Append a display-only session-event marker (model/mode/rename/reasoning change). Insertion order
    *  (rowid) is the timeline; the marker never touches brain_messages, so it stays out of model context. */
   appendSessionEvent(sessionId: string, kind: SessionEventKind, detail: string): BrainSessionEvent {
@@ -854,6 +988,9 @@ export class BrainStore {
       this.db.prepare('DELETE FROM brain_goals WHERE session_id = ?').run(id);
       this.db.prepare('DELETE FROM brain_cards WHERE session_id = ?').run(id);
       this.db.prepare('DELETE FROM brain_session_events WHERE session_id = ?').run(id);
+      // Only as the ORIGIN: a workflow outlives any one of its node children (getWorkflowRuns simply
+      // stops resolving that node's drill-in), so deleting a node session must not take the DAG with it.
+      this.db.prepare('DELETE FROM brain_workflows WHERE parent_session_id = ?').run(id);
       this.db.prepare('DELETE FROM brain_messages WHERE session_id = ?').run(id);
       this.db.prepare('DELETE FROM brain_sessions WHERE id = ?').run(id);
     })();
@@ -877,6 +1014,10 @@ export class BrainStore {
       this.db.prepare('UPDATE brain_goals SET session_id = ? WHERE session_id = ?').run(newId, oldId);
       this.db.prepare('UPDATE brain_cards SET session_id = ? WHERE session_id = ?').run(newId, oldId);
       this.db.prepare('UPDATE brain_session_events SET session_id = ? WHERE session_id = ?').run(newId, oldId);
+      // No JSON surgery for the node session ids inside `state`: only a session addressed by a
+      // deterministic channel id is ever re-keyed, and node children run on single-use uuid channel ids,
+      // so a node can never be `oldId`. getWorkflowRuns re-validates them on read regardless.
+      this.db.prepare('UPDATE brain_workflows SET parent_session_id = ? WHERE parent_session_id = ?').run(newId, oldId);
     })();
   }
 
@@ -940,6 +1081,11 @@ export class BrainStore {
              OR child_session_id IN (SELECT id FROM brain_sessions WHERE user_id = ?)`
       ).run(userId, userId);
       this.db.prepare('DELETE FROM brain_goals WHERE user_id = ?').run(userId);
+      // Every per-session sidecar goes too. These three were missing, so deleting a user left rows
+      // holding their conversation content behind — keyed to session ids that no longer exist.
+      this.db.prepare('DELETE FROM brain_workflows WHERE parent_session_id IN (SELECT id FROM brain_sessions WHERE user_id = ?)').run(userId);
+      this.db.prepare('DELETE FROM brain_cards WHERE session_id IN (SELECT id FROM brain_sessions WHERE user_id = ?)').run(userId);
+      this.db.prepare('DELETE FROM brain_session_events WHERE session_id IN (SELECT id FROM brain_sessions WHERE user_id = ?)').run(userId);
       this.db.prepare('DELETE FROM brain_messages WHERE session_id IN (SELECT id FROM brain_sessions WHERE user_id = ?)').run(userId);
       this.db.prepare('DELETE FROM brain_sessions WHERE user_id = ?').run(userId);
     })();

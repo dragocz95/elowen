@@ -640,6 +640,7 @@ describe('chat application shell ownership', () => {
     const viewport = {
       isScrollbarHit: vi.fn(() => false),
       subagentAt: vi.fn(() => null),
+      workflowAt: vi.fn(() => null),
       isExpandableRow: vi.fn(() => true),
       toggleExpandable: vi.fn(),
     };

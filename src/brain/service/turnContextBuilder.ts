@@ -113,9 +113,14 @@ export class TurnContextBuilder {
     const emitSubagentCompletion = (completion: SubagentCompletion): void => {
       this.d.completeSubagent?.(live.sessionId, userId, completion);
     };
-    // Workflow snapshots are pure live UI state (the node child sessions persist on their own); publish
-    // fans the whole DAG snapshot to the owner's clients, replay covers a reconnect within this session.
-    const emitWorkflow = (update: WorkflowUpdate): void => { live.replay.publish({ type: 'workflow', ...update }); };
+    // Persist-first, exactly like emitSubagent above: the durable row is what the transcript marker and
+    // its modal are rebuilt from on every hydration, so the live event must not advertise a DAG the store
+    // refused. No setChildRunning — node children are registered by beginDelegatedCall on the shared run
+    // path, independently of any emitter.
+    const emitWorkflow = (update: WorkflowUpdate): void => {
+      if (!this.d.store.upsertWorkflowRun(live.sessionId, update)) return;
+      live.replay.publish({ type: 'workflow', ...update });
+    };
     const toolPolicy = this.applyOwnerToolPolicy(userId, live, mode);
     const workDir = turnWorkDir(live.policy, clientCwd ?? live.workDir, this.d.projectPath);
     const permissions = this.d.permissions.turnPermissions(userId, live, true);

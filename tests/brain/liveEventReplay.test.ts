@@ -57,6 +57,37 @@ describe('LiveEventReplay', () => {
     }]);
   });
 
+  it('coalesces workflow snapshots by workflow id', () => {
+    const replay = new LiveEventReplay(new Set());
+    const wf = (status: 'running' | 'done', id = 'wf-1') => ({
+      type: 'workflow' as const, id, toolCallId: 'call-1', status,
+      nodes: [{ id: 'a', task: 'a', status: 'done' as const, deps: [] }],
+    });
+    replay.publish(wf('running'));
+    replay.publish(wf('done'));
+    expect(replay.snapshot().events).toEqual([wf('done')]);
+
+    // Two workflows are two entries — coalescing is per id, not per type.
+    replay.publish(wf('running', 'wf-2'));
+    expect(replay.snapshot().events).toHaveLength(2);
+  });
+
+  // A workflow re-fans the WHOLE DAG on every tool call of every node. Uncoalesced, that storm used to
+  // push real transcript events out of the bounded journal, so a reconnect mid-run lost the conversation.
+  it('does not let a workflow snapshot storm evict earlier transcript events', () => {
+    const replay = new LiveEventReplay(new Set());
+    replay.publish({ type: 'text', delta: 'the reply the user is reading' });
+    for (let i = 0; i < 700; i++) {
+      replay.publish({
+        type: 'workflow', id: 'wf-1', toolCallId: 'call-1', status: 'running',
+        nodes: [{ id: 'a', task: 'x'.repeat(500), status: 'running', deps: [], detail: `tool ${i}` }],
+      });
+    }
+    const events = replay.snapshot().events;
+    expect(events[0]).toEqual({ type: 'text', delta: 'the reply the user is reading' });
+    expect(events).toHaveLength(2); // the text, plus exactly one live DAG snapshot
+  });
+
   it('keeps only the newest authoritative goal snapshot', () => {
     const replay = new LiveEventReplay(new Set());
     const active = {

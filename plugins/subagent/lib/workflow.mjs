@@ -86,7 +86,9 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
         ...(n.model ? { model: n.model } : {}),
       };
     });
-    try { wf.emit({ id: wf.id, ...(wf.title ? { title: wf.title } : {}), status: wf.status, nodes }); }
+    // Always the ORIGIN's workflow_start call, never whatever tool call is executing right now: a node's
+    // own turn can trigger a snapshot (workflow_add_nodes), and it must still land on the origin's row.
+    try { wf.emit({ id: wf.id, toolCallId: wf.toolCallId, ...(wf.title ? { title: wf.title } : {}), status: wf.status, nodes }); }
     catch (e) { ctx.logger.warn(`workflow snapshot fan-out failed: ${errorText(e)}`); }
   };
 
@@ -211,7 +213,7 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
       context: Type.Optional(Type.String({ description: 'Background shared by ALL nodes (added to each node\'s cache-friendly system prefix) — findings, conventions, ids they would otherwise re-derive.' })),
       nodes: Type.Array(NODE_SHAPE, { description: 'The workflow nodes. At least one must have no deps (a root).' }),
     }),
-    execute: async (_id, p) => {
+    execute: async (toolCallId, p) => {
       if (!getRun()) return ok('Error: workflows are not wired up on this server.');
       const originSessionId = ctx.currentSessionId();
       const originPrincipal = principalOf(ctx.currentIdentity());
@@ -222,6 +224,9 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
       if (workflows.size >= MAX_WORKFLOWS) return ok(`Error: too many workflows (${MAX_WORKFLOWS}) are running; wait for one to finish.`);
       const wf = {
         id: `wf-${randomUUID()}`,
+        // THIS call — the origin's workflow_start. Every snapshot names it, so the host can persist the
+        // DAG against the transcript row this call produced (mirrors delegate's `toolCallId`).
+        toolCallId,
         title: typeof p.title === 'string' ? p.title.trim().slice(0, 200) || undefined : undefined,
         status: 'running',
         nodes,
@@ -258,6 +263,9 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
       workflowId: Type.String({ description: 'The id of the running workflow (from workflow_start / your node briefing).' }),
       nodes: Type.Array(NODE_SHAPE, { description: 'The nodes to add.' }),
     }),
+    // `_id` is THIS call's tool id, and this tool usually runs inside a NODE's own turn. It is
+    // deliberately unused: the snapshot must address the origin's workflow_start row, which `snapshot()`
+    // reads off wf.toolCallId. Keying anything here off `_id` would fork a phantom row per expansion.
     execute: async (_id, p) => {
       const wf = authWorkflow(p.workflowId);
       if (!wf) return ok(`Error: no running workflow ${p.workflowId} you can extend.`);

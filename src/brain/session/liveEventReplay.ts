@@ -95,6 +95,8 @@ export function appendReplayBrainEvent(events: BrainEvent[], event: BrainEvent, 
     replace = events.findLastIndex((entry) => entry.type === 'tool_progress' && entry.id === event.id);
   } else if (event.type === 'subagent') {
     replace = events.findLastIndex((entry) => entry.type === 'subagent' && entry.id === event.id);
+  } else if (event.type === 'workflow') {
+    replace = events.findLastIndex((entry) => entry.type === 'workflow' && entry.id === event.id);
   } else if (event.type === 'card') {
     replace = events.findLastIndex((entry) => entry.type === 'card' && entry.card.id === event.card.id);
   } else if (event.type === 'notice') {
@@ -213,6 +215,12 @@ export class LiveEventReplay {
       // the newest one: durable history carries the same latest state, and progress churn must not crowd
       // the actual parent stream out of the bounded reconnect journal.
       replace = this.entries.findLastIndex((entry) => entry.event.type === 'subagent' && entry.event.id === stamped.id);
+    } else if (stamped.type === 'workflow') {
+      // The same argument as `subagent`, and with more force: a workflow update is a whole-DAG snapshot
+      // that re-fans on every tool call of every node, so a modest run emits hundreds of multi-KB entries.
+      // Left uncoalesced they evict real assistant/tool events from the journal — and lose nothing by
+      // being dropped, since the durable row carries the same latest state.
+      replace = this.entries.findLastIndex((entry) => entry.event.type === 'workflow' && entry.event.id === stamped.id);
     } else if (stamped.type === 'card') {
       replace = this.entries.findLastIndex((entry) => entry.event.type === 'card' && entry.event.card.id === stamped.card.id);
     } else if (stamped.type === 'notice') {

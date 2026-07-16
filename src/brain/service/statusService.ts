@@ -1,5 +1,5 @@
 import { createAgentSession, SessionManager, DefaultResourceLoader } from '@earendil-works/pi-coding-agent';
-import type { BrainStore, BrainSearchHit } from '../../store/brainStore.js';
+import type { BrainStore, BrainSearchHit, BrainWorkflowRun } from '../../store/brainStore.js';
 import type { BrainRuntimeConfig } from '../providers.js';
 import { buildBrainRegistry, resolveBrainModel } from '../providers.js';
 import { extractText, shapeBrainMessages } from '../messageView.js';
@@ -12,6 +12,7 @@ import { queueDisplayItems } from '../session/queueMirror.js';
 import type { ElicitationRegistry } from '../elicitation.js';
 import type { CardRegistry } from '../cards.js';
 import { isNonUserSession } from '../sessionId.js';
+import { terminalizeWorkflow } from '../workflowRuns.js';
 import type { BrainDeps } from '../brainDeps.js';
 import type { ClientAttachments } from './attachments.js';
 import type { ConversationLifecycle } from './lifecycle.js';
@@ -48,6 +49,33 @@ export class BrainStatusService {
     const active = new Set(this.d.sessions.childrenOf(sessionId));
     return this.d.store.getSubagentRuns(sessionId)
       .filter((run) => run.status !== 'running' || active.has(run.sessionId));
+  }
+
+  /** The conversation's durable DAGs. Same restart-orphan concern as subagentRuns, but a TRANSFORM rather
+   *  than a filter: a workflow row is the only thing that renders its transcript marker, so hiding it
+   *  would lose the record of what ran — it is terminalized instead. This also covers what the boot sweep
+   *  cannot reach: channel/task sessions and the read-only history view.
+   *
+   *  Keyed on the ORIGIN's liveness, not childrenOf: a genuinely running workflow has real windows with
+   *  zero live children (between one node ending and tick() launching the next), which a children-based
+   *  check would misread as an orphan and flicker. */
+  private workflowRuns(sessionId: string): BrainWorkflowRun[] {
+    const live = this.d.sessions.has(sessionId)
+      || (sessionId.startsWith('brain-ch-') && !!this.d.sessions.channelGet(sessionId.slice('brain-ch-'.length)));
+    return this.d.store.getWorkflowRuns(sessionId)
+      .map((run) => (live || run.status !== 'running' ? run : terminalizeWorkflow(run)));
+  }
+
+  /** The one place a conversation's durable history is shaped: rows plus every sidecar. Callers pass rows
+   *  only when they have already filtered them (streamSnapshot). Keeping the sidecar list here is what
+   *  stops the same three-argument call being copied to each read path. */
+  private shapedHistory(sessionId: string, rows = this.d.store.getMessages(sessionId)): BrainMessageView[] {
+    return shapeBrainMessages(
+      rows,
+      this.subagentRuns(sessionId),
+      this.d.store.getSessionEvents(sessionId),
+      this.workflowRuns(sessionId),
+    );
   }
 
   /** The current provider config, or null when nothing is configured (never throws). Shared by the
@@ -190,8 +218,7 @@ export class BrainStatusService {
   /** The user's stored conversation, shaped for display (channels render this on connect). Reads the
    *  sole store; no live session required, so it works before/independently of `start`. */
   history(userId: number): BrainMessageView[] {
-    const sessionId = this.d.lifecycle.activeSessionId(userId);
-    return shapeBrainMessages(this.d.store.getMessages(sessionId), this.subagentRuns(sessionId), this.d.store.getSessionEvents(sessionId));
+    return this.shapedHistory(this.d.lifecycle.activeSessionId(userId));
   }
 
   /** ANY of the owner's stored sessions, shaped for display — including the channel (Discord) and
@@ -200,7 +227,7 @@ export class BrainStatusService {
   messagesOf(userId: number, sessionId: string): BrainMessageView[] {
     const row = this.d.store.getSession(sessionId);
     if (!row || row.user_id !== userId) throw new Error('unknown session');
-    return shapeBrainMessages(this.d.store.getMessages(sessionId), this.subagentRuns(sessionId), this.d.store.getSessionEvents(sessionId));
+    return this.shapedHistory(sessionId);
   }
 
   /** Atomic, idempotent first frame for an opt-in fixed-session SSE stream. Reads the clean durable
@@ -221,10 +248,9 @@ export class BrainStatusService {
       // Journaled users are already durable, but replaying them is what preserves their position among
       // pre/post-steer deltas. Remove exactly those id-matched rows from the history prefix (no text
       // guessing: display text may differ from persisted image/mention framing).
-      history: shapeBrainMessages(
+      history: this.shapedHistory(
+        sessionId,
         this.d.store.getMessages(sessionId).filter((message) => !orderedUserRows.has(message.id)),
-        this.subagentRuns(sessionId),
-        this.d.store.getSessionEvents(sessionId),
       ),
       ...replay,
     };

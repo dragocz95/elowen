@@ -246,6 +246,29 @@ describe('BrainStore', () => {
     expect((db.prepare('SELECT COUNT(*) AS n FROM brain_subagent_runs').get() as { n: number }).n).toBe(0);
   });
 
+  // Deleting a user must not leave rows holding their conversation content behind, keyed to session ids
+  // that no longer exist. Every per-session sidecar, not just the sub-agent ones.
+  it('removeForUser drops every per-session sidecar, leaving nothing of that owner behind', () => {
+    store.createSession({ id: 'mine', userId: 1, model: 'm' });
+    store.createSession({ id: 'theirs', userId: 2, model: 'm' });
+    for (const id of ['mine', 'theirs']) {
+      store.upsertCard(id, { id: 'todos', title: 'T', items: [{ text: 'x' }] });
+      store.appendSessionEvent(id, 'mode', 'Workflow');
+      store.upsertWorkflowRun(id, { id: `wf-${id}`, toolCallId: 'c1', status: 'done', nodes: [] });
+    }
+
+    store.removeForUser(1);
+
+    const count = (sql: string): number => (db.prepare(sql).get() as { n: number }).n;
+    expect(count("SELECT COUNT(*) AS n FROM brain_cards WHERE session_id = 'mine'")).toBe(0);
+    expect(count("SELECT COUNT(*) AS n FROM brain_session_events WHERE session_id = 'mine'")).toBe(0);
+    expect(count("SELECT COUNT(*) AS n FROM brain_workflows WHERE parent_session_id = 'mine'")).toBe(0);
+    // ...and the other user is untouched.
+    expect(count("SELECT COUNT(*) AS n FROM brain_cards WHERE session_id = 'theirs'")).toBe(1);
+    expect(count("SELECT COUNT(*) AS n FROM brain_session_events WHERE session_id = 'theirs'")).toBe(1);
+    expect(count("SELECT COUNT(*) AS n FROM brain_workflows WHERE parent_session_id = 'theirs'")).toBe(1);
+  });
+
   it('appends messages and returns them in order', () => {
     store.createSession({ id: 's1', userId: 7, model: 'm' });
     store.appendMessage({ id: 'm1', sessionId: 's1', parentId: null, role: 'user', content: { text: 'hi' } });
@@ -776,6 +799,111 @@ describe('BrainStore', () => {
       store.upsertCard('s1', card('good', 'Ship it'));
       db.prepare("INSERT INTO brain_cards (session_id, card_id, payload) VALUES ('s1', 'broken', '{oops')").run();
       expect(store.getCards('s1').map((c) => c.id)).toEqual(['good']);
+    });
+  });
+
+  describe('workflow runs', () => {
+    const wf = (over: Record<string, unknown> = {}) => ({
+      id: 'wf-1', toolCallId: 'call-1', title: 'Ship it', status: 'running',
+      nodes: [{ id: 'gather', task: 'gather facts', status: 'done', deps: [], sessionId: 'child', tokens: 120, seconds: 4 }],
+      ...over,
+    });
+
+    it('persists a snapshot and reads it back', () => {
+      store.createSession({ id: 'root', userId: 1, model: 'm' });
+      store.createSession({ id: 'child', userId: 1, model: 'm', parentSessionId: 'root' });
+      expect(store.upsertWorkflowRun('root', wf())).toBe(true);
+      expect(store.getWorkflowRuns('root')).toEqual([wf()]);
+    });
+
+    it('keeps only the newest snapshot per tool call, and binds a tool call to its first workflow id', () => {
+      store.createSession({ id: 'root', userId: 1, model: 'm' });
+      store.upsertWorkflowRun('root', wf({ nodes: [] }));
+      store.upsertWorkflowRun('root', wf({ status: 'done', nodes: [] }));
+      expect(store.getWorkflowRuns('root')).toEqual([wf({ status: 'done', nodes: [] })]);
+      // A second workflow claiming the same tool call would fork the transcript marker.
+      expect(store.upsertWorkflowRun('root', wf({ id: 'wf-2', nodes: [] }))).toBe(false);
+      expect(store.getWorkflowRuns('root')[0]?.id).toBe('wf-1');
+    });
+
+    it('rejects an unknown origin and malformed snapshots rather than coercing them', () => {
+      store.createSession({ id: 'root', userId: 1, model: 'm' });
+      expect(store.upsertWorkflowRun('nope', wf({ nodes: [] }))).toBe(false);
+      expect(store.upsertWorkflowRun('root', wf({ status: 'weird', nodes: [] }))).toBe(false);
+      expect(store.upsertWorkflowRun('root', wf({ toolCallId: '' }))).toBe(false);
+      expect(store.upsertWorkflowRun('root', wf({ nodes: [{ id: 'a', task: 't', status: 'nope', deps: [] }] }))).toBe(false);
+      expect(store.upsertWorkflowRun('root', wf({ nodes: [{ id: 'a', task: 't', status: 'done', deps: 'x' }] }))).toBe(false);
+      expect(store.upsertWorkflowRun('root', wf({ nodes: [{ id: 'a', task: 't', status: 'done', deps: [], tokens: -1 }] }))).toBe(false);
+      // A duplicate node id would make the modal's per-node keying ambiguous.
+      expect(store.upsertWorkflowRun('root', wf({ nodes: [
+        { id: 'a', task: 't', status: 'done', deps: [] }, { id: 'a', task: 't2', status: 'done', deps: [] },
+      ] }))).toBe(false);
+      expect(store.upsertWorkflowRun('root', wf({
+        nodes: Array.from({ length: 65 }, (_, i) => ({ id: `n${i}`, task: 't', status: 'pending', deps: [] })),
+      }))).toBe(false);
+      expect(store.getWorkflowRuns('root')).toEqual([]);
+    });
+
+    it('bounds oversized text instead of storing it whole', () => {
+      store.createSession({ id: 'root', userId: 1, model: 'm' });
+      store.upsertWorkflowRun('root', wf({
+        title: 'T'.repeat(400),
+        nodes: [{ id: 'a', task: 'x'.repeat(5_000), status: 'running', deps: [], detail: 'd'.repeat(2_000) }],
+      }));
+      const [run] = store.getWorkflowRuns('root');
+      expect(run?.title).toHaveLength(200);
+      expect(run?.nodes[0]?.task).toHaveLength(600);
+      expect(run?.nodes[0]?.detail).toHaveLength(500);
+    });
+
+    it('drops a corrupt row rather than taking the whole conversation down', () => {
+      store.createSession({ id: 'root', userId: 1, model: 'm' });
+      store.upsertWorkflowRun('root', wf({ nodes: [] }));
+      db.prepare("INSERT INTO brain_workflows (parent_session_id, tool_call_id, workflow_id, state) VALUES ('root', 'call-2', 'wf-9', '{oops')").run();
+      expect(store.getWorkflowRuns('root').map((r) => r.id)).toEqual(['wf-1']);
+    });
+
+    // The stored sessionId is never trusted: it is re-derived from the live relation on every read, so a
+    // node can only ever point the drill-in at a direct child of THIS conversation.
+    it('resolves a node drill-in only for a direct same-owner child, keeping the node either way', () => {
+      store.createSession({ id: 'root', userId: 1, model: 'm' });
+      store.createSession({ id: 'child', userId: 1, model: 'm', parentSessionId: 'root' });
+      store.createSession({ id: 'unrelated', userId: 1, model: 'm' });
+      store.createSession({ id: 'foreign', userId: 2, model: 'm' });
+      db.prepare("UPDATE brain_sessions SET parent_session_id = 'root' WHERE id = 'foreign'").run();
+      const node = (id: string, sessionId: string) => ({ id, task: 't', status: 'done' as const, deps: [], sessionId });
+      store.upsertWorkflowRun('root', wf({ nodes: [
+        node('ok', 'child'), node('loose', 'unrelated'), node('cross', 'foreign'), node('gone', 'deleted-id'),
+      ] }));
+
+      const nodes = store.getWorkflowRuns('root')[0]?.nodes ?? [];
+      expect(nodes.map((n) => n.id)).toEqual(['ok', 'loose', 'cross', 'gone']); // every node survives
+      expect(nodes[0]?.sessionId).toBe('child');
+      expect(nodes[1]?.sessionId).toBeUndefined();
+      expect(nodes[2]?.sessionId).toBeUndefined();
+      expect(nodes[3]?.sessionId).toBeUndefined();
+    });
+
+    it('survives deleting a node child, but goes with its origin', () => {
+      store.createSession({ id: 'root', userId: 1, model: 'm' });
+      store.createSession({ id: 'child', userId: 1, model: 'm', parentSessionId: 'root' });
+      store.upsertWorkflowRun('root', wf());
+
+      store.deleteSession('child');
+      const [run] = store.getWorkflowRuns('root');
+      expect(run?.nodes[0]?.id).toBe('gather');        // the DAG is still the record of what ran
+      expect(run?.nodes[0]?.sessionId).toBeUndefined(); // only the drill-in goes
+
+      store.deleteSession('root');
+      expect(store.getWorkflowRuns('root')).toEqual([]);
+    });
+
+    it('carries the workflow along when a conversation is re-keyed (channel rollover)', () => {
+      store.createSession({ id: 'old', userId: 7, model: 'm' });
+      store.upsertWorkflowRun('old', wf({ nodes: [] }));
+      store.reassignSession('old', 'archived');
+      expect(store.getWorkflowRuns('old')).toEqual([]);
+      expect(store.getWorkflowRuns('archived')).toEqual([wf({ nodes: [] })]);
     });
   });
 

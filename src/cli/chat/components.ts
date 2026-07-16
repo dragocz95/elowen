@@ -234,8 +234,9 @@ export class SubagentPanel implements Component {
   private clampScroll(): void { this.scrollOffset = Math.min(this.scrollOffset, this.maxScrollOffset()); }
 }
 
-/** Count a workflow's node statuses into the `✓done ●running ⏸pending ✗error` summary shown on its row. */
-function workflowCounts(w: WorkflowState): { done: number; running: number; pending: number; error: number; tokens: number } {
+/** Count a workflow's node statuses into the `✓done ●running ⏸pending ✗error` summary shown on its row.
+ *  Shared by the telemetry rail and the transcript marker so one workflow never tallies two ways. */
+export function workflowCounts(w: WorkflowState): { done: number; running: number; pending: number; error: number; tokens: number } {
   const counts = { done: 0, running: 0, pending: 0, error: 0, tokens: 0 };
   for (const n of w.nodes) {
     if (n.status === 'done') counts.done += 1;

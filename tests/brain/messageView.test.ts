@@ -61,6 +61,28 @@ describe('shapeBrainMessages: durable sub-agent state', () => {
   });
 });
 
+describe('shapeBrainMessages: durable workflow state', () => {
+  it('attaches the DAG to its own workflow_start call and no other tool row', () => {
+    const rows = [{
+      role: 'assistant',
+      content: JSON.stringify({
+        role: 'assistant',
+        content: [
+          { type: 'toolCall', id: 'call-1', name: 'workflow_start', arguments: { title: 'Ship it' } },
+          { type: 'toolCall', id: 'call-2', name: 'read_file', arguments: { path: 'src/a.ts' } },
+        ],
+      }),
+    }];
+    const run = {
+      id: 'wf-1', toolCallId: 'call-1', title: 'Ship it', status: 'running' as const,
+      nodes: [{ id: 'gather', task: 'gather facts', status: 'done' as const, deps: [], sessionId: 'child', tokens: 120 }],
+    };
+    const [view] = shapeBrainMessages(rows, [], [], [run]);
+    expect(view?.segments?.[0]).toMatchObject({ kind: 'tool', id: 'call-1', name: 'workflow_start', wf: run });
+    expect(view?.segments?.[1]).not.toHaveProperty('wf');
+  });
+});
+
 describe('shapeBrainMessages: session-event interleave', () => {
   it('merges session-change markers into the transcript by timestamp', () => {
     const rows = [

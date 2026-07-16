@@ -81,6 +81,7 @@ export class ChatViewport implements Component {
   private scrollbarColumn = 0;
   private expandableRows = new Map<number, { key: string; turnIndex: number }>();
   private subagentRows = new Map<number, string>();
+  private workflowRows = new Map<number, string>();
   // Drag-to-copy selection uses exact BOTTOM-relative row offsets. Discovering an older prefix in the
   // background therefore cannot move an active selection or the visible viewport.
   private selAnchor: number | null = null;
@@ -239,6 +240,14 @@ export class ChatViewport implements Component {
     return this.subagentRows.get(localRow) ?? null;
   }
 
+  /** The workflow id under a click, or null — same contract as subagentAt: the marker opens the DAG modal
+   *  rather than expanding in place, so it gets its own registry. */
+  workflowAt(x: number, absRow: number): string | null {
+    const localRow = absRow - this.getTopRow() + 1;
+    if (x < 1 || x > this.scrollbarColumn - 2) return null;
+    return this.workflowRows.get(localRow) ?? null;
+  }
+
   toggleExpandable(absRow: number): void {
     const target = this.expandableRows.get(absRow - this.getTopRow() + 1);
     if (!target) return;
@@ -347,6 +356,7 @@ export class ChatViewport implements Component {
     this.refreshMetrics();
     this.expandableRows = new Map();
     this.subagentRows = new Map();
+    this.workflowRows = new Map();
 
     const totalRows = this.totalLines;
     const start = Math.max(0, totalRows - height - this.scrollOffset);
@@ -364,6 +374,7 @@ export class ChatViewport implements Component {
         this.expandableRows.set(i + 1, { key: entry.key, turnIndex: entry.turnIndex });
       }
       if (entry.kind === 'subagent' && entry.key) this.subagentRows.set(i + 1, entry.key);
+      if (entry.kind === 'workflow' && entry.key) this.workflowRows.set(i + 1, entry.key);
       const content = i === 0 && this.scrollOffset > 0
         ? this.historyChip(entry.line, chatWidth - 2)
         : entry.line;

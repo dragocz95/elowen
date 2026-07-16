@@ -381,11 +381,13 @@ export class ChannelSessionService {
         const emitSubagentCompletion = parentSessionId && this.d.completeSubagent
           ? (completion: SubagentCompletion) => { this.d.completeSubagent!(ch.sessionId, opts.ownerUserId, completion); }
           : undefined;
-        // Workflow snapshots are pure live UI state (like `process`): the node child sessions persist
-        // on their own, so there is no durable workflow row to keep — the in-plugin engine owns the DAG
-        // and re-emits the whole snapshot on every change. Publish fans it to the parent's clients (and
-        // the replay buffer covers a reconnect within this daemon session).
-        const emitWorkflow = (u: WorkflowUpdate) => { ch.replay.publish({ type: 'workflow', ...u }); };
+        // Persist-first, mirroring emitSubagent: the in-plugin engine owns the DAG only in memory, so the
+        // durable row is the sole thing the transcript marker and its modal can be rebuilt from after a
+        // reconnect or restart. A snapshot the store refuses must not reach a client.
+        const emitWorkflow = (u: WorkflowUpdate) => {
+          if (!this.d.store.upsertWorkflowRun(ch.sessionId, u)) return;
+          ch.replay.publish({ type: 'workflow', ...u });
+        };
         const assistantBefore = [...(ch.session.messages as { role?: string }[])].reverse()
           .find((message) => message.role === 'assistant');
         try {

@@ -86,6 +86,65 @@ describe('TranscriptModel', () => {
     ] });
   });
 
+  describe('workflow', () => {
+    const wfEvent = (over: Record<string, unknown> = {}) => ({
+      type: 'workflow' as const, id: 'wf-1', toolCallId: 'call-1', title: 'Ship it',
+      status: 'running' as const,
+      nodes: [{ id: 'gather', task: 'gather', status: 'done' as const, deps: [], sessionId: 's-gather' }],
+      ...over,
+    });
+    const withCall = (): HistoryMessage[] => [
+      { role: 'user', text: 'go' },
+      { role: 'assistant', text: '', segments: [{ kind: 'tool', id: 'call-1', name: 'workflow_start' }] },
+    ];
+
+    it('attaches a live snapshot to its workflow_start item and projects it', () => {
+      const model = new TranscriptModel(withCall());
+      expect(model.apply(wfEvent())).toBe(true);
+
+      const turn = model.turnAt(1);
+      if (turn?.role !== 'elowen') throw new Error('expected assistant turn');
+      const segment = turn.segments[0];
+      if (segment?.kind !== 'tools') throw new Error('expected tools segment');
+      expect(segment.items[0]?.wf).toMatchObject({ id: 'wf-1', status: 'running' });
+      expect(model.workflows().map((w) => w.id)).toEqual(['wf-1']);
+    });
+
+    it('marks the workflow_start turn dirty so its marker re-renders', () => {
+      const model = new TranscriptModel(withCall());
+      const before = model.revision;
+      model.apply(wfEvent());
+      expect(model.changesSince(before)).toMatchObject({ kind: 'turns', indices: [1] });
+    });
+
+    it('ignores a snapshot whose tool call is not in the transcript', () => {
+      const model = new TranscriptModel(withCall());
+      expect(model.apply(wfEvent({ toolCallId: 'nope' }))).toBe(false);
+      expect(model.workflows()).toEqual([]);
+    });
+
+    // The regression this whole change exists for. Every hydration — reconnect, opening the stream, even
+    // closing a sub-agent view — calls replaceHistory, which wipes the derived projections. The workflow
+    // used to have no durable source to be rebuilt from, so it vanished from the rail and its modal could
+    // never be reopened; an open modal read an empty node list, which is why Enter appeared to do nothing.
+    it('rebuilds the projection from durable history, so a workflow survives replaceHistory', () => {
+      const model = new TranscriptModel();
+      model.replaceHistory([
+        { role: 'user', text: 'go' },
+        { role: 'assistant', text: '', segments: [{
+          kind: 'tool', id: 'call-1', name: 'workflow_start',
+          wf: { id: 'wf-1', toolCallId: 'call-1', status: 'done', nodes: [{ id: 'gather', task: 'gather', status: 'done', deps: [] }] },
+        }] },
+      ]);
+      expect(model.workflows().map((w) => w.id)).toEqual(['wf-1']);
+      const turn = model.turnAt(1);
+      if (turn?.role !== 'elowen') throw new Error('expected assistant turn');
+      const segment = turn.segments[0];
+      if (segment?.kind !== 'tools') throw new Error('expected tools segment');
+      expect(segment.items[0]?.wf?.status).toBe('done');
+    });
+  });
+
   it('does not expose an old assistant plan when durable history ends with a user turn', () => {
     const model = new TranscriptModel([
       { role: 'assistant', text: '<proposed_plan>old</proposed_plan>' },
@@ -317,17 +376,19 @@ describe('TranscriptModel', () => {
     expect(model.changesSince(model.revision - 1)).toEqual({ kind: 'full', revision: model.revision });
   });
 
-  it('projects workflow snapshots latest-per-id without touching any turn', () => {
-    const model = new TranscriptModel([{ role: 'assistant', text: 'hi' }]);
+  it('projects workflow snapshots latest-per-id, adding no turn of its own', () => {
+    const model = new TranscriptModel([
+      { role: 'assistant', text: '', segments: [{ kind: 'tool', id: 'call-1', name: 'workflow_start' }] },
+    ]);
     const beforeTurns = model.turnCount;
     model.apply({
-      type: 'workflow', id: 'wf-1', title: 'ship it', status: 'running',
+      type: 'workflow', id: 'wf-1', toolCallId: 'call-1', title: 'ship it', status: 'running',
       nodes: [
         { id: 'a', task: 'gather', status: 'running', deps: [], sessionId: 's-a', tokens: 100, seconds: 2 },
         { id: 'b', task: 'write', status: 'pending', deps: ['a'] },
       ],
     });
-    expect(model.turnCount).toBe(beforeTurns); // a workflow is a side panel, not a turn
+    expect(model.turnCount).toBe(beforeTurns); // it rides its workflow_start row; it is not a turn
     expect(model.workflows()).toEqual([
       expect.objectContaining({ id: 'wf-1', title: 'ship it', status: 'running' }),
     ]);
@@ -335,7 +396,7 @@ describe('TranscriptModel', () => {
 
     const projection = model.workflows();
     model.apply({
-      type: 'workflow', id: 'wf-1', title: 'ship it', status: 'done',
+      type: 'workflow', id: 'wf-1', toolCallId: 'call-1', title: 'ship it', status: 'done',
       nodes: [
         { id: 'a', task: 'gather', status: 'done', deps: [], sessionId: 's-a', tokens: 120, seconds: 3 },
         { id: 'b', task: 'write', status: 'done', deps: ['a'], sessionId: 's-b', tokens: 80, seconds: 4 },
@@ -347,8 +408,10 @@ describe('TranscriptModel', () => {
   });
 
   it('clears workflow projection on session rollover', () => {
-    const model = new TranscriptModel();
-    model.apply({ type: 'workflow', id: 'wf-1', status: 'running', nodes: [{ id: 'a', task: 't', status: 'running', deps: [] }] });
+    const model = new TranscriptModel([
+      { role: 'assistant', text: '', segments: [{ kind: 'tool', id: 'call-1', name: 'workflow_start' }] },
+    ]);
+    model.apply({ type: 'workflow', id: 'wf-1', toolCallId: 'call-1', status: 'running', nodes: [{ id: 'a', task: 't', status: 'running', deps: [] }] });
     expect(model.workflows()).toHaveLength(1);
     model.apply({ type: 'session', sessionId: 'fresh' });
     expect(model.workflows()).toEqual([]);

@@ -168,6 +168,10 @@ export class InputRouter {
     if (click && noModal && !rt.childView) {
       const subagent = context.activeViewport().subagentAt(click.x, click.y);
       if (subagent) { void stream.openSubagent(subagent); return { consume: true }; }
+      // The transcript marker reuses the rail's modal verbatim — and is the only way back into a workflow
+      // that has already finished, since the rail carries running ones only.
+      const workflow = context.activeViewport().workflowAt(click.x, click.y);
+      if (workflow) { context.openWorkflowModal(workflow); return { consume: true }; }
     }
     if (click && noModal && context.activeViewport().isExpandableRow(click.x, click.y)) {
       context.activeViewport().toggleExpandable(click.y);

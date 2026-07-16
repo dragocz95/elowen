@@ -69,8 +69,8 @@ export class TranscriptModel implements TranscriptRead {
   private readonly subagentIndices = new Map<string, number>();
   private readonly subagentSources = new Map<string, Set<string>>();
   private readonly sourceSessions = new Map<string, string>();
-  /** Live workflow snapshots, latest-per-id. A standalone side panel (not attached to a turn), so it is
-   *  kept as its own indexed projection rather than hung off a tool location. */
+  /** Workflow snapshots, latest-per-id — the side panel's read model. Derived, never authoritative: it is
+   *  refilled by indexTurn() from each durable `workflow_start` item, so it survives a rebuild. */
   private workflowProjection: WorkflowState[] = [];
   private readonly workflowIndices = new Map<string, number>();
   private lastAssistant = '';
@@ -204,19 +204,17 @@ export class TranscriptModel implements TranscriptRead {
         return true;
       }
       case 'workflow': {
-        // A workflow snapshot is the WHOLE DAG; keep only the latest per id. It is a standalone panel,
-        // not a turn, so publish a revision bump with no dirty turn — the side panel re-reads workflows().
-        const projected = Object.freeze({ ...event, nodes: event.nodes.map((n) => Object.freeze({ ...n })) }) as WorkflowState;
-        const index = this.workflowIndices.get(event.id);
-        this.workflowProjection = this.workflowProjection.slice();
-        if (index === undefined) {
-          this.workflowIndices.set(event.id, this.workflowProjection.length);
-          this.workflowProjection.push(projected);
-        } else {
-          this.workflowProjection[index] = projected;
-        }
-        Object.freeze(this.workflowProjection);
-        this.publish({ kind: 'none' });
+        // A workflow snapshot is the WHOLE DAG, attached to its workflow_start row by tool call id —
+        // exactly like `subagent` above. Attaching (rather than only projecting) is what makes it durable:
+        // the panel is rebuilt from the transcript on every hydration, so a projection-only workflow was
+        // erased by any reconnect and could never be reopened.
+        const location = this.toolLocations.get(event.toolCallId);
+        if (!location) return false;
+        const { type: _type, ...update } = event;
+        const wf = freezeWorkflow(update);
+        if (!this.patchTool(location, (item) => ({ ...item, wf }))) return false;
+        this.upsertWorkflow(wf, true);
+        this.publish({ kind: 'turn', index: location.turn });
         return true;
       }
       case 'session':
@@ -317,6 +315,7 @@ export class TranscriptModel implements TranscriptRead {
     }
     this.lastAssistant = tailAssistantText(this.turns);
     this.freezeSubagents();
+    this.freezeWorkflows();
     this.thinkingState = false;
     this.compactionActive = false;
     this.noticeState = undefined;
@@ -332,8 +331,10 @@ export class TranscriptModel implements TranscriptRead {
     this.sourceSessions.clear();
     this.workflowProjection = [];
     this.workflowIndices.clear();
-    Object.freeze(this.workflowProjection);
-    if (!mutableProjection) this.freezeSubagents();
+    // Both projections stay mutable while a rebuild refills them from the durable turns, and are frozen
+    // together at the end (see rebuild). Freezing the workflow list here unconditionally used to be safe
+    // only because nothing ever refilled it.
+    if (!mutableProjection) { this.freezeSubagents(); this.freezeWorkflows(); }
   }
 
   private indexTurn(turnIndex: number, turn: ChatTurn, cloneProjection: boolean): void {
@@ -352,6 +353,9 @@ export class TranscriptModel implements TranscriptRead {
         this.lastToolLocation = location;
         if (item.id) this.toolLocations.set(item.id, location);
         if (item.sub) this.upsertSubagent(location.source, item.sub, cloneProjection);
+        // The line that makes a workflow survive: clearDerived() still wipes the projection on every
+        // rebuild, and this refills it from the durable tool item — the same way `sub` above always has.
+        if (item.wf) this.upsertWorkflow(item.wf, cloneProjection);
       }
     }
   }
@@ -423,6 +427,21 @@ export class TranscriptModel implements TranscriptRead {
     if (clone) this.freezeSubagents();
   }
 
+  /** Latest-per-workflow-id. No `source` bookkeeping like upsertSubagent needs: the store's
+   *  (parent_session_id, tool_call_id) key makes workflow ↔ tool call strictly 1:1, whereas one child
+   *  session can legitimately appear under several delegate calls. */
+  private upsertWorkflow(wf: WorkflowState, clone: boolean): void {
+    const index = this.workflowIndices.get(wf.id);
+    if (clone) this.workflowProjection = this.workflowProjection.slice();
+    if (index === undefined) {
+      this.workflowIndices.set(wf.id, this.workflowProjection.length);
+      this.workflowProjection.push(wf);
+    } else {
+      this.workflowProjection[index] = wf;
+    }
+    if (clone) Object.freeze(this.workflowProjection);
+  }
+
   private removeSubagentSource(source: string, sessionId: string, clone: boolean): void {
     this.sourceSessions.delete(source);
     const sources = this.subagentSources.get(sessionId);
@@ -448,6 +467,10 @@ export class TranscriptModel implements TranscriptRead {
     Object.freeze(this.subagentProjection);
   }
 
+  private freezeWorkflows(): void {
+    Object.freeze(this.workflowProjection);
+  }
+
   private publish(change: TranscriptMutation): void {
     this.currentRevision += 1;
     this.changes.set(this.currentRevision, change);
@@ -461,6 +484,10 @@ export class TranscriptModel implements TranscriptRead {
 
 function toolSource(id: string | undefined, turn: number, segment: number, item: number): string {
   return id ? `id:${id}` : `at:${turn}:${segment}:${item}`;
+}
+
+function freezeWorkflow(wf: WorkflowState): WorkflowState {
+  return Object.freeze({ ...wf, nodes: wf.nodes.map((node) => Object.freeze({ ...node })) });
 }
 
 function assistantText(turn: ElowenTurn): string {

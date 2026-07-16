@@ -14,7 +14,7 @@ interface Tool { name: string; execute(id: string, p: unknown): Promise<{ conten
  *  contains "FAIL" (then it returns an Error), recording the order nodes were launched. */
 function harness(opts: { toolPolicyAllow?: string[] } = {}) {
   const tools = new Map<string, Tool>();
-  const snapshots: { id: string; status: string; nodes: { id: string; status: string; deps: string[] }[] }[] = [];
+  const snapshots: { id: string; toolCallId: string; status: string; nodes: { id: string; status: string; deps: string[] }[] }[] = [];
   const launched: string[] = [];
   const run = async (_source: unknown, task: string, onEvent: (e: unknown) => void) => {
     launched.push(task);
@@ -98,10 +98,19 @@ describe('workflow engine', () => {
     expect(last.nodes[0]!.status).toBe('done');
   });
 
+  // Every snapshot names the origin's workflow_start call: it is the durable anchor that binds the DAG
+  // to the parent's transcript row, so the host can persist it and the marker survives a reconnect.
+  it('stamps every snapshot with the originating workflow_start tool call id', async () => {
+    const { tools, snapshots } = harness();
+    await tools.get('workflow_start')!.execute('call-42', { nodes: [{ id: 'a', task: 'a' }] });
+    expect(snapshots.length).toBeGreaterThan(1);
+    expect(snapshots.every((s) => s.toolCallId === 'call-42')).toBe(true);
+  });
+
   it('runs nodes added dynamically while the workflow is still running', async () => {
     const tools = new Map<string, Tool>();
     const launched: string[] = [];
-    const snapshots: { id: string; status: string }[] = [];
+    const snapshots: { id: string; toolCallId: string; status: string }[] = [];
     let releaseRoot!: () => void;
     const rootGate = new Promise<void>((r) => { releaseRoot = r; });
     const run = async (_s: unknown, task: string, onEvent: (e: unknown) => void) => {
@@ -117,7 +126,7 @@ describe('workflow engine', () => {
       currentIdentity: () => ({ elowenUserId: 1, platform: 'cli', userId: '1' }),
       currentAccess: () => ({ toolPolicy: undefined }),
       currentModel: () => ({ provider: 'p', model: 'm' }),
-      workflowEmitter: () => (u: { id: string; status: string }) => { snapshots.push(u); },
+      workflowEmitter: () => (u: { id: string; toolCallId: string; status: string }) => { snapshots.push(u); },
       listModels: async () => [],
       toolNames: () => ['read_file'],
     };
@@ -138,6 +147,10 @@ describe('workflow engine', () => {
     const res = await startP;
     expect(launched).toEqual(['root', 'leaf']); // leaf ran only after root was released
     expect(res.content[0]!.text).toMatch(/status: done/);
+    // An expansion runs under its OWN tool call ('a1'), but the DAG belongs to the origin's
+    // workflow_start ('t6') — every snapshot must keep naming that row, or the extended workflow would
+    // fork a second, phantom marker in the transcript.
+    expect(snapshots.every((s) => s.toolCallId === 't6')).toBe(true);
   });
 
   it('lets a running node self-expand the workflow from its own subagent session', async () => {

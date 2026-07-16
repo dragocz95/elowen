@@ -27,6 +27,7 @@ import { GoalLoopService } from './service/goalLoop.js';
 import { LiveSessionSpawner } from './service/spawner.js';
 import { ConversationLifecycle } from './service/lifecycle.js';
 import { recordSessionEvent } from './service/sessionEvents.js';
+import { terminalizeWorkflow } from './workflowRuns.js';
 import { BrainTurnRunner } from './service/turnRunner.js';
 import type { BoundClientRequest, TurnRequest } from './service/turnRequest.js';
 import { BrainStatusService } from './service/statusService.js';
@@ -696,6 +697,14 @@ export class BrainService {
         error: 'sub-agent interrupted by daemon restart', tools: run.tools, tokens: run.tokens,
         seconds: run.seconds, model: run.model,
       });
+    }
+    // Same restart concern for workflows, minus the delivery half: workflow_start BLOCKS, so a restart
+    // killed the tool call and its whole turn — there is no result anyone is still waiting on, and no
+    // completion inbox to weave into. The row only has to stop claiming the DAG is still running.
+    for (const run of this.d.store.getWorkflowRuns(started.sessionId)) {
+      if (run.status !== 'running') continue;
+      if (run.nodes.some((node) => node.sessionId && activeChildren.has(node.sessionId))) continue;
+      this.d.store.upsertWorkflowRun(started.sessionId, terminalizeWorkflow(run));
     }
     void this.turnRunner.drainPendingSubagentResults(userId, started.sessionId);
     return started;

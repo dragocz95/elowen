@@ -3,7 +3,7 @@ import type { MarkdownTheme } from '@earendil-works/pi-tui';
 import type { ChatTurn, ToolItem } from '../../brain/transcript.js';
 import { groupToolItems, failureSignature } from '../../brain/transcript.js';
 import { formatDuration, formatK, padAnsi, terminalInlineText, terminalPlainText } from '../ui/text.js';
-import { framedDiffBlock, toolOutputBlock, UserBlock } from './components.js';
+import { framedDiffBlock, toolOutputBlock, UserBlock, workflowCounts } from './components.js';
 import { chatTheme, color, paintRow } from './theme.js';
 
 export const TOOL_INDENT = '    ';
@@ -19,7 +19,7 @@ function errorHeadline(output: NonNullable<ToolItem['output']>): string {
 
 export interface TranscriptRow {
   line: string;
-  kind?: 'thought' | 'expandable' | 'subagent';
+  kind?: 'thought' | 'expandable' | 'subagent' | 'workflow';
   key?: string;
   turnIndex?: number;
 }
@@ -107,6 +107,9 @@ export class TurnRenderer {
           if (item.sub) {
             for (const row of this.subagentBlock(item.sub, width)) add(row.line, row.kind, row.key);
           }
+          if (item.wf) {
+            for (const row of this.workflowBlock(item.wf, width)) add(row.line, row.kind, row.key);
+          }
           if (item.diff) {
             const diffKey = `${key}:diff`;
             const { lines: block, expandable } = framedDiffBlock(
@@ -153,7 +156,7 @@ export class TurnRenderer {
                 rows[index] = { ...rows[index]!, kind: 'expandable', key, turnIndex };
               }
             }
-          } else if (!item.diff && !item.sub) {
+          } else if (!item.diff && !item.sub && !item.wf) {
             if (item.command) {
               const command = terminalInlineText(item.command);
               add(`${TOOL_INDENT}${color.faint('$')} ${color.dim(truncateToWidth(command, Math.max(12, width - 12), '…'))} ${color.faint(turn.streaming && item === lastToolItem ? '· running…' : '· done')}`);
@@ -212,6 +215,32 @@ export class TurnRenderer {
       { line: '' },
       { line: `  ${glyph} ${color.text('Sub-agent')} ${color.faint('click')} ${color.dim(task)}`, kind: 'subagent', key: subagent.sessionId },
       { line: `    ${color.faint(truncateToWidth(`↳ ${meta}`, Math.max(12, width - 6), '…'))}`, kind: 'subagent', key: subagent.sessionId },
+    ];
+  }
+
+  /** The transcript marker for a workflow_start call — the sub-agent block's twin, and the durable way
+   *  back into a workflow: the telemetry rail only carries RUNNING ones, so once a DAG finishes this row
+   *  is the only thing that can still open its modal. Clicking anywhere on it drills in by workflow id. */
+  private workflowBlock(wf: NonNullable<ToolItem['wf']>, width: number): TranscriptRow[] {
+    const glyph = wf.status === 'running'
+      ? color.warning('⛓')
+      : wf.status === 'done' ? color.success('⛓') : color.error('⛓');
+    const counts = workflowCounts(wf);
+    const title = terminalInlineText(wf.title || `${wf.nodes.length}-node workflow`);
+    const tally = [
+      color.success(`${counts.done}✓`),
+      color.warning(`${counts.running}●`),
+      color.faint(`${counts.pending}⏸`),
+      ...(counts.error ? [color.error(`${counts.error}✗`)] : []),
+    ].join(' ');
+    const meta = [tally, counts.tokens ? color.faint(`${formatK(counts.tokens)} tok`) : ''].filter(Boolean).join('  ');
+    return [
+      { line: '' },
+      {
+        line: `  ${glyph} ${color.text('Workflow')} ${color.faint('click')} ${color.dim(truncateToWidth(title, Math.max(12, width - 30), '…'))}`,
+        kind: 'workflow', key: wf.id,
+      },
+      { line: `    ${color.faint('↳')} ${meta}`, kind: 'workflow', key: wf.id },
     ];
   }
 

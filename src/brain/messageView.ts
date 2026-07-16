@@ -33,12 +33,33 @@ export interface BrainSubagentView {
   resultDelivery?: 'pending' | 'acknowledged';
 }
 
+/** Durable latest state of a workflow DAG attached to its `workflow_start` call. Structural for the same
+ *  reason as BrainSubagentView — events.ts imports this file, so importing WorkflowUpdate back would form
+ *  a cycle. Mirrors that type field for field; BrainStore passes its validated rows straight through. */
+export interface BrainWorkflowView {
+  id: string;
+  toolCallId: string;
+  title?: string;
+  status: 'running' | 'done' | 'error' | 'cancelled';
+  nodes: {
+    id: string;
+    task: string;
+    status: 'pending' | 'running' | 'done' | 'error';
+    deps: string[];
+    sessionId?: string;
+    detail?: string;
+    tokens?: number;
+    seconds?: number;
+    model?: string;
+  }[];
+}
+
 /** One display piece of an assistant turn, in the order it happened: a text block, or a tool call
  *  (with a short argument summary and, for edits, the display diff). The call id stays on the wire so
  *  a post-parent-idle background update can patch the already-settled row. */
 type BrainSegment =
   | { kind: 'text'; text: string }
-  | { kind: 'tool'; name: string; id?: string; detail?: string; diff?: string; output?: ToolOutputView; command?: string; sub?: BrainSubagentView };
+  | { kind: 'tool'; name: string; id?: string; detail?: string; diff?: string; output?: ToolOutputView; command?: string; sub?: BrainSubagentView; wf?: BrainWorkflowView };
 
 /** A stored turn shaped for display (the `GET /brain/messages` payload consumed by channels).
  *  `text` is the flat reply (title derivation, plain clients); `segments` preserve the true order. */
@@ -326,6 +347,7 @@ export function shapeBrainMessages(
   rows: StoredTurnRow[],
   subagentRuns: readonly ({ toolCallId: string } & BrainSubagentView)[] = [],
   sessionEvents: readonly { id: string; kind: string; detail: string; at: string }[] = [],
+  workflowRuns: readonly BrainWorkflowView[] = [],
 ): BrainMessageView[] {
   // Edit diffs and raw tool results live on the toolResult rows (never shown raw) — index them by
   // toolCallId so the matching assistant toolCall segment can lift its diff and build its output view.
@@ -334,6 +356,10 @@ export function shapeBrainMessages(
   const diffs = new Map<string, string>();
   const results = new Map<string, { result: unknown; isError?: boolean }>();
   const subagents = new Map(subagentRuns.map(({ toolCallId, ...state }) => [toolCallId, state]));
+  // Not destructured like the sub-agent above: a subagent's `id` IS its tool call id and would collide
+  // with the tool item's own `id`, whereas a workflow's `id` is its own — so the view keeps every field
+  // and stays identical to the durable row and the wire event.
+  const workflows = new Map(workflowRuns.map((run) => [run.toolCallId, run]));
   for (const row of rows) {
     if (row.role !== 'toolResult') continue;
     try {
@@ -388,6 +414,7 @@ export function shapeBrainMessages(
           ...(output ? { output } : {}),
           ...(command ? { command } : {}),
           ...(p.id && subagents.has(p.id) ? { sub: subagents.get(p.id) } : {}),
+          ...(p.id && workflows.has(p.id) ? { wf: workflows.get(p.id) } : {}),
         });
       }
     }

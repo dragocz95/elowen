@@ -18,6 +18,10 @@ export type { WorkflowNode } from './events.js';
  *  Claude-Code "grouped" look. Tool outputs are attached only when the daemon marks a compact preview
  *  as useful enough to show (tests, shell errors, browser/search observations). */
 export interface ToolItem { name: string; detail?: string; diff?: string; icon?: string; output?: ToolOutputView; id?: string; command?: string; sub?: SubagentState;
+  /** The workflow DAG a `workflow_start` call is running, attached by its tool call id exactly as `sub`
+   *  is for a delegate call. Durable: this is what the panel projection is rebuilt from on every
+   *  hydration, so it is also what lets a finished workflow still open its modal from the transcript. */
+  wf?: WorkflowState;
   /** Live rolling tail of a still-running `run_command` (from the `tool_progress` event), shown under the
    *  tool row while it streams. LIVE-only — never persisted; the final `output`/`diff` clears it. */
   progress?: string }
@@ -65,7 +69,7 @@ export interface ToolGroup {
 /** True when an item is a bare tool row (no block of its own), the only kind that collapses. A live
  *  `progress` tail is a block of its own, so a streaming command never folds into a collapsed run. */
 function isCollapsibleTool(item: ToolItem): boolean {
-  return !item.diff && !item.output && !item.sub && !item.command && !item.progress;
+  return !item.diff && !item.output && !item.sub && !item.wf && !item.command && !item.progress;
 }
 
 /** The kind of failure a tool result is, or undefined when it is not one. Four refusals that differ only
@@ -130,7 +134,7 @@ export type ChatTurn = YouTurn | ElowenTurn | DividerTurn | EventTurn;
 export interface HistoryMessage {
   role: string;
   text: string;
-  segments?: ({ kind: 'text'; text: string } | { kind: 'tool'; name: string; id?: string; detail?: string; diff?: string; output?: ToolOutputView; command?: string; sub?: SubagentState })[];
+  segments?: ({ kind: 'text'; text: string } | { kind: 'tool'; name: string; id?: string; detail?: string; diff?: string; output?: ToolOutputView; command?: string; sub?: SubagentState; wf?: WorkflowState })[];
   /** Present only on a `role:'event'` row — the session-change marker's id/kind/detail. */
   id?: string;
   kind?: string;
@@ -158,7 +162,7 @@ export function turnsFromHistory(msgs: HistoryMessage[]): ChatTurn[] {
       if (seg.kind === 'text') {
         segments.push({ kind: 'text', text: seg.text });
       } else {
-        const item: ToolItem = { name: seg.name, id: seg.id, detail: seg.detail, diff: seg.diff, output: seg.output, command: seg.command, sub: seg.sub };
+        const item: ToolItem = { name: seg.name, id: seg.id, detail: seg.detail, diff: seg.diff, output: seg.output, command: seg.command, sub: seg.sub, wf: seg.wf };
         const tail = segments[segments.length - 1];
         if (tail?.kind === 'tools') tail.items.push(item);
         else segments.push({ kind: 'tools', items: [item] });

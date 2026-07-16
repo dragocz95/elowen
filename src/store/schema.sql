@@ -188,6 +188,24 @@ CREATE TABLE IF NOT EXISTS brain_subagent_runs (
   PRIMARY KEY (parent_session_id, tool_call_id)
 );
 CREATE INDEX IF NOT EXISTS idx_brain_subagent_runs_child ON brain_subagent_runs(child_session_id);
+-- Latest durable UI state for each `workflow_start` tool call, holding the WHOLE DAG the in-plugin
+-- engine otherwise keeps only in memory. Without it a finished workflow is unrecoverable: the live
+-- projection is rebuilt from the transcript on every hydration, so a reconnect (or merely closing a
+-- sub-agent view) would drop it and its modal could never be reopened.
+--
+-- Unlike brain_subagent_runs there is no single child to key on -- one blocking call fans out to N node
+-- sessions -- so the node session ids live inside `state` and are NOT trusted on read: getWorkflowRuns
+-- re-derives each node's drill-in target from the live parent/child relation. That check is strictly
+-- stronger than rewriting ids on rollover, which is why the DAG can stay one JSON blob (and why one
+-- snapshot costs one write, not up to 64). Same no-foreign-keys rule as the tables above.
+CREATE TABLE IF NOT EXISTS brain_workflows (
+  parent_session_id TEXT NOT NULL,
+  tool_call_id TEXT NOT NULL,
+  workflow_id TEXT NOT NULL,
+  state TEXT NOT NULL,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (parent_session_id, tool_call_id)
+);
 -- Display panels a plugin pushed via ctx.emitCard (the todo checklist is the canonical one). They are
 -- conversation state, not turn state: closing the chat disposes the live session, so a memory-only panel
 -- would take the user's todo list with it. Persisting them lets a reopened conversation show its

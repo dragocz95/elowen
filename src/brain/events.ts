@@ -93,10 +93,16 @@ export type BrainEvent =
   /** Live snapshot of a declarative sub-agent WORKFLOW (a DAG the delegating agent authored via
    *  `workflow_start`). One event per state change carries the WHOLE workflow — its overall status and
    *  the full node list with each node's dependencies, live status, and the child session/tokens/tool
-   *  it is running. Keyed by `id`; a client keeps the latest per id, renders the panel + drill-in modal,
-   *  and may open a node's transcript via its `sessionId`. Synthetic and fanned out to the PARENT
-   *  conversation's listeners exactly like `subagent`; ignoring it is always safe. */
-  | { type: 'workflow'; id: string; title?: string; status: 'running' | 'done' | 'error' | 'cancelled'; nodes: WorkflowNode[] }
+   *  it is running. A client keeps the latest per `id`, renders the panel + drill-in modal, and may open
+   *  a node's transcript via its `sessionId`. Synthetic and fanned out to the PARENT conversation's
+   *  listeners exactly like `subagent`; ignoring it is always safe.
+   *
+   *  Two identifiers, and the distinction matters: `id` is the workflow's OWN identity (what
+   *  `workflow_add_nodes` addresses and what the panel keys on), while `toolCallId` is the origin's
+   *  `workflow_start` call — the durable anchor that binds the DAG to a row in the parent's transcript,
+   *  exactly as `subagent.id` does for a delegate call. A snapshot always names the ORIGIN's call, even
+   *  when a node's own turn triggered it. */
+  | { type: 'workflow'; id: string; toolCallId: string; title?: string; status: 'running' | 'done' | 'error' | 'cancelled'; nodes: WorkflowNode[] }
   /** A visible, display-only marker that the owner changed session state out of turn — switched the
    *  model, work mode (build/plan/workflow), renamed the conversation, or changed the reasoning level.
    *  Rendered as a subtle system line interleaved into the transcript by `at`; persisted (replayed on
