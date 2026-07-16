@@ -7,7 +7,7 @@ import type { BrainStore } from '../../store/brainStore.js';
 import type { BrainDeps } from '../brainDeps.js';
 import type { CardRegistry } from '../cards.js';
 import type { ElicitationRegistry } from '../elicitation.js';
-import type { AskQuestion, SubagentCompletion, SubagentUpdate } from '../events.js';
+import type { AskQuestion, SubagentCompletion, SubagentUpdate, WorkflowUpdate } from '../events.js';
 import type { IdentityResolver } from '../identity.js';
 import type { MemoryService } from '../memoryService.js';
 import { frameUntrusted } from '../messageView.js';
@@ -100,6 +100,9 @@ export class TurnContextBuilder {
     const emitSubagentCompletion = (completion: SubagentCompletion): void => {
       this.d.completeSubagent?.(live.sessionId, userId, completion);
     };
+    // Workflow snapshots are pure live UI state (the node child sessions persist on their own); publish
+    // fans the whole DAG snapshot to the owner's clients, replay covers a reconnect within this session.
+    const emitWorkflow = (update: WorkflowUpdate): void => { live.replay.publish({ type: 'workflow', ...update }); };
     const toolPolicy = this.applyOwnerToolPolicy(userId, live, mode);
     const workDir = turnWorkDir(live.policy, clientCwd ?? live.workDir, this.d.projectPath);
     const permissions = this.d.permissions.turnPermissions(userId, live, true);
@@ -109,6 +112,7 @@ export class TurnContextBuilder {
       emitCard,
       emitSubagent,
       emitSubagentCompletion,
+      emitWorkflow,
       toolPolicy,
       permissions,
       workDir,

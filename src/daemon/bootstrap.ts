@@ -515,11 +515,13 @@ export function buildApp(opts: BuildOpts) {
         resolvePlatformUser: (platform, platformUserId) => {
           if (!platformUserId) return null;
           // Discord ids are bare snowflakes; WhatsApp userIds are JIDs (e.g. "420778433908@s.whatsapp.net"
-          // or a "<id>@lid") — strip to digits so it matches the stored phone number.
-          let key: 'discordUserId' | 'whatsappNumber';
+          // or a "<id>@lid") — strip to digits so it matches the stored phone number. Telegram userIds are
+          // bare numeric ids (the plugin reports String(from.id)), stored/matched as-is.
+          let key: 'discordUserId' | 'whatsappNumber' | 'telegramUserId';
           let value: string;
           if (platform === 'discord') { key = 'discordUserId'; value = platformUserId; }
           else if (platform === 'whatsapp') { key = 'whatsappNumber'; value = platformUserId.replace(/[@:].*$/, '').replace(/[^\d]/g, ''); }
+          else if (platform === 'telegram') { key = 'telegramUserId'; value = platformUserId.replace(/[^\d]/g, ''); }
           else return null;
           if (!value) return null;
           const id = userSettings.userIdBySetting(key, value);

@@ -7,7 +7,7 @@ import {
   normalizeDelegatedExecutionScope,
   type DelegatedExecutionScope,
 } from './delegatedScope.js';
-import type { AskQuestion, BrainEvent, BrainUsage, CompactResult, SubagentCompletion, SubagentUpdate } from './events.js';
+import type { AskQuestion, BrainEvent, BrainUsage, CompactResult, SubagentCompletion, SubagentUpdate, WorkflowUpdate } from './events.js';
 import { usageOf, runCompaction, withDescendantUsage } from './events.js';
 import type { ElicitationRegistry } from './elicitation.js';
 import { normalizeCard } from './cards.js';
@@ -381,6 +381,11 @@ export class ChannelSessionService {
         const emitSubagentCompletion = parentSessionId && this.d.completeSubagent
           ? (completion: SubagentCompletion) => { this.d.completeSubagent!(ch.sessionId, opts.ownerUserId, completion); }
           : undefined;
+        // Workflow snapshots are pure live UI state (like `process`): the node child sessions persist
+        // on their own, so there is no durable workflow row to keep — the in-plugin engine owns the DAG
+        // and re-emits the whole snapshot on every change. Publish fans it to the parent's clients (and
+        // the replay buffer covers a reconnect within this daemon session).
+        const emitWorkflow = (u: WorkflowUpdate) => { ch.replay.publish({ type: 'workflow', ...u }); };
         const assistantBefore = [...(ch.session.messages as { role?: string }[])].reverse()
           .find((message) => message.role === 'assistant');
         try {
@@ -425,7 +430,7 @@ export class ChannelSessionService {
               await ch.session.prompt(NO_REPLY_NUDGE);
               if (this.d.registry.consumePendingAbort(sessionId)) throw new Error('delegation aborted');
             }
-          }, { identity: opts.identity, elicit, emitCard, emitSubagent, emitSubagentCompletion, toolPolicy: effectiveToolPolicy, permissions, sessionId, model: { provider: ch.providerId, model: ch.model } }));
+          }, { identity: opts.identity, elicit, emitCard, emitSubagent, emitSubagentCompletion, emitWorkflow, toolPolicy: effectiveToolPolicy, permissions, sessionId, model: { provider: ch.providerId, model: ch.model } }));
           // Deterministic settled idle (model + context fill) AFTER the turn — proactive footers depend on it.
           turnOnEvent?.({ type: 'idle', model: ch.model, usage: withDescendantUsage(usageOf(ch.session), this.d.store.descendantUsage(ch.sessionId)) });
         } finally { detach?.(); }

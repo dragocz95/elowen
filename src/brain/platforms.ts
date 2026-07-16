@@ -80,6 +80,9 @@ export class PlatformOrchestrator {
           }
           const promptAppend = [
             ...(src.access.prompt ? [src.access.prompt] : []),
+            // Parent-supplied background for a delegated child — a stable prefix block (cache-friendly),
+            // bounded by the delegated-scope normalizer like every other prompt append.
+            ...(src.access.context ? [src.access.context] : []),
             ...(src.channelName ? [this.d.channels.fragmentFor(src, owner)] : []),
           ];
           // ONE unified access decision. A LINKED sender runs fully through their Elowen account — their

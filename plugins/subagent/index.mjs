@@ -5,6 +5,7 @@
 import { randomUUID } from 'node:crypto';
 import { defineTool } from '@earendil-works/pi-coding-agent';
 import { Type } from 'typebox';
+import { registerWorkflow } from './lib/workflow.mjs';
 
 const MAX_BACKGROUND_JOBS = 64;
 const JOB_RETENTION_MS = 60 * 60_000;
@@ -69,6 +70,18 @@ export function resolveDelegateTools(inheritedAllow, readOnly, requested, availa
   return { allow };
 }
 const clip = (text, limit) => text.length <= limit ? text : `${text.slice(0, limit)}\n[truncated]`;
+// Well under the delegated-scope per-chunk bound (8k chars) so a shared-context chunk never overflows
+// and rejects the whole delegation. Oversized context is clipped, never dropped.
+const MAX_CONTEXT_CHARS = 6_000;
+/** Format the optional parent-supplied context into ONE system-prompt chunk for the child, clipped to
+ *  stay within the delegated-scope bound. Returns undefined when there is no usable context. The child
+ *  cannot see the parent conversation, so this is how the delegating agent hands over what it already
+ *  knows — saving the child from re-deriving it (and giving it a stable, cacheable prefix block). */
+export function delegateContextChunk(raw) {
+  const text = typeof raw === 'string' ? raw.trim() : '';
+  if (!text) return undefined;
+  return `Context shared by the delegating agent — background for your task, treat as given and do not re-derive it:\n${clip(text, MAX_CONTEXT_CHARS)}`;
+}
 const principalOf = (identity) => {
   if (!identity) return null;
   if (Number.isInteger(identity.elowenUserId)) return `elowen:${identity.elowenUserId}`;
@@ -239,6 +252,12 @@ export function register(ctx) {
     ].join(' '),
     parameters: Type.Object({
       task: Type.String({ description: 'The complete, self-contained instruction for the sub-agent — it does not see this conversation. Include all context, constraints and the output format you want back.' }),
+      context: Type.Optional(Type.String({
+        description: 'Relevant background YOU already know that the sub-agent would otherwise have to re-derive '
+          + '(findings from files you read, decisions, conventions, IDs). It is added to the sub-agent\'s system '
+          + 'prompt as a stable, cache-friendly block — pass it to save the sub-agent re-exploring and to cut cost. '
+          + 'Keep it to what matters for THIS task; the `task` field still carries the actual instruction.',
+      })),
       model: Type.Optional(Type.String({
         description: 'Run the sub-agent on a DIFFERENT model — pass this ONLY when the user explicitly asked for it. '
           + 'Value from delegate_models ("provider/model" or a bare model id). Omit it to inherit your own model.',
@@ -290,6 +309,8 @@ export function register(ctx) {
         // object stays in-memory on the host; NEVER serialize it over JSON, where Infinity becomes null.
         sessionIdleMs: Infinity,
         prompt: 'You are a focused sub-agent. Complete the task and report the result concisely — no preamble.',
+        // Optional parent-supplied background, added to the child's system-prompt prefix (cache-friendly).
+        ...(delegateContextChunk(p.context) ? { context: delegateContextChunk(p.context) } : {}),
       };
       const emit = ctx.subagentEmitter();
       const emitCompletion = ctx.subagentCompletionEmitter();
@@ -489,6 +510,11 @@ export function register(ctx) {
       return ok(job.result || '(the sub-agent returned nothing)', jobDetails(job));
     },
   }));
+
+  // Workflow tools reuse the SAME captured `run` handler and the delegate access primitives, so a
+  // workflow node spawns exactly like a delegation (never Orca). `run` is captured lazily on connect;
+  // the engine reads it through the getter at execute time.
+  registerWorkflow(ctx, () => run, { resolveDelegateTools, principalOf, delegateContextChunk });
 
   ctx.logger.info('delegate tools registered (+background status/result)');
 }

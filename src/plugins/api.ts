@@ -1,5 +1,5 @@
 import type { Skill, ToolDefinition } from '@earendil-works/pi-coding-agent';
-import type { SubagentCompletionEmitter, SubagentEmitter, TurnIdentity, TurnModel } from './policyContext.js';
+import type { SubagentCompletionEmitter, SubagentEmitter, TurnIdentity, TurnModel, WorkflowEmitter } from './policyContext.js';
 import type { AskAnswer, AskQuestion, BrainCard } from '../brain/events.js';
 import type { ProcessRegistry } from '../brain/processRegistry.js';
 import type { NoninteractivePermissionBoundary } from '../brain/toolPermissions.js';
@@ -91,6 +91,9 @@ export interface SessionSource {
    *  block (or '' when nothing is available). */
   history?: () => Promise<string>;
   access?: { projectIds: number[]; prompt?: string; admin?: boolean; model?: { provider?: string; model?: string }; thinkingLevel?: string; fast?: boolean; tools?: string[];
+    /** Optional background the delegating agent hands to a sub-agent (it cannot see the parent
+     *  conversation). Added to the child's system-prompt prefix as a stable, cache-friendly block. */
+    context?: string;
     /** True only when the ORIGINAL delegating turn belongs to the instance operator. `admin` is project
      *  scope and is deliberately insufficient: a foreign platform role may be admin without being owner. */
     owner?: boolean;
@@ -204,7 +207,7 @@ export interface PluginCommand {
   /** The prompt sent to the agent; PI substitutes `$ARGUMENTS`/`$@`, `$1`..`$9`, `${N:-default}`. */
   prompt: string;
   /** Which surfaces expose it (default: all). */
-  surfaces?: ('cli' | 'discord' | 'whatsapp' | 'web')[];
+  surfaces?: ('cli' | 'discord' | 'whatsapp' | 'telegram' | 'web')[];
 }
 
 /** Placement of volatile plugin context relative to the user's own text. Context is always ephemeral:
@@ -234,7 +237,7 @@ export interface PluginContext {
    *  plugin's command. */
   registerCommand(command: PluginCommand): void;
   /** Core chat command metadata for a platform. Adapters own presentation only; names/help live once. */
-  chatCommands(surface: 'discord' | 'whatsapp'): { name: string; description: string; adminOnly?: boolean }[];
+  chatCommands(surface: 'discord' | 'whatsapp' | 'telegram'): { name: string; description: string; adminOnly?: boolean }[];
   /** Append a chunk of instructions to the brain's system prompt, after the Elowen persona. */
   registerSystemPromptFragment(fragment: string): void;
   registerHook(hook: PluginHook): void;
@@ -319,6 +322,10 @@ export interface PluginContext {
   subagentEmitter(): SubagentEmitter | null;
   /** Host-only durable completion sink. Capture it in the parent turn before spawning a child. */
   subagentCompletionEmitter(): SubagentCompletionEmitter | null;
+  /** The current turn's live workflow-snapshot emitter, or null when the transport wired none. The
+   *  workflow engine MUST capture this BEFORE scheduling nodes: each update fans out to the parent's
+   *  clients as a `workflow` BrainEvent (the CLI/web Workflow panel + drill-in modal). */
+  workflowEmitter(): WorkflowEmitter | null;
   /** The provider entry id + model the CURRENT turn's session runs on, or null outside a prompt turn —
    *  a delegating plugin uses it to default the child to "the same model as me". */
   currentModel(): TurnModel | null;

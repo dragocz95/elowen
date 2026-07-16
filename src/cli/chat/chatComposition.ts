@@ -3,6 +3,8 @@ import type { Component, MarkdownTheme, TUI } from '@earendil-works/pi-tui';
 import { color } from './theme.js';
 import { StatusBar, CardPanel, SubagentPanel, spinnerFrame } from './components.js';
 import type { SubagentPanelEntry } from './components.js';
+import type { WorkflowState } from '../../brain/transcript.js';
+import { openWorkflowModal as showWorkflowModal } from './workflowModal.js';
 import { activeMention, CLIPBOARD_MENTION, imageMimeFor, rankMentionFiles, bumpMentionFrecency, mentionInsertText } from './mentions.js';
 import { isSlashCommandDraft } from './commands.js';
 import { activeKeymap, createLeaderState } from './keys.js';
@@ -20,7 +22,8 @@ import {
   TOP_RULE_ROWS, TopRule,
 } from './startScreen.js';
 import { TelemetryPanel } from './telemetryPanel.js';
-import { MentionOverlay, SlashOverlay } from './suggestionOverlay.js';
+import { ArgOverlay, MentionOverlay, SlashOverlay, type SuggestionItem, type SuggestionOverlay } from './suggestionOverlay.js';
+import { scoreModels, type ModelOption } from './fuzzy.js';
 import type { BrainWorkMode } from './brainClient.js';
 import type { ChatState } from './chatState.js';
 import type { ChatApplicationActions, ChatApplicationResources } from './chatCapabilities.js';
@@ -229,7 +232,7 @@ export function createChatComposition(
 
   let panelHandle: ReturnType<TUI['showOverlay']> | null = null;
   let slashHandle: ReturnType<TUI['showOverlay']> | null = null;
-  let slashOverlay: SlashOverlay | null = null;
+  let slashOverlay: SuggestionOverlay | null = null;
   let mentionHandle: ReturnType<TUI['showOverlay']> | null = null;
   let mentionOverlay: MentionOverlay | null = null;
   let panelWidth = 46;
@@ -396,6 +399,7 @@ export function createChatComposition(
   const activeViewport = (): ChatViewport => rt.childView ? (childViewport ?? parentViewport) : parentViewport;
   let currentRunSeconds = 0;
   let currentAgents: readonly SubagentPanelEntry[] = [];
+  let currentWorkflows: readonly WorkflowState[] = [];
   telemetry = new TelemetryPanel(() => ({
     usage: rt.usage,
     cwd: cwdLabel,
@@ -404,6 +408,7 @@ export function createChatComposition(
     lspEnabled: rt.lspEnabled,
     processes: rt.childView?.processes ?? rt.processes,
     subagents: currentAgents,
+    workflows: currentWorkflows,
     rateLimits: rt.rateLimits,
     goal: rt.goal,
     floatOffset: animations.mascotOffset,
@@ -482,6 +487,17 @@ export function createChatComposition(
     }, (e) => { rt.notice = color.error(`could not kill process: ${e.message}`); render('process:kill-error'); });
   };
 
+  // Open the navigable workflow modal for a workflow id (clicked in the telemetry rail). The modal reads
+  // the live snapshot each frame and drills into a node's transcript through the sub-agent viewer.
+  const openWorkflowModal = (workflowId: string): void => {
+    showWorkflowModal({
+      tui,
+      editor,
+      getWorkflow: () => rt.transcript.workflows().find((w) => w.id === workflowId),
+      onDrill: (sessionId) => { void stream.openSubagent(sessionId); },
+    });
+  };
+
   let thinkStart = 0;
   let interruptArmedUntil = 0;
   /** The armed window came from the daemon reporting its queue already drained — i.e. `rt.queued` is stale.
@@ -547,6 +563,7 @@ export function createChatComposition(
     // Contextual footer: while streaming, Esc interrupts; inside a sub-agent view, input steers the child.
     const footerState = rt.childView ? 'child' : rt.transcript.thinking ? 'thinking' : 'idle';
     currentAgents = stream.subagentStates(); // one transcript scan per frame, shared by rail + fallback
+    currentWorkflows = stream.workflowStates();
     const agents = currentAgents;
     bottomBar.setLeft(color.faint(`  ${bottomHints(keymap, footerState, agents.length > 0, interruptArmedUntil > Date.now(), rt.queued.length > 0, agents.some((agent) => agent.status === 'running' && agent.background !== true))}`)
       + (footerState === 'idle' && shellContext.pending ? `   ${color.warning('· ! output → next message')}` : ''));
@@ -654,6 +671,39 @@ export function createChatComposition(
     render('overlay:slash-open');
   };
 
+  // `/model <name>` argument autocomplete. It reuses the slash overlay slot with an args-kind overlay
+  // whose item values are the full "/model <id>" string, so the shared tab/enter completion applies them
+  // unchanged. The configured model list is fetched once, lazily, on the first "/model " draft.
+  let modelArgModels: ModelOption[] | null = null;
+  let modelArgLoading = false;
+  const modelArgQuery = (text: string): string | null =>
+    /^\/model\s/.test(text) ? text.replace(/^\/model\s+/, '') : null;
+  const modelArgSuggestions = (query: string): SuggestionItem[] =>
+    scoreModels(modelArgModels ?? [], query).slice(0, 12).map(({ option }) => ({
+      value: `/model ${option.model}`,
+      label: `${option.model === rt.modelName ? '▸ ' : ''}${option.model.replace(/:free$/, '')}`,
+      description: option.free ? `${option.providerLabel} · free` : option.providerLabel,
+    }));
+  const updateModelArg = (query: string): void => {
+    if (!(slashOverlay instanceof ArgOverlay)) {
+      closeSlash();
+      const overlay = new ArgOverlay();
+      slashOverlay = overlay;
+      slashHandle = showSuggestions('slash', overlay);
+    }
+    (slashOverlay as ArgOverlay).setItems(modelArgSuggestions(query));
+    render('overlay:model-arg');
+    if (modelArgModels === null && !modelArgLoading) {
+      modelArgLoading = true;
+      lifetime.runApplication(() => client.models(), (models) => {
+        modelArgModels = models;
+        modelArgLoading = false;
+        const q = modelArgQuery(editor.getText());
+        if (q !== null && slashOverlay instanceof ArgOverlay) { slashOverlay.setItems(modelArgSuggestions(q)); render('overlay:model-arg-loaded'); }
+      }, () => { modelArgModels = []; modelArgLoading = false; });
+    }
+  };
+
   const closeMention = (): void => {
     mentionHandle?.hide();
     mentionHandle = null;
@@ -719,10 +769,15 @@ export function createChatComposition(
   // still be a command name and closes the moment it can't be one anymore (a space for arguments, a
   // second '/' as in /var/www/x, or the leading '/' deleted) — the text itself always stays in the input.
   editor.onChange = (text: string): void => {
-    if (slashHandle && slashOverlay) {
+    const argQuery = modelArgQuery(text);
+    if (argQuery !== null) {
+      // "/model <partial>" — show model suggestions (opens the overlay even if none was open yet).
+      updateModelArg(argQuery);
+    } else if (slashHandle && slashOverlay) {
       if (isSlashCommandDraft(text)) {
-        slashOverlay.setFilter(text);
-        render('input:slash-filter');
+        // Backing out of the args overlay to a bare command draft restores the command overlay.
+        if (slashOverlay instanceof SlashOverlay) { slashOverlay.setFilter(text); render('input:slash-filter'); }
+        else openSlash();
       } else {
         closeSlash();
       }
@@ -995,6 +1050,7 @@ export function createChatComposition(
       },
       telemetry,
       killProcess,
+      openWorkflowModal,
       rowBudget,
       subPanel,
       cardPanel,

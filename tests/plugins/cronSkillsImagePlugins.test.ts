@@ -415,7 +415,10 @@ describe('subagent plugin', () => {
     const dataRoot = freshDataRoot();
     const reg = await loadPlugins({ dirs: [pluginsDir], enabled: ['subagent'], dataRoot, logger: log });
     expect(reg.platforms.map((p) => p.name)).toEqual(['subagent']);
-    expect(reg.tools.map((t) => t.name).sort()).toEqual(['delegate', 'delegate_models', 'delegate_result', 'delegate_status']);
+    expect(reg.tools.map((t) => t.name).sort()).toEqual([
+      'delegate', 'delegate_models', 'delegate_result', 'delegate_status',
+      'workflow_add_nodes', 'workflow_start', 'workflow_status',
+    ]);
     const delegate = reg.tools.find((t) => t.name === 'delegate')!;
 
     // Before the host wires the platform handler, delegate fails gracefully.

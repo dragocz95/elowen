@@ -1,4 +1,9 @@
 import { isKeyRelease, matchesKey, parseKey } from '@earendil-works/pi-tui';
+// Re-exported so every custom input handler filters key-RELEASE events from one place. The Kitty
+// keyboard protocol (pi-tui negotiates flag 2) reports a release edge per keypress; a handler that acts
+// on both edges fires twice (the VS Code integrated-terminal double-input). pi-tui's own Editor/SelectList
+// already filter releases — our overlays must do the same.
+export { isKeyRelease } from '@earendil-works/pi-tui';
 import type { KeyId } from '@earendil-works/pi-tui';
 
 /** The single seam for every key-string comparison in the chat TUI. Two layers live here:

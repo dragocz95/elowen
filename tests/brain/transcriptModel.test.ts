@@ -268,4 +268,41 @@ describe('TranscriptModel', () => {
     expect(model.lastAssistantText()).toBe('');
     expect(model.changesSince(model.revision - 1)).toEqual({ kind: 'full', revision: model.revision });
   });
+
+  it('projects workflow snapshots latest-per-id without touching any turn', () => {
+    const model = new TranscriptModel([{ role: 'assistant', text: 'hi' }]);
+    const beforeTurns = model.turnCount;
+    model.apply({
+      type: 'workflow', id: 'wf-1', title: 'ship it', status: 'running',
+      nodes: [
+        { id: 'a', task: 'gather', status: 'running', deps: [], sessionId: 's-a', tokens: 100, seconds: 2 },
+        { id: 'b', task: 'write', status: 'pending', deps: ['a'] },
+      ],
+    });
+    expect(model.turnCount).toBe(beforeTurns); // a workflow is a side panel, not a turn
+    expect(model.workflows()).toEqual([
+      expect.objectContaining({ id: 'wf-1', title: 'ship it', status: 'running' }),
+    ]);
+    expect(model.workflows()[0]!.nodes).toHaveLength(2);
+
+    const projection = model.workflows();
+    model.apply({
+      type: 'workflow', id: 'wf-1', title: 'ship it', status: 'done',
+      nodes: [
+        { id: 'a', task: 'gather', status: 'done', deps: [], sessionId: 's-a', tokens: 120, seconds: 3 },
+        { id: 'b', task: 'write', status: 'done', deps: ['a'], sessionId: 's-b', tokens: 80, seconds: 4 },
+      ],
+    });
+    expect(model.workflows()).not.toBe(projection); // fresh immutable snapshot on change
+    expect(model.workflows()).toHaveLength(1); // same id updates in place, not appended
+    expect(model.workflows()[0]!.status).toBe('done');
+  });
+
+  it('clears workflow projection on session rollover', () => {
+    const model = new TranscriptModel();
+    model.apply({ type: 'workflow', id: 'wf-1', status: 'running', nodes: [{ id: 'a', task: 't', status: 'running', deps: [] }] });
+    expect(model.workflows()).toHaveLength(1);
+    model.apply({ type: 'session', sessionId: 'fresh' });
+    expect(model.workflows()).toEqual([]);
+  });
 });

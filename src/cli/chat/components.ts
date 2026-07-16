@@ -1,7 +1,8 @@
 import { truncateToWidth, visibleWidth, wrapTextWithAnsi } from '@earendil-works/pi-tui';
-import { isDownKey, isEnterKey, isEscapeKey, isUpKey } from './keys.js';
+import { isDownKey, isEnterKey, isEscapeKey, isKeyRelease, isUpKey } from './keys.js';
 import type { Component, Container, Editor, Focusable, TUI } from '@earendil-works/pi-tui';
 import type { AskQuestion, BrainCard, BrainCardItem } from '../../brain/events.js';
+import type { WorkflowState } from '../../brain/transcript.js';
 import type { ProcessInfo } from '../../brain/processRegistry.js';
 import { ansi, chatTheme, color, paintRow } from './theme.js';
 import type { ToolOutputView } from '../../brain/messageView.js';
@@ -233,6 +234,83 @@ export class SubagentPanel implements Component {
   private clampScroll(): void { this.scrollOffset = Math.min(this.scrollOffset, this.maxScrollOffset()); }
 }
 
+/** Count a workflow's node statuses into the `✓done ●running ⏸pending ✗error` summary shown on its row. */
+function workflowCounts(w: WorkflowState): { done: number; running: number; pending: number; error: number; tokens: number } {
+  const counts = { done: 0, running: 0, pending: 0, error: 0, tokens: 0 };
+  for (const n of w.nodes) {
+    if (n.status === 'done') counts.done += 1;
+    else if (n.status === 'running') counts.running += 1;
+    else if (n.status === 'error') counts.error += 1;
+    else counts.pending += 1;
+    if (n.tokens) counts.tokens += n.tokens;
+  }
+  return counts;
+}
+
+/** The telemetry-rail "Workflow" section: one clickable row per RUNNING workflow (a DAG the agent
+ *  launched via workflow_start). Each row shows the workflow title, its live node tally
+ *  (`✓done ●running ⏸pending`) and total tokens; clicking a row opens the navigable workflow modal.
+ *  Mirrors SubagentPanel's collapse/scroll/hit-test contract so the rail behaves consistently. */
+export class WorkflowPanel implements Component {
+  private entries: WorkflowState[] = [];
+  private collapsed = false;
+  private maxRows = Number.POSITIVE_INFINITY;
+  private scrollOffset = 0;
+  /** Row index (0-based within this panel's output) → the workflow id that row opens in the modal. */
+  private rowTargets = new Map<number, string>();
+  invalidate(): void { /* re-rendered on the next frame */ }
+  set(entries: readonly WorkflowState[]): void {
+    this.entries = entries.filter((w) => w.status === 'running');
+    this.clampScroll();
+  }
+  setMaxRows(rows: number): void { this.maxRows = Math.max(0, Math.floor(rows)); this.clampScroll(); }
+  desiredRows(): number { return this.entries.length === 0 ? 0 : this.collapsed ? 1 : this.entries.length + 1; }
+  targetAt(index: number): string | null { return this.rowTargets.get(index) ?? null; }
+  canScroll(): boolean { return !this.collapsed && this.viewportRows() > 0 && this.entries.length > this.viewportRows(); }
+  scroll(delta: number): boolean {
+    if (!this.canScroll()) return false;
+    const previous = this.scrollOffset;
+    this.scrollOffset = Math.max(0, Math.min(this.maxScrollOffset(), this.scrollOffset - Math.trunc(delta)));
+    return this.scrollOffset !== previous;
+  }
+  isHeaderRow(index: number): boolean { return index === 0 && this.entries.length > 0 && this.maxRows > 0; }
+  toggleCollapsed(): void { this.collapsed = !this.collapsed; this.clampScroll(); }
+  render(width = 80): string[] {
+    this.rowTargets = new Map();
+    if (this.entries.length === 0 || this.maxRows <= 0) return [];
+    const capacity = this.viewportRows();
+    this.clampScroll();
+    const range = this.canScroll()
+      ? `  ${this.scrollOffset + 1}–${Math.min(this.entries.length, this.scrollOffset + capacity)}/${this.entries.length} ↕`
+      : `  ${this.entries.length}`;
+    const header = `  ${FAINTC(this.collapsed ? '▸' : '▾')} ${bold(WHITE('Workflow'))}${FAINTC(range)} ${FAINTC('click')}`;
+    const lines: string[] = [truncateToWidth(header, Math.max(1, width), '…')];
+    if (this.collapsed) return lines;
+    const shownEntries = this.entries.slice(this.scrollOffset, this.scrollOffset + capacity);
+    for (const w of shownEntries) {
+      const c = workflowCounts(w);
+      const tally = [
+        color.success(`${c.done}✓`), color.warning(`${c.running}●`), FAINTC(`${c.pending}⏸`),
+        ...(c.error ? [color.error(`${c.error}✗`)] : []),
+      ].join(' ');
+      const meta = [tally, c.tokens ? FAINTC(`${formatK(c.tokens)} tok`) : ''].filter(Boolean).join('  ');
+      const label = w.title || `${w.nodes.length}-node workflow`;
+      const title = DIM(truncateToWidth(inlineText(label), Math.max(10, width - visibleWidth(meta) - 12), '…'));
+      const row = `    ${color.accent('⛓')} ${title} ${FAINTC('click')}`;
+      const gap = Math.max(1, width - visibleWidth(row) - visibleWidth(meta) - 2);
+      this.rowTargets.set(lines.length, w.id);
+      lines.push(`${row}${' '.repeat(gap)}${meta}`);
+    }
+    return lines;
+  }
+
+  private viewportRows(): number {
+    return Number.isFinite(this.maxRows) ? Math.max(0, this.maxRows - 1) : this.entries.length;
+  }
+  private maxScrollOffset(): number { return Math.max(0, this.entries.length - this.viewportRows()); }
+  private clampScroll(): void { this.scrollOffset = Math.min(this.scrollOffset, this.maxScrollOffset()); }
+}
+
 /** A slim fixed panel under the Sub-agents card listing the owner's live background shell processes
  *  (the terminal plugin's `run_command(background:true)` children). One row per RUNNING process — a
  *  status dot, the truncated command, its run time and a clickable ✕ that kills it. Exited/killed
@@ -320,6 +398,7 @@ export class ApprovalDock implements Component, Focusable {
   }
 
   handleInput(data: string): void {
+    if (isKeyRelease(data)) return; // Kitty release edge — one keypress selects/cycles once
     const ops = this.options();
     if (isEscapeKey(data)) { this.opts.onPick(this.denyLabel()); return; }
     if (isUpKey(data)) { this.selectedIndex = (this.selectedIndex + ops.length - 1) % ops.length; this.opts.tui.requestRender(); return; }

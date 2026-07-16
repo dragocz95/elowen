@@ -152,6 +152,7 @@ export function compositionHarness(options: {
   } satisfies ChatApplicationResources;
   const stream = {
     subagentStates: () => [],
+    workflowStates: () => [],
     openSubagent: async () => {},
     closeSubagent: () => {},
     cycleSubagent: () => {},

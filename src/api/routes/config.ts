@@ -138,9 +138,9 @@ export function registerConfigRoutes(app: ElowenApp, ctx: RouteContext): void {
       ...(memoryConfigured ? {} : { hint: 'Optional — enable memory in `elowen setup` or Settings → Brain.' }) });
 
     // platforms — informational: which messaging plugins are enabled.
-    const messaging = ['discord', 'whatsapp'].filter((p) => cfg.plugins.enabled.includes(p));
+    const messaging = ['discord', 'whatsapp', 'telegram'].filter((p) => cfg.plugins.enabled.includes(p));
     checks.push({ id: 'platforms', label: 'Platforms', ok: true, detail: messaging.length ? messaging.join(', ') : 'none',
-      hint: 'Connect Discord or WhatsApp in Settings → Plugins.' });
+      hint: 'Connect Discord, WhatsApp or Telegram in Settings → Plugins.' });
 
     // plugins — informational: the enabled tool plugins.
     checks.push({ id: 'plugins', label: 'Plugins', ok: true, detail: cfg.plugins.enabled.length ? cfg.plugins.enabled.join(', ') : 'none' });

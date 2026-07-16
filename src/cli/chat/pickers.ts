@@ -1,6 +1,7 @@
 import { chatThemeItems, color, isChatThemeName, setChatTheme, setCustomChatTheme } from './theme.js';
 import { savePrefs } from './prefs.js';
 import { sessionItems, modelItems, parseModelValue, openPicker, openTextInput, openInfoModal } from './picker.js';
+import { resolveModelQuery } from './fuzzy.js';
 import { isCtrlD, isCtrlL, isCtrlP, isCtrlR, isCtrlU, isTabKey } from './keys.js';
 import { openKeybindsEditor } from './keybindsEditor.js';
 import { API_KEY_PROVIDERS } from '../setup/constants.js';
@@ -14,6 +15,7 @@ export interface Pickers {
   openThinkingPicker(): void;
   cycleThinkingLevel(): void;
   openModelPicker(): void;
+  applyModelArg(arg: string): void;
   applyTheme(name: string): boolean;
   openThemePicker(): void;
   openHelpModal(): void;
@@ -178,6 +180,30 @@ export function createPickers(
     }, fail);
   };
 
+  // Apply a concrete (provider, model) switch and reopen the event stream — the server rebuilt the
+  // session, so the old stream is dead. Shared by the picker and the `/model <name>` fast path.
+  const applyModel = (sel: { provider: string; model: string }): void => {
+    rt.notice = color.dim('switching model…');
+    render();
+    runSession(() => client.setModel(sel), (r) => {
+      rt.modelName = r.model;
+      stream.restartStream();
+      runSession(() => refreshMeta(), () => { rt.notice = ''; render(); }, fail);
+    }, fail);
+  };
+
+  // `/model <name>`: fuzzy-fix the argument to a configured model and switch directly; on no confident
+  // match, fall back to the picker so the user can choose (never silently jump to a surprising model).
+  const applyModelArg = (arg: string): void => {
+    runApplication(() => client.models(), (models) => {
+      const hit = resolveModelQuery(models, arg);
+      if (hit) { applyModel(hit); return; }
+      rt.notice = color.dim(`no model matches "${arg.trim()}" — pick one`);
+      render();
+      openModelPicker();
+    }, (e) => { rt.notice = color.error(`error: ${e.message}`); render(); });
+  };
+
   const openModelPicker = (): void => {
     runApplication(() => client.models(), (models) => {
       if (models.length === 0) { rt.notice = color.dim('no models configured — ctrl+p in /model adds a provider'); render(); return; }
@@ -198,14 +224,7 @@ export function createPickers(
         },
         onPick: (value) => {
           if (value === '__free') { openModelPicker(); return; }
-          rt.notice = color.dim('switching model…');
-          render();
-          runSession(() => client.setModel(parseModelValue(value)), (r) => {
-            rt.modelName = r.model;
-            // The server rebuilt the session — the old event stream is dead, reopen it.
-            stream.restartStream();
-            runSession(() => refreshMeta(), () => { rt.notice = ''; render(); }, fail);
-          }, fail);
+          applyModel(parseModelValue(value));
         },
       });
     }, (e) => { rt.notice = color.error(`error: ${e.message}`); render(); });
@@ -561,7 +580,7 @@ export function createPickers(
   };
 
   return {
-    openThinkingPicker, cycleThinkingLevel, openModelPicker, applyTheme, openThemePicker,
+    openThinkingPicker, cycleThinkingLevel, openModelPicker, applyModelArg, applyTheme, openThemePicker,
     openHelpModal, openStatusModal, openSessionsModal, openMcpModal, openSkillsModal,
     openLspModal, openToolsModal, openKeybindsModal,
   };

@@ -1,5 +1,5 @@
 import { truncateToWidth, visibleWidth, wrapTextWithAnsi } from '@earendil-works/pi-tui';
-import { isDownKey, isEnterKey, isEscapeKey, isUpKey } from './keys.js';
+import { isDownKey, isEnterKey, isEscapeKey, isKeyRelease, isUpKey } from './keys.js';
 import type { Component, Focusable, TUI, Container, Editor } from '@earendil-works/pi-tui';
 import { getSelectListTheme } from '@earendil-works/pi-coding-agent';
 import type { AskAnswer, AskQuestion } from '../../brain/events.js';
@@ -108,6 +108,7 @@ export class AskChoiceDock implements Component, Focusable {
   }
 
   handleInput(data: string): void {
+    if (isKeyRelease(data)) return; // Kitty release edge — one keypress, one action
     if (isEscapeKey(data)) { this.opts.onCancel(); return; }
     if (isUpKey(data)) { this.move(-1); return; }
     if (isDownKey(data)) { this.move(1); return; }

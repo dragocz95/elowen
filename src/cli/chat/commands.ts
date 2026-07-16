@@ -316,7 +316,9 @@ export function wireSubmit(
           return;
         }
         case 'model': {
-          pickers.openModelPicker();
+          // "/model gpt-5.5" fuzzy-fixes the name and switches directly; bare "/model" opens the picker.
+          if (command.arg?.trim()) pickers.applyModelArg(command.arg);
+          else pickers.openModelPicker();
           return;
         }
         case 'reasoning': {

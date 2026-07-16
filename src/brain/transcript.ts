@@ -1,6 +1,12 @@
-import type { BrainCard } from './events.js';
+import type { BrainCard, WorkflowUpdate } from './events.js';
 import { isEmptyCard } from './cards.js';
 import type { ToolOutputView } from './messageView.js';
+
+/** The CLI/web projection of a live `workflow` snapshot — structurally the event payload itself (a
+ *  workflow event carries the WHOLE DAG each time), so it aliases WorkflowUpdate to stay single-source
+ *  with the wire contract. `TranscriptModel.workflows()` keeps the latest one per id. */
+export type WorkflowState = WorkflowUpdate;
+export type { WorkflowNode } from './events.js';
 
 /** Shared, UI-free transcript data types and durable-history parsing. `TranscriptModel` owns the live
  *  event fold for the CLI; the web dock mirrors the same wire contract in

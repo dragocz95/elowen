@@ -1,5 +1,5 @@
 import { CURSOR_MARKER, SelectList, Editor, truncateToWidth, visibleWidth } from '@earendil-works/pi-tui';
-import { isBackspaceKey, isDownKey, isEnterKey, isEscapeKey, isUpKey } from './keys.js';
+import { isBackspaceKey, isDownKey, isEnterKey, isEscapeKey, isKeyRelease, isUpKey } from './keys.js';
 import type { SelectItem, TUI } from '@earendil-works/pi-tui';
 import { getSelectListTheme } from '@earendil-works/pi-coding-agent';
 import { chatTheme, color, paintRow } from './theme.js';
@@ -64,6 +64,7 @@ export class ChatEditor extends Editor {
   }
 
   override handleInput(data: string): void {
+    if (isKeyRelease(data)) return; // Kitty flag-2 release edge — act on the press only (super filters too).
     if (isEscapeKey(data) && !this.isShowingAutocomplete() && this.onEscape?.()) {
       return;
     }
@@ -153,6 +154,7 @@ class PickerModal {
 
   invalidate(): void { this.list.invalidate(); }
   handleInput(data: string): void {
+    if (isKeyRelease(data)) return; // ignore Kitty release edges so one keypress moves/filters once
     // A caller hook (ctrl+d delete, ctrl+r rename, …) wins first.
     if (this.onInput?.(data, this.list.getSelectedItem(), this.onCancel)) return;
     // Type-to-filter — the footer advertises it, so it must actually work. Printable characters (incl.
@@ -285,6 +287,7 @@ class InfoModal {
   ) {}
   invalidate(): void { /* state driven */ }
   handleInput(data: string): void {
+    if (isKeyRelease(data)) return; // ignore Kitty release edges so scroll advances one row per press
     if (isEscapeKey(data) || isEnterKey(data) || data === 'q') { this.onClose(); return; }
     const maxScroll = Math.max(0, this.lines.length - this.viewport);
     if (isDownKey(data)) this.scroll = Math.min(maxScroll, this.scroll + 1);

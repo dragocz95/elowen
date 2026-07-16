@@ -155,14 +155,14 @@ describe('GET /system/readiness', () => {
     let { body } = await getChecks(app);
     expect(body.checks[4]).toEqual({
       id: 'platforms', label: 'Platforms', ok: true, detail: 'none',
-      hint: 'Connect Discord or WhatsApp in Settings → Plugins.',
+      hint: 'Connect Discord, WhatsApp or Telegram in Settings → Plugins.',
     });
 
     ({ app } = makeApp({ model: 'm', patch: { plugins: { enabled: ['files', 'discord', 'whatsapp'], removed: [] } } }));
     ({ body } = await getChecks(app));
     expect(body.checks[4]).toEqual({
       id: 'platforms', label: 'Platforms', ok: true, detail: 'discord, whatsapp',
-      hint: 'Connect Discord or WhatsApp in Settings → Plugins.',
+      hint: 'Connect Discord, WhatsApp or Telegram in Settings → Plugins.',
     });
   });
 

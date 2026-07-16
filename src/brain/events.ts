@@ -90,6 +90,13 @@ export type BrainEvent =
    *  lets a client drill into the child's transcript (`GET /brain/messages?session=…`). Synthetic —
    *  fanned out to the PARENT conversation's listeners; ignoring it is always safe. */
   | { type: 'subagent'; id: string; sessionId: string; status: 'running' | 'done' | 'error'; task: string; detail?: string; tools: number; tokens?: number; seconds: number; model?: string; background?: boolean; autoDeliver?: boolean; resultDelivery?: 'pending' | 'acknowledged' }
+  /** Live snapshot of a declarative sub-agent WORKFLOW (a DAG the delegating agent authored via
+   *  `workflow_start`). One event per state change carries the WHOLE workflow — its overall status and
+   *  the full node list with each node's dependencies, live status, and the child session/tokens/tool
+   *  it is running. Keyed by `id`; a client keeps the latest per id, renders the panel + drill-in modal,
+   *  and may open a node's transcript via its `sessionId`. Synthetic and fanned out to the PARENT
+   *  conversation's listeners exactly like `subagent`; ignoring it is always safe. */
+  | { type: 'workflow'; id: string; title?: string; status: 'running' | 'done' | 'error' | 'cancelled'; nodes: WorkflowNode[] }
   /** The pending message queue for this session — a FULL snapshot (an empty array clears it). Mapped
    *  from PI's native `queue_update` event: a message a user sends while a turn is already streaming is
    *  STEERED into the running turn (delivered between steps, before the next model call), and PI reports
@@ -120,6 +127,25 @@ export type BrainEvent =
 /** The payload a delegating plugin pushes through `ctx.subagentEmitter()` — everything of the
  *  `subagent` BrainEvent except its `type` tag (the host adds that when fanning out). */
 export type SubagentUpdate = Omit<Extract<BrainEvent, { type: 'subagent' }>, 'type'>;
+
+/** One node of a `workflow` snapshot. `sessionId` is set once the node's child agent starts (drill-in
+ *  target); `tokens`/`seconds`/`detail` accumulate the child's live progress; `deps` are the node ids
+ *  that must finish before it runs. Bounded display data only — no result bodies. */
+export interface WorkflowNode {
+  id: string;
+  task: string;
+  status: 'pending' | 'running' | 'done' | 'error';
+  deps: string[];
+  sessionId?: string;
+  detail?: string;
+  tokens?: number;
+  seconds?: number;
+  model?: string;
+}
+
+/** The payload the workflow engine pushes through `ctx.workflowEmitter()` — the whole `workflow`
+ *  BrainEvent except its `type` tag (the host adds that when fanning out to the parent's clients). */
+export type WorkflowUpdate = Omit<Extract<BrainEvent, { type: 'workflow' }>, 'type'>;
 
 /** Terminal result emitted once by the delegating plugin. Unlike SubagentUpdate this carries the
  * bounded result body and is host-only: core persists it before it wakes the parent conversation. */

@@ -586,7 +586,7 @@ describe('chat application shell ownership', () => {
     const context = {
       state: { childView: null }, term: { columns: 80, write: vi.fn() },
       editor: { focused: true, getText: () => 'abc' },
-      stream: { subagentStates: () => [] }, quit: vi.fn(), renderForced: vi.fn(),
+      stream: { subagentStates: () => [], workflowStates: () => [] }, quit: vi.fn(), renderForced: vi.fn(),
       keymap: () => ({ matches: () => false, isLeader: () => false, directAction: () => 'subagent_background' }),
       leader: () => ({ pending: () => false }), dispatchAction, render: vi.fn(),
       animations: { nudgeMascot: vi.fn() }, hasMessages: () => true,

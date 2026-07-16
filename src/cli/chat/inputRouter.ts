@@ -4,7 +4,7 @@ import type { ChatEditor } from './picker.js';
 import type { StreamCoordinatorPort } from './streamCoordinator.js';
 import type { KeybindAction, Keymap } from './keys.js';
 import {
-  isDownKey, isEnterKey, isEscapeKey, isPageDownKey, isPageUpKey, isTabByte, isUpKey,
+  isDownKey, isEnterKey, isEscapeKey, isKeyRelease, isPageDownKey, isPageUpKey, isTabByte, isUpKey,
 } from './keys.js';
 import { mouseClick, mouseEvent, mouseWheel } from './terminalProtocol.js';
 import type { ChatViewport } from './chatViewport.js';
@@ -43,6 +43,7 @@ export interface ChatInputContext {
   setPanelWidth(width: number): void;
   telemetry: TelemetryPanel;
   killProcess(id: string): void;
+  openWorkflowModal(workflowId: string): void;
   rowBudget(): LayoutBudget;
   subPanel: SubagentPanel;
   cardPanel: CardPanel;
@@ -92,6 +93,12 @@ export class InputRouter {
   }
 
   private route(data: string): InputRouteResult {
+    // pi-tui negotiates the Kitty keyboard protocol with flag 2 ("report event types"), so a terminal
+    // that supports it (notably VS Code's integrated terminal) delivers a separate RELEASE event for
+    // every keypress. We bind on the press only — without this guard each key would fire twice (a single
+    // ↑/↓ moves two rows, one ctrl+r cycles reasoning twice). Held-key REPEAT events are kept so
+    // arrow-scroll still auto-repeats; pi-tui's own Editor/SelectList filter releases the same way.
+    if (isKeyRelease(data)) return { consume: true };
     const context = this.context;
     const { state: rt, stream, editor, term } = context;
     const keymap = context.keymap();
@@ -136,6 +143,13 @@ export class InputRouter {
     if (click && noModal && context.panelVisible() && click.x > context.panelLeftEdge()) {
       const localRow = click.y - TOP_RULE_ROWS - 1;
       const localX = click.x - context.panelLeftEdge();
+      if (context.telemetry.isWorkflowHeaderRow(localRow)) {
+        context.telemetry.toggleWorkflows();
+        context.render('input:workflow-toggle');
+        return { consume: true };
+      }
+      const workflow = context.telemetry.workflowAt(localRow);
+      if (workflow) { context.openWorkflowModal(workflow); return { consume: true }; }
       if (context.telemetry.isSubagentHeaderRow(localRow)) {
         context.telemetry.toggleSubagents();
         context.render('input:subagents-toggle');
@@ -185,6 +199,11 @@ export class InputRouter {
       }
     }
     const wheel = mouseWheel(data);
+    if (wheel && noModal && event && context.panelVisible() && event.x > context.panelLeftEdge()
+      && context.telemetry.canScrollWorkflows()) {
+      if (context.telemetry.scrollWorkflows(wheel)) context.render('scroll:workflow');
+      return { consume: true };
+    }
     if (wheel && noModal && event && context.panelVisible() && event.x > context.panelLeftEdge()
       && context.telemetry.canScrollSubagents()) {
       if (context.telemetry.scrollSubagents(wheel)) context.render('scroll:subagents');

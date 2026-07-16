@@ -7,6 +7,7 @@ import type { BrainMessageView } from '../../brain/messageView.js';
 import type { BrainStreamSnapshot } from '../../brain/session/liveEventReplay.js';
 import type { BrainStreamFrame } from './brainClient.js';
 import type { SubagentPanelEntry } from './components.js';
+import type { WorkflowState } from '../../brain/transcript.js';
 import type { ChatState } from './chatState.js';
 import type { ChatApplicationActions, ChatApplicationResources } from './chatCapabilities.js';
 import type { Flows } from './flows.js';
@@ -20,6 +21,7 @@ const historyNotice = (scope: 'conversation' | 'sub-agent', error: unknown): str
 
 export interface StreamCoordinatorPort {
   subagentStates(): readonly SubagentPanelEntry[];
+  workflowStates(): readonly WorkflowState[];
   openSubagent(sessionId: string): Promise<void>;
   closeSubagent(): void;
   cycleSubagent(): void;
@@ -33,6 +35,7 @@ export interface StreamCoordinatorPort {
  * explicitly injected bounded hydrator; all callbacks also capture their stream/session generation. */
 export class StreamCoordinator implements StreamCoordinatorPort {
   readonly subagentStates: () => readonly SubagentPanelEntry[];
+  readonly workflowStates: () => readonly WorkflowState[];
   readonly openSubagent: (sessionId: string) => Promise<void>;
   readonly closeSubagent: () => void;
   readonly cycleSubagent: () => void;
@@ -74,6 +77,7 @@ export class StreamCoordinator implements StreamCoordinatorPort {
     };
 
     const subagentStates = (): readonly SubagentPanelEntry[] => rt.transcript.subagents();
+    const workflowStates = (): readonly WorkflowState[] => rt.transcript.workflows();
     const subagentSessions = (): { sessionId: string }[] =>
       subagentStates().map(({ sessionId }) => ({ sessionId }));
 
@@ -463,6 +467,7 @@ export class StreamCoordinator implements StreamCoordinatorPort {
     };
 
     this.subagentStates = subagentStates;
+    this.workflowStates = workflowStates;
     this.openSubagent = openSubagent;
     this.closeSubagent = closeSubagent;
     this.cycleSubagent = cycleSubagent;

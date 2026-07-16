@@ -2,6 +2,7 @@ import { truncateToWidth, visibleWidth } from '@earendil-works/pi-tui';
 import type { Component } from '@earendil-works/pi-tui';
 import { padAnsi } from '../ui/text.js';
 import { ansi, chatTheme, color, paintRow } from './theme.js';
+import { fuzzyScore } from './fuzzy.js';
 
 export interface SuggestionItem {
   value: string;
@@ -9,7 +10,7 @@ export interface SuggestionItem {
   description?: string;
 }
 
-export type SuggestionKind = 'commands' | 'files';
+export type SuggestionKind = 'commands' | 'files' | 'args';
 
 const bgFill = (text: string, width: number): string => paintRow(chatTheme().inputBg, text, width);
 
@@ -67,8 +68,8 @@ export class SuggestionOverlay implements Component {
 
     const cap = this.maxRows ?? Number.POSITIVE_INFINITY;
     const compact = innerWidth < 55;
-    const subject = this.kind === 'commands' ? 'commands' : 'files';
-    const action = this.kind === 'commands' ? 'run' : 'attach';
+    const subject = this.kind === 'commands' ? 'commands' : this.kind === 'args' ? 'models' : 'files';
+    const action = this.kind === 'commands' ? 'run' : this.kind === 'args' ? 'switch' : 'attach';
     const hintText = compact
       ? `${subject} · ↑↓ · tab/enter · esc`
       : `${subject} · ↑↓ select · tab/enter ${action} · esc dismiss`;
@@ -101,26 +102,10 @@ export class SuggestionOverlay implements Component {
   }
 
   private filteredCommands(): SuggestionItem[] {
-    const query = this.filter.trim().toLowerCase().replace(/^\//, '');
-    const score = (item: SuggestionItem): number => {
-      if (!query) return 1;
-      const name = item.value.replace(/^\//, '').toLowerCase();
-      const description = (item.description ?? '').toLowerCase();
-      if (name === query) return 100;
-      if (name.startsWith(query)) return 80;
-      if (name.includes(query)) return 60;
-      if (description.includes(query)) return 35;
-      let position = 0;
-      for (const character of query) {
-        position = name.indexOf(character, position);
-        if (position === -1) return 0;
-        position++;
-      }
-      return 20;
-    };
+    const query = this.filter.replace(/^\//, '');
     return this.items
-      .map((item) => ({ item, score: score(item) }))
-      .filter(({ score: value }) => value > 0)
+      .map((item) => ({ item, score: fuzzyScore(query, item.value.replace(/^\//, ''), item.description ?? '') }))
+      .filter(({ score }) => score > 0)
       .sort((left, right) => right.score - left.score || left.item.value.localeCompare(right.item.value))
       .map(({ item }) => item);
   }
@@ -167,4 +152,11 @@ export class SlashOverlay extends SuggestionOverlay {
 
 export class MentionOverlay extends SuggestionOverlay {
   constructor() { super('files'); }
+}
+
+/** Argument-completion overlay (e.g. `/model <name>`): caller-managed items like a mention overlay, but
+ *  labelled for switching rather than attaching. Its item values are the full `/command arg` string, so
+ *  the shared slash tab/enter completion path applies it unchanged. */
+export class ArgOverlay extends SuggestionOverlay {
+  constructor() { super('args'); }
 }

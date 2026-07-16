@@ -2,7 +2,7 @@ import { matchesKey, visibleWidth } from '@earendil-works/pi-tui';
 import type { Component, Editor, Focusable, TUI } from '@earendil-works/pi-tui';
 import {
   KEYBIND_ACTIONS, activeKeymap, chordFromInput, createKeymap, initKeymap, isDownKey, isEnterKey,
-  isEscapeKey, isUpKey, keybindDefault, keybindRows, parseKeybind,
+  isEscapeKey, isKeyRelease, isUpKey, keybindDefault, keybindRows, parseKeybind,
 } from './keys.js';
 import type { KeybindAction, KeybindRow, Keymap } from './keys.js';
 import { loadPrefs, savePrefs } from './prefs.js';
@@ -116,6 +116,7 @@ export class KeybindsEditor implements Component, Focusable {
   }
 
   handleInput(data: string): void {
+    if (isKeyRelease(data)) return; // Kitty release edge — capture and navigation act on the press only
     if (this.mode === 'capture') { this.capture(data); return; }
     if (this.mode === 'capture2') { this.capture2(data); return; }
     if (isEscapeKey(data)) { this.opts.onClose(); return; }

@@ -2,8 +2,9 @@ import { truncateToWidth, visibleWidth } from '@earendil-works/pi-tui';
 import type { Component } from '@earendil-works/pi-tui';
 import { MASCOT_ART } from './mascot.js';
 import { FLOAT_BAND } from './mascotFloat.js';
-import { ProcessPanel, SubagentPanel } from './components.js';
+import { ProcessPanel, SubagentPanel, WorkflowPanel } from './components.js';
 import type { SubagentPanelEntry } from './components.js';
+import type { WorkflowState } from '../../brain/transcript.js';
 import { chatTheme, color, paintRow } from './theme.js';
 import type { BrainRateLimits, BrainRateLimitWindow, BrainUsageView, GoalView, McpServerView } from './brainClient.js';
 import type { ProcessInfo } from '../../brain/processRegistry.js';
@@ -24,6 +25,8 @@ export interface TelemetryState {
   processes?: ProcessInfo[];
   /** Running delegated sessions. Settled agents stay in the transcript; only live work appears here. */
   subagents?: readonly SubagentPanelEntry[];
+  /** Running sub-agent workflows (DAGs). Each row opens the navigable workflow modal. */
+  workflows?: readonly WorkflowState[];
   /** OpenAI OAuth subscription usage. Null on other providers/accounts, which hides the whole section. */
   rateLimits?: BrainRateLimits | null;
   /** Active persistent goal. Terminal states disappear; durable history remains in the conversation. */
@@ -37,8 +40,9 @@ const PANEL_BAR_MARGIN = 2;
 const MCP_NAMES_SHOWN = 4;
 const PROCESS_ROWS_SHOWN = 5;
 const SUBAGENT_ROWS_SHOWN = 5;
+const WORKFLOW_ROWS_SHOWN = 4;
 
-type TelemetrySectionId = 'context' | 'goal' | 'limits' | 'subagents' | 'processes' | 'project' | 'mcp' | 'lsp';
+type TelemetrySectionId = 'context' | 'goal' | 'limits' | 'workflow' | 'subagents' | 'processes' | 'project' | 'mcp' | 'lsp';
 
 interface TelemetrySection {
   id: TelemetrySectionId;
@@ -51,13 +55,16 @@ interface TelemetryRows {
   rows: string[];
   processTop: number;
   subagentTop: number;
+  workflowTop: number;
 }
 
 export class TelemetryPanel implements Component {
   private readonly processPanel = new ProcessPanel();
   private readonly subagentPanel = new SubagentPanel();
+  private readonly workflowPanel = new WorkflowPanel();
   private processTop = -1;
   private subagentTop = -1;
+  private workflowTop = -1;
   private maxRows: number | null = null;
   constructor(private getState: () => TelemetryState) {}
   invalidate(): void { /* state driven */ }
@@ -89,6 +96,15 @@ export class TelemetryPanel implements Component {
   }
   canScrollSubagents(): boolean { return this.subagentPanel.canScroll(); }
   scrollSubagents(delta: number): boolean { return this.subagentPanel.scroll(delta); }
+  isWorkflowHeaderRow(row: number): boolean {
+    return this.workflowTop >= 0 && this.workflowPanel.isHeaderRow(row - this.workflowTop);
+  }
+  toggleWorkflows(): void { this.workflowPanel.toggleCollapsed(); }
+  workflowAt(row: number): string | null {
+    return this.workflowTop >= 0 ? this.workflowPanel.targetAt(row - this.workflowTop) : null;
+  }
+  canScrollWorkflows(): boolean { return this.workflowPanel.canScroll(); }
+  scrollWorkflows(delta: number): boolean { return this.workflowPanel.scroll(delta); }
   render(width: number): string[] {
     const st = this.getState();
     const sections = this.sections(st, width);
@@ -103,6 +119,9 @@ export class TelemetryPanel implements Component {
     this.subagentTop = functional.subagentTop < 0
       ? -1
       : functional.subagentTop + (showMascot ? mascotRows.length : 0);
+    this.workflowTop = functional.workflowTop < 0
+      ? -1
+      : functional.workflowTop + (showMascot ? mascotRows.length : 0);
     if (this.maxRows != null) {
       rows.splice(this.maxRows);
       while (rows.length < this.maxRows) rows.push('');
@@ -123,6 +142,9 @@ export class TelemetryPanel implements Component {
     this.subagentPanel.set(st.subagents ?? []);
     this.subagentPanel.setMaxRows(SUBAGENT_ROWS_SHOWN);
     const subagentRows = this.subagentPanel.render(width);
+    this.workflowPanel.set(st.workflows ?? []);
+    this.workflowPanel.setMaxRows(WORKFLOW_ROWS_SHOWN);
+    const workflowRows = this.workflowPanel.render(width);
     const sections: TelemetrySection[] = [
       {
         id: 'context', minimumRows: 3,
@@ -140,6 +162,9 @@ export class TelemetryPanel implements Component {
     }
     if (limitRows.length > 0) {
       sections.push({ id: 'limits', rows: limitRows, minimumRows: limitRows.length });
+    }
+    if (workflowRows.length > 0) {
+      sections.push({ id: 'workflow', rows: workflowRows, minimumRows: Math.min(2, workflowRows.length) });
     }
     if (subagentRows.length > 0) {
       sections.push({ id: 'subagents', rows: subagentRows, minimumRows: Math.min(2, subagentRows.length) });
@@ -166,15 +191,17 @@ export class TelemetryPanel implements Component {
     const rows: string[] = [];
     let processTop = -1;
     let subagentTop = -1;
+    let workflowTop = -1;
     for (const section of sections) {
       const count = rowCounts ? (rowCounts.get(section.id) ?? 0) : section.rows.length;
       if (count <= 0) continue;
       if (rows.length > 0) rows.push('');
       if (section.id === 'processes') processTop = rows.length;
       if (section.id === 'subagents') subagentTop = rows.length;
+      if (section.id === 'workflow') workflowTop = rows.length;
       rows.push(...section.rows.slice(0, count));
     }
-    return { rows, processTop, subagentTop };
+    return { rows, processTop, subagentTop, workflowTop };
   }
 
   /** Protect the two core sections first. Optional sections then receive a useful minimum in priority
@@ -184,7 +211,8 @@ export class TelemetryPanel implements Component {
     const budget = Math.max(0, Math.floor(maxRows));
     if (budget === 0) {
       this.subagentPanel.setMaxRows(0);
-      return { rows: [], processTop: -1, subagentTop: -1 };
+      this.workflowPanel.setMaxRows(0);
+      return { rows: [], processTop: -1, subagentTop: -1, workflowTop: -1 };
     }
     const counts = new Map<TelemetrySectionId, number>();
     let used = 0;
@@ -200,11 +228,11 @@ export class TelemetryPanel implements Component {
       const section = sections.find((candidate) => candidate.id === id);
       if (section) select(section, section.rows.length);
     }
-    for (const id of ['goal', 'subagents', 'limits', 'processes', 'mcp', 'lsp'] as const) {
+    for (const id of ['goal', 'workflow', 'subagents', 'limits', 'processes', 'mcp', 'lsp'] as const) {
       const section = sections.find((candidate) => candidate.id === id);
       if (section) select(section, section.minimumRows);
     }
-    for (const id of ['goal', 'subagents', 'limits', 'processes', 'mcp', 'lsp'] as const) {
+    for (const id of ['goal', 'workflow', 'subagents', 'limits', 'processes', 'mcp', 'lsp'] as const) {
       const section = sections.find((candidate) => candidate.id === id);
       const current = section ? counts.get(id) : undefined;
       if (!section || current == null || current >= section.rows.length) continue;
@@ -225,6 +253,11 @@ export class TelemetryPanel implements Component {
     if (subagents) {
       this.subagentPanel.setMaxRows(counts.get('subagents') ?? 0);
       subagents.rows = this.subagentPanel.render(width);
+    }
+    const workflow = sections.find((section) => section.id === 'workflow');
+    if (workflow) {
+      this.workflowPanel.setMaxRows(counts.get('workflow') ?? 0);
+      workflow.rows = this.workflowPanel.render(width);
     }
     return this.composeSections(sections, counts);
   }

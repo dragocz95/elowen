@@ -6,6 +6,7 @@ import {
   type HistoryMessage,
   type SubagentState,
   type ToolItem,
+  type WorkflowState,
 } from './transcript.js';
 
 const TRANSCRIPT_CHANGE_JOURNAL_LIMIT = 4_096;
@@ -65,6 +66,10 @@ export class TranscriptModel implements TranscriptRead {
   private readonly subagentIndices = new Map<string, number>();
   private readonly subagentSources = new Map<string, Set<string>>();
   private readonly sourceSessions = new Map<string, string>();
+  /** Live workflow snapshots, latest-per-id. A standalone side panel (not attached to a turn), so it is
+   *  kept as its own indexed projection rather than hung off a tool location. */
+  private workflowProjection: WorkflowState[] = [];
+  private readonly workflowIndices = new Map<string, number>();
   private lastAssistant = '';
   private thinkingState = false;
   private compactionActive = false;
@@ -91,6 +96,7 @@ export class TranscriptModel implements TranscriptRead {
 
   turnAt(index: number): ChatTurn | undefined { return this.visit(index); }
   subagents(): readonly SubagentState[] { return this.subagentProjection; }
+  workflows(): readonly WorkflowState[] { return this.workflowProjection; }
   lastAssistantText(): string { return this.lastAssistant; }
 
   replaceHistory(history: HistoryMessage[]): void {
@@ -194,6 +200,22 @@ export class TranscriptModel implements TranscriptRead {
         this.publish({ kind: 'turn', index: location.turn });
         return true;
       }
+      case 'workflow': {
+        // A workflow snapshot is the WHOLE DAG; keep only the latest per id. It is a standalone panel,
+        // not a turn, so publish a revision bump with no dirty turn — the side panel re-reads workflows().
+        const projected = Object.freeze({ ...event, nodes: event.nodes.map((n) => Object.freeze({ ...n })) }) as WorkflowState;
+        const index = this.workflowIndices.get(event.id);
+        this.workflowProjection = this.workflowProjection.slice();
+        if (index === undefined) {
+          this.workflowIndices.set(event.id, this.workflowProjection.length);
+          this.workflowProjection.push(projected);
+        } else {
+          this.workflowProjection[index] = projected;
+        }
+        Object.freeze(this.workflowProjection);
+        this.publish({ kind: 'none' });
+        return true;
+      }
       case 'session':
         this.turns.length = 0;
         this.clearDerived();
@@ -286,6 +308,9 @@ export class TranscriptModel implements TranscriptRead {
     this.subagentIndices.clear();
     this.subagentSources.clear();
     this.sourceSessions.clear();
+    this.workflowProjection = [];
+    this.workflowIndices.clear();
+    Object.freeze(this.workflowProjection);
     if (!mutableProjection) this.freezeSubagents();
   }
 

@@ -5,7 +5,7 @@
 
 import { createSyntheticSourceInfo, type PromptTemplate } from '@earendil-works/pi-coding-agent';
 
-export type SlashSurface = 'cli' | 'discord' | 'whatsapp' | 'web';
+export type SlashSurface = 'cli' | 'discord' | 'whatsapp' | 'telegram' | 'web';
 
 /** How a surface handles the command once the user picks it:
  *  - `action`: a server-side effect with no chooser (new, stop, compact, restart) — POST /brain/command.
@@ -49,7 +49,7 @@ export const SLASH_COMMANDS: readonly SlashCommandDef[] = [
   // default is edited in web Account → Elowen AI (or PATCH /auth/me/permissions).
   { name: 'yolo', description: 'YOLO — auto-approve tool asks for this session ("on"/"off" or toggle)', kind: 'action', surfaces: ['cli'] },
   { name: 'model', description: 'Switch the AI model', kind: 'picker' },
-  { name: 'fast', description: 'Toggle OpenAI OAuth priority processing', kind: 'action', surfaces: ['cli', 'discord', 'whatsapp', 'web'] },
+  { name: 'fast', description: 'Toggle OpenAI OAuth priority processing', kind: 'action', surfaces: ['cli', 'discord', 'whatsapp', 'telegram', 'web'] },
   // CLI-only: the reasoning-effort picker is wired in the TUI. Discord tunes reasoning through its own
   // native command surface; the web dock has no picker for it yet (would show a dead menu entry).
   { name: 'reasoning', description: 'Set the reasoning effort · "show" toggles Thought rows', kind: 'picker', surfaces: ['cli'] },

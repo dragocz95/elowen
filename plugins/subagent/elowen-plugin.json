@@ -9,7 +9,10 @@
       "delegate",
       "delegate_status",
       "delegate_result",
-      "delegate_models"
+      "delegate_models",
+      "workflow_start",
+      "workflow_add_nodes",
+      "workflow_status"
     ],
     "platforms": [
       "subagent"
@@ -19,6 +22,9 @@
     "delegate": "\ud83e\udd1d",
     "delegate_status": "\u23f3",
     "delegate_result": "\ud83d\udce5",
-    "delegate_models": "\ud83e\udd1d"
+    "delegate_models": "\ud83e\udd1d",
+    "workflow_start": "\ud83d\udd00",
+    "workflow_add_nodes": "\u2795",
+    "workflow_status": "\ud83d\udcca"
   }
 }

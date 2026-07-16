@@ -7,10 +7,10 @@ import { isCanonicalThinkingLevel } from '../brain/modelCapabilities.js';
 /** Typed per-user CLI/brain settings. `model`/`modelProvider` empty → use the configured brain default.
  *  `autoCompactAt` is the context-window fill percentage at which the conversation is auto-summarized.
  *  `advisorStyle` picks the advisor's communication style (the `{{personality}}` prompt paragraph). */
-export interface CliSettings { model: string; modelProvider: string; visionModel: string; visionModelProvider: string; thinkingLevel: string; autoCompact: boolean; autoCompactAt: number; advisorStyle: string; discordUserId: string; whatsappNumber: string; autoRecall: boolean; autoSave: boolean }
+export interface CliSettings { model: string; modelProvider: string; visionModel: string; visionModelProvider: string; thinkingLevel: string; autoCompact: boolean; autoCompactAt: number; advisorStyle: string; discordUserId: string; whatsappNumber: string; telegramUserId: string; autoRecall: boolean; autoSave: boolean }
 export interface ProjectModelPreference { provider: string; model: string }
 // autoRecall/autoSave default to true so upgrading users keep the prior always-on memory behaviour.
-const CLI_DEFAULTS: CliSettings = { model: '', modelProvider: '', visionModel: '', visionModelProvider: '', thinkingLevel: '', autoCompact: false, autoCompactAt: 80, advisorStyle: DEFAULT_ADVISOR_STYLE, discordUserId: '', whatsappNumber: '', autoRecall: true, autoSave: true };
+const CLI_DEFAULTS: CliSettings = { model: '', modelProvider: '', visionModel: '', visionModelProvider: '', thinkingLevel: '', autoCompact: false, autoCompactAt: 80, advisorStyle: DEFAULT_ADVISOR_STYLE, discordUserId: '', whatsappNumber: '', telegramUserId: '', autoRecall: true, autoSave: true };
 
 /** Raised when a user tries to link a Discord snowflake another user has already claimed. The route
  *  maps it to a 409 with a Czech user message; the identity link stays with the original owner. */
@@ -27,6 +27,15 @@ export class WhatsAppNumberConflictError extends Error {
   constructor(public readonly whatsappNumber: string) {
     super(`whatsapp number ${whatsappNumber} is already linked to another user`);
     this.name = 'WhatsAppNumberConflictError';
+  }
+}
+
+/** Raised when a user tries to link a Telegram numeric user id another user has already claimed. Mirrors
+ *  {@link DiscordIdConflictError}; the route maps it to a 409 with a Czech user message. */
+export class TelegramIdConflictError extends Error {
+  constructor(public readonly telegramUserId: string) {
+    super(`telegram id ${telegramUserId} is already linked to another user`);
+    this.name = 'TelegramIdConflictError';
   }
 }
 
@@ -106,6 +115,7 @@ export class UserSettingStore {
       advisorStyle: isAdvisorStyle(all.advisorStyle) ? all.advisorStyle : CLI_DEFAULTS.advisorStyle,
       discordUserId: all.discordUserId ?? CLI_DEFAULTS.discordUserId,
       whatsappNumber: all.whatsappNumber ?? CLI_DEFAULTS.whatsappNumber,
+      telegramUserId: all.telegramUserId ?? CLI_DEFAULTS.telegramUserId,
       autoRecall: all.autoRecall !== undefined ? all.autoRecall === 'true' : CLI_DEFAULTS.autoRecall,
       autoSave: all.autoSave !== undefined ? all.autoSave === 'true' : CLI_DEFAULTS.autoSave,
     };
@@ -156,6 +166,19 @@ export class UserSettingStore {
           try { this.set(userId, 'whatsappNumber', v); }
           catch (e) {
             if (isUniqueViolation(e)) throw new WhatsAppNumberConflictError(v);
+            throw e;
+          }
+        }
+      }
+      // A Telegram numeric user id links a Telegram account to this Elowen account, same squatter
+      // protection as Discord via a partial UNIQUE index on (value WHERE key='telegramUserId').
+      if (patch.telegramUserId !== undefined) {
+        const v = String(patch.telegramUserId).trim();
+        if (!/^\d{5,25}$/.test(v)) this.remove(userId, 'telegramUserId');
+        else {
+          try { this.set(userId, 'telegramUserId', v); }
+          catch (e) {
+            if (isUniqueViolation(e)) throw new TelegramIdConflictError(v);
             throw e;
           }
         }

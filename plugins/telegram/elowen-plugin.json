@@ -1,0 +1,273 @@
+{
+  "name": "telegram",
+  "version": "0.1.0",
+  "apiVersion": "1",
+  "description": "Telegram bot (grammY): message it and it answers from Elowen AI. Slash commands (/model, /reasoning, /display, /new, /help), per-chat model and presentation settings, live tool activity with independent answer delivery, status reactions and proactive cron/tick pushes. Chat tools (admin sessions): chat & member info, member count, pin/unpin, delete messages, ban/unban, promote, set title/description, forum topics (create/edit/close), plus send a message to any chat (operator). Each rolePolicy maps a Telegram user id / @username / chat id to allowed Elowen projects + a role prompt.",
+  "entry": "index.mjs",
+  "provides": {
+    "platforms": [
+      "telegram"
+    ],
+    "tools": [
+      "telegram_api",
+      "telegram_send",
+      "telegram_chat_info",
+      "telegram_get_members_count",
+      "telegram_member_info",
+      "telegram_pin_message",
+      "telegram_unpin_message",
+      "telegram_delete_message",
+      "telegram_ban_member",
+      "telegram_unban_member",
+      "telegram_promote_member",
+      "telegram_set_chat_title",
+      "telegram_set_chat_description",
+      "telegram_create_forum_topic",
+      "telegram_edit_forum_topic",
+      "telegram_close_forum_topic"
+    ]
+  },
+  "icons": { "telegram_*": "✈️" },
+  "requires": {
+    "config": [
+      "botToken"
+    ]
+  },
+  "configSchema": [
+    {
+      "key": "sec_connection",
+      "label": "Connection",
+      "type": "section",
+      "hint": "The bot token and where it listens."
+    },
+    {
+      "key": "botToken",
+      "label": "Bot token",
+      "type": "secret",
+      "required": true,
+      "hint": "Telegram → @BotFather → /newbot (or an existing bot's token). To let the bot see all group messages, disable BotFather → Bot Settings → Group Privacy."
+    },
+    {
+      "key": "allowedChatIds",
+      "label": "Allowed chats",
+      "type": "string",
+      "hint": "Comma-separated chat IDs (a numeric user/group id, e.g. 123456789 or -1001234567890). Empty = respond everywhere allowed. When set, the bot only responds in these chats."
+    },
+    {
+      "key": "notifyChatId",
+      "label": "Notification chat ID",
+      "type": "string",
+      "hint": "Where proactive messages (cron/tick results, escalations) are posted — a numeric chat id or @channelusername. Empty = no proactive pushes."
+    },
+    {
+      "key": "sec_replies",
+      "label": "Replies & behavior",
+      "type": "section",
+      "hint": "When and how the bot answers."
+    },
+    {
+      "key": "respondWithoutMention",
+      "label": "Respond without mention",
+      "type": "boolean",
+      "default": true,
+      "hint": "On: in groups the bot answers every message from a mapped sender. Off: in groups it only answers when @mentioned or when its message is replied to. Direct chats always get an answer."
+    },
+    {
+      "key": "toolActivity",
+      "label": "Tool activity",
+      "type": "enum",
+      "default": "status",
+      "options": [
+        { "value": "off", "label": "Off" },
+        { "value": "status", "label": "Live status" },
+        { "value": "live", "label": "Live output" }
+      ],
+      "hint": "Off hides the work trace. Live status updates tool start/completion. Live output also streams bounded run_command progress. Override per chat with /display."
+    },
+    {
+      "key": "answerMode",
+      "label": "Answer delivery",
+      "type": "enum",
+      "default": "final",
+      "options": [
+        { "value": "final", "label": "Final answer only" },
+        { "value": "live", "label": "Stream answer live" }
+      ],
+      "hint": "Final posts one complete answer below the live tool trace. Live edits the answer while it is written. Override per chat with /display."
+    },
+    {
+      "key": "toolOutput",
+      "label": "Tool output detail",
+      "type": "enum",
+      "default": "summary",
+      "options": [
+        { "value": "hidden", "label": "Status only" },
+        { "value": "summary", "label": "Short summary" },
+        { "value": "tail", "label": "Rolling output tail" }
+      ],
+      "hint": "Controls how much bounded tool output appears below each status. Raw full output is never dumped into Telegram."
+    },
+    {
+      "key": "toolMessageMode",
+      "label": "Tool message layout",
+      "type": "enum",
+      "default": "single",
+      "options": [
+        { "value": "single", "label": "One live message" },
+        { "value": "per_tool", "label": "One message per tool" }
+      ],
+      "hint": "One live message keeps the chat compact. One message per tool gives every tool call its own editable Telegram message."
+    },
+    {
+      "key": "reactions",
+      "label": "Status reactions",
+      "type": "boolean",
+      "default": true,
+      "hint": "React 👀 while thinking, 👍/👎 when done (Telegram allows only a limited reaction emoji set; unsupported ones are skipped)."
+    },
+    {
+      "key": "runtimeFooter",
+      "label": "Runtime footer",
+      "type": "boolean",
+      "default": true,
+      "hint": "Append a small \"model · context %\" line under the final reply."
+    },
+    {
+      "key": "showReasoning",
+      "label": "Show reasoning",
+      "type": "boolean",
+      "default": false,
+      "hint": "Stream the model's reasoning into the progress message (extended-thinking models). Off by default — it's usually noise."
+    },
+    {
+      "key": "language",
+      "label": "Service language",
+      "type": "string",
+      "default": "en",
+      "hint": "Language of the bot's own service messages (/new, /model, placeholders): en (default) or cs."
+    },
+    {
+      "key": "sec_conversation",
+      "label": "Conversation",
+      "type": "section",
+      "hint": "Image routing."
+    },
+    {
+      "key": "visionModel",
+      "label": "Vision model",
+      "type": "model",
+      "hint": "Model used for turns that carry image attachments (must support vision). Empty = the chat's normal model."
+    },
+    {
+      "key": "sec_media",
+      "label": "Media limits",
+      "type": "section",
+      "advanced": true,
+      "hint": "Caps on inbound/outbound images and how long a pending question stays open."
+    },
+    {
+      "key": "maxImageBytes",
+      "label": "Max inbound image size",
+      "type": "number",
+      "min": 1048576,
+      "max": 20971520,
+      "step": 1048576,
+      "placeholder": "5242880",
+      "default": 5242880,
+      "hint": "Largest image attachment (bytes) the bot downloads for vision; bigger ones are noted instead."
+    },
+    {
+      "key": "maxImages",
+      "label": "Max images per message",
+      "type": "number",
+      "min": 1,
+      "max": 10,
+      "step": 1,
+      "placeholder": "4",
+      "default": 4,
+      "hint": "How many image attachments in a single incoming message the bot sends to the vision model."
+    },
+    {
+      "key": "maxUploadImages",
+      "label": "Max images per reply",
+      "type": "number",
+      "min": 1,
+      "max": 10,
+      "step": 1,
+      "placeholder": "4",
+      "default": 4,
+      "hint": "How many generated images the bot attaches to a single outgoing reply."
+    },
+    {
+      "key": "askTimeoutMs",
+      "label": "Question timeout (ms)",
+      "type": "number",
+      "min": 30000,
+      "max": 1800000,
+      "step": 30000,
+      "placeholder": "360000",
+      "default": 360000,
+      "hint": "How long a pending ask_user_question stays open for a button tap or free-text reply before it's dropped as stale."
+    },
+    {
+      "key": "sec_voice",
+      "label": "Voice",
+      "type": "section",
+      "hint": "Speech-to-text and text-to-speech (optional; reuses the voice provider's key)."
+    },
+    {
+      "key": "voiceProvider",
+      "label": "Voice provider",
+      "type": "provider",
+      "providerType": "openai",
+      "hint": "Which configured OpenAI-compatible provider powers voice (Whisper STT + TTS) — reuses that provider's key, no separate key here. Add providers in Settings → Brain. Leave empty to keep voice off."
+    },
+    {
+      "key": "stt",
+      "label": "Transcribe voice messages",
+      "type": "boolean",
+      "default": false,
+      "hint": "Transcribe incoming voice messages / audio attachments with Whisper so the agent understands them. Needs the OpenAI API key."
+    },
+    {
+      "key": "sttModel",
+      "label": "Speech-to-text model",
+      "type": "string",
+      "default": "whisper-1",
+      "hint": "Whisper transcription model (default: whisper-1)."
+    },
+    {
+      "key": "tts",
+      "label": "Speak replies (default)",
+      "type": "boolean",
+      "default": false,
+      "hint": "Default for chats: attach a spoken-audio version of replies as a voice note. Toggle live per chat with /voice. Needs the OpenAI API key."
+    },
+    {
+      "key": "ttsModel",
+      "label": "Text-to-speech model",
+      "type": "string",
+      "default": "gpt-4o-mini-tts",
+      "hint": "TTS model (default: gpt-4o-mini-tts)."
+    },
+    {
+      "key": "ttsVoice",
+      "label": "TTS voice",
+      "type": "string",
+      "default": "alloy",
+      "hint": "Voice: alloy, echo, fable, onyx, nova or shimmer (default: alloy)."
+    },
+    {
+      "key": "sec_roles",
+      "label": "Role policies",
+      "type": "section",
+      "hint": "Map Telegram senders to allowed projects, a role prompt and the tools the bot may use."
+    },
+    {
+      "key": "rolePolicies",
+      "label": "Role policies",
+      "type": "rolePolicies",
+      "hint": "First matching policy wins; senders with no mapped policy are ignored. The ID is a Telegram user ID (123456789), an @username, or a whole chat ID (…negative for groups) — a chat ID grants access to everyone in it. Mark a policy admin to let it switch the model and use the chat tools. Each policy may also restrict which tools the bot can use for it."
+    }
+  ]
+}

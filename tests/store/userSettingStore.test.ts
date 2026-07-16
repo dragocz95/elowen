@@ -1,17 +1,17 @@
 import { describe, it, expect } from 'vitest';
 import { openDb } from '../../src/store/db.js';
-import { UserSettingStore, DiscordIdConflictError, WhatsAppNumberConflictError } from '../../src/store/userSettingStore.js';
+import { UserSettingStore, DiscordIdConflictError, WhatsAppNumberConflictError, TelegramIdConflictError } from '../../src/store/userSettingStore.js';
 
 describe('UserSettingStore', () => {
   it('defaults CLI settings when nothing is stored', () => {
     const s = new UserSettingStore(openDb(':memory:'));
-    expect(s.cliSettings(1)).toEqual({ model: '', modelProvider: '', visionModel: '', visionModelProvider: '', thinkingLevel: '', autoCompact: false, autoCompactAt: 80, advisorStyle: 'professional', discordUserId: '', whatsappNumber: '', autoRecall: true, autoSave: true });
+    expect(s.cliSettings(1)).toEqual({ model: '', modelProvider: '', visionModel: '', visionModelProvider: '', thinkingLevel: '', autoCompact: false, autoCompactAt: 80, advisorStyle: 'professional', discordUserId: '', whatsappNumber: '', telegramUserId: '', autoRecall: true, autoSave: true });
   });
 
   it('round-trips model + autoCompact + threshold via the typed helper', () => {
     const s = new UserSettingStore(openDb(':memory:'));
-    s.setCliSettings(1, { model: 'ollama/kimi-k2.7-code', modelProvider: 'relay', visionModel: '', visionModelProvider: '', thinkingLevel: '', autoCompact: true, autoCompactAt: 70, advisorStyle: 'professional', discordUserId: '', whatsappNumber: '', autoRecall: true, autoSave: true });
-    expect(s.cliSettings(1)).toEqual({ model: 'ollama/kimi-k2.7-code', modelProvider: 'relay', visionModel: '', visionModelProvider: '', thinkingLevel: '', autoCompact: true, autoCompactAt: 70, advisorStyle: 'professional', discordUserId: '', whatsappNumber: '', autoRecall: true, autoSave: true });
+    s.setCliSettings(1, { model: 'ollama/kimi-k2.7-code', modelProvider: 'relay', visionModel: '', visionModelProvider: '', thinkingLevel: '', autoCompact: true, autoCompactAt: 70, advisorStyle: 'professional', discordUserId: '', whatsappNumber: '', telegramUserId: '', autoRecall: true, autoSave: true });
+    expect(s.cliSettings(1)).toEqual({ model: 'ollama/kimi-k2.7-code', modelProvider: 'relay', visionModel: '', visionModelProvider: '', thinkingLevel: '', autoCompact: true, autoCompactAt: 70, advisorStyle: 'professional', discordUserId: '', whatsappNumber: '', telegramUserId: '', autoRecall: true, autoSave: true });
   });
 
   it('round-trips the provider-native max reasoning level', () => {
@@ -47,7 +47,7 @@ describe('UserSettingStore', () => {
     const s = new UserSettingStore(openDb(':memory:'));
     s.setCliSettings(1, { model: 'm', autoCompact: true });
     s.setCliSettings(1, { model: 'n' });
-    expect(s.cliSettings(1)).toEqual({ model: 'n', modelProvider: '', visionModel: '', visionModelProvider: '', thinkingLevel: '', autoCompact: true, autoCompactAt: 80, advisorStyle: 'professional', discordUserId: '', whatsappNumber: '', autoRecall: true, autoSave: true });
+    expect(s.cliSettings(1)).toEqual({ model: 'n', modelProvider: '', visionModel: '', visionModelProvider: '', thinkingLevel: '', autoCompact: true, autoCompactAt: 80, advisorStyle: 'professional', discordUserId: '', whatsappNumber: '', telegramUserId: '', autoRecall: true, autoSave: true });
   });
 
   it('isolates settings per user', () => {
@@ -72,7 +72,7 @@ describe('UserSettingStore', () => {
     const s = new UserSettingStore(openDb(':memory:'));
     s.setCliSettings(1, { model: 'a', autoCompact: true });
     s.removeForUser(1);
-    expect(s.cliSettings(1)).toEqual({ model: '', modelProvider: '', visionModel: '', visionModelProvider: '', thinkingLevel: '', autoCompact: false, autoCompactAt: 80, advisorStyle: 'professional', discordUserId: '', whatsappNumber: '', autoRecall: true, autoSave: true });
+    expect(s.cliSettings(1)).toEqual({ model: '', modelProvider: '', visionModel: '', visionModelProvider: '', thinkingLevel: '', autoCompact: false, autoCompactAt: 80, advisorStyle: 'professional', discordUserId: '', whatsappNumber: '', telegramUserId: '', autoRecall: true, autoSave: true });
   });
 
   it('terminal settings default, round-trip, merge, and survive a corrupt blob', () => {
@@ -143,6 +143,24 @@ describe('UserSettingStore', () => {
     expect(() => s.setCliSettings(2, { whatsappNumber: '420778433908' })).toThrow(WhatsAppNumberConflictError);
     expect(s.cliSettings(2).whatsappNumber).toBe('');
     expect(s.userIdBySetting('whatsappNumber', '420778433908')).toBe(1);
+  });
+
+  it('links a Telegram numeric user id and reverse-looks-it-up; too-short clears', () => {
+    const s = new UserSettingStore(openDb(':memory:'));
+    s.setCliSettings(1, { telegramUserId: '123456789' });
+    expect(s.cliSettings(1).telegramUserId).toBe('123456789');
+    expect(s.userIdBySetting('telegramUserId', '123456789')).toBe(1);
+    s.setCliSettings(1, { telegramUserId: '12' }); // too short → clears
+    expect(s.cliSettings(1).telegramUserId).toBe('');
+    expect(s.userIdBySetting('telegramUserId', '123456789')).toBeNull();
+  });
+
+  it('refuses a Telegram id already claimed by another user (no squatting)', () => {
+    const s = new UserSettingStore(openDb(':memory:'));
+    s.setCliSettings(1, { telegramUserId: '123456789' });
+    expect(() => s.setCliSettings(2, { telegramUserId: '123456789' })).toThrow(TelegramIdConflictError);
+    expect(s.cliSettings(2).telegramUserId).toBe('');
+    expect(s.userIdBySetting('telegramUserId', '123456789')).toBe(1);
   });
 
   it('permission settings: empty defaults, sanitized round-trip, corrupt blob degrades cleanly', () => {
