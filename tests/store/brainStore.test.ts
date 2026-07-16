@@ -778,4 +778,35 @@ describe('BrainStore', () => {
       expect(store.getCards('s1').map((c) => c.id)).toEqual(['good']);
     });
   });
+
+  describe('session events', () => {
+    it('appends a marker and reads it back in insertion order with an ISO timestamp', () => {
+      store.createSession({ id: 's1', userId: 7, model: 'm' });
+      const first = store.appendSessionEvent('s1', 'model', 'anthropic/claude');
+      const second = store.appendSessionEvent('s1', 'mode', 'Workflow');
+      expect(first.id).not.toBe(second.id);
+      expect(first.at).toMatch(/^\d{4}-\d{2}-\d{2}T.*Z$/);
+      expect(store.getSessionEvents('s1')).toEqual([
+        { id: first.id, kind: 'model', detail: 'anthropic/claude', at: first.at },
+        { id: second.id, kind: 'mode', detail: 'Workflow', at: second.at },
+      ]);
+    });
+
+    it('scopes markers to their conversation, and deleting one takes only its own', () => {
+      store.createSession({ id: 's1', userId: 7, model: 'm' });
+      store.appendSessionEvent('s1', 'rename', 'Mine');
+      store.appendSessionEvent('s2', 'rename', 'Theirs');
+      store.deleteSession('s1');
+      expect(store.getSessionEvents('s1')).toEqual([]);
+      expect(store.getSessionEvents('s2')).toHaveLength(1);
+    });
+
+    it('carries the markers along when a conversation is re-keyed (channel rollover)', () => {
+      store.createSession({ id: 'old', userId: 7, model: 'm' });
+      const event = store.appendSessionEvent('old', 'reasoning', 'high');
+      store.reassignSession('old', 'archived');
+      expect(store.getSessionEvents('old')).toEqual([]);
+      expect(store.getSessionEvents('archived')).toEqual([{ id: event.id, kind: 'reasoning', detail: 'high', at: event.at }]);
+    });
+  });
 });

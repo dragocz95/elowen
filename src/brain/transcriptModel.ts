@@ -60,6 +60,9 @@ export class TranscriptModel implements TranscriptRead {
   private readonly toolLocations = new Map<string, ToolLocation>();
   private lastToolLocation: ToolLocation | null = null;
   private readonly changes = new Map<number, TranscriptMutation>();
+  /** Ids of session-change markers already materialized as `event` turns. A marker arrives both in the
+   *  durable boot history and again over the live replay ring, so the id dedups the second sighting. */
+  private readonly eventIds = new Set<string>();
   private readonly journalLimit: number;
   private readonly onTurnVisit?: (index: number) => void;
   private subagentProjection: SubagentState[] = [];
@@ -233,6 +236,23 @@ export class TranscriptModel implements TranscriptRead {
         this.publish({ kind: 'append', index });
         return true;
       }
+      case 'session-event': {
+        // Skip the durable twin already seeded from history; only a genuinely new marker changes anything.
+        if (event.id && this.eventIds.has(event.id)) return false;
+        if (event.id) this.eventIds.add(event.id);
+        const item = { id: event.id, kind: event.kind, detail: event.detail };
+        const index = this.turns.length - 1;
+        const last = index >= 0 ? this.visit(index) : undefined;
+        // Extend the run in place when markers arrive back to back, so they render as one block.
+        if (last?.role === 'event') {
+          this.turns[index] = { role: 'event', events: [...last.events, item] };
+          this.publish({ kind: 'turn', index });
+          return true;
+        }
+        this.turns.push({ role: 'event', events: [item] });
+        this.publish({ kind: 'append', index: this.turns.length - 1 });
+        return true;
+      }
       case 'idle': {
         const index = this.turns.length - 1;
         const last = index >= 0 ? this.visit(index) : undefined;
@@ -292,6 +312,7 @@ export class TranscriptModel implements TranscriptRead {
     this.clearDerived(true);
     for (let index = 0; index < this.turns.length; index += 1) {
       const turn = this.turns[index]!;
+      if (turn.role === 'event') for (const e of turn.events) if (e.id) this.eventIds.add(e.id);
       this.indexTurn(index, turn, false);
     }
     this.lastAssistant = tailAssistantText(this.turns);
@@ -304,6 +325,7 @@ export class TranscriptModel implements TranscriptRead {
   private clearDerived(mutableProjection = false): void {
     this.toolLocations.clear();
     this.lastToolLocation = null;
+    this.eventIds.clear();
     this.subagentProjection = [];
     this.subagentIndices.clear();
     this.subagentSources.clear();

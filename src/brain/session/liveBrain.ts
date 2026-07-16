@@ -103,6 +103,14 @@ export interface LiveBrain {
    *  and re-passed on respawns (model switch, vision hop, restart) so the session cwd never silently
    *  reverts away from where the user launched their CLI. */
   workDir?: string;
+  /** One-shot, model-facing notices of owner session-state changes (model/mode/rename/reasoning),
+   *  drained into the NEXT turn's context as a <system-reminder> and cleared (see turnContextBuilder).
+   *  Ephemeral like the mode reminder — never persisted. The durable, user-visible marker is the
+   *  separate brain_session_events row emitted alongside each notice. */
+  pendingSessionNotices?: string[];
+  /** The work mode of the last send on this session, so a change (build↔plan↔workflow) can be detected
+   *  and recorded — mode is client-stamped per send, with no discrete daemon event of its own. */
+  lastMode?: 'build' | 'plan' | 'workflow';
 }
 
 /** What it takes to spawn one live conversation — composed by BrainService.spawnLive and reused by

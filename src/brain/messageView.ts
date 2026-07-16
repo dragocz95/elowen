@@ -2,7 +2,7 @@
  *  raw content JSON). Kept as a local structural contract rather than importing `BrainMessageRow` from
  *  the store: the store imports `extractText` from here, so a type import back into the store would form
  *  a module cycle. `BrainMessageRow` satisfies this structurally, so callers pass their rows unchanged. */
-type StoredTurnRow = { id?: string; role: string; content: string };
+type StoredTurnRow = { id?: string; role: string; content: string; created_at?: string };
 
 export interface ToolOutputView {
   title: string;
@@ -46,7 +46,7 @@ type BrainSegment =
  * case served over HTTP); structural callers without a store row may omit it. Reconnect consumers use it
  * as identity, never a text/JSON fingerprint — compaction can delete an old identical reply and delegate
  * progress can mutate one row's rendered segments without turning it into a new terminal line. */
-export interface BrainMessageView { id?: string; role: string; text: string; segments?: BrainSegment[] }
+export interface BrainMessageView { id?: string; role: string; text: string; segments?: BrainSegment[]; kind?: string; detail?: string }
 
 const TOOL_DETAIL_MAX = 60;
 
@@ -325,6 +325,7 @@ export function isThinkingOnlyReply(msg: unknown): boolean {
 export function shapeBrainMessages(
   rows: StoredTurnRow[],
   subagentRuns: readonly ({ toolCallId: string } & BrainSubagentView)[] = [],
+  sessionEvents: readonly { id: string; kind: string; detail: string; at: string }[] = [],
 ): BrainMessageView[] {
   // Edit diffs and raw tool results live on the toolResult rows (never shown raw) — index them by
   // toolCallId so the matching assistant toolCall segment can lift its diff and build its output view.
@@ -342,13 +343,15 @@ export function shapeBrainMessages(
       results.set(m.toolCallId, { result: m, isError: m.isError });
     } catch { /* malformed row → no diff */ }
   }
-  const views: BrainMessageView[] = [];
+  // Stamp each produced view with its source row's time so display-only session-event markers can be
+  // interleaved into the (time-ordered) transcript at their real position.
+  const stamped: { at: string; view: BrainMessageView }[] = [];
   for (const row of rows) {
     // A persisted compaction boundary (persistCompaction stores PI's compactionSummary under this role):
     // surface a marker turn so every client draws a subtle "context compacted" divider before the kept
     // tail. The summary itself stays out of the transcript — it's context for the model, not the reader.
     if (row.role === 'compaction') {
-      views.push({ ...(row.id ? { id: row.id } : {}), role: 'compaction', text: '' });
+      stamped.push({ at: row.created_at ?? '', view: { ...(row.id ? { id: row.id } : {}), role: 'compaction', text: '' } });
       continue;
     }
     if (row.role !== 'user' && row.role !== 'assistant') continue;
@@ -356,7 +359,7 @@ export function shapeBrainMessages(
     try { msg = JSON.parse(row.content) as { content?: unknown }; } catch { /* malformed row → skipped below */ }
     if (row.role === 'user') {
       const text = extractText(msg);
-      if (text.trim()) views.push({ ...(row.id ? { id: row.id } : {}), role: 'user', text });
+      if (text.trim()) stamped.push({ at: row.created_at ?? '', view: { ...(row.id ? { id: row.id } : {}), role: 'user', text } });
       continue;
     }
     // Assistant: the content array preserves the true order of text and tool calls.
@@ -392,7 +395,38 @@ export function shapeBrainMessages(
       const clean = stripInlineReasoning(msg.content);
       if (clean.trim()) { text = clean; segments.push({ kind: 'text', text }); }
     }
-    if (segments.length > 0) views.push({ ...(row.id ? { id: row.id } : {}), role: 'assistant', text, segments });
+    if (segments.length > 0) stamped.push({ at: row.created_at ?? '', view: { ...(row.id ? { id: row.id } : {}), role: 'assistant', text, segments } });
   }
-  return views;
+  // Merge the session-event markers into the time-ordered views (both streams are already chronological).
+  // Message rows carry SQLite time (`YYYY-MM-DD HH:MM:SS`, second precision), events carry ISO 8601, so
+  // normalize both to epoch ms.
+  //
+  // Second precision means a marker and the row it borders routinely land on the SAME second, and a plain
+  // sort would order them arbitrarily. The tie is broken by what a marker MEANS: it is recorded between
+  // turns — after the reply it followed, before the next thing the user says. So on a tie the marker goes
+  // BEFORE a user row and AFTER any other row. That is what makes a mode switch (always recorded in the
+  // same second as the very turn it precedes) render identically here and in the live event fold.
+  if (sessionEvents.length === 0) return stamped.map((s) => s.view);
+  const toMs = (s: string): number => {
+    const iso = s.includes('T') ? s : `${s.replace(' ', 'T')}Z`;
+    const ms = Date.parse(iso);
+    return Number.isNaN(ms) ? 0 : ms;
+  };
+  const events = sessionEvents.map((e) => ({
+    ms: toMs(e.at),
+    view: { id: e.id, role: 'event', text: '', kind: e.kind, detail: e.detail } as BrainMessageView,
+  }));
+  const merged: BrainMessageView[] = [];
+  let next = 0;
+  for (const row of stamped) {
+    const ms = toMs(row.at);
+    while (next < events.length
+      && (events[next]!.ms < ms || (events[next]!.ms === ms && row.view.role === 'user'))) {
+      merged.push(events[next]!.view);
+      next += 1;
+    }
+    merged.push(row.view);
+  }
+  for (; next < events.length; next += 1) merged.push(events[next]!.view);
+  return merged;
 }

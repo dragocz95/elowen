@@ -48,6 +48,19 @@ function toolRowSpec(name: string, detail?: string): { glyph: string; title: str
 
 const blockFill = (text: string, width: number): string => paintRow(chatTheme().modalBg, text, width);
 
+/** One-line description of a session-change marker (model/mode/rename/reasoning), rendered as a faint
+ *  centered-ish row in the transcript. The verb varies by kind; the detail is the new value. */
+function sessionEventLabel(kind: string, detail: string): string {
+  const value = terminalInlineText(detail);
+  switch (kind) {
+    case 'model': return `model → ${value}`;
+    case 'mode': return `mode → ${value}`;
+    case 'rename': return `renamed → "${value}"`;
+    case 'reasoning': return `reasoning → ${value}`;
+    default: return value;
+  }
+}
+
 /** Stateless renderer for one transcript turn. Expansion sets remain viewport interaction state and are
  * supplied per call, keeping Markdown/tool projection independent from height indexing and scrolling. */
 export class TurnRenderer {
@@ -67,6 +80,16 @@ export class TurnRenderer {
     }
     if (turn.role === 'divider') {
       add(`  ${color.faint('· · ·  context compacted  · · ·')}`);
+      addBlank();
+      return rows;
+    }
+    if (turn.role === 'event') {
+      // Styled exactly like a bare tool row (same indent, faint glyph + dim text): both are the machine
+      // annotating what it did, so they read as one visual language rather than two. The run stacks with
+      // no gaps and closes with the single blank every turn ends with — the tool-row rhythm.
+      for (const event of turn.events) {
+        add(`${TOOL_INDENT}${color.faint('⚙')} ${color.dim(sessionEventLabel(event.kind, event.detail))}`);
+      }
       addBlank();
       return rows;
     }

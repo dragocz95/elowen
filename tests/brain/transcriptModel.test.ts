@@ -38,6 +38,54 @@ describe('TranscriptModel', () => {
     expect(model.changesSince(before)).toEqual({ kind: 'full', revision: model.revision });
   });
 
+  it('folds a live session-event into an event turn and dedups the durable twin from history', () => {
+    const model = new TranscriptModel([
+      { role: 'user', text: 'hi' },
+      { role: 'event', id: 'evt-1', kind: 'model', detail: 'anthropic/claude' },
+    ]);
+    expect(model.turnCount).toBe(2);
+    expect(model.turnAt(1)).toEqual({ role: 'event', events: [{ id: 'evt-1', kind: 'model', detail: 'anthropic/claude' }] });
+
+    // The same marker replayed over the live ring must NOT show up twice.
+    expect(model.apply({ type: 'session-event', id: 'evt-1', kind: 'model', detail: 'anthropic/claude', at: '2026-07-16T09:00:00.000Z' })).toBe(false);
+    expect(model.turnCount).toBe(2);
+    expect(model.turnAt(1)).toEqual({ role: 'event', events: [{ id: 'evt-1', kind: 'model', detail: 'anthropic/claude' }] });
+  });
+
+  // A run of markers is ONE turn, so they stack as a block and only the block is separated from what
+  // follows — the same shape consecutive tool calls take.
+  it('extends the marker run in place instead of starting a turn per marker', () => {
+    const model = new TranscriptModel([{ role: 'user', text: 'hi' }]);
+    expect(model.apply({ type: 'session-event', id: 'evt-1', kind: 'mode', detail: 'Workflow', at: '2026-07-16T09:00:00.000Z' })).toBe(true);
+    expect(model.apply({ type: 'session-event', id: 'evt-2', kind: 'reasoning', detail: 'max', at: '2026-07-16T09:00:01.000Z' })).toBe(true);
+
+    expect(model.turnCount).toBe(2);
+    expect(model.turnAt(1)).toEqual({ role: 'event', events: [
+      { id: 'evt-1', kind: 'mode', detail: 'Workflow' },
+      { id: 'evt-2', kind: 'reasoning', detail: 'max' },
+    ] });
+
+    // A user turn closes the run: the next marker starts a fresh block.
+    model.apply({ type: 'user', text: 'go on' });
+    model.apply({ type: 'session-event', id: 'evt-3', kind: 'model', detail: 'anthropic/claude', at: '2026-07-16T09:00:02.000Z' });
+    expect(model.turnCount).toBe(4);
+    expect(model.turnAt(3)).toEqual({ role: 'event', events: [{ id: 'evt-3', kind: 'model', detail: 'anthropic/claude' }] });
+  });
+
+  it('collapses a consecutive run of durable markers from history into one turn', () => {
+    const model = new TranscriptModel([
+      { role: 'user', text: 'hi' },
+      { role: 'event', id: 'evt-1', kind: 'rename', detail: 'Marker demo' },
+      { role: 'event', id: 'evt-2', kind: 'reasoning', detail: 'max' },
+      { role: 'assistant', text: 'sure' },
+    ]);
+    expect(model.turnCount).toBe(3);
+    expect(model.turnAt(1)).toEqual({ role: 'event', events: [
+      { id: 'evt-1', kind: 'rename', detail: 'Marker demo' },
+      { id: 'evt-2', kind: 'reasoning', detail: 'max' },
+    ] });
+  });
+
   it('does not expose an old assistant plan when durable history ends with a user turn', () => {
     const model = new TranscriptModel([
       { role: 'assistant', text: '<proposed_plan>old</proposed_plan>' },

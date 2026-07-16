@@ -191,7 +191,7 @@ export class BrainStatusService {
    *  sole store; no live session required, so it works before/independently of `start`. */
   history(userId: number): BrainMessageView[] {
     const sessionId = this.d.lifecycle.activeSessionId(userId);
-    return shapeBrainMessages(this.d.store.getMessages(sessionId), this.subagentRuns(sessionId));
+    return shapeBrainMessages(this.d.store.getMessages(sessionId), this.subagentRuns(sessionId), this.d.store.getSessionEvents(sessionId));
   }
 
   /** ANY of the owner's stored sessions, shaped for display — including the channel (Discord) and
@@ -200,7 +200,7 @@ export class BrainStatusService {
   messagesOf(userId: number, sessionId: string): BrainMessageView[] {
     const row = this.d.store.getSession(sessionId);
     if (!row || row.user_id !== userId) throw new Error('unknown session');
-    return shapeBrainMessages(this.d.store.getMessages(sessionId), this.subagentRuns(sessionId));
+    return shapeBrainMessages(this.d.store.getMessages(sessionId), this.subagentRuns(sessionId), this.d.store.getSessionEvents(sessionId));
   }
 
   /** Atomic, idempotent first frame for an opt-in fixed-session SSE stream. Reads the clean durable
@@ -224,6 +224,7 @@ export class BrainStatusService {
       history: shapeBrainMessages(
         this.d.store.getMessages(sessionId).filter((message) => !orderedUserRows.has(message.id)),
         this.subagentRuns(sessionId),
+        this.d.store.getSessionEvents(sessionId),
       ),
       ...replay,
     };

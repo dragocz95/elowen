@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import type { Db } from './db.js';
 import { extractText } from '../brain/messageView.js';
 import {
@@ -49,6 +50,15 @@ interface BrainSubagentRunState {
 export interface BrainSubagentRun extends BrainSubagentRunState {
   toolCallId: string;
   sessionId: string;
+}
+/** A visible, display-only marker of an owner-driven session-state change (see brain_session_events). */
+export type SessionEventKind = 'model' | 'mode' | 'rename' | 'reasoning';
+export interface BrainSessionEvent {
+  id: string;
+  kind: SessionEventKind;
+  detail: string;
+  /** ISO 8601 (from the row's SQLite UTC created_at) — the transcript interleaves markers by this. */
+  at: string;
 }
 export interface BrainSubagentResult {
   id: string;
@@ -657,6 +667,33 @@ export class BrainStore {
     return out;
   }
 
+  /** Append a display-only session-event marker (model/mode/rename/reasoning change). Insertion order
+   *  (rowid) is the timeline; the marker never touches brain_messages, so it stays out of model context. */
+  appendSessionEvent(sessionId: string, kind: SessionEventKind, detail: string): BrainSessionEvent {
+    const id = randomUUID();
+    this.db.prepare(
+      'INSERT INTO brain_session_events (session_id, event_id, kind, detail) VALUES (?, ?, ?, ?)'
+    ).run(sessionId, id, kind, detail);
+    const row = this.db.prepare(
+      'SELECT created_at FROM brain_session_events WHERE session_id = ? AND event_id = ?'
+    ).get(sessionId, id) as { created_at: string };
+    return { id, kind, detail, at: new Date(`${row.created_at.replace(' ', 'T')}Z`).toISOString() };
+  }
+
+  /** The session's markers in event order, for the boot/reconnect snapshot (interleaved into the
+   *  transcript client-side by `at`). Malformed rows are dropped at this boundary. */
+  getSessionEvents(sessionId: string): BrainSessionEvent[] {
+    const rows = this.db.prepare(
+      'SELECT event_id, kind, detail, created_at FROM brain_session_events WHERE session_id = ? ORDER BY rowid ASC'
+    ).all(sessionId) as { event_id: string; kind: string; detail: string; created_at: string }[];
+    const out: BrainSessionEvent[] = [];
+    for (const row of rows) {
+      if (row.kind !== 'model' && row.kind !== 'mode' && row.kind !== 'rename' && row.kind !== 'reasoning') continue;
+      out.push({ id: row.event_id, kind: row.kind, detail: row.detail, at: new Date(`${row.created_at.replace(' ', 'T')}Z`).toISOString() });
+    }
+    return out;
+  }
+
   /** Persist a terminal child result before any attempt to wake the parent. Stable result/tool ids make
    * duplicate plugin callbacks idempotent; the durable direct-child relation is revalidated here. */
   enqueueSubagentResult(parentSessionId: string, raw: unknown): boolean {
@@ -816,6 +853,7 @@ export class BrainStore {
       this.db.prepare('UPDATE brain_sessions SET parent_session_id = NULL WHERE parent_session_id = ?').run(id);
       this.db.prepare('DELETE FROM brain_goals WHERE session_id = ?').run(id);
       this.db.prepare('DELETE FROM brain_cards WHERE session_id = ?').run(id);
+      this.db.prepare('DELETE FROM brain_session_events WHERE session_id = ?').run(id);
       this.db.prepare('DELETE FROM brain_messages WHERE session_id = ?').run(id);
       this.db.prepare('DELETE FROM brain_sessions WHERE id = ?').run(id);
     })();
@@ -838,6 +876,7 @@ export class BrainStore {
       this.db.prepare('UPDATE brain_messages SET session_id = ? WHERE session_id = ?').run(newId, oldId);
       this.db.prepare('UPDATE brain_goals SET session_id = ? WHERE session_id = ?').run(newId, oldId);
       this.db.prepare('UPDATE brain_cards SET session_id = ? WHERE session_id = ?').run(newId, oldId);
+      this.db.prepare('UPDATE brain_session_events SET session_id = ? WHERE session_id = ?').run(newId, oldId);
     })();
   }
 

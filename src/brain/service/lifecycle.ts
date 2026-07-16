@@ -13,6 +13,7 @@ import type { BrainDeps } from '../brainDeps.js';
 import type { ClientAttachments } from './attachments.js';
 import type { GoalLoopService } from './goalLoop.js';
 import { clientDir, gitProjectRoot } from './workDir.js';
+import { recordSessionEvent } from './sessionEvents.js';
 
 interface LifecycleDeps {
   store: BrainStore;
@@ -305,6 +306,9 @@ export class ConversationLifecycle {
       });
       live.interactedAt = Date.now(); // a model switch is a deliberate touch — don't idle-roll it over
       this.d.sessions.set(sessionId, live);
+      // The switch respawned the session, so record the change on the FRESH live (the old one is disposed):
+      // a visible transcript marker + a one-shot notice so the agent knows its model changed next turn.
+      if (previous && previous.model !== live.model) recordSessionEvent(this.d.store, live.sessionId, live, 'model', live.model);
       const projectRoot = gitProjectRoot(policy, prevWorkDir);
       if (projectRoot && sel.provider && sel.model) {
         this.d.setProjectModelPreference?.(userId, projectRoot, { provider: sel.provider, model: sel.model });

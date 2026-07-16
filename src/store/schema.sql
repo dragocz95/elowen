@@ -200,6 +200,20 @@ CREATE TABLE IF NOT EXISTS brain_cards (
   updated_at TEXT NOT NULL DEFAULT (datetime('now')),
   PRIMARY KEY (session_id, card_id)
 );
+-- Visible, display-only markers of owner-driven session-state changes (model switch, work-mode switch,
+-- rename, reasoning change). Rendered as a subtle system line INTERLEAVED into the transcript by time,
+-- and replayed on reconnect — but deliberately NOT part of brain_messages, so they never enter the
+-- model's context (rehydrate) or perturb compaction alignment. Row order (rowid) mirrors event order;
+-- same no-foreign-keys / rekey-in-rollover rule as the tables above.
+CREATE TABLE IF NOT EXISTS brain_session_events (
+  session_id TEXT NOT NULL,
+  event_id TEXT NOT NULL,
+  kind TEXT NOT NULL CHECK (kind IN ('model', 'mode', 'rename', 'reasoning')),
+  detail TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (session_id, event_id)
+);
+CREATE INDEX IF NOT EXISTS idx_brain_session_events_session ON brain_session_events(session_id);
 -- Durable completion inbox for detached/background sub-agents. A result is persisted before the
 -- parent is woken and remains pending until that triggered parent turn settles successfully.
 CREATE TABLE IF NOT EXISTS brain_subagent_results (

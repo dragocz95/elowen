@@ -26,6 +26,7 @@ import { PermissionApprovalService } from './service/permissionApproval.js';
 import { GoalLoopService } from './service/goalLoop.js';
 import { LiveSessionSpawner } from './service/spawner.js';
 import { ConversationLifecycle } from './service/lifecycle.js';
+import { recordSessionEvent } from './service/sessionEvents.js';
 import { BrainTurnRunner } from './service/turnRunner.js';
 import type { BoundClientRequest, TurnRequest } from './service/turnRequest.js';
 import { BrainStatusService } from './service/statusService.js';
@@ -506,9 +507,11 @@ export class BrainService {
     const canonical = model ? canonicalThinkingLevel(model, level) : level;
     const available = new Set(sess.getAvailableThinkingLevels?.() ?? CANONICAL_THINKING_LEVELS);
     if (!available.has(canonical)) throw new Error(`model does not support reasoning effort "${level}"`);
+    const prevLevel = b.thinkingLevel;
     sess.setThinkingLevel?.(canonical);
     b.thinkingLevel = canonical;
     b.interactedAt = Date.now(); // a reasoning-effort change is a deliberate touch — don't idle-roll it over
+    if (prevLevel !== canonical) recordSessionEvent(this.d.store, b.sessionId, b, 'reasoning', b.thinkingLabels[canonical] ?? canonical);
     return { thinkingLevel: (sess.thinkingLevel as string) ?? canonical };
   }
 
@@ -595,7 +598,11 @@ export class BrainService {
     const clean = title.trim().replace(/\s+/g, ' ').slice(0, 120);
     if (!row || row.user_id !== userId || isNonUserSession(sessionId)) throw new Error('unknown session');
     if (!clean) throw new Error('title cannot be empty');
+    const changed = row.title !== clean;
     this.d.store.renameSession(sessionId, clean);
+    // A visible marker + one-shot notice when the conversation is live; when it isn't (renamed from the
+    // picker), the marker is simply persisted for the next transcript load.
+    if (changed) recordSessionEvent(this.d.store, sessionId, this.sessions.get(sessionId), 'rename', clean);
     return { id: sessionId, title: clean };
   }
 

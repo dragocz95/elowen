@@ -381,6 +381,10 @@ export class LiveSessionSpawner {
       policy: opts.policy, listeners, replay, turnContext,
       pluginToolNames: new Set(pluginTools.map((t) => t.name)), workDir: cwd,
       queuedSteer, queuedFollowUp, deliveringUserEchoes: [],
+      // Baseline for owner mode-switch detection: left undefined so the FIRST turn on a fresh live (new
+      // session or a respawn after a model switch) only records the mode without emitting a marker — a
+      // marker means the user changed mode BETWEEN turns, not that a turn ran in a given mode.
+      lastMode: undefined,
     };
     return live;
   }

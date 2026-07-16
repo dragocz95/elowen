@@ -2,6 +2,7 @@ import { PluginHookBus } from '../../plugins/hookBus.js';
 import type { PluginRegistry } from '../../plugins/registry.js';
 import { runWithPolicy } from '../../plugins/policyContext.js';
 import type { ToolPolicy } from '../../plugins/policyContext.js';
+import { drainSessionNotices } from './sessionEvents.js';
 import type { HookAuditBuffer } from '../../shared/hookAudit.js';
 import type { BrainStore } from '../../store/brainStore.js';
 import type { BrainDeps } from '../brainDeps.js';
@@ -69,6 +70,11 @@ export class TurnContextBuilder {
         let prompt = request.text;
         if (!isPromptCommand(request.text, live.session)) {
           const turnContext = live.turnContext();
+          // One-shot notice of any session-state change (model/mode/rename/reasoning) since the last reply —
+          // drained + cleared here so the agent is told exactly once. Rides under the user message like the
+          // mode reminder (volatile per-turn context, cache-friendly), so it is composed only for a real
+          // prompt turn — never on the prompt-command path, which would drain it without showing it.
+          const sessionChanges = drainSessionNotices(live);
           // The mode directive is volatile per-turn content (it flips when the user switches mode), so it
           // rides UNDER the user message as a <system-reminder> — alongside runningSubagents — rather than
           // prefixing the user's words. Keeps the user message body stable/contiguous across mode switches
@@ -76,6 +82,7 @@ export class TurnContextBuilder {
           prompt = memoryBlock + hookBlock + permissionsBlock + turnContext.beforeUser
             + request.text
             + (turnContext.afterUser ? `\n\n${turnContext.afterUser}` : '')
+            + (sessionChanges ? `\n\n${sessionChanges}` : '')
             + (modeReminder ? `\n\n${modeReminder}` : '')
             + (runningSubagents ? `\n\n${runningSubagents}` : '');
         }

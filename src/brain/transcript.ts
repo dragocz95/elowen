@@ -114,7 +114,16 @@ export type ElowenTurn = { role: 'elowen'; segments: Segment[]; streaming: boole
 /** A context-compaction boundary: everything before it was summarized away, so the surface renders a
  *  subtle "context compacted" divider in its place followed by the kept tail (see `persistCompaction`). */
 export type DividerTurn = { role: 'divider' };
-export type ChatTurn = YouTurn | ElowenTurn | DividerTurn;
+/** One visible marker of an owner session-state change. `id` dedups a live-folded event against the same
+ *  durable marker already seeded from history. */
+export interface SessionEventItem { id: string; kind: string; detail: string }
+/** A run of session-change markers, interleaved into the transcript by time. Display-only — never part of
+ *  the model's context. Consecutive markers (switching model AND mode before speaking again) collapse into
+ *  ONE turn holding them all, exactly as consecutive tool calls collapse into one segment: they then stack
+ *  as a block, and the single blank every turn ends with separates the block from what follows instead of
+ *  falling between each pair. */
+export type EventTurn = { role: 'event'; events: SessionEventItem[] };
+export type ChatTurn = YouTurn | ElowenTurn | DividerTurn | EventTurn;
 
 /** One stored turn as `turnsFromHistory` consumes it. Structurally the `BrainMessageView` the daemon serves
  *  (`GET /brain/messages`) and the web's `BrainMessage` — a flat `text` plus optional ordered `segments`. */
@@ -122,6 +131,10 @@ export interface HistoryMessage {
   role: string;
   text: string;
   segments?: ({ kind: 'text'; text: string } | { kind: 'tool'; name: string; id?: string; detail?: string; diff?: string; output?: ToolOutputView; command?: string; sub?: SubagentState })[];
+  /** Present only on a `role:'event'` row — the session-change marker's id/kind/detail. */
+  id?: string;
+  kind?: string;
+  detail?: string;
 }
 
 /** Parse the durable wire/storage transcript into render turns without adding runtime bookkeeping. */
@@ -129,6 +142,13 @@ export function turnsFromHistory(msgs: HistoryMessage[]): ChatTurn[] {
   const turns: ChatTurn[] = [];
   for (const m of msgs) {
     if (m.role === 'compaction') { turns.push({ role: 'divider' }); continue; }
+    if (m.role === 'event') {
+      const item: SessionEventItem = { id: m.id ?? '', kind: m.kind ?? '', detail: m.detail ?? '' };
+      const tail = turns[turns.length - 1];
+      if (tail?.role === 'event') tail.events.push(item);
+      else turns.push({ role: 'event', events: [item] });
+      continue;
+    }
     if (m.role === 'user') {
       if (m.text.trim()) turns.push({ role: 'you', text: m.text });
       continue;

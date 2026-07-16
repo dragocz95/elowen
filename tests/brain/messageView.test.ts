@@ -61,6 +61,34 @@ describe('shapeBrainMessages: durable sub-agent state', () => {
   });
 });
 
+describe('shapeBrainMessages: session-event interleave', () => {
+  it('merges session-change markers into the transcript by timestamp', () => {
+    const rows = [
+      { id: 'm1', role: 'user', content: JSON.stringify({ role: 'user', content: 'hello' }), created_at: '2026-07-16 09:00:00' },
+      { id: 'm2', role: 'assistant', content: JSON.stringify({ role: 'assistant', content: [{ type: 'text', text: 'hi' }] }), created_at: '2026-07-16 09:00:05' },
+    ];
+    const views = shapeBrainMessages(rows, [], [{ id: 'evt-1', kind: 'model', detail: 'anthropic/claude', at: '2026-07-16T09:00:10.000Z' }]);
+    expect(views.map((v) => [v.role, v.id])).toEqual([['user', 'm1'], ['assistant', 'm2'], ['event', 'evt-1']]);
+    expect(views[2]).toEqual({ id: 'evt-1', role: 'event', text: '', kind: 'model', detail: 'anthropic/claude' });
+  });
+
+  // Second-precision message stamps mean a marker routinely ties with the row it borders. A marker is
+  // recorded BETWEEN turns, so a tie must resolve the way the live fold renders it.
+  it('places a marker tying with a user row BEFORE it — a mode switch precedes the turn it applies to', () => {
+    const rows = [
+      { id: 'm1', role: 'assistant', content: JSON.stringify({ role: 'assistant', content: [{ type: 'text', text: 'hi' }] }), created_at: '2026-07-16 09:00:00' },
+      { id: 'm2', role: 'user', content: JSON.stringify({ role: 'user', content: 'now in workflow' }), created_at: '2026-07-16 09:00:00' },
+    ];
+    const views = shapeBrainMessages(rows, [], [{ id: 'evt-1', kind: 'mode', detail: 'Workflow', at: '2026-07-16T09:00:00.000Z' }]);
+    expect(views.map((v) => [v.role, v.id])).toEqual([['assistant', 'm1'], ['event', 'evt-1'], ['user', 'm2']]);
+  });
+
+  it('returns messages unchanged when there are no session events', () => {
+    const rows = [{ id: 'm1', role: 'user', content: JSON.stringify({ role: 'user', content: 'hi' }), created_at: '2026-07-16 09:00:00' }];
+    expect(shapeBrainMessages(rows, [], []).map((v) => v.role)).toEqual(['user']);
+  });
+});
+
 describe('isThinkingOnlyReply', () => {
   const asst = (m: Record<string, unknown>) => ({ role: 'assistant', ...m });
 

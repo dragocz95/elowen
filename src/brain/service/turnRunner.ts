@@ -17,6 +17,7 @@ import type { GoalLoopService } from './goalLoop.js';
 import type { PermissionApprovalService } from './permissionApproval.js';
 import { TurnAdmission } from './turnAdmission.js';
 import { TurnContextBuilder } from './turnContextBuilder.js';
+import { recordSessionEvent } from './sessionEvents.js';
 import type { TurnImage, TurnMode, TurnRequest } from './turnRequest.js';
 import { hasActiveNativeCompactionCheck } from '../session/compactionCheckCoordinator.js';
 import type { SubagentCompletion } from '../events.js';
@@ -241,6 +242,15 @@ export class BrainTurnRunner {
     }
     const active = this.d.sessions.get(targetId);
     if (!active) throw new Error('brain not started for user');
+    // Owner mode switch (build↔plan↔workflow): mode is client-stamped per send with no discrete daemon
+    // event, so compare against the last mode seen on this session. Real user turns only — the goal loop
+    // (internal) is always build and must not perturb the baseline or emit a marker.
+    if (!internal) {
+      if (active.lastMode !== undefined && active.lastMode !== mode) {
+        recordSessionEvent(this.d.store, active.sessionId, active, 'mode', `${mode[0]!.toUpperCase()}${mode.slice(1)}`);
+      }
+      active.lastMode = mode;
+    }
     // Esc/stop fences the conversation before it snapshots children and clears PI's queue. Never admit a
     // message into that teardown window: the cancelled compaction/run will not drain it, so it would
     // otherwise survive as a phantom chip and execute on a later prompt.
