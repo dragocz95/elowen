@@ -29,7 +29,15 @@ export interface BrainClientOpts {
 /** Statusline display toggles (the statusline plugin's config; null when the plugin is disabled). */
 interface StatuslineConfig { showModel?: boolean; showContext?: boolean; showTokens?: boolean; showCost?: boolean }
 export interface BrainUsageView { tokens: number | null; contextWindow: number; percent: number | null; totalTokens: number; cost: number }
-export type BrainWorkMode = 'build' | 'plan';
+export type BrainWorkMode = 'build' | 'plan' | 'workflow';
+/** Single source of truth for the chat work-mode label (status chip / modal) and the toggle notice.
+ *  Keyed by BrainWorkMode so adding a mode is one edit here, not scattered ternaries. */
+export const WORK_MODE_LABEL: Record<BrainWorkMode, string> = { build: 'Build', plan: 'Plan', workflow: 'Workflow' };
+export const WORK_MODE_NOTICE: Record<BrainWorkMode, string> = {
+  build: 'build mode: Elowen can implement with tools',
+  plan: 'plan mode: Elowen will reason through approach, risks and tests before editing',
+  workflow: 'workflow mode: Elowen orchestrates the task as a DAG of sub-agents',
+};
 export interface BrainRateLimitWindow { usedPercent: number; windowMinutes: number | null; resetsAt: number | null }
 export interface BrainRateLimits {
   provider: string;

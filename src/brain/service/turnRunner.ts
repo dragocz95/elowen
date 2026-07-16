@@ -381,6 +381,6 @@ export class BrainTurnRunner {
         void this.drainPendingSubagentResults(userId, completedSessionId);
       }
     }
-    if (!internal?.systemNudge) this.d.goals.afterTurnGoalJudge(userId, completedSessionId, mode, internal);
+    if (!internal?.systemNudge) this.d.goals.afterTurnGoalJudge(userId, completedSessionId, internal);
   }
 }

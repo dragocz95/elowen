@@ -55,7 +55,7 @@ CHAT
                                     --model/--provider <id>   pick the model for this run
                                     -c | --resume <id> | --new    continue active (default) / specific / fresh
                                     --list                        list conversations (ids for --resume)
-                                    --mode plan|build | --plan    plan mode hides mutating tools
+                                    --mode plan|build|workflow    plan hides mutating tools · workflow orchestrates a DAG
                                     --goal "<text>" [--max-turns N]  run an autonomous goal until it settles
                                     --json | --verbose | --timeout <s>
                                     a /slash prompt runs that command, e.g. -p "/status", -p "/goal pause"

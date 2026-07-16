@@ -129,6 +129,23 @@ describe('BrainService', () => {
     expect(svc.history(1).find((row) => row.role === 'user')?.text).toContain('1× image');
   });
 
+  it('splices the workflow-mode instruction ahead of a workflow-mode turn, and nothing for build', async () => {
+    const d = fakeDeps();
+    const svc = new BrainService(d as never);
+    await svc.start(1);
+
+    await svc.send({ userId: 1, text: 'ORCHESTRATE THIS', mode: 'workflow', session: 'brain-1' });
+    const wfPrompt = d.session.prompt.mock.calls.at(-1)?.[0] as string;
+    expect(d.prompts.render).toHaveBeenCalledWith('cli/workflow-mode', {}, 1);
+    expect(wfPrompt).toContain('PERSONA:cli/workflow-mode:');
+    expect(wfPrompt).toContain('ORCHESTRATE THIS');
+
+    await svc.send({ userId: 1, text: 'JUST BUILD', mode: 'build', session: 'brain-1' });
+    const buildPrompt = d.session.prompt.mock.calls.at(-1)?.[0] as string;
+    expect(buildPrompt).not.toContain('cli/workflow-mode');
+    expect(buildPrompt).not.toContain('cli/plan-mode');
+  });
+
   it('start creates a session row and reports running', async () => {
     const d = fakeDeps();
     const svc = new BrainService(d as never);
@@ -1625,7 +1642,7 @@ describe('BrainService', () => {
     expect(d.session.prompt.mock.calls.at(-1)?.[0]).toBe('Continue the active persistent goal.');
   });
 
-  it('plan mode injects the CLI plan prompt into the live prompt but keeps history clean', async () => {
+  it('plan mode injects the CLI plan prompt as a reminder UNDER the user text but keeps history clean', async () => {
     const d = fakeDeps();
     d.prompts.render.mockImplementation((name: string, vars: Record<string, string>) =>
       name === 'cli/plan-mode' ? 'PLAN MODE PROMPT' : `PERSONA:${name}:${vars.userName}`,
@@ -1633,7 +1650,8 @@ describe('BrainService', () => {
     const svc = new BrainService(d as never);
     await svc.start(1);
     await svc.send({ userId: 1, text: 'outline the migration', mode: 'plan' });
-    expect(d.session.prompt.mock.calls.at(-1)?.[0]).toBe('PLAN MODE PROMPT\n\noutline the migration');
+    // The mode directive rides under the user message (a per-turn <system-reminder>), not as a prefix.
+    expect(d.session.prompt.mock.calls.at(-1)?.[0]).toBe('outline the migration\n\nPLAN MODE PROMPT');
     const stored = d.store.getMessages('brain-1')
       .filter((m) => m.role === 'user')
       .map((m) => JSON.parse(m.content).content);

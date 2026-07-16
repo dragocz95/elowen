@@ -57,9 +57,10 @@ export class TurnContextBuilder {
     const hookBlock = await this.hookBlock(request.text);
     const scope = this.scopeOptions(request.userId, live, mode, request.clientCwd);
     const permissionsBlock = scope.permissions ? `${summarizePermissions(scope.permissions)}\n\n` : '';
-    const modeInstruction = mode === 'plan'
-      ? `${this.d.prompts.render('cli/plan-mode', {}, request.userId)}\n\n`
-      : '';
+    // Each non-build mode carries its own tuned <system-reminder> directive (a self-contained block in
+    // the template). Plan also restricts tools (see applyOwnerToolPolicy); Workflow is prompt-only.
+    const modeTemplate = mode === 'plan' ? 'cli/plan-mode' : mode === 'workflow' ? 'cli/workflow-mode' : null;
+    const modeReminder = modeTemplate ? this.d.prompts.render(modeTemplate, {}, request.userId) : '';
     const runningSubagents = this.runningSubagentsBlock(live.sessionId);
 
     return {
@@ -68,9 +69,14 @@ export class TurnContextBuilder {
         let prompt = request.text;
         if (!isPromptCommand(request.text, live.session)) {
           const turnContext = live.turnContext();
-          prompt = memoryBlock + hookBlock + permissionsBlock + turnContext.beforeUser + modeInstruction
+          // The mode directive is volatile per-turn content (it flips when the user switches mode), so it
+          // rides UNDER the user message as a <system-reminder> — alongside runningSubagents — rather than
+          // prefixing the user's words. Keeps the user message body stable/contiguous across mode switches
+          // and matches how every other per-turn directive is injected.
+          prompt = memoryBlock + hookBlock + permissionsBlock + turnContext.beforeUser
             + request.text
             + (turnContext.afterUser ? `\n\n${turnContext.afterUser}` : '')
+            + (modeReminder ? `\n\n${modeReminder}` : '')
             + (runningSubagents ? `\n\n${runningSubagents}` : '');
         }
         return operation(prompt);

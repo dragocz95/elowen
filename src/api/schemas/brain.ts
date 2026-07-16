@@ -46,7 +46,7 @@ const imageSchema = z.object({
  *  sessions rejected server-side); absent → the active conversation (web dock). */
 export const brainSendSchema = z.object({
   text: z.string().min(1),
-  mode: z.enum(['build', 'plan']).optional(),
+  mode: z.enum(['build', 'plan', 'workflow']).optional(),
   images: z.array(imageSchema).max(4).optional(),
   cwd: z.string().max(4096).optional(),
   session: z.string().max(200).optional(),

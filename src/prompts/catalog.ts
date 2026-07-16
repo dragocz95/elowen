@@ -41,6 +41,7 @@ export const EDITABLE_PROMPTS: PromptCatalogEntry[] = [
   { name: 'elowen', group: 'advisor', vars: ['userName', 'personality', 'agentName'], jsonContract: false, appendOnly: true },
   { name: 'elowen-platform', group: 'advisor', vars: ['ownerName', 'agentName'], jsonContract: false, appendOnly: true },
   { name: 'cli/plan-mode', group: 'cli', vars: [], jsonContract: false },
+  { name: 'cli/workflow-mode', group: 'cli', vars: [], jsonContract: false },
 ];
 
 const EDITABLE_NAMES = new Set(EDITABLE_PROMPTS.map((p) => p.name));

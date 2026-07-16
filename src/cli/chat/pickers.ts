@@ -6,7 +6,7 @@ import { isCtrlD, isCtrlL, isCtrlP, isCtrlR, isCtrlU, isTabKey } from './keys.js
 import { openKeybindsEditor } from './keybindsEditor.js';
 import { API_KEY_PROVIDERS } from '../setup/constants.js';
 import { formatK } from '../ui/text.js';
-import type { BrainProviderView } from './brainClient.js';
+import { WORK_MODE_LABEL, type BrainProviderView } from './brainClient.js';
 import type { ChatState } from './chatState.js';
 import type { ChatApplicationActions, ChatApplicationResources, ChatTaskScope } from './chatCapabilities.js';
 import type { StreamCoordinatorPort } from './streamCoordinator.js';
@@ -283,7 +283,7 @@ export function createPickers(
       kv('model', s?.model || '—');
       if (s?.thinkingLevel) kv('reasoning', s.thinkingLevelLabels?.[s.thinkingLevel] ?? s.thinkingLevel);
       if (s?.fastAvailable) kv('fast', s.fast ? 'on' : 'off');
-      kv('mode', rt.workMode === 'plan' ? 'Plan' : 'Build');
+      kv('mode', WORK_MODE_LABEL[rt.workMode]);
       const u = s?.usage;
       if (u) {
         if (u.percent != null) kv('context', `${Math.round(u.percent)}%  (${formatK(u.tokens ?? 0)} / ${formatK(u.contextWindow)})`);

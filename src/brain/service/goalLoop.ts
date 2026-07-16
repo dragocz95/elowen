@@ -93,7 +93,7 @@ export class GoalLoopService {
     return this.d.activeSessionId(userId) === sessionId || this.d.attachedCount(sessionId) > 0;
   }
 
-  private scheduleGoalContinuation(userId: number, sessionId: string, mode: 'build' | 'plan', delay: number): void {
+  private scheduleGoalContinuation(userId: number, sessionId: string, delay: number): void {
     this.cancelGoalContinuation(sessionId);
     const timer = setTimeout(() => {
       if (this.goalTimers.get(sessionId) !== timer) return;
@@ -115,7 +115,10 @@ export class GoalLoopService {
           return this.d.send({
             userId,
             text: goalContinuePrompt(now),
-            mode,
+            // The autonomous goal loop always runs in build — an implementation loop, never plan (which
+            // would strip mutating tools) or workflow (which would nudge DAG orchestration). It must not
+            // inherit the mode of whatever manual turn happened to trigger this judge.
+            mode: 'build',
             internal: { goalContinue: true },
             session: sessionId,
           });
@@ -195,7 +198,7 @@ export class GoalLoopService {
     const resumed = this.updateGoal(sessionId, {
       status: 'active', paused_reason: '', ...(exhausted ? { turns_used: 0 } : {}),
     }) ?? null;
-    if (resumed) this.scheduleGoalContinuation(userId, sessionId, 'build', 100);
+    if (resumed) this.scheduleGoalContinuation(userId, sessionId, 100);
     return resumed;
   }
 
@@ -217,7 +220,7 @@ export class GoalLoopService {
     return this.updateGoal(sessionId, { subgoals: JSON.stringify(items) })!;
   }
 
-  afterTurnGoalJudge(userId: number, sessionId: string, mode: 'build' | 'plan', internal?: { goalKickoff?: boolean; goalContinue?: boolean }): void {
+  afterTurnGoalJudge(userId: number, sessionId: string, internal?: { goalKickoff?: boolean; goalContinue?: boolean }): void {
     const row = this.d.store.getGoal(sessionId);
     if (!row || row.user_id !== userId || row.status !== 'active') return;
     const turns = row.turns_used + 1;
@@ -257,7 +260,7 @@ export class GoalLoopService {
       if (yolo && turns < ceiling) {
         this.updateGoal(sessionId, { turns_used: turns, subgoals: subgoalsJson, last_verdict: 'continue', last_evidence: progress });
         if (!this.goalDriven(userId, sessionId)) return;
-        this.scheduleGoalContinuation(userId, sessionId, mode, internal?.goalContinue ? 250 : 100);
+        this.scheduleGoalContinuation(userId, sessionId, internal?.goalContinue ? 250 : 100);
         return;
       }
       const reason = yolo ? `safety ceiling reached (${turns}/${ceiling})` : `turn budget reached (${turns}/${row.turn_budget})`;
@@ -270,6 +273,6 @@ export class GoalLoopService {
     const doneRejected = verdict.done; // reached here only when NOT allSubgoalsDone
     this.updateGoal(sessionId, { turns_used: turns, subgoals: subgoalsJson, last_verdict: doneRejected ? 'done_pending_subgoals' : 'continue', last_evidence: progress });
     if (!this.goalDriven(userId, sessionId)) return;
-    this.scheduleGoalContinuation(userId, sessionId, mode, internal?.goalContinue ? 250 : 100);
+    this.scheduleGoalContinuation(userId, sessionId, internal?.goalContinue ? 250 : 100);
   }
 }

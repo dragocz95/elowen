@@ -45,6 +45,7 @@ export const SLASH_COMMANDS: readonly SlashCommandDef[] = [
   { name: 'compact', description: 'Summarize the conversation to free up context (add text to steer what to keep)', kind: 'action' },
   { name: 'plan', description: 'Plan mode — think through the approach before editing', kind: 'mode', surfaces: ['cli'] },
   { name: 'build', description: 'Build mode — implement changes with tools', kind: 'mode', surfaces: ['cli'] },
+  { name: 'workflow', description: 'Workflow mode — orchestrate the task as a DAG of sub-agents', kind: 'mode', surfaces: ['cli'] },
   // CLI-local like /goal: the TUI calls POST /brain/yolo itself. Session-scoped — the persisted
   // default is edited in web Account → Elowen AI (or PATCH /auth/me/permissions).
   { name: 'yolo', description: 'YOLO — auto-approve tool asks for this session ("on"/"off" or toggle)', kind: 'action', surfaces: ['cli'] },

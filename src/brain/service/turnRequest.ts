@@ -5,7 +5,7 @@ export interface TurnImage {
   mimeType: string;
 }
 
-export type TurnMode = 'build' | 'plan';
+export type TurnMode = 'build' | 'plan' | 'workflow';
 
 /** Internal turns reuse the normal PI pipeline but do not render an authoritative user echo. */
 interface InternalTurn {

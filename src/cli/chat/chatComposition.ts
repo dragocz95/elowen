@@ -24,7 +24,7 @@ import {
 import { TelemetryPanel } from './telemetryPanel.js';
 import { ArgOverlay, MentionOverlay, SlashOverlay, type SuggestionItem, type SuggestionOverlay } from './suggestionOverlay.js';
 import { scoreModels, type ModelOption } from './fuzzy.js';
-import type { BrainWorkMode } from './brainClient.js';
+import { WORK_MODE_LABEL, WORK_MODE_NOTICE, type BrainWorkMode } from './brainClient.js';
 import type { ChatState } from './chatState.js';
 import type { ChatApplicationActions, ChatApplicationResources } from './chatCapabilities.js';
 import type { StreamCoordinatorPort } from './streamCoordinator.js';
@@ -156,7 +156,7 @@ function modelMetaLine(
   const provider = slash > 0 ? raw.slice(0, slash) : '';
   const model = slash > 0 ? raw.slice(slash + 1) : raw;
   return [
-    `  ${color.accent(mode === 'plan' ? 'Plan' : 'Build')}`,
+    `  ${color.accent(WORK_MODE_LABEL[mode])}`,
     color.faint('·'),
     activeGoal?.primary ?? '',
     activeGoal ? color.faint('·') : '',
@@ -1014,10 +1014,8 @@ export function createChatComposition(
           return;
         }
         case 'mode_toggle': {
-          rt.workMode = rt.workMode === 'plan' ? 'build' : 'plan';
-          rt.notice = color.dim(rt.workMode === 'plan'
-            ? 'plan mode: Elowen will reason through approach, risks and tests before editing'
-            : 'build mode: Elowen can implement with tools');
+          rt.workMode = rt.workMode === 'build' ? 'plan' : rt.workMode === 'plan' ? 'workflow' : 'build';
+          rt.notice = color.dim(WORK_MODE_NOTICE[rt.workMode]);
           render('input:mode-toggle');
           return;
         }

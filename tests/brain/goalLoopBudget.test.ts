@@ -72,14 +72,14 @@ describe('GoalLoopService — budget + YOLO', () => {
       id: 'a1', sessionId: 'brain-1', parentId: null, role: 'assistant',
       content: { content: 'GOAL_DONE: indicator verified in tmux' },
     });
-    loop.afterTurnGoalJudge(1, 'brain-1', 'build', { goalKickoff: true });
+    loop.afterTurnGoalJudge(1, 'brain-1', { goalKickoff: true });
 
     expect(published.at(-1)).toMatchObject({ status: 'done', last_verdict: 'done' });
   });
 
   it('pauses at the turn budget for confirmation when NOT in YOLO', () => {
     const { store, loop } = harness({ yolo: false, turnBudget: 2, turnsUsed: 1, goalMaxTurns: 64 });
-    loop.afterTurnGoalJudge(1, 'brain-1', 'build');
+    loop.afterTurnGoalJudge(1, 'brain-1');
     const g = store.getGoal('brain-1')!;
     expect(g.status).toBe('paused');
     expect(g.last_verdict).toBe('budget_reached');
@@ -88,7 +88,7 @@ describe('GoalLoopService — budget + YOLO', () => {
 
   it('keeps going past a spent budget in YOLO (below the safety ceiling)', () => {
     const { store, loop } = harness({ yolo: true, turnBudget: 2, turnsUsed: 1, goalMaxTurns: 8 });
-    loop.afterTurnGoalJudge(1, 'brain-1', 'build');
+    loop.afterTurnGoalJudge(1, 'brain-1');
     const g = store.getGoal('brain-1')!;
     expect(g.status).toBe('active'); // not paused — the loop continues
     expect(g.last_verdict).toBe('continue');
@@ -97,7 +97,7 @@ describe('GoalLoopService — budget + YOLO', () => {
 
   it('pauses even in YOLO once the absolute safety ceiling is hit', () => {
     const { store, loop } = harness({ yolo: true, turnBudget: 2, turnsUsed: 3, goalMaxTurns: 4 });
-    loop.afterTurnGoalJudge(1, 'brain-1', 'build');
+    loop.afterTurnGoalJudge(1, 'brain-1');
     const g = store.getGoal('brain-1')!;
     expect(g.status).toBe('paused');
     expect(g.last_verdict).toBe('budget_reached');
@@ -109,7 +109,7 @@ describe('GoalLoopService — budget + YOLO', () => {
     // before "pausing" — the effective ceiling is max(ceiling, budget) = 5, so it pauses at turn 5 with a
     // truthful reason, not `safety ceiling reached (5/3)`.
     const { store, loop } = harness({ yolo: true, turnBudget: 5, turnsUsed: 4, goalMaxTurns: 3 });
-    loop.afterTurnGoalJudge(1, 'brain-1', 'build');
+    loop.afterTurnGoalJudge(1, 'brain-1');
     const g = store.getGoal('brain-1')!;
     expect(g.status).toBe('paused');
     expect(g.paused_reason).toBe('safety ceiling reached (5/5)');

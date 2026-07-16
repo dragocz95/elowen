@@ -18,7 +18,7 @@ export interface QueuedUserEcho {
    * marker is re-appended once, instead of the stale copies being duplicated. */
   sourceText?: string;
   /** Work mode selected when this owner message entered PI's queue; needed if Esc promotes it to a turn. */
-  mode?: 'build' | 'plan';
+  mode?: 'build' | 'plan' | 'workflow';
   /** Owner CLI/web messages broadcast their user row. Platform messages were already rendered by the
    * platform sink, so they only journal the ordering marker for reconnect/drill-in snapshots. */
   publish: boolean;

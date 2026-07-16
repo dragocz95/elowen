@@ -35,6 +35,18 @@ describe('parseCommand — /compact custom instructions', () => {
   });
 });
 
+describe('parseCommand — work-mode commands', () => {
+  it('recognizes /workflow alongside /plan and /build', () => {
+    expect(parseCommand('/workflow')).toEqual({ cmd: 'workflow' });
+    expect(parseCommand('/plan')).toEqual({ cmd: 'plan' });
+    expect(parseCommand('/build')).toEqual({ cmd: 'build' });
+  });
+
+  it('captures a headless prompt after /workflow', () => {
+    expect(parseCommand('/workflow ship the parser')).toEqual({ cmd: 'workflow', arg: 'ship the parser' });
+  });
+});
+
 describe('compactNotice', () => {
   it('a real compaction shows no local notice — the daemon stream owns the status', () => {
     expect(compactNotice({ compacted: true })).toBeNull();

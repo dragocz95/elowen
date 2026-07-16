@@ -15,7 +15,7 @@ export interface HeadlessOpts {
   goal?: string;                   // --goal <text>: start a persistent goal instead of a single turn
   model?: string; provider?: string;
   session?: string; fresh: boolean; // --session <id> / --new; default resumes the active conversation
-  mode: 'build' | 'plan';
+  mode: 'build' | 'plan' | 'workflow';
   maxTurns?: number;               // --max-turns: the goal's turn budget
   json: boolean; verbose: boolean;
   list: boolean;                   // --list: print the conversations and exit
@@ -27,7 +27,7 @@ const USAGE = [
   'usage: elowen run "<prompt>"   |   elowen -p "<prompt>"',
   '  --model <id> --provider <id>   pick the model for this run',
   '  -c | --resume <id> | --new     continue the active conversation (DEFAULT), a specific one, or start fresh',
-  '  --mode plan|build | --plan     plan mode hides mutating tools for the turn',
+  '  --mode plan|build|workflow     plan hides mutating tools · workflow orchestrates a DAG (--plan shorthand)',
   '  --goal "<text>" [--max-turns N]  run an autonomous persistent goal until it settles',
   '  --json                         emit every event as JSONL (default: plain text)',
   '  --verbose                      print steps/tools/usage to stderr',
@@ -61,7 +61,7 @@ export function parseHeadlessArgs(args: string[]): HeadlessOpts {
       case '--session': case '--resume': o.session = need(a); break; // resume a specific conversation by id
       case '-c': case '--continue': o.fresh = false; break; // resume the active conversation (the default; last of -c/--new wins)
       case '--new': o.fresh = true; break;
-      case '--mode': { const m = val(); if (m === 'plan' || m === 'build') o.mode = m; else o.error = `--mode must be plan or build (got "${m ?? ''}")`; break; }
+      case '--mode': { const m = val(); if (m === 'plan' || m === 'build' || m === 'workflow') o.mode = m; else o.error = `--mode must be plan, build or workflow (got "${m ?? ''}")`; break; }
       case '--plan': o.mode = 'plan'; break;
       case '--max-turns': { const n = Number(val()); if (Number.isInteger(n) && n >= 1) o.maxTurns = n; else o.error = '--max-turns needs a positive integer'; break; }
       case '--json': o.json = true; break;
@@ -446,7 +446,7 @@ export async function runHeadless(
   // Completion therefore comes ONLY from the ordered terminal stream event (`idle`/`error`), with the
   // run's explicit --timeout as the bounded no-event failure path. Treating POST success as completion
   // made a normal >300ms model start exit 0 without printing its answer.
-  const fireTurn = (text: string, mode: 'build' | 'plan'): void => {
+  const fireTurn = (text: string, mode: 'build' | 'plan' | 'workflow'): void => {
     void c.send(text, mode).then(
       () => { /* accepted; the stream owns completion */ },
       // With admission-only POST semantics, every rejection means THIS prompt was not accepted. Stream
@@ -459,8 +459,8 @@ export async function runHeadless(
   async function dispatchSlash(p: NonNullable<ReturnType<typeof parseCommand>>): Promise<void> {
     const arg = (p.arg ?? '').trim();
     switch (p.cmd) {
-      case 'plan': case 'build': // a mode-tagged turn; streams like a normal turn and settles on idle
-        if (arg) fireTurn(arg, p.cmd === 'plan' ? 'plan' : 'build');
+      case 'plan': case 'build': case 'workflow': // a mode-tagged turn; streams like a normal turn and settles on idle
+        if (arg) fireTurn(arg, p.cmd);
         else { io.stderr(`/${p.cmd} needs a prompt in headless mode, e.g. -p "/${p.cmd} <text>".\n`); finish(2); }
         break;
       case 'goal': { // pause / resume / clear / status (a `/goal <text>` was already routed to a goal run)
