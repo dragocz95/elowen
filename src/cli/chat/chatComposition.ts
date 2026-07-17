@@ -1262,8 +1262,9 @@ export function createChatComposition(
   };
 
   // Syntax highlighting: grammars load in the background; each completed load re-renders once so
-  // diffs and code fences switch from the plain fallback to highlighted rows.
-  setCodeHighlightListener(() => render('code-highlight'));
+  // diffs and code fences switch from the plain fallback to highlighted rows. Registration returns an
+  // unregister so two coexisting compositions never overwrite one another's hook.
+  const unregisterHighlight = setCodeHighlightListener(() => render('code-highlight'));
   prewarmCodeHighlight();
 
   let disposed = false;
@@ -1273,7 +1274,7 @@ export function createChatComposition(
     clearInterruptArm();
     leader.cancel();
     animations.stop();
-    setCodeHighlightListener(null);
+    unregisterHighlight();
     inputRouter?.stop();
     overlayController.stop();
     panelHandle = null;

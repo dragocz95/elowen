@@ -4,6 +4,7 @@
  *  whose grammar is not loaded yet falls back to the unhighlighted path, and the registered listener
  *  triggers one re-render once the grammar lands. */
 
+import { visibleWidth } from '@earendil-works/pi-tui';
 import { createHighlighterCore } from 'shiki/core';
 import type { HighlighterCore } from 'shiki/core';
 import { createJavaScriptRegexEngine } from 'shiki/engine/javascript';
@@ -86,12 +87,20 @@ const FENCE_TO_LANG: Record<string, string> = {
  *  null keeps the plain unhighlighted rendering, which beats a wrong grammar. */
 export function langForPath(path: string | null | undefined): string | null {
   if (!path) return null;
-  const token = path.trim().split(/\s+/).pop() ?? '';
-  const base = token.split('/').pop() ?? '';
-  if (/^(dockerfile|containerfile)$/i.test(base)) return 'dockerfile';
-  const dot = base.lastIndexOf('.');
-  if (dot <= 0 || dot === base.length - 1) return null;
-  return EXT_TO_LANG[base.slice(dot + 1).toLowerCase()] ?? null;
+  // Scan whitespace-separated tokens for the FIRST that names a known file: a tool detail like
+  // `src/app.ts (+5 -2)` carries the path first and a trailing parenthetical the naive last-token
+  // form would pick up instead. Strip surrounding punctuation/parentheses before mapping.
+  for (const raw of path.trim().split(/\s+/)) {
+    const token = raw.replace(/^[([{'"`]+/, '').replace(/[)\]}'"`,.;:]+$/, '');
+    const base = token.split('/').pop() ?? '';
+    if (!base) continue;
+    if (/^(dockerfile|containerfile)$/i.test(base)) return 'dockerfile';
+    const dot = base.lastIndexOf('.');
+    if (dot <= 0 || dot === base.length - 1) continue;
+    const lang = EXT_TO_LANG[base.slice(dot + 1).toLowerCase()];
+    if (lang) return lang;
+  }
+  return null;
 }
 
 /** The shiki language for a Markdown fence info string (`json`, `ts`, `python`…), or null. */
@@ -114,11 +123,20 @@ let highlighterPromise: Promise<HighlighterCore> | null = null;
 let highlighter: HighlighterCore | null = null;
 const loadedLangs = new Set<string>();
 const pendingLangs = new Map<string, Promise<void>>();
-let onReady: (() => void) | null = null;
+const readyListeners = new Set<() => void>();
 
-/** Register the single re-render hook fired whenever a newly loaded grammar can change the picture. */
-export function setCodeHighlightListener(cb: (() => void) | null): void {
-  onReady = cb;
+/** Register (or, with a null argument, clear) a re-render hook fired whenever a newly loaded grammar
+ *  can change the picture. Listeners are held in a Set so two coexisting compositions each get their
+ *  own hook instead of overwriting one slot; `setCodeHighlightListener(null)` clears all of them, and
+ *  the returned function unregisters just the one that was added. */
+export function setCodeHighlightListener(cb: (() => void) | null): () => void {
+  if (cb == null) { readyListeners.clear(); return () => {}; }
+  readyListeners.add(cb);
+  return () => { readyListeners.delete(cb); };
+}
+
+function notifyReady(): void {
+  for (const cb of readyListeners) cb();
 }
 
 function ensureHighlighter(): Promise<HighlighterCore> {
@@ -145,7 +163,7 @@ export function ensureLang(lang: string): Promise<void> | null {
     const h = await ensureHighlighter();
     await h.loadLanguage(LANG_LOADERS[lang]!() as never);
     loadedLangs.add(lang);
-    onReady?.();
+    notifyReady();
   })()
     .catch(() => { /* highlighting simply stays off for this language */ })
     .finally(() => { pendingLangs.delete(lang); });
@@ -162,6 +180,11 @@ export function prewarmCodeHighlight(): void {
  *  (language, line). 500 entries covers a large diff plus the visible Markdown code blocks. */
 const CACHE_LIMIT = 500;
 const tokenCache = new Map<string, CodeToken[] | null>();
+
+/** Bounded FIFO cache for whole-fence renders. A streaming code block re-renders every 250 ms tick;
+ *  keying the ANSI result by `${lang}\n${code}` makes that a map hit instead of a full re-tokenize. */
+const BLOCK_CACHE_LIMIT = 200;
+const blockCache = new Map<string, string[] | null>();
 
 function tokenize(line: string, lang: string): CodeToken[] | null {
   if (!highlighter || !loadedLangs.has(lang)) return null;
@@ -180,6 +203,10 @@ function tokenize(line: string, lang: string): CodeToken[] | null {
  *  stateless: diff hunks are fragments, so a multi-line construct may mis-color at hunk edges. */
 export function highlightLine(line: string, lang: string): CodeToken[] | null {
   if (!line || !LANG_LOADERS[lang]) return null;
+  // The unloaded state is transient: caching its null would poison the cache so the line never
+  // highlights once the grammar lands and the re-render fires. Check it BEFORE the cache and return
+  // null uncached; only real tokenization results (tokens or null-from-error) are memoized.
+  if (!highlighter || !loadedLangs.has(lang)) return null;
   const key = `${lang} ${line}`;
   if (tokenCache.has(key)) return tokenCache.get(key)!;
   const tokens = tokenize(line, lang);
@@ -196,20 +223,33 @@ export function highlightLine(line: string, lang: string): CodeToken[] | null {
 export function highlightBlock(code: string, lang: string): string[] | null {
   if (!LANG_LOADERS[lang]) return null;
   ensureLang(lang);
+  // The unloaded state is transient — never cache its null, or the block would stay plain after the
+  // grammar lands (mirrors highlightLine). Only memoize real tokenization results.
   if (!highlighter || !loadedLangs.has(lang)) return null;
+  const key = `${lang}\n${code}`;
+  if (blockCache.has(key)) return blockCache.get(key)!;
+  let result: string[] | null;
   try {
     const rows = highlighter.codeToTokensBase(code.replace(/\n+$/, ''), { lang, theme: THEME });
-    return rows.map((tokens) =>
+    result = rows.map((tokens) =>
       `${tokens.map((t) => `\x1b[${hexToFgParams(t.color)}m${t.content}`).join('')}\x1b[0m`);
   } catch {
-    return null;
+    result = null;
   }
+  if (blockCache.size >= BLOCK_CACHE_LIMIT) {
+    for (const oldest of [...blockCache.keys()].slice(0, BLOCK_CACHE_LIMIT / 2)) blockCache.delete(oldest);
+  }
+  blockCache.set(key, result);
+  return result;
 }
 
 /** Wrap tokenized source into visual rows of at most `width` cells, splitting tokens at the wrap
  *  point so a long logical line keeps correct colors on every continuation row. */
 export function wrapTokens(tokens: readonly CodeToken[], width: number): CodeToken[][] {
-  const charWidth = (ch: string): number => (ch.codePointAt(0)! >= 0x1100 ? 2 : 1);
+  // Measure each grapheme with the same visibleWidth pi-tui uses for row padding, so a non-Latin line
+  // wraps at the exact column its diff row later pads to — a homemade codePoint heuristic disagreed
+  // with paintTokenRow and made CJK source wrap early and pad to the wrong column.
+  const charWidth = (ch: string): number => visibleWidth(ch);
   const rows: CodeToken[][] = [[]];
   let col = 0;
   for (const token of tokens) {
@@ -228,9 +268,18 @@ export function wrapTokens(tokens: readonly CodeToken[], width: number): CodeTok
         take += ch.length;
       }
       if (take === 0) {
-        // A single glyph wider than the remaining room moves to the next row.
-        rows.push([]);
-        col = 0;
+        // A single glyph wider than the remaining room moves to the next row — but only if this row
+        // already holds something. On an empty row (glyph wider than the ENTIRE width) force-place it
+        // so the loop always makes progress instead of pushing empty rows forever.
+        if (col > 0) {
+          rows.push([]);
+          col = 0;
+          continue;
+        }
+        const first = [...rest][0]!;
+        rows[rows.length - 1]!.push({ text: first, fg: token.fg });
+        col += charWidth(first);
+        rest = rest.slice(first.length);
         continue;
       }
       rows[rows.length - 1]!.push({ text: rest.slice(0, take), fg: token.fg });

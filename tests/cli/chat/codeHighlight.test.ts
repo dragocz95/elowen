@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { visibleWidth } from '@earendil-works/pi-tui';
 import {
-  ensureLang, highlightBlock, highlightLine, langForFence, langForPath, wrapTokens,
+  ensureLang, highlightBlock, highlightLine, langForFence, langForPath, setCodeHighlightListener, wrapTokens,
 } from '../../../src/cli/chat/codeHighlight.js';
 import type { CodeToken } from '../../../src/cli/chat/codeHighlight.js';
 import { diffBlock, framedDiffBlock } from '../../../src/cli/chat/components.js';
@@ -27,6 +27,14 @@ describe('langForPath', () => {
 
   it('reads the last token of a tool detail line', () => {
     expect(langForPath('Edit /tmp/demo/app.tsx')).toBe('tsx');
+  });
+
+  it('finds the FIRST known path token, ignoring a trailing parenthetical', () => {
+    expect(langForPath('src/app.ts (+5 -2)')).toBe('typescript');
+    expect(langForPath('Edit src/app.ts (+5 -2)')).toBe('typescript');
+    expect(langForPath('(src/main.py)')).toBe('python');
+    expect(langForPath('foo bar server.rs baz')).toBe('rust');
+    expect(langForPath('nothing here (+1 -1)')).toBeNull();
   });
 });
 
@@ -68,6 +76,36 @@ describe('highlightLine', () => {
     const first = highlightLine('let x = 1', 'javascript');
     const second = highlightLine('let x = 1', 'javascript');
     expect(second).toEqual(first);
+  });
+
+  it('highlights after the grammar loads even when first asked while unloaded', async () => {
+    // `go` is loaded by no other test — the unloaded null must NOT be cached, or this line would stay
+    // plain forever once the grammar lands (the poisoned-cache regression).
+    const line = 'func main() { println("hi") }';
+    expect(highlightLine(line, 'go')).toBeNull();
+    await ensureLang('go');
+    const tokens = highlightLine(line, 'go');
+    expect(tokens).not.toBeNull();
+    expect(tokens!.map((t) => t.text).join('')).toBe(line);
+  });
+});
+
+describe('setCodeHighlightListener', () => {
+  it('supports multiple coexisting listeners and unregisters just one', async () => {
+    setCodeHighlightListener(null); // start from a clean slate
+    let a = 0;
+    let b = 0;
+    const offA = setCodeHighlightListener(() => { a += 1; });
+    const offB = setCodeHighlightListener(() => { b += 1; });
+    await ensureLang('ruby');
+    expect(a).toBe(1);
+    expect(b).toBe(1);
+    offA();
+    await ensureLang('rust');
+    expect(a).toBe(1); // A no longer fires
+    expect(b).toBe(2);
+    offB();
+    setCodeHighlightListener(null);
   });
 });
 
@@ -112,6 +150,16 @@ describe('wrapTokens', () => {
       }
     }
   });
+
+  it('measures wide (CJK) glyphs with visibleWidth so rows never overflow', () => {
+    // Each CJK glyph is 2 cells; a row must not exceed the requested width at any width that can hold
+    // at least one glyph (a width-1 column cannot fit a 2-cell glyph and is out of scope here).
+    for (const width of [2, 3, 4, 7, 8]) {
+      for (const row of wrapTokens(toks([['你好世界一二三', '38;2;1;2;3']]), width)) {
+        expect(row.reduce((sum, t) => sum + visibleWidth(t.text), 0)).toBeLessThanOrEqual(width);
+      }
+    }
+  });
 });
 
 describe('diff rows with a grammar loaded', () => {
@@ -122,6 +170,17 @@ describe('diff rows with a grammar loaded', () => {
     expect(row).toContain('38;2;86;156;214'); // …while the keyword carries its dark-plus blue
     expect(row).toContain('\x1b[0m');
     expect(visibleWidth(row)).toBe(60 + 4); // block indent + padded row
+  });
+
+  it('pads a CJK diff row to exactly the requested visible width', async () => {
+    await ensureLang('javascript');
+    const cjkRow = '+ 3 const 名前 = "你好世界" // 挨拶';
+    for (const row of diffBlock(cjkRow, 10, 50, 'javascript')) {
+      // block indent (4) + padded row width (50); no wrapped row may exceed it.
+      expect(visibleWidth(row)).toBeLessThanOrEqual(50 + 4);
+    }
+    const bodyRow = diffBlock(cjkRow, 10, 50, 'javascript').find((l) => l.includes('const'))!;
+    expect(visibleWidth(bodyRow)).toBe(50 + 4);
   });
 
   it('falls back to the plain git-style row when the grammar is not loaded', () => {
