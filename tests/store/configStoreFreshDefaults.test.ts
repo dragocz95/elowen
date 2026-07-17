@@ -5,9 +5,13 @@ import { openDb } from '../../src/store/db.js';
 import { ConfigStore } from '../../src/store/configStore.js';
 
 /** The fresh-install default tool plugins — a SAFE set that needs no config to load (files, terminal,
- *  askuser, runtime-context, skills, subagent). Verified against each plugin's own manifest below so
- *  this list can never silently drift from what actually loads with zero config. */
-const SAFE_DEFAULT_PLUGINS = ['files', 'terminal', 'askuser', 'runtime-context', 'skills', 'subagent'];
+ *  askuser, runtime-context, skills, subagent, elowen-docs). Verified against each plugin's own manifest
+ *  below so this list can never silently drift from what actually loads with zero config.
+ *
+ *  elowen-docs qualifies despite reading embeddings: the manual it searches ships with the install, and
+ *  with no embedding model configured it ranks by keyword instead of failing — so it still answers "how
+ *  do I set this up?" on the fresh install where nothing is set up yet. */
+const SAFE_DEFAULT_PLUGINS = ['files', 'terminal', 'askuser', 'runtime-context', 'skills', 'subagent', 'elowen-docs'];
 
 describe('ConfigStore fresh-install defaults', () => {
   it('plugins.enabled is exactly the safe out-of-box tool set on a brand-new (empty) config row', () => {

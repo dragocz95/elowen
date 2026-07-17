@@ -246,7 +246,9 @@ const DEFAULT_CONFIG: ElowenConfig = {
   autoUpdate: false,
   lspEnabled: true,
   webPush: { publicKey: '', publicKeySet: false },
-  plugins: { enabled: ['files', 'terminal', 'askuser', 'runtime-context', 'skills', 'subagent'], removed: [] },
+  // elowen-docs ships on: it is how the agent answers questions about Elowen itself and looks a setting
+  // up before changing it, which has to work on a fresh install or it is never there when it is needed.
+  plugins: { enabled: ['files', 'terminal', 'askuser', 'runtime-context', 'skills', 'subagent', 'elowen-docs'], removed: [] },
   brain: { providers: [], agentName: 'Elowen', maxSteps: DEFAULT_MAX_STEPS, modelContextWindows: {}, limits: { ...DEFAULT_BRAIN_LIMITS } },
   embedding: { providerId: '', model: '', baseUrl: '', dimensions: null },
   categorization: { providerId: '', model: '', baseUrl: '' },

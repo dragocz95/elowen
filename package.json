@@ -35,6 +35,7 @@
     "web-dist/",
     "prompts/",
     "plugins/",
+    "docs/site/*.md",
     "LICENSE",
     "README.md"
   ],

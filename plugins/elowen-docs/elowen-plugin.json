@@ -1,0 +1,25 @@
+{
+  "name": "elowen-docs",
+  "version": "0.1.0",
+  "apiVersion": "1",
+  "description": "Search Elowen's OWN user documentation by meaning — what Elowen can do, where a feature lives, and how to configure it. Use it to answer questions about Elowen itself and to look up a setting before changing one, instead of guessing. Covers the shipped manual (getting started, install, tasks and missions, agents and autonomy, the web UI, the CLI, brain chat, plugins, projects, configuration, account security, architecture). Not for the user's own code — that is CodebaseSearch.",
+  "entry": "index.mjs",
+  "provides": {
+    "tools": [
+      "ElowenDocs"
+    ]
+  },
+  "icons": {
+    "ElowenDocs": "📖"
+  },
+  "showOutput": [
+    "ElowenDocs"
+  ],
+  "planSafe": [
+    "ElowenDocs"
+  ],
+  "capabilities": {
+    "reads": ["embeddings"],
+    "network": true
+  }
+}

@@ -1,0 +1,3 @@
+{
+  "description": "Prohledá vlastní uživatelskou dokumentaci Elowenu podle významu — co Elowen umí, kde se která funkce nachází a jak ji nastavit. Použijte jej k zodpovězení dotazů o samotném Elowenu a k dohledání nastavení dříve, než jej změníte, místo odhadování. Pokrývá dodávanou příručku (první kroky, instalace, úkoly a mise, agenti a autonomie, webové rozhraní, CLI, chat s Brainem, pluginy, projekty, konfigurace, zabezpečení účtu, architektura). Není určen pro kód uživatele — k tomu slouží CodebaseSearch."
+}
