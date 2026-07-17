@@ -336,7 +336,9 @@ export class TelemetryPanel implements Component {
    *  warning (70 %) → error (90 %); the percentage number beside it stays in the neutral text color. */
   private progressBar(percent: number, cells: number): string {
     const value = Math.max(0, Math.min(100, percent));
-    const eighths = Math.round((value / 100) * cells * 8);
+    // A tiny non-zero usage rounds to 0 eighths and reads as empty; show at least one eighth cell so a
+    // live meter is never indistinguishable from 0 % (still capped at the full cell count).
+    const eighths = Math.min(cells * 8, Math.max(value > 0 ? 1 : 0, Math.round((value / 100) * cells * 8)));
     const filled = Math.floor(eighths / 8);
     const frac = eighths % 8;
     const tone = value >= 90 ? color.error : value >= 70 ? color.warning : color.accent;

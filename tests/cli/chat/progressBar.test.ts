@@ -48,6 +48,14 @@ describe('the usage meter', () => {
     expect(strip(meterRow(0, 36))).not.toContain('█');
   });
 
+  it('shows at least one eighth for a tiny non-zero usage', () => {
+    // 0.1 % of 32 cells rounds to 0 eighths; the meter must still show a fractional head so it is
+    // distinguishable from the 0 % empty track.
+    const tiny = strip(meterRow(0.1, 36));
+    expect(tiny).toMatch(/[▏▎▍▌▋▊▉]/);
+    expect(tiny).not.toBe('╌'.repeat(32));
+  });
+
   it('shifts the fill accent → warning → error at the 70/90 pressure thresholds', () => {
     const theme = chatTheme();
     expect(meterRow(10, 36)).toContain(theme.accent);
