@@ -273,4 +273,15 @@ describe('elowen-docs — packaging', () => {
     expect(pkg.files.some((f) => f === 'docs/*.md' || f === 'docs/**')).toBe(false);
     expect(pkg.files.some((f) => f.includes('superpowers') || f.includes('plans'))).toBe(false);
   });
+
+  // The result is reference material the model reads to answer in its own words — a wall of doc prose
+  // dumped into the chat buries the answer the reader actually wanted. Tool output is hidden unless a
+  // manifest opts in, so the fix is the absence of an opt-in; this asserts nobody re-adds one. The
+  // built-in control-plane and memory tools are left out of their own show list for the same reason.
+  it('shows a marker in the transcript, never the search result itself', () => {
+    const manifest = JSON.parse(
+      readFileSync(join(repoRoot, 'plugins/elowen-docs/elowen-plugin.json'), 'utf8'),
+    ) as { showOutput?: string[] };
+    expect(manifest.showOutput ?? []).toEqual([]);
+  });
 });
