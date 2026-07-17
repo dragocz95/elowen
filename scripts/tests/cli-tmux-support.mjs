@@ -9,7 +9,12 @@ import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:pat
 
 import { visibleWidth } from '@earendil-works/pi-tui';
 
-const STATUS_ROW = /^\s+(?:Build|Plan)(?:\s+·\s+\S+|…)/u;
+// The composer's meta line: a mode label, then — while a turn runs — the activity chip, then the
+// `·`-separated chips. The chip sits BETWEEN the label and the first `·`, so matching only `Build ·` finds
+// no status row at all mid-turn, which is exactly when these captures are taken. It is anchored on the
+// braille spinner frame, the one part of the chip that is always present and cannot occur in prose; the
+// rest is left loose because the chip's tail varies ("0s", "5m 3s", "compacting 0s").
+const STATUS_ROW = /^\s+(?:Build|Plan)(?:\s+[⠀-⣿][^·]*)?(?:\s+·\s+\S+|…)/u;
 
 export const EXPECTED_TMUX_CAPTURE_LABELS = Object.freeze({
   goal: Object.freeze([

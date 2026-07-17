@@ -120,7 +120,7 @@ const KIMI_OAUTH_MODELS = ['k3'] as const;
  *  registerProvider REPLACES the provider's model list, so PI's own descriptors are copied forward rather
  *  than dropped. `headers` is copied with them: Kimi pins its `User-Agent` per model, and losing it would
  *  present us to the endpoint as an unknown client. */
-export function registerKimiCatalog(registry: ModelRegistry): void {
+function registerKimiCatalog(registry: ModelRegistry): void {
   const provider = 'kimi-coding';
   const builtins = registry.getAll().filter((model) => model.provider === provider);
   const template = builtins[0];
