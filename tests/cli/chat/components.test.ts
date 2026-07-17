@@ -380,6 +380,19 @@ describe('SubagentPanel', () => {
     expect(p.render(80)[1]).not.toContain(selectedBg);
   });
 
+  it('keeps the focused highlight unbroken when the row truncates', () => {
+    // At a narrow width the task + model truncate, and truncateToWidth fences its '…' ellipsis with a
+    // reset. That reset would end the selection background mid-row unless it is stripped — the bug where
+    // only part of the open sub-agent's row was highlighted.
+    const p = new SubagentPanel();
+    p.set([{ ...running, task: 'Audit /var/www/elowen/src for a long path that truncates', model: 'a-deliberately-long-model-name' }]);
+    p.setSelected('brain-ch-subagent-a');
+    const row = p.render(46)[1]!;
+    // A single background span: the opening SGR and exactly one trailing reset, none fencing the ellipsis.
+    expect(row.match(/\x1b\[[0-9;]*m/g)).toHaveLength(2);
+    expect(row.endsWith('\x1b[0m')).toBe(true);
+  });
+
   it('lists running agents with task + live counters, and maps rows to their session', () => {
     const p = new SubagentPanel();
     p.set([running]);

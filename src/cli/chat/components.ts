@@ -14,6 +14,10 @@ import { formatDuration, formatK, padAnsi, terminalInlineText, terminalPlainText
 /** Bold that resets ONLY bold (\x1b[22m), so it never clears the surrounding background. */
 const bold = (s: string): string => `\x1b[1m${s}\x1b[22m`;
 
+/** Strip SGR sequences so a string is safe to wrap in a single background span — any embedded reset would
+ *  otherwise end that background early (SGR has no stack). */
+const stripSgr = (s: string): string => s.replace(/\x1b\[[0-9;]*m/g, '');
+
 const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 
 /** Time-based braille spinner frame — every render advances it (the app re-renders on a 250ms ticker
@@ -222,14 +226,19 @@ export class SubagentPanel implements Component {
       // has no stack, so an embedded colour would end the highlight at the first glyph.
       const meta = [e.model, formatDuration(e.seconds), e.tokens ? `${formatK(e.tokens)} tok` : '']
         .filter(Boolean).map((value) => inlineText(String(value))).join(' · ');
-      const metaPlain = truncateToWidth(meta, Math.max(10, Math.floor(width * 0.5)), '…');
-      const taskPlain = truncateToWidth(inlineText(e.task), Math.max(10, width - visibleWidth(metaPlain) - 12), '…');
+      // truncateToWidth fences its '…' ellipsis with a `\x1b[0m` reset. On the selected row that reset ends
+      // the highlight background early (SGR has no stack), so strip SGR here to keep these strings truly
+      // plain — the contract the coloured branches below rely on.
+      const metaPlain = stripSgr(truncateToWidth(meta, Math.max(10, Math.floor(width * 0.5)), '…'));
+      const taskPlain = stripSgr(truncateToWidth(inlineText(e.task), Math.max(10, width - visibleWidth(metaPlain) - 12), '…'));
       const iconPlain = e.status === 'running' ? '●' : e.status === 'done' ? '✓' : '✗';
       const rowPlain = `    ${iconPlain} ${taskPlain} click`;
       const gap = Math.max(1, width - visibleWidth(rowPlain) - visibleWidth(metaPlain) - 2);
       this.rowTargets.set(lines.length, e.sessionId);
       if (e.sessionId === this.selected) {
-        lines.push(color.selected(padAnsi(`${rowPlain}${' '.repeat(gap)}${metaPlain}`, width)));
+        // Strip once more AFTER padAnsi: when the row overflows, padAnsi truncates and re-inserts an
+        // ellipsis reset of its own, which would again break the single background span.
+        lines.push(color.selected(stripSgr(padAnsi(`${rowPlain}${' '.repeat(gap)}${metaPlain}`, width))));
         continue;
       }
       const icon = e.status === 'running' ? color.warning('●') : e.status === 'done' ? color.success('✓') : color.error('✗');
