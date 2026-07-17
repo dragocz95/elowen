@@ -330,6 +330,54 @@ describe('BrainService', () => {
     expect(d.store.pendingSubagentResults(sessionId)).toEqual([]);
   });
 
+  it('does not spend the delivery budget when the parent\'s own turn errors after the result landed', async () => {
+    // The delivery budget exists for a transport that could not carry the result. A provider outage on the
+    // PARENT says nothing about the child's result — and PI appends the custom message before running the
+    // turn, so the result is already in context. Charging the outage against the budget is what burns all
+    // five attempts in half a minute; retrying would also put the result in the context a second time.
+    const d = fakeDeps();
+    const svc = new BrainService(d as never);
+    const { sessionId } = await svc.start(1);
+    const child = 'brain-ch-subagent-landed-error';
+    d.store.createSession({ id: child, userId: 1, model: 'm', parentSessionId: sessionId });
+    d.store.upsertSubagentRun(sessionId, { id: 'call-landed', sessionId: child, status: 'done', task: 'inspect', tools: 1, seconds: 1, background: true, autoDeliver: true });
+    d.session.sendCustomMessage.mockImplementationOnce(async (msg: { details?: { resultId?: string } }) => {
+      d.session.messages.push({ role: 'custom', details: msg.details } as never);   // PI appends it first…
+      d.session.messages.push({ role: 'assistant', content: '', stopReason: 'error', errorMessage: 'provider unavailable' } as never); // …then the turn dies
+    });
+    const runner = (svc as unknown as { turnRunner: { acceptSubagentCompletion(parent: string, userId: number, result: unknown): void } }).turnRunner;
+    runner.acceptSubagentCompletion(sessionId, 1, { id: 'res-landed', toolCallId: 'call-landed', sessionId: child, status: 'done', task: 'inspect', result: 'answer', tools: 1, seconds: 1 });
+
+    await vi.waitFor(() => expect(d.store.pendingSubagentResults(sessionId)).toEqual([]));
+    expect(d.session.sendCustomMessage).toHaveBeenCalledTimes(1);   // never re-delivered
+    expect(d.store.getSubagentRuns(sessionId)[0]).toMatchObject({ resultDelivery: 'acknowledged' });
+  });
+
+  it('does not spend the delivery budget when a landed result\'s parent retry is cancelled mid-backoff', async () => {
+    // PI strips the errored assistant out of live state BEFORE its retry backoff sleep. Esc cancels the
+    // sleep, so the run settles with the PRE-delivery assistant last and no new one — indistinguishable
+    // from "the turn never ran", except the custom message is already in context. Keying on the turn's
+    // shape would burn an attempt and re-deliver; only looking for the message itself gets this right.
+    const d = fakeDeps();
+    const svc = new BrainService(d as never);
+    const { sessionId } = await svc.start(1);
+    const child = 'brain-ch-subagent-cancelled-retry';
+    d.store.createSession({ id: child, userId: 1, model: 'm', parentSessionId: sessionId });
+    d.store.upsertSubagentRun(sessionId, { id: 'call-cancel', sessionId: child, status: 'done', task: 'inspect', tools: 1, seconds: 1, background: true, autoDeliver: true });
+    d.session.messages.push({ role: 'assistant', content: 'earlier reply', stopReason: 'stop' } as never);
+    d.session.sendCustomMessage.mockImplementationOnce(async (msg: { details?: { resultId?: string } }) => {
+      d.session.messages.push({ role: 'custom', details: msg.details } as never);                        // PI appends it…
+      d.session.messages.push({ role: 'assistant', content: '', stopReason: 'error' } as never);         // …the provider 503s…
+      d.session.messages.pop();                                                                          // …_prepareRetry slices it, then Esc cancels the sleep
+    });
+    const runner = (svc as unknown as { turnRunner: { acceptSubagentCompletion(parent: string, userId: number, result: unknown): void } }).turnRunner;
+    runner.acceptSubagentCompletion(sessionId, 1, { id: 'res-cancel', toolCallId: 'call-cancel', sessionId: child, status: 'done', task: 'inspect', result: 'answer', tools: 1, seconds: 1 });
+
+    await vi.waitFor(() => expect(d.store.pendingSubagentResults(sessionId)).toEqual([]));
+    expect(d.session.sendCustomMessage).toHaveBeenCalledTimes(1);   // never delivered a second copy
+    expect(d.store.getSubagentRuns(sessionId)[0]).toMatchObject({ resultDelivery: 'acknowledged' });
+  });
+
   it('defers a result while the parent is streaming and delivers it on the next turn (never parks a follow-up)', async () => {
     const d = fakeDeps();
     const svc = new BrainService(d as never);

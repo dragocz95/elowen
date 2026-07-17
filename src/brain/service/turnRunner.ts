@@ -119,25 +119,42 @@ export class BrainTurnRunner {
       }, { triggerTurn: true, deliverAs: 'followUp' }));
       const settled = [...(live.session.messages as { role?: string; stopReason?: string; errorMessage?: string }[])]
         .reverse().find((message) => message.role === 'assistant');
-      if (!settled || settled === before || settled.stopReason === 'error') {
-        throw new Error(settled?.errorMessage?.trim() || 'sub-agent result was not processed by the parent model');
+      // A turn that did not settle normally is NOT automatically a failure to deliver: PI appends the
+      // custom message to the transcript before running the turn, so the result may already be in the
+      // parent's context, and re-delivering it would put it there twice. Don't assume from the turn's
+      // shape — look for the message. It carries our result id, so its presence is the only honest answer
+      // to "did this land?", whatever became of the turn afterwards.
+      const landed = (live.session.messages as { role?: string; details?: { resultId?: string } }[])
+        .some((message) => message.role === 'custom' && message.details?.resultId === resultId);
+      // No new assistant at all. Usually a genuine non-delivery — but PI strips the errored assistant out
+      // of live state BEFORE its retry backoff, so a retry the user cancels mid-sleep settles with the
+      // pre-delivery assistant still last, having already put the result in context.
+      if (!settled || settled === before) {
+        if (!landed) throw new Error('sub-agent result was not processed by the parent model');
+        logger('brain-subagent').info(`sub-agent result for ${target} entered the context of a cancelled parent retry; acknowledging without retry`);
+        return;
       }
-      // A turn the user aborted mid-flight (Esc / stop) is NOT a failure to deliver: PI appends the custom
-      // message to the transcript before running the turn, so the result may already be in the parent's
-      // context, and re-delivering it would put it there twice. Don't assume either way — look for it. It
-      // carries our result id, so its presence is the only honest answer to "did this land?".
-      if (settled.stopReason === 'aborted') {
-        const landed = (live.session.messages as { role?: string; details?: { resultId?: string } }[])
-          .some((message) => message.role === 'custom' && message.details?.resultId === resultId);
-        if (!landed) throw new Error('parent turn was aborted before the sub-agent result reached its context');
-        logger('brain-subagent').info(`sub-agent result for ${target} entered the context of an aborted parent turn; acknowledging without retry`);
+      // Two ways to get here. The user aborted the turn mid-flight (Esc / stop). Or the parent's own model
+      // turn errored — which says nothing about the CHILD's result: the delivery budget exists for a
+      // transport that could not carry it, and spending it on the parent's provider outage is what burns
+      // all five attempts in half a minute and strands a perfectly good result.
+      if (settled.stopReason === 'aborted' || settled.stopReason === 'error') {
+        const why = settled.stopReason === 'aborted' ? 'aborted' : 'errored';
+        if (!landed) throw new Error(settled.errorMessage?.trim() || `parent turn ${why} before the sub-agent result reached its context`);
+        logger('brain-subagent').info(`sub-agent result for ${target} entered the context of an ${why} parent turn; acknowledging without retry`);
       }
     }));
   }
 
   /** Store-first terminal completion ingress shared by explicit background jobs and Ctrl+B detaches. */
   acceptSubagentCompletion(parentSessionId: string, userId: number, completion: SubagentCompletion): void {
-    if (!this.d.store.enqueueSubagentResult(parentSessionId, completion)) return;
+    if (!this.d.store.enqueueSubagentResult(parentSessionId, completion)) {
+      // The enqueue join needs a live run row AND a parent/child link owned by the same user. Without one
+      // the result has nowhere durable to go and the parent is never woken — the work is simply lost, with
+      // nothing to distinguish it from a child that never finished. Never silent.
+      logger('brain-subagent').error(`dropped sub-agent result for ${parentSessionId} (tool ${completion.toolCallId}, child ${completion.sessionId}): no durable parent/child link`);
+      return;
+    }
     this.publishResultDelivery(parentSessionId, completion.toolCallId, 'pending');
     void this.drainPendingSubagentResults(userId, parentSessionId);
   }
@@ -177,11 +194,13 @@ export class BrainTurnRunner {
           // A streaming parent isn't a failure — the result stays pending and send()'s post-turn hook will
           // re-drain it. Don't burn an attempt or arm a retry timer.
           if (error instanceof ParentTurnBusyError) return;
-          this.d.store.noteSubagentResultFailure(parentSessionId, result.id, error instanceof Error ? error.message : String(error));
+          const cause = error instanceof Error ? error.message : String(error);
+          this.d.store.noteSubagentResultFailure(parentSessionId, result.id, cause);
+          logger('brain-subagent').warn(`sub-agent result ${result.id} for ${parentSessionId} failed delivery attempt ${result.attempts + 1}/${MAX_RESULT_DELIVERY_ATTEMPTS}: ${cause}`);
           if (result.attempts + 1 >= MAX_RESULT_DELIVERY_ATTEMPTS) {
             // Out of timed retries: stop arming a timer for it, but move on to the rest of the queue rather
             // than letting it block them. It keeps its one shot per later drain.
-            logger('brain-subagent').warn(`sub-agent result ${result.id} for ${parentSessionId} exhausted ${MAX_RESULT_DELIVERY_ATTEMPTS} timed delivery attempts; leaving it pending and continuing with the rest`);
+            logger('brain-subagent').warn(`sub-agent result ${result.id} for ${parentSessionId} exhausted ${MAX_RESULT_DELIVERY_ATTEMPTS} timed delivery attempts (last: ${cause}); it stays pending with no timer armed and is only retried once the user sends another message`);
             continue;
           }
           this.scheduleResultRetry(userId, parentSessionId, result.attempts + 1);
