@@ -47,13 +47,13 @@ export class StreamCoordinator implements StreamCoordinatorPort {
   constructor(
     rt: ChatState,
     resources: Pick<ChatApplicationResources, 'client'>,
-    actions: Pick<ChatApplicationActions, 'render' | 'refreshMeta' | 'refreshRateLimits' | 'invalidateAsyncState'>,
+    actions: Pick<ChatApplicationActions, 'render' | 'refreshMeta' | 'onTurnSettled' | 'onTurnActive' | 'invalidateAsyncState'>,
     flows: Flows,
     hydrator: SnapshotHydrator<BrainEvent>,
     hydrationNotices: HydrationNoticeOwner,
   ) {
     const { client } = resources;
-    const { render, refreshMeta, refreshRateLimits, invalidateAsyncState } = actions;
+    const { render, refreshMeta, onTurnSettled, onTurnActive, invalidateAsyncState } = actions;
     let childGeneration = 0;
     let sessionGeneration = 0;
     let switchingSessionGeneration: number | null = null;
@@ -142,14 +142,19 @@ export class StreamCoordinator implements StreamCoordinatorPort {
         const repairTruncatedAtIdle = event.type === 'idle' && truncatedSnapshotPending;
         if (event.type === 'idle') {
           if (event.usage) rt.usage = event.usage;
+          // Turn settled: refresh the rail's rate limits (throttled to the daemon's usage-cache TTL) and
+          // stop the long-turn poll. The title branch's refreshMeta covers the first-turn case separately.
+          onTurnSettled();
           if (!rt.conversationTitle) {
             void refreshMeta().then(() => { if (current() && lease.isCurrent()) render('metadata:idle-title'); });
-          } else void refreshRateLimits();
+          }
           if (rt.workMode === 'plan' && !rt.childView) {
             const text = rt.transcript.lastAssistantText();
             if (/<proposed_plan>/i.test(text)) flows.openPlanDecision();
           }
         }
+        // A parent step means a turn is running — arm the periodic poll for very long turns (idempotent).
+        if (event.type === 'step') onTurnActive();
         if (event.type === 'step' && event.usage) rt.usage = event.usage;
         if (event.type === 'card') rt.cards = upsertCard(rt.cards, event.card);
         if (event.type === 'subagent' && event.status !== 'running') {

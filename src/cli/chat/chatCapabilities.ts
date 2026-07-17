@@ -51,6 +51,13 @@ export interface ChatApplicationActions {
   render(reason?: string): void;
   renderForced(reason?: string): void;
   refreshRateLimits(): Promise<void>;
+  /** Signal that an agent turn has settled (the parent lane's idle). Refreshes the rail's rate-limit
+   *  section, throttled to the daemon's usage-cache TTL so back-to-back turns fetch at most once, and
+   *  stops the long-turn poll. */
+  onTurnSettled(): void;
+  /** Signal that a parent turn is running (a step arrived). Arms the 5-minute poll that keeps the rail
+   *  fresh through a very long single turn; idempotent, so it is safe to call on every step. */
+  onTurnActive(): void;
   refreshMeta(): Promise<void>;
   invalidateAsyncState(): void;
   quit(): void;

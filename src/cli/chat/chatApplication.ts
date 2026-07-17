@@ -28,6 +28,7 @@ import { loadPromptHistory, PromptStash } from './promptHistory.js';
 import { SnapshotHydrator } from './snapshotHydrator.js';
 import { StreamCoordinator } from './streamCoordinator.js';
 import type { StreamCoordinatorPort } from './streamCoordinator.js';
+import { RATE_LIMIT_RUNNING_INTERVAL_MS, shouldRefreshRateLimits } from './rateLimitRefresh.js';
 import { TerminalLifecycle, createShutdownCoordinator, installExitGuards } from './terminalLifecycle.js';
 import { color, isChatThemeName, setChatTheme, setCustomChatTheme } from './theme.js';
 import { createTuiDiagnostics } from './tuiDiagnostics.js';
@@ -58,6 +59,10 @@ export class ChatApplication {
   private readonly lifetime = new ChatApplicationLifetime<'metadata' | 'rate-limits'>();
   private readonly client: BrainClient;
   private removeExitGuards: (() => void) | null = null;
+  /** When the last rate-limit fetch went out (epoch ms), for the turn-settle throttle + running poll. */
+  private rateLimitsFetchedAt = 0;
+  /** The 5-minute "turn still running" poll. Armed when a turn starts, cancelled on settle/pause/dispose. */
+  private rateLimitsPoll: ReturnType<typeof setInterval> | null = null;
   private quitImpl: () => void = () => {};
   private launchPendingAsk: (() => void) | null = null;
   private stopped = false;
@@ -71,6 +76,8 @@ export class ChatApplication {
       render: (reason) => this.composition?.render(reason),
       renderForced: (reason) => this.composition?.renderForced(reason),
       refreshRateLimits: () => this.refreshRateLimits(),
+      onTurnSettled: () => this.onTurnSettled(),
+      onTurnActive: () => this.startRateLimitsPoll(),
       refreshMeta: () => this.refreshMeta(),
       invalidateAsyncState: () => this.lifetime.invalidate(),
       quit: () => this.quitImpl(),
@@ -128,6 +135,7 @@ export class ChatApplication {
     if (this.localStop) return this.localStop;
     this.stopped = true;
     this.localStop = this.lifetime.stop();
+    this.stopRateLimitsPoll();
     this.coordinator?.stop();
     this.hydrator?.stop();
     this.diagnostics?.record({ type: 'lifecycle', action: 'stop' });
@@ -278,8 +286,34 @@ export class ChatApplication {
     });
   }
 
+  /** A turn settled (parent lane idle). Refresh the rail's limits — throttled to the usage-cache TTL so
+   *  a burst of short turns fetches once — and stop the long-turn poll now that the turn is over. */
+  private onTurnSettled(): void {
+    this.stopRateLimitsPoll();
+    if (shouldRefreshRateLimits(this.rateLimitsFetchedAt, Date.now(), 'idle')) void this.refreshRateLimits();
+  }
+
+  /** Arm the 5-minute poll that keeps the rail fresh through a very long single turn. Idempotent; a
+   *  tick fetches only when the interval has genuinely elapsed since the last fetch, so it never
+   *  double-fetches on top of a turn-settle refresh. */
+  private startRateLimitsPoll(): void {
+    if (this.rateLimitsPoll || this.stopped) return;
+    this.rateLimitsPoll = setInterval(() => {
+      if (shouldRefreshRateLimits(this.rateLimitsFetchedAt, Date.now(), 'interval')) void this.refreshRateLimits();
+    }, RATE_LIMIT_RUNNING_INTERVAL_MS);
+    // A bare interval must not keep the event loop alive past shutdown.
+    this.rateLimitsPoll.unref?.();
+  }
+
+  private stopRateLimitsPoll(): void {
+    if (!this.rateLimitsPoll) return;
+    clearInterval(this.rateLimitsPoll);
+    this.rateLimitsPoll = null;
+  }
+
   private async refreshRateLimits(): Promise<void> {
     if (!this.resources) return;
+    this.rateLimitsFetchedAt = Date.now();
     const publication = this.lifetime.begin('rate-limits');
     try {
       const limits = await this.resources.client.rateLimits();
@@ -332,6 +366,8 @@ export class ChatApplication {
   }
 
   private pauseRendering(): void {
+    // A paused terminal shows nothing and takes no turns — drop the long-turn poll until resume.
+    this.stopRateLimitsPoll();
     this.composition?.pause();
   }
 

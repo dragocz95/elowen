@@ -38,6 +38,8 @@ function actions(overrides: Partial<ChatApplicationActions> = {}): ChatApplicati
     render: () => {},
     renderForced: () => {},
     refreshRateLimits: async () => {},
+    onTurnSettled: () => {},
+    onTurnActive: () => {},
     refreshMeta: async () => {},
     invalidateAsyncState: () => {},
     quit: () => {},
@@ -1129,6 +1131,37 @@ describe('StreamCoordinator — parent snapshot hydration', () => {
     const rendered = serialized(rt.transcript);
     expect(rendered).toContain('complete durable reply');
     expect(rendered).not.toContain('only surviving live suffix');
+    ac.abort();
+  });
+  it('arms the long-turn poll on a parent step and signals settle on idle', async () => {
+    let onFrame!: (event: BrainEvent) => void;
+    const client = {
+      stream: (cb: typeof onFrame, signal: AbortSignal) => {
+        onFrame = cb;
+        return new Promise<void>((resolve) => signal.addEventListener('abort', () => resolve(), { once: true }));
+      },
+      history: vi.fn(async () => []),
+      rebind: () => {},
+    } as unknown as BrainClient;
+    const ac = new AbortController();
+    const rt = state([{ role: 'assistant', text: 'hi' }], { workMode: 'build' });
+    rt.conversationTitle = 'titled'; // skip the first-turn refreshMeta title branch
+    rt.streamAc = ac;
+    const onTurnActive = vi.fn();
+    const onTurnSettled = vi.fn();
+    const stream = new StreamCoordinator(
+      rt, { client }, actions({ onTurnActive, onTurnSettled }),
+      { launchAsk: () => {}, openPlanDecision: () => {} } as unknown as Flows,
+      new SnapshotHydrator<BrainEvent>(), new HydrationNoticeOwner(),
+    );
+    stream.openStream(ac);
+
+    onFrame({ type: 'step', step: 1, maxSteps: 0 });
+    expect(onTurnActive).toHaveBeenCalledTimes(1);
+    expect(onTurnSettled).not.toHaveBeenCalled();
+
+    onFrame({ type: 'idle', model: 'm' });
+    expect(onTurnSettled).toHaveBeenCalledTimes(1);
     ac.abort();
   });
 });
