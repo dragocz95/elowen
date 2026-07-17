@@ -6,6 +6,7 @@ import { formatDuration, formatK, padAnsi, terminalInlineText, terminalPlainText
 import { framedDiffBlock, toolOutputBlock, UserBlock, workflowCounts } from './components.js';
 import { chatTheme, color, paintRow } from './theme.js';
 import { prettyCwd } from './projectDir.js';
+import { activeKeymap } from './keys.js';
 
 export const TOOL_INDENT = '    ';
 const TOOL_OUTPUT_INDENT = '      ';
@@ -217,10 +218,21 @@ export class TurnRenderer {
       ? [subagent.detail ?? 'starting…', subagent.model, formatDuration(subagent.seconds), tokens]
       : [`${subagent.tools} tool${subagent.tools === 1 ? '' : 's'}`, subagent.model, formatDuration(subagent.seconds), tokens];
     const meta = detail.filter(Boolean).map((value) => terminalInlineText(String(value))).join(' · ');
+    // A foreground sub-agent blocks the parent's tool result until it finishes; Ctrl+B detaches it so the
+    // parent continues and the child's result is delivered back asynchronously. The footer already carries
+    // this hint, but not next to the block it acts on — so surface it on the meta row, only while it can
+    // actually be done (running and not already backgrounded). The chord is read live so a rebind stays
+    // truthful; if it is unbound the whole segment drops.
+    const bgChord = subagent.status === 'running' && !subagent.background
+      ? activeKeymap().chordLabel('subagent_background') : null;
+    const hint = bgChord ? ` · ${bgChord} background` : '';
+    // Budget the hint into the truncation so a long task never wraps the meta row past the terminal edge:
+    // the chord label drops first, then the meta text itself ellipsizes into whatever remains.
+    const metaLine = truncateToWidth(`↳ ${meta}`, Math.max(12, width - 6 - visibleWidth(hint)), '…');
     return [
       { line: '' },
       { line: `  ${glyph} ${color.text('Sub-agent')} ${color.faint('click')} ${color.dim(task)}`, kind: 'subagent', key: subagent.sessionId },
-      { line: `    ${color.faint(truncateToWidth(`↳ ${meta}`, Math.max(12, width - 6), '…'))}`, kind: 'subagent', key: subagent.sessionId },
+      { line: `    ${color.faint(metaLine)}${hint ? color.faint(hint) : ''}`, kind: 'subagent', key: subagent.sessionId },
     ];
   }
 

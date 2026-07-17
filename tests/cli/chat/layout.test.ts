@@ -54,6 +54,32 @@ describe('chat layout components', () => {
 
   beforeAll(() => { initTheme(); });
 
+  describe('sub-agent block Ctrl+B hint', () => {
+    const renderSub = (sub: Record<string, unknown>): string => {
+      const turn = { role: 'elowen' as const, streaming: true, segments: [
+        { kind: 'tools' as const, items: [{ name: 'Delegate', sub }] },
+      ] };
+      return new TurnRenderer(getMarkdownTheme())
+        .render(turn, 0, 80, { showThoughts: true, thinkingSeconds: 0, expandedThoughts: new Set(), expandedTools: new Set() })
+        .map((row) => row.line.replace(/\x1b\[[0-9;]*m/g, '')).join('\n');
+    };
+
+    it('offers the background chord while a foreground sub-agent is running', () => {
+      const rendered = renderSub({ sessionId: 'child', status: 'running', task: 'inspect', tools: 1, seconds: 3 });
+      expect(rendered).toContain('ctrl+b background');
+    });
+
+    it('drops the hint once the sub-agent is already backgrounded', () => {
+      const rendered = renderSub({ sessionId: 'child', status: 'running', task: 'inspect', tools: 1, seconds: 3, background: true });
+      expect(rendered).not.toContain('background');
+    });
+
+    it('drops the hint once the sub-agent has finished', () => {
+      const rendered = renderSub({ sessionId: 'child', status: 'done', task: 'inspect', tools: 4, seconds: 9 });
+      expect(rendered).not.toContain('ctrl+b');
+    });
+  });
+
   it('parses SGR mouse wheel events', () => {
     expect(mouseWheel('\x1b[<64;10;10M')).toBe(3);
     expect(mouseWheel('\x1b[<65;10;10M')).toBe(-3);
