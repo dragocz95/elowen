@@ -1060,31 +1060,25 @@ export function createChatComposition(
             return;
           }
           rt.notice = color.dim('moving foreground work to the background…');
-          rt.noticeSticky = true; // live progress — an outcome below replaces it and expires normally
-          if (fgSubagents > 0) {
-            lifetime.runSession(
-              () => client.backgroundSubagents(),
-              ({ detached }) => {
-                rt.notice = detached > 0
-                  ? color.success(`moved ${detached} sub-agent${detached === 1 ? '' : 's'} to background`)
-                  : color.dim('sub-agent already finished or moved to background');
-                render('state:subagent-background-complete');
-              },
-              (error) => { rt.notice = color.error(error.message); render('state:subagent-background-error'); },
-            );
-          }
-          if (fgCommands > 0) {
-            lifetime.runSession(
-              () => client.backgroundCommands(),
-              ({ detached }) => {
-                rt.notice = detached > 0
-                  ? color.success(`moved ${detached} command${detached === 1 ? '' : 's'} to background`)
-                  : color.dim('command already finished or moved to background');
-                render('state:command-background-complete');
-              },
-              (error) => { rt.notice = color.error(error.message); render('state:command-background-error'); },
-            );
-          }
+          rt.noticeSticky = true; // live progress — the outcome below replaces it and expires normally
+          // Fire whichever detaches apply as ONE session task so a single combined notice reports both,
+          // instead of two independent callbacks racing to overwrite rt.notice.
+          lifetime.runSession(
+            () => Promise.all([
+              fgSubagents > 0 ? client.backgroundSubagents() : Promise.resolve({ detached: 0 }),
+              fgCommands > 0 ? client.backgroundCommands() : Promise.resolve({ detached: 0 }),
+            ]),
+            ([subs, cmds]) => {
+              const parts: string[] = [];
+              if (subs.detached > 0) parts.push(`${subs.detached} sub-agent${subs.detached === 1 ? '' : 's'}`);
+              if (cmds.detached > 0) parts.push(`${cmds.detached} command${cmds.detached === 1 ? '' : 's'}`);
+              rt.notice = parts.length > 0
+                ? color.success(`moved ${parts.join(' and ')} to background`)
+                : color.dim('foreground work already finished or moved to background');
+              render('state:foreground-background-complete');
+            },
+            (error) => { rt.notice = color.error(error.message); render('state:foreground-background-error'); },
+          );
           render('input:foreground-background');
           return;
         }

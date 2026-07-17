@@ -33,6 +33,9 @@ const clampSeconds = (value, def, min, max) => {
   return Math.min(Math.max(Math.round(n), min), max);
 };
 
+/** Short process id shared by the foreground-detach and background spawn paths. */
+const newProcessId = () => `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`;
+
 // PI's local shell backend for FOREGROUND runs. Two things it gets right that a hand-rolled spawn does
 // not: (1) `waitForChildProcess` resolves on the shell's exit WITHOUT hanging on a stdout/stderr pipe a
 // detached grandchild (e.g. a dev-server the command forked) still holds open; (2) a timeout kills the
@@ -281,7 +284,7 @@ export function register(ctx) {
           // `tool_execution_update` the daemon maps to a throttled `tool_progress` event. Absent for callers
           // that don't stream (background path never uses it — it has ProcessOutput instead).
           const onProgress = onUpdate ? (text) => onUpdate(ok(text)) : undefined;
-          const id = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`;
+          const id = newProcessId();
           const run = new ForegroundRun(id, p.command, cwd, outputCap, timeoutMs);
           // Register the run as `foreground` so Ctrl+B (which reads the live process list) can detach it,
           // and so a detach flips the SAME handle to `job` — an ordinary background process from then on,
@@ -332,7 +335,7 @@ export function register(ctx) {
         for (const proc of ctx.processes.listForSession(sessionId)) { if (!proc.running) ctx.processes.remove(proc.id); }
         // Exclude an in-flight foreground command from the cap: it is not a background slot holder.
         if (ctx.processes.listForSession(sessionId).filter((proc) => proc.completionMode !== 'foreground').length >= MAX_BG) return ok(`Error: too many background processes (${MAX_BG}); kill one first.`);
-        const id = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`;
+        const id = newProcessId();
         // The operator who started it (+ the session they started it in) → wake THAT conversation when it
         // exits (markExited on close). Field is `elowenUserId` (was mis-typed as the pre-rebrand `orcaUserId`,
         // which is undefined → the wake never fired).

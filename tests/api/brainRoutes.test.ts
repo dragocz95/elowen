@@ -1,4 +1,5 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
+import { AuthStorage } from '@earendil-works/pi-coding-agent';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -45,6 +46,7 @@ function fakeBrain() {
   const processOutputCalls: { id: number; processId: string; session?: string }[] = [];
   const killProcessCalls: { id: number; processId: string; session?: string }[] = [];
   let owner = true;
+  let activeProvider = ''; // the pi provider of the active model — drives usage-rail selection
   let processes: ProcessInfo[] = [];
   let processOutputText: string | null = 'buffer';
   let unknownSessionError: Error | null = null;
@@ -111,7 +113,8 @@ function fakeBrain() {
     },
     /** Test helper: seed a user's pending mid-turn queue. */
     __enqueue: (id: number, item: { id: string; text: string }) => { queues.set(id, [...(queues.get(id) ?? []), item]); },
-    status: (id: number) => ({ running: started.has(id), sessionId: started.has(id) ? `brain-${id}` : null, model: 'm', queued: queues.get(id) ?? [], fast: false, fastAvailable: true }),
+    __setProvider: (p: string) => { activeProvider = p; },
+    status: (id: number) => ({ running: started.has(id), sessionId: started.has(id) ? `brain-${id}` : null, model: 'm', provider: activeProvider, queued: queues.get(id) ?? [], fast: false, fastAvailable: true }),
     start: async (id: number, opts?: { fresh?: boolean; clientId?: string; clientGeneration?: number }) => {
       startCalls.push({ id, opts });
       started.add(id);
@@ -209,7 +212,7 @@ function fakeBrain() {
   };
 }
 
-function setup() {
+function setup(opts: { brainAuth?: AuthStorage } = {}) {
   const db = openDb(':memory:');
   db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
   const users = new UserStore(db);
@@ -222,7 +225,7 @@ function setup() {
     engine: null as never, spawn: null as never, tmux: null as never,
     project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },
     clock: new FakeClock(0), config, users, projects: new ProjectStore(db), userProjects: new UserProjectStore(db),
-    brain: brain as never,
+    brain: brain as never, brainAuth: opts.brainAuth as never,
   });
   return { app, amyTok: users.issueToken(amy.id), agentTok: users.issueToken(amy.id, 'agent'), brain };
 }
@@ -504,6 +507,42 @@ describe('brain routes', () => {
     const res = await app.request('/brain/rate-limits?session=brain-2', auth(amyTok));
     expect(res.status).toBe(200);
     expect(await res.json()).toBeNull();
+  });
+
+  it('selects the usage service by the active model provider and returns its windows', async () => {
+    const brainAuth = AuthStorage.inMemory({
+      'openai-codex': { type: 'oauth', access: 'tok', refresh: 'r', expires: Date.now() + 3_600_000, accountId: 'acct-1' },
+    });
+    const fetchSpy = vi.fn(async () => new Response(JSON.stringify({
+      plan_type: 'pro',
+      rate_limit: {
+        primary_window: { used_percent: 30, limit_window_seconds: 18_000, reset_at: 1_900_000_000 },
+        secondary_window: { used_percent: 70, limit_window_seconds: 604_800, reset_at: 1_900_500_000 },
+      },
+    }), { status: 200, headers: { 'content-type': 'application/json' } }));
+    vi.stubGlobal('fetch', fetchSpy);
+    try {
+      const { app, amyTok, brain } = setup({ brainAuth });
+      await app.request('/brain/start', post(amyTok, {}));
+
+      // Active model is Codex OAuth → its usage service is selected and its windows come back.
+      brain.__setProvider('openai-codex');
+      const res = await app.request('/brain/rate-limits?session=brain-2', auth(amyTok));
+      expect(res.status).toBe(200);
+      const body = await res.json() as { provider: string; windows: { usedPercent: number; windowMinutes: number }[] };
+      expect(body.provider).toBe('openai-codex');
+      expect(body.windows).toEqual([
+        { usedPercent: 30, windowMinutes: 300, resetsAt: 1_900_000_000 },
+        { usedPercent: 70, windowMinutes: 10_080, resetsAt: 1_900_500_000 },
+      ]);
+      expect(fetchSpy).toHaveBeenCalledWith('https://chatgpt.com/backend-api/wham/usage', expect.anything());
+
+      // A provider with no registered usage service (e.g. a non-OAuth model) → null, no fetch.
+      brain.__setProvider('some-byok-provider');
+      expect(await (await app.request('/brain/rate-limits?session=brain-2', auth(amyTok))).json()).toBeNull();
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it('GET /brain/queue lists the caller\'s pending queue; DELETE removes one (unknown id → removed:false)', async () => {

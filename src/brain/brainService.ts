@@ -893,7 +893,10 @@ export class BrainService {
    *  process an orphaned delegate left behind. With a session: that conversation only (CLI). */
   processes(userId: number, sessionId?: string): ProcessInfo[] {
     if (sessionId) return processRegistry.listForSession(this.ownedProcessSession(userId, sessionId));
-    return processRegistry.listWhere((handle) => this.ownsProcess(userId, handle));
+    // The cross-conversation (web panel) view excludes in-flight `foreground` Bash commands: they are
+    // transient tool calls owned by their live turn (Ctrl+B backgrounds them), not managed background
+    // processes to list and kill. The session-scoped path above keeps them — the CLI's Ctrl+B gate reads it.
+    return processRegistry.listWhere((handle) => this.ownsProcess(userId, handle) && handle.completionMode !== 'foreground');
   }
 
   processOutput(userId: number, processId: string, sessionId?: string): string | null {
@@ -903,6 +906,9 @@ export class BrainService {
   }
 
   killProcess(userId: number, processId: string, sessionId?: string): boolean {
+    // A foreground command is owned by its live turn; the process API never kills it (that would SIGKILL a
+    // command the CLI is still awaiting). Ctrl+B backgrounds it; session deletion still reaps it via killSession.
+    if (processRegistry.get(processId)?.completionMode === 'foreground') return false;
     if (sessionId) return processRegistry.killForSession(this.ownedProcessSession(userId, sessionId), processId);
     const handle = processRegistry.get(processId);
     return handle !== undefined && this.ownsProcess(userId, handle) && processRegistry.kill(processId);

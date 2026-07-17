@@ -139,6 +139,8 @@ export class UsageService {
 
       const normalized = this.source.normalize(await response.json(), this.now());
       if (!normalized) return this.stale(key);
+      // Enforce the documented shortest-first window order centrally, so a source needn't repeat it.
+      normalized.windows.sort((a, b) => (a.windowMinutes ?? Infinity) - (b.windowMinutes ?? Infinity));
       this.cache.set(key, { at: normalized.fetchedAt, value: normalized });
       return copySnapshot(normalized);
     } catch {

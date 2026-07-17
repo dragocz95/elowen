@@ -56,7 +56,7 @@ function normalizeKimiUsage(value: unknown, fetchedAt: number): ProviderUsage | 
     if (window) windows.push(window);
   }
   if (windows.length === 0) return null;
-  windows.sort((a, b) => (a.windowMinutes ?? Infinity) - (b.windowMinutes ?? Infinity));
+  // Window order (shortest-first) is enforced centrally in UsageService.
   const level = record(record(raw.user)?.membership)?.level;
   const planType = typeof level === 'string' && level.trim()
     ? level.replace(/^LEVEL_/, '').toLowerCase().slice(0, 80)

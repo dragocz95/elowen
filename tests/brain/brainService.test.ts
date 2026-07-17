@@ -3811,6 +3811,26 @@ describe('BrainService — background processes', () => {
     expect(svc.processes(7)).toEqual([]);
   });
 
+  it('shields an in-flight foreground command from the web panel: hidden cross-session, not killable, but visible to its own CLI session', async () => {
+    const d = fakeDeps();
+    const svc = new BrainService(d as never);
+    const { sessionId } = await svc.start(1);
+    const job = fakeHandle('job', sessionId, 1);
+    const fg = { ...fakeHandle('fg', sessionId, 1), completionMode: 'foreground' as const };
+    processRegistry.register(job);
+    processRegistry.register(fg);
+
+    // The cross-conversation (web panel) view hides the foreground command…
+    expect(svc.processes(1).map((p) => p.id)).toEqual(['job']);
+    // …but the session-scoped (CLI) view keeps it, so Ctrl+B's gate can see it.
+    expect(svc.processes(1, sessionId).map((p) => p.id).sort()).toEqual(['fg', 'job']);
+    // …and the process API refuses to kill it (its live turn owns it), while a real job is still killable.
+    expect(svc.killProcess(1, 'fg')).toBe(false);
+    expect((fg as unknown as { killed: boolean }).killed).toBe(false);
+    expect(svc.killProcess(1, 'job')).toBe(true);
+    expect((job as unknown as { killed: boolean }).killed).toBe(true);
+  });
+
   it('sessionless output/kill enforce ownership per process', async () => {
     const d = fakeDeps();
     const svc = new BrainService(d as never);

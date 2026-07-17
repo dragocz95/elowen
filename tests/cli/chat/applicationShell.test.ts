@@ -1057,6 +1057,42 @@ describe('chat application shell ownership', () => {
     composition.dispose();
   });
 
+  it('uses Ctrl+B to background a running foreground command, not a sub-agent', async () => {
+    const h = compositionHarness({ columns: 100, rows: 24, turns: 3 });
+    h.rt.processes = [{
+      id: 'cmd-1', command: 'npm run build', cwd: '/w', startedAt: new Date().toISOString(),
+      running: true, exitCode: null, sessionId: 'brain-1', completionMode: 'foreground',
+    }];
+    const backgroundSubagents = vi.fn(async () => ({ detached: 0 }));
+    const backgroundCommands = vi.fn(async () => ({ detached: 1 }));
+    Object.assign(h.resources.client, { backgroundSubagents, backgroundCommands });
+    vi.spyOn(h.stream, 'subagentStates').mockReturnValue([]);
+    const composition = makeComposition(h);
+
+    h.tui.emit('\x02'); // ctrl+b
+    await vi.runAllTimersAsync();
+
+    expect(backgroundCommands).toHaveBeenCalledOnce();
+    expect(backgroundSubagents).not.toHaveBeenCalled(); // no foreground delegate → command branch only
+    expect(terminalPlainText(h.rt.notice)).toContain('moved 1 command to background');
+    composition.dispose();
+  });
+
+  it('leaves Ctrl+B alone when nothing is running in the foreground', async () => {
+    const h = compositionHarness({ columns: 100, rows: 24, turns: 3 });
+    h.rt.processes = [];
+    const backgroundCommands = vi.fn(async () => ({ detached: 0 }));
+    Object.assign(h.resources.client, { backgroundCommands });
+    vi.spyOn(h.stream, 'subagentStates').mockReturnValue([]);
+    const composition = makeComposition(h);
+
+    h.tui.emit('\x02'); // ctrl+b — the editor's native backward-char, nothing to detach
+    await vi.runAllTimersAsync();
+
+    expect(backgroundCommands).not.toHaveBeenCalled();
+    composition.dispose();
+  });
+
   it('renders one compact active-goal chip in the existing prompt row and removes it on completion', async () => {
     vi.setSystemTime(new Date('2026-07-12T10:00:12.000Z'));
     const h = compositionHarness({ columns: 160, rows: 30, turns: 4 });

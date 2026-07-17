@@ -25,9 +25,9 @@ function normalizeCodexUsage(value: unknown, fetchedAt: number): ProviderUsage |
   const raw = record(value);
   const limits = record(raw?.rate_limit);
   if (!raw || !limits) return null;
+  // UsageService orders windows shortest-first centrally, so this only needs to collect the present ones.
   const windows = [rateLimitWindow(limits.primary_window), rateLimitWindow(limits.secondary_window)]
-    .filter((window): window is UsageWindow => window !== null)
-    .sort((a, b) => (a.windowMinutes ?? Infinity) - (b.windowMinutes ?? Infinity));
+    .filter((window): window is UsageWindow => window !== null);
   const plan = typeof raw.plan_type === 'string' ? raw.plan_type.trim().slice(0, 80) : '';
   return { provider: PROVIDER_ID, planType: plan || null, windows, fetchedAt, stale: false };
 }
