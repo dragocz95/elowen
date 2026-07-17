@@ -135,8 +135,10 @@ export interface HistoryMessage {
   role: string;
   text: string;
   segments?: ({ kind: 'text'; text: string } | { kind: 'tool'; name: string; id?: string; detail?: string; diff?: string; output?: ToolOutputView; command?: string; sub?: SubagentState; wf?: WorkflowState })[];
-  /** Present only on a `role:'event'` row — the session-change marker's id/kind/detail. */
+  /** The source's own id: the store row's for a `user`/`assistant`/`compaction` row, the session-change
+   *  marker's for a `role:'event'` row. Absent only when the source had none. */
   id?: string;
+  /** Present only on a `role:'event'` row — the session-change marker's kind/detail. */
   kind?: string;
   detail?: string;
 }

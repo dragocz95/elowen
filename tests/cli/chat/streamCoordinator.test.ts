@@ -159,6 +159,72 @@ describe('StreamCoordinator — idle rollover', () => {
     expect(hasFlushReply()).toBe(true);
   });
 
+  // A message sent DURING a manual /compact parks on the session lock and resumes the instant the
+  // compaction ends — so its durable row lands in the same breath as the `compacted` that triggers this
+  // refetch, and the refetched history already contains it. The buffered `user` event then replays on top.
+  // The snapshot path strips id-matched rows for exactly this reason; the refetch has no such filter, so
+  // the model itself has to recognise the row it already holds.
+  it('renders a message once when the refetched history already carries its durable row', async () => {
+    let onEvent!: (e: BrainEvent) => void;
+    const hist = deferred<{ role: string; text: string; id?: string }[]>();
+    const client = {
+      stream: (cb: (e: BrainEvent) => void) => { onEvent = cb; return Promise.resolve(); },
+      history: () => hist.promise,
+      rebind: () => {},
+    } as unknown as BrainClient;
+
+    const ac = new AbortController();
+    const rt = state([{ role: 'user', text: 'q1' }, { role: 'assistant', text: 'long answer' }]);
+    rt.streamAc = ac;
+    const flows = { launchAsk: () => {}, openPlanDecision: () => {} } as unknown as Flows;
+    const stream = new StreamCoordinator(
+      rt, { client }, actions(), flows,
+      new SnapshotHydrator<BrainEvent>(), new HydrationNoticeOwner(),
+    );
+    stream.openStream(ac);
+
+    onEvent({ type: 'compacted' });
+    onEvent({ type: 'user', text: 'sent during the compaction', durableId: 'row-9' });
+
+    hist.resolve([
+      { role: 'compaction', text: '' },
+      { role: 'user', text: 'sent during the compaction', id: 'row-9' },
+    ]);
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(turns(rt.transcript).filter((t) => t.role === 'you')).toHaveLength(1);
+  });
+
+  // The same durable id must still render when history does NOT carry it — the snapshot path deliberately
+  // strips those rows so the live marker can hold their true position among the deltas.
+  it('still renders a message whose durable row was stripped from the history prefix', async () => {
+    let onEvent!: (e: BrainEvent) => void;
+    const hist = deferred<{ role: string; text: string; id?: string }[]>();
+    const client = {
+      stream: (cb: (e: BrainEvent) => void) => { onEvent = cb; return Promise.resolve(); },
+      history: () => hist.promise,
+      rebind: () => {},
+    } as unknown as BrainClient;
+
+    const ac = new AbortController();
+    const rt = state([{ role: 'user', text: 'q1' }]);
+    rt.streamAc = ac;
+    const flows = { launchAsk: () => {}, openPlanDecision: () => {} } as unknown as Flows;
+    const stream = new StreamCoordinator(
+      rt, { client }, actions(), flows,
+      new SnapshotHydrator<BrainEvent>(), new HydrationNoticeOwner(),
+    );
+    stream.openStream(ac);
+
+    onEvent({ type: 'compacted' });
+    onEvent({ type: 'user', text: 'ordered live marker', durableId: 'row-9' });
+
+    hist.resolve([{ role: 'compaction', text: '' }]); // id-matched row stripped, as streamSnapshot does
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(turns(rt.transcript).filter((t) => t.role === 'you' && t.text === 'ordered live marker')).toHaveLength(1);
+  });
+
   it('a `queue` event replaces rt.queued (full snapshot) without touching the transcript view', () => {
     let onEvent!: (e: BrainEvent) => void;
     const client = {

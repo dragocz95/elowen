@@ -63,6 +63,12 @@ export class TranscriptModel implements TranscriptRead {
   /** Ids of session-change markers already materialized as `event` turns. A marker arrives both in the
    *  durable boot history and again over the live replay ring, so the id dedups the second sighting. */
   private readonly eventIds = new Set<string>();
+  /** Durable row ids of `you` turns already materialized. A user turn can arrive twice for the same
+   *  reason a marker can — once in a fetched history, once as the ordered live marker. `streamSnapshot`
+   *  strips id-matched rows from the history it serves, so on that path only the live event ever lands;
+   *  a post-`compacted` history REFETCH has no such filter and serves the row whole, which is how a
+   *  message sent during a compaction rendered twice. */
+  private readonly userIds = new Set<string>();
   private readonly journalLimit: number;
   private readonly onTurnVisit?: (index: number) => void;
   private subagentProjection: SubagentState[] = [];
@@ -227,6 +233,9 @@ export class TranscriptModel implements TranscriptRead {
         this.publish({ kind: 'reset' });
         return true;
       case 'user': {
+        // Skip the durable twin already seeded from history; only a genuinely new turn changes anything.
+        if (event.durableId && this.userIds.has(event.durableId)) return false;
+        if (event.durableId) this.userIds.add(event.durableId);
         const index = this.turns.length;
         this.turns.push({ role: 'you', text: event.text });
         this.lastAssistant = '';
@@ -308,6 +317,10 @@ export class TranscriptModel implements TranscriptRead {
     this.turns.length = 0;
     for (const turn of turnsFromHistory(history)) this.turns.push(turn);
     this.clearDerived(true);
+    // Seeded from the rows, not the turns: `turnsFromHistory` renders a user row as a bare `you` turn and
+    // drops its id, and an empty-text row produces no turn at all — but either can still return as a live
+    // `user` event carrying that id.
+    for (const message of history) if (message.role === 'user' && message.id) this.userIds.add(message.id);
     for (let index = 0; index < this.turns.length; index += 1) {
       const turn = this.turns[index]!;
       if (turn.role === 'event') for (const e of turn.events) if (e.id) this.eventIds.add(e.id);
@@ -325,6 +338,7 @@ export class TranscriptModel implements TranscriptRead {
     this.toolLocations.clear();
     this.lastToolLocation = null;
     this.eventIds.clear();
+    this.userIds.clear();
     this.subagentProjection = [];
     this.subagentIndices.clear();
     this.subagentSources.clear();
