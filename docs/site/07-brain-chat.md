@@ -33,9 +33,9 @@ Long conversations are managed in three complementary ways:
 
 ## Models and reasoning
 
-Elowen supports configured OpenAI-compatible and Anthropic providers, plus supported OAuth-backed account types. A provider's model catalog is used by the chat pickers and can also feed tasks and plugins that request a model field.
+Elowen supports configured OpenAI-compatible and Anthropic providers, plus OAuth-backed **Claude**, **ChatGPT**, **GitHub Copilot**, and **Kimi** accounts. A provider's model catalog is used by the chat pickers and can also feed tasks and plugins that request a model field.
 
-Select a model for the current conversation where your surface provides a picker. Reasoning options are shown only when the chosen model exposes them. The daemon preserves provider credentials and returns only safe configuration metadata to the Web UI.
+Select a model for the current conversation where your surface provides a picker. Reasoning options are shown only when the chosen model exposes them. ChatGPT OAuth models can additionally use priority processing through `/fast` in the CLI when the selected model supports it. The daemon preserves provider credentials and returns only safe configuration metadata to the Web UI.
 
 Use the provider connection flow in **Settings → Elowen AI**. It can test a configured provider before you rely on it for normal chat or automation.
 
@@ -53,7 +53,7 @@ After an owner exchange, optional curation can extract durable facts in a capped
 
 ![Memory workspace](images/brain-memory.png)
 
-Configure embeddings and categorization in **Settings → Memory**. The embedding provider reuses a configured Elowen AI provider rather than asking you to store a duplicate API key.
+Configure embeddings and categorization in **Settings → Memory**. An API-key or OpenAI-compatible Elowen AI provider can be reused without storing a duplicate key. OAuth-only accounts do not expose an embedding endpoint, so semantic memory needs a supported embedding provider; without one, recall remains available through keyword matching.
 
 ## Tools, approvals, and output
 

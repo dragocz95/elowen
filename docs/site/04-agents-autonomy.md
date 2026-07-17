@@ -65,7 +65,7 @@ Opus and Codex while another is limited to a cheap OpenCode model. See
 
 ## Provider configuration
 
-Configure each provider in **Settings → Providers**:
+Configure each provider in **Settings → CLI Agents**:
 
 - **Binary path** — override where the CLI binary lives
 - **Extra args** — additional flags passed on every spawn

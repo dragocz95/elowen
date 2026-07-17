@@ -5,6 +5,23 @@ All notable changes to Elowen are documented here. The format loosely follows
 
 ## [Unreleased]
 
+### Added
+- **Elowen can search its own manual.** The bundled `ElowenDocs` tool finds the relevant shipped user-guide sections before the agent guesses about a setting or feature. It uses semantic search when memory embeddings are configured and a clearly labelled keyword search otherwise; it is deliberately separate from `CodebaseSearch`, which searches your projects.
+- **`/cd [path]` changes the CLI working directory.** With no argument it shows the current directory; with a path it updates the local CLI context used by later prompts, `!` commands, attachments, exports, and history without widening daemon project access.
+- **Old brain conversations can be cleaned up automatically.** Administrators can opt in to hourly cleanup of stale user conversations. It leaves active/running conversations, channel and task sessions, delegated children, and conversations with running children alone.
+- **A foreground `Bash` command can be backgrounded with `Ctrl+B`.** Like a foreground sub-agent, it keeps running and sends its completion back asynchronously instead of holding the terminal chat open.
+- **Proxied and custom models can show an estimated cost.** Elowen consults the bundled models.dev catalog when a provider does not report cost; provider-reported usage remains authoritative.
+
+### Changed
+- **The CLI gives clearer live-work feedback.** It shows an activity indicator while a tool call streams and only shows the writing-tool-call hint after the call has genuinely spent time being composed.
+- **OAuth providers disappear from the model picker once disconnected.** A saved provider entry no longer leaves a dead selectable account behind.
+- **The focused sub-agent view includes its own context and cost.** A parent turn's failure no longer consumes the child delivery budget.
+
+### Fixed
+- **A message arriving during compaction is rendered once.** It no longer appears twice when the compacted turn settles.
+- **The CLI's transient notices expire instead of lingering above the composer.**
+- **ElowenDocs results render as a compact tool marker in plugin presentations, rather than showing the full search result inline.**
+
 ## [0.27.6] - 2026-07-17
 
 ### Fixed

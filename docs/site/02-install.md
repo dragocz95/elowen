@@ -100,11 +100,12 @@ skippable and resumable:
    **escapable, bounded sign-in** (retries are capped and each failure lets you
    try again, skip, or go back — a wrong password never traps you in a loop)
 2. **Project** — register a repository for agents to work in
-3. **AI provider** — connect a provider — **CoreSynth AI**, OpenAI, Anthropic,
-   OpenRouter and other presets, or a custom OpenAI-compatible endpoint — pick a
-   model, then run a **chat smoke-test** (one small, real completion) to confirm
-   the model actually answers. The built-in task engine is wired to that model,
-   so basic tasks run with no external agent CLI installed.
+3. **AI provider** — connect an OpenAI-compatible or Anthropic provider, a preset,
+   a custom compatible endpoint, or a supported OAuth account (Claude, ChatGPT,
+   GitHub Copilot, or Kimi); pick a model, then run a **chat smoke-test** (one
+   small, real completion) to confirm the model actually answers. The built-in
+   task engine is wired to that model, so basic tasks run with no external agent
+   CLI installed.
 4. **Memory** — optional embeddings for recall (reuse the provider's key or an
    OpenRouter key)
 5. **Code intelligence** — optionally install the TypeScript language server so

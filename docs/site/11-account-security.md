@@ -44,19 +44,14 @@ can't read it either.
 
 ## Token scopes
 
-Not every token is equal. Elowen issues three scopes so an agent it spawns can never
-act with your full rights.
+Not every token is equal. Elowen resolves two effective scopes so a spawned agent can never act with your full rights.
 
 | Scope | Purpose |
 |-------|---------|
 | `full` | Interactive user sessions (web UI, CLI) — full access |
-| `agent` | Spawned agents — restricted allow-list (e.g. close their own task, submit plans), confined to their project |
-| `advisor` | Per-user assistant — granted full rights but isolated from your login tokens |
+| `agent` | Spawned workers, overseers, and pilots — a restricted allow-list, confined to their project |
 
-Agent-scoped tokens are confined to the project they're working on: a worker agent
-can only close its own tasks and can't reach across to another project. The `advisor`
-scope grants the same rights as `full` but is stored separately, so stopping or
-rotating a user's advisor never touches their login session.
+Agent-scoped tokens are confined to the project they are working on: a worker can only close its own tasks and cannot reach across to another project. Advisor credentials are stored separately from login tokens but resolve to the owner's `full` access, so stopping or rotating an advisor never invalidates the user's login session.
 
 ## Session token lifetime
 

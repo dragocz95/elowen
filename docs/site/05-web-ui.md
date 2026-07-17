@@ -41,11 +41,11 @@ The **Tasks** workspace is the primary operational surface. Its header exposes t
 
 ![Kanban board](images/web-ui-kanban.png)
 
-**Sessions** shows live tmux-backed workers and allows you to open a terminal view when the executor supports it. Its second tab keeps the brain conversation history from every surface — web, CLI, channels, and task agents — in one place.
+**Sessions** shows live tmux-backed workers and allows you to open a terminal view when the executor supports it. Its second tab keeps the brain conversation history from every surface — web, CLI, channels, and task agents — in one place. Administrators can optionally enable **Automatic conversation cleanup** there: the hourly janitor removes only a user's old, inactive top-level conversations. It never removes running, active, channel, task, delegated-child, or child-bearing conversations.
 
 ![Sessions and conversation history](images/web-ui-sessions.png)
 
-**Timeline** and **Stats** provide the historical side: activity, commits, and usage rather than another competing task list.
+**Timeline** and **Stats** provide the historical side: activity, commits, and usage rather than another competing task list. Stats shows tokens and model cost. A provider-reported cost is authoritative; a `~` amount is an estimate from the models.dev catalog, used for proxy or custom-model turns when the provider does not report a price.
 
 ![Timeline of commits and active files](images/web-ui-timeline.png)
 

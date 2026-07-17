@@ -17,6 +17,8 @@ Open **Settings → Plugins** to inspect installed plugins, enable or disable a 
 
 Bundled capabilities include file and terminal tools, MCP, skills, sub-agent delegation, ask-user questions, scheduled jobs, codebase indexing, formatters, runtime context, Discord, WhatsApp, and supporting presentation/security tools. The exact installed set can differ by deployment, so Settings is the source of truth for a running instance.
 
+**ElowenDocs** searches Elowen's shipped user manual. With a configured embedding model it finds sections by meaning; otherwise it uses keyword matching and says so. Results identify the source page and heading. Use it for product behaviour or settings before guessing; use **CodebaseSearch** for the user's own repositories instead.
+
 ## Plugin anatomy
 
 Each plugin lives under `plugins/<name>/` and declares itself with **`elowen-plugin.json`**:

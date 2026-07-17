@@ -45,7 +45,7 @@ The Settings surface follows one stable order. It is administrator-controlled; u
 
 | Section | What it controls |
 | --- | --- |
-| **System** | Version/readiness, service controls, automatic updates, and login-token lifetime. |
+| **System** | Version/readiness, service controls, automatic updates, login-token lifetime, and optional stale-conversation cleanup. |
 | **Elowen AI** | Agent name, provider accounts, model context windows, max steps, and runtime limits. |
 | **Models** | Enabled executor presets, custom entries, and model notes for planning. |
 | **CLI Agents** | External coding CLI binary, arguments, permission behavior, and resume behavior. |
@@ -77,7 +77,7 @@ GitHub settings keep credentials write-only and define the PR workflow defaults:
 
 ## Plugins and Memory
 
-Plugins render their own config from `elowen-plugin.json`; use their documentation and help affordances for specialized fields. The Memory section chooses the embedding and categorization models. Both reuse credentials from a configured Elowen AI provider instead of keeping duplicate keys.
+Plugins render their own config from `elowen-plugin.json`; use their documentation and help affordances for specialized fields. The Memory section chooses the embedding and categorization models. API-key and OpenAI-compatible providers can supply those credentials without duplication; OAuth-only accounts cannot, because they do not expose an embedding endpoint.
 
 Leaving embeddings unconfigured keeps memory usable with keyword retrieval. Reindexing or recategorizing performs a deliberate background operation; it is not a hidden side effect of changing the visual UI.
 

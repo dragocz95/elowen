@@ -23,13 +23,14 @@ The browser does not expose a daemon token to JavaScript. It uses the
 same-origin `/api` proxy and an httpOnly session cookie; the CLI sends the
 bearer header directly.
 
-Tokens have three scopes:
+Tokens resolve to two effective scopes:
 
 | Scope | Intended use |
 | --- | --- |
 | `full` | Interactive users |
-| `agent` | Spawned workers; a route and field allow-list limits this scope |
-| `advisor` | Per-user assistant sessions, with full interactive rights |
+| `agent` | Spawned workers, pilots, and overseers; a route and field allow-list limits this scope |
+
+Advisor credentials are stored separately from login tokens but resolve to the owner's `full` scope. Rotating or stopping an advisor therefore does not invalidate an interactive login.
 
 When project assignments are enabled, non-admin users are limited to their
 assigned projects. Per-user model and tool policy applies in addition to the

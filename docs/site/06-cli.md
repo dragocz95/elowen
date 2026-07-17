@@ -28,13 +28,18 @@ elowen status                # daemon and Web UI health
 
 ## Chat
 
-The terminal chat streams assistant text, tool calls, diffs, approvals, todos, and sub-agent state. Its telemetry rail shows the current conversation's model, context, project, branch, language-server state, usage, and—when the provider exposes them—subscription limits. This is live state from the daemon, not a terminal-only copy.
+The terminal chat streams assistant text, tool calls, diffs, approvals, todos, and sub-agent state. Its telemetry rail shows the current conversation's model, context, project, branch, language-server state, and usage. For a connected ChatGPT account it also shows the subscription windows returned by that account; a cached reading is marked when it is no longer fresh. This is live state from the daemon, not a terminal-only copy.
 
 - Use **`@`** to attach a file through the picker. Text is attached as context; supported images remain image attachments.
 - Use **`@clipboard`** to attach supported clipboard content.
 - Start a line with **`!`** to run a local shell command. Its output is shown and made available to the next prompt.
 - Use **`Esc`** to deny a pending approval; it does not silently abort the whole conversation.
+- Use **`/cd [path]`** to show or change the CLI working directory. It affects later prompts, `!` commands, attachments, exports, and local history; it never widens the daemon's project permissions.
+- Use **`/tools`** to inspect the currently available plugin tools, their owner, description, and input schema. It is an inspector, not a plugin-management screen.
+- Use **`/fast`** with a ChatGPT/OpenAI OAuth model to toggle priority processing for this conversation when that model supports it.
 - Use **`/model`**, **`/theme`**, and **`/keybinds`** for the corresponding pickers and preferences.
+
+While Elowen is working, the CLI shows live activity and elapsed time. A tool call that takes longer to compose shows a temporary writing indicator. **`Ctrl+B`** moves a running foreground sub-agent or `Bash` command into the background without cancelling it; its result returns to the conversation when it completes.
 
 The exact command menu is served by the daemon, so built-in and plugin commands remain aligned across surfaces. Type `/` in chat to browse it.
 
@@ -49,6 +54,10 @@ elowen run --new "start a clean investigation"
 ```
 
 If you send a message while a turn is running, Elowen stores it in that session's durable queue and delivers it after the current turn settles. `/compact` compacts older history when needed, retaining a summary and the useful tail. Context, output, goal, and channel limits are controlled by the instance owner in **Settings → Elowen AI**.
+
+### Background commands
+
+`Bash(background: true)` starts a command as a tracked background process and returns its ID. The agent can inspect it with `ListProcesses`, collect output with `ProcessOutput`, or stop it with `KillProcess`. `ProcessOutput(block: true)` waits for a bounded period instead of polling. A foreground `Bash` command can also be detached with **`Ctrl+B`** from the terminal chat; it keeps running without the foreground timeout and reports its completion asynchronously.
 
 ## Modes and permissions
 
