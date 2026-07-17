@@ -57,7 +57,11 @@ const CHROME_ROWS = 6;   // title, blank, column header, rule, blank, footer
 
 /** One source of truth for the modal's geometry. maxHeight used to be hardcoded at the call site and
  *  never reached render(), so the list's capacity and the real row budget disagreed and a long DAG
- *  silently lost its bottom rows. Both sides now compute from the same terminal. */
+ *  silently lost its bottom rows. Both sides now compute from the same terminal.
+ *
+ *  The 12-row floor is a minimum to render INTO, not a promise the terminal can honour: the overlay clamps
+ *  the frame to `rows - 4` regardless, so under ~16 rows the modal is taller than its window and gets
+ *  trimmed. That is the floor doing its job — a modal squeezed below its chrome has nothing left to show. */
 function modalGeometry(terminal: { columns: number; rows: number }): { width: number; maxHeight: number } {
   return {
     width: Math.max(64, Math.min(110, Math.floor(terminal.columns * 0.9))),
@@ -66,14 +70,14 @@ function modalGeometry(terminal: { columns: number; rows: number }): { width: nu
 }
 
 /** A node placed in the dependency tree: its row prefix is the branch art leading to it. */
-interface TreeRow { node: WorkflowNode; branch: string; extraDeps: string[] }
+interface TreeRow { node: WorkflowNode; branch: string }
 
 /** Lay the DAG out as a tree so the list SHOWS what depends on what instead of only saying it.
  *
  *  A DAG is not a tree: a node may depend on several others, and only one of them can hold it in an
- *  indented list. Each node therefore hangs under its FIRST dependency, and any others are reported as
- *  `extraDeps` — the shape stays readable and the full truth still shows in the detail column, rather
- *  than the layout quietly implying a node has one parent when it has three.
+ *  indented list. Each node therefore hangs under its FIRST dependency, and the detail column carries the
+ *  full dep list — the shape stays readable rather than the layout quietly implying a node has one parent
+ *  when it has three.
  *
  *  Total by construction: nodes are emitted at most once (`seen`), and anything the walk cannot reach —
  *  a dangling dependency, or a cycle the engine should have rejected — is emitted as its own root rather
@@ -94,11 +98,7 @@ function layoutTree(nodes: readonly WorkflowNode[]): TreeRow[] {
     const node = byId.get(id);
     if (!node || seen.has(id)) return;
     seen.add(id);
-    out.push({
-      node,
-      branch: root ? '' : `${prefix}${last ? '└─' : '├─'} `,
-      extraDeps: node.deps.filter((dep, i) => byId.has(dep) && i > 0),
-    });
+    out.push({ node, branch: root ? '' : `${prefix}${last ? '└─' : '├─'} ` });
     const kids = children.get(id) ?? [];
     const next = root ? '' : `${prefix}${last ? '   ' : '│  '}`;
     kids.forEach((kid, i) => walk(kid, next, i === kids.length - 1, false));
@@ -210,18 +210,23 @@ class WorkflowModal implements Component, Focusable {
     ].filter(Boolean).join(' · ');
     const rows: string[] = [
       `${STATUS_INK[node.status](GLYPH[node.status])} ${W(terminalInlineText(node.id))}  ${F(meta)}`,
-      F(node.deps.length ? `deps: ${node.deps.join(', ')}` : 'root'),
+      F(node.deps.length ? `deps: ${terminalInlineText(node.deps.join(', '))}` : 'root'),
       '',
     ];
     const task = wrapTextWithAnsi(G(terminalInlineText(node.task)), width);
     const room = Math.max(1, maxRows - rows.length - (node.detail ? 2 : 0));
-    rows.push(...task.slice(0, room));
-    if (task.length > room) rows.push(F(`… +${task.length - room} more`));
+    // The "+N more" line costs a row of `room` itself. Counting it as free overran maxRows by one, and the
+    // overlay trims from the BOTTOM — so a long task silently ate the footer's keybind hint.
+    if (task.length > room) rows.push(...task.slice(0, room - 1), F(`… +${task.length - room + 1} more`));
+    else rows.push(...task);
     if (node.detail) {
       rows.push('');
       rows.push(F(`▸ ${terminalInlineText(node.detail)}`));
     }
-    return rows;
+    // The status/deps head has no upper bound of its own, so on a very short budget it alone can outgrow
+    // maxRows. Cede the overflow here rather than at the caller: the overlay trims from the bottom, and
+    // losing the tail of a detail beats losing the footer that says which keys work.
+    return rows.slice(0, Math.max(1, maxRows));
   }
 
   /** Full-chrome message frame — an empty modal should still read as this modal, not a broken one. */
@@ -247,11 +252,17 @@ class WorkflowModal implements Component, Focusable {
     const listWidth = twoColumn ? Math.max(MIN_LIST, Math.min(44, Math.floor(bodyWidth * 0.42))) : bodyWidth;
     const detailWidth = twoColumn ? bodyWidth - listWidth - GUTTER : bodyWidth;
     const capacity = this.capacity();
+    // Side by side, the columns overlap in the row budget and cost max(list, detail). Stacked, they sit ON
+    // TOP of one another (plus a rule between), so they must SHARE it — billing both the full capacity
+    // overran the frame by a whole column's worth of rows, and the overlay trimmed the detail and footer
+    // away to pay for it.
+    const listRoom = twoColumn ? capacity : Math.max(2, Math.ceil((capacity - 1) / 2));
+    const detailRoom = twoColumn ? capacity : Math.max(1, capacity - listRoom - 1);
 
     // Window derived from the selection, never stored: the formula is total over every selectedIndex, so
     // move()'s modulo wrap (last→first) needs no special case and `selectedIndex` stays the only state.
-    const start = Math.max(0, Math.min(this.selectedIndex - capacity + 1, tree.length - capacity));
-    const window = tree.slice(start, start + capacity);
+    const start = Math.max(0, Math.min(this.selectedIndex - listRoom + 1, tree.length - listRoom));
+    const window = tree.slice(start, start + listRoom);
 
     const out: string[] = [];
     const statusInk = wf.status === 'running' ? (t: string) => ansi.sgr(RUNNING, t)
@@ -262,12 +273,12 @@ class WorkflowModal implements Component, Focusable {
     out.push(ROW(head, width));
     out.push(ROW(`  ${F(`${' '.repeat(Math.max(0, bodyWidth - 3))}esc`)}`, width));
 
-    const range = tree.length > capacity
-      ? `${start + 1}–${Math.min(tree.length, start + capacity)}/${tree.length} ↕`
+    const range = tree.length > listRoom
+      ? `${start + 1}–${Math.min(tree.length, start + listRoom)}/${tree.length} ↕`
       : `${tree.length}`;
     const listHeader = `${F('NODES')}  ${F(range)}`;
     const selected = tree[this.selectedIndex]!;
-    const detail = this.detailBlock(selected.node, detailWidth, capacity);
+    const detail = this.detailBlock(selected.node, detailWidth, detailRoom);
 
     if (twoColumn) {
       // ONE paintRow per row, at the OUTER level: painting the columns separately would emit a mid-row

@@ -178,6 +178,90 @@ describe('workflow CLI rendering', () => {
     for (const id of ['a', 'b', 'orphan']) expect(flat).toMatch(new RegExp(`[✓●⏸✗] ${id}\\b`));
   });
 
+  it('keeps the footer when a long task overflows the detail column', () => {
+    // The overlay trims a too-tall modal from the BOTTOM, so any row the detail column overspends is paid
+    // for by the footer — the one row telling the user which keys work. A short terminal is where this
+    // bites: the task is store-bounded to 600 chars, which only outgrows the detail column once the row
+    // budget is small.
+    const wordy: WorkflowState = {
+      id: 'wf-w', toolCallId: 'call-w', title: 'wordy', status: 'running',
+      nodes: [{
+        id: 'gather', task: 'summarize the token grammar '.repeat(21).slice(0, 600),
+        status: 'running', deps: [], sessionId: 's-gather', tokens: 4200, seconds: 9, detail: 'Read src/lexer.ts',
+      }],
+    };
+    let captured: { render(w: number): string[] } | null = null;
+    openWorkflowModal({
+      tui: {
+        showOverlay: (c: typeof captured) => { captured = c; return { hide: vi.fn(), focus: vi.fn() }; },
+        setFocus: vi.fn(), requestRender: vi.fn(), terminal: { columns: 120, rows: 20 },
+      } as never,
+      editor: {} as never, getWorkflow: () => wordy, onDrill: vi.fn(),
+    });
+    const frame = captured!.render(108);
+    show('modal — long task on a short terminal', frame);
+
+    expect(frame.length).toBeLessThanOrEqual(16); // modalGeometry's maxHeight at rows: 20
+    const flat = frame.map(strip).join('\n');
+    expect(flat).toContain('enter open node transcript'); // the row an overrun used to eat
+    expect(flat).toMatch(/… \+\d+ more/);                 // the task is elided, not dropped
+  });
+
+  it('shares the row budget between list and detail when stacked on a narrow terminal', () => {
+    // Below MIN_TWO_COL the detail stacks UNDER the list instead of beside it, so the two stop overlapping
+    // in the row budget and start adding up. Billing each the full capacity overflowed the frame, and the
+    // overlay pays for an overrun out of the bottom rows — the detail block and the footer.
+    const many: WorkflowState = {
+      id: 'wf-n', toolCallId: 'call-n', title: 'wide dag', status: 'running',
+      nodes: [
+        { id: 'root', task: 'root task', status: 'done', deps: [], sessionId: 's-root' },
+        ...Array.from({ length: 29 }, (_, i) => ({
+          id: `node-${i}`, task: `task ${i}`, status: 'pending' as const, deps: ['root'],
+        })),
+      ],
+    };
+    let captured: { render(w: number): string[] } | null = null;
+    openWorkflowModal({
+      tui: {
+        showOverlay: (c: typeof captured) => { captured = c; return { hide: vi.fn(), focus: vi.fn() }; },
+        setFocus: vi.fn(), requestRender: vi.fn(), terminal: { columns: 66, rows: 34 },
+      } as never,
+      editor: {} as never, getWorkflow: () => many, onDrill: vi.fn(),
+    });
+    const frame = captured!.render(62); // what the overlay constrains 66 columns down to
+    show('modal — stacked on a narrow terminal', frame);
+
+    const flat = frame.map(strip).join('\n');
+    expect(flat).not.toContain('┼');                       // stacked, not two-column
+    expect(frame.length).toBeLessThanOrEqual(30);          // modalGeometry's maxHeight at rows: 34
+    expect(flat).toContain('enter open node transcript');  // footer survives
+    expect(flat).toContain('root');                        // and so does the detail block
+  });
+
+  it('strips control sequences out of a model-authored dep id', () => {
+    // The engine length-caps node ids but never validates their charset, and terminalSafeAnsi passes SGR
+    // through by design — so an unsanitized dep id would repaint the modal's fixed palette from the inside.
+    const hostile: WorkflowState = {
+      id: 'wf-h', toolCallId: 'call-h', status: 'running',
+      nodes: [
+        { id: 'a', task: 'a', status: 'done', deps: [] },
+        { id: 'b', task: 'b', status: 'running', deps: ['a', '\x1b[31mghost'] },
+      ],
+    };
+    let captured: { render(w: number): string[]; handleInput(d: string): void } | null = null;
+    openWorkflowModal({
+      tui: {
+        showOverlay: (c: typeof captured) => { captured = c; return { hide: vi.fn(), focus: vi.fn() }; },
+        setFocus: vi.fn(), requestRender: vi.fn(), terminal: { columns: 100, rows: 40 },
+      } as never,
+      editor: {} as never, getWorkflow: () => hostile, onDrill: vi.fn(),
+    });
+    captured!.handleInput('\x1b[B'); // select `b`, whose deps render in the detail column
+    const frame = captured!.render(90);
+    expect(frame.join('\n')).not.toContain('\x1b[31m');
+    expect(strip(frame.join('\n'))).toContain('deps: a, ghost');
+  });
+
   it('keeps its OLED palette whatever theme the chat is on', () => {
     const frame = (): string[] => {
       let captured: { render(w: number): string[] } | null = null;
