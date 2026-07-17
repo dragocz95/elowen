@@ -4,7 +4,7 @@ import { APP_IDENTITY_HEADERS } from '../inference/appIdentity.js';
 import { installOpenRouterMeter } from './openrouterMeter.js';
 import { kimiOAuthProvider } from './kimiOAuth.js';
 import type { BrainProviderType, BrainProviderApi } from '../store/configStore.js';
-import { descriptorCapabilities } from './modelCapabilities.js';
+import { catalogModelCost, descriptorCapabilities } from './modelCapabilities.js';
 
 /** One brain model provider, daemon-side (API key included). `openai`/`anthropic` register a custom
  *  endpoint; `oauth-*` rely on pi-ai's built-in providers + an OAuth credential in the AuthStorage. */
@@ -217,7 +217,10 @@ function modelEntry(provider: string, id: string, contextWindow?: number, compat
     // into a 400; known reasoning families expose only their real canonical levels.
     thinkingLevelMap: capabilities.thinkingLevelMap,
     ...(compat ? { compat } : {}),
-    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    // Estimated from the models.dev catalog so a proxied model (`kimi-k3` through a relay) reports real
+    // spend instead of $0. A provider-reported cost (the OpenRouter meter, persistence.ts) still overrides
+    // this per turn; a catalog miss keeps $0 rather than inventing a figure.
+    cost: catalogModelCost(provider, id) ?? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     contextWindow: contextWindow && contextWindow > 0 ? contextWindow : DEFAULT_CONTEXT_WINDOW, maxTokens: 8_192,
   };
 }

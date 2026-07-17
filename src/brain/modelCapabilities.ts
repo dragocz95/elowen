@@ -1,6 +1,6 @@
 import type { Model, Api, ModelThinkingLevel, ThinkingLevelMap } from '@earendil-works/pi-ai';
 import { getSupportedThinkingLevels } from '@earendil-works/pi-ai';
-import { MODEL_CAPABILITY_CATALOG, type CatalogCapability } from './modelCapabilityData.js';
+import { MODEL_CAPABILITY_CATALOG, MODEL_COST_CATALOG, type CatalogCapability, type CatalogCost } from './modelCapabilityData.js';
 
 /**
  * Elowen's one model-capability vocabulary. PI keeps the canonical values stable while providers are
@@ -141,6 +141,73 @@ function catalogCapability(provider: string, model: string) {
   // Neither the endpoint nor an upstream namespace is known: recognise the model by name inside whatever
   // the endpoint chose to call it, and offer only what every endpoint serving it accepts.
   return nameWithin(model);
+}
+
+/** A model descriptor's per-token USD rates, in pi-ai's `Model['cost']` shape. */
+export interface ModelCost { input: number; output: number; cacheRead: number; cacheWrite: number }
+
+const toCost = (t: CatalogCost): ModelCost => ({ input: t[0], output: t[1], cacheRead: t[2], cacheWrite: t[3] });
+const sameCost = (a: CatalogCost, b: CatalogCost): boolean => a.every((n, i) => n === b[i]);
+
+/** The price row for `<catalog>/<model>`, retried without a pull tag the catalog does not carry — the
+ *  cost twin of `catalogRow`. */
+function costRow(catalog: string, model: string): CatalogCost | undefined {
+  const row = MODEL_COST_CATALOG[`${catalog}/${model}`];
+  if (row !== undefined) return row;
+  const untagged = model.includes(':') ? model.slice(0, model.indexOf(':')) : undefined;
+  return untagged ? MODEL_COST_CATALOG[`${catalog}/${untagged}`] : undefined;
+}
+
+let costNamedModels: Map<string, CatalogCost[]> | undefined;
+function costByName(): Map<string, CatalogCost[]> {
+  if (costNamedModels) return costNamedModels;
+  costNamedModels = new Map();
+  for (const [key, cost] of Object.entries(MODEL_COST_CATALOG)) {
+    const tail = key.slice(key.lastIndexOf('/') + 1);
+    const name = tail.includes(':') ? tail.slice(0, tail.indexOf(':')) : tail;
+    const rows = costNamedModels.get(name);
+    if (rows) rows.push(cost); else costNamedModels.set(name, [cost]);
+  }
+  return costNamedModels;
+}
+
+/** The price to attribute to a bare model name matched only by `nameWithin`. Unlike a reasoning ladder,
+ *  a price has no safe intersection: providers charge different amounts for the same model, and the
+ *  endpoint fronting it here (a proxy of unknown billing) may match none of them. So a name-only match
+ *  yields a price ONLY when every catalogued endpoint agrees on it exactly — then the figure is reliable
+ *  whichever one the proxy really uses. Any disagreement leaves the model unpriced rather than guessed. */
+function costWithin(model: string): CatalogCost | undefined {
+  const id = model.toLowerCase();
+  let best: string | undefined;
+  for (const name of costByName().keys()) {
+    if (name.length < 4 || (best && name.length <= best.length)) continue;
+    const at = id.indexOf(name);
+    if (at < 0) continue;
+    const before = at === 0 ? '' : id[at - 1]!;
+    const after = id[at + name.length] ?? '';
+    if (/[a-z0-9]/.test(before) || /[0-9.]/.test(after)) continue;
+    best = name;
+  }
+  if (!best) return undefined;
+  const rows = costByName().get(best)!;
+  return rows.every((row) => sameCost(row, rows[0]!)) ? rows[0] : undefined;
+}
+
+/** The estimated per-token cost for a (provider, model) from the models.dev catalog, or undefined when it
+ *  lists no matching price. The cost twin of `catalogCapability`, resolved through the identical three
+ *  tiers (exact endpoint row → upstream namespace → agreed name match) so a proxy model is priced exactly
+ *  where its capability is recognised. Only an ESTIMATE: a provider-reported cost (the OpenRouter meter)
+ *  overrides it downstream, and a miss leaves pi-ai's own $0, never inventing a figure. */
+export function catalogModelCost(provider: string, model: string): ModelCost | undefined {
+  if (provider === 'openai-codex') return undefined; // ChatGPT's own catalog, not models.dev
+  const key = provider.startsWith('elowen-') ? provider.slice('elowen-'.length) : provider;
+  const direct = costRow(catalogName(key), model);
+  if (direct !== undefined) return toCost(direct);
+  const slash = model.indexOf('/');
+  const upstream = slash > 0 ? costRow(catalogName(model.slice(0, slash)), model.slice(slash + 1)) : undefined;
+  if (upstream !== undefined) return toCost(upstream);
+  const named = costWithin(model);
+  return named !== undefined ? toCost(named) : undefined;
 }
 
 /** Turn an accepted effort ladder into PI's map: a level the endpoint does not accept is `null`

@@ -40,6 +40,7 @@ const catalog = source
     });
 
 const entries = [];
+const costs = [];
 for (const provider of PROVIDERS) {
   const models = catalog[provider]?.models;
   if (!models) {
@@ -47,6 +48,13 @@ for (const provider of PROVIDERS) {
     continue;
   }
   for (const [id, model] of Object.entries(models).sort(([a], [b]) => a.localeCompare(b))) {
+    // Cost is per MILLION tokens in models.dev, the same unit pi-ai's descriptor rates use, so it is
+    // emitted verbatim. Recorded even when zero (a flat-rate subscription like kimi-for-coding) so a
+    // direct catalog hit resolves an explicit $0 rather than falling through to an estimate.
+    const c = model.cost;
+    if (c && (c.input != null || c.output != null || c.cache_read != null || c.cache_write != null)) {
+      costs.push([`${provider}/${id}`, [c.input ?? 0, c.output ?? 0, c.cache_read ?? 0, c.cache_write ?? 0]]);
+    }
     if (!model.reasoning) { entries.push([`${provider}/${id}`, 'false']); continue; }
     const effort = (model.reasoning_options ?? []).find((option) => option.type === 'effort');
     const levels = (effort?.values ?? []).filter((value) => CANONICAL.has(value));
@@ -57,6 +65,7 @@ for (const provider of PROVIDERS) {
 }
 
 const body = entries.map(([key, value]) => `  '${key}': ${value},`).join('\n');
+const costBody = costs.map(([key, t]) => `  '${key}': [${t.join(', ')}],`).join('\n');
 const reasoning = entries.filter(([, value]) => value !== 'false').length;
 
 writeFileSync(OUT, `/* GENERATED FILE — DO NOT EDIT BY HAND.
@@ -67,16 +76,24 @@ writeFileSync(OUT, `/* GENERATED FILE — DO NOT EDIT BY HAND.
  * \`false\` for one that does not reason at all. Consumed by descriptorCapabilities() in
  * modelCapabilities.ts, which is the only reader — a miss there falls back to name heuristics.
  *
- * ${entries.length} models, ${reasoning} of them reasoning-capable.
+ * ${entries.length} models, ${reasoning} of them reasoning-capable; ${costs.length} carry a price.
  */
 import type { ModelThinkingLevel } from '@earendil-works/pi-ai';
 
 /** Accepted effort ladder, \`true\` (reasons, effort not settable), or \`false\` (no reasoning). */
 export type CatalogCapability = readonly ModelThinkingLevel[] | boolean;
 
+/** Per-MILLION-token USD rate as \`[input, output, cacheRead, cacheWrite]\` — the same unit pi-ai's
+ *  descriptor rates use, so it is consumed verbatim. A flat-rate subscription is recorded as all zeros. */
+export type CatalogCost = readonly [number, number, number, number];
+
 export const MODEL_CAPABILITY_CATALOG: Readonly<Record<string, CatalogCapability>> = {
 ${body}
 };
+
+export const MODEL_COST_CATALOG: Readonly<Record<string, CatalogCost>> = {
+${costBody}
+};
 `);
 
-console.log(`wrote ${entries.length} models (${reasoning} reasoning-capable) to src/brain/modelCapabilityData.ts`);
+console.log(`wrote ${entries.length} models (${reasoning} reasoning-capable, ${costs.length} priced) to src/brain/modelCapabilityData.ts`);

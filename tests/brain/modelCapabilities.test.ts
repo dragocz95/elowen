@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { descriptorCapabilities, inferredModelCapabilities } from '../../src/brain/modelCapabilities.js';
+import { catalogModelCost, descriptorCapabilities, inferredModelCapabilities } from '../../src/brain/modelCapabilities.js';
 
 /** The effort ladder Elowen would offer for a model on a custom endpoint registered as `elowen-<id>`. */
 const levels = (provider: string, model: string) => inferredModelCapabilities(`elowen-${provider}`, model).levels;
@@ -81,5 +81,42 @@ describe('descriptorCapabilities — models.dev catalog', () => {
     expect(codex.labels).toEqual({ xhigh: 'ultra' });
     expect(inferredModelCapabilities('openai-codex', 'gpt-5.6').levels)
       .toEqual(['minimal', 'low', 'medium', 'high', 'xhigh', 'max']);
+  });
+});
+
+// Asserted on catalog INVARIANTS, not the live figures a refresh moves: that a model resolves to SOME
+// price via each of the three tiers, that an ambiguous or unknown one resolves to none, and that the same
+// price is reached however the id is spelled. The exact dollar amounts are models.dev's, not ours to pin.
+describe('catalogModelCost — a proxied model reports real spend instead of $0', () => {
+  const priced = (provider: string, model: string) => catalogModelCost(`elowen-${provider}`, model);
+
+  it('prices a bare model name only when every catalogued endpoint agrees on it', () => {
+    // kimi-k3 is listed identically by Moonshot and OpenRouter, so a relay serving it as a bare `kimi-k3`
+    // (no namespace, no own catalog row) is priced from that agreement — the headline case, was $0.
+    const k3 = priced('acme-relay', 'kimi-k3');
+    expect(k3?.input).toBeGreaterThan(0);
+    expect(k3?.output).toBeGreaterThan(0);
+    // Spelled with the upstream namespace it must reach the SAME price (tier 2 vs tier 3, one figure).
+    expect(catalogModelCost('elowen-relay', 'moonshotai/kimi-k3')).toEqual(k3);
+  });
+
+  it('reads the upstream price a relay names, even when the relay itself is uncatalogued', () => {
+    // `deepseek/deepseek-v4-flash` says which upstream it proxies; the price is the upstream model's own.
+    const flash = priced('acme-relay', 'deepseek/deepseek-v4-flash');
+    expect(flash?.input).toBeGreaterThan(0);
+    expect(flash).toEqual(catalogModelCost('deepseek', 'deepseek-v4-flash'));
+  });
+
+  it('leaves a model unpriced rather than guess when the catalog disagrees or is silent', () => {
+    // glm-5.2 is priced differently by Z.AI, OpenRouter and NVIDIA — no agreement, so no guess.
+    expect(priced('acme-relay', 'glm-5.2')).toBeUndefined();
+    // ollama publishes no price for its glm-5.2, so the namespaced form is unpriced too.
+    expect(priced('acme-relay', 'ollama/glm-5.2')).toBeUndefined();
+    // A model in no catalog at all stays $0 (undefined here), never invented.
+    expect(priced('acme-relay', 'some-private-model-xyz')).toBeUndefined();
+  });
+
+  it('never prices Codex OAuth from models.dev — ChatGPT bills on its own catalog', () => {
+    expect(catalogModelCost('openai-codex', 'gpt-5.6')).toBeUndefined();
   });
 });

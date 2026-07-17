@@ -241,15 +241,16 @@ describe('brain providers', () => {
       expect(await wireAgent('k3')).toBe(`KimiCLI/${KIMI_CLI_VERSION}`); // added by us
     });
 
-    it('knows k3 reasons and offers only the effort Kimi documents', () => {
-      // K3 always thinks, and `max` is its only level — and already its default, so this changes no request.
-      // Regression guard: with kimi-for-coding missing from the capability catalog, k3 read as a
-      // non-reasoning model.
+    it('knows k3 reasons and offers only the efforts Kimi documents', () => {
+      // K3 always thinks; the catalog grades it low/high/max (not medium/xhigh). Regression guard: with
+      // kimi-for-coding missing from the capability catalog, k3 read as a non-reasoning model.
       const model = buildBrainRegistry(empty).getAll().find((m) => m.provider === 'kimi-coding' && m.id === 'k3');
       expect(model?.reasoning).toBe(true);
+      expect(model?.thinkingLevelMap?.low).toBe('low');
+      expect(model?.thinkingLevelMap?.high).toBe('high');
       expect(model?.thinkingLevelMap?.max).toBe('max');
-      expect(model?.thinkingLevelMap?.low).toBeNull();
-      expect(model?.thinkingLevelMap?.high).toBeNull();
+      expect(model?.thinkingLevelMap?.medium).toBeNull();
+      expect(model?.thinkingLevelMap?.xhigh).toBeNull();
     });
   });
 
