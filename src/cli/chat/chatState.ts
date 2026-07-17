@@ -38,6 +38,12 @@ export class ChatState {
   childAc: AbortController | null = null;
   streamAc = new AbortController();
   notice: string;
+  /** Set to true right after assigning `notice` to exempt THAT text from the frame loop's auto-expiry —
+   *  for a status whose owner clears or replaces it (`… running locally…`), or a block meant to be read
+   *  rather than glanced at (a goal draft). Describes the one assignment, not the slot: the frame loop
+   *  consumes the flag when it first sees the new text, so the result that later replaces a pending
+   *  status expires normally without its writer having to reset anything. */
+  noticeSticky = false;
   modelName: string;
   conversationTitle: string;
   lineCfg: BrainStatus['statusline'];

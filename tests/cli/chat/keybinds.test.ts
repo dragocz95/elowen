@@ -3,7 +3,7 @@ import {
   chordFromInput, createKeymap, createLeaderState, keybindDefault, keybindRows, parseKeybind, KEYBIND_ACTIONS,
 } from '../../../src/cli/chat/keys.js';
 import {
-  bottomHints, INTERRUPT_CONFIRM_MS, interruptPress, startScreenHints, quitHint, modelMetaLine,
+  bottomHints, INTERRUPT_CONFIRM_MS, interruptPress, noticeAction, startScreenHints, quitHint, modelMetaLine,
 } from '../../../src/cli/chat/chatComposition.js';
 
 // Raw bytes the terminal sends for the chords under test.
@@ -60,6 +60,26 @@ describe('stream interrupt + shell row budget', () => {
       armedUntil: first.armedUntil + INTERRUPT_CONFIRM_MS,
       abort: false,
     });
+  });
+
+  // Submitting the next message used to be the only general clear, so a confirmation sat above the
+  // composer indefinitely — the frame loop now expires it on a clock instead.
+  it('arms an expiry for a transient notice, and only once per assignment', () => {
+    expect(noticeAction('reasoning effort: max', '', false)).toBe('arm');
+    // Already seen: its timer is running. Re-arming every frame would keep pushing the expiry away for as
+    // long as anything else redraws — i.e. never expire during a streaming turn.
+    expect(noticeAction('reasoning effort: max', 'reasoning effort: max', false)).toBe('idle');
+  });
+
+  it('leaves a sticky notice alone, and expires whatever replaces it', () => {
+    expect(noticeAction('$ npm test · running locally…', '', true)).toBe('cancel');
+    // The flag describes one assignment. The shell consumes it on sight, so the outcome that replaces a
+    // pending status arrives unsticky and expires normally — its writer resets nothing.
+    expect(noticeAction('done', '$ npm test · running locally…', false)).toBe('arm');
+  });
+
+  it('cancels rather than arms when the slot is cleared', () => {
+    expect(noticeAction('', 'reasoning effort: max', false)).toBe('cancel');
   });
 
   it('changes the thinking footer while interrupt is armed', () => {

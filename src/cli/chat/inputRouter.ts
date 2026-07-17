@@ -245,11 +245,9 @@ export class InputRouter {
         if (text) {
           term.write(`\x1b]52;c;${Buffer.from(text.slice(0, 100_000)).toString('base64')}\x07`);
           const count = text.split('\n').length;
+          // Expiry is the frame loop's job now — every transient notice fades on the same clock.
           rt.notice = color.success(`✓ Copied ${count} line${count === 1 ? '' : 's'}`);
           context.render('input:copied');
-          context.animations.scheduleVisual('copy-notice', 1_800, () => {
-            if (rt.notice.includes('Copied')) { rt.notice = ''; context.render('state:copy-notice-clear'); }
-          });
         }
         return { consume: true };
       }

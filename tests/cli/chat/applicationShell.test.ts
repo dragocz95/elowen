@@ -7,7 +7,7 @@ import { InputRouter } from '../../../src/cli/chat/inputRouter.js';
 import type { ChatInputContext } from '../../../src/cli/chat/inputRouter.js';
 import { OverlayController } from '../../../src/cli/chat/overlayController.js';
 import { RenderShell } from '../../../src/cli/chat/renderShell.js';
-import { createChatComposition } from '../../../src/cli/chat/chatComposition.js';
+import { createChatComposition, NOTICE_TTL_MS } from '../../../src/cli/chat/chatComposition.js';
 import type { ChatComposition, ShellInputDeps } from '../../../src/cli/chat/chatComposition.js';
 import { SubagentPanel } from '../../../src/cli/chat/components.js';
 import { openPicker } from '../../../src/cli/chat/picker.js';
@@ -108,6 +108,49 @@ describe('chat application shell ownership', () => {
     expect(animation.timerCount).toBe(1);
     animation.stop();
     expect(animation.timerCount).toBe(0);
+  });
+
+  // The pure decision is covered in keybinds.test.ts. This is the half that broke: a transient notice sat
+  // above the composer until the user typed again, because nothing ARMED an expiry. Drive the real
+  // composition so a decision function nobody calls cannot pass.
+  it('expires a transient notice on its own, and never a sticky one', async () => {
+    const h = compositionHarness();
+    const composition = makeComposition(h);
+
+    h.rt.notice = 'reasoning effort: max';
+    composition.prepare();
+    await vi.advanceTimersByTimeAsync(NOTICE_TTL_MS);
+    expect(h.rt.notice).toBe('');
+
+    h.rt.notice = '$ npm test · running locally…';
+    h.rt.noticeSticky = true;
+    composition.prepare();
+    await vi.advanceTimersByTimeAsync(NOTICE_TTL_MS * 3);
+    expect(h.rt.notice).toBe('$ npm test · running locally…'); // its owner clears it, not the clock
+
+    // The flag covered that one assignment: the outcome replacing it expires like any confirmation.
+    h.rt.notice = 'done';
+    composition.prepare();
+    await vi.advanceTimersByTimeAsync(NOTICE_TTL_MS);
+    expect(h.rt.notice).toBe('');
+    composition.dispose();
+  });
+
+  // A newer notice must not be swallowed by the timer the previous one armed.
+  it('lets a replacement notice outlive the timer armed for the notice it replaced', async () => {
+    const h = compositionHarness();
+    const composition = makeComposition(h);
+
+    h.rt.notice = 'first';
+    composition.prepare();
+    await vi.advanceTimersByTimeAsync(NOTICE_TTL_MS / 2);
+    h.rt.notice = 'second';
+    composition.prepare();
+    await vi.advanceTimersByTimeAsync(NOTICE_TTL_MS / 2 + 10); // the FIRST notice's deadline passes here
+    expect(h.rt.notice).toBe('second');
+    await vi.advanceTimersByTimeAsync(NOTICE_TTL_MS);
+    expect(h.rt.notice).toBe('');
+    composition.dispose();
   });
 
   it('ticks active-goal elapsed time only while a goal is visible and leaves no idle timer', async () => {

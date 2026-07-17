@@ -123,12 +123,14 @@ function handleGoalCommand(
   const text = draft ? raw.slice('draft '.length).trim() : raw;
   if (draft) {
     rt.notice = color.dim('drafting goal…');
+    rt.noticeSticky = true; // live progress — the draft below replaces it
     render();
     const stateRevision = rt.goalRevision;
     run(() => client.setGoal(text, true), (g) => {
       if (!rt.isCurrentGoalCommand(commandRevision)) return;
       publish(stateRevision, g);
       rt.notice = color.dim(`goal draft:\n${g.draft}`);
+      rt.noticeSticky = true; // a multi-line draft to read and act on, not a glanceable confirmation
       render();
     }, fail);
     return;
@@ -260,6 +262,7 @@ export function wireSubmit(
     const localCmd = parseBangCommand(trimmed);
     if (localCmd) {
       rt.notice = color.dim(`$ ${localCmd} · running locally…`);
+      rt.noticeSticky = true; // live progress — the completion handler below owns clearing it
       render();
       runSession((signal) => runShell(localCmd, process.cwd(), signal), (result) => {
         shellContext.add(result);

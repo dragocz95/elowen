@@ -51,6 +51,10 @@ export interface ChatComposition {
   readonly animations: AnimationController;
   render(reason?: string): void;
   renderForced(reason?: string): void;
+  /** Run one frame-preparation pass synchronously. In production the RenderShell calls this from
+   *  `beginRender`; exposed so a test can drive the frame-loop side effects (e.g. notice expiry) that a
+   *  faked PI never triggers on its own. */
+  prepare(): void;
   attachInput(deps: ShellInputDeps): void;
   reshowPanel(): void;
   reloadKeymap(): void;
@@ -134,6 +138,19 @@ export function quitHint(keymap: Keymap): string {
 }
 
 export const INTERRUPT_CONFIRM_MS = 1_800;
+
+/** How long a transient notice stays above the composer. Long enough to read a line of confirmation
+ *  after looking back at the screen, short enough that it is gone before it reads as state. */
+export const NOTICE_TTL_MS = 4_000;
+
+/** Pure half of the notice-expiry contract (mirrors `interruptPress`: the shell owns the timer, this
+ *  makes the boundary testable). Decides what the frame loop does with the notice slot it just saw:
+ *  `idle` — unchanged, any timer already running still owns it; `arm` — new transient text, start its
+ *  expiry; `cancel` — the slot is empty, or its writer marked this text sticky and will clear it itself. */
+export function noticeAction(current: string, seen: string, sticky: boolean): 'idle' | 'arm' | 'cancel' {
+  if (current === seen) return 'idle';
+  return !current || sticky ? 'cancel' : 'arm';
+}
 
 /** Pure half of the double-Esc contract. The shell owns the expiry timer; this function makes the
  *  boundary deterministic in focused tests and prevents an old armed window from aborting a later turn. */
@@ -530,7 +547,27 @@ export function createChatComposition(
       if (interruptArmedUntil === armedUntil) { clearInterruptArm(); render('input:interrupt-expired'); }
     });
   };
+  // `rt.notice` is a single slot ~50 call sites write to, and submitting the next message was its only
+  // general clear — so a confirmation like "reasoning effort: max" sat above the composer until the user
+  // typed again. Expire it on a timer instead, armed from here because this is where the frame loop can
+  // see the slot change without every writer needing the animation controller. Assignments the writer
+  // marked sticky are left alone; the flag is consumed on sight so it cannot leak onto the next notice.
+  let noticeSeen = rt.notice;
+  const expireNotice = (): void => {
+    const action = noticeAction(rt.notice, noticeSeen, rt.noticeSticky);
+    if (action === 'idle') return;
+    noticeSeen = rt.notice;
+    rt.noticeSticky = false; // consumed: it described that one assignment, not the slot
+    if (action === 'cancel') { animations.cancelVisual('notice'); return; }
+    const shown = rt.notice;
+    animations.scheduleVisual('notice', NOTICE_TTL_MS, () => {
+      if (rt.notice !== shown) return; // someone else owns the slot now — theirs to expire, not ours
+      rt.notice = '';
+      render('state:notice-expired');
+    });
+  };
   const prepareFrame = (): void => {
+    expireNotice();
     if (!panelVisible()) cancelFloat();
     if (rt.transcript.thinking) {
       if (!thinkStart) thinkStart = Date.now();
@@ -1000,6 +1037,7 @@ export function createChatComposition(
             return;
           }
           rt.notice = color.dim('moving sub-agent to background…');
+          rt.noticeSticky = true; // live progress — the outcome below replaces it and expires normally
           lifetime.runSession(
             () => client.backgroundSubagents(),
             ({ detached }) => {
@@ -1111,6 +1149,7 @@ export function createChatComposition(
     animations,
     render,
     renderForced,
+    prepare: prepareFrame,
     reshowPanel,
     attachInput,
     reloadKeymap,
