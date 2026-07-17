@@ -5,6 +5,84 @@ All notable changes to Elowen are documented here. The format loosely follows
 
 ## [Unreleased]
 
+## [0.27.4] - 2026-07-17
+
+### Added
+- **Sign in with a Kimi Code subscription.** Kimi (kimi.com) joins Claude, ChatGPT and GitHub Copilot as an
+  account you sign in to instead of pasting an API key: pick it in `elowen setup` or under Settings →
+  Elowen AI, approve the code your browser shows, and the subscription pays for the turns. Access renews
+  itself in the background, so a signed-in account keeps working without you touching it. K3 and the rest
+  of the Kimi Code catalog are available once you are in.
+- **A sampling temperature per provider** (Settings → Elowen AI → the provider's Edit). Left empty, Elowen
+  sends no temperature at all — which stays the default, because several models accept only their own: Kimi
+  K3 answers `only 1 is allowed for this model`, and Claude Opus 4.7 and newer refuse a non-default value.
+  Set it and every turn on that endpoint carries it.
+- **Workflow mode, a third way to work alongside Build and Plan.** shift+tab now cycles Build → Plan →
+  Workflow, or type `/workflow`. It primes the agent to break the task into a dependency graph and run it
+  across sub-agents, while keeping the full toolset — unlike Plan mode it still does the small things
+  itself. The prompt is user-overridable like the others.
+- **Sub-agent workflows.** `WorkflowStart` / `WorkflowAddNodes` / `WorkflowStatus` build a declarative DAG
+  the agent can extend while it runs. Each node runs as a sub-agent once its dependencies clear, inheriting
+  the caller's access and never widening it. Live state shows in the telemetry rail and in a navigable
+  modal where Enter drills into a node's own conversation — and a workflow is now kept with the
+  conversation it ran in, so you can reopen it from history instead of losing it at the next reconnect.
+- **The Telegram plugin** — optional, grammY-based, mirroring the Discord feature set: live streaming, tool
+  trace, media, inline model and reasoning pickers, and account identity linking.
+- **`/model <name>` takes an argument**, with autocomplete and fuzzy correction. A unique match applies
+  straight away; anything ambiguous falls back to the picker.
+- **`Delegate` can hand a sub-agent context.** An optional `context` param the parent passes down as a
+  cache-friendly system-prompt block, so the child need not re-derive what the parent already established.
+- **`/compact` takes an instruction**, so you can say what the summary must keep.
+- **Changing a conversation's settings is recorded in it.** Switching model, work mode or reasoning effort
+  mid-thread — or renaming the conversation — used to be invisible: the transcript said nothing and the
+  agent carried on under settings it had no idea had changed. Each change is now a marker in the transcript
+  and a one-shot note to the agent under your next message. The markers live outside the message history,
+  so they never enter the model's context or disturb compaction.
+
+### Changed
+- **MCP tools are now named `mcp__<server>__<tool>`** (double underscores), matching the convention used
+  elsewhere. The old single-underscore form could not be read back: a server called `chrome-devtools`
+  offering `click` produced `mcp_chrome_devtools_click`, which is indistinguishable from a server called
+  `chrome` offering `devtools_click`. Existing per-user disabled-tool lists and permission rules are
+  migrated on first start. A rule for a server you have since removed from your config cannot be split
+  back apart and is left as-is.
+- **Plan mode now works from what tools declare, not from what they are called.** It used to guess which
+  tools were safe to offer while the agent planned by reading the name — anything starting with `read_`,
+  `list_`, `get_` and so on was assumed harmless. A tool called `get_and_purge` was assumed harmless too.
+  Each tool now states whether it only reads, and Plan mode offers exactly those; anything that has not
+  said so is withheld. No bundled tool changes behaviour. Plugin authors: declare `planSafe` in your
+  manifest (see `docs/PLUGIN_DEV.md`) — until you do, your tools stay out of Plan mode.
+- **Tools are now named in TitleCase.** Every tool the assistant calls was renamed from `snake_case` to
+  TitleCase, and the frequently used ones lost their redundant suffix: `read_file` → `Read`,
+  `write_file` → `Write`, `edit_file` → `Edit`, `search_files` → `Search`, `run_command` → `Bash`.
+  Tools that belong to one service keep their family prefix (`MemorySearch`, `DiscordListChannels`,
+  `WorkflowStart`). Everything you had already configured is migrated automatically on first start —
+  saved tool permissions, per-user disabled-tool lists, and platform role tool allow-lists — so nothing
+  you switched off comes back on, and no role loses its tools.
+  - Tools reached over MCP are unchanged: both the ones Elowen exposes to other MCP clients and the
+    `mcp_*` tools bridged in from a remote server keep their names, so existing MCP setups keep working.
+  - **Breaking for scripts:** tool names appear in `elowen run --json` events, on the `/brain/stream`
+    SSE feed and in exported sessions. Anything matching on a specific tool name needs updating.
+  - **Breaking for plugin authors:** third-party plugins keep working with `snake_case` names, but
+    TitleCase is now the documented convention (see `docs/PLUGIN_DEV.md`).
+- **The plugin detail page is rebuilt in the settings card language.** Capabilities, Data and Logs are now
+  discrete cards with their content shown inline, instead of collapsed hairline accordions that read as a
+  stack of stray lines; the schema-driven config editor renders one card per declared section; and the hero
+  states version, source and tools as chips.
+- **The CLI's activity spinner sits next to the mode label**, where you are already looking, instead of far
+  off to the right of it.
+
+### Fixed
+- **Kimi K3's thinking was invisible to Elowen.** K3 always reasons, but Elowen believed it did not reason
+  at all and would not let you set its effort. The model catalog Elowen refreshes from covers the endpoints
+  it ships — except that Moonshot and Kimi Code had been left off the list, so their models arrived with no
+  capabilities at all. Both are now included.
+- **Kimi and GitHub Copilot models show their brand icon** in the web UI, rather than the generic glyph.
+- **Over-wide diff lines wrap under the gutter** in the CLI instead of being truncated.
+- **The stats usage table's headers line up with their columns** again.
+- **One keypress no longer fires twice** in terminals that report Kitty keyboard-protocol release events —
+  notably the VS Code integrated terminal, where arrow and reasoning actions triggered in pairs.
+
 ## [0.27.3] - 2026-07-15
 
 ### Fixed
