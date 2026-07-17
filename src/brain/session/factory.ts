@@ -85,6 +85,9 @@ export interface BrainResourceLoaderOptions {
   prompts?: PromptTemplate[];
   contextFiles?: boolean;
   codexReasoningFix?: boolean;
+  /** Log the NAMES of the response headers Kimi returns, to learn whether it exposes a rate-limit/quota
+   *  signal (the CLI rail already renders one for ChatGPT). A measurement step, not a feature. */
+  kimiHeaderProbe?: boolean;
   /** Marker hook for PI-owned compaction requests. The actual stream route is installed on AgentSession. */
   compactionModelRouteExtension?: CodexCompactionModelRoute['extension'];
   requestProfile?: ProviderRequestProfile;
@@ -110,6 +113,24 @@ function codexReasoningSummary(pi: ExtensionAPI): void {
     const payload = event.payload as { reasoning?: Record<string, unknown> } | null | undefined;
     if (!payload?.reasoning || typeof payload.reasoning !== 'object') return undefined;
     return { ...payload, reasoning: { ...payload.reasoning, summary: 'concise' } };
+  });
+}
+
+/** Whether Kimi returns a usage/quota header has no answer in any code on this box (not in the Go
+ *  reference cliproxy, not in the JWT, and nothing reads Kimi response headers), so this measures it: log
+ *  each distinct response-header NAME the first time it is seen. Names only, never values — a header can
+ *  carry an identifier. Bounded noise (one line per name, ever) yet still catches a `*-ratelimit-*` header
+ *  that only appears near a limit. If one shows up, the rail can be built on it; if none do, Kimi exposes
+ *  nothing and the idea is settled. The `Set` lives for the daemon's lifetime; a restart re-probes. */
+const kimiSeenHeaderNames = new Set<string>();
+function kimiHeaderProbe(pi: ExtensionAPI): void {
+  pi.on('after_provider_response', (event) => {
+    const fresh = Object.keys(event.headers ?? {})
+      .map((name) => name.toLowerCase())
+      .filter((name) => !kimiSeenHeaderNames.has(name));
+    if (fresh.length === 0) return;
+    for (const name of fresh) kimiSeenHeaderNames.add(name);
+    logger('kimi-headers').info(`response header name(s) seen for the first time: ${fresh.sort().join(', ')}`);
   });
 }
 
@@ -151,9 +172,10 @@ function defaultResourceLoaderFactory(o: BrainResourceLoaderOptions): ResourceLo
     // feeds PI our in-memory plugin templates, which it exposes as `/name` slash commands and expands
     // ($1/$@/$ARGUMENTS/${N:-default}) itself in prompt()/steer()/followUp() — no daemon-side expansion.
     promptsOverride: () => ({ prompts, diagnostics: [] }),
-    ...(o.codexReasoningFix || o.compactionModelRouteExtension || o.requestProfile ? {
+    ...(o.codexReasoningFix || o.kimiHeaderProbe || o.compactionModelRouteExtension || o.requestProfile ? {
       extensionFactories: [
         ...(o.codexReasoningFix ? [codexReasoningSummary] : []),
+        ...(o.kimiHeaderProbe ? [kimiHeaderProbe] : []),
         ...(o.compactionModelRouteExtension ? [o.compactionModelRouteExtension] : []),
         ...(o.requestProfile ? [providerRequestProfile(o.requestProfile)] : []),
       ],
@@ -212,6 +234,7 @@ export class BrainSessionFactory {
       cwd: spec.cwd, systemPrompt: spec.systemPrompt, appendSystemPrompt: spec.appendSystemPrompt,
       skills: spec.skills, prompts: spec.promptTemplates, contextFiles: spec.contextFiles,
       codexReasoningFix: spec.model.provider === 'openai-codex',
+      kimiHeaderProbe: spec.model.provider === 'kimi-coding',
       compactionModelRouteExtension: compactionModelRoute?.extension,
       requestProfile: spec.requestProfile, settingsManager,
     });
