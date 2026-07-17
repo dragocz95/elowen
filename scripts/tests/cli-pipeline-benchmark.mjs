@@ -204,7 +204,7 @@ function history(turns) {
     ? {
         role: 'assistant',
         text: '',
-        segments: [{ kind: 'tool', id: 'benchmark-delegate', name: 'delegate', detail: 'inspect the architecture' }],
+        segments: [{ kind: 'tool', id: 'benchmark-delegate', name: 'Delegate', detail: 'inspect the architecture' }],
       }
     : { role: 'assistant', text: `settled answer ${index}` });
 }

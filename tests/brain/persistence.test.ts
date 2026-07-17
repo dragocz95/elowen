@@ -44,7 +44,7 @@ describe('brain persistence', () => {
       messages: [
         { role: 'user', content: '<ephemeral context>initial clean prompt' },
         { role: 'assistant', content: 'I will inspect it.' },
-        { role: 'tool', content: 'read_file complete' },
+        { role: 'tool', content: 'Read complete' },
         { role: 'user', content: 'steer after the tool' },
         { role: 'assistant', content: 'Adjusted course.' },
       ],
@@ -53,7 +53,7 @@ describe('brain persistence', () => {
     const rows = store.getMessages('s1');
     expect(rows.map((row) => row.role)).toEqual(['user', 'assistant', 'tool', 'user', 'assistant']);
     expect(rows.map((row) => JSON.parse(row.content).content)).toEqual([
-      'initial clean prompt', 'I will inspect it.', 'read_file complete', 'steer after the tool', 'Adjusted course.',
+      'initial clean prompt', 'I will inspect it.', 'Read complete', 'steer after the tool', 'Adjusted course.',
     ]);
     expect(rows.find((row) => row.id === steerId)?.created_at).toBe('2000-01-01 00:00:05');
   });

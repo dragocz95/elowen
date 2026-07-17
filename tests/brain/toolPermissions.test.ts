@@ -44,33 +44,33 @@ describe('resolveToolPermission — last matching rule in insertion order wins',
       { scope: 'bash', pattern: 'git *', action: 'allow' },
       { scope: 'bash', pattern: 'git push*', action: 'deny' },
     ];
-    expect(resolveToolPermission(ruleset, 'run_command', 'git status').action).toBe('allow');
-    expect(resolveToolPermission(ruleset, 'run_command', 'git push origin main').action).toBe('deny');
-    expect(resolveToolPermission(ruleset, 'run_command', 'rm -rf x').action).toBe('ask');
+    expect(resolveToolPermission(ruleset, 'Bash', 'git status').action).toBe('allow');
+    expect(resolveToolPermission(ruleset, 'Bash', 'git push origin main').action).toBe('deny');
+    expect(resolveToolPermission(ruleset, 'Bash', 'rm -rf x').action).toBe('ask');
   });
 
   it('user rules (appended after defaults) beat the built-in defaults', () => {
-    const ruleset = buildPermissionRuleset(settings({ tools: { write_file: 'allow' }, bash: { '*': 'allow' } }));
-    expect(resolveToolPermission(ruleset, 'write_file').action).toBe('allow'); // default was ask
-    expect(resolveToolPermission(ruleset, 'run_command', 'rm -rf /').action).toBe('allow'); // default was ask
+    const ruleset = buildPermissionRuleset(settings({ tools: { Write: 'allow' }, bash: { '*': 'allow' } }));
+    expect(resolveToolPermission(ruleset, 'Write').action).toBe('allow'); // default was ask
+    expect(resolveToolPermission(ruleset, 'Bash', 'rm -rf /').action).toBe('allow'); // default was ask
   });
 
   it('bash scope resolves against the command; tools scope against the name', () => {
     const ruleset = buildPermissionRuleset(settings());
-    // run_command resolves in the bash space — the tools '*'→allow default must not leak in.
-    expect(resolveToolPermission(ruleset, 'run_command', 'rm -rf /').action).toBe('ask');
-    expect(resolveToolPermission(ruleset, 'run_command', 'git status --porcelain').action).toBe('allow');
+    // Bash resolves in the bash space — the tools '*'→allow default must not leak in.
+    expect(resolveToolPermission(ruleset, 'Bash', 'rm -rf /').action).toBe('ask');
+    expect(resolveToolPermission(ruleset, 'Bash', 'git status --porcelain').action).toBe('allow');
     // whitespace is normalized before matching, so "git  status" still hits "git status*"
-    expect(resolveToolPermission(ruleset, 'run_command', '  git   status  ').action).toBe('allow');
+    expect(resolveToolPermission(ruleset, 'Bash', '  git   status  ').action).toBe('allow');
     // tools space: read-only tools allow by default, edits ask.
-    expect(resolveToolPermission(ruleset, 'read_file').action).toBe('allow');
-    expect(resolveToolPermission(ruleset, 'write_file').action).toBe('ask');
-    expect(resolveToolPermission(ruleset, 'edit_file').action).toBe('ask');
+    expect(resolveToolPermission(ruleset, 'Read').action).toBe('allow');
+    expect(resolveToolPermission(ruleset, 'Write').action).toBe('ask');
+    expect(resolveToolPermission(ruleset, 'Edit').action).toBe('ask');
   });
 
   it('no matching rule → ask (fail closed, opencode default)', () => {
     expect(resolveToolPermission([], 'anything').action).toBe('ask');
-    expect(resolveToolPermission([{ scope: 'tools', pattern: '*', action: 'allow' }], 'run_command', 'ls').action).toBe('ask');
+    expect(resolveToolPermission([{ scope: 'tools', pattern: '*', action: 'allow' }], 'Bash', 'ls').action).toBe('ask');
   });
 });
 
@@ -127,17 +127,17 @@ describe('bashAlwaysPattern — "Always allow" suggestion', () => {
 
 describe('approvalQuestion / approvalDecision', () => {
   it('builds a single-select, no-Other question with the three fixed options', () => {
-    const q = approvalQuestion({ tool: 'run_command', scope: 'bash', command: 'rm -rf x', alwaysPattern: 'rm*' });
+    const q = approvalQuestion({ tool: 'Bash', scope: 'bash', command: 'rm -rf x', alwaysPattern: 'rm*' });
     expect(q.multiSelect).toBe(false);
     expect(q.custom).toBe(false);
     expect(q.options.map((o) => o.label)).toEqual([APPROVAL_LABELS.once, APPROVAL_LABELS.always, APPROVAL_LABELS.deny]);
     expect(q.question).toContain('rm -rf x');
     // Non-bash tools name the tool instead of a command.
-    expect(approvalQuestion({ tool: 'write_file', scope: 'tools', alwaysPattern: 'write_file' }).question).toContain('write_file');
+    expect(approvalQuestion({ tool: 'Write', scope: 'tools', alwaysPattern: 'Write' }).question).toContain('Write');
   });
 
   it('omits "Always allow" when there is no safe pattern to persist (empty command)', () => {
-    const q = approvalQuestion({ tool: 'run_command', scope: 'bash', command: '', alwaysPattern: null });
+    const q = approvalQuestion({ tool: 'Bash', scope: 'bash', command: '', alwaysPattern: null });
     expect(q.options.map((o) => o.label)).toEqual([APPROVAL_LABELS.once, APPROVAL_LABELS.deny]);
   });
 
@@ -157,9 +157,9 @@ describe('summarizePermissions', () => {
   it('renders scope defaults and groups patterns by action', () => {
     const text = summarizePermissions({ ruleset: rules(), yolo: false });
     expect(text).toContain('<permissions>');
-    expect(text).toContain('shell (run_command, matched against the command): default ask');
+    expect(text).toContain('shell (Bash, matched against the command): default ask');
     expect(text).toContain('allow: git status*, git diff*');
-    expect(text).toContain('tools (matched by name): default allow; ask: write_file, edit_file');
+    expect(text).toContain('tools (matched by name): default allow; ask: Write, Edit');
     expect(text).not.toContain('YOLO');
   });
 
@@ -220,46 +220,46 @@ describe('resolveToolPermission — bash chaining bypass is closed (most-restric
 
   it('a chained command cannot ride the allow that matched only its first segment', () => {
     // `cat *` is a default allow; the trailing `rm -rf ~` must drag the whole call off allow.
-    expect(resolveToolPermission(buildPermissionRuleset(settings()), 'run_command', 'cat README && rm -rf ~').action).not.toBe('allow');
+    expect(resolveToolPermission(buildPermissionRuleset(settings()), 'Bash', 'cat README && rm -rf ~').action).not.toBe('allow');
     // With an explicit `rm*` deny, the chained/ substituted rm makes the whole call deny.
-    expect(resolveToolPermission(ruleset(), 'run_command', 'cat README && rm -rf ~').action).toBe('deny');
-    expect(resolveToolPermission(ruleset(), 'run_command', 'echo hi; rm -rf ~').action).toBe('deny');
-    expect(resolveToolPermission(ruleset(), 'run_command', 'echo $(rm -rf ~)').action).toBe('deny');
+    expect(resolveToolPermission(ruleset(), 'Bash', 'cat README && rm -rf ~').action).toBe('deny');
+    expect(resolveToolPermission(ruleset(), 'Bash', 'echo hi; rm -rf ~').action).toBe('deny');
+    expect(resolveToolPermission(ruleset(), 'Bash', 'echo $(rm -rf ~)').action).toBe('deny');
   });
 
   it('normalizes the program token so a path/assignment/wrapper cannot dodge a deny', () => {
-    expect(resolveToolPermission(ruleset(), 'run_command', '/bin/rm -rf ~').action).toBe('deny');
-    expect(resolveToolPermission(ruleset(), 'run_command', 'FOO=1 rm -rf ~').action).toBe('deny');
-    expect(resolveToolPermission(ruleset(), 'run_command', 'env rm -rf ~').action).toBe('deny');
-    expect(resolveToolPermission(ruleset(), 'run_command', 'sudo /usr/bin/rm -rf ~').action).toBe('deny');
+    expect(resolveToolPermission(ruleset(), 'Bash', '/bin/rm -rf ~').action).toBe('deny');
+    expect(resolveToolPermission(ruleset(), 'Bash', 'FOO=1 rm -rf ~').action).toBe('deny');
+    expect(resolveToolPermission(ruleset(), 'Bash', 'env rm -rf ~').action).toBe('deny');
+    expect(resolveToolPermission(ruleset(), 'Bash', 'sudo /usr/bin/rm -rf ~').action).toBe('deny');
     // A bare wrapped program (no args) still resolves to the real program.
-    expect(resolveToolPermission(ruleset(), 'run_command', 'env rm').action).toBe('deny');
+    expect(resolveToolPermission(ruleset(), 'Bash', 'env rm').action).toBe('deny');
   });
 
   it('most-restrictive wins across segments: any deny denies, else any ask asks, else allow', () => {
     const rs = buildPermissionRuleset(settings({ bash: { 'git *': 'allow', 'rm*': 'deny' } }));
-    expect(resolveToolPermission(rs, 'run_command', 'git status && git diff').action).toBe('allow'); // both allow
-    expect(resolveToolPermission(rs, 'run_command', 'git status && whoami').action).toBe('ask'); // whoami → default ask
-    expect(resolveToolPermission(rs, 'run_command', 'git status && rm -rf ~').action).toBe('deny'); // one deny wins
+    expect(resolveToolPermission(rs, 'Bash', 'git status && git diff').action).toBe('allow'); // both allow
+    expect(resolveToolPermission(rs, 'Bash', 'git status && whoami').action).toBe('ask'); // whoami → default ask
+    expect(resolveToolPermission(rs, 'Bash', 'git status && rm -rf ~').action).toBe('deny'); // one deny wins
   });
 
   it('a quoted separator is NOT a split point — the whole thing stays one segment', () => {
     // The `;` lives inside quotes, so this is a single `cat` call and stays on the default `cat *` allow.
-    expect(resolveToolPermission(buildPermissionRuleset(settings()), 'run_command', 'cat "a; rm -rf ~"').action).toBe('allow');
+    expect(resolveToolPermission(buildPermissionRuleset(settings()), 'Bash', 'cat "a; rm -rf ~"').action).toBe('allow');
   });
 
   it('an ambiguous command can never be granted by an allow/prefix rule (capped at ask)', () => {
     const rs = buildPermissionRuleset(settings({ bash: { 'cat*': 'allow' } }));
     // Unbalanced quote: even though `cat*` would match, an unparseable line cannot ride the allow.
-    expect(resolveToolPermission(rs, 'run_command', "cat 'oops").action).toBe('ask');
+    expect(resolveToolPermission(rs, 'Bash', "cat 'oops").action).toBe('ask');
     // A deny still bites through the ambiguity.
-    expect(resolveToolPermission(ruleset(), 'run_command', "rm -rf 'oops").action).toBe('deny');
+    expect(resolveToolPermission(ruleset(), 'Bash', "rm -rf 'oops").action).toBe('deny');
   });
 
   it('single, unchained commands behave exactly as before', () => {
     const rs = buildPermissionRuleset(settings());
-    expect(resolveToolPermission(rs, 'run_command', 'git status --porcelain').action).toBe('allow');
-    expect(resolveToolPermission(rs, 'run_command', 'rm -rf /').action).toBe('ask'); // no rm rule → default ask
-    expect(resolveToolPermission(rs, 'run_command', '  git   status  ').action).toBe('allow'); // whitespace normalized
+    expect(resolveToolPermission(rs, 'Bash', 'git status --porcelain').action).toBe('allow');
+    expect(resolveToolPermission(rs, 'Bash', 'rm -rf /').action).toBe('ask'); // no rm rule → default ask
+    expect(resolveToolPermission(rs, 'Bash', '  git   status  ').action).toBe('allow'); // whitespace normalized
   });
 });

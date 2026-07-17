@@ -195,7 +195,7 @@ export class BrainClient {
     await this.post('/brain/send', { text, cwd: process.cwd(), ...binding, ...(mode ? { mode } : {}), ...(images?.length ? { images } : {}), ...(display !== undefined && display !== text ? { display } : {}) });
   }
 
-  /** Answer a parked ask_user_question — settles the paused turn so it resumes with the user's picks. */
+  /** Answer a parked AskUserQuestion — settles the paused turn so it resumes with the user's picks. */
   async answer(id: string, answers: AskAnswer[]): Promise<void> {
     await this.post('/brain/answer', { id, answers });
   }
@@ -265,7 +265,7 @@ export class BrainClient {
     if (!res.ok) throw new Error(`elowen brain ${res.status} on /brain/queue`);
   }
 
-  /** The owner's background shell processes (terminal plugin's `run_command(background:true)` children)
+  /** The owner's background shell processes (terminal plugin's `Bash(background:true)` children)
    *  — the snapshot the process panel boot-seeds from; live spawn/exit/kill updates ride the `process`
    *  stream event. Owner-only server-side (403 for a non-owner). */
   async processes(session = this.bound): Promise<ProcessInfo[]> {

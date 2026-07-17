@@ -79,7 +79,7 @@ describe('parsePageSpec', () => {
   });
 });
 
-describe('read_file — PDF', () => {
+describe('Read — PDF', () => {
   let reg: PluginRegistry;
   let dir: string;
   let pdf: string;
@@ -95,7 +95,7 @@ describe('read_file — PDF', () => {
   });
 
   const read = (params: Record<string, unknown>) =>
-    runWithPolicy(userPolicy([dir]), () => runTool(reg, 'read_file', params), { sessionId: 'brain-pdf' });
+    runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Read', params), { sessionId: 'brain-pdf' });
 
   it('reads the requested pages as text, labelled by page', async () => {
     const res = await read({ path: pdf, pages: '1-2' });

@@ -20,12 +20,12 @@ const ok = (text, details = {}) => ({ content: [{ type: 'text', text }], details
 const errorText = (e) => (e instanceof Error ? e.message : String(e));
 const clip = (text, limit) => (text.length <= limit ? text : `${text.slice(0, limit)}\n[truncated]`);
 
-// The node-declaration shape shared by workflow_start and workflow_add_nodes.
+// The node-declaration shape shared by WorkflowStart and WorkflowAddNodes.
 const NODE_SHAPE = Type.Object({
   id: Type.String({ description: 'Short unique id for this node (referenced by other nodes\' deps).' }),
   task: Type.String({ description: 'The complete, self-contained instruction for this node\'s sub-agent — it cannot see the conversation.' }),
   deps: Type.Optional(Type.Array(Type.String(), { description: 'Ids of nodes that must finish before this one starts. Omit for a root node.' })),
-  model: Type.Optional(Type.String({ description: 'Run this node on a DIFFERENT model (value from delegate_models). Omit to inherit yours.' })),
+  model: Type.Optional(Type.String({ description: 'Run this node on a DIFFERENT model (value from DelegateModels). Omit to inherit yours.' })),
   read_only: Type.Optional(Type.Boolean({ description: 'Give this node only read-only tools (explore/report, no writing or delegation).' })),
   tools: Type.Optional(Type.Array(Type.String(), { description: 'Give this node EXACTLY these tools (names from your own toolset). Narrows only.' })),
 });
@@ -86,8 +86,8 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
         ...(n.model ? { model: n.model } : {}),
       };
     });
-    // Always the ORIGIN's workflow_start call, never whatever tool call is executing right now: a node's
-    // own turn can trigger a snapshot (workflow_add_nodes), and it must still land on the origin's row.
+    // Always the ORIGIN's WorkflowStart call, never whatever tool call is executing right now: a node's
+    // own turn can trigger a snapshot (WorkflowAddNodes), and it must still land on the origin's row.
     try { wf.emit({ id: wf.id, toolCallId: wf.toolCallId, ...(wf.title ? { title: wf.title } : {}), status: wf.status, nodes }); }
     catch (e) { ctx.logger.warn(`workflow snapshot fan-out failed: ${errorText(e)}`); }
   };
@@ -108,12 +108,12 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
       ? { ...(wf.parentAccess.toolPolicy?.deny ? { deny: wf.parentAccess.toolPolicy.deny } : {}), allow: restricted.allow }
       : wf.parentAccess.toolPolicy;
     // A node that keeps full access (no read_only, no explicit toolset) may extend the DAG; a narrowed
-    // node cannot (it may not even hold workflow_add_nodes), so it is never invited to.
+    // node cannot (it may not even hold WorkflowAddNodes), so it is never invited to.
     const canExpand = !node.readOnly && !node.tools;
     const contextParts = [];
     if (canExpand) {
       contextParts.push(`You are node "${node.id}" of a running workflow (id "${wf.id}"). Only if completing this `
-        + `task clearly reveals concrete follow-up sub-tasks, you may call workflow_add_nodes with that workflowId `
+        + `task clearly reveals concrete follow-up sub-tasks, you may call WorkflowAddNodes with that workflowId `
         + `to add them; otherwise just finish your task and report.`);
     }
     if (wf.sharedContext) contextParts.push(wf.sharedContext);
@@ -202,7 +202,7 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
   };
 
   ctx.registerTool(defineTool({
-    name: 'workflow_start', label: 'Run a workflow',
+    name: 'WorkflowStart', label: 'Run a workflow',
     description: [
       'Run a DAG of sub-agents: you declare nodes (each a self-contained task) and their dependencies, and the engine executes them as dependencies clear — independent nodes run in parallel, dependents wait for what they need. Each node is a fresh sub-agent that inherits your access; it cannot see this conversation, so every task must be complete and standalone.',
       'Use a workflow instead of several separate delegate calls when the subtasks have an ORDER or dependency between them (gather → analyze → write), or when a later step needs earlier steps\' results. For a set of fully independent tasks, plain parallel delegate calls are simpler.',
@@ -224,7 +224,7 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
       if (workflows.size >= MAX_WORKFLOWS) return ok(`Error: too many workflows (${MAX_WORKFLOWS}) are running; wait for one to finish.`);
       const wf = {
         id: `wf-${randomUUID()}`,
-        // THIS call — the origin's workflow_start. Every snapshot names it, so the host can persist the
+        // THIS call — the origin's WorkflowStart. Every snapshot names it, so the host can persist the
         // DAG against the transcript row this call produced (mirrors delegate's `toolCallId`).
         toolCallId,
         title: typeof p.title === 'string' ? p.title.trim().slice(0, 200) || undefined : undefined,
@@ -255,16 +255,16 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
   }));
 
   ctx.registerTool(defineTool({
-    name: 'workflow_add_nodes', label: 'Extend a workflow',
+    name: 'WorkflowAddNodes', label: 'Extend a workflow',
     description: 'Add nodes to a workflow that is already running (dynamic expansion). New node ids must be '
       + 'unique, may depend on existing or new nodes, and must not create a cycle. Available to the node '
       + 'sub-agents themselves so a workflow can grow as work reveals more work. Returns which nodes were added.',
     parameters: Type.Object({
-      workflowId: Type.String({ description: 'The id of the running workflow (from workflow_start / your node briefing).' }),
+      workflowId: Type.String({ description: 'The id of the running workflow (from WorkflowStart / your node briefing).' }),
       nodes: Type.Array(NODE_SHAPE, { description: 'The nodes to add.' }),
     }),
     // `_id` is THIS call's tool id, and this tool usually runs inside a NODE's own turn. It is
-    // deliberately unused: the snapshot must address the origin's workflow_start row, which `snapshot()`
+    // deliberately unused: the snapshot must address the origin's WorkflowStart row, which `snapshot()`
     // reads off wf.toolCallId. Keying anything here off `_id` would fork a phantom row per expansion.
     execute: async (_id, p) => {
       const wf = authWorkflow(p.workflowId);
@@ -280,11 +280,11 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
   }));
 
   ctx.registerTool(defineTool({
-    name: 'workflow_status', label: 'Check a workflow',
+    name: 'WorkflowStatus', label: 'Check a workflow',
     description: 'Return a snapshot of a workflow: each node\'s status, dependencies and progress. A one-off '
-      + 'view for when the user asks how it is going — workflow_start already blocks until the whole workflow '
+      + 'view for when the user asks how it is going — WorkflowStart already blocks until the whole workflow '
       + 'is done and returns the full result, so you do not need this to collect results.',
-    parameters: Type.Object({ workflowId: Type.String({ description: 'The workflow id from workflow_start.' }) }),
+    parameters: Type.Object({ workflowId: Type.String({ description: 'The workflow id from WorkflowStart.' }) }),
     execute: async (_id, p) => {
       const wf = authWorkflow(p.workflowId);
       if (!wf) return ok(`Error: no workflow ${p.workflowId}, or it has expired.`);

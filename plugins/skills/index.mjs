@@ -1,6 +1,6 @@
 // Bundled reference plugin: exposes markdown skills to the brain. Hand-written ESM (no build step) so
 // it doubles as the canonical example of the plugin format. It reads .md skills from its own `skills/`
-// directory plus the instance's user skills dir (where create_skill writes), and registers each so the
+// directory plus the instance's user skills dir (where CreateSkill writes), and registers each so the
 // brain's system prompt advertises them. The creator tools are admin-only — skills are shared state.
 import { loadSkillsFromDir, defineTool } from '@earendil-works/pi-coding-agent';
 import { Type } from 'typebox';
@@ -37,7 +37,7 @@ export function register(ctx) {
   // skills to PI, which advertises them (progressive disclosure) in the system prompt and expands
   // `/skill:name` on its own. This plugin only LOADS skills and offers the admin write tools below.
   ctx.registerTool(defineTool({
-    name: 'create_skill', label: 'Create skill',
+    name: 'CreateSkill', label: 'Create skill',
     description: 'Create (or overwrite) a reusable markdown skill. It becomes part of your system prompt for NEW conversations after a brain restart. Admin only.',
     parameters: Type.Object({
       name: Type.String({ description: 'kebab-case identifier, e.g. deploy-checklist' }),
@@ -56,7 +56,7 @@ export function register(ctx) {
   }));
 
   ctx.registerTool(defineTool({
-    name: 'list_skills', label: 'List skills',
+    name: 'ListSkills', label: 'List skills',
     description: 'List available skills (bundled + user-created).',
     parameters: Type.Object({}),
     execute: async () => {
@@ -77,7 +77,7 @@ export function register(ctx) {
   }));
 
   ctx.registerTool(defineTool({
-    name: 'delete_skill', label: 'Delete skill',
+    name: 'DeleteSkill', label: 'Delete skill',
     description: 'Delete a user-created skill by name (bundled skills cannot be deleted). Admin only.',
     parameters: Type.Object({ name: Type.String() }),
     execute: async (_id, p) => {

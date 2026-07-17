@@ -166,11 +166,11 @@ describe('UserSettingStore', () => {
   it('permission settings: empty defaults, sanitized round-trip, corrupt blob degrades cleanly', () => {
     const s = new UserSettingStore(openDb(':memory:'));
     expect(s.permissionSettings(1)).toEqual({ tools: {}, bash: {}, yolo: false, unattendedAsks: 'allow' });
-    s.setPermissionSettings(1, { tools: { write_file: 'allow', junk: 'nuke' }, bash: { 'rm *': 'deny' }, yolo: true, unattendedAsks: 'deny' });
-    expect(s.permissionSettings(1)).toEqual({ tools: { write_file: 'allow' }, bash: { 'rm *': 'deny' }, yolo: true, unattendedAsks: 'deny' });
+    s.setPermissionSettings(1, { tools: { Write: 'allow', junk: 'nuke' }, bash: { 'rm *': 'deny' }, yolo: true, unattendedAsks: 'deny' });
+    expect(s.permissionSettings(1)).toEqual({ tools: { Write: 'allow' }, bash: { 'rm *': 'deny' }, yolo: true, unattendedAsks: 'deny' });
     // A patch replaces a present rule map wholesale but keeps absent fields (yolo + strict mode stay).
     s.setPermissionSettings(1, { bash: { 'git *': 'allow' } });
-    expect(s.permissionSettings(1)).toEqual({ tools: { write_file: 'allow' }, bash: { 'git *': 'allow' }, yolo: true, unattendedAsks: 'deny' });
+    expect(s.permissionSettings(1)).toEqual({ tools: { Write: 'allow' }, bash: { 'git *': 'allow' }, yolo: true, unattendedAsks: 'deny' });
     // Corrupt stored JSON → full defaults, never a throw.
     s.set(1, 'permissions', '{not json');
     expect(s.permissionSettings(1)).toEqual({ tools: {}, bash: {}, yolo: false, unattendedAsks: 'allow' });
@@ -181,7 +181,7 @@ describe('UserSettingStore', () => {
     s.setPermissionSettings(1, { bash: { 'npm *': 'deny', 'git *': 'ask' } });
     s.addPermissionAllowRule(1, 'bash', 'npm *'); // an "Always allow" pick overrides the earlier deny
     expect(Object.entries(s.permissionSettings(1).bash)).toEqual([['git *', 'ask'], ['npm *', 'allow']]);
-    s.addPermissionAllowRule(1, 'tools', 'write_file');
-    expect(s.permissionSettings(1).tools).toEqual({ write_file: 'allow' });
+    s.addPermissionAllowRule(1, 'tools', 'Write');
+    expect(s.permissionSettings(1).tools).toEqual({ Write: 'allow' });
   });
 });

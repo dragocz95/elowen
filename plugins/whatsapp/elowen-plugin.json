@@ -9,15 +9,15 @@
       "whatsapp"
     ],
     "tools": [
-      "whatsapp_send",
-      "whatsapp_group_list",
-      "whatsapp_group_info",
-      "whatsapp_group_create",
-      "whatsapp_group_add",
-      "whatsapp_group_remove"
+      "WhatsappSend",
+      "WhatsappGroupList",
+      "WhatsappGroupInfo",
+      "WhatsappGroupCreate",
+      "WhatsappGroupAdd",
+      "WhatsappGroupRemove"
     ]
   },
-  "icons": { "whatsapp_*": "🟢" },
+  "icons": { "Whatsapp*": "🟢" },
   "requires": {
     "config": []
   },
@@ -155,7 +155,7 @@
       "step": 30000,
       "placeholder": "360000",
       "default": 360000,
-      "hint": "How long a pending ask_user_question stays open for a numbered reply or free text before it's dropped as stale."
+      "hint": "How long a pending AskUserQuestion stays open for a numbered reply or free text before it's dropped as stale."
     },
     {
       "key": "sec_senders",

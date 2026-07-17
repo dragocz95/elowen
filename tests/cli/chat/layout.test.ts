@@ -121,7 +121,7 @@ describe('chat layout components', () => {
   it('separates a Thought row from the preceding tool block with a blank line', () => {
     const view = transcriptWith([], [
       { type: 'user', text: 'go' },
-      { type: 'tool', name: 'run_command', detail: 'npm test' },
+      { type: 'tool', name: 'Bash', detail: 'npm test' },
       { type: 'tool_output', output: { title: 'console output', kind: 'console', text: 'Tests 4 passed', command: 'npm test', status: 'exit 0', tone: 'success' } },
       { type: 'reasoning', delta: 'now decide the next step' },
       { type: 'idle' },
@@ -142,7 +142,7 @@ describe('chat layout components', () => {
   it('encodes live tool progress before it reaches terminal layout', () => {
     const view = transcriptWith([], [
       { type: 'user', text: 'run it' },
-      { type: 'tool', id: 'cmd-1', name: 'run_command', detail: 'du -xhd2', command: 'du -xhd2' },
+      { type: 'tool', id: 'cmd-1', name: 'Bash', detail: 'du -xhd2', command: 'du -xhd2' },
       { type: 'tool_progress', id: 'cmd-1', text: '984M\t/var/www/.local\x1b[2J\rupdated' },
     ]);
     const viewport = new ChatViewport(
@@ -182,7 +182,7 @@ describe('chat layout components', () => {
 
   it('renders framed tool output blocks', () => {
     const view = transcriptWith([], [
-      { type: 'tool', name: 'run_command', detail: 'npm test' },
+      { type: 'tool', name: 'Bash', detail: 'npm test' },
       { type: 'tool_output', output: { title: 'console output', kind: 'console', text: 'Tests 4 passed', command: 'npm test', status: 'exit 0', tone: 'success' } },
     ]);
     const viewport = new ChatViewport(
@@ -198,14 +198,14 @@ describe('chat layout components', () => {
     expect(rendered).not.toContain('console output');
     expect(rendered).toContain('npm test');
     expect(rendered).toContain('Tests 4 passed');
-    expect(rendered).not.toContain('run_command');
+    expect(rendered).not.toContain('Bash');
   });
 
   it('marks the last silent command row · running… while streaming and · done once settled', () => {
     const view = transcriptWith([], [
       { type: 'user', text: 'go' },
-      { type: 'tool', name: 'run_command', command: 'echo one' },
-      { type: 'tool', name: 'run_command', command: 'sleep 5' },
+      { type: 'tool', name: 'Bash', command: 'echo one' },
+      { type: 'tool', name: 'Bash', command: 'sleep 5' },
     ]);
     const render = (transcript: TranscriptModel): string => new ChatViewport(
       viewportState(transcript),
@@ -226,7 +226,7 @@ describe('chat layout components', () => {
 
   it('renders expandable tool output previews without a tool-name chip', () => {
     const view = transcriptWith([], [
-      { type: 'tool', id: 'cmd-1', name: 'run_command', detail: 'npm test' },
+      { type: 'tool', id: 'cmd-1', name: 'Bash', detail: 'npm test' },
       {
       type: 'tool_output',
       id: 'cmd-1',
@@ -244,15 +244,15 @@ describe('chat layout components', () => {
     expect(rendered).toContain('Click to expand');
     expect(rendered).toContain('line 10');
     expect(rendered).not.toContain('line 2');
-    expect(rendered).not.toContain('run_command');
+    expect(rendered).not.toContain('Bash');
   });
 
   it('collapses a run of the same bare tool into one indented row with a ×N counter', () => {
     const view = transcriptWith([], [
       { type: 'user', text: 'read them' },
-      { type: 'tool', name: 'read_file', detail: 'a.ts' },
-      { type: 'tool', name: 'read_file', detail: 'a.ts' },
-      { type: 'tool', name: 'read_file', detail: 'b.ts' },
+      { type: 'tool', name: 'Read', detail: 'a.ts' },
+      { type: 'tool', name: 'Read', detail: 'a.ts' },
+      { type: 'tool', name: 'Read', detail: 'b.ts' },
       { type: 'idle' },
     ]);
     const viewport = new ChatViewport(
@@ -275,9 +275,9 @@ describe('chat layout components', () => {
 
   it('does not collapse a tool that carries an output block (it renders its own block, not a ×N row)', () => {
     const view = transcriptWith([], [
-      { type: 'tool', id: 't1', name: 'read_file', detail: 'a.ts' },
+      { type: 'tool', id: 't1', name: 'Read', detail: 'a.ts' },
       { type: 'tool_output', id: 't1', output: { title: 'tool result', kind: 'result', text: 'file body', tone: 'normal' } },
-      { type: 'tool', name: 'read_file', detail: 'b.ts' },
+      { type: 'tool', name: 'Read', detail: 'b.ts' },
       { type: 'idle' },
     ]);
     const rendered = new ChatViewport(
@@ -291,9 +291,12 @@ describe('chat layout components', () => {
     expect(rendered).toContain('tool result');
   });
 
-  it('labels edit diffs by action and target instead of rendering the tool name', () => {
+  // This used to also assert the raw tool name never reaches the screen (the tool was `edit_file`).
+  // It is now named `Edit`, so name and label have converged and that negative can no longer
+  // distinguish a correct render from a raw-name dump — asserting it would only restate the line above.
+  it('labels edit diffs by action and target', () => {
     const view = transcriptWith([], [
-      { type: 'tool', name: 'edit_file', detail: 'test.php' },
+      { type: 'tool', name: 'Edit', detail: 'test.php' },
       { type: 'diff', diff: '-  1 old\n+  1 new' },
     ]);
     const viewport = new ChatViewport(
@@ -305,7 +308,6 @@ describe('chat layout components', () => {
     );
     const rendered = viewport.render(72).join('\n');
     expect(rendered).toContain('Edit test.php');
-    expect(rendered).not.toContain('edit_file');
   });
 
   it('renders proposed plan tags as a nested plan block', () => {
@@ -896,7 +898,7 @@ describe('progressive history layout', () => {
   it.each([
     ['text', { type: 'text', delta: 'first fresh answer' } satisfies BrainEvent, 'first fresh answer'],
     ['reasoning', { type: 'reasoning', delta: 'first fresh thought' } satisfies BrainEvent, 'Thought'],
-    ['tool', { type: 'tool', id: 'first-tool', name: 'read_file', detail: 'src/fresh.ts' } satisfies BrainEvent, 'fresh.ts'],
+    ['tool', { type: 'tool', id: 'first-tool', name: 'Read', detail: 'src/fresh.ts' } satisfies BrainEvent, 'fresh.ts'],
   ])('journals the first fresh %s turn as a bounded append frame', (_name, event, visibleText) => {
     let visits = 0;
     const transcript = largeHistory(2_000, { onTurnVisit: () => { visits++; } });
@@ -1467,7 +1469,7 @@ describe('progressive history layout', () => {
     // the append even though the final event itself only mutates the new assistant tail.
     transcript.apply({ type: 'user', text: 'coalesced question' });
     transcript.apply({ type: 'text', delta: 'first token' });
-    transcript.apply({ type: 'tool', id: 't-coalesced', name: 'read_file', detail: 'src/index.ts' });
+    transcript.apply({ type: 'tool', id: 't-coalesced', name: 'Read', detail: 'src/index.ts' });
     viewport.setState(transcriptState(transcript));
     viewport.render(80);
 
@@ -1499,7 +1501,7 @@ describe('progressive history layout', () => {
 
   it('patches old sub-agent progress without rebuilding the later 5k-turn suffix', () => {
     const history = [
-      { role: 'assistant', text: '', segments: [{ kind: 'tool' as const, id: 'delegate-old', name: 'delegate', detail: 'old child' }] },
+      { role: 'assistant', text: '', segments: [{ kind: 'tool' as const, id: 'delegate-old', name: 'Delegate', detail: 'old child' }] },
       ...Array.from({ length: 4_999 }, (_, index) => ({ role: 'assistant', text: `settled answer ${index}` })),
     ];
     const transcript = new TranscriptModel(history);
@@ -1535,7 +1537,7 @@ describe('progressive history layout', () => {
       ...Array.from({ length: updates }, (_, index) => ({
         role: 'assistant' as const,
         text: '',
-        segments: [{ kind: 'tool' as const, id: `delegate-${index}`, name: 'delegate', detail: `child ${index}` }],
+        segments: [{ kind: 'tool' as const, id: `delegate-${index}`, name: 'Delegate', detail: `child ${index}` }],
       })),
       ...Array.from({ length: 200 }, (_, index) => ({ role: 'assistant' as const, text: `tail ${index}` })),
     ];

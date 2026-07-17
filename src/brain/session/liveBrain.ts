@@ -64,6 +64,11 @@ export interface LiveBrain {
    *  may hide (the built-in elowen_ and memory_ tools stay visible). Used by applyToolVisibility to slice
    *  the model's advertised tools to what the current sender may use. */
   pluginToolNames: Set<string>;
+  /** Names of the tools composed into this session that only READ. Assembled at spawn from the same two
+   *  declarations icons come from — the core's `BUILTIN_TOOL_PLAN_SAFE` and each plugin manifest's
+   *  `planSafe` — so a tool's plan-safety is stated once, by whoever owns the tool. Plan mode composes
+   *  exactly this set; anything absent is treated as mutating and withheld. */
+  planSafeToolNames: Set<string>;
   /** True while the session runs on the user's vision-fallback model (an image turn hopped onto it). */
   visionFallback?: boolean;
   /** Exact session-scoped profile to restore after the temporary vision fallback. This cannot be
@@ -123,11 +128,11 @@ export interface SpawnOpts {
   /** Extra system-prompt chunks appended after the plugin fragments (e.g. a Discord role prompt). */
   extraAppend?: string[];
   /** Platform channel session (Discord, …): the sender is NOT the verified Elowen owner, so the owner's
-   *  full-scope elowen_* API tools are withheld — only Policy-guarded plugin tools load. ALWAYS true for
+   *  full-scope Elowen* API tools are withheld — only Policy-guarded plugin tools load. ALWAYS true for
    *  a shared channel; such a session is never owner-chat, whatever role the sender holds. */
   channel?: boolean;
   /** A shared channel whose sender holds the operator's admin role: resolves to `trusted-channel`
-   *  (all-project Policy + full plugin toolset) instead of `foreign-channel`, but STILL without elowen_*
+   *  (all-project Policy + full plugin toolset) instead of `foreign-channel`, but STILL without Elowen*
    *  tools or the owner API token. Only meaningful when `channel` is true. */
   trustedChannel?: boolean;
   /** Reasoning effort for extended-thinking models (empty/undefined = the model default). */

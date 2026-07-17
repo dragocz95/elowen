@@ -36,7 +36,7 @@ export interface AskChoiceDockOpts {
   onCancel: () => void;
 }
 
-/** Bottom ask_user_question dock, modelled after Claude Code's checklist prompt. It replaces the chat
+/** Bottom AskUserQuestion dock, modelled after Claude Code's checklist prompt. It replaces the chat
  *  editor while active: arrows move, Space toggles checkboxes, Enter submits, and the selected answers
  *  are echoed in the action row so the user never has to type unless they choose Other. */
 export class AskChoiceDock implements Component, Focusable {
@@ -193,7 +193,7 @@ export class AskChoiceDock implements Component, Focusable {
     }));
     const choiceRows = choiceGroups.flat();
     const progress = `${this.opts.index + 1}/${this.opts.total}`;
-    const titleRow = row(`  ${open(theme.text, 'Elowen needs a decision')}  ${open(theme.faint, inlineText(this.opts.question.header || 'ask_user_question'))}  ${open(theme.faint, progress)}`);
+    const titleRow = row(`  ${open(theme.text, 'Elowen needs a decision')}  ${open(theme.faint, inlineText(this.opts.question.header || 'AskUserQuestion'))}  ${open(theme.faint, progress)}`);
     const questionRows = wrapTextWithAnsi(terminalPlainText(this.opts.question.question), Math.max(1, innerWidth - 4))
       .map((line) => row(`  ${open(theme.text, line)}`));
     const actionSegments = [
@@ -299,7 +299,7 @@ export interface AskFlowOpts {
   onCancel: () => void;
 }
 
-/** Drive an `ask_user_question` turn in the TUI. The active question replaces the chat input with a
+/** Drive an `AskUserQuestion` turn in the TUI. The active question replaces the chat input with a
  *  checklist dock: Space toggles choices, Enter confirms, and selected answers are visible at the bottom.
  *  Free-text Other remains available (unless the question sets `custom: false`), but only after the user
  *  explicitly chooses it. */

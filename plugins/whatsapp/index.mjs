@@ -7,7 +7,7 @@
 // On top of plain chat it provides: text commands (/model, /thinking, /new, /help, /stop, /status,
 // /compact, /restart), a per-chat model picker (native buttons with a numbered-text fallback), live
 // streaming replies (edit-in-place with a tool-call trace), a typing indicator, status reactions,
-// proactive pushes (cron/tick echoes) via notify(), and admin/owner-gated whatsapp_* tools for group
+// proactive pushes (cron/tick echoes) via notify(), and admin/owner-gated Whatsapp* tools for group
 // management and outbound messaging.
 //
 // Pairing: on first connect the socket emits a QR (rendered as ASCII into the plugin logs + a PNG in the

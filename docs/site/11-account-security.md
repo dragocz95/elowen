@@ -158,12 +158,12 @@ brain makes resolves to one of three actions:
 | **deny** | Returns an error to the model — the call never runs |
 
 Rules live in two independent pattern spaces. **`tools`** rules match a tool by
-**name** (e.g. `write_file`). **`bash`** rules match the **command string** of the
+**name** (e.g. `Write`). **`bash`** rules match the **command string** of the
 shell tool — so `git *` can be allowed while `rm *` is denied, even though both run
-through the same `run_command` tool.
+through the same `Bash` tool.
 
 The built-in defaults are conservative but frictionless: read-only tools are allowed,
-file edits (`write_file`, `edit_file`) **ask**, and shell commands **ask** except for
+file edits (`Write`, `Edit`) **ask**, and shell commands **ask** except for
 a small read-only allow-list (`git status`, `git diff`, `git log`, `ls`, `cat`,
 `grep`, `pwd`, `which`). Your own rules append **after** those defaults, and
 resolution is **last-match-wins** — so any rule you add always overrides a built-in,

@@ -282,7 +282,7 @@ function CronJobRow({ job, persisted, channels, models, onRemoved }: {
 }
 
 /** Cron jobs manager (the cronjob plugin detail). The list is the SERVER's — a job the scheduler or the
- *  brain's cron_add tool creates shows up on the next refetch — and each row persists itself. A row added
+ *  brain's CronAdd tool creates shows up on the next refetch — and each row persists itself. A row added
  *  here lives locally only until the server has it; from then on the server's copy is the row. */
 export function CronJobsEditor() {
   const { t } = useTranslation();
@@ -305,7 +305,7 @@ export function CronJobsEditor() {
   const rows = [...data, ...drafts.filter((j) => !saved.has(j.id))];
 
   const addJob = () => {
-    // Same id shape the plugin's own cron_add tool generates.
+    // Same id shape the plugin's own CronAdd tool generates.
     const id = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
     setDrafts((cur) => [...cur, { id, name: '', schedule: 'every 1h', prompt: '', enabled: false, createdAt: new Date().toISOString() }]);
   };

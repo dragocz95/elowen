@@ -53,9 +53,9 @@ describe('security-scan plugin', () => {
     expect(f.some((x) => x.line === 1)).toBe(false);
   });
 
-  it('scan_code tool returns a clean bill for safe code', async () => {
+  it('ScanCode tool returns a clean bill for safe code', async () => {
     const reg = await loadPlugins({ dirs: [pluginsDir], enabled: ['security-scan'], dataRoot: freshDataRoot(), logger: log });
-    const tool = reg.tools.find((t) => t.name === 'scan_code')!;
+    const tool = reg.tools.find((t) => t.name === 'ScanCode')!;
     const res = await runWithPolicy(ADMIN, () => tool.execute('t', { code: 'const a = 1 + 1;' }, undefined as never, undefined as never));
     expect(asText(res)).toMatch(/No risky patterns/);
   });

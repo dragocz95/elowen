@@ -176,8 +176,8 @@ export class TurnContextBuilder {
       // this turn is still streaming. Waiting or polling here delays the very result the model waits for.
       automatic ? 'Jobs marked auto-deliver hand you their result on their own, in a new turn — you never fetch it, '
         + 'and it can only arrive once this turn is over. So do the work you can do now and then end your turn; if '
-        + 'there is nothing else to do, say so briefly and end it. Do not wait for them and do not poll delegate_status.' : '',
-      manual ? 'Jobs without auto-deliver are collected with delegate_result on a later turn; do not busy-wait for them.' : '',
+        + 'there is nothing else to do, say so briefly and end it. Do not wait for them and do not poll DelegateStatus.' : '',
+      manual ? 'Jobs without auto-deliver are collected with DelegateResult on a later turn; do not busy-wait for them.' : '',
     ].filter(Boolean).join(' ');
     return '<system-reminder>\n<running-subagents>\n'
       + `${rows}\n</running-subagents>\n`
@@ -216,28 +216,21 @@ export class TurnContextBuilder {
     }
   }
 
+  /** Plan mode withholds every tool that is not DECLARED plan-safe — by the core for its own built-ins
+   *  (BUILTIN_TOOL_PLAN_SAFE) or by a plugin in its manifest (`planSafe`), assembled onto the live at
+   *  spawn. Declaration, not inference: this is a policy boundary, and the name heuristic this replaced
+   *  ("starts with read_/list_/get_…") both guessed and failed OPEN — a third-party `get_and_purge` read
+   *  as safe. Undeclared now means withheld, so an unknown tool costs the model some reach in plan mode
+   *  rather than costing the user a mutation they were promised could not happen. */
   private applyOwnerToolPolicy(userId: number, live: LiveBrain, mode: TurnMode): ToolPolicy | undefined {
     const denied = new Set(this.d.users.get(userId)?.disabled_tools ?? []);
     if (mode === 'plan') {
       for (const tool of live.session.getAllTools?.() ?? []) {
-        if (isPlanModeUnsafeTool(tool.name)) denied.add(tool.name);
+        if (!live.planSafeToolNames.has(tool.name)) denied.add(tool.name);
       }
     }
     const policy = denied.size ? { deny: denied } : undefined;
     applyToolVisibility(live.session, live.pluginToolNames, policy);
     return policy;
   }
-}
-
-function isPlanModeUnsafeTool(name: string): boolean {
-  const safeExact = new Set([
-    'ask_user_question',
-    'todo_write', 'todo_update',
-    'read_file', 'list_dir', 'file_info', 'git_status', 'lsp_diagnostics',
-    'list_processes', 'read_process_output',
-    'elowen_list_tasks', 'elowen_list_missions', 'elowen_list_sessions',
-    'memory_search', 'memory_list_recent', 'memory_categories',
-  ]);
-  if (safeExact.has(name)) return false;
-  return !/^(read|list|find|grep|search|fetch|get|show|inspect|describe)_/i.test(name);
 }

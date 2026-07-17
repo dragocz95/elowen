@@ -43,15 +43,15 @@ describe('GET/PATCH /auth/me/permissions', () => {
   it('PATCH round-trips rules + the persisted YOLO default, sanitizing junk', async () => {
     const { app, amyTok } = setup();
     const res = await app.request('/auth/me/permissions', patch(amyTok, {
-      tools: { write_file: 'allow', junk: 'explode' },
+      tools: { Write: 'allow', junk: 'explode' },
       bash: { '*': 'ask', 'git *': 'allow' },
       yolo: true,
     }));
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ tools: { write_file: 'allow' }, bash: { '*': 'ask', 'git *': 'allow' }, yolo: true, unattendedAsks: 'allow' });
+    expect(await res.json()).toEqual({ tools: { Write: 'allow' }, bash: { '*': 'ask', 'git *': 'allow' }, yolo: true, unattendedAsks: 'allow' });
     // A yolo-only patch keeps the stored rules (the web toggle sends just { yolo }).
     const res2 = await app.request('/auth/me/permissions', patch(amyTok, { yolo: false }));
-    expect(await res2.json()).toEqual({ tools: { write_file: 'allow' }, bash: { '*': 'ask', 'git *': 'allow' }, yolo: false, unattendedAsks: 'allow' });
+    expect(await res2.json()).toEqual({ tools: { Write: 'allow' }, bash: { '*': 'ask', 'git *': 'allow' }, yolo: false, unattendedAsks: 'allow' });
   });
 
   it('PATCH round-trips the unattended-asks strict mode independently of the other fields', async () => {

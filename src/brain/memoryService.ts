@@ -166,7 +166,7 @@ export class MemoryService {
   }
 
   /** Find active memories whose body is a near-duplicate of `body` (cosine ≥ threshold), sorted most
-   *  similar first. Powers the curator + memory_add tool's "prefer update over near-duplicate". When
+   *  similar first. Powers the curator + MemoryAdd tool's "prefer update over near-duplicate". When
    *  embeddings are not configured — or the embed throws — this degrades to an empty result, i.e. "no
    *  near-duplicate detected", so the caller simply falls back to inserting a fresh memory. */
   async findSimilar(userId: number, body: string, opts: FindSimilarOpts = {}): Promise<SimilarMemory[]> {

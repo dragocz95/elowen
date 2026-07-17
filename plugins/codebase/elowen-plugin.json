@@ -2,24 +2,24 @@
   "name": "codebase",
   "version": "0.1.0",
   "apiVersion": "1",
-  "description": "Semantic code index: search your repositories by MEANING, not literal text. Chunks each accessible repo, embeds every chunk with the SAME embedding model your memory uses (Settings → Memory), and stores the vectors in a private per-repo index. codebase_search finds the most relevant code/docs for a natural-language query; codebase_reindex (admin) refreshes it incrementally; codebase_status reports coverage. Complements the files plugin's literal search_files.",
+  "description": "Semantic code index: search your repositories by MEANING, not literal text. Chunks each accessible repo, embeds every chunk with the SAME embedding model your memory uses (Settings → Memory), and stores the vectors in a private per-repo index. CodebaseSearch finds the most relevant code/docs for a natural-language query; CodebaseReindex (admin) refreshes it incrementally; CodebaseStatus reports coverage. Complements the files plugin's literal Search.",
   "entry": "index.mjs",
   "provides": {
     "tools": [
-      "codebase_search",
-      "codebase_reindex",
-      "codebase_status"
+      "CodebaseSearch",
+      "CodebaseReindex",
+      "CodebaseStatus"
     ]
   },
   "icons": {
-    "codebase_search": "🔎",
-    "codebase_reindex": "♻️",
-    "codebase_status": "📇"
+    "CodebaseSearch": "🔎",
+    "CodebaseReindex": "♻️",
+    "CodebaseStatus": "📇"
   },
   "showOutput": [
-    "codebase_search",
-    "codebase_status",
-    "codebase_reindex"
+    "CodebaseSearch",
+    "CodebaseStatus",
+    "CodebaseReindex"
   ],
   "capabilities": {
     "reads": ["embeddings"],
@@ -82,7 +82,7 @@
       "step": 1,
       "placeholder": "8",
       "default": 8,
-      "hint": "Default number of matches codebase_search returns (the tool's k argument overrides it)."
+      "hint": "Default number of matches CodebaseSearch returns (the tool's k argument overrides it)."
     },
     {
       "key": "relevanceFloor",
@@ -100,7 +100,7 @@
       "label": "Auto-reindex on search",
       "type": "boolean",
       "default": true,
-      "hint": "When on, a search lazily refreshes a repo's index if it is empty or stale (debounced), so you rarely need codebase_reindex."
+      "hint": "When on, a search lazily refreshes a repo's index if it is empty or stale (debounced), so you rarely need CodebaseReindex."
     },
     {
       "key": "reindexEmbedBudget",

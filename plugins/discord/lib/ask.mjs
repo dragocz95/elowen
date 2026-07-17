@@ -1,4 +1,4 @@
-// ask_user_question UI rendering: native Discord components for a parked question.
+// AskUserQuestion UI rendering: native Discord components for a parked question.
 /** True when a question renders as a button row: single-select with few options — a click IS the pick.
  *  MultiSelect or >5 options need a string select (Discord caps 5 buttons per action row). */
 export function askUsesButtons(q) {
@@ -6,7 +6,7 @@ export function askUsesButtons(q) {
   return q.multiSelect !== true && n >= 1 && n <= 5;
 }
 
-/** Build the component rows for a parked ask_user_question message. Pure — exported for tests.
+/** Build the component rows for a parked AskUserQuestion message. Pure — exported for tests.
  *  Per question: a row of ≤5 buttons (single-select, `ask:<id>:<qi>:<oi>`; picked = green) or one
  *  string select (`ask:<id>:<qi>`, multi-capable, ≤25 options). Footer row: Submit — skipped for a
  *  single button-question where a click answers instantly — plus a free-text "Other" button on

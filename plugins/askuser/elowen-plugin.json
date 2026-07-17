@@ -6,10 +6,13 @@
   "entry": "index.mjs",
   "provides": {
     "tools": [
-      "ask_user_question"
+      "AskUserQuestion"
     ]
   },
   "icons": {
-    "ask_user_question": "❓"
-  }
+    "AskUserQuestion": "❓"
+  },
+  "planSafe": [
+    "AskUserQuestion"
+  ]
 }

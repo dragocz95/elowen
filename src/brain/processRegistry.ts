@@ -1,5 +1,5 @@
 /** Daemon-level registry of background shell processes started by the terminal plugin's
- *  `run_command(background:true)`. The plugin used to keep these in a per-registration closure Map, which
+ *  `Bash(background:true)`. The plugin used to keep these in a per-registration closure Map, which
  *  no UI or API could reach; lifting the registry into the daemon makes them listable, killable and
  *  observable from the CLI + web (a panel next to the todos) without going through an agent turn.
  *
@@ -22,7 +22,7 @@ export interface ProcessHandle {
   running: () => boolean;
   exitCode: () => number | null;
   readAll: () => string;
-  /** Incremental read for the AGENT's `read_process_output` tool: returns the output written since the
+  /** Incremental read for the AGENT's `ProcessOutput` tool: returns the output written since the
    *  previous call and advances the handle's read cursor (`all` returns the whole buffer and still
    *  advances it). The daemon surfaces (API/UI) deliberately use `readAll` instead — a panel refresh must
    *  never consume output the agent has not seen yet. */
@@ -58,7 +58,7 @@ interface JobIdleWaiter {
   settle: (outcome: 'idle' | 'timeout') => void;
 }
 
-/** One pending waiter on a SINGLE process finishing (the agent's blocking `read_process_output`). Settles
+/** One pending waiter on a SINGLE process finishing (the agent's blocking `ProcessOutput`). Settles
  *  exactly once — from `settleExitWaiters` when the process exits or leaves the registry, or from its own
  *  timeout timer — so a later exit can never re-settle it. */
 interface ProcessExitWaiter {
@@ -200,7 +200,7 @@ export class ProcessRegistry {
     return count;
   }
 
-  /** Resolve when ONE process finishes, so the agent's `read_process_output(block:true)` can wait for a
+  /** Resolve when ONE process finishes, so the agent's `ProcessOutput(block:true)` can wait for a
    *  build/test run instead of polling it in a loop. Returns 'exited' immediately when the id is unknown or
    *  the process already finished, once it exits (or is killed/dropped — either way no more output is
    *  coming), or 'timeout' if a finite `timeoutMs` passes first. The timer is unref'd so a pending wait

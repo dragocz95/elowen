@@ -99,7 +99,7 @@ function runGoalTurn(text) {
   emit({ type: 'goal', goal: currentGoal });
   later(60, () => emit({ type: 'step', step: 1, maxSteps: 8 }), goalTimers);
   later(100, () => emit({
-    type: 'tool', id: 'goal-tool', name: 'run_command',
+    type: 'tool', id: 'goal-tool', name: 'Bash',
     detail: 'verify isolated goal project', command: 'git status --short',
   }), goalTimers);
   later(180, () => emit({ type: 'tool_progress', id: 'goal-tool', text: 'E2E GOAL TOOL RUNNING' }), goalTimers);
@@ -159,7 +159,7 @@ function runFirstTurn(text) {
   later(80, () => emit({ type: 'step', step: 1, maxSteps: 8 }), firstTimers);
   later(120, () => {
     emit({
-      type: 'tool', id: 'long-tool', name: 'run_command',
+      type: 'tool', id: 'long-tool', name: 'Bash',
       detail: 'sleep e2e-long-run', command: 'sleep e2e-long-run',
     });
     let phase = 0;
@@ -175,14 +175,14 @@ function runSecondTurn(text) {
   later(40, () => emit({ type: 'user', text }));
   later(80, () => emit({ type: 'step', step: 1, maxSteps: 8 }));
   later(130, () => emit({
-    type: 'tool', id: 'final-tool', name: 'run_command',
+    type: 'tool', id: 'final-tool', name: 'Bash',
     detail: 'npm run e2e-demo', command: 'npm run e2e-demo',
   }));
   later(150, () => {
     for (let index = 0; index < 8; index += 1) {
       emit({
         type: 'tool', id: index === 0 ? 'delegate-e2e' : `delegate-e2e-${index}`,
-        name: 'delegate', detail: `agent-${index} verify the CLI panels`,
+        name: 'Delegate', detail: `agent-${index} verify the CLI panels`,
       });
     }
   });
@@ -275,7 +275,7 @@ function runControlBurst(text) {
     id: 'short-a2', role: 'assistant', text: 'E2E CONTROL BURST COMPLETE',
     segments: [
       ...Array.from({ length: 14 }, (_, index) => ({
-        kind: 'tool', id: `unsafe-tool-${index}`, name: 'run_command',
+        kind: 'tool', id: `unsafe-tool-${index}`, name: 'Bash',
         command: `printf column-${index}`, detail: `printf column-${index}`,
         output: {
           title: 'console output', kind: 'console',
@@ -291,7 +291,7 @@ function runControlBurst(text) {
     const id = `unsafe-tool-${index}`;
     const delay = 30 + index * 4;
     later(delay, () => emit({
-      type: 'tool', id, name: 'run_command',
+      type: 'tool', id, name: 'Bash',
       detail: `column\t${index}\u001b[2J`,
       command: `printf 'column\t${index}'\u001b[2J`,
     }));

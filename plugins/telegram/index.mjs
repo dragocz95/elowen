@@ -7,7 +7,7 @@
 // On top of plain chat it provides: slash commands (/model, /reasoning, /display, /new, /help), per-chat
 // model and presentation settings, a stateful live tool trace with independent answer delivery, a typing
 // indicator, status reactions, proactive pushes (cron/tick echoes) via notify(), voice STT/TTS, and
-// admin/owner-gated telegram_* tools for chat and group management.
+// admin/owner-gated Telegram* tools for chat and group management.
 import { join } from 'node:path';
 import { StateStore } from './lib/state.mjs';
 import { TelegramAdapter } from './lib/adapter.mjs';

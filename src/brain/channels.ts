@@ -36,7 +36,7 @@ export interface ChannelSendOpts {
   promptAppend?: string[];
   /** Sender holds the operator's admin role: elevates the channel session to `trusted-channel`
    *  (all-project Policy + full plugin toolset) — but it is STILL a shared channel, never owner-chat,
-   *  so it never receives elowen_* tools or the owner API token. */
+   *  so it never receives Elowen* tools or the owner API token. */
   trusted?: boolean;
   model?: { provider?: string; model?: string };
   thinkingLevel?: string;
@@ -93,7 +93,7 @@ export interface ChannelServiceDeps {
   titler?: ConversationTitler;
   /** Per-user memory toggles (autoRecall/autoSave), read fresh per turn for the verified writer. */
   userSettings?: (userId: number) => { autoRecall?: boolean; autoSave?: boolean };
-  /** Parked ask_user_question registry (shared with BrainService) — lets a channel turn's `ctx.askUser`
+  /** Parked AskUserQuestion registry (shared with BrainService) — lets a channel turn's `ctx.askUser`
    *  emit an `ask` event to the channel's clients and await the answer (settled by a Discord interaction). */
   elicitation?: ElicitationRegistry;
   /** Per-user granular tool-permission settings (shared with BrainService). Channel turns resolve them
@@ -302,8 +302,8 @@ export class ChannelSessionService {
           selection: opts.model ?? {},
           policy: opts.policy,
           extraAppend: opts.promptAppend,
-          channel: true, // a shared platform channel is NEVER owner-chat — no elowen_* tools, no owner token
-          trustedChannel: opts.trusted, // admin-role sender → trusted-channel (all projects + full plugin toolset), still no elowen_*
+          channel: true, // a shared platform channel is NEVER owner-chat — no Elowen* tools, no owner token
+          trustedChannel: opts.trusted, // admin-role sender → trusted-channel (all projects + full plugin toolset), still no Elowen*
           thinkingLevel: opts.thinkingLevel,
           fast: opts.fast,
           // Channels are the shared, owner-anchored Discord surface — the personality chunk always resolves
@@ -521,7 +521,7 @@ export class ChannelSessionService {
       }
       this.d.registry.clearChildren(ch.sessionId);
       // Match owner-chat stop semantics: queued steering belongs to the interrupted turn and a parked
-      // ask_user_question must reject before PI aborts, otherwise `/stop` can leave prompt() hanging.
+      // AskUserQuestion must reject before PI aborts, otherwise `/stop` can leave prompt() hanging.
       ch.session.clearQueue();
       clearDeliveredUserEchoes(ch);
       this.d.elicitation?.cancelForSession(ch.sessionId, 'aborted');

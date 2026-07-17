@@ -1346,7 +1346,7 @@ export const cs = {
       toolOutputMaxChars: "Výstup nástroje — znaky",
       toolOutputMaxCharsHint: "Strop počtu znaků rozbaleného výstupu nástroje; delší výstup se ořízne. Rozsah 2000–50000, výchozí 12000.",
       elicitationTimeoutMs: "Timeout otázky (ms)",
-      elicitationTimeoutMsHint: "Jak dlouho čeká odložená otázka ask_user_question na odpověď, než se sama vyřeší jako „bez odpovědi“, aby tah nikdy nevisel donekonečna. Rozsah 30 s–30 min, výchozí 5 min.",
+      elicitationTimeoutMsHint: "Jak dlouho čeká odložená otázka AskUserQuestion na odpověď, než se sama vyřeší jako „bez odpovědi“, aby tah nikdy nevisel donekonečna. Rozsah 30 s–30 min, výchozí 5 min.",
       memoryRecallCount: "Vybavování paměti — počet",
       memoryRecallCountHint: "Kolik relevantních vzpomínek se vloží do kontextu každého tahu. Více = bohatší kontext, ale vyšší spotřeba tokenů. Rozsah 1–20, výchozí 6.",
       memoryRecallChars: "Vybavování paměti — znaky",

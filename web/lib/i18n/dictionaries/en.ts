@@ -1346,7 +1346,7 @@ export const en = {
       toolOutputMaxChars: "Tool output — characters",
       toolOutputMaxCharsHint: "Character cap on the expanded tool-output view; longer output is clipped. Range 2000-50000, default 12000.",
       elicitationTimeoutMs: "Question timeout (ms)",
-      elicitationTimeoutMsHint: "How long a parked ask_user_question waits for an answer before it auto-resolves as \"no answer\", so a turn never hangs forever. Range 30s-30min, default 5min.",
+      elicitationTimeoutMsHint: "How long a parked AskUserQuestion waits for an answer before it auto-resolves as \"no answer\", so a turn never hangs forever. Range 30s-30min, default 5min.",
       memoryRecallCount: "Memory recall — count",
       memoryRecallCountHint: "How many relevant memories are injected into each turn's context. More = richer context but higher token cost. Range 1-20, default 6.",
       memoryRecallChars: "Memory recall — characters",

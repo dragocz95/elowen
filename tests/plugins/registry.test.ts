@@ -116,9 +116,34 @@ describe('PluginRegistry', () => {
   describe('setShowOutput (tool-output policy)', () => {
     it('collects a plugin manifest\'s showOutput patterns, trims blanks, and is idempotent', () => {
       const reg = new PluginRegistry();
-      reg.setShowOutput(['run_command', ' read_process_output ', 'lsp_*']);
-      reg.setShowOutput(['run_command', 'scan_code', '', '   ']); // re-declares + blanks dropped
-      expect([...reg.toolShowOutput].sort()).toEqual(['lsp_*', 'read_process_output', 'run_command', 'scan_code']);
+      reg.setShowOutput(['Bash', ' ProcessOutput ', 'Lsp*']);
+      reg.setShowOutput(['Bash', 'ScanCode', '', '   ']); // re-declares + blanks dropped
+      expect([...reg.toolShowOutput].sort()).toEqual(['Bash', 'Lsp*', 'ProcessOutput', 'ScanCode']);
+    });
+  });
+
+  describe('setPlanSafe (what plan mode may compose)', () => {
+    it('collects a manifest\'s plan-safe tool names, trims blanks, and is idempotent', () => {
+      const reg = new PluginRegistry();
+      reg.setPlanSafe(['Read', ' ListDir ', ''], undefined);
+      reg.setPlanSafe(['Read', 'FileInfo', '   '], undefined);
+      expect([...reg.toolPlanSafe].sort()).toEqual(['FileInfo', 'ListDir', 'Read']);
+    });
+
+    it('refuses a plan-safe claim for a tool the manifest never declared', () => {
+      const reg = new PluginRegistry();
+      const warnings: string[] = [];
+      // A manifest that declares provides.tools may only vouch for its own tools — otherwise it could
+      // hand plan mode another plugin's destructive tool by naming it here.
+      reg.setPlanSafe(['Read', 'Bash'], { tools: ['Read'] }, (m) => warnings.push(m));
+      expect([...reg.toolPlanSafe]).toEqual(['Read']);
+      expect(warnings).toEqual(["planSafe 'Bash' ignored: not declared in provides.tools"]);
+    });
+
+    it('leaves a manifest without provides.tools unconstrained, exactly like registerTool', () => {
+      const reg = new PluginRegistry();
+      reg.setPlanSafe(['ListSkills'], { skills: ['*'] });
+      expect([...reg.toolPlanSafe]).toEqual(['ListSkills']);
     });
 
     it('an undefined/empty manifest field contributes nothing', () => {

@@ -5,7 +5,7 @@
 //
 // On top of plain chat it provides: slash commands (/model, /reasoning, /display, /new, /help), per-channel model
 // and presentation settings, a stateful live tool trace with independent answer delivery, a
-// typing indicator, proactive pushes (cron/tick echoes) via notify(), and an admin-only `discord_api`
+// typing indicator, proactive pushes (cron/tick echoes) via notify(), and an admin-only `DiscordApi`
 // tool for server management (messages, roles, channels — the whole REST surface).
 import { join } from 'node:path';
 import { StateStore } from './lib/state.mjs';

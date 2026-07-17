@@ -40,67 +40,67 @@ const run = (identity: TurnIdentity | undefined, fn: () => Promise<unknown>) => 
 describe('buildMemoryTools', () => {
   it('exposes the expected tool names', () => {
     const { byName } = toolset();
-    const names = ['memory_search', 'memory_add', 'memory_update', 'memory_merge', 'memory_delete', 'memory_list_recent',
-      'memory_categories', 'memory_category_create', 'memory_category_delete', 'memory_recategorize'];
+    const names = ['MemorySearch', 'MemoryAdd', 'MemoryUpdate', 'MemoryMerge', 'MemoryDelete', 'MemoryListRecent',
+      'MemoryCategories', 'MemoryCategoryCreate', 'MemoryCategoryDelete', 'MemoryRecategorize'];
     for (const n of names) expect(byName(n)).toBeDefined();
   });
 
   it('owner identity: creates, lists and deletes a memory category', async () => {
     const { categories, byName } = toolset();
-    const created = await run(OWNER, () => byName('memory_category_create').execute('c', { name: 'Infra', description: 'servers, VPS, ports' }));
+    const created = await run(OWNER, () => byName('MemoryCategoryCreate').execute('c', { name: 'Infra', description: 'servers, VPS, ports' }));
     expect(txt(created)).toMatch(/Created category #\d+/);
     expect(categories.list(1).map((c) => c.name)).toContain('Infra');
     // A duplicate name is refused, not thrown.
-    const dup = await run(OWNER, () => byName('memory_category_create').execute('c2', { name: 'Infra' }));
+    const dup = await run(OWNER, () => byName('MemoryCategoryCreate').execute('c2', { name: 'Infra' }));
     expect(txt(dup)).toMatch(/already exists/i);
-    const list = await run(OWNER, () => byName('memory_categories').execute('l', {}));
+    const list = await run(OWNER, () => byName('MemoryCategories').execute('l', {}));
     expect(txt(list)).toContain('Infra');
     const id = categories.list(1)[0]!.id;
-    const del = await run(OWNER, () => byName('memory_category_delete').execute('d', { id }));
+    const del = await run(OWNER, () => byName('MemoryCategoryDelete').execute('d', { id }));
     expect(txt(del)).toMatch(/Deleted category/);
     expect(categories.list(1)).toHaveLength(0);
   });
 
   it('a non-owner channel turn cannot touch categories', async () => {
     const { byName } = toolset();
-    const r = await run(CHANNEL, () => byName('memory_category_create').execute('c', { name: 'Secret' }));
+    const r = await run(CHANNEL, () => byName('MemoryCategoryCreate').execute('c', { name: 'Secret' }));
     expect(txt(r)).toBe('Memory is only available to you — in your own Elowen chat or from your linked platform account.');
   });
 
-  it('owner identity: memory_add stores and memory_search finds it', async () => {
+  it('owner identity: MemoryAdd stores and MemorySearch finds it', async () => {
     const { store, byName } = toolset();
-    const add = await run(OWNER, () => byName('memory_add').execute('c1', { body: 'Filip preferuje TypeScript strict mode.' }));
+    const add = await run(OWNER, () => byName('MemoryAdd').execute('c1', { body: 'Filip preferuje TypeScript strict mode.' }));
     expect(txt(add)).toMatch(/Stored memory #\d+/);
     expect(store.list(1)).toHaveLength(1);
     expect(store.list(1)[0]!.body).toContain('TypeScript');
 
-    const search = await run(OWNER, () => byName('memory_search').execute('c2', { query: 'TypeScript' }));
+    const search = await run(OWNER, () => byName('MemorySearch').execute('c2', { query: 'TypeScript' }));
     expect(txt(search)).toContain('TypeScript');
   });
 
   it('owner identity: update / delete / list_recent operate on the acting user', async () => {
     const { store, byName } = toolset();
-    await run(OWNER, () => byName('memory_add').execute('a', { body: 'Původní fakt.' }));
+    await run(OWNER, () => byName('MemoryAdd').execute('a', { body: 'Původní fakt.' }));
     const id = store.list(1)[0]!.id;
-    const upd = await run(OWNER, () => byName('memory_update').execute('u', { id, body: 'Opravený fakt.' }));
+    const upd = await run(OWNER, () => byName('MemoryUpdate').execute('u', { id, body: 'Opravený fakt.' }));
     expect(txt(upd)).toContain(`#${id}`);
     expect(store.get(1, id)!.body).toBe('Opravený fakt.');
 
-    const list = await run(OWNER, () => byName('memory_list_recent').execute('l', {}));
+    const list = await run(OWNER, () => byName('MemoryListRecent').execute('l', {}));
     expect(txt(list)).toContain('Opravený fakt.');
 
-    const del = await run(OWNER, () => byName('memory_delete').execute('d', { id }));
+    const del = await run(OWNER, () => byName('MemoryDelete').execute('d', { id }));
     expect(txt(del)).toContain(`Deleted memory #${id}`);
     expect(store.get(1, id)!.status).toBe('deleted');
   });
 
   it('linked-owner platform turn: keys to the Elowen account (#1), not the raw Discord id', async () => {
     const { store, byName } = toolset();
-    const add = await run(LINKED_OWNER, () => byName('memory_add').execute('c1', { body: 'Filip jede na Discordu.' }));
+    const add = await run(LINKED_OWNER, () => byName('MemoryAdd').execute('c1', { body: 'Filip jede na Discordu.' }));
     expect(txt(add)).toMatch(/Stored memory #\d+/);
     // Written to Elowen account #1 (same store as the web chat), NOT under the Discord id.
     expect(store.list(1)).toHaveLength(1);
-    const search = await run(LINKED_OWNER, () => byName('memory_search').execute('c2', { query: 'Discord' }));
+    const search = await run(LINKED_OWNER, () => byName('MemorySearch').execute('c2', { query: 'Discord' }));
     expect(txt(search)).toContain('Discord');
   });
 
@@ -108,30 +108,30 @@ describe('buildMemoryTools', () => {
     // Patricie: authenticated, not the operator (owner=false), not admin — but a resolved Elowen account.
     const MEMBER: TurnIdentity = { platform: 'elowen', userId: '2', elowenUserId: 2, admin: false, owner: false };
     const { store, byName } = toolset();
-    const add = await run(MEMBER, () => byName('memory_add').execute('c1', { body: 'Patricie preferuje krátké odpovědi.' }));
+    const add = await run(MEMBER, () => byName('MemoryAdd').execute('c1', { body: 'Patricie preferuje krátké odpovědi.' }));
     expect(txt(add)).toMatch(/Stored memory #\d+/);
     expect(store.list(2)).toHaveLength(1); // written under HER account (2)…
     expect(store.list(1)).toHaveLength(0); // …never the operator's (1)
-    const search = await run(MEMBER, () => byName('memory_search').execute('c2', { query: 'odpovědi' }));
+    const search = await run(MEMBER, () => byName('MemorySearch').execute('c2', { query: 'odpovědi' }));
     expect(txt(search)).toContain('Patricie');
   });
 
   it('channel / non-owner identity: refused, nothing written', async () => {
     const { store, byName } = toolset();
-    const r = await run(CHANNEL, () => byName('memory_add').execute('c1', { body: 'should not persist' }));
+    const r = await run(CHANNEL, () => byName('MemoryAdd').execute('c1', { body: 'should not persist' }));
     expect(txt(r)).toBe('Memory is only available to you — in your own Elowen chat or from your linked platform account.');
     // No memory was written for ANY user (the channel sender has no linked elowenUserId).
     expect(store.list(1)).toHaveLength(0);
     expect(store.listEvents(1)).toHaveLength(0);
 
-    const search = await run(CHANNEL, () => byName('memory_search').execute('c2', { query: 'anything' }));
+    const search = await run(CHANNEL, () => byName('MemorySearch').execute('c2', { query: 'anything' }));
     expect(txt(search)).toBe('Memory is only available to you — in your own Elowen chat or from your linked platform account.');
   });
 
   it('task-worker (no identity established): refused', async () => {
     const { store, byName } = toolset();
     // A task-worker turn runs without a turn identity → currentIdentity() is null.
-    const r = await run(undefined, () => byName('memory_add').execute('c1', { body: 'worker leak' }));
+    const r = await run(undefined, () => byName('MemoryAdd').execute('c1', { body: 'worker leak' }));
     expect(txt(r)).toBe('Memory is only available to you — in your own Elowen chat or from your linked platform account.');
     expect(store.list(1)).toHaveLength(0);
   });

@@ -3,24 +3,24 @@ import { stripInlineReasoning, extractText, toolDetail, toolOutputView, isThinki
 import { makeToolOutputPolicy } from '../../src/brain/toolOutput.js';
 
 describe('toolDetail: read ranges', () => {
-  it('shows the requested line range for paginated read_file calls', () => {
-    expect(toolDetail({ path: 'src/brain/messageView.ts', offset: 120, limit: 80 }, 'read_file'))
+  it('shows the requested line range for paginated Read calls', () => {
+    expect(toolDetail({ path: 'src/brain/messageView.ts', offset: 120, limit: 80 }, 'Read'))
       .toBe('src/brain/messageView.ts · lines 120–199');
-    expect(toolDetail({ path: 'src/brain/messageView.ts', limit: 40 }, 'read_file'))
+    expect(toolDetail({ path: 'src/brain/messageView.ts', limit: 40 }, 'Read'))
       .toBe('src/brain/messageView.ts · lines 1–40');
-    expect(toolDetail({ path: 'src/brain/messageView.ts', offset: 120 }, 'read_file'))
+    expect(toolDetail({ path: 'src/brain/messageView.ts', offset: 120 }, 'Read'))
       .toBe('src/brain/messageView.ts · from line 120');
   });
 
   it('keeps read pagination visible when a long path must be shortened', () => {
-    const detail = toolDetail({ path: `/very/${'long/'.repeat(12)}file.ts`, offset: 20, limit: 10 }, 'read_file');
+    const detail = toolDetail({ path: `/very/${'long/'.repeat(12)}file.ts`, offset: 20, limit: 10 }, 'Read');
     expect(detail).toHaveLength(60);
     expect(detail).toMatch(/… · lines 20–29$/);
   });
 
   it('leaves unpaginated reads and other tools unchanged', () => {
-    expect(toolDetail({ path: 'src/a.ts' }, 'read_file')).toBe('src/a.ts');
-    expect(toolDetail({ path: 'src', offset: 2, limit: 3 }, 'list_dir')).toBe('src');
+    expect(toolDetail({ path: 'src/a.ts' }, 'Read')).toBe('src/a.ts');
+    expect(toolDetail({ path: 'src', offset: 2, limit: 3 }, 'ListDir')).toBe('src');
   });
 });
 
@@ -44,32 +44,32 @@ describe('shapeBrainMessages: durable sub-agent state', () => {
       role: 'assistant',
       content: JSON.stringify({
         role: 'assistant',
-        content: [{ type: 'toolCall', id: 'delegate-1', name: 'delegate', arguments: { task: 'inspect' } }],
+        content: [{ type: 'toolCall', id: 'delegate-1', name: 'Delegate', arguments: { task: 'inspect' } }],
       }),
     }];
     const [view] = shapeBrainMessages(rows, [{
       toolCallId: 'delegate-1', sessionId: 'brain-ch-subagent-child', status: 'running', task: 'inspect',
-      detail: 'read_file src/a.ts', tools: 2, tokens: 900, seconds: 4, model: 'm',
+      detail: 'Read src/a.ts', tools: 2, tokens: 900, seconds: 4, model: 'm',
     }]);
     expect(view?.segments?.[0]).toMatchObject({
-      kind: 'tool', id: 'delegate-1', name: 'delegate',
+      kind: 'tool', id: 'delegate-1', name: 'Delegate',
       sub: {
         sessionId: 'brain-ch-subagent-child', status: 'running', task: 'inspect',
-        detail: 'read_file src/a.ts', tools: 2, tokens: 900, seconds: 4, model: 'm',
+        detail: 'Read src/a.ts', tools: 2, tokens: 900, seconds: 4, model: 'm',
       },
     });
   });
 });
 
 describe('shapeBrainMessages: durable workflow state', () => {
-  it('attaches the DAG to its own workflow_start call and no other tool row', () => {
+  it('attaches the DAG to its own WorkflowStart call and no other tool row', () => {
     const rows = [{
       role: 'assistant',
       content: JSON.stringify({
         role: 'assistant',
         content: [
-          { type: 'toolCall', id: 'call-1', name: 'workflow_start', arguments: { title: 'Ship it' } },
-          { type: 'toolCall', id: 'call-2', name: 'read_file', arguments: { path: 'src/a.ts' } },
+          { type: 'toolCall', id: 'call-1', name: 'WorkflowStart', arguments: { title: 'Ship it' } },
+          { type: 'toolCall', id: 'call-2', name: 'Read', arguments: { path: 'src/a.ts' } },
         ],
       }),
     }];
@@ -78,7 +78,7 @@ describe('shapeBrainMessages: durable workflow state', () => {
       nodes: [{ id: 'gather', task: 'gather facts', status: 'done' as const, deps: [], sessionId: 'child', tokens: 120 }],
     };
     const [view] = shapeBrainMessages(rows, [], [], [run]);
-    expect(view?.segments?.[0]).toMatchObject({ kind: 'tool', id: 'call-1', name: 'workflow_start', wf: run });
+    expect(view?.segments?.[0]).toMatchObject({ kind: 'tool', id: 'call-1', name: 'WorkflowStart', wf: run });
     expect(view?.segments?.[1]).not.toHaveProperty('wf');
   });
 });
@@ -120,7 +120,7 @@ describe('isThinkingOnlyReply', () => {
 
   it('a turn with visible text or a tool call is NOT thinking-only', () => {
     expect(isThinkingOnlyReply(asst({ stopReason: 'stop', content: [{ type: 'thinking', thinking: 'x' }, { type: 'text', text: 'hi' }] }))).toBe(false);
-    expect(isThinkingOnlyReply(asst({ stopReason: 'stop', content: [{ type: 'toolCall', id: '1', name: 'read_file', arguments: {} }] }))).toBe(false);
+    expect(isThinkingOnlyReply(asst({ stopReason: 'stop', content: [{ type: 'toolCall', id: '1', name: 'Read', arguments: {} }] }))).toBe(false);
     expect(isThinkingOnlyReply(asst({ stopReason: 'stop', content: 'plain string reply' }))).toBe(false);
   });
 
@@ -176,7 +176,7 @@ describe('toolOutputView', () => {
 
   it('keeps only a compact tail of long command output', () => {
     const text = Array.from({ length: 12 }, (_, i) => `line ${i + 1}`).join('\n');
-    const out = toolOutputView('run_command', { command: 'printf' }, { content: [{ type: 'text', text }], details: { exitCode: 0 } });
+    const out = toolOutputView('Bash', { command: 'printf' }, { content: [{ type: 'text', text }], details: { exitCode: 0 } });
     expect(out?.text).toContain('6 earlier lines hidden');
     expect(out?.fullText).toContain('line 1');
     expect(out?.text).toContain('line 12');
@@ -184,7 +184,7 @@ describe('toolOutputView', () => {
   });
 
   it('always surfaces a shell command on the first line, even when it exited silently', () => {
-    const out = toolOutputView('run_command', { command: 'mkdir -p build' }, { content: [{ type: 'text', text: '' }], details: { exitCode: 0 } });
+    const out = toolOutputView('Bash', { command: 'mkdir -p build' }, { content: [{ type: 'text', text: '' }], details: { exitCode: 0 } });
     expect(out).toBeDefined();
     expect(out?.command).toBe('mkdir -p build');
     expect(out?.kind).toBe('console');
@@ -198,14 +198,14 @@ describe('toolOutputView', () => {
   });
 
   it('still hides a non-console tool that produced no useful output', () => {
-    const out = toolOutputView('read_file', { path: 'a.ts' }, { content: [{ type: 'text', text: '' }] });
+    const out = toolOutputView('Read', { path: 'a.ts' }, { content: [{ type: 'text', text: '' }] });
     expect(out).toBeUndefined();
   });
 
   it('strips the redundant `$ command` echo and `[exit N]` from a console body (renderer re-adds both)', () => {
     // The terminal plugin frames its result verbatim as `$ <cmd>\n(cwd: …)\n<output>\n[exit N]`.
     const framed = '$ rm -rf public/x && echo done\n(cwd: /var/www/wemx)\ndone\n[exit 0]';
-    const out = toolOutputView('run_command', { command: 'rm -rf public/x && echo done' }, { content: [{ type: 'text', text: framed }], details: { exitCode: 0 } });
+    const out = toolOutputView('Bash', { command: 'rm -rf public/x && echo done' }, { content: [{ type: 'text', text: framed }], details: { exitCode: 0 } });
     expect(out?.command).toBe('rm -rf public/x && echo done'); // echoed once, from args
     expect(out?.status).toBe('exit 0');                        // exit shown once, as the chip
     expect(out?.text).not.toMatch(/^\$ /);                     // no leading command echo left in the body
@@ -227,36 +227,36 @@ describe('toolOutputView — single-source show policy', () => {
   afterEach(() => setToolOutputPolicy(() => true));
 
   it('hides an unlisted tool\'s successful output but keeps a shown tool\'s', () => {
-    setToolOutputPolicy(makeToolOutputPolicy(() => ['run_command']));
-    // list_dir / memory_* are NOT on the show allowlist → their (successful) output is dropped so
+    setToolOutputPolicy(makeToolOutputPolicy(() => ['Bash']));
+    // ListDir / Memory* are NOT on the show allowlist → their (successful) output is dropped so
     // repeated calls can collapse.
-    expect(toolOutputView('list_dir', { path: 'src' }, { content: [{ type: 'text', text: 'a.ts\nb.ts' }] })).toBeUndefined();
-    expect(toolOutputView('memory_search', {}, { content: [{ type: 'text', text: 'a memory' }] })).toBeUndefined();
-    // run_command IS on the allowlist → its console output surfaces.
-    const shown = toolOutputView('run_command', { command: 'ls' }, { content: [{ type: 'text', text: 'a.ts' }], details: { exitCode: 0 } });
+    expect(toolOutputView('ListDir', { path: 'src' }, { content: [{ type: 'text', text: 'a.ts\nb.ts' }] })).toBeUndefined();
+    expect(toolOutputView('MemorySearch', {}, { content: [{ type: 'text', text: 'a memory' }] })).toBeUndefined();
+    // Bash IS on the allowlist → its console output surfaces.
+    const shown = toolOutputView('Bash', { command: 'ls' }, { content: [{ type: 'text', text: 'a.ts' }], details: { exitCode: 0 } });
     expect(shown).toMatchObject({ kind: 'console', text: 'a.ts', status: 'exit 0' });
   });
 
   it('hides output by default — a tool on NO show list stays hidden (regression: default is hide)', () => {
-    // Only run_command is allowlisted. cron_list (structured control data) declares nothing → hidden.
-    // Under the old hide-list default-show, cron_list dumped its raw JSON into the transcript.
-    setToolOutputPolicy(makeToolOutputPolicy(() => ['run_command']));
-    expect(toolOutputView('cron_list', {}, { content: [{ type: 'text', text: '[{"id":1}]' }] })).toBeUndefined();
-    expect(toolOutputView('ask_user_question', {}, { content: [{ type: 'text', text: 'picked A' }] })).toBeUndefined();
+    // Only Bash is allowlisted. CronList (structured control data) declares nothing → hidden.
+    // Under the old hide-list default-show, CronList dumped its raw JSON into the transcript.
+    setToolOutputPolicy(makeToolOutputPolicy(() => ['Bash']));
+    expect(toolOutputView('CronList', {}, { content: [{ type: 'text', text: '[{"id":1}]' }] })).toBeUndefined();
+    expect(toolOutputView('AskUserQuestion', {}, { content: [{ type: 'text', text: 'picked A' }] })).toBeUndefined();
     expect(toolOutputView('some_third_party_tool', {}, { content: [{ type: 'text', text: 'noise' }] })).toBeUndefined();
   });
 
   it('an unlisted tool\'s FAILURE still surfaces (warning tone overrides the hide default)', () => {
-    setToolOutputPolicy(makeToolOutputPolicy(() => ['run_command']));
-    const failed = toolOutputView('list_dir', { path: 'nope' }, { isError: true, content: [{ type: 'text', text: 'ENOENT' }] });
+    setToolOutputPolicy(makeToolOutputPolicy(() => ['Bash']));
+    const failed = toolOutputView('ListDir', { path: 'nope' }, { isError: true, content: [{ type: 'text', text: 'ENOENT' }] });
     expect(failed).toMatchObject({ tone: 'warning', text: 'ENOENT' });
-    const nonZero = toolOutputView('list_dir', { path: 'x' }, { content: [{ type: 'text', text: 'boom' }], details: { exitCode: 2 } });
+    const nonZero = toolOutputView('ListDir', { path: 'x' }, { content: [{ type: 'text', text: 'boom' }], details: { exitCode: 2 } });
     expect(nonZero?.tone).toBe('warning');
   });
 
   it('an unlisted tool\'s hook note still surfaces (a diff-less annotated result)', () => {
-    setToolOutputPolicy(makeToolOutputPolicy(() => ['run_command']));
-    const out = toolOutputView('write_file', { path: 'a.ts' }, { content: [{ type: 'text', text: '' }], details: { notes: ['formatted a.ts'] } });
+    setToolOutputPolicy(makeToolOutputPolicy(() => ['Bash']));
+    const out = toolOutputView('Write', { path: 'a.ts' }, { content: [{ type: 'text', text: '' }], details: { notes: ['formatted a.ts'] } });
     expect(out?.notes).toEqual(['formatted a.ts']);
   });
 });
@@ -264,31 +264,31 @@ describe('toolOutputView — single-source show policy', () => {
 describe('toolOutputView — hook-appended notes (details.notes)', () => {
   it('a diff result stays hidden without notes, but yields a notes-only view WITH them', () => {
     const base = { content: [{ type: 'text', text: 'Edited a.ts' }], details: { diff: '+    1 x' } };
-    expect(toolOutputView('edit_file', { path: 'a.ts' }, base)).toBeUndefined();
-    const out = toolOutputView('edit_file', { path: 'a.ts' }, { ...base, details: { ...base.details, notes: ['formatted a.ts with prettier'] } });
+    expect(toolOutputView('Edit', { path: 'a.ts' }, base)).toBeUndefined();
+    const out = toolOutputView('Edit', { path: 'a.ts' }, { ...base, details: { ...base.details, notes: ['formatted a.ts with prettier'] } });
     expect(out).toMatchObject({ kind: 'result', text: '', tone: 'normal', notes: ['formatted a.ts with prettier'] });
   });
 
   it('notes earn an otherwise-hidden non-console result its block and ride a shown one', () => {
-    const hidden = toolOutputView('write_file', { path: 'a.ts' }, { content: [{ type: 'text', text: '' }], details: { notes: ['formatted a.ts with prettier'] } });
+    const hidden = toolOutputView('Write', { path: 'a.ts' }, { content: [{ type: 'text', text: '' }], details: { notes: ['formatted a.ts with prettier'] } });
     expect(hidden?.notes).toEqual(['formatted a.ts with prettier']);
-    const shown = toolOutputView('run_command', { command: 'x' }, { content: [{ type: 'text', text: 'out' }], details: { exitCode: 0, notes: ['note'] } });
+    const shown = toolOutputView('Bash', { command: 'x' }, { content: [{ type: 'text', text: 'out' }], details: { exitCode: 0, notes: ['note'] } });
     expect(shown).toMatchObject({ text: 'out', notes: ['note'] });
   });
 
   it('validates the untrusted notes array: non-strings dropped, whitespace collapsed, capped at 5', () => {
     const notes = [' a  note ', 42, '', 'b', 'c', 'd', 'e', 'f'];
-    const out = toolOutputView('write_file', { path: 'a.ts' }, { content: [], details: { diff: '+ x', notes } });
+    const out = toolOutputView('Write', { path: 'a.ts' }, { content: [], details: { diff: '+ x', notes } });
     expect(out?.notes).toEqual(['a note', 'b', 'c', 'd', 'e']);
     // A non-array (or all-invalid) notes value contributes nothing — the diff result stays hidden.
-    expect(toolOutputView('write_file', {}, { content: [], details: { diff: '+ x', notes: 'nope' } })).toBeUndefined();
-    expect(toolOutputView('write_file', {}, { content: [], details: { diff: '+ x', notes: [42, '  '] } })).toBeUndefined();
+    expect(toolOutputView('Write', {}, { content: [], details: { diff: '+ x', notes: 'nope' } })).toBeUndefined();
+    expect(toolOutputView('Write', {}, { content: [], details: { diff: '+ x', notes: [42, '  '] } })).toBeUndefined();
   });
 });
 
 describe('tool output tone (needs attention)', () => {
   it('a clean exit 0 is success even when the output mentions errors/warnings', () => {
-    const v = toolOutputView('run_command', { command: 'grep -rn error src' }, {
+    const v = toolOutputView('Bash', { command: 'grep -rn error src' }, {
       content: [{ type: 'text', text: 'src/a.ts: handleError()\nnpm warn deprecated foo@1' }],
       details: { exitCode: 0 },
     });
@@ -297,19 +297,19 @@ describe('tool output tone (needs attention)', () => {
   });
 
   it('a non-zero exit stays a warning', () => {
-    const v = toolOutputView('run_command', { command: 'false' }, { content: [], details: { exitCode: 2 } });
+    const v = toolOutputView('Bash', { command: 'false' }, { content: [], details: { exitCode: 2 } });
     expect(v?.tone).toBe('warning');
   });
 
   it('without an exit code, prose merely mentioning "error" does not flag the row', () => {
-    const v = toolOutputView('run_command', { command: 'cat notes.txt' }, {
+    const v = toolOutputView('Bash', { command: 'cat notes.txt' }, {
       content: [{ type: 'text', text: 'the error handling chapter explains retries' }],
     });
     expect(v?.tone).not.toBe('warning');
   });
 
   it('without an exit code, a line starting with Error still warns', () => {
-    const v = toolOutputView('run_command', { command: 'node x' }, {
+    const v = toolOutputView('Bash', { command: 'node x' }, {
       content: [{ type: 'text', text: 'Error: connect ECONNREFUSED' }],
     });
     expect(v?.tone).toBe('warning');

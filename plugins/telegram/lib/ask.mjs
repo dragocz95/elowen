@@ -1,4 +1,4 @@
-// ask_user_question UI rendering: native Telegram inline-keyboard buttons for a parked question.
+// AskUserQuestion UI rendering: native Telegram inline-keyboard buttons for a parked question.
 // Buttons carry a compact callback payload `a:<token>:<qi>:<oi>` (plus `:submit` / `:other`) — the
 // adapter maps the short token back to the real ask id, keeping every payload well under Telegram's
 // 64-byte callback_data limit even for long brain ask ids.
@@ -10,7 +10,7 @@ export function askUsesButtons(q) {
   return q.multiSelect !== true && n >= 1;
 }
 
-/** Build the inline-keyboard rows for a parked ask_user_question. Pure — exported for tests. Per question:
+/** Build the inline-keyboard rows for a parked AskUserQuestion. Pure — exported for tests. Per question:
  *  a grid of option buttons (`a:<token>:<qi>:<oi>`; a picked option is prefixed ✅). Footer: Submit
  *  (skipped for a single single-select question where a click answers instantly) plus a free-text "Other"
  *  button on single-question asks unless the question sets `custom: false` (absent = allowed). */

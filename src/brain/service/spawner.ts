@@ -5,7 +5,7 @@ import { PluginHookBus } from '../../plugins/hookBus.js';
 import { logger } from '../../shared/logger.js';
 import type { BrainRuntimeConfig } from '../providers.js';
 import { buildBrainRegistry, resolveBrainModelRoute } from '../providers.js';
-import { buildElowenTools, buildMemoryTools, BUILTIN_TOOL_ICONS } from '../tools/index.js';
+import { buildElowenTools, buildMemoryTools, BUILTIN_TOOL_ICONS, BUILTIN_TOOL_PLAN_SAFE } from '../tools/index.js';
 import { makeToolIconResolver } from '../toolIcons.js';
 import { composeSessionTools } from '../session/capabilities.js';
 import { buildPromptTemplates } from '../slashCommands.js';
@@ -98,7 +98,7 @@ export class LiveSessionSpawner {
     // Policy at call time via AsyncLocalStorage (set around each prompt), no per-session construction.
     const plugins = await this.d.plugins();
     // The security invariant (a SHARED platform channel — trusted OR foreign — never gets the owner's
-    // elowen_* control-plane tools or owner API token) lives in composeSessionTools; the token is minted
+    // Elowen* control-plane tools or owner API token) lives in composeSessionTools; the token is minted
     // lazily so it never exists for them. An admin-role Discord sender lands on 'trusted-channel', NOT
     // 'owner-chat', so the channel-keyed session can't leak the owner toolset to a later non-admin
     // sender in the same channel. Memory tools ride every interactive session but key per-user on the
@@ -139,7 +139,7 @@ export class LiveSessionSpawner {
     // NOTHING appended, so the systemPrompt prefix stays byte-identical for users without one.
     const persoAppend = this.d.activePersonality?.(ownerUserId, opts.platform ?? 'web');
     // Skills awareness block (progressive disclosure): PI would render `<available_skills>` itself, but
-    // ONLY when a tool literally named `read` is active (system-prompt.js) — our tools are `read_file`
+    // ONLY when a tool literally named `read` is active (system-prompt.js) — our tools are `Read`
     // etc., so PI never renders it. We therefore append it ourselves so the model learns which skills
     // exist; `skills` still flows to the factory's `skillsOverride` so PI expands `/skill:name` natively.
     // `formatSkillsForPrompt` already drops disable-model-invocation skills, so the toggle is honoured.
@@ -379,7 +379,12 @@ export class LiveSessionSpawner {
       requestProfile, fastAvailable: capabilities.fast,
       thinkingLabels: Object.fromEntries(capabilities.levels.map((level) => [level, capabilities.labels[level] ?? level])),
       policy: opts.policy, listeners, replay, turnContext,
-      pluginToolNames: new Set(pluginTools.map((t) => t.name)), workDir: cwd,
+      pluginToolNames: new Set(pluginTools.map((t) => t.name)),
+      // Read-only-ness is declared with the tool, exactly like its icon above: the core co-locates its
+      // own, a plugin states its own in the manifest. Assembled once per session so a plugin toggle
+      // applies on the next spawn without a daemon restart.
+      planSafeToolNames: new Set([...BUILTIN_TOOL_PLAN_SAFE, ...(plugins?.toolPlanSafe ?? [])]),
+      workDir: cwd,
       queuedSteer, queuedFollowUp, deliveringUserEchoes: [],
       // Baseline for owner mode-switch detection: left undefined so the FIRST turn on a fresh live (new
       // session or a respawn after a model switch) only records the mode without emitting a marker — a

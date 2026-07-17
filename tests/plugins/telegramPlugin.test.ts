@@ -25,10 +25,10 @@ describe('telegram plugin', () => {
       dirs: [join(repoRoot, 'plugins')], enabled: ['telegram'], logger: log,
       config: { telegram: { botToken: 'tok', rolePolicies: [] } },
     });
-    const names = reg.tools.map((t) => t.name).filter((n) => n.startsWith('telegram_'));
-    expect(names).toContain('telegram_send');
-    expect(names).toContain('telegram_api');
-    expect(names).toContain('telegram_create_forum_topic');
+    const names = reg.tools.map((t) => t.name).filter((n) => n.startsWith('Telegram'));
+    expect(names).toContain('TelegramSend');
+    expect(names).toContain('TelegramApi');
+    expect(names).toContain('TelegramCreateForumTopic');
     expect(names.length).toBe(16);
   });
 });

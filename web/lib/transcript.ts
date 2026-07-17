@@ -13,7 +13,7 @@ export type TranscriptEvent =
   | { type: 'text'; delta: string }
   | { type: 'reasoning'; delta: string }
   | { type: 'tool'; name: string; detail?: string; icon?: string; id?: string; command?: string }
-  /** Live rolling tail of a running `run_command` (mirror of the daemon `tool_progress` event). Attaches
+  /** Live rolling tail of a running `Bash` (mirror of the daemon `tool_progress` event). Attaches
    *  to the in-progress tool row by id; the final `tool_output`/`diff` supersedes it (no doubled dump). */
   | { type: 'tool_progress'; id: string; text: string }
   | { type: 'diff'; diff: string; id?: string }
@@ -31,7 +31,7 @@ export type TranscriptEvent =
  *  happened. Consecutive tool calls (no new text between them) collapse into ONE tools segment → the
  *  Claude-Code "grouped pills" look. Useful tool output previews attach to their matching item. */
 export interface ToolItem { name: string; detail?: string; diff?: string; icon?: string; output?: ToolOutputView; id?: string; command?: string; sub?: SubagentState;
-  /** Live rolling tail of a still-running `run_command` (from the `tool_progress` event), rendered under
+  /** Live rolling tail of a still-running `Bash` (from the `tool_progress` event), rendered under
    *  the tool pill while it streams. LIVE-only — never persisted; the final `output`/`diff` clears it. */
   progress?: string }
 
@@ -169,7 +169,7 @@ export function reduce(view: ChatView, e: TranscriptEvent): ChatView {
       return { turns, thinking: true, notice: view.notice };
     }
     case 'tool_progress': {
-      // Live rolling tail of a running run_command — attach to its in-progress tool pill by id so the
+      // Live rolling tail of a running Bash — attach to its in-progress tool pill by id so the
       // dock shows output as it streams. Superseded by the final `tool_output`/`diff` below.
       const t = ensureElowen();
       attachToTool(t, e.id, (item) => ({ ...item, progress: e.text }));

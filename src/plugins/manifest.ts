@@ -81,6 +81,12 @@ export interface PluginManifest {
    *  the clients collapse repeated same-tool rows into one `Read … ×N` line. Merged with the core defaults
    *  (`toolOutput.ts`). */
   showOutput?: string[];
+  /** Tools that only READ — they inspect, list or report, and change nothing. Plan mode composes exactly
+   *  these plus the core's own (`toolPlanSafe.ts`); everything else is withheld while the agent works out
+   *  an approach. Deliberately EXACT names, never `prefix*`: plan-safety does not run in families —
+   *  `DiscordListChannels` reads and `DiscordDeleteChannel` does not — so a pattern here would be a way to
+   *  hand plan mode a destructive tool by accident. Undeclared = treated as mutating (fail closed). */
+  planSafe?: string[];
   /** Path (relative to the plugin folder) of the plugin's brand icon (SVG), shown in the settings UI.
    *  Defaults to `icon.svg` when omitted; the icon route serves it if the file exists, else the UI
    *  falls back to a lucide/emoji glyph. */
@@ -111,6 +117,7 @@ const ManifestSchema = Type.Object({
   })),
   icons: Type.Optional(Type.Record(Type.String(), Type.String())),
   showOutput: Type.Optional(Type.Array(Type.String())),
+  planSafe: Type.Optional(Type.Array(Type.String())),
   icon: Type.Optional(Type.String()),
   configSchema: Type.Optional(Type.Array(Type.Object({
     key: Type.String({ minLength: 1 }),

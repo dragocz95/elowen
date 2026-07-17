@@ -116,7 +116,7 @@ export function resolveSessionIdleMs(value) {
 
 /** Run a job's optional cheap guard command and classify the outcome, so the scheduler can decide
  *  whether the (expensive) brain turn is even worth running. Admin-authored (jobs are admin-only), run
- *  through `/bin/sh -c` like the brain's own run_command. Returns:
+ *  through `/bin/sh -c` like the brain's own Bash. Returns:
  *   - { skip:true }  → nothing to do (empty stdout) or the check errored → DON'T spend an LLM turn.
  *   - { skip:false, output } → fresh data on stdout → run the brain turn and feed it this output. */
 export async function runCheck(command, logger, timeoutMs = DEFAULT_CHECK_TIMEOUT_MS) {
@@ -537,12 +537,12 @@ export function register(ctx) {
   const adminOnly = () => { if (!ctx.isAdminSession()) throw new Error('cron jobs can only be managed from an admin session'); };
 
   ctx.registerTool(defineTool({
-    name: 'cron_add', label: 'Schedule job',
+    name: 'CronAdd', label: 'Schedule job',
     description: [
       'Schedule a recurring prompt for yourself — daily summaries, periodic checks, recurring reminders. The prompt fires as a brain turn on the schedule you set, and results go to the default notification channel unless you override it with notifyChannelId. Admin only.',
       'The schedule takes either a plain form — "every 15m", "every 2h", "daily 07:30", "weekly sun 20:00" — or a standard 5-field cron expression ("*/5 * * * *", "0 9 * * 1-5", "0 0 1 * *"). The format is detected automatically; reach for cron only when the plain form cannot express the timing you need.',
       'For polling work, use the `check` guard: a cheap shell command that runs BEFORE the prompt. If it prints nothing (or fails), the scheduled turn is skipped entirely — no model call. If it prints output, the brain runs and receives that output. This is how you poll for new work without paying for a model call on every tick.',
-      'Use `hours` ("H-H", e.g. "5-21") to keep a job quiet outside active hours, `enabled: false` to create it paused, and `plain: true` to deliver the reply without the "⏰ job name" header. Returns the job id — pass it to cron_remove to cancel.',
+      'Use `hours` ("H-H", e.g. "5-21") to keep a job quiet outside active hours, `enabled: false` to create it paused, and `plain: true` to deliver the reply without the "⏰ job name" header. Returns the job id — pass it to CronRemove to cancel.',
     ].join(' '),
     parameters: Type.Object({
       name: Type.String({ description: 'Short human name for the job, shown in schedules and telemetry' }),
@@ -574,7 +574,7 @@ export function register(ctx) {
   }));
 
   ctx.registerTool(defineTool({
-    name: 'schedule_wakeup', label: 'Schedule wake-up',
+    name: 'ScheduleWakeup', label: 'Schedule wake-up',
     description: [
       'Wake yourself up ONCE after a delay ("in 30s", "in 20m", "in 2h") or at a time ("at 18:30") to run a prompt. It is strictly one-shot — the job removes itself after running. Scheduled from a user conversation, the wake-up replies in that same conversation, so the user sees the result in context. Admin only.',
       'Use it to check back on something that changes over time but does not notify you — a CI run, a deploy, an external queue. Do NOT use it to poll background work you started here: a background sub-agent and a background command both wake you on their own when they finish, so a wake-up on top of them only fires redundantly. If you want a safety net for work that might hang, set a LONG fallback ("in 30m") rather than a short poll.',
@@ -608,9 +608,9 @@ export function register(ctx) {
   }));
 
   ctx.registerTool(defineTool({
-    name: 'cron_list', label: 'List jobs',
+    name: 'CronList', label: 'List jobs',
     description: 'List scheduled jobs with their id, name, schedule, last run and last result. Admin only. '
-      + 'Use it to see what is active, when each job last fired and what it produced — and to get the id you need for cron_remove.',
+      + 'Use it to see what is active, when each job last fired and what it produced — and to get the id you need for CronRemove.',
     parameters: Type.Object({}),
     execute: async () => {
       try {
@@ -625,10 +625,10 @@ export function register(ctx) {
   }));
 
   ctx.registerTool(defineTool({
-    name: 'cron_remove', label: 'Remove job',
+    name: 'CronRemove', label: 'Remove job',
     description: 'Remove a scheduled job by id. It stops firing immediately. Admin only. '
-      + 'Get the id from cron_list, or from what cron_add returned.',
-    parameters: Type.Object({ id: Type.String({ description: 'Job id, from cron_list or cron_add' }) }),
+      + 'Get the id from CronList, or from what CronAdd returned.',
+    parameters: Type.Object({ id: Type.String({ description: 'Job id, from CronList or CronAdd' }) }),
     execute: async (_id, p) => {
       try {
         adminOnly();

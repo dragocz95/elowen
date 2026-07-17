@@ -33,7 +33,7 @@ const projectWithPrettier = () => {
   return dir;
 };
 
-const writeResult = (path: string) => ({ tool: 'write_file', params: { path }, result: { content: [], details: { ok: true, path } } });
+const writeResult = (path: string) => ({ tool: 'Write', params: { path }, result: { content: [], details: { ok: true, path } } });
 
 describe('formatters plugin — catalog resolution (extension → formatter, enabledWhen gates)', () => {
   let mod: FormattersModule;
@@ -226,9 +226,9 @@ describe('formatters plugin — tools.call.after hook flow', () => {
     const dir = projectWithPrettier();
     const file = join(dir, 'a.ts');
     writeFileSync(file, 'const x=1');
-    await fire(hook, dir, { tool: 'read_file', params: { path: file }, result: { content: [], details: { ok: true, path: file } } });
-    await fire(hook, dir, { tool: 'write_file', params: { path: file }, result: { content: [], details: { ok: false, path: file } } });
-    await fire(hook, dir, { tool: 'write_file', params: {}, result: { content: [], details: { ok: true } } }); // no path
+    await fire(hook, dir, { tool: 'Read', params: { path: file }, result: { content: [], details: { ok: true, path: file } } });
+    await fire(hook, dir, { tool: 'Write', params: { path: file }, result: { content: [], details: { ok: false, path: file } } });
+    await fire(hook, dir, { tool: 'Write', params: {}, result: { content: [], details: { ok: true } } }); // no path
     await fire(hook, dir, undefined); // malformed payload
     expect(existsSync(`${file}.formatted`)).toBe(false);
   });

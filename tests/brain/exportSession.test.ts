@@ -64,7 +64,7 @@ describe('exportBrainSession', () => {
   it('includes durable delegated-child status in the HTML transcript', async () => {
     store.appendMessage({
       id: 'a2', sessionId: 's1', parentId: null, role: 'assistant',
-      content: { role: 'assistant', content: [{ type: 'toolCall', id: 'delegate-1', name: 'delegate', arguments: { task: 'inspect' } }] },
+      content: { role: 'assistant', content: [{ type: 'toolCall', id: 'delegate-1', name: 'Delegate', arguments: { task: 'inspect' } }] },
     });
     store.createSession({ id: 'brain-ch-subagent-child', userId: 1, model: 'child-model', parentSessionId: 's1' });
     expect(store.upsertSubagentRun('s1', {

@@ -4,7 +4,7 @@ import { LspManager, formatCheckResult } from '../../lsp/manager.js';
 import { allowedRoots, assertPathAllowed, realPathWithin } from '../../plugins/pathGuard.js';
 import { currentWorkDir } from '../../plugins/policyContext.js';
 
-/** One daemon-wide LSP manager (owns the live language-server clients). Shared by the `lsp_diagnostics`
+/** One daemon-wide LSP manager (owns the live language-server clients). Shared by the `LspDiagnostics`
  *  tool and the `/lsp` toggle so enabling/disabling and diagnostics hit the same servers. Lazily built so
  *  no server is spawned until the agent actually checks a file. */
 let manager: LspManager | null = null;
@@ -47,7 +47,7 @@ export function toggleLsp(): { enabled: boolean; message: string } {
 export function buildLspTools() {
   return [
     defineTool({
-      name: 'lsp_diagnostics', label: 'Check diagnostics',
+      name: 'LspDiagnostics', label: 'Check diagnostics',
       description: 'Type-check a file with its language server (LSP) and return errors/warnings with exact line:column. Call this right after editing a code file to immediately confirm it still compiles. Returns "no problems" for a clean file, and a clear note when LSP is off (/lsp) or no server is installed for the language.',
       parameters: Type.Object({ path: Type.String({ description: 'Absolute path to the file to check' }) }),
       execute: async (_id: string, p: { path: string }) => {

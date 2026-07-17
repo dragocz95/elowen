@@ -92,7 +92,7 @@ describe('mcp plugin — end-to-end connection + process-group cleanup', () => {
     expect(ctx.controls.has('mcp')).toBe(true);
 
     // The server's `echo` tool is bridged, namespaced.
-    const echo = ctx.tools.find((t) => t.name === 'mcp_mock_echo');
+    const echo = ctx.tools.find((t) => t.name === 'mcp__mock__echo');
     expect(echo, 'bridged tool registered').toBeTruthy();
     const res = (await echo!.execute('1', { text: 'hello mcp' })) as { content: { text: string }[] };
     expect(res.content[0]!.text).toBe('hello mcp');
@@ -126,6 +126,6 @@ describe('mcp plugin — end-to-end connection + process-group cleanup', () => {
     const elapsed = Date.now() - start;
     expect(elapsed).toBeGreaterThanOrEqual(4900); // the 5s override, not an instant failure
     expect(elapsed).toBeLessThan(10_000); // well under the unconfigured 15s default -> the override was used
-    expect(ctx.tools.find((t) => t.name.startsWith('mcp_hung_'))).toBeUndefined();
+    expect(ctx.tools.find((t) => t.name.startsWith('mcp__hung__'))).toBeUndefined();
   }, 15000);
 });

@@ -10,25 +10,36 @@ export { buildMemoryTools } from './memoryTools.js';
  *  declaration (the equivalent of a plugin's manifest `icons`). The daemon merges it with the plugin
  *  manifest icons to resolve a `tool` event's icon. Keys are exact names or `prefix*` patterns. */
 export const BUILTIN_TOOL_ICONS: Record<string, string> = {
-  'elowen_*': '🔥',
-  'memory_*': '🧠',
-  'lsp_*': '🔎',
+  'Elowen*': '🔥',
+  'Memory*': '🧠',
+  'Lsp*': '🔎',
 };
 
 /** Output-visibility policy for the brain's BUILT-IN tools (the co-located equivalent of a plugin
  *  manifest's `showOutput`). Output is HIDDEN by default; only the tools listed here surface their
- *  SUCCESSFUL output in the transcript. `lsp_*` diagnostics are worth showing. The control plane
- *  (`elowen_*`) and memory (`memory_*`) are deliberately ABSENT — they return structured data the model
+ *  SUCCESSFUL output in the transcript. `Lsp*` diagnostics are worth showing. The control plane
+ *  (`Elowen*`) and memory (`Memory*`) are deliberately ABSENT — they return structured data the model
  *  acts on, not something the reader needs echoed, so their success stays hidden and repeated calls
  *  collapse into one row (a failure or a hook note still surfaces; see `toolOutputView`). Keys are
  *  exact names or `prefix*` patterns. */
 export const BUILTIN_TOOL_OUTPUT_SHOWN: string[] = [
-  'lsp_*',
+  'Lsp*',
+];
+
+/** Which of the brain's BUILT-IN tools only READ (the co-located equivalent of a plugin manifest's
+ *  `planSafe`). Plan mode composes exactly these plus the plugins' declared ones and withholds the rest,
+ *  so this list is a policy boundary: a name added here is a name plan mode will hand the model.
+ *  Deliberately NOT `prefix*` patterns, unlike the icon/output lists above — `Elowen*` reads AND writes
+ *  (ElowenCreateTask), `Memory*` likewise (MemoryDelete), so only exact names can be right. */
+export const BUILTIN_TOOL_PLAN_SAFE: string[] = [
+  'ElowenListTasks', 'ElowenListMissions', 'ElowenListSessions',
+  'MemorySearch', 'MemoryListRecent', 'MemoryCategories',
+  'LspDiagnostics',
 ];
 
 /** The brain's Elowen capability toolset. Every tool wraps callElowenApi (single source of truth), so a
  *  new REST endpoint needs no changes here beyond adding one more thin wrapper. Bundles the LSP
- *  diagnostics tool (owner-chat only, like the elowen_* control plane). */
+ *  diagnostics tool (owner-chat only, like the Elowen* control plane). */
 export function buildElowenTools(ctx: ElowenToolCtx) {
   return [elowenListTasks(ctx), elowenCreateTask(ctx), elowenUpdateTask(ctx), elowenPlan(ctx), elowenListMissions(ctx), elowenListSessions(ctx), ...buildLspTools()];
 }

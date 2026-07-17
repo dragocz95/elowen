@@ -337,7 +337,7 @@ export function registerPluginRoutes(app: ElowenApp, ctx: RouteContext): void {
   });
 
   // ── Cron jobs (cronjob plugin): jobs.json is a SHARED list — the scheduler stamps runs into it, the
-  // brain's cron_add/cron_remove tools write it, and this UI edits it. So a write here names exactly ONE
+  // brain's CronAdd/CronRemove tools write it, and this UI edits it. So a write here names exactly ONE
   // job and the file is read-modify-written around it. It must never take the whole array from the
   // client: a page that loaded its snapshot before someone else added a job would delete that job on the
   // next save, and a browser tab left open for a day is enough to lose one. The plugin's scheduler
@@ -438,7 +438,7 @@ export function registerPluginRoutes(app: ElowenApp, ctx: RouteContext): void {
   });
 
   // ── Skills (skills plugin): bundled .md skills ship inside the plugin folder, user skills live in
-  // the plugin's writable data dir (where the create_skill tool writes). Managed one file per skill;
+  // the plugin's writable data dir (where the CreateSkill tool writes). Managed one file per skill;
   // a successful write/delete hot-reloads the plugins so new conversations pick the change up. ──
   const SKILL_NAME_RE = /^[a-z0-9][a-z0-9-]{1,63}$/; // mirrors NAME_RE in plugins/skills/index.mjs
   const userSkillsDir = (): string | null => (d.pluginDataRoot ? join(d.pluginDataRoot, 'skills') : null);
@@ -450,7 +450,7 @@ export function registerPluginRoutes(app: ElowenApp, ctx: RouteContext): void {
     }
     return null;
   };
-  // Same cheap frontmatter probe the plugin's list_skills tool uses — full YAML parsing is overkill
+  // Same cheap frontmatter probe the plugin's ListSkills tool uses — full YAML parsing is overkill
   // for one known single-line field.
   const skillDescription = (file: string): string => {
     try { return /description:\s*(.+)/.exec(readFileSync(file, 'utf-8').slice(0, 400))?.[1]?.trim() ?? ''; }
@@ -510,7 +510,7 @@ export function registerPluginRoutes(app: ElowenApp, ctx: RouteContext): void {
     return c.json(out);
   });
 
-  // Create (or overwrite) a user skill — the same file format the plugin's create_skill tool writes.
+  // Create (or overwrite) a user skill — the same file format the plugin's CreateSkill tool writes.
   // A name shadowing a bundled skill is refused: the plugin registers both copies and the duplicate
   // would silently fight over the system prompt.
   app.post('/plugins/skills', async (c) => {

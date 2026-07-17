@@ -69,6 +69,10 @@ export class PluginRegistry {
    *  the shared `messageView` renderer consults (`makeToolOutputPolicy`). Output is hidden by default;
    *  only these tools' output surfaces. */
   readonly toolShowOutput = new Set<string>();
+  /** Tool names declared plan-safe across all plugin manifests (`planSafe`). Merged with the core's own
+   *  (`BUILTIN_TOOL_PLAN_SAFE`) into the set plan mode composes from. Exact names only — see the manifest
+   *  field's doc for why a `prefix*` would be unsafe here. */
+  readonly toolPlanSafe = new Set<string>();
 
   /** Absorb another registry's contributions (the loader stages each plugin and merges on success).
    *  Controls + commands are name-keyed and drive admin routes / the slash menu, so a later plugin must
@@ -122,6 +126,22 @@ export class PluginRegistry {
   setShowOutput(patterns?: string[]): void {
     for (const p of patterns ?? []) {
       if (typeof p === 'string' && p.trim()) this.toolShowOutput.add(p.trim());
+    }
+  }
+
+  /** Record a plugin's manifest plan-safe tool names (from `planSafe`). Called by the loader after a
+   *  clean register+merge, mirroring `setShowOutput`. A name is dropped unless the plugin also declared
+   *  it in `provides.tools`: the same reason registerTool is gated there — a manifest must not be able to
+   *  vouch for a tool it does not own, least of all to widen what plan mode composes. */
+  setPlanSafe(names: string[] | undefined, provides: PluginManifest['provides'], warn?: (msg: string) => void): void {
+    for (const n of names ?? []) {
+      if (typeof n !== 'string' || !n.trim()) continue;
+      const name = n.trim();
+      if (provides?.tools && !provides.tools.includes(name)) {
+        warn?.(`planSafe '${name}' ignored: not declared in provides.tools`);
+        continue;
+      }
+      this.toolPlanSafe.add(name);
     }
   }
 

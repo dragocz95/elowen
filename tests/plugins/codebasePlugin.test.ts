@@ -145,11 +145,11 @@ describe('codebase plugin — index + search', () => {
   });
 
   it('declares exactly its three tools', () => {
-    expect(reg.tools.map((t) => t.name).sort()).toEqual(['codebase_reindex', 'codebase_search', 'codebase_status']);
+    expect(reg.tools.map((t) => t.name).sort()).toEqual(['CodebaseReindex', 'CodebaseSearch', 'CodebaseStatus']);
   });
 
   it('reindex (admin) writes a real index.db with chunk rows carrying the configured model', async () => {
-    const res = await runWithPolicy(adminPolicy(), () => runTool(reg, 'codebase_reindex', { repo: repo1 }), { workDir: repo1 });
+    const res = await runWithPolicy(adminPolicy(), () => runTool(reg, 'CodebaseReindex', { repo: repo1 }), { workDir: repo1 });
     expect(res.details.ok).toBe(true);
     expect(res.details.chunksEmbedded as number).toBeGreaterThan(0);
 
@@ -164,7 +164,7 @@ describe('codebase plugin — index + search', () => {
   });
 
   it('search ranks the semantically closest chunk first and drops sub-floor hits', async () => {
-    const res = await runWithPolicy(userPolicy([repo1]), () => runTool(reg, 'codebase_search', { query: 'cosine similarity of two vectors', k: 5 }));
+    const res = await runWithPolicy(userPolicy([repo1]), () => runTool(reg, 'CodebaseSearch', { query: 'cosine similarity of two vectors', k: 5 }));
     expect(res.details.ok).toBe(true);
     const text = res.content[0].text;
     // math.ts (cosine/similarity/vector/dot/product) beats queue.ts (background/job/embedding).
@@ -175,28 +175,28 @@ describe('codebase plugin — index + search', () => {
   });
 
   it('a different query surfaces the background-embedding-queue chunk', async () => {
-    const res = await runWithPolicy(userPolicy([repo1]), () => runTool(reg, 'codebase_search', { query: 'background job that fills in missing memory embeddings' }));
+    const res = await runWithPolicy(userPolicy([repo1]), () => runTool(reg, 'CodebaseSearch', { query: 'background job that fills in missing memory embeddings' }));
     expect(res.content[0].text.split('\n')[0]).toContain('src/queue.ts');
   });
 
   it('a pathGlob narrows results to matching files', async () => {
-    const res = await runWithPolicy(userPolicy([repo1]), () => runTool(reg, 'codebase_search', { query: 'cosine similarity vector', pathGlob: 'src/queue.ts' }));
+    const res = await runWithPolicy(userPolicy([repo1]), () => runTool(reg, 'CodebaseSearch', { query: 'cosine similarity vector', pathGlob: 'src/queue.ts' }));
     const text = res.content[0].text;
     expect(text).not.toContain('src/math.ts');
   });
 
   it('repo scoping: a repo1-only session never sees repo2 chunks', async () => {
     // Index repo2 as admin, then search as a repo1-scoped user — repo2 must stay invisible.
-    await runWithPolicy(adminPolicy(), () => runTool(reg, 'codebase_reindex', { repo: repo2 }), { workDir: repo2 });
-    const scoped = await runWithPolicy(userPolicy([repo1]), () => runTool(reg, 'codebase_search', { query: 'cosine similarity vector dot product' }));
+    await runWithPolicy(adminPolicy(), () => runTool(reg, 'CodebaseReindex', { repo: repo2 }), { workDir: repo2 });
+    const scoped = await runWithPolicy(userPolicy([repo1]), () => runTool(reg, 'CodebaseSearch', { query: 'cosine similarity vector dot product' }));
     expect(scoped.content[0].text).not.toContain('other.ts');
     // An admin (all-access, no roots) CAN see repo2's chunk.
-    const admin = await runWithPolicy(adminPolicy(), () => runTool(reg, 'codebase_search', { query: 'cosine similarity vector dot product' }), { workDir: repo1 });
+    const admin = await runWithPolicy(adminPolicy(), () => runTool(reg, 'CodebaseSearch', { query: 'cosine similarity vector dot product' }), { workDir: repo1 });
     expect(admin.content[0].text).toContain('other.ts');
   });
 
   it('reindex is refused for a non-admin session', async () => {
-    const res = await runWithPolicy(userPolicy([repo1]), () => runTool(reg, 'codebase_reindex', {}));
+    const res = await runWithPolicy(userPolicy([repo1]), () => runTool(reg, 'CodebaseReindex', {}));
     expect(res.details.ok).toBe(false);
     expect(res.content[0].text).toContain('admin');
   });
@@ -205,12 +205,12 @@ describe('codebase plugin — index + search', () => {
     const edited = mkdtempSync(join(tmpdir(), 'elowen-cb-inc-'));
     writeFileSync(join(edited, 'keep.ts'), 'export function keep() { return 1; } // cosine vector\n');
     writeFileSync(join(edited, 'gone.ts'), 'export function gone() { return 2; } // dot product\n');
-    await runWithPolicy(adminPolicy(), () => runTool(reg, 'codebase_reindex', { repo: edited }), { workDir: edited });
+    await runWithPolicy(adminPolicy(), () => runTool(reg, 'CodebaseReindex', { repo: edited }), { workDir: edited });
 
     // Edit one file (new content), delete the other.
     writeFileSync(join(edited, 'keep.ts'), 'export function keep() { return 42; } // cosine similarity vector product changed\n');
     rmSync(join(edited, 'gone.ts'));
-    const res = await runWithPolicy(adminPolicy(), () => runTool(reg, 'codebase_reindex', { repo: edited }), { workDir: edited });
+    const res = await runWithPolicy(adminPolicy(), () => runTool(reg, 'CodebaseReindex', { repo: edited }), { workDir: edited });
     expect(res.details.filesChanged as number).toBe(1); // only keep.ts re-embedded
     expect(res.details.pruned as number).toBe(1);       // gone.ts pruned
 
@@ -224,10 +224,10 @@ describe('codebase plugin — index + search', () => {
   it('switching the embedding model marks the repo stale and rebuilds it under the new model', async () => {
     const stale = mkdtempSync(join(tmpdir(), 'elowen-cb-stale-'));
     writeFileSync(join(stale, 'a.ts'), 'export function alpha() { return 1; } // cosine vector\n');
-    await runWithPolicy(adminPolicy(), () => runTool(reg, 'codebase_reindex', { repo: stale }), { workDir: stale });
+    await runWithPolicy(adminPolicy(), () => runTool(reg, 'CodebaseReindex', { repo: stale }), { workDir: stale });
 
     liveCfg = { providerId: 'p', model: 'fake-2', dimensions: VOCAB.length }; // operator switched the model
-    const res = await runWithPolicy(adminPolicy(), () => runTool(reg, 'codebase_reindex', { repo: stale }), { workDir: stale });
+    const res = await runWithPolicy(adminPolicy(), () => runTool(reg, 'CodebaseReindex', { repo: stale }), { workDir: stale });
     expect(res.details.chunksEmbedded as number).toBeGreaterThan(0); // rebuilt despite no file edit
 
     const db = new Database(join(dataRoot, 'codebase', 'index.db'), { readonly: true });
@@ -238,7 +238,7 @@ describe('codebase plugin — index + search', () => {
   });
 
   it('status reports per-repo coverage and the configured model', async () => {
-    const res = await runWithPolicy(userPolicy([repo1]), () => runTool(reg, 'codebase_status', {}));
+    const res = await runWithPolicy(userPolicy([repo1]), () => runTool(reg, 'CodebaseStatus', {}));
     expect(res.details.ok).toBe(true);
     expect(res.content[0].text).toContain('fake-1');
     expect(res.content[0].text).toContain(repo1);
@@ -252,7 +252,7 @@ describe('codebase plugin — index + search', () => {
       embeddings: fakeEmbedder,
       embeddingConfig: () => ({ providerId: '', model: '', dimensions: null } as EmbeddingConfig),
     });
-    const res = await runWithPolicy(userPolicy([repo1]), () => runTool(regOff, 'codebase_search', { query: 'anything' }));
+    const res = await runWithPolicy(userPolicy([repo1]), () => runTool(regOff, 'CodebaseSearch', { query: 'anything' }));
     expect(res.details.ok).toBe(false);
     expect(res.content[0].text.toLowerCase()).toContain('embedding');
   });
@@ -287,7 +287,7 @@ describe('codebase plugin — batch3 fixes', () => {
       config: { codebase: { reindexEmbedBudget: 1 } }, // one chunk per pass so files spread across passes
       embeddings: fakeEmbedder, embeddingConfig: () => cfg,
     });
-    const reindex = () => runWithPolicy(adminPolicy(), () => runTool(reg, 'codebase_reindex', { repo }), { workDir: repo });
+    const reindex = () => runWithPolicy(adminPolicy(), () => runTool(reg, 'CodebaseReindex', { repo }), { workDir: repo });
 
     for (let i = 0; i < 3; i++) await reindex(); // fully index under fake-1 (3 passes @ budget 1)
     expect(chunkCount(dataRoot, "SELECT COUNT(*) AS n FROM chunks WHERE model = 'fake-1'")).toBe(3);
@@ -306,7 +306,7 @@ describe('codebase plugin — batch3 fixes', () => {
   });
 
   // #5 — auto-reindex on search is admin-only; a non-admin search must never write the index or spend the
-  // embedding provider (the same effects codebase_reindex refuses to non-admins).
+  // embedding provider (the same effects CodebaseReindex refuses to non-admins).
   it('#5 a non-admin search never triggers auto-reindex; an admin search does', async () => {
     const dataRoot = mkdtempSync(join(tmpdir(), 'elowen-cb5-data-'));
     const repo = mkdtempSync(join(tmpdir(), 'elowen-cb5-repo-'));
@@ -322,7 +322,7 @@ describe('codebase plugin — batch3 fixes', () => {
       embeddings: embedder, embeddingConfig: () => cfg,
     });
     // Non-admin: no reindex, index stays empty, and a helpful failure that points at the admin tool.
-    const res = await runWithPolicy(userPolicy([repo]), () => runTool(reg, 'codebase_search', { query: 'cosine similarity vector' }));
+    const res = await runWithPolicy(userPolicy([repo]), () => runTool(reg, 'CodebaseSearch', { query: 'cosine similarity vector' }));
     await new Promise((r) => setTimeout(r, 60)); // give any wrongly-fired background pass time to run
     expect(embedBatchCalls).toBe(0);             // the bug fires a full reindex+embed here for a plain user
     expect(res.details.ok).toBe(false);
@@ -330,7 +330,7 @@ describe('codebase plugin — batch3 fixes', () => {
     expect(chunkCount(dataRoot)).toBe(0);
 
     // Admin: kicks the (background) reindex → chunks appear.
-    await runWithPolicy(adminPolicy(), () => runTool(reg, 'codebase_search', { query: 'cosine similarity vector' }), { workDir: repo });
+    await runWithPolicy(adminPolicy(), () => runTool(reg, 'CodebaseSearch', { query: 'cosine similarity vector' }), { workDir: repo });
     await waitFor(() => embedBatchCalls > 0 && chunkCount(dataRoot) > 0);
   });
 
@@ -350,7 +350,7 @@ describe('codebase plugin — batch3 fixes', () => {
       dirs: [join(repoRoot, 'plugins')], enabled: ['codebase'], logger: log, dataRoot,
       embeddings: embedder, embeddingConfig: () => cfg,
     });
-    const adminSearch = () => runWithPolicy(adminPolicy(), () => runTool(reg, 'codebase_search', { query: 'cosine vector' }), { workDir: repo });
+    const adminSearch = () => runWithPolicy(adminPolicy(), () => runTool(reg, 'CodebaseSearch', { query: 'cosine vector' }), { workDir: repo });
 
     await adminSearch();                       // first search kicks a pass that fails → index still empty
     await waitFor(() => embedBatchCalls === 1);
@@ -380,7 +380,7 @@ describe('codebase plugin — batch3 fixes', () => {
       dirs: [join(repoRoot, 'plugins')], enabled: ['codebase'], logger: log, dataRoot,
       embeddings: embedder, embeddingConfig: () => cfg,
     });
-    await runWithPolicy(adminPolicy(), () => runTool(reg, 'codebase_reindex', { repo }), { workDir: repo }); // seed (fast)
+    await runWithPolicy(adminPolicy(), () => runTool(reg, 'CodebaseReindex', { repo }), { workDir: repo }); // seed (fast)
 
     // Add a file so the next auto-reindex has real (slow) embedding work, and force the repo debounce-stale.
     writeFileSync(join(repo, 'fresh.ts'), 'export function fresh() { return 2; } // cosine vector\n');
@@ -391,7 +391,7 @@ describe('codebase plugin — batch3 fixes', () => {
     slow = true;
 
     const t0 = Date.now();
-    const res = await runWithPolicy(adminPolicy(), () => runTool(reg, 'codebase_search', { query: 'cosine similarity vector dot product' }), { workDir: repo });
+    const res = await runWithPolicy(adminPolicy(), () => runTool(reg, 'CodebaseSearch', { query: 'cosine similarity vector dot product' }), { workDir: repo });
     const elapsed = Date.now() - t0;
     expect(res.details.ok).toBe(true);
     expect(res.content[0].text).toContain('seed.ts');  // served from the existing index immediately
@@ -410,7 +410,7 @@ describe('codebase plugin — batch3 fixes', () => {
       dirs: [join(repoRoot, 'plugins')], enabled: ['codebase'], logger: log, dataRoot,
       embeddings: fakeEmbedder, embeddingConfig: () => cfg,
     });
-    await runWithPolicy(adminPolicy(), () => runTool(reg, 'codebase_reindex', { repo }), { workDir: repo });
+    await runWithPolicy(adminPolicy(), () => runTool(reg, 'CodebaseReindex', { repo }), { workDir: repo });
 
     // Inject a chunk from a DIFFERENT model but the SAME width, whose vector is a perfect match for the
     // query — the old width-only guard would have ranked it #1; the model filter must exclude it.
@@ -422,7 +422,7 @@ describe('codebase plugin — batch3 fixes', () => {
       .run(realRepo, 'foreign.ts', 1, 1, null, 'cosine similarity vector foreign', 'h', 'other-model', VOCAB.length, Buffer.from(q.buffer, q.byteOffset, q.byteLength));
     wdb.close();
 
-    const res = await runWithPolicy(adminPolicy(), () => runTool(reg, 'codebase_search', { query: 'cosine similarity vector' }), { workDir: repo });
+    const res = await runWithPolicy(adminPolicy(), () => runTool(reg, 'CodebaseSearch', { query: 'cosine similarity vector' }), { workDir: repo });
     expect(res.content[0].text).not.toContain('foreign.ts'); // excluded by the SQL model filter, not compared
   });
 
@@ -440,9 +440,9 @@ describe('codebase plugin — batch3 fixes', () => {
       dirs: [join(repoRoot, 'plugins')], enabled: ['codebase'], logger: log, dataRoot,
       embeddings: fakeEmbedder, embeddingConfig: () => cfg,
     });
-    await runWithPolicy(adminPolicy(), () => runTool(reg, 'codebase_reindex', { repo }), { workDir: repo });
+    await runWithPolicy(adminPolicy(), () => runTool(reg, 'CodebaseReindex', { repo }), { workDir: repo });
 
-    const res = await runWithPolicy(adminPolicy(), () => runTool(reg, 'codebase_search', { query: 'cosine similarity vector dot product' }), { workDir: repo });
+    const res = await runWithPolicy(adminPolicy(), () => runTool(reg, 'CodebaseSearch', { query: 'cosine similarity vector dot product' }), { workDir: repo });
     const text = res.content[0].text;
     expect(text).toContain('wide.ts');
     // The over-long line is capped for display and marked — the snippet is never empty.

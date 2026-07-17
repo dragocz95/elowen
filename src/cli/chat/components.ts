@@ -249,7 +249,7 @@ export function workflowCounts(w: WorkflowState): { done: number; running: numbe
 }
 
 /** The telemetry-rail "Workflow" section: one clickable row per RUNNING workflow (a DAG the agent
- *  launched via workflow_start). Each row shows the workflow title, its live node tally
+ *  launched via WorkflowStart). Each row shows the workflow title, its live node tally
  *  (`✓done ●running ⏸pending`) and total tokens; clicking a row opens the navigable workflow modal.
  *  Mirrors SubagentPanel's collapse/scroll/hit-test contract so the rail behaves consistently. */
 export class WorkflowPanel implements Component {
@@ -313,7 +313,7 @@ export class WorkflowPanel implements Component {
 }
 
 /** A slim fixed panel under the Sub-agents card listing the owner's live background shell processes
- *  (the terminal plugin's `run_command(background:true)` children). One row per RUNNING process — a
+ *  (the terminal plugin's `Bash(background:true)` children). One row per RUNNING process — a
  *  status dot, the truncated command, its run time and a clickable ✕ that kills it. Exited/killed
  *  processes drop off (the daemon's `process` snapshot is the single source of truth); renders nothing
  *  when none run, so the bottom stack pays zero rows at rest. */

@@ -89,7 +89,7 @@ fetching URLs. Rate-limited to prevent abuse.
 
 ### Owner-only tools
 
-Certain tools (`discord_api`, `run_command` in shared channels) are gated
+Certain tools (`DiscordApi`, `Bash` in shared channels) are gated
 to the true owner (`identity.owner === true`), not merely admin roles.
 
 ### Secrets handling

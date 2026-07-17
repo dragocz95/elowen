@@ -866,8 +866,8 @@ describe('LspManager', () => {
 });
 
 describe('lsp tool + /lsp toggle', () => {
-  it('exposes an lsp_diagnostics tool that returns readable text (inside an allowed root)', async () => {
-    const tool = buildLspTools().find((t) => t.name === 'lsp_diagnostics')!;
+  it('exposes an LspDiagnostics tool that returns readable text (inside an allowed root)', async () => {
+    const tool = buildLspTools().find((t) => t.name === 'LspDiagnostics')!;
     expect(tool).toBeDefined();
     // A non-code path is a graceful no-op (no server spawned) regardless of install state. The tool
     // enforces the same per-user path policy as every file tool, so run under one covering the path.
@@ -878,8 +878,8 @@ describe('lsp tool + /lsp toggle', () => {
     expect(res.content[0]!.text).toContain('nothing to check');
   });
 
-  it('lsp_diagnostics refuses a path outside the session policy (no file read, no server)', async () => {
-    const tool = buildLspTools().find((t) => t.name === 'lsp_diagnostics')!;
+  it('LspDiagnostics refuses a path outside the session policy (no file read, no server)', async () => {
+    const tool = buildLspTools().find((t) => t.name === 'LspDiagnostics')!;
     const res = await runWithPolicy(
       { allowedProjectIds: new Set([1]), allowedPaths: () => ['/tmp/only-here'] },
       () => tool.execute('c1', { path: '/etc/passwd' }),

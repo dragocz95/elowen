@@ -6,7 +6,7 @@
  *  There is NO central icon list here: an icon lives WITH the tool that owns it. A plugin declares its
  *  tools' icons in its manifest (`icons`); the brain's built-in tools declare theirs co-located in
  *  `src/brain/tools/index.ts` (BUILTIN_TOOL_ICONS). The daemon merges both into one map and builds a
- *  resolver. Keys may be an exact tool name or a `prefix*` pattern (e.g. `elowen_*`); an exact match wins
+ *  resolver. Keys may be an exact tool name or a `prefix*` pattern (e.g. `Elowen*`); an exact match wins
  *  over a prefix. */
 
 /** Resolve a tool name to its display icon, or undefined when nothing matches (the caller applies its

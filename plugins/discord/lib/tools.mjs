@@ -1,4 +1,4 @@
-// Admin/server tools: the discord_* tool registrations (raw REST access + curated wrappers).
+// Admin/server tools: the Discord* tool registrations (raw REST access + curated wrappers).
 import { defineTool } from '@earendil-works/pi-coding-agent';
 import { Type } from 'typebox';
 
@@ -9,7 +9,7 @@ export function registerTools(ctx, adapter) {
   // Raw Discord REST access for the OWNER: delete/purge messages, manage roles, edit channels —
   // whatever the bot's permissions allow. The token never leaves the plugin; admin sessions only.
   ctx.registerTool(defineTool({
-    name: 'discord_api', label: 'Discord API',
+    name: 'DiscordApi', label: 'Discord API',
     description: 'Call the Discord REST API (v10) with the bot token — server management: delete messages (DELETE /channels/{id}/messages/{msgId}, bulk POST /channels/{id}/messages/bulk-delete with {"messages":[ids]} for <14d messages), manage roles (PUT/DELETE /guilds/{gid}/members/{uid}/roles/{roleId}), fetch messages (GET /channels/{id}/messages?limit=50), edit channels, and anything else the API offers. Operator only.',
     parameters: Type.Object({
       method: Type.Union([Type.Literal('GET'), Type.Literal('POST'), Type.Literal('PATCH'), Type.Literal('PUT'), Type.Literal('DELETE')]),
@@ -20,7 +20,7 @@ export function registerTools(ctx, adapter) {
       try {
         // Owner-only, NOT merely admin: the raw bot token can delete/ban/reconfigure the whole server,
         // so a foreign member holding an admin-mapped role must never reach it. `owner` is the operator.
-        if (ctx.currentIdentity?.()?.owner !== true) throw new Error('discord_api is only available to the operator');
+        if (ctx.currentIdentity?.()?.owner !== true) throw new Error('DiscordApi is only available to the operator');
         if (!p.path.startsWith('/')) return ok('Error: path must start with "/".');
         let body;
         if (p.body) {
@@ -36,7 +36,7 @@ export function registerTools(ctx, adapter) {
   // ── Ergonomic server tools (structured wrappers over the REST surface, so the agent needn't know raw
   // endpoints). Every one gates on an admin session (ctx.isAdminSession() → the role-id-mapped admin
   // access): a role granted all tools can run the full server surface, reads and destructive writes alike.
-  // The raw-token discord_api above stays owner-only. ──
+  // The raw-token DiscordApi above stays owner-only. ──
   const cfgGuild = typeof ctx.config.guildId === 'string' ? ctx.config.guildId.trim() : '';
   const requireGuild = (p) => {
     const g = (p?.guildId && String(p.guildId).trim()) || cfgGuild;
@@ -50,7 +50,7 @@ export function registerTools(ctx, adapter) {
   const CHAN_TYPE_ID = { text: 0, voice: 2, category: 4, news: 5, stage: 13, forum: 15 };
 
   ctx.registerTool(defineTool({
-    name: 'discord_list_channels', label: 'List Discord channels',
+    name: 'DiscordListChannels', label: 'List Discord channels',
     description: 'List the guild\'s channels AND active threads (id, type, name, parent) so you can pick one to read or post to.',
     parameters: Type.Object({ guildId: Type.Optional(Type.String({ description: 'Guild id (defaults to the configured one)' })) }),
     execute: async (_id, p) => {
@@ -67,7 +67,7 @@ export function registerTools(ctx, adapter) {
   }));
 
   ctx.registerTool(defineTool({
-    name: 'discord_read_channel', label: 'Read Discord channel',
+    name: 'DiscordReadChannel', label: 'Read Discord channel',
     description: 'Read recent messages from a channel or thread by id (oldest→newest) — use it to load context from another thread. Returns "author: text" lines.',
     parameters: Type.Object({
       channelId: Type.String({ description: 'Channel or thread id' }),
@@ -86,7 +86,7 @@ export function registerTools(ctx, adapter) {
   }));
 
   ctx.registerTool(defineTool({
-    name: 'discord_list_roles', label: 'List Discord roles',
+    name: 'DiscordListRoles', label: 'List Discord roles',
     description: 'List the guild\'s roles (id, name) — get a roleId here before assigning/removing it.',
     parameters: Type.Object({ guildId: Type.Optional(Type.String()) }),
     execute: async (_id, p) => {
@@ -99,7 +99,7 @@ export function registerTools(ctx, adapter) {
   }));
 
   ctx.registerTool(defineTool({
-    name: 'discord_list_members', label: 'List Discord members',
+    name: 'DiscordListMembers', label: 'List Discord members',
     description: 'List guild members (id, username, role ids) — needs the SERVER MEMBERS privileged intent. Use it to find a user id before assigning a role.',
     parameters: Type.Object({ guildId: Type.Optional(Type.String()), limit: Type.Optional(Type.Number({ description: 'default 50, max 200' })) }),
     execute: async (_id, p) => {
@@ -113,8 +113,8 @@ export function registerTools(ctx, adapter) {
   }));
 
   ctx.registerTool(defineTool({
-    name: 'discord_assign_role', label: 'Assign Discord role',
-    description: 'DESTRUCTIVE. Give a guild member a role (a role can grant permissions). Get ids from discord_list_members + discord_list_roles.',
+    name: 'DiscordAssignRole', label: 'Assign Discord role',
+    description: 'DESTRUCTIVE. Give a guild member a role (a role can grant permissions). Get ids from DiscordListMembers + DiscordListRoles.',
     parameters: Type.Object({ userId: Type.String(), roleId: Type.String(), guildId: Type.Optional(Type.String()) }),
     execute: async (_id, p) => {
       try {
@@ -126,7 +126,7 @@ export function registerTools(ctx, adapter) {
   }));
 
   ctx.registerTool(defineTool({
-    name: 'discord_remove_role', label: 'Remove Discord role',
+    name: 'DiscordRemoveRole', label: 'Remove Discord role',
     description: 'DESTRUCTIVE. Remove a role from a guild member.',
     parameters: Type.Object({ userId: Type.String(), roleId: Type.String(), guildId: Type.Optional(Type.String()) }),
     execute: async (_id, p) => {
@@ -141,10 +141,10 @@ export function registerTools(ctx, adapter) {
   // ── More server tools (structured REST wrappers). Per the operator's choice, ALL of these gate on an
   // admin session (ctx.isAdminSession() → the role-id-mapped admin access): the destructive ones can
   // delete/reconfigure the server, so they must never run in a plain member's channel. The raw-token
-  // discord_api above stays owner-only; these curated wrappers are the admin-session surface. ──
+  // DiscordApi above stays owner-only; these curated wrappers are the admin-session surface. ──
 
   ctx.registerTool(defineTool({
-    name: 'discord_server_info', label: 'Discord server info',
+    name: 'DiscordServerInfo', label: 'Discord server info',
     description: 'Guild overview: name, id, owner, approximate member/online counts, channel and role totals.',
     parameters: Type.Object({ guildId: Type.Optional(Type.String({ description: 'Guild id (defaults to the configured one)' })) }),
     execute: async (_id, p) => {
@@ -164,7 +164,7 @@ export function registerTools(ctx, adapter) {
   }));
 
   ctx.registerTool(defineTool({
-    name: 'discord_channel_info', label: 'Discord channel info',
+    name: 'DiscordChannelInfo', label: 'Discord channel info',
     description: 'Details of one channel or thread by id: type, name, topic, parent, NSFW, slowmode, archived/locked (threads).',
     parameters: Type.Object({ channelId: Type.String({ description: 'Channel or thread id' }) }),
     execute: async (_id, p) => {
@@ -183,7 +183,7 @@ export function registerTools(ctx, adapter) {
   }));
 
   ctx.registerTool(defineTool({
-    name: 'discord_member_info', label: 'Discord member info',
+    name: 'DiscordMemberInfo', label: 'Discord member info',
     description: 'Details of one guild member by user id: username, nickname, role ids, joined date.',
     parameters: Type.Object({ userId: Type.String(), guildId: Type.Optional(Type.String()) }),
     execute: async (_id, p) => {
@@ -200,7 +200,7 @@ export function registerTools(ctx, adapter) {
   }));
 
   ctx.registerTool(defineTool({
-    name: 'discord_search_members', label: 'Search Discord members',
+    name: 'DiscordSearchMembers', label: 'Search Discord members',
     description: 'Find guild members whose username/nickname starts with a query string (id, username, nick). Use it to resolve a user id from a name.',
     parameters: Type.Object({
       query: Type.String({ description: 'Name prefix to match' }),
@@ -218,7 +218,7 @@ export function registerTools(ctx, adapter) {
   }));
 
   ctx.registerTool(defineTool({
-    name: 'discord_list_pins', label: 'List Discord pins',
+    name: 'DiscordListPins', label: 'List Discord pins',
     description: 'List the pinned messages of a channel (id, author, text) — get a message id before unpinning.',
     parameters: Type.Object({ channelId: Type.String() }),
     execute: async (_id, p) => {
@@ -231,7 +231,7 @@ export function registerTools(ctx, adapter) {
   }));
 
   ctx.registerTool(defineTool({
-    name: 'discord_create_thread', label: 'Create Discord thread',
+    name: 'DiscordCreateThread', label: 'Create Discord thread',
     description: 'Create a public thread. If messageId is given the thread hangs off that message; otherwise a standalone thread is created in the channel.',
     parameters: Type.Object({
       channelId: Type.String({ description: 'Parent text channel id' }),
@@ -255,7 +255,7 @@ export function registerTools(ctx, adapter) {
   }));
 
   ctx.registerTool(defineTool({
-    name: 'discord_pin_message', label: 'Pin Discord message',
+    name: 'DiscordPinMessage', label: 'Pin Discord message',
     description: 'Pin a message in its channel.',
     parameters: Type.Object({ channelId: Type.String(), messageId: Type.String() }),
     execute: async (_id, p) => {
@@ -268,7 +268,7 @@ export function registerTools(ctx, adapter) {
   }));
 
   ctx.registerTool(defineTool({
-    name: 'discord_unpin_message', label: 'Unpin Discord message',
+    name: 'DiscordUnpinMessage', label: 'Unpin Discord message',
     description: 'Remove a pinned message (does NOT delete it).',
     parameters: Type.Object({ channelId: Type.String(), messageId: Type.String() }),
     execute: async (_id, p) => {
@@ -281,7 +281,7 @@ export function registerTools(ctx, adapter) {
   }));
 
   ctx.registerTool(defineTool({
-    name: 'discord_delete_message', label: 'Delete Discord message',
+    name: 'DiscordDeleteMessage', label: 'Delete Discord message',
     description: 'DESTRUCTIVE. Permanently delete ONE message by id.',
     parameters: Type.Object({ channelId: Type.String(), messageId: Type.String() }),
     execute: async (_id, p) => {
@@ -294,7 +294,7 @@ export function registerTools(ctx, adapter) {
   }));
 
   ctx.registerTool(defineTool({
-    name: 'discord_purge_messages', label: 'Purge Discord messages',
+    name: 'DiscordPurgeMessages', label: 'Purge Discord messages',
     description: 'DESTRUCTIVE. Bulk-delete recent messages from a channel/thread. Fetches up to maxMessages (newest first), skips pinned unless includePinned, then deletes them (bulk for <14-day messages, one-by-one for older, throttled). Always run with dryRun:true first to see the count.',
     parameters: Type.Object({
       channelId: Type.String(),
@@ -340,7 +340,7 @@ export function registerTools(ctx, adapter) {
   }));
 
   ctx.registerTool(defineTool({
-    name: 'discord_create_channel', label: 'Create Discord channel',
+    name: 'DiscordCreateChannel', label: 'Create Discord channel',
     description: 'Create a channel in the guild. type is one of: text, voice, news, stage, forum (default text). Optionally nest under a category id.',
     parameters: Type.Object({
       name: Type.String(),
@@ -361,7 +361,7 @@ export function registerTools(ctx, adapter) {
   }));
 
   ctx.registerTool(defineTool({
-    name: 'discord_create_category', label: 'Create Discord category',
+    name: 'DiscordCreateCategory', label: 'Create Discord category',
     description: 'Create a category (channel group) in the guild.',
     parameters: Type.Object({ name: Type.String(), guildId: Type.Optional(Type.String()) }),
     execute: async (_id, p) => {
@@ -374,7 +374,7 @@ export function registerTools(ctx, adapter) {
   }));
 
   ctx.registerTool(defineTool({
-    name: 'discord_rename_channel', label: 'Rename Discord channel',
+    name: 'DiscordRenameChannel', label: 'Rename Discord channel',
     description: 'Rename a channel, thread or category by id.',
     parameters: Type.Object({ channelId: Type.String(), name: Type.String() }),
     execute: async (_id, p) => {
@@ -387,7 +387,7 @@ export function registerTools(ctx, adapter) {
   }));
 
   ctx.registerTool(defineTool({
-    name: 'discord_delete_channel', label: 'Delete Discord channel',
+    name: 'DiscordDeleteChannel', label: 'Delete Discord channel',
     description: 'DESTRUCTIVE. Permanently delete a channel, thread or category by id (a category delete does NOT delete its children, they become uncategorized).',
     parameters: Type.Object({ channelId: Type.String() }),
     execute: async (_id, p) => {
@@ -400,7 +400,7 @@ export function registerTools(ctx, adapter) {
   }));
 
   ctx.registerTool(defineTool({
-    name: 'discord_archive_thread', label: 'Archive Discord thread',
+    name: 'DiscordArchiveThread', label: 'Archive Discord thread',
     description: 'Archive (archived:true) or reopen (archived:false) a thread by id.',
     parameters: Type.Object({ threadId: Type.String(), archived: Type.Optional(Type.Boolean({ description: 'default true' })) }),
     execute: async (_id, p) => {
@@ -414,7 +414,7 @@ export function registerTools(ctx, adapter) {
   }));
 
   ctx.registerTool(defineTool({
-    name: 'discord_lock_thread', label: 'Lock Discord thread',
+    name: 'DiscordLockThread', label: 'Lock Discord thread',
     description: 'Lock (locked:true) or unlock a thread by id — a locked thread can\'t get new messages from non-moderators.',
     parameters: Type.Object({ threadId: Type.String(), locked: Type.Optional(Type.Boolean({ description: 'default true' })) }),
     execute: async (_id, p) => {
@@ -428,7 +428,7 @@ export function registerTools(ctx, adapter) {
   }));
 
   ctx.registerTool(defineTool({
-    name: 'discord_add_thread_member', label: 'Add Discord thread member',
+    name: 'DiscordAddThreadMember', label: 'Add Discord thread member',
     description: 'Add a guild member to a thread by user id.',
     parameters: Type.Object({ threadId: Type.String(), userId: Type.String() }),
     execute: async (_id, p) => {
@@ -441,7 +441,7 @@ export function registerTools(ctx, adapter) {
   }));
 
   ctx.registerTool(defineTool({
-    name: 'discord_remove_thread_member', label: 'Remove Discord thread member',
+    name: 'DiscordRemoveThreadMember', label: 'Remove Discord thread member',
     description: 'Remove a member from a thread by user id.',
     parameters: Type.Object({ threadId: Type.String(), userId: Type.String() }),
     execute: async (_id, p) => {

@@ -22,7 +22,7 @@ function Radio({ checked }: { checked: boolean }) {
   );
 }
 
-/** Renders a parked ask_user_question inline in the transcript as a form: one block per question with a
+/** Renders a parked AskUserQuestion inline in the transcript as a form: one block per question with a
  *  radio list (single-select) or checkbox list (multiSelect), plus a free-text "Other" unless the
  *  question sets `custom: false` (absent = allowed — older events predate the flag). A single submit
  *  posts all answers at once to /brain/answer, resuming the paused turn. `kind: 'approval'` (a blocked

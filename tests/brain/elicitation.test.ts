@@ -4,7 +4,7 @@ import type { AskQuestion, BrainEvent } from '../../src/brain/events.js';
 
 const Q: AskQuestion[] = [{ question: 'Pick one', header: 'Choice', multiSelect: false, options: [{ label: 'A' }, { label: 'B' }] }];
 
-describe('ElicitationRegistry — parked ask_user_question lifecycle', () => {
+describe('ElicitationRegistry — parked AskUserQuestion lifecycle', () => {
   it('emits an ask event, then resolves the parked promise with the answer', async () => {
     const reg = new ElicitationRegistry();
     let emitted: BrainEvent | null = null;

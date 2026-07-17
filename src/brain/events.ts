@@ -47,7 +47,7 @@ export type BrainEvent =
    *  replaces it; an empty card (no items/body) removes it. Generalizes what the todo checklist used to
    *  do with its own bespoke event. */
   | { type: 'card'; card: BrainCard }
-  /** Live streamed output of an IN-PROGRESS `run_command` foreground run — and ONLY that tool, so every
+  /** Live streamed output of an IN-PROGRESS `Bash` foreground run — and ONLY that tool, so every
    *  other tool stays silent (no `_update` re-noise flooding the SSE). Mapped from PI's
    *  `tool_execution_update`, THROTTLED to at most one per `PROGRESS_THROTTLE_MS` per tool call, and
    *  carrying a bounded rolling TAIL of the output so far (never the whole buffer). Keyed by `id`
@@ -67,7 +67,7 @@ export type BrainEvent =
    *  `notice` (the one-line status): this event drives the transcript REBUILD, the notice the status. */
   | { type: 'compacted' }
   /** The agent is asking the user to pick from predefined options and has PARKED the turn until they
-   *  answer (see `ask_user_question` plugin + ElicitationRegistry). Synthetic — not derived from a PI
+   *  answer (see `AskUserQuestion` plugin + ElicitationRegistry). Synthetic — not derived from a PI
    *  event; the elicitor emits it straight into `listeners`. A client renders the questions as
    *  interactive choices and POSTs the answer to `/brain/answer` (Discord resolves it in-process).
    *  `kind: 'approval'` marks a blocking tool-permission prompt (three fixed options — see
@@ -91,15 +91,15 @@ export type BrainEvent =
    *  fanned out to the PARENT conversation's listeners; ignoring it is always safe. */
   | { type: 'subagent'; id: string; sessionId: string; status: 'running' | 'done' | 'error'; task: string; detail?: string; tools: number; tokens?: number; seconds: number; model?: string; background?: boolean; autoDeliver?: boolean; resultDelivery?: 'pending' | 'acknowledged' }
   /** Live snapshot of a declarative sub-agent WORKFLOW (a DAG the delegating agent authored via
-   *  `workflow_start`). One event per state change carries the WHOLE workflow — its overall status and
+   *  `WorkflowStart`). One event per state change carries the WHOLE workflow — its overall status and
    *  the full node list with each node's dependencies, live status, and the child session/tokens/tool
    *  it is running. A client keeps the latest per `id`, renders the panel + drill-in modal, and may open
    *  a node's transcript via its `sessionId`. Synthetic and fanned out to the PARENT conversation's
    *  listeners exactly like `subagent`; ignoring it is always safe.
    *
    *  Two identifiers, and the distinction matters: `id` is the workflow's OWN identity (what
-   *  `workflow_add_nodes` addresses and what the panel keys on), while `toolCallId` is the origin's
-   *  `workflow_start` call — the durable anchor that binds the DAG to a row in the parent's transcript,
+   *  `WorkflowAddNodes` addresses and what the panel keys on), while `toolCallId` is the origin's
+   *  `WorkflowStart` call — the durable anchor that binds the DAG to a row in the parent's transcript,
    *  exactly as `subagent.id` does for a delegate call. A snapshot always names the ORIGIN's call, even
    *  when a node's own turn triggered it. */
   | { type: 'workflow'; id: string; toolCallId: string; title?: string; status: 'running' | 'done' | 'error' | 'cancelled'; nodes: WorkflowNode[] }
@@ -122,7 +122,7 @@ export type BrainEvent =
    *  turns are NOT user messages and emit nothing. Safe to ignore (the streamed reply still arrives). */
   | { type: 'user'; text: string; /** Store row replaced by this ordered live marker in snapshots. */ durableId?: string }
   /** A FULL snapshot of the owner's background shell processes (the terminal plugin's
-   *  `run_command(background:true)` children), pushed to the owner's live client streams whenever one
+   *  `Bash(background:true)` children), pushed to the owner's live client streams whenever one
    *  spawns/exits/is killed — so the CLI/web process panel updates OUT of turn. Owner-only: a command
    *  line can carry a secret, so the daemon emits it only to the owner's own streams (never a second
    *  admin's). A client renders the running ones as a killable panel; empty snapshot clears it. Safe to
@@ -207,7 +207,7 @@ export async function runCompaction(session: AgentSession, customInstruction?: s
  *  to a side-by-side layout showing the focused option's preview beside the list. Surfaces without a
  *  side-by-side view (Discord, WhatsApp) simply ignore it. */
 interface AskOption { label: string; description?: string; preview?: string }
-/** A single multiple-choice question the agent poses via `ask_user_question`. `header` is a short chip
+/** A single multiple-choice question the agent poses via `AskUserQuestion`. `header` is a short chip
  *  label (≤30 chars); `multiSelect` allows more than one pick. `custom` says whether a free-text "Other"
  *  escape is offered — absent means true (older events predate the flag), so clients must treat only an
  *  explicit `false` as "options only". */
@@ -279,7 +279,7 @@ function retryReason(raw: unknown): string {
 
 /** Only this tool streams live progress — every other tool's `tool_execution_update` is dropped so a
  *  chatty tool can't re-flood the SSE with the raw output it already returns once at the end. */
-const PROGRESS_TOOL = 'run_command';
+const PROGRESS_TOOL = 'Bash';
 /** At most one `tool_progress` per tool call per this window — the ceiling on how often a running
  *  command can push a partial to every attached client. Paired with the plugin's own onData throttle
  *  (the primary emission rate limit); this is the defensive second gate at the single mapping point. */
@@ -340,7 +340,7 @@ export function toBrainEvent(e: AgentSessionEvent, now: number = Date.now()): Br
     const ok = anyE.result != null && anyE.aborted !== true;
     return { type: 'notice', kind: 'compaction', message: ok ? 'conversation compacted' : '', done: true };
   }
-  // Live streamed output of a running tool. Scoped to `run_command` ONLY (every other tool would just
+  // Live streamed output of a running tool. Scoped to `Bash` ONLY (every other tool would just
   // re-noise the SSE with output it returns once at the end anyway) and throttled per tool call, so a
   // long build/test streams a bounded rolling tail live. The final `tool_output` for this id supersedes
   // the partial in the reducer, so a dropped in-window update is harmless.
@@ -371,7 +371,7 @@ export function toBrainEvent(e: AgentSessionEvent, now: number = Date.now()): Br
     }
     // Image tools return a markdown link to the stored file; surface it as a first-class event so
     // channel adapters can attach the real file (models often omit the link from their final text). Skip
-    // run_command: its console output can legitimately print such a path (grep/cat over stored transcripts,
+    // Bash: its console output can legitimately print such a path (grep/cat over stored transcripts,
     // curl of our own API) and turning that into an `image` event instead of `tool_output` would strand the
     // live progress tail — the reducer only reconciles (drops) progress on tool_output/diff for the id.
     if (anyE.toolName !== PROGRESS_TOOL) {

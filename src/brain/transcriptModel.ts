@@ -70,7 +70,7 @@ export class TranscriptModel implements TranscriptRead {
   private readonly subagentSources = new Map<string, Set<string>>();
   private readonly sourceSessions = new Map<string, string>();
   /** Workflow snapshots, latest-per-id — the side panel's read model. Derived, never authoritative: it is
-   *  refilled by indexTurn() from each durable `workflow_start` item, so it survives a rebuild. */
+   *  refilled by indexTurn() from each durable `WorkflowStart` item, so it survives a rebuild. */
   private workflowProjection: WorkflowState[] = [];
   private readonly workflowIndices = new Map<string, number>();
   private lastAssistant = '';
@@ -204,7 +204,7 @@ export class TranscriptModel implements TranscriptRead {
         return true;
       }
       case 'workflow': {
-        // A workflow snapshot is the WHOLE DAG, attached to its workflow_start row by tool call id —
+        // A workflow snapshot is the WHOLE DAG, attached to its WorkflowStart row by tool call id —
         // exactly like `subagent` above. Attaching (rather than only projecting) is what makes it durable:
         // the panel is rebuilt from the transcript on every hydration, so a projection-only workflow was
         // erased by any reconnect and could never be reopened.

@@ -28,10 +28,10 @@ describe('validateWorkflowNodes', () => {
 
   it('carries optional model, tools and read_only through', () => {
     const r = validateWorkflowNodes([
-      { id: 'a', task: 'explore', model: 'openai/gpt-5.5', tools: ['read_file'], read_only: true },
+      { id: 'a', task: 'explore', model: 'openai/gpt-5.5', tools: ['Read'], read_only: true },
     ]);
     expect(r.nodes?.[0]).toEqual({
-      id: 'a', task: 'explore', deps: [], model: 'openai/gpt-5.5', tools: ['read_file'], readOnly: true,
+      id: 'a', task: 'explore', deps: [], model: 'openai/gpt-5.5', tools: ['Read'], readOnly: true,
     });
   });
 

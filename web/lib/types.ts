@@ -107,7 +107,7 @@ type BrainSegment =
     } };
 export interface BrainMessage { role: string; text: string; segments?: BrainSegment[] }
 
-/** ask_user_question wire shapes (mirror src/brain/events.ts). The `ask` SSE event carries `id` +
+/** AskUserQuestion wire shapes (mirror src/brain/events.ts). The `ask` SSE event carries `id` +
  *  `questions`; the client POSTs `answers` back to /brain/answer. */
 interface AskOption { label: string; description?: string; preview?: string }
 export interface AskQuestion { question: string; header: string; multiSelect: boolean; custom?: boolean; options: AskOption[] }
@@ -117,7 +117,7 @@ export interface AskAnswer { header: string; selected: string[]; other?: string 
 interface BrainCardItem { text: string; status?: 'pending' | 'in_progress' | 'completed' }
 export interface BrainCard { id: string; title?: string; items?: BrainCardItem[]; body?: string; pinned?: boolean }
 
-/** One background shell process (terminal plugin's `run_command(background:true)`) — the process panel
+/** One background shell process (terminal plugin's `Bash(background:true)`) — the process panel
  *  next to the todos lists these, reads output for the modal, and kills on demand. */
 /** `sessionId` is the brain session the process was started in — the panel derives the origin badge
  *  (sub-agent / channel) from it; null when the process has no session. */
@@ -672,7 +672,7 @@ export interface ModelUsage {
 
 /** Whether a user can reach a tool. `allowed` = they can invoke it; `inherited` = granted by session
  *  role (e.g. memory tools every session gets), not a per-user grant; `disabled` = an admin switched
- *  this plugin tool off for the user; `unavailable` = out of reach (e.g. the operator-only elowen_*
+ *  this plugin tool off for the user; `unavailable` = out of reach (e.g. the operator-only Elowen*
  *  control plane for a non-admin). */
 type UserToolState = 'allowed' | 'inherited' | 'disabled' | 'unavailable';
 

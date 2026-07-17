@@ -6,16 +6,31 @@
   "entry": "index.mjs",
   "provides": {
     "tools": [
-    "read_file",
-    "write_file",
-    "edit_file",
-    "list_dir",
-    "search_files",
-    "file_info",
-    "git_status"
-  ]
+      "Read",
+      "Write",
+      "Edit",
+      "ListDir",
+      "Search",
+      "FileInfo",
+      "GitStatus"
+    ]
   },
-  "icons": { "read_file": "📄", "list_dir": "📂", "write_file": "✏️", "edit_file": "✏️", "search_files": "🔎", "file_info": "📄", "git_status": "🌿" },
+  "icons": {
+    "Read": "📄",
+    "ListDir": "📂",
+    "Write": "✏️",
+    "Edit": "✏️",
+    "Search": "🔎",
+    "FileInfo": "📄",
+    "GitStatus": "🌿"
+  },
+  "planSafe": [
+    "Read",
+    "Search",
+    "ListDir",
+    "FileInfo",
+    "GitStatus"
+  ],
   "configSchema": [
     {
       "key": "sec_limits",
@@ -43,7 +58,7 @@
       "step": 10,
       "placeholder": "200",
       "default": 200,
-      "hint": "Max number of matches search_files returns before truncating."
+      "hint": "Max number of matches Search returns before truncating."
     }
   ]
 }

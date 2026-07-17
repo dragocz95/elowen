@@ -64,7 +64,7 @@ describe('cron jobs routes', () => {
     expect(await res.json()).toEqual([]);
   });
 
-  // jobs.json is shared with the scheduler and the brain's cron_add tool. A client that could hand over
+  // jobs.json is shared with the scheduler and the brain's CronAdd tool. A client that could hand over
   // the whole list would delete whatever it had not seen — the way an open browser tab silently dropped
   // jobs added behind its back. So a write names ONE job, and every other job on disk survives it.
   it('a save leaves every other job on disk alone — including one the client never saw', async () => {
@@ -171,7 +171,7 @@ describe('cron jobs routes', () => {
     expect(Date.parse(saved.lastRun)).toBeGreaterThan(Date.parse('2026-07-06T07:30:05.000Z'));
   });
 
-  // The brain's cron_add accepts 5-field cron expressions; a validator that rejects them makes the jobs it
+  // The brain's CronAdd accepts 5-field cron expressions; a validator that rejects them makes the jobs it
   // creates uneditable from the UI.
   it('accepts the cron expressions the plugin accepts, and rejects malformed ones', async () => {
     const { app, adminTok } = setup();

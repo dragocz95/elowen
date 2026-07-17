@@ -37,23 +37,23 @@ const composed = (name: string) => {
 
 describe('permission gate — the single tool-call choke point (composeSessionTools)', () => {
   it('no TurnPermissions scope (task workers, tests) → the gate is inert and the tool runs', async () => {
-    const { gated, ran } = composed('write_file');
+    const { gated, ran } = composed('Write');
     const res = await callTool(gated, { path: 'x' }, undefined);
     expect(ran()).toBe(1);
-    expect(res.content[0]!.text).toContain('ran write_file');
+    expect(res.content[0]!.text).toContain('ran Write');
   });
 
-  it('gates built-in (non-plugin) tools too — the elowen_*/memory_* set passes the same choke point', async () => {
-    const { tool, ran } = fakeTool('elowen_create_task');
+  it('gates built-in (non-plugin) tools too — the Elowen*/Memory* set passes the same choke point', async () => {
+    const { tool, ran } = fakeTool('ElowenCreateTask');
     const [gated] = composeSessionTools({ kind: 'owner-chat', elowenTools: () => [tool], pluginTools: [] });
-    const p = perms({ user: { tools: { elowen_create_task: 'deny' } } });
+    const p = perms({ user: { tools: { ElowenCreateTask: 'deny' } } });
     const res = await callTool(gated!, {}, p);
     expect(ran()).toBe(0);
-    expect(res.content[0]!.text).toContain('Denied by permission rule "elowen_create_task"');
+    expect(res.content[0]!.text).toContain('Denied by permission rule "ElowenCreateTask"');
   });
 
   it('deny → immediate error result naming the rule, tool never runs (even under YOLO)', async () => {
-    const { gated, ran } = composed('run_command');
+    const { gated, ran } = composed('Bash');
     const p = perms({ user: { bash: { 'rm *': 'deny' } }, yolo: true });
     const res = await callTool(gated, { command: 'rm -rf /' }, p);
     expect(ran()).toBe(0);
@@ -61,7 +61,7 @@ describe('permission gate — the single tool-call choke point (composeSessionTo
   });
 
   it('allow → runs without consulting the approval channel', async () => {
-    const { gated, ran } = composed('run_command');
+    const { gated, ran } = composed('Bash');
     const requestApproval = vi.fn();
     const p = perms({ requestApproval });
     await callTool(gated, { command: 'git status --porcelain' }, p); // default bash allow
@@ -70,10 +70,10 @@ describe('permission gate — the single tool-call choke point (composeSessionTo
   });
 
   it('ask + interactive: "Allow once" runs the tool without persisting anything', async () => {
-    const { gated, ran } = composed('run_command');
+    const { gated, ran } = composed('Bash');
     const persistAllow = vi.fn();
     const requestApproval = vi.fn(async (req: ApprovalRequest): Promise<ApprovalDecision> => {
-      expect(req).toMatchObject({ tool: 'run_command', scope: 'bash', command: 'npm run build', alwaysPattern: 'npm run build*' });
+      expect(req).toMatchObject({ tool: 'Bash', scope: 'bash', command: 'npm run build', alwaysPattern: 'npm run build*' });
       return 'once';
     });
     await callTool(gated, { command: 'npm run build' }, perms({ requestApproval, persistAllow }));
@@ -83,24 +83,24 @@ describe('permission gate — the single tool-call choke point (composeSessionTo
   });
 
   it('ask + interactive: "Always allow" persists the suggested pattern, then runs', async () => {
-    const { gated, ran } = composed('write_file');
+    const { gated, ran } = composed('Write');
     const persistAllow = vi.fn();
     const requestApproval = vi.fn(async (): Promise<ApprovalDecision> => 'always');
     await callTool(gated, { path: 'a.txt' }, perms({ requestApproval, persistAllow }));
     expect(ran()).toBe(1);
-    expect(persistAllow).toHaveBeenCalledWith('tools', 'write_file');
+    expect(persistAllow).toHaveBeenCalledWith('tools', 'Write');
   });
 
   it('ask + interactive: "Deny" returns a refusal result and the tool never runs', async () => {
-    const { gated, ran } = composed('run_command');
+    const { gated, ran } = composed('Bash');
     const requestApproval = vi.fn(async (): Promise<ApprovalDecision> => 'deny');
     const res = await callTool(gated, { command: 'rm -rf x' }, perms({ requestApproval }));
     expect(ran()).toBe(0);
-    expect(res.content[0]!.text).toContain('denied running "run_command" (rm -rf x)');
+    expect(res.content[0]!.text).toContain('denied running "Bash" (rm -rf x)');
   });
 
   it('a cancelled approval prompt (rejected elicitation) fails closed to deny', async () => {
-    const { gated, ran } = composed('write_file');
+    const { gated, ran } = composed('Write');
     const requestApproval = vi.fn(async (): Promise<ApprovalDecision> => { throw new Error('aborted'); });
     const res = await callTool(gated, {}, perms({ requestApproval }));
     expect(ran()).toBe(0);
@@ -108,7 +108,7 @@ describe('permission gate — the single tool-call choke point (composeSessionTo
   });
 
   it('YOLO: ask resolves to allow without prompting', async () => {
-    const { gated, ran } = composed('run_command');
+    const { gated, ran } = composed('Bash');
     const requestApproval = vi.fn();
     await callTool(gated, { command: 'rm -rf x' }, perms({ yolo: true, requestApproval }));
     expect(ran()).toBe(1);
@@ -116,7 +116,7 @@ describe('permission gate — the single tool-call choke point (composeSessionTo
   });
 
   it('non-interactive (channel/cron/subagent — no approval channel): ask resolves to allow, deny still denies', async () => {
-    const { gated, ran } = composed('run_command');
+    const { gated, ran } = composed('Bash');
     // ask → allow (no requestApproval wired; default unattendedAsks, absent AND explicit 'allow')
     await callTool(gated, { command: 'rm -rf x' }, perms());
     expect(ran()).toBe(1);
@@ -129,7 +129,7 @@ describe('permission gate — the single tool-call choke point (composeSessionTo
   });
 
   it('unattended strict mode (unattendedAsks: deny): ask fails closed with a deny-shaped error naming strict mode', async () => {
-    const { gated, ran } = composed('run_command');
+    const { gated, ran } = composed('Bash');
     const res = await callTool(gated, { command: 'rm -rf x' }, perms({ unattendedAsks: 'deny' }));
     expect(ran()).toBe(0);
     expect(res.content[0]!.text).toContain('Denied by permission rule "*"');
@@ -140,14 +140,14 @@ describe('permission gate — the single tool-call choke point (composeSessionTo
   });
 
   it('unattended strict mode is NOT overridden by YOLO (strict is a hard safety opt-in)', async () => {
-    const { gated, ran } = composed('run_command');
+    const { gated, ran } = composed('Bash');
     const res = await callTool(gated, { command: 'rm -rf x' }, perms({ unattendedAsks: 'deny', yolo: true }));
     expect(ran()).toBe(0);
     expect(res.content[0]!.text).toContain('ask rule blocked in unattended run (strict mode)');
   });
 
   it('unattendedAsks: deny is inert on ATTENDED turns — the approval prompt still decides', async () => {
-    const { gated, ran } = composed('run_command');
+    const { gated, ran } = composed('Bash');
     const requestApproval = vi.fn(async (): Promise<ApprovalDecision> => 'once');
     await callTool(gated, { command: 'rm -rf x' }, perms({ unattendedAsks: 'deny', requestApproval }));
     expect(ran()).toBe(1);
@@ -156,8 +156,8 @@ describe('permission gate — the single tool-call choke point (composeSessionTo
 
   // FIX 1 — a chained command can no longer ride the allow (or lack of rule) that matched only its first
   // segment: the deny on `rm*` reached via the second segment denies the whole call.
-  it('chaining bypass is closed: a deny on any segment denies the whole run_command call', async () => {
-    const { gated, ran } = composed('run_command');
+  it('chaining bypass is closed: a deny on any segment denies the whole Bash call', async () => {
+    const { gated, ran } = composed('Bash');
     const p = perms({ user: { bash: { 'rm*': 'deny' } } });
     const res = await callTool(gated, { command: 'cat README && rm -rf ~' }, p);
     expect(ran()).toBe(0);
@@ -167,7 +167,7 @@ describe('permission gate — the single tool-call choke point (composeSessionTo
   // FIX 2 — an empty/missing command must never offer or persist an "Always allow" (its pattern would be
   // an allow-all bash `*`). The approval is still shown (Allow once / Deny), but nothing is persisted.
   it('empty command: "Always allow" is not offered and never persists a bash * rule', async () => {
-    const { gated, ran } = composed('run_command');
+    const { gated, ran } = composed('Bash');
     const persistAllow = vi.fn();
     const requestApproval = vi.fn(async (req: ApprovalRequest): Promise<ApprovalDecision> => {
       expect(req.alwaysPattern).toBeNull();

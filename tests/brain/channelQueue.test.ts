@@ -177,7 +177,7 @@ describe('ChannelSessionService — mid-turn steering (Discord double-message)',
       // This was captured while a linked non-owner was driving the parent channel. The durable child row
       // is nevertheless anchored to owner #1, whose current account settings below would ALLOW it.
       permissionBoundary: {
-        rules: [{ scope: 'tools', pattern: 'write_file', action: 'deny' }],
+        rules: [{ scope: 'tools', pattern: 'Write', action: 'deny' }],
         unattendedAsks: 'deny',
       },
     };
@@ -191,7 +191,7 @@ describe('ChannelSessionService — mid-turn steering (Discord double-message)',
       return child;
     });
     const ownerPermissions = vi.fn(() => ({
-      tools: { write_file: 'allow' as const }, bash: {}, yolo: false, unattendedAsks: 'allow' as const,
+      tools: { Write: 'allow' as const }, bash: {}, yolo: false, unattendedAsks: 'allow' as const,
     }));
     const svc = new ChannelSessionService({
       registry, store, users: { get: () => ({ username: 'owner' }) }, spawn, permissions: ownerPermissions,
@@ -212,7 +212,7 @@ describe('ChannelSessionService — mid-turn steering (Discord double-message)',
     expect(observed).toHaveLength(2);
     for (const permissions of observed) {
       expect(permissions?.unattendedAsks).toBe('deny');
-      expect(resolveToolPermission(permissions?.ruleset ?? [], 'write_file').action).toBe('deny');
+      expect(resolveToolPermission(permissions?.ruleset ?? [], 'Write').action).toBe('deny');
       expect(permissions?.yolo).toBe(false);
     }
   });

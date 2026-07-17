@@ -35,7 +35,7 @@ describe('BrainStore', () => {
       delegatedAccess: {
         admin: false, projectIds: [9, 3, 9], owner: false,
         permissionBoundary: null,
-        toolPolicy: { allow: [], deny: ['discord_api', 'discord_api'] },
+        toolPolicy: { allow: [], deny: ['DiscordApi', 'DiscordApi'] },
         promptAppend: ['focused child', 'focused child'],
       },
     });
@@ -44,12 +44,12 @@ describe('BrainStore', () => {
     expect(store.delegatedAccessFor('child')).toEqual({
       admin: false, projectIds: [3, 9], owner: false,
       permissionBoundary: null,
-      toolPolicy: { allow: [], deny: ['discord_api'] }, promptAppend: ['focused child'],
+      toolPolicy: { allow: [], deny: ['DiscordApi'] }, promptAppend: ['focused child'],
     });
     expect(store.hasDelegatedAccess('child', {
       admin: false, projectIds: [3, 9], owner: false,
       permissionBoundary: null,
-      toolPolicy: { allow: [], deny: ['discord_api'] }, promptAppend: ['focused child'],
+      toolPolicy: { allow: [], deny: ['DiscordApi'] }, promptAppend: ['focused child'],
     })).toBe(true);
     expect(store.hasDelegatedAccess('child', {
       admin: true, projectIds: [], owner: true, permissionBoundary: null,
@@ -58,7 +58,7 @@ describe('BrainStore', () => {
     // A row minted before permissionBoundary existed is no safer than a NULL legacy scope: it must not
     // resume under the row owner's current settings after an idle child eviction.
     db.prepare("UPDATE brain_sessions SET delegated_access = ? WHERE id = 'child'").run(JSON.stringify({
-      admin: false, projectIds: [3, 9], owner: false, toolPolicy: { allow: [], deny: ['discord_api'] },
+      admin: false, projectIds: [3, 9], owner: false, toolPolicy: { allow: [], deny: ['DiscordApi'] },
     }));
     expect(store.delegatedAccessFor('child')).toBeUndefined();
     db.prepare("UPDATE brain_sessions SET delegated_access = '{bad json' WHERE id = 'child'").run();
@@ -83,11 +83,11 @@ describe('BrainStore', () => {
 
     expect(store.upsertSubagentRun('root', {
       id: 'delegate-1', sessionId: 'child', status: 'running', task: 'inspect',
-      detail: 'read_file src/a.ts', tools: 2, tokens: 1234, seconds: 2, model: 'm', background: true,
+      detail: 'Read src/a.ts', tools: 2, tokens: 1234, seconds: 2, model: 'm', background: true,
     })).toBe(true);
     expect(store.getSubagentRuns('root')).toEqual([{
       toolCallId: 'delegate-1', sessionId: 'child', status: 'running', task: 'inspect',
-      detail: 'read_file src/a.ts', tools: 2, tokens: 1234, seconds: 2, model: 'm', background: true,
+      detail: 'Read src/a.ts', tools: 2, tokens: 1234, seconds: 2, model: 'm', background: true,
     }]);
     expect(store.upsertSubagentRun('root', {
       id: 'unrelated', sessionId: 'same-owner-unrelated', status: 'running', task: 'x', tools: 0, seconds: 0,
@@ -407,6 +407,23 @@ describe('BrainStore', () => {
       seedFour();
       store.compactSessionMessages('s1', { id: 'c', role: 'compaction', content: { summary: 's' } }, 99);
       expect(store.getMessages('s1').map((r) => r.id)).toEqual(['c', 'old1', 'old2', 'keep1', 'keep2']);
+    });
+
+    it('drops markers whose turns were summarized away, keeping the ones annotating the kept tail', () => {
+      seedFour();
+      const gone = store.appendSessionEvent('s1', 'mode', 'Plan');    // belongs to the old1/old2 region
+      const kept = store.appendSessionEvent('s1', 'model', 'opus');   // belongs to the kept tail
+      const at = (eventId: string, ts: string): void => {
+        db.prepare('UPDATE brain_session_events SET created_at = ? WHERE event_id = ?').run(ts, eventId);
+      };
+      at(gone.id, '2020-01-01 00:00:03');
+      at(kept.id, '2020-01-01 00:00:06');
+
+      store.compactSessionMessages('s1', { id: 'c', role: 'compaction', content: { summary: 's' } }, 2);
+
+      // A marker older than the divider would render ABOVE it, annotating a turn that no longer exists —
+      // and nothing else ever prunes it, so they would stack up for the life of the session.
+      expect(store.getSessionEvents('s1').map((e) => e.detail)).toEqual(['opus']);
     });
 
     it('keepLastN <= 0 keeps only the summary divider', () => {

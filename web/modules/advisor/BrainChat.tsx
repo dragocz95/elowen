@@ -158,7 +158,7 @@ function ToolPills({ tools }: { tools: ToolItem[] }) {
   );
 }
 
-/** Live rolling tail of a running run_command (the `tool_progress` event): the last lines of its output
+/** Live rolling tail of a running Bash (the `tool_progress` event): the last lines of its output
  *  as it streams, in a muted terminal block. Cleared once the final `output`/`diff` lands, so it never
  *  doubles the final dump. */
 function ProgressBlock({ text }: { text: string }) {
@@ -234,7 +234,7 @@ export function BrainChat() {
   const [lineCfg, setLineCfg] = useState<StatuslineConfig | null>(null);
   /** Transient runtime line (rate-limit retry, context compaction) so a stalled turn explains itself. */
   const [notice, setNotice] = useState('');
-  /** A parked ask_user_question: the turn is paused until the user picks and we POST /brain/answer.
+  /** A parked AskUserQuestion: the turn is paused until the user picks and we POST /brain/answer.
    *  `kind: 'approval'` = a blocked tool-permission ask — same pipeline, styled as a security prompt. */
   const [ask, setAsk] = useState<{ id: string; questions: AskQuestion[]; kind?: 'approval' } | null>(null);
   /** Live display cards (ctx.emitCard) — seeded from status, kept current from the `card` event. */
@@ -346,7 +346,7 @@ export function BrainChat() {
       const { name, detail, icon, id } = JSON.parse((e as MessageEvent).data) as { name: string; detail?: string; icon?: string; id?: string };
       setTurns((cur) => fold(cur, { type: 'tool', name, detail, icon, id }));
     });
-    // Live streamed output of a running run_command (bounded rolling tail): fold onto its tool pill by id
+    // Live streamed output of a running Bash (bounded rolling tail): fold onto its tool pill by id
     // so a long build/test shows output as it runs. The stored history's final output supersedes it on
     // reload; there is no live tool_output frame in the dock, so nothing doubles it here.
     es.addEventListener('tool_progress', (e) => {
@@ -392,7 +392,7 @@ export function BrainChat() {
       const { diff } = JSON.parse((e as MessageEvent).data) as { diff: string };
       setTurns((cur) => fold(cur, { type: 'diff', diff }));
     });
-    // ask_user_question parked the turn — render the inline choice card until the user answers.
+    // AskUserQuestion parked the turn — render the inline choice card until the user answers.
     es.addEventListener('ask', (e) => {
       const { id, questions, kind } = JSON.parse((e as MessageEvent).data) as { id: string; questions: AskQuestion[]; kind?: 'approval' };
       setAsk({ id, questions, kind });

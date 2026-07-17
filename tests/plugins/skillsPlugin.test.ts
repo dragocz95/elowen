@@ -37,11 +37,11 @@ describe('bundled skills plugin', () => {
     const reg = await loadPlugins({ dirs: [resolve(repoRoot, 'plugins')], enabled: ['skills'], logger: log, dataRoot });
     // PI's loader registered the dir-form skill…
     expect(reg.skills.map((s) => s.name)).toContain('deploy-flow');
-    // …and list_skills surfaces it (via the loader, not a flat readdir).
-    const listed = await runWithPolicy(adminPolicy, () => runTool(reg as never, 'list_skills', {}), { identity: admin });
+    // …and ListSkills surfaces it (via the loader, not a flat readdir).
+    const listed = await runWithPolicy(adminPolicy, () => runTool(reg as never, 'ListSkills', {}), { identity: admin });
     expect(listed.content[0].text).toContain('deploy-flow');
-    // …and delete_skill removes the whole skill directory.
-    const del = await runWithPolicy(adminPolicy, () => runTool(reg as never, 'delete_skill', { name: 'deploy-flow' }), { identity: admin });
+    // …and DeleteSkill removes the whole skill directory.
+    const del = await runWithPolicy(adminPolicy, () => runTool(reg as never, 'DeleteSkill', { name: 'deploy-flow' }), { identity: admin });
     expect(del.content[0].text).toContain('deleted');
     expect(existsSync(skillDir)).toBe(false);
   });

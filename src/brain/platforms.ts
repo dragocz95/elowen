@@ -89,7 +89,7 @@ export class PlatformOrchestrator {
           // own project Policy AND their own tool deny-list — exactly as in their web chat (the role
           // policy is bypassed for them). An UNLINKED sender falls back to the Role-ID policy: all-project
           // for an admin role, else the role's projects, plus the role's tool allowlist. Neither ever gets
-          // the owner's elowen_* API tools/token — a shared channel is never the verified owner's own chat.
+          // the owner's Elowen* API tools/token — a shared channel is never the verified owner's own chat.
           let policy: Policy;
           let toolPolicy: ToolPolicy | undefined;
           let identity: TurnIdentity;

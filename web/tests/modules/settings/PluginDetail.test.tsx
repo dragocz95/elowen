@@ -79,13 +79,13 @@ describe('PluginDetail workspace', () => {
   });
 
   it('shows the capability panels inline as settings-group cards (no accordion to expand)', () => {
-    usePluginContributions.mockReturnValue({ data: { tools: [{ name: 'discord_api' }], skills: [], platforms: [{ name: 'discord' }], hooks: [] } });
+    usePluginContributions.mockReturnValue({ data: { tools: [{ name: 'DiscordApi' }], skills: [], platforms: [{ name: 'discord' }], hooks: [] } });
     usePluginDetail.mockReturnValue({ data: detail([], {}, 'discord'), isLoading: false });
     renderDetail();
     fireEvent.click(screen.getByRole('radio', { name: en.pluginDetail.tabCapabilities }));
     // The Tools / Hooks / Permissions panels render their content immediately — each is a settings-group
     // card with an icon-chip header, not a collapsed accordion the user must click open first.
-    expect(screen.getByText('discord_api')).toBeInTheDocument();
+    expect(screen.getByText('DiscordApi')).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: en.pluginDetail.tools })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: en.pluginDetail.hooks })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: en.pluginDetail.permissions })).toBeInTheDocument();

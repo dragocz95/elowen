@@ -21,7 +21,7 @@ describe('TranscriptModel', () => {
       { role: 'user', text: 'recent question' },
       { role: 'assistant', text: '', segments: [
         { kind: 'text', text: 'recent ' },
-        { kind: 'tool', id: 'read-1', name: 'read_file', detail: 'src/a.ts' },
+        { kind: 'tool', id: 'read-1', name: 'Read', detail: 'src/a.ts' },
         { kind: 'text', text: 'answer' },
       ] },
     ]);
@@ -95,10 +95,10 @@ describe('TranscriptModel', () => {
     });
     const withCall = (): HistoryMessage[] => [
       { role: 'user', text: 'go' },
-      { role: 'assistant', text: '', segments: [{ kind: 'tool', id: 'call-1', name: 'workflow_start' }] },
+      { role: 'assistant', text: '', segments: [{ kind: 'tool', id: 'call-1', name: 'WorkflowStart' }] },
     ];
 
-    it('attaches a live snapshot to its workflow_start item and projects it', () => {
+    it('attaches a live snapshot to its WorkflowStart item and projects it', () => {
       const model = new TranscriptModel(withCall());
       expect(model.apply(wfEvent())).toBe(true);
 
@@ -110,7 +110,7 @@ describe('TranscriptModel', () => {
       expect(model.workflows().map((w) => w.id)).toEqual(['wf-1']);
     });
 
-    it('marks the workflow_start turn dirty so its marker re-renders', () => {
+    it('marks the WorkflowStart turn dirty so its marker re-renders', () => {
       const model = new TranscriptModel(withCall());
       const before = model.revision;
       model.apply(wfEvent());
@@ -132,7 +132,7 @@ describe('TranscriptModel', () => {
       model.replaceHistory([
         { role: 'user', text: 'go' },
         { role: 'assistant', text: '', segments: [{
-          kind: 'tool', id: 'call-1', name: 'workflow_start',
+          kind: 'tool', id: 'call-1', name: 'WorkflowStart',
           wf: { id: 'wf-1', toolCallId: 'call-1', status: 'done', nodes: [{ id: 'gather', task: 'gather', status: 'done', deps: [] }] },
         }] },
       ]);
@@ -177,7 +177,7 @@ describe('TranscriptModel', () => {
     model.apply({ type: 'notice', kind: 'retry', message: 'retrying' });
     model.apply({ type: 'reasoning', delta: 'checking' });
     model.apply({ type: 'text', delta: 'hello' });
-    model.apply({ type: 'tool', id: 'run-1', name: 'run_command', command: 'npm test' });
+    model.apply({ type: 'tool', id: 'run-1', name: 'Bash', command: 'npm test' });
     model.apply({ type: 'tool_progress', id: 'run-1', text: 'PASS a' });
     model.apply({
       type: 'tool_output', id: 'run-1',
@@ -229,7 +229,7 @@ describe('TranscriptModel', () => {
   it('patches a settled old tool and updates the sub-agent projection incrementally', () => {
     const model = new TranscriptModel([
       { role: 'assistant', text: '', segments: [
-        { kind: 'tool', id: 'delegate-old', name: 'delegate', detail: 'inspect' },
+        { kind: 'tool', id: 'delegate-old', name: 'Delegate', detail: 'inspect' },
       ] },
       ...Array.from({ length: 50 }, (_, index) => ({ role: 'assistant', text: `answer ${index}` })),
     ]);
@@ -237,7 +237,7 @@ describe('TranscriptModel', () => {
 
     model.apply({
       type: 'subagent', id: 'delegate-old', sessionId: 'child-1', status: 'running', task: 'inspect',
-      detail: 'read_file src/a.ts', tools: 2, tokens: 100, seconds: 3, model: 'test-model',
+      detail: 'Read src/a.ts', tools: 2, tokens: 100, seconds: 3, model: 'test-model',
     });
 
     expect(model.turnCount).toBe(beforeTurns);
@@ -259,7 +259,7 @@ describe('TranscriptModel', () => {
   it('protects the cached sub-agent projection from caller mutation', () => {
     const model = new TranscriptModel([{
       role: 'assistant', text: '', segments: [{
-        kind: 'tool', id: 'delegate', name: 'delegate',
+        kind: 'tool', id: 'delegate', name: 'Delegate',
         sub: { sessionId: 'child', status: 'running', task: 'inspect', tools: 1, seconds: 1 },
       }],
     }]);
@@ -310,7 +310,7 @@ describe('TranscriptModel', () => {
   it.each([
     { type: 'text', delta: 'answer' } as const,
     { type: 'reasoning', delta: 'thought' } as const,
-    { type: 'tool', id: 'tool-1', name: 'read_file', detail: 'src/index.ts' } as const,
+    { type: 'tool', id: 'tool-1', name: 'Read', detail: 'src/index.ts' } as const,
   ])('publishes a fresh assistant $type event as an appended suffix', (event) => {
     const model = new TranscriptModel([{ role: 'assistant', text: 'settled' }]);
     const revision = model.revision;
@@ -340,7 +340,7 @@ describe('TranscriptModel', () => {
 
   it('visits at most one turn for a steady event at exactly 40,000 turns', () => {
     const history: HistoryMessage[] = Array.from({ length: 40_000 }, (_, index) => index === 0
-      ? { role: 'assistant', text: '', segments: [{ kind: 'tool', id: 'old', name: 'delegate' }] }
+      ? { role: 'assistant', text: '', segments: [{ kind: 'tool', id: 'old', name: 'Delegate' }] }
       : { role: 'assistant', text: `settled ${index}` });
     const visits: number[] = [];
     const model = new TranscriptModel(history, { onTurnVisit: (index) => visits.push(index) });
@@ -364,7 +364,7 @@ describe('TranscriptModel', () => {
   it('resets all indexes and derived state on session rollover', () => {
     const model = new TranscriptModel([{
       role: 'assistant', text: '', segments: [{
-        kind: 'tool', id: 'delegate', name: 'delegate',
+        kind: 'tool', id: 'delegate', name: 'Delegate',
         sub: { sessionId: 'child', status: 'running', task: 'inspect', tools: 1, seconds: 1 },
       }],
     }]);
@@ -378,7 +378,7 @@ describe('TranscriptModel', () => {
 
   it('projects workflow snapshots latest-per-id, adding no turn of its own', () => {
     const model = new TranscriptModel([
-      { role: 'assistant', text: '', segments: [{ kind: 'tool', id: 'call-1', name: 'workflow_start' }] },
+      { role: 'assistant', text: '', segments: [{ kind: 'tool', id: 'call-1', name: 'WorkflowStart' }] },
     ]);
     const beforeTurns = model.turnCount;
     model.apply({
@@ -388,7 +388,7 @@ describe('TranscriptModel', () => {
         { id: 'b', task: 'write', status: 'pending', deps: ['a'] },
       ],
     });
-    expect(model.turnCount).toBe(beforeTurns); // it rides its workflow_start row; it is not a turn
+    expect(model.turnCount).toBe(beforeTurns); // it rides its WorkflowStart row; it is not a turn
     expect(model.workflows()).toEqual([
       expect.objectContaining({ id: 'wf-1', title: 'ship it', status: 'running' }),
     ]);
@@ -409,7 +409,7 @@ describe('TranscriptModel', () => {
 
   it('clears workflow projection on session rollover', () => {
     const model = new TranscriptModel([
-      { role: 'assistant', text: '', segments: [{ kind: 'tool', id: 'call-1', name: 'workflow_start' }] },
+      { role: 'assistant', text: '', segments: [{ kind: 'tool', id: 'call-1', name: 'WorkflowStart' }] },
     ]);
     model.apply({ type: 'workflow', id: 'wf-1', toolCallId: 'call-1', status: 'running', nodes: [{ id: 'a', task: 't', status: 'running', deps: [] }] });
     expect(model.workflows()).toHaveLength(1);

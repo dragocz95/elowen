@@ -25,12 +25,12 @@ describe('ToolPills', () => {
     mountWith([
       tool({ name: 'discord_send', plugin: 'discord', state: 'allowed' }),
       tool({ name: 'discord_read', plugin: 'discord', state: 'disabled' }),
-      tool({ name: 'memory_search', group: 'memory', state: 'inherited', toggleable: false }),
+      tool({ name: 'MemorySearch', group: 'memory', state: 'inherited', toggleable: false }),
     ]);
     expect(await screen.findByText('2 of 3 tools enabled · 1 plugins')).toBeTruthy();
     // Sample chips show enabled tools only.
     expect(screen.getByText('discord_send')).toBeTruthy();
-    expect(screen.getByText('memory_search')).toBeTruthy();
+    expect(screen.getByText('MemorySearch')).toBeTruthy();
     expect(screen.queryByText('discord_read')).toBeNull();
   });
 
@@ -49,13 +49,13 @@ describe('ToolPills', () => {
     mountWith([
       tool({ name: 'discord_send', plugin: 'discord' }),
       tool({ name: 'wa_send', plugin: 'whatsapp' }),
-      tool({ name: 'memory_search', group: 'memory', state: 'inherited', toggleable: false }),
+      tool({ name: 'MemorySearch', group: 'memory', state: 'inherited', toggleable: false }),
     ]);
     fireEvent.click(await screen.findByRole('button', { name: 'Manage' }));
     expect(await screen.findByRole('heading', { name: 'discord' })).toBeTruthy();
     expect(screen.getByRole('heading', { name: 'whatsapp' })).toBeTruthy();
     expect(screen.getByRole('heading', { name: 'Memory' })).toBeTruthy();
-    const builtIn = screen.getByRole('button', { name: /memory_search/ });
+    const builtIn = screen.getByRole('button', { name: /MemorySearch/ });
     expect(builtIn).toBeDisabled();
     expect(screen.getByText('built-in')).toBeTruthy();
   });

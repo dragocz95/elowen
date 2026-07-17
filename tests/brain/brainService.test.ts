@@ -201,7 +201,7 @@ describe('BrainService', () => {
     await svc.start(1);
     const opts = (d.createSession as unknown as { mock: { calls: [{ customTools: { name: string }[] }][] } }).mock.calls[0][0];
     expect(opts.customTools.map((t) => t.name)).toContain('demo_echo');
-    expect(opts.customTools.map((t) => t.name)).toContain('elowen_list_tasks');
+    expect(opts.customTools.map((t) => t.name)).toContain('ElowenListTasks');
     expect(seenAppend).toContain('Follow house style.');
   });
 
@@ -455,7 +455,7 @@ describe('BrainService', () => {
     d.store.createSession({ id: 'brain-ch-subagent-child', userId: 1, model: 'm', parentSessionId: sessionId });
     d.store.upsertSubagentRun(sessionId, {
       id: 'delegate-1', sessionId: 'brain-ch-subagent-child', status: 'running',
-      task: 'inspect <unsafe>', detail: 'read_file src/a.ts', tools: 2, seconds: 4, background: true, autoDeliver: true,
+      task: 'inspect <unsafe>', detail: 'Read src/a.ts', tools: 2, seconds: 4, background: true, autoDeliver: true,
     });
     (svc as unknown as { sessions: { setChildRunning(parent: string, child: string, running: boolean): void } })
       .sessions.setChildRunning(sessionId, 'brain-ch-subagent-child', true);
@@ -468,7 +468,7 @@ describe('BrainService', () => {
     expect(prompted).toContain('inspect &lt;unsafe&gt;');
     // The child's live tool detail is a UI-only projection — it must never reach the model-facing reminder.
     expect(prompted).not.toContain('<progress>');
-    expect(prompted).not.toContain('read_file src/a.ts');
+    expect(prompted).not.toContain('Read src/a.ts');
     expect(prompted.indexOf('What is next?')).toBeLessThan(prompted.indexOf('<running-subagents>'));
 
     d.session.isStreaming = true;
@@ -496,11 +496,11 @@ describe('BrainService', () => {
     // so the reminder must say so — and must never suggest waiting or polling for it.
     expect(instruction).toContain('end your turn');
     expect(instruction).toContain('new turn');
-    expect(instruction).toContain('Do not wait for them and do not poll delegate_status.');
-    expect(instruction).not.toContain('delegate_result');
+    expect(instruction).toContain('Do not wait for them and do not poll DelegateStatus.');
+    expect(instruction).not.toContain('DelegateResult');
   });
 
-  it('asks for delegate_result only when a running job has no automatic delivery', async () => {
+  it('asks for DelegateResult only when a running job has no automatic delivery', async () => {
     const d = fakeDeps();
     const svc = new BrainService(d as never);
     const { sessionId } = await svc.start(1);
@@ -515,7 +515,7 @@ describe('BrainService', () => {
     await svc.send({ userId: 1, text: 'anything else?', session: sessionId });
     const instruction = (d.session.prompt.mock.calls.at(-1)?.[0] as string)
       .split('<instruction>')[1]!.split('</instruction>')[0]!;
-    expect(instruction).toContain('delegate_result');
+    expect(instruction).toContain('DelegateResult');
     expect(instruction).toContain('do not busy-wait');
     expect(instruction).not.toContain('end your turn');
   });
@@ -527,7 +527,7 @@ describe('BrainService', () => {
     d.store.createSession({ id: 'brain-ch-subagent-stale', userId: 1, model: 'm', parentSessionId: sessionId });
     d.store.appendMessage({
       id: 'assistant-stale', sessionId, parentId: null, role: 'assistant',
-      content: { role: 'assistant', content: [{ type: 'toolCall', id: 'delegate-stale', name: 'delegate', arguments: { task: 'stale job' } }] },
+      content: { role: 'assistant', content: [{ type: 'toolCall', id: 'delegate-stale', name: 'Delegate', arguments: { task: 'stale job' } }] },
     });
     d.store.upsertSubagentRun(sessionId, {
       id: 'delegate-stale', sessionId: 'brain-ch-subagent-stale', status: 'running',
@@ -1671,24 +1671,25 @@ describe('BrainService', () => {
     await svc.send({ userId: 1, text: 'plan it first', mode: 'plan' });
 
     const activeTools = d.session.setActiveToolsByName.mock.calls.at(-1)?.[0] ?? d.session.__active;
-    expect(activeTools).toContain('elowen_list_tasks');
-    expect(activeTools).not.toContain('elowen_create_task');
-    expect(activeTools).not.toContain('elowen_plan');
+    expect(activeTools).toContain('ElowenListTasks');
+    expect(activeTools).not.toContain('ElowenCreateTask');
+    expect(activeTools).not.toContain('ElowenPlan');
   });
 
-  it('plan mode keeps planning/checklist tools but hides unsafe plugin tools', async () => {
+  it('plan mode composes only DECLARED read-only tools — a reader-sounding name earns nothing', async () => {
     const d = fakeDeps();
     d.prompts.render.mockImplementation((name: string, vars: Record<string, string>) =>
       name === 'cli/plan-mode' ? 'PLAN MODE PROMPT' : `PERSONA:${name}:${vars.userName}`,
     );
     const reg = new PluginRegistry();
     const ctx = reg.contextFor('demo', {}, { info() {}, warn() {}, error() {} });
-    for (const name of ['todo_write', 'todo_update', 'read_file', 'send_message', 'sql_query', 'str_replace', 'set_config']) {
+    for (const name of ['ShowStatus', 'read_thing', 'get_and_purge', 'send_message', 'str_replace', 'mcp__github__create_issue']) {
       ctx.registerTool(defineTool({
         name, label: name, description: name, parameters: Type.Object({}),
         execute: async () => ({ content: [{ type: 'text' as const, text: 'ok' }], details: {} }),
       }));
     }
+    reg.setPlanSafe(['ShowStatus'], undefined); // the plugin vouches for exactly one of its tools
     (d as unknown as { plugins: unknown }).plugins = new PluginRegistryProvider(async () => reg);
     const svc = new BrainService(d as never);
     await svc.start(1);
@@ -1697,13 +1698,17 @@ describe('BrainService', () => {
     await svc.send({ userId: 1, text: 'make a checklist', mode: 'plan' });
 
     const activeTools = d.session.setActiveToolsByName.mock.calls.at(-1)?.[0] ?? d.session.__active;
-    expect(activeTools).toContain('todo_write');
-    expect(activeTools).toContain('todo_update');
-    expect(activeTools).toContain('read_file');
+    expect(activeTools).toContain('ShowStatus');
+    expect(activeTools).toContain('ElowenListTasks'); // the core declares its own read-only built-ins
+    // Undeclared is withheld no matter how the tool is named. `get_and_purge` is the point: the name
+    // heuristic this replaced read `get_`/`read_` as a promise and let both of these straight through.
+    expect(activeTools).not.toContain('get_and_purge');
+    expect(activeTools).not.toContain('read_thing');
     expect(activeTools).not.toContain('send_message');
-    expect(activeTools).not.toContain('sql_query');
     expect(activeTools).not.toContain('str_replace');
-    expect(activeTools).not.toContain('set_config');
+    expect(activeTools).not.toContain('mcp__github__create_issue');
+    // A mutating built-in stays withheld too — the core's list is not "all built-ins".
+    expect(activeTools).not.toContain('ElowenCreateTask');
   });
 
   it('a mid-turn message is STEERED into the running turn WITHOUT re-slicing its tool visibility', async () => {
@@ -1977,16 +1982,16 @@ describe('BrainService', () => {
     expect(list.find((s) => s.id === first.sessionId)?.title).toBe('první konverzace');
   });
 
-  it('channel sessions get NO elowen_* control-plane tools (the owner token stays unreachable)', async () => {
+  it('channel sessions get NO Elowen* control-plane tools (the owner token stays unreachable)', async () => {
     const d = fakeDeps();
     const svc = new BrainService(d as never);
     const policy = { allowedProjectIds: new Set([1]), allowedPaths: () => ['/repo/a'] };
     await svc.channelSend({ channelId: 'c-sec', ownerUserId: 1, policy }, 'ahoj');
     const opts = (d.createSession as unknown as { mock: { calls: [{ customTools: { name: string }[] }][] } }).mock.calls[0][0];
-    expect(opts.customTools.filter((t) => t.name.startsWith('elowen_'))).toHaveLength(0);
+    expect(opts.customTools.filter((t) => t.name.startsWith('Elowen'))).toHaveLength(0);
   });
 
-  it('an admin-role channel session gets NO elowen_* tools, and a later non-admin in the same channel rides that clean session', async () => {
+  it('an admin-role channel session gets NO Elowen* tools, and a later non-admin in the same channel rides that clean session', async () => {
     const d = fakeDeps();
     const reg = new PluginRegistry();
     const ctx = reg.contextFor('discord', {}, { info() {}, warn() {}, error() {} });
@@ -1998,12 +2003,12 @@ describe('BrainService', () => {
       (ids) => ({ allowedProjectIds: new Set(ids), allowedPaths: () => [] });
     const svc = new BrainService(d as never);
     await svc.startPlatforms();
-    // Every elowen_* tool composed into ANY spawned session so far — must always be empty for a channel.
+    // Every Elowen* tool composed into ANY spawned session so far — must always be empty for a channel.
     const elowenNames = () => (d.createSession as unknown as { mock: { calls: [{ customTools: { name: string }[] }][] } })
-      .mock.calls.flatMap((c) => c[0].customTools.map((t) => t.name)).filter((n) => n.startsWith('elowen_'));
+      .mock.calls.flatMap((c) => c[0].customTools.map((t) => t.name)).filter((n) => n.startsWith('Elowen'));
 
     // 1) An admin-role sender opens the shared channel. Even with admin:true it must resolve to
-    //    trusted-channel, NEVER owner-chat — so the owner's elowen_* control-plane tools / API token are
+    //    trusted-channel, NEVER owner-chat — so the owner's Elowen* control-plane tools / API token are
     //    never composed in.
     await handler!({ platform: 'discord', userId: 'admin', roleIds: ['r-admin'], channelId: 'c-shared',
       access: { admin: true, projectIds: [1], prompt: 'Admin.' } }, 'hi');
@@ -2011,7 +2016,7 @@ describe('BrainService', () => {
     expect(elowenNames()).toHaveLength(0);
 
     // 2) A later NON-admin sender in the SAME channel rides the same channel-keyed session (no respawn),
-    //    which is already free of the owner toolset — the admin role can't leak elowen_* to the next sender.
+    //    which is already free of the owner toolset — the admin role can't leak Elowen* to the next sender.
     await handler!({ platform: 'discord', userId: 'guest', roleIds: ['r-guest'], channelId: 'c-shared',
       access: { admin: false, projectIds: [2], prompt: 'Guest.' } }, 'hello');
     expect(d.createSession).toHaveBeenCalledTimes(1); // reused, not respawned
@@ -2451,8 +2456,8 @@ describe('BrainService memory integration', () => {
     await svc.start(1);
     const opts = (d.createSession as unknown as { mock: { calls: [{ customTools: { name: string }[] }][] } }).mock.calls[0][0];
     const names = opts.customTools.map((t) => t.name);
-    expect(names).toContain('memory_add');
-    expect(names).toContain('memory_search');
+    expect(names).toContain('MemoryAdd');
+    expect(names).toContain('MemorySearch');
   });
 
   it('channel sessions get NO memory tools (owner-chat only)', async () => {
@@ -2462,7 +2467,7 @@ describe('BrainService memory integration', () => {
     const svc = new BrainService(d as never);
     await svc.channelSend({ channelId: 'c-mem', ownerUserId: 1, policy: { allowedProjectIds: new Set([1]), allowedPaths: () => [] } }, 'ahoj');
     const opts = (d.createSession as unknown as { mock: { calls: [{ customTools: { name: string }[] }][] } }).mock.calls[0][0];
-    expect(opts.customTools.filter((t) => t.name.startsWith('memory_'))).toHaveLength(0);
+    expect(opts.customTools.filter((t) => t.name.startsWith('Memory'))).toHaveLength(0);
   });
 
   it('launches the post-turn curator fire-and-forget after an owner send', async () => {
@@ -2786,7 +2791,7 @@ describe('sub-agent session tap + owner steering', () => {
     d.emit({ type: 'agent_start' });
     d.emit({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: 'partial ' } });
     d.emit({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: 'answer' } });
-    d.emit({ type: 'tool_execution_start', toolName: 'read_file', toolCallId: 'read-1', args: { path: 'src/a.ts' } });
+    d.emit({ type: 'tool_execution_start', toolName: 'Read', toolCallId: 'read-1', args: { path: 'src/a.ts' } });
     // A pending steer is queue state only. Its durable replay marker is created at PI's delivery boundary
     // and must stay BETWEEN the assistant output emitted before it and the continuation emitted after it.
     d.session.isStreaming = true;
@@ -2857,11 +2862,11 @@ describe('sub-agent session tap + owner steering', () => {
       emit = currentSubagentEmitter();
       emit?.({
         id: 'delegate-1', sessionId: 'brain-ch-subagent-child', status: 'running', task: 'inspect',
-        detail: 'read_file src/a.ts', tools: 1, tokens: 120, seconds: 1,
+        detail: 'Read src/a.ts', tools: 1, tokens: 120, seconds: 1,
       });
       const assistant = {
         role: 'assistant', stopReason: 'stop',
-        content: [{ type: 'toolCall', id: 'delegate-1', name: 'delegate', arguments: { task: 'inspect' } }],
+        content: [{ type: 'toolCall', id: 'delegate-1', name: 'Delegate', arguments: { task: 'inspect' } }],
       };
       (d.session.messages as unknown as { role: string; content: unknown }[]).push(
         { role: 'user', content: text }, assistant,
@@ -2930,7 +2935,7 @@ describe('sub-agent session tap + owner steering', () => {
 
   it('sendToSubagent forwards the durable parent so a respawned continuation stays in its abort tree', async () => {
     const d = fakeDeps();
-    d.users.get = () => ({ name: 'Filip', username: 'filip', disabled_tools: ['discord_api'] });
+    d.users.get = () => ({ name: 'Filip', username: 'filip', disabled_tools: ['DiscordApi'] });
     const svc = new BrainService(d as never);
     d.store.createSession({ id: 'brain-parent', userId: 1, model: 'm' });
     d.store.createSession({
@@ -2938,7 +2943,7 @@ describe('sub-agent session tap + owner steering', () => {
       delegatedAccess: {
         admin: false, owner: false, projectIds: [3], promptAppend: ['focused child'],
         permissionBoundary: null,
-        toolPolicy: { allow: [], deny: ['read_file'] },
+        toolPolicy: { allow: [], deny: ['Read'] },
       },
     });
     const channel = (svc as unknown as { channelService: { send: ReturnType<typeof vi.fn> } }).channelService;
@@ -2951,10 +2956,10 @@ describe('sub-agent session tap + owner steering', () => {
       delegatedAccess: {
         admin: false, owner: false, projectIds: [3], promptAppend: ['focused child'],
         permissionBoundary: null,
-        toolPolicy: { allow: [], deny: ['read_file'] },
+        toolPolicy: { allow: [], deny: ['Read'] },
       },
       promptAppend: ['focused child'], trusted: false,
-      toolPolicy: { allow: new Set(), deny: new Set(['discord_api', 'read_file']) },
+      toolPolicy: { allow: new Set(), deny: new Set(['DiscordApi', 'Read']) },
       identity: expect.objectContaining({ platform: 'subagent', admin: false, owner: false }),
     }), 'continue');
     const forwarded = send.mock.calls[0]![0] as { policy: { allowedProjectIds: Set<number> | 'all' }; writerUserId?: number };
@@ -3094,7 +3099,7 @@ describe('sub-agent abort sparing + restart reconcile', () => {
     d.store.createSession({ id: 'brain-ch-subagent-fg', userId: 1, model: 'm', parentSessionId: sessionId });
     d.store.appendMessage({
       id: 'assistant-fg', sessionId, parentId: null, role: 'assistant',
-      content: { role: 'assistant', content: [{ type: 'toolCall', id: 'delegate-fg', name: 'delegate', arguments: { task: 'inspect' } }] },
+      content: { role: 'assistant', content: [{ type: 'toolCall', id: 'delegate-fg', name: 'Delegate', arguments: { task: 'inspect' } }] },
     });
     d.store.upsertSubagentRun(sessionId, { id: 'delegate-fg', sessionId: 'brain-ch-subagent-fg', status: 'running', task: 'inspect', tools: 1, seconds: 5 });
 

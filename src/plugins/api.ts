@@ -64,7 +64,7 @@ export interface PluginCapabilities {
 /** Where a channel message came from + what its sender may access. The adapter resolves `access` from
  *  its own role mapping (e.g. Discord role → projects + prompt); a message without `access` is ignored
  *  (an unmapped user gets no brain). `admin: true` runs the turn with the owner's full powers (all
- *  repos + elowen_* tools) — reserve it for owner-authored automation (cron), never for foreign senders. */
+ *  repos + Elowen* tools) — reserve it for owner-authored automation (cron), never for foreign senders. */
 export interface SessionSource {
   platform: string;
   userId: string;
@@ -298,7 +298,7 @@ export interface PluginContext {
    *  until the user answers (or a timeout elapses), then resolves with one AskAnswer per question. Only
    *  valid inside a prompt turn driven by an interactive transport (chat/Discord); throws otherwise. */
   askUser(questions: AskQuestion[]): Promise<AskAnswer[]>;
-  /** Deliver a user's answer to a parked ask_user_question back to its waiting turn — for interactive
+  /** Deliver a user's answer to a parked AskUserQuestion back to its waiting turn — for interactive
    *  transports (Discord) that receive the pick out-of-band via their own event loop rather than through
    *  /brain/answer. Returns whether a pending question matched (false for an unknown/expired id). */
   answerQuestion(id: string, answers: AskAnswer[]): boolean;
@@ -309,7 +309,7 @@ export interface PluginContext {
    *  above the status bar) — a non-pinned card won't surface there. No-op outside an interactive prompt
    *  turn (cron/worker sessions wire no emitter). */
   emitCard(card: BrainCard): void;
-  /** The daemon-level background-process registry (`run_command(background:true)` children). The terminal
+  /** The daemon-level background-process registry (`Bash(background:true)` children). The terminal
    *  plugin registers a handle here per spawn so the CLI + web can list/read/kill them from a panel next
    *  to the todos, without going through an agent turn. Process-global (not turn-scoped) — see
    *  processRegistry. */

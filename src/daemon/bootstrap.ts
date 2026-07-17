@@ -431,7 +431,7 @@ export function buildApp(opts: BuildOpts) {
   // auto-save (the curator distilling durable facts) AND category classification — it resolves the
   // referenced brain provider's endpoint+key at call time (no second secret stored), mirroring how
   // embeddings reuse the brain key. Null when unconfigured/keyless → both no-op (memory still works via
-  // the explicit memory_* tools). NOTE: deliberately NOT the autopilot model — memory is its own concern.
+  // the explicit Memory* tools). NOTE: deliberately NOT the autopilot model — memory is its own concern.
   const memoryCategoryStore = new MemoryCategoryStore(db);
   const memoryModelInference = (): InferenceClient | null => {
     const block = config.get().categorization;
@@ -461,7 +461,7 @@ export function buildApp(opts: BuildOpts) {
         return typeof configured === 'string' && configured.trim() ? configured.trim() : '';
       },
       notify: (t, channelId) => brain?.notify(t, channelId) ?? Promise.resolve(),
-      // Interactive transports (Discord) hand a parked ask_user_question's answer straight back in-process.
+      // Interactive transports (Discord) hand a parked AskUserQuestion's answer straight back in-process.
       answerQuestion: (id, answers) => brain?.answerQuestion(id, answers) ?? false,
       // The Discord /model picker is an operator-shared channel setting, so it offers the platform
       // owner's CURATED list: their personal allow-list narrows the picker even though, as admin, they
@@ -565,7 +565,7 @@ export function buildApp(opts: BuildOpts) {
     if (sessionId?.startsWith('brain-ch-subagent-')) return;
     const status = info.exitCode === 0 ? 'finished successfully' : `exited (code ${info.exitCode})`;
     const text = `⚙️ Background command \`${info.command}\` ${status}. If it matters, read its output with `
-      + `read_process_output("${info.id}") and continue; otherwise just carry on.`;
+      + `ProcessOutput("${info.id}") and continue; otherwise just carry on.`;
     // `systemNudge`: no 'you' bubble, dropped if the target session is already streaming, and it never
     // drives the goal loop (so a wake can't spend a goal-budget turn or mis-judge an active goal). Bound to
     // the session the command was started in — not whatever conversation is currently active.

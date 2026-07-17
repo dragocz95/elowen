@@ -13,7 +13,7 @@ import { resolveDisplaySettings, updateDisplayOverrides } from './display.mjs';
 
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024; // default: larger images are noted, not downloaded (cfg: maxImageBytes)
 const MAX_IMAGES = 4;                    // default vision cap per message (cfg: maxImages)
-const ASK_TTL_MS = 6 * 60_000;           // default: drop a pending ask_user_question after this (cfg: askTimeoutMs; > the core 5-min timeout)
+const ASK_TTL_MS = 6 * 60_000;           // default: drop a pending AskUserQuestion after this (cfg: askTimeoutMs; > the core 5-min timeout)
 const MAX_UPLOAD_IMAGES = 4;             // default generated-image uploads per outgoing message (cfg: maxUploadImages)
 const MAX_AUDIO_BYTES = 25 * 1024 * 1024; // Whisper's per-file limit — larger clips are just noted
 const TTS_MAX_CHARS = 4000;              // cap the spoken text (OpenAI TTS input limit is 4096)
@@ -48,7 +48,7 @@ export class TelegramAdapter {
     this.listModels = listModels;
     this.resolveProvider = resolveProvider; // central brain-provider key resolver (voice STT/TTS)
     this.imageDirs = imageDirs; // where the image-gen/image-edit plugins store their generated files
-    this.answerQuestion = answerQuestion; // deliver a parked ask_user_question answer back to the turn
+    this.answerQuestion = answerQuestion; // deliver a parked AskUserQuestion answer back to the turn
     this.chatCommands = chatCommands; // core names/descriptions — presentation/dispatch remains local
     this.handler = null;
     this.ctl = null; // host channel-control surface (stop/status/compact/restart), wired via control()
@@ -139,7 +139,7 @@ export class TelegramAdapter {
     return {
       access: {
         // admin:true = the operator's admin identity — full project scope + the full plugin toolset
-        // (trusted-chat). It does NOT grant the owner's elowen_* control-plane tools or API token: a shared
+        // (trusted-chat). It does NOT grant the owner's Elowen* control-plane tools or API token: a shared
         // group is never the verified owner's own chat, whatever policy the sender matched.
         admin: match.admin === true,
         projectIds: (match.projectIds ?? []).map(Number),
@@ -188,7 +188,7 @@ export class TelegramAdapter {
     const chat = m.chat;
     const chatId = chat.id;
 
-    // Free-text answer to a parked ask_user_question ("✏️ Other"): if this chat has a pending ask awaiting
+    // Free-text answer to a parked AskUserQuestion ("✏️ Other"): if this chat has a pending ask awaiting
     // text from THIS sender, consume the message as that answer — not as a new brain turn.
     for (const [token, pend] of this.pendingAsks) {
       if (Date.now() - pend.createdAt > cfgNum(this.cfg, 'askTimeoutMs', ASK_TTL_MS, 30000, 1800000)) { this.pendingAsks.delete(token); continue; }
@@ -248,7 +248,7 @@ export class TelegramAdapter {
     const display = resolveDisplaySettings(this.cfg, this.state.get(String(chatId)));
     const observesLiveEvents = display.toolActivity !== 'off' || display.answerMode === 'live' || this.cfg.showReasoning === true;
     const stream = observesLiveEvents ? new LiveMessage(this, chatId, m.message_id, from.id, display) : null;
-    // Even with live streaming OFF, ask_user_question must still render its choice message — otherwise the
+    // Even with live streaming OFF, AskUserQuestion must still render its choice message — otherwise the
     // parked turn hangs until the timeout. Route events through the stream when present, else handle only `ask`.
     const onEvent = stream
       ? (e) => stream.onEvent(e)
@@ -335,9 +335,9 @@ export class TelegramAdapter {
     return Buffer.from(await res.arrayBuffer());
   }
 
-  // ── ask_user_question ──
+  // ── AskUserQuestion ──
 
-  /** Render a parked ask_user_question (from the brain's `ask` event) as a prompt message plus an inline
+  /** Render a parked AskUserQuestion (from the brain's `ask` event) as a prompt message plus an inline
    *  keyboard — option buttons per question, a Submit button for multi-select/multi-question asks, and a
    *  free-text "Other" button on single-question asks. Registers a pending entry the callback/text
    *  handlers resolve. Keyed by a SHORT token so the callback_data stays under Telegram's 64-byte limit. */
@@ -734,13 +734,13 @@ export class TelegramAdapter {
     await this.reply(chatTarget(target), text);
   }
 
-  /** The live bot, or a thrown error when not yet connected — used by the telegram_* tools. */
+  /** The live bot, or a thrown error when not yet connected — used by the Telegram* tools. */
   requireBot() {
     if (!this.bot) throw new Error('Telegram is not connected yet — check the plugin config (botToken).');
     return this.bot;
   }
 
-  /** Call any raw Bot API method by name (used by the owner-only telegram_api tool). */
+  /** Call any raw Bot API method by name (used by the owner-only TelegramApi tool). */
   async callApi(method, params) {
     const bot = this.requireBot();
     if (typeof bot.api.raw[method] !== 'function') throw new Error(`unknown Bot API method: ${method}`);

@@ -6,7 +6,7 @@ import type { ChatTurn, ToolItem } from '../../../src/brain/transcript.js';
 beforeAll(() => { initTheme(); });
 
 const refusal = (path: string): ToolItem => ({
-  name: 'write_file', detail: path, id: `call-${path}`,
+  name: 'Write', detail: path, id: `call-${path}`,
   output: {
     title: 'tool result', kind: 'result', tone: 'warning', status: 'needs attention',
     text: `Error: ${path} has not been read in this conversation. Read it first — editing a file you have `
@@ -69,7 +69,7 @@ describe('a failed tool result in the transcript', () => {
 
   // A successful result is content the user asked for, not a complaint they have already read.
   it('leaves a successful result rendering in full', () => {
-    const ok: ToolItem = { name: 'read_file', detail: 'a.ts', id: 'call-ok',
+    const ok: ToolItem = { name: 'Read', detail: 'a.ts', id: 'call-ok',
       output: { title: 'tool result', kind: 'result', tone: 'success', text: 'the file contents' } };
     expect(text(render(turnOf(ok)))).toContain('the file contents');
   });

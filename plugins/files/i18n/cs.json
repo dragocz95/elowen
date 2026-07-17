@@ -11,7 +11,7 @@
     },
     "searchMaxMatches": {
       "label": "Maximální počet shod hledání",
-      "hint": "Maximální počet shod, které search_files vrátí před oříznutím."
+      "hint": "Maximální počet shod, které Search vrátí před oříznutím."
     }
   }
 }

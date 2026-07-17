@@ -9,34 +9,34 @@
       "discord"
     ],
     "tools": [
-      "discord_api",
-      "discord_list_channels",
-      "discord_read_channel",
-      "discord_list_roles",
-      "discord_list_members",
-      "discord_assign_role",
-      "discord_remove_role",
-      "discord_server_info",
-      "discord_channel_info",
-      "discord_member_info",
-      "discord_search_members",
-      "discord_list_pins",
-      "discord_create_thread",
-      "discord_pin_message",
-      "discord_unpin_message",
-      "discord_delete_message",
-      "discord_purge_messages",
-      "discord_create_channel",
-      "discord_create_category",
-      "discord_rename_channel",
-      "discord_delete_channel",
-      "discord_archive_thread",
-      "discord_lock_thread",
-      "discord_add_thread_member",
-      "discord_remove_thread_member"
+      "DiscordApi",
+      "DiscordListChannels",
+      "DiscordReadChannel",
+      "DiscordListRoles",
+      "DiscordListMembers",
+      "DiscordAssignRole",
+      "DiscordRemoveRole",
+      "DiscordServerInfo",
+      "DiscordChannelInfo",
+      "DiscordMemberInfo",
+      "DiscordSearchMembers",
+      "DiscordListPins",
+      "DiscordCreateThread",
+      "DiscordPinMessage",
+      "DiscordUnpinMessage",
+      "DiscordDeleteMessage",
+      "DiscordPurgeMessages",
+      "DiscordCreateChannel",
+      "DiscordCreateCategory",
+      "DiscordRenameChannel",
+      "DiscordDeleteChannel",
+      "DiscordArchiveThread",
+      "DiscordLockThread",
+      "DiscordAddThreadMember",
+      "DiscordRemoveThreadMember"
     ]
   },
-  "icons": { "discord_*": "💬" },
+  "icons": { "Discord*": "💬" },
   "requires": {
     "config": [
       "botToken"
@@ -97,7 +97,7 @@
         { "value": "status", "label": "Live status" },
         { "value": "live", "label": "Live output" }
       ],
-      "hint": "Off hides the work trace. Live status updates tool start/completion. Live output also streams bounded run_command progress. Override per channel with /display."
+      "hint": "Off hides the work trace. Live status updates tool start/completion. Live output also streams bounded Bash progress. Override per channel with /display."
     },
     {
       "key": "answerMode",
@@ -229,7 +229,7 @@
       "step": 30000,
       "placeholder": "360000",
       "default": 360000,
-      "hint": "How long a pending ask_user_question stays open for a button click or free-text reply before it's dropped as stale."
+      "hint": "How long a pending AskUserQuestion stays open for a button click or free-text reply before it's dropped as stale."
     },
     {
       "key": "sec_voice",

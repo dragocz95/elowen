@@ -20,7 +20,7 @@ const WF: WorkflowState = {
   id: 'wf-1', toolCallId: 'call-1', title: 'ship the parser', status: 'running',
   nodes: [
     { id: 'gather', task: 'Read the parser sources and summarize the token grammar', status: 'done', deps: [], sessionId: 's-gather', tokens: 4200, seconds: 9, model: 'claude-opus-4-8' },
-    { id: 'analyze', task: 'Find every edge case the grammar misses', status: 'running', deps: ['gather'], sessionId: 's-analyze', tokens: 1800, seconds: 5, detail: 'read_file src/lexer.ts', model: 'claude-opus-4-8' },
+    { id: 'analyze', task: 'Find every edge case the grammar misses', status: 'running', deps: ['gather'], sessionId: 's-analyze', tokens: 1800, seconds: 5, detail: 'Read src/lexer.ts', model: 'claude-opus-4-8' },
     { id: 'write', task: 'Write the fix and a regression test', status: 'pending', deps: ['analyze'] },
   ],
 };
@@ -28,11 +28,11 @@ const WF: WorkflowState = {
 describe('workflow CLI rendering', () => {
   // The durable way back into a workflow: the rail only carries RUNNING ones, so once a DAG finishes this
   // transcript row is the only thing that can still open its modal.
-  it('renders the transcript marker on its workflow_start row, keyed for drill-in', () => {
+  it('renders the transcript marker on its WorkflowStart row, keyed for drill-in', () => {
     const renderer = new TurnRenderer(getMarkdownTheme());
     const model = new TranscriptModel([{
       role: 'assistant', text: '',
-      segments: [{ kind: 'tool', id: 'call-1', name: 'workflow_start', detail: 'ship the parser', wf: WF }],
+      segments: [{ kind: 'tool', id: 'call-1', name: 'WorkflowStart', detail: 'ship the parser', wf: WF }],
     }]);
     const turn = model.turnAt(0)!;
     const rows = renderer.render(turn, 0, 90, {
@@ -45,7 +45,7 @@ describe('workflow CLI rendering', () => {
     expect(flat).toContain('ship the parser');
     expect(flat).toContain('1✓ 1● 1⏸');          // the rail's tally, shared not re-derived
     expect(flat).toContain('6k tok');            // 4200 + 1800
-    // Every marker row drills into the workflow by id, and the bare `workflow_start` tool row is gone —
+    // Every marker row drills into the workflow by id, and the bare `WorkflowStart` tool row is gone —
     // the marker replaces it rather than stacking under a duplicate.
     const marked = rows.filter((r) => r.kind === 'workflow');
     expect(marked.length).toBeGreaterThan(0);

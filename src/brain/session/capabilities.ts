@@ -8,21 +8,21 @@ import { BASH_PERMISSION_TOOLS, bashAlwaysPattern, resolveToolPermission, type A
  *  to it, since automation IS the operator). */
 type SessionKind =
   /** The operator's own authenticated chat (web owner chat / owner DM), or their owner-authored
-   *  automation (cron) — full elowen_* control-plane tools + the owner API token. This is the ONLY kind
+   *  automation (cron) — full Elowen* control-plane tools + the owner API token. This is the ONLY kind
    *  that ever receives them; a SHARED platform channel never resolves here, whatever role its sender
    *  holds. */
   | 'owner-chat'
   /** A shared platform channel whose sender holds the operator's admin role — elevated to all-project
-   *  Policy + the full plugin toolset, but STILL without elowen_* tools and without the owner API token
+   *  Policy + the full plugin toolset, but STILL without Elowen* tools and without the owner API token
    *  (an admin Discord role is not the verified owner). Tool-wise identical to `foreign-channel`; the
    *  distinct label keeps the trust level auditable and stops the channel-keyed session from ever being
    *  mislabelled owner-chat and leaking the owner toolset to a later non-admin sender. */
   | 'trusted-channel'
-  /** A shared platform channel driven by OTHER, role-scoped people — the owner's full-scope elowen_* API
+  /** A shared platform channel driven by OTHER, role-scoped people — the owner's full-scope Elowen* API
    *  tools are withheld; only Policy-guarded plugin tools load. */
   | 'foreign-channel'
   /** An elowen-exec task worker — its one control-plane tool (close-own-task) is baked in by the
-   *  caller; plugin tools ride along, but never the owner's elowen_* API tools. */
+   *  caller; plugin tools ride along, but never the owner's Elowen* API tools. */
   | 'task-worker';
 
 /** What a plugin tool call produced — the payload the `tools.call.after` hook receives. `params` is the
@@ -83,7 +83,7 @@ function gateToolAccess(tool: ToolDefinition, onToolResult?: (e: PluginToolResul
 const refused = (text: string) => ({ content: [{ type: 'text' as const, text }], details: {} });
 
 /** Wrap ANY session tool with the granular permission gate — THE single choke point every tool call
- *  passes (built-in elowen_* and memory_* tools and plugin tools alike; composeSessionTools applies it
+ *  passes (built-in Elowen* and Memory* tools and plugin tools alike; composeSessionTools applies it
  *  to the whole composed set). The turn's rules resolve to allow/ask/deny (resolveToolPermission — last matching
  *  rule wins): `deny` returns an error result naming the rule; `ask` blocks on the turn's approval
  *  channel where a human is attached (owner CLI/web chat) and, everywhere else (channel/cron/subagent
@@ -139,7 +139,7 @@ function gatePermissions(tool: ToolDefinition): ToolDefinition {
 }
 
 /** Compose the tool set for one session. THE security invariant lives here: `trusted-channel`,
- *  `foreign-channel` and `task-worker` sessions NEVER receive the owner's elowen_* control-plane tools —
+ *  `foreign-channel` and `task-worker` sessions NEVER receive the owner's Elowen* control-plane tools —
  *  ONLY `owner-chat` does. A shared channel sender (even one holding the admin role) reaching the
  *  owner's full-scope API token would be a privilege escalation. Plugin tools are always composed but
  *  wrapped with the per-turn access gate (see gateToolAccess) — the effective allow/deny is decided at
@@ -161,7 +161,7 @@ export function composeSessionTools(spec: CapabilitySpec): ToolDefinition[] {
 
 /** The names a turn's ToolPolicy is allowed to HIDE from the model, given the full tool set and which of
  *  them are plugin tools. Mirrors the execute-time gate's scope with one deliberate asymmetry:
- *   - a role's `allow`-list narrows ONLY plugin tools — built-in `elowen_*` / `memory_*` (composed per
+ *   - a role's `allow`-list narrows ONLY plugin tools — built-in `Elowen*` / `Memory*` (composed per
  *     SessionKind) stay visible, so a channel never loses its core abilities to a narrow role grant;
  *   - a user's own `deny`-list (their `disabled_tools`) may hide ANY tool it names, plugin or not.
  *  No policy → the full set is visible. */

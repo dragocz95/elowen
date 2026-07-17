@@ -2,6 +2,7 @@ import Database from 'better-sqlite3';
 import { readFileSync, mkdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { renameTool } from './toolRenames.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -129,5 +130,163 @@ export function openDb(path: string): Db {
   // Rename prompt template keys to match the elowen/elowen-platform rename (advisor → elowen, advisor-channel → elowen-platform).
   db.exec("UPDATE user_prompts SET name = 'elowen' WHERE name = 'advisor'");
   db.exec("UPDATE user_prompts SET name = 'elowen-platform' WHERE name = 'advisor-channel'");
+  migrateToolNames(db);
+  migrateMcpToolNames(db);
   return db;
+}
+
+/** Apply `rename` to every tool name this DB stores. Four surfaces, and every one of them matches by
+ *  exact string, so a name the code no longer uses does not raise — it stops matching. A stale DENY
+ *  silently RE-ENABLES its tool and the `write_file`/`edit_file` "ask" defaults stop prompting (fail
+ *  open); a stale ALLOW-list leaves a platform role with no tools at all (fail closed). `rename` returns
+ *  its input unchanged for anything it does not own. */
+function renameStoredToolNames(db: Db, rename: (name: string) => string): void {
+  // Per-user tool deny-list: a CSV of exact names.
+  const users = db.prepare("SELECT id, disabled_tools FROM users WHERE disabled_tools != ''")
+    .all() as { id: number; disabled_tools: string }[];
+  for (const u of users) {
+    const next = u.disabled_tools.split(',').map(rename).join(',');
+    if (next !== u.disabled_tools) db.prepare('UPDATE users SET disabled_tools = ? WHERE id = ?').run(next, u.id);
+  }
+  // Saved permission rules. Only the `tools` scope holds tool names — `bash` patterns are shell commands
+  // ("git status*") and must not be touched. Rebuilding the map preserves JSON key order, which is
+  // load-bearing: rule precedence is last-match-wins (see resolveToolPermission).
+  const userPerms = db.prepare("SELECT user_id, value FROM user_settings WHERE key = 'permissions'")
+    .all() as { user_id: number; value: string }[];
+  for (const s of userPerms) {
+    const next = rewriteJson(s.value, (blob) => {
+      const tools = (blob as { tools?: unknown }).tools;
+      if (!tools || typeof tools !== 'object' || Array.isArray(tools)) return;
+      (blob as { tools: Record<string, unknown> }).tools = renameKeys(tools as Record<string, unknown>, rename);
+    });
+    if (next && next !== s.value) {
+      db.prepare("UPDATE user_settings SET value = ? WHERE user_id = ? AND key = 'permissions'").run(next, s.user_id);
+    }
+  }
+  // A delegated child's frozen boundary. Deliberately never re-read from current settings, so nothing
+  // else would ever repair it; rewriting names preserves its meaning exactly rather than re-deriving it.
+  const scopes = db.prepare('SELECT id, delegated_access FROM brain_sessions WHERE delegated_access IS NOT NULL')
+    .all() as { id: string; delegated_access: string }[];
+  for (const s of scopes) {
+    const next = rewriteJson(s.delegated_access, (blob) => {
+      const tp = (blob as { toolPolicy?: { allow?: unknown; deny?: unknown } }).toolPolicy;
+      if (tp) for (const k of ['allow', 'deny'] as const) {
+        if (Array.isArray(tp[k])) tp[k] = (tp[k] as unknown[]).map((n) => typeof n === 'string' ? rename(n) : n);
+      }
+      const rules = (blob as { permissionBoundary?: { rules?: unknown } }).permissionBoundary?.rules;
+      if (Array.isArray(rules)) {
+        for (const r of rules as { scope?: unknown; pattern?: unknown }[]) {
+          if (r?.scope === 'tools' && typeof r.pattern === 'string') r.pattern = rename(r.pattern);
+        }
+      }
+    });
+    if (next && next !== s.delegated_access) {
+      db.prepare('UPDATE brain_sessions SET delegated_access = ? WHERE id = ?').run(next, s.id);
+    }
+  }
+  // A platform role's tool ALLOW-list, inside the settings blob. `rolePolicies` is a declared config
+  // type, not a Discord-only field, so walk every plugin's config rather than name one.
+  const settings = db.prepare('SELECT data FROM settings WHERE id = 1').get() as { data: string } | undefined;
+  if (!settings) return;
+  const next = rewriteJson(settings.data, (blob) => {
+    const configs = (blob as { plugins?: { config?: Record<string, unknown> } }).plugins?.config;
+    if (!configs || typeof configs !== 'object') return;
+    for (const cfg of Object.values(configs)) {
+      const policies = (cfg as { rolePolicies?: unknown } | null)?.rolePolicies;
+      if (!Array.isArray(policies)) continue;
+      for (const p of policies as ({ tools?: unknown } | null)[]) {
+        // An empty list or ['*'] means "unrestricted" — `rename` leaves '*' alone, so both survive.
+        if (Array.isArray(p?.tools)) p.tools = (p.tools as unknown[]).map((n) => typeof n === 'string' ? rename(n) : n);
+      }
+    }
+  });
+  if (next && next !== settings.data) db.prepare('UPDATE settings SET data = ? WHERE id = 1').run(next);
+}
+
+/** Run a one-shot data migration behind `PRAGMA user_version`.
+ *
+ *  Every other migration in this file is idempotent by construction — `addColumn` checks the table shape,
+ *  and `WHERE name = 'advisor'` can never re-match. A tool RENAME is not: the freed names are generic
+ *  enough that a third-party plugin could later legitimately register `read_file`, and a second run would
+ *  then rewrite a user's rule for THAT tool. So each runs exactly once, ever.
+ *
+ *  IMMEDIATE, and the gate is re-read and set INSIDE the transaction. Several processes call openDb on the
+ *  same file — the daemon, `elowen update --auto` (which runs alongside it by design), missionGate — so a
+ *  deferred transaction lets two of them both pass the check and then collide when the second tries to
+ *  upgrade its read snapshot to a write (SQLITE_BUSY_SNAPSHOT, which busy_timeout cannot resolve). Setting
+ *  the gate inside also means a crash between commit and the pragma cannot leave migrated data with the
+ *  gate still armed. */
+function runOnce(db: Db, version: number, apply: () => void): void {
+  if ((db.pragma('user_version', { simple: true }) as number) >= version) return;
+  db.transaction(() => {
+    if ((db.pragma('user_version', { simple: true }) as number) >= version) return;
+    apply();
+    db.pragma(`user_version = ${version}`);
+  }).immediate();
+}
+
+/** v1 — snake_case → TitleCase (see toolRenames.ts). */
+function migrateToolNames(db: Db): void {
+  runOnce(db, 1, () => renameStoredToolNames(db, renameTool));
+}
+
+/** v2 — MCP bridged names gain double separators: `mcp_<server>_<tool>` → `mcp__<server>__<tool>`.
+ *
+ *  The single-underscore form was ambiguous. A server name and a tool name may each contain `_` after
+ *  sanitizing, so `mcp_chrome_devtools_click` splits as either (chrome, devtools_click) or
+ *  (chrome_devtools, click) and the string cannot tell you which — which is the whole reason for the
+ *  change, and also why this cannot be a name map: an old name is only splittable against the CONFIGURED
+ *  server list, read here from the mcp plugin's own config.
+ *
+ *  `sanitize` is duplicated rather than imported: plugins/mcp is loaded dynamically and this must stay
+ *  frozen at what shipped when these names were written — a migration encodes history, not the live rule.
+ *  A server since removed from config cannot be split, so its tools keep their old names and their rules
+ *  go stale; nothing re-derives an mcp name, so there is no other source to recover it from. */
+function migrateMcpToolNames(db: Db): void {
+  runOnce(db, 2, () => {
+    const sanitize = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 40) || 'x';
+    const row = db.prepare('SELECT data FROM settings WHERE id = 1').get() as { data: string } | undefined;
+    if (!row) return;
+    let servers: string[] = [];
+    try {
+      const cfg = (JSON.parse(row.data) as { plugins?: { config?: { mcp?: { servers?: unknown } } } }).plugins?.config?.mcp?.servers;
+      if (Array.isArray(cfg)) {
+        servers = cfg
+          .map((s) => (s as { name?: unknown } | null)?.name)
+          .filter((n): n is string => typeof n === 'string' && n.trim().length > 0)
+          .map(sanitize);
+      }
+    } catch { return; } // a corrupt settings blob is not this migration's to repair
+    if (servers.length === 0) return;
+    // Longest first: one server's sanitized token can prefix another's ("gh" vs "gh_enterprise").
+    servers.sort((a, b) => b.length - a.length);
+    renameStoredToolNames(db, (name) => {
+      for (const s of servers) {
+        const old = `mcp_${s}_`;
+        if (name.startsWith(old)) return `mcp__${s}__${name.slice(old.length)}`;
+      }
+      return name;
+    });
+  });
+}
+
+/** Apply `mutate` to a parsed JSON object and re-serialize. A blob that is corrupt or not an object is
+ *  left exactly as found: this migration renames names, it is not the place to repair stored data. */
+function rewriteJson(raw: string, mutate: (blob: object) => void): string | undefined {
+  let blob: unknown;
+  try { blob = JSON.parse(raw); } catch { return undefined; }
+  if (!blob || typeof blob !== 'object' || Array.isArray(blob)) return undefined;
+  mutate(blob);
+  return JSON.stringify(blob);
+}
+
+/** Rename a rule map's keys, preserving insertion order. A rename that collides with an existing key
+ *  keeps the LAST value — matching last-match-wins — but lands it in the FIRST key's slot, which is how
+ *  JS object keys work. Order is precedence, so a merged rule is promoted ahead of anything that used to
+ *  outrank it. Harmless for the only collision that can realistically occur (a user holding rules for
+ *  both an old and its new name), and no prod DB has one. */
+function renameKeys(map: Record<string, unknown>, rename: (name: string) => string): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [pattern, action] of Object.entries(map)) out[rename(pattern)] = action;
+  return out;
 }

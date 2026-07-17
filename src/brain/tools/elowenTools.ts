@@ -20,11 +20,11 @@ type TaskStatusArg = typeof TASK_STATUSES[number];
 
 export function elowenListTasks(ctx: ElowenToolCtx) {
   return defineTool({
-    name: 'elowen_list_tasks', label: 'List tasks',
+    name: 'ElowenListTasks', label: 'List tasks',
     description: [
       'List tasks in the Elowen projects, with each task\'s id, title, status and project. Optionally narrow to one project with project_id.',
       'Use it to see what work exists or is in progress, to find the next task after finishing one, or to get an overview before planning.',
-      'Call it before elowen_create_task so you do not create a duplicate of a task that already exists.',
+      'Call it before ElowenCreateTask so you do not create a duplicate of a task that already exists.',
     ].join(' '),
     parameters: Type.Object({ project_id: Type.Optional(Type.Number({ description: 'Only list tasks in this project' })) }),
     execute: async (_id, p: { project_id?: number }) =>
@@ -34,11 +34,11 @@ export function elowenListTasks(ctx: ElowenToolCtx) {
 
 export function elowenCreateTask(ctx: ElowenToolCtx) {
   return defineTool({
-    name: 'elowen_create_task', label: 'Create task',
+    name: 'ElowenCreateTask', label: 'Create task',
     description: [
       'Create a task in an Elowen project. Tasks are the unit of organized work — each belongs to a project and carries a title, a description and a status that tracks it through its lifecycle.',
       'Use this when the request is genuinely multi-step, when the work needs a visible checklist to stay on track, or when the user asks for it. Do not create a task for a single trivial action — just do the work.',
-      'Check elowen_list_tasks first to avoid duplicating an existing task. A new task starts `open`; move it through its lifecycle with elowen_update_task as the work proceeds.',
+      'Check ElowenListTasks first to avoid duplicating an existing task. A new task starts `open`; move it through its lifecycle with ElowenUpdateTask as the work proceeds.',
     ].join(' '),
     parameters: Type.Object({
       title: Type.String({ description: 'A brief, actionable imperative naming the outcome, e.g. "Fix the auth bug in the login flow"' }),
@@ -52,14 +52,14 @@ export function elowenCreateTask(ctx: ElowenToolCtx) {
 
 export function elowenUpdateTask(ctx: ElowenToolCtx) {
   return defineTool({
-    name: 'elowen_update_task', label: 'Update task',
+    name: 'ElowenUpdateTask', label: 'Update task',
     description: [
       'Update an existing Elowen task: move it through its lifecycle, rename it, or revise its description.',
       `Status values are ${TASK_STATUSES.join(', ')} — set \`in_progress\` when you start the work and \`closed\` when it is genuinely finished, \`blocked\` when something outside your control stops it, and \`cancelled\` when it is no longer wanted.`,
-      'Only close a task you have actually completed: a partial implementation, a failing test or an unresolved error means it stays in_progress. Get the task id from elowen_list_tasks or from what elowen_create_task returned.',
+      'Only close a task you have actually completed: a partial implementation, a failing test or an unresolved error means it stays in_progress. Get the task id from ElowenListTasks or from what ElowenCreateTask returned.',
     ].join(' '),
     parameters: Type.Object({
-      task_id: Type.String({ description: 'Id of the task to update (from elowen_list_tasks or elowen_create_task)' }),
+      task_id: Type.String({ description: 'Id of the task to update (from ElowenListTasks or ElowenCreateTask)' }),
       status: Type.Optional(Type.Union(TASK_STATUSES.map((s) => Type.Literal(s)), { description: 'New lifecycle status' })),
       title: Type.Optional(Type.String({ description: 'Rename the task' })),
       description: Type.Optional(Type.String({ description: 'Replace the task description' })),
@@ -82,7 +82,7 @@ export function elowenUpdateTask(ctx: ElowenToolCtx) {
 
 export function elowenPlan(ctx: ElowenToolCtx) {
   return defineTool({
-    name: 'elowen_plan', label: 'Plan a goal',
+    name: 'ElowenPlan', label: 'Plan a goal',
     description: 'Ask Elowen to break a goal into a task plan for a project.',
     parameters: Type.Object({ goal: Type.String(), project_id: Type.Number() }),
     execute: async (_id, p: { goal: string; project_id: number }) => call(ctx, 'POST', '/tasks/plan', p),
@@ -91,7 +91,7 @@ export function elowenPlan(ctx: ElowenToolCtx) {
 
 export function elowenListMissions(ctx: ElowenToolCtx) {
   return defineTool({
-    name: 'elowen_list_missions', label: 'List missions',
+    name: 'ElowenListMissions', label: 'List missions',
     description: 'List Elowen autopilot missions.',
     parameters: Type.Object({}),
     execute: async () => call(ctx, 'GET', '/missions'),
@@ -100,7 +100,7 @@ export function elowenListMissions(ctx: ElowenToolCtx) {
 
 export function elowenListSessions(ctx: ElowenToolCtx) {
   return defineTool({
-    name: 'elowen_list_sessions', label: 'List sessions',
+    name: 'ElowenListSessions', label: 'List sessions',
     description: 'List live Elowen agent sessions.',
     parameters: Type.Object({}),
     execute: async () => call(ctx, 'GET', '/sessions'),

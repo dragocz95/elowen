@@ -41,14 +41,14 @@ function DiscordPreview({ detail, values }: { detail: PluginDetail; values: Reco
     </div>
   ) : perTool ? (
     <div className="flex flex-col gap-2">
-      {bubble('run_command', t.pluginDetail.previewRunning, output !== 'hidden')}
+      {bubble('Bash', t.pluginDetail.previewRunning, output !== 'hidden')}
       {bubble('web_search', t.pluginDetail.previewDone)}
     </div>
   ) : (
     <div data-testid="discord-tool-bubble" className={previewBox}>
       <div className="mb-2 flex items-center gap-2 text-xs font-medium text-text"><Wrench size={13} className="text-accent" aria-hidden />{t.pluginDetail.previewToolActivity}</div>
       <div className="flex flex-col gap-1.5 font-mono text-[11px] text-text-muted">
-        <span className="flex justify-between gap-2"><span>run_command</span><span>{t.pluginDetail.previewRunning}</span></span>
+        <span className="flex justify-between gap-2"><span>Bash</span><span>{t.pluginDetail.previewRunning}</span></span>
         {outputPreview}
         <span className="flex justify-between gap-2"><span>web_search</span><span>{t.pluginDetail.previewDone}</span></span>
       </div>
@@ -102,7 +102,7 @@ function TerminalPreview({ detail, values }: { detail: PluginDetail; values: Rec
   const timeout = Number(valueOf(detail, values, 'commandTimeoutMs') ?? 120000) / 1000;
   return (
     <div className="overflow-hidden rounded-lg border border-border bg-bg font-mono text-[11px]">
-      <div className="flex items-center gap-2 border-b border-border px-3 py-2 text-text-muted"><TerminalSquare size={13} aria-hidden />run_command</div>
+      <div className="flex items-center gap-2 border-b border-border px-3 py-2 text-text-muted"><TerminalSquare size={13} aria-hidden />Bash</div>
       <div className="space-y-1 p-3 text-text"><div>$ npm test</div><div className="text-success">✓ {t.pluginDetail.previewDone}</div></div>
       <div className="border-t border-border px-3 py-2 text-text-muted">{Math.round(cap / 1000)} KB · {timeout}s</div>
     </div>

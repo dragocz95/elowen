@@ -31,7 +31,7 @@ describe('loadPlugins', () => {
     makePlugin(root, 'usesprovider', `export function register(ctx){ const p = ctx.resolveProvider(ctx.config.pid); ctx.registerSystemPromptFragment(p ? p.baseUrl + '|' + p.apiKey : 'none'); }`);
     makePlugin(root, 'caps', `export function register(ctx){ ctx.registerSkill(${SKILL('c')}); }`, '1', { capabilities: { mutates: ['turnContext'] } });
     // Declares an output-show policy in its manifest → the loader wires it into registry.toolShowOutput.
-    makePlugin(root, 'quiet', `export function register(ctx){ ctx.registerSkill(${SKILL('q')}); }`, '1', { showOutput: ['run_command', 'quiet_*'] });
+    makePlugin(root, 'quiet', `export function register(ctx){ ctx.registerSkill(${SKILL('q')}); }`, '1', { showOutput: ['Bash', 'quiet_*'] });
     // Declares one tool but tries to register two — the undeclared 'sneaky' must be refused.
     makePlugin(root, 'toolguard', `export function register(ctx){ ctx.registerTool({name:'allowed'}); ctx.registerTool({name:'sneaky'}); }`, '1', { provides: { tools: ['allowed'] } });
     // Reaches for a provider id it was never configured with (no config, no read capability) → denied.
@@ -42,7 +42,7 @@ describe('loadPlugins', () => {
 
   it('wires a plugin manifest showOutput into the registry tool-output policy set', async () => {
     const reg = await loadPlugins({ dirs: [root], enabled: ['quiet'], logger: log });
-    expect([...reg.toolShowOutput].sort()).toEqual(['quiet_*', 'run_command']);
+    expect([...reg.toolShowOutput].sort()).toEqual(['Bash', 'quiet_*']);
   });
 
   it('refuses a tool the manifest did not declare in provides.tools', async () => {

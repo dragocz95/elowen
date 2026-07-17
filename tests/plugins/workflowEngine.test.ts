@@ -19,7 +19,7 @@ function harness(opts: { toolPolicyAllow?: string[] } = {}) {
   const run = async (_source: unknown, task: string, onEvent: (e: unknown) => void) => {
     launched.push(task);
     onEvent({ type: 'session', sessionId: `s-${task}` });
-    onEvent({ type: 'tool', name: 'read_file' });
+    onEvent({ type: 'tool', name: 'Read' });
     onEvent({ type: 'idle', usage: { totalTokens: 100 } });
     return task.includes('FAIL') ? 'Error: boom' : `done:${task}`;
   };
@@ -32,11 +32,11 @@ function harness(opts: { toolPolicyAllow?: string[] } = {}) {
     currentModel: () => ({ provider: 'p', model: 'm' }),
     workflowEmitter: () => (u: (typeof snapshots)[number]) => { snapshots.push(u); },
     listModels: async () => [],
-    toolNames: () => ['read_file', 'write_file', 'run_command'],
+    toolNames: () => ['Read', 'Write', 'Bash'],
   };
   const helpers = {
     resolveDelegateTools: (inheritedAllow: string[] | undefined, readOnly: boolean, requested: string[]) =>
-      (readOnly || requested ? { allow: requested ?? ['read_file'] } : { allow: undefined }),
+      (readOnly || requested ? { allow: requested ?? ['Read'] } : { allow: undefined }),
     principalOf: (identity: unknown) => (identity ? 'elowen:1' : null),
     delegateContextChunk: (raw: string) => (raw ? `ctx:${raw}` : undefined),
   };
@@ -47,7 +47,7 @@ function harness(opts: { toolPolicyAllow?: string[] } = {}) {
 describe('workflow engine', () => {
   it('runs a linear DAG in dependency order and returns every node result', async () => {
     const { tools, launched } = harness();
-    const res = await tools.get('workflow_start')!.execute('t1', {
+    const res = await tools.get('WorkflowStart')!.execute('t1', {
       nodes: [
         { id: 'a', task: 'a' },
         { id: 'b', task: 'b', deps: ['a'] },
@@ -63,7 +63,7 @@ describe('workflow engine', () => {
 
   it('runs independent nodes that share one dependency in parallel after it', async () => {
     const { tools, launched } = harness();
-    await tools.get('workflow_start')!.execute('t2', {
+    await tools.get('WorkflowStart')!.execute('t2', {
       nodes: [
         { id: 'root', task: 'root' },
         { id: 'x', task: 'x', deps: ['root'] },
@@ -76,7 +76,7 @@ describe('workflow engine', () => {
 
   it('marks the workflow errored and skips dependents of a failed node', async () => {
     const { tools, launched } = harness();
-    const res = await tools.get('workflow_start')!.execute('t3', {
+    const res = await tools.get('WorkflowStart')!.execute('t3', {
       nodes: [
         { id: 'a', task: 'a FAIL' },
         { id: 'b', task: 'b', deps: ['a'] },
@@ -90,7 +90,7 @@ describe('workflow engine', () => {
 
   it('emits a live snapshot stream ending in a terminal status', async () => {
     const { tools, snapshots } = harness();
-    await tools.get('workflow_start')!.execute('t4', { nodes: [{ id: 'a', task: 'a' }] });
+    await tools.get('WorkflowStart')!.execute('t4', { nodes: [{ id: 'a', task: 'a' }] });
     expect(snapshots.length).toBeGreaterThan(1);
     expect(snapshots[0]!.status).toBe('running');
     const last = snapshots.at(-1)!;
@@ -98,11 +98,11 @@ describe('workflow engine', () => {
     expect(last.nodes[0]!.status).toBe('done');
   });
 
-  // Every snapshot names the origin's workflow_start call: it is the durable anchor that binds the DAG
+  // Every snapshot names the origin's WorkflowStart call: it is the durable anchor that binds the DAG
   // to the parent's transcript row, so the host can persist it and the marker survives a reconnect.
-  it('stamps every snapshot with the originating workflow_start tool call id', async () => {
+  it('stamps every snapshot with the originating WorkflowStart tool call id', async () => {
     const { tools, snapshots } = harness();
-    await tools.get('workflow_start')!.execute('call-42', { nodes: [{ id: 'a', task: 'a' }] });
+    await tools.get('WorkflowStart')!.execute('call-42', { nodes: [{ id: 'a', task: 'a' }] });
     expect(snapshots.length).toBeGreaterThan(1);
     expect(snapshots.every((s) => s.toolCallId === 'call-42')).toBe(true);
   });
@@ -128,17 +128,17 @@ describe('workflow engine', () => {
       currentModel: () => ({ provider: 'p', model: 'm' }),
       workflowEmitter: () => (u: { id: string; toolCallId: string; status: string }) => { snapshots.push(u); },
       listModels: async () => [],
-      toolNames: () => ['read_file'],
+      toolNames: () => ['Read'],
     };
     registerWorkflow(ctx, () => run, {
       resolveDelegateTools: () => ({ allow: undefined }),
       principalOf: () => 'elowen:1',
       delegateContextChunk: (raw: string) => (raw ? `ctx:${raw}` : undefined),
     });
-    const startP = tools.get('workflow_start')!.execute('t6', { title: 'dyn', nodes: [{ id: 'root', task: 'root' }] });
+    const startP = tools.get('WorkflowStart')!.execute('t6', { title: 'dyn', nodes: [{ id: 'root', task: 'root' }] });
     await new Promise((r) => setTimeout(r, 5)); // let root launch and park on the gate
     const wfId = snapshots[0]!.id; // learn the generated workflow id from the first live snapshot
-    const added = await tools.get('workflow_add_nodes')!.execute('a1', {
+    const added = await tools.get('WorkflowAddNodes')!.execute('a1', {
       workflowId: wfId,
       nodes: [{ id: 'leaf', task: 'leaf', deps: ['root'] }],
     });
@@ -148,7 +148,7 @@ describe('workflow engine', () => {
     expect(launched).toEqual(['root', 'leaf']); // leaf ran only after root was released
     expect(res.content[0]!.text).toMatch(/status: done/);
     // An expansion runs under its OWN tool call ('a1'), but the DAG belongs to the origin's
-    // workflow_start ('t6') — every snapshot must keep naming that row, or the extended workflow would
+    // WorkflowStart ('t6') — every snapshot must keep naming that row, or the extended workflow would
     // fork a second, phantom marker in the transcript.
     expect(snapshots.every((s) => s.toolCallId === 't6')).toBe(true);
   });
@@ -156,7 +156,7 @@ describe('workflow engine', () => {
   it('lets a running node self-expand the workflow from its own subagent session', async () => {
     // A delegated node turn always runs as the anonymous `subagent:subagent` principal (no elowenUserId),
     // NOT the origin principal — so authorization for self-expansion must ride on childSessions membership,
-    // not a principal match. This drives workflow_add_nodes with exactly that node-child context.
+    // not a principal match. This drives WorkflowAddNodes with exactly that node-child context.
     const tools = new Map<string, Tool>();
     const launched: string[] = [];
     const snapshots: { id: string }[] = [];
@@ -180,7 +180,7 @@ describe('workflow engine', () => {
       currentModel: () => ({ provider: 'p', model: 'm' }),
       workflowEmitter: () => (u: { id: string }) => { snapshots.push(u); },
       listModels: async () => [],
-      toolNames: () => ['read_file'],
+      toolNames: () => ['Read'],
     };
     // Faithful principalOf (mirrors plugins/subagent/index.mjs): elowenUserId → elowen:N, else platform:userId.
     const principalOf = (id: { elowenUserId?: number; platform?: string; userId?: string } | null) =>
@@ -190,20 +190,20 @@ describe('workflow engine', () => {
       principalOf,
       delegateContextChunk: (raw: string) => (raw ? `ctx:${raw}` : undefined),
     });
-    const startP = tools.get('workflow_start')!.execute('t7', { nodes: [{ id: 'root', task: 'root' }] });
+    const startP = tools.get('WorkflowStart')!.execute('t7', { nodes: [{ id: 'root', task: 'root' }] });
     await new Promise((r) => setTimeout(r, 5));
     const wfId = snapshots[0]!.id;
-    // Now the RUNNING node calls workflow_add_nodes from its own subagent turn.
+    // Now the RUNNING node calls WorkflowAddNodes from its own subagent turn.
     sessionId = 's-root';
     identity = { platform: 'subagent', userId: 'subagent' };
-    const added = await tools.get('workflow_add_nodes')!.execute('a1', {
+    const added = await tools.get('WorkflowAddNodes')!.execute('a1', {
       workflowId: wfId,
       nodes: [{ id: 'leaf', task: 'leaf', deps: ['root'] }],
     });
     expect(added.content[0]!.text).toMatch(/Added 1 node.*leaf/);
     // A foreign subagent session (not part of this workflow) must still be refused.
     sessionId = 's-stranger';
-    const denied = await tools.get('workflow_add_nodes')!.execute('a2', { workflowId: wfId, nodes: [{ id: 'x', task: 'x' }] });
+    const denied = await tools.get('WorkflowAddNodes')!.execute('a2', { workflowId: wfId, nodes: [{ id: 'x', task: 'x' }] });
     expect(denied.content[0]!.text).toMatch(/no running workflow/);
     releaseRoot();
     const res = await startP;
@@ -213,7 +213,7 @@ describe('workflow engine', () => {
 
   it('rejects an invalid DAG without launching anything', async () => {
     const { tools, launched } = harness();
-    const res = await tools.get('workflow_start')!.execute('t5', {
+    const res = await tools.get('WorkflowStart')!.execute('t5', {
       nodes: [{ id: 'a', task: 'a', deps: ['ghost'] }],
     });
     expect(res.content[0]!.text).toMatch(/Error:/);

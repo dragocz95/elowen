@@ -100,9 +100,10 @@ const bounded = (value: string, max: number): string => value.length <= max ? va
 
 // Bounds for a persisted workflow snapshot, mirroring the engine's own limits (dag.mjs MAX_NODES /
 // MAX_ID_CHARS, workflow.mjs SNAPSHOT_TASK_PREVIEW). The whole DAG re-fans on every tool event of every
-// node, so an unbounded blob would be a write amplifier as much as a DoS: 64 nodes x ~1.2k caps a row
-// near 77k. `task` allows the preview plus its ellipsis; `detail` is one "tool + arg" line, so it gets
-// far less room than a sub-agent's 2k -- 64 of those at that size would be 128k per snapshot.
+// node, so an unbounded blob would be a write amplifier as much as a DoS: `deps` dominates the ceiling,
+// since every node may name every other, so 64 nodes x ~5.4k caps a row near 350k. `task` allows the
+// preview plus its ellipsis; `detail` is one "tool + arg" line, so it gets far less room than a
+// sub-agent's 2k -- 64 of those at that size would be 128k per snapshot.
 const MAX_WORKFLOW_NODES = 64;
 const MAX_WORKFLOW_ID_CHARS = 64;
 const MAX_WORKFLOW_TASK_CHARS = 600;
@@ -737,7 +738,7 @@ export class BrainStore {
     return out;
   }
 
-  /** Persist the newest whole-DAG snapshot for one `workflow_start` tool call. Synchronous for the same
+  /** Persist the newest whole-DAG snapshot for one `WorkflowStart` tool call. Synchronous for the same
    *  reason as upsertSubagentRun: the live event must never race ahead of the durable state a reconnect
    *  reads. The origin session must exist, and a tool call is permanently bound to its first workflow id.
    *
@@ -1064,6 +1065,11 @@ export class BrainStore {
       for (const r of keep) {
         insert.run({ id: r.id, session_id: sessionId, parent_id: r.parent_id, role: r.role, content: r.content, created_at: r.created_at });
       }
+      // Markers annotate turns, so they die with the turns they annotate. Both tables stamp `datetime('now')`,
+      // so this compares chronologically; `<` keeps any marker sharing the oldest kept row's second. Without
+      // it a summarized-away marker outlives its turn and, being older than the divider, renders ABOVE it —
+      // annotating a turn the reader can no longer see.
+      this.db.prepare('DELETE FROM brain_session_events WHERE session_id = ? AND created_at < ?').run(sessionId, summaryTs);
     })();
   }
 

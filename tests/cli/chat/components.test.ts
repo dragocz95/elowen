@@ -330,7 +330,7 @@ describe('chat components', () => {
 });
 
 describe('SubagentPanel', () => {
-  const running = { sessionId: 'brain-ch-subagent-a', task: 'research the config layer', status: 'running' as const, detail: 'read_file src/a.ts', tools: 2, tokens: 12000, seconds: 8 };
+  const running = { sessionId: 'brain-ch-subagent-a', task: 'research the config layer', status: 'running' as const, detail: 'Read src/a.ts', tools: 2, tokens: 12000, seconds: 8 };
 
   it('renders active result inbox entries with icon-only lifecycle state', () => {
     const p = new SubagentPanel();

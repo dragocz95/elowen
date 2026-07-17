@@ -72,7 +72,7 @@ export const subagentSendSchema = z.object({
   text: z.string().min(1).max(32_000),
 });
 
-/** The user's answer to a parked ask_user_question (POST /brain/answer). `id` is the question id carried
+/** The user's answer to a parked AskUserQuestion (POST /brain/answer). `id` is the question id carried
  *  on the `ask` event; `answers` holds one entry per question with the picked label(s) + optional free
  *  text. Bounds mirror the tool schema (≤4 questions, each with a handful of picks). */
 export const brainAnswerSchema = z.object({

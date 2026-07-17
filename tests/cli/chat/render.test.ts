@@ -30,13 +30,13 @@ describe('chat transcript model', () => {
   it('groups consecutive tool calls into one tools segment', () => {
     const model = new TranscriptModel();
     model.apply({ type: 'tool', name: 'grep' });
-    model.apply({ type: 'tool', name: 'read_file' });
+    model.apply({ type: 'tool', name: 'Read' });
     const turn = lastTurn(model);
     expect(turn.role === 'elowen' && turn.segments).toEqual([{
       kind: 'tools',
       items: [
         { name: 'grep', detail: undefined, icon: undefined },
-        { name: 'read_file', detail: undefined, icon: undefined },
+        { name: 'Read', detail: undefined, icon: undefined },
       ],
     }]);
   });
@@ -66,7 +66,7 @@ describe('chat transcript model', () => {
 
   it('attaches tool output to the most recent tool call', () => {
     const model = new TranscriptModel();
-    model.apply({ type: 'tool', name: 'run_command', detail: 'npm test' });
+    model.apply({ type: 'tool', name: 'Bash', detail: 'npm test' });
     const output = {
       title: 'console output', kind: 'console' as const, text: 'Tests 4 passed', command: 'npm test',
       status: 'exit 0', tone: 'success' as const,
@@ -74,13 +74,13 @@ describe('chat transcript model', () => {
     model.apply({ type: 'tool_output', output });
     const turn = lastTurn(model);
     expect(turn.role === 'elowen' && turn.segments).toEqual([{
-      kind: 'tools', items: [{ name: 'run_command', detail: 'npm test', icon: undefined, output }],
+      kind: 'tools', items: [{ name: 'Bash', detail: 'npm test', icon: undefined, output }],
     }]);
   });
 
   it('threads the verbatim start command into an output that carries no command', () => {
     const model = new TranscriptModel();
-    model.apply({ type: 'tool', name: 'run_command', detail: 'mkdir -p build', command: 'mkdir -p build', id: 'x' });
+    model.apply({ type: 'tool', name: 'Bash', detail: 'mkdir -p build', command: 'mkdir -p build', id: 'x' });
     model.apply({ type: 'tool_output', id: 'x', output: { title: 'console output', kind: 'console', text: '', status: 'done' } });
     const turn = lastTurn(model);
     const item = turn.role === 'elowen' && turn.segments[0]?.kind === 'tools' ? turn.segments[0].items[0] : null;
@@ -90,7 +90,7 @@ describe('chat transcript model', () => {
 
   it('does not overwrite a command the output already carries', () => {
     const model = new TranscriptModel();
-    model.apply({ type: 'tool', name: 'run_command', command: 'a', id: 'y' });
+    model.apply({ type: 'tool', name: 'Bash', command: 'a', id: 'y' });
     model.apply({ type: 'tool_output', id: 'y', output: { title: 'console output', kind: 'console', text: 'x', command: 'b' } });
     const turn = lastTurn(model);
     const item = turn.role === 'elowen' && turn.segments[0]?.kind === 'tools' ? turn.segments[0].items[0] : null;

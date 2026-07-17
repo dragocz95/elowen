@@ -1,4 +1,4 @@
-// ask_user_question reply parsing (numbered text menus — see the buttons caveat in index.mjs).
+// AskUserQuestion reply parsing (numbered text menus — see the buttons caveat in index.mjs).
 /** Parse a text reply to a single parked ask question. Pure — exported for tests. Returns
  *  `{ kind: 'picks', labels }` for a valid number (or comma list on a multiSelect question),
  *  `{ kind: 'other', text }` for free text when the question allows it (`custom !== false`,

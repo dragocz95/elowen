@@ -288,7 +288,7 @@ export class LiveMessage {
     this.a = adapter;
     this.channelId = channelId;
     this.replyToId = replyToId; // the triggering message — the answer bubble is a real reply to it
-    this.askerId = askerId;     // who to route an ask_user_question prompt to (and gate its answer on)
+    this.askerId = askerId;     // who to route an AskUserQuestion prompt to (and gate its answer on)
     this.display = display ?? resolveDisplaySettings(adapter.cfg);
     this.toolCalls = []; // lifecycle rows in display order
     this.toolById = new Map(); // PI toolCallId → row (parallel-safe completion/progress updates)
@@ -464,7 +464,7 @@ export class LiveMessage {
       this.step = e.step; this.maxSteps = e.maxSteps;
       this.renderProgress();
     } else if (e.type === 'ask' && Array.isArray(e.questions)) {
-      // The turn parked on ask_user_question — post the interactive choice message (fire-and-forget; the
+      // The turn parked on AskUserQuestion — post the interactive choice message (fire-and-forget; the
       // turn stays blocked in the tool until the user answers via a component/text interaction).
       void this.a.postAsk(this.channelId, this.replyToId, this.askerId, e.id, e.questions).catch(() => {});
     } else if (e.type === 'idle') {

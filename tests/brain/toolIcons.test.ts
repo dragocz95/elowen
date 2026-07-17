@@ -10,16 +10,16 @@ function resolver(pluginIcons: Record<string, string> = {}) {
 }
 
 describe('makeToolIconResolver — the single tool→icon source', () => {
-  it('resolves built-in tools by prefix (elowen_*, memory_*)', () => {
+  it('resolves built-in tools by prefix (Elowen*, Memory*)', () => {
     const r = resolver();
-    expect(r('elowen_list_tasks')).toBe('🔥');
-    expect(r('memory_search')).toBe('🧠');
+    expect(r('ElowenListTasks')).toBe('🔥');
+    expect(r('MemorySearch')).toBe('🧠');
   });
 
   it('resolves plugin manifest icons — exact and prefix', () => {
-    const r = resolver({ ask_user_question: '❓', 'discord_*': '💬' });
-    expect(r('ask_user_question')).toBe('❓');
-    expect(r('discord_list_channels')).toBe('💬');
+    const r = resolver({ AskUserQuestion: '❓', 'Discord*': '💬' });
+    expect(r('AskUserQuestion')).toBe('❓');
+    expect(r('DiscordListChannels')).toBe('💬');
   });
 
   it('an exact entry wins over a prefix entry', () => {
@@ -29,8 +29,8 @@ describe('makeToolIconResolver — the single tool→icon source', () => {
   });
 
   it('a plugin entry overrides a built-in for the same key', () => {
-    const r = resolver({ 'elowen_*': '🎯' });
-    expect(r('elowen_plan')).toBe('🎯');
+    const r = resolver({ 'Elowen*': '🎯' });
+    expect(r('ElowenPlan')).toBe('🎯');
   });
 
   it('returns undefined for an unknown tool (client applies its own generic glyph)', () => {

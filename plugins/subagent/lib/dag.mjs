@@ -59,7 +59,7 @@ function normalizeNode(raw, knownIds) {
   return { node };
 }
 
-/** Validate + normalize a fresh node list for `workflow_start`. Enforces: non-empty, bounded size,
+/** Validate + normalize a fresh node list for `WorkflowStart`. Enforces: non-empty, bounded size,
  *  unique ids, known deps, no self-loop, and an acyclic graph. Returns `{ nodes }` or `{ error }`. */
 export function validateWorkflowNodes(raw) {
   if (!Array.isArray(raw) || raw.length === 0) return { error: 'a workflow needs at least one node' };

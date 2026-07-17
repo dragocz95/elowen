@@ -38,7 +38,7 @@ export interface LspStepDeps {
 const defaultDeps: LspStepDeps = { exists: commandExists, install: (ctx) => installTsServer(ctx) };
 
 /** Step 5 — code intelligence. Offers to install the TypeScript language server globally so the agent
- *  can type-check its own edits (the lsp_diagnostics tool) out of the box. Local-only (no daemon call)
+ *  can type-check its own edits (the LspDiagnostics tool) out of the box. Local-only (no daemon call)
  *  and fully optional. */
 export async function runLspStep(ctx: WizardCtx, deps: LspStepDeps = defaultDeps): Promise<StepResult> {
   p.note('Elowen can type-check its own edits live through language servers (LSP). Optional.', 'Code intelligence');

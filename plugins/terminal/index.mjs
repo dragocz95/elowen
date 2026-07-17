@@ -16,7 +16,7 @@ const DEFAULT_TIMEOUT_MS = 120_000;      // foreground runs get killed after thi
 // ceiling — anything longer belongs in the background, where nothing kills it.
 const MAX_TIMEOUT_S = 600;
 const MIN_TIMEOUT_S = 1;
-// Blocking `read_process_output` — wait for a background process to finish instead of polling it. Capped
+// Blocking `ProcessOutput` — wait for a background process to finish instead of polling it. Capped
 // well under the foreground ceiling: a blocked read holds the agent's turn open, and the process keeps
 // running after a timeout, so the caller can simply block again.
 const DEFAULT_BLOCK_S = 30;
@@ -197,13 +197,13 @@ export function register(ctx) {
     : ok('Error: terminal tools are only available to the operator.'));
 
   ctx.registerTool(defineTool({
-    name: 'run_command', label: 'Run command',
+    name: 'Bash', label: 'Run command',
     description: [
       'Execute a shell command and return its output.',
       'The working directory is confined to your accessible repositories. Use absolute paths — `cd` inside a compound command is unreliable and can shift context unexpectedly. Shell state (env vars, functions) does not persist between calls; the shell is initialized fresh each time.',
-      'Prefer the dedicated file tools (read_file, edit_file, write_file, search_files, list_dir) over cat, head, tail, sed, awk or echo. Reach for the shell when the task genuinely needs it: builds, tests, git, service inspection, process management.',
+      'Prefer the dedicated file tools (Read, Edit, Write, Search, ListDir) over cat, head, tail, sed, awk or echo. Reach for the shell when the task genuinely needs it: builds, tests, git, service inspection, process management.',
       `Foreground runs are killed after ${Math.round(DEFAULT_TIMEOUT_MS / 1000)} s; raise it with \`timeout\` (seconds, max ${MAX_TIMEOUT_S}) for a slow but finite command such as an install or a full build.`,
-      'Pass background=true for open-ended work (dev servers, watchers) — it runs detached and returns a process id with no time limit. Manage those with list_processes / read_process_output / kill_process, and use backgroundMode="service" for a long-lived process that should never be collected as a finite job.',
+      'Pass background=true for open-ended work (dev servers, watchers) — it runs detached and returns a process id with no time limit. Manage those with ListProcesses / ProcessOutput / KillProcess, and use backgroundMode="service" for a long-lived process that should never be collected as a finite job.',
       'A denied or blocked command means a permission rule stopped it — adjust the approach, do not retry it verbatim. Keep secrets out of command lines and output.',
     ].join(' '),
     parameters: Type.Object({
@@ -231,7 +231,7 @@ export function register(ctx) {
           // Stream the rolling output tail live as it runs. `onUpdate` is PI's 4th execute argument (the
           // agent loop passes it, forwarded verbatim through the Elowen tool wrappers); each call emits a
           // `tool_execution_update` the daemon maps to a throttled `tool_progress` event. Absent for callers
-          // that don't stream (background path never uses it — it has read_process_output instead).
+          // that don't stream (background path never uses it — it has ProcessOutput instead).
           const onProgress = onUpdate ? (text) => onUpdate(ok(text)) : undefined;
           return ok(await runForeground(p.command, cwd, outputCap, timeoutMs, onProgress));
         }
@@ -249,14 +249,14 @@ export function register(ctx) {
         const bg = new BgProcess(id, p.command, cwd, outputCap, () => { emitProcCard(sessionId); ctx.processes.markExited(id); });
         ctx.processes.register(handleFor(id, bg, userId, sessionId, p.backgroundMode === 'service' ? 'service' : 'job'));
         emitProcCard();
-        return ok(`Started background process ${id}: ${p.command}\n(cwd: ${cwd})\nUse read_process_output("${id}") to check on it.`);
+        return ok(`Started background process ${id}: ${p.command}\n(cwd: ${cwd})\nUse ProcessOutput("${id}") to check on it.`);
       } catch (e) { return fail(e); }
     },
   }));
 
   ctx.registerTool(defineTool({
-    name: 'list_processes', label: 'List processes',
-    description: 'List background processes started with run_command(background=true).',
+    name: 'ListProcesses', label: 'List processes',
+    description: 'List background processes started with Bash(background=true).',
     parameters: Type.Object({}),
     execute: async () => {
       const denied = denyNonOwner();
@@ -271,16 +271,16 @@ export function register(ctx) {
   }));
 
   ctx.registerTool(defineTool({
-    name: 'read_process_output', label: 'Read process output',
+    name: 'ProcessOutput', label: 'Read process output',
     description: [
-      'Read the output (stdout + stderr) of a background process started with run_command(background=true).',
+      'Read the output (stdout + stderr) of a background process started with Bash(background=true).',
       'By default this returns only what was written SINCE your last read and does not wait — the process keeps running.',
       'Pass all=true for the whole buffer from process start.',
       `Pass block=true to WAIT for the process to finish instead of polling: the call returns as soon as it exits, or after \`timeout\` seconds (default ${DEFAULT_BLOCK_S}, max ${MAX_BLOCK_S}) with the output so far and a note that it is still running. Use it whenever you need a finite command's result — never call this in a polling loop.`,
-      'The process id comes from the run_command call that started it; use list_processes if you did not start it yourself. This tool is only for shell processes — a background sub-agent result comes back through delegate_result.',
+      'The process id comes from the Bash call that started it; use ListProcesses if you did not start it yourself. This tool is only for shell processes — a background sub-agent result comes back through DelegateResult.',
     ].join(' '),
     parameters: Type.Object({
-      id: Type.String({ description: 'Process id returned by run_command(background=true)' }),
+      id: Type.String({ description: 'Process id returned by Bash(background=true)' }),
       all: Type.Optional(Type.Boolean({ description: 'Return the whole buffer instead of just new output' })),
       block: Type.Optional(Type.Boolean({ description: 'Wait for the process to finish before returning (default false).' })),
       timeout: Type.Optional(Type.Number({ description: `Seconds to wait when block=true (default ${DEFAULT_BLOCK_S}, max ${MAX_BLOCK_S}). Ignored otherwise.` })),
@@ -313,7 +313,7 @@ export function register(ctx) {
   }));
 
   ctx.registerTool(defineTool({
-    name: 'kill_process', label: 'Kill process',
+    name: 'KillProcess', label: 'Kill process',
     description: 'Kill a background process by id.',
     parameters: Type.Object({ id: Type.String() }),
     execute: async (_id, p) => {
@@ -327,5 +327,5 @@ export function register(ctx) {
     },
   }));
 
-  ctx.logger.info('registered run_command (+background), list/read/kill process tools');
+  ctx.logger.info('registered Bash (+background), list/read/kill process tools');
 }

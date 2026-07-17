@@ -233,7 +233,7 @@ export class GoalLoopService {
     const progress = parseProgress(assistantText) || row.last_evidence; // keep the prior note if none this turn
 
     // Blocked: the model declared an unresolvable blocker — pause for the operator instead of looping the
-    // budget away. (There is no `waiting_for_user` pause: an ask_user_question parks INSIDE session.prompt(),
+    // budget away. (There is no `waiting_for_user` pause: an AskUserQuestion parks INSIDE session.prompt(),
     // so by the time this judge runs the question is always resolved/timed-out.)
     const blocked = judgeGoalBlocked(assistantText);
     if (blocked.blocked) {

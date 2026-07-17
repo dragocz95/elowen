@@ -33,10 +33,10 @@ my-plugin/
   "description": "Adds a small example tool.",
   "entry": "index.mjs",
   "provides": {
-    "tools": ["my_tool"]
+    "tools": ["MyTool"]
   },
   "icons": {
-    "my_tool": "✨"
+    "MyTool": "✨"
   },
   "configSchema": [
     {
@@ -69,7 +69,7 @@ const text = (value) => ({ content: [{ type: 'text', text: value }], details: {}
 
 export function register(ctx) {
   ctx.registerTool(defineTool({
-    name: 'my_tool',
+    name: 'MyTool',
     label: 'Example tool',
     description: 'Returns the supplied text.',
     parameters: Type.Object({
@@ -86,6 +86,39 @@ Use the PI `defineTool` and TypeBox `parameters` pattern used by bundled
 plugins. Return a normal PI tool result rather than inventing a separate
 transport format.
 
+Name tools in **TitleCase** (`MyTool`, `ReadFile`), matching the bundled
+plugins. Prefix a family that belongs to one service (`GithubListIssues`,
+`GithubCreatePr`) so a manifest can give the whole family one icon with a
+`Github*` pattern — icon and output-visibility patterns are matched
+case-sensitively from the start of the name.
+
+A tool name is not a private identifier: it is durable in a user's saved
+permission rules and tool deny-list, and it is emitted on the event stream.
+Renaming one silently voids the rules a user already saved for it, so pick the
+name before the first release rather than after.
+
+### Plan mode (`planSafe`)
+
+Plan mode lets the agent work out an approach before it touches anything, so it
+withholds every tool that is not declared plan-safe:
+
+```json
+"provides": { "tools": ["GithubListIssues", "GithubCloseIssue"] },
+"planSafe": ["GithubListIssues"]
+```
+
+The bar is: **it must not change anything outside the conversation.** No writes
+to the user's files or services, no messages sent, nothing deleted, no
+sub-agents spawned. Reading, listing and reporting qualify; so does a tool that
+only writes the agent's own scratch state, such as a todo checklist. Undeclared
+is the safe default — the tool is simply not offered while the agent plans.
+
+Two rules the registry enforces. `planSafe` takes **exact names only, never a
+`prefix*`** — plan-safety does not run in families (`GithubListIssues` is safe,
+`GithubCloseIssue` is not), and a pattern here is how you would hand Plan mode a
+destructive tool by accident. And a name is ignored unless it also appears in
+your `provides.tools`, so a manifest can only vouch for its own tools.
+
 ## Manifest fields
 
 | Field | Meaning |
@@ -95,6 +128,7 @@ transport format.
 | `icons` | Per-tool display icons |
 | `icon` | Optional relative SVG path; defaults to `icon.svg` when present |
 | `showOutput` | Exact tool names or `prefix*` patterns whose successful output appears in chat |
+| `planSafe` | Exact tool names Plan mode may offer — they change nothing outside the conversation |
 | `configSchema` | Array of settings fields rendered in the plugin UI |
 | `capabilities` | Explicit runtime permissions for hooks and shared reads |
 

@@ -97,7 +97,7 @@ export function registerBrainRoutes(app: ElowenApp, ctx: RouteContext): void {
     return c.json({ deleted: d.brain.deleteManagedSession(c.get('user').id, c.req.param('id')) });
   });
 
-  // Background processes (terminal plugin's `run_command(background:true)` children) — the panel next to
+  // Background processes (terminal plugin's `Bash(background:true)` children) — the panel next to
   // the todos lists them, reads output for the modal, and kills on demand. OWNER-only (not merely admin):
   // the underlying shell reads any absolute path — secrets, the config DB — exactly like the terminal tools
   // that spawn these (owner-only there). A second admin is admin-but-not-owner and must not see the buffers.
@@ -500,7 +500,7 @@ export function registerBrainRoutes(app: ElowenApp, ctx: RouteContext): void {
     catch { return c.json({ error: 'unknown session' }, 404); }
   });
 
-  // Answer a parked ask_user_question. Deliberately bypasses the per-turn send() lock (the parked turn
+  // Answer a parked AskUserQuestion. Deliberately bypasses the per-turn send() lock (the parked turn
   // holds it) — it just resolves the registry Promise, so it never deadlocks. An unknown/expired id is a
   // tolerated no-op (matched:false) rather than an error, so a late double-click is harmless.
   app.post('/brain/answer', async c => {

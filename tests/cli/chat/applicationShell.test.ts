@@ -969,7 +969,7 @@ describe('chat application shell ownership', () => {
 
   it('uses Ctrl+B to detach a foreground sub-agent without aborting the parent turn', async () => {
     const h = compositionHarness({ columns: 100, rows: 24, turns: 3 });
-    h.rt.transcript.apply({ type: 'tool', id: 'delegate-fg', name: 'delegate', detail: 'inspect slowly' });
+    h.rt.transcript.apply({ type: 'tool', id: 'delegate-fg', name: 'Delegate', detail: 'inspect slowly' });
     h.rt.transcript.apply({
       type: 'subagent', id: 'delegate-fg', sessionId: 'brain-ch-subagent-fg', status: 'running',
       task: 'inspect slowly', tools: 1, seconds: 3, background: false,

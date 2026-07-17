@@ -90,7 +90,7 @@ export interface LoadPluginsOptions {
   /** The LIVE embedding config mapper (Settings → Memory), read on each embed so a model change applies
    *  without a reload. Pairs with `embeddings` above. */
   embeddingConfig?: () => EmbeddingConfig;
-  /** Deliver a parked ask_user_question answer, exposed to plugins as ctx.answerQuestion() — for
+  /** Deliver a parked AskUserQuestion answer, exposed to plugins as ctx.answerQuestion() — for
    *  interactive transports (Discord) that gather the pick out-of-band. */
   answerQuestion?: (id: string, answers: AskAnswer[]) => boolean;
   /** The operator's configured IANA timezone, exposed to plugins as ctx.timezone(). Read live. */
@@ -143,6 +143,7 @@ export async function loadPlugins(opts: LoadPluginsOptions): Promise<PluginRegis
         registry.setCapabilities(name, manifest.capabilities ?? {});
         registry.setIcons(manifest.icons);
         registry.setShowOutput(manifest.showOutput);
+        registry.setPlanSafe(manifest.planSafe, manifest.provides, (m) => opts.logger.warn(`[plugin:${name}] ${m}`));
         loaded.add(name);
         opts.logger.info(`plugin loaded: ${name}@${manifest.version}`);
       } catch (err) {

@@ -44,7 +44,7 @@ describe('LiveEventReplay', () => {
     replay.publish({ type: 'tool_progress', id: 'run', text: 'two' });
     expect(replay.snapshot().events).toEqual([{ type: 'tool_progress', id: 'run', text: 'two' }]);
 
-    for (let i = 0; i < 700; i++) replay.publish({ type: 'tool', id: `t${i}`, name: 'read_file' });
+    for (let i = 0; i < 700; i++) replay.publish({ type: 'tool', id: `t${i}`, name: 'Read' });
     expect(replay.snapshot().events.length).toBeLessThanOrEqual(512);
   });
 
@@ -134,7 +134,7 @@ describe('LiveEventReplay', () => {
     expect(first).toMatchObject({ run: 1, events: [{ type: 'text', delta: 'one' }], eventCursors: [1] });
     expect(JSON.stringify(first.events[0])).toBe('{"type":"text","delta":"one"}');
 
-    for (let i = 0; i < 600; i++) replay.publish({ type: 'tool', id: `t${i}`, name: 'read_file' });
+    for (let i = 0; i < 600; i++) replay.publish({ type: 'tool', id: `t${i}`, name: 'Read' });
     expect(replay.transportSnapshot().truncated).toBe(true);
   });
 });

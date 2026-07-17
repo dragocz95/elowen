@@ -29,23 +29,23 @@ describe('files plugin', () => {
   });
 
   it('registers read/write/edit/list tools', () => {
-    expect(reg.tools.map((t) => t.name).sort()).toEqual(['edit_file', 'file_info', 'git_status', 'list_dir', 'read_file', 'search_files', 'write_file']);
+    expect(reg.tools.map((t) => t.name).sort()).toEqual(['Edit', 'FileInfo', 'GitStatus', 'ListDir', 'Read', 'Search', 'Write']);
   });
 
   it('reads a file inside an allowed root', async () => {
-    const res = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'read_file', { path: join(dir, 'hello.txt') }));
+    const res = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Read', { path: join(dir, 'hello.txt') }));
     expect(res.content[0].text).toContain('hello world');
   });
 
   it('writes then reads back inside an allowed root', async () => {
-    await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'write_file', { path: join(dir, 'out.txt'), content: 'written' }));
+    await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Write', { path: join(dir, 'out.txt'), content: 'written' }));
     expect(readFileSync(join(dir, 'out.txt'), 'utf-8')).toBe('written');
   });
 
-  it('edit_file replaces a unique snippet and returns a numbered diff plus a unified patch', async () => {
+  it('Edit replaces a unique snippet and returns a numbered diff plus a unified patch', async () => {
     const f = join(dir, 'edit.txt');
     writeFileSync(f, 'line one\nline two\nline three');
-    const res = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'edit_file', { path: f, oldText: 'line two', newText: 'line 2' }));
+    const res = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Edit', { path: f, oldText: 'line two', newText: 'line 2' }));
     expect(res.content[0].text).toContain('1 replacement');
     expect(readFileSync(f, 'utf-8')).toBe('line one\nline 2\nline three');
     const details = (res as { details?: { diff?: string; patch?: string; replacements?: number } }).details ?? {};
@@ -57,56 +57,56 @@ describe('files plugin', () => {
     expect(details.patch).toContain('+line 2');
   });
 
-  it('edit_file refuses an ambiguous match unless replaceAll is set', async () => {
+  it('Edit refuses an ambiguous match unless replaceAll is set', async () => {
     const f = join(dir, 'multi.txt');
     writeFileSync(f, 'dup\ndup\n');
-    const res = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'edit_file', { path: f, oldText: 'dup', newText: 'x' }));
+    const res = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Edit', { path: f, oldText: 'dup', newText: 'x' }));
     expect(res.content[0].text).toMatch(/matches 2 times/);
-    await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'edit_file', { path: f, oldText: 'dup', newText: 'x', replaceAll: true }));
+    await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Edit', { path: f, oldText: 'dup', newText: 'x', replaceAll: true }));
     expect(readFileSync(f, 'utf-8')).toBe('x\nx\n');
   });
 
-  it('edit_file replaceAll rewrites every occurrence (multi-edit) and counts them', async () => {
+  it('Edit replaceAll rewrites every occurrence (multi-edit) and counts them', async () => {
     const f = join(dir, 'multi2.txt');
     writeFileSync(f, 'x\ny\nx\nz\nx\n');
-    const res = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'edit_file', { path: f, oldText: 'x', newText: 'Q', replaceAll: true }));
+    const res = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Edit', { path: f, oldText: 'x', newText: 'Q', replaceAll: true }));
     expect(readFileSync(f, 'utf-8')).toBe('Q\ny\nQ\nz\nQ\n');
     expect((res as { details?: { replacements?: number } }).details?.replacements).toBe(3);
   });
 
-  it('edit_file fuzzy-matches smart quotes while preserving the other lines byte-for-byte', async () => {
+  it('Edit fuzzy-matches smart quotes while preserving the other lines byte-for-byte', async () => {
     const f = join(dir, 'fuzzy.txt');
     // The target line uses curly quotes; oldText is supplied with straight ASCII quotes.
     writeFileSync(f, 'const a = 1;\nconst s = “hello”;\nconst b = 2;');
-    const res = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'edit_file', { path: f, oldText: 'const s = "hello";', newText: 'const s = "world";' }));
+    const res = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Edit', { path: f, oldText: 'const s = "hello";', newText: 'const s = "world";' }));
     expect(res.content[0].text).toContain('1 replacement');
     expect(readFileSync(f, 'utf-8')).toBe('const a = 1;\nconst s = "world";\nconst b = 2;');
   });
 
-  it('edit_file preserves CRLF line endings across an edit', async () => {
+  it('Edit preserves CRLF line endings across an edit', async () => {
     const f = join(dir, 'crlf.txt');
     writeFileSync(f, 'a\r\nb\r\nc');
-    await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'edit_file', { path: f, oldText: 'b', newText: 'X' }));
+    await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Edit', { path: f, oldText: 'b', newText: 'X' }));
     expect(readFileSync(f, 'utf-8')).toBe('a\r\nX\r\nc');
   });
 
-  it('write_file carries a diff and unified patch for overwrites and new files', async () => {
+  it('Write carries a diff and unified patch for overwrites and new files', async () => {
     const f = join(dir, 'ow.txt');
     writeFileSync(f, 'a\nb\nc');
-    const res = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'write_file', { path: f, content: 'a\nX\nc' }));
+    const res = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Write', { path: f, content: 'a\nX\nc' }));
     const details = (res as { details?: { diff?: string; patch?: string } }).details ?? {};
     expect(details.diff).toContain('-2 b');
     expect(details.diff).toContain('+2 X');
     expect(details.patch).toContain('@@');
     expect(details.patch).toContain('+X');
-    const fresh = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'write_file', { path: join(dir, 'new.txt'), content: 'n1\nn2' }));
+    const fresh = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Write', { path: join(dir, 'new.txt'), content: 'n1\nn2' }));
     const freshDiff = (fresh as { details?: { diff?: string } }).details?.diff ?? '';
     expect(freshDiff).toContain('+1 n1');
     expect(freshDiff).toContain('+2 n2');
   });
 
   it('refuses a path outside the allowed roots', async () => {
-    const res = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'read_file', { path: '/etc/hostname' }));
+    const res = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Read', { path: '/etc/hostname' }));
     expect(res.content[0].text).toMatch(/not allowed/);
   });
 
@@ -116,8 +116,8 @@ describe('files plugin', () => {
     // FIFO per file: the first-dispatched write lands first, so the second sees it ('one') as its diff
     // baseline instead of the original 'zero' — proving the read-modify-write was serialized, not raced.
     const [, rb] = await runWithPolicy(userPolicy([dir]), () => Promise.all([
-      runTool(reg, 'write_file', { path: f, content: 'one' }),
-      runTool(reg, 'write_file', { path: f, content: 'two' }),
+      runTool(reg, 'Write', { path: f, content: 'one' }),
+      runTool(reg, 'Write', { path: f, content: 'two' }),
     ]));
     const diffB = (rb as { details?: { diff?: string } }).details?.diff ?? '';
     expect(diffB).toContain('-1 one');
@@ -125,25 +125,25 @@ describe('files plugin', () => {
     expect(readFileSync(f, 'utf-8')).toBe('two');
   });
 
-  it('read_file paginates with offset/limit and hints how to continue', async () => {
+  it('Read paginates with offset/limit and hints how to continue', async () => {
     const f = join(dir, 'paged.txt');
     writeFileSync(f, Array.from({ length: 10 }, (_, i) => `line ${i + 1}`).join('\n'));
-    const res = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'read_file', { path: f, offset: 3, limit: 2 }));
+    const res = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Read', { path: f, offset: 3, limit: 2 }));
     const text = res.content[0].text;
     expect(text).toContain('line 3');
     expect(text).toContain('line 4');
     expect(text).not.toContain('line 5');
     expect(text).toContain('Showing lines 3-4 of 10. Use offset=5 to continue.');
     expect((res as { details?: { truncated?: boolean } }).details?.truncated).toBe(true);
-    const beyond = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'read_file', { path: f, offset: 999 }));
+    const beyond = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Read', { path: f, offset: 999 }));
     expect(beyond.content[0].text).toMatch(/beyond end of file/);
   });
 
-  it('read_file returns an image content block with a base64 attachment', async () => {
+  it('Read returns an image content block with a base64 attachment', async () => {
     const f = join(dir, 'pixel.png');
     // 1x1 PNG.
     writeFileSync(f, Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR4nGNgYGAAAAAEAAH2FzhVAAAAAElFTkSuQmCC', 'base64'));
-    const res = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'read_file', { path: f })) as unknown as { content: { type: string; mimeType?: string; data?: string; text?: string }[]; details?: { image?: boolean; mimeType?: string } };
+    const res = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Read', { path: f })) as unknown as { content: { type: string; mimeType?: string; data?: string; text?: string }[]; details?: { image?: boolean; mimeType?: string } };
     expect(res.content[0].type).toBe('text');
     expect(res.content[0].text).toContain('Read image file [image/png]');
     const img = res.content.find((b) => b.type === 'image');
@@ -153,29 +153,29 @@ describe('files plugin', () => {
     expect(res.details?.image).toBe(true);
   });
 
-  it('read_file does not misclassify a text file whose bytes start with an image prefix as an image', async () => {
+  it('Read does not misclassify a text file whose bytes start with an image prefix as an image', async () => {
     // "BM" is the BMP magic prefix but also an ordinary text lead ("BMW…"); a prefix-only sniff would drop
     // this into the image branch and return an "[Image omitted]" stub instead of the file's real text. The
     // full-header validation (isBmp) must reject it so the actual text is read back verbatim.
     const f = join(dir, 'notes.txt');
     writeFileSync(f, 'BMW service log\nline two\n');
-    const res = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'read_file', { path: f })) as unknown as { content: { type: string; text?: string }[]; details?: { image?: boolean } };
+    const res = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Read', { path: f })) as unknown as { content: { type: string; text?: string }[]; details?: { image?: boolean } };
     expect(res.details?.image).toBeFalsy();
     expect(res.content.some((b) => b.type === 'image')).toBe(false);
     expect(res.content[0].text).toContain('BMW service log');
     expect(res.content[0].text).toContain('line two');
   });
 
-  it('read_file reads a text file starting with "GIF" as text, not a broken image (3-byte sniff misfire)', async () => {
+  it('Read reads a text file starting with "GIF" as text, not a broken image (3-byte sniff misfire)', async () => {
     const f = join(dir, 'gifts.txt');
     writeFileSync(f, 'GIFT ideas for the party\nballoons\n');
-    const res = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'read_file', { path: f })) as unknown as { content: { type: string; text?: string }[]; details?: { image?: boolean } };
+    const res = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Read', { path: f })) as unknown as { content: { type: string; text?: string }[]; details?: { image?: boolean } };
     expect(res.details?.image).toBeFalsy();
     expect(res.content.some((b) => b.type === 'image')).toBe(false);
     expect(res.content[0].text).toContain('GIFT ideas for the party');
   });
 
-  it('read_file never emits an image block the API would reject (a BMP is omitted, not sent as image/bmp)', async () => {
+  it('Read never emits an image block the API would reject (a BMP is omitted, not sent as image/bmp)', async () => {
     // Anthropic accepts only jpeg/png/gif/webp. A valid BMP is a real image but resizeImage may hand it back
     // unconverted as image/bmp; the tool must never put image/bmp (or any non-inline type) into an image
     // content block — that would 400 the whole turn. Build a minimal valid 54-byte BMP header.
@@ -190,64 +190,64 @@ describe('files plugin', () => {
     bmp.writeUInt16LE(24, 28);  // bits per pixel
     const f = join(dir, 'pixel.bmp');
     writeFileSync(f, bmp);
-    const res = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'read_file', { path: f })) as unknown as { content: { type: string; mimeType?: string }[]; details?: { image?: boolean; mimeType?: string } };
+    const res = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Read', { path: f })) as unknown as { content: { type: string; mimeType?: string }[]; details?: { image?: boolean; mimeType?: string } };
     const SUPPORTED = new Set(['image/jpeg', 'image/png', 'image/gif', 'image/webp']);
     expect(res.details?.image).toBe(true); // it IS detected as an image…
     // …but any emitted image block must carry an API-supported type — never image/bmp.
     for (const b of res.content) if (b.type === 'image') expect(SUPPORTED.has(b.mimeType ?? '')).toBe(true);
   });
 
-  it('read_file does not report a phantom truncation for a file ending in a newline', async () => {
+  it('Read does not report a phantom truncation for a file ending in a newline', async () => {
     // "l1\nl2\n".split("\n") == ["l1","l2",""] — the trailing "" is not a real line. Reading with a limit
     // that covers the real lines must NOT claim truncation nor hand out a continuation offset that reads back
     // nothing.
     const f = join(dir, 'trail.txt');
     writeFileSync(f, 'l1\nl2\n');
-    const res = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'read_file', { path: f, limit: 2 })) as unknown as { content: { text?: string }[]; details?: { truncated?: boolean } };
+    const res = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Read', { path: f, limit: 2 })) as unknown as { content: { text?: string }[]; details?: { truncated?: boolean } };
     expect(res.details?.truncated).toBe(false);
     expect(res.content[0].text).not.toContain('Use offset=');
     expect(res.content[0].text).toContain('l1');
     expect(res.content[0].text).toContain('l2');
   });
 
-  it('search_files caps a very long match line', async () => {
+  it('Search caps a very long match line', async () => {
     const f = join(dir, 'long.txt');
     writeFileSync(f, `needle ${'y'.repeat(2000)}\n`);
-    const res = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'search_files', { path: dir, query: 'needle', include: 'long.txt' }));
+    const res = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Search', { path: dir, query: 'needle', include: 'long.txt' }));
     const hit = res.content[0].text.split('\n').find((l) => l.includes('needle')) ?? '';
     expect(hit.length).toBeLessThanOrEqual(520);
     expect(hit).toContain('[truncated]');
   });
 
-  it('search_files finds content and file names with structured metadata', async () => {
+  it('Search finds content and file names with structured metadata', async () => {
     mkdirSync(join(dir, 'src'), { recursive: true });
     writeFileSync(join(dir, 'src', 'search-target.ts'), 'export const needle = 42;\n');
     writeFileSync(join(dir, 'src', 'search-target.tsx'), 'export const tsxNeedle = 42;\n');
-    const content = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'search_files', { path: dir, query: 'needle', include: '*.ts' }));
+    const content = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Search', { path: dir, query: 'needle', include: '*.ts' }));
     expect(content.content[0].text).toContain('search-target.ts');
     expect((content as { details?: { ok?: boolean; matches?: number } }).details?.ok).toBe(true);
     expect((content as { details?: { matches?: number } }).details?.matches).toBeGreaterThan(0);
-    const braceGlob = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'search_files', { path: dir, query: 'tsxNeedle', include: '*.{ts,tsx}' }));
+    const braceGlob = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Search', { path: dir, query: 'tsxNeedle', include: '*.{ts,tsx}' }));
     expect(braceGlob.content[0].text).toContain('search-target.tsx');
-    const files = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'search_files', { path: dir, query: 'search-target', mode: 'files' }));
+    const files = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Search', { path: dir, query: 'search-target', mode: 'files' }));
     expect(files.content[0].text).toContain('src/search-target.ts');
   });
 
-  it('file_info reports type and byte size', async () => {
+  it('FileInfo reports type and byte size', async () => {
     const f = join(dir, 'hello.txt');
-    const res = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'file_info', { path: f }));
+    const res = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'FileInfo', { path: f }));
     expect(res.content[0].text).toContain('"type": "file"');
     expect((res as { details?: { bytes?: number } }).details?.bytes).toBeGreaterThan(0);
   });
 
-  it('git_status reports branch and dirty files for an allowed repo', async () => {
+  it('GitStatus reports branch and dirty files for an allowed repo', async () => {
     const repo = mkdtempSync(join(tmpdir(), 'elowen-files-git-'));
     execFileSync('git', ['init', '-b', 'main'], { cwd: repo, stdio: 'ignore' });
     writeFileSync(join(repo, 'tracked.txt'), 'one\n');
     execFileSync('git', ['add', 'tracked.txt'], { cwd: repo, stdio: 'ignore' });
     execFileSync('git', ['-c', 'user.email=a@example.test', '-c', 'user.name=A', 'commit', '-m', 'init'], { cwd: repo, stdio: 'ignore' });
     writeFileSync(join(repo, 'tracked.txt'), 'two\n');
-    const res = await runWithPolicy(userPolicy([repo]), () => runTool(reg, 'git_status', { path: join(repo, 'tracked.txt') }));
+    const res = await runWithPolicy(userPolicy([repo]), () => runTool(reg, 'GitStatus', { path: join(repo, 'tracked.txt') }));
     expect(res.content[0].text).toContain('branch main');
     expect(res.content[0].text).toContain('M tracked.txt');
     expect((res as { details?: { dirtyFiles?: number } }).details?.dirtyFiles).toBe(1);
@@ -272,7 +272,7 @@ describe('files plugin — configurable readCap', () => {
     });
     const f = join(dir, 'big1.txt');
     writeFileSync(f, 'a'.repeat(30_000));
-    const res = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'read_file', { path: f }));
+    const res = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Read', { path: f }));
     const text = res.content[0].text;
     expect(text).toContain('exceeds the'); // single overlong line: byte-limit hint, not line paging
     expect(shownLength(text)).toBe(20_000); // single-line file: byte-slice fallback keeps exactly the cap
@@ -282,13 +282,13 @@ describe('files plugin — configurable readCap', () => {
     const reg = await loadPlugins({ dirs: [join(repoRoot, 'plugins')], enabled: ['files'], logger: log });
     const under = join(dir, 'under.txt');
     writeFileSync(under, 'a'.repeat(30_000));
-    const underRes = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'read_file', { path: under }));
+    const underRes = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Read', { path: under }));
     expect(underRes.content[0].text).not.toContain('\n\n['); // below the 100000 default: untouched
     expect((underRes as { details?: { truncated?: boolean } }).details?.truncated).toBe(false);
 
     const over = join(dir, 'over.txt');
     writeFileSync(over, 'a'.repeat(150_000));
-    const overRes = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'read_file', { path: over }));
+    const overRes = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Read', { path: over }));
     const text = overRes.content[0].text;
     expect(text).toContain('exceeds the');
     expect(shownLength(text)).toBe(100_000);
@@ -302,7 +302,7 @@ describe('files plugin — configurable readCap', () => {
     const f = join(dir, 'lines.txt');
     // 3000 lines of "xxxxxxxxx" (10 bytes incl. newline) => ~30KB, well over the 20KB cap.
     writeFileSync(f, `${Array.from({ length: 3000 }, () => 'x'.repeat(9)).join('\n')}\n`);
-    const res = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'read_file', { path: f }));
+    const res = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Read', { path: f }));
     const text = res.content[0].text;
     expect(text).toContain('Use offset='); // multi-line: line-paging continuation hint
     const shown = text.slice(0, shownLength(text));
@@ -324,14 +324,14 @@ describe('files plugin — configurable searchMaxMatches', () => {
       dirs: [join(repoRoot, 'plugins')], enabled: ['files'], logger: log,
       config: { files: { searchMaxMatches: 50 } },
     });
-    const res = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'search_files', { path: dir, query: 'needle' }));
+    const res = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Search', { path: dir, query: 'needle' }));
     expect((res as { details?: { matches?: number } }).details?.matches).toBe(50);
     expect((res as { details?: { truncated?: boolean } }).details?.truncated).toBe(true);
   });
 
   it('unset searchMaxMatches reproduces the default 200-match cap exactly', async () => {
     const reg = await loadPlugins({ dirs: [join(repoRoot, 'plugins')], enabled: ['files'], logger: log });
-    const res = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'search_files', { path: dir, query: 'needle' }));
+    const res = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Search', { path: dir, query: 'needle' }));
     expect((res as { details?: { matches?: number } }).details?.matches).toBe(200);
     expect((res as { details?: { truncated?: boolean } }).details?.truncated).toBe(true);
   });

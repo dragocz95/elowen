@@ -112,9 +112,11 @@ function mapResult(res) {
   return { content, details: { ok: !res?.isError, isError: !!res?.isError } };
 }
 
-/** Register one remote MCP tool as a native brain tool (namespaced `mcp_<server>_<tool>`). */
+/** Register one remote MCP tool as a native brain tool (namespaced `mcp__<server>__<tool>`).
+ *  Double separators on purpose: a sanitized server or tool name may itself contain `_`, so the old
+ *  single-underscore form could not be split back apart unambiguously. */
 function registerBridgedTool(ctx, client, serverName, tool) {
-  const name = `mcp_${sanitize(serverName)}_${sanitize(tool.name)}`;
+  const name = `mcp__${sanitize(serverName)}__${sanitize(tool.name)}`;
   const params = tool.inputSchema && typeof tool.inputSchema === 'object' ? Type.Unsafe(tool.inputSchema) : Type.Object({});
   ctx.registerTool(defineTool({
     name,

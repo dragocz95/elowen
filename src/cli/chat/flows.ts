@@ -10,7 +10,7 @@ export interface Flows {
   openPlanDecision(): void;
 }
 
-/** Modal/approval flows that park the running turn: ask_user_question pickers, blocked tool-permission
+/** Modal/approval flows that park the running turn: AskUserQuestion pickers, blocked tool-permission
  *  approvals, and the plan-mode "implement it?" follow-up. */
 export function createFlows(
   rt: ChatState,
@@ -20,7 +20,7 @@ export function createFlows(
   const { client, tui, editor, editorSlot, lifetime } = resources;
   const { render } = actions;
 
-  // Drive the interactive picker flow for a parked ask_user_question, POST the answer (Esc aborts the
+  // Drive the interactive picker flow for a parked AskUserQuestion, POST the answer (Esc aborts the
   // turn). Shared by the live `ask` event and the reconnect restore (boot.pendingAsk). An `approval`
   // kind (a blocked tool-permission ask) takes the dedicated warning-toned modal instead: 1/2/3 or
   // arrows+Enter pick, and Esc answers Deny — it never aborts the turn (the tool just reports the

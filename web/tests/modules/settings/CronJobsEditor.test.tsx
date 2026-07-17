@@ -82,7 +82,7 @@ describe('CronJobsEditor destination channel', () => {
   });
 });
 
-/** jobs.json is shared: the scheduler stamps runs into it and the brain's cron_add tool writes it. A page
+/** jobs.json is shared: the scheduler stamps runs into it and the brain's CronAdd tool writes it. A page
  *  that sent the whole list back would delete every job it had not seen — which is exactly how jobs went
  *  missing. So a write must name ONE job, and the rest of the list must be none of this page's business. */
 describe('CronJobsEditor writes', () => {
@@ -127,7 +127,7 @@ describe('CronJobsEditor writes', () => {
     const jobs = [job({})];
     mount(jobs, writes, []);
     fireEvent.click(await screen.findByText('digest'));
-    // Someone else adds a job to the shared file (the scheduler, cron_add, a hand edit)…
+    // Someone else adds a job to the shared file (the scheduler, CronAdd, a hand edit)…
     jobs.push(job({ id: 'j2', name: 'added-elsewhere' }));
     // …and this page saves the row it happened to be editing.
     fireEvent.change(screen.getByPlaceholderText('morning-digest'), { target: { value: 'renamed' } });

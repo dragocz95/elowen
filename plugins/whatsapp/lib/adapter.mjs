@@ -288,7 +288,7 @@ export class WhatsAppAdapter {
 
     const rawText = this.extractText(m.message);
 
-    // Free-text answer to a parked ask_user_question ("other"), or a numbered reply to a pending menu.
+    // Free-text answer to a parked AskUserQuestion ("other"), or a numbered reply to a pending menu.
     if (await this.handleTextReply(chatJid, senderJid, rawText, m)) return;
 
     // Group allowlist: when configured, only respond inside these groups.
@@ -482,7 +482,7 @@ export class WhatsAppAdapter {
    *  anything else is a free-form answer). Returns true when the message was consumed. */
   async handleTextReply(chatJid, senderJid, text, m) {
     const t = String(text ?? '').trim();
-    // Parked ask_user_question from this sender.
+    // Parked AskUserQuestion from this sender.
     for (const [id, pend] of this.pendingAsks) {
       if (Date.now() - pend.createdAt > cfgNum(this.cfg, 'askTimeoutMs', ASK_TTL_MS, 30000, 1800000)) { this.pendingAsks.delete(id); continue; }
       if (pend.jid !== chatJid || !sameId(pend.askerJid, senderJid)) continue;
@@ -539,9 +539,9 @@ export class WhatsAppAdapter {
     await this.sendText(chatJid, body, quoted);
   }
 
-  // ── ask_user_question ──
+  // ── AskUserQuestion ──
 
-  /** Render a parked ask_user_question (brain `ask` event) as a numbered text prompt
+  /** Render a parked AskUserQuestion (brain `ask` event) as a numbered text prompt
    *  ("1. label — description"). On a single-question ask the user replies with a number (a comma list
    *  on multiSelect), or free text unless the question sets `custom: false`; multi-question asks collect
    *  a free-text answer or `submit`. Answers are delivered from handleTextReply. */
@@ -721,7 +721,7 @@ export class WhatsAppAdapter {
     await this.sendText(toJid(target), text);
   }
 
-  /** The live socket, or a thrown error when not yet connected — used by the whatsapp_* tools. */
+  /** The live socket, or a thrown error when not yet connected — used by the Whatsapp* tools. */
   requireSock() {
     if (!this.sock || !this.meId) throw new Error('WhatsApp is not connected yet — pair the device first (see the plugin logs for the QR / pairing code)');
     return this.sock;

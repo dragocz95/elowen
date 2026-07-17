@@ -14,7 +14,7 @@ const fakeTui = (): TUI => ({
 }) as unknown as TUI;
 
 const q = (): AskQuestion =>
-  approvalQuestion({ tool: 'run_command', scope: 'bash', command: 'rm -rf build', alwaysPattern: 'rm*' });
+  approvalQuestion({ tool: 'Bash', scope: 'bash', command: 'rm -rf build', alwaysPattern: 'rm*' });
 
 describe('ApprovalDock — blocking tool-approval prompt', () => {
   beforeAll(() => { initTheme(); });

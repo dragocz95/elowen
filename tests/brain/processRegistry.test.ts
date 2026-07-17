@@ -177,7 +177,7 @@ describe('ProcessRegistry', () => {
     });
   });
 
-  // Backs read_process_output(block:true): the agent parks until ONE process finishes instead of polling.
+  // Backs ProcessOutput(block:true): the agent parks until ONE process finishes instead of polling.
   describe('waitForExit', () => {
     it('resolves exited on the process exit', async () => {
       const reg = new ProcessRegistry();

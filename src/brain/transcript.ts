@@ -18,11 +18,11 @@ export type { WorkflowNode } from './events.js';
  *  Claude-Code "grouped" look. Tool outputs are attached only when the daemon marks a compact preview
  *  as useful enough to show (tests, shell errors, browser/search observations). */
 export interface ToolItem { name: string; detail?: string; diff?: string; icon?: string; output?: ToolOutputView; id?: string; command?: string; sub?: SubagentState;
-  /** The workflow DAG a `workflow_start` call is running, attached by its tool call id exactly as `sub`
+  /** The workflow DAG a `WorkflowStart` call is running, attached by its tool call id exactly as `sub`
    *  is for a delegate call. Durable: this is what the panel projection is rebuilt from on every
    *  hydration, so it is also what lets a finished workflow still open its modal from the transcript. */
   wf?: WorkflowState;
-  /** Live rolling tail of a still-running `run_command` (from the `tool_progress` event), shown under the
+  /** Live rolling tail of a still-running `Bash` (from the `tool_progress` event), shown under the
    *  tool row while it streams. LIVE-only — never persisted; the final `output`/`diff` clears it. */
   progress?: string }
 

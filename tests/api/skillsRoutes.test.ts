@@ -64,7 +64,7 @@ describe('skills routes', () => {
     expect(await res.json()).toEqual([expect.objectContaining({ name: 'greeting', description: 'How to greet.', source: 'bundled', canDelete: false })]);
   });
 
-  it('POST creates the user skill file in the create_skill format and GET lists it', async () => {
+  it('POST creates the user skill file in the CreateSkill format and GET lists it', async () => {
     const { app, userDir, adminTok } = setup();
     const res = await app.request('/plugins/skills', post(adminTok, skill()));
     expect(res.status).toBe(201);

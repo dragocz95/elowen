@@ -1,6 +1,6 @@
 // Files plugin: read/write/list, each confined to the caller's accessible repos via ctx.assertPathAllowed
 // (which reads the per-session Policy). A guard rejection is returned as an error text so the model can
-// react, not thrown, matching how the elowen_* tools surface API errors.
+// react, not thrown, matching how the Elowen* tools surface API errors.
 import { defineTool, withFileMutationQueue, truncateHead, truncateLine, formatSize, generateDiffString, generateUnifiedPatch, resizeImage, formatDimensionNote } from '@earendil-works/pi-coding-agent';
 import { Type } from 'typebox';
 import { readFileSync, writeFileSync, readdirSync, statSync, mkdtempSync, rmSync } from 'node:fs';
@@ -265,7 +265,7 @@ const INLINE_IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/gif', 'ima
 
 // ── PDF ──────────────────────────────────────────────────────────────────────
 // Read via poppler (pdftotext / pdftoppm / pdfinfo) rather than a bundled parser: it handles the real
-// world's malformed PDFs, and it is OPTIONAL in exactly the way `rg` is for search_files — absent, we say
+// world's malformed PDFs, and it is OPTIONAL in exactly the way `rg` is for Search — absent, we say
 // so plainly instead of silently returning nothing. A page with a text layer comes back as text; a scanned
 // page (no text layer) is rendered to a PNG and returned as an image, which is the only way its content
 // reaches a model at all.
@@ -361,7 +361,7 @@ async function pdfImageBlock(png) {
  *  not. Returns the PI tool-result shape directly. */
 async function readPdf(abs, pageSpec, supportsImages, readCap) {
   const parsed = parsePageSpec(pageSpec);
-  if (parsed.error) return fail('read_file', new Error(`Invalid pages: ${parsed.error}.`), { path: abs, pdf: true });
+  if (parsed.error) return fail('Read', new Error(`Invalid pages: ${parsed.error}.`), { path: abs, pdf: true });
 
   let total = null;
   try {
@@ -369,15 +369,15 @@ async function readPdf(abs, pageSpec, supportsImages, readCap) {
   } catch (e) {
     // ENOENT here means poppler is not installed; anything else is a genuinely broken/encrypted PDF.
     if (e && typeof e === 'object' && e.code === 'ENOENT') {
-      return fail('read_file', new Error('Reading PDFs requires poppler-utils (pdfinfo/pdftotext/pdftoppm), which is not installed on this host.'), { path: abs, pdf: true });
+      return fail('Read', new Error('Reading PDFs requires poppler-utils (pdfinfo/pdftotext/pdftoppm), which is not installed on this host.'), { path: abs, pdf: true });
     }
-    return fail('read_file', new Error(`Could not read the PDF: ${e instanceof Error ? e.message : String(e)}`), { path: abs, pdf: true });
+    return fail('Read', new Error(`Could not read the PDF: ${e instanceof Error ? e.message : String(e)}`), { path: abs, pdf: true });
   }
 
   const wanted = total === null ? parsed.pages : parsed.pages.filter((p) => p <= total);
   const outOfRange = total === null ? [] : parsed.pages.filter((p) => p > total);
   if (wanted.length === 0) {
-    return fail('read_file', new Error(`The PDF has ${total} page(s); none of the requested pages exist.`), { path: abs, pdf: true, pageCount: total });
+    return fail('Read', new Error(`The PDF has ${total} page(s); none of the requested pages exist.`), { path: abs, pdf: true, pageCount: total });
   }
 
   const parts = [];
@@ -414,7 +414,7 @@ async function readPdf(abs, pageSpec, supportsImages, readCap) {
   return {
     content: [{ type: 'text', text }, ...images],
     details: {
-      ok: true, tool: 'read_file', path: abs, pdf: true, pageCount: total,
+      ok: true, tool: 'Read', path: abs, pdf: true, pageCount: total,
       pages: wanted, renderedPages: rendered, truncated: capped.truncated || skippedImages > 0,
     },
   };
@@ -430,16 +430,16 @@ async function readPdf(abs, pageSpec, supportsImages, readCap) {
 // key on and the guard is inert rather than wrong.
 //
 // The subtlety is our own formatters plugin: it rewrites the file from a `tools.call.after` hook, AFTER
-// write_file/edit_file has already returned, so the bytes on disk stop matching what we recorded — and we
+// Write/Edit has already returned, so the bytes on disk stop matching what we recorded — and we
 // get no signal that it happened. Treating that as "changed behind your back" would refuse every edit that
 // follows a formatted write: the guard would spend its life blocking us rather than protecting us.
 //
 // We cannot tell a formatter's rewrite from an outsider's, so the two mutations are held to DIFFERENT bars,
 // on one principle: a blind full overwrite is never allowed against bytes the agent has not seen; a targeted
 // edit is, because its `oldText` anchor still has to match the current content to apply at all.
-//   - write_file: any divergence refuses. Post-formatter, an overwrite means re-reading first — rare, and
+//   - Write: any divergence refuses. Post-formatter, an overwrite means re-reading first — rare, and
 //     the refusal says exactly that.
-//   - edit_file: a divergence from content WE authored (`ours`) is forgiven once and re-baselined — that is
+//   - Edit: a divergence from content WE authored (`ours`) is forgiven once and re-baselined — that is
 //     the formatter's window — while a file we only READ and never wrote is fully protected either way.
 const READ_STATE_MAX_SESSIONS = 64;
 const READ_STATE_MAX_FILES = 512;
@@ -474,7 +474,7 @@ export function markFileRead(sessionId, abs, content, ours = false) {
 
 /** Why a mutation of `abs` must not proceed, or null when it may. `current` is the file's bytes on disk, or
  *  null when it does not exist yet (a brand-new file is always allowed — there is nothing to lose).
- *  `tolerateAuthoredDrift` is set by edit_file only: see the note above on why an anchored edit may proceed
+ *  `tolerateAuthoredDrift` is set by Edit only: see the note above on why an anchored edit may proceed
  *  through the formatter's window while a blind overwrite may not.
  *
  *  PURE — it decides, it never records. A mutation that is allowed here but then FAILS (an `oldText` that
@@ -600,14 +600,14 @@ export function register(ctx) {
   const searchMaxMatches = Math.min(Math.max(Number(ctx.config.searchMaxMatches) || DEFAULT_SEARCH_MAX_MATCHES, 50), 1000);
 
   ctx.registerTool(defineTool({
-    name: 'read_file', label: 'Read file',
+    name: 'Read', label: 'Read file',
     description: [
       'Read a UTF-8 text file, an image, or a PDF within the accessible repositories.',
-      'This is the right tool when you need exact source text, config, logs or docs before editing. For broad discovery across the codebase, use search_files or list_dir first.',
+      'This is the right tool when you need exact source text, config, logs or docs before editing. For broad discovery across the codebase, use Search or ListDir first.',
       'The path must be absolute. For a large file use offset (1-indexed line to start from) and limit (max lines) and read only the part you need — details.truncated and the continuation hint tell you where to resume.',
       'Images (jpg/png/gif/webp/bmp) come back as an attachment you can see.',
       `PDFs require \`pages\` ("3", "1-5" or "1,3,5"; at most ${PDF_MAX_PAGES} pages per call). Pages with a text layer are returned as text; a scanned page with no text layer is rendered and returned as an image.`,
-      'Do not re-read a file you just edited to check the change landed — edit_file and write_file would have errored if the write failed, so a verification read costs a round and tells you nothing.',
+      'Do not re-read a file you just edited to check the change landed — Edit and Write would have errored if the write failed, so a verification read costs a round and tells you nothing.',
     ].join(' '),
     parameters: Type.Object({
       path: Type.String({ description: 'Absolute path to the file' }),
@@ -625,19 +625,19 @@ export function register(ctx) {
           // A PDF has no meaningful line-based read, so `pages` is not optional here — decoding it as UTF-8
           // would hand the model a screenful of binary and look like a successful read.
           if (p.pages === undefined) {
-            return fail('read_file', new Error(`This is a PDF. Pass \`pages\` to read it — e.g. pages="1-5" (max ${PDF_MAX_PAGES} per call).`), { path: abs, pdf: true });
+            return fail('Read', new Error(`This is a PDF. Pass \`pages\` to read it — e.g. pages="1-5" (max ${PDF_MAX_PAGES} per call).`), { path: abs, pdf: true });
           }
           const result = await readPdf(abs, p.pages, supportsImages, readCap);
           // Only a read that actually SHOWED the agent something counts. A bad `pages` spec, an encrypted
           // PDF or a missing poppler must not leave the file marked as read — that would license a later
-          // blind write_file over a document nobody ever saw.
+          // blind Write over a document nobody ever saw.
           if (result.details?.ok) markFileRead(ctx.currentSessionId?.(), abs, raw);
           return result;
         }
         const mime = detectImageMime(raw);
         if (mime) {
           markFileRead(ctx.currentSessionId?.(), abs, raw);
-          const details = { ok: true, tool: 'read_file', truncated: false, path: abs, bytes: raw.length, image: true, mimeType: mime };
+          const details = { ok: true, tool: 'Read', truncated: false, path: abs, bytes: raw.length, image: true, mimeType: mime };
           const resized = await resizeImage(raw, mime, { maxWidth: 2000, maxHeight: 2000 }).catch(() => null);
           let data = resized?.data;
           let outMime = resized?.mimeType ?? mime;
@@ -677,7 +677,7 @@ export function register(ctx) {
         // reads back nothing.
         const total = allLines.length - (body.endsWith('\n') && allLines.length > 1 ? 1 : 0);
         const start = p.offset ? Math.max(0, Math.floor(p.offset) - 1) : 0;
-        if (start >= total) return fail('read_file', new Error(`Offset ${p.offset} is beyond end of file (${total} lines total)`), { path: abs });
+        if (start >= total) return fail('Read', new Error(`Offset ${p.offset} is beyond end of file (${total} lines total)`), { path: abs });
         const endLine = p.limit !== undefined ? Math.min(start + Math.max(0, Math.floor(p.limit)), total) : total;
         const selected = allLines.slice(start, endLine).join('\n');
         const r = truncateHead(selected, { maxBytes: readCap, maxLines: Infinity });
@@ -701,16 +701,16 @@ export function register(ctx) {
         } else if (truncated) {
           text += `\n\n[Showing lines ${start + 1}-${endShown} of ${total}. Use offset=${endShown + 1} to continue.]`;
         }
-        return ok('read_file', text, { path: abs, bytes: Buffer.byteLength(body), truncated });
-      } catch (e) { return fail('read_file', e); }
+        return ok('Read', text, { path: abs, bytes: Buffer.byteLength(body), truncated });
+      } catch (e) { return fail('Read', e); }
     },
   }));
 
   ctx.registerTool(defineTool({
-    name: 'write_file', label: 'Write file',
+    name: 'Write', label: 'Write file',
     description: [
       'Create a new UTF-8 text file, or fully replace an existing one, within the accessible repositories.',
-      'Use it only when you intend to replace the ENTIRE file content — for a localized change use edit_file instead.',
+      'Use it only when you intend to replace the ENTIRE file content — for a localized change use Edit instead.',
       'Creating a new file is always fine. To overwrite an EXISTING file you must have read it in this conversation first: overwriting a file you have not inspected discards content you never reviewed, so the write is refused until you have.',
       'Output includes a human summary, details.diff for review and details.patch (unified) for tooling. Read the diff before you consider an overwrite done.',
     ].join(' '),
@@ -730,23 +730,23 @@ export function register(ctx) {
           let beforeBuf = null;
           try { beforeBuf = readFileSync(abs); } catch { /* new file */ }
           const guard = readGuardError(sessionId, abs, beforeBuf);
-          if (guard) return ok('write_file', `Error: ${guard}`, { ok: false, path: abs });
+          if (guard) return ok('Write', `Error: ${guard}`, { ok: false, path: abs });
           writeFileSync(abs, p.content, 'utf-8');
           markFileRead(sessionId, abs, Buffer.from(p.content, 'utf-8'), true);
           const base = beforeBuf?.toString('utf-8') ?? '';
           const diff = displayDiff(base, p.content);
           const patch = unifiedPatch(abs, base, p.content);
-          return ok('write_file', `Wrote ${Buffer.byteLength(p.content)} bytes to ${abs}`, {
+          return ok('Write', `Wrote ${Buffer.byteLength(p.content)} bytes to ${abs}`, {
             path: abs, bytes: Buffer.byteLength(p.content),
             ...(diff ? { diff } : {}), ...(patch ? { patch } : {}),
           });
         });
-      } catch (e) { return fail('write_file', e); }
+      } catch (e) { return fail('Write', e); }
     },
   }));
 
   ctx.registerTool(defineTool({
-    name: 'edit_file', label: 'Edit file',
+    name: 'Edit', label: 'Edit file',
     description: [
       'Replace an exact text snippet in a UTF-8 file within the accessible repositories. Use it for a targeted change, after reading enough surrounding context to locate the change precisely.',
       'You must have read the file in this conversation before editing it, and it must not have changed on disk since — an edit written from assumption, or against content that moved, is how work gets silently discarded.',
@@ -768,34 +768,34 @@ export function register(ctx) {
         return await withFileMutationQueue(abs, async () => {
           const beforeBuf = readFileSync(abs);
           // `true`: an anchored edit may proceed through a post-write reformat of our OWN content — its
-          // oldText still has to match what is on disk now. A blind overwrite (write_file) gets no such pass.
+          // oldText still has to match what is on disk now. A blind overwrite (Write) gets no such pass.
           const guard = readGuardError(sessionId, abs, beforeBuf, true);
-          if (guard) return ok('edit_file', `Error: ${guard}`, { ok: false, path: abs });
+          if (guard) return ok('Edit', `Error: ${guard}`, { ok: false, path: abs });
           const before = beforeBuf.toString('utf-8');
-          if (p.oldText === p.newText) return ok('edit_file', 'Error: oldText and newText are identical.', { ok: false, path: abs });
+          if (p.oldText === p.newText) return ok('Edit', 'Error: oldText and newText are identical.', { ok: false, path: abs });
           const plan = planEdit(before, p.oldText, p.newText, p.replaceAll ?? false);
-          if (plan.error === 'empty') return ok('edit_file', 'Error: oldText must not be empty.', { ok: false, path: abs });
-          if (plan.error === 'notfound') return ok('edit_file', 'Error: oldText not found in the file. Match it exactly, including whitespace.', { ok: false, path: abs });
-          if (plan.error === 'ambiguous') return ok('edit_file', `Error: oldText matches ${plan.count} times. Provide more context to make it unique, or set replaceAll.`, { ok: false, path: abs, matches: plan.count });
-          if (plan.newContent === plan.content) return ok('edit_file', 'Error: the replacement produced identical content.', { ok: false, path: abs });
+          if (plan.error === 'empty') return ok('Edit', 'Error: oldText must not be empty.', { ok: false, path: abs });
+          if (plan.error === 'notfound') return ok('Edit', 'Error: oldText not found in the file. Match it exactly, including whitespace.', { ok: false, path: abs });
+          if (plan.error === 'ambiguous') return ok('Edit', `Error: oldText matches ${plan.count} times. Provide more context to make it unique, or set replaceAll.`, { ok: false, path: abs, matches: plan.count });
+          if (plan.newContent === plan.content) return ok('Edit', 'Error: the replacement produced identical content.', { ok: false, path: abs });
           writeFileSync(abs, plan.after, 'utf-8');
           markFileRead(sessionId, abs, Buffer.from(plan.after, 'utf-8'), true);
           const diff = displayDiff(plan.content, plan.newContent);
           const patch = unifiedPatch(abs, plan.content, plan.newContent);
-          return ok('edit_file', `Edited ${abs} (${plan.count > 1 ? `${plan.count} replacements` : '1 replacement'})`, {
+          return ok('Edit', `Edited ${abs} (${plan.count > 1 ? `${plan.count} replacements` : '1 replacement'})`, {
             path: abs, replacements: plan.count, ...(diff ? { diff } : {}), ...(patch ? { patch } : {}),
           });
         });
-      } catch (e) { return fail('edit_file', e); }
+      } catch (e) { return fail('Edit', e); }
     },
   }));
 
   ctx.registerTool(defineTool({
-    name: 'list_dir', label: 'List directory',
+    name: 'ListDir', label: 'List directory',
     description: [
       'List the entries of a directory within the accessible repositories.',
       'Use for focused navigation when you already know the directory.',
-      'Do not use recursively; use search_files for codebase-wide discovery.',
+      'Do not use recursively; use Search for codebase-wide discovery.',
     ].join(' '),
     parameters: Type.Object({ path: Type.String() }),
     execute: async (_id, p) => {
@@ -804,13 +804,13 @@ export function register(ctx) {
         const entries = readdirSync(abs).map((n) => {
           try { return statSync(join(abs, n)).isDirectory() ? `${n}/` : n; } catch { return n; }
         });
-        return ok('list_dir', entries.join('\n') || '(empty)', { path: abs, count: entries.length });
-      } catch (e) { return fail('list_dir', e); }
+        return ok('ListDir', entries.join('\n') || '(empty)', { path: abs, count: entries.length });
+      } catch (e) { return fail('ListDir', e); }
     },
   }));
 
   ctx.registerTool(defineTool({
-    name: 'search_files', label: 'Search files',
+    name: 'Search', label: 'Search files',
     description: [
       'Search file names or UTF-8 file contents within an accessible repository path.',
       'Use for codebase discovery before reading or editing files. Prefer content mode for symbols/text and files mode for path/name lookup.',
@@ -826,7 +826,7 @@ export function register(ctx) {
       try {
         const abs = ctx.assertPathAllowed(p.path);
         const mode = p.mode === 'files' ? 'files' : 'content';
-        if (!String(p.query ?? '').trim()) return ok('search_files', 'Error: query is required.', { ok: false, path: abs });
+        if (!String(p.query ?? '').trim()) return ok('Search', 'Error: query is required.', { ok: false, path: abs });
         const root = statSync(abs).isDirectory() ? abs : dirname(abs);
         const queryText = String(p.query);
         const query = safeRegex(queryText);
@@ -863,13 +863,13 @@ export function register(ctx) {
         // Cap each hit so one minified/very long match line can't flood the result set.
         const formatted = lines.map((l) => truncateLine(l, RESULT_LINE_MAX).text).join('\n');
         const truncated = lines.length >= searchMaxMatches;
-        return ok('search_files', formatted || 'No matches found.', { path: abs, mode, matches: lines.length, truncated });
-      } catch (e) { return fail('search_files', e); }
+        return ok('Search', formatted || 'No matches found.', { path: abs, mode, matches: lines.length, truncated });
+      } catch (e) { return fail('Search', e); }
     },
   }));
 
   ctx.registerTool(defineTool({
-    name: 'file_info', label: 'File info',
+    name: 'FileInfo', label: 'File info',
     description: [
       'Inspect basic filesystem metadata for a file or directory inside accessible repositories.',
       'Use to verify existence, size, file type, and modification time before reading a large file or writing changes.',
@@ -881,13 +881,13 @@ export function register(ctx) {
         const abs = ctx.assertPathAllowed(p.path);
         const s = statSync(abs);
         const info = { path: abs, type: s.isDirectory() ? 'directory' : s.isFile() ? 'file' : 'other', bytes: s.size, modifiedAt: s.mtime.toISOString() };
-        return ok('file_info', JSON.stringify(info, null, 2), info);
-      } catch (e) { return fail('file_info', e); }
+        return ok('FileInfo', JSON.stringify(info, null, 2), info);
+      } catch (e) { return fail('FileInfo', e); }
     },
   }));
 
   ctx.registerTool(defineTool({
-    name: 'git_status', label: 'Git status',
+    name: 'GitStatus', label: 'Git status',
     description: [
       'Report concise git repository state for an accessible project path.',
       'Use before/after edits to understand branch, dirty files, and staged changes.',
@@ -905,10 +905,10 @@ export function register(ctx) {
         const porcelain = execFileSync('git', ['status', '--short'], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
         const lines = porcelain.split('\n').filter(Boolean);
         const out = [`branch ${branch}`, `root ${root}`, lines.length ? '' : 'clean', ...lines.slice(0, 120)];
-        return ok('git_status', out.join('\n'), { root, branch, dirtyFiles: lines.length, truncated: lines.length > 120 });
-      } catch (e) { return fail('git_status', e); }
+        return ok('GitStatus', out.join('\n'), { root, branch, dirtyFiles: lines.length, truncated: lines.length > 120 });
+      } catch (e) { return fail('GitStatus', e); }
     },
   }));
 
-  ctx.logger.info('registered read_file, write_file, edit_file, list_dir, search_files, file_info, git_status');
+  ctx.logger.info('registered Read, Write, Edit, ListDir, Search, FileInfo, GitStatus');
 }

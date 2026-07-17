@@ -9,25 +9,25 @@
       "telegram"
     ],
     "tools": [
-      "telegram_api",
-      "telegram_send",
-      "telegram_chat_info",
-      "telegram_get_members_count",
-      "telegram_member_info",
-      "telegram_pin_message",
-      "telegram_unpin_message",
-      "telegram_delete_message",
-      "telegram_ban_member",
-      "telegram_unban_member",
-      "telegram_promote_member",
-      "telegram_set_chat_title",
-      "telegram_set_chat_description",
-      "telegram_create_forum_topic",
-      "telegram_edit_forum_topic",
-      "telegram_close_forum_topic"
+      "TelegramApi",
+      "TelegramSend",
+      "TelegramChatInfo",
+      "TelegramGetMembersCount",
+      "TelegramMemberInfo",
+      "TelegramPinMessage",
+      "TelegramUnpinMessage",
+      "TelegramDeleteMessage",
+      "TelegramBanMember",
+      "TelegramUnbanMember",
+      "TelegramPromoteMember",
+      "TelegramSetChatTitle",
+      "TelegramSetChatDescription",
+      "TelegramCreateForumTopic",
+      "TelegramEditForumTopic",
+      "TelegramCloseForumTopic"
     ]
   },
-  "icons": { "telegram_*": "✈️" },
+  "icons": { "Telegram*": "✈️" },
   "requires": {
     "config": [
       "botToken"
@@ -82,7 +82,7 @@
         { "value": "status", "label": "Live status" },
         { "value": "live", "label": "Live output" }
       ],
-      "hint": "Off hides the work trace. Live status updates tool start/completion. Live output also streams bounded run_command progress. Override per chat with /display."
+      "hint": "Off hides the work trace. Live status updates tool start/completion. Live output also streams bounded Bash progress. Override per chat with /display."
     },
     {
       "key": "answerMode",
@@ -207,7 +207,7 @@
       "step": 30000,
       "placeholder": "360000",
       "default": 360000,
-      "hint": "How long a pending ask_user_question stays open for a button tap or free-text reply before it's dropped as stale."
+      "hint": "How long a pending AskUserQuestion stays open for a button tap or free-text reply before it's dropped as stale."
     },
     {
       "key": "sec_voice",

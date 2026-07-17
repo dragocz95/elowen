@@ -19,16 +19,16 @@ const lastTool = (model: TranscriptModel): ToolItem => {
 const delegateTranscript = (): TranscriptModel => {
   const model = new TranscriptModel();
   model.apply({ type: 'user', text: 'do it' });
-  model.apply({ type: 'tool', name: 'delegate', detail: 'research the config', id: 'call-1' });
+  model.apply({ type: 'tool', name: 'Delegate', detail: 'research the config', id: 'call-1' });
   return model;
 };
 
 describe('groupToolItems: collapse consecutive same-tool rows', () => {
   it('folds a run of the same bare tool into one group carrying the LATEST detail and a count', () => {
     const items: ToolItem[] = [
-      { name: 'read_file', detail: 'a.ts' },
-      { name: 'read_file', detail: 'a.ts' },
-      { name: 'read_file', detail: 'b.ts' },
+      { name: 'Read', detail: 'a.ts' },
+      { name: 'Read', detail: 'a.ts' },
+      { name: 'Read', detail: 'b.ts' },
     ];
     const groups = groupToolItems(items);
     expect(groups).toHaveLength(1);
@@ -38,27 +38,27 @@ describe('groupToolItems: collapse consecutive same-tool rows', () => {
 
   it('does NOT merge across a different tool (grouping is strictly consecutive + same name)', () => {
     const groups = groupToolItems([
-      { name: 'read_file', detail: 'a.ts' },
-      { name: 'list_dir', detail: 'src' },
-      { name: 'read_file', detail: 'b.ts' },
+      { name: 'Read', detail: 'a.ts' },
+      { name: 'ListDir', detail: 'src' },
+      { name: 'Read', detail: 'b.ts' },
     ]);
     expect(groups.map((group) => [group.item.name, group.count])).toEqual([
-      ['read_file', 1], ['list_dir', 1], ['read_file', 1],
+      ['Read', 1], ['ListDir', 1], ['Read', 1],
     ]);
   });
 
   it('keeps an item carrying a diff / output / sub / command as its own group', () => {
     const groups = groupToolItems([
-      { name: 'read_file', detail: 'a.ts' },
-      { name: 'read_file', detail: 'b.ts', output: { title: 't', kind: 'result', text: 'x' } },
-      { name: 'read_file', detail: 'c.ts' },
-      { name: 'run_command', command: 'ls' },
-      { name: 'run_command', command: 'pwd' },
-      { name: 'edit_file', detail: 'd.ts', diff: '+ 1 x' },
+      { name: 'Read', detail: 'a.ts' },
+      { name: 'Read', detail: 'b.ts', output: { title: 't', kind: 'result', text: 'x' } },
+      { name: 'Read', detail: 'c.ts' },
+      { name: 'Bash', command: 'ls' },
+      { name: 'Bash', command: 'pwd' },
+      { name: 'Edit', detail: 'd.ts', diff: '+ 1 x' },
     ]);
     expect(groups.map((group) => group.count)).toEqual([1, 1, 1, 1, 1, 1]);
     expect(groups.map((group) => group.item.name)).toEqual([
-      'read_file', 'read_file', 'read_file', 'run_command', 'run_command', 'edit_file',
+      'Read', 'Read', 'Read', 'Bash', 'Bash', 'Edit',
     ]);
   });
 });
@@ -68,7 +68,7 @@ describe('groupToolItems: collapse consecutive same-tool rows', () => {
 // it once, with each file still recoverable behind the count.
 describe('groupToolItems: a repeated failure is one failure', () => {
   const refusal = (path: string): ToolItem => ({
-    name: 'write_file', detail: path,
+    name: 'Write', detail: path,
     output: { title: 'tool result', kind: 'result', tone: 'warning', status: 'needs attention',
       text: `Error: ${path} has not been read in this conversation. Read it first.` },
   });
@@ -81,14 +81,14 @@ describe('groupToolItems: a repeated failure is one failure', () => {
   });
 
   it('keeps genuinely different failures apart — they are different things to fix', () => {
-    const denied: ToolItem = { name: 'write_file', detail: '/docs/a.md',
+    const denied: ToolItem = { name: 'Write', detail: '/docs/a.md',
       output: { title: 'tool result', kind: 'result', tone: 'danger', text: 'Error: permission denied' } };
     const groups = groupToolItems([refusal('/docs/routes.md'), denied, refusal('/docs/pricing.md')]);
     expect(groups.map((group) => group.count)).toEqual([1, 1, 1]);
   });
 
   it('never folds a successful result — its output is content, not a repeated complaint', () => {
-    const ok = (path: string): ToolItem => ({ name: 'read_file', detail: path,
+    const ok = (path: string): ToolItem => ({ name: 'Read', detail: path,
       output: { title: 'tool result', kind: 'result', tone: 'success', text: 'ok' } });
     expect(groupToolItems([ok('a.ts'), ok('b.ts')]).map((g) => g.count)).toEqual([1, 1]);
   });
@@ -96,7 +96,7 @@ describe('groupToolItems: a repeated failure is one failure', () => {
   // A failing command's output is the thing you actually want to read — the stack trace, the failing test.
   // Folding those away would hide the one output worth showing.
   it('never folds a failed console command', () => {
-    const failed = (command: string): ToolItem => ({ name: 'run_command', command,
+    const failed = (command: string): ToolItem => ({ name: 'Bash', command,
       output: { title: 'console', kind: 'console', tone: 'danger', status: 'exit 1', text: 'boom' } });
     expect(groupToolItems([failed('npm test'), failed('npm test')]).map((g) => g.count)).toEqual([1, 1]);
   });
@@ -116,7 +116,7 @@ describe('durable transcript parsing', () => {
 
   it('rehydrates a durable running child with its drill-in session id', () => {
     const model = new TranscriptModel([{ role: 'assistant', text: '', segments: [{
-      kind: 'tool', id: 'call-1', name: 'delegate', detail: 'inspect',
+      kind: 'tool', id: 'call-1', name: 'Delegate', detail: 'inspect',
       sub: { sessionId: 'brain-ch-subagent-child', status: 'running', task: 'inspect', tools: 1, seconds: 3 },
     }] }]);
     const turn = model.turnAt(0);
@@ -179,7 +179,7 @@ describe('TranscriptModel event fold', () => {
   it('attaches both a diff and its notes-only output to the matching tool', () => {
     const model = new TranscriptModel();
     model.apply({ type: 'user', text: 'edit it' });
-    model.apply({ type: 'tool', name: 'edit_file', detail: 'a.ts', id: 'c1' });
+    model.apply({ type: 'tool', name: 'Edit', detail: 'a.ts', id: 'c1' });
     const output = {
       title: 'tool result', kind: 'result' as const, text: '', tone: 'normal' as const,
       notes: ['formatted a.ts with prettier'],
@@ -191,7 +191,7 @@ describe('TranscriptModel event fold', () => {
   it('replaces live command progress and supersedes it with final output', () => {
     const model = new TranscriptModel();
     model.apply({ type: 'user', text: 'run tests' });
-    model.apply({ type: 'tool', name: 'run_command', command: 'npm test', id: 'r1' });
+    model.apply({ type: 'tool', name: 'Bash', command: 'npm test', id: 'r1' });
     model.apply({ type: 'tool_progress', id: 'r1', text: 'PASS a.test' });
     expect(lastTool(model)).toMatchObject({ command: 'npm test', progress: 'PASS a.test' });
     model.apply({ type: 'tool_progress', id: 'r1', text: 'PASS a.test\nPASS b.test' });
@@ -206,8 +206,8 @@ describe('TranscriptModel event fold', () => {
 
   it('keeps progress-bearing commands as separate render groups', () => {
     const groups = groupToolItems([
-      { name: 'run_command', id: 'r1', progress: 'building…' },
-      { name: 'run_command', id: 'r2', progress: 'linking…' },
+      { name: 'Bash', id: 'r1', progress: 'building…' },
+      { name: 'Bash', id: 'r2', progress: 'linking…' },
     ]);
     expect(groups.map((group) => group.count)).toEqual([1, 1]);
   });
@@ -218,10 +218,10 @@ describe('TranscriptModel subagent progress', () => {
     const model = delegateTranscript();
     model.apply({
       type: 'subagent', id: 'call-1', sessionId: 'brain-ch-subagent-sub-x', status: 'running',
-      task: 'research the config', detail: 'read_file src/a.ts', tools: 2, tokens: 1500, seconds: 7,
+      task: 'research the config', detail: 'Read src/a.ts', tools: 2, tokens: 1500, seconds: 7,
     });
     expect(lastTool(model).sub).toMatchObject({
-      sessionId: 'brain-ch-subagent-sub-x', status: 'running', detail: 'read_file src/a.ts',
+      sessionId: 'brain-ch-subagent-sub-x', status: 'running', detail: 'Read src/a.ts',
       tools: 2, tokens: 1500, seconds: 7,
     });
     model.apply({

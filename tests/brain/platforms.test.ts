@@ -22,7 +22,7 @@ async function runTurn(opts: { linked: boolean; access: Record<string, unknown> 
     platformOwner: () => 1,
     policyForProjects: () => rolePolicy,
     policyForUser: () => userPolicy,
-    disabledToolsFor: () => ['discord_api'], // Amy disabled this tool in her Elowen account
+    disabledToolsFor: () => ['DiscordApi'], // Amy disabled this tool in her Elowen account
     identity: linkedResolver(opts.linked),
     channels: { send: async (o: ChannelSendOpts) => { sent = o; return 'ok'; }, fragmentFor: () => '' } as never,
   });
@@ -33,16 +33,16 @@ async function runTurn(opts: { linked: boolean; access: Record<string, unknown> 
 
 describe('PlatformOrchestrator — unified per-turn access', () => {
   it('a LINKED sender runs fully through their Elowen account: their policy + their tool deny-list', async () => {
-    const sent = await runTurn({ linked: true, access: { admin: false, projectIds: [3], tools: ['memory_search'] } });
+    const sent = await runTurn({ linked: true, access: { admin: false, projectIds: [3], tools: ['MemorySearch'] } });
     expect(sent.policy).toBe(userPolicy); // Elowen account policy, NOT the role's
-    expect(sent.toolPolicy).toEqual({ deny: new Set(['discord_api']) }); // their disabled_tools, role allowlist ignored
+    expect(sent.toolPolicy).toEqual({ deny: new Set(['DiscordApi']) }); // their disabled_tools, role allowlist ignored
     expect(sent.identity?.elowenUserId).toBe(2);
   });
 
   it('an UNLINKED sender falls back to the Role-ID policy + the role tool allowlist', async () => {
-    const sent = await runTurn({ linked: false, access: { admin: false, projectIds: [3], tools: ['memory_search'] } });
+    const sent = await runTurn({ linked: false, access: { admin: false, projectIds: [3], tools: ['MemorySearch'] } });
     expect(sent.policy).toBe(rolePolicy); // the role's projects
-    expect(sent.toolPolicy).toEqual({ allow: new Set(['memory_search']) }); // the role's tool allowlist
+    expect(sent.toolPolicy).toEqual({ allow: new Set(['MemorySearch']) }); // the role's tool allowlist
     expect(sent.identity?.elowenUserId).toBeUndefined();
   });
 
@@ -107,17 +107,17 @@ describe('PlatformOrchestrator — unified per-turn access', () => {
       platform: 'subagent', userId: 'subagent', channelId: 'sub-foreign-admin', roleIds: [],
       access: {
         admin: true, owner: false, projectIds: [], parentSessionId: 'brain-owner-channel',
-        toolPolicy: { allow: [], deny: ['discord_api'] },
+        toolPolicy: { allow: [], deny: ['DiscordApi'] },
         permissionBoundary: null,
       },
     } as never, 'inspect');
 
     expect(sent?.identity).toMatchObject({ admin: true, owner: false });
-    expect(sent?.toolPolicy).toEqual({ allow: new Set(), deny: new Set(['discord_api']) });
+    expect(sent?.toolPolicy).toEqual({ allow: new Set(), deny: new Set(['DiscordApi']) });
     expect(sent?.delegatedAccess).toEqual({
       admin: true, projectIds: [], owner: false,
       permissionBoundary: null,
-      toolPolicy: { allow: [], deny: ['discord_api'] },
+      toolPolicy: { allow: [], deny: ['DiscordApi'] },
     });
   });
 
@@ -141,15 +141,15 @@ describe('PlatformOrchestrator — unified per-turn access', () => {
 
     await handler!({
       platform: 'subagent', userId: 'subagent', channelId: 'sub-scope', roleIds: [],
-      access: { admin: false, owner: true, projectIds: [3], parentSessionId: 'brain-owner', toolPolicy: { allow: ['read_file'] }, permissionBoundary: null },
+      access: { admin: false, owner: true, projectIds: [3], parentSessionId: 'brain-owner', toolPolicy: { allow: ['Read'] }, permissionBoundary: null },
     } as never, 'inspect');
 
     expect(sent?.delegatedAccess).toEqual({
       admin: false, owner: true, projectIds: [3],
       permissionBoundary: null,
-      toolPolicy: { allow: ['read_file'], deny: ['terminal_exec'] },
+      toolPolicy: { allow: ['Read'], deny: ['terminal_exec'] },
     });
-    expect(sent?.toolPolicy).toEqual({ allow: new Set(['read_file']), deny: new Set(['terminal_exec']) });
+    expect(sent?.toolPolicy).toEqual({ allow: new Set(['Read']), deny: new Set(['terminal_exec']) });
   });
 
   it('carries a linked non-owner granular deny into the immutable child scope', async () => {
@@ -157,7 +157,7 @@ describe('PlatformOrchestrator — unified per-turn access', () => {
     let handler: ((src: never, text: string) => Promise<unknown>) | undefined;
     const adapter = { name: 'subagent', listen: (fn: never) => { handler = fn as never; }, connect: async () => {} };
     const boundary = {
-      rules: [{ scope: 'tools' as const, pattern: 'write_file', action: 'deny' as const }],
+      rules: [{ scope: 'tools' as const, pattern: 'Write', action: 'deny' as const }],
       unattendedAsks: 'deny' as const,
     };
     const orch = new PlatformOrchestrator({

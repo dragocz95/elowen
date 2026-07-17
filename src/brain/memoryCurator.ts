@@ -56,7 +56,7 @@ export class MemoryCurator {
   async run(userId: number, userText: string, assistantText: string): Promise<void> {
     try {
       const inf = this.inference();
-      if (!inf) return; // no memory model configured → no-op (memory still works via the explicit memory_* tools)
+      if (!inf) return; // no memory model configured → no-op (memory still works via the explicit Memory* tools)
       const user = userText.trim();
       if (user === '') return;
       // Show the model the memories it ALREADY holds that are relevant to this exchange, so it can

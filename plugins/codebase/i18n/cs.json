@@ -1,5 +1,5 @@
 {
-  "description": "Sémantický index kódu: prohledávejte repozitáře podle VÝZNAMU, ne podle přesného textu. Rozseká každý přístupný repozitář na bloky, zaindexuje je STEJNÝM embedding modelem jako paměť (Nastavení → Paměť) a uloží vektory do soukromého indexu pro daný repozitář. codebase_search najde nejrelevantnější kód/dokumentaci k dotazu v přirozeném jazyce; codebase_reindex (admin) index inkrementálně obnoví; codebase_status ukáže pokrytí. Doplňuje textové vyhledávání search_files z pluginu files.",
+  "description": "Sémantický index kódu: prohledávejte repozitáře podle VÝZNAMU, ne podle přesného textu. Rozseká každý přístupný repozitář na bloky, zaindexuje je STEJNÝM embedding modelem jako paměť (Nastavení → Paměť) a uloží vektory do soukromého indexu pro daný repozitář. CodebaseSearch najde nejrelevantnější kód/dokumentaci k dotazu v přirozeném jazyce; CodebaseReindex (admin) index inkrementálně obnoví; CodebaseStatus ukáže pokrytí. Doplňuje textové vyhledávání Search z pluginu files.",
   "fields": {
     "sec_indexing": {
       "label": "Indexace",
@@ -27,7 +27,7 @@
     },
     "topK": {
       "label": "Výsledků na vyhledání",
-      "hint": "Výchozí počet shod, které codebase_search vrátí (argument k tento počet přepíše)."
+      "hint": "Výchozí počet shod, které CodebaseSearch vrátí (argument k tento počet přepíše)."
     },
     "relevanceFloor": {
       "label": "Práh relevance",
@@ -35,7 +35,7 @@
     },
     "autoReindex": {
       "label": "Automatická reindexace při hledání",
-      "hint": "Když je zapnuto, vyhledávání líně obnoví index repozitáře, pokud je prázdný nebo zastaralý (s prodlevou), takže codebase_reindex je zřídka potřeba."
+      "hint": "Když je zapnuto, vyhledávání líně obnoví index repozitáře, pokud je prázdný nebo zastaralý (s prodlevou), takže CodebaseReindex je zřídka potřeba."
     },
     "reindexEmbedBudget": {
       "label": "Embeddingů na průchod",

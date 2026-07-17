@@ -14,7 +14,7 @@ const GATEWAY = 'wss://gateway.discord.gg/?v=10&encoding=json';
 const INTENTS = (1 << 0) | (1 << 9) | (1 << 15);
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024; // default: larger images are noted, not downloaded (cfg: maxImageBytes)
 const MAX_IMAGES = 4;                    // default vision cap per message (cfg: maxImages)
-const ASK_TTL_MS = 6 * 60_000;           // default: drop a pending ask_user_question after this (cfg: askTimeoutMs; > the core 5-min timeout)
+const ASK_TTL_MS = 6 * 60_000;           // default: drop a pending AskUserQuestion after this (cfg: askTimeoutMs; > the core 5-min timeout)
 const MAX_UPLOAD_IMAGES = 4;             // default generated-image uploads per outgoing message (cfg: maxUploadImages)
 const MAX_AUDIO_BYTES = 25 * 1024 * 1024; // Whisper's per-file limit — larger clips are just noted
 const TTS_MAX_CHARS = 4000;              // cap the spoken text (OpenAI TTS input limit is 4096)
@@ -69,7 +69,7 @@ export class DiscordAdapter {
     this.listModels = listModels;
     this.resolveProvider = resolveProvider; // central brain-provider key resolver (voice STT/TTS)
     this.imageDirs = imageDirs; // where the image-gen/image-edit plugins store their generated files
-    this.answerQuestion = answerQuestion; // deliver a parked ask_user_question answer back to the turn
+    this.answerQuestion = answerQuestion; // deliver a parked AskUserQuestion answer back to the turn
     this.chatCommands = chatCommands; // core names/descriptions — presentation/dispatch remains local
     this.pendingAsks = new Map(); // id → { channelId, messageId, questions, askerId, selected, awaitingText }
     this.handler = null;
@@ -241,7 +241,7 @@ export class DiscordAdapter {
       roleIds,
       access: {
         // admin:true = the operator's admin role — full project scope + the full plugin toolset
-        // (trusted-channel). It does NOT grant the owner's elowen_* control-plane tools or API token:
+        // (trusted-channel). It does NOT grant the owner's Elowen* control-plane tools or API token:
         // a shared channel is never the verified owner's own chat, whatever role the sender holds.
         admin: match.admin === true,
         projectIds: (match.projectIds ?? []).map(Number),
@@ -302,7 +302,7 @@ export class DiscordAdapter {
     if (!m.guild_id) return; // DMs carry no member roles → no policy can ever match; ignore them
     if (this.cfg.guildId && m.guild_id !== this.cfg.guildId) return;
 
-    // Free-text answer to a parked ask_user_question ("✏️ Other"): if this channel has a pending ask
+    // Free-text answer to a parked AskUserQuestion ("✏️ Other"): if this channel has a pending ask
     // awaiting text from THIS sender, consume the message as that answer — not as a new brain turn.
     for (const [id, pend] of this.pendingAsks) {
       if (Date.now() - pend.createdAt > cfgNum(this.cfg, 'askTimeoutMs', ASK_TTL_MS, 30000, 1800000)) { this.pendingAsks.delete(id); continue; } // stale (server-side timed out) → drop, never swallow a later message
@@ -367,7 +367,7 @@ export class DiscordAdapter {
     const display = resolveDisplaySettings(this.cfg, this.state.get(m.channel_id));
     const observesLiveEvents = display.toolActivity !== 'off' || display.answerMode === 'live' || this.cfg.showReasoning === true;
     const stream = observesLiveEvents ? new LiveMessage(this, m.channel_id, m.id, m.author.id, display) : null;
-    // Even with live streaming OFF, ask_user_question must still render its choice message — otherwise the
+    // Even with live streaming OFF, AskUserQuestion must still render its choice message — otherwise the
     // parked turn hangs until the timeout. Route events through the stream when present, else handle only `ask`.
     const onEvent = stream
       ? (e) => stream.onEvent(e)
@@ -565,7 +565,7 @@ export class DiscordAdapter {
         }
       }
     }
-    // ask_user_question components (select menus + Submit/Other buttons) resolve a parked turn.
+    // AskUserQuestion components (select menus + Submit/Other buttons) resolve a parked turn.
     if (i.type === 3 && typeof i.data?.custom_id === 'string' && i.data.custom_id.startsWith('ask:')) {
       return this.onAskInteraction(i);
     }
@@ -611,7 +611,7 @@ export class DiscordAdapter {
     await this.rest('PATCH', `/webhooks/${this.appId}/${i.token}/messages/@original`, data);
   }
 
-  /** Render a parked ask_user_question (from the brain's `ask` event) as an orange embed plus native
+  /** Render a parked AskUserQuestion (from the brain's `ask` event) as an orange embed plus native
    *  components — option buttons for small single-select questions, string selects otherwise (see
    *  buildAskComponents). Registers a pending entry the interaction/text handlers resolve. */
   async postAsk(channelId, replyToId, askerId, id, questions) {

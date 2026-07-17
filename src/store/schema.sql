@@ -188,7 +188,7 @@ CREATE TABLE IF NOT EXISTS brain_subagent_runs (
   PRIMARY KEY (parent_session_id, tool_call_id)
 );
 CREATE INDEX IF NOT EXISTS idx_brain_subagent_runs_child ON brain_subagent_runs(child_session_id);
--- Latest durable UI state for each `workflow_start` tool call, holding the WHOLE DAG the in-plugin
+-- Latest durable UI state for each `WorkflowStart` tool call, holding the WHOLE DAG the in-plugin
 -- engine otherwise keeps only in memory. Without it a finished workflow is unrecoverable: the live
 -- projection is rebuilt from the transcript on every hydration, so a reconnect (or merely closing a
 -- sub-agent view) would drop it and its modal could never be reopened.

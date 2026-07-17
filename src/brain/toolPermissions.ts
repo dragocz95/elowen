@@ -10,7 +10,7 @@ export type PermissionAction = 'allow' | 'ask' | 'deny';
 
 /** Two independent pattern spaces: `tools` matches TOOL NAMES; `bash` matches the COMMAND STRING of
  *  shell tools (see {@link BASH_PERMISSION_TOOLS}) — so "git *" can be allowed while "rm *" is denied
- *  even though both run through the same run_command tool. */
+ *  even though both run through the same Bash tool. */
 export type PermissionScope = 'tools' | 'bash';
 
 export interface PermissionRule { scope: PermissionScope; pattern: string; action: PermissionAction }
@@ -43,15 +43,15 @@ export interface PermissionSettings {
 }
 
 /** Tool names whose permission is decided in the `bash` pattern space, against `args.command`. */
-export const BASH_PERMISSION_TOOLS: ReadonlySet<string> = new Set(['run_command']);
+export const BASH_PERMISSION_TOOLS: ReadonlySet<string> = new Set(['Bash']);
 
 /** Built-in defaults, conservative but usable: everything not otherwise named is allowed (read-only
  *  tools stay frictionless), file edits ask, and shell commands ask except for a small read-only
  *  allow-list. User rules are appended AFTER these, so any of them can be overridden per user. */
 const DEFAULT_PERMISSION_RULES: readonly PermissionRule[] = [
   { scope: 'tools', pattern: '*', action: 'allow' },
-  { scope: 'tools', pattern: 'write_file', action: 'ask' },
-  { scope: 'tools', pattern: 'edit_file', action: 'ask' },
+  { scope: 'tools', pattern: 'Write', action: 'ask' },
+  { scope: 'tools', pattern: 'Edit', action: 'ask' },
   { scope: 'bash', pattern: '*', action: 'ask' },
   { scope: 'bash', pattern: 'git status*', action: 'allow' },
   { scope: 'bash', pattern: 'git diff*', action: 'allow' },
@@ -415,7 +415,7 @@ export function summarizePermissions(perms: Pick<TurnPermissions, 'ruleset' | 'y
   const lines = [
     '<permissions>',
     "Tool-permission rules this session ('ask' pauses for the user's approval — prefer pre-allowed commands where equivalent, and batch work so approvals come early, not scattered):",
-    scopeLine('shell (run_command, matched against the command)', effective('bash')),
+    scopeLine('shell (Bash, matched against the command)', effective('bash')),
     scopeLine('tools (matched by name)', effective('tools')),
   ];
   if (perms.yolo) lines.push('- YOLO active: asks auto-approve this session; deny rules still apply.');
@@ -424,7 +424,7 @@ export function summarizePermissions(perms: Pick<TurnPermissions, 'ruleset' | 'y
 }
 
 /** Option labels of the approval prompt. English on purpose: core wire texts are English (the model
- *  and every surface see them verbatim), mirroring ask_user_question. Stable — the decision mapping
+ *  and every surface see them verbatim), mirroring AskUserQuestion. Stable — the decision mapping
  *  below and both frontends key on them. */
 export const APPROVAL_LABELS = { once: 'Allow once', always: 'Always allow', deny: 'Deny' } as const;
 

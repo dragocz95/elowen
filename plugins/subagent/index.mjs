@@ -21,7 +21,7 @@ const JOB_WAIT_TIMEOUT_MS = 5 * 60_000;
 // deliberately, and never by accidentally matching a prefix. Names absent from an installation (a disabled
 // plugin) simply never resolve; allow-listing them is harmless.
 const READ_ONLY_TOOLS = [
-  'read_file', 'search_files', 'list_dir', 'file_info', 'git_status', 'codebase_search', 'codebase_status',
+  'Read', 'Search', 'ListDir', 'FileInfo', 'GitStatus', 'CodebaseSearch', 'CodebaseStatus',
 ];
 
 const ok = (text, details = {}) => ({ content: [{ type: 'text', text }], details });
@@ -107,7 +107,7 @@ const buildCollectReminder = (finished, stillRunning) => {
     const rows = stillRunning.map((proc) => `- ${xmlEscape(proc.id)}: ${xmlEscape(proc.command)}`).join('\n');
     parts.push(`<background-processes-still-running>\n${rows}\n</background-processes-still-running>`);
     parts.push('<instruction>These background processes are still running after a long wait. Either '
-      + 'kill_process the ones you no longer need, keep waiting only if their output is essential, or '
+      + 'KillProcess the ones you no longer need, keep waiting only if their output is essential, or '
       + 'finish the delegated task now with what you already have.</instruction>');
   } else {
     parts.push('<instruction>Read the finished process output, finish the delegated task, and return the '
@@ -228,7 +228,7 @@ export function register(ctx) {
   });
 
   ctx.registerTool(defineTool({
-    name: 'delegate_models', label: 'List sub-agent models',
+    name: 'DelegateModels', label: 'List sub-agent models',
     description: 'List the models a sub-agent can run on (values for the delegate tool\'s "model" argument). '
       + 'Only consult this when the user explicitly asked to run a sub-agent on a different model.',
     parameters: Type.Object({}),
@@ -241,11 +241,11 @@ export function register(ctx) {
   }));
 
   ctx.registerTool(defineTool({
-    name: 'delegate', label: 'Delegate to sub-agent',
+    name: 'Delegate', label: 'Delegate to sub-agent',
     description: [
       'Hand a self-contained task to a fresh sub-agent with its own clean context. It has the same tools and access as you, but it CANNOT see this conversation — the task text is the only instruction it gets, so it must be complete and standalone.',
       'Delegate when the subtask is self-contained and only the conclusion matters, not the exploration trail; when answering would mean reading across many files and you want the summary rather than the file dumps; or when you have independent work to run in parallel. Do NOT delegate a single-fact lookup where you already know the file or symbol, work that needs nuanced judgment about the user\'s intent, or anything so small that spawning an agent costs more than doing it.',
-      'By default the call BLOCKS and returns the sub-agent\'s final result. Set background=true for an independent side-quest: it returns a job id immediately and the result is delivered to you in a NEW turn — do other work meanwhile, then end your turn. You are woken when it lands, so never poll delegate_status in a loop.',
+      'By default the call BLOCKS and returns the sub-agent\'s final result. Set background=true for an independent side-quest: it returns a job id immediately and the result is delivered to you in a NEW turn — do other work meanwhile, then end your turn. You are woken when it lands, so never poll DelegateStatus in a loop.',
       'To launch several independent sub-agents, put multiple delegate calls in ONE response so they run concurrently; do not serialize them. Once you have delegated a search, do not also run it yourself.',
       'Use read_only=true when the sub-agent only needs to look (explore, search, report) — it then gets read-only tools and cannot write, run commands or delegate further. Use `tools` to hand it an exact toolset. Either way you can only ever narrow what you already hold.',
       'The sub-agent inherits your model; pass `model` only when the user explicitly asked for a different one. Its final message comes back to you, not to the user — relay what matters. There is no way to continue a finished sub-agent: a follow-up is a NEW delegation, carrying whatever context it needs.',
@@ -260,7 +260,7 @@ export function register(ctx) {
       })),
       model: Type.Optional(Type.String({
         description: 'Run the sub-agent on a DIFFERENT model — pass this ONLY when the user explicitly asked for it. '
-          + 'Value from delegate_models ("provider/model" or a bare model id). Omit it to inherit your own model.',
+          + 'Value from DelegateModels ("provider/model" or a bare model id). Omit it to inherit your own model.',
       })),
       background: Type.Optional(Type.Boolean({
         description: 'Start asynchronously and return a stable job id immediately. Omit or false to wait for the result.',
@@ -470,15 +470,15 @@ export function register(ctx) {
             ? 'Its result is delivered to you automatically in a NEW turn when it finishes — you do not have to '
               + 'fetch it. Do any other useful work now, then end your turn. If there is nothing else to do, say so '
               + 'briefly and end the turn: waiting inside this turn only delays the result, and polling '
-              + 'delegate_status in a loop is never the answer.'
-            : `Use delegate_result({"id":"${jobId}"}) later; automatic delivery is unavailable on this surface.`),
+              + 'DelegateStatus in a loop is never the answer.'
+            : `Use DelegateResult({"id":"${jobId}"}) later; automatic delivery is unavailable on this surface.`),
         { jobId, status: 'running' },
       );
     },
   }));
 
   ctx.registerTool(defineTool({
-    name: 'delegate_status', label: 'Check sub-agent status',
+    name: 'DelegateStatus', label: 'Check sub-agent status',
     description: 'Return the current state and latest progress for one background delegation. This is a '
       + 'one-off snapshot for when the user asks how a job is doing — it is NOT how you collect a result. '
       + 'An auto-delivered result arrives on its own in a new turn; never call this in a loop to wait for one.',
@@ -491,7 +491,7 @@ export function register(ctx) {
   }));
 
   ctx.registerTool(defineTool({
-    name: 'delegate_result', label: 'Read sub-agent result',
+    name: 'DelegateResult', label: 'Read sub-agent result',
     description: 'Return a completed background delegation result. If it is still running, this reports '
       + 'that state immediately instead of waiting; continue other work before checking again.',
     parameters: Type.Object({ id: Type.String({ description: 'Job id returned by delegate(background=true)' }) }),

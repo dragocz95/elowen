@@ -84,7 +84,7 @@ export class BrainService {
   /** Names a brand-new conversation from its first message with one cheap background inference (reuses the
    *  curator/categorizer model). No-ops when that model isn't configured — the provisional title stays. */
   private titler: ConversationTitler;
-  /** Parked `ask_user_question` calls, shared by owner chat and channel sessions so `/brain/answer`
+  /** Parked `AskUserQuestion` calls, shared by owner chat and channel sessions so `/brain/answer`
    *  (web/CLI) and Discord interactions resolve through one registry. */
   /** Operator-tuned brain limits, read live (Settings → Elowen AI → Limits); the built-in defaults when a
    *  minimal/test wiring omits the accessor. */
@@ -473,7 +473,7 @@ export class BrainService {
     return this.serial(sessionId, async () => cleanUp(sessionId));
   }
 
-  /** Settle a parked `ask_user_question` with the user's picks (from POST /brain/answer or a Discord
+  /** Settle a parked `AskUserQuestion` with the user's picks (from POST /brain/answer or a Discord
    *  interaction). Deliberately NOT serialized: the parked turn holds the session lock, so resolving
    *  through the lock would deadlock — it just resolves the registry Promise directly. Returns whether
    *  a pending question matched (false for an unknown/expired id — tolerated). */
@@ -698,7 +698,7 @@ export class BrainService {
         seconds: run.seconds, model: run.model,
       });
     }
-    // Same restart concern for workflows, minus the delivery half: workflow_start BLOCKS, so a restart
+    // Same restart concern for workflows, minus the delivery half: WorkflowStart BLOCKS, so a restart
     // killed the tool call and its whole turn — there is no result anyone is still waiting on, and no
     // completion inbox to weave into. The row only has to stop claiming the DAG is still running.
     for (const run of this.d.store.getWorkflowRuns(started.sessionId)) {
@@ -967,7 +967,7 @@ export class BrainService {
     // Serialized: two rapid plugin toggles must not interleave stopAll()/startAll() and leave
     // duplicate connected adapters (a distinct lock key from any session, so it never blocks a turn).
     await this.serial('plugins-reload', async () => {
-      // Every live session is about to be torn down — release any parked ask_user_question across all of
+      // Every live session is about to be torn down — release any parked AskUserQuestion across all of
       // them so a pending question can't stall the reload (or leave a turn hanging on a disposed session).
       this.elicitation.cancelAll('plugins reloaded');
       // Let plugins observe the reload boundary. Observational only (fail-open, no mutation) — fires on

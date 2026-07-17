@@ -165,7 +165,7 @@ const clampMaxSteps = (next: number | undefined, fallback: number): number =>
  *  surfaced so the instance owner can trade cost/verbosity/latency to taste. Each is a whole number,
  *  clamped to a sane range; an unset/invalid field falls back to the current value (so a partial patch
  *  never wipes a sibling). Consumed at: messageView (tool-output preview), ElicitationRegistry
- *  (ask_user_question wait), MemoryService.retrieve (recall size), the goal loop (turn budget + YOLO
+ *  (AskUserQuestion wait), MemoryService.retrieve (recall size), the goal loop (turn budget + YOLO
  *  safety ceiling), and Channels (live-session LRU cap). */
 export interface BrainLimits {
   toolOutputMaxLines: number;

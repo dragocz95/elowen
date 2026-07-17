@@ -183,11 +183,11 @@ describe('cli/chat/headless.runHeadless', () => {
   it('uses durable row ids so compaction can replace identical text without losing it or reprinting a mutable row', async () => {
     const initial = [
       { id: 'old-ok', role: 'assistant', text: 'OK' },
-      { id: 'delegate-row', role: 'assistant', text: 'already rendered', segments: [{ kind: 'tool', name: 'delegate', sub: { status: 'running' } }] },
+      { id: 'delegate-row', role: 'assistant', text: 'already rendered', segments: [{ kind: 'tool', name: 'Delegate', sub: { status: 'running' } }] },
     ];
     const settled = [
       // The old identical OK row was compacted away. The delegate row changed only its durable sidecar.
-      { id: 'delegate-row', role: 'assistant', text: 'already rendered', segments: [{ kind: 'tool', name: 'delegate', sub: { status: 'done' } }] },
+      { id: 'delegate-row', role: 'assistant', text: 'already rendered', segments: [{ kind: 'tool', name: 'Delegate', sub: { status: 'done' } }] },
       { id: 'new-ok', role: 'assistant', text: 'OK' },
     ];
     const client = {

@@ -86,7 +86,7 @@ describe('BrainWorkerService', () => {
     const createSession = (svc as unknown as { d: { createSession: { mock: { calls: [{ customTools: { name: string; execute: (id: string, p: unknown) => Promise<unknown> }[] }][] } } } }).d.createSession;
     await svc.launch(launchInput);
     const tools = createSession.mock.calls[0][0].customTools;
-    const close = tools.find((t) => t.name === 'elowen_close_task')!;
+    const close = tools.find((t) => t.name === 'ElowenCloseTask')!;
     await close.execute('c1', { summary: 'done', outcome: 'ok' });
     expect(fetchImpl).toHaveBeenCalledTimes(1);
     const [url, init] = (fetchImpl as { mock: { calls: [string | URL, RequestInit][] } }).mock.calls[0];
@@ -126,7 +126,7 @@ describe('BrainWorkerService', () => {
     expect(session.prompt).toHaveBeenCalledTimes(1);
     release(); await settle(); // kickoff settles unclosed → nudge
     expect(session.prompt).toHaveBeenCalledTimes(2);
-    expect(String(session.prompt.mock.calls[1][0])).toContain('elowen_close_task');
+    expect(String(session.prompt.mock.calls[1][0])).toContain('ElowenCloseTask');
     release(); await settle(); await settle(); // nudge also settles unclosed → teardown
     const t = tasks.get('T-1')!;
     expect(t.status).toBe('open');

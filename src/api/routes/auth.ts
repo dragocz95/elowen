@@ -325,7 +325,7 @@ export function registerAuthRoutes(app: ElowenApp, ctx: RouteContext): void {
 
   // Admin: the tools a user can actually reach, for the users-panel pills. One pass over the live plugin
   // registry + the built-in tool catalog — no N+1. State is DERIVED (there's no stored per-user tool
-  // grant): elowen_* control-plane is operator/admin-only; memory_* is inherited by every interactive
+  // grant): Elowen* control-plane is operator/admin-only; Memory* is inherited by every interactive
   // session (per-user scoped); plugin tools ride along for the user's sessions (path-level access is
   // still enforced at execute). `icon` is the manifest/built-in emoji, or null → the client's fallback.
   app.get('/users/:id/tools', async (c) => {

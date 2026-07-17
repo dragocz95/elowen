@@ -33,7 +33,7 @@ export interface BrainSubagentView {
   resultDelivery?: 'pending' | 'acknowledged';
 }
 
-/** Durable latest state of a workflow DAG attached to its `workflow_start` call. Structural for the same
+/** Durable latest state of a workflow DAG attached to its `WorkflowStart` call. Structural for the same
  *  reason as BrainSubagentView — events.ts imports this file, so importing WorkflowUpdate back would form
  *  a cycle. Mirrors that type field for field; BrainStore passes its validated rows straight through. */
 export interface BrainWorkflowView {
@@ -75,7 +75,7 @@ function truncateToolDetail(value: string, max = TOOL_DETAIL_MAX): string {
   return value.length > max ? `${value.slice(0, Math.max(0, max - 1))}…` : value;
 }
 
-/** Requested 1-indexed line window for read_file. This mirrors the plugin's offset/limit normalization,
+/** Requested 1-indexed line window for Read. This mirrors the plugin's offset/limit normalization,
  *  but deliberately describes the request rather than claiming how many lines the file actually had. */
 function readRange(args: Record<string, unknown>): string | undefined {
   const rawOffset = args.offset;
@@ -90,7 +90,7 @@ function readRange(args: Record<string, unknown>): string | undefined {
 }
 
 /** A short, human-scannable summary of a tool call's most salient argument (the file path, command,
- *  query…), opencode-style: `read src/foo.ts`, `bash "npm test"`. `read_file` keeps its requested line
+ *  query…), opencode-style: `read src/foo.ts`, `bash "npm test"`. `Read` keeps its requested line
  *  window visible at the end, even when a long path needs truncating. */
 export function toolDetail(args: unknown, toolName?: string): string | undefined {
   if (!args || typeof args !== 'object') return undefined;
@@ -98,7 +98,7 @@ export function toolDetail(args: unknown, toolName?: string): string | undefined
   const raw = a.path ?? a.file_path ?? a.filename ?? a.command ?? a.pattern ?? a.query ?? a.url ?? a.name ?? a.text;
   if (typeof raw !== 'string' || !raw.trim()) return undefined;
   const s = raw.replace(/\s+/g, ' ').trim();
-  const range = toolName === 'read_file' ? readRange(a) : undefined;
+  const range = toolName === 'Read' ? readRange(a) : undefined;
   if (!range) return truncateToolDetail(s);
   const suffix = ` · ${range}`;
   return `${truncateToolDetail(s, TOOL_DETAIL_MAX - suffix.length)}${suffix}`;

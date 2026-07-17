@@ -44,7 +44,7 @@ function renderMemory(m: MemoryRow): string {
 
 function memorySearch(d: MemoryToolDeps) {
   return defineTool({
-    name: 'memory_search', label: 'Search memory',
+    name: 'MemorySearch', label: 'Search memory',
     description: 'Search your long-term memory about the user for durable facts relevant to a query '
       + '(stable preferences, decisions, project/infra details). Semantic when embeddings are configured, '
       + 'keyword otherwise. Only usable in the user\'s personal chat.',
@@ -64,11 +64,11 @@ function memorySearch(d: MemoryToolDeps) {
 
 function memoryAdd(d: MemoryToolDeps) {
   return defineTool({
-    name: 'memory_add', label: 'Add memory',
+    name: 'MemoryAdd', label: 'Add memory',
     description: 'Store ONE durable, reusable fact about the user (a stable preference, a decision, a '
       + 'project/infra detail). Do NOT store chit-chat, greetings or transient state. Before inserting, '
       + 'this checks for a near-duplicate — if one exists it does NOT insert and returns the existing id '
-      + 'so you can memory_update or memory_merge instead of piling up paraphrases. Personal chat only.',
+      + 'so you can MemoryUpdate or MemoryMerge instead of piling up paraphrases. Personal chat only.',
     parameters: Type.Object({
       body: Type.String({ description: 'The fact, self-contained' }),
       kind: Type.Optional(Type.String({ description: "e.g. 'fact', 'preference', 'decision' (default 'fact')" })),
@@ -83,13 +83,13 @@ function memoryAdd(d: MemoryToolDeps) {
       if (near.length > 0) {
         const top = near[0]!;
         return text(`A near-duplicate memory already exists (#${top.memory.id}, similarity `
-          + `${top.similarity.toFixed(2)}): "${top.memory.body}". Prefer memory_update #${top.memory.id} `
-          + 'or memory_merge instead of adding a duplicate.');
+          + `${top.similarity.toFixed(2)}): "${top.memory.body}". Prefer MemoryUpdate #${top.memory.id} `
+          + 'or MemoryMerge instead of adding a duplicate.');
       }
       const row = d.store.add(
         userId,
         { body, kind: p.kind, importance: p.importance, source: 'user' },
-        `user:${userId}`, 'added via memory_add tool',
+        `user:${userId}`, 'added via MemoryAdd tool',
       );
       return text(`Stored memory #${row.id}.`);
     },
@@ -98,7 +98,7 @@ function memoryAdd(d: MemoryToolDeps) {
 
 function memoryUpdate(d: MemoryToolDeps) {
   return defineTool({
-    name: 'memory_update', label: 'Update memory',
+    name: 'MemoryUpdate', label: 'Update memory',
     description: 'Revise an existing memory by id — correct the fact, change its kind, or re-rank its '
       + 'importance (1..5). Prefer this over adding a paraphrase. Personal chat only.',
     parameters: Type.Object({
@@ -114,7 +114,7 @@ function memoryUpdate(d: MemoryToolDeps) {
       if (p.body !== undefined) patch.body = p.body;
       if (p.kind !== undefined) patch.kind = p.kind;
       if (p.importance !== undefined) patch.importance = p.importance;
-      const row = d.store.update(userId, p.id, patch, `user:${userId}`, 'updated via memory_update tool');
+      const row = d.store.update(userId, p.id, patch, `user:${userId}`, 'updated via MemoryUpdate tool');
       if (!row) return text(`No memory #${p.id} found.`);
       return text(`Updated memory #${row.id}.`);
     },
@@ -123,7 +123,7 @@ function memoryUpdate(d: MemoryToolDeps) {
 
 function memoryMerge(d: MemoryToolDeps) {
   return defineTool({
-    name: 'memory_merge', label: 'Merge memories',
+    name: 'MemoryMerge', label: 'Merge memories',
     description: 'Collapse several redundant memories into one consolidated fact. The source ids are '
       + 'soft-deleted; the merged body becomes a new memory. Personal chat only.',
     parameters: Type.Object({
@@ -136,7 +136,7 @@ function memoryMerge(d: MemoryToolDeps) {
       const body = p.body.trim();
       if (body === '') return text('Cannot merge into an empty memory.');
       if (p.ids.length === 0) return text('Provide at least one source memory id to merge.');
-      const merged = d.store.merge(userId, p.ids, body, `user:${userId}`, 'merged via memory_merge tool');
+      const merged = d.store.merge(userId, p.ids, body, `user:${userId}`, 'merged via MemoryMerge tool');
       return text(`Merged into memory #${merged.id}.`);
     },
   });
@@ -144,14 +144,14 @@ function memoryMerge(d: MemoryToolDeps) {
 
 function memoryDelete(d: MemoryToolDeps) {
   return defineTool({
-    name: 'memory_delete', label: 'Delete memory',
+    name: 'MemoryDelete', label: 'Delete memory',
     description: 'Soft-delete a memory by id (it is retained for audit, just no longer recalled). '
       + 'Personal chat only.',
     parameters: Type.Object({ id: Type.Number({ description: 'The memory id to delete' }) }),
     execute: async (_id, p: { id: number }) => {
       const userId = actingUserId();
       if (userId === null) return text(LOCKED);
-      const ok = d.store.softDelete(userId, p.id, `user:${userId}`, 'deleted via memory_delete tool');
+      const ok = d.store.softDelete(userId, p.id, `user:${userId}`, 'deleted via MemoryDelete tool');
       return text(ok ? `Deleted memory #${p.id}.` : `No memory #${p.id} found.`);
     },
   });
@@ -159,7 +159,7 @@ function memoryDelete(d: MemoryToolDeps) {
 
 function memoryListRecent(d: MemoryToolDeps) {
   return defineTool({
-    name: 'memory_list_recent', label: 'List recent memories',
+    name: 'MemoryListRecent', label: 'List recent memories',
     description: 'List the most recently stored memories about the user. Personal chat only.',
     parameters: Type.Object({ limit: Type.Optional(Type.Number({ description: 'Max to list (default 10)' })) }),
     execute: async (_id, p: { limit?: number }) => {
@@ -174,7 +174,7 @@ function memoryListRecent(d: MemoryToolDeps) {
 
 function memoryCategories(d: MemoryToolDeps) {
   return defineTool({
-    name: 'memory_categories', label: 'List memory categories',
+    name: 'MemoryCategories', label: 'List memory categories',
     description: 'List your memory categories — each id, name and the guide the auto-classifier matches '
       + 'memories against. Use this before creating (avoid duplicates) or deleting one. Personal chat only.',
     parameters: Type.Object({}),
@@ -182,7 +182,7 @@ function memoryCategories(d: MemoryToolDeps) {
       const userId = actingUserId();
       if (userId === null) return text(LOCKED);
       const cats = d.categories.list(userId);
-      if (cats.length === 0) return text('No memory categories yet. Create one with memory_category_create.');
+      if (cats.length === 0) return text('No memory categories yet. Create one with MemoryCategoryCreate.');
       return text(cats.map((c) => `#${c.id} ${c.name}${c.description ? ` — ${c.description}` : ''}`).join('\n'));
     },
   });
@@ -190,11 +190,11 @@ function memoryCategories(d: MemoryToolDeps) {
 
 function memoryCategoryCreate(d: MemoryToolDeps) {
   return defineTool({
-    name: 'memory_category_create', label: 'Create memory category',
+    name: 'MemoryCategoryCreate', label: 'Create memory category',
     description: 'Create a new memory category. `description` is the guide the auto-classifier matches '
       + 'memories against, so make it specific about what belongs here. `icon` is optional (a lucide name '
       + `from: ${ICON_ALLOWLIST.join(', ')}; anything else falls back to a folder). Fails if the name `
-      + 'already exists — call memory_categories first. Personal chat only.',
+      + 'already exists — call MemoryCategories first. Personal chat only.',
     parameters: Type.Object({
       name: Type.String({ description: 'Short category name (unique)' }),
       description: Type.Optional(Type.String({ description: 'What belongs here — the classifier guide' })),
@@ -207,7 +207,7 @@ function memoryCategoryCreate(d: MemoryToolDeps) {
       if (name === '') return text('A category needs a name.');
       try {
         const row = d.categories.create(userId, { name, description: p.description?.trim(), icon: p.icon });
-        return text(`Created category #${row.id} "${row.name}". Run memory_recategorize to sort memories into it.`);
+        return text(`Created category #${row.id} "${row.name}". Run MemoryRecategorize to sort memories into it.`);
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
         if (/UNIQUE|constraint/i.test(msg)) return text(`A category named "${name}" already exists.`);
@@ -219,10 +219,10 @@ function memoryCategoryCreate(d: MemoryToolDeps) {
 
 function memoryCategoryDelete(d: MemoryToolDeps) {
   return defineTool({
-    name: 'memory_category_delete', label: 'Delete memory category',
+    name: 'MemoryCategoryDelete', label: 'Delete memory category',
     description: 'Delete a memory category by id. Its memories are NOT deleted — they just become '
       + 'uncategorized. Personal chat only.',
-    parameters: Type.Object({ id: Type.Number({ description: 'Category id (from memory_categories)' }) }),
+    parameters: Type.Object({ id: Type.Number({ description: 'Category id (from MemoryCategories)' }) }),
     execute: async (_id, p: { id: number }) => {
       const userId = actingUserId();
       if (userId === null) return text(LOCKED);
@@ -234,7 +234,7 @@ function memoryCategoryDelete(d: MemoryToolDeps) {
 
 function memoryRecategorize(d: MemoryToolDeps) {
   return defineTool({
-    name: 'memory_recategorize', label: 'Recategorize memories',
+    name: 'MemoryRecategorize', label: 'Recategorize memories',
     description: 'Re-run the auto-classifier over your memories to sort them into the current categories. '
       + 'By default only UNcategorized memories are touched; set `all: true` to re-sort every memory '
       + '(e.g. after adding or renaming categories). Personal chat only.',
@@ -245,7 +245,7 @@ function memoryRecategorize(d: MemoryToolDeps) {
       const userId = actingUserId();
       if (userId === null) return text(LOCKED);
       if (!d.categorizer.configured()) return text('No categorization model is configured (Settings → memory model), so memories can\'t be auto-sorted.');
-      if (d.categories.list(userId).length === 0) return text('No categories to sort into. Create one with memory_category_create first.');
+      if (d.categories.list(userId).length === 0) return text('No categories to sort into. Create one with MemoryCategoryCreate first.');
       const { scanned, classified } = await d.categorizer.reclassify(userId, { includeCategorized: p.all === true });
       return text(`Scanned ${scanned} memor${scanned === 1 ? 'y' : 'ies'}, sorted ${classified} into a category.`);
     },

@@ -68,14 +68,14 @@ describe('discord LiveMessage (tool progress)', () => {
     };
     const lm = new LiveMessage(adapter, 'chan');
     lm.onEvent({ type: 'text', delta: 'Mrknu na to… ' }); // pre-tool narration opens the answer bubble FIRST (m1)
-    lm.onEvent({ type: 'tool', name: 'run_command', detail: 'apt list --upgradable', icon: '💻' }); // tool bubble posts below (m2)
-    lm.onEvent({ type: 'tool', name: 'read_file', icon: '📄' });
+    lm.onEvent({ type: 'tool', name: 'Bash', detail: 'apt list --upgradable', icon: '💻' }); // tool bubble posts below (m2)
+    lm.onEvent({ type: 'tool', name: 'Read', icon: '📄' });
     await new Promise((r) => setTimeout(r, 20));
     await lm.finalize('Hotovo, vše běží.');
     // Bubbles created in order: [stranded draft m1, tool trace m2, re-anchored answer m3].
     const [draftId, progressId, finalId] = posts;
     expect(deleted).toContain(draftId); // the draft stranded ABOVE the trace is deleted, not left buried in scrollback
-    expect(edits.get(progressId)).toBe('💻 `run_command`: "apt list --upgradable"\n📄 `read_file`'); // single \n = tight; finalize closes every row
+    expect(edits.get(progressId)).toBe('💻 `Bash`: "apt list --upgradable"\n📄 `Read`'); // single \n = tight; finalize closes every row
     expect(edits.get(progressId)).not.toContain('\n\n');
     expect(edits.get(finalId)).toBe('Hotovo, vše běží.'); // final answer re-posted BELOW the trace, as the LAST message
   });
@@ -96,12 +96,12 @@ describe('discord LiveMessage (tool progress)', () => {
     };
     const lm = new LiveMessage(adapter, 'chan');
     lm.onEvent({ type: 'text', delta: 'Koukám se na to, hned…' }); // narration is NOT streamed live in summary mode
-    lm.onEvent({ type: 'tool', name: 'run_command', detail: 'npm test', icon: '💻' }); // the tool trace DOES stream (m1)
+    lm.onEvent({ type: 'tool', name: 'Bash', detail: 'npm test', icon: '💻' }); // the tool trace DOES stream (m1)
     await new Promise((r) => setTimeout(r, 20));
     await lm.finalize('Hotovo — vše zelené.');
     // Exactly two messages: the live tool trace and the single final summary — no intermediate answer bubble.
     expect(posts).toHaveLength(2);
-    expect(edits.get(posts[0]!.id)).toContain('run_command'); // tool trace streamed live
+    expect(edits.get(posts[0]!.id)).toContain('Bash'); // tool trace streamed live
     expect(posts[1]!.content).toContain('Hotovo — vše zelené.'); // the summary posted once, below the trace
     expect(posts.some((p) => p.content.includes('Koukám se na to'))).toBe(false); // narration never became its own message
   });
@@ -121,14 +121,14 @@ describe('discord LiveMessage (tool progress)', () => {
       },
     };
     const lm = new LiveMessage(adapter, 'chan', undefined, undefined, { toolActivity: 'status', answerMode: 'final', toolOutput: 'summary', toolMessageMode: 'per_tool' });
-    lm.onEvent({ type: 'tool', id: 'a', name: 'read_file', detail: 'a.ts', icon: '📄' });
-    lm.onEvent({ type: 'tool', id: 'b', name: 'run_command', detail: 'npm test', icon: '💻' });
+    lm.onEvent({ type: 'tool', id: 'a', name: 'Read', detail: 'a.ts', icon: '📄' });
+    lm.onEvent({ type: 'tool', id: 'b', name: 'Bash', detail: 'npm test', icon: '💻' });
     lm.onEvent({ type: 'tool_output', id: 'b', output: { title: 'console output', kind: 'console', text: 'ok', status: 'exit 0', tone: 'success' } });
     await lm.finalize('Hotovo.');
     expect(posts.map((p) => p.id)).toEqual(['m1', 'm2', 'm3']);
-    expect(edits.get('m1')).toContain('read_file');
-    expect(edits.get('m1')).not.toContain('run_command');
-    expect(edits.get('m2')).toContain('run_command');
+    expect(edits.get('m1')).toContain('Read');
+    expect(edits.get('m1')).not.toContain('Bash');
+    expect(edits.get('m2')).toContain('Bash');
     expect(edits.get('m3')).toBe('Hotovo.');
   });
 
@@ -147,9 +147,9 @@ describe('discord LiveMessage (tool progress)', () => {
       } };
       const lm = new LiveMessage(adapter, 'chan', 'trigger', 'user', { toolActivity: 'live', answerMode: 'final', toolOutput: 'tail' });
       lm.onEvent({ type: 'text', delta: 'working narration' });
-      lm.onEvent({ type: 'tool', id: 'cmd1', name: 'run_command', detail: 'npm test', icon: '💻' });
+      lm.onEvent({ type: 'tool', id: 'cmd1', name: 'Bash', detail: 'npm test', icon: '💻' });
       await vi.advanceTimersByTimeAsync(0);
-      expect(edits.get('m1')).toContain('💻 `run_command`');
+      expect(edits.get('m1')).toContain('💻 `Bash`');
       expect(posts).toEqual(['m1']); // no answer draft in final mode
 
       lm.onEvent({ type: 'tool_progress', id: 'cmd1', text: 'PASS a.test\nPASS b.test' });
@@ -158,7 +158,7 @@ describe('discord LiveMessage (tool progress)', () => {
 
       lm.onEvent({ type: 'tool_output', id: 'cmd1', output: { title: 'console output', kind: 'console', text: '44 tests passed', status: 'exit 0', tone: 'success' } });
       await lm.finalize('Hotovo.');
-      expect(edits.get('m1')).toContain('💻 `run_command`');
+      expect(edits.get('m1')).toContain('💻 `Bash`');
       expect(edits.get('m1')).toContain('44 tests passed');
       expect(posts).toEqual(['m1', 'm2']);
       expect(edits.get('m2')).toContain('Hotovo.');
@@ -174,13 +174,13 @@ describe('discord LiveMessage (tool progress)', () => {
       edits.set(id, body.content); return { id };
     } };
     const lm = new LiveMessage(adapter, 'chan', undefined, undefined, { toolActivity: 'status', answerMode: 'final', toolOutput: 'summary' });
-    lm.onEvent({ type: 'tool', id: 'a', name: 'read_file', detail: 'a.ts', icon: '📄' });
-    lm.onEvent({ type: 'tool', id: 'b', name: 'run_command', detail: 'npm test', icon: '💻' });
+    lm.onEvent({ type: 'tool', id: 'a', name: 'Read', detail: 'a.ts', icon: '📄' });
+    lm.onEvent({ type: 'tool', id: 'b', name: 'Bash', detail: 'npm test', icon: '💻' });
     lm.onEvent({ type: 'tool_output', id: 'b', output: { title: 'console output', kind: 'console', text: 'Test failed', status: 'exit 1', tone: 'warning' } });
     lm.onEvent({ type: 'tool_end', id: 'a' });
     await lm.finalize('Opravil jsem chybu.');
-    expect(edits.get('m1')).toContain('📄 `read_file`: "a.ts"');
-    expect(edits.get('m1')).toContain('💻 `run_command`: "npm test" — exit 1');
+    expect(edits.get('m1')).toContain('📄 `Read`: "a.ts"');
+    expect(edits.get('m1')).toContain('💻 `Bash`: "npm test" — exit 1');
   });
 
   it('bounds a long trace around the newest tools and neutralizes mentions from tool data', async () => {
@@ -232,11 +232,11 @@ describe('discord LiveMessage (tool progress)', () => {
     lm.onEvent({ type: 'tool', name: 'sarah_hair', detail: 'list_services', icon: '✂️' });
     lm.onEvent({ type: 'tool', name: 'sarah_hair', detail: 'list_bookings', icon: '✂️' });
     lm.onEvent({ type: 'tool', name: 'sarah_hair', icon: '✂️' }); // detail-less repeat keeps the latest detail
-    lm.onEvent({ type: 'tool', name: 'read_file', icon: '📄' });  // different tool → new line
+    lm.onEvent({ type: 'tool', name: 'Read', icon: '📄' });  // different tool → new line
     lm.onEvent({ type: 'tool', name: 'sarah_hair', icon: '✂️' }); // NON-consecutive → a fresh line, no merge back
     await new Promise((r) => setTimeout(r, 20));
     await lm.finalize('done');
-    expect(edits.get('m1')).toBe('✂️ `sarah_hair`: "list_bookings" ×3\n📄 `read_file`\n✂️ `sarah_hair`');
+    expect(edits.get('m1')).toBe('✂️ `sarah_hair`: "list_bookings" ×3\n📄 `Read`\n✂️ `sarah_hair`');
   });
 
   // Every real tool call carries a PI toolCallId — and the trace collapsed only calls that had none, so on
@@ -280,14 +280,14 @@ describe('discord LiveMessage (tool progress)', () => {
       },
     };
     const lm = new LiveMessage(adapter, 'chan');
-    for (const id of ['a', 'b', 'c']) lm.onEvent({ type: 'tool', id, name: 'read_file', icon: '📄' });
+    for (const id of ['a', 'b', 'c']) lm.onEvent({ type: 'tool', id, name: 'Read', icon: '📄' });
     lm.onEvent({ type: 'tool_output', id: 'b', output: { kind: 'result', tone: 'success', status: 'ok', text: '42 rows' } });
     lm.onEvent({ type: 'tool_output', id: 'c', output: { kind: 'result', tone: 'danger', status: 'needs attention', text: 'no such file' } });
     await new Promise((r) => setTimeout(r, 20));
     await lm.finalize('done');
     const trace = edits.get('m1')!;
-    expect(trace).toContain('📄 `read_file` — 42 rows');       // the one with a result keeps its line…
-    expect(trace).toContain('📄 `read_file` — needs attention'); // …as does the failure
+    expect(trace).toContain('📄 `Read` — 42 rows');       // the one with a result keeps its line…
+    expect(trace).toContain('📄 `Read` — needs attention'); // …as does the failure
     expect(trace.split('\n').filter((l) => l.startsWith('📄')).length).toBe(3); // and nothing is folded away
   });
 
@@ -305,7 +305,7 @@ describe('discord LiveMessage (tool progress)', () => {
       },
     };
     const lm = new LiveMessage(adapter, 'chan');
-    for (const id of ['a', 'b', 'c']) lm.onEvent({ type: 'tool', id, name: 'read_file', icon: '📄' });
+    for (const id of ['a', 'b', 'c']) lm.onEvent({ type: 'tool', id, name: 'Read', icon: '📄' });
     for (const [id, path] of [['a', '/x/1.txt'], ['b', '/y/2.txt'], ['c', '/z/3.txt']] as const)
       lm.onEvent({ type: 'tool_output', id, output: { kind: 'result', tone: 'danger', status: 'needs attention', text: `no such file: ${path}` } });
     await new Promise((r) => setTimeout(r, 20));
@@ -720,20 +720,20 @@ describe('discord answer streaming (live reply edits, two-bubble model)', () => 
       const lm = new LiveMessage(adapter, 'chan');
       lm.onEvent({ type: 'text', delta: 'Let me check. ' }); // narration opens the answer draft FIRST (m1)
       await vi.advanceTimersByTimeAsync(0);
-      lm.onEvent({ type: 'tool', name: 'read_file', icon: '📄' }); // tool bubble posts below (m2) → answer stranded above
+      lm.onEvent({ type: 'tool', name: 'Read', icon: '📄' }); // tool bubble posts below (m2) → answer stranded above
       await vi.advanceTimersByTimeAsync(0);
       lm.onEvent({ type: 'text', delta: 'Found it.' }); // streams live into the stranded draft during the turn
       await vi.advanceTimersByTimeAsync(1300);
       await lm.finalize('Found it.');
       const tools = calls.filter((c) => c.id === 'm2');   // the tool bubble
       expect(tools.length).toBeGreaterThan(0);
-      expect(tools.every((c) => c.content.includes('read_file'))).toBe(true); // tool bubble only ever holds tool lines
+      expect(tools.every((c) => c.content.includes('Read'))).toBe(true); // tool bubble only ever holds tool lines
       expect(calls.filter((c) => c.method === 'DELETE').map((c) => c.id)).toContain('m1'); // stranded draft deleted
       const posts = calls.filter((c) => c.method === 'POST').map((c) => c.id);
       const finalId = posts.at(-1)!; // the answer re-posted LAST, below the trace
       expect(finalId).not.toBe('m1');
       const finalBubble = calls.filter((c) => c.id === finalId);
-      expect(finalBubble.every((c) => !c.content.includes('read_file'))).toBe(true); // never gets tool lines
+      expect(finalBubble.every((c) => !c.content.includes('Read'))).toBe(true); // never gets tool lines
       expect(finalBubble.at(-1)!.content).toBe('Found it.'); // authoritative reply, as the channel's LAST message
     } finally { vi.useRealTimers(); }
   });
@@ -779,10 +779,10 @@ describe('discord answer streaming (live reply edits, two-bubble model)', () => 
       const { calls, adapter } = mk();
       const lm = new LiveMessage(adapter, 'chan');
       lm.onEvent({ type: 'text', delta: 'partial answer' });
-      lm.onEvent({ type: 'tool', name: 'read_file', icon: '📄' });
+      lm.onEvent({ type: 'tool', name: 'Read', icon: '📄' });
       await vi.advanceTimersByTimeAsync(0);
       lm.onEvent({ type: 'text', delta: ' more text' }); // queued behind the throttle
-      lm.onEvent({ type: 'tool', name: 'read_file', icon: '📄' }); // queued behind the throttle
+      lm.onEvent({ type: 'tool', name: 'Read', icon: '📄' }); // queued behind the throttle
       lm.abandon();
       const before = calls.length;
       await vi.advanceTimersByTimeAsync(5000); // any armed trailing flush would fire in here
@@ -934,11 +934,11 @@ describe('discord answer streaming (live reply edits, two-bubble model)', () => 
       const lm = new LiveMessage(adapter, 'chan');
       lm.onEvent({ type: 'text', delta: 'First. ' });             // answer draft m1
       await vi.advanceTimersByTimeAsync(0);
-      lm.onEvent({ type: 'tool', name: 'read_file', icon: '📄' }); // tool bubble m2 → answer stranded above
+      lm.onEvent({ type: 'tool', name: 'Read', icon: '📄' }); // tool bubble m2 → answer stranded above
       await vi.advanceTimersByTimeAsync(0);
       lm.onEvent({ type: 'text', delta: 'Second. ' });
       await vi.advanceTimersByTimeAsync(1300);
-      lm.onEvent({ type: 'tool', name: 'run_command', icon: '💻' }); // same single trace bubble m2
+      lm.onEvent({ type: 'tool', name: 'Bash', icon: '💻' }); // same single trace bubble m2
       await vi.advanceTimersByTimeAsync(0);
       lm.onEvent({ type: 'text', delta: 'Third.' });
       await vi.advanceTimersByTimeAsync(1300);
@@ -1190,7 +1190,7 @@ describe('discord onMessage context pipeline', () => {
   });
 });
 
-describe('discord buildAskComponents (ask_user_question rendering)', () => {
+describe('discord buildAskComponents (AskUserQuestion rendering)', () => {
   interface Component { type: number; custom_id?: string; label?: string; style?: number; options?: { label: string; value: string }[]; min_values?: number; max_values?: number }
   interface Row { type: number; components: Component[] }
   const load = async () => (await import(join(repoRoot, 'plugins/discord/index.mjs'))) as {
@@ -1325,7 +1325,7 @@ describe('files plugin tool icons are emoji glyphs (Discord toolLine renders man
       expect(emoji.test(icon), `${tool} icon "${icon}" must be an emoji glyph`).toBe(true);
     }
     expect(manifest.icons).toMatchObject({
-      read_file: '📄', list_dir: '📂', write_file: '✏️', edit_file: '✏️', search_files: '🔎', file_info: '📄', git_status: '🌿',
+      Read: '📄', ListDir: '📂', Write: '✏️', Edit: '✏️', Search: '🔎', FileInfo: '📄', GitStatus: '🌿',
     });
   });
 });

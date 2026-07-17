@@ -108,11 +108,11 @@ describe('PermissionRulesCard', () => {
   });
 
   it('shows editable tools rules when they exist — edits PATCH the tools map, never bash', async () => {
-    const patches = mountWith({ tools: { write_file: 'allow' }, bash: { 'rm *': 'deny' }, yolo: false });
+    const patches = mountWith({ tools: { Write: 'allow' }, bash: { 'rm *': 'deny' }, yolo: false });
     await screen.findByText(en.cli.permToolsTitle);
-    fireEvent.click(within(row('write_file')).getByRole('radio', { name: en.cli.permAsk }));
+    fireEvent.click(within(row('Write')).getByRole('radio', { name: en.cli.permAsk }));
     await waitFor(() => expect(patches.length).toBe(1));
-    expect(patches[0]).toEqual({ tools: { write_file: 'ask' } });
+    expect(patches[0]).toEqual({ tools: { Write: 'ask' } });
   });
 
   it('reconciles a phantom rule away when the save fails (refetch on error)', async () => {

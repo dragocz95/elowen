@@ -9,7 +9,7 @@ type FormatFn = (questions: { question: string }[], answers: unknown) => string;
 
 const load = async () => await import(join(repoRoot, 'plugins/askuser/index.mjs')) as { normalizeQuestion: NormalizeFn; formatAnswers: FormatFn };
 
-describe('ask_user_question — forgiving question normalization', () => {
+describe('AskUserQuestion — forgiving question normalization', () => {
   it('accepts the minimal form (bare string options, no header/multiple)', async () => {
     const { normalizeQuestion } = await load();
     const q = normalizeQuestion({ question: 'Which colour?', options: ['Blue', 'Green', 'Red'] });
@@ -85,7 +85,7 @@ describe('ask_user_question — forgiving question normalization', () => {
   });
 });
 
-describe('ask_user_question — answer formatting', () => {
+describe('AskUserQuestion — answer formatting', () => {
   const questions = [{ question: 'Which colour?' }, { question: 'Pick tools' }];
 
   it('renders one "<question>" = "<answer>" line per question, multiple picks joined with ", "', async () => {

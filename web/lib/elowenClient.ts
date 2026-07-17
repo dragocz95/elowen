@@ -243,7 +243,7 @@ export const elowenClient = {
   brainDeleteManagedSession: (id: string) => req<{ deleted: number }>(`/brain/managed-sessions/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   brainDeleteAllManagedSessions: () => req<{ deleted: number }>('/brain/managed-sessions', { method: 'DELETE' }),
   brainMessages: (session?: string) => req<BrainMessage[]>(`/brain/messages${session ? `?session=${encodeURIComponent(session)}` : ''}`),
-  /** Background processes (terminal `run_command(background:true)`) — the panel next to the todos. */
+  /** Background processes (terminal `Bash(background:true)`) — the panel next to the todos. */
   brainProcesses: () => req<ProcessInfo[]>('/brain/processes'),
   brainProcessOutput: (id: string) => req<{ output: string }>(`/brain/processes/${encodeURIComponent(id)}/output`),
   brainKillProcess: (id: string) => req<{ killed: boolean }>(`/brain/processes/${encodeURIComponent(id)}`, { method: 'DELETE' }),

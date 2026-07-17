@@ -13,7 +13,7 @@ const load = async () => (await import(join(repoRoot, 'plugins/whatsapp/index.mj
 const single = { options: [{ label: 'Blue' }, { label: 'Green' }, { label: 'Red' }] };
 const multi = { ...single, multiSelect: true };
 
-describe('whatsapp parseAskReply (ask_user_question reply parsing)', () => {
+describe('whatsapp parseAskReply (AskUserQuestion reply parsing)', () => {
   it('parses a bare number as that option', async () => {
     const { parseAskReply } = await load();
     expect(parseAskReply('2', single)).toEqual({ kind: 'picks', labels: ['Green'] });
@@ -59,7 +59,7 @@ const mkAdapter = async (cfg: Record<string, unknown> = {}) => {
   return new WhatsAppAdapter(cfg, noopLog, null, null, [], '', '', () => false);
 };
 
-describe('whatsapp configurable askTimeoutMs (pending ask_user_question TTL)', () => {
+describe('whatsapp configurable askTimeoutMs (pending AskUserQuestion TTL)', () => {
   it('unset reproduces the default (~6 min): a 60s-old pending ask is NOT pruned', async () => {
     const adapter = await mkAdapter();
     adapter.pendingAsks.set('ask1', { jid: 'other', askerJid: 'other', questions: [], selected: {}, createdAt: Date.now() - 60_000 });

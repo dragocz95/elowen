@@ -12,7 +12,7 @@
       "label": "Automatic formatting",
       "type": "boolean",
       "default": true,
-      "hint": "Run the project's formatter right after write_file/edit_file succeeds. Formatting is on by default; switch this off to disable it entirely."
+      "hint": "Run the project's formatter right after Write/Edit succeeds. Formatting is on by default; switch this off to disable it entirely."
     },
     {
       "key": "disabled",

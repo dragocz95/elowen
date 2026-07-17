@@ -1,8 +1,8 @@
 // Codebase plugin: a SEMANTIC code index. It chunks the caller's accessible repos, embeds each chunk via
 // the SHARED text→vector pipeline (ctx.embeddings — the operator's ONE Settings→Memory embedding model,
 // gated by a `reads:['embeddings']` capability), and stores vectors in a plugin-owned SQLite index at
-// ctx.dataDir()/index.db. codebase_search then cosine-ranks chunks by MEANING (unlike the files plugin's
-// lexical search_files). The index is per-REPO and plugin-owned — it never touches the user-scoped memory
+// ctx.dataDir()/index.db. CodebaseSearch then cosine-ranks chunks by MEANING (unlike the files plugin's
+// lexical Search). The index is per-REPO and plugin-owned — it never touches the user-scoped memory
 // store. Every disk read + every returned path is confined to the session's repos via ctx.assertPathAllowed.
 import { defineTool, truncateHead, truncateLine } from '@earendil-works/pi-coding-agent';
 import { Type } from 'typebox';
@@ -435,7 +435,7 @@ export function register(ctx) {
   };
 
   // Lazily run ONE bounded incremental pass per stale-by-time repo. ADMIN-GATED at the call site (it writes
-  // shared state + spends the embedding provider — exactly what codebase_reindex refuses to non-admins).
+  // shared state + spends the embedding provider — exactly what CodebaseReindex refuses to non-admins).
   // The 5-minute debounce ALWAYS applies — even to a repo that indexes to zero chunks (a failing provider,
   // an all-excluded repo) — so a persistently-empty repo can't re-walk + re-embed on every search. Never
   // throws (best-effort; a failed pass must not break the search).
@@ -452,12 +452,12 @@ export function register(ctx) {
   };
 
   ctx.registerTool(defineTool({
-    name: 'codebase_search', label: 'Codebase search',
+    name: 'CodebaseSearch', label: 'Codebase search',
     description: [
       'Semantic (meaning-based) search over the accessible repositories: find the code/docs most relevant',
       'to a natural-language query, ranked by embedding similarity — not literal text matching.',
       'Use it to locate where a concept/behavior lives ("where do we verify a JWT", "the retry backoff logic")',
-      'when you do not know the exact identifier. For exact strings/regex/symbols prefer search_files.',
+      'when you do not know the exact identifier. For exact strings/regex/symbols prefer Search.',
       'Output is the top matches as `path:startLine-endLine [symbol] (score)` with a short snippet; results',
       'below the relevance floor are dropped. Requires an embedding model configured in Settings → Memory.',
     ].join(' '),
@@ -470,16 +470,16 @@ export function register(ctx) {
     execute: async (_id, p) => {
       try {
         if (!ctx.embeddings.isConfigured()) {
-          return fail('codebase_search', new Error('semantic code search needs an embedding model — set one in Settings → Memory (the same model memory uses). For literal text search use search_files.'));
+          return fail('CodebaseSearch', new Error('semantic code search needs an embedding model — set one in Settings → Memory (the same model memory uses). For literal text search use Search.'));
         }
         const query = String(p.query ?? '').trim();
-        if (!query) return fail('codebase_search', new Error('query is required'));
+        if (!query) return fail('CodebaseSearch', new Error('query is required'));
         const scope = searchScope(ctx, p.repo);
-        if (Array.isArray(scope) && scope.length === 0) return ok('codebase_search', 'No accessible repositories to search.', { matches: 0 });
+        if (Array.isArray(scope) && scope.length === 0) return ok('CodebaseSearch', 'No accessible repositories to search.', { matches: 0 });
         const database = getDb();
         const desc = ctx.embeddings.descriptor();
 
-        // Auto-reindex is ADMIN-ONLY (same gate as codebase_reindex: it writes shared state + spends the
+        // Auto-reindex is ADMIN-ONLY (same gate as CodebaseReindex: it writes shared state + spends the
         // embedding provider). Fire-and-forget so the search answer NEVER waits on a full walk+embed pass —
         // freshly embedded chunks surface on the NEXT search; the 5-minute debounce guards re-entry.
         let kickedReindex = false;
@@ -509,10 +509,10 @@ export function register(ctx) {
           // No vectors under the current model for this session's repos. An admin's search already kicked a
           // background (re)index; a non-admin can't build the index (it's admin-gated), so say so plainly.
           return kickedReindex
-            ? ok('codebase_search', 'The semantic index has no chunks yet for the current embedding model. A background refresh is running — try again shortly. For literal text search use search_files.', { matches: 0 })
-            : fail('codebase_search', new Error('the semantic code index for your repositories is empty — ask an operator (admin) to run codebase_reindex to build it, or use search_files for literal text search'));
+            ? ok('CodebaseSearch', 'The semantic index has no chunks yet for the current embedding model. A background refresh is running — try again shortly. For literal text search use Search.', { matches: 0 })
+            : fail('CodebaseSearch', new Error('the semantic code index for your repositories is empty — ask an operator (admin) to run CodebaseReindex to build it, or use Search for literal text search'));
         }
-        if (top.length === 0) return ok('codebase_search', `No matches above the relevance floor (${cfg.relevanceFloor}) for: ${query}`, { matches: 0 });
+        if (top.length === 0) return ok('CodebaseSearch', `No matches above the relevance floor (${cfg.relevanceFloor}) for: ${query}`, { matches: 0 });
 
         // Fetch bodies only for the handful of winners (k ≤ 50), keyed by id.
         const bodyOf = database.prepare('SELECT body FROM chunks WHERE id = ?');
@@ -528,13 +528,13 @@ export function register(ctx) {
           const snippet = snippetLines.map((l) => `    ${truncateLine(l, SNIPPET_MAX_CHARS).text}`).join('\n');
           return `${head}\n${snippet}`;
         }).join('\n\n');
-        return ok('codebase_search', text, { matches: top.length });
-      } catch (e) { return fail('codebase_search', e); }
+        return ok('CodebaseSearch', text, { matches: top.length });
+      } catch (e) { return fail('CodebaseSearch', e); }
     },
   }));
 
   ctx.registerTool(defineTool({
-    name: 'codebase_reindex', label: 'Codebase reindex',
+    name: 'CodebaseReindex', label: 'Codebase reindex',
     description: [
       'Rebuild or refresh the semantic code index for the accessible repositories (incremental by default:',
       'only changed/new files are re-embedded; pass full to rebuild from scratch). Admin sessions only —',
@@ -546,12 +546,12 @@ export function register(ctx) {
     }),
     execute: async (_id, p) => {
       try {
-        if (!ctx.isAdminSession()) return fail('codebase_reindex', new Error('codebase_reindex requires an admin session'));
+        if (!ctx.isAdminSession()) return fail('CodebaseReindex', new Error('CodebaseReindex requires an admin session'));
         if (!ctx.embeddings.isConfigured()) {
-          return fail('codebase_reindex', new Error('no embedding model configured — set one in Settings → Memory'));
+          return fail('CodebaseReindex', new Error('no embedding model configured — set one in Settings → Memory'));
         }
         const targets = indexTargets(ctx, p.repo);
-        if (targets.length === 0) return fail('codebase_reindex', new Error('no repository to index'));
+        if (targets.length === 0) return fail('CodebaseReindex', new Error('no repository to index'));
         const database = getDb();
         const results = [];
         for (const repo of targets) {
@@ -570,18 +570,18 @@ export function register(ctx) {
           pending: a.pending + (r.pending ?? 0),
         }), { filesChanged: 0, chunksEmbedded: 0, pruned: 0, pending: 0 });
         return anyError
-          ? fail('codebase_reindex', new Error(lines.join('\n')), totals)
-          : ok('codebase_reindex', lines.join('\n'), totals);
-      } catch (e) { return fail('codebase_reindex', e); }
+          ? fail('CodebaseReindex', new Error(lines.join('\n')), totals)
+          : ok('CodebaseReindex', lines.join('\n'), totals);
+      } catch (e) { return fail('CodebaseReindex', e); }
     },
   }));
 
   ctx.registerTool(defineTool({
-    name: 'codebase_status', label: 'Codebase status',
+    name: 'CodebaseStatus', label: 'Codebase status',
     description: [
       'Report the semantic index state per accessible repository: indexed chunk/file counts, when it was',
       'last indexed, the embedding model/dimensions the vectors were built with, and whether any are stale',
-      "against the currently configured model. Use it to check coverage before relying on codebase_search.",
+      "against the currently configured model. Use it to check coverage before relying on CodebaseSearch.",
     ].join(' '),
     parameters: Type.Object({
       repo: Type.Optional(Type.String({ description: 'Only report this repository root (must be accessible)' })),
@@ -594,7 +594,7 @@ export function register(ctx) {
         const repoFilter = scope === null
           ? database.prepare('SELECT DISTINCT repo FROM files').all().map((r) => r.repo)
           : scope;
-        if (repoFilter.length === 0) return ok('codebase_status', 'No repositories indexed yet. Run codebase_reindex.', { repos: 0, configured: !!desc });
+        if (repoFilter.length === 0) return ok('CodebaseStatus', 'No repositories indexed yet. Run CodebaseReindex.', { repos: 0, configured: !!desc });
         const rows = repoFilter.map((repo) => {
           const chunks = database.prepare('SELECT COUNT(*) AS n FROM chunks WHERE repo = ?').get(repo).n;
           const files = database.prepare('SELECT COUNT(*) AS n FROM files WHERE repo = ?').get(repo).n;
@@ -607,10 +607,10 @@ export function register(ctx) {
         const header = desc
           ? `Embedding model: ${desc.model} (dims ${desc.dimensions ?? 'auto'})`
           : 'Embedding model: NOT CONFIGURED (set one in Settings → Memory)';
-        return ok('codebase_status', `${header}\n\n${rows.join('\n')}`, { repos: repoFilter.length, configured: !!desc });
-      } catch (e) { return fail('codebase_status', e); }
+        return ok('CodebaseStatus', `${header}\n\n${rows.join('\n')}`, { repos: repoFilter.length, configured: !!desc });
+      } catch (e) { return fail('CodebaseStatus', e); }
     },
   }));
 
-  ctx.logger.info('registered codebase_search, codebase_reindex, codebase_status');
+  ctx.logger.info('registered CodebaseSearch, CodebaseReindex, CodebaseStatus');
 }

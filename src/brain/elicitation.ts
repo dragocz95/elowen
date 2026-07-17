@@ -12,7 +12,7 @@ interface Pending {
   sessionId: string;
   questions: AskQuestion[];
   /** Distinct flavour of the parked question: 'approval' = a blocking tool-permission prompt (three
-   *  fixed options), absent = a regular ask_user_question. Rides the emitted `ask` event so every
+   *  fixed options), absent = a regular AskUserQuestion. Rides the emitted `ask` event so every
    *  frontend can style approvals differently while reusing the whole answer pipeline. */
   kind?: 'approval';
   resolve: (answers: AskAnswer[]) => void;
@@ -20,7 +20,7 @@ interface Pending {
   timer: ReturnType<typeof setTimeout>;
 }
 
-/** In-memory registry of parked `ask_user_question` calls. One instance is owned by BrainService and
+/** In-memory registry of parked `AskUserQuestion` calls. One instance is owned by BrainService and
  *  serves every surface (web/CLI via `/brain/answer`, Discord in-process): a tool's `execute` awaits
  *  `ask()`, which emits an `ask` BrainEvent to the conversation's clients and parks a Promise keyed by a
  *  fresh question id; whichever client answers first calls `answer(id, …)` to settle it. Since a turn is
@@ -41,7 +41,7 @@ export class ElicitationRegistry {
    *  Two approval prompts can arise in ONE turn (parallel tool calls each needing sign-off). Those are
    *  SERIALIZED — the second parks only after the first settles — instead of the second superseding
    *  (cancelling) the first, which would reject the first's promise and be misread by the gate as a user
-   *  deny. Regular ask_user_question calls keep the "one pending question per conversation" UX: a newer
+   *  deny. Regular AskUserQuestion calls keep the "one pending question per conversation" UX: a newer
    *  one drops the earlier. */
   ask(sessionId: string, questions: AskQuestion[], emit: (e: BrainEvent) => void, kind?: 'approval'): Promise<AskAnswer[]> {
     if (kind === 'approval') {
@@ -54,7 +54,7 @@ export class ElicitationRegistry {
       void tail.then(() => { if (this.approvalChain.get(sessionId) === tail) this.approvalChain.delete(sessionId); });
       return result;
     }
-    // Enforce one pending question per conversation: if the model somehow fired two ask_user_question
+    // Enforce one pending question per conversation: if the model somehow fired two AskUserQuestion
     // calls in one turn, drop the earlier one (clients only show the latest anyway) so it can't linger.
     this.cancelForSession(sessionId, 'superseded by a newer question');
     return this.park(sessionId, questions, emit, kind);

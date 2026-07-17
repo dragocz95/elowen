@@ -43,7 +43,7 @@
     },
     "toolActivity": {
       "label": "Aktivita nástrojů",
-      "hint": "Vypnuto skryje pracovní stopu. Živý stav ukazuje spuštění a dokončení nástrojů. Živý výstup navíc streamuje omezený průběh run_command. Pro chat lze přepsat přes /display.",
+      "hint": "Vypnuto skryje pracovní stopu. Živý stav ukazuje spuštění a dokončení nástrojů. Živý výstup navíc streamuje omezený průběh Bash. Pro chat lze přepsat přes /display.",
       "options": { "off": "Vypnuto", "status": "Živý stav", "live": "Živý výstup" }
     },
     "answerMode": {
@@ -95,7 +95,7 @@
     },
     "askTimeoutMs": {
       "label": "Timeout otázky (ms)",
-      "hint": "Jak dlouho zůstává čekající ask_user_question otevřená pro klik na tlačítko nebo textovou odpověď, než ji bot zahodí jako zastaralou."
+      "hint": "Jak dlouho zůstává čekající AskUserQuestion otevřená pro klik na tlačítko nebo textovou odpověď, než ji bot zahodí jako zastaralou."
     },
     "voiceProvider": {
       "label": "Poskytovatel hlasu",

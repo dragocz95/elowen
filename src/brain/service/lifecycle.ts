@@ -118,7 +118,7 @@ export class ConversationLifecycle {
    *  Deliberately narrow: a conversation with even one stored message is never touched, and neither is one
    *  that is still live, that a client stream holds, or that a start has already claimed — an empty
    *  conversation open in another terminal belongs to that terminal. "No stored messages" is NOT "nothing
-   *  happening": a turn can be in flight, parked on an ask_user_question, or driving a goal without having
+   *  happening": a turn can be in flight, parked on an AskUserQuestion, or driving a goal without having
    *  written a row yet, which is exactly why the live check is here. An unspoken conversation has had no
    *  turn, so it owns no processes, goals or parked questions to clean up. */
   dropIfUnspoken(sessionId: string): void {
@@ -175,7 +175,7 @@ export class ConversationLifecycle {
     // A bound CLI can be following non-active A while another client has moved the global pointer to B.
     // Its stable binding, not that shared pointer, identifies the driver this switch actually leaves.
     const leavingSessionId = opts?.clientId ? claim?.previousSessionId : prevActive;
-    // Switching AWAY from a conversation that's parked on an ask_user_question: release its question so
+    // Switching AWAY from a conversation that's parked on an AskUserQuestion: release its question so
     // the abandoned turn settles and frees its session lock. ONLY when no other client stream is still
     // attached to it — a second terminal (or the dock) holding that conversation must keep its pending
     // ask and its running goal; the pointer moving away from THEM must never kill THEIR turn.
@@ -283,7 +283,7 @@ export class ConversationLifecycle {
   async switchModel(userId: number, sel: { provider?: string; model?: string }, session?: string): Promise<{ model: string }> {
     if (!this.d.selectionAllowed(userId, sel)) throw new Error('model not allowed for user');
     const sessionId = session ? this.ownedUserSession(userId, session) : this.activeSessionId(userId);
-    // A parked ask_user_question holds this session's serial lock — release it FIRST (outside the lock)
+    // A parked AskUserQuestion holds this session's serial lock — release it FIRST (outside the lock)
     // so the switch doesn't wait out the question's timeout.
     this.d.elicitation.cancelForSession(sessionId, 'model switched');
     this.d.goals.cancelGoalContinuation(sessionId);
@@ -490,7 +490,7 @@ export class ConversationLifecycle {
     const b = this.activeLive(userId);
     if (!b) return;
     const sessionId = b.sessionId;
-    // Release a parked ask_user_question first, else `settled` waits out its full timeout.
+    // Release a parked AskUserQuestion first, else `settled` waits out its full timeout.
     this.d.elicitation.cancelForSession(sessionId, 'session restarted');
     await this.d.sessions.settled(sessionId); // let an in-flight turn settle before disposing the session
     const prevWorkDir = b.workDir; // the restart must not move the session cwd

@@ -39,11 +39,13 @@ function toolRowSpec(name: string, detail?: string): { glyph: string; title: str
   if (/(edit|patch|update|modify|replace)/i.test(safeName)) return { glyph: '←', title: title('Edit') };
   if (/(write|create)/i.test(safeName)) return { glyph: '←', title: title('Write') };
   if (/(read|open|cat)/i.test(safeName)) return { glyph: '→', title: title('Read') };
-  if (/list_dir/i.test(safeName)) return { glyph: '→', title: title('List') };
+  if (/list_?dir/i.test(safeName)) return { glyph: '→', title: title('List') };
   if (/diff/i.test(safeName)) return { glyph: '←', title: title('Diff') };
   if (/(lsp|diagnostic)/i.test(safeName)) return { glyph: '✱', title: title('Diagnostics') };
   if (/(fetch|web|http|url)/i.test(safeName)) return { glyph: '%', title: title('Fetch') };
-  return { glyph: '⚙', title: title(safeName.replace(/[_-]+/g, ' ')) };
+  // Last resort: spell the name out as words. Separators cover a third-party snake/kebab tool; the hump
+  // split covers ours, which have none — without it "ProcessOutput" would render as one blob.
+  return { glyph: '⚙', title: title(safeName.replace(/[_-]+/g, ' ').replace(/([a-z0-9])([A-Z])/g, '$1 $2')) };
 }
 
 const blockFill = (text: string, width: number): string => paintRow(chatTheme().modalBg, text, width);
@@ -218,7 +220,7 @@ export class TurnRenderer {
     ];
   }
 
-  /** The transcript marker for a workflow_start call — the sub-agent block's twin, and the durable way
+  /** The transcript marker for a WorkflowStart call — the sub-agent block's twin, and the durable way
    *  back into a workflow: the telemetry rail only carries RUNNING ones, so once a DAG finishes this row
    *  is the only thing that can still open its modal. Clicking anywhere on it drills in by workflow id. */
   private workflowBlock(wf: NonNullable<ToolItem['wf']>, width: number): TranscriptRow[] {

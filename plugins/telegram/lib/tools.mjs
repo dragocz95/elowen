@@ -1,4 +1,4 @@
-// Admin/owner-gated telegram_* tools: outbound messaging, chat/member inspection and group management.
+// Admin/owner-gated Telegram* tools: outbound messaging, chat/member inspection and group management.
 import { defineTool } from '@earendil-works/pi-coding-agent';
 import { Type } from 'typebox';
 
@@ -18,7 +18,7 @@ export function registerTools(ctx, adapter) {
 
   // Send a message to any chat — OWNER only (it can message anyone the bot can reach).
   ctx.registerTool(defineTool({
-    name: 'telegram_send', label: 'Telegram send message',
+    name: 'TelegramSend', label: 'Telegram send message',
     description: 'Send a Telegram text message to a chat: a numeric chat id (e.g. 123456789 or a negative group id like -1001234567890) or an @channelusername. Operator only.',
     parameters: Type.Object({
       chatId: Type.String({ description: 'Numeric chat id or @channelusername' }),
@@ -26,7 +26,7 @@ export function registerTools(ctx, adapter) {
     }),
     execute: async (_id, p) => {
       try {
-        ownerGate('telegram_send');
+        ownerGate('TelegramSend');
         await api().sendMessage(chat(p.chatId), String(p.text ?? ''));
         return ok(`Sent to ${p.chatId}.`);
       } catch (e) { return fail(e); }
@@ -34,7 +34,7 @@ export function registerTools(ctx, adapter) {
   }));
 
   ctx.registerTool(defineTool({
-    name: 'telegram_chat_info', label: 'Telegram chat info',
+    name: 'TelegramChatInfo', label: 'Telegram chat info',
     description: 'Details of a chat by id/username: type, title/username, description and pinned message (via getChat).',
     parameters: Type.Object({ chatId: Type.String({ description: 'Numeric chat id or @channelusername' }) }),
     execute: async (_id, p) => {
@@ -52,7 +52,7 @@ export function registerTools(ctx, adapter) {
   }));
 
   ctx.registerTool(defineTool({
-    name: 'telegram_get_members_count', label: 'Telegram member count',
+    name: 'TelegramGetMembersCount', label: 'Telegram member count',
     description: 'The number of members in a group/supergroup/channel (via getChatMemberCount).',
     parameters: Type.Object({ chatId: Type.String({ description: 'Numeric chat id or @channelusername' }) }),
     execute: async (_id, p) => {
@@ -65,7 +65,7 @@ export function registerTools(ctx, adapter) {
   }));
 
   ctx.registerTool(defineTool({
-    name: 'telegram_member_info', label: 'Telegram member info',
+    name: 'TelegramMemberInfo', label: 'Telegram member info',
     description: 'Details of one chat member by user id: status (creator/administrator/member/…), name and admin rights (via getChatMember).',
     parameters: Type.Object({ chatId: Type.String(), userId: Type.Number({ description: 'Numeric Telegram user id' }) }),
     execute: async (_id, p) => {
@@ -82,7 +82,7 @@ export function registerTools(ctx, adapter) {
   }));
 
   ctx.registerTool(defineTool({
-    name: 'telegram_pin_message', label: 'Pin Telegram message',
+    name: 'TelegramPinMessage', label: 'Pin Telegram message',
     description: 'Pin a message in a chat by id. The bot must have pin rights.',
     parameters: Type.Object({ chatId: Type.String(), messageId: Type.Number() }),
     execute: async (_id, p) => {
@@ -92,7 +92,7 @@ export function registerTools(ctx, adapter) {
   }));
 
   ctx.registerTool(defineTool({
-    name: 'telegram_unpin_message', label: 'Unpin Telegram message',
+    name: 'TelegramUnpinMessage', label: 'Unpin Telegram message',
     description: 'Unpin a pinned message in a chat by id (does NOT delete it).',
     parameters: Type.Object({ chatId: Type.String(), messageId: Type.Number() }),
     execute: async (_id, p) => {
@@ -102,7 +102,7 @@ export function registerTools(ctx, adapter) {
   }));
 
   ctx.registerTool(defineTool({
-    name: 'telegram_delete_message', label: 'Delete Telegram message',
+    name: 'TelegramDeleteMessage', label: 'Delete Telegram message',
     description: 'DESTRUCTIVE. Permanently delete ONE message by id from a chat.',
     parameters: Type.Object({ chatId: Type.String(), messageId: Type.Number() }),
     execute: async (_id, p) => {
@@ -112,7 +112,7 @@ export function registerTools(ctx, adapter) {
   }));
 
   ctx.registerTool(defineTool({
-    name: 'telegram_ban_member', label: 'Ban Telegram member',
+    name: 'TelegramBanMember', label: 'Ban Telegram member',
     description: 'DESTRUCTIVE. Ban a user from a group/channel by user id. The bot must be an admin with ban rights.',
     parameters: Type.Object({ chatId: Type.String(), userId: Type.Number() }),
     execute: async (_id, p) => {
@@ -122,7 +122,7 @@ export function registerTools(ctx, adapter) {
   }));
 
   ctx.registerTool(defineTool({
-    name: 'telegram_unban_member', label: 'Unban Telegram member',
+    name: 'TelegramUnbanMember', label: 'Unban Telegram member',
     description: 'Unban a previously banned user by user id so they can rejoin the group/channel.',
     parameters: Type.Object({ chatId: Type.String(), userId: Type.Number() }),
     execute: async (_id, p) => {
@@ -132,7 +132,7 @@ export function registerTools(ctx, adapter) {
   }));
 
   ctx.registerTool(defineTool({
-    name: 'telegram_promote_member', label: 'Promote Telegram member',
+    name: 'TelegramPromoteMember', label: 'Promote Telegram member',
     description: 'DESTRUCTIVE. Promote or demote a member to/from admin by user id. Pass the rights you want granted (true) — omitted rights and a demote (all false) both go through promoteChatMember. The bot must be an admin with can_promote_members.',
     parameters: Type.Object({
       chatId: Type.String(),
@@ -161,7 +161,7 @@ export function registerTools(ctx, adapter) {
   }));
 
   ctx.registerTool(defineTool({
-    name: 'telegram_set_chat_title', label: 'Set Telegram chat title',
+    name: 'TelegramSetChatTitle', label: 'Set Telegram chat title',
     description: 'Rename a group/supergroup/channel by id. The bot must be an admin with can_change_info.',
     parameters: Type.Object({ chatId: Type.String(), title: Type.String() }),
     execute: async (_id, p) => {
@@ -171,7 +171,7 @@ export function registerTools(ctx, adapter) {
   }));
 
   ctx.registerTool(defineTool({
-    name: 'telegram_set_chat_description', label: 'Set Telegram chat description',
+    name: 'TelegramSetChatDescription', label: 'Set Telegram chat description',
     description: 'Set the description of a group/supergroup/channel by id. The bot must be an admin with can_change_info.',
     parameters: Type.Object({ chatId: Type.String(), description: Type.String() }),
     execute: async (_id, p) => {
@@ -181,7 +181,7 @@ export function registerTools(ctx, adapter) {
   }));
 
   ctx.registerTool(defineTool({
-    name: 'telegram_create_forum_topic', label: 'Create Telegram forum topic',
+    name: 'TelegramCreateForumTopic', label: 'Create Telegram forum topic',
     description: 'Create a forum topic in a forum-enabled supergroup. Returns the new message_thread_id.',
     parameters: Type.Object({ chatId: Type.String(), name: Type.String({ description: 'Topic name' }) }),
     execute: async (_id, p) => {
@@ -194,7 +194,7 @@ export function registerTools(ctx, adapter) {
   }));
 
   ctx.registerTool(defineTool({
-    name: 'telegram_edit_forum_topic', label: 'Edit Telegram forum topic',
+    name: 'TelegramEditForumTopic', label: 'Edit Telegram forum topic',
     description: 'Rename a forum topic by its message_thread_id in a forum-enabled supergroup.',
     parameters: Type.Object({ chatId: Type.String(), threadId: Type.Number({ description: 'message_thread_id of the topic' }), name: Type.String() }),
     execute: async (_id, p) => {
@@ -204,7 +204,7 @@ export function registerTools(ctx, adapter) {
   }));
 
   ctx.registerTool(defineTool({
-    name: 'telegram_close_forum_topic', label: 'Close Telegram forum topic',
+    name: 'TelegramCloseForumTopic', label: 'Close Telegram forum topic',
     description: 'Close (closed:true) or reopen (closed:false) a forum topic by its message_thread_id.',
     parameters: Type.Object({ chatId: Type.String(), threadId: Type.Number(), closed: Type.Optional(Type.Boolean({ description: 'default true (close); false reopens' })) }),
     execute: async (_id, p) => {
@@ -220,7 +220,7 @@ export function registerTools(ctx, adapter) {
 
   // Raw Bot API access for the OWNER: any method the bot token can call. Operator only.
   ctx.registerTool(defineTool({
-    name: 'telegram_api', label: 'Telegram Bot API',
+    name: 'TelegramApi', label: 'Telegram Bot API',
     description: 'Call any Telegram Bot API method by name with a JSON params object — full bot surface (sendMessage, getChat, restrictChatMember, exportChatInviteLink, …). Operator only.',
     parameters: Type.Object({
       method: Type.String({ description: 'Bot API method name, e.g. "sendMessage" or "getChat"' }),
@@ -228,7 +228,7 @@ export function registerTools(ctx, adapter) {
     }),
     execute: async (_id, p) => {
       try {
-        ownerGate('telegram_api');
+        ownerGate('TelegramApi');
         let params;
         if (p.params) {
           try { params = JSON.parse(p.params); } catch { return ok('Error: params is not valid JSON.'); }

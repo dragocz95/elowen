@@ -13,7 +13,7 @@ interface PermissionApprovalDeps {
   /** Per-user brain-model permission, keyed by exec spec `elowen:<provider>/<model>` (see
    *  BrainDeps.execAllowed). Absent → no restriction (open mode / tests). */
   execAllowed?: (userId: number, exec: string) => boolean;
-  /** The shared ask registry — approval prompts ride the SAME pipeline as ask_user_question. */
+  /** The shared ask registry — approval prompts ride the SAME pipeline as AskUserQuestion. */
   elicitation: ElicitationRegistry;
 }
 
@@ -50,7 +50,7 @@ export class PermissionApprovalService {
    *  applies immediately; the effective YOLO layers the session `/yolo` override over the persisted
    *  default. `interactive` (owner chat — web/CLI, a human is attached) additionally wires the blocking
    *  approval channel: an `ask` rule parks the tool call as an `ask` BrainEvent of kind 'approval' on
-   *  the SAME elicitation pipeline as ask_user_question (answered via /brain/answer), and an "Always
+   *  the SAME elicitation pipeline as AskUserQuestion (answered via /brain/answer), and an "Always
    *  allow" pick persists a rule via saveAlwaysAllow. Non-interactive turns get no approval channel, so
    *  the gate resolves their `ask` rules per the user's `unattendedAsks` setting — allow by default,
    *  refuse under strict mode (deny rules always deny). Undefined when permissions aren't wired at all —

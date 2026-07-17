@@ -44,7 +44,7 @@ export function scan(source) {
 
 export function register(ctx) {
   ctx.registerTool(defineTool({
-    name: 'scan_code', label: 'Scan code for risks',
+    name: 'ScanCode', label: 'Scan code for risks',
     description: 'Statically scan code for dangerous patterns (eval, pickle.load, shell=True, hardcoded '
       + 'secrets, unsafe deserialization…). Provide code directly or a repo file path. Advisory only.',
     parameters: Type.Object({
@@ -65,5 +65,5 @@ export function register(ctx) {
       } catch (e) { return fail(e); }
     },
   }));
-  ctx.logger.info('security-scan registered (scan_code)');
+  ctx.logger.info('security-scan registered (ScanCode)');
 }

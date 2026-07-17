@@ -369,7 +369,7 @@ describe('brain routes', () => {
   it('unsubscribes and closes an opt-in snapshot stream when the raw pre-snapshot queue overflows', async () => {
     const { app, amyTok, brain } = setup();
     brain.__setSnapshotPending(Array.from({ length: 2_049 }, (_, index) => ({
-      type: 'tool' as const, id: `overflow-${index}`, name: 'read_file',
+      type: 'tool' as const, id: `overflow-${index}`, name: 'Read',
     })), true);
     const ac = new AbortController();
     const res = await app.request('/brain/stream?session=brain-ch-subagent-overflow&snapshot=1', {

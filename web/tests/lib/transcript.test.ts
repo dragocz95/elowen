@@ -5,9 +5,9 @@ import type { ToolItem } from '../../lib/transcript';
 describe('web groupToolItems: collapse consecutive same-tool pills', () => {
   it('folds a run of the same bare tool into one group with the latest detail and a count', () => {
     const items: ToolItem[] = [
-      { name: 'read_file', detail: 'a.ts' },
-      { name: 'read_file', detail: 'a.ts' },
-      { name: 'read_file', detail: 'b.ts' },
+      { name: 'Read', detail: 'a.ts' },
+      { name: 'Read', detail: 'a.ts' },
+      { name: 'Read', detail: 'b.ts' },
     ];
     const groups = groupToolItems(items);
     expect(groups).toHaveLength(1);
@@ -17,23 +17,23 @@ describe('web groupToolItems: collapse consecutive same-tool pills', () => {
 
   it('does not merge across a different tool, and an item with a diff/output stays its own group', () => {
     const groups = groupToolItems([
-      { name: 'read_file', detail: 'a.ts' },
-      { name: 'list_dir', detail: 'src' },
-      { name: 'read_file', detail: 'b.ts', output: { title: 't', kind: 'result', text: 'x' } },
-      { name: 'read_file', detail: 'c.ts' },
-      { name: 'edit_file', detail: 'd.ts', diff: '+ 1 x' },
+      { name: 'Read', detail: 'a.ts' },
+      { name: 'ListDir', detail: 'src' },
+      { name: 'Read', detail: 'b.ts', output: { title: 't', kind: 'result', text: 'x' } },
+      { name: 'Read', detail: 'c.ts' },
+      { name: 'Edit', detail: 'd.ts', diff: '+ 1 x' },
     ]);
     expect(groups.map((g) => [g.item.name, g.count])).toEqual([
-      ['read_file', 1], ['list_dir', 1], ['read_file', 1], ['read_file', 1], ['edit_file', 1],
+      ['Read', 1], ['ListDir', 1], ['Read', 1], ['Read', 1], ['Edit', 1],
     ]);
   });
 
   it('keeps a delegate row carrying sub-agent state out of collapsed tool groups', () => {
     const sub = { sessionId: 'brain-ch-subagent-child', status: 'running' as const, task: 'inspect', tools: 1, seconds: 2 };
     const groups = groupToolItems([
-      { name: 'delegate', detail: 'first' },
-      { name: 'delegate', detail: 'background', sub },
-      { name: 'delegate', detail: 'third' },
+      { name: 'Delegate', detail: 'first' },
+      { name: 'Delegate', detail: 'background', sub },
+      { name: 'Delegate', detail: 'third' },
     ]);
     expect(groups.map((group) => group.count)).toEqual([1, 1, 1]);
     expect(groups[1]!.item.sub?.sessionId).toBe('brain-ch-subagent-child');
@@ -70,9 +70,9 @@ describe('web transcript reducer', () => {
     ]);
   });
 
-  it('attaches live run_command progress by id and the final tool_output supersedes it (no doubled dump)', () => {
+  it('attaches live Bash progress by id and the final tool_output supersedes it (no doubled dump)', () => {
     let view = emptyView();
-    view = reduce(view, { type: 'tool', name: 'run_command', id: 'r1' });
+    view = reduce(view, { type: 'tool', name: 'Bash', id: 'r1' });
     view = reduce(view, { type: 'tool_progress', id: 'r1', text: 'PASS a' });
     let turn = view.turns.at(-1);
     let item = turn?.role === 'elowen' && turn.segments[0]?.kind === 'tools' ? turn.segments[0].items[0] : undefined;
@@ -95,7 +95,7 @@ describe('web transcript reducer', () => {
 
   it('rehydrates durable child state and patches done after parent idle without a new spinner turn', () => {
     let view = fromHistory([{ role: 'assistant', text: '', segments: [{
-      kind: 'tool', id: 'delegate-1', name: 'delegate', detail: 'inspect',
+      kind: 'tool', id: 'delegate-1', name: 'Delegate', detail: 'inspect',
       sub: { sessionId: 'brain-ch-subagent-child', status: 'running', task: 'inspect', tools: 1, seconds: 2 },
     }] }]);
     expect(view.thinking).toBe(false);

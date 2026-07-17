@@ -61,7 +61,7 @@ export class LiveMessage {
     this.a = adapter;
     this.jid = jid;
     this.quoted = quoted;     // the triggering message — the final answer quotes it
-    this.askerJid = askerJid; // who to route an ask_user_question prompt to (and gate its answer on)
+    this.askerJid = askerJid; // who to route an AskUserQuestion prompt to (and gate its answer on)
     this.toolCalls = [];
     this.progress = null;
     this.text = '';

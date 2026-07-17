@@ -1,4 +1,4 @@
-// Formatters plugin: after the files plugin's write_file/edit_file succeeds, run the project's own code
+// Formatters plugin: after the files plugin's Write/Edit succeeds, run the project's own code
 // formatter on the written file. It observes tool results via the `tools.call.after` hook (emitted by
 // the session tool composer after each permitted plugin tool execute) — no coupling to the files plugin
 // beyond its result shape. A formatter only runs when the PROJECT is set up for it (local binary or
@@ -18,7 +18,7 @@ function configNumber(value, def, min, max) {
 }
 /** The file-writing tools whose successful results trigger a format run. Terminal-side writes are out
  *  of scope — only the files plugin's structured write/edit results carry a reliable path. */
-const WRITE_TOOLS = new Set(['write_file', 'edit_file']);
+const WRITE_TOOLS = new Set(['Write', 'Edit']);
 
 /** Whether `bin` resolves to an executable on the daemon's PATH (dependency-free `which`). */
 function onPath(bin) {

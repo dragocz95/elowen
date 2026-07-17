@@ -36,11 +36,11 @@ async function loadCron(dataRoot: string, notify?: (text: string, channelId?: st
 
 const jobsFile = (dataRoot: string) => join(dataRoot, 'cronjob/jobs.json');
 
-describe('schedule_wakeup origin capture', () => {
+describe('ScheduleWakeup origin capture', () => {
   it('records the originating USER conversation (session + elowen user) and says so in the ok message', async () => {
     const dataRoot = freshDataRoot();
     const { reg } = await loadCron(dataRoot);
-    const wakeup = reg.tools.find((t) => t.name === 'schedule_wakeup')!;
+    const wakeup = reg.tools.find((t) => t.name === 'ScheduleWakeup')!;
     const text = await runWithPolicy(ADMIN, async () =>
       asText(await wakeup.execute('t', { name: 'ping', when: 'in 30s', prompt: 'say hi' }, undefined as never, undefined as never)),
     { identity: OWNER, sessionId: 'brain-1-abc' });
@@ -53,7 +53,7 @@ describe('schedule_wakeup origin capture', () => {
   it('keeps NO origin for channel/task-originated schedules and for turns without an Elowen account', async () => {
     const dataRoot = freshDataRoot();
     const { reg } = await loadCron(dataRoot);
-    const wakeup = reg.tools.find((t) => t.name === 'schedule_wakeup')!;
+    const wakeup = reg.tools.find((t) => t.name === 'ScheduleWakeup')!;
     // A cron/channel session (brain-ch-…) must not bind — today's notify-channel behavior stays.
     await runWithPolicy(ADMIN, async () => {
       await wakeup.execute('t', { name: 'ch', when: 'in 30s', prompt: 'p' }, undefined as never, undefined as never);

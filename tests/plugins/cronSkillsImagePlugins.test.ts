@@ -72,13 +72,13 @@ describe('cronjob plugin', () => {
     expect(typeof (reg.platforms[0] as { notify?: unknown }).notify).toBe('undefined');
   });
 
-  it('cron_add/list/remove work in an admin session and are refused otherwise', async () => {
+  it('CronAdd/list/remove work in an admin session and are refused otherwise', async () => {
     const dataRoot = freshDataRoot();
     const reg = await loadPlugins({ dirs: [pluginsDir], enabled: ['cronjob'], dataRoot, logger: log });
     expect(reg.platforms.map((p) => p.name)).toEqual(['cron']);
-    const add = reg.tools.find((t) => t.name === 'cron_add')!;
-    const list = reg.tools.find((t) => t.name === 'cron_list')!;
-    const remove = reg.tools.find((t) => t.name === 'cron_remove')!;
+    const add = reg.tools.find((t) => t.name === 'CronAdd')!;
+    const list = reg.tools.find((t) => t.name === 'CronList')!;
+    const remove = reg.tools.find((t) => t.name === 'CronRemove')!;
 
     await runWithPolicy(LIMITED, async () => {
       expect(asText(await add.execute('t', { name: 'x', schedule: 'every 15m', prompt: 'p' }, undefined as never, undefined as never))).toMatch(/admin session/);
@@ -99,9 +99,9 @@ describe('skills plugin creator tools', () => {
   it('create → list → delete a user skill (admin only)', async () => {
     const dataRoot = freshDataRoot();
     const reg = await loadPlugins({ dirs: [pluginsDir], enabled: ['skills'], dataRoot, logger: log });
-    const create = reg.tools.find((t) => t.name === 'create_skill')!;
-    const list = reg.tools.find((t) => t.name === 'list_skills')!;
-    const del = reg.tools.find((t) => t.name === 'delete_skill')!;
+    const create = reg.tools.find((t) => t.name === 'CreateSkill')!;
+    const list = reg.tools.find((t) => t.name === 'ListSkills')!;
+    const del = reg.tools.find((t) => t.name === 'DeleteSkill')!;
 
     await runWithPolicy(LIMITED, async () => {
       expect(asText(await create.execute('t', { name: 'x', description: 'd', content: 'c' }, undefined as never, undefined as never))).toMatch(/admin session/);
@@ -120,7 +120,7 @@ describe('skills plugin creator tools', () => {
   it('user-created skills register on the next plugin load', async () => {
     const dataRoot = freshDataRoot();
     const reg1 = await loadPlugins({ dirs: [pluginsDir], enabled: ['skills'], dataRoot, logger: log });
-    const create = reg1.tools.find((t) => t.name === 'create_skill')!;
+    const create = reg1.tools.find((t) => t.name === 'CreateSkill')!;
     await runWithPolicy(ADMIN, async () => {
       await create.execute('t', { name: 'novy-skill', description: 'test', content: 'obsah' }, undefined as never, undefined as never);
     });
@@ -134,10 +134,10 @@ describe('terminal plugin background processes', () => {
     const dataRoot = freshDataRoot();
     const reg = await loadPlugins({ dirs: [pluginsDir], enabled: ['terminal'], dataRoot, logger: log });
     const names = reg.tools.map((t) => t.name).sort();
-    expect(names).toEqual(['kill_process', 'list_processes', 'read_process_output', 'run_command']);
-    const run = reg.tools.find((t) => t.name === 'run_command')!;
-    const read = reg.tools.find((t) => t.name === 'read_process_output')!;
-    const list = reg.tools.find((t) => t.name === 'list_processes')!;
+    expect(names).toEqual(['Bash', 'KillProcess', 'ListProcesses', 'ProcessOutput']);
+    const run = reg.tools.find((t) => t.name === 'Bash')!;
+    const read = reg.tools.find((t) => t.name === 'ProcessOutput')!;
+    const list = reg.tools.find((t) => t.name === 'ListProcesses')!;
 
     await runWithPolicy(ADMIN, async () => {
       const started = asText(await run.execute('t', { command: 'echo hello-bg', cwd: '/tmp', background: true }, undefined as never, undefined as never));
@@ -153,10 +153,10 @@ describe('terminal plugin background processes', () => {
   it('keeps background process tools isolated between parent and child sessions', async () => {
     const dataRoot = freshDataRoot();
     const reg = await loadPlugins({ dirs: [pluginsDir], enabled: ['terminal'], dataRoot, logger: log });
-    const run = reg.tools.find((t) => t.name === 'run_command')!;
-    const list = reg.tools.find((t) => t.name === 'list_processes')!;
-    const read = reg.tools.find((t) => t.name === 'read_process_output')!;
-    const kill = reg.tools.find((t) => t.name === 'kill_process')!;
+    const run = reg.tools.find((t) => t.name === 'Bash')!;
+    const list = reg.tools.find((t) => t.name === 'ListProcesses')!;
+    const read = reg.tools.find((t) => t.name === 'ProcessOutput')!;
+    const kill = reg.tools.find((t) => t.name === 'KillProcess')!;
     const scoped = <T>(sessionId: string, fn: () => T): T => runWithPolicy(ADMIN, fn, { identity: OWNER, sessionId });
 
     const parentText = await scoped('brain-parent', async () => asText(await run.execute('p', { command: 'sleep 5', cwd: '/tmp', background: true }, undefined as never, undefined as never)));
@@ -171,10 +171,10 @@ describe('terminal plugin background processes', () => {
     await scoped('brain-child', async () => kill.execute('kc', { id: childId }, undefined as never, undefined as never));
   });
 
-  it('run_command is refused for a non-owner (role-scoped) identity', async () => {
+  it('Bash is refused for a non-owner (role-scoped) identity', async () => {
     const dataRoot = freshDataRoot();
     const reg = await loadPlugins({ dirs: [pluginsDir], enabled: ['terminal'], dataRoot, logger: log });
-    const run = reg.tools.find((t) => t.name === 'run_command')!;
+    const run = reg.tools.find((t) => t.name === 'Bash')!;
     const CHANNEL: TurnIdentity = { platform: 'discord', userId: 'disc-9', admin: true, owner: false };
     await runWithPolicy(ADMIN, async () => {
       const out = asText(await run.execute('t', { command: 'echo nope', cwd: '/tmp' }, undefined as never, undefined as never));
@@ -187,7 +187,7 @@ describe('subagent plugin', () => {
   it('collects a background job that already exited before the first reply', async () => {
     const dataRoot = freshDataRoot();
     const reg = await loadPlugins({ dirs: [pluginsDir], enabled: ['subagent'], dataRoot, logger: log });
-    const delegate = reg.tools.find((t) => t.name === 'delegate')!;
+    const delegate = reg.tools.find((t) => t.name === 'Delegate')!;
     const sessionId = 'brain-ch-subagent-bgwait';
     const reminders: string[] = [];
     let calls = 0;
@@ -222,7 +222,7 @@ describe('subagent plugin', () => {
   it('reports each finished background job exactly once across successive collect turns', async () => {
     const dataRoot = freshDataRoot();
     const reg = await loadPlugins({ dirs: [pluginsDir], enabled: ['subagent'], dataRoot, logger: log });
-    const delegate = reg.tools.find((t) => t.name === 'delegate')!;
+    const delegate = reg.tools.find((t) => t.name === 'Delegate')!;
     const sessionId = 'brain-ch-subagent-delta';
     const reminders: string[] = [];
     const registerJob = (id: string) => {
@@ -267,7 +267,7 @@ describe('subagent plugin', () => {
     // sub-agent was interrupted). So the plugin must re-assert `running` before it starts waiting.
     const dataRoot = freshDataRoot();
     const reg = await loadPlugins({ dirs: [pluginsDir], enabled: ['subagent'], dataRoot, logger: log });
-    const delegate = reg.tools.find((t) => t.name === 'delegate')!;
+    const delegate = reg.tools.find((t) => t.name === 'Delegate')!;
     const sessionId = 'brain-ch-subagent-alive';
     let released!: () => void;
     const jobExits = new Promise<void>((resolve) => { released = resolve; });
@@ -315,7 +315,7 @@ describe('subagent plugin', () => {
   it('breaks the collect loop without an extra turn when the child job is killed', async () => {
     const dataRoot = freshDataRoot();
     const reg = await loadPlugins({ dirs: [pluginsDir], enabled: ['subagent'], dataRoot, logger: log });
-    const delegate = reg.tools.find((t) => t.name === 'delegate')!;
+    const delegate = reg.tools.find((t) => t.name === 'Delegate')!;
     const sessionId = 'brain-ch-subagent-kill';
     let calls = 0;
     reg.platforms[0]!.listen(async (_src, _text, onEvent) => {
@@ -345,7 +345,7 @@ describe('subagent plugin', () => {
     try {
       const dataRoot = freshDataRoot();
       const reg = await loadPlugins({ dirs: [pluginsDir], enabled: ['subagent'], dataRoot, logger: log });
-      const delegate = reg.tools.find((t) => t.name === 'delegate')!;
+      const delegate = reg.tools.find((t) => t.name === 'Delegate')!;
       const sessionId = 'brain-ch-subagent-timeout';
       const reminders: string[] = [];
       let running = true;
@@ -392,12 +392,12 @@ describe('subagent plugin', () => {
   it('emits the child current-tool detail on progress updates (UI/store projection)', async () => {
     const dataRoot = freshDataRoot();
     const reg = await loadPlugins({ dirs: [pluginsDir], enabled: ['subagent'], dataRoot, logger: log });
-    const delegate = reg.tools.find((t) => t.name === 'delegate')!;
+    const delegate = reg.tools.find((t) => t.name === 'Delegate')!;
     let resolveReply!: (r: string) => void;
     const reply = new Promise<string>((resolve) => { resolveReply = resolve; });
     reg.platforms[0]!.listen(async (_src, _text, onEvent) => {
       onEvent?.({ type: 'session', sessionId: 'brain-ch-subagent-detail' });
-      onEvent?.({ type: 'tool', name: 'read_file', detail: 'src/parser.ts' } as never);
+      onEvent?.({ type: 'tool', name: 'Read', detail: 'src/parser.ts' } as never);
       return reply;
     });
     const updates: { status: string; detail?: string }[] = [];
@@ -407,7 +407,7 @@ describe('subagent plugin', () => {
       emitSubagent: (u) => updates.push(u),
     });
     expect(started).toContain('Started background delegation');
-    await vi.waitFor(() => expect(updates.some((u) => u.detail === 'read_file src/parser.ts')).toBe(true));
+    await vi.waitFor(() => expect(updates.some((u) => u.detail === 'Read src/parser.ts')).toBe(true));
     resolveReply('done');
   });
 
@@ -416,10 +416,10 @@ describe('subagent plugin', () => {
     const reg = await loadPlugins({ dirs: [pluginsDir], enabled: ['subagent'], dataRoot, logger: log });
     expect(reg.platforms.map((p) => p.name)).toEqual(['subagent']);
     expect(reg.tools.map((t) => t.name).sort()).toEqual([
-      'delegate', 'delegate_models', 'delegate_result', 'delegate_status',
-      'workflow_add_nodes', 'workflow_start', 'workflow_status',
+      'Delegate', 'DelegateModels', 'DelegateResult', 'DelegateStatus',
+      'WorkflowAddNodes', 'WorkflowStart', 'WorkflowStatus',
     ]);
-    const delegate = reg.tools.find((t) => t.name === 'delegate')!;
+    const delegate = reg.tools.find((t) => t.name === 'Delegate')!;
 
     // Before the host wires the platform handler, delegate fails gracefully.
     await runWithPolicy(LIMITED, async () => {
@@ -435,20 +435,20 @@ describe('subagent plugin', () => {
     }, {
       sessionId: 'brain-parent-1',
       identity: { platform: 'discord', userId: 'foreign-admin', admin: true, owner: false },
-      toolPolicy: { allow: new Set(['delegate']), deny: new Set(['discord_api']) },
+      toolPolicy: { allow: new Set(['Delegate']), deny: new Set(['DiscordApi']) },
     });
     expect(seen!.access).toMatchObject({
       projectIds: [1], admin: false, owner: false, parentSessionId: 'brain-parent-1',
       // The delegate transcript never rolls over into a fresh session mid-flight.
       sessionIdleMs: Infinity,
-      toolPolicy: { allow: ['delegate'], deny: ['discord_api'] },
+      toolPolicy: { allow: ['Delegate'], deny: ['DiscordApi'] },
     });
   });
 
   it('delegate inherits admin scope and owner truth independently', async () => {
     const dataRoot = freshDataRoot();
     const reg = await loadPlugins({ dirs: [pluginsDir], enabled: ['subagent'], dataRoot, logger: log });
-    const delegate = reg.tools.find((t) => t.name === 'delegate')!;
+    const delegate = reg.tools.find((t) => t.name === 'Delegate')!;
     let seen: { access?: { admin: boolean; owner: boolean } } | null = null;
     reg.platforms[0]!.listen(async (src) => { seen = src; return 'ok'; });
     await runWithPolicy(ADMIN, async () => {
@@ -460,7 +460,7 @@ describe('subagent plugin', () => {
   it('detaches a foreground delegation without cancelling the child and reports its eventual result', async () => {
     const dataRoot = freshDataRoot();
     const reg = await loadPlugins({ dirs: [pluginsDir], enabled: ['subagent'], dataRoot, logger: log });
-    const delegate = reg.tools.find((t) => t.name === 'delegate')!;
+    const delegate = reg.tools.find((t) => t.name === 'Delegate')!;
     const control = reg.controls.get('subagent') as {
       detachForeground(input: { sessionId: string; principal: string }): { detached: number };
     };
@@ -499,9 +499,9 @@ describe('subagent plugin', () => {
   it('returns a background handle immediately, exposes progress/result, and keeps emitting the child session', async () => {
     const dataRoot = freshDataRoot();
     const reg = await loadPlugins({ dirs: [pluginsDir], enabled: ['subagent'], dataRoot, logger: log });
-    const delegate = reg.tools.find((t) => t.name === 'delegate')!;
-    const status = reg.tools.find((t) => t.name === 'delegate_status')!;
-    const result = reg.tools.find((t) => t.name === 'delegate_result')!;
+    const delegate = reg.tools.find((t) => t.name === 'Delegate')!;
+    const status = reg.tools.find((t) => t.name === 'DelegateStatus')!;
+    const result = reg.tools.find((t) => t.name === 'DelegateResult')!;
 
     let resolveReply!: (reply: string) => void;
     const childReply = new Promise<string>((resolve) => { resolveReply = resolve; });
@@ -511,7 +511,7 @@ describe('subagent plugin', () => {
     reg.platforms[0]!.listen(async (src, _text, onEvent) => {
       seen = src;
       onEvent?.({ type: 'session', sessionId: 'brain-ch-subagent-background' });
-      onEvent?.({ type: 'tool', name: 'read_file', detail: 'src/a.ts' } as never);
+      onEvent?.({ type: 'tool', name: 'Read', detail: 'src/a.ts' } as never);
       onEvent?.({ type: 'step', usage: { totalTokens: 321 } } as never);
       childStarted();
       return childReply;
@@ -537,14 +537,14 @@ describe('subagent plugin', () => {
     // its turn rather than wait or poll for it.
     expect(startedText).toContain('automatically in a NEW turn');
     expect(startedText).toContain('end your turn');
-    expect(startedText).toContain('polling delegate_status in a loop is never the answer');
+    expect(startedText).toContain('polling DelegateStatus in a loop is never the answer');
     await started;
 
     const asOwner = <T>(fn: () => T): T => runWithPolicy(ADMIN, fn, { sessionId: 'brain-parent-bg', identity: OWNER });
     const liveStatus = await asOwner(async () => asText(await status.execute('status', { id: jobId! }, undefined as never, undefined as never)));
     expect(liveStatus).toContain('RUNNING');
     expect(liveStatus).toContain('brain-ch-subagent-background');
-    expect(liveStatus).toContain('Progress: read_file src/a.ts');
+    expect(liveStatus).toContain('Progress: Read src/a.ts');
     expect(liveStatus).toContain('Tokens: 321');
     expect(await asOwner(async () => asText(await result.execute('result', { id: jobId! }, undefined as never, undefined as never)))).toContain('still running');
     const foreignSender: TurnIdentity = { platform: 'discord', userId: 'other-sender', admin: true, owner: false };
@@ -573,9 +573,9 @@ describe('subagent plugin', () => {
     try {
       const dataRoot = freshDataRoot();
       const reg = await loadPlugins({ dirs: [pluginsDir], enabled: ['subagent'], dataRoot, logger: log });
-      const delegate = reg.tools.find((t) => t.name === 'delegate')!;
-      const status = reg.tools.find((t) => t.name === 'delegate_status')!;
-      const result = reg.tools.find((t) => t.name === 'delegate_result')!;
+      const delegate = reg.tools.find((t) => t.name === 'Delegate')!;
+      const status = reg.tools.find((t) => t.name === 'DelegateStatus')!;
+      const result = reg.tools.find((t) => t.name === 'DelegateResult')!;
       reg.platforms[0]!.listen(async (_src, _text, onEvent) => {
         onEvent?.({ type: 'session', sessionId: 'brain-ch-subagent-failed' });
         onEvent?.({ type: 'text', delta: 'partial output before cancellation' } as never);
@@ -611,8 +611,8 @@ describe('subagent plugin', () => {
       dirs: [pluginsDir], enabled: ['subagent'], dataRoot,
       logger: { ...log, warn: (message: string) => warnings.push(message) },
     });
-    const delegate = reg.tools.find((t) => t.name === 'delegate')!;
-    const result = reg.tools.find((t) => t.name === 'delegate_result')!;
+    const delegate = reg.tools.find((t) => t.name === 'Delegate')!;
+    const result = reg.tools.find((t) => t.name === 'DelegateResult')!;
     reg.platforms[0]!.listen(async (_src, _text, onEvent) => {
       onEvent?.({ type: 'session', sessionId: 'brain-ch-subagent-fanout' });
       return 'child completed';

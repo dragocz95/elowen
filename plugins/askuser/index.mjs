@@ -1,4 +1,4 @@
-// Ask-user plugin: a single tool `ask_user_question` that pauses the turn and lets the user pick from
+// Ask-user plugin: a single tool `AskUserQuestion` that pauses the turn and lets the user pick from
 // predefined options — the Elowen analogue of Claude Code's AskUserQuestion / opencode's question tool.
 // The heavy lifting (parking the turn, emitting the interactive event, awaiting the answer) lives in the
 // core ElicitationRegistry; this plugin is just the tool surface. `ctx.askUser(questions)` returns one
@@ -84,7 +84,7 @@ export function formatAnswers(questions, answers) {
 
 export function register(ctx) {
   ctx.registerTool(defineTool({
-    name: 'ask_user_question',
+    name: 'AskUserQuestion',
     label: 'Ask the user',
     description:
       'Ask the user one or more structured questions and WAIT for their answer before continuing. It shows '
@@ -123,7 +123,7 @@ export function register(ctx) {
 
   // Nudge the model to reach for the tool at decision points instead of burying options in prose.
   ctx.registerSystemPromptFragment(
-    'When a decision is genuinely the user\'s to make, call `ask_user_question` rather than asking an '
+    'When a decision is genuinely the user\'s to make, call `AskUserQuestion` rather than asking an '
     + 'open-ended question in prose — it shows clickable options and pauses until they pick. Ask only once '
     + 'the cheaper answers are exhausted: resolve it from the environment, from convention, or from a '
     + 'reversible default first, and state the assumption instead of blocking. When you do ask, lead with a '

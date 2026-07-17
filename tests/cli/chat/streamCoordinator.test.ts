@@ -604,7 +604,7 @@ describe('StreamCoordinator — bounded hydration lifecycle', () => {
       rebind: () => {},
     } as unknown as BrainClient;
     const rt = runtime();
-    rt.transcript.apply({ type: 'tool', id: 'delegate-old', name: 'delegate', detail: 'old child' });
+    rt.transcript.apply({ type: 'tool', id: 'delegate-old', name: 'Delegate', detail: 'old child' });
     rt.transcript.apply({
       type: 'subagent', id: 'delegate-old', sessionId: 'old-child', status: 'running',
       task: 'old child', detail: 'working', tools: 1, seconds: 1,
@@ -764,7 +764,7 @@ describe('StreamCoordinator — bounded hydration lifecycle', () => {
     stream.openStream(rt.streamAc);
     callbacks[0]!({ type: 'compacted' });
     for (let index = 0; index < 2_049; index += 1) {
-      callbacks[0]!({ type: 'tool', id: `tool-${index}`, name: 'read_file' });
+      callbacks[0]!({ type: 'tool', id: `tool-${index}`, name: 'Read' });
     }
 
     expect(callbacks).toHaveLength(2);
@@ -1064,7 +1064,7 @@ describe('StreamCoordinator — concurrent parent switches', () => {
       rebind: () => {},
     } as unknown as BrainClient;
     const rt = state([], { workMode: 'build' });
-    rt.transcript.apply({ type: 'tool', id: 'delegate-old', name: 'delegate', detail: 'old child' });
+    rt.transcript.apply({ type: 'tool', id: 'delegate-old', name: 'Delegate', detail: 'old child' });
     rt.transcript.apply({
       type: 'subagent', id: 'delegate-old', sessionId: 'old-child', status: 'running',
       task: 'old child', detail: 'working', tools: 1, seconds: 1,
@@ -1106,7 +1106,7 @@ describe('StreamCoordinator — concurrent parent switches', () => {
 describe('StreamCoordinator — cached sub-agent projection', () => {
   it('reuses the same projection across repeated frames instead of rescanning the transcript', () => {
     const rt = state();
-    rt.transcript.apply({ type: 'tool', id: 'delegate-1', name: 'delegate', detail: 'inspect tests' });
+    rt.transcript.apply({ type: 'tool', id: 'delegate-1', name: 'Delegate', detail: 'inspect tests' });
     rt.transcript.apply({
       type: 'subagent', id: 'delegate-1', sessionId: 'child-1', status: 'running',
       task: 'inspect tests', detail: 'reading', tools: 2, seconds: 3,
@@ -1128,7 +1128,7 @@ describe('StreamCoordinator — cached sub-agent projection', () => {
   it('cycles parent to each child and back without replacing the parent transcript', () => {
     const rt = state();
     for (const index of [1, 2]) {
-      rt.transcript.apply({ type: 'tool', id: `delegate-${index}`, name: 'delegate', detail: `child ${index}` });
+      rt.transcript.apply({ type: 'tool', id: `delegate-${index}`, name: 'Delegate', detail: `child ${index}` });
       rt.transcript.apply({
         type: 'subagent', id: `delegate-${index}`, sessionId: `child-${index}`, status: 'running',
         task: `child ${index}`, tools: index, seconds: index,

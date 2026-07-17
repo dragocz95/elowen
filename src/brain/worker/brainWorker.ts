@@ -119,7 +119,7 @@ function sessionUsage(session: AgentSession): TokenUsage {
  * Runs `elowen:` tasks on the embedded brain: an in-process PI session scoped to the task's checkout
  * (Policy-guarded plugin tools + one baked-in close tool) instead of a tmux-spawned CLI. Task states
  * flow exactly as with CLI workers — the scheduler set in_progress before calling launch, and the
- * REST close route (driven by the elowen_close_task tool) runs the same ReviewService pipeline.
+ * REST close route (driven by the ElowenCloseTask tool) runs the same ReviewService pipeline.
  */
 export class BrainWorkerService {
   private live = new Map<string, LiveWorker>();
@@ -151,7 +151,7 @@ export class BrainWorkerService {
 
     const cwd = input.projectPath;
     const plugins = await this.d.plugins?.get();
-    // Run plugin tools through the shared composer so the "a task worker never gets the owner's elowen_*
+    // Run plugin tools through the shared composer so the "a task worker never gets the owner's Elowen*
     // control-plane tools" invariant is actually enforced here (not just true by construction) — the
     // worker's own close tool is added separately below.
     // Same `tools.call.after` fan-out as chat sessions (awaited by the tool gate, fail-open), so e.g.
@@ -170,7 +170,7 @@ export class BrainWorkerService {
     // The one control-plane capability a worker gets: closing ITS OWN task (id baked in) through the
     // REST route, so ReviewService/mission advancement fire exactly as for a CLI worker's `elowen close`.
     const closeTool = defineTool({
-      name: 'elowen_close_task', label: 'Close task',
+      name: 'ElowenCloseTask', label: 'Close task',
       description: 'Close YOUR task when the work is finished. Call exactly once, at the end.',
       parameters: Type.Object({
         summary: Type.String({ description: 'What you did and the result' }),
@@ -222,7 +222,7 @@ export class BrainWorkerService {
     // The worker's file/terminal tools are confined to the task's checkout for the whole run.
     const policy = { allowedProjectIds: new Set([input.projectId]), allowedPaths: () => [cwd] };
     const kickoff = resumed
-      ? 'You were interrupted and relaunched on the same task. Re-check the current state (git status, build/tests), fold in any new input from the brief, finish the work and call elowen_close_task.'
+      ? 'You were interrupted and relaunched on the same task. Re-check the current state (git status, build/tests), fold in any new input from the brief, finish the work and call ElowenCloseTask.'
       : 'Start working on the task now.';
     projectUserTurn(this.d.store, sessionId, kickoff);
     // Fire-and-forget: launch() returns like a tmux spawn; the run settles through the close tool.
@@ -252,7 +252,7 @@ export class BrainWorkerService {
     if (!task || task.status !== 'in_progress') { this.dispose(worker); return; }
     if (!worker.nudged) {
       worker.nudged = true;
-      const nudge = 'You ended your turn without closing the task. If the work is complete, call elowen_close_task now with a summary; otherwise finish the remaining work first, then close.';
+      const nudge = 'You ended your turn without closing the task. If the work is complete, call ElowenCloseTask now with a summary; otherwise finish the remaining work first, then close.';
       projectUserTurn(this.d.store, worker.sessionId, nudge);
       try {
         await runWithMeter(worker.meter, () => runWithPolicy(policy, () => worker.session.prompt(nudge), { workDir: worker.cwd, sessionId: worker.sessionId }));
