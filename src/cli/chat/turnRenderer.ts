@@ -4,6 +4,7 @@ import type { ChatTurn, ToolItem } from '../../brain/transcript.js';
 import { groupToolItems, failureSignature } from '../../brain/transcript.js';
 import { formatDuration, formatK, padAnsi, terminalInlineText, terminalPlainText } from '../ui/text.js';
 import { framedDiffBlock, toolOutputBlock, UserBlock, workflowCounts } from './components.js';
+import { ensureLang, langForPath } from './codeHighlight.js';
 import { chatTheme, color, paintRow } from './theme.js';
 import { prettyCwd } from './projectDir.js';
 import { activeKeymap } from './keys.js';
@@ -121,9 +122,13 @@ export class TurnRenderer {
           }
           if (item.diff) {
             const diffKey = `${key}:diff`;
+            // The file path in the tool detail picks the grammar (unknown extension → plain colors);
+            // ensureLang kicks the async grammar load so the NEXT render highlights this language.
+            const diffLang = langForPath(item.detail);
+            if (diffLang) ensureLang(diffLang);
             const { lines: block, expandable } = framedDiffBlock(
               item.diff, width, toolRowSpec(item.name, item.detail).title,
-              options.expandedTools.has(diffKey),
+              options.expandedTools.has(diffKey), diffLang,
             );
             for (const [index, line] of block.entries()) {
               const toggle = expandable && index === block.length - 1;

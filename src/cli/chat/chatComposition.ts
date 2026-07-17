@@ -14,6 +14,7 @@ import { formatDuration, formatK, padAnsi, terminalInlineText, terminalSafeAnsi 
 import { ELOWEN_CLI_VERSION } from '../version.js';
 import { computeTelemetryRailBudget } from './layoutBudget.js';
 import type { LayoutBudget } from './layoutBudget.js';
+import { prewarmCodeHighlight, setCodeHighlightListener } from './codeHighlight.js';
 import type { TuiDiagnostics } from './tuiDiagnostics.js';
 import {
   ChatViewport,
@@ -1260,6 +1261,11 @@ export function createChatComposition(
     inputRouter.attach();
   };
 
+  // Syntax highlighting: grammars load in the background; each completed load re-renders once so
+  // diffs and code fences switch from the plain fallback to highlighted rows.
+  setCodeHighlightListener(() => render('code-highlight'));
+  prewarmCodeHighlight();
+
   let disposed = false;
   const cleanup = (): void => {
     if (disposed) return;
@@ -1267,6 +1273,7 @@ export function createChatComposition(
     clearInterruptArm();
     leader.cancel();
     animations.stop();
+    setCodeHighlightListener(null);
     inputRouter?.stop();
     overlayController.stop();
     panelHandle = null;

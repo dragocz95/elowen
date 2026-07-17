@@ -5,6 +5,8 @@ import type { AskQuestion, BrainCard, BrainCardItem } from '../../brain/events.j
 import type { WorkflowState } from '../../brain/transcript.js';
 import type { ProcessInfo } from '../../brain/processRegistry.js';
 import { ansi, chatTheme, color, paintRow } from './theme.js';
+import { highlightLine, wrapTokens } from './codeHighlight.js';
+import type { CodeToken } from './codeHighlight.js';
 import type { ToolOutputView } from '../../brain/messageView.js';
 import { formatDuration, formatK, padAnsi, terminalInlineText, terminalPlainText } from '../ui/text.js';
 
@@ -594,8 +596,12 @@ export function cardBlock(card: BrainCard, maxRows = 12, collapsed = false): str
   return lines;
 }
 
-const GIT_ADD = `${ansi.bg(3, 58, 22)};${ansi.fg(63, 185, 80)}`;
-const GIT_DEL = `${ansi.bg(103, 6, 12)};${ansi.fg(248, 81, 73)}`;
+const GIT_ADD_BG = ansi.bg(3, 58, 22);
+const GIT_ADD_FG = ansi.fg(63, 185, 80);
+const GIT_DEL_BG = ansi.bg(103, 6, 12);
+const GIT_DEL_FG = ansi.fg(248, 81, 73);
+const GIT_ADD = `${GIT_ADD_BG};${GIT_ADD_FG}`;
+const GIT_DEL = `${GIT_DEL_BG};${GIT_DEL_FG}`;
 const CODE_BG = ansi.bg(13, 13, 16);
 const DIFF_ADD = (t: string): string => ansi.sgr(GIT_ADD, t);
 const DIFF_DEL = (t: string): string => ansi.sgr(GIT_DEL, t);
@@ -606,7 +612,18 @@ const LEGACY_SIGN = /^\s*\d+ ([-+ ]) /;
 const PI_ROW = /^([-+ ])\s*(\d+) (.*)$/;
 const LEGACY_ROW = /^\s*(\d+) ([-+ ]) (.*)$/;
 
-function diffLine(line: string, width?: number): string[] {
+/** A syntax-highlighted diff row: per-token foregrounds composited over the row's semantic (add/del/
+ *  context) background. Every SGR re-opens the background because SGR has no stack — a bare reset
+ *  would drop it; the trailing padding stays background-only and the row closes with one reset. */
+function paintTokenRow(gutter: string, gutterFg: string, parts: readonly CodeToken[], bg: string, width?: number): string {
+  const head = `\x1b[${bg};${gutterFg}m ${gutter} `;
+  const body = parts.map((p) => `\x1b[${bg};${p.fg}m${p.text}`).join('');
+  const used = visibleWidth(gutter) + 2 + parts.reduce((sum, p) => sum + visibleWidth(p.text), 0);
+  const pad = width != null && used < width ? `\x1b[${bg}m${' '.repeat(width - used)}` : '';
+  return `${head}${body}${pad}\x1b[0m`;
+}
+
+function diffLine(line: string, width?: number, lang?: string | null): string[] {
   const pi = PI_ROW.exec(line);
   const legacy = LEGACY_ROW.exec(line);
   const sign = pi?.[1] ?? legacy?.[2] ?? ' ';
@@ -618,6 +635,15 @@ function diffLine(line: string, width?: number): string[] {
   // ` ${gutter} ${text}`, i.e. gutter + 2 framing spaces; a caller with no width keeps the single-row form.
   const gutterPad = ' '.repeat(visibleWidth(gutter));
   const textWidth = width ? Math.max(1, width - visibleWidth(gutter) - 2) : undefined;
+  const bg = sign === '+' ? GIT_ADD_BG : sign === '-' ? GIT_DEL_BG : CODE_BG;
+  // Syntax path: the background keeps the add/del semantics, the foreground carries the grammar
+  // (VSCode-style). highlightLine is null until the grammar loads — the plain path renders then.
+  const tokens = lang ? highlightLine(text, lang) : null;
+  if (tokens) {
+    const gutterFg = sign === '+' ? GIT_ADD_FG : sign === '-' ? GIT_DEL_FG : chatTheme().faint;
+    const rows = textWidth ? wrapTokens(tokens, textWidth) : [tokens];
+    return rows.map((toks, i) => paintTokenRow(i === 0 ? gutter : gutterPad, gutterFg, toks, bg, width));
+  }
   const segments = textWidth ? wrapTextWithAnsi(text, textWidth) : [text];
   return segments.map((seg, i) => {
     const g = i === 0 ? gutter : gutterPad;
@@ -635,13 +661,15 @@ function parseDiffRows(diff: string): string[] {
 }
 
 /** Colour pre-parsed diff rows (see {@link parseDiffRows}) with stable line numbers and git-style
- *  add/delete backgrounds, capped so a huge edit can't flood the conversation. */
-function renderDiffRows(rows: readonly string[], maxLines = 60, rowWidth?: number): string[] {
+ *  add/delete backgrounds, capped so a huge edit can't flood the conversation. When `lang` names a
+ *  loaded grammar, changed and context lines are additionally syntax-highlighted (fg composited over
+ *  the semantic row background). */
+function renderDiffRows(rows: readonly string[], maxLines = 60, rowWidth?: number, lang?: string | null): string[] {
   // Cap on LOGICAL diff rows (so "+N more lines" stays a diff-line count), then wrap each shown row —
   // one over-wide source line can now expand into several visual rows without inflating that count.
   const rendered = rows.slice(0, maxLines).flatMap((l) => {
     const s = PI_ROW.exec(l)?.[1] ?? LEGACY_SIGN.exec(l)?.[1];
-    return s === '+' || s === '-' || s === ' ' ? diffLine(l, rowWidth) : [CODE_ROW(color.dim(l), rowWidth)];
+    return s === '+' || s === '-' || s === ' ' ? diffLine(l, rowWidth, lang) : [CODE_ROW(color.dim(l), rowWidth)];
   });
   const shown = rendered.map((l) => `    ${l}`);
   if (rows.length > maxLines) shown.push(`    ${FAINTC(`… +${rows.length - maxLines} more lines`)}`);
@@ -650,8 +678,8 @@ function renderDiffRows(rows: readonly string[], maxLines = 60, rowWidth?: numbe
 
 /** Render a display diff with stable line numbers and git-style add/delete colors. Indented under the
  *  file-action label and capped so a huge edit can't flood the conversation. */
-export function diffBlock(diff: string, maxLines = 60, rowWidth?: number): string[] {
-  return renderDiffRows(parseDiffRows(diff), maxLines, rowWidth);
+export function diffBlock(diff: string, maxLines = 60, rowWidth?: number, lang?: string | null): string[] {
+  return renderDiffRows(parseDiffRows(diff), maxLines, rowWidth, lang);
 }
 
 // A tool's nested block (diff / console output) sits one level DEEPER than the 4-space tool row: its
@@ -681,13 +709,13 @@ function simpleBlock(title: string, lines: string[], width: number, footer?: str
  *  expand/collapse toggle iff `expandable` is true. When collapsed, `renderDiffRows` already emits the
  *  `… +N more lines` note as that trailing row, so no redundant replacement is needed. */
 export function framedDiffBlock(
-  diff: string, width: number, title = 'diff', expanded = false,
+  diff: string, width: number, title = 'diff', expanded = false, lang?: string | null,
 ): { lines: string[]; expandable: boolean } {
   const inner = Math.max(24, width - 12);
   const previewLines = 18;
   const rows = parseDiffRows(diff);
   const expandable = rows.length > previewLines;
-  const lines = renderDiffRows(rows, expanded ? Number.POSITIVE_INFINITY : previewLines, inner);
+  const lines = renderDiffRows(rows, expanded ? Number.POSITIVE_INFINITY : previewLines, inner, lang);
   // Expanded shows every row, so append the collapse affordance; collapsed already carries the
   // more-lines note as its last row.
   if (expandable && expanded) lines.push(`    ${color.faint('▴ Click to collapse')}`);

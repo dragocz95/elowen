@@ -12,6 +12,7 @@ import { ChatState } from './chatState.js';
 import { createChatComposition } from './chatComposition.js';
 import type { ChatComposition } from './chatComposition.js';
 import { AttachmentChips, QueuedMessages } from './components.js';
+import { highlightBlock, langForFence } from './codeHighlight.js';
 import { wireSubmit } from './commands.js';
 import { createFlows } from './flows.js';
 import { HydrationNoticeOwner } from './hydrationNoticeOwner.js';
@@ -230,7 +231,21 @@ export class ChatApplication {
     }
     const coordinator = new StreamCoordinator(state, resources, this.actions, flows, hydrator, notices);
     this.coordinator = coordinator;
-    this.mountComposition(getMarkdownTheme(), createTuiDiagnostics(process.env));
+    // shiki powers code fences with the same dark-plus palette the diff renderer uses; a fence whose
+    // grammar has not loaded yet keeps the stock codeBlock styling until the ready-invalidate lands.
+    const baseMdTheme = getMarkdownTheme();
+    const mdTheme: MarkdownTheme = {
+      ...baseMdTheme,
+      highlightCode: (code: string, lang?: string): string[] => {
+        const fence = langForFence(lang);
+        if (fence) {
+          const highlighted = highlightBlock(code, fence);
+          if (highlighted) return highlighted;
+        }
+        return code.split('\n').map((line) => baseMdTheme.codeBlock(line));
+      },
+    };
+    this.mountComposition(mdTheme, createTuiDiagnostics(process.env));
     const pickers = createPickers(state, resources, this.actions, coordinator, {
       reshowPanel: () => this.composition?.reshowPanel(),
       reloadKeymap: () => this.composition?.reloadKeymap(),
