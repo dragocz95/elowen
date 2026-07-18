@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { catalogModelCost, descriptorCapabilities, inferredModelCapabilities } from '../../src/brain/modelCapabilities.js';
+import { catalogModelCost, catalogModelVision, descriptorCapabilities, inferredModelCapabilities } from '../../src/brain/modelCapabilities.js';
 
 /** The effort ladder Elowen would offer for a model on a custom endpoint registered as `elowen-<id>`. */
 const levels = (provider: string, model: string) => inferredModelCapabilities(`elowen-${provider}`, model).levels;
@@ -118,5 +118,29 @@ describe('catalogModelCost — a proxied model reports real spend instead of $0'
 
   it('never prices Codex OAuth from models.dev — ChatGPT bills on its own catalog', () => {
     expect(catalogModelCost('openai-codex', 'gpt-5.6')).toBeUndefined();
+  });
+});
+
+// Vision resolves through the same three tiers as cost. A KNOWN text-only model returns false so
+// modelEntry declares `input:['text']` and pi-ai downgrades a tool-read image gracefully; an unknown model
+// returns undefined so it keeps the image-declaring default and vision is never wrongly stripped.
+describe('catalogModelVision — a text-only model is known, so pi-ai can downgrade instead of 400', () => {
+  const vision = (provider: string, model: string) => catalogModelVision(`elowen-${provider}`, model);
+
+  it('reports a catalogued text-only model false and a vision model true (direct endpoint row)', () => {
+    expect(vision('deepseek', 'deepseek-v4-flash')).toBe(false);
+    expect(vision('openai', 'gpt-5.6')).toBe(true);
+    expect(vision('anthropic', 'claude-opus-4-8')).toBe(true);
+  });
+
+  it('reads the upstream a relay names (tier 2) and an agreed bare name (tier 3)', () => {
+    expect(vision('acme-relay', 'deepseek/deepseek-v4-flash')).toBe(false);
+    // kimi-k3 accepts images on every catalogued endpoint, so a bare relay id resolves to true.
+    expect(vision('acme-relay', 'kimi-k3')).toBe(true);
+  });
+
+  it('is undefined for an unknown model (caller keeps the image default) and for Codex OAuth', () => {
+    expect(vision('acme-relay', 'some-private-model-xyz')).toBeUndefined();
+    expect(catalogModelVision('openai-codex', 'gpt-5.6')).toBeUndefined();
   });
 });

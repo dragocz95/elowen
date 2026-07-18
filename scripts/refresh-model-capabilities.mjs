@@ -41,6 +41,7 @@ const catalog = source
 
 const entries = [];
 const costs = [];
+const visions = [];
 for (const provider of PROVIDERS) {
   const models = catalog[provider]?.models;
   if (!models) {
@@ -55,6 +56,13 @@ for (const provider of PROVIDERS) {
     if (c && (c.input != null || c.output != null || c.cache_read != null || c.cache_write != null)) {
       costs.push([`${provider}/${id}`, [c.input ?? 0, c.output ?? 0, c.cache_read ?? 0, c.cache_write ?? 0]]);
     }
+    // Vision = accepts image input. `modalities.input` is authoritative; `attachment` is the older boolean
+    // flag. Recorded ONLY when the catalog actually says (true or false) — an unknown model must stay
+    // absent so it keeps the conservative "declare vision, let the endpoint decide" default downstream.
+    const modalInput = model.modalities?.input;
+    const vision = Array.isArray(modalInput) ? modalInput.includes('image')
+      : typeof model.attachment === 'boolean' ? model.attachment : undefined;
+    if (vision !== undefined) visions.push([`${provider}/${id}`, vision]);
     if (!model.reasoning) { entries.push([`${provider}/${id}`, 'false']); continue; }
     const effort = (model.reasoning_options ?? []).find((option) => option.type === 'effort');
     const levels = (effort?.values ?? []).filter((value) => CANONICAL.has(value));
@@ -66,7 +74,9 @@ for (const provider of PROVIDERS) {
 
 const body = entries.map(([key, value]) => `  '${key}': ${value},`).join('\n');
 const costBody = costs.map(([key, t]) => `  '${key}': [${t.join(', ')}],`).join('\n');
+const visionBody = visions.map(([key, value]) => `  '${key}': ${value},`).join('\n');
 const reasoning = entries.filter(([, value]) => value !== 'false').length;
+const visionCapable = visions.filter(([, value]) => value === true).length;
 
 writeFileSync(OUT, `/* GENERATED FILE — DO NOT EDIT BY HAND.
  * Source: models.dev (${CATALOG_URL}); regenerate with \`npm run models:refresh\`.
@@ -76,7 +86,8 @@ writeFileSync(OUT, `/* GENERATED FILE — DO NOT EDIT BY HAND.
  * \`false\` for one that does not reason at all. Consumed by descriptorCapabilities() in
  * modelCapabilities.ts, which is the only reader — a miss there falls back to name heuristics.
  *
- * ${entries.length} models, ${reasoning} of them reasoning-capable; ${costs.length} carry a price.
+ * ${entries.length} models, ${reasoning} of them reasoning-capable; ${costs.length} carry a price;
+ * ${visions.length} declare an image-input capability (${visionCapable} accept images).
  */
 import type { ModelThinkingLevel } from '@earendil-works/pi-ai';
 
@@ -94,6 +105,13 @@ ${body}
 export const MODEL_COST_CATALOG: Readonly<Record<string, CatalogCost>> = {
 ${costBody}
 };
+
+/** Whether a model accepts image input (\`modalities.input\` includes 'image', or the legacy \`attachment\`
+ *  flag). Present ONLY for models the catalog is explicit about — a miss means "unknown", which downstream
+ *  treats as the conservative "declare vision and let the endpoint decide" default. */
+export const MODEL_VISION_CATALOG: Readonly<Record<string, boolean>> = {
+${visionBody}
+};
 `);
 
-console.log(`wrote ${entries.length} models (${reasoning} reasoning-capable, ${costs.length} priced) to src/brain/modelCapabilityData.ts`);
+console.log(`wrote ${entries.length} models (${reasoning} reasoning-capable, ${costs.length} priced, ${visions.length} with vision data) to src/brain/modelCapabilityData.ts`);

@@ -1,6 +1,6 @@
 import type { Model, Api, ModelThinkingLevel, ThinkingLevelMap } from '@earendil-works/pi-ai';
 import { getSupportedThinkingLevels } from '@earendil-works/pi-ai';
-import { MODEL_CAPABILITY_CATALOG, MODEL_COST_CATALOG, type CatalogCapability, type CatalogCost } from './modelCapabilityData.js';
+import { MODEL_CAPABILITY_CATALOG, MODEL_COST_CATALOG, MODEL_VISION_CATALOG, type CatalogCapability, type CatalogCost } from './modelCapabilityData.js';
 
 /**
  * Elowen's one model-capability vocabulary. PI keeps the canonical values stable while providers are
@@ -208,6 +208,60 @@ export function catalogModelCost(provider: string, model: string): ModelCost | u
   if (upstream !== undefined) return toCost(upstream);
   const named = costWithin(model);
   return named !== undefined ? toCost(named) : undefined;
+}
+
+/** The vision row for `<catalog>/<model>`, retried without a pull tag — the vision twin of `costRow`. */
+function visionRow(catalog: string, model: string): boolean | undefined {
+  const row = MODEL_VISION_CATALOG[`${catalog}/${model}`];
+  if (row !== undefined) return row;
+  const untagged = model.includes(':') ? model.slice(0, model.indexOf(':')) : undefined;
+  return untagged ? MODEL_VISION_CATALOG[`${catalog}/${untagged}`] : undefined;
+}
+
+let visionNamedModels: Map<string, boolean[]> | undefined;
+function visionByName(): Map<string, boolean[]> {
+  if (visionNamedModels) return visionNamedModels;
+  visionNamedModels = new Map();
+  for (const [key, vision] of Object.entries(MODEL_VISION_CATALOG)) {
+    const tail = key.slice(key.lastIndexOf('/') + 1);
+    const name = tail.includes(':') ? tail.slice(0, tail.indexOf(':')) : tail;
+    const rows = visionNamedModels.get(name);
+    if (rows) rows.push(vision); else visionNamedModels.set(name, [vision]);
+  }
+  return visionNamedModels;
+}
+
+/** Vision for a bare model name matched only by `nameWithin` — yielded ONLY when every catalogued endpoint
+ *  agrees, so a proxy of unknown provenance is never told a model is text-only on a split vote. */
+function visionWithin(model: string): boolean | undefined {
+  const id = model.toLowerCase();
+  let best: string | undefined;
+  for (const name of visionByName().keys()) {
+    if (name.length < 4 || (best && name.length <= best.length)) continue;
+    const at = id.indexOf(name);
+    if (at < 0) continue;
+    const before = at === 0 ? '' : id[at - 1]!;
+    const after = id[at + name.length] ?? '';
+    if (/[a-z0-9]/.test(before) || /[0-9.]/.test(after)) continue;
+    best = name;
+  }
+  if (!best) return undefined;
+  const rows = visionByName().get(best)!;
+  return rows.every((v) => v === rows[0]) ? rows[0] : undefined;
+}
+
+/** Whether the catalog KNOWS this (provider, model) accepts image input: `true` (vision), `false`
+ *  (text-only), or `undefined` (not catalogued). Resolved through the same three tiers as cost/capability
+ *  (exact endpoint row → upstream namespace → agreed name match). The vision twin of `catalogModelCost`. */
+export function catalogModelVision(provider: string, model: string): boolean | undefined {
+  if (provider === 'openai-codex') return undefined; // ChatGPT's own catalog, not models.dev
+  const key = provider.startsWith('elowen-') ? provider.slice('elowen-'.length) : provider;
+  const direct = visionRow(catalogName(key), model);
+  if (direct !== undefined) return direct;
+  const slash = model.indexOf('/');
+  const upstream = slash > 0 ? visionRow(catalogName(model.slice(0, slash)), model.slice(slash + 1)) : undefined;
+  if (upstream !== undefined) return upstream;
+  return visionWithin(model);
 }
 
 /** Turn an accepted effort ladder into PI's map: a level the endpoint does not accept is `null`

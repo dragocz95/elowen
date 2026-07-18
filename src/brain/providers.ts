@@ -4,7 +4,7 @@ import { APP_IDENTITY_HEADERS } from '../inference/appIdentity.js';
 import { installOpenRouterMeter } from './openrouterMeter.js';
 import { kimiOAuthProvider } from './kimiOAuth.js';
 import type { BrainProviderType, BrainProviderApi } from '../store/configStore.js';
-import { catalogModelCost, descriptorCapabilities } from './modelCapabilities.js';
+import { catalogModelCost, catalogModelVision, descriptorCapabilities } from './modelCapabilities.js';
 
 /** One brain model provider, daemon-side (API key included). `openai`/`anthropic` register a custom
  *  endpoint; `oauth-*` rely on pi-ai's built-in providers + an OAuth credential in the AuthStorage. */
@@ -183,12 +183,13 @@ export function openAiApiFor(p: Pick<BrainProviderEntry, 'api' | 'baseUrl'>): Br
 
 /** Reasonable descriptor defaults — the brain is a chat agent, exact cost/window are not load-bearing
  *  here (usage accounting lives elsewhere), so we ship safe placeholders the model list requires.
- *  `input` is declared multimodal: pi-ai DOWNGRADES image blocks to a "(image omitted…)" placeholder
- *  whenever the model descriptor's `input` lacks 'image' (see pi-ai transform-messages
- *  downgradeUnsupportedImages), which silently strips vision even from models that support it. We can't
- *  probe per-model capability for inline providers (OpenRouter, custom relays), so we declare vision and
- *  let the endpoint decide: a genuinely multimodal model gets the image, a text-only one returns a clean
- *  400 ("does not support image input") instead of a confusing text-only answer. */
+ *  `input` gates pi-ai's downgradeUnsupportedImages (transform-messages): when the descriptor's `input`
+ *  lacks 'image', pi-ai replaces image blocks with a "(image omitted…)" placeholder and PI's Read tool
+ *  appends a "model does not support images" note — a clean text answer instead of a request that errors.
+ *  A model the catalog KNOWS is text-only therefore gets `['text']` so that graceful path fires; a genuine
+ *  vision model, OR one the catalog does not cover (an unprobeable relay), keeps `['text', 'image']` so its
+ *  vision is never silently stripped — there the endpoint still decides (a 400 for a text-only relay model).
+ *  This is what stops a tool-read image on a text-only model from 400-ing every turn and killing the chat. */
 /** Default context window when the operator hasn't pinned one and the endpoint doesn't report a reliable
  *  max — a safe placeholder the model list requires. */
 export const DEFAULT_CONTEXT_WINDOW = 200_000;
@@ -210,8 +211,10 @@ const RELAY_SAFE_COMPAT = { supportsDeveloperRole: false } as const;
 
 function modelEntry(provider: string, id: string, contextWindow?: number, compat?: Model<Api>['compat']) {
   const capabilities = descriptorCapabilities(provider, id);
+  // Declare vision unless the catalog KNOWS this model is text-only (see the descriptor-defaults note above).
+  const input: ('text' | 'image')[] = catalogModelVision(provider, id) === false ? ['text'] : ['text', 'image'];
   return {
-    id, name: id, reasoning: capabilities.reasoning, input: ['text', 'image'] as ('text' | 'image')[],
+    id, name: id, reasoning: capabilities.reasoning, input,
     // Per-provider/model reasoning support lives in modelCapabilities.ts. In particular, an unknown
     // custom chat model is not sent a speculative reasoning_effort that would turn a healthy request
     // into a 400; known reasoning families expose only their real canonical levels.
