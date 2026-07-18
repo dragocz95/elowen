@@ -380,7 +380,8 @@ export class TelemetryPanel implements Component {
    *  beside it stays in the neutral text color. The two frame cells count toward the given width. */
   private progressBar(percent: number, cells: number): string {
     const value = Math.max(0, Math.min(100, percent));
-    const inner = Math.max(1, cells - 2);
+    // Two cells go to the [ ] frame; callers always pass a comfortable width (>=8 context, >=4 limits).
+    const inner = cells - 2;
     // A tiny non-zero usage rounds to zero segments and reads as empty; show at least one lit segment so
     // a live meter is never indistinguishable from 0 % (still capped at the inner cell count).
     const filled = Math.min(inner, Math.max(value > 0 ? 1 : 0, Math.round((value / 100) * inner)));
