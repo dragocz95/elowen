@@ -164,6 +164,14 @@ export class InputRouter {
       }
       const killId = context.telemetry.processKillAt(localRow, localX);
       if (killId) { context.killProcess(killId); return { consume: true }; }
+      // Plain rail sections (Context, Goal, Limits, Project, MCP, LSP) fold to their header on click,
+      // mirroring the Sub-agents/Processes panels above.
+      const section = context.telemetry.sectionHeaderAt(localRow);
+      if (section) {
+        context.telemetry.toggleSection(section);
+        context.render('input:section-toggle');
+        return { consume: true };
+      }
     }
     if (click && noModal && !rt.childView) {
       const subagent = context.activeViewport().subagentAt(click.x, click.y);

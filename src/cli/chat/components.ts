@@ -36,13 +36,17 @@ const GREENC = color.success;
 const inlineText = terminalInlineText;
 const TODO_PREVIEW_ITEMS = 4;
 
-/** A rail section header with a faint rule filling the row behind the (pre-styled) content. The rule
- *  lives INSIDE the header row, so visually separating sections costs no extra height and row-based
- *  hit-testing keeps its current offsets. Over-wide content truncates exactly as before. */
-export function ruledHeader(content: string, width: number): string {
-  const fill = width - visibleWidth(content) - 1;
-  if (fill <= 0) return truncateToWidth(content, Math.max(1, width), '…');
-  return `${content} ${FAINTC('─'.repeat(fill))}`;
+/** A rail section header: a collapse chevron, a bold label and optional faint meta — no full-width rule.
+ *  Sections separate by the bold label plus the blank row between them, which keeps the rail airy instead
+ *  of boxed in horizontal lines. Shared by every rail section so they all read and collapse the same way. */
+export function sectionHeaderContent(chevron: string, label: string, meta = ''): string {
+  return `${FAINTC(chevron)} ${bold(WHITE(label))}${meta ? ` ${FAINTC(meta)}` : ''}`;
+}
+
+/** Fit a pre-styled header to the panel width; over-wide content truncates with an ellipsis. The row is
+ *  padded to width later by the panel's background paint, so nothing is appended here. */
+export function sectionHeaderRow(content: string, width: number): string {
+  return truncateToWidth(content, Math.max(1, width), '…');
 }
 
 /** Pick a useful compact Todo snapshot instead of blindly showing the first rows forever.
@@ -225,10 +229,10 @@ export class SubagentPanel implements Component {
     const capacity = this.viewportRows();
     this.clampScroll();
     const range = this.canScroll()
-      ? `  ${this.scrollOffset + 1}–${Math.min(this.entries.length, this.scrollOffset + capacity)}/${this.entries.length} ↕`
-      : `  ${this.entries.length}`;
-    const header = `${FAINTC('─')} ${FAINTC(this.collapsed ? '▸' : '▾')} ${bold(WHITE('Sub-agents'))}${FAINTC(range)} ${FAINTC('click')}`;
-    const lines: string[] = [ruledHeader(header, Math.max(1, width))];
+      ? `${this.scrollOffset + 1}–${Math.min(this.entries.length, this.scrollOffset + capacity)}/${this.entries.length} ↕`
+      : `${this.entries.length}`;
+    const header = sectionHeaderContent(this.collapsed ? '▸' : '▾', 'Sub-agents', `${range} · click`);
+    const lines: string[] = [sectionHeaderRow(header, Math.max(1, width))];
     if (this.collapsed) return lines;
     const shownEntries = this.entries.slice(this.scrollOffset, this.scrollOffset + capacity);
     for (const e of shownEntries) {
@@ -313,10 +317,10 @@ export class WorkflowPanel implements Component {
     const capacity = this.viewportRows();
     this.clampScroll();
     const range = this.canScroll()
-      ? `  ${this.scrollOffset + 1}–${Math.min(this.entries.length, this.scrollOffset + capacity)}/${this.entries.length} ↕`
-      : `  ${this.entries.length}`;
-    const header = `${FAINTC('─')} ${FAINTC(this.collapsed ? '▸' : '▾')} ${bold(WHITE('Workflow'))}${FAINTC(range)} ${FAINTC('click')}`;
-    const lines: string[] = [ruledHeader(header, Math.max(1, width))];
+      ? `${this.scrollOffset + 1}–${Math.min(this.entries.length, this.scrollOffset + capacity)}/${this.entries.length} ↕`
+      : `${this.entries.length}`;
+    const header = sectionHeaderContent(this.collapsed ? '▸' : '▾', 'Workflow', `${range} · click`);
+    const lines: string[] = [sectionHeaderRow(header, Math.max(1, width))];
     if (this.collapsed) return lines;
     const shownEntries = this.entries.slice(this.scrollOffset, this.scrollOffset + capacity);
     for (const w of shownEntries) {
@@ -370,7 +374,7 @@ export class ProcessPanel implements Component {
   render(width = 80, now = Date.now()): string[] {
     this.killZones = new Map();
     if (this.entries.length === 0 || this.maxRows <= 0) return [];
-    const lines = [ruledHeader(`${FAINTC('─')} ${FAINTC(this.collapsed ? '▸' : '▾')} ${bold(WHITE('Processes'))}${FAINTC(`  ${this.entries.length} running`)} ${FAINTC('click ✕')}`, Math.max(1, width))];
+    const lines = [sectionHeaderRow(sectionHeaderContent(this.collapsed ? '▸' : '▾', 'Processes', `${this.entries.length} running · click ✕`), Math.max(1, width))];
     if (this.collapsed) return lines;
     const room = Math.max(0, this.maxRows - 1);
     const needsSummary = this.entries.length > room;
