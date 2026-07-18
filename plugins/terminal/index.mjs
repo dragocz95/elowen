@@ -240,7 +240,7 @@ export function register(ctx) {
   const guardCwd = (cwd) => ctx.assertPathAllowed(cwd ?? ctx.defaultCwd());
 
   // Owner-only gate. The shell runs with process.env and can read ANY absolute path — cwd guarding
-  // doesn't contain that (e.g. `cat /var/www/.config/elowen/elowen.db`). So these tools are reserved for
+  // doesn't contain that (e.g. `cat ~/.config/elowen/elowen.db`). So these tools are reserved for
   // the verified operator: a role-scoped platform member (Discord) is refused even with an admin role.
   // Gate on `owner`, never `admin` — an admin-mapped stranger is admin-but-not-owner.
   const denyNonOwner = () => (ctx.currentIdentity?.()?.owner === true
