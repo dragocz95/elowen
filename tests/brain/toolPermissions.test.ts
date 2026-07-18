@@ -208,6 +208,12 @@ describe('splitBashSegments — shell-aware simple-command split', () => {
     expect(splitBashSegments('echo `rm -rf ~`').segments).toContain('rm -rf ~');
   });
 
+  it('extracts the inner command of <(...) and >(...) process substitutions as its own segment', () => {
+    expect(splitBashSegments('cat <(rm -rf ~)').segments).toContain('rm -rf ~');
+    expect(splitBashSegments('tee >(rm -rf ~)').segments).toContain('rm -rf ~');
+    expect(splitBashSegments('cat <(rm -rf ~').ambiguous).toBe(true); // unterminated → ambiguous, never allow
+  });
+
   it('flags an unbalanced quote / unterminated substitution as ambiguous', () => {
     expect(splitBashSegments("cat 'oops").ambiguous).toBe(true);
     expect(splitBashSegments('echo $(rm -rf ~').ambiguous).toBe(true);

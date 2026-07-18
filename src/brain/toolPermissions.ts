@@ -246,6 +246,14 @@ function scanBashLevel(input: string, segments: string[], state: { ambiguous: bo
       if (end === -1) { state.ambiguous = true; break; }
       scanBashLevel(input.slice(i + 2, end), segments, state); current += ' '; i = end + 1; continue;
     }
+    if ((ch === '<' || ch === '>') && input[i + 1] === '(') { // process substitution `<(cmd)` / `>(cmd)`
+      // Gate the inner command on its OWN, exactly like `$(…)`: otherwise `cat <(rm -rf ~)` would stay one
+      // segment matching a `cat *` allow (no `>` for the redirection deny to catch) and smuggle a mutating
+      // command past a read-only boundary. The `(` must follow immediately — a bare `<`/`>` is a redirect.
+      const end = findMatchingParen(input, i + 1);
+      if (end === -1) { state.ambiguous = true; break; }
+      scanBashLevel(input.slice(i + 2, end), segments, state); current += ' '; i = end + 1; continue;
+    }
     // Control operators (outside quotes): `;`, newline, `|`/`||`, `&`/`&&` — the two-char forms just
     // produce an empty segment between the flushes, which flush() drops.
     if (ch === ';' || ch === '\n' || ch === '|' || ch === '&') { flush(); i++; continue; }
@@ -258,8 +266,8 @@ function scanBashLevel(input: string, segments: string[], state: { ambiguous: bo
  *  permission rule must never let a chained or substituted command ride an allow/prefix that matched
  *  only the first program (e.g. `cat x && rm -rf ~`). Splits on the control operators `;`, `&&`, `||`,
  *  `|`, `&` and newlines, and extracts the inner command of every command substitution (`` `…` `` and
- *  `$(…)`). Single/double quotes are respected, so a separator inside a quoted string is NOT a split
- *  point. Conservative on malformed input: an unbalanced quote or an unterminated substitution sets
+ *  `$(…)`) and process substitution (`<(…)` / `>(…)`). Single/double quotes are respected, so a separator inside
+ *  a quoted string is NOT a split point. Conservative on malformed input: an unbalanced quote or an unterminated substitution sets
  *  `ambiguous`, telling the resolver to treat the whole line as one segment that can never be granted
  *  by an allow/prefix rule. */
 export function splitBashSegments(command: string): { segments: string[]; ambiguous: boolean } {
