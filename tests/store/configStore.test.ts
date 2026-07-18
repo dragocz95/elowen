@@ -41,6 +41,18 @@ describe('ConfigStore', () => {
     expect(cfg.apiKey()).toBe('k1');
     expect(cfg.get().autopilot.apiKeySet).toBe(true);
   });
+  it('brain.hiddenOauth defaults empty, sanitizes, survives a sibling patch, and clears on an empty list', () => {
+    expect(cfg.get().brain.hiddenOauth).toEqual([]);
+    // Non-string / empty members are dropped on the way in.
+    cfg.update({ brain: { hiddenOauth: ['oauth-kimi', 42, '', 'oauth-anthropic'] as unknown as string[] } });
+    expect(cfg.get().brain.hiddenOauth).toEqual(['oauth-kimi', 'oauth-anthropic']);
+    // A patch touching another brain field must not reset the hidden list.
+    cfg.update({ brain: { agentName: 'Bot' } });
+    expect(cfg.get().brain.hiddenOauth).toEqual(['oauth-kimi', 'oauth-anthropic']);
+    // An explicit empty list clears it (un-hiding the last account).
+    cfg.update({ brain: { hiddenOauth: [] } });
+    expect(cfg.get().brain.hiddenOauth).toEqual([]);
+  });
 
   describe('autopilotRelay (planner/overseer/curator credentials)', () => {
     it('falls back to the legacy top-level apiKey + autopilot.apiUrl when no provider is picked', () => {

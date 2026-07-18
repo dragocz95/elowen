@@ -1373,6 +1373,8 @@ export const cs = {
     pickModelsTitle: "Modely - {provider}",
     pickModelsHint: "Vyberte, které modely tohoto účtu bude Elowen nabízet. Žádný výběr = celý katalog.",
     accounts: 'Připojené účty (OAuth)',
+    hideAccount: 'Skrýt účet',
+    addAccount: 'Přidat účet',
     usageWeekly: 'týdně',
     usageWindow: 'okno',
     usageResets: 'Obnoví se {time}',

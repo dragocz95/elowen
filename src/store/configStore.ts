@@ -70,7 +70,7 @@ export interface ElowenConfig {
    *  identity ("Elowen" by default) — it feeds the persona prompts everywhere the brain speaks.
    *  `maxSteps` caps the agent's per-run model round-trips; `modelContextWindows` lets the operator pin a
    *  max context window per Elowen AI model (`providerId/model`) for endpoints that don't report one. */
-  brain: { providers: BrainProviderPublic[]; agentName: string; maxSteps: number; modelContextWindows: Record<string, number>; limits: BrainLimits };
+  brain: { providers: BrainProviderPublic[]; agentName: string; maxSteps: number; modelContextWindows: Record<string, number>; limits: BrainLimits; hiddenOauth: string[] };
   /** Memory embedding provider config (no secret — the API key comes from the referenced brain provider). */
   embedding: EmbeddingBlock;
   /** Memory categorization model (workspace-level; no secret — key reused from the brain provider). */
@@ -239,6 +239,11 @@ function sanitizeContextWindows(input: unknown): Record<string, number> {
   return out;
 }
 
+/** Keep only the non-empty string members of a stored/patched list, dropping any malformed entries. */
+function sanitizeStringList(input: unknown): string[] {
+  return Array.isArray(input) ? input.filter((v): v is string => typeof v === 'string' && v.length > 0) : [];
+}
+
 const DEFAULT_CONFIG: ElowenConfig = {
   allowedExecs: [...KNOWN_EXECS],
   customModels: [],
@@ -255,7 +260,7 @@ const DEFAULT_CONFIG: ElowenConfig = {
   // elowen-docs ships on: it is how the agent answers questions about Elowen itself and looks a setting
   // up before changing it, which has to work on a fresh install or it is never there when it is needed.
   plugins: { enabled: ['files', 'terminal', 'askuser', 'runtime-context', 'skills', 'subagent', 'elowen-docs'], removed: [] },
-  brain: { providers: [], agentName: 'Elowen', maxSteps: DEFAULT_MAX_STEPS, modelContextWindows: {}, limits: { ...DEFAULT_BRAIN_LIMITS } },
+  brain: { providers: [], agentName: 'Elowen', maxSteps: DEFAULT_MAX_STEPS, modelContextWindows: {}, limits: { ...DEFAULT_BRAIN_LIMITS }, hiddenOauth: [] },
   embedding: { providerId: '', model: '', baseUrl: '', dimensions: null },
   categorization: { providerId: '', model: '', baseUrl: '' },
 };
@@ -280,7 +285,7 @@ interface Stored {
    *  (secrets included, never serialized to API). */
   plugins: { enabled: string[]; removed: string[]; config: Record<string, Record<string, unknown>> };
   /** Brain provider entries with plaintext API keys — stripped to `apiKeySet` in the public view. */
-  brain: { providers: BrainProviderStored[]; agentName: string; maxSteps: number; modelContextWindows: Record<string, number>; limits: BrainLimits };
+  brain: { providers: BrainProviderStored[]; agentName: string; maxSteps: number; modelContextWindows: Record<string, number>; limits: BrainLimits; hiddenOauth: string[] };
   /** Embedding provider config. Holds no secret (the key is reused from the brain provider), so this
    *  block is safe to surface verbatim in the public view. */
   embedding: EmbeddingBlock;
@@ -311,7 +316,7 @@ const defaultStored = (): Stored => ({
   lspEnabled: true,
   webPush: null,
   plugins: { enabled: [...DEFAULT_CONFIG.plugins.enabled], removed: [], config: {} },
-  brain: { providers: [], agentName: 'Elowen', maxSteps: DEFAULT_MAX_STEPS, modelContextWindows: {}, limits: { ...DEFAULT_BRAIN_LIMITS } },
+  brain: { providers: [], agentName: 'Elowen', maxSteps: DEFAULT_MAX_STEPS, modelContextWindows: {}, limits: { ...DEFAULT_BRAIN_LIMITS }, hiddenOauth: [] },
   embedding: { providerId: '', model: '', baseUrl: '', dimensions: null },
   categorization: { providerId: '', model: '', baseUrl: '' },
 });
@@ -331,7 +336,7 @@ export interface ConfigPatch {
   plugins?: { enabled?: string[]; removed?: string[]; config?: Record<string, Record<string, unknown>> };
   /** Brain providers replace wholesale (the UI edits the full list). A patched entry with an empty/absent
    *  apiKey KEEPS the currently stored key for that id — the UI never sees (or resends) secrets. */
-  brain?: { providers?: unknown; agentName?: unknown; maxSteps?: number; modelContextWindows?: Record<string, number>; limits?: Partial<BrainLimits> };
+  brain?: { providers?: unknown; agentName?: unknown; maxSteps?: number; modelContextWindows?: Record<string, number>; limits?: Partial<BrainLimits>; hiddenOauth?: string[] };
   /** Embedding config is merged per-field (like autopilot); `dimensions: null` clears the width hint. */
   embedding?: { providerId?: string; model?: string; baseUrl?: string; dimensions?: number | null };
   /** Categorization config merged per-field (like embedding). */
@@ -389,6 +394,7 @@ export class ConfigStore {
           maxSteps: clampMaxSteps(p.brain?.maxSteps, d.brain.maxSteps),
           modelContextWindows: sanitizeContextWindows(p.brain?.modelContextWindows),
           limits: clampBrainLimits(p.brain?.limits, d.brain.limits),
+          hiddenOauth: sanitizeStringList(p.brain?.hiddenOauth),
         },
         embedding: {
           providerId: typeof p.embedding?.providerId === 'string' ? p.embedding.providerId : d.embedding.providerId,
@@ -428,7 +434,7 @@ export class ConfigStore {
       webPush: { publicKey: s.webPush?.publicKey ?? '', publicKeySet: !!s.webPush },
       // Only the enabled + removed lists surface; per-plugin config (possible secrets) stays daemon-side.
       plugins: { enabled: s.plugins.enabled, removed: s.plugins.removed },
-      brain: { providers: s.brain.providers.map(({ apiKey, ...pub }) => ({ ...pub, apiKeySet: !!apiKey })), agentName: s.brain.agentName, maxSteps: s.brain.maxSteps, modelContextWindows: s.brain.modelContextWindows, limits: s.brain.limits },
+      brain: { providers: s.brain.providers.map(({ apiKey, ...pub }) => ({ ...pub, apiKeySet: !!apiKey })), agentName: s.brain.agentName, maxSteps: s.brain.maxSteps, modelContextWindows: s.brain.modelContextWindows, limits: s.brain.limits, hiddenOauth: s.brain.hiddenOauth },
       // No secret in the embedding block (the key is reused from the brain provider) → expose verbatim.
       embedding: s.embedding,
       // Likewise no secret in the categorization block → expose verbatim.
@@ -528,6 +534,9 @@ export class ConfigStore {
         // Limits merge per-field onto the current values (a partial patch tunes one knob without
         // resetting the rest) and each field is clamped to its bound.
         limits: clampBrainLimits(patch.brain?.limits, cur.brain.limits),
+        // Hidden OAuth types replace wholesale (the UI sends the full list); a display filter only, never
+        // touching credentials or provider entries.
+        hiddenOauth: patch.brain?.hiddenOauth !== undefined ? sanitizeStringList(patch.brain.hiddenOauth) : cur.brain.hiddenOauth,
       },
       embedding: {
         providerId: patch.embedding?.providerId ?? cur.embedding.providerId,

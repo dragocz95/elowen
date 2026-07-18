@@ -1373,6 +1373,8 @@ export const en = {
     pickModelsTitle: "Models - {provider}",
     pickModelsHint: "Pick which of this account's models Elowen offers. No selection = the full catalog.",
     accounts: 'Connected accounts (OAuth)',
+    hideAccount: 'Hide account',
+    addAccount: 'Add account',
     usageWeekly: 'weekly',
     usageWindow: 'window',
     usageResets: 'Resets {time}',

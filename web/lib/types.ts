@@ -42,7 +42,7 @@ export interface ElowenConfig {
   sessionRetention: { enabled: boolean; days: number };
   autoUpdate: boolean;
   plugins?: { enabled: string[]; removed?: string[] };
-  brain?: { providers: BrainProvider[]; agentName?: string; maxSteps?: number; modelContextWindows?: Record<string, number>; limits?: BrainLimits };
+  brain?: { providers: BrainProvider[]; agentName?: string; maxSteps?: number; modelContextWindows?: Record<string, number>; limits?: BrainLimits; hiddenOauth?: string[] };
 }
 
 /** Operator-tunable brain limits (Settings → Elowen AI → Limits) — mirrors `BrainLimits` in
@@ -157,7 +157,7 @@ export interface ConfigPatch {
   sessionRetention?: { enabled?: boolean; days?: number };
   autoUpdate?: boolean;
   /** Wholesale brain provider list; an entry may carry `apiKey` to (re)set that provider's secret. */
-  brain?: { providers?: (Omit<BrainProvider, 'apiKeySet'> & { apiKey?: string })[]; agentName?: string; maxSteps?: number; modelContextWindows?: Record<string, number>; limits?: Partial<BrainLimits> };
+  brain?: { providers?: (Omit<BrainProvider, 'apiKeySet'> & { apiKey?: string })[]; agentName?: string; maxSteps?: number; modelContextWindows?: Record<string, number>; limits?: Partial<BrainLimits>; hiddenOauth?: string[] };
 }
 interface MissionTask { id: string; title: string; status: TaskStatus; type: string; parent_id: string | null; labels?: string[]; outcome?: TaskOutcome | null }
 interface MissionProgress { total: number; open: number; inProgress: number; blocked: number; closed: number; cancelled: number }

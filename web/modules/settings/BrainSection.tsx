@@ -1,6 +1,6 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
-import { BrainCircuit, Plus, Pencil, Trash2, KeyRound, Link2, Unlink, ExternalLink, Check, ListChecks, SlidersHorizontal, Gauge } from 'lucide-react';
+import { BrainCircuit, Plus, Pencil, Trash2, KeyRound, Link2, Unlink, ExternalLink, Check, ListChecks, SlidersHorizontal, Gauge, Eye, EyeOff } from 'lucide-react';
 import { Badge } from '../../components/ui/Badge';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
@@ -8,6 +8,7 @@ import { Field } from '../../components/ui/Field';
 import { Segmented } from '../../components/ui/Segmented';
 import { ModelIcon } from '../../components/ui/ModelIcon';
 import { ManageSelectionModal, type ManageSelectionItem } from '../../components/ui/ManageSelectionModal';
+import { ActionMenu } from '../../components/ui/ActionMenu';
 import { SelectionSummary } from '../../components/ui/SelectionSummary';
 import { Modal, ModalBody } from '../../components/ui/Modal';
 import { BrainLimitsModal, BRAIN_LIMIT_DEFAULTS } from './BrainLimitsModal';
@@ -318,6 +319,16 @@ export function BrainSection({ onSaveState }: { onSaveState?: (section: string, 
   // cards above manage them, so the add/edit grid below shows API-key providers only.
   const apiProviders = providers.filter((p) => !p.type.startsWith('oauth-'));
 
+  // A display filter only: hidden OAuth types drop from the accounts list so a provider the operator
+  // never uses stops offering "Connect". It never touches credentials, so only disconnected accounts can
+  // be hidden — a hidden type that is somehow connected still shows, to never bury a working account.
+  const hiddenOauth = config.brain?.hiddenOauth ?? [];
+  const isConnected = (type: BrainProviderType) => oauth.data?.[type] ?? false;
+  const setHiddenOauth = (next: string[]) => { void updateConfig.mutateAsync({ brain: { hiddenOauth: next } }); };
+  const hideOauth = (type: BrainProviderType) => setHiddenOauth([...hiddenOauth.filter((t) => t !== type), type]);
+  const showOauth = (type: BrainProviderType) => setHiddenOauth(hiddenOauth.filter((t) => t !== type));
+  const restorableOauth = OAUTH_TYPES.filter(({ type }) => hiddenOauth.includes(type) && !isConnected(type));
+
   // A connected account's model selection lives on its explicit provider entry (id = the builtin
   // provider name, so `elowen:<id>/<model>` execs stay stable whether the entry is synthetic or saved).
   const OAUTH_ENTRY_ID: Record<string, string> = { 'oauth-anthropic': 'anthropic', 'oauth-openai-codex': 'openai-codex', 'oauth-github-copilot': 'github-copilot', 'oauth-kimi': 'kimi-coding' };
@@ -385,10 +396,23 @@ export function BrainSection({ onSaveState }: { onSaveState?: (section: string, 
             />
       ) : null}
 
-      {/* OAuth accounts: one row per supported account type, connect/disconnect. */}
-      <SettingsGroup title={t.brain.accounts} density="compact">
-        {OAUTH_TYPES.map(({ type, icon }) => {
-          const connected = oauth.data?.[type] ?? false;
+      {/* OAuth accounts: one row per supported account type, connect/disconnect. Hidden types drop out
+          and return via the "+" menu. */}
+      <SettingsGroup
+        title={t.brain.accounts}
+        density="compact"
+        actions={restorableOauth.length > 0 ? (
+          <ActionMenu
+            align="right"
+            label={t.brain.addAccount}
+            triggerClassName="flex h-6 w-6 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-elevated hover:text-accent"
+            trigger={<Plus size={15} aria-hidden />}
+            items={restorableOauth.map(({ type }) => ({ label: t.brain.types[type], icon: Eye, onSelect: () => showOauth(type) }))}
+          />
+        ) : undefined}
+      >
+        {OAUTH_TYPES.filter(({ type }) => !hiddenOauth.includes(type) || isConnected(type)).map(({ type, icon }) => {
+          const connected = isConnected(type);
           const usage = connected ? rateLimits.data?.[OAUTH_ENTRY_ID[type]] : undefined;
           return (
             <SettingsRow
@@ -406,7 +430,10 @@ export function BrainSection({ onSaveState }: { onSaveState?: (section: string, 
                   <Button variant="ghost" icon={Unlink} aria-label={`${t.brain.disconnect}: ${t.brain.types[type]}`} onClick={() => setDisconnectTarget(type)} />
                 </>
               ) : (
-                <Button variant="accent" icon={Link2} onClick={() => startConnect(type)}>{t.brain.connect}</Button>
+                <>
+                  <Button variant="accent" icon={Link2} onClick={() => startConnect(type)}>{t.brain.connect}</Button>
+                  <Button variant="ghost" icon={EyeOff} aria-label={`${t.brain.hideAccount}: ${t.brain.types[type]}`} onClick={() => hideOauth(type)} />
+                </>
               )}
             >
               {usage ? <OAuthUsageRail usage={usage} /> : null}
