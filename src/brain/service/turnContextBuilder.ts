@@ -106,9 +106,16 @@ export class TurnContextBuilder {
       if (card) live.replay.publish({ type: 'card', card });
     };
     const emitSubagent = (update: SubagentUpdate): void => {
-      if (!this.d.store.upsertSubagentRun(live.sessionId, update)) return;
+      // The plugin's update has no reasoning effort — read the child's OWN effective level from its live
+      // session so the drilled-in child status bar shows it (a delegated child may differ from the parent).
+      const childBrain = this.d.sessions.get(update.sessionId);
+      const childLevel = (childBrain?.session as { thinkingLevel?: string } | undefined)?.thinkingLevel ?? childBrain?.thinkingLevel;
+      const enriched: SubagentUpdate = childLevel
+        ? { ...update, thinkingLevel: childLevel, thinkingLabel: childBrain?.thinkingLabels?.[childLevel] ?? childLevel }
+        : update;
+      if (!this.d.store.upsertSubagentRun(live.sessionId, enriched)) return;
       this.d.sessions.setChildRunning(live.sessionId, update.sessionId, update.status === 'running');
-      live.replay.publish({ type: 'subagent', ...update });
+      live.replay.publish({ type: 'subagent', ...enriched });
     };
     const emitSubagentCompletion = (completion: SubagentCompletion): void => {
       this.d.completeSubagent?.(live.sessionId, userId, completion);

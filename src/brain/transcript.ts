@@ -38,6 +38,9 @@ export interface SubagentState {
   seconds: number;
   /** The model the sub-agent runs on (its own, or the delegating conversation's) — shown in the table. */
   model?: string;
+  /** The sub-agent's own effective reasoning effort (level id + display label), for the child status bar. */
+  thinkingLevel?: string;
+  thinkingLabel?: string;
   /** True once the user detached this job from the parent tool wait with Ctrl+B. */
   background?: boolean;
   autoDeliver?: boolean;

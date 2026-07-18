@@ -215,6 +215,8 @@ export class TranscriptModel implements TranscriptRead {
           tokens: event.tokens,
           seconds: event.seconds,
           model: event.model,
+          thinkingLevel: event.thinkingLevel,
+          thinkingLabel: event.thinkingLabel,
           background: event.background,
           autoDeliver: event.autoDeliver,
           resultDelivery: event.resultDelivery,

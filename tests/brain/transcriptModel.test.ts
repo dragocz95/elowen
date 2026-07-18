@@ -238,11 +238,15 @@ describe('TranscriptModel', () => {
     model.apply({
       type: 'subagent', id: 'delegate-old', sessionId: 'child-1', status: 'running', task: 'inspect',
       detail: 'Read src/a.ts', tools: 2, tokens: 100, seconds: 3, model: 'test-model',
+      thinkingLevel: 'high', thinkingLabel: 'High',
     });
 
     expect(model.turnCount).toBe(beforeTurns);
     expect(toolItem(model, 0, 'delegate-old').sub).toMatchObject({ sessionId: 'child-1', tools: 2 });
-    expect(model.subagents()).toEqual([expect.objectContaining({ sessionId: 'child-1', status: 'running' })]);
+    // The child's own reasoning level rides the projection so the drilled-in status bar can show it.
+    expect(model.subagents()).toEqual([expect.objectContaining({
+      sessionId: 'child-1', status: 'running', thinkingLevel: 'high', thinkingLabel: 'High',
+    })]);
 
     const projection = model.subagents();
     model.apply({ type: 'notice', kind: 'retry', message: 'retry' });

@@ -183,6 +183,8 @@ export interface SubagentPanelEntry {
   tokens?: number;
   seconds: number;
   model?: string;
+  thinkingLevel?: string;
+  thinkingLabel?: string;
   background?: boolean;
   autoDeliver?: boolean;
   resultDelivery?: 'pending' | 'acknowledged';

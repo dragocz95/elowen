@@ -42,6 +42,8 @@ interface BrainSubagentRunState {
   tokens?: number;
   seconds: number;
   model?: string;
+  thinkingLevel?: string;
+  thinkingLabel?: string;
   background?: boolean;
   autoDeliver?: boolean;
   resultDelivery?: 'pending' | 'acknowledged';
@@ -186,6 +188,8 @@ function normalizeSubagentState(raw: unknown): BrainSubagentRunState | undefined
   if (o.tokens !== undefined && (typeof o.tokens !== 'number' || !Number.isSafeInteger(o.tokens) || o.tokens < 0)) return undefined;
   if (o.detail !== undefined && typeof o.detail !== 'string') return undefined;
   if (o.model !== undefined && typeof o.model !== 'string') return undefined;
+  if (o.thinkingLevel !== undefined && typeof o.thinkingLevel !== 'string') return undefined;
+  if (o.thinkingLabel !== undefined && typeof o.thinkingLabel !== 'string') return undefined;
   if (o.background !== undefined && typeof o.background !== 'boolean') return undefined;
   if (o.autoDeliver !== undefined && typeof o.autoDeliver !== 'boolean') return undefined;
   if (o.resultDelivery !== undefined && o.resultDelivery !== 'pending' && o.resultDelivery !== 'acknowledged') return undefined;
@@ -197,6 +201,8 @@ function normalizeSubagentState(raw: unknown): BrainSubagentRunState | undefined
     ...(typeof o.tokens === 'number' ? { tokens: o.tokens } : {}),
     seconds: o.seconds,
     ...(typeof o.model === 'string' ? { model: bounded(o.model, 512) } : {}),
+    ...(typeof o.thinkingLevel === 'string' ? { thinkingLevel: bounded(o.thinkingLevel, 64) } : {}),
+    ...(typeof o.thinkingLabel === 'string' ? { thinkingLabel: bounded(o.thinkingLabel, 64) } : {}),
     ...(typeof o.background === 'boolean' ? { background: o.background } : {}),
     ...(typeof o.autoDeliver === 'boolean' ? { autoDeliver: o.autoDeliver } : {}),
     ...(o.resultDelivery === 'pending' || o.resultDelivery === 'acknowledged' ? { resultDelivery: o.resultDelivery } : {}),
