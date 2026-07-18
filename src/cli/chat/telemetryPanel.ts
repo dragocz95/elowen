@@ -311,7 +311,11 @@ export class TelemetryPanel implements Component {
     const header = sectionHeaderRow(sectionHeaderContent(this.chevron('limits'), 'Limits', meta), width);
     if (this.collapsedSections.has('limits')) return [header];
     const rows = [header];
-    for (const window of limits.windows) rows.push(this.rateLimitWindowRow(window, width));
+    // Size every window's bar identically — to the width left by the widest reset label — so both meters
+    // and the trailing % / reset columns line up regardless of per-window reset text length.
+    const resetWidth = Math.max(...limits.windows.map((w) => visibleWidth(this.rateLimitReset(w.resetsAt, w.windowMinutes))));
+    const cells = Math.max(4, width - 15 - resetWidth);
+    for (const window of limits.windows) rows.push(this.rateLimitWindowRow(window, cells));
     return rows;
   }
 
@@ -334,14 +338,13 @@ export class TelemetryPanel implements Component {
     return rows;
   }
 
-  private rateLimitWindowRow(window: BrainRateLimitWindow, width: number): string {
+  private rateLimitWindowRow(window: BrainRateLimitWindow, cells: number): string {
     const labelWidth = 7;
     const label = this.rateLimitDuration(window.windowMinutes).padEnd(labelWidth);
     const pctValue = Math.max(0, Math.min(100, window.usedPercent));
     const pct = `${Math.round(pctValue)}%`.padStart(4);
     const reset = this.rateLimitReset(window.resetsAt, window.windowMinutes);
-    // `  label` + bar + ` pct reset`; at the supported 36-col rail minimum this still leaves >=9 cells.
-    const cells = Math.max(4, width - 15 - visibleWidth(reset));
+    // `  label` + bar + ` pct reset`; cells is shared across windows so the bars and columns align.
     const bar = this.progressBar(pctValue, cells);
     return `  ${color.faint(label)}${bar} ${color.text(pct)} ${color.faint(reset)}`;
   }
