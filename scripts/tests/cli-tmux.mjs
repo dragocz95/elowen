@@ -189,6 +189,14 @@ function panelMeterRows(plain) {
   return paneLines(plain).filter((line) => /[█░]{4,}/u.test(line));
 }
 
+// The two bottom rows are the footer: the model/reasoning/activity meta line (status) and the keybind
+// hints. Trailing whitespace is normalized so the comparison keys on content, not padding.
+function footerRows(plain) {
+  const lines = paneLines(plain).map((line) => line.replace(/\s+$/u, ''));
+  while (lines.length && lines.at(-1) === '') lines.pop();
+  return lines.slice(-2);
+}
+
 async function startMock() {
   const child = spawn(process.execPath, [fixture], {
     cwd: repo,
@@ -665,10 +673,18 @@ try {
   sendKey('Escape');
   await waitFor('commands modal closed', () => !capture().includes('enter run'));
 
+  // Re-showing the rail must restore the footer exactly. The toggle path used to skip the overlay reflow
+  // that resize/drag/message-presence all run, so the rail came back at stale geometry and corrupted the
+  // bottom meta/hint rows.
+  const footerBeforeToggle = footerRows(capture());
   sendKey('C-p');
   await waitFor('post-stream telemetry hidden', () => !capture().includes('Context'));
   sendKey('C-p');
   await waitFor('post-stream telemetry shown', () => capture().includes('Context'));
+  await waitFor('footer restored after telemetry re-show', () => {
+    const now = footerRows(capture());
+    return now.length === footerBeforeToggle.length && now.every((line, index) => line === footerBeforeToggle[index]);
+  });
 
   // Suggestion chrome must fit completely on a short terminal: both the header/hints and bottom border
   // are present in the same physical 40x15 pane, while keyboard navigation keeps working.

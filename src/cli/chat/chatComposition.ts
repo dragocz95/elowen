@@ -1157,6 +1157,13 @@ export function createChatComposition(
           panelHandle?.setHidden(!panelHandle.isHidden());
           if (panelHandle?.isHidden()) cancelFloat();
           inputRouter?.cancelPanelResize();
+          // Re-showing the rail must recompute its overlay geometry, not composite it back at the last
+          // reflowed size — otherwise it lands against a stale `panelReserve()` and corrupts the footer.
+          // Mirror `onResize`: invalidate the budget/input and request a full overlay reflow so the toggle
+          // takes the same path as resize / drag-resize / message-presence.
+          currentBudget = null;
+          preparedInput = null;
+          fullOverlayReflowPending = true;
           render('input:telemetry-toggle');
           return;
         }
