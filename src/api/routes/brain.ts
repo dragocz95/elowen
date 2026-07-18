@@ -12,6 +12,7 @@ import { logger } from '../../shared/logger.js';
 import { UsageService, type ProviderUsage } from '../../brain/providerUsage.js';
 import { codexUsageSource } from '../../brain/openaiCodexUsage.js';
 import { kimiUsageSource } from '../../brain/kimiUsage.js';
+import { anthropicUsageSource } from '../../brain/anthropicUsage.js';
 import { brainEventReplayCursor, withoutBrainEventReplayCursor } from '../../brain/session/liveEventReplay.js';
 import { SerializedEventBuffer } from '../../brain/session/serializedEventBuffer.js';
 import type { ElowenApp, RouteContext } from '../context.js';
@@ -35,6 +36,7 @@ export function registerBrainRoutes(app: ElowenApp, ctx: RouteContext): void {
   const usageServices: Record<string, UsageService> = d.brainAuth ? {
     [codexUsageSource.provider]: new UsageService(codexUsageSource, d.brainAuth),
     [kimiUsageSource.provider]: new UsageService(kimiUsageSource, d.brainAuth),
+    [anthropicUsageSource.provider]: new UsageService(anthropicUsageSource, d.brainAuth),
   } : {};
   const forbidden = (c: { get: (k: 'tokenScope') => string }) => c.get('tokenScope') === 'agent';
 
