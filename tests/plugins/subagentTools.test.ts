@@ -14,7 +14,6 @@ const owner: TurnIdentity = { platform: 'elowen', userId: '1', elowenUserId: 1, 
 const mod = await import(resolve(repoRoot, 'plugins/subagent/index.mjs')) as {
   resolveDelegateTools(
     inheritedAllow: string[] | undefined,
-    readOnly: boolean | undefined,
     requested: string[] | undefined,
     available: string[],
   ): { allow?: string[]; error?: string };
@@ -23,47 +22,34 @@ const mod = await import(resolve(repoRoot, 'plugins/subagent/index.mjs')) as {
 const AVAILABLE = ['Read', 'Search', 'ListDir', 'FileInfo', 'GitStatus', 'CodebaseSearch',
   'CodebaseStatus', 'Write', 'Edit', 'Bash', 'Delegate', 'KillProcess'];
 
-// A delegated child inherits the caller's execution boundary. `read_only` / `tools` narrow it — and the one
-// property that must never break is that they can ONLY narrow.
+// `resolveDelegateTools` resolves ONLY an explicit `tools` list now — `read_only` moved host-side (it
+// selects the read-only MODE: preset toolset + minted boundary). The invariant that must never break is that
+// an explicit toolset can ONLY narrow what the caller holds.
 describe('resolveDelegateTools', () => {
-  it('leaves the child unrestricted when neither knob is used', () => {
-    expect(mod.resolveDelegateTools(undefined, undefined, undefined, AVAILABLE)).toEqual({ allow: undefined });
-  });
-
-  it('read_only hands over the look-but-do-not-touch set — and nothing that writes, runs or delegates', () => {
-    const { allow } = mod.resolveDelegateTools(undefined, true, undefined, AVAILABLE);
-    expect(allow).toEqual(['Read', 'Search', 'ListDir', 'FileInfo', 'GitStatus', 'CodebaseSearch', 'CodebaseStatus']);
-    for (const dangerous of ['Write', 'Edit', 'Bash', 'Delegate', 'KillProcess']) {
-      expect(allow).not.toContain(dangerous);
-    }
+  it('leaves the child unrestricted when no tools list is given', () => {
+    expect(mod.resolveDelegateTools(undefined, undefined, AVAILABLE)).toEqual({ allow: undefined });
   });
 
   it('an explicit tools list becomes the child\'s exact toolset', () => {
-    expect(mod.resolveDelegateTools(undefined, undefined, ['Read', 'Search'], AVAILABLE))
+    expect(mod.resolveDelegateTools(undefined, ['Read', 'Search'], AVAILABLE))
       .toEqual({ allow: ['Read', 'Search'] });
   });
 
   it('deduplicates and trims a sloppy tools list', () => {
-    expect(mod.resolveDelegateTools(undefined, undefined, [' Read ', 'Read', ''], AVAILABLE))
+    expect(mod.resolveDelegateTools(undefined, [' Read ', 'Read', ''], AVAILABLE))
       .toEqual({ allow: ['Read'] });
-  });
-
-  it('read_only + tools INTERSECT — honoring only one would hand the child more than was asked for', () => {
-    // Bash is in `tools` but not read-only, so it must be dropped, not granted.
-    const { allow } = mod.resolveDelegateTools(undefined, true, ['Read', 'Bash'], AVAILABLE);
-    expect(allow).toEqual(['Read']);
   });
 
   it('rejects unknown tool names instead of silently granting a narrower set', () => {
     // A typo must not quietly become "the child gets nothing useful and nobody knows why".
-    const res = mod.resolveDelegateTools(undefined, undefined, ['Read', 'raed_file'], AVAILABLE);
+    const res = mod.resolveDelegateTools(undefined, ['Read', 'raed_file'], AVAILABLE);
     expect(res.allow).toBeUndefined();
     expect(res.error).toMatch(/unknown tool\(s\): raed_file/);
   });
 
   it('rejects an explicitly EMPTY tools list rather than reading it as "no restriction"', () => {
     // The dangerous inversion: a model that means "give it nothing" would otherwise get "give it everything".
-    const res = mod.resolveDelegateTools(undefined, undefined, [], AVAILABLE);
+    const res = mod.resolveDelegateTools(undefined, [], AVAILABLE);
     expect(res.allow).toBeUndefined();
     expect(res.error).toMatch(/`tools` was empty/);
   });
@@ -71,30 +57,20 @@ describe('resolveDelegateTools', () => {
   describe('can only ever narrow', () => {
     it('refuses to hand over a tool the caller does not hold — loudly, not by silently dropping it', () => {
       // Silently dropping Bash would spawn a child that mysteriously cannot do its job.
-      const res = mod.resolveDelegateTools(['Read', 'ListDir'], undefined, ['Read', 'Bash'], AVAILABLE);
+      const res = mod.resolveDelegateTools(['Read', 'ListDir'], ['Read', 'Bash'], AVAILABLE);
       expect(res.allow).toBeUndefined();
       expect(res.error).toMatch(/you do not have Bash yourself/);
     });
 
     it('a read-only caller cannot mint a writing child', () => {
-      const res = mod.resolveDelegateTools(['Read', 'Search'], undefined, ['Write', 'Read'], AVAILABLE);
+      const res = mod.resolveDelegateTools(['Read', 'Search'], ['Write', 'Read'], AVAILABLE);
       expect(res.allow).toBeUndefined();
       expect(res.error).toMatch(/you do not have Write yourself/);
     });
 
     it('a restricted caller may still narrow WITHIN what it holds', () => {
-      const { allow } = mod.resolveDelegateTools(['Read', 'ListDir', 'Search'], undefined, ['Read', 'ListDir'], AVAILABLE);
+      const { allow } = mod.resolveDelegateTools(['Read', 'ListDir', 'Search'], ['Read', 'ListDir'], AVAILABLE);
       expect(allow).toEqual(['Read', 'ListDir']);
-    });
-
-    it('read_only intersects with a restricted caller down to what they both allow', () => {
-      const { allow } = mod.resolveDelegateTools(['Read', 'Bash'], true, undefined, AVAILABLE);
-      expect(allow).toEqual(['Read']); // Bash is held, but read_only excludes it
-    });
-
-    it('errors rather than spawning a child with an empty toolset', () => {
-      const res = mod.resolveDelegateTools(['Bash'], true, undefined, AVAILABLE);
-      expect(res.error).toMatch(/no tools at all/);
     });
   });
 });
@@ -106,7 +82,10 @@ describe('delegate — the access handed to the child', () => {
   let seen: { access?: Record<string, unknown> };
 
   beforeAll(async () => {
-    reg = await loadPlugins({ dirs: [join(repoRoot, 'plugins')], enabled: ['subagent', 'files', 'terminal'], logger: log });
+    reg = await loadPlugins({
+      dirs: [join(repoRoot, 'plugins')], enabled: ['subagent', 'files', 'terminal'], logger: log,
+      subagentTypes: () => [{ name: 'explore', description: 'read-only explore' }],
+    });
     seen = {};
     // Stand in for the host's channel handler: capture the source the plugin would spawn the child with.
     const platform = reg.platforms.find((p) => p.name === 'subagent')!;
@@ -130,12 +109,13 @@ describe('delegate — the access handed to the child', () => {
     expect(seen.access?.toolPolicy).toBeUndefined();
   });
 
-  it('sends a read-only allow-list the host persists as the child\'s immutable boundary', async () => {
+  it('flags read_only as the host-side read-only MODE, not a plugin toolset', async () => {
+    // The plugin no longer materializes a read-only allow-list; it forwards the mode and the host applies
+    // the READ_ONLY_AGENT_TOOLS preset + minted boundary (so the child gets read-only shell too).
     const res = await delegate({ task: 'find every caller of X', read_only: true });
     expect(res.content[0].text).toBe('child done');
-    expect(seen.access?.toolPolicy).toEqual({
-      allow: ['Read', 'Search', 'ListDir', 'FileInfo', 'GitStatus', 'CodebaseSearch', 'CodebaseStatus'],
-    });
+    expect(seen.access?.readOnly).toBe(true);
+    expect(seen.access?.toolPolicy).toBeUndefined(); // no plugin-side allow-list; the host mints it
   });
 
   it('sends an exact tools allow-list', async () => {
@@ -143,14 +123,14 @@ describe('delegate — the access handed to the child', () => {
     expect(seen.access?.toolPolicy).toEqual({ allow: ['Read', 'ListDir'] });
   });
 
-  it('carries the caller\'s deny-list through untouched while adding the allow-list', async () => {
+  it('carries the caller\'s deny-list through untouched', async () => {
     await delegate({ task: 'explore' }, { deny: new Set(['Bash']) });
     expect(seen.access?.toolPolicy).toEqual({ deny: ['Bash'] });
 
+    // read_only rides as the mode flag; the parent deny survives on the toolPolicy for the host to keep.
     await delegate({ task: 'explore', read_only: true }, { deny: new Set(['GitStatus']) });
-    // The deny survives, and still applies ON TOP of the allow-list: a tool in both is denied.
-    expect(seen.access?.toolPolicy).toMatchObject({ deny: ['GitStatus'] });
-    expect((seen.access?.toolPolicy as { allow: string[] }).allow).toContain('Read');
+    expect(seen.access?.readOnly).toBe(true);
+    expect(seen.access?.toolPolicy).toEqual({ deny: ['GitStatus'] });
   });
 
   it('refuses an unknown tool name and never spawns the child', async () => {
@@ -171,6 +151,34 @@ describe('delegate — the access handed to the child', () => {
     seen.access = undefined;
     const res = await delegate({ task: 'go', tools: [] });
     expect(res.content[0].text).toMatch(/`tools` was empty/);
+    expect(seen.access).toBeUndefined();
+  });
+
+  // A typed sub-agent gets its toolset from the HOST (from the type's own preset, which for a read-only type
+  // includes read-only shell). The plugin forwards the type (and read_only as a mode flag) and clamps
+  // nothing — the host resolves both into one read-only definition.
+  it('forwards the type and does not clamp the toolset when a redundant read_only rides along', async () => {
+    seen.access = undefined;
+    await delegate({ task: 'find every caller of X', subagent_type: 'explore', read_only: true });
+    expect(seen.access?.agentType).toBe('explore');
+    expect(seen.access?.readOnly).toBe(true); // redundant with the read-only type, harmless — host converges them
+    // No plugin-side allow-list: the host applies the type's preset (incl. Bash). read_only did NOT re-narrow.
+    expect(seen.access?.toolPolicy).toBeUndefined();
+    // A typed delegation carries no generic role prompt — the host supplies the type's prompt.
+    expect(seen.access?.prompt).toBeUndefined();
+  });
+
+  it('still lets an explicit tools list narrow a typed sub-agent further', async () => {
+    seen.access = undefined;
+    await delegate({ task: 'read auth only', subagent_type: 'explore', tools: ['Read'] });
+    expect(seen.access?.agentType).toBe('explore');
+    expect(seen.access?.toolPolicy).toEqual({ allow: ['Read'] });
+  });
+
+  it('rejects an unknown subagent_type and never spawns the child', async () => {
+    seen.access = undefined;
+    const res = await delegate({ task: 'go', subagent_type: 'nope' });
+    expect(res.content[0].text).toMatch(/unknown subagent_type "nope"/);
     expect(seen.access).toBeUndefined();
   });
 });

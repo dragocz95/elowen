@@ -35,8 +35,8 @@ function harness(opts: { toolPolicyAllow?: string[] } = {}) {
     toolNames: () => ['Read', 'Write', 'Bash'],
   };
   const helpers = {
-    resolveDelegateTools: (inheritedAllow: string[] | undefined, readOnly: boolean, requested: string[]) =>
-      (readOnly || requested ? { allow: requested ?? ['Read'] } : { allow: undefined }),
+    resolveDelegateTools: (_inheritedAllow: string[] | undefined, requested: string[] | undefined) =>
+      (requested ? { allow: requested } : { allow: undefined }),
     principalOf: (identity: unknown) => (identity ? 'elowen:1' : null),
     delegateContextChunk: (raw: string) => (raw ? `ctx:${raw}` : undefined),
   };

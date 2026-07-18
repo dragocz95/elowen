@@ -3,6 +3,7 @@ import { PlatformOrchestrator } from '../../src/brain/platforms.js';
 import { IdentityResolver } from '../../src/brain/identity.js';
 import type { Policy } from '../../src/plugins/policy.js';
 import type { ChannelSendOpts } from '../../src/brain/channels.js';
+import { READ_ONLY_AGENT_TOOLS, type AgentDef } from '../../src/brain/agents/agentRegistry.js';
 
 // A linked sender resolves to Elowen account #2 (non-admin); everyone else is unlinked.
 const users = { get: (id: number) => ({ username: `u${id}` }) };
@@ -184,6 +185,75 @@ describe('PlatformOrchestrator — unified per-turn access', () => {
       admin: false, owner: false, projectIds: [3], permissionBoundary: boundary,
     });
     expect(sent?.writerUserId).toBeUndefined(); // no owner/private-memory identity crosses the boundary
+  });
+
+  // A read-only agent TYPE (or a bare read_only delegation) reaches the child with the read-only preset —
+  // read-only tools PLUS Bash (shell-gated by the minted boundary). Guards against two past regressions:
+  //   1) a redundant read_only on the call stripping the type's shell, and
+  //   2) a parent disabled-tools DENY list suppressing the preset (a deny is not an allow-list), which would
+  //      over-widen the child to "everything but the denied tool".
+  const exploreDef = (): Map<string, AgentDef> => new Map([['explore', {
+    name: 'explore', description: 'read-only explore', body: 'You explore.',
+    toolsSpec: 'read-only', source: 'builtin', filePath: '/explore.md',
+  }]]);
+  const runTypedDelegate = async (access: Record<string, unknown>): Promise<ChannelSendOpts> => {
+    let sent: ChannelSendOpts | undefined;
+    let handler: ((src: never, text: string) => Promise<unknown>) | undefined;
+    const adapter = { name: 'subagent', listen: (fn: never) => { handler = fn as never; }, connect: async () => {} };
+    const orch = new PlatformOrchestrator({
+      plugins: async () => ({ platforms: [adapter] }) as never,
+      platformOwner: () => 1,
+      policyForProjects: () => rolePolicy,
+      identity: linkedResolver(false),
+      agents: exploreDef,
+      channels: { sessionOwnerUserId: () => 1, send: async (o: ChannelSendOpts) => { sent = o; return 'ok'; }, fragmentFor: () => '' } as never,
+    });
+    await orch.startAll();
+    await handler!({ platform: 'subagent', userId: 'subagent', channelId: 'sub-typed', roleIds: [], access } as never, 'inspect');
+    return sent!;
+  };
+
+  const sortedAllow = (sent: ChannelSendOpts): string[] => [...(sent.delegatedAccess?.toolPolicy?.allow ?? [])].sort();
+  const presetSorted = [...READ_ONLY_AGENT_TOOLS].sort();
+
+  it('applies the read-only type preset (incl. Bash) when the call pinned no allow-list', async () => {
+    const sent = await runTypedDelegate({
+      admin: false, owner: true, projectIds: [3], parentSessionId: 'brain-owner',
+      agentType: 'explore', permissionBoundary: null,
+    });
+    expect(sortedAllow(sent)).toEqual(presetSorted);
+    expect(sent.delegatedAccess?.toolPolicy?.allow).toContain('Bash');
+  });
+
+  it('keeps the preset AND the parent deny-list when the parent has disabled tools', async () => {
+    const sent = await runTypedDelegate({
+      admin: false, owner: true, projectIds: [3], parentSessionId: 'brain-owner',
+      agentType: 'explore', toolPolicy: { deny: ['GitStatus'] }, permissionBoundary: null,
+    });
+    // The preset still sets the positive toolset (over-widen fixed) and the deny rides on top.
+    expect(sortedAllow(sent)).toEqual(presetSorted);
+    expect(sent.delegatedAccess?.toolPolicy?.deny).toEqual(['GitStatus']);
+  });
+
+  it('intersects an explicit call-level allow-list with the type preset (both only narrow)', async () => {
+    const sent = await runTypedDelegate({
+      admin: false, owner: true, projectIds: [3], parentSessionId: 'brain-owner',
+      agentType: 'explore', toolPolicy: { allow: ['Read'] }, permissionBoundary: null,
+    });
+    expect(sent.delegatedAccess?.toolPolicy?.allow).toEqual(['Read']); // Read ∩ READ_ONLY_AGENT_TOOLS = Read
+  });
+
+  it('a bare read_only delegation (no type) takes the same host-side read-only path', async () => {
+    // read_only without a subagent_type: the host applies READ_ONLY_AGENT_TOOLS + the minted boundary, so a
+    // generic read-only child now gets read-only shell too — one read-only definition, no plugin toolset.
+    const sent = await runTypedDelegate({
+      admin: false, owner: true, projectIds: [3], parentSessionId: 'brain-owner',
+      readOnly: true, permissionBoundary: null,
+    });
+    expect(sortedAllow(sent)).toEqual(presetSorted);
+    expect(sent.delegatedAccess?.toolPolicy?.allow).toContain('Bash');
+    // The minted read-only boundary denies writes and non-allowlisted shell even unattended.
+    expect(sent.delegatedAccess?.permissionBoundary?.unattendedAsks).toBe('deny');
   });
 
   it('an origin-carrying message routes through the BOUND send (no channel session touched)', async () => {

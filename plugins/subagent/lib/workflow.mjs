@@ -102,7 +102,7 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
       if (!hit) throw new Error(`model "${node.model}" is not available for node "${node.id}"`);
       model = { provider: hit.provider, model: hit.model };
     }
-    const restricted = resolveDelegateTools(wf.parentAccess.toolPolicy?.allow, node.readOnly, node.tools, ctx.toolNames());
+    const restricted = resolveDelegateTools(wf.parentAccess.toolPolicy?.allow, node.tools, ctx.toolNames());
     if (restricted.error) throw new Error(restricted.error);
     const toolPolicy = restricted.allow
       ? { ...(wf.parentAccess.toolPolicy?.deny ? { deny: wf.parentAccess.toolPolicy.deny } : {}), allow: restricted.allow }
@@ -126,6 +126,8 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
       // In-memory host object; never serialized (Infinity would become null in JSON) — keeps the node
       // transcript pinned to this workflow instead of rolling over mid-run.
       sessionIdleMs: Infinity,
+      // read_only selects the host-side read-only MODE (preset toolset + minted boundary), same as delegate.
+      ...(node.readOnly ? { readOnly: true } : {}),
       prompt: 'You are a focused sub-agent running one node of a workflow. Complete the task and report the result concisely — no preamble.',
       ...(context ? { context } : {}),
     };

@@ -12,9 +12,10 @@ import type { PluginLogger } from '../../plugins/api.js';
  */
 
 /** The read-only agent toolset: the look-but-never-touch tools PLUS Bash (gated to read-only commands by
- *  the minted permission boundary — see readOnlyBoundary.ts). Mirrors the plugin's own `READ_ONLY_TOOLS`
- *  (plugins/subagent/index.mjs), which cannot be imported across the daemon/plugin boundary; the two are
- *  kept in sync deliberately. Bash is the difference: an explore/plan agent may run read-only shell. */
+ *  the minted permission boundary — see readOnlyBoundary.ts). The SINGLE source of "read-only" for delegated
+ *  children: both a read-only agent TYPE and a bare `read_only` delegation resolve to this list host-side (in
+ *  brain/platforms.ts), so the subagent plugin no longer carries its own copy. Bash is here because an
+ *  unattended read-only agent may run read-only shell — the boundary, not this list, keeps it look-only. */
 export const READ_ONLY_AGENT_TOOLS: readonly string[] = [
   'Read', 'Search', 'ListDir', 'FileInfo', 'GitStatus', 'CodebaseSearch', 'CodebaseStatus', 'Bash',
 ];

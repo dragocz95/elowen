@@ -10,7 +10,7 @@ import {
   withDelegatedDeniedTools,
   type DelegatedExecutionScope,
 } from './delegatedScope.js';
-import { resolveAgentTools, type AgentDef } from './agents/agentRegistry.js';
+import { resolveAgentTools, READ_ONLY_AGENT_TOOLS, type AgentDef } from './agents/agentRegistry.js';
 import { renderAgentPrompt } from './agents/agentPrompt.js';
 import { buildReadOnlyBoundary } from './agents/readOnlyBoundary.js';
 
@@ -115,13 +115,23 @@ export class PlatformOrchestrator {
             // is internal but still validated like persisted JSON: a malformed scope must not fall back to
             // the owner's ambient policy. `owner` is independently authenticated, never inferred from an
             // admin role (a foreign Discord admin is not the instance operator).
-            // Preset tool allow-list from the agent type — but ONLY when the delegate call did not already
-            // narrow (an explicit read_only/tools on the call sets access.toolPolicy and wins). A read-only
-            // type also gets a minted read-only permission boundary so its Bash is gated to look-only
-            // commands even though the child runs unattended (see readOnlyBoundary.ts).
-            const presetAllow = agentDef && src.access.toolPolicy === undefined ? resolveAgentTools(agentDef) : undefined;
-            const effectiveToolPolicy = presetAllow ? { allow: [...presetAllow] } : src.access.toolPolicy;
-            const boundary = agentDef?.toolsSpec === 'read-only'
+            // Read-only MODE — from a read-only agent TYPE or a bare `read_only` delegation — resolves to ONE
+            // host-side definition: the READ_ONLY_AGENT_TOOLS preset plus a minted read-only permission
+            // boundary (Bash gated to look-only commands even though the child runs unattended — see
+            // readOnlyBoundary.ts). This is the single source of "read-only"; the subagent plugin no longer
+            // carries its own toolset.
+            const readOnlyMode = agentDef?.toolsSpec === 'read-only' || src.access.readOnly === true;
+            // What the type / read-only mode contributes to the toolset (undefined = no constraint of its own).
+            const preset = readOnlyMode ? READ_ONLY_AGENT_TOOLS : agentDef ? resolveAgentTools(agentDef) : undefined;
+            // INTERSECT the preset with any call-level allow-list (an explicit `tools`, or a restricted
+            // parent) — both only ever narrow, so a read-only child never even SEES a tool the caller lacks.
+            // A parent deny-list (disabled tools) rides on top untouched.
+            const callAllow = src.access.toolPolicy?.allow;
+            const narrowed = preset && callAllow ? preset.filter((t) => callAllow.includes(t)) : preset ?? callAllow;
+            const effectiveToolPolicy = narrowed
+              ? { ...(src.access.toolPolicy?.deny ? { deny: src.access.toolPolicy.deny } : {}), allow: [...narrowed] }
+              : src.access.toolPolicy;
+            const boundary = readOnlyMode
               ? buildReadOnlyBoundary(src.access.permissionBoundary ?? null)
               : src.access.permissionBoundary;
             const rawScope = normalizeDelegatedExecutionScope({
