@@ -281,6 +281,86 @@ describe('plugin contributions + logs + data routes', () => {
   });
 });
 
+describe('sub-agent (typed .md) routes', () => {
+  // The routes derive the user-agents dir as dirname(pluginDataRoot)/agents, so nest pluginDataRoot one
+  // level down to keep each test's agents dir isolated (setup() puts it directly under tmpdir → shared).
+  function agentSetup() {
+    const cfgDir = mkdtempSync(join(tmpdir(), 'elowen-agentcfg-'));
+    const pluginDataRoot = join(cfgDir, 'plugins-data');
+    mkdirSync(pluginDataRoot, { recursive: true });
+    const db = openDb(':memory:');
+    const users = new UserStore(db);
+    const admin = users.create('admin', 'pw');
+    const amy = users.create('amy', 'pw');
+    const app = createServer({
+      tasks: new TaskStore(db), readiness: new Readiness(db), missions: new MissionStore(db), bus: new EventBus(),
+      engine: null as never, spawn: null as never, tmux: null as never,
+      project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },
+      clock: new FakeClock(0), config: new ConfigStore(db), users, projects: new ProjectStore(db), userProjects: new UserProjectStore(db),
+      pluginDirs: [], pluginDataRoot,
+      brain: { reloadPlugins: vi.fn(async () => {}) } as never,
+      brainOauth: new BrainOAuthManager(AuthStorage.inMemory()),
+    });
+    return { app, userAgentsDir: join(cfgDir, 'agents'), adminTok: users.issueToken(admin.id), amyTok: users.issueToken(amy.id) };
+  }
+  const put = (t: string, body: unknown) => ({ method: 'PUT', headers: { authorization: `Bearer ${t}`, 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  const del = (t: string) => ({ method: 'DELETE', headers: { authorization: `Bearer ${t}` } });
+  const valid = { description: 'Read-only explorer', tools: 'read-only', body: 'You explore.' };
+
+  it('rejects a non-admin (403) on list, create and delete — these write agent-definition files', async () => {
+    const { app, amyTok, userAgentsDir } = agentSetup();
+    expect((await app.request('/plugins/agents/list', auth(amyTok))).status).toBe(403);
+    expect((await app.request('/plugins/agents/mine', put(amyTok, valid))).status).toBe(403);
+    expect((await app.request('/plugins/agents/mine', del(amyTok))).status).toBe(403);
+    expect(existsSync(userAgentsDir)).toBe(false); // nothing was written
+  });
+
+  it('refuses a non-kebab / path-traversal name (400) and writes nothing to disk', async () => {
+    const { app, adminTok, userAgentsDir } = agentSetup();
+    // %2F decodes to a slash in the :name param; the kebab guard must refuse it before any writeFileSync.
+    expect((await app.request('/plugins/agents/..%2Fescape', put(adminTok, valid))).status).toBe(400);
+    expect((await app.request('/plugins/agents/UPPER', put(adminTok, valid))).status).toBe(400);
+    expect((await app.request('/plugins/agents/has.dot', put(adminTok, valid))).status).toBe(400);
+    expect((await app.request('/plugins/agents/..%2Fescape', del(adminTok))).status).toBe(400);
+    expect(existsSync(userAgentsDir)).toBe(false);
+  });
+
+  it('refuses to shadow or delete a built-in agent (400) so a read-only type cannot be overridden', async () => {
+    const { app, adminTok, userAgentsDir } = agentSetup();
+    // explore/plan ship built-in and read-only; loadAgentRegistry loads the user dir LAST, so a user file
+    // of the same name would win — the guard must block it, or a read-only type becomes writable.
+    expect((await app.request('/plugins/agents/explore', put(adminTok, { ...valid, tools: 'all' }))).status).toBe(400);
+    expect((await app.request('/plugins/agents/plan', del(adminTok))).status).toBe(400);
+    expect(existsSync(join(userAgentsDir, 'explore.md'))).toBe(false);
+  });
+
+  it('rejects an invalid tools spec before writing (400), leaving the agents dir empty', async () => {
+    const { app, adminTok, userAgentsDir } = agentSetup();
+    expect((await app.request('/plugins/agents/mine', put(adminTok, { ...valid, tools: 'bogus' }))).status).toBe(400);
+    expect((await app.request('/plugins/agents/mine', put(adminTok, { ...valid, tools: [] }))).status).toBe(400);
+    expect((await app.request('/plugins/agents/mine', put(adminTok, { description: '', tools: 'all', body: 'x' }))).status).toBe(400);
+    expect(existsSync(userAgentsDir) && readdirSync(userAgentsDir).length > 0).toBe(false);
+  });
+
+  it('creates a user agent, round-trips a colon/hash description through YAML, then deletes it', async () => {
+    const { app, adminTok, userAgentsDir } = agentSetup();
+    // A description with ': ' and a leading '#' is exactly what string-interpolated frontmatter would
+    // mangle into invalid YAML; the YAML-library serialization must let it round-trip through the parser.
+    const description = 'Use when: triaging #42 regressions';
+    const created = await app.request('/plugins/agents/triage', put(adminTok, { description, tools: 'read-only', body: 'Investigate.' }));
+    expect(created.status).toBe(201);
+    expect(existsSync(join(userAgentsDir, 'triage.md'))).toBe(true);
+    const list = await (await app.request('/plugins/agents/list', auth(adminTok))).json() as { name: string; description: string; source: string; canDelete: boolean }[];
+    const mine = list.find((a) => a.name === 'triage');
+    expect(mine).toMatchObject({ description, source: 'user', canDelete: true });
+    // Built-ins are present and marked read-only.
+    expect(list.find((a) => a.name === 'explore')).toMatchObject({ source: 'builtin', canDelete: false });
+    const removed = await app.request('/plugins/agents/triage', del(adminTok));
+    expect(removed.status).toBe(200);
+    expect(existsSync(join(userAgentsDir, 'triage.md'))).toBe(false);
+  });
+});
+
 describe('brain oauth routes', () => {
   function oauthSetup() {
     const base = setup();
