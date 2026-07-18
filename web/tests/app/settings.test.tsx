@@ -34,7 +34,7 @@ describe('SettingsPage', () => {
     expect(await screen.findByRole('heading', { level: 1, name: 'System' })).toBeInTheDocument();
     const rail = screen.getByRole('radiogroup', { name: 'Settings sections' });
     expect(Array.from(rail.querySelectorAll('[role="radio"]')).map((node) => node.textContent)).toEqual([
-      'System', 'Elowen AI', 'Models', 'CLI Agents', 'Data', 'GitHub', 'Autopilot', 'Plugins', 'Memory',
+      'System', 'Elowen AI', 'Models', 'CLI Agents', 'Plugins', 'GitHub', 'Autopilot', 'Memory', 'Data',
     ]);
     expect(screen.getByText('System diagnostics')).toBeInTheDocument();
     expect(screen.getByText('12%')).toBeInTheDocument();
@@ -51,7 +51,7 @@ describe('SettingsPage', () => {
     const { container } = render(<Wrapper><ToastProvider><SettingsPage /></ToastProvider></Wrapper>);
 
     await screen.findByRole('heading', { level: 1, name: 'System' });
-    for (const name of ['System', 'Elowen AI', 'Models', 'CLI Agents', 'Data', 'GitHub', 'Autopilot', 'Plugins', 'Memory']) {
+    for (const name of ['System', 'Elowen AI', 'Models', 'CLI Agents', 'Plugins', 'GitHub', 'Autopilot', 'Memory', 'Data']) {
       fireEvent.click(screen.getByRole('radio', { name }));
       await waitFor(() => {
         const activePanel = container.querySelector(`[data-settings-panel]:not([style*="display: none"])`);
