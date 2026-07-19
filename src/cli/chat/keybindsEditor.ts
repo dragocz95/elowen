@@ -6,6 +6,7 @@ import {
 } from './keys.js';
 import type { KeybindAction, KeybindRow, Keymap } from './keys.js';
 import { loadPrefs, savePrefs } from './prefs.js';
+import { openCenteredModal } from './openCenteredModal.js';
 import { chatTheme, color, paintRow } from './theme.js';
 import { padAnsi } from '../ui/text.js';
 
@@ -172,18 +173,19 @@ export class KeybindsEditor implements Component, Focusable {
 /** Show the interactive keybind editor as a centered, focus-capturing overlay (same chrome + restore
  *  contract as the pickers). `reload` live-applies each rebind to the running session. */
 export function openKeybindsEditor(o: { tui: TUI; editor: Editor; reload(): void }): void {
-  const restore = (): void => { o.tui.setFocus(o.editor); o.tui.requestRender(); };
-  let handle: ReturnType<TUI['showOverlay']> | null = null;
-  const close = (): void => { handle?.hide(); handle = null; restore(); };
-  const editor = new KeybindsEditor({ tui: o.tui, onClose: close, reload: o.reload });
   // Wide enough for the longest chord label / warning line, clamped to [60, 90% of the terminal].
   const longest = Math.max(
     ...keybindRows(createKeymap()).map((r) => (r.chord ?? '').length),
     ...createKeymap().warnings.map((w) => w.length),
     visibleWidth('enter rebind · x unbind · r reset · ↑↓ move · esc close'),
   );
-  const width = Math.max(60, Math.min(longest + 40, Math.floor(o.tui.terminal.columns * 0.9)));
-  handle = o.tui.showOverlay(editor, { anchor: 'center', width, maxHeight: 26, margin: 2 });
-  handle.focus();
-  o.tui.requestRender();
+  openCenteredModal({
+    tui: o.tui,
+    editor: o.editor,
+    makeComponent: (close) => new KeybindsEditor({ tui: o.tui, onClose: close, reload: o.reload }),
+    longest,
+    minWidth: 60,
+    pad: 40,
+    maxHeight: 26,
+  });
 }

@@ -3,6 +3,7 @@ import type { Component, Editor, Focusable, TUI } from '@earendil-works/pi-tui';
 import { isDownKey, isEnterKey, isEscapeKey, isKeyRelease, isUpKey } from './keys.js';
 import { chatTheme, color, paintRow } from './theme.js';
 import { padAnsi } from '../ui/text.js';
+import { openCenteredModal } from './openCenteredModal.js';
 import type { StatuslineConfig } from './brainClient.js';
 
 /** The statusline toggles editable from the CLI (keys mirror plugins/statusline/elowen-plugin.json's
@@ -33,6 +34,8 @@ export class StatuslineEditor implements Component, Focusable {
   private _focused = false;
   private selectedIndex = 0;
   private values: StatuslineConfig;
+  /** Bumped on every toggle so a save's error callback can tell whether it is still the latest intent. */
+  private saveGeneration = 0;
 
   constructor(private readonly opts: StatuslineEditorOpts) {
     this.values = { ...(opts.current ?? {}) };
@@ -51,10 +54,16 @@ export class StatuslineEditor implements Component, Focusable {
   private toggle(): void {
     const key = STATUSLINE_FIELDS[this.selectedIndex]!.key;
     const previous = this.values;
+    const generation = ++this.saveGeneration;
     this.values = { ...this.values, [key]: !this.values[key] };
     // Persist + live-apply optimistically; the server reply refreshes the authoritative bar. On a save
-    // failure, roll back so the checkbox never shows a state that was not persisted.
-    this.opts.save({ ...this.values }, () => { this.values = previous; this.opts.tui.requestRender(); });
+    // failure, roll back so the checkbox never shows a state that was not persisted — but only if no newer
+    // toggle has since superseded this one, otherwise a stale error would revert to an out-of-date state.
+    this.opts.save({ ...this.values }, () => {
+      if (generation !== this.saveGeneration) return;
+      this.values = previous;
+      this.opts.tui.requestRender();
+    });
     this.opts.tui.requestRender();
   }
 
@@ -100,13 +109,14 @@ export function openStatuslineEditor(o: {
   current: StatuslineConfig | null;
   save(values: StatuslineConfig, onError: () => void): void;
 }): void {
-  const restore = (): void => { o.tui.setFocus(o.editor); o.tui.requestRender(); };
-  let handle: ReturnType<TUI['showOverlay']> | null = null;
-  const close = (): void => { handle?.hide(); handle = null; restore(); };
-  const editor = new StatuslineEditor({ tui: o.tui, current: o.current, onClose: close, save: o.save });
   const longest = Math.max(...STATUSLINE_FIELDS.map((f) => f.hint.length + f.label.length + 6), visibleWidth('space toggle · ↑↓ move · esc close'));
-  const width = Math.max(52, Math.min(longest + 20, Math.floor(o.tui.terminal.columns * 0.9)));
-  handle = o.tui.showOverlay(editor, { anchor: 'center', width, maxHeight: 14, margin: 2 });
-  handle.focus();
-  o.tui.requestRender();
+  openCenteredModal({
+    tui: o.tui,
+    editor: o.editor,
+    makeComponent: (close) => new StatuslineEditor({ tui: o.tui, current: o.current, onClose: close, save: o.save }),
+    longest,
+    minWidth: 52,
+    pad: 20,
+    maxHeight: 14,
+  });
 }
