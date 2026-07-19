@@ -78,7 +78,7 @@
       "hint": "Jazyk vlastních zpráv bota (/new, /model, zástupné texty): en (výchozí) nebo cs."
     },
     "visionModel": {
-      "label": "Vision model",
+      "label": "Model pro obrázky",
       "hint": "Model pro zprávy s obrázkovými přílohami (musí umět vision). Prázdné = běžný model chatu."
     },
     "maxImageBytes": {

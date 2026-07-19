@@ -3,7 +3,15 @@
   "fields": {
     "enabled": {
       "label": "Povolené příkazy",
-      "hint": "Které vývojářské příkazy zpřístupnit. Ponechte prázdné pro povolení všech."
+      "hint": "Které vývojářské příkazy zpřístupnit. Ponechte prázdné pro povolení všech.",
+      "options": {
+        "commit": "/commit — připravit změny a napsat zprávu Conventional Commits",
+        "review": "/review — zkontrolovat diff na chyby, bezpečnost a styl",
+        "test": "/test — spustit testy a opravit selhání",
+        "explain": "/explain — vysvětlit, jak zde něco funguje",
+        "pr": "/pr — napsat popis pull requestu pro tuto větev",
+        "docs": "/docs — napsat nebo aktualizovat dokumentaci"
+      }
     }
   }
 }

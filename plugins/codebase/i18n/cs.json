@@ -42,7 +42,7 @@
       "hint": "Max. počet bloků zaindexovaných v jednom průchodu, aby se velký repozitář rozložil do více průchodů a nezahltil poskytovatele."
     },
     "sec_model": {
-      "label": "Embedding model",
+      "label": "Model pro embeddingy",
       "hint": "Embedding model se přebírá z Nastavení → Paměť (jediný zdroj pravdy) — zde se žádný samostatný model nenastavuje. Změna toho modelu při další reindexaci index přestaví."
     }
   }

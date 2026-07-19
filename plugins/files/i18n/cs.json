@@ -1,5 +1,5 @@
 {
-  "description": "Čtení, zápis a výpis souborů v repozitářích Orcy, ke kterým má uživatel přístup.",
+  "description": "Čtení, zápis a výpis souborů v repozitářích Elowen, ke kterým má uživatel přístup.",
   "fields": {
     "sec_limits": {
       "label": "Limity",

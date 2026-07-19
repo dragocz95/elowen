@@ -3,7 +3,7 @@
   "fields": {
     "timezone": {
       "label": "Časové pásmo",
-      "hint": "Časové pásmo IANA, např. Europe/Prague (výchozí). Používá se pro vkládané datum a čas."
+      "hint": "Časové pásmo IANA, např. Europe/Prague. Prázdné = časové pásmo serveru. Používá se pro vkládané datum, čas a časování plánovaných úloh."
     }
   }
 }

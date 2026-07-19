@@ -7,7 +7,19 @@
     },
     "disabled": {
       "label": "Vypnuté formátovače",
-      "hint": "Formátovače, které se nikdy nesmí spouštět, ani když je pro ně projekt nastaven."
+      "hint": "Formátovače, které se nikdy nesmí spouštět, ani když je pro ně projekt nastaven.",
+      "options": {
+        "biome": "Biome",
+        "prettier": "Prettier",
+        "pint": "Laravel Pint",
+        "ruff": "Ruff",
+        "gofmt": "gofmt",
+        "rustfmt": "rustfmt",
+        "clang-format": "clang-format",
+        "mix": "mix format",
+        "terraform": "terraform fmt",
+        "shfmt": "shfmt"
+      }
     },
     "sec_limits": {
       "label": "Limity",

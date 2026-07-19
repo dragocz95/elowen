@@ -50,7 +50,7 @@
       "hint": "Směrování obrázků."
     },
     "visionModel": {
-      "label": "Vision model",
+      "label": "Model pro obrázky",
       "hint": "Model pro zprávy s obrázkovými přílohami (musí umět vision). Prázdné = běžný model chatu."
     },
     "sec_media": {

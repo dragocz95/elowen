@@ -21,6 +21,10 @@
       "label": "Timeout kontroly (ms)",
       "hint": "Timeout pro levný guard příkaz \"check\" u úlohy."
     },
+    "checkOutputChars": {
+      "label": "Limit výstupu kontroly (znaky)",
+      "hint": "Kolik výstupu z guard příkazu „check“ se předá do tahu mozku. Zvyšte pro collectory, které vytvářejí velká agregovaná data."
+    },
     "sessionIdleMs": {
       "label": "Práh nečinnosti pro novou session (ms)",
       "hint": "Volitelné. Úloha nečinná déle než tato hodnota mezi běhy začne při dalším tiknutí novou konverzaci — po vypršení cache promptu je opětovné použití starého kontextu čistá cena bez úspory. Nechte prázdné pro výchozí hodnotu hosta (jako Discord). Nižší hodnota pro časté úlohy, vyšší pro delší zachování návaznosti, nebo 0 pro trvalé zachování kontextu (nikdy nezačínat znovu)."
