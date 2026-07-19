@@ -1,43 +1,48 @@
-# Nový webový Chat a Elowen CLI
+# Webový Chat a Elowen CLI
 
-## Stav rozhodnutí
+Jedna Elowen konverzace, tři prezentace stejného stavu: kompaktní dock, plná stránka `/chat` a — jen pro adminy — reálné `elowen chat` TUI ve webovém terminálu. Přepnutí prezentace nesmí zahodit draft, rozpojit běžící odpověď ani vytvořit druhý modelový běh.
 
-- Nová hlavní položka navigace: **Chat** na route `/chat`, hned pod Home.
-- Desktopový chat: historie konverzací vlevo, široká konverzace uprostřed.
-- Fullscreen: překrytí aplikace ve stejné záložce; `Escape` vrátí původní pohled.
-- Elowen CLI: otevře **stejnou konverzaci**, která je aktivní na webu.
-- V terminálovém výběru bude samostatná sekce **Elowen CLI** nad sekcí **CLI agenti**.
-- Webový tmux a Elowen CLI zůstanou **pouze pro administrátory**. Nová funkce nesmí rozšířit terminálový přístup běžným uživatelům.
-- Ani jiný administrátor se nesmí připojit k cizí Elowen CLI relaci; každá relace je vlastněná konkrétním adminem.
+## Invarianty
 
-## Cíl
+Vše ostatní se jim podřizuje. Testy i akceptace na ně odkazují, nepřepisují je.
 
-Každý uživatel má mít jeden Elowen chat dostupný ve dvou webových prezentacích bez rozdílného chování nebo duplikovaných konverzací:
+1. **Jeden controller, jedna session.** Dock, `/chat` i fullscreen sdílí jeden session-bound controller a jeden SSE stream. Navigace ani změna prezentace neprovede remount ani reconnect.
+2. **Detach ≠ abort.** Odpojení jednoho klienta (web tab zavřený, CLI ukončené) shodí jen jeho transport. Modelový turn abortuje pouze explicitní `abortConversation`, dokud jej sleduje aspoň jeden klient.
+3. **Model-switch drží klienty spolu.** Změna modelu se aplikuje na bound session a atomicky převede všechny připojené klienty na novou generaci — bez ztráty historie a bez druhého turnu.
+4. **Terminál je admin-only, per-owner.** Elowen CLI vidí, spustí a ovládá pouze admin, který relaci vytvořil. Non-admin i cizí admin dostanou `403` na UI i API. Obecný admin bypass se na roli `chat` nevztahuje.
+5. **Token se nikdy neukáže.** Per-terminal token má práva svého admina, je oddělený od login/advisor/agent tokenů, nevrací se klientu, neobjeví se v logu ani názvu tmux relace a revokuje se s relací.
 
-1. kompaktní chat v současném docku;
-2. plnohodnotná stránka `/chat` podobná ChatGPT.
+## Rozhodnutí
 
-Administrátor může stejnou brain session navíc otevřít ve skutečném TUI `elowen chat` uvnitř webového terminálu. Přepnutí prezentace nesmí zahodit rozepsaný text, rozpojit běžící odpověď ani vytvořit druhý modelový běh.
+- Nová navigační položka **Chat** na `/chat`, hned pod Home.
+- Desktop: historie vlevo, široká konverzace uprostřed.
+- Fullscreen: portálové překrytí ve stejné záložce (ne browser Fullscreen API); `Escape` zavře.
+- Elowen CLI otevře **aktuální** webovou konverzaci, ne novou; opakované otevření je idempotentní.
+- Terminálový výběr má pro adminy samostatnou sekci **Elowen CLI** nad **CLI agenty**.
+- Webový tmux i Elowen CLI zůstávají admin-only; funkce nesmí rozšířit terminálový přístup běžným uživatelům.
+
+## Rozsah
+
+**Mimo rozsah:** nový chat protokol nebo brain backend; paralelní kopie transcriptu jen pro `/chat`; browser Fullscreen API nebo pop-out webového chatu; zpřístupnění tmuxu/CLI běžným uživatelům; změna vzhledu externích CLI TUI; sloučení legacy `AdvisorService` s embedded brainem; automatický start CLI při otevření terminálového tabu.
 
 ## Současný stav
 
-- `web/modules/advisor/BrainChat.tsx` již umí historii, vyhledávání, nové konverzace, SSE stream, přílohy, slash příkazy, změnu modelu, otázky, procesy a subagenty.
-- `AdvisorPanel` přepíná mezi chatem a terminálovými panely, ale změnou režimu `BrainChat` odpojí a znovu připojí.
-- Webový klient dnes většinou pracuje s globální aktivní konverzací; na rozdíl od CLI není důsledně vázaný na explicitní session/client/generation.
-- Model se ve webovém chatu mění pouze přes `/model`; není zde trvale viditelný model picker.
-- Terminálový režim umí externího CLI advisora a připojení k existujícím tmux relacím. Neumí spustit Elowen chat TUI.
-- `/terminal/[name]` a `StreamTerminal` již poskytují interaktivní webový terminál a pop-out.
-- Brain API i CLI již podporují pokračování konkrétní konverzace přes `session` / `elowen chat --session <id>`.
+- `web/modules/advisor/BrainChat.tsx` už umí historii, hledání, nové konverzace, SSE stream, přílohy, slash příkazy, změnu modelu, otázky, procesy a subagenty.
+- `AdvisorPanel` přepíná chat a terminál, ale změna režimu `BrainChat` odpojí a znovu připojí.
+- Web pracuje s globální aktivní konverzací; na rozdíl od CLI není důsledně vázaný na explicitní session/client/generation.
+- Model se mění jen přes `/model`; trvale viditelný picker chybí.
+- Terminál umí externího CLI advisora a připojení k tmux relacím, ale neumí spustit Elowen chat TUI.
+- `/terminal/[name]` + `StreamTerminal` poskytují interaktivní terminál a pop-out.
+- Brain API i CLI už umí pokračovat konkrétní konverzaci přes `session` / `elowen chat --session <id>`.
+- `SessionRole` je dnes `'overseer' | 'pilot' | 'agent' | 'advisor'` — role `chat` je nová.
 
-## UX návrh
+## UX
 
-### 1. Hlavní stránka `/chat`
-
-Desktop:
+### Stránka `/chat`
 
 ```text
 ┌──────────┬──────────────────┬────────────────────────────────────────┐
-│ globální │ + Nový chat      │ název        model ▾      Terminal ⛶ │
+│ globální │ + Nový chat      │ název        model ▾      Terminál ⛶  │
 │ navigace │ hledání          │                                        │
 │          │ historie         │              konverzace                │
 │          │ konverzací       │                                        │
@@ -45,106 +50,85 @@ Desktop:
 └──────────┴──────────────────┴────────────────────────────────────────┘
 ```
 
-- Levý chatový rail obsahuje nový chat, vyhledávání, seznam konverzací, aktivní stav a menu pro přejmenování, export a smazání.
-- Hlavní header obsahuje název konverzace, viditelný model picker a fullscreen.
-- Tlačítko **Terminál** se renderuje pouze administrátorům; běžný uživatel nemá terminálový affordance ani skrytý způsob startu přes API.
-- Transcript má čitelnou maximální šířku; nástroje, diffy, procesy, otázky a subagenti zachovají dnešní schopnosti.
-- Composer zůstává dole a podporuje přílohy, frontu zpráv, slash příkazy a průběžné posílání během běžícího turnu.
-- Prázdný chat dostane klidný úvodní stav; nevznikne druhý dashboard nebo sada produktových shortcutů.
+- Levý rail: nový chat, hledání, seznam konverzací, aktivní stav, menu (přejmenovat / export / smazat).
+- Header: název konverzace, viditelný model picker, fullscreen.
+- **Terminál** se renderuje jen adminům — běžný uživatel nemá affordance ani skrytý API start (invariant 4).
+- Transcript má čitelnou max šířku; nástroje, diffy, procesy, otázky a subagenti drží dnešní schopnosti.
+- Composer dole: přílohy, fronta zpráv, slash příkazy, průběžné posílání během běžícího turnu.
+- Prázdný chat = klidný úvodní stav, ne druhý dashboard.
 
-Mobil:
+**Mobil:** historie jako drawer z headeru; composer respektuje safe-area a virtuální klávesnici; fullscreen je stejný layout bez globální navigace.
 
-- Historie je drawer otevřený z headeru.
-- Composer respektuje safe-area a virtuální klávesnici.
-- Fullscreen je prakticky stejný layout bez globální navigace.
+### Fullscreen
 
-### 2. Fullscreen
+- Jedno tlačítko `Maximize2` v docku i na `/chat`.
+- Portál/fixed vrstva nad shellem (`inset-0`, vlastní z-index).
+- Surface má stabilního vlastníka — přesun stejného JSX mezi inline stromem a portálem nesmí remountnout (invariant 1). Surface navíc explicitně zachová selection textarey, scroll transcriptu a fokus.
+- `Escape` zavře, pokud zrovna nevlastní Escape menu/modal/dialog.
+- Po otevření fokus do chatu, po zavření zpět na spouštěcí tlačítko; pozadí `inert`, scroll stránky zamknutý.
 
-- Jedno tlačítko `Maximize2` bude dostupné v docku i na `/chat`.
-- Fullscreen použije portál/fixed vrstvu nad shellem (`inset-0`, vlastní správný z-index), nikoli browser Fullscreen API.
-- Chat surface musí mít stabilního vlastníka. Pouhé přesunutí stejného JSX mezi inline stromem a portálem nesmí způsobit remount.
-- Controller zachová stream a data; surface navíc explicitně zachová textarea selection, scroll transcriptu a fokus.
-- `Escape` fullscreen zavře, pokud právě není otevřené menu, modal nebo jiný dialog vlastnící Escape.
-- Fokus se po otevření přesune do chatu a po zavření vrátí na spouštěcí tlačítko. Pozadí bude `inert` a scroll stránky zamknutý.
-
-### 3. Terminálový režim — pouze admin
-
-Výběr v terminálové části bude pro administrátora rozdělený:
+### Terminál — admin-only
 
 ```text
 Elowen CLI
-  [Elowen ikona] Aktuální brain model
+  [ikona] Aktuální brain model
   Otevřít aktuální konverzaci v CLI
 
 CLI agenti
   Claude / Codex / OpenCode / další povolené execy
 ```
 
-- Celá sekce **Elowen CLI** i startovací endpoint jsou admin-only.
-- Běžný uživatel sekci nevidí a server mu vrátí `403`, i kdyby endpoint zavolal ručně.
-- Elowen sekce pouze ukáže aktivní brain model. Změnu modelu vlastní sdílený chatový model picker; druhý model picker v terminálu nevznikne.
+- Sekce i startovací endpoint jsou admin-only; non-admin ji nevidí a API vrátí `403` (invariant 4).
+- Elowen sekce jen zobrazí aktivní brain model. Změnu vlastní sdílený chatový picker — druhý picker v terminálu nevznikne.
 - CLI agenti dál používají stávající `allowedExecs`, konfiguraci providerů a `AdvisorService`.
-- Po spuštění Elowen CLI vrátí API tmux session a dock ji otevře jako běžný `session` pane přes `StreamTerminal`.
-- Opakované kliknutí pro stejnou brain session připojí existující tmux relaci místo spuštění duplikátu.
-- Zavření panelu pouze odpojí webový pohled. **Stop** nebo ukončení TUI relaci skutečně ukončí.
-- Pop-out terminálu zůstane dostupný přes stávající `/terminal/[name]`.
+- Po startu API vrátí tmux session a dock ji otevře jako běžný `session` pane přes `StreamTerminal`.
+- Opakované kliknutí pro stejnou brain session připojí existující relaci, nespustí duplikát.
+- Zavření panelu jen odpojí web; **Stop** nebo ukončení TUI relaci skutečně ukončí (invariant 2). Pop-out přes `/terminal/[name]`.
 
-## Technická architektura
+## Design
 
 ### A. Session-bound chat controller
 
-Rozdělit dnešní monolitický `BrainChat` na:
+Rozdělit monolitický `BrainChat` na:
 
-- `BrainChatProvider` / `useBrainChatController` — session, SSE lifecycle, transcript, draft, přílohy, modely, příkazy, fronta, otázky a mutace;
-- `BrainChatSurface` — společný transcript a composer;
-- `ChatHistoryRail` — desktopový rail a mobilní drawer;
-- `ChatHeader` — název, model, admin-only terminál, fullscreen a session akce;
-- `ChatFullscreen` — fullscreen prezentace stejného controlleru a stabilního surface hostu;
-- `BrainChat` — tenký kompaktní adapter pro současný dock;
-- `ChatView` — plnohodnotný layout route `/chat`.
+| Komponenta | Odpovědnost |
+|---|---|
+| `BrainChatProvider` / `useBrainChatController` | session, SSE lifecycle, transcript, draft, přílohy, modely, příkazy, fronta, otázky, mutace |
+| `BrainChatSurface` | společný transcript + composer |
+| `ChatHistoryRail` | desktop rail + mobilní drawer |
+| `ChatHeader` | název, model, admin-only terminál, fullscreen, session akce |
+| `ChatFullscreen` | fullscreen prezentace téhož controlleru přes stabilní surface host |
+| `BrainChat` | tenký kompaktní adapter pro dock |
+| `ChatView` | plný layout route `/chat` |
 
-Provider bude umístěný jednou v `ShellLayout`, nad route contentem i `AdvisorPanel`, ale ne nad chromeless `/terminal/*`. Připojí se lazy při prvním otevření chatu.
+Provider žije jednou v `ShellLayout`, nad route contentem i `AdvisorPanel`, ale ne nad chromeless `/terminal/*`. Připojí se lazy při prvním otevření chatu.
 
-Nestačí pouze přesunout současný stav do React contextu. Web musí převzít session binding používaný CLI:
+Nestačí přesunout stav do React contextu — web musí převzít session binding z CLI: stabilní `clientId` per tab, monotónní `generation` při switchi/reconnectu, explicitní `session` pro stream/status/historii/send/queue/model/procesy/cíle/příkazy, a zahození opožděných odpovědí z předchozí generace.
 
-- stabilní `clientId` pro konkrétní browser tab;
-- monotónní `generation` při switchi/reconnectu;
-- explicitní `session` pro stream, status, historii, send, queue, model, procesy, cíle a příkazy;
-- zahození opožděných odpovědí z předchozí generace.
+**Hostování:** mimo `/chat` běží dock; na `/chat` je host `ChatView` a dock smí být otevřený jen v režimu Terminál (nikdy druhý chat surface); fullscreen mění prezentaci stabilního hostu, ne síťový lifecycle; navigace/změna režimu neresetuje controller.
 
-Pravidla hostování:
+### B. Víc klientů na jedné brain session — hlavní risk
 
-- mimo `/chat` vykresluje chat dock;
-- na `/chat` je hlavní host `ChatView`; dock může být otevřený v režimu Terminál, ale nesmí vykreslit druhý chat surface;
-- fullscreen mění prezentaci stabilního surface hostu, nikoli síťový lifecycle;
-- navigace nebo změna režimu nesmí resetovat controller.
+Web a CLI můžou být připojené současně. Server proto musí oddělit (invariant 2):
 
-### B. Více klientů na jedné brain session
-
-Web a CLI mohou být připojené současně, proto server musí odlišit:
-
-- `detachClient` — odpojí pouze konkrétní SSE/TUI transport;
+- `detachClient` — odpojí jen konkrétní SSE/TUI transport;
 - `abortConversation` — explicitně zastaví sdílený modelový turn.
 
-Ukončení jednoho CLI klienta nesmí automaticky abortovat turn, který stále sleduje web. Změna modelu musí buď atomicky převést listeners/taps na nový live session objekt, nebo všem klientům poslat autoritativní reconnect/rebind event. Klienti se poté připojí ke stejné session a nové generaci.
+Ukončení jednoho CLI klienta nesmí abortovat turn, který stále sleduje web. Model-switch (invariant 3) buď atomicky převede listeners/taps na nový live session objekt, nebo všem klientům pošle autoritativní reconnect/rebind event; klienti se pak připojí ke stejné session a nové generaci.
+
+**Open question:** default vlastnictví abortu — má explicitní Stop z jednoho klienta zastavit turn i pro ostatní sledující, nebo jen odpojit? Návrh: Stop = `abortConversation` (zastaví pro všechny), zavření tabu = `detachClient`. Potvrdit před fází 3.
 
 ### C. Model picker
 
-- Použít existující `/brain/models` a `/brain/model`; nevytvářet druhý katalog.
-- Picker seskupí modely podle provideru, ukáže provider/OAuth badge, aktivní model a případně podporované reasoning volby.
-- Změna modelu se aplikuje na explicitně bound konverzaci a aktualizuje všechny připojené klienty bez ztráty historie.
-- Dock může použít kompaktní variantu stejného pickeru.
-- Elowen CLI se spouští až po úspěšném potvrzení modelu aktivní webové session, takže web i TUI zobrazují stejný model.
+- Postavit nad existující `/brain/models` a `/brain/model` — žádný druhý katalog.
+- Seskupit podle provideru, ukázat provider/OAuth badge, aktivní model a podporované reasoning volby.
+- Změna se aplikuje na bound konverzaci a aktualizuje všechny klienty bez ztráty historie (invariant 3).
+- Dock používá kompaktní variantu téhož pickeru.
+- Elowen CLI se spustí až po potvrzení modelu aktivní web session — web i TUI ukazují stejný model.
 
-### D. Brain terminal service
+### D. `BrainTerminalService`
 
-Přidat úzkou službu, například `BrainTerminalService`, oddělenou od `AdvisorService` a `SpawnService`:
-
-- `AdvisorService` zůstává vlastníkem externích Claude/Codex/OpenCode advisorů.
-- `SpawnService` zůstává vlastníkem task workerů; Elowen chat TUI není worker.
-- `BrainTerminalService` pouze spravuje adminovy interaktivní CLI klienty připojené k existujícím brain sessions.
-
-Navržený kontrakt:
+Úzká služba oddělená od `AdvisorService` (externí advisoři) a `SpawnService` (task workeři). Spravuje jen adminovy interaktivní CLI klienty připojené k existujícím brain sessions.
 
 ```http
 POST /brain/terminal
@@ -152,164 +136,138 @@ POST /brain/terminal
 → 201 { "terminal": "elowen-chat-…", "created": true|false }
 ```
 
-Running stav se odvodí z existující vlastnicky filtrované `/sessions` query; samostatný polling endpoint nevznikne bez konkrétní potřeby.
+Running stav se odvodí z existující vlastnicky filtrované `/sessions` query; samostatný polling endpoint nevzniká.
 
-Služba při startu:
+Start:
 
-1. ověří full-scope token a `user.is_admin === true`; agent token i běžný full-scope user jsou zakázaní;
-2. ověří, že brain session patří právě tomuto adminovi a je continuable;
-3. vytvoří nebo načte durable vazbu `terminal_name → user_id, brain_session_id, token_id`;
-4. při existující tmux relaci vrátí její jméno;
-5. vytvoří samostatný token pro konkrétní terminal instance;
-6. spustí v neutrálním per-admin cwd příkaz ekvivalentní:
+1. ověří full-scope token a `user.is_admin === true` (agent token i běžný full-scope user zakázaní);
+2. ověří, že brain session patří tomuto adminovi a je continuable;
+3. vytvoří/načte durable vazbu `terminal_name → user_id, brain_session_id, token_id`;
+4. při existující tmux relaci vrátí její jméno (idempotence);
+5. vytvoří per-terminal token (invariant 5);
+6. v neutrálním per-admin cwd spustí ekvivalent:
 
 ```sh
 exec env ELOWEN_URL=<daemon> ELOWEN_TOKEN=<token> <elowen-cli> chat --session <id>
 ```
 
-Tmux driver dostane argv/env launch variantu a spustí CLI přímo přes `tmux new-session`; příkaz ani token se nebudou zapisovat pomocí `send-keys`. Token se nesmí objevit v API odpovědi, logu ani názvu tmux relace.
+Tmux driver dostane argv/env launch variantu a spustí CLI přímo přes `tmux new-session` — příkaz ani token se nezapisují přes `send-keys`.
 
-Hosted TUI zachová běžné CLI schopnosti včetně lokálního shell escape. To je přijatelné pouze proto, že přístup je omezený na důvěryhodné administrátory hostitele; nejde o bezpečný shell pro běžné multi-tenant uživatele.
+Hosted TUI zachová běžné CLI schopnosti včetně lokálního shell escape. Přijatelné jen proto, že přístup je omezen na důvěryhodné adminy hostitele; není to bezpečný shell pro multi-tenant uživatele.
 
-### E. Session identita, RBAC a lifecycle
+### E. RBAC a lifecycle
 
-- Rozšířit `SessionRole` o `chat`; `classifySession` rozpozná roli, durable metadata služba doplní `brainSessionId` a `userId`.
-- Nepoužívat nereverzibilní hash bez metadata: tmux relace mohou přežít restart daemonu.
-- Chat terminál smí vypsat, připojit, ovládat a ukončit pouze admin, který jej vytvořil. Obecný admin bypass se na roli `chat` nepoužije.
-- Jiný admin dostane `403`; non-admin dostane `403` ještě před ownership kontrolou.
-- Přidat oddělený uložený token scope/metadata pro chat terminal. Token má práva svého admina, ale je oddělený od login, advisor a agent tokenů a revokuje se s konkrétní relací.
-- Role `chat` musí být explicitně zapojená do API middleware, `sessionAccessible`, session DELETE lifecycle, liveness sweepu a webových typů. Malformed chat identity je nepřístupná všem.
-- Ukončení `elowen chat` ukončí tmux session a revokuje navázaný token. Explicitní Stop provede stejný cleanup.
-- Smazání brain konverzace nejprve ukončí terminál a revokuje token, potom smaže session. Selhání cleanupu ponechá durable orphan záznam pro janitor.
-- Startup/periodický janitor odstraní malformed nebo orphan chat terminal sessions a jejich tokeny.
+- `SessionRole` rozšířit o `chat`; `classifySession` roli rozpozná, durable metadata služba doplní `brainSessionId` a `userId`. Žádný nereverzibilní hash bez metadat — tmux relace přežívají restart daemonu.
+- Chat terminál smí vypsat/připojit/ovládat/ukončit jen admin-vlastník (invariant 4). Cizí admin `403`, non-admin `403` ještě před ownership kontrolou.
+- Per-terminal token scope/metadata oddělené od login/advisor/agent tokenů (invariant 5).
+- Role `chat` musí být explicitně zapojená do API middleware, `sessionAccessible`, session DELETE lifecycle, liveness sweepu a web typů. Malformed chat identita je nepřístupná všem.
+- Ukončení `elowen chat` i explicitní Stop ukončí tmux session a revokují token.
+- Smazání brain konverzace: nejdřív ukončit terminál + revokovat token, pak smazat session. Selhání cleanupu ponechá durable orphan pro janitor.
+- Startup/periodický janitor odstraní malformed i orphan chat terminály a jejich tokeny.
 
 ### F. Navigace a shell
 
-- Přidat `web/modules/chat/meta.ts`, `web/modules/chat/ChatView.tsx` a `web/app/chat/page.tsx`.
+- Přidat `web/modules/chat/meta.ts`, `web/modules/chat/ChatView.tsx`, `web/app/chat/page.tsx`.
 - Rozšířit `MODULES`, `NavigationWorldId`, `NAVIGATION_WORLDS`, `SPATIAL_ROUTE_ORDER` a registry testy.
-- Přidat české i anglické `nav.chat`, `page.chat`, hinty, aria texty a prázdné/error stavy.
-- Na route `/chat` launcher chatu neotevře duplicitní dock; adminovo tlačítko Terminál otevře stávající dock rovnou v terminálovém režimu.
-- Chromeless výjimka v `ShellBody` zůstane pouze pro `/terminal/*`; chat fullscreen řeší stabilní portálový host, ne nová route.
+- Doplnit cs + en `nav.chat`, `page.chat`, hinty, aria texty, prázdné/error stavy.
+- Na `/chat` launcher neotevře duplicitní dock; adminovo tlačítko Terminál otevře dock rovnou v terminálovém režimu.
+- Chromeless výjimka v `ShellBody` zůstane jen pro `/terminal/*`; chat fullscreen řeší stabilní portálový host, ne nová route.
 
-## Implementační fáze
+## Implementace
 
-### 0. Bezpečnostní a víceklientský kontrakt
+### Fáze 0 — Bezpečnostní a víceklientský kontrakt
 
-- Potvrdit admin-only boundary v UI, API middleware a session ownership.
-- Specifikovat explicitní web session binding, `detachClient` versus `abortConversation` a model-switch rebind.
-- Navrhnout durable terminal metadata, token per terminal a restart/expiry cleanup.
-- Přidat cílené failing testy pro web + CLI na jedné session a non-admin/admin ownership.
+Potvrdit admin-only boundary v UI, API middleware i session ownership. Specifikovat web session binding, `detachClient` vs `abortConversation` (vč. open question z B) a model-switch rebind. Navrhnout durable terminal metadata, per-terminal token a restart/expiry cleanup. Přidat cílené **failing** testy pro web+CLI na jedné session a non-admin/admin ownership.
 
-### 1. Session-bound web controller bez UX změny
+**Hotovo, když:** kontrakty jsou zapsané a failing testy existují a padají ze správného důvodu.
 
-- Rozšířit typed `elowenClient` o session/client/generation kontrakty.
-- Vyjmout síťový a stavový lifecycle do controlleru/provideru v `ShellLayout`.
-- Zachovat všechny dnešní eventy: text, reasoning, tools/progress, subagents, cards, queue, asks, compaction, diff, usage a reconnect.
-- Převést současný dock na `BrainChatSurface variant="compact"`.
-- Ověřit draft, attachments, reconnect a jediný SSE stream při přepnutí Chat/Terminál.
+### Fáze 1 — Session-bound web controller bez UX změny
 
-### 2. Stránka `/chat`
+Rozšířit typed `elowenClient` o session/client/generation kontrakty. Vyjmout síťový a stavový lifecycle do controlleru/provideru v `ShellLayout`. Zachovat všechny dnešní eventy (text, reasoning, tools/progress, subagents, cards, queue, asks, compaction, diff, usage, reconnect). Převést dock na `BrainChatSurface variant="compact"`.
 
-- Přidat route, navigation meta, registry kontrakty a i18n.
-- Implementovat historii vlevo, mobilní drawer, hlavní header, transcript a composer.
-- Přesunout session search/list/delete z popupu do sdíleného `ChatHistoryRail`; kompaktní dock může dál používat dropdown variantu stejného datového zdroje.
-- Doplnit přejmenování a export přes existující brain session API.
+**Hotovo, když:** draft, přílohy, reconnect a jediný SSE stream přežijí přepnutí Chat/Terminál (invariant 1).
 
-### 3. Model picker a víceklientský restart
+### Fáze 2 — Stránka `/chat`
 
-- Nejdřív opravit serverový model-switch lifecycle a reconnect/rebind všech klientů.
-- Vytvořit sdílený brain model picker nad `/brain/models` a session-bound `/brain/model`.
-- Umístit jej do hlavního chat headeru a kompaktní variantu do docku.
-- Ošetřit loading, žádný povolený model, provider error a změnu modelu během nečinné i aktivní konverzace.
+Přidat route, navigation meta, registry kontrakty a i18n. Implementovat historii vlevo, mobilní drawer, header, transcript, composer. Přesunout session search/list/delete z popupu do sdíleného `ChatHistoryRail` (dock používá dropdown variantu téhož zdroje). Doplnit přejmenování a export přes existující brain session API.
 
-### 4. Admin-only `BrainTerminalService`
+**Hotovo, když:** `/chat` je v obou navigacích, funguje na desktopu i mobilu, sdílí controller s dockem.
 
-- Implementovat argv-native launch, durable metadata, token lifecycle a idempotentní start.
-- Rozšířit klasifikaci a owner-only guard session routes o roli `chat` bez obecného admin bypassu.
-- Zapojit middleware, liveness sweep, DELETE cleanup, daemon bootstrap a janitor.
-- Backend ověřit samostatně před přidáním frontendového tlačítka.
+### Fáze 3 — Model picker a víceklientský restart
 
-### 5. Elowen CLI v terminálovém výběru
+Nejdřív opravit serverový model-switch lifecycle a reconnect/rebind všech klientů (invariant 3). Pak sdílený picker nad `/brain/models` a session-bound `/brain/model` do hlavního headeru + kompaktní do docku. Ošetřit loading, žádný povolený model, provider error a změnu modelu během nečinné i aktivní konverzace.
 
-- Pouze adminům rozdělit picker na **Elowen CLI** a **CLI agenti**.
-- V Elowen sekci zobrazit aktivní brain model a akci pro otevření aktuální session.
-- Po startu refreshnout sessions query, přidat vrácenou tmux session do dock state a otevřít `StreamTerminal`.
-- Doplnit running/reconnect, detach, explicitní stop a pop-out; žádný token ani brain session ID neparsovat na klientu.
-- Non-adminovi nevyrenderovat žádný Elowen CLI control.
+**Hotovo, když:** změna modelu drží oba klienty na stejné session a nevytvoří druhý turn.
 
-### 6. Fullscreen, responsive a dokončení
+### Fáze 4 — `BrainTerminalService` (admin-only)
 
-- Přidat stabilní fullscreen host, Escape/focus management, `inert`, scroll lock a obnovu scrollu/selection.
-- Ověřit desktop, úzký dock, mobil, změnu orientace, virtuální klávesnici a dlouhé tool výstupy.
-- Aktualizovat `docs/WEB.md` a případně screenshoty až po stabilizaci UI.
+Argv-native launch, durable metadata, token lifecycle, idempotentní start. Rozšířit klasifikaci a owner-only guard session routes o roli `chat` bez obecného admin bypassu. Zapojit middleware, liveness sweep, DELETE cleanup, daemon bootstrap, janitor. Ověřit backend samostatně před frontendem.
 
-## Testovací plán
+**Hotovo, když:** backend testy z invariantů 4 a 5 procházejí bez jediného řádku UI.
+
+### Fáze 5 — Elowen CLI v terminálovém výběru
+
+Jen adminům rozdělit picker na **Elowen CLI** / **CLI agenti**. V Elowen sekci zobrazit aktivní model a akci „otevřít aktuální session". Po startu refreshnout sessions query, přidat vrácenou tmux session do dock state, otevřít `StreamTerminal`. Doplnit running/reconnect, detach, explicitní stop, pop-out — na klientu neparsovat žádný token ani brain session ID. Non-adminovi nevyrenderovat žádný Elowen CLI control.
+
+**Hotovo, když:** admin otevře stejnou session obousměrně; non-admin nemá v DOM žádný control.
+
+### Fáze 6 — Fullscreen, responsive, dokončení
+
+Stabilní fullscreen host, Escape/focus management, `inert`, scroll lock, obnova scrollu/selection. Ověřit desktop, úzký dock, mobil, orientaci, virtuální klávesnici, dlouhé tool výstupy. Aktualizovat `docs/WEB.md` a screenshoty až po stabilizaci UI.
+
+**Hotovo, když:** fullscreen nezpůsobí reconnect, ztrátu draftu, remount ani druhý turn (invariant 1).
+
+## Testy
 
 ### Backend
 
-- `BrainTerminalService`: admin guard, bezpečný argv launch, idempotence, jedna relace na admin+brain session, ukončení a orphan cleanup.
-- API: non-admin `403`, agent token `403`, cizí session, jiný admin `403`, neexistující session, tmux failure a správné status kódy.
-- Session routes: role `chat` je viditelná a ovladatelná pouze adminem-vlastníkem; obecný admin bypass ji nezpřístupní jinému adminovi.
-- Tokeny: token per terminal má práva admina-vlastníka, je oddělený od login/advisor/agent tokenů, nikdy se nevrací klientu a při cleanupu se revokuje.
-- Delete conversation ukončí navázaný terminál nebo ponechá evidovaný orphan pro janitor.
-- Web + CLI: detach jednoho klienta neabortuje turn; model switch rebindne oba klienty ke stejné session.
+- `BrainTerminalService`: admin guard, bezpečný argv launch, idempotence, jedna relace na admin+brain session, ukončení, orphan cleanup.
+- API: non-admin `403`, agent token `403`, cizí session, jiný admin `403`, neexistující session, tmux failure, správné status kódy.
+- Session routes: role `chat` viditelná/ovladatelná jen adminem-vlastníkem; obecný admin bypass ji nezpřístupní jinému adminovi.
+- Tokeny: per-terminal token má práva vlastníka, je oddělený od login/advisor/agent, nikdy se nevrací klientu, revokuje se při cleanupu.
+- Delete conversation ukončí navázaný terminál nebo ponechá evidovaný orphan.
+- Web+CLI: detach jednoho klienta neabortuje turn; model switch rebindne oba klienty ke stejné session.
 
-### Frontend unit/integration
+### Frontend
 
 - `/chat` je v obou navigacích a správně aktivní.
-- History rail: přepnutí, nový chat, search, rename, export, delete a mobilní drawer.
-- Model picker: katalog, allow-list, aktivní hodnota, úspěch/chyba a refresh session.
-- Fullscreen: otevření/zavření, Escape, focus restore, zachování draftu/příloh/scrollu a žádný remount controlleru.
+- History rail: přepnutí, nový chat, search, rename, export, delete, mobilní drawer.
+- Model picker: katalog, allow-list, aktivní hodnota, úspěch/chyba, refresh session.
+- Fullscreen: open/close, Escape, focus restore, zachování draftu/příloh/scrollu, žádný remount controlleru.
 - Jeden controller: dock, `/chat` a fullscreen nevytvoří duplicitní SSE připojení.
-- Admin terminal picker: Elowen sekce je nad CLI agenty, start přidá pane, opakovaný start neduplikuje pane, stop a pop-out fungují.
+- Admin terminal picker: Elowen sekce nad CLI agenty, start přidá pane, opakovaný start neduplikuje, stop a pop-out fungují.
 - Non-admin terminal picker: Elowen sekce ani startovací akce nejsou v DOM.
 
 ### Reálná cesta
 
-1. Jako admin otevřít `/chat`, založit konverzaci a poslat zprávu.
-2. Během streamu přejít do fullscreen a zpět; odpověď i draft zůstanou.
-3. Změnit model a ověřit model ve statusline i session historii.
-4. Kliknout Terminal → Elowen CLI a ověřit, že TUI otevře stejnou historii/session ID.
-5. Poslat zprávu z TUI a vidět ji ve webu; poslat další z webu a vidět ji v TUI.
-6. Odpojit a znovu připojit pane bez nové tmux relace; pak Stop a ověřit ukončení i revokaci tokenu.
-7. Jako non-admin ověřit absenci CLI ovládání a `403` při ručním API volání.
-8. Jako druhý admin ověřit, že cizí chat terminal nelze vypsat ani ovládat.
+1. Admin otevře `/chat`, založí konverzaci, pošle zprávu.
+2. Během streamu do fullscreen a zpět — odpověď i draft zůstanou.
+3. Změní model, ověří ve statusline i session historii.
+4. Terminal → Elowen CLI otevře TUI se stejnou historií/session ID.
+5. Zpráva z TUI se objeví ve webu; další z webu se objeví v TUI.
+6. Odpojí a znovu připojí pane bez nové tmux relace; pak Stop → ověří ukončení i revokaci tokenu.
+7. Non-admin: žádný CLI control, `403` při ručním API volání.
+8. Druhý admin: cizí chat terminal nelze vypsat ani ovládat.
 
-Po focused testech spustit:
+### Příkazy
 
 ```bash
-# cílené root Vitest testy
 npm test -- --run <root-test-files>
-
-# cílené web Vitest testy
 npm --prefix web test -- --run <web-test-files>
-
 npm run lint
 npm run typecheck
 npm run build:web
 npm run test:cli-tmux:built
 ```
 
-## Akceptační kritéria
+## Akceptace
 
-- Levá navigace obsahuje Chat a `/chat` funguje na desktopu i mobilu pro oprávněné uživatele.
+Funkce je hotová, když platí všech pět invariantů a navíc:
+
+- Levá navigace obsahuje Chat; `/chat` funguje na desktopu i mobilu pro oprávněné uživatele.
 - Chat má trvale viditelný, RBAC-filtered model picker a historii vlevo.
-- Dock a stránka používají stejné chování, historii, draft a explicitně bound session.
-- Fullscreen nezpůsobí reconnect, ztrátu draftu, remount controlleru ani druhý modelový turn.
-- Pouze adminův terminálový výběr zobrazuje Elowen CLI odděleně nad CLI agenty.
-- Non-admin nemůže Elowen CLI vypsat, spustit ani ovládat přes UI nebo API.
-- Elowen CLI otevře aktuální webovou konverzaci, nikoli novou, a opakované otevření je idempotentní.
-- Web a TUI mohou pokračovat ve stejné session oběma směry; odpojení jednoho klienta neabortuje druhého.
-- Jiný admin nemůže vypsat, připojit, ovládat ani získat token cizího chat terminálu.
-- Ukončené nebo osiřelé chat terminály ani jejich tokeny nezůstávají běžet.
+- Dock a stránka sdílejí chování, historii, draft a explicitně bound session.
+- Elowen CLI otevře aktuální webovou konverzaci (ne novou) a opakované otevření je idempotentní.
+- Web a TUI pokračují ve stejné session oběma směry.
+- Ukončené ani osiřelé chat terminály a jejich tokeny nezůstanou běžet.
 - Focused root/web testy, lint, typecheck, web build a tmux smoke projdou.
-
-## Mimo rozsah
-
-- Nový chat protokol nebo nový brain backend.
-- Paralelní kopie transcriptu pouze pro `/chat`.
-- Browser Fullscreen API nebo pop-out webového chatu.
-- Zpřístupnění tmuxu nebo Elowen CLI běžným uživatelům.
-- Změna vzhledu externích CLI TUI.
-- Sloučení legacy externího `AdvisorService` s embedded brainem.
-- Automatické spuštění Elowen CLI při otevření terminálového tabu.
