@@ -1634,6 +1634,8 @@ export const en = {
     heroCost: 'Cost',
     roleYou: 'You',
     roleElowen: 'Elowen',
+    fullscreen: 'Fullscreen',
+    exitFullscreen: 'Exit fullscreen',
   },
   pluginCfg: {
     roleAdmin: "Administrator access",

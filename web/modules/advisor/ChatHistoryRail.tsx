@@ -254,7 +254,7 @@ export function ChatHistoryRail({ variant, open = false, onClose, className }: {
     // close it; focus lands in the search input on open (its autoFocus now fires on open, not on mount).
     if (!open) return null;
     return (
-      <div className="fixed inset-0 z-40" onKeyDown={(e) => { if (e.key === 'Escape') onClose?.(); }}>
+      <div className="fixed inset-0 z-[60]" onKeyDown={(e) => { if (e.key === 'Escape') onClose?.(); }}>
         <div className="absolute inset-0 bg-black/50" onClick={onClose} aria-hidden />
         <aside
           role="dialog"

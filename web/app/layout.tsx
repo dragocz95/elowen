@@ -16,9 +16,14 @@ export const metadata = {
 };
 
 // Elowen is intentionally OLED-only. Browser chrome follows the same black canvas on every device.
+// `viewportFit: cover` lays the app edge-to-edge so `env(safe-area-inset-*)` resolves (notch / home
+// indicator, incl. the installed PWA); `interactiveWidget: resizes-content` shrinks the layout viewport
+// (and therefore `100dvh`) when the soft keyboard opens, so a sticky bottom composer stays above it.
 export const viewport = {
   colorScheme: 'dark' as const,
   themeColor: '#000000',
+  viewportFit: 'cover' as const,
+  interactiveWidget: 'resizes-content' as const,
 };
 
 // Apply the per-device effects preference before first paint. This prevents an opted-out device from

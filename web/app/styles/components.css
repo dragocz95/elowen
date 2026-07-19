@@ -46,6 +46,14 @@ html[data-effects='full'] .card-interactive:hover { transform: translateY(-1px);
    state instead (its focus-within border shift). */
 .chat-composer textarea:focus-visible { box-shadow: none; }
 
+/* In the fullscreen /chat overlay the sticky composer sits on the true viewport bottom, so pad it past
+   the mobile home indicator (safe-area inset; 0 on devices/desktops without one). */
+.chat-composer-safe { padding-bottom: env(safe-area-inset-bottom); }
+
+/* Wide content in assistant prose (markdown tables, fenced code) scrolls inside its own box so the page
+   never scrolls sideways at narrow / mobile widths. */
+.chat-markdown table, .chat-markdown pre { display: block; max-width: 100%; overflow-x: auto; }
+
 /* Collapsible tool row (native <details>): hide the default marker, rotate the chevron when open. */
 .chat-tool > summary { list-style: none; }
 .chat-tool > summary::-webkit-details-marker { display: none; }

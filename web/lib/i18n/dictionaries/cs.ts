@@ -1634,6 +1634,8 @@ export const cs = {
     heroCost: 'Náklady',
     roleYou: 'Vy',
     roleElowen: 'Elowen',
+    fullscreen: 'Celá obrazovka',
+    exitFullscreen: 'Zavřít celou obrazovku',
   },
   pluginCfg: {
     roleAdmin: "Administrátorský přístup",

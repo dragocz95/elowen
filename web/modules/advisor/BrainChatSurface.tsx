@@ -2,8 +2,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
-import { Send, Square, Plus, ChevronDown, Wrench, Paperclip, X, FileText, Users, ChevronRight, PanelLeft } from 'lucide-react';
+import { Send, Square, Plus, ChevronDown, Wrench, Paperclip, X, FileText, Users, ChevronRight, PanelLeft, Maximize2, Minimize2 } from 'lucide-react';
 import { useTranslation } from '../../lib/i18n';
+import { useMobile } from '../../lib/useMobile';
 import { useToast } from '../../components/ui/Toast';
 import type { BrainCard } from '../../lib/types';
 import { collectSubagents, type ChatTurn, type ToolItem } from '../../lib/transcript';
@@ -222,6 +223,10 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory }: { varia
 
   const [pickerOpen, setPickerOpen] = useState(false);
   const [slashIdx, setSlashIdx] = useState(0);
+  // Fullscreen is a CSS-only overlay on the SAME root node (never a portal/remount), so the stream,
+  // draft and running turn survive the toggle. Only meaningful for the full /chat variant.
+  const [fullscreen, setFullscreen] = useState(false);
+  const mobile = useMobile();
   const fileRef = useRef<HTMLInputElement>(null);
   const composerRef = useRef<HTMLTextAreaElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -239,18 +244,20 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory }: { varia
   // enough (and avoids re-firing on the controller's per-render identity churn).
   useEffect(() => { ensureAttached(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Autoscroll to the newest turn. The compact dock scrolls its own box; the full page has no inner
-  // scroll box — the whole page (the shell's <main>) scrolls, so drive that instead.
+  // Autoscroll to the newest turn. The compact dock scrolls its own box; the full page normally has no
+  // inner scroll box — the whole page (the shell's <main>) scrolls, so drive that instead. In fullscreen
+  // the fixed overlay is its own scroll box (the messages div, scrollRef), so scroll THAT element. This is
+  // a target-selection change only — the same node stays mounted, so nothing reconnects or remounts.
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
     if (variant === 'full') {
-      const scroller = el.closest('main');
+      const scroller = fullscreen ? el : el.closest('main');
       scroller?.scrollTo({ top: scroller.scrollHeight });
     } else {
       el.scrollTo({ top: el.scrollHeight });
     }
-  }, [turns, variant]);
+  }, [turns, variant, fullscreen]);
 
   // The controller asks the composer to focus (a compose-bridge request / a seeded draft) by bumping the
   // focus nonce — the surface owns the DOM ref, so it does the actual focus. Guard against a plain (re)mount
@@ -267,10 +274,44 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory }: { varia
   // whose setSlashIdx(0) moved into the surface since slashIdx is now surface-local view state).
   useEffect(() => { if (slash.modelOptsOpen) setSlashIdx(0); }, [slash.modelOptsOpen]);
 
+  // Escape leaves fullscreen — but only when no transient UI owns Escape. The slash menu's own Escape
+  // (the composer clears it) and an open ModelPicker menu (its own Escape closes it) must win first, so we
+  // bail while the slash menu is open or a picker listbox is mounted. Guarding by state/DOM (not
+  // stopPropagation) lets the owning handler run in the same keystroke without also collapsing fullscreen.
+  useEffect(() => {
+    if (!fullscreen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      if (slashOpen) return;
+      // A menu (ModelPicker) or a modal drawer/dialog (the history rail) owns Escape first — its own
+      // handler closes it on this same keystroke, so fullscreen must not also collapse.
+      if (document.querySelector('[role="listbox"],[role="dialog"],[aria-modal="true"]')) return;
+      setFullscreen(false);
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [fullscreen, slashOpen]);
+
+  // Auto-enter fullscreen ONCE on a phone so the conversation owns the whole viewport (the embedded /chat
+  // page is cramped there). The user can still toggle back out — an orientation change that re-crosses the
+  // breakpoint must NOT re-force it, so a ref gates the auto-enter to a single fire.
+  const autoFullscreenedRef = useRef(false);
+  useEffect(() => {
+    if (variant === 'full' && mobile && !autoFullscreenedRef.current) { autoFullscreenedRef.current = true; setFullscreen(true); }
+  }, [variant, mobile]);
+
   const newChat = () => { setPickerOpen(false); void switchSession({ fresh: true }).catch(() => toast(t.brainChat.searchOpenError, 'error')); };
 
   return (
-    <div className={`flex flex-col ${variant === 'full' ? 'flex-1' : 'h-full min-h-0'}`} data-variant={variant}>
+    <div
+      className={`flex flex-col ${
+        variant === 'full'
+          ? fullscreen ? 'fixed inset-0 z-50 overflow-hidden bg-bg' : 'flex-1'
+          : 'h-full min-h-0'
+      }`}
+      style={variant === 'full' && fullscreen ? { height: 'calc(100dvh / var(--ui-scale, 1))' } : undefined}
+      data-variant={variant}
+    >
       {/* Conversation bar. Compact (dock): title + picker dropdown + new chat. Full (/chat): a light
           header — the shared history rail owns the session list, so here it is only the title, a mobile
           drawer toggle and new chat. Space is reserved for the model picker (Fáze 3), terminal
@@ -323,6 +364,16 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory }: { varia
           >
             <Plus size={18} aria-hidden />
           </button>
+          <button
+            type="button"
+            onClick={() => setFullscreen((v) => !v)}
+            aria-pressed={fullscreen}
+            aria-label={fullscreen ? t.chat.exitFullscreen : t.chat.fullscreen}
+            title={fullscreen ? t.chat.exitFullscreen : t.chat.fullscreen}
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-elevated hover:text-text"
+          >
+            {fullscreen ? <Minimize2 size={18} aria-hidden /> : <Maximize2 size={18} aria-hidden />}
+          </button>
         </div>
       )}
 
@@ -330,7 +381,7 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory }: { varia
           turns stack with NO container gap — each segment carries its own margin, so tool rows keep one
           uniform rhythm across turn boundaries and only a speaker change opens a block break. The compact
           dock keeps its own internal scroll and per-turn gap. */}
-      <div ref={scrollRef} className={`flex flex-1 flex-col ${variant === 'full' ? 'chat-gutter py-4' : 'gap-3 min-h-0 overflow-y-auto p-3'}`}>
+      <div ref={scrollRef} className={`flex flex-1 flex-col ${variant === 'full' ? `chat-gutter py-4${fullscreen ? ' min-h-0 overflow-y-auto' : ''}` : 'gap-3 min-h-0 overflow-y-auto p-3'}`}>
         {turns.length === 0 && ready ? (
           variant === 'full' ? (
             <div className="m-auto flex max-w-md flex-col items-center gap-2 text-center">
@@ -381,7 +432,7 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory }: { varia
       {/* Composer footer (statusline + staged attachments + queue + composer). In the full page it sticks
           to the viewport bottom so it stays reachable while the whole page scrolls behind it; the compact
           dock keeps it in normal flow at the bottom of its own scroll box. */}
-      <div className={variant === 'full' ? 'sticky bottom-0 z-10 bg-bg' : ''}>
+      <div className={variant === 'full' ? `sticky bottom-0 z-10 bg-bg${fullscreen ? ' chat-composer-safe' : ''}` : ''}>
       {/* No hairline above the footer — a soft fade lets the transcript slide under it instead. */}
       {variant === 'full' ? (
         <div aria-hidden className="pointer-events-none absolute inset-x-0 bottom-full h-6 bg-gradient-to-t from-bg to-transparent" />
